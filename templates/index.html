@@ -1,0 +1,201 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent Management</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+        button {
+            padding: 10px 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+    </style>
+</head>
+<body>
+    <h1>Agent Management</h1>
+    <table id="agents-table">
+        <thead>
+            <tr>
+                <th>Agent ID</th>
+                <th>Full Name</th>
+                <th>Role</th>
+                <th>Specialty</th>
+                <th>Status</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+        </tbody>
+    </table>
+    <br/>
+    <label for="agent-name">Select Agent:</label>
+    <select id="agent-name">
+        <option value="Sandy">Sales Agent</option>
+        <option value="Sam">Support Agent</option>
+        <option value="Oscar">Order Agent</option>
+        <option value="Felix">Finance Agent</option>
+        <option value="Toby">Technical Support Agent</option>
+    </select>
+    
+    <label for="status">Select Status:</label>
+    <select id="status">
+        <option value="active">Active</option>
+        <option value="inactive">Inactive</option>
+    </select>
+    
+    <button onclick="updateAgentStatus()">Update Status</button>
+<div class="add-agent-form">
+    <h2>Add New Agent</h2>
+    <label for="new-agent-name">Agent Name:</label>
+    <input type="text" id="new-agent-name" required>
+    
+    <label for="new-agent-role">Role:</label>
+    <select id="new-agent-role">
+        <option value="Sales Agent">Sales Agent</option>
+        <option value="Support Agent">Support Agent</option>
+        <option value="Technical Agent">Technical Agent</option>
+    </select>
+    
+    <label for="new-agent-specialty">Specialty:</label>
+    <input type="text" id="new-agent-specialty">
+    
+    <button onclick="addAgent()">Add Agent</button>
+</div>
+    <script>
+        async function fetchAgents() {
+            try {
+                const response = await fetch('/agents');
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                const agents = await response.json();
+                const tableBody = document.querySelector('#agents-table tbody');
+                tableBody.innerHTML = '';
+
+                for (const [agent, data] of Object.entries(agents)) {
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td>${agent}</td>
+                        <td>${data.full_name}</td>
+                        <td>${data.role}</td>
+                        <td>${data.specialty}</td>
+                        <td>${data.status}</td>
+                        <td>
+                            <button onclick="updateAgentStatus('${agent}')">Update</button>
+                            <button onclick="deleteAgent('${agent}')">Delete</button>
+                        </td>
+                    `;
+                    tableBody.appendChild(row);
+                }
+            } catch (error) {
+                console.error('Fetch agents failed:', error);
+                alert('Failed to load agents');
+            }
+        }
+
+        async function updateAgentStatus(agentName = null) {
+            try {
+                agentName = agentName || document.getElementById('agent-name').value;
+                const status = document.getElementById('status').value;
+
+                const response = await fetch('/toggle_agent', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        agent_name: agentName,
+                        status: status
+                    })
+                });
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                const result = await response.json();
+                alert(result.message);
+                fetchAgents();
+            } catch (error) {
+                console.error('Update agent status failed:', error);
+                alert('Failed to update agent status');
+            }
+        }
+
+        async function addAgent() {
+            try {
+                const newAgentName = document.getElementById('new-agent-name').value;
+                
+                const response = await fetch('/add_agent', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        agent_name: newAgentName,
+                        full_name: newAgentName,  // Add full name
+                        role: "Sales Agent",      // Add default role
+                        specialty: "General",      // Add default specialty
+                        status: 'active'
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Failed to add agent');
+                }
+                
+                const result = await response.json();
+                alert(result.message);
+                fetchAgents();  // Refresh the table
+            } catch (error) {
+                console.error('Add agent failed:', error);
+                alert('Failed to add agent');
+            }
+        }
+        async function deleteAgent(agentName) {
+            try {
+                const response = await fetch('/delete_agent', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        agent_name: agentName
+                    })
+                });
+                
+                const result = await response.json();
+                alert(result.message);
+                fetchAgents();
+            } catch (error) {
+                console.error('Delete agent failed:', error);
+                alert('Failed to delete agent');
+            }
+        }
+
+        fetchAgents();
+    </script>
+</body>
+</html>
