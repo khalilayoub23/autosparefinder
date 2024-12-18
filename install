@@ -29,5 +29,8 @@ def toggle_agent():
 def get_agents():
     return jsonify(agents), 200
 
+Runs the Flask application in debug mode.
+
+This code block is the entry point of the Flask application. It runs the application in debug mode, which provides additional logging and error handling features for development purposes.
 if __name__ == "__main__":
     app.run(debug=True)
