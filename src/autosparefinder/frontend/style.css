@@ -1,0 +1,17 @@
+.stApp {
+    background-color: #f5f5f5;
+}
+
+.chat-message {
+    padding: 1rem;
+    border-radius: 10px;
+    margin: 1rem 0;
+    background-color: white;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.upload-section {
+    border: 2px dashed #ccc;
+    padding: 20px;
+    border-radius: 10px;
+}

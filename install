@@ -1,0 +1,33 @@
+from flask import Flask, request, jsonify
+
+app = Flask(__name__)
+
+# מאגר נתונים של סוכנים
+agents = {
+    "sales_agent": {"status": "active"},
+    "support_agent": {"status": "active"},
+    "order_agent": {"status": "active"},
+    "finance_agent": {"status": "active"},
+    "technical_support_agent": {"status": "active"},
+    # הוסף כאן סוכנים נוספים לפי הצורך
+}
+
+# Endpoint להדליק/לכבות סוכן
+@app.route('/toggle_agent', methods=['POST'])
+def toggle_agent():
+    agent_name = request.json.get('agent_name')
+    status = request.json.get('status')  # 'active' or 'inactive'
+    
+    if agent_name in agents:
+        agents[agent_name]["status"] = status
+        return jsonify({"message": f"{agent_name} status updated to {status}"}), 200
+    else:
+        return jsonify({"message": "Agent not found"}), 404
+
+# Endpoint לקבלת כל הסוכנים והסטטוס שלהם
+@app.route('/agents', methods=['GET'])
+def get_agents():
+    return jsonify(agents), 200
+
+if __name__ == "__main__":
+    app.run(debug=True)
