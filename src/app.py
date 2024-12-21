@@ -39,3 +39,17 @@ def status():
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=5000, debug=True)
+
+@app.route('/api/parts/count')
+import sqlite3
+
+def get_parts_count():
+    conn = sqlite3.connect('src/autosparefinder.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT COUNT(*) FROM parts')
+    count = cursor.fetchone()[0]
+    conn.close()
+    return jsonify({
+        "total_parts": count,
+        "status": "success"
+    })
