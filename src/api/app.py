@@ -1,7 +1,60 @@
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, request
 from flask_cors import CORS
 import datetime
 import time
+from transformers import BertTokenizer, BertModel
+import torch
+import streamlit as st
+import pandas as pd
+import sqlite3
+from agents.sales_agent import SalesAgent
+from sqlalchemy import create_engine, Column, Integer, String, Float, ForeignKey
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import relationship, sessionmaker
+
+Base = declarative_base()
+
+class Category(Base):
+    __tablename__ = 'categories'
+    id = Column(Integer, primary_key=True)
+    name = Column(String(50), nullable=False)
+    parts = relationship("Part", back_populates="category")
+
+class Brand(Base):
+    __tablename__ = 'brands'
+    id = Column(Integer, primary_key=True)
+    name = Column(String(50), nullable=False)
+    models = relationship("Model", back_populates="brand")
+
+class Model(Base):
+    __tablename__ = 'models'
+    id = Column(Integer, primary_key=True)
+    name = Column(String(50), nullable=False)
+    brand_id = Column(Integer, ForeignKey('brands.id'))
+    brand = relationship("Brand", back_populates="models")
+    parts = relationship("Part", back_populates="model")
+
+class Part(Base):
+    __tablename__ = 'parts'
+    id = Column(Integer, primary_key=True)
+    name = Column(String(100), nullable=False)
+    category_id = Column(Integer, ForeignKey('categories.id'))
+    brand_id = Column(Integer, ForeignKey('brands.id'))
+    model_id = Column(Integer, ForeignKey('models.id'))
+    price = Column(Float)
+    category = relationship("Category", back_populates="parts")
+    brand = relationship("Brand")
+    model = relationship("Model", back_populates="parts")
+
+tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+model = BertModel.from_pretrained('bert-base-uncased')
+
+def encode_text(text):
+    inputs = tokenizer(text, return_tensors='pt')
+    outputs = model(**inputs)
+    return outputs.last_hidden_state.mean(dim=1).detach().numpy()
+
+bert_handler = type('BertHandler', (object,), {'encode_text': encode_text})()
 
 app = Flask(__name__)
 CORS(app)
@@ -253,3 +306,110 @@ def monitor_mark():
 if __name__ == "__main__":
     print("Starting server on port 8501...")
     app.run(port=8501, debug=True)
+
+# Function to read Excel file and insert data into the database
+def load_data_to_db(file_path, db_path):
+    # Read the Excel file
+    df = pd.read_excel(file_path)
+    
+    # Connect to the SQLite database
+    conn = sqlite3.connect(db_path)
+    
+    # Insert data into the database
+    df.to_sql('parts_data', con=conn, if_exists='replace', index=False)
+    
+    # Close the connection
+    conn.close()
+
+# Load data into the database
+file_path = 'C:\\Users\\khalil ayoub\\Desktop\\car brands database\\parts data base.xlsx'
+db_path = 'fastpost.db'
+load_data_to_db(file_path, db_path)
+
+import streamlit as st
+from agents.sales_agent import SalesAgent
+from sqlalchemy.orm import sessionmaker
+
+# Create database engine
+engine = create_engine('sqlite:///spare_parts.db')
+
+# Create session
+Session = sessionmaker(bind=engine)
+from database.models import Part, Category, Brand, Model
+
+def main():
+    st.title("Spare Parts Finder")
+    
+    # Database session
+    session = Session()
+    
+    # Initialize sales agent
+    john = SalesAgent("John")
+    
+    # Sidebar filters
+    category = st.sidebar.selectbox("Category", [c.name for c in session.query(Category).all()])
+    brand = st.sidebar.selectbox("Brand", [b.name for b in session.query(Brand).all()])
+    
+    # Create the chat interface
+    user_input = st.text_input("You:", "")
+    
+    if user_input:
+        response = john.respond(user_input)
+        st.text(f"John: {response}")
+        
+        # Query parts based on filters
+        parts = session.query(Part).join(Category).join(Brand)\
+            .filter(Category.name == category)\
+            .filter(Brand.name == brand)\
+            .all()
+            
+        # Display parts
+        for part in parts:
+            st.write(f"{part.name} - ${part.price}")
+
+if __name__ == "__main__":
+    main()
+
+from .database.models import Base, Category, Brand, Model, Part
+
+# Create database engine
+engine = create_engine('sqlite:///spare_parts.db')
+
+# Create tables
+Base.metadata.create_all(engine)
+
+# Create session
+Session = sessionmaker(bind=engine)
+session = Session()
+
+# Add sample data
+def add_sample_data():
+    # Categories
+    categories = [
+        Category(name='Engine'),
+        Category(name='Transmission'),
+        Category(name='Brakes'),
+        Category(name='Suspension')
+    ]
+    session.add_all(categories)
+    
+    # Brands
+    brands = [
+        Brand(name='Toyota'),
+        Brand(name='Honda'),
+        Brand(name='BMW')
+    ]
+    session.add_all(brands)
+    
+    session.commit()
+
+if __name__ == '__main__':
+    add_sample_data()
+# Directory structure
+# autosparefinder/
+# ├── database/
+# │   ├── __init__.py
+# │   ├── models.py
+# │   └── db_setup.py
+# ├── app.py
+# └── requirements.txt
