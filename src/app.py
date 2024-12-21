@@ -43,6 +43,30 @@ if __name__ == "__main__":
 @app.route('/api/parts/count')
 import sqlite3
 
+@app.route('/api/parts/count')
+def get_parts_count():
+    conn = sqlite3.connect('src/autosparefinder.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT COUNT(*) FROM parts')
+    count = cursor.fetchone()[0]
+    conn.close()
+    return jsonify({
+        "total_parts": count,
+        "status": "success"
+    })
+
+@app.route('/api/parts/count')
+def get_parts_count():
+    conn = sqlite3.connect('src/autosparefinder.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT COUNT(*) FROM parts')
+    count = cursor.fetchone()[0]
+    conn.close()
+    return jsonify({
+        "total_parts": count,
+        "status": "success"
+    })
+
 def get_parts_count():
     conn = sqlite3.connect('src/autosparefinder.db')
     cursor = conn.cursor()
