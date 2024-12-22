@@ -13,12 +13,11 @@ def main(args=None):
         args = sys.argv[1:]
 
     parser = argparse.ArgumentParser(
-        description='Reads barcodes in images, using the zbar library'
+        description="Reads barcodes in images, using the zbar library"
     )
-    parser.add_argument('image', nargs='+')
+    parser.add_argument("image", nargs="+")
     parser.add_argument(
-        '-v', '--version', action='version',
-        version='%(prog)s ' + pyzbar.__version__
+        "-v", "--version", action="version", version="%(prog)s " + pyzbar.__version__
     )
     args = parser.parse_args(args)
 
@@ -29,5 +28,5 @@ def main(args=None):
             print(barcode.data)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
