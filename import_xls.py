@@ -4,7 +4,7 @@ from models import db, Part
 import os
 
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://localhost/autosparefinder'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://postgres:postgres@localhost:5432/autosparefinder'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db.init_app(app)
 
@@ -31,4 +31,4 @@ def import_xls_data():
 
 if __name__ == "__main__":
     with app.app_context():
-        import_xls_data()        import_xls_data()
+        import_xls_data()
