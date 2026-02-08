@@ -3,6 +3,20 @@ from typing import List
 
 app = FastAPI()
 
+@app.get("/health", tags=["health"])
+async def health_check():
+    """Lightweight health endpoint for container/monitoring (returns DB status if available)."""
+    status = {"app": "ok"}
+    try:
+        # optional quick DB ping (if dependencies available)
+        from ..dependencies import engine
+        with engine.connect() as conn:
+            conn.execute("SELECT 1")
+        status["db"] = "ok"
+    except Exception:
+        status["db"] = "unavailable"
+    return {"status": status}
+
 @app.get("/parts/{part_id}")
 async def get_part(part_id: str):
     return {"part_id": part_id}
