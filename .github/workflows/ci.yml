@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+
+jobs:
+  test-and-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install backend deps
+        working-directory: ./
+        run: |
+          python -m venv .venv-ci
+          source .venv-ci/bin/activate
+          pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Run pytest (smoke)
+        run: |
+          source .venv-ci/bin/activate
+          pytest -q src/tests/test_config.py::test_config_values src/tests/test_deployment.py::test_docker_compose_has_required_services
+
+      - name: Docker Compose config (validate)
+        run: docker compose -f docker-compose.yml config
+
+      - name: Secret-scan (basic)
+        run: |
+          set -e
+          # look for common public token patterns (fail on match)
+          if git grep -nE "ghp_[A-Za-z0-9_\-]+|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}" -- './' || true; then
+            echo "Potential secret pattern found in repository — please ensure no secrets are committed.";
+            git grep -nE "ghp_[A-Za-z0-9_\-]+|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}" -- './' || true
+            exit 1
+          fi
