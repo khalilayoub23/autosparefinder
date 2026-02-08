@@ -17,11 +17,16 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # import your project's metadata object for 'autogenerate'
+# Prefer async models (if present), otherwise fall back to the synchronous DB module.
 try:
-    from src.config.database import Base
+    from src.config.async_database import Base
     target_metadata = Base.metadata
 except Exception:
-    target_metadata = None
+    try:
+        from src.config.database import Base
+        target_metadata = Base.metadata
+    except Exception:
+        target_metadata = None
 
 # get DB URL from environment (recommended)
 DATABASE_URL = os.environ.get("DATABASE_URL") or config.get_main_option("sqlalchemy.url")
