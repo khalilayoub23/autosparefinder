@@ -5,12 +5,17 @@ import ProtectedRoute from './components/ProtectedRoute'
 import Login from './pages/Login'
 import Register from './pages/Register'
 import ResetPassword from './pages/ResetPassword'
+import Privacy from './pages/Privacy'
+import Terms from './pages/Terms'
+import Refund from './pages/Refund'
 import Chat from './pages/Chat'
 import Parts from './pages/Parts'
 import Orders from './pages/Orders'
 import Cart from './pages/Cart'
 import Profile from './pages/Profile'
 import Admin from './pages/Admin'
+import Agents from './pages/Agents'
+import PaymentSuccess from './pages/PaymentSuccess'
 
 export default function App() {
   return (
@@ -29,6 +34,9 @@ export default function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
         <Route path="/reset-password" element={<ResetPassword />} />
+        <Route path="/privacy" element={<Privacy />} />
+        <Route path="/terms" element={<Terms />} />
+        <Route path="/refund" element={<Refund />} />
 
         {/* Protected routes wrapped with Layout */}
         <Route
@@ -87,6 +95,27 @@ export default function App() {
             <ProtectedRoute adminOnly>
               <Layout>
                 <Admin />
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/agents"
+          element={
+            <ProtectedRoute adminOnly>
+              <Layout>
+                <Agents />
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/payment/success"
+          element={
+            <ProtectedRoute>
+              <Layout>
+                <PaymentSuccess />
               </Layout>
             </ProtectedRoute>
           }

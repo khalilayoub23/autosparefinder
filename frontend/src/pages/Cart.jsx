@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useCartStore } from '../stores/cartStore'
 import { useAuthStore } from '../stores/authStore'
 import { paymentsApi, ordersApi } from '../api/orders'
-import { ShoppingCart, Trash2, Plus, Minus, ArrowLeft, CreditCard, Loader2, CheckCircle2 } from 'lucide-react'
+import api from '../api/client'
+import { ShoppingCart, Trash2, Plus, Minus, ArrowLeft, CreditCard, Loader2, CheckCircle2, MapPin, Edit3 } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 
@@ -12,13 +13,39 @@ export default function Cart() {
   const navigate = useNavigate()
   const [isOrdering, setIsOrdering] = useState(false)
   const [address, setAddress] = useState({ street: '', city: '', postal_code: '', country: 'Israel' })
+  const [profileAddress, setProfileAddress] = useState(null)
+  const [useOtherAddress, setUseOtherAddress] = useState(false)
   const [step, setStep] = useState('cart') // 'cart' | 'address' | 'payment' | 'done'
   const [orderId, setOrderId] = useState(null)
   const [orderNumber, setOrderNumber] = useState(null)
   const t = totals()
 
+  // Load profile address on mount
+  useEffect(() => {
+    api.get('/profile').then(({ data }) => {
+      if (data.profile?.address || data.profile?.city) {
+        const pa = {
+          street: data.profile.address || '',
+          city: data.profile.city || '',
+          postal_code: data.profile.postal_code || '',
+          country: 'Israel',
+        }
+        setProfileAddress(pa)
+        setAddress(pa) // pre-fill
+      }
+    }).catch(() => {})
+  }, [])
+
   const handleCreateOrder = async () => {
     if (!address.street || !address.city) { toast.error('יש למלא כתובת מלאה'); return }
+
+    // Guard against stale cart items with fake IDs
+    const staleItems = items.filter((i) => !i.supplierPartId || i.supplierPartId.startsWith('sp-'))
+    if (staleItems.length > 0) {
+      toast.error('חלק מהפריטים בסל פגו תוקף — הסר אותם והוסף מחדש מדף החיפוש')
+      return
+    }
+
     setIsOrdering(true)
     try {
       const payload = {
@@ -29,17 +56,15 @@ export default function Cart() {
       setOrderId(order.order_id)
       setOrderNumber(order.order_number)
 
-      const { data: intent } = await paymentsApi.createIntent(order.order_id)
-      // With real Stripe: load Stripe Elements here
-      // For dev: auto-confirm
-      await paymentsApi.confirm(intent.payment_intent_id)
-
-      clear()
-      setStep('done')
-      toast.success('ההזמנה בוצעה בהצלחה!')
+      // Get real Stripe Checkout URL and redirect
+      const { data: checkout } = await paymentsApi.createCheckout(order.order_id)
+      if (checkout.checkout_url) {
+        window.location.href = checkout.checkout_url
+      } else {
+        throw new Error('לא התקבל קישור לתשלום')
+      }
     } catch (err) {
-      toast.error(err.response?.data?.error || 'שגיאה ביצירת הזמנה')
-    } finally {
+      toast.error(err.response?.data?.detail || err.response?.data?.error || 'שגיאה ביצירת הזמנה')
       setIsOrdering(false)
     }
   }
@@ -90,6 +115,11 @@ export default function Cart() {
                   <p className="font-medium text-gray-900 truncate">{item.name}</p>
                   <p className="text-xs text-gray-500">{item.manufacturer}</p>
                   <p className="text-brand-600 font-semibold mt-1">₪{(item.price * item.quantity).toFixed(2)}</p>
+                  {item.deliveryDays && (
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      🚚 אספקה: {item.deliveryDays} ימים
+                    </p>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   <button onClick={() => updateQty(item.supplierPartId, item.quantity - 1)} className="w-7 h-7 rounded-full border border-gray-300 flex items-center justify-center hover:bg-gray-100">
@@ -116,6 +146,23 @@ export default function Cart() {
             </div>
           </div>
 
+          {/* Delivery estimate notice */}
+          {(() => {
+            const maxDays = Math.max(...items.map((i) => i.deliveryDays ?? 14))
+            const hasLongDelivery = items.some((i) => (i.deliveryDays ?? 0) > 18)
+            return (
+              <div className={`text-xs rounded-xl px-4 py-3 flex items-center gap-2 ${hasLongDelivery ? 'bg-orange-50 text-orange-700 border border-orange-200' : 'bg-blue-50 text-blue-700 border border-blue-100'}`}>
+                <span>🚚</span>
+                <span>
+                  {hasLongDelivery
+                    ? `חלק מהפריטים מיובאים — משלוח עד ${maxDays} ימי עסקים`
+                    : `זמן אספקה משוער: ${maxDays} ימי עסקים`
+                  }
+                </span>
+              </div>
+            )
+          })()}
+
           <button onClick={() => setStep('address')} className="btn-primary w-full flex items-center justify-center gap-2">
             המשך לכתובת משלוח <ArrowLeft className="w-4 h-4" />
           </button>
@@ -125,20 +172,56 @@ export default function Cart() {
       {step === 'address' && (
         <div className="card p-6 space-y-4">
           <h3 className="font-bold text-gray-900">כתובת משלוח</h3>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="col-span-2">
-              <label className="block text-sm font-medium text-gray-700 mb-1">רחוב ומספר</label>
-              <input className="input-field" placeholder="הרצל 55" value={address.street} onChange={(e) => setAddress({ ...address, street: e.target.value })} />
+
+          {/* Profile address card */}
+          {profileAddress && !useOtherAddress && (
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <MapPin className="w-5 h-5 text-blue-500 mt-0.5 shrink-0" />
+                  <div>
+                    <p className="font-medium text-gray-900">{profileAddress.street}</p>
+                    <p className="text-sm text-gray-600">{profileAddress.city}{profileAddress.postal_code ? `, ${profileAddress.postal_code}` : ''}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => { setUseOtherAddress(true); setAddress({ street: '', city: '', postal_code: '', country: 'Israel' }) }}
+                  className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 shrink-0 mt-0.5"
+                >
+                  <Edit3 className="w-3 h-3" /> שנה כתובת
+                </button>
+              </div>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">עיר</label>
-              <input className="input-field" placeholder="עכו" value={address.city} onChange={(e) => setAddress({ ...address, city: e.target.value })} />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">מיקוד</label>
-              <input className="input-field" placeholder="24100" value={address.postal_code} onChange={(e) => setAddress({ ...address, postal_code: e.target.value })} />
-            </div>
-          </div>
+          )}
+
+          {/* No profile address or user chose other address */}
+          {(!profileAddress || useOtherAddress) && (
+            <>
+              {useOtherAddress && (
+                <button
+                  onClick={() => { setUseOtherAddress(false); setAddress(profileAddress) }}
+                  className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
+                >
+                  ← חזור לכתובת המשלוח הרגילה
+                </button>
+              )}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="col-span-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">רחוב ומספר</label>
+                  <input className="input-field" placeholder="הרצל 55" value={address.street} onChange={(e) => setAddress({ ...address, street: e.target.value })} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">עיר</label>
+                  <input className="input-field" placeholder="עכו" value={address.city} onChange={(e) => setAddress({ ...address, city: e.target.value })} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">מיקוד</label>
+                  <input className="input-field" placeholder="24100" value={address.postal_code} onChange={(e) => setAddress({ ...address, postal_code: e.target.value })} />
+                </div>
+              </div>
+            </>
+          )}
+
           <div className="flex gap-3">
             <button onClick={() => setStep('cart')} className="btn-secondary flex-1">חזור</button>
             <button onClick={() => setStep('payment')} disabled={!address.street || !address.city} className="btn-primary flex-1">המשך לתשלום</button>

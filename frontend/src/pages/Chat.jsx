@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
 import { useChatStore } from '../stores/chatStore'
 import { useAuthStore } from '../stores/authStore'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Send, PlusCircle, Trash2, MessageSquare, Bot,
-  User, Image, Loader2, Star, ChevronRight,
+  User, Image, Loader2, Star, ChevronRight, Search, ShoppingCart,
 } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import { he } from 'date-fns/locale'
@@ -36,9 +37,98 @@ function AgentBadge({ agent }) {
   return <span className={`badge ${info.color} text-xs`}>{info.label}</span>
 }
 
-function Message({ msg, onRate }) {
+/** Render inline markdown: **bold**, [link](url), ₪NNN price highlights */
+function InlineMarkdown({ text }) {
+  const tokens = text.split(/(\[.+?\]\(https?:\/\/[^\s)]+\)|\*\*.+?\*\*|₪[\d,]+(?:\.\d+)?)/g)
+  return (
+    <>
+      {tokens.map((tok, i) => {
+        const link = tok.match(/^\[(.+?)\]\((https?:\/\/[^\s)]+)\)$/)
+        if (link) return (
+          <a key={i} href={link[2]} target="_blank" rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-brand-600 underline hover:text-brand-800 font-medium">
+            {link[1]} ↗
+          </a>
+        )
+        const bold = tok.match(/^\*\*(.+?)\*\*$/)
+        if (bold) return <strong key={i} className="font-semibold text-gray-900">{bold[1]}</strong>
+        const price = tok.match(/^(₪[\d,]+(?:\.\d+)?)$/)
+        if (price) return (
+          <span key={i} className="font-semibold text-green-700 bg-green-50 rounded px-0.5">{tok}</span>
+        )
+        return <span key={i}>{tok}</span>
+      })}
+    </>
+  )
+}
+
+/** Render full message content with lists, paragraphs, and inline markdown */
+function MessageContent({ content }) {
+  const lines = content.split('\n')
+  const elements = []
+  let listBuffer = []
+
+  const flushList = (key) => {
+    if (listBuffer.length === 0) return
+    elements.push(
+      <ul key={`ul-${key}`} className="my-1 space-y-0.5 pr-3">
+        {listBuffer.map((item, idx) => (
+          <li key={idx} className="flex gap-1.5 text-sm leading-relaxed">
+            <span className="text-brand-500 flex-shrink-0 font-medium">•</span>
+            <span><InlineMarkdown text={item} /></span>
+          </li>
+        ))}
+      </ul>
+    )
+    listBuffer = []
+  }
+
+  lines.forEach((line, idx) => {
+    const trimmed = line.trim()
+    if (!trimmed) {
+      flushList(idx)
+      elements.push(<div key={`br-${idx}`} className="h-1" />)
+      return
+    }
+    // Numbered list: "1. ..." or "١. ..."
+    const numbered = trimmed.match(/^(\d+)\.\s+(.+)/)
+    if (numbered) {
+      flushList(idx)
+      elements.push(
+        <div key={idx} className="flex gap-2 text-sm leading-relaxed my-0.5">
+          <span className="flex-shrink-0 w-5 h-5 bg-brand-100 text-brand-700 rounded-full text-xs font-bold flex items-center justify-center mt-0.5">
+            {numbered[1]}
+          </span>
+          <span className="flex-1"><InlineMarkdown text={numbered[2]} /></span>
+        </div>
+      )
+      return
+    }
+    // Bullet list: "• ..." or "- ..."
+    const bullet = trimmed.match(/^[•\-\*]\s+(.+)/)
+    if (bullet) {
+      listBuffer.push(bullet[1])
+      return
+    }
+    flushList(idx)
+    elements.push(
+      <p key={idx} className="text-sm leading-relaxed">
+        <InlineMarkdown text={trimmed} />
+      </p>
+    )
+  })
+  flushList('end')
+
+  return <div className="space-y-0.5">{elements}</div>
+}
+
+const PARTS_AGENTS = new Set(['parts_finder_agent', 'sales_agent'])
+
+function Message({ msg, onRate, onCatalogSearch }) {
   const isUser = msg.role === 'user'
   const [rated, setRated] = useState(false)
+  const isPartsAgent = !isUser && PARTS_AGENTS.has(msg.agent_name)
+
   return (
     <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'} mb-4`}>
       <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${isUser ? 'bg-brand-600' : 'bg-white border border-gray-200'}`}>
@@ -51,8 +141,23 @@ function Message({ msg, onRate }) {
           </div>
         )}
         <div className={isUser ? 'chat-bubble-user' : 'chat-bubble-agent'}>
-          <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+          {isUser
+            ? <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+            : <MessageContent content={msg.content} />
+          }
         </div>
+
+        {/* Parts catalog CTA */}
+        {isPartsAgent && (
+          <button
+            onClick={() => onCatalogSearch(msg.content)}
+            className="mt-1.5 flex items-center gap-1.5 text-xs text-brand-600 hover:text-brand-800 hover:bg-brand-50 rounded-lg px-2 py-1 transition-colors"
+          >
+            <Search className="w-3.5 h-3.5" />
+            חיפוש בקטלוג
+          </button>
+        )}
+
         <div className={`flex items-center gap-1 mt-1 ${isUser ? 'flex-row-reverse' : ''}`}>
           <span className="text-xs text-gray-400">
             {msg.created_at ? formatDistanceToNow(new Date(msg.created_at), { addSuffix: true, locale: he }) : ''}
@@ -89,14 +194,49 @@ function TypingIndicator() {
 
 export default function Chat() {
   const { user } = useAuthStore()
-  const { conversations, messages, currentConversationId, isTyping, sendMessage, loadConversations, selectConversation, newConversation, deleteConversation, agentName } = useChatStore()
+  const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const { conversations, messages, currentConversationId, isTyping, sendMessage, loadConversations, selectConversation, newConversation, deleteConversation, agentName, lastReadAt } = useChatStore()
+
+  // helper: is a conversation unread?
+  const isUnread = (c) => {
+    if (!c.last_message_at) return false
+    if (c.id === currentConversationId) return false
+    const readAt = lastReadAt[c.id]
+    if (!readAt) return c.message_count > 0
+    return new Date(c.last_message_at) > new Date(readAt)
+  }
+
+  // format conversation timestamp
+  const fmtTime = (iso) => {
+    if (!iso) return ''
+    const d = new Date(iso)
+    const now = new Date()
+    const sameDay = d.toDateString() === now.toDateString()
+    return sameDay
+      ? d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })
+      : d.toLocaleDateString('he-IL', { day: '2-digit', month: '2-digit', year: '2-digit' }) + ' ' + d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })
+  }
   const [input, setInput] = useState('')
   const [imageFile, setImageFile] = useState(null)
   const bottomRef = useRef(null)
   const fileRef = useRef(null)
+  const autoSentRef = useRef(false)
 
   useEffect(() => { loadConversations() }, [])
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, isTyping])
+
+  // Auto-send when navigated here with ?msg= (e.g. from Parts no-results AI button)
+  useEffect(() => {
+    const msg = searchParams.get('msg')
+    if (msg && !autoSentRef.current) {
+      autoSentRef.current = true
+      // Small delay to let conversations load first
+      const t = setTimeout(() => handleSend(msg), 800)
+      return () => clearTimeout(t)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const handleSend = async (text = input) => {
     if (!text.trim() && !imageFile) return
@@ -117,6 +257,13 @@ export default function Chat() {
     } catch {}
   }
 
+  const handleCatalogSearch = (agentText) => {
+    // Extract a plausible search term from agent text (first Hebrew noun phrase / part name)
+    const hebrewWords = agentText.match(/[\u05D0-\u05EA][\u05D0-\u05EA\s]{2,25}/g)
+    const searchTerm = hebrewWords ? hebrewWords[0].trim() : ''
+    navigate(`/parts${searchTerm ? `?search=${encodeURIComponent(searchTerm)}` : ''}`)
+  }
+
   return (
     <div className="flex h-[calc(100vh-5rem)] gap-4">
       {/* Sidebar - conversations */}
@@ -131,31 +278,44 @@ export default function Chat() {
           {conversations.length === 0 && (
             <p className="text-xs text-gray-400 text-center py-8">אין שיחות עדיין</p>
           )}
-          {conversations.map((c) => (
+          {conversations.map((c) => {
+            const unread = isUnread(c)
+            return (
             <div
               key={c.id}
               onClick={() => selectConversation(c.id)}
-              className={`group flex items-center justify-between p-3 rounded-xl cursor-pointer mb-1 transition-colors ${
-                currentConversationId === c.id ? 'bg-brand-50' : 'hover:bg-gray-50'
+              className={`group flex items-start justify-between p-3 rounded-xl cursor-pointer mb-1 transition-colors ${
+                currentConversationId === c.id ? 'bg-brand-50 border border-brand-200' : unread ? 'bg-orange-50 border border-orange-200' : 'hover:bg-gray-50 border border-transparent'
               }`}
             >
-              <div className="flex items-center gap-2 min-w-0">
-                <MessageSquare className={`w-4 h-4 flex-shrink-0 ${currentConversationId === c.id ? 'text-brand-600' : 'text-gray-400'}`} />
-                <div className="min-w-0">
-                  <p className={`text-sm font-medium truncate ${currentConversationId === c.id ? 'text-brand-700' : 'text-gray-800'}`}>
+              <div className="flex items-start gap-2 min-w-0 flex-1">
+                <div className="relative flex-shrink-0 mt-0.5">
+                  <MessageSquare className={`w-4 h-4 ${
+                    currentConversationId === c.id ? 'text-brand-600' : unread ? 'text-orange-500' : 'text-gray-400'
+                  }`} />
+                  {unread && <span className="absolute -top-1 -right-1 w-2 h-2 bg-orange-500 rounded-full" />}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className={`text-sm truncate ${
+                    currentConversationId === c.id ? 'font-semibold text-brand-700' : unread ? 'font-semibold text-gray-900' : 'font-medium text-gray-700'
+                  }`}>
                     {c.title || 'שיחה חדשה'}
                   </p>
-                  <p className="text-xs text-gray-400 truncate">{AGENT_LABELS[c.current_agent]?.label || c.current_agent}</p>
+                  <div className="flex items-center justify-between gap-1 mt-0.5">
+                    <p className="text-xs text-gray-400 truncate">{AGENT_LABELS[c.current_agent]?.label || c.current_agent}</p>
+                    <p className="text-xs text-gray-400 flex-shrink-0 dir-ltr">{fmtTime(c.last_message_at)}</p>
+                  </div>
                 </div>
               </div>
               <button
                 onClick={(e) => { e.stopPropagation(); deleteConversation(c.id) }}
-                className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-100 text-red-400"
+                className="flex-shrink-0 opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-100 text-red-400 ml-1 mt-0.5 transition-opacity"
               >
-                <Trash2 className="w-3 h-3" />
+                <Trash2 className="w-3.5 h-3.5" />
               </button>
             </div>
-          ))}
+            )
+          })}
         </div>
       </aside>
 
@@ -195,7 +355,7 @@ export default function Chat() {
               </div>
             </div>
           )}
-          {messages.map((m) => <Message key={m.id} msg={m} onRate={handleRate} />)}
+          {messages.map((m) => <Message key={m.id} msg={m} onRate={handleRate} onCatalogSearch={handleCatalogSearch} />)}
           {isTyping && <TypingIndicator />}
           <div ref={bottomRef} />
         </div>

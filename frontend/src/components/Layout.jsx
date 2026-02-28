@@ -3,10 +3,11 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../stores/authStore'
 import { useCartStore } from '../stores/cartStore'
 import api from '../api/client'
+import ConsentModal from './ConsentModal'
 import {
   MessageSquare, Search, ShoppingCart, Package, User,
   Settings, LogOut, Menu, X, Bell, Car, ChevronDown,
-  LayoutDashboard, Wrench,
+  LayoutDashboard, Wrench, Bot,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -23,11 +24,14 @@ export default function Layout({ children }) {
   const [notifications, setNotifications] = useState([])
   const [showNotifs, setShowNotifs] = useState(false)
   const notifsRef = useRef(null)
-  const { user, logout } = useAuthStore()
+  const { user, logout, fetchMe } = useAuthStore()
   const { totals } = useCartStore()
   const location = useLocation()
   const navigate = useNavigate()
   const cartTotals = totals()
+
+  // Refresh user on mount to ensure is_admin and other fields are current
+  useEffect(() => { fetchMe() }, [])
 
   const fetchNotifications = () =>
     api.get('/notifications').then(({ data }) => setNotifications(data.notifications || [])).catch(() => {})
@@ -53,7 +57,11 @@ export default function Layout({ children }) {
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-gray-50">
+    <>
+      {/* Consent modal — shown on first login until user accepts privacy policy + terms */}
+      {user && !user.terms_accepted_at && <ConsentModal />}
+
+      <div className="min-h-screen flex flex-col bg-gray-50">
       {/* Top navbar */}
       <header className="fixed top-0 right-0 left-0 z-40 bg-white border-b border-gray-200 shadow-sm">
         <div className="flex items-center justify-between h-16 px-4 max-w-7xl mx-auto">
@@ -82,17 +90,30 @@ export default function Layout({ children }) {
               </Link>
             ))}
             {user?.is_admin && (
-              <Link
-                to="/admin"
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors
-                  ${location.pathname.startsWith('/admin')
-                    ? 'bg-purple-50 text-purple-700'
-                    : 'text-gray-600 hover:bg-gray-100'
-                  }`}
-              >
-                <LayoutDashboard className="w-4 h-4" />
-                ניהול
-              </Link>
+              <>
+                <Link
+                  to="/admin"
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors
+                    ${location.pathname === '/admin'
+                      ? 'bg-purple-50 text-purple-700'
+                      : 'text-gray-600 hover:bg-gray-100'
+                    }`}
+                >
+                  <LayoutDashboard className="w-4 h-4" />
+                  ניהול
+                </Link>
+                <Link
+                  to="/agents"
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors
+                    ${location.pathname === '/agents'
+                      ? 'bg-brand-50 text-brand-700'
+                      : 'text-gray-600 hover:bg-gray-100'
+                    }`}
+                >
+                  <Bot className="w-4 h-4" />
+                  סוכני AI
+                </Link>
+              </>
             )}
           </nav>
 
@@ -143,6 +164,13 @@ export default function Layout({ children }) {
                         className={`p-4 hover:bg-gray-50 cursor-pointer ${!n.read_at ? 'bg-blue-50/40' : ''}`}
                         onClick={() => {
                           if (!n.read_at) api.put(`/notifications/${n.id}/read`).then(() => { setUnreadCount((c) => Math.max(0, c - 1)); fetchNotifications() }).catch(() =>{})
+                          setShowNotifs(false)
+                          // Deep-link based on notification type
+                          const d = n.data || {}
+                          if (n.type === 'order_update' || d.order_id) navigate('/orders')
+                          else if (n.type === 'payment')  navigate('/orders')
+                          else if (n.type === 'message')  navigate('/')
+                          else if (n.type === 'marketing') navigate('/parts')
                         }}
                       >
                         <p className={`text-sm ${!n.read_at ? 'font-semibold text-gray-900' : 'text-gray-700'}`}>{n.title}</p>
@@ -231,6 +259,19 @@ export default function Layout({ children }) {
           {children}
         </div>
       </main>
+
+      {/* Footer */}
+      <footer className="bg-white border-t border-gray-200 py-4 mt-auto">
+        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-gray-500" dir="rtl">
+          <span>© {new Date().getFullYear()} AutoSpare — עוסק מורשה 060633880</span>
+          <div className="flex items-center gap-4">
+            <Link to="/privacy" className="hover:text-brand-600 transition-colors">מדיניות פרטיות</Link>
+            <Link to="/terms" className="hover:text-brand-600 transition-colors">תנאי שימוש</Link>
+            <Link to="/refund" className="hover:text-brand-600 transition-colors">ביטולים והחזרות</Link>
+          </div>
+        </div>
+      </footer>
     </div>
+    </>
   )
 }
