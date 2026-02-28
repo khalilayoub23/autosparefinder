@@ -64,6 +64,12 @@ export const useAuthStore = create(
         }
       },
 
+      acceptTerms: async () => {
+        const { data } = await authApi.acceptTerms()
+        // Merge terms_accepted_at into the stored user object
+        set(state => ({ user: { ...state.user, terms_accepted_at: data.terms_accepted_at } }))
+      },
+
       logout: () => {
         authApi.logout().catch(() => {})
         localStorage.removeItem('access_token')

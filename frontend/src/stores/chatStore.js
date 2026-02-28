@@ -8,6 +8,8 @@ export const useChatStore = create((set, get) => ({
   isTyping: false,
   isLoading: false,
   agentName: 'router_agent',
+  // map of conversationId -> ISO string of when it was last marked read
+  lastReadAt: {},
 
   loadConversations: async () => {
     const { data } = await chatApi.getConversations()
@@ -15,7 +17,12 @@ export const useChatStore = create((set, get) => ({
   },
 
   selectConversation: async (id) => {
-    set({ currentConversationId: id, isLoading: true })
+    // mark as read when selected
+    set((s) => ({
+      currentConversationId: id,
+      isLoading: true,
+      lastReadAt: { ...s.lastReadAt, [id]: new Date().toISOString() },
+    }))
     try {
       const { data } = await chatApi.getMessages(id)
       set({ messages: data.messages || [] })
@@ -43,23 +50,50 @@ export const useChatStore = create((set, get) => ({
       }
       const { data } = await chatApi.sendMessage({ conversation_id: conversationId, message: text })
 
-      const agentMsg = {
-        id: data.message_id,
-        role: 'assistant',
-        agent_name: data.agent,
-        content: data.response,
-        content_type: 'text',
-        created_at: data.created_at,
-      }
+      // Replace temp message with confirmed user message
       set((s) => ({
-        messages: [...s.messages.filter((m) => m.id !== tempId), agentMsg],
+        messages: s.messages.map((m) =>
+          m.id === tempId
+            ? { ...m, id: data.user_message_id }
+            : m
+        ),
         currentConversationId: data.conversation_id,
-        agentName: data.agent,
-        isTyping: false,
+        isTyping: true, // keep typing indicator while agent processes in background
       }))
 
-      // Refresh conversations list
-      get().loadConversations()
+      // Poll for the assistant reply (agent runs as background task on server)
+      const convId = data.conversation_id
+      const startedAt = Date.now()
+      const MAX_WAIT_MS = 45_000
+      const POLL_INTERVAL_MS = 1_500
+      const knownMsgCount = get().messages.length
+
+      const poll = async () => {
+        if (Date.now() - startedAt > MAX_WAIT_MS) {
+          set({ isTyping: false })
+          return
+        }
+        try {
+          const { data: msgData } = await chatApi.getMessages(convId)
+          const allMsgs = msgData.messages || []
+          const assistantMsgs = allMsgs.filter((m) => m.role === 'assistant')
+          const latestAssistant = assistantMsgs[assistantMsgs.length - 1]
+
+          // New assistant message arrived
+          if (latestAssistant && allMsgs.length > knownMsgCount) {
+            set({
+              messages: allMsgs,
+              agentName: latestAssistant.agent_name || 'router_agent',
+              isTyping: false,
+            })
+            get().loadConversations()
+            return
+          }
+        } catch {}
+        setTimeout(poll, POLL_INTERVAL_MS)
+      }
+      setTimeout(poll, POLL_INTERVAL_MS)
+
     } catch (err) {
       set((s) => ({
         messages: s.messages.filter((m) => m.id !== tempId),

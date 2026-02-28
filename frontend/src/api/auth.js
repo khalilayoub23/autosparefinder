@@ -12,4 +12,5 @@ export const authApi = {
   sendCode: () => api.post('/auth/send-2fa'),
   trustedDevices: () => api.get('/auth/trusted-devices'),
   removeTrustedDevice: (id) => api.delete(`/auth/trusted-devices/${id}`),
+  acceptTerms: () => api.post('/auth/accept-terms'),
 }

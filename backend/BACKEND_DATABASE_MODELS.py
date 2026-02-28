@@ -2,10 +2,11 @@
 ==============================================================================
 AUTO SPARE - DATABASE MODELS (SQLAlchemy 2.0 Async)
 ==============================================================================
-28 Tables:
+29 Tables:
   Users & Auth (6): users, user_profiles, user_sessions,
                     two_factor_codes, login_attempts, password_resets
-  Vehicles & Parts (4): vehicles, user_vehicles, parts_catalog, parts_images
+  Vehicles & Parts (5): vehicles, user_vehicles, parts_catalog, parts_images,
+                        car_brands
   Suppliers (2): suppliers, supplier_parts
   Orders & Payments (5): orders, order_items, payments, invoices, returns
   AI & Chat (4): conversations, messages, agent_actions, agent_ratings
@@ -26,7 +27,7 @@ from sqlalchemy import (
     String, Text, BigInteger, JSON, UniqueConstraint, CheckConstraint,
     Index, func,
 )
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker
 
@@ -56,6 +57,34 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             raise
         finally:
             await session.close()
+
+
+# ==============================================================================
+# 0. CAR BRANDS REFERENCE TABLE
+# ==============================================================================
+
+class CarBrand(Base):
+    """Reference table of known car manufacturers/brands.
+    Populated at startup — no fake parts, just brand metadata.
+    Used by AI agents for normalization, matching & future data imports.
+    """
+    __tablename__ = "car_brands"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String(100), unique=True, nullable=False, index=True)       # canonical English name
+    name_he = Column(String(100), nullable=True)                               # Hebrew display name
+    group_name = Column(String(100), nullable=True)                            # parent group (e.g. Stellantis)
+    country = Column(String(100), nullable=True)                               # country of origin
+    region = Column(String(50), nullable=True)                                 # Europe / Asia / America
+    is_luxury = Column(Boolean, default=False, nullable=False)
+    is_electric_focused = Column(Boolean, default=False, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    logo_url = Column(String(500), nullable=True)
+    website = Column(String(500), nullable=True)
+    notes = Column(Text, nullable=True)
+    aliases = Column(ARRAY(String), default=list)   # alternate spellings / import names
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 # ==============================================================================
@@ -107,6 +136,7 @@ class UserProfile(Base):
     default_vehicle_id = Column(UUID(as_uuid=True), ForeignKey("vehicles.id"), nullable=True)
     marketing_consent = Column(Boolean, default=False)
     newsletter_subscribed = Column(Boolean, default=False)
+    terms_accepted_at = Column(DateTime, nullable=True)  # NULL = not yet accepted
     marketing_preferences = Column(JSONB, default=dict)
     preferred_language = Column(String(10), default="he")
     avatar_url = Column(String(500), nullable=True)

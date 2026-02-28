@@ -6,14 +6,19 @@ export const ordersApi = {
   getById: (id) => api.get(`/orders/${id}`),
   track: (id) => api.get(`/orders/${id}/track`),
   cancel: (id, reason) => api.put(`/orders/${id}/cancel`, { reason }),
+  delete: (id) => api.delete(`/orders/${id}`),
   return: (id, reason, description) => api.post(`/orders/${id}/return`, null, { params: { reason, description } }),
-  invoice: (id) => api.get(`/orders/${id}/invoice`),
+  invoice: (id) => api.get(`/orders/${id}/invoice`, { responseType: 'blob' }),
 }
 
 export const paymentsApi = {
+  createCheckout: (order_id) => api.post('/payments/create-checkout', null, { params: { order_id } }),
+  createMultiCheckout: (order_ids) => api.post('/payments/create-multi-checkout', { order_ids }),
+  verifySession: (session_id) => api.get('/payments/verify-session', { params: { session_id } }),
   createIntent: (order_id) => api.post('/payments/create-intent', null, { params: { order_id } }),
   confirm: (payment_intent_id) => api.post('/payments/confirm', null, { params: { payment_intent_id } }),
   history: () => api.get('/payments/history'),
+  getRefunds: () => api.get('/payments/refunds/list'),
 }
 
 export const returnsApi = {
