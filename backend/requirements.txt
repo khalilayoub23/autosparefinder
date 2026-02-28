@@ -1,0 +1,52 @@
+# Core
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-dotenv==1.0.1
+pydantic==2.10.4
+pydantic-settings==2.7.0
+email-validator==2.2.0
+
+# Database
+sqlalchemy[asyncio]==2.0.36
+asyncpg==0.30.0
+alembic==1.14.0
+
+# Redis
+redis==5.2.1
+hiredis==3.1.1
+
+# AI & LLM
+openai==1.59.9
+
+# File Processing
+Pillow==11.1.0
+python-multipart==0.0.20
+
+# Security
+cryptography==44.0.0
+bcrypt==4.2.1
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+
+# Payments
+stripe==11.4.1
+
+# Communication
+twilio==9.4.4
+sendgrid==6.11.0
+
+# HTTP
+httpx==0.28.1
+requests==2.32.3
+
+# Validation
+phonenumbers==8.13.52
+
+# Monitoring
+loguru==0.7.3
+
+# Utilities
+python-slugify==8.0.4
+python-dateutil==2.9.0
+pytz==2025.1
+reportlab==4.2.5

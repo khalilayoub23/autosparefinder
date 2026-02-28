@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+develop-eggs/
+.installed.cfg
+lib/python*/
+*.so
+
+# Virtual environments
+lib/
+venv/
+env/
+ENV/
+.venv/
+
+# Environment variables (secrets!)
+.env
+backend/.env
+*.env.local
+*.env.production
+
+# Node / Frontend
+frontend/node_modules/
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.lock
+
+# Database
+*.db
+*.sqlite3
+*.sqlite
+
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Alembic (keep versions, not these)
+backend/alembic/__pycache__/
+
+# Coverage / test artifacts
+.coverage
+htmlcov/
+.pytest_cache/
