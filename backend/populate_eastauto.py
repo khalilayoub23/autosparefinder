@@ -23,10 +23,15 @@ Idempotent: uses ON CONFLICT DO NOTHING on (supplier_id, supplier_sku).
 import asyncio
 import uuid
 from datetime import datetime
+import os
+from dotenv import load_dotenv
+load_dotenv()
 
 import asyncpg
 
-DB_URL = "postgresql://autospare:autospare@localhost:5432/autospare"
+_raw_url = os.getenv("DATABASE_URL", "postgresql://autospare:autospare@localhost:5432/autospare")
+# asyncpg needs postgresql:// not postgresql+asyncpg://
+DB_URL = _raw_url.replace("postgresql+asyncpg://", "postgresql://")
 ILS_PER_USD = 3.72
 
 # Expensive categories worth offering a Chinese alternative for

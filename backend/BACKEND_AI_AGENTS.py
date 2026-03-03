@@ -735,6 +735,27 @@ get_db_stats() to verify what categories and manufacturers currently hold stock.
                 pricing["estimated_delivery"] = f"{sp_row.estimated_delivery_days}–{sp_row.estimated_delivery_days + 7} ימים"
                 suppliers.append(pricing)
 
+            # Fallback: synthesise pricing from base_price when no supplier row exists
+            bp = float(part.base_price) if part.base_price else 0.0
+            if not suppliers and bp > 0:
+                price_no_vat = round(bp / 1.17, 2)
+                vat            = round(bp - price_no_vat, 2)
+                shipping       = 35.0
+                suppliers = [{
+                    "price_no_vat": price_no_vat,
+                    "vat": vat,
+                    "shipping": shipping,
+                    "total": round(bp + shipping, 2),
+                    "availability": "on_order",
+                    "warranty_months": 12,
+                    "estimated_delivery_days": 14,
+                    "supplier_part_id": None,
+                    "estimated_delivery": "14\u201321 \u05d9\u05de\u05d9\u05dd",
+                    "cost_ils": round(bp / 1.45, 2),
+                    "profit": round(price_no_vat - round(bp / 1.45, 2), 2),
+                    "is_base_price_fallback": True,
+                }]
+
             # Best option = first supplier (in_stock best price)
             best = suppliers[0] if suppliers else None
 
@@ -749,7 +770,7 @@ get_db_stats() to verify what categories and manufacturers currently hold stock.
                 "compatible_vehicles": part.compatible_vehicles or [],
                 "pricing": best,           # kept for backward compat
                 "suppliers": suppliers,    # all options (up to 3)
-                "base_price": float(part.base_price) if part.base_price else 0,
+                "base_price": bp,
                 "warranty_months": rows[0].warranty_months if rows else 12,
             })
 

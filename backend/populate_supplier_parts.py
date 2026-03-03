@@ -23,10 +23,13 @@ Delivery days:
 
 import asyncio
 import uuid
+import os
+from dotenv import load_dotenv
+load_dotenv()
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy import text
 
-DATABASE_URL = "postgresql+asyncpg://autospare:autospare@localhost:5432/autospare"
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://autospare:autospare@localhost:5432/autospare")
 
 # Exchange rate ILS/USD used if needed (must match USD_TO_ILS in BACKEND_AI_AGENTS.py)
 ILS_USD = 3.65
