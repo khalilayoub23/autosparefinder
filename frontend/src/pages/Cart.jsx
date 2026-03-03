@@ -39,7 +39,7 @@ export default function Cart() {
   const handleCreateOrder = async () => {
     if (!address.street || !address.city) { toast.error('יש למלא כתובת מלאה'); return }
 
-    // Guard against stale cart items with fake IDs
+    // Guard against stale cart items with truly fake IDs (not fallback estimated-price items)
     const staleItems = items.filter((i) => !i.supplierPartId || i.supplierPartId.startsWith('sp-'))
     if (staleItems.length > 0) {
       toast.error('חלק מהפריטים בסל פגו תוקף — הסר אותם והוסף מחדש מדף החיפוש')
@@ -49,7 +49,12 @@ export default function Cart() {
     setIsOrdering(true)
     try {
       const payload = {
-        items: items.map((i) => ({ part_id: i.partId, supplier_part_id: i.supplierPartId, quantity: i.quantity })),
+        // Strip fallback- prefix keys → send null supplier_part_id so backend handles as manual order
+        items: items.map((i) => ({
+          part_id: i.partId,
+          supplier_part_id: i.supplierPartId?.startsWith('fallback-') ? null : i.supplierPartId,
+          quantity: i.quantity,
+        })),
         shipping_address: address,
       }
       const { data: order } = await ordersApi.create(payload)
@@ -115,6 +120,9 @@ export default function Cart() {
                   <p className="font-medium text-gray-900 truncate">{item.name}</p>
                   <p className="text-xs text-gray-500">{item.manufacturer}</p>
                   <p className="text-brand-600 font-semibold mt-1">₪{(item.price * item.quantity).toFixed(2)}</p>
+                  {item.isEstimated && (
+                    <span className="inline-block text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5 mt-0.5">~ מחיר משוער</span>
+                  )}
                   {item.deliveryDays && (
                     <p className="text-xs text-gray-400 mt-0.5">
                       🚚 אספקה: {item.deliveryDays} ימים
