@@ -3341,10 +3341,12 @@ async def get_version():
 
 @app.on_event("startup")
 async def startup():
+    from catalog_scraper import start_scraper_task
     print("🚀 Auto Spare API starting...")
     print(f"   Environment: {os.getenv('ENVIRONMENT', 'development')}")
     asyncio.create_task(_price_sync_loop())
-    print("✅ All systems ready — price-sync scheduler started")
+    start_scraper_task()   # ← catalog scraper background loop
+    print("✅ All systems ready — price-sync + catalog-scraper schedulers started")
 
 
 # ── Background price-sync loop ────────────────────────────────────────────────
@@ -3415,6 +3417,116 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 async def general_exception_handler(request: Request, exc: Exception):
     print(f"[ERROR] Unhandled exception: {exc}")
     return JSONResponse(status_code=500, content={"error": "Internal server error", "status_code": 500})
+
+
+# ==============================================================================
+# ADMIN — CATALOG SCRAPER CONTROLS
+# GET  /api/v1/admin/scraper/status
+# POST /api/v1/admin/scraper/run
+# POST /api/v1/admin/scraper/run-part/{part_id}
+# ==============================================================================
+
+@app.get("/api/v1/admin/scraper/status", tags=["Admin – Scraper"])
+async def scraper_status(
+    current_user=Depends(get_current_admin_user),
+):
+    """Return scraper config + last run summary."""
+    from catalog_scraper import get_scraper_status
+    return get_scraper_status()
+
+
+@app.post("/api/v1/admin/scraper/run", tags=["Admin – Scraper"])
+async def scraper_run_now(
+    batch_size: int = 100,
+    current_user=Depends(get_current_admin_user),
+):
+    """
+    Manually trigger one scraper cycle (runs in the background, returns immediately).
+    batch_size: how many supplier_parts rows to process (default 100).
+    """
+    from catalog_scraper import run_scraper_cycle
+
+    async def _run():
+        try:
+            await run_scraper_cycle(batch_size=batch_size)
+        except Exception as exc:
+            print(f"[Scraper] manual run error: {exc}")
+
+    asyncio.create_task(_run())
+    return {
+        "status": "started",
+        "message": f"Scraper cycle started for {batch_size} parts",
+        "batch_size": batch_size,
+    }
+
+
+@app.post("/api/v1/admin/scraper/run-part/{part_id}", tags=["Admin – Scraper"])
+async def scraper_run_one_part(
+    part_id: str,
+    current_user=Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Immediately scrape and update a single part plus all its supplier_parts rows.
+    Returns the scraper result dict.
+    """
+    from catalog_scraper import (
+        scrape_autodoc, scrape_ebay_motors, scrape_aliexpress,
+        db_update_supplier_part, db_log, SUPPLIER_TOOL_MAP, FALLBACK_TOOLS,
+        ILS_PER_USD, SCRAPE_REQUEST_DELAY,
+    )
+
+    # Load the part + its supplier rows
+    rows = (await db.execute(
+        text("""
+            SELECT sp.id  AS sp_id,
+                   sp.price_ils,
+                   sp.availability,
+                   s.name AS supplier_name,
+                   pc.sku, pc.name AS part_name, pc.manufacturer
+            FROM supplier_parts sp
+            JOIN suppliers s ON s.id = sp.supplier_id
+            JOIN parts_catalog pc ON pc.id = sp.part_id
+            WHERE pc.id = :pid
+        """),
+        {"pid": part_id},
+    )).fetchall()
+
+    if not rows:
+        raise HTTPException(404, detail=f"Part {part_id} not found")
+
+    results = []
+    for row in rows:
+        cat_num = row.sku.split("-", 1)[-1] if "-" in row.sku else row.sku
+        mfr = row.manufacturer or ""
+        primary_fn = SUPPLIER_TOOL_MAP.get(row.supplier_name, scrape_ebay_motors)
+        try:
+            if primary_fn is scrape_aliexpress:
+                data = await primary_fn(f"{mfr} {cat_num} auto part")
+            else:
+                data = await primary_fn(cat_num, mfr)
+        except Exception as exc:
+            data = {"results": []}
+
+        prices = [r["price_ils"] for r in data.get("results", []) if r.get("price_ils", 0) > 10]
+        if prices:
+            prices.sort()
+            median = prices[len(prices) // 2]
+            derived_cost = median / 1.17 / 1.45
+            old = float(row.price_ils or derived_cost)
+            new_ils = round(max(old * 0.75, min(derived_cost, old * 1.25)), 2)
+            await db_update_supplier_part(
+                db,
+                supplier_part_id=str(row.sp_id),
+                price_ils=new_ils,
+                price_usd=round(new_ils / ILS_PER_USD, 2),
+            )
+            results.append({"supplier": row.supplier_name, "old_price": old, "new_price": new_ils, "action": "updated"})
+        else:
+            results.append({"supplier": row.supplier_name, "old_price": float(row.price_ils or 0), "action": "no_data"})
+
+    await db_log(db, "INFO", f"Manual scrape of part {part_id}: {len(results)} supplier rows processed")
+    return {"part_id": part_id, "sku": rows[0].sku, "supplier_results": results}
 
 
 if __name__ == "__main__":
