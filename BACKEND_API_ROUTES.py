@@ -26,7 +26,7 @@ try:
         get_db, User, Vehicle, PartsCatalog, Order, OrderItem, Payment,
         Invoice, Return, Conversation, Message, File as FileModel,
         Notification, UserProfile, SystemSetting
-    ) as DB
+    )
 except Exception:
     # expose names into local namespace so type hints in endpoints still resolve in CI
     try:
