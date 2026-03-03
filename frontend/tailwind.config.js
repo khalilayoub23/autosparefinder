@@ -1,6 +1,12 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
+  safelist: [
+    // Category accent colours used dynamically in PartCard
+    { pattern: /^border-l-(red|orange|yellow|lime|sky|cyan|violet|emerald|blue|pink|stone|teal|gray)-(300|400)$/ },
+    { pattern: /^bg-(red|orange|yellow|lime|sky|cyan|violet|emerald|blue|pink|stone|teal|gray)-(50|100)$/ },
+    { pattern: /^text-(red|orange|yellow|lime|sky|cyan|violet|emerald|blue|pink|stone|teal|gray)-(600|700)$/ },
+  ],
   theme: {
     extend: {
       colors: {

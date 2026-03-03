@@ -11,10 +11,13 @@ Fixes applied:
 
 import asyncio
 import re
+import os
+from dotenv import load_dotenv
+load_dotenv()
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy import text
 
-DATABASE_URL = "postgresql+asyncpg://autospare:autospare@localhost:5432/autospare"
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://autospare:autospare@localhost:5432/autospare")
 
 # ---------------------------------------------------------------------------
 # 1.  MANUFACTURER ALIAS MAP  (alias → canonical name)
