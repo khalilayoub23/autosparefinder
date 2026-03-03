@@ -46,7 +46,14 @@ export const useChatStore = create((set, get) => ({
       let conversationId = state.currentConversationId
       if (imageFile) {
         const { data: fileData } = await chatApi.uploadImage(imageFile)
-        text = `[Image: ${fileData.file_id}] ${text}`
+        if (fileData.identified_part) {
+          const partInfo = fileData.identified_part_en
+            ? `${fileData.identified_part} (${fileData.identified_part_en})`
+            : fileData.identified_part
+          text = `[זוהה בתמונה: ${partInfo}] ${text}`
+        } else {
+          text = `[Image: ${fileData.file_id}] ${text}`
+        }
       }
       const { data } = await chatApi.sendMessage({ conversation_id: conversationId, message: text })
 

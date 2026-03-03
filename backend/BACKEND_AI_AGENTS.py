@@ -599,6 +599,7 @@ get_db_stats() to verify what categories and manufacturers currently hold stock.
         offset: int = 0,
         sort_by: str = "name",
         sort_dir: str = "asc",
+        vehicle_manufacturer: Optional[str] = None,
     ) -> List[Dict]:
         """Search parts catalog.
         Automatically normalizes manufacturer aliases via car_brands registry
@@ -608,6 +609,20 @@ get_db_stats() to verify what categories and manufacturers currently hold stock.
         sort_dir: asc | desc  (ignored when sort_by is price_asc/price_desc)
         """
         stmt = select(PartsCatalog).where(PartsCatalog.is_active == True)
+
+        if vehicle_manufacturer:
+            normalized_mfr = await self.normalize_manufacturer(vehicle_manufacturer, db)
+            # Also try splitting compound Hebrew names like "סיטרואן ספרד" → try each word
+            words = vehicle_manufacturer.split()
+            word_normalized = normalized_mfr
+            for word in words:
+                if len(word) >= 3:
+                    candidate = await self.normalize_manufacturer(word, db)
+                    if candidate.lower() != word.lower():  # successfully resolved
+                        word_normalized = candidate
+                        break
+            mfr_terms = {vehicle_manufacturer, normalized_mfr, word_normalized}
+            stmt = stmt.where(or_(*[PartsCatalog.manufacturer.ilike(f"%{t}%") for t in mfr_terms]))
 
         if query:
             # Try to resolve the query (or a leading word) as a brand alias
