@@ -1,8 +1,8 @@
 import api from './client'
 
 export const partsApi = {
-  search: (query, vehicle_id, category, limit = 50, offset = 0, sort_by = 'name', sort_dir = 'asc') =>
-    api.get('/parts/search', { params: { query, vehicle_id, category, limit, offset, sort_by, sort_dir } }),
+  search: (query, vehicle_id, category, limit = 50, offset = 0, sort_by = 'name', sort_dir = 'asc', vehicle_manufacturer = null) =>
+    api.get('/parts/search', { params: { query, vehicle_id, category, limit, offset, sort_by, sort_dir, vehicle_manufacturer } }),
   categories: () => api.get('/parts/categories'),
   manufacturers: () => api.get('/parts/manufacturers'),
   brands: (params = {}) => api.get('/brands', { params }),

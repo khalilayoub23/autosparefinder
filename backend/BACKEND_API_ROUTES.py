@@ -565,7 +565,69 @@ async def delete_conversation(conversation_id: str, current_user: User = Depends
 
 @app.post("/api/v1/chat/upload-image")
 async def upload_image(file: UploadFile = File(...), current_user: User = Depends(get_current_verified_user), db: AsyncSession = Depends(get_db)):
-    return {"file_id": str(uuid.uuid4()), "message": "Image uploaded. Vision AI analysis coming soon."}
+    """Upload an image and immediately run GPT-4o Vision to identify the part."""
+    import base64 as _b64
+    from openai import AsyncOpenAI
+    import json as _json
+
+    file_id = str(uuid.uuid4())
+    identified_part = ""
+    identified_part_en = ""
+    confidence = 0.0
+    possible_names: list = []
+
+    github_token = os.getenv("GITHUB_TOKEN", "")
+    if github_token:
+        try:
+            img_bytes = await file.read()
+            if len(img_bytes) <= 10 * 1024 * 1024:  # 10 MB limit
+                b64 = _b64.b64encode(img_bytes).decode()
+                mime = file.content_type or "image/jpeg"
+                client = AsyncOpenAI(
+                    base_url="https://models.inference.ai.azure.com",
+                    api_key=github_token,
+                )
+                resp = await client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[{
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": (
+                                    "You are an expert automotive parts identifier. "
+                                    "Look at this image and identify the car part shown. "
+                                    "Respond ONLY with a JSON object, no markdown: "
+                                    '{"part_name_he": "<name in Hebrew>", '
+                                    '"part_name_en": "<name in English>", '
+                                    '"possible_names": ["<alt 1>", "<alt 2>"], '
+                                    '"confidence": <0.0-1.0>}'
+                                ),
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:{mime};base64,{b64}"},
+                            },
+                        ],
+                    }],
+                    max_tokens=200,
+                )
+                raw = resp.choices[0].message.content.strip().strip("`").removeprefix("json").strip()
+                parsed = _json.loads(raw)
+                identified_part = parsed.get("part_name_he") or parsed.get("part_name_en", "")
+                identified_part_en = parsed.get("part_name_en", "")
+                confidence = float(parsed.get("confidence", 0.0))
+                possible_names = parsed.get("possible_names", [])
+        except Exception as e:
+            print(f"[Chat Vision] error: {e}")
+
+    return {
+        "file_id": file_id,
+        "identified_part": identified_part,
+        "identified_part_en": identified_part_en,
+        "confidence": confidence,
+        "possible_names": possible_names,
+    }
 
 
 @app.post("/api/v1/chat/upload-audio")
@@ -611,17 +673,30 @@ async def search_parts(
     offset: int = 0,
     sort_by: str = "name",
     sort_dir: str = "asc",
+    vehicle_manufacturer: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
     agent = get_agent("parts_finder_agent")
     parts = await agent.search_parts_in_db(
-        query, vehicle_id, category, db, limit, offset, sort_by, sort_dir
+        query, vehicle_id, category, db, limit, offset, sort_by, sort_dir,
+        vehicle_manufacturer=vehicle_manufacturer,
     )
 
     # Total count — uses same alias-expanded search terms as search_parts_in_db
     count_stmt = select(func.count()).select_from(PartsCatalog).where(PartsCatalog.is_active == True)
+    if vehicle_manufacturer:
+        normalized_mfr = await agent.normalize_manufacturer(vehicle_manufacturer, db)
+        words = vehicle_manufacturer.split()
+        word_normalized = normalized_mfr
+        for word in words:
+            if len(word) >= 3:
+                candidate = await agent.normalize_manufacturer(word, db)
+                if candidate.lower() != word.lower():
+                    word_normalized = candidate
+                    break
+        mfr_terms = {vehicle_manufacturer, normalized_mfr, word_normalized}
+        count_stmt = count_stmt.where(or_(*[PartsCatalog.manufacturer.ilike(f"%{t}%") for t in mfr_terms]))
     if query:
-        # Normalize brand aliases to match agent's search logic (e.g. מרצדס → Mercedes-Benz)
         normalized = await agent.normalize_manufacturer(query, db)
         search_terms = {query, normalized} if normalized.lower() != query.lower() else {query}
         conditions = []
