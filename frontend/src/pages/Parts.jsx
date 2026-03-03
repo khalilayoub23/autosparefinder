@@ -23,15 +23,40 @@ function PriceTag({ price, vat, shipping, total }) {
 const PART_TYPE_COLOR = {
   'Original':    'bg-blue-50 text-blue-700 border-blue-200',
   'OEM':         'bg-blue-50 text-blue-700 border-blue-200',
+  'מקורי':       'bg-blue-50 text-blue-700 border-blue-200',
   'Aftermarket': 'bg-amber-50 text-amber-700 border-amber-200',
+  'חליפי':       'bg-amber-50 text-amber-700 border-amber-200',
   'Refurbished': 'bg-purple-50 text-purple-700 border-purple-200',
+  'משופץ':       'bg-purple-50 text-purple-700 border-purple-200',
+  'unknown':     'bg-gray-50 text-gray-500 border-gray-200',
 }
 
 const PART_TYPE_LABEL = {
   'Original':    'מקורי',
+  'מקורי':       'מקורי',
   'OEM':         'OEM',
   'Aftermarket': 'חליפי',
+  'חליפי':       'חליפי',
   'Refurbished': 'משופץ',
+  'משופץ':       'משופץ',
+  'unknown':     'כללי',
+}
+
+// Category → accent colour (left border + header tint)
+const CATEGORY_ACCENT = {
+  'בלמים':           { border: 'border-l-red-400',    bg: 'bg-red-50',    icon: '🛑', text: 'text-red-700' },
+  'מנוע':            { border: 'border-l-orange-400', bg: 'bg-orange-50', icon: '⚙️', text: 'text-orange-700' },
+  'מתלה':            { border: 'border-l-yellow-400', bg: 'bg-yellow-50', icon: '🔧', text: 'text-yellow-700' },
+  'היגוי':           { border: 'border-l-lime-400',   bg: 'bg-lime-50',   icon: '🎯', text: 'text-lime-700' },
+  'תאורה':           { border: 'border-l-sky-400',    bg: 'bg-sky-50',    icon: '💡', text: 'text-sky-700' },
+  'מיזוג':           { border: 'border-l-cyan-400',   bg: 'bg-cyan-50',   icon: '❄️', text: 'text-cyan-700' },
+  'חשמל רכב':        { border: 'border-l-violet-400', bg: 'bg-violet-50', icon: '⚡', text: 'text-violet-700' },
+  'דלק':             { border: 'border-l-emerald-400',bg: 'bg-emerald-50',icon: '⛽', text: 'text-emerald-700' },
+  'פחיין ומרכב':     { border: 'border-l-blue-400',   bg: 'bg-blue-50',   icon: '🚗', text: 'text-blue-700' },
+  'ריפוד ופנים':     { border: 'border-l-pink-400',   bg: 'bg-pink-50',   icon: '🪑', text: 'text-pink-700' },
+  'גלגלים וצמיגים':  { border: 'border-l-stone-400',  bg: 'bg-stone-50',  icon: '🛞', text: 'text-stone-700' },
+  'תיבת הילוכים':    { border: 'border-l-teal-400',   bg: 'bg-teal-50',   icon: '🔩', text: 'text-teal-700' },
+  'כללי':            { border: 'border-l-gray-300',   bg: 'bg-gray-50',   icon: '📦', text: 'text-gray-600' },
 }
 
 function AvailabilityBadge({ availability, deliveryDays }) {
@@ -49,81 +74,101 @@ function PartCard({ part, onAddToCart }) {
   const suppliers = part.suppliers || (part.pricing ? [part.pricing] : [])
 
   const handleAddToCart = (supplierPartId, priceData) => {
-    if (!supplierPartId) { toast.error('שגיאה: נתוני ספק חסרים'); return }
+    // For estimated-price parts there is no supplier row yet — use a
+    // deterministic fallback key so the cart can still deduplicate correctly.
+    const cartKey = supplierPartId || `fallback-${part.id}`
     onAddToCart({
       partId: part.id,
-      supplierPartId,
+      supplierPartId: cartKey,
       name: part.name,
       manufacturer: part.manufacturer,
       price: priceData.subtotal ?? priceData.price_no_vat,
       vat: priceData.vat,
       deliveryDays: priceData.estimated_delivery_days ?? null,
+      isEstimated: priceData.is_base_price_fallback ?? false,
     })
     toast.success(`${part.name} נוסף לסל 🛒`)
   }
 
   const typeColor = PART_TYPE_COLOR[part.part_type] || 'bg-gray-50 text-gray-600 border-gray-200'
-  const typeLabel = PART_TYPE_LABEL[part.part_type] || part.part_type || '—'
+  const typeLabel = PART_TYPE_LABEL[part.part_type] || part.part_type || 'כללי'
+  const accent = CATEGORY_ACCENT[part.category] || CATEGORY_ACCENT['כללי']
 
   return (
-    <div className="card p-4 hover:shadow-md transition-shadow border border-gray-100 flex flex-col h-full">
-      {/* Header — fixed-height zone so all cards align identically */}
-      <div className="flex justify-between items-start gap-2 mb-1">
-        <div className="flex-1 min-w-0">
-          <h3 className="font-semibold text-gray-900 leading-snug line-clamp-2 min-h-[2.75rem]">{part.name}</h3>
-          <p className="text-xs text-gray-500 mt-0.5">{part.manufacturer} · {part.category}</p>
+    <div className={`card overflow-hidden hover:shadow-lg transition-all duration-200 border border-gray-100 border-l-4 ${accent.border} flex flex-col h-full`}>
+      {/* Coloured category header strip */}
+      <div className={`${accent.bg} px-4 pt-3 pb-2`}>
+        <div className="flex justify-between items-start gap-2">
+          <div className="flex-1 min-w-0">
+            <h3 className="font-semibold text-gray-900 leading-snug line-clamp-2 min-h-[2.75rem] text-sm">{part.name}</h3>
+            <p className={`text-xs mt-0.5 font-medium ${accent.text}`}>
+              <span className="mr-1">{accent.icon}</span>
+              {part.category}
+            </p>
+          </div>
+          <span className={`shrink-0 text-xs px-2 py-0.5 rounded-full border font-medium ${typeColor}`}>{typeLabel}</span>
         </div>
-        <span className={`shrink-0 text-xs px-2 py-0.5 rounded-full border font-medium ${typeColor}`}>{typeLabel}</span>
+        <p className="text-xs text-gray-500 mt-1">{part.manufacturer}</p>
       </div>
 
-      {/* Always rendered so all cards have same spacing */}
-      <p className="text-xs text-gray-500 mb-1 line-clamp-1 min-h-[1rem]">{part.description || '\u00a0'}</p>
-      <p className="text-xs text-gray-400 mb-2 min-h-[1rem]">{part.sku ? `SKU: ${part.sku}` : '\u00a0'}</p>
+      {/* Body */}
+      <div className="px-4 pt-2 pb-1 flex flex-col flex-1">
+        <p className="text-xs text-gray-400 mb-2 min-h-[1rem]">{part.sku ? `SKU: ${part.sku}` : '\u00a0'}</p>
 
-      {/* Supplier options */}
-      {suppliers.length === 0 ? (
-        <div className="flex-1 flex items-center justify-center bg-gray-50 rounded-lg px-3 py-4 text-center">
-          <span className="text-xs text-gray-400">אין מחיר זמין</span>
-        </div>
-      ) : (
-        <div className="space-y-2 flex-1">
-          {suppliers.map((s, i) => (
-            <div key={i} className={`rounded-xl border px-3 py-2.5 flex flex-col gap-2 ${i === 0 ? 'border-brand-200 bg-brand-50' : 'border-gray-100 bg-gray-50'}`}>
-              {/* Row 1: availability + warranty */}
-              <div className="flex items-center justify-between gap-1">
-                <AvailabilityBadge availability={s.availability} deliveryDays={s.estimated_delivery_days} />
-                <div className="flex items-center gap-2 text-xs text-gray-500">
-                  <span className="flex items-center gap-1">
-                    <Shield className="w-3 h-3" />
-                    {s.warranty_months} חודשים
-                  </span>
-                  {i === 0 && <span className="text-xs font-medium text-green-600">✓ מומלץ</span>}
+        {/* Supplier / pricing options */}
+        {suppliers.length === 0 ? (
+          <div className={`flex-1 flex flex-col items-center justify-center ${accent.bg} rounded-lg px-3 py-4 text-center gap-1`}>
+            <Tag className={`w-4 h-4 ${accent.text} opacity-60`} />
+            <span className={`text-xs font-medium ${accent.text}`}>מחיר על פניה</span>
+            <span className="text-xs text-gray-400">צור קשר לקבלת הצעת מחיר</span>
+          </div>
+        ) : (
+          <div className="space-y-2 flex-1">
+            {suppliers.map((s, i) => (
+              <div key={i} className={`rounded-xl border px-3 py-2.5 flex flex-col gap-2 ${
+                i === 0
+                  ? `border-l-2 ${accent.border} border-t border-r border-b border-gray-100 bg-white shadow-sm`
+                  : 'border-gray-100 bg-gray-50'
+              }`}>
+                {/* Row 1: availability + warranty */}
+                <div className="flex items-center justify-between gap-1">
+                  <AvailabilityBadge availability={s.availability} deliveryDays={s.estimated_delivery_days} />
+                  <div className="flex items-center gap-2 text-xs text-gray-500">
+                    {s.warranty_months && (
+                      <span className="flex items-center gap-1">
+                        <Shield className="w-3 h-3" />
+                        {s.warranty_months} חודשים
+                      </span>
+                    )}
+                    {i === 0 && !s.is_base_price_fallback && <span className="text-xs font-medium text-green-600">✓ מומלץ</span>}
+                    {s.is_base_price_fallback && <span className="text-xs text-amber-500 bg-amber-50 px-1.5 py-0.5 rounded-full border border-amber-200">~ מחיר משוער</span>}
+                  </div>
                 </div>
-              </div>
-              {/* Row 2: total price large + breakdown grid below */}
-              <div>
-                <div className="text-xl font-bold text-brand-700 text-left mb-1">₪{s.total?.toFixed(0)}</div>
-                <div className="grid grid-cols-3 gap-1 text-center text-xs text-gray-500 bg-white/60 rounded-lg py-1.5">
-                  <div><div className="font-semibold text-gray-700">₪{s.price_no_vat?.toFixed(0)}</div>נטו</div>
-                  <div className="border-x border-gray-200"><div className="font-semibold text-gray-700">₪{s.vat?.toFixed(0)}</div>מע״מ</div>
-                  <div><div className="font-semibold text-gray-700">₪{s.shipping?.toFixed(0)}</div>משלוח</div>
+                {/* Row 2: total price large + breakdown */}
+                <div>
+                  <div className={`text-2xl font-bold text-left mb-1 ${accent.text}`}>₪{s.total?.toFixed(0)}</div>
+                  <div className="grid grid-cols-3 gap-1 text-center text-xs text-gray-500 bg-gray-50 rounded-lg py-1.5">
+                    <div><div className="font-semibold text-gray-700">₪{s.price_no_vat?.toFixed(0)}</div>נטו</div>
+                    <div className="border-x border-gray-200"><div className="font-semibold text-gray-700">₪{s.vat?.toFixed(0)}</div>מע״מ</div>
+                    <div><div className="font-semibold text-gray-700">₪{s.shipping?.toFixed(0)}</div>משלוח</div>
+                  </div>
                 </div>
+                {/* Row 3: add to cart */}
+                <button
+                  onClick={() => handleAddToCart(s.supplier_part_id, s)}
+                  className={`w-full text-sm flex items-center justify-center gap-2 py-2 rounded-lg font-medium transition-colors ${
+                    i === 0
+                      ? 'bg-brand-600 hover:bg-brand-700 text-white'
+                      : 'bg-white hover:bg-brand-50 text-brand-700 border border-brand-200'
+                  }`}
+                >
+                  <ShoppingCart className="w-4 h-4" /> הוסף לסל
+                </button>
               </div>
-              {/* Row 3: add to cart */}
-              <button
-                onClick={() => handleAddToCart(s.supplier_part_id, s)}
-                className={`w-full text-sm flex items-center justify-center gap-2 py-2 rounded-lg font-medium transition-colors ${
-                  i === 0
-                    ? 'bg-brand-600 hover:bg-brand-700 text-white'
-                    : 'bg-white hover:bg-brand-50 text-brand-700 border border-brand-200'
-                }`}
-              >
-                <ShoppingCart className="w-4 h-4" /> הוסף לסל
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   )
 }

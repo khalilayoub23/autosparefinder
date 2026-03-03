@@ -19,7 +19,10 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import text
 
-DATABASE_URL = "postgresql+asyncpg://autospare:autospare@localhost:5432/autospare"
+import os
+from dotenv import load_dotenv
+load_dotenv()
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://autospare:autospare@localhost:5432/autospare")
 
 # ─── Brand definitions ────────────────────────────────────────────────────────
 # (name, name_he, group_name, country, region, is_luxury, is_electric_focused, website)
