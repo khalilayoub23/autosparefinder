@@ -42,21 +42,24 @@ const PART_TYPE_LABEL = {
   'unknown':     'כללי',
 }
 
-// Category → accent colour (left border + header tint)
+// Category → accent colour (left border color as hex + Tailwind bg/text classes)
+// Using hex color for border avoids Tailwind JIT purge / specificity issues with dynamic class names
 const CATEGORY_ACCENT = {
-  'בלמים':           { border: 'border-l-red-400',    bg: 'bg-red-50',    icon: '🛑', text: 'text-red-700' },
-  'מנוע':            { border: 'border-l-orange-400', bg: 'bg-orange-50', icon: '⚙️', text: 'text-orange-700' },
-  'מתלה':            { border: 'border-l-yellow-400', bg: 'bg-yellow-50', icon: '🔧', text: 'text-yellow-700' },
-  'היגוי':           { border: 'border-l-lime-400',   bg: 'bg-lime-50',   icon: '🎯', text: 'text-lime-700' },
-  'תאורה':           { border: 'border-l-sky-400',    bg: 'bg-sky-50',    icon: '💡', text: 'text-sky-700' },
-  'מיזוג':           { border: 'border-l-cyan-400',   bg: 'bg-cyan-50',   icon: '❄️', text: 'text-cyan-700' },
-  'חשמל רכב':        { border: 'border-l-violet-400', bg: 'bg-violet-50', icon: '⚡', text: 'text-violet-700' },
-  'דלק':             { border: 'border-l-emerald-400',bg: 'bg-emerald-50',icon: '⛽', text: 'text-emerald-700' },
-  'פחיין ומרכב':     { border: 'border-l-blue-400',   bg: 'bg-blue-50',   icon: '🚗', text: 'text-blue-700' },
-  'ריפוד ופנים':     { border: 'border-l-pink-400',   bg: 'bg-pink-50',   icon: '🪑', text: 'text-pink-700' },
-  'גלגלים וצמיגים':  { border: 'border-l-stone-400',  bg: 'bg-stone-50',  icon: '🛞', text: 'text-stone-700' },
-  'תיבת הילוכים':    { border: 'border-l-teal-400',   bg: 'bg-teal-50',   icon: '🔩', text: 'text-teal-700' },
-  'כללי':            { border: 'border-l-gray-300',   bg: 'bg-gray-50',   icon: '📦', text: 'text-gray-600' },
+  'בלמים':           { color: '#f87171', bg: 'bg-red-50',     text: 'text-red-700',     icon: '🛑' },
+  'מנוע':            { color: '#fb923c', bg: 'bg-orange-50',  text: 'text-orange-700',  icon: '⚙️' },
+  'מתלה':            { color: '#facc15', bg: 'bg-yellow-50',  text: 'text-yellow-700',  icon: '🔧' },
+  'היגוי':           { color: '#a3e635', bg: 'bg-lime-50',    text: 'text-lime-700',    icon: '🎯' },
+  'תאורה':           { color: '#38bdf8', bg: 'bg-sky-50',     text: 'text-sky-700',     icon: '💡' },
+  'מיזוג':           { color: '#22d3ee', bg: 'bg-cyan-50',    text: 'text-cyan-700',    icon: '❄️' },
+  'חשמל רכב':        { color: '#a78bfa', bg: 'bg-violet-50',  text: 'text-violet-700',  icon: '⚡' },
+  'דלק':             { color: '#34d399', bg: 'bg-emerald-50', text: 'text-emerald-700', icon: '⛽' },
+  'פחיין ומרכב':     { color: '#60a5fa', bg: 'bg-blue-50',    text: 'text-blue-700',    icon: '🚗' },
+  'ריפוד ופנים':     { color: '#f472b6', bg: 'bg-pink-50',    text: 'text-pink-700',    icon: '🪑' },
+  'גלגלים וצמיגים':  { color: '#a8a29e', bg: 'bg-stone-50',   text: 'text-stone-700',   icon: '🛞' },
+  'תיבת הילוכים':    { color: '#2dd4bf', bg: 'bg-teal-50',    text: 'text-teal-700',    icon: '🔩' },
+  'מגבים':           { color: '#94a3b8', bg: 'bg-slate-50',   text: 'text-slate-600',   icon: '🌧️' },
+  'שרשראות ורצועות': { color: '#d97706', bg: 'bg-amber-50',   text: 'text-amber-700',   icon: '⛓️' },
+  'כללי':            { color: '#d1d5db', bg: 'bg-gray-50',    text: 'text-gray-600',    icon: '📦' },
 }
 
 function AvailabilityBadge({ availability, deliveryDays }) {
@@ -95,7 +98,10 @@ function PartCard({ part, onAddToCart }) {
   const accent = CATEGORY_ACCENT[part.category] || CATEGORY_ACCENT['כללי']
 
   return (
-    <div className={`card overflow-hidden hover:shadow-lg transition-all duration-200 border border-gray-100 border-l-4 ${accent.border} flex flex-col h-full`}>
+    <div
+      className="card overflow-hidden hover:shadow-lg transition-all duration-200 border border-gray-100 border-l-4 flex flex-col h-full"
+      style={{ borderLeftColor: accent.color }}
+    >
       {/* Coloured category header strip */}
       <div className={`${accent.bg} px-4 pt-3 pb-2`}>
         <div className="flex justify-between items-start gap-2">
@@ -125,11 +131,13 @@ function PartCard({ part, onAddToCart }) {
         ) : (
           <div className="space-y-2 flex-1">
             {suppliers.map((s, i) => (
-              <div key={i} className={`rounded-xl border px-3 py-2.5 flex flex-col gap-2 ${
-                i === 0
-                  ? `border-l-2 ${accent.border} border-t border-r border-b border-gray-100 bg-white shadow-sm`
-                  : 'border-gray-100 bg-gray-50'
-              }`}>
+              <div
+                key={i}
+                className={`rounded-xl border px-3 py-2.5 flex flex-col gap-2 ${
+                  i === 0 ? 'border-l-2 border-t border-r border-b border-gray-100 bg-white shadow-sm' : 'border-gray-100 bg-gray-50'
+                }`}
+                style={i === 0 ? { borderLeftColor: accent.color } : undefined}
+              >
                 {/* Row 1: availability + warranty */}
                 <div className="flex items-center justify-between gap-1">
                   <AvailabilityBadge availability={s.availability} deliveryDays={s.estimated_delivery_days} />
