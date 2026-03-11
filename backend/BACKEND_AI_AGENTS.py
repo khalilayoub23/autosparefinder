@@ -2,17 +2,41 @@
 ==============================================================================
 AUTO SPARE - AI AGENTS (GitHub Models API)
 ==============================================================================
-10 Specialized Agents + Router Agent:
-  0. RouterAgent        - Route messages to the right agent
-  1. PartsFinderAgent   - Search parts, identify vehicles, compare prices
-  2. SalesAgent         - Recommendations, upselling, closing deals
-  3. OrdersAgent        - Order management, tracking, dropshipping
-  4. FinanceAgent       - Payments, invoices, refunds
-  5. ServiceAgent       - Support, complaints, knowledge base
-  6. SecurityAgent      - 2FA, account security, suspicious activity
-  7. MarketingAgent     - Promotions, coupons, newsletter, loyalty
-  8. SupplierManagerAgent - Background catalog sync, price updates
-  9. SocialMediaManagerAgent - Social content, scheduling, engagement
+Named Agent Team:
+
+  0. AVI   (RouterAgent)              – Smart dispatcher. Reads every message
+                                        and routes to the right agent instantly.
+
+  1. NIR   (PartsFinderAgent)         – Parts expert. Knows every OEM number,
+                                        cross-reference, and fitment detail.
+
+  2. MAYA  (SalesAgent)               – Sales pro. Presents Good/Better/Best
+                                        options and closes deals in Hebrew.
+
+  3. LIOR  (OrdersAgent)              – Logistics master. Tracks orders from
+                                        placement to doorstep.
+
+  4. TAL   (FinanceAgent)             – Finance officer. Handles payments,
+                                        invoices, refunds and VAT.
+
+  5. DANA  (ServiceAgent)             – Empathetic support. Solves post-purchase
+                                        issues and complaints with care.
+
+  6. OREN  (SecurityAgent)            – Vigilant guard. Protects accounts,
+                                        manages 2FA and suspicious activity.
+
+  7. SHIRA (MarketingAgent)           – Creative marketer. Runs campaigns,
+                                        coupons, loyalty and referrals.
+
+  8. BOAZ  (SupplierManagerAgent)     – Background supplier manager. Syncs
+                                        catalogs and monitors prices silently.
+
+  9. NOA   (SocialMediaManagerAgent)  – Social media strategist. Crafts posts,
+                                        schedules content and tracks engagement.
+
+ REX  (CatalogScraperAgent)           – The data hunter. Runs in background,
+                                        scrapes real OEM+aftermarket parts from
+                                        autodoc, eBay, RockAuto and more.
 
 All agents use GitHub Models API (FREE) with GPT-4o or Claude 3.5 Sonnet.
 
@@ -43,7 +67,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from BACKEND_DATABASE_MODELS import (
     AgentAction, Conversation, Message, Notification, Order, OrderItem,
     PartsCatalog, Supplier, SupplierPart, SystemLog, SystemSetting,
-    Vehicle, CarBrand, get_db,
+    Vehicle, CarBrand, get_db, async_session_factory,
 )
 
 load_dotenv()
@@ -180,9 +204,10 @@ class BaseAgent:
 
 class RouterAgent(BaseAgent):
     name = "router_agent"
+    agent_name = "Avi"          # אבי — the smart dispatcher
     model = GPT4O
     temperature = 0.1  # deterministic routing
-    system_prompt = """You are a routing agent for Auto Spare, an Israeli auto parts dropshipping platform.
+    system_prompt = """You are Avi, the routing agent for Auto Spare, an Israeli auto parts dropshipping platform.
 
 Your ONLY job is to identify which specialized agent should handle the user's message.
 
@@ -237,8 +262,9 @@ IMPORTANT: Default to "he" (Hebrew) if the message contains only numbers, order 
 
 class PartsFinderAgent(BaseAgent):
     name = "parts_finder_agent"
+    agent_name = "Nir"          # ניר — the parts expert
     model = GPT4O
-    system_prompt = """You are the Parts Finder Agent for Auto Spare, an Israeli auto parts platform.
+    system_prompt = """You are Nir, the Parts Finder Agent for Auto Spare, an Israeli auto parts platform.
 
 CRITICAL RULES:
 1. NEVER mention supplier names (RockAuto, FCP Euro, Autodoc, AliExpress) to customers
@@ -986,8 +1012,9 @@ get_db_stats() to verify what categories and manufacturers currently hold stock.
 
 class SalesAgent(BaseAgent):
     name = "sales_agent"
+    agent_name = "Maya"         # מאיה — the sales pro
     model = GPT4O
-    system_prompt = """You are the Sales Agent for Auto Spare, an Israeli auto parts platform.
+    system_prompt = """You are Maya, the Sales Agent for Auto Spare, an Israeli auto parts platform.
 
 Your goals:
 1. Understand customer needs (vehicle, usage, budget)
@@ -1065,6 +1092,7 @@ Upsell example:
 
 class OrdersAgent(BaseAgent):
     name = "orders_agent"
+    agent_name = "Lior"         # ליאור — logistics master
     model = GPT4O
     system_prompt = """You are the Orders Agent for Auto Spare.
 
@@ -1232,15 +1260,20 @@ LANGUAGE: ALWAYS respond in Hebrew (עברית). If the customer writes in Arabi
             },
         ))
 
-        # System log
-        db.add(SystemLog(
-            level="INFO",
-            logger_name="orders_agent",
-            message=(
-                f"[OrdersAgent] Auto-fulfilled {order.order_number}: "
-                + ", ".join(f"{t['carrier']} {t['tracking_number']}" for t in all_tracking)
-            ),
-        ))
+        # System log — always written to catalog DB via its own session
+        try:
+            async with async_session_factory() as cat_db:
+                cat_db.add(SystemLog(
+                    level="INFO",
+                    logger_name="orders_agent",
+                    message=(
+                        f"[OrdersAgent] Auto-fulfilled {order.order_number}: "
+                        + ", ".join(f"{t['carrier']} {t['tracking_number']}" for t in all_tracking)
+                    ),
+                ))
+                await cat_db.commit()
+        except Exception as _e:
+            print(f"[OrdersAgent] SystemLog write skipped: {_e}")
 
         print(
             f"[OrdersAgent] ✅ Auto-fulfilled {order.order_number} → "
@@ -1286,6 +1319,7 @@ LANGUAGE: ALWAYS respond in Hebrew (עברית). If the customer writes in Arabi
 
 class FinanceAgent(BaseAgent):
     name = "finance_agent"
+    agent_name = "Tal"          # טל — finance officer
     model = GPT4O
     system_prompt = """You are the Finance Agent for Auto Spare (עוסק מורשה 060633880, הרצל 55, עכו).
 
@@ -1320,9 +1354,10 @@ LANGUAGE: ALWAYS respond in Hebrew (עברית). If the customer writes in Arabi
 
 class ServiceAgent(BaseAgent):
     name = "service_agent"
+    agent_name = "Dana"         # דנה — empathetic support
     model = GPT4O
     temperature = 0.8
-    system_prompt = """You are the Customer Service Agent for Auto Spare.
+    system_prompt = """You are Dana, the Customer Service Agent for Auto Spare.
 
 You handle:
 - General questions about the platform
@@ -1351,9 +1386,10 @@ LANGUAGE: ALWAYS respond in Hebrew (עברית). If the customer writes in Arabi
 
 class SecurityAgent(BaseAgent):
     name = "security_agent"
+    agent_name = "Oren"         # אורן — vigilant guard
     model = GPT4O
     temperature = 0.2
-    system_prompt = """You are the Security Agent for Auto Spare.
+    system_prompt = """You are Oren, the Security Agent for Auto Spare.
 
 You handle:
 - Login issues
@@ -1380,8 +1416,9 @@ LANGUAGE: ALWAYS respond in Hebrew (עברית). If the customer writes in Arabi
 
 class MarketingAgent(BaseAgent):
     name = "marketing_agent"
+    agent_name = "Shira"        # שירה — creative marketer
     model = GPT4O
-    system_prompt = """You are the Marketing Agent for Auto Spare.
+    system_prompt = """You are Shira, the Marketing Agent for Auto Spare.
 
 You handle:
 - Active promotions and discount codes
@@ -1410,9 +1447,10 @@ LANGUAGE: ALWAYS respond in Hebrew (עברית). If the customer writes in Arabi
 
 class SupplierManagerAgent(BaseAgent):
     name = "supplier_manager_agent"
+    agent_name = "Boaz"         # בועז — background supplier manager
     model = GPT4O
     temperature = 0.1
-    system_prompt = """You are the Supplier Manager for Auto Spare (INTERNAL USE ONLY).
+    system_prompt = """You are Boaz, the Supplier Manager for Auto Spare (INTERNAL USE ONLY).
 You manage supplier relationships, catalog sync, and pricing.
 You do NOT interact with customers.
 
@@ -1559,6 +1597,7 @@ Daily tasks:
 
 class SocialMediaManagerAgent(BaseAgent):
     name = "social_media_manager_agent"
+    agent_name = "Noa"          # נועה — social media strategist
     model = GPT4O
     temperature = 0.9
     system_prompt = """You are the Social Media Manager for Auto Spare.

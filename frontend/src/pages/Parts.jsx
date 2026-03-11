@@ -73,6 +73,164 @@ function AvailabilityBadge({ availability, deliveryDays }) {
   )
 }
 
+// Transform a new-API supplier row into the shape PartCard expects
+function _supplierForCard(sp) {
+  const costIls    = parseFloat(sp.price_ils) || 0
+  const priceNet   = Math.round(costIls * 1.30)           // 30 % retail margin
+  const vatAmount  = Math.round(priceNet * 0.17)
+  const ship       = Math.round(parseFloat(sp.shipping_cost_ils) || 91)
+  return {
+    ...sp,
+    supplier_part_id:       sp.supplier_part_id,
+    price_no_vat:           priceNet,
+    vat:                    vatAmount,
+    shipping:               ship,
+    subtotal:               priceNet + vatAmount,
+    total:                  priceNet + vatAmount + ship,
+    availability:           sp.availability || 'on_order',
+    estimated_delivery_days: sp.estimated_delivery_days,
+    is_base_price_fallback: false,
+  }
+}
+
+// Express badge
+function ExpressBadge({ price, days, cutoff }) {
+  if (!price) return null
+  return (
+    <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-yellow-50 text-yellow-700 border border-yellow-200 font-medium">
+      ⚡ אקספרס {days}d · +₪{Math.round(price)}{cutoff ? ` עד ${cutoff}` : ''}
+    </span>
+  )
+}
+
+const TYPE_META = {
+  original:    { label: 'מקורי',   color: '#3b82f6', bg: 'bg-blue-50',   text: 'text-blue-700',  icon: '🔵', badge: 'bg-blue-100 text-blue-700 border-blue-300' },
+  oem:         { label: 'OEM',     color: '#7c3aed', bg: 'bg-violet-50', text: 'text-violet-700',icon: '🔷', badge: 'bg-violet-100 text-violet-700 border-violet-300' },
+  aftermarket: { label: 'חליפי',   color: '#d97706', bg: 'bg-amber-50',  text: 'text-amber-700', icon: '🟡', badge: 'bg-amber-100 text-amber-700 border-amber-300' },
+}
+
+function TypeSection({ typeKey, data, onAddToCart }) {
+  const meta = TYPE_META[typeKey] || TYPE_META.aftermarket
+  if (!data?.part) {
+    return (
+      <div className={`rounded-2xl border border-dashed border-gray-200 ${meta.bg} p-6 text-center opacity-60`}>
+        <div className="text-3xl mb-2">{meta.icon}</div>
+        <p className={`text-sm font-medium ${meta.text}`}>{meta.label}</p>
+        <p className="text-xs text-gray-400 mt-1">אין תוצאות</p>
+      </div>
+    )
+  }
+
+  const { part, suppliers = [] } = data
+  const accent = CATEGORY_ACCENT[part.category] || CATEGORY_ACCENT['כללי']
+
+  return (
+    <div className="rounded-2xl border border-gray-100 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
+      {/* Type header */}
+      <div className={`${meta.bg} px-4 py-2 flex items-center gap-2 border-b border-gray-100`}>
+        <span className="text-lg">{meta.icon}</span>
+        <span className={`text-sm font-bold ${meta.text}`}>{meta.label}</span>
+        {part.is_safety_critical && (
+          <span className="ml-auto text-xs bg-red-100 text-red-700 border border-red-200 px-2 py-0.5 rounded-full font-medium">⚠️ בטיחותי</span>
+        )}
+      </div>
+
+      {/* Part info */}
+      <div className={`${accent.bg} px-4 pt-3 pb-2 border-l-4`} style={{ borderLeftColor: accent.color }}>
+        <h3 className="font-semibold text-gray-900 text-sm leading-snug line-clamp-2">
+          {part.name_he || part.name}
+        </h3>
+        <p className={`text-xs mt-0.5 font-medium ${accent.text}`}>
+          <span className="mr-1">{accent.icon}</span>{part.category}
+        </p>
+        <div className="flex flex-wrap gap-1 mt-1">
+          <span className="text-xs text-gray-500">{part.manufacturer}</span>
+          {part.sku && <span className="text-xs text-gray-400">· {part.sku}</span>}
+          {part.oem_number && <span className="text-xs text-gray-400">· OEM: {part.oem_number}</span>}
+        </div>
+      </div>
+
+      {/* Superseded part warning */}
+      {part.superseded_by_sku && (
+        <div className="mx-4 mt-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700 flex items-center gap-2">
+          <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+          <span>חלק זה הוחלף — מספר חדש: <span className="font-mono font-bold">{part.superseded_by_sku}</span></span>
+        </div>
+      )}
+
+      {/* Supplier offers */}
+      <div className="px-4 pb-4 pt-2 space-y-2">
+        {suppliers.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-4 text-center gap-1 opacity-60">
+            <span className="text-xs text-gray-400">אין הצעות ספק זמינות</span>
+          </div>
+        ) : (
+          suppliers.map((sp, i) => {
+            const s = _supplierForCard(sp)
+            return (
+              <div
+                key={sp.supplier_part_id || i}
+                className={`rounded-xl border px-3 py-2.5 flex flex-col gap-2 ${
+                  i === 0 ? 'bg-white shadow-sm border-gray-200' : 'bg-gray-50 border-gray-100'
+                }`}
+                style={i === 0 ? { borderLeftColor: meta.color, borderLeftWidth: 3 } : undefined}
+              >
+                {/* Row 1: supplier label + availability */}
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span className="text-xs font-medium text-gray-700 truncate">{sp.supplier_name || `ספק #${i + 1}`}</span>
+                  <div className="flex items-center gap-1 flex-wrap">
+                    <AvailabilityBadge availability={sp.availability} deliveryDays={sp.estimated_delivery_days} />
+                    {sp.express_available && (
+                      <ExpressBadge price={sp.express_price_ils} days={sp.express_delivery_days} cutoff={sp.express_cutoff_time} />
+                    )}
+                    {sp.warranty_months && (
+                      <span className="flex items-center gap-1 text-xs text-gray-500">
+                        <Shield className="w-3 h-3" />{sp.warranty_months} חודשים
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {/* Row 2: price breakdown */}
+                <div>
+                  <div className={`text-2xl font-bold text-left mb-1 ${accent.text}`}>₪{s.total?.toFixed(0)}</div>
+                  <div className="grid grid-cols-3 gap-1 text-center text-xs text-gray-500 bg-gray-50 rounded-lg py-1.5">
+                    <div><div className="font-semibold text-gray-700">₪{s.price_no_vat}</div>נטו</div>
+                    <div className="border-x border-gray-200"><div className="font-semibold text-gray-700">₪{s.vat}</div>מע״מ</div>
+                    <div><div className="font-semibold text-gray-700">₪{s.shipping}</div>משלוח</div>
+                  </div>
+                </div>
+                {/* Row 3: cart button */}
+                <button
+                  onClick={() => {
+                    onAddToCart({
+                      partId: part.id,
+                      supplierPartId: sp.supplier_part_id || `fallback-${part.id}-${i}`,
+                      name: part.name_he || part.name,
+                      manufacturer: part.manufacturer,
+                      price: s.subtotal,
+                      vat: s.vat,
+                      deliveryDays: sp.estimated_delivery_days || null,
+                      isEstimated: false,
+                    })
+                    toast.success(`${part.name_he || part.name} נוסף לסל 🛒`)
+                  }}
+                  className={`w-full text-sm flex items-center justify-center gap-2 py-2 rounded-lg font-medium transition-colors ${
+                    i === 0
+                      ? 'bg-brand-600 hover:bg-brand-700 text-white'
+                      : 'bg-white hover:bg-brand-50 text-brand-700 border border-brand-200'
+                  }`}
+                >
+                  <ShoppingCart className="w-4 h-4" /> הוסף לסל
+                </button>
+              </div>
+            )
+          })
+        )}
+      </div>
+    </div>
+  )
+}
+
 function PartCard({ part, onAddToCart }) {
   const suppliers = part.suppliers || (part.pricing ? [part.pricing] : [])
 
@@ -194,7 +352,8 @@ export default function Parts() {
   const [category, setCategory] = useState('')
   const [categories, setCategories] = useState([])
   const [categoryCounts, setCategoryCounts] = useState({})
-  const [parts, setParts] = useState([])
+  const [parts, setParts] = useState([])          // flat list for photo/legacy search
+  const [searchResults, setSearchResults] = useState(null) // grouped: {original,oem,aftermarket}
   const [isLoading, setIsLoading] = useState(false)
   const [searched, setSearched] = useState(false)
   const [page, setPage] = useState(0)
@@ -214,6 +373,7 @@ export default function Parts() {
   const [sortBy, setSortBy] = useState('availability')
   const [filterAvail, setFilterAvail] = useState('')
   const [filterType, setFilterType] = useState('')
+  const [perType, setPerType] = useState(4)   // suppliers per type shown in grouped view
 
   const getSortParams = (sv) => {
     if (sv === 'price_asc')    return { sort_by: 'price_asc',    sort_dir: 'asc' }
@@ -267,8 +427,20 @@ export default function Parts() {
         setSearchMode('manual')
         setSearched(true)
         setIsLoading(true)
-        partsApi.search(urlSearch, null, urlCategory, 50, 0, 'name', 'asc')
-          .then(({ data }) => { setParts(data.parts || []); setTotalCount(data.total || 0) })
+        partsApi.search(urlSearch, null, urlCategory)
+          .then(({ data }) => {
+            if (data.original !== undefined || data.oem !== undefined) {
+              setSearchResults({ original: data.original, oem: data.oem, aftermarket: data.aftermarket })
+              const flat = [
+                ...(data.original?.part  ? [{ ...data.original.part,  suppliers: data.original.suppliers  }] : []),
+                ...(data.oem?.part       ? [{ ...data.oem.part,       suppliers: data.oem.suppliers       }] : []),
+                ...(data.aftermarket?.part ? [{ ...data.aftermarket.part, suppliers: data.aftermarket.suppliers }] : []),
+              ]
+              setParts(flat); setTotalCount(flat.length)
+            } else {
+              setParts(data.parts || []); setTotalCount(data.total || 0)
+            }
+          })
           .catch(() => toast.error('שגיאה בטעינת תוצאות'))
           .finally(() => setIsLoading(false))
       }, 100)
@@ -315,6 +487,7 @@ export default function Parts() {
   const switchMode = (mode) => {
     setSearchMode(mode)
     setParts([])
+    setSearchResults(null)
     setSearched(false)
     setTotalCount(0)
     setPage(0)
@@ -322,9 +495,7 @@ export default function Parts() {
 
   const buildManualQuery = () => {
     const parts = []
-    if (manualManufacturer) parts.push(manualManufacturer)
     if (manualModel.trim()) parts.push(manualModel.trim())
-    if (manualYear.trim()) parts.push(manualYear.trim())
     if (query.trim()) parts.push(query.trim())
     return parts.join(' ')
   }
@@ -338,7 +509,6 @@ export default function Parts() {
   }
 
   const search = async (pageNum = 0) => {
-    const { sort_by, sort_dir } = getSortParams(sortBy)
     let q = query.trim()
     let vehicleId = null
 
@@ -356,9 +526,24 @@ export default function Parts() {
     setIsLoading(true)
     setSearched(true)
     try {
-      const { data } = await partsApi.search(q, vehicleId, category, PAGE_SIZE, pageNum * PAGE_SIZE, sort_by, sort_dir)
-      setParts(data.parts || [])
-      setTotalCount(data.total || 0)
+      const { data } = await partsApi.search(q, vehicleId, category, perType, searchMode === 'manual' ? manualManufacturer : null)
+      // New grouped response
+      if (data.original !== undefined || data.oem !== undefined || data.aftermarket !== undefined) {
+        setSearchResults({ original: data.original, oem: data.oem, aftermarket: data.aftermarket })
+        // Also flatten for backwards compat (stats, filters)
+        const flat = [
+          ...(data.original?.part  ? [{ ...data.original.part,  suppliers: data.original.suppliers  }] : []),
+          ...(data.oem?.part       ? [{ ...data.oem.part,       suppliers: data.oem.suppliers       }] : []),
+          ...(data.aftermarket?.part ? [{ ...data.aftermarket.part, suppliers: data.aftermarket.suppliers }] : []),
+        ]
+        setParts(flat)
+        setTotalCount(flat.length)
+      } else {
+        // Fallback for old-style responses
+        setSearchResults(null)
+        setParts(data.parts || [])
+        setTotalCount(data.total || 0)
+      }
       setPage(pageNum)
       saveRecentSearch(q)
     } catch (err) {
@@ -407,62 +592,53 @@ export default function Parts() {
 
   const runPhotoPartsSearch = async (candidates, vehicleManufacturer) => {
     if (!candidates || candidates.length === 0) return
-    const { sort_by, sort_dir } = getSortParams(sortBy)
 
     // Return cached result instantly
     const cacheKey = `${candidates[0]}__${vehicleManufacturer}`
     if (photoSearchCache.current[cacheKey]) {
       const c = photoSearchCache.current[cacheKey]
-      setQuery(c.query); setParts(c.parts); setTotalCount(c.total); setSearched(true); setPage(0)
+      setQuery(c.query); setParts(c.parts); setSearchResults(c.grouped || null)
+      setTotalCount(c.total); setSearched(true); setPage(0)
       setPhotoFallbackMfr(c.fallbackMfr || '')
       return
     }
 
     setIsLoading(true)
     try {
-      // Fire all candidate queries in parallel (with + without manufacturer filter simultaneously)
-      const top = candidates.slice(0, 3) // limit to top 3 to avoid over-fetching
-      const withMfr = vehicleManufacturer
-        ? top.map(c => partsApi.search(c, null, category, PAGE_SIZE, 0, sort_by, sort_dir, vehicleManufacturer).catch(() => null))
-        : []
-      const noMfr = top.map(c => partsApi.search(c, null, category, PAGE_SIZE, 0, sort_by, sort_dir, null).catch(() => null))
+      const top = candidates.slice(0, 3)
+      const queries = vehicleManufacturer
+        ? top.map(c => partsApi.search(c, null, category, null, vehicleManufacturer).catch(() => null))
+        : top.map(c => partsApi.search(c, null, category).catch(() => null))
+      const results = await Promise.all(queries)
 
-      const [mfrResults, generalResults] = await Promise.all([
-        Promise.all(withMfr),
-        Promise.all(noMfr),
-      ])
+      let foundGrouped = null, foundParts = [], foundTotal = 0, usedQuery = top[0]
 
-      let foundParts = [], foundTotal = 0, usedQuery = top[0], usedMfr = false
-
-      // Prefer manufacturer-filtered results first
       for (let i = 0; i < top.length; i++) {
-        const r = mfrResults[i]?.data
-        if (r && (r.parts || []).length > 0) {
-          foundParts = r.parts; foundTotal = r.total || 0; usedQuery = top[i]; usedMfr = true; break
-        }
-      }
-
-      // Fallback to general results
-      if (!usedMfr) {
-        for (let i = 0; i < top.length; i++) {
-          const r = generalResults[i]?.data
-          if (r && (r.parts || []).length > 0) {
-            foundParts = r.parts; foundTotal = r.total || 0; usedQuery = top[i]; break
+        const d = results[i]?.data
+        if (!d) continue
+        if (d.original !== undefined || d.oem !== undefined) {
+          const flat = [
+            ...(d.original?.part  ? [{ ...d.original.part,  suppliers: d.original.suppliers  }] : []),
+            ...(d.oem?.part       ? [{ ...d.oem.part,       suppliers: d.oem.suppliers       }] : []),
+            ...(d.aftermarket?.part ? [{ ...d.aftermarket.part, suppliers: d.aftermarket.suppliers }] : []),
+          ]
+          if (flat.length > 0) {
+            foundGrouped = { original: d.original, oem: d.oem, aftermarket: d.aftermarket }
+            foundParts = flat; foundTotal = flat.length; usedQuery = top[i]; break
           }
+        } else if ((d.parts || []).length > 0) {
+          foundParts = d.parts; foundTotal = d.total || 0; usedQuery = top[i]; break
         }
-        if (vehicleManufacturer && foundParts.length > 0) {
-          setPhotoFallbackMfr(vehicleManufacturer)
-        } else {
-          setPhotoFallbackMfr('')
-        }
-      } else {
-        setPhotoFallbackMfr('')
       }
 
-      // Cache for instant re-use
-      photoSearchCache.current[cacheKey] = { query: usedQuery, parts: foundParts, total: foundTotal, fallbackMfr: vehicleManufacturer && !usedMfr ? vehicleManufacturer : '' }
+      photoSearchCache.current[cacheKey] = {
+        query: usedQuery, parts: foundParts, grouped: foundGrouped,
+        total: foundTotal, fallbackMfr: vehicleManufacturer || '',
+      }
 
-      setQuery(usedQuery); setParts(foundParts); setTotalCount(foundTotal); setSearched(true); setPage(0)
+      setQuery(usedQuery); setParts(foundParts); setSearchResults(foundGrouped)
+      setTotalCount(foundTotal); setSearched(true); setPage(0)
+      setPhotoFallbackMfr('')
     } finally {
       setIsLoading(false)
     }
@@ -559,30 +735,45 @@ export default function Parts() {
     if (voiceSearchCache.current[cacheKey]) {
       const c = voiceSearchCache.current[cacheKey]
       setQuery(c.query); setParts(c.parts); setTotalCount(c.total); setSearched(true); setPage(0)
+      setSearchResults(c.grouped || null)
       setVoiceFallbackMfr(c.fallbackMfr || '')
       return
     }
     setIsLoading(true)
     try {
-      // Fire all candidates × (with/without mfr) in parallel
+      // Fire all candidates × (with/without mfr) in parallel — use updated partsApi.search signature
       const top = candidates.slice(0, 4)
       const [mfrResults, genResults] = await Promise.all([
         Promise.all(
           vehicleManufacturer
-            ? top.map(c => partsApi.search(c, null, category, PAGE_SIZE, 0, sort_by, sort_dir, vehicleManufacturer).catch(() => null))
+            ? top.map(c => partsApi.search(c, null, category, null, vehicleManufacturer).catch(() => null))
             : top.map(() => Promise.resolve(null))
         ),
         Promise.all(
-          top.map(c => partsApi.search(c, null, category, PAGE_SIZE, 0, sort_by, sort_dir, null).catch(() => null))
+          top.map(c => partsApi.search(c, null, category, null, null).catch(() => null))
         ),
       ])
 
-      let foundParts = [], foundTotal = 0, usedQuery = top[0], usedMfr = false
+      let foundParts = [], foundTotal = 0, foundGrouped = null, usedQuery = top[0], usedMfr = false
+
+      // Helper: extract flat array from grouped response
+      const flattenGrouped = (r) => [
+        ...(r.original?.part    ? [{ ...r.original.part,    suppliers: r.original.suppliers    }] : []),
+        ...(r.oem?.part         ? [{ ...r.oem.part,         suppliers: r.oem.suppliers         }] : []),
+        ...(r.aftermarket?.part ? [{ ...r.aftermarket.part, suppliers: r.aftermarket.suppliers }] : []),
+      ]
 
       // Prefer manufacturer-filtered results
       for (let i = 0; i < top.length; i++) {
         const r = mfrResults[i]?.data
-        if (r && (r.parts || []).length > 0) {
+        if (!r) continue
+        if (r.original !== undefined || r.oem !== undefined) {
+          const flat = flattenGrouped(r)
+          if (flat.length > 0) {
+            foundGrouped = { original: r.original, oem: r.oem, aftermarket: r.aftermarket }
+            foundParts = flat; foundTotal = flat.length; usedQuery = top[i]; usedMfr = true; break
+          }
+        } else if ((r.parts || []).length > 0) {
           foundParts = r.parts; foundTotal = r.total || 0; usedQuery = top[i]; usedMfr = true; break
         }
       }
@@ -590,15 +781,23 @@ export default function Parts() {
       if (!usedMfr) {
         for (let i = 0; i < top.length; i++) {
           const r = genResults[i]?.data
-          if (r && (r.parts || []).length > 0) {
+          if (!r) continue
+          if (r.original !== undefined || r.oem !== undefined) {
+            const flat = flattenGrouped(r)
+            if (flat.length > 0) {
+              foundGrouped = { original: r.original, oem: r.oem, aftermarket: r.aftermarket }
+              foundParts = flat; foundTotal = flat.length; usedQuery = top[i]; break
+            }
+          } else if ((r.parts || []).length > 0) {
             foundParts = r.parts; foundTotal = r.total || 0; usedQuery = top[i]; break
           }
         }
       }
 
       const fallbackMfr = !usedMfr && vehicleManufacturer && foundParts.length > 0 ? vehicleManufacturer : ''
-      voiceSearchCache.current[cacheKey] = { query: usedQuery, parts: foundParts, total: foundTotal, fallbackMfr }
+      voiceSearchCache.current[cacheKey] = { query: usedQuery, parts: foundParts, total: foundTotal, grouped: foundGrouped, fallbackMfr }
       setQuery(usedQuery); setParts(foundParts); setTotalCount(foundTotal); setSearched(true); setPage(0)
+      setSearchResults(foundGrouped)
       setVoiceFallbackMfr(fallbackMfr)
     } catch { toast.error('שגיאה בחיפוש') }
     finally { setIsLoading(false) }
@@ -1448,9 +1647,32 @@ export default function Parts() {
                 <option value="price_desc">מיין: מחיר ↓</option>
                 <option value="name">מיין: שם</option>
               </select>
+              {searchResults && (
+                <div className="flex items-center gap-1 border border-gray-200 rounded-lg overflow-hidden text-sm" title="ספקים לסוג">
+                  <button
+                    onClick={() => { const n = Math.max(1, perType - 1); setPerType(n); setTimeout(() => search(0), 0) }}
+                    className="px-2 py-1.5 bg-gray-50 hover:bg-gray-100 text-gray-600 font-bold leading-none"
+                  >−</button>
+                  <span className="px-2 py-1 text-gray-700 font-medium select-none">{perType}</span>
+                  <button
+                    onClick={() => { const n = Math.min(10, perType + 1); setPerType(n); setTimeout(() => search(0), 0) }}
+                    className="px-2 py-1.5 bg-gray-50 hover:bg-gray-100 text-gray-600 font-bold leading-none"
+                  >+</button>
+                  <span className="pr-2 text-xs text-gray-400 hidden sm:inline">ספקים</span>
+                </div>
+              )}
             </div>
           </div>
 
+          {/* ── Grouped 3-type results (new API) ─────────────────────────── */}
+          {searchResults ? (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {['original', 'oem', 'aftermarket'].map((key) => (
+                <TypeSection key={key} typeKey={key} data={searchResults[key]} onAddToCart={addItem} />
+              ))}
+            </div>
+          ) : (
+            <>
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {displayParts.map((p) => <PartCard key={p.id} part={p} onAddToCart={addItem} />)}
             {displayParts.length === 0 && filterAvail && (
@@ -1493,6 +1715,8 @@ export default function Parts() {
                 הבא →
               </button>
             </div>
+          )}
+            </>
           )}
         </>
       )}
