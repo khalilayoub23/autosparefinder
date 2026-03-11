@@ -13,6 +13,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U autospare"]
       interval: 5s
@@ -40,6 +41,7 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+asyncpg://autospare:${DB_PASSWORD}@postgres:5432/autospare
+      DATABASE_PII_URL: postgresql+asyncpg://autospare:${DB_PASSWORD}@postgres:5432/autospare_pii
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       JWT_SECRET_KEY: ${JWT_SECRET_KEY}
       JWT_REFRESH_SECRET_KEY: ${JWT_REFRESH_SECRET_KEY}
@@ -49,7 +51,10 @@ services:
       TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN}
       TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
       SENDGRID_API_KEY: ${SENDGRID_API_KEY}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:3000}
+      CLAMD_HOST: clamav
       ENVIRONMENT: production
       DEBUG: "false"
     ports:
@@ -57,15 +62,21 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      clamav:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/api/v1/system/health || exit 1"]
       interval: 10s
       timeout: 3s
       retries: 5
       start_period: 5s
     volumes:
       - upload_files:/app/uploads
-    command: sh -c "alembic upgrade head && uvicorn BACKEND_API_ROUTES:app --host 0.0.0.0 --port 8000 --workers 4"
+    command: >
+      sh -c "
+        python -c 'import asyncio; from BACKEND_DATABASE_MODELS import create_tables; asyncio.run(create_tables())'
+        && uvicorn BACKEND_API_ROUTES:app --host 0.0.0.0 --port 8000 --workers 4
+      "
 
   frontend:
     build: ./frontend
@@ -75,6 +86,19 @@ services:
       - "80:80"
     depends_on:
       - backend
+
+  clamav:
+    image: clamav/clamav:stable
+    container_name: autospare_clamav
+    restart: unless-stopped
+    ports:
+      - "3310:3310"
+    healthcheck:
+      test: ["CMD-SHELL", "clamdcheck.sh || exit 1"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
 
 volumes:
   postgres_data:

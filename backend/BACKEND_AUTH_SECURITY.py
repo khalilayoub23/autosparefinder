@@ -41,8 +41,24 @@ load_dotenv()
 # CONFIGURATION
 # ==============================================================================
 
-JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", secrets.token_hex(32))
-JWT_REFRESH_SECRET_KEY = os.getenv("JWT_REFRESH_SECRET_KEY", secrets.token_hex(32))
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "")
+JWT_REFRESH_SECRET_KEY = os.getenv("JWT_REFRESH_SECRET_KEY", "")
+
+# Fail fast in production — ephemeral secrets invalidate all sessions every restart.
+_env = os.getenv("ENVIRONMENT", "development")
+if _env == "production":
+    if not JWT_SECRET_KEY:
+        raise RuntimeError("JWT_SECRET_KEY environment variable must be set in production")
+    if not JWT_REFRESH_SECRET_KEY:
+        raise RuntimeError("JWT_REFRESH_SECRET_KEY environment variable must be set in production")
+else:
+    # Development fallback: generate a stable-per-process random key with a warning
+    if not JWT_SECRET_KEY:
+        JWT_SECRET_KEY = secrets.token_hex(32)
+        print("[WARN] JWT_SECRET_KEY not set — using random key. All tokens will be lost on restart.")
+    if not JWT_REFRESH_SECRET_KEY:
+        JWT_REFRESH_SECRET_KEY = secrets.token_hex(32)
+        print("[WARN] JWT_REFRESH_SECRET_KEY not set — using random key. All tokens will be lost on restart.")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))
 REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
@@ -235,10 +251,16 @@ async def record_successful_login(user: User, ip_address: str, db: AsyncSession)
 # ==============================================================================
 
 def generate_2fa_code() -> str:
-    # In development, use a fixed code if DEV_2FA_CODE is set
+    # DEV_2FA_CODE is ONLY permitted in non-production environments.
+    # Using it in production would be a security backdoor.
     dev_code = os.getenv("DEV_2FA_CODE")
     if dev_code:
-        return dev_code
+        env = os.getenv("ENVIRONMENT", "development")
+        if env == "production":
+            # Silently ignore the backdoor in production; generate a real code
+            print("[SECURITY] DEV_2FA_CODE is set but ignored in production environment.")
+        else:
+            return dev_code
     return "".join(random.choices(string.digits, k=6))
 
 
@@ -576,8 +598,33 @@ async def create_password_reset_token(email: str, db: AsyncSession) -> Optional[
     db.add(reset)
     await db.commit()
 
-    # TODO: send email with reset link
-    print(f"[DEV] Password reset token for {email}: {token}")
+    reset_link = f"{os.getenv('FRONTEND_URL', 'http://localhost:5173')}/reset-password?token={token}"
+
+    sendgrid_key = os.getenv("SENDGRID_API_KEY")
+    if sendgrid_key:
+        try:
+            import httpx
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    "https://api.sendgrid.com/v3/mail/send",
+                    headers={"Authorization": f"Bearer {sendgrid_key}", "Content-Type": "application/json"},
+                    json={
+                        "personalizations": [{"to": [{"email": email}]}],
+                        "from": {"email": os.getenv("SENDGRID_FROM_EMAIL", "noreply@autospare.com"), "name": "Auto Spare"},
+                        "subject": "קישור לאיפוס סיסמא | Auto Spare",
+                        "content": [{
+                            "type": "text/plain",
+                            "value": f"לחץ על הקישור לאיפוס הסיסמא (תוקף שעה): {reset_link}",
+                        }],
+                    },
+                )
+                if resp.status_code not in (200, 202):
+                    print(f"[ERROR] SendGrid returned {resp.status_code}: {resp.text}")
+        except Exception as exc:
+            print(f"[ERROR] Failed to send password reset email: {exc}")
+    else:
+        # Development fallback: print to console
+        print(f"[DEV] Password reset link for {email}: {reset_link}")
     return token
 
 
@@ -647,6 +694,19 @@ async def get_current_user(
     token = credentials.credentials
     payload = decode_access_token(token)
     user_id = payload.get("sub")
+    session_id = payload.get("session_id")
+
+    # Check that the session has not been revoked (e.g. by logout)
+    session_result = await db.execute(
+        select(UserSession).where(
+            and_(
+                UserSession.token == token,
+                UserSession.revoked_at.is_(None),
+            )
+        )
+    )
+    if session_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=401, detail="Session has been revoked")
 
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()

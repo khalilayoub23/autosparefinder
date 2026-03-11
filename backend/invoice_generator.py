@@ -34,8 +34,30 @@ def rtl(text: str) -> str:
 # ── Fonts ─────────────────────────────────────────────────────────────────────
 _FONT_REG  = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 _FONT_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-pdfmetrics.registerFont(TTFont("DV",      _FONT_REG))
-pdfmetrics.registerFont(TTFont("DV-Bold", _FONT_BOLD))
+
+def _register_fonts():
+    """Register DejaVu fonts once; safe to call multiple times."""
+    global _FONT_REG, _FONT_BOLD
+    registered = pdfmetrics.getRegisteredFontNames()
+    try:
+        if "DV" not in registered:
+            pdfmetrics.registerFont(TTFont("DV", _FONT_REG))
+        if "DV-Bold" not in registered:
+            pdfmetrics.registerFont(TTFont("DV-Bold", _FONT_BOLD))
+    except Exception as exc:
+        # Fonts not installed — fall back to the built-in Helvetica family.
+        # The invoice will still render but Hebrew glyphs will not display.
+        print(f"[invoice_generator] WARNING: DejaVu fonts unavailable ({exc}). Falling back to Helvetica.")
+        _FONT_REG = _FONT_BOLD = None  # signal to use Helvetica below
+
+_register_fonts()
+
+
+def _font(bold: bool = False) -> str:
+    """Return the best available font name."""
+    if _FONT_REG is None:
+        return "Helvetica-Bold" if bold else "Helvetica"
+    return "DV-Bold" if bold else "DV"
 
 # ── Brand colours ─────────────────────────────────────────────────────────────
 BRAND = HexColor("#ea580c")

@@ -26,7 +26,7 @@ from BACKEND_DATABASE_MODELS import (
     get_db, get_pii_db, async_session_factory, pii_session_factory, User, Vehicle, PartsCatalog, Order, OrderItem, Payment,
     Invoice, Return, Conversation, Message, File as FileModel,
     Notification, UserProfile, SystemSetting, SupplierPart, Supplier,
-    CarBrand, SystemLog,
+    CarBrand, SystemLog, USD_TO_ILS,
 )
 from BACKEND_AUTH_SECURITY import (
     get_current_user, get_current_active_user, get_current_verified_user,
@@ -55,7 +55,7 @@ async def trigger_supplier_fulfillment(paid_orders: list, db: AsyncSession) -> N
       4. Notifies the customer with tracking details
       5. Records an admin audit log entry (pre-marked done)
     """
-    USD_TO_ILS = float(os.getenv("USD_TO_ILS", "3.65"))
+    # USD_TO_ILS is imported from BACKEND_DATABASE_MODELS (single source of truth)
     agent = OrdersAgent()
 
     # Find all admin users for audit logs
@@ -105,8 +105,25 @@ async def trigger_supplier_fulfillment(paid_orders: list, db: AsyncSession) -> N
             by_supplier[sup_name]["total_cost_ils"] += item_cost
 
         # Build by_supplier_id-compatible dict for agent
+        # Build by_supplier_id-compatible dict for agent.
+        # Derive the supplier country from the known SUPPLIER_SHIPPING_RATES mapping
+        # so the fulfillment agent selects the correct carrier (H-7 fix).
+        _SUPPLIER_COUNTRY_MAP = {
+            "AutoParts Pro IL": "il",
+            "Global Parts Hub": "de",
+            "EastAuto Supply":  "cn",
+        }
         by_supplier_for_agent = {
-            f"name:{k}": {"supplier": type("S", (), {"id": f"name:{k}", "name": k, "website": "", "country": ""})(), "items": v["items"], "total_cost_ils": v["total_cost_ils"]}
+            f"name:{k}": {
+                "supplier": type("S", (), {
+                    "id": f"name:{k}",
+                    "name": k,
+                    "website": "",
+                    "country": _SUPPLIER_COUNTRY_MAP.get(k, "il"),
+                })(),
+                "items": v["items"],
+                "total_cost_ils": v["total_cost_ils"],
+            }
             for k, v in by_supplier.items()
         }
 
@@ -175,21 +192,49 @@ app.add_middleware(
 )
 
 # ==============================================================================
-# SUPPLIER MASKING  — customer-facing routes never expose real supplier names
-# The same supplier always gets the same number (stable across requests).
+# SUPPLIER MASKING  — customer-facing routes never expose real supplier names.
+# Uses a deterministic hash so the same supplier always maps to the same number,
+# regardless of which worker process handles the request.
 # ==============================================================================
-_SUPPLIER_MASK_MAP: dict = {}
-_supplier_mask_counter = 0
+import hashlib as _hashlib
 
 def _mask_supplier(name: str) -> str:
-    """Return a stable numbered alias for a supplier name (e.g. 'ספק #1')."""
-    global _supplier_mask_counter
+    """Return a deterministic numbered alias for a supplier name (e.g. 'ספק #3').
+    The number is derived from the supplier name via SHA-256, so it is consistent
+    across all worker processes and restarts without shared state.
+    """
     if not name:
         return "ספק"
-    if name not in _SUPPLIER_MASK_MAP:
-        _supplier_mask_counter += 1
-        _SUPPLIER_MASK_MAP[name] = f"ספק #{_supplier_mask_counter}"
-    return _SUPPLIER_MASK_MAP[name]
+    # Take first 4 hex bytes of SHA-256 → 0..4294967295, map to 1..9999
+    digest = int(_hashlib.sha256(name.encode("utf-8")).hexdigest()[:8], 16)
+    num = (digest % 9999) + 1
+    return f"ספק #{num}"
+
+
+# ==============================================================================
+# VIRUS SCANNING — ClamAV via clamd (graceful degradation when daemon absent)
+# ==============================================================================
+import clamd as _clamd
+
+def _scan_bytes_for_virus(content: bytes) -> tuple:
+    """
+    Scan raw bytes with ClamAV daemon.
+    Returns: ('clean', None) | ('infected', '<VirusName>') | ('skipped', None)
+    Tries Unix socket first, falls back to TCP, then skips gracefully.
+    """
+    for _make_scanner in (
+        lambda: _clamd.ClamdUnixSocket(),
+        lambda: _clamd.ClamdNetworkSocket(host=os.getenv("CLAMD_HOST", "clamav"), port=3310),
+    ):
+        try:
+            scanner = _make_scanner()
+            result = scanner.instream(io.BytesIO(content))
+            status, virus_name = result.get("stream", ("skipped", None))
+            return (status.lower(), virus_name)
+        except Exception:
+            continue
+    # ClamAV daemon unavailable — skip scan (dev/CI without ClamAV)
+    return ("skipped", None)
 
 
 # ==============================================================================
@@ -210,6 +255,18 @@ class RegisterRequest(BaseModel):
                 raise ValueError("Invalid international phone number")
         elif not v.startswith("05") or len(v) != 10 or not v.isdigit():
             raise ValueError("Invalid Israeli phone number (must start with 05, 10 digits)")
+        return v
+
+    @validator("password")
+    def validate_password_strength(cls, v):
+        min_len = int(os.getenv("PASSWORD_MIN_LENGTH", 8))
+        if len(v) < min_len:
+            raise ValueError(f"Password must be at least {min_len} characters long")
+        # Require at least one digit and one letter
+        if not any(c.isdigit() for c in v):
+            raise ValueError("Password must contain at least one digit")
+        if not any(c.isalpha() for c in v):
+            raise ValueError("Password must contain at least one letter")
         return v
 
 class LoginRequest(BaseModel):
@@ -378,6 +435,32 @@ async def refresh_token(data: RefreshTokenRequest, db: AsyncSession = Depends(ge
 
 @app.post("/api/v1/auth/verify-email")
 async def verify_email(token: str, db: AsyncSession = Depends(get_pii_db)):
+    """Validate an email verification token (re-uses the PasswordReset table as
+    a lightweight token store — a dedicated EmailVerification table can replace
+    this when full email verification flow is implemented)."""
+    from BACKEND_DATABASE_MODELS import PasswordReset
+    from datetime import datetime
+    if not token:
+        raise HTTPException(status_code=400, detail="Token required")
+    result = await db.execute(
+        select(PasswordReset).where(
+            and_(
+                PasswordReset.token == token,
+                PasswordReset.used_at.is_(None),
+                PasswordReset.expires_at > datetime.utcnow(),
+            )
+        )
+    )
+    reset = result.scalar_one_or_none()
+    if not reset:
+        raise HTTPException(status_code=400, detail="Invalid or expired verification token")
+    # Mark user as verified
+    user_result = await db.execute(select(User).where(User.id == reset.user_id))
+    user = user_result.scalar_one_or_none()
+    if user:
+        user.is_verified = True
+    reset.used_at = datetime.utcnow()
+    await db.commit()
     return {"message": "Email verified"}
 
 
@@ -398,7 +481,16 @@ async def send_2fa(current_user: User = Depends(get_current_user), db: AsyncSess
 
 
 @app.post("/api/v1/auth/logout")
-async def logout(current_user: User = Depends(get_current_user)):
+async def logout(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_pii_db),
+):
+    # Revoke the current session token so it can no longer be used
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.removeprefix("Bearer ").strip() if auth_header.startswith("Bearer ") else ""
+    if token:
+        await logout_user(token, db)
     return {"message": "Logged out successfully"}
 
 
@@ -546,7 +638,7 @@ async def send_message(data: ChatMessageRequest, current_user: User = Depends(ge
 
     # ── 3. Fire agent as asyncio background task (non-blocking) ──────────────
     async def _run_agent_bg():
-        async with async_session_factory() as bg_db:
+        async with pii_session_factory() as bg_db:
             try:
                 await process_agent_response_for_message(user_id, message, conv_id, bg_db)
             except Exception as exc:
@@ -623,6 +715,10 @@ async def upload_image(file: UploadFile = File(...), current_user: User = Depend
     if github_token:
         try:
             img_bytes = await file.read()
+            # Virus scan before processing
+            _img_scan, _img_virus = _scan_bytes_for_virus(img_bytes)
+            if _img_scan == "infected":
+                raise HTTPException(status_code=400, detail=f"File rejected: malware detected ({_img_virus})")
             if len(img_bytes) <= 10 * 1024 * 1024:  # 10 MB limit
                 b64 = _b64.b64encode(img_bytes).decode()
                 mime = file.content_type or "image/jpeg"
@@ -684,7 +780,23 @@ async def upload_video(file: UploadFile = File(...), current_user: User = Depend
 
 
 @app.websocket("/api/v1/chat/ws")
-async def chat_websocket(websocket: WebSocket, db: AsyncSession = Depends(get_pii_db)):
+async def chat_websocket(websocket: WebSocket, token: Optional[str] = None, db: AsyncSession = Depends(get_pii_db)):
+    """Authenticated WebSocket. Client must pass ?token=<access_token> as a query param."""
+    from BACKEND_AUTH_SECURITY import decode_access_token
+    from jose import JWTError
+    # Validate token before accepting the connection
+    if not token:
+        await websocket.close(code=4001, reason="Authentication required")
+        return
+    try:
+        payload = decode_access_token(token)
+        user_id = payload.get("sub")
+        if not user_id:
+            raise JWTError("No user id in token")
+    except (JWTError, Exception):
+        await websocket.close(code=4003, reason="Invalid or expired token")
+        return
+
     await websocket.accept()
     try:
         while True:
@@ -883,9 +995,9 @@ async def search_parts(
 
     # ── Run all 3 type queries (concurrently) ────────────────────────────────
     original_res, oem_res, aftermarket_res = await asyncio.gather(
-        _fetch_type(["OEM", "Original"]),      # מקורי / original equipment
-        _fetch_type(["OEM", "Original"]),      # same bucket, shown as OEM label
-        _fetch_type(["Aftermarket", "Refurbished"]),  # חליפי / aftermarket
+        _fetch_type(["Original"]),                         # מקורי / OEM original
+        _fetch_type(["OEM"]),                              # OEM equivalent
+        _fetch_type(["Aftermarket", "Refurbished"]),       # חליפי / aftermarket
     )
 
     return {
@@ -944,6 +1056,7 @@ async def autocomplete_parts(q: str = "", limit: int = 8, db: AsyncSession = Dep
     return {"suggestions": suggestions, "query": q}
 
 
+@app.get("/api/v1/parts/manufacturers")
 async def get_manufacturers(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(PartsCatalog.manufacturer).distinct().where(PartsCatalog.is_active == True))
     return {"manufacturers": [m for m in result.scalars().all() if m]}
@@ -1307,6 +1420,7 @@ async def compare_parts(part_id: str, db: AsyncSession = Depends(get_db)):
 @app.post("/api/v1/parts/identify-from-image")
 async def identify_part_from_image(
     file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Identify a car part from a photo using GPT-4o Vision, then search the DB."""
@@ -1406,7 +1520,7 @@ async def identify_part_from_image(
 # ==============================================================================
 
 @app.post("/api/v1/vehicles/identify")
-async def identify_vehicle(data: VehicleIdentifyRequest, db: AsyncSession = Depends(get_db)):
+async def identify_vehicle(data: VehicleIdentifyRequest, db: AsyncSession = Depends(get_pii_db)):
     agent = get_agent("parts_finder_agent")
     try:
         result = await agent.identify_vehicle(data.license_plate, db)
@@ -1419,7 +1533,7 @@ async def identify_vehicle(data: VehicleIdentifyRequest, db: AsyncSession = Depe
 
 
 @app.post("/api/v1/vehicles/identify-from-image")
-async def identify_vehicle_from_image(file: UploadFile = File(...), current_user: User = Depends(get_current_verified_user), db: AsyncSession = Depends(get_db)):
+async def identify_vehicle_from_image(file: UploadFile = File(...), current_user: User = Depends(get_current_verified_user), db: AsyncSession = Depends(get_pii_db)):
     return {"message": "License plate OCR – coming soon"}
 
 
@@ -1528,7 +1642,7 @@ async def create_order(data: OrderCreate, current_user: User = Depends(get_curre
     from BACKEND_AI_AGENTS import get_supplier_shipping as _get_ship2
     subtotal = 0.0
     items_data = []
-    USD_TO_ILS = 3.65
+    # USD_TO_ILS is imported from BACKEND_DATABASE_MODELS (single source of truth)
     # Track unique suppliers in this order → charge delivery fee once per supplier origin
     supplier_delivery_fees: dict[str, float] = {}  # supplier_id -> delivery_fee
 
@@ -1664,13 +1778,13 @@ async def cancel_order(order_id: str, data: OrderCancelRequest, current_user: Us
                 try:
                     # payment_intent_id stores the Checkout Session ID (cs_...)
                     # Retrieve session to get the actual payment_intent (pi_...)
-                    session_obj = await asyncio.get_event_loop().run_in_executor(
+                    session_obj = await asyncio.get_running_loop().run_in_executor(
                         None,
                         lambda: stripe_sdk.checkout.Session.retrieve(payment.payment_intent_id)
                     )
                     pi_id = session_obj.payment_intent
                     if pi_id:
-                        stripe_refund = await asyncio.get_event_loop().run_in_executor(
+                        stripe_refund = await asyncio.get_running_loop().run_in_executor(
                             None,
                             lambda: stripe_sdk.Refund.create(
                                 payment_intent=pi_id,
@@ -1735,13 +1849,18 @@ async def cancel_order(order_id: str, data: OrderCancelRequest, current_user: Us
 
 
 @app.post("/api/v1/orders/{order_id}/return")
-async def create_order_return(order_id: str, reason: str, description: Optional[str] = None, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
+async def create_order_return(
+    order_id: str,
+    data: ReturnRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_pii_db),
+):
     result = await db.execute(select(Order).where(and_(Order.id == order_id, Order.user_id == current_user.id)))
     order = result.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
     return_number = f"RET-2026-{str(uuid.uuid4())[:8].upper()}"
-    ret = Return(return_number=return_number, order_id=order.id, user_id=current_user.id, reason=reason, description=description, original_amount=order.total_amount, status="pending")
+    ret = Return(return_number=return_number, order_id=order.id, user_id=current_user.id, reason=data.reason, description=data.description, original_amount=order.total_amount, status="pending")
     db.add(ret)
     await db.commit()
     await db.refresh(ret)
@@ -1757,6 +1876,10 @@ async def delete_order(order_id: str, current_user: User = Depends(get_current_u
     if order.status not in ["pending_payment", "cancelled"]:
         raise HTTPException(status_code=400, detail="ניתן למחוק רק הזמנות שבוטלו או שממתינות לתשלום")
     # Delete child records that have non-nullable FKs first
+    # Returns must be deleted before the Order (no CASCADE defined)
+    ret_res = await db.execute(select(Return).where(Return.order_id == order.id))
+    for ret in ret_res.scalars().all():
+        await db.delete(ret)
     pay_res = await db.execute(select(Payment).where(Payment.order_id == order.id))
     for pay in pay_res.scalars().all():
         await db.delete(pay)
@@ -1881,8 +2004,20 @@ async def create_checkout_session(
                 status="paid",
             ))
         await db.commit()
-        # Trigger supplier fulfillment in background
-        asyncio.create_task(trigger_supplier_fulfillment([order], db))
+        # Trigger supplier fulfillment in background with its own session
+        # (request db will close after handler returns)
+        _order_id = order.id
+        async def _fulfill_bg():
+            async with pii_session_factory() as bg_db:
+                try:
+                    result2 = await bg_db.execute(select(Order).where(Order.id == _order_id))
+                    bg_order = result2.scalar_one_or_none()
+                    if bg_order:
+                        await trigger_supplier_fulfillment([bg_order], bg_db)
+                        await bg_db.commit()
+                except Exception as _e:
+                    print(f"[Fulfillment BG] error: {_e}")
+        asyncio.create_task(_fulfill_bg())
         return {
             "checkout_url": f"{frontend_url}/payment/success?session_id={sim_session_id}&simulated=1",
             "session_id": sim_session_id,
@@ -1925,7 +2060,7 @@ async def create_checkout_session(
         })
 
     # Create Stripe Checkout Session (async)
-    session = await asyncio.get_event_loop().run_in_executor(
+    session = await asyncio.get_running_loop().run_in_executor(
         None,
         lambda: stripe_sdk.checkout.Session.create(
             payment_method_types=["card"],
@@ -2023,7 +2158,7 @@ async def create_multi_checkout_session(
             })
 
     frontend_url = _get_frontend_url(request)
-    session = await asyncio.get_event_loop().run_in_executor(
+    session = await asyncio.get_running_loop().run_in_executor(
         None,
         lambda: stripe_sdk.checkout.Session.create(
             payment_method_types=["card"],
@@ -2113,7 +2248,7 @@ async def verify_checkout_session(
 
     stripe_sdk.api_key = stripe_key
 
-    session = await asyncio.get_event_loop().run_in_executor(
+    session = await asyncio.get_running_loop().run_in_executor(
         None,
         lambda: stripe_sdk.checkout.Session.retrieve(session_id)
     )
@@ -2316,7 +2451,17 @@ async def list_refunds(current_user: User = Depends(get_current_user), db: Async
 
 @app.get("/api/v1/payments/{payment_id}")
 async def get_payment(payment_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
-    result = await db.execute(select(Payment).where(Payment.id == payment_id))
+    # Join with Order to enforce ownership — prevents IDOR
+    result = await db.execute(
+        select(Payment)
+        .join(Order, Payment.order_id == Order.id)
+        .where(
+            and_(
+                Payment.id == payment_id,
+                Order.user_id == current_user.id,
+            )
+        )
+    )
     payment = result.scalar_one_or_none()
     if not payment:
         raise HTTPException(status_code=404, detail="Payment not found")
@@ -2332,16 +2477,16 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_pii_db
     webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET", "")
     stripe_sdk.api_key = os.getenv("STRIPE_SECRET_KEY", "")
 
+    # Reject webhook silently (return 400) when secret is not configured — never
+    # fall through to forged-event handling.
+    if not webhook_secret:
+        raise HTTPException(status_code=400, detail="Webhook secret not configured")
+
     try:
-        if webhook_secret and not webhook_secret.startswith("whsec_xxxxx"):
-            event = await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: stripe_sdk.Webhook.construct_event(payload, sig_header, webhook_secret)
-            )
-        else:
-            event = stripe_sdk.Event.construct_from(
-                {"type": "raw", "data": {"object": {}}}, stripe_sdk.api_key
-            )
+        event = await asyncio.get_running_loop().run_in_executor(
+            None,
+            lambda: stripe_sdk.Webhook.construct_event(payload, sig_header, webhook_secret)
+        )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -2416,7 +2561,7 @@ async def refund_payment(
     stripe_sdk.api_key = stripe_key
     try:
         # payment_intent_id field stores the Checkout Session ID (cs_...)
-        session_obj = await asyncio.get_event_loop().run_in_executor(
+        session_obj = await asyncio.get_running_loop().run_in_executor(
             None,
             lambda: stripe_sdk.checkout.Session.retrieve(payment.payment_intent_id)
         )
@@ -2425,7 +2570,7 @@ async def refund_payment(
             raise HTTPException(status_code=400, detail="No payment intent found for this session")
 
         refund_cents = int(amount * 100)
-        stripe_refund = await asyncio.get_event_loop().run_in_executor(
+        stripe_refund = await asyncio.get_running_loop().run_in_executor(
             None,
             lambda: stripe_sdk.Refund.create(
                 payment_intent=pi_id,
@@ -2702,9 +2847,24 @@ async def upload_file(file: UploadFile = File(...), current_user: User = Depends
     content = await file.read()
     if len(content) > 25 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File too large (max 25MB)")
+    # Virus scan before persisting anything
+    scan_status, virus_name = _scan_bytes_for_virus(content)
+    if scan_status == "infected":
+        raise HTTPException(status_code=400, detail=f"File rejected: malware detected ({virus_name})")
     stored_filename = f"{uuid.uuid4()}_{file.filename}"
     ftype = "image" if "image" in (file.content_type or "") else ("audio" if "audio" in (file.content_type or "") else "video")
-    file_record = FileModel(user_id=current_user.id, original_filename=file.filename, stored_filename=stored_filename, file_type=ftype, mime_type=file.content_type, file_size_bytes=len(content), storage_path=f"/uploads/{stored_filename}", expires_at=datetime.utcnow() + timedelta(days=30))
+    file_record = FileModel(
+        user_id=current_user.id,
+        original_filename=file.filename,
+        stored_filename=stored_filename,
+        file_type=ftype,
+        mime_type=file.content_type,
+        file_size_bytes=len(content),
+        storage_path=f"/uploads/{stored_filename}",
+        expires_at=datetime.utcnow() + timedelta(days=30),
+        virus_scan_status=scan_status,
+        virus_scan_at=datetime.utcnow() if scan_status != "skipped" else None,
+    )
     db.add(file_record)
     await db.commit()
     await db.refresh(file_record)
@@ -3544,7 +3704,7 @@ async def test_agent(
     agent_name: str,
     body: dict,
     current_user: User = Depends(get_current_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_pii_db),
 ):
     from BACKEND_AI_AGENTS import get_agent, AGENT_MAP
     if agent_name not in AGENT_MAP:
@@ -4114,15 +4274,16 @@ async def db_agent_run_all(
     if is_running():
         return {"status": "already_running", "message": "DB agent is already running"}
 
-    async def _run(session):
-        try:
-            await run_all_tasks(session)
-        except Exception as exc:
-            print(f"[DB Agent] background run error: {exc}")
+    # The task must open its own session — the context-manager session would
+    # close before the background coroutine runs.
+    async def _run():
+        async with async_session_factory() as bg_db:
+            try:
+                await run_all_tasks(bg_db)
+            except Exception as exc:
+                print(f"[DB Agent] background run error: {exc}")
 
-    async with async_session_factory() as bg_db:
-        asyncio.create_task(_run(bg_db))
-
+    asyncio.create_task(_run())
     return {"status": "started", "message": "All DB agent tasks triggered in the background"}
 
 
