@@ -1,5 +1,6 @@
 from __future__ import with_statement
 import os
+import re
 from logging.config import fileConfig
 
 from sqlalchemy import pool
@@ -16,20 +17,26 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# import your project's metadata object for 'autogenerate'
-# Prefer async models (if present), otherwise fall back to the synchronous DB module.
+# Import project metadata so autogenerate can detect table changes.
+# We import from backend/ since that's where the real models live.
 try:
-    from src.config.async_database import Base
-    target_metadata = Base.metadata
-except Exception:
-    try:
-        from src.config.database import Base
-        target_metadata = Base.metadata
-    except Exception:
-        target_metadata = None
+    import sys, os as _os
+    # Ensure 'backend/' is on sys.path when running alembic from repo root
+    _backend_path = _os.path.join(_os.path.dirname(_os.path.dirname(__file__)), 'backend')
+    if _backend_path not in sys.path:
+        sys.path.insert(0, _backend_path)
+    from BACKEND_DATABASE_MODELS import Base, PiiBase
+    # Combine both metadata objects so autogenerate sees all 35 tables
+    target_metadata = [Base.metadata, PiiBase.metadata]
+except Exception as _exc:
+    print(f"[alembic/env.py] WARNING: Could not import models: {_exc}")
+    target_metadata = None
 
-# get DB URL from environment (recommended)
-DATABASE_URL = os.environ.get("DATABASE_URL") or config.get_main_option("sqlalchemy.url")
+# get DB URL from environment (recommended).
+# For the synchronous alembic runner we need a psycopg2 URL, not asyncpg.
+_raw_url = os.environ.get("DATABASE_URL") or config.get_main_option("sqlalchemy.url") or ""
+# Convert postgresql+asyncpg:// → postgresql+psycopg2:// for sync runner
+DATABASE_URL = re.sub(r"postgresql\+asyncpg", "postgresql+psycopg2", _raw_url)
 
 
 def run_migrations_offline():
@@ -45,7 +52,7 @@ def run_migrations_offline():
 
 def run_migrations_online():
     from sqlalchemy import create_engine
-    connectable = create_engine(DATABASE_URL)
+    connectable = create_engine(DATABASE_URL, poolclass=pool.NullPool)
 
     with connectable.connect() as connection:
         context.configure(

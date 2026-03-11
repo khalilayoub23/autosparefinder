@@ -88,7 +88,8 @@ LLAMA = "Meta-Llama-3.1-70B-Instruct"
 PROFIT_MARGIN = 1.45       # 45% markup on cost
 VAT_RATE = 0.17            # 17%
 SHIPPING_ILS = 91.0        # default customer delivery fee (₪)
-USD_TO_ILS = 3.65          # exchange rate
+# Import the single source of truth for USD→ILS rate from BACKEND_DATABASE_MODELS
+from BACKEND_DATABASE_MODELS import USD_TO_ILS
 
 # Customer-facing delivery fee per supplier (varies by origin country)
 SUPPLIER_SHIPPING_RATES: dict = {
@@ -337,33 +338,35 @@ get_db_stats() to verify what categories and manufacturers currently hold stock.
         The agent can call this periodically to stay up to date.
         """
         from sqlalchemy import func
-        cat_result = await db.execute(
-            select(PartsCatalog.category, func.count(PartsCatalog.id).label("cnt"))
-            .where(PartsCatalog.is_active == True)
-            .group_by(PartsCatalog.category)
-            .order_by(func.count(PartsCatalog.id).desc())
-        )
-        mfr_result = await db.execute(
-            select(PartsCatalog.manufacturer, func.count(PartsCatalog.id).label("cnt"))
-            .where(PartsCatalog.is_active == True)
-            .group_by(PartsCatalog.manufacturer)
-            .order_by(func.count(PartsCatalog.id).desc())
-        )
-        pt_result = await db.execute(
-            select(PartsCatalog.part_type, func.count(PartsCatalog.id).label("cnt"))
-            .where(PartsCatalog.is_active == True)
-            .group_by(PartsCatalog.part_type)
-            .order_by(func.count(PartsCatalog.id).desc())
-        )
-        total_result = await db.execute(
-            select(func.count(PartsCatalog.id)).where(PartsCatalog.is_active == True)
-        )
-        return {
-            "total_active": total_result.scalar(),
-            "categories": {row[0]: row[1] for row in cat_result.fetchall()},
-            "manufacturers": {row[0]: row[1] for row in mfr_result.fetchall()},
-            "part_types": {row[0]: row[1] for row in pt_result.fetchall()},
-        }
+        # Always use catalog DB — PartsCatalog lives in autospare, not pii
+        async with async_session_factory() as cat_db:
+            cat_result = await cat_db.execute(
+                select(PartsCatalog.category, func.count(PartsCatalog.id).label("cnt"))
+                .where(PartsCatalog.is_active == True)
+                .group_by(PartsCatalog.category)
+                .order_by(func.count(PartsCatalog.id).desc())
+            )
+            mfr_result = await cat_db.execute(
+                select(PartsCatalog.manufacturer, func.count(PartsCatalog.id).label("cnt"))
+                .where(PartsCatalog.is_active == True)
+                .group_by(PartsCatalog.manufacturer)
+                .order_by(func.count(PartsCatalog.id).desc())
+            )
+            pt_result = await cat_db.execute(
+                select(PartsCatalog.part_type, func.count(PartsCatalog.id).label("cnt"))
+                .where(PartsCatalog.is_active == True)
+                .group_by(PartsCatalog.part_type)
+                .order_by(func.count(PartsCatalog.id).desc())
+            )
+            total_result = await cat_db.execute(
+                select(func.count(PartsCatalog.id)).where(PartsCatalog.is_active == True)
+            )
+            return {
+                "total_active": total_result.scalar(),
+                "categories": {row[0]: row[1] for row in cat_result.fetchall()},
+                "manufacturers": {row[0]: row[1] for row in mfr_result.fetchall()},
+                "part_types": {row[0]: row[1] for row in pt_result.fetchall()},
+            }
 
     async def normalize_manufacturer(self, raw_name: str, db: AsyncSession) -> str:
         """Normalize a raw manufacturer string to the canonical car_brands.name.
@@ -373,56 +376,60 @@ get_db_stats() to verify what categories and manufacturers currently hold stock.
         if not raw_name or not raw_name.strip():
             return raw_name
         cleaned = raw_name.strip()
-        # 1. Exact match on name or name_he
-        result = await db.execute(
-            select(CarBrand.name).where(CarBrand.is_active == True).where(
-                or_(CarBrand.name.ilike(cleaned), CarBrand.name_he.ilike(cleaned))
-            ).limit(1)
-        )
-        row = result.scalar_one_or_none()
-        if row:
-            return row
-        # 2. Check aliases array (text[] in DB — use ANY operator)
-        result2 = await db.execute(
-            select(CarBrand.name).where(CarBrand.is_active == True).where(
-                text("(:val)::text = ANY(car_brands.aliases)")
-            ).params(val=cleaned).limit(1)
-        )
-        row2 = result2.scalar_one_or_none()
-        if row2:
-            return row2
-        # 3. Case-insensitive alias check via unnest
-        result3 = await db.execute(
-            select(CarBrand.name).where(CarBrand.is_active == True).where(
-                or_(
-                    CarBrand.name.ilike(f"{cleaned}%"),
-                    CarBrand.name.ilike(f"%{cleaned}%"),
-                )
-            ).order_by(CarBrand.name).limit(1)
-        )
-        row3 = result3.scalar_one_or_none()
-        return row3 if row3 else cleaned
+        # Always use catalog DB — CarBrand lives in autospare, not pii
+        async with async_session_factory() as cat_db:
+            # 1. Exact match on name or name_he
+            result = await cat_db.execute(
+                select(CarBrand.name).where(CarBrand.is_active == True).where(
+                    or_(CarBrand.name.ilike(cleaned), CarBrand.name_he.ilike(cleaned))
+                ).limit(1)
+            )
+            row = result.scalar_one_or_none()
+            if row:
+                return row
+            # 2. Check aliases array (text[] in DB — use ANY operator)
+            result2 = await cat_db.execute(
+                select(CarBrand.name).where(CarBrand.is_active == True).where(
+                    text("(:val)::text = ANY(car_brands.aliases)")
+                ).params(val=cleaned).limit(1)
+            )
+            row2 = result2.scalar_one_or_none()
+            if row2:
+                return row2
+            # 3. Case-insensitive alias check via unnest
+            result3 = await cat_db.execute(
+                select(CarBrand.name).where(CarBrand.is_active == True).where(
+                    or_(
+                        CarBrand.name.ilike(f"{cleaned}%"),
+                        CarBrand.name.ilike(f"%{cleaned}%"),
+                    )
+                ).order_by(CarBrand.name).limit(1)
+            )
+            row3 = result3.scalar_one_or_none()
+            return row3 if row3 else cleaned
 
     async def list_known_brands(self, db: AsyncSession) -> List[Dict]:
         """Return all active brands from the car_brands registry."""
-        result = await db.execute(
-            select(CarBrand)
-            .where(CarBrand.is_active == True)
-            .order_by(CarBrand.name)
-        )
-        brands = result.scalars().all()
-        return [
-            {
-                "name": b.name,
-                "name_he": b.name_he,
-                "group": b.group_name,
-                "country": b.country,
-                "region": b.region,
-                "is_luxury": b.is_luxury,
-                "is_electric": b.is_electric_focused,
-            }
-            for b in brands
-        ]
+        # Always use catalog DB — CarBrand lives in autospare, not pii
+        async with async_session_factory() as cat_db:
+            result = await cat_db.execute(
+                select(CarBrand)
+                .where(CarBrand.is_active == True)
+                .order_by(CarBrand.name)
+            )
+            brands = result.scalars().all()
+            return [
+                {
+                    "name": b.name,
+                    "name_he": b.name_he,
+                    "group": b.group_name,
+                    "country": b.country,
+                    "region": b.region,
+                    "is_luxury": b.is_luxury,
+                    "is_electric": b.is_electric_focused,
+                }
+                for b in brands
+            ]
 
     @staticmethod
     def _vehicle_response(vehicle: "Vehicle", extra: dict | None = None) -> Dict:
@@ -454,56 +461,61 @@ get_db_stats() to verify what categories and manufacturers currently hold stock.
         }
 
     async def identify_vehicle(self, license_plate: str, db: AsyncSession) -> Dict:
-        """Identify vehicle from license plate via Israeli Transport Ministry API (data.gov.il)."""
+        """Identify vehicle from license plate via Israeli Transport Ministry API (data.gov.il).
+        Always uses its own pii_session_factory session — Vehicle is a PiiBase model.
+        The `db` parameter is kept for API compatibility but is not used.
+        """
+        from BACKEND_DATABASE_MODELS import pii_session_factory
         clean_plate = license_plate.replace("-", "").replace(" ", "")
 
-        # Check DB cache (90-day TTL)
-        result = await db.execute(
-            select(Vehicle).where(Vehicle.license_plate == clean_plate)
-        )
-        vehicle = result.scalar_one_or_none()
-
-        if vehicle and vehicle.cached_at:
-            cache_age = (datetime.utcnow() - vehicle.cached_at).days
-            if cache_age < 90:
-                return self._vehicle_response(vehicle)
-
-        # Live call to data.gov.il
-        vehicle_data = await self._call_gov_api(clean_plate)
-        if not vehicle_data:
-            raise Exception(f"Vehicle with plate {clean_plate} not found in government database")
-
-        # Strip internal _raw key before persisting to avoid large JSONB
-        raw = vehicle_data.pop("_raw", {})
-        gov_cache = {**vehicle_data, "_raw_fields": list(raw.keys())}
-
-        # Persist / update
-        if vehicle:
-            vehicle.manufacturer    = vehicle_data.get("manufacturer") or vehicle.manufacturer
-            vehicle.model           = vehicle_data.get("model") or vehicle.model
-            vehicle.year            = vehicle_data.get("year") or vehicle.year
-            vehicle.engine_type     = vehicle_data.get("engine_type") or vehicle.engine_type
-            vehicle.fuel_type       = vehicle_data.get("fuel_type") or vehicle.fuel_type
-            vehicle.transmission    = vehicle_data.get("transmission") or vehicle.transmission
-            vehicle.gov_api_data    = gov_cache
-            vehicle.cached_at       = datetime.utcnow()
-        else:
-            vehicle = Vehicle(
-                license_plate   = clean_plate,
-                manufacturer    = vehicle_data.get("manufacturer", ""),
-                model           = vehicle_data.get("model", ""),
-                year            = vehicle_data.get("year", 0),
-                engine_type     = vehicle_data.get("engine_type"),
-                fuel_type       = vehicle_data.get("fuel_type"),
-                transmission    = vehicle_data.get("transmission"),
-                gov_api_data    = gov_cache,
-                cached_at       = datetime.utcnow(),
+        async with pii_session_factory() as pii_db:
+            # Check DB cache (90-day TTL)
+            result = await pii_db.execute(
+                select(Vehicle).where(Vehicle.license_plate == clean_plate)
             )
-            db.add(vehicle)
+            vehicle = result.scalar_one_or_none()
 
-        await db.commit()
-        await db.refresh(vehicle)
-        return self._vehicle_response(vehicle)
+            if vehicle and vehicle.cached_at:
+                cache_age = (datetime.utcnow() - vehicle.cached_at).days
+                if cache_age < 90:
+                    return self._vehicle_response(vehicle)
+
+            # Live call to data.gov.il
+            vehicle_data = await self._call_gov_api(clean_plate)
+            if not vehicle_data:
+                raise Exception(f"Vehicle with plate {clean_plate} not found in government database")
+
+            # Strip internal _raw key before persisting to avoid large JSONB
+            raw = vehicle_data.pop("_raw", {})
+            gov_cache = {**vehicle_data, "_raw_fields": list(raw.keys())}
+
+            # Persist / update
+            if vehicle:
+                vehicle.manufacturer    = vehicle_data.get("manufacturer") or vehicle.manufacturer
+                vehicle.model           = vehicle_data.get("model") or vehicle.model
+                vehicle.year            = vehicle_data.get("year") or vehicle.year
+                vehicle.engine_type     = vehicle_data.get("engine_type") or vehicle.engine_type
+                vehicle.fuel_type       = vehicle_data.get("fuel_type") or vehicle.fuel_type
+                vehicle.transmission    = vehicle_data.get("transmission") or vehicle.transmission
+                vehicle.gov_api_data    = gov_cache
+                vehicle.cached_at       = datetime.utcnow()
+            else:
+                vehicle = Vehicle(
+                    license_plate   = clean_plate,
+                    manufacturer    = vehicle_data.get("manufacturer", ""),
+                    model           = vehicle_data.get("model", ""),
+                    year            = vehicle_data.get("year", 0),
+                    engine_type     = vehicle_data.get("engine_type"),
+                    fuel_type       = vehicle_data.get("fuel_type"),
+                    transmission    = vehicle_data.get("transmission"),
+                    gov_api_data    = gov_cache,
+                    cached_at       = datetime.utcnow(),
+                )
+                pii_db.add(vehicle)
+
+            await pii_db.commit()
+            await pii_db.refresh(vehicle)
+            return self._vehicle_response(vehicle)
 
     # data.gov.il resource IDs (Ministry of Transport – private & commercial vehicles)
     _GOV_RESOURCES = [
@@ -709,8 +721,10 @@ get_db_stats() to verify what categories and manufacturers currently hold stock.
         else:  # default: name
             stmt = stmt.order_by(_dir(PartsCatalog.name))
 
-        result = await db.execute(stmt.offset(offset).limit(limit))
-        parts = result.scalars().all()
+        # Always use catalog DB — PartsCatalog/SupplierPart live in autospare, not pii
+        async with async_session_factory() as cat_db:
+            result = await cat_db.execute(stmt.offset(offset).limit(limit))
+            parts = result.scalars().all()
 
         if not parts:
             return []
@@ -720,26 +734,28 @@ get_db_stats() to verify what categories and manufacturers currently hold stock.
         part_ids = [part.id for part in parts]
 
         # Single query: DISTINCT ON (part_id) — best supplier per part, in_stock first
-        sp_batch_result = await db.execute(
-            text("""
-                SELECT DISTINCT ON (sp.part_id)
-                    sp.id AS sp_id, sp.part_id, sp.price_usd, sp.shipping_cost_usd,
-                    sp.is_available, sp.warranty_months, sp.estimated_delivery_days,
-                    s.name AS supplier_name, s.country AS supplier_country,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY sp.part_id
-                        ORDER BY sp.is_available DESC, s.priority ASC
-                    ) AS rn
-                FROM supplier_parts sp
-                JOIN suppliers s ON sp.supplier_id = s.id
-                WHERE sp.part_id = ANY(:pids) AND s.is_active = true
-            """),
-            {"pids": part_ids},
-        )
+        async with async_session_factory() as cat_db:
+            sp_batch_result = await cat_db.execute(
+                text("""
+                    SELECT DISTINCT ON (sp.part_id)
+                        sp.id AS sp_id, sp.part_id, sp.price_usd, sp.shipping_cost_usd,
+                        sp.is_available, sp.warranty_months, sp.estimated_delivery_days,
+                        s.name AS supplier_name, s.country AS supplier_country,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY sp.part_id
+                            ORDER BY sp.is_available DESC, s.priority ASC
+                        ) AS rn
+                    FROM supplier_parts sp
+                    JOIN suppliers s ON sp.supplier_id = s.id
+                    WHERE sp.part_id = ANY(:pids) AND s.is_active = true
+                """),
+                {"pids": part_ids},
+            )
+            sp_rows_all = sp_batch_result.fetchall()
         # Group up to 3 suppliers per part (in_stock first, then on_order)
         from collections import defaultdict
         sp_map: dict[str, list] = defaultdict(list)
-        for row in sp_batch_result.fetchall():
+        for row in sp_rows_all:
             if row.rn <= 3:
                 sp_map[str(row.part_id)].append(row)
 
@@ -1062,19 +1078,20 @@ Upsell example:
 
             if upsell_suggestions:
                 lines = ["\n[UPSELL OPPORTUNITY — כלול הצעות אלו בתשובה:]\n"]
-                for sugg in upsell_suggestions:
-                    # Quick DB check if we have this item
-                    results = await db.execute(
-                        select(PartsCatalog.name, PartsCatalog.manufacturer, PartsCatalog.category)
-                        .where(PartsCatalog.is_active == True)
-                        .where(PartsCatalog.name.ilike(f"%{sugg}%"))
-                        .limit(1)
-                    )
-                    row = results.fetchone()
-                    if row:
-                        lines.append(f"• {sugg}: ✅ יש במלאי — {row[1]} '{row[0]}' ({row[2]})")
-                    else:
-                        lines.append(f"• {sugg}: הצע ללקוח לבדוק")
+                # Always use catalog DB — PartsCatalog lives in autospare, not pii
+                async with async_session_factory() as cat_db:
+                    for sugg in upsell_suggestions:
+                        results = await cat_db.execute(
+                            select(PartsCatalog.name, PartsCatalog.manufacturer, PartsCatalog.category)
+                            .where(PartsCatalog.is_active == True)
+                            .where(PartsCatalog.name.ilike(f"%{sugg}%"))
+                            .limit(1)
+                        )
+                        row = results.fetchone()
+                        if row:
+                            lines.append(f"• {sugg}: ✅ יש במלאי — {row[1]} '{row[0]}' ({row[2]})")
+                        else:
+                            lines.append(f"• {sugg}: הצע ללקוח לבדוק")
                 upsell_context = "\n".join(lines)
         except Exception as e:
             print(f"[SalesAgent] upsell lookup failed: {e}")
@@ -1123,18 +1140,21 @@ LANGUAGE: ALWAYS respond in Hebrew (עברית). If the customer writes in Arabi
 
     async def process(self, message: str, conversation_history: List[Dict], db: AsyncSession, **kwargs) -> str:
         import re as _re
+        from BACKEND_DATABASE_MODELS import pii_session_factory as _pii_sf
         user_id = kwargs.get("user_id")
         order_context = ""
 
-        if user_id and db:
+        if user_id:
             try:
-                res = await db.execute(
-                    select(Order)
-                    .where(Order.user_id == user_id)
-                    .order_by(Order.created_at.desc())
-                    .limit(10)
-                )
-                orders = res.scalars().all()
+                # Always use PII DB — Order lives in autospare_pii
+                async with _pii_sf() as pii_db:
+                    res = await pii_db.execute(
+                        select(Order)
+                        .where(Order.user_id == user_id)
+                        .order_by(Order.created_at.desc())
+                        .limit(10)
+                    )
+                    orders = res.scalars().all()
                 if orders:
                     lines = []
                     for o in orders:

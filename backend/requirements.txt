@@ -18,7 +18,6 @@ hiredis==3.1.1
 
 # AI & LLM
 openai==1.59.9
-anthropic==0.18.1
 
 # File Processing
 Pillow==11.1.0
@@ -40,7 +39,7 @@ cryptography==44.0.0
 bcrypt==4.2.1
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
-pyjwt==2.8.0
+# Note: PyJWT removed — conflicts with python-jose; codebase uses jose exclusively
 
 # Payments
 stripe==11.4.1
@@ -48,7 +47,7 @@ stripe==11.4.1
 # Communication
 twilio==9.4.4
 sendgrid==6.11.0
-python-telegram-bot==20.8
+# Note: python-telegram-bot removed — not used in codebase
 
 # HTTP
 httpx==0.28.1
@@ -56,11 +55,9 @@ aiohttp==3.9.3
 requests==2.32.3
 beautifulsoup4==4.12.3
 lxml==5.1.0
-selenium==4.17.2
+# Note: selenium removed — not used in backend codebase
 
-# Social
-facebook-sdk==3.1.0
-tweepy==4.14.0
+# Note: facebook-sdk and tweepy removed — not used in codebase
 
 # Validation
 phonenumbers==8.13.52

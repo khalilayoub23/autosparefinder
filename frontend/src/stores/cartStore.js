@@ -39,7 +39,12 @@ export const useCartStore = create(
         const items = get().items
         const subtotal = items.reduce((sum, i) => sum + i.price * i.quantity, 0)
         const vat = Math.round(subtotal * 0.17 * 100) / 100
-        const shipping = 91
+        // Shipping is calculated per-supplier-origin on the backend.
+        // Use the sum of per-item shipping costs when available (set at add-to-cart time),
+        // or fall back to a single standard delivery fee (91 ₪) when not yet known.
+        const shipping = items.length > 0
+          ? items.reduce((sum, i) => sum + (i.shippingCost ?? 0), 0) || 91
+          : 0
         const total = Math.round((subtotal + vat + shipping) * 100) / 100
         return { subtotal: Math.round(subtotal * 100) / 100, vat, shipping, total, count: items.reduce((s, i) => s + i.quantity, 0) }
       },

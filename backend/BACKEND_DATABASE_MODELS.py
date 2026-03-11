@@ -64,6 +64,15 @@ class PiiBase(DeclarativeBase):
     pass
 
 
+# ==============================================================================
+# SHARED CONSTANTS
+# ==============================================================================
+
+# Single source of truth for the USD → ILS exchange rate.
+# Override via the USD_TO_ILS environment variable or the system_settings DB row.
+USD_TO_ILS: float = float(os.getenv("USD_TO_ILS", "3.65"))
+
+
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """Dependency: yields an async database session (catalog DB)."""
     async with async_session_factory() as session:
@@ -420,6 +429,8 @@ class SupplierPart(Base):
     express_cutoff_time = Column(String(5), nullable=True)           # "14:00"
     express_last_checked = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    part_type = Column(String(50), nullable=True)                    # OEM, Original, Aftermarket
 
     __table_args__ = (
         UniqueConstraint("supplier_id", "supplier_sku"),
@@ -923,13 +934,18 @@ async def create_tables():
     """Create all tables (used in development; production uses Alembic)."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    print("✅ All 35 tables created successfully")
+    # Also create PII tables (users, orders, payments, sessions, etc.)
+    async with pii_engine.begin() as conn:
+        await conn.run_sync(PiiBase.metadata.create_all)
+    print("✅ All catalog + PII tables created successfully")
 
 
 async def drop_tables():
     """Drop all tables (dangerous! development only)."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
+    async with pii_engine.begin() as conn:
+        await conn.run_sync(PiiBase.metadata.drop_all)
 
 
 async def seed_initial_data(db: AsyncSession):
