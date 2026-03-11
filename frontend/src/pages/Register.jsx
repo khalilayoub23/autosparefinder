@@ -7,7 +7,7 @@ import toast from 'react-hot-toast'
 export default function Register() {
   const navigate = useNavigate()
   const { register, isLoading } = useAuthStore()
-  const [form, setForm] = useState({ full_name: '', email: '', phone: '05', password: '', confirmPassword: '' })
+  const [form, setForm] = useState({ full_name: '', email: '', phone: '', password: '', confirmPassword: '' })
   const [showPass, setShowPass] = useState(false)
   const [done, setDone] = useState(false)
 
@@ -21,8 +21,11 @@ export default function Register() {
       toast.error('הסיסמה חייבת להכיל לפחות 8 תווים')
       return
     }
-    if (!/^05\d{8}$/.test(form.phone)) {
-      toast.error('מספר טלפון לא תקין (צריך להתחיל ב-05 וכולל 10 ספרות)')
+    // Accept Israeli 05XXXXXXXX or international +E.164
+    const isIsraeli = /^05\d{8}$/.test(form.phone)
+    const isIntl = /^\+\d{7,15}$/.test(form.phone)
+    if (!isIsraeli && !isIntl) {
+      toast.error('מספר טלפון לא תקין (ישראלי: 05XXXXXXXX או בינלאומי: +XXXXXXXXXXX)')
       return
     }
     try {
@@ -70,7 +73,7 @@ export default function Register() {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">טלפון (לאימות דו-שלבי)</label>
-              <input type="tel" dir="ltr" className="input-field" placeholder="0501234567" maxLength={10} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} required />
+              <input type="tel" dir="ltr" className="input-field" placeholder="0501234567 או +18777804236" maxLength={16} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} required />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">סיסמה</label>

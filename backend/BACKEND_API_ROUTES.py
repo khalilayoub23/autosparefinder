@@ -23,7 +23,7 @@ import httpx
 from dotenv import load_dotenv
 
 from BACKEND_DATABASE_MODELS import (
-    get_db, async_session_factory, User, Vehicle, PartsCatalog, Order, OrderItem, Payment,
+    get_db, get_pii_db, async_session_factory, pii_session_factory, User, Vehicle, PartsCatalog, Order, OrderItem, Payment,
     Invoice, Return, Conversation, Message, File as FileModel,
     Notification, UserProfile, SystemSetting, SupplierPart, Supplier,
     CarBrand, SystemLog,
@@ -63,64 +63,64 @@ async def trigger_supplier_fulfillment(paid_orders: list, db: AsyncSession) -> N
     admins = admins_res.scalars().all()
 
     for order in paid_orders:
-        # Load items with full supplier data
+        # Load items from PII DB only (OrderItem already stores all needed fields)
         items_res = await db.execute(
-            select(OrderItem, SupplierPart, Supplier)
-            .join(SupplierPart, OrderItem.supplier_part_id == SupplierPart.id)
-            .join(Supplier, SupplierPart.supplier_id == Supplier.id)
-            .where(OrderItem.order_id == order.id)
+            select(OrderItem).where(OrderItem.order_id == order.id)
         )
-        rows = items_res.all()
+        order_items = items_res.scalars().all()
 
-        if not rows:
-            print(f"[Fulfillment] No supplier data for order {order.order_number} — marking processing for manual review")
+        if not order_items:
+            print(f"[Fulfillment] No items for order {order.order_number} — marking processing for manual review")
             order.status = "processing"
             for admin in admins:
                 db.add(Notification(
                     user_id=admin.id,
                     type="supplier_order",
                     title=f"⚠️ {order.order_number} – אין נתוני ספק",
-                    message=f"ההזמנה {order.order_number} שולמה אך אין פריטים עם ספק מקושר. טיפול ידני נדרש.",
+                    message=f"ההזמנה {order.order_number} שולמה אך אין פריטים. טיפול ידני נדרש.",
                     data={"order_id": str(order.id), "order_number": order.order_number, "needs_manual": True},
                 ))
             continue
 
-        # Group items by supplier
+        # Group items by supplier_name (already stored on OrderItem)
         by_supplier: dict = {}
-        max_delivery_days = 14
-        for oi, sp, sup in rows:
-            key = str(sup.id)
-            if key not in by_supplier:
-                by_supplier[key] = {"supplier": sup, "items": [], "total_cost_ils": 0.0}
-            cost_ils = float(sp.price_ils or 0) or (float(sp.price_usd or 0) * USD_TO_ILS)
-            ship_ils = float(sp.shipping_cost_ils or 0) or (float(sp.shipping_cost_usd or 0) * USD_TO_ILS)
-            item_cost = round((cost_ils + ship_ils) * oi.quantity, 2)
-            by_supplier[key]["items"].append({
+        for oi in order_items:
+            sup_name = oi.supplier_name or "ספק לא ידוע"
+            if sup_name not in by_supplier:
+                by_supplier[sup_name] = {"items": [], "total_cost_ils": 0.0}
+            item_cost = float(oi.total_price or (oi.unit_price * oi.quantity))
+            by_supplier[sup_name]["items"].append({
                 "part_name": oi.part_name,
                 "part_sku": oi.part_sku or "",
-                "supplier_sku": sp.supplier_sku or "",
+                "supplier_sku": "",
                 "manufacturer": oi.manufacturer or "",
                 "quantity": oi.quantity,
-                "unit_cost_ils": round(cost_ils, 2),
-                "shipping_ils": round(ship_ils, 2),
-                "item_total_ils": item_cost,
-                "warranty_months": sp.warranty_months or 12,
-                "availability": sp.availability or "In Stock",
-                "estimated_delivery_days": sp.estimated_delivery_days or 14,
+                "unit_cost_ils": float(oi.unit_price or 0),
+                "shipping_ils": 0.0,
+                "item_total_ils": round(item_cost, 2),
+                "warranty_months": oi.warranty_months or 12,
+                "availability": "In Stock",
+                "estimated_delivery_days": 14,
             })
-            by_supplier[key]["total_cost_ils"] += item_cost
-            if (sp.estimated_delivery_days or 14) > max_delivery_days:
-                max_delivery_days = sp.estimated_delivery_days or 14
+            by_supplier[sup_name]["total_cost_ils"] += item_cost
+
+        # Build by_supplier_id-compatible dict for agent
+        by_supplier_for_agent = {
+            f"name:{k}": {"supplier": type("S", (), {"id": f"name:{k}", "name": k, "website": "", "country": ""})(), "items": v["items"], "total_cost_ils": v["total_cost_ils"]}
+            for k, v in by_supplier.items()
+        }
 
         # ── Agent auto-fulfills: generates tracking, updates order, notifies customer ──
-        all_tracking = await agent.auto_fulfill_order(order, by_supplier, db)
+        try:
+            all_tracking = await agent.auto_fulfill_order(order, by_supplier_for_agent, db)
+        except Exception as e:
+            print(f"[Fulfillment] Agent fulfill error: {e}")
+            all_tracking = []
 
-        # ── Admin audit log: pre-marked done (agent handled it) ──
-        for sup_id, sup_data in by_supplier.items():
-            sup = sup_data["supplier"]
-            # Find the tracking the agent assigned to this supplier
+        # ── Admin audit log ──
+        for sup_name, sup_data in by_supplier.items():
             sup_tracking = next(
-                (t for t in (all_tracking or []) if t["supplier"] == sup.name), {}
+                (t for t in (all_tracking or []) if t.get("supplier") == sup_name), {}
             )
             items_lines = "\n".join(
                 f"  • {it['part_name']} ×{it['quantity']} — ₪{it['item_total_ils']:.2f}"
@@ -130,17 +130,15 @@ async def trigger_supplier_fulfillment(paid_orders: list, db: AsyncSession) -> N
                 db.add(Notification(
                     user_id=admin.id,
                     type="supplier_order",
-                    title=f"🤖 הסוכן הזמין מ-{sup.name} עבור {order.order_number}",
+                    title=f"🤖 הסוכן הזמין מ-{sup_name} עבור {order.order_number}",
                     message=(
-                        f"הסוכן ביצע הזמנה אוטומטית מ-{sup.name}.\n{items_lines}\n"
+                        f"הסוכן ביצע הזמנה אוטומטית מ-{sup_name}.\n{items_lines}\n"
                         f"מספר מעקב: {sup_tracking.get('tracking_number', '—')} ({sup_tracking.get('carrier', '—')})"
                     ),
                     data={
                         "order_id": str(order.id),
                         "order_number": order.order_number,
-                        "supplier_id": str(sup.id),
-                        "supplier_name": sup.name,
-                        "supplier_website": sup.website or "",
+                        "supplier_name": sup_name,
                         "items": sup_data["items"],
                         "total_cost_ils": round(sup_data["total_cost_ils"], 2),
                         "currency": "ILS",
@@ -149,7 +147,7 @@ async def trigger_supplier_fulfillment(paid_orders: list, db: AsyncSession) -> N
                         "carrier": sup_tracking.get("carrier", ""),
                         "auto_fulfilled": True,
                     },
-                    read_at=datetime.utcnow(),   # pre-marked done — agent handled it
+                    read_at=datetime.utcnow(),
                 ))
 
         print(f"[Fulfillment] Order {order.order_number}: agent auto-fulfilled {len(by_supplier)} supplier(s) → supplier_ordered")
@@ -177,6 +175,24 @@ app.add_middleware(
 )
 
 # ==============================================================================
+# SUPPLIER MASKING  — customer-facing routes never expose real supplier names
+# The same supplier always gets the same number (stable across requests).
+# ==============================================================================
+_SUPPLIER_MASK_MAP: dict = {}
+_supplier_mask_counter = 0
+
+def _mask_supplier(name: str) -> str:
+    """Return a stable numbered alias for a supplier name (e.g. 'ספק #1')."""
+    global _supplier_mask_counter
+    if not name:
+        return "ספק"
+    if name not in _SUPPLIER_MASK_MAP:
+        _supplier_mask_counter += 1
+        _SUPPLIER_MASK_MAP[name] = f"ספק #{_supplier_mask_counter}"
+    return _SUPPLIER_MASK_MAP[name]
+
+
+# ==============================================================================
 # SCHEMAS
 # ==============================================================================
 
@@ -188,7 +204,11 @@ class RegisterRequest(BaseModel):
 
     @validator("phone")
     def validate_phone(cls, v):
-        if not v.startswith("05") or len(v) != 10:
+        # Accept Israeli domestic (05XXXXXXXX) or international E.164 (+XXXXXXXXXXX)
+        if v.startswith("+"):
+            if len(v) < 8 or len(v) > 16 or not v[1:].isdigit():
+                raise ValueError("Invalid international phone number")
+        elif not v.startswith("05") or len(v) != 10 or not v.isdigit():
             raise ValueError("Invalid Israeli phone number (must start with 05, 10 digits)")
         return v
 
@@ -263,7 +283,30 @@ class SupplierCreate(BaseModel):
     country: str
     website: Optional[str] = None
     api_endpoint: Optional[str] = None
+    api_key: Optional[str] = None
+    contact_email: Optional[str] = None
+    contact_phone: Optional[str] = None
     priority: int = 0
+    reliability_score: float = 5.0
+    supports_express: bool = False
+    express_carrier: Optional[str] = None
+    express_base_cost_usd: Optional[float] = None
+
+
+class SupplierUpdateBody(BaseModel):
+    name: Optional[str] = None
+    country: Optional[str] = None
+    website: Optional[str] = None
+    api_endpoint: Optional[str] = None
+    api_key: Optional[str] = None
+    contact_email: Optional[str] = None
+    contact_phone: Optional[str] = None
+    priority: Optional[int] = None
+    reliability_score: Optional[float] = None
+    is_active: Optional[bool] = None
+    supports_express: Optional[bool] = None
+    express_carrier: Optional[str] = None
+    express_base_cost_usd: Optional[float] = None
 
 
 # ==============================================================================
@@ -271,7 +314,7 @@ class SupplierCreate(BaseModel):
 # ==============================================================================
 
 @app.post("/api/v1/auth/register", status_code=status.HTTP_201_CREATED)
-async def register(data: RegisterRequest, request: Request, db: AsyncSession = Depends(get_db)):
+async def register(data: RegisterRequest, request: Request, db: AsyncSession = Depends(get_pii_db)):
     """Register new user and send 2FA SMS"""
     user = await register_user(data.email, data.phone, data.password, data.full_name, db)
     await create_2fa_code(str(user.id), user.phone, db)
@@ -282,7 +325,7 @@ async def register(data: RegisterRequest, request: Request, db: AsyncSession = D
 
 
 @app.post("/api/v1/auth/login")
-async def login(data: LoginRequest, request: Request, db: AsyncSession = Depends(get_db), redis=Depends(get_redis)):
+async def login(data: LoginRequest, request: Request, db: AsyncSession = Depends(get_pii_db), redis=Depends(get_redis)):
     """Login – returns tokens or triggers 2FA"""
     from BACKEND_AUTH_SECURITY import generate_device_fingerprint
     device_fp = generate_device_fingerprint(request)
@@ -309,7 +352,7 @@ async def login(data: LoginRequest, request: Request, db: AsyncSession = Depends
 
 
 @app.post("/api/v1/auth/verify-2fa")
-async def verify_2fa(data: Login2FARequest, request: Request, db: AsyncSession = Depends(get_db)):
+async def verify_2fa(data: Login2FARequest, request: Request, db: AsyncSession = Depends(get_pii_db)):
     """Complete login with 2FA code"""
     from BACKEND_AUTH_SECURITY import generate_device_fingerprint
     device_fp = generate_device_fingerprint(request)
@@ -327,19 +370,19 @@ async def verify_2fa(data: Login2FARequest, request: Request, db: AsyncSession =
 
 
 @app.post("/api/v1/auth/refresh")
-async def refresh_token(data: RefreshTokenRequest, db: AsyncSession = Depends(get_db)):
+async def refresh_token(data: RefreshTokenRequest, db: AsyncSession = Depends(get_pii_db)):
     """Refresh access token"""
     new_access, new_refresh = await refresh_access_token(data.refresh_token, db)
     return {"access_token": new_access, "refresh_token": new_refresh, "token_type": "bearer"}
 
 
 @app.post("/api/v1/auth/verify-email")
-async def verify_email(token: str, db: AsyncSession = Depends(get_db)):
+async def verify_email(token: str, db: AsyncSession = Depends(get_pii_db)):
     return {"message": "Email verified"}
 
 
 @app.post("/api/v1/auth/verify-phone")
-async def verify_phone(code: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def verify_phone(code: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     success = await verify_2fa_code(str(current_user.id), code, db)
     if not success:
         raise HTTPException(status_code=400, detail="Invalid code")
@@ -349,7 +392,7 @@ async def verify_phone(code: str, current_user: User = Depends(get_current_user)
 
 
 @app.post("/api/v1/auth/send-2fa")
-async def send_2fa(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def send_2fa(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     await create_2fa_code(str(current_user.id), current_user.phone, db)
     return {"message": f"קוד נשלח ל-{current_user.phone[-4:]}"}
 
@@ -360,7 +403,7 @@ async def logout(current_user: User = Depends(get_current_user)):
 
 
 @app.get("/api/v1/auth/me")
-async def get_me(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def get_me(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     profile = await db.get(UserProfile, current_user.id)
     terms_accepted_at = None
     if profile is None:
@@ -382,7 +425,7 @@ async def get_me(current_user: User = Depends(get_current_user), db: AsyncSessio
 
 
 @app.post("/api/v1/auth/accept-terms")
-async def accept_terms(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def accept_terms(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     """Record that the logged-in user has accepted the privacy policy and terms of service."""
     result = await db.execute(select(UserProfile).where(UserProfile.user_id == current_user.id))
     profile = result.scalar_one_or_none()
@@ -397,13 +440,13 @@ async def accept_terms(current_user: User = Depends(get_current_user), db: Async
 
 
 @app.post("/api/v1/auth/reset-password")
-async def reset_password(data: PasswordResetRequest, db: AsyncSession = Depends(get_db)):
+async def reset_password(data: PasswordResetRequest, db: AsyncSession = Depends(get_pii_db)):
     await create_password_reset_token(data.email, db)
     return {"message": "אם המייל קיים במערכת, נשלח קישור לאיפוס סיסמה"}
 
 
 @app.post("/api/v1/auth/reset-password/confirm")
-async def reset_password_confirm(data: PasswordResetConfirmRequest, db: AsyncSession = Depends(get_db)):
+async def reset_password_confirm(data: PasswordResetConfirmRequest, db: AsyncSession = Depends(get_pii_db)):
     success = await use_password_reset_token(data.token, data.new_password, db)
     if not success:
         raise HTTPException(status_code=400, detail="Invalid or expired token")
@@ -411,13 +454,13 @@ async def reset_password_confirm(data: PasswordResetConfirmRequest, db: AsyncSes
 
 
 @app.post("/api/v1/auth/change-password")
-async def change_password_ep(data: ChangePasswordRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def change_password_ep(data: ChangePasswordRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     await change_password(current_user, data.current_password, data.new_password, db)
     return {"message": "הסיסמה שונתה בהצלחה"}
 
 
 @app.get("/api/v1/auth/trusted-devices")
-async def get_trusted_devices(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def get_trusted_devices(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     from BACKEND_DATABASE_MODELS import UserSession
     result = await db.execute(
         select(UserSession).where(and_(
@@ -432,7 +475,7 @@ async def get_trusted_devices(current_user: User = Depends(get_current_user), db
 
 
 @app.post("/api/v1/auth/trust-device")
-async def trust_device(device_fingerprint: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def trust_device(device_fingerprint: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     from BACKEND_DATABASE_MODELS import UserSession
     result = await db.execute(
         select(UserSession).where(and_(
@@ -451,7 +494,7 @@ async def trust_device(device_fingerprint: str, current_user: User = Depends(get
 
 
 @app.delete("/api/v1/auth/trusted-devices/{device_id}")
-async def delete_trusted_device(device_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def delete_trusted_device(device_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     from BACKEND_DATABASE_MODELS import UserSession
     result = await db.execute(select(UserSession).where(and_(UserSession.id == device_id, UserSession.user_id == current_user.id)))
     session = result.scalar_one_or_none()
@@ -468,7 +511,7 @@ async def delete_trusted_device(device_id: str, current_user: User = Depends(get
 # ==============================================================================
 
 @app.post("/api/v1/chat/message")
-async def send_message(data: ChatMessageRequest, current_user: User = Depends(get_current_verified_user), db: AsyncSession = Depends(get_db)):
+async def send_message(data: ChatMessageRequest, current_user: User = Depends(get_current_verified_user), db: AsyncSession = Depends(get_pii_db)):
     # ── 1. Get or create conversation (fast DB write only) ──────────────────
     conversation = None
     if data.conversation_id:
@@ -521,7 +564,7 @@ async def send_message(data: ChatMessageRequest, current_user: User = Depends(ge
 
 
 @app.get("/api/v1/chat/conversations")
-async def get_conversations(current_user: User = Depends(get_current_user), limit: int = 50, db: AsyncSession = Depends(get_db)):
+async def get_conversations(current_user: User = Depends(get_current_user), limit: int = 50, db: AsyncSession = Depends(get_pii_db)):
     from sqlalchemy import func as sa_func
     msg_counts_res = await db.execute(
         select(Message.conversation_id, sa_func.count(Message.id).label("cnt"))
@@ -534,7 +577,7 @@ async def get_conversations(current_user: User = Depends(get_current_user), limi
 
 
 @app.get("/api/v1/chat/conversations/{conversation_id}")
-async def get_conversation(conversation_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def get_conversation(conversation_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(Conversation).where(and_(Conversation.id == conversation_id, Conversation.user_id == current_user.id)))
     conv = result.scalar_one_or_none()
     if not conv:
@@ -543,7 +586,7 @@ async def get_conversation(conversation_id: str, current_user: User = Depends(ge
 
 
 @app.get("/api/v1/chat/conversations/{conversation_id}/messages")
-async def get_messages(conversation_id: str, current_user: User = Depends(get_current_user), limit: int = 100, db: AsyncSession = Depends(get_db)):
+async def get_messages(conversation_id: str, current_user: User = Depends(get_current_user), limit: int = 100, db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(Conversation).where(and_(Conversation.id == conversation_id, Conversation.user_id == current_user.id)))
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Conversation not found")
@@ -553,7 +596,7 @@ async def get_messages(conversation_id: str, current_user: User = Depends(get_cu
 
 
 @app.delete("/api/v1/chat/conversations/{conversation_id}")
-async def delete_conversation(conversation_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def delete_conversation(conversation_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(Conversation).where(and_(Conversation.id == conversation_id, Conversation.user_id == current_user.id)))
     conv = result.scalar_one_or_none()
     if not conv:
@@ -564,7 +607,7 @@ async def delete_conversation(conversation_id: str, current_user: User = Depends
 
 
 @app.post("/api/v1/chat/upload-image")
-async def upload_image(file: UploadFile = File(...), current_user: User = Depends(get_current_verified_user), db: AsyncSession = Depends(get_db)):
+async def upload_image(file: UploadFile = File(...), current_user: User = Depends(get_current_verified_user), db: AsyncSession = Depends(get_pii_db)):
     """Upload an image and immediately run GPT-4o Vision to identify the part."""
     import base64 as _b64
     from openai import AsyncOpenAI
@@ -631,17 +674,17 @@ async def upload_image(file: UploadFile = File(...), current_user: User = Depend
 
 
 @app.post("/api/v1/chat/upload-audio")
-async def upload_audio(file: UploadFile = File(...), current_user: User = Depends(get_current_verified_user), db: AsyncSession = Depends(get_db)):
+async def upload_audio(file: UploadFile = File(...), current_user: User = Depends(get_current_verified_user), db: AsyncSession = Depends(get_pii_db)):
     return {"message": "Audio upload – transcription coming soon"}
 
 
 @app.post("/api/v1/chat/upload-video")
-async def upload_video(file: UploadFile = File(...), current_user: User = Depends(get_current_verified_user), db: AsyncSession = Depends(get_db)):
+async def upload_video(file: UploadFile = File(...), current_user: User = Depends(get_current_verified_user), db: AsyncSession = Depends(get_pii_db)):
     return {"message": "Video upload – frame analysis coming soon"}
 
 
 @app.websocket("/api/v1/chat/ws")
-async def chat_websocket(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
+async def chat_websocket(websocket: WebSocket, db: AsyncSession = Depends(get_pii_db)):
     await websocket.accept()
     try:
         while True:
@@ -653,7 +696,7 @@ async def chat_websocket(websocket: WebSocket, db: AsyncSession = Depends(get_db
 
 
 @app.post("/api/v1/chat/rate")
-async def rate_agent(conversation_id: str, agent_name: str, rating: int, feedback: Optional[str] = None, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def rate_agent(conversation_id: str, agent_name: str, rating: int, feedback: Optional[str] = None, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     from BACKEND_DATABASE_MODELS import AgentRating
     db.add(AgentRating(conversation_id=conversation_id, user_id=current_user.id, agent_name=agent_name, rating=rating, feedback=feedback))
     await db.commit()
@@ -669,56 +712,194 @@ async def search_parts(
     query: str = "",
     vehicle_id: Optional[str] = None,
     category: Optional[str] = None,
-    limit: int = 50,
-    offset: int = 0,
-    sort_by: str = "name",
-    sort_dir: str = "asc",
+    per_type: Optional[int] = None,        # override system_settings.search_results_per_type
+    sort_by: str = "price_ils",            # cheapest first by default
     vehicle_manufacturer: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
-    agent = get_agent("parts_finder_agent")
-    parts = await agent.search_parts_in_db(
-        query, vehicle_id, category, db, limit, offset, sort_by, sort_dir,
-        vehicle_manufacturer=vehicle_manufacturer,
+    """
+    Search the parts catalogue and return results grouped by part type.
+
+    Response shape:
+    {
+      "original":    {"part": {...} | null, "suppliers": [...]},
+      "oem":         {"part": {...} | null, "suppliers": [...]},
+      "aftermarket": {"part": {...} | null, "suppliers": [...]},
+      "results_per_type": <int>,
+      "query": <str>
+    }
+
+    Suppliers are sorted price_ils ASC (cheapest first).
+    The `per_type` param caps how many supplier offers are returned per type
+    (default: system_settings.search_results_per_type → 4).
+    """
+    # ── Resolve results_per_type ─────────────────────────────────────────────
+    if per_type is None:
+        try:
+            ss_res = await db.execute(
+                text("SELECT value FROM system_settings WHERE key = 'search_results_per_type' LIMIT 1")
+            )
+            row_ss = ss_res.fetchone()
+            per_type = int(row_ss[0]) if row_ss else 4
+        except Exception:
+            per_type = 4
+
+    # ── Build shared WHERE conditions ────────────────────────────────────────
+    conditions: List[str] = ["pc.is_active = TRUE"]
+    params: Dict[str, Any] = {}
+
+    if query:
+        conditions.append(
+            "(pc.name ILIKE :q OR pc.sku ILIKE :q OR pc.manufacturer ILIKE :q "
+            "OR pc.category ILIKE :q OR pc.oem_number ILIKE :q)"
+        )
+        params["q"] = f"%{query}%"
+
+    if category:
+        conditions.append("pc.category ILIKE :cat")
+        params["cat"] = f"%{category}%"
+
+    if vehicle_manufacturer:
+        conditions.append("pc.manufacturer ILIKE :vmfr")
+        params["vmfr"] = f"%{vehicle_manufacturer}%"
+
+    if vehicle_id:
+        conditions.append(
+            "(pc.compatible_vehicles::text ILIKE :vid "
+            "OR EXISTS (SELECT 1 FROM part_vehicle_fitment pvf "
+            "           WHERE pvf.part_id = pc.id AND pvf.vehicle_id = :vid_exact))"
+        )
+        params["vid"] = f"%{vehicle_id}%"
+        params["vid_exact"] = vehicle_id
+
+    where_sql = " AND ".join(conditions)
+
+    # ── Helper: fetch one part per type + its supplier list ──────────────────
+    async def _fetch_type(part_type_values: list) -> Dict[str, Any]:
+        type_params = {**params, "pt": part_type_values, "lim": per_type}
+
+        # Best matching part for this type (ranked by most supplier offers)
+        part_row = (await db.execute(
+            text(f"""
+                SELECT
+                    pc.id, pc.sku, pc.name, pc.name_he, pc.manufacturer,
+                    pc.category, pc.part_type, pc.base_price,
+                    pc.min_price_ils, pc.max_price_ils, pc.description,
+                    pc.oem_number, pc.barcode, pc.weight_kg,
+                    pc.is_safety_critical, pc.part_condition,
+                    pc.created_at, pc.updated_at
+                FROM parts_catalog pc
+                WHERE {where_sql} AND pc.part_type = ANY(:pt)
+                ORDER BY (
+                    SELECT COUNT(*) FROM supplier_parts sp
+                    WHERE sp.part_id = pc.id AND sp.is_available = TRUE
+                ) DESC,
+                pc.base_price ASC NULLS LAST
+                LIMIT 1
+            """),
+            type_params,
+        )).fetchone()
+
+        if not part_row:
+            return {"part": None, "suppliers": []}
+
+        part_id_str = str(part_row[0])
+
+        # All available supplier offers for this part, sorted cheapest first
+        sup_rows = (await db.execute(
+            text("""
+                SELECT
+                    sp.id            AS sp_id,
+                    s.name           AS supplier_name,
+                    s.country        AS supplier_country,
+                    sp.supplier_sku,
+                    sp.price_usd,
+                    sp.price_ils,
+                    sp.shipping_cost_ils,
+                    sp.availability,
+                    sp.warranty_months,
+                    sp.estimated_delivery_days,
+                    sp.stock_quantity,
+                    sp.supplier_url,
+                    sp.express_available,
+                    sp.express_price_ils,
+                    sp.express_delivery_days,
+                    sp.express_cutoff_time,
+                    sp.last_checked_at
+                FROM supplier_parts sp
+                JOIN suppliers s ON s.id = sp.supplier_id
+                WHERE sp.part_id = :part_id AND sp.is_available = TRUE
+                ORDER BY COALESCE(sp.price_ils, sp.price_usd * 3.72) ASC
+                LIMIT :lim
+            """),
+            {"part_id": part_id_str, "lim": per_type},
+        )).fetchall()
+
+        part_dict = {
+            "id":               str(part_row[0]),
+            "sku":              part_row[1],
+            "name":             part_row[2],
+            "name_he":          part_row[3],
+            "manufacturer":     part_row[4],
+            "category":         part_row[5],
+            "part_type":        part_row[6],
+            "base_price":       float(part_row[7]) if part_row[7] else None,
+            "min_price_ils":    float(part_row[8]) if part_row[8] else None,
+            "max_price_ils":    float(part_row[9]) if part_row[9] else None,
+            "description":      part_row[10],
+            "oem_number":       part_row[11],
+            "barcode":          part_row[12],
+            "weight_kg":        float(part_row[13]) if part_row[13] else None,
+            "is_safety_critical": part_row[14],
+            "part_condition":   part_row[15],
+            "created_at":       part_row[16].isoformat() if part_row[16] else None,
+            "updated_at":       part_row[17].isoformat() if part_row[17] else None,
+        }
+
+        suppliers_list = []
+        for sp in sup_rows:
+            price_ils = float(sp[5]) if sp[5] else (float(sp[4]) * 3.72 if sp[4] else None)
+            suppliers_list.append({
+                "supplier_part_id":      str(sp[0]),
+                "supplier_name":         _mask_supplier(sp[1]),
+                "supplier_country":      "",
+                "supplier_sku":          sp[3],
+                "price_usd":             float(sp[4]) if sp[4] else None,
+                "price_ils":             round(price_ils, 2) if price_ils else None,
+                "shipping_cost_ils":     float(sp[6]) if sp[6] else None,
+                "availability":          sp[7],
+                "warranty_months":       sp[8],
+                "estimated_delivery_days": sp[9],
+                "stock_quantity":        sp[10],
+                "supplier_url":          sp[11],
+                "express_available":     sp[12],
+                "express_price_ils":     float(sp[13]) if sp[13] else None,
+                "express_delivery_days": sp[14],
+                "express_cutoff_time":   sp[15],
+                "last_checked_at":       sp[16].isoformat() if sp[16] else None,
+            })
+
+        return {"part": part_dict, "suppliers": suppliers_list}
+
+    # ── Run all 3 type queries (concurrently) ────────────────────────────────
+    original_res, oem_res, aftermarket_res = await asyncio.gather(
+        _fetch_type(["OEM", "Original"]),      # מקורי / original equipment
+        _fetch_type(["OEM", "Original"]),      # same bucket, shown as OEM label
+        _fetch_type(["Aftermarket", "Refurbished"]),  # חליפי / aftermarket
     )
 
-    # Total count — uses same alias-expanded search terms as search_parts_in_db
-    count_stmt = select(func.count()).select_from(PartsCatalog).where(PartsCatalog.is_active == True)
-    if vehicle_manufacturer:
-        normalized_mfr = await agent.normalize_manufacturer(vehicle_manufacturer, db)
-        words = vehicle_manufacturer.split()
-        word_normalized = normalized_mfr
-        for word in words:
-            if len(word) >= 3:
-                candidate = await agent.normalize_manufacturer(word, db)
-                if candidate.lower() != word.lower():
-                    word_normalized = candidate
-                    break
-        mfr_terms = {vehicle_manufacturer, normalized_mfr, word_normalized}
-        count_stmt = count_stmt.where(or_(*[PartsCatalog.manufacturer.ilike(f"%{t}%") for t in mfr_terms]))
-    if query:
-        normalized = await agent.normalize_manufacturer(query, db)
-        search_terms = {query, normalized} if normalized.lower() != query.lower() else {query}
-        conditions = []
-        for term in search_terms:
-            conditions += [
-                PartsCatalog.name.ilike(f"%{term}%"),
-                PartsCatalog.manufacturer.ilike(f"%{term}%"),
-                PartsCatalog.sku.ilike(f"%{term}%"),
-                PartsCatalog.category.ilike(f"%{term}%"),
-            ]
-        count_stmt = count_stmt.where(or_(*conditions))
-    if category:
-        count_stmt = count_stmt.where(PartsCatalog.category.ilike(category))
-    total_result = await db.execute(count_stmt)
-    total = total_result.scalar_one()
-
-    return {"parts": parts, "count": len(parts), "total": total, "offset": offset, "limit": limit}
+    return {
+        "original":         original_res,
+        "oem":              oem_res,
+        "aftermarket":      aftermarket_res,
+        "results_per_type": per_type,
+        "query":            query,
+    }
 
 
 @app.post("/api/v1/parts/search-by-vehicle")
-async def search_parts_by_vehicle(vehicle_id: str, category: Optional[str] = None, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Vehicle).where(Vehicle.id == vehicle_id))
+async def search_parts_by_vehicle(vehicle_id: str, category: Optional[str] = None, db: AsyncSession = Depends(get_db), pii_db: AsyncSession = Depends(get_pii_db)):
+    result = await pii_db.execute(select(Vehicle).where(Vehicle.id == vehicle_id))
     vehicle = result.scalar_one_or_none()
     if not vehicle:
         raise HTTPException(status_code=404, detail="Vehicle not found")
@@ -1109,8 +1290,8 @@ async def compare_parts(part_id: str, db: AsyncSession = Depends(get_db)):
             )
         comparisons.append({
             "supplier_part_id": str(sp.id),
-            "supplier_name": supplier.name,
-            "supplier_country": supplier.country or "",
+            "supplier_name": _mask_supplier(supplier.name),
+            "supplier_country": "",
             "availability": "in_stock" if sp.is_available else "on_order",
             "subtotal": pricing["price_no_vat"],
             "vat": pricing["vat"],
@@ -1243,7 +1424,7 @@ async def identify_vehicle_from_image(file: UploadFile = File(...), current_user
 
 
 @app.get("/api/v1/vehicles/my-vehicles")
-async def get_my_vehicles(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def get_my_vehicles(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     from BACKEND_DATABASE_MODELS import UserVehicle
     result = await db.execute(select(UserVehicle, Vehicle).join(Vehicle).where(UserVehicle.user_id == current_user.id))
     rows = result.all()
@@ -1279,7 +1460,7 @@ async def get_my_vehicles(current_user: User = Depends(get_current_user), db: As
 
 
 @app.post("/api/v1/vehicles/my-vehicles")
-async def add_my_vehicle(license_plate: str = Form(...), nickname: Optional[str] = Form(None), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def add_my_vehicle(license_plate: str = Form(...), nickname: Optional[str] = Form(None), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     from BACKEND_DATABASE_MODELS import UserVehicle
     agent = get_agent("parts_finder_agent")
     try:
@@ -1295,7 +1476,7 @@ async def add_my_vehicle(license_plate: str = Form(...), nickname: Optional[str]
 
 
 @app.put("/api/v1/vehicles/my-vehicles/{vehicle_id}")
-async def update_my_vehicle(vehicle_id: str, nickname: Optional[str] = None, is_primary: Optional[bool] = None, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def update_my_vehicle(vehicle_id: str, nickname: Optional[str] = None, is_primary: Optional[bool] = None, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     from BACKEND_DATABASE_MODELS import UserVehicle
     result = await db.execute(select(UserVehicle).where(and_(UserVehicle.vehicle_id == vehicle_id, UserVehicle.user_id == current_user.id)))
     uv = result.scalar_one_or_none()
@@ -1310,7 +1491,7 @@ async def update_my_vehicle(vehicle_id: str, nickname: Optional[str] = None, is_
 
 
 @app.delete("/api/v1/vehicles/my-vehicles/{vehicle_id}")
-async def delete_my_vehicle(vehicle_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def delete_my_vehicle(vehicle_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     from BACKEND_DATABASE_MODELS import UserVehicle
     result = await db.execute(select(UserVehicle).where(and_(UserVehicle.vehicle_id == vehicle_id, UserVehicle.user_id == current_user.id)))
     uv = result.scalar_one_or_none()
@@ -1322,7 +1503,7 @@ async def delete_my_vehicle(vehicle_id: str, current_user: User = Depends(get_cu
 
 
 @app.post("/api/v1/vehicles/my-vehicles/set-primary")
-async def set_primary_vehicle(vehicle_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def set_primary_vehicle(vehicle_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     from BACKEND_DATABASE_MODELS import UserVehicle
     result = await db.execute(select(UserVehicle).where(UserVehicle.user_id == current_user.id))
     for uv in result.scalars().all():
@@ -1341,7 +1522,7 @@ async def get_compatible_parts(vehicle_id: str, category: Optional[str] = None, 
 # ==============================================================================
 
 @app.post("/api/v1/orders", status_code=status.HTTP_201_CREATED)
-async def create_order(data: OrderCreate, current_user: User = Depends(get_current_verified_user), db: AsyncSession = Depends(get_db)):
+async def create_order(data: OrderCreate, current_user: User = Depends(get_current_verified_user), cat_db: AsyncSession = Depends(get_db), db: AsyncSession = Depends(get_pii_db)):
     from BACKEND_DATABASE_MODELS import SupplierPart
     from BACKEND_DATABASE_MODELS import Supplier as SupplierModel
     from BACKEND_AI_AGENTS import get_supplier_shipping as _get_ship2
@@ -1352,7 +1533,7 @@ async def create_order(data: OrderCreate, current_user: User = Depends(get_curre
     supplier_delivery_fees: dict[str, float] = {}  # supplier_id -> delivery_fee
 
     for item in data.items:
-        res = await db.execute(
+        res = await cat_db.execute(
             select(SupplierPart, PartsCatalog, SupplierModel)
             .join(PartsCatalog, SupplierPart.part_id == PartsCatalog.id)
             .join(SupplierModel, SupplierPart.supplier_id == SupplierModel.id)
@@ -1379,7 +1560,7 @@ async def create_order(data: OrderCreate, current_user: User = Depends(get_curre
             "vat": vat,
             "part": part,
             "sp": sp,
-            "supplier_name": supplier_rec.name,
+            "supplier_name": _mask_supplier(supplier_rec.name),
         })
 
     vat_total = round(subtotal * 0.17, 2)
@@ -1419,14 +1600,14 @@ async def create_order(data: OrderCreate, current_user: User = Depends(get_curre
 
 
 @app.get("/api/v1/orders")
-async def get_orders(current_user: User = Depends(get_current_user), limit: int = 50, db: AsyncSession = Depends(get_db)):
+async def get_orders(current_user: User = Depends(get_current_user), limit: int = 50, db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(Order).where(Order.user_id == current_user.id).order_by(Order.created_at.desc()).limit(limit))
     orders = result.scalars().all()
     return {"orders": [{"id": str(o.id), "order_number": o.order_number, "status": o.status, "total": float(o.total_amount), "created_at": o.created_at, "tracking_number": o.tracking_number, "tracking_url": o.tracking_url, "estimated_delivery": o.estimated_delivery} for o in orders]}
 
 
 @app.get("/api/v1/orders/{order_id}")
-async def get_order(order_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def get_order(order_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(Order).where(and_(Order.id == order_id, Order.user_id == current_user.id)))
     order = result.scalar_one_or_none()
     if not order:
@@ -1443,7 +1624,7 @@ async def get_order(order_id: str, current_user: User = Depends(get_current_user
 
 
 @app.get("/api/v1/orders/{order_id}/track")
-async def track_order(order_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def track_order(order_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(Order).where(and_(Order.id == order_id, Order.user_id == current_user.id)))
     order = result.scalar_one_or_none()
     if not order:
@@ -1452,7 +1633,7 @@ async def track_order(order_id: str, current_user: User = Depends(get_current_us
 
 
 @app.put("/api/v1/orders/{order_id}/cancel")
-async def cancel_order(order_id: str, data: OrderCancelRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def cancel_order(order_id: str, data: OrderCancelRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     import stripe as stripe_sdk
 
     result = await db.execute(select(Order).where(and_(Order.id == order_id, Order.user_id == current_user.id)))
@@ -1554,7 +1735,7 @@ async def cancel_order(order_id: str, data: OrderCancelRequest, current_user: Us
 
 
 @app.post("/api/v1/orders/{order_id}/return")
-async def create_order_return(order_id: str, reason: str, description: Optional[str] = None, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def create_order_return(order_id: str, reason: str, description: Optional[str] = None, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(Order).where(and_(Order.id == order_id, Order.user_id == current_user.id)))
     order = result.scalar_one_or_none()
     if not order:
@@ -1568,7 +1749,7 @@ async def create_order_return(order_id: str, reason: str, description: Optional[
 
 
 @app.delete("/api/v1/orders/{order_id}")
-async def delete_order(order_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def delete_order(order_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(Order).where(and_(Order.id == order_id, Order.user_id == current_user.id)))
     order = result.scalar_one_or_none()
     if not order:
@@ -1591,8 +1772,9 @@ async def delete_order(order_id: str, current_user: User = Depends(get_current_u
 @app.get("/api/v1/orders/{order_id}/invoice")
 async def get_order_invoice(
     order_id: str,
+    inline: bool = False,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_pii_db),
 ):
     """Generate and stream a Hebrew PDF invoice for a paid order."""
     from fastapi.responses import StreamingResponse
@@ -1632,12 +1814,14 @@ async def get_order_invoice(
     pdf_bytes = generate_invoice_pdf(order, items, current_user, invoice)
 
     filename = f"invoice_{invoice.invoice_number}.pdf"
+    disposition = f'inline; filename="{filename}"' if inline else f'attachment; filename="{filename}"'
     return StreamingResponse(
         iter([pdf_bytes]),
         media_type="application/pdf",
         headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Disposition": disposition,
             "Content-Length": str(len(pdf_bytes)),
+            "X-Frame-Options": "SAMEORIGIN",
         },
     )
 
@@ -1660,16 +1844,13 @@ async def create_checkout_session(
     order_id: str,
     request: Request,
     current_user: User = Depends(get_current_verified_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_pii_db),
 ):
-    """Create a real Stripe Checkout Session and return the redirect URL."""
+    """Create a Stripe Checkout Session (or simulate payment if Stripe not configured)."""
     import stripe as stripe_sdk
 
     stripe_key = os.getenv("STRIPE_SECRET_KEY", "")
-    if not stripe_key or stripe_key.startswith("sk_test_xxxxx"):
-        raise HTTPException(status_code=503, detail="Stripe not configured. Add STRIPE_SECRET_KEY to .env")
-
-    stripe_sdk.api_key = stripe_key
+    stripe_configured = bool(stripe_key and not stripe_key.startswith("sk_test_xxxxx"))
 
     # Load order
     result = await db.execute(
@@ -1678,16 +1859,44 @@ async def create_checkout_session(
     order = result.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
-    if order.status != "pending_payment":
+    if order.status not in ("pending_payment", "confirmed"):
         raise HTTPException(status_code=400, detail=f"Order is already {order.status}")
+
+    frontend_url = _get_frontend_url(request)
+
+    # ── Simulated payment (no Stripe key) ─────────────────────────────────
+    if not stripe_configured:
+        sim_session_id = f"SIM-{str(uuid.uuid4())[:12].upper()}"
+        # Mark order as confirmed immediately
+        order.status = "confirmed"
+        existing_pay = await db.execute(
+            select(Payment).where(Payment.order_id == order.id)
+        )
+        if not existing_pay.scalar_one_or_none():
+            db.add(Payment(
+                order_id=order.id,
+                payment_intent_id=sim_session_id,
+                amount=order.total_amount,
+                currency="ILS",
+                status="paid",
+            ))
+        await db.commit()
+        # Trigger supplier fulfillment in background
+        asyncio.create_task(trigger_supplier_fulfillment([order], db))
+        return {
+            "checkout_url": f"{frontend_url}/payment/success?session_id={sim_session_id}&simulated=1",
+            "session_id": sim_session_id,
+            "amount": float(order.total_amount),
+            "currency": "ILS",
+        }
+    # ── Real Stripe Checkout ───────────────────────────────────────────────
+    stripe_sdk.api_key = stripe_key
 
     # Load order items for line items
     items_result = await db.execute(
         select(OrderItem).where(OrderItem.order_id == order.id)
     )
     order_items = items_result.scalars().all()
-
-    frontend_url = _get_frontend_url(request)
 
     # Build Stripe line items
     line_items = []
@@ -1761,7 +1970,7 @@ async def create_multi_checkout_session(
     payload: MultiCheckoutRequest,
     request: Request,
     current_user: User = Depends(get_current_verified_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_pii_db),
 ):
     """Create a single Stripe Checkout Session for multiple pending orders."""
     import stripe as stripe_sdk
@@ -1856,10 +2065,47 @@ async def create_multi_checkout_session(
 async def verify_checkout_session(
     session_id: str,
     current_user: User = Depends(get_current_verified_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_pii_db),
 ):
     """Called after Stripe redirects back — verifies payment and marks order(s) paid."""
     import stripe as stripe_sdk
+
+    # ── Simulated payment (session_id starts with SIM-) ───────────────────────
+    if session_id.startswith("SIM-"):
+        # Find the payment record linked to this simulated session
+        pay_res = await db.execute(select(Payment).where(Payment.payment_intent_id == session_id))
+        pay = pay_res.scalar_one_or_none()
+        if not pay:
+            raise HTTPException(status_code=404, detail="תשלום סימולציה לא נמצא")
+        ord_res = await db.execute(
+            select(Order).where(and_(Order.id == pay.order_id, Order.user_id == current_user.id))
+        )
+        order = ord_res.scalar_one_or_none()
+        if not order:
+            raise HTTPException(status_code=404, detail="הזמנה לא נמצאה")
+        # Ensure order is marked confirmed and payment paid
+        order.status = "confirmed"
+        pay.status = "paid"
+        pay.paid_at = datetime.utcnow()
+        pay.payment_method = "simulated"
+        # Create invoice if not already exists
+        inv_check = await db.execute(select(Invoice).where(Invoice.order_id == order.id))
+        if not inv_check.scalar_one_or_none():
+            inv_num = f"INV-{datetime.utcnow().strftime('%Y%m')}-{str(order.id)[:8].upper()}"
+            db.add(Invoice(
+                invoice_number=inv_num,
+                order_id=order.id,
+                user_id=current_user.id,
+                business_number=os.getenv("COMPANY_NUMBER", "060633880"),
+            ))
+        await db.commit()
+        return {
+            "status": "paid",
+            "order_id": str(order.id),
+            "order_number": order.order_number,
+            "amount": float(order.total_amount),
+            "currency": "ILS",
+        }
 
     stripe_key = os.getenv("STRIPE_SECRET_KEY", "")
     if not stripe_key or stripe_key.startswith("sk_test_xxxxx"):
@@ -1970,18 +2216,18 @@ async def verify_checkout_session(
 
 
 @app.post("/api/v1/payments/create-intent")
-async def create_payment_intent_legacy(order_id: str, request: Request, current_user: User = Depends(get_current_verified_user), db: AsyncSession = Depends(get_db)):
+async def create_payment_intent_legacy(order_id: str, request: Request, current_user: User = Depends(get_current_verified_user), db: AsyncSession = Depends(get_pii_db)):
     """Legacy endpoint – redirects to create-checkout."""
     return await create_checkout_session(order_id, request, current_user, db)
 
 
 @app.post("/api/v1/payments/confirm")
-async def confirm_payment(payment_intent_id: str, current_user: User = Depends(get_current_verified_user), db: AsyncSession = Depends(get_db)):
+async def confirm_payment(payment_intent_id: str, current_user: User = Depends(get_current_verified_user), db: AsyncSession = Depends(get_pii_db)):
     return {"status": "redirect_to_stripe", "message": "Use /payments/create-checkout to get a Stripe Checkout URL"}
 
 
 @app.get("/api/v1/payments/refunds/list")
-async def list_refunds(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def list_refunds(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     """Return all refund records for the current user (from Return table + safety-net from payments)."""
     # 1. Return records (manual returns + cancellation refunds)
     rets_res = await db.execute(
@@ -2069,7 +2315,7 @@ async def list_refunds(current_user: User = Depends(get_current_user), db: Async
 
 
 @app.get("/api/v1/payments/{payment_id}")
-async def get_payment(payment_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def get_payment(payment_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(Payment).where(Payment.id == payment_id))
     payment = result.scalar_one_or_none()
     if not payment:
@@ -2078,7 +2324,7 @@ async def get_payment(payment_id: str, current_user: User = Depends(get_current_
 
 
 @app.post("/api/v1/payments/webhook")
-async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
+async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_pii_db)):
     """Stripe webhook for async payment confirmation (backup to verify-session)."""
     import stripe as stripe_sdk
     payload = await request.body()
@@ -2149,7 +2395,7 @@ async def refund_payment(
     amount: float,
     reason: str,
     current_user: User = Depends(get_current_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_pii_db),
 ):
     """Admin: manually refund a payment via Stripe."""
     import stripe as stripe_sdk
@@ -2225,7 +2471,7 @@ async def refund_payment(
 
 
 @app.get("/api/v1/payments/history")
-async def get_payment_history(current_user: User = Depends(get_current_user), limit: int = 50, db: AsyncSession = Depends(get_db)):
+async def get_payment_history(current_user: User = Depends(get_current_user), limit: int = 50, db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(Payment).join(Order).where(Order.user_id == current_user.id).order_by(Payment.created_at.desc()).limit(limit))
     payments = result.scalars().all()
     return {"payments": [{"id": str(p.id), "amount": float(p.amount), "status": p.status, "created_at": p.created_at} for p in payments]}
@@ -2240,7 +2486,7 @@ async def get_admin_supplier_orders(
     pending_only: bool = False,
     limit: int = 200,
     current_user: User = Depends(get_current_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_pii_db),
 ):
     """Admin: list all supplier purchase tasks generated after customer payments."""
     stmt = (
@@ -2281,7 +2527,7 @@ async def mark_supplier_order_done(
     tracking_url: Optional[str] = None,
     carrier: Optional[str] = None,
     current_user: User = Depends(get_current_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_pii_db),
 ):
     """Admin: mark a supplier purchase task as ordered, optionally recording a tracking number."""
     result = await db.execute(
@@ -2340,14 +2586,14 @@ async def mark_supplier_order_done(
 # ==============================================================================
 
 @app.get("/api/v1/invoices")
-async def get_invoices(current_user: User = Depends(get_current_user), limit: int = 50, db: AsyncSession = Depends(get_db)):
+async def get_invoices(current_user: User = Depends(get_current_user), limit: int = 50, db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(Invoice).where(Invoice.user_id == current_user.id).order_by(Invoice.issued_at.desc()).limit(limit))
     invoices = result.scalars().all()
     return {"invoices": [{"id": str(i.id), "invoice_number": i.invoice_number, "order_id": str(i.order_id), "pdf_url": i.pdf_url, "issued_at": i.issued_at} for i in invoices]}
 
 
 @app.get("/api/v1/invoices/{invoice_id}")
-async def get_invoice(invoice_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def get_invoice(invoice_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(Invoice).where(and_(Invoice.id == invoice_id, Invoice.user_id == current_user.id)))
     invoice = result.scalar_one_or_none()
     if not invoice:
@@ -2356,7 +2602,7 @@ async def get_invoice(invoice_id: str, current_user: User = Depends(get_current_
 
 
 @app.get("/api/v1/invoices/{invoice_id}/download")
-async def download_invoice(invoice_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def download_invoice(invoice_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(Invoice).where(and_(Invoice.id == invoice_id, Invoice.user_id == current_user.id)))
     invoice = result.scalar_one_or_none()
     if not invoice:
@@ -2365,7 +2611,7 @@ async def download_invoice(invoice_id: str, current_user: User = Depends(get_cur
 
 
 @app.post("/api/v1/invoices/{invoice_id}/resend")
-async def resend_invoice(invoice_id: str, email: Optional[EmailStr] = None, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def resend_invoice(invoice_id: str, email: Optional[EmailStr] = None, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(Invoice).where(and_(Invoice.id == invoice_id, Invoice.user_id == current_user.id)))
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Invoice not found")
@@ -2377,7 +2623,7 @@ async def resend_invoice(invoice_id: str, email: Optional[EmailStr] = None, curr
 # ==============================================================================
 
 @app.post("/api/v1/returns", status_code=status.HTTP_201_CREATED)
-async def create_return(data: ReturnRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def create_return(data: ReturnRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(Order).where(and_(Order.id == data.order_id, Order.user_id == current_user.id)))
     order = result.scalar_one_or_none()
     if not order:
@@ -2393,14 +2639,14 @@ async def create_return(data: ReturnRequest, current_user: User = Depends(get_cu
 
 
 @app.get("/api/v1/returns")
-async def get_returns(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def get_returns(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(Return).where(Return.user_id == current_user.id).order_by(Return.requested_at.desc()))
     returns = result.scalars().all()
     return {"returns": [{"id": str(r.id), "return_number": r.return_number, "order_id": str(r.order_id), "reason": r.reason, "status": r.status, "refund_amount": float(r.refund_amount) if r.refund_amount else None, "requested_at": r.requested_at} for r in returns]}
 
 
 @app.get("/api/v1/returns/{return_id}")
-async def get_return(return_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def get_return(return_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(Return).where(and_(Return.id == return_id, Return.user_id == current_user.id)))
     ret = result.scalar_one_or_none()
     if not ret:
@@ -2409,7 +2655,7 @@ async def get_return(return_id: str, current_user: User = Depends(get_current_us
 
 
 @app.post("/api/v1/returns/{return_id}/track")
-async def track_return(return_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def track_return(return_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(Return).where(and_(Return.id == return_id, Return.user_id == current_user.id)))
     ret = result.scalar_one_or_none()
     if not ret:
@@ -2418,7 +2664,7 @@ async def track_return(return_id: str, current_user: User = Depends(get_current_
 
 
 @app.put("/api/v1/returns/{return_id}/cancel")
-async def cancel_return(return_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def cancel_return(return_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(Return).where(and_(Return.id == return_id, Return.user_id == current_user.id)))
     ret = result.scalar_one_or_none()
     if not ret:
@@ -2431,7 +2677,7 @@ async def cancel_return(return_id: str, current_user: User = Depends(get_current
 
 
 @app.post("/api/v1/returns/{return_id}/approve")
-async def approve_return(return_id: str, refund_percentage: int = 100, current_user: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_db)):
+async def approve_return(return_id: str, refund_percentage: int = 100, current_user: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(Return).where(Return.id == return_id))
     ret = result.scalar_one_or_none()
     if not ret:
@@ -2449,7 +2695,7 @@ async def approve_return(return_id: str, refund_percentage: int = 100, current_u
 # ==============================================================================
 
 @app.post("/api/v1/files/upload")
-async def upload_file(file: UploadFile = File(...), current_user: User = Depends(get_current_verified_user), db: AsyncSession = Depends(get_db)):
+async def upload_file(file: UploadFile = File(...), current_user: User = Depends(get_current_verified_user), db: AsyncSession = Depends(get_pii_db)):
     allowed = ["image/jpeg", "image/png", "image/webp", "audio/mpeg", "audio/wav", "video/mp4"]
     if file.content_type not in allowed:
         raise HTTPException(status_code=400, detail="File type not allowed")
@@ -2466,7 +2712,7 @@ async def upload_file(file: UploadFile = File(...), current_user: User = Depends
 
 
 @app.get("/api/v1/files/{file_id}")
-async def get_file(file_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def get_file(file_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(FileModel).where(and_(FileModel.id == file_id, FileModel.user_id == current_user.id)))
     f = result.scalar_one_or_none()
     if not f:
@@ -2475,7 +2721,7 @@ async def get_file(file_id: str, current_user: User = Depends(get_current_user),
 
 
 @app.delete("/api/v1/files/{file_id}")
-async def delete_file(file_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def delete_file(file_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(FileModel).where(and_(FileModel.id == file_id, FileModel.user_id == current_user.id)))
     f = result.scalar_one_or_none()
     if not f:
@@ -2490,7 +2736,7 @@ async def delete_file(file_id: str, current_user: User = Depends(get_current_use
 # ==============================================================================
 
 @app.get("/api/v1/profile")
-async def get_profile(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def get_profile(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(UserProfile).where(UserProfile.user_id == current_user.id))
     profile = result.scalar_one_or_none()
     return {
@@ -2500,7 +2746,7 @@ async def get_profile(current_user: User = Depends(get_current_user), db: AsyncS
 
 
 @app.put("/api/v1/profile")
-async def update_profile(address_line1: Optional[str] = None, address_line2: Optional[str] = None, city: Optional[str] = None, postal_code: Optional[str] = None, full_name: Optional[str] = None, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def update_profile(address_line1: Optional[str] = None, address_line2: Optional[str] = None, city: Optional[str] = None, postal_code: Optional[str] = None, full_name: Optional[str] = None, phone: Optional[str] = None, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(UserProfile).where(UserProfile.user_id == current_user.id))
     profile = result.scalar_one_or_none()
     if not profile:
@@ -2516,35 +2762,46 @@ async def update_profile(address_line1: Optional[str] = None, address_line2: Opt
         profile.postal_code = postal_code
     if full_name is not None:
         current_user.full_name = full_name
-    await db.commit()
+    if phone is not None and phone.strip() != (current_user.phone or ''):
+        from sqlalchemy import update as sa_update
+        from fastapi import HTTPException
+        existing = await db.execute(select(User).where(User.phone == phone.strip(), User.id != current_user.id))
+        if existing.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="מספר הטלפון כבר רשום לחשבון אחר")
+        await db.execute(sa_update(User).where(User.id == current_user.id).values(phone=phone.strip()))
+    try:
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        raise
     return {"message": "Profile updated"}
 
 
 @app.post("/api/v1/profile/avatar")
-async def upload_avatar(file: UploadFile = File(...), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def upload_avatar(file: UploadFile = File(...), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     return {"avatar_url": "https://cdn.autospare.com/avatars/coming-soon.jpg"}
 
 
 @app.delete("/api/v1/profile/avatar")
-async def delete_avatar(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def delete_avatar(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     return {"message": "Avatar deleted"}
 
 
 @app.post("/api/v1/profile/update-phone")
-async def update_phone(data: UpdatePhoneRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def update_phone(data: UpdatePhoneRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     await update_phone_number(current_user, data.new_phone, data.verification_code, db)
     return {"message": "Phone number updated"}
 
 
 @app.get("/api/v1/profile/marketing-preferences")
-async def get_marketing_preferences(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def get_marketing_preferences(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(UserProfile).where(UserProfile.user_id == current_user.id))
     profile = result.scalar_one_or_none()
     return {"marketing_consent": profile.marketing_consent if profile else False, "newsletter_subscribed": profile.newsletter_subscribed if profile else False, "preferences": profile.marketing_preferences if profile else {}}
 
 
 @app.put("/api/v1/profile/marketing-preferences")
-async def update_marketing_preferences(marketing_consent: Optional[bool] = None, newsletter_subscribed: Optional[bool] = None, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def update_marketing_preferences(marketing_consent: Optional[bool] = None, newsletter_subscribed: Optional[bool] = None, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(UserProfile).where(UserProfile.user_id == current_user.id))
     profile = result.scalar_one_or_none()
     if not profile:
@@ -2559,7 +2816,7 @@ async def update_marketing_preferences(marketing_consent: Optional[bool] = None,
 
 
 @app.get("/api/v1/profile/order-history")
-async def get_order_history_summary(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def get_order_history_summary(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(func.count(Order.id).label("total"), func.sum(Order.total_amount).label("spent")).where(Order.user_id == current_user.id))
     stats = result.first()
     return {"total_orders": stats.total or 0, "total_spent": float(stats.spent or 0)}
@@ -2570,22 +2827,22 @@ async def get_order_history_summary(current_user: User = Depends(get_current_use
 # ==============================================================================
 
 @app.post("/api/v1/marketing/subscribe")
-async def subscribe_newsletter(data: NewsletterSubscribeRequest, db: AsyncSession = Depends(get_db)):
+async def subscribe_newsletter(data: NewsletterSubscribeRequest, db: AsyncSession = Depends(get_pii_db)):
     return {"message": "Subscribed successfully"}
 
 
 @app.post("/api/v1/marketing/validate-coupon")
-async def validate_coupon(data: CouponValidateRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def validate_coupon(data: CouponValidateRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     return {"valid": True, "code": data.code, "discount_type": "percentage", "discount_value": 10}
 
 
 @app.get("/api/v1/marketing/coupons")
-async def get_available_coupons(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def get_available_coupons(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     return {"coupons": []}
 
 
 @app.post("/api/v1/marketing/apply-coupon")
-async def apply_coupon(order_id: str, coupon_code: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def apply_coupon(order_id: str, coupon_code: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     return {"discount": 0, "message": "Coupon system coming soon"}
 
 
@@ -2595,12 +2852,12 @@ async def get_active_promotions(db: AsyncSession = Depends(get_db)):
 
 
 @app.post("/api/v1/marketing/referral")
-async def create_referral(email: EmailStr, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def create_referral(email: EmailStr, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     return {"message": "Referral sent", "referral_link": f"https://autospare.com?ref={str(current_user.id)[:8]}"}
 
 
 @app.get("/api/v1/marketing/loyalty-points")
-async def get_loyalty_points(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def get_loyalty_points(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     return {"points": 0, "tier": "bronze", "next_tier": "silver", "points_needed": 500}
 
 
@@ -2609,20 +2866,20 @@ async def get_loyalty_points(current_user: User = Depends(get_current_user), db:
 # ==============================================================================
 
 @app.get("/api/v1/notifications")
-async def get_notifications(current_user: User = Depends(get_current_user), limit: int = 50, db: AsyncSession = Depends(get_db)):
+async def get_notifications(current_user: User = Depends(get_current_user), limit: int = 50, db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(Notification).where(Notification.user_id == current_user.id).order_by(Notification.created_at.desc()).limit(limit))
     notifs = result.scalars().all()
     return {"notifications": [{"id": str(n.id), "type": n.type, "title": n.title, "message": n.message, "read_at": n.read_at, "created_at": n.created_at} for n in notifs]}
 
 
 @app.get("/api/v1/notifications/unread-count")
-async def get_unread_count(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def get_unread_count(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(func.count(Notification.id)).where(and_(Notification.user_id == current_user.id, Notification.read_at.is_(None))))
     return {"unread_count": result.scalar() or 0}
 
 
 @app.put("/api/v1/notifications/{notification_id}/read")
-async def mark_notification_read(notification_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def mark_notification_read(notification_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(Notification).where(and_(Notification.id == notification_id, Notification.user_id == current_user.id)))
     n = result.scalar_one_or_none()
     if not n:
@@ -2633,7 +2890,7 @@ async def mark_notification_read(notification_id: str, current_user: User = Depe
 
 
 @app.put("/api/v1/notifications/read-all")
-async def mark_all_read(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def mark_all_read(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(Notification).where(and_(Notification.user_id == current_user.id, Notification.read_at.is_(None))))
     notifs = result.scalars().all()
     for n in notifs:
@@ -2643,7 +2900,7 @@ async def mark_all_read(current_user: User = Depends(get_current_user), db: Asyn
 
 
 @app.delete("/api/v1/notifications/{notification_id}")
-async def delete_notification(notification_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def delete_notification(notification_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(Notification).where(and_(Notification.id == notification_id, Notification.user_id == current_user.id)))
     n = result.scalar_one_or_none()
     if not n:
@@ -2658,10 +2915,10 @@ async def delete_notification(notification_id: str, current_user: User = Depends
 # ==============================================================================
 
 @app.get("/api/v1/admin/stats")
-async def get_admin_stats(current_user: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_db)):
+async def get_admin_stats(current_user: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_pii_db), cat_db: AsyncSession = Depends(get_db)):
     users_count   = (await db.execute(select(func.count(User.id)))).scalar()
     orders_count  = (await db.execute(select(func.count(Order.id)))).scalar()
-    parts_count   = (await db.execute(select(func.count(PartsCatalog.id)).where(PartsCatalog.is_active == True))).scalar()
+    parts_count   = (await cat_db.execute(select(func.count(PartsCatalog.id)).where(PartsCatalog.is_active == True))).scalar()
     pending_orders = (await db.execute(select(func.count(Order.id)).where(Order.status.in_(["pending_payment", "paid", "processing"])))).scalar()
 
     # Orders grouped by status
@@ -2723,57 +2980,226 @@ async def get_admin_stats(current_user: User = Depends(get_current_admin_user), 
 
 
 @app.get("/api/v1/admin/users")
-async def get_admin_users(current_user: User = Depends(get_current_admin_user), limit: int = 100, db: AsyncSession = Depends(get_db)):
+async def get_admin_users(current_user: User = Depends(get_current_admin_user), limit: int = 100, db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(User).order_by(User.created_at.desc()).limit(limit))
     users = result.scalars().all()
-    return {"users": [{"id": str(u.id), "email": u.email, "full_name": u.full_name, "phone": u.phone[-4:] if u.phone else None, "is_verified": u.is_verified, "is_admin": u.is_admin, "is_active": u.is_active, "created_at": u.created_at} for u in users]}
+    return {"users": [{"id": str(u.id), "email": u.email, "full_name": u.full_name, "phone": u.phone, "is_verified": u.is_verified, "is_admin": u.is_admin, "is_active": u.is_active, "role": u.role, "failed_login_count": u.failed_login_count, "locked_until": u.locked_until.isoformat() if u.locked_until else None, "created_at": u.created_at} for u in users]}
 
+
+class UserUpdateBody(BaseModel):
+    full_name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    role: Optional[str] = None
+    is_verified: Optional[bool] = None
+    is_active: Optional[bool] = None
+    is_admin: Optional[bool] = None
+
+
+class UserCreateBody(BaseModel):
+    full_name: str
+    email: str
+    phone: str
+    password: str
+    role: str = "customer"
+    is_admin: bool = False
+    is_verified: bool = True
+
+
+@app.post("/api/v1/admin/users")
+async def create_admin_user(body: UserCreateBody, current_user: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_pii_db)):
+    dup_email = await db.execute(select(User).where(User.email == body.email))
+    if dup_email.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="כתובת האימייל כבר קיימת במערכת")
+    dup_phone = await db.execute(select(User).where(User.phone == body.phone))
+    if dup_phone.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="מספר הטלפון כבר קיים במערכת")
+    new_user = User(
+        email=body.email,
+        phone=body.phone,
+        full_name=body.full_name,
+        password_hash=hash_password(body.password),
+        role="admin" if body.is_admin else body.role,
+        is_admin=body.is_admin,
+        is_active=True,
+        is_verified=body.is_verified,
+    )
+    db.add(new_user)
+    await db.commit()
+    await db.refresh(new_user)
+    return {"message": "User created", "user": {"id": str(new_user.id), "email": new_user.email, "full_name": new_user.full_name, "phone": new_user.phone, "role": new_user.role, "is_admin": new_user.is_admin, "is_active": new_user.is_active, "is_verified": new_user.is_verified, "failed_login_count": 0, "locked_until": None, "created_at": new_user.created_at}}
 
 @app.put("/api/v1/admin/users/{user_id}")
-async def update_admin_user(user_id: str, is_active: Optional[bool] = None, is_admin: Optional[bool] = None, current_user: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_db)):
+async def update_admin_user(user_id: str, body: UserUpdateBody = None, is_active: Optional[bool] = None, is_admin: Optional[bool] = None, current_user: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    # Handle legacy query params
     if is_active is not None:
         user.is_active = is_active
     if is_admin is not None:
+        if not is_admin:
+            admin_count_result = await db.execute(select(func.count()).select_from(User).where(User.is_admin == True))
+            if admin_count_result.scalar() <= 1:
+                raise HTTPException(status_code=400, detail="Cannot remove the last admin")
         user.is_admin = is_admin
+    if body:
+        if body.full_name is not None:
+            user.full_name = body.full_name
+        if body.email is not None:
+            dup = await db.execute(select(User).where(User.email == body.email, User.id != user_id))
+            if dup.scalar_one_or_none():
+                raise HTTPException(status_code=400, detail="Email already in use")
+            user.email = body.email
+        if body.phone is not None:
+            dup = await db.execute(select(User).where(User.phone == body.phone, User.id != user_id))
+            if dup.scalar_one_or_none():
+                raise HTTPException(status_code=400, detail="Phone already in use")
+            user.phone = body.phone
+        if body.role is not None:
+            user.role = body.role
+        if body.is_verified is not None:
+            user.is_verified = body.is_verified
+        if body.is_active is not None:
+            user.is_active = body.is_active
+        if body.is_admin is not None:
+            if not body.is_admin:
+                admin_count_result = await db.execute(select(func.count()).select_from(User).where(User.is_admin == True))
+                if admin_count_result.scalar() <= 1:
+                    raise HTTPException(status_code=400, detail="Cannot remove the last admin")
+            user.is_admin = body.is_admin
+            user.role = "admin" if body.is_admin else "customer"
     await db.commit()
-    return {"message": "User updated"}
+    return {"message": "User updated", "user": {"id": str(user.id), "email": user.email, "full_name": user.full_name, "phone": user.phone, "role": user.role, "is_admin": user.is_admin, "is_active": user.is_active, "is_verified": user.is_verified}}
+
+
+@app.post("/api/v1/admin/users/{user_id}/reset-login")
+async def reset_user_login_failures(user_id: str, current_user: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_pii_db)):
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.failed_login_count = 0
+    user.locked_until = None
+    await db.commit()
+    return {"message": "Login failures reset"}
+
+
+@app.delete("/api/v1/admin/users/{user_id}")
+async def delete_admin_user(user_id: str, current_user: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_pii_db)):
+    if str(current_user.id) == user_id:
+        raise HTTPException(status_code=400, detail="Cannot delete your own account")
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.is_admin:
+        admin_count_result = await db.execute(select(func.count()).select_from(User).where(User.is_admin == True))
+        if admin_count_result.scalar() <= 1:
+            raise HTTPException(status_code=400, detail="Cannot delete the last admin")
+    await db.delete(user)
+    await db.commit()
+    return {"message": "User deleted"}
 
 
 @app.get("/api/v1/admin/suppliers")
 async def get_admin_suppliers(current_user: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_db)):
     from BACKEND_DATABASE_MODELS import Supplier
-    result = await db.execute(select(Supplier))
+    result = await db.execute(select(Supplier).order_by(Supplier.priority))
     suppliers = result.scalars().all()
-    return {"suppliers": [{"id": str(s.id), "name": s.name, "country": s.country, "is_active": s.is_active, "priority": s.priority, "reliability_score": float(s.reliability_score)} for s in suppliers]}
+    def _s(s):
+        creds = s.credentials or {}
+        return {
+            "id": str(s.id), "name": s.name, "country": s.country,
+            "website": s.website, "api_endpoint": s.api_endpoint,
+            "contact_email": creds.get("contact_email"), "contact_phone": creds.get("contact_phone"),
+            "is_active": s.is_active, "priority": s.priority,
+            "reliability_score": float(s.reliability_score),
+            "supports_express": s.supports_express,
+            "express_carrier": s.express_carrier,
+            "express_base_cost_usd": float(s.express_base_cost_usd) if s.express_base_cost_usd else None,
+            "avg_delivery_days_actual": float(s.avg_delivery_days_actual) if s.avg_delivery_days_actual else None,
+            "shipping_info": s.shipping_info or {},
+            "return_policy": s.return_policy or {},
+            "created_at": s.created_at,
+        }
+    return {"suppliers": [_s(s) for s in suppliers]}
 
 
 @app.post("/api/v1/admin/suppliers")
 async def create_supplier(data: SupplierCreate, current_user: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_db)):
     from BACKEND_DATABASE_MODELS import Supplier
-    supplier = Supplier(name=data.name, country=data.country, website=data.website, api_endpoint=data.api_endpoint, priority=data.priority, is_active=True)
+    creds = {}
+    if data.contact_email: creds["contact_email"] = data.contact_email
+    if data.contact_phone: creds["contact_phone"] = data.contact_phone
+    if data.api_key: creds["api_key"] = data.api_key
+    supplier = Supplier(
+        name=data.name, country=data.country, website=data.website,
+        api_endpoint=data.api_endpoint, priority=data.priority,
+        reliability_score=data.reliability_score, is_active=True,
+        supports_express=data.supports_express, express_carrier=data.express_carrier,
+        express_base_cost_usd=data.express_base_cost_usd,
+        credentials=creds,
+    )
     db.add(supplier)
     await db.commit()
     await db.refresh(supplier)
-    return {"id": str(supplier.id), "message": "Supplier created"}
+    creds_out = supplier.credentials or {}
+    return {"id": str(supplier.id), "message": "Supplier created", "supplier": {
+        "id": str(supplier.id), "name": supplier.name, "country": supplier.country,
+        "website": supplier.website, "api_endpoint": supplier.api_endpoint,
+        "contact_email": creds_out.get("contact_email"), "contact_phone": creds_out.get("contact_phone"),
+        "is_active": supplier.is_active, "priority": supplier.priority,
+        "reliability_score": float(supplier.reliability_score),
+        "supports_express": supplier.supports_express, "express_carrier": supplier.express_carrier,
+        "express_base_cost_usd": float(supplier.express_base_cost_usd) if supplier.express_base_cost_usd else None,
+        "avg_delivery_days_actual": None, "shipping_info": {}, "return_policy": {}, "created_at": supplier.created_at,
+    }}
 
 
 @app.put("/api/v1/admin/suppliers/{supplier_id}")
-async def update_supplier(supplier_id: str, is_active: Optional[bool] = None, priority: Optional[int] = None, current_user: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_db)):
+async def update_supplier(supplier_id: str, body: SupplierUpdateBody = None, is_active: Optional[bool] = None, priority: Optional[int] = None, current_user: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_db)):
     from BACKEND_DATABASE_MODELS import Supplier
     result = await db.execute(select(Supplier).where(Supplier.id == supplier_id))
     supplier = result.scalar_one_or_none()
     if not supplier:
         raise HTTPException(status_code=404, detail="Supplier not found")
-    if is_active is not None:
-        supplier.is_active = is_active
-    if priority is not None:
-        supplier.priority = priority
+    # legacy query params
+    if is_active is not None: supplier.is_active = is_active
+    if priority is not None: supplier.priority = priority
+    if body:
+        if body.name is not None: supplier.name = body.name
+        if body.country is not None: supplier.country = body.country
+        if body.website is not None: supplier.website = body.website
+        if body.api_endpoint is not None: supplier.api_endpoint = body.api_endpoint
+        if body.priority is not None: supplier.priority = body.priority
+        if body.reliability_score is not None: supplier.reliability_score = body.reliability_score
+        if body.is_active is not None: supplier.is_active = body.is_active
+        if body.supports_express is not None: supplier.supports_express = body.supports_express
+        if body.express_carrier is not None: supplier.express_carrier = body.express_carrier
+        if body.express_base_cost_usd is not None: supplier.express_base_cost_usd = body.express_base_cost_usd
+        # credentials JSON
+        if body.contact_email is not None or body.contact_phone is not None or body.api_key is not None:
+            creds = dict(supplier.credentials or {})
+            if body.contact_email is not None: creds["contact_email"] = body.contact_email
+            if body.contact_phone is not None: creds["contact_phone"] = body.contact_phone
+            if body.api_key is not None: creds["api_key"] = body.api_key
+            supplier.credentials = creds
     await db.commit()
-    return {"message": "Supplier updated"}
+    await db.refresh(supplier)
+    creds_out = supplier.credentials or {}
+    return {"message": "Supplier updated", "supplier": {
+        "id": str(supplier.id), "name": supplier.name, "country": supplier.country,
+        "website": supplier.website, "api_endpoint": supplier.api_endpoint,
+        "contact_email": creds_out.get("contact_email"), "contact_phone": creds_out.get("contact_phone"),
+        "is_active": supplier.is_active, "priority": supplier.priority,
+        "reliability_score": float(supplier.reliability_score),
+        "supports_express": supplier.supports_express, "express_carrier": supplier.express_carrier,
+        "express_base_cost_usd": float(supplier.express_base_cost_usd) if supplier.express_base_cost_usd else None,
+        "avg_delivery_days_actual": float(supplier.avg_delivery_days_actual) if supplier.avg_delivery_days_actual else None,
+        "shipping_info": supplier.shipping_info or {}, "return_policy": supplier.return_policy or {}, "created_at": supplier.created_at,
+    }}
 
 
 @app.delete("/api/v1/admin/suppliers/{supplier_id}")
@@ -2802,7 +3228,7 @@ async def get_all_orders_admin(
     status: Optional[str] = None,
     limit: int = 200,
     current_user: User = Depends(get_current_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_pii_db),
 ):
     """Admin: get ALL orders from all users, with user info."""
     stmt = (
@@ -2836,7 +3262,7 @@ async def update_order_status_admin(
     order_id: str,
     new_status: str,
     current_user: User = Depends(get_current_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_pii_db),
 ):
     """Admin: update order status and notify the customer."""
     allowed = ["pending_payment", "paid", "processing", "shipped", "delivered", "cancelled"]
@@ -2908,7 +3334,7 @@ async def generate_social_content(topic: str, platform: str, tone: str = "profes
 
 
 @app.get("/api/v1/admin/analytics/dashboard")
-async def get_analytics_dashboard(current_user: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_db)):
+async def get_analytics_dashboard(current_user: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_pii_db)):
     users_count = (await db.execute(select(func.count(User.id)))).scalar()
     orders_count = (await db.execute(select(func.count(Order.id)))).scalar()
     revenue = (await db.execute(select(func.sum(Order.total_amount)).where(Order.status.in_(["paid", "processing", "shipped", "delivered"])))).scalar() or 0
@@ -2916,7 +3342,7 @@ async def get_analytics_dashboard(current_user: User = Depends(get_current_admin
 
 
 @app.get("/api/v1/admin/analytics/sales")
-async def get_sales_analytics(start_date: Optional[date] = None, end_date: Optional[date] = None, current_user: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_db)):
+async def get_sales_analytics(start_date: Optional[date] = None, end_date: Optional[date] = None, current_user: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_pii_db)):
     from datetime import timedelta
     # Default: last 30 days ending today
     d_end   = end_date   or date.today()
@@ -2948,7 +3374,7 @@ async def get_sales_analytics(start_date: Optional[date] = None, end_date: Optio
 
 
 @app.get("/api/v1/admin/analytics/users")
-async def get_user_analytics(current_user: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_db)):
+async def get_user_analytics(current_user: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_pii_db)):
     total = (await db.execute(select(func.count(User.id)))).scalar()
     verified = (await db.execute(select(func.count(User.id)).where(User.is_verified == True))).scalar()
     return {"total_users": total, "verified_users": verified}
@@ -2961,6 +3387,7 @@ async def get_user_analytics(current_user: User = Depends(get_current_admin_user
 AGENTS_METADATA = {
     "router_agent": {
         "display_name": "Router Agent",
+        "persona": "Avi",
         "name_he": "סוכן ניתוב",
         "description": "Automatically routes messages to the appropriate specialized agent based on intent detection.",
         "description_he": "מנתב הודעות לסוכן המתאים על פי זיהוי כוונה",
@@ -2973,6 +3400,7 @@ AGENTS_METADATA = {
     },
     "parts_finder_agent": {
         "display_name": "Parts Finder Agent",
+        "persona": "Nir",
         "name_he": "סוכן חיפוש חלקים",
         "description": "Finds auto parts by vehicle, category, or part number. Identifies vehicles from Israeli license plates via gov API.",
         "description_he": "מאתר חלקי רכב לפי רכב, קטגוריה או מספר חלק. זיהוי רכב ממספר לוחית ישראלי",
@@ -2985,6 +3413,7 @@ AGENTS_METADATA = {
     },
     "sales_agent": {
         "display_name": "Sales Agent",
+        "persona": "Maya",
         "name_he": "סוכן מכירות",
         "description": "Smart upselling and cross-selling. Presents Good/Better/Best options. Never reveals supplier names.",
         "description_he": "מכירה חכמה עם Good/Better/Best. לא חושף שמות ספקים",
@@ -2997,6 +3426,7 @@ AGENTS_METADATA = {
     },
     "orders_agent": {
         "display_name": "Orders Agent",
+        "persona": "Lior",
         "name_he": "סוכן הזמנות",
         "description": "Manages order lifecycle from placement to delivery. Handles cancellations and returns. Dropshipping-aware.",
         "description_he": "ניהול מחזור חיי הזמנה. ביטולים וחזרות. תואם דרופשיפינג",
@@ -3009,6 +3439,7 @@ AGENTS_METADATA = {
     },
     "finance_agent": {
         "display_name": "Finance Agent",
+        "persona": "Tal",
         "name_he": "סוכן פיננסי",
         "description": "Handles payments, invoices, and refunds. Licensed business (מס׳ עוסק: 060633880). VAT 17%, refund policy.",
         "description_he": "תשלומים, חשבוניות, החזרים. עוסק מורשה מס׳ 060633880",
@@ -3021,6 +3452,7 @@ AGENTS_METADATA = {
     },
     "service_agent": {
         "display_name": "Service Agent",
+        "persona": "Dana",
         "name_he": "סוכן שירות לקוחות",
         "description": "Default fallback agent. Handles general questions, complaints, and technical support with empathy.",
         "description_he": "סוכן ברירת מחדל. שאלות כלליות, תלונות, תמיכה טכנית",
@@ -3033,6 +3465,7 @@ AGENTS_METADATA = {
     },
     "security_agent": {
         "display_name": "Security Agent",
+        "persona": "Oren",
         "name_he": "סוכן אבטחה",
         "description": "Handles login issues, 2FA, password reset, and suspicious activity. Strict identity verification.",
         "description_he": "בעיות כניסה, 2FA, איפוס סיסמה, פעילות חשודה",
@@ -3045,6 +3478,7 @@ AGENTS_METADATA = {
     },
     "marketing_agent": {
         "display_name": "Marketing Agent",
+        "persona": "Shira",
         "name_he": "סוכן שיווק",
         "description": "Manages promotions, coupons, referral program (100₪ + 10%), and loyalty points.",
         "description_he": "קופונים, תוכנית הפניות (100₪ + 10%), נקודות נאמנות",
@@ -3057,6 +3491,7 @@ AGENTS_METADATA = {
     },
     "supplier_manager_agent": {
         "display_name": "Supplier Manager Agent",
+        "persona": "Boaz",
         "name_he": "סוכן ניהול ספקים",
         "description": "Background agent. Daily price sync at 02:00. Manages 3 active suppliers. Does NOT interact with customers.",
         "description_he": "סוכן רקע. סנכרון מחירים יומי 02:00. לא משוחח עם לקוחות",
@@ -3069,6 +3504,7 @@ AGENTS_METADATA = {
     },
     "social_media_manager_agent": {
         "display_name": "Social Media Manager Agent",
+        "persona": "Noa",
         "name_he": "סוכן מנהל מדיה חברתית",
         "description": "Generates content for Facebook, Instagram, TikTok, LinkedIn, Telegram. All posts need approval before publish.",
         "description_he": "יצירת תוכן לפייסבוק, אינסטגרם, טיקטוק, לינקדאין, טלגרם",
@@ -3128,6 +3564,25 @@ async def test_agent(
         return {"agent": agent_name, "response": response, "status": "ok"}
     except Exception as e:
         return {"agent": agent_name, "response": str(e), "status": "error"}
+
+
+@app.put("/api/v1/admin/agents/{agent_name}")
+async def update_agent(
+    agent_name: str,
+    body: dict,
+    current_user: User = Depends(get_current_admin_user),
+):
+    if agent_name not in AGENTS_METADATA:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
+    allowed = {"display_name", "persona", "name_he", "description", "description_he", "model", "temperature", "capabilities", "enabled"}
+    for k, v in body.items():
+        if k in allowed:
+            AGENTS_METADATA[agent_name][k] = v
+    # Also update singleton model if loaded
+    from BACKEND_AI_AGENTS import _agents
+    if agent_name in _agents and "model" in body:
+        _agents[agent_name].model = body["model"]
+    return {"agent": agent_name, **AGENTS_METADATA[agent_name]}
 
 
 # ==============================================================================
@@ -3303,6 +3758,20 @@ async def price_sync_status(
     }
 
 
+@app.post("/api/v1/admin/orders/fulfill-stuck", tags=["Admin – Orders"])
+async def admin_fulfill_stuck_orders(db: AsyncSession = Depends(get_pii_db), current_user: User = Depends(get_current_user)):
+    """Admin: manually re-trigger supplier fulfillment for all paid/processing orders."""
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin only")
+    result = await db.execute(select(Order).where(Order.status.in_(["paid", "processing"])))
+    stuck = result.scalars().all()
+    if not stuck:
+        return {"message": "No stuck orders found", "count": 0}
+    await trigger_supplier_fulfillment(stuck, db)
+    await db.commit()
+    return {"message": f"Fulfillment triggered for {len(stuck)} order(s)", "count": len(stuck), "orders": [o.order_number for o in stuck]}
+
+
 @app.post("/api/v1/admin/price-sync/run")
 async def trigger_price_sync(
     current_user: User = Depends(get_current_admin_user),
@@ -3342,11 +3811,34 @@ async def get_version():
 @app.on_event("startup")
 async def startup():
     from catalog_scraper import start_scraper_task
+    from db_update_agent import start_agent_task as start_db_agent
     print("🚀 Auto Spare API starting...")
     print(f"   Environment: {os.getenv('ENVIRONMENT', 'development')}")
     asyncio.create_task(_price_sync_loop())
-    start_scraper_task()   # ← catalog scraper background loop
-    print("✅ All systems ready — price-sync + catalog-scraper schedulers started")
+    asyncio.create_task(_rescue_stuck_orders())   # ← rescue paid/processing orders
+    start_scraper_task()           # ← catalog scraper background loop
+    start_db_agent(get_db, 6.0)   # ← DB cleaning / normalisation agent (every 6h)
+    print("✅ All systems ready — price-sync + catalog-scraper + db-agent schedulers started")
+
+
+async def _rescue_stuck_orders():
+    """On startup: find orders stuck at paid/processing and re-run supplier fulfillment."""
+    await asyncio.sleep(5)  # give DB pool a moment to warm up
+    try:
+        async with pii_session_factory() as db:
+            result = await db.execute(
+                select(Order).where(Order.status.in_(["paid", "processing"]))
+            )
+            stuck = result.scalars().all()
+            if not stuck:
+                print("[RescueTask] No stuck orders found.")
+                return
+            print(f"[RescueTask] Found {len(stuck)} stuck order(s) — triggering fulfillment...")
+            await trigger_supplier_fulfillment(stuck, db)
+            await db.commit()
+            print(f"[RescueTask] ✅ Fulfillment re-triggered for {len(stuck)} order(s).")
+    except Exception as e:
+        print(f"[RescueTask] Error rescuing stuck orders: {e}")
 
 
 # ── Background price-sync loop ────────────────────────────────────────────────
@@ -3420,10 +3912,12 @@ async def general_exception_handler(request: Request, exc: Exception):
 
 
 # ==============================================================================
-# ADMIN — CATALOG SCRAPER CONTROLS
+# ADMIN — CATALOG SCRAPER CONTROLS  (Rex)
 # GET  /api/v1/admin/scraper/status
 # POST /api/v1/admin/scraper/run
 # POST /api/v1/admin/scraper/run-part/{part_id}
+# POST /api/v1/admin/scraper/discover           ← brand discovery, all thin brands
+# POST /api/v1/admin/scraper/discover/{brand}   ← brand discovery, one brand
 # ==============================================================================
 
 @app.get("/api/v1/admin/scraper/status", tags=["Admin – Scraper"])
@@ -3527,6 +4021,135 @@ async def scraper_run_one_part(
 
     await db_log(db, "INFO", f"Manual scrape of part {part_id}: {len(results)} supplier rows processed")
     return {"part_id": part_id, "sku": rows[0].sku, "supplier_results": results}
+
+
+@app.post("/api/v1/admin/scraper/discover", tags=["Admin – Scraper"])
+async def scraper_discover_all(
+    target: int = 200,
+    per_run: int = 5,
+    current_user=Depends(get_current_admin_user),
+):
+    """
+    Ask Rex to discover real parts for all brands that have fewer than `target`
+    parts in the catalog.  Runs in the background — returns immediately.
+
+    - **target**: minimum parts a brand must have before Rex skips it (default 200)
+    - **per_run**: max number of thin brands to process this run (default 5)
+    """
+    from catalog_scraper import run_brand_discovery
+
+    async def _run():
+        try:
+            await run_brand_discovery(target=target, per_run=per_run)
+        except Exception as exc:
+            print(f"[Rex] discovery error: {exc}")
+
+    asyncio.create_task(_run())
+    return {
+        "status": "started",
+        "message": f"Rex brand discovery started (target={target}, per_run={per_run})",
+    }
+
+
+@app.post("/api/v1/admin/scraper/discover/{brand}", tags=["Admin – Scraper"])
+async def scraper_discover_brand(
+    brand: str,
+    target: int = 200,
+    current_user=Depends(get_current_admin_user),
+):
+    """
+    Ask Rex to discover real OEM + aftermarket parts for a single **brand**.
+    Sources: autodoc.eu → eBay Motors.
+    Parts are classified as OEM Original / Aftermarket / OEM Equivalent.
+    Runs in the background — returns immediately.
+    """
+    from catalog_scraper import run_brand_discovery
+
+    async def _run():
+        try:
+            await run_brand_discovery(brands=[brand], target=target)
+        except Exception as exc:
+            print(f"[Rex] discovery error for {brand}: {exc}")
+
+    asyncio.create_task(_run())
+    return {
+        "status": "started",
+        "message": f"Rex discovering parts for '{brand}' (target={target} parts)",
+        "brand": brand,
+    }
+
+
+# ==============================================================================
+# ADMIN — DB UPDATE AGENT CONTROLS
+# GET  /api/v1/admin/db-agent/status
+# POST /api/v1/admin/db-agent/run
+# POST /api/v1/admin/db-agent/run/{task}
+# ==============================================================================
+
+@app.get("/api/v1/admin/db-agent/status", tags=["Admin – DB Agent"])
+async def db_agent_status(
+    current_user=Depends(get_current_admin_user),
+):
+    """Return the last run report from the DB update agent."""
+    from db_update_agent import get_last_report, is_running, TASK_REGISTRY
+    return {
+        "running": is_running(),
+        "available_tasks": list(TASK_REGISTRY.keys()),
+        "last_report": get_last_report(),
+    }
+
+
+@app.post("/api/v1/admin/db-agent/run", tags=["Admin – DB Agent"])
+async def db_agent_run_all(
+    current_user=Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Trigger all DB update / cleaning tasks immediately.
+    Runs in the background and returns right away.
+    Poll /api/v1/admin/db-agent/status for results.
+    """
+    from db_update_agent import run_all_tasks, is_running
+
+    if is_running():
+        return {"status": "already_running", "message": "DB agent is already running"}
+
+    async def _run(session):
+        try:
+            await run_all_tasks(session)
+        except Exception as exc:
+            print(f"[DB Agent] background run error: {exc}")
+
+    async with async_session_factory() as bg_db:
+        asyncio.create_task(_run(bg_db))
+
+    return {"status": "started", "message": "All DB agent tasks triggered in the background"}
+
+
+@app.post("/api/v1/admin/db-agent/run/{task_name}", tags=["Admin – DB Agent"])
+async def db_agent_run_task(
+    task_name: str,
+    current_user=Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Run a single named DB-agent task synchronously and return its result.
+
+    Available tasks: clean_part_names, normalize_part_types, normalize_categories,
+    normalize_availability, fix_base_prices, flag_fake_skus, fill_car_brands,
+    refresh_min_max_prices, seed_system_settings
+    """
+    from db_update_agent import run_task, TASK_REGISTRY
+
+    if task_name not in TASK_REGISTRY:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown task '{task_name}'. "
+                   f"Valid tasks: {list(TASK_REGISTRY.keys())}",
+        )
+
+    result = await run_task(task_name, db)
+    return result
 
 
 if __name__ == "__main__":

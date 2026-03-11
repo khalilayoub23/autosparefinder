@@ -6,6 +6,7 @@ import { format } from 'date-fns'
 import { he } from 'date-fns/locale'
 import toast from 'react-hot-toast'
 import { useCartStore } from '../stores/cartStore'
+import InvoiceActions from '../components/InvoiceActions'
 
 function buildTrackingUrl(trackingNumber, storedUrl) {
   if (!trackingNumber) return null
@@ -267,24 +268,8 @@ function OrderCard({ order, onReturn, onDelete, selected, onSelect }) {
                 {paying ? <Loader2 className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />} שלם הזמנה
               </button>
             )}
-            {['paid', 'processing', 'shipped', 'delivered', 'refunded'].includes(detail.status) && (
-              <button
-                onClick={() =>
-                  ordersApi.invoice(order.id)
-                    .then(({ data }) => {
-                      const url = URL.createObjectURL(new Blob([data], { type: 'application/pdf' }))
-                      const a = document.createElement('a')
-                      a.href = url
-                      a.download = `invoice-${order.order_number}.pdf`
-                      a.click()
-                      URL.revokeObjectURL(url)
-                    })
-                    .catch(() => toast.error('שגיאה בהורדת החשבונית'))
-                }
-                className="btn-secondary text-sm flex items-center gap-1"
-              >
-                <FileText className="w-4 h-4" /> חשבונית PDF
-              </button>
+            {['paid', 'confirmed', 'processing', 'supplier_ordered', 'shipped', 'delivered', 'refunded'].includes(detail.status) && (
+              <InvoiceActions orderId={order.id} orderNumber={order.order_number} compact />
             )}
             {['delivered', 'shipped'].includes(detail.status) && (
               <button onClick={() => onReturn(order.id)} className="btn-secondary text-sm flex items-center gap-1">

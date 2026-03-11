@@ -32,7 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from BACKEND_DATABASE_MODELS import (
     LoginAttempt, PasswordReset, TwoFactorCode, User, UserProfile, UserSession,
-    get_db,
+    get_db, get_pii_db,
 )
 
 load_dotenv()
@@ -638,7 +638,7 @@ security = HTTPBearer(auto_error=False)
 
 async def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_pii_db),
 ) -> User:
     """Extract and validate JWT from Authorization header."""
     if not credentials:

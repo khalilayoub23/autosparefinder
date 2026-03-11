@@ -2,7 +2,7 @@
 ==============================================================================
 AUTO SPARE - DATABASE MODELS (SQLAlchemy 2.0 Async)
 ==============================================================================
-29 Tables:
+35 Tables:
   Users & Auth (6): users, user_profiles, user_sessions,
                     two_factor_codes, login_attempts, password_resets
   Vehicles & Parts (5): vehicles, user_vehicles, parts_catalog, parts_images,
@@ -13,6 +13,9 @@ AUTO SPARE - DATABASE MODELS (SQLAlchemy 2.0 Async)
   Files & Media (2): files, file_metadata
   System & Logs (5): system_logs, audit_logs, system_settings,
                      cache_entries, notifications
+  Catalog Enhancements (6): part_vehicle_fitment, part_cross_reference,
+                            part_aliases, price_history,
+                            purchase_orders, scraper_api_calls
 ==============================================================================
 """
 
@@ -38,17 +41,45 @@ DATABASE_URL = os.getenv(
     "postgresql+asyncpg://autospare:autospare@localhost:5432/autospare"
 )
 
+DATABASE_PII_URL = os.getenv(
+    "DATABASE_PII_URL",
+    "postgresql+asyncpg://autospare:autospare@localhost:5432/autospare_pii"
+)
+
 engine = create_async_engine(DATABASE_URL, echo=False, future=True)
 async_session_factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+# PII database — separate engine for GDPR-scoped data
+pii_engine = create_async_engine(DATABASE_PII_URL, echo=False, future=True)
+pii_session_factory = sessionmaker(pii_engine, class_=AsyncSession, expire_on_commit=False)
 
 
 class Base(DeclarativeBase):
     pass
 
 
+# Separate declarative base for PII models (users, orders, payments, etc.)
+# Tables using this base are created in autospare_pii, not autospare.
+class PiiBase(DeclarativeBase):
+    pass
+
+
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
-    """Dependency: yields an async database session."""
+    """Dependency: yields an async database session (catalog DB)."""
     async with async_session_factory() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
+
+async def get_pii_db() -> AsyncGenerator[AsyncSession, None]:
+    """Dependency: yields an async database session (PII DB — autospare_pii)."""
+    async with pii_session_factory() as session:
         try:
             yield session
             await session.commit()
@@ -83,6 +114,15 @@ class CarBrand(Base):
     website = Column(String(500), nullable=True)
     notes = Column(Text, nullable=True)
     aliases = Column(ARRAY(String), default=list)   # alternate spellings / import names
+    # Israeli market
+    warranty_years = Column(Integer, nullable=True)
+    warranty_km = Column(Integer, nullable=True)
+    warranty_notes = Column(Text, nullable=True)
+    il_importer = Column(String(200), nullable=True)               # e.g. Champion Motors (BMW)
+    il_importer_website = Column(String(500), nullable=True)
+    parts_availability = Column(String(20), nullable=True)         # Easy / Medium / Hard
+    avg_service_interval_km = Column(Integer, nullable=True)
+    popular_models_il = Column(JSONB, nullable=True)               # from transport ministry data
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -91,7 +131,7 @@ class CarBrand(Base):
 # 1. USERS & AUTH TABLES (6)
 # ==============================================================================
 
-class User(Base):
+class User(PiiBase):
     __tablename__ = "users"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -124,7 +164,7 @@ class User(Base):
     agent_ratings = relationship("AgentRating", back_populates="user")
 
 
-class UserProfile(Base):
+class UserProfile(PiiBase):
     __tablename__ = "user_profiles"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -147,7 +187,7 @@ class UserProfile(Base):
     user = relationship("User", back_populates="profile")
 
 
-class UserSession(Base):
+class UserSession(PiiBase):
     __tablename__ = "user_sessions"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -169,7 +209,7 @@ class UserSession(Base):
     user = relationship("User", back_populates="sessions")
 
 
-class TwoFactorCode(Base):
+class TwoFactorCode(PiiBase):
     __tablename__ = "two_factor_codes"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -185,7 +225,7 @@ class TwoFactorCode(Base):
     user = relationship("User", back_populates="two_factor_codes")
 
 
-class LoginAttempt(Base):
+class LoginAttempt(PiiBase):
     __tablename__ = "login_attempts"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -200,7 +240,7 @@ class LoginAttempt(Base):
     user = relationship("User", back_populates="login_attempts")
 
 
-class PasswordReset(Base):
+class PasswordReset(PiiBase):
     __tablename__ = "password_resets"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -218,7 +258,7 @@ class PasswordReset(Base):
 # 2. VEHICLES & PARTS TABLES (4)
 # ==============================================================================
 
-class Vehicle(Base):
+class Vehicle(PiiBase):
     __tablename__ = "vehicles"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -243,7 +283,7 @@ class Vehicle(Base):
     profiles_default = relationship("UserProfile", foreign_keys="UserProfile.default_vehicle_id")
 
 
-class UserVehicle(Base):
+class UserVehicle(PiiBase):
     __tablename__ = "user_vehicles"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -275,7 +315,23 @@ class PartsCatalog(Base):
     description = Column(Text)
     specifications = Column(JSONB, default=dict)
     compatible_vehicles = Column(JSONB, default=list)
-    base_price = Column(Numeric(10, 2), nullable=True)
+    base_price = Column(Numeric(10, 2), nullable=True,
+                        doc="Our selling price — WITH 17% VAT included")
+    # New catalog fields
+    name_he = Column(String(255), nullable=True)                   # Hebrew name
+    oem_number = Column(String(100), nullable=True, index=True)    # primary OEM number
+    barcode = Column(String(50), nullable=True)                    # EAN-13 / UPC
+    weight_kg = Column(Numeric(6, 3), nullable=True)
+    # All ILS prices stored WITH 17% VAT included
+    importer_price_ils = Column(Numeric(10, 2), nullable=True)     # IL importer price incl. VAT
+    online_price_ils = Column(Numeric(10, 2), nullable=True)       # competitor online price incl. VAT
+    min_price_ils = Column(Numeric(10, 2), nullable=True)          # cheapest supplier incl. VAT
+    max_price_ils = Column(Numeric(10, 2), nullable=True)          # most expensive supplier incl. VAT
+    part_condition = Column(String(20), nullable=False, default="New")  # New/Used/Remanufactured
+    superseded_by_sku = Column(String(100), nullable=True)         # replacement SKU if discontinued
+    customs_tariff_code = Column(String(20), nullable=True)        # for Israeli customs
+    is_safety_critical = Column(Boolean, nullable=False, default=False)  # brakes/steering/airbags
+    needs_oem_lookup = Column(Boolean, nullable=False, default=False)    # fake/seeded SKU flag
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -283,7 +339,10 @@ class PartsCatalog(Base):
     # Relationships
     images = relationship("PartImage", back_populates="part", cascade="all, delete-orphan")
     supplier_parts = relationship("SupplierPart", back_populates="part")
-    order_items = relationship("OrderItem", back_populates="part")
+    # order_items are in autospare_pii — no cross-DB relationship
+    fitments = relationship("PartVehicleFitment", back_populates="part", cascade="all, delete-orphan")
+    cross_references = relationship("PartCrossReference", back_populates="part", cascade="all, delete-orphan")
+    aliases = relationship("PartAlias", back_populates="part", cascade="all, delete-orphan")
 
 
 class PartImage(Base):
@@ -291,7 +350,7 @@ class PartImage(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     part_id = Column(UUID(as_uuid=True), ForeignKey("parts_catalog.id", ondelete="CASCADE"), nullable=False, index=True)
-    file_id = Column(UUID(as_uuid=True), ForeignKey("files.id"), nullable=True)
+    file_id = Column(UUID(as_uuid=True), nullable=True)  # cross-DB ref → autospare_pii.files
     url = Column(String(500))
     is_primary = Column(Boolean, default=False)
     sort_order = Column(Integer, default=0)
@@ -320,11 +379,17 @@ class Supplier(Base):
     reliability_score = Column(Numeric(3, 2), default=5.0)
     is_active = Column(Boolean, default=True)
     priority = Column(Integer, default=0)                            # lower = higher priority
+    # Express shipping
+    supports_express = Column(Boolean, nullable=False, default=False)
+    express_carrier = Column(String(100), nullable=True)             # DHL Express, Israel Post Express
+    express_base_cost_usd = Column(Numeric(8, 2), nullable=True)
+    avg_delivery_days_actual = Column(Numeric(5, 1), nullable=True)  # from real order history
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
     supplier_parts = relationship("SupplierPart", back_populates="supplier")
+    purchase_orders = relationship("PurchaseOrder", back_populates="supplier")
 
 
 class SupplierPart(Base):
@@ -343,6 +408,17 @@ class SupplierPart(Base):
     estimated_delivery_days = Column(Integer, default=14)
     last_checked_at = Column(DateTime, nullable=True)
     is_available = Column(Boolean, default=True)
+    # Stock details
+    stock_quantity = Column(Integer, nullable=True)
+    min_order_qty = Column(Integer, nullable=False, default=1)
+    supplier_url = Column(String(1000), nullable=True)
+    last_in_stock_at = Column(DateTime, nullable=True)
+    # Express shipping for this specific part
+    express_available = Column(Boolean, nullable=False, default=False)
+    express_price_ils = Column(Numeric(10, 2), nullable=True)        # surcharge incl. 17% VAT
+    express_delivery_days = Column(Integer, nullable=True)
+    express_cutoff_time = Column(String(5), nullable=True)           # "14:00"
+    express_last_checked = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (
@@ -352,14 +428,15 @@ class SupplierPart(Base):
     # Relationships
     supplier = relationship("Supplier", back_populates="supplier_parts")
     part = relationship("PartsCatalog", back_populates="supplier_parts")
-    order_items = relationship("OrderItem", back_populates="supplier_part")
+    # order_items are in autospare_pii — no cross-DB relationship
+    price_history = relationship("PriceHistory", back_populates="supplier_part", cascade="all, delete-orphan")
 
 
 # ==============================================================================
 # 4. ORDERS & PAYMENTS TABLES (5)
 # ==============================================================================
 
-class Order(Base):
+class Order(PiiBase):
     __tablename__ = "orders"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -379,6 +456,7 @@ class Order(Base):
     estimated_delivery = Column(DateTime, nullable=True)
     notes = Column(Text, nullable=True)
     coupon_code = Column(String(50), nullable=True)
+    shipping_type = Column(String(20), nullable=False, default="standard")  # standard / express
     shipped_at = Column(DateTime, nullable=True)
     delivered_at = Column(DateTime, nullable=True)
     cancelled_at = Column(DateTime, nullable=True)
@@ -391,15 +469,16 @@ class Order(Base):
     payment = relationship("Payment", back_populates="order", uselist=False)
     invoice = relationship("Invoice", back_populates="order", uselist=False)
     returns = relationship("Return", back_populates="order")
+    # purchase_orders are in autospare catalog DB — no cross-DB relationship
 
 
-class OrderItem(Base):
+class OrderItem(PiiBase):
     __tablename__ = "order_items"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     order_id = Column(UUID(as_uuid=True), ForeignKey("orders.id", ondelete="CASCADE"), nullable=False, index=True)
-    part_id = Column(UUID(as_uuid=True), ForeignKey("parts_catalog.id"), nullable=True)
-    supplier_part_id = Column(UUID(as_uuid=True), ForeignKey("supplier_parts.id"), nullable=True)
+    part_id = Column(UUID(as_uuid=True), nullable=True)           # cross-DB ref → autospare.parts_catalog
+    supplier_part_id = Column(UUID(as_uuid=True), nullable=True)  # cross-DB ref → autospare.supplier_parts
     # Snapshot fields (in case part/supplier data changes later)
     part_name = Column(String(255), nullable=False)
     part_sku = Column(String(100))
@@ -416,11 +495,10 @@ class OrderItem(Base):
 
     # Relationships
     order = relationship("Order", back_populates="items")
-    part = relationship("PartsCatalog", back_populates="order_items")
-    supplier_part = relationship("SupplierPart", back_populates="order_items")
+    # part/supplier_part are in autospare catalog DB — no cross-DB relationships
 
 
-class Payment(Base):
+class Payment(PiiBase):
     __tablename__ = "payments"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -445,7 +523,7 @@ class Payment(Base):
     order = relationship("Order", back_populates="payment")
 
 
-class Invoice(Base):
+class Invoice(PiiBase):
     __tablename__ = "invoices"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -462,7 +540,7 @@ class Invoice(Base):
     user = relationship("User", back_populates="invoices")
 
 
-class Return(Base):
+class Return(PiiBase):
     __tablename__ = "returns"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -495,7 +573,7 @@ class Return(Base):
 # 5. AI & CHAT TABLES (4)
 # ==============================================================================
 
-class Conversation(Base):
+class Conversation(PiiBase):
     __tablename__ = "conversations"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -514,7 +592,7 @@ class Conversation(Base):
     ratings = relationship("AgentRating", back_populates="conversation", cascade="all, delete-orphan")
 
 
-class Message(Base):
+class Message(PiiBase):
     __tablename__ = "messages"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -535,7 +613,7 @@ class Message(Base):
     actions = relationship("AgentAction", back_populates="message", cascade="all, delete-orphan")
 
 
-class AgentAction(Base):
+class AgentAction(PiiBase):
     __tablename__ = "agent_actions"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -553,7 +631,7 @@ class AgentAction(Base):
     message = relationship("Message", back_populates="actions")
 
 
-class AgentRating(Base):
+class AgentRating(PiiBase):
     __tablename__ = "agent_ratings"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -577,7 +655,7 @@ class AgentRating(Base):
 # 6. FILES & MEDIA TABLES (2)
 # ==============================================================================
 
-class File(Base):
+class File(PiiBase):
     __tablename__ = "files"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -628,7 +706,7 @@ class File(Base):
     metadata_entries = relationship("FileMetadata", back_populates="file", cascade="all, delete-orphan")
 
 
-class FileMetadata(Base):
+class FileMetadata(PiiBase):
     __tablename__ = "file_metadata"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -701,7 +779,7 @@ class CacheEntry(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
-class Notification(Base):
+class Notification(PiiBase):
     __tablename__ = "notifications"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -720,6 +798,124 @@ class Notification(Base):
 
 
 # ==============================================================================
+# CATALOG ENHANCEMENT TABLES (6)
+# ==============================================================================
+
+class PartVehicleFitment(Base):
+    """Make / model / year fitment link — replaces the compatible_vehicles JSON blob."""
+    __tablename__ = "part_vehicle_fitment"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    part_id = Column(UUID(as_uuid=True), ForeignKey("parts_catalog.id", ondelete="CASCADE"), nullable=False, index=True)
+    manufacturer = Column(String(100), nullable=False, index=True)
+    model = Column(String(100), nullable=False)
+    year_from = Column(Integer, nullable=False)
+    year_to = Column(Integer, nullable=True)                          # NULL = still in production
+    engine_type = Column(String(50), nullable=True)
+    transmission = Column(String(50), nullable=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("idx_fitment_mfr_model", "manufacturer", "model"),
+        Index("idx_fitment_years", "year_from", "year_to"),
+    )
+
+    part = relationship("PartsCatalog", back_populates="fitments")
+
+
+class PartCrossReference(Base):
+    """
+    Cross-reference numbers for a part across manufacturers.
+    ref_type: OEM_ORIGINAL / OEM_EQUIVALENT / AFTERMARKET
+    """
+    __tablename__ = "part_cross_reference"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    part_id = Column(UUID(as_uuid=True), ForeignKey("parts_catalog.id", ondelete="CASCADE"), nullable=False, index=True)
+    ref_number = Column(String(100), nullable=False, index=True)
+    manufacturer = Column(String(100), nullable=False)
+    ref_type = Column(String(20), nullable=False)                    # OEM_ORIGINAL / OEM_EQUIVALENT / AFTERMARKET
+    is_superseded = Column(Boolean, nullable=False, default=False)
+    superseded_by = Column(String(100), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    part = relationship("PartsCatalog", back_populates="cross_references")
+
+
+class PartAlias(Base):  # noqa: E501
+    """Search aliases — same part, different Hebrew/English names."""
+    __tablename__ = "part_aliases"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    part_id = Column(UUID(as_uuid=True), ForeignKey("parts_catalog.id", ondelete="CASCADE"), nullable=False, index=True)
+    alias = Column(String(255), nullable=False, index=True)
+    language = Column(String(10), nullable=False, default="he")
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    part = relationship("PartsCatalog", back_populates="aliases")
+
+
+class PriceHistory(Base):
+    """One row per price change per supplier_parts row — enables margin analysis."""
+    __tablename__ = "price_history"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    supplier_part_id = Column(UUID(as_uuid=True), ForeignKey("supplier_parts.id", ondelete="CASCADE"), nullable=False, index=True)
+    old_price_ils = Column(Numeric(10, 2), nullable=True)
+    new_price_ils = Column(Numeric(10, 2), nullable=False)
+    old_price_usd = Column(Numeric(10, 2), nullable=True)
+    new_price_usd = Column(Numeric(10, 2), nullable=False)
+    change_pct = Column(Numeric(7, 4), nullable=True)               # (new-old)/old * 100
+    source = Column(String(50), nullable=True)                      # scraper / manual / import
+    ils_per_usd_rate = Column(Numeric(8, 4), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    supplier_part = relationship("SupplierPart", back_populates="price_history")
+
+
+class PurchaseOrder(Base):
+    """Tracks actual orders placed to suppliers (between customer order and shipment)."""
+    __tablename__ = "purchase_orders"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    po_number = Column(String(30), unique=True, nullable=False)
+    order_id = Column(UUID(as_uuid=True), nullable=True, index=True)  # cross-DB ref → autospare_pii.orders
+    supplier_id = Column(UUID(as_uuid=True), ForeignKey("suppliers.id"), nullable=False, index=True)
+    status = Column(String(30), nullable=False, default="draft",
+                    doc="draft / sent / confirmed / shipped / received / cancelled")
+    total_usd = Column(Numeric(10, 2), nullable=True)
+    total_ils = Column(Numeric(10, 2), nullable=True)
+    shipping_type = Column(String(20), nullable=False, default="standard")
+    tracking_number = Column(String(100), nullable=True)
+    shipped_at = Column(DateTime, nullable=True)
+    received_at = Column(DateTime, nullable=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    supplier = relationship("Supplier", back_populates="purchase_orders")
+    # order is in autospare_pii — no cross-DB relationship
+
+
+class ScraperApiCall(Base):
+    """Tracks every external API call made by the scraper and data.gov.il lookups."""
+    __tablename__ = "scraper_api_calls"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    source = Column(String(50), nullable=False, index=True,
+                    doc="autodoc / ebay / aliexpress / rockauto / google_shopping / data_gov_il")
+    query = Column(String(200), nullable=True)
+    part_number = Column(String(100), nullable=True)
+    http_status = Column(Integer, nullable=True)
+    success = Column(Boolean, nullable=False, default=True)
+    results_count = Column(Integer, nullable=True)
+    response_ms = Column(Integer, nullable=True)                    # milliseconds
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
+# ==============================================================================
 # DATABASE INITIALIZATION
 # ==============================================================================
 
@@ -727,7 +923,7 @@ async def create_tables():
     """Create all tables (used in development; production uses Alembic)."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    print("✅ All 28 tables created successfully")
+    print("✅ All 35 tables created successfully")
 
 
 async def drop_tables():

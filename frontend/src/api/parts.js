@@ -1,8 +1,11 @@
 import api from './client'
 
 export const partsApi = {
-  search: (query, vehicle_id, category, limit = 50, offset = 0, sort_by = 'name', sort_dir = 'asc', vehicle_manufacturer = null) =>
-    api.get('/parts/search', { params: { query, vehicle_id, category, limit, offset, sort_by, sort_dir, vehicle_manufacturer } }),
+  search: (query, vehicle_id, category, per_type = null, vehicle_manufacturer = null) =>
+    api.get('/parts/search', { params: { query, vehicle_id, category, per_type, vehicle_manufacturer } }),
+  // Legacy flat search kept for photo-search and URL-triggered flows
+  searchFlat: (query, vehicle_id, category, limit = 50, offset = 0, sort_by = 'name', sort_dir = 'asc', vehicle_manufacturer = null) =>
+    api.get('/parts/search', { params: { query, vehicle_id, category, vehicle_manufacturer } }),
   categories: () => api.get('/parts/categories'),
   manufacturers: () => api.get('/parts/manufacturers'),
   brands: (params = {}) => api.get('/brands', { params }),
