@@ -20,11 +20,17 @@ api.interceptors.request.use((config) => {
 let isRefreshing = false
 let refreshQueue = []
 
+// Endpoints that should NEVER trigger auto-refresh (they ARE the auth endpoints)
+const AUTH_ENDPOINTS = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/forgot', '/auth/reset']
+
 api.interceptors.response.use(
   (res) => res,
   async (error) => {
     const original = error.config
-    if (error.response?.status === 401 && !original._retry) {
+    const url = original?.url || ''
+    // Don't intercept auth endpoints — let the caller handle the error directly
+    const isAuthEndpoint = AUTH_ENDPOINTS.some((e) => url.includes(e))
+    if (error.response?.status === 401 && !original._retry && !isAuthEndpoint) {
       if (isRefreshing) {
         return new Promise((resolve, reject) => {
           refreshQueue.push({ resolve, reject })
@@ -52,7 +58,6 @@ api.interceptors.response.use(
         // If we failed refreshing while on the payment success flow, redirect to
         // /orders (payment was already confirmed by Stripe webhook) rather than
         // sending the user to /login and losing their session silently.
-        const url = original?.url || ''
         if (url.includes('verify-session') || url.includes('payment')) {
           window.location.href = '/orders?payment=done'
         } else {
