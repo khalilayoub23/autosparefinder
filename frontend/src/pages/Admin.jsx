@@ -585,10 +585,10 @@ export default function Admin() {
           </div>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <StatCard
-              label="הכנסות נטו (₪)"
-              value={stats?.total_revenue != null ? `₪${Number(stats.total_revenue).toLocaleString('he-IL', {minimumFractionDigits: 0})}` : null}
+              label="הכנסות (ללא מע״מ)"
+              value={stats?.net_revenue_ex_vat != null ? `₪${Number(stats.net_revenue_ex_vat).toLocaleString('he-IL', {minimumFractionDigits: 0})}` : null}
               icon={DollarSign} color="green"
-              sub="לאחר החזרות"
+              sub="עלות + רווח = סכום זה"
             />
             <StatCard
               label="רווח גולמי (₪)"
@@ -610,9 +610,9 @@ export default function Admin() {
             />
           </div>
 
-          {/* Revenue breakdown row */}
+          {/* Revenue breakdown row — formula: Gross − Refunds = Net = ExVAT + VAT = Cost + Profit + VAT */}
           {stats && (
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
               <div className="card p-4 border-l-4 border-green-400">
                 <p className="text-xs text-gray-500 mb-1">הכנסות ברוטו</p>
                 <p className="text-xl font-bold text-green-600">₪{Number(stats.gross_revenue || 0).toLocaleString('he-IL', {minimumFractionDigits: 2})}</p>
@@ -622,11 +622,16 @@ export default function Admin() {
                 <p className="text-xl font-bold text-red-500">{stats.refunds_total > 0 ? `-₪${Number(stats.refunds_total).toLocaleString('he-IL', {minimumFractionDigits: 2})}` : '₪0'}</p>
               </div>
               <div className="card p-4 border-l-4 border-brand-500">
-                <p className="text-xs text-gray-500 mb-1">הכנסות נטו</p>
+                <p className="text-xs text-gray-500 mb-1">הכנסות נטו (כולל מע״מ)</p>
                 <p className="text-xl font-bold text-brand-600">₪{Number(stats.total_revenue || 0).toLocaleString('he-IL', {minimumFractionDigits: 2})}</p>
               </div>
+              <div className="card p-4 border-l-4 border-yellow-400">
+                <p className="text-xs text-gray-500 mb-1">מע״מ 17%</p>
+                <p className="text-xl font-bold text-yellow-600">₪{Number(stats.vat_total || 0).toLocaleString('he-IL', {minimumFractionDigits: 2})}</p>
+                <p className="text-xs text-gray-400 mt-1">הכנסות נטו − ₪{Number(stats.net_revenue_ex_vat || 0).toLocaleString('he-IL', {minimumFractionDigits: 0})}</p>
+              </div>
               <div className="card p-4 border-l-4 border-teal-400">
-                <p className="text-xs text-gray-500 mb-1">רווח גולמי (מרווח 45% על עלות)</p>
+                <p className="text-xs text-gray-500 mb-1">רווח גולמי (מרווח 45%)</p>
                 <p className="text-xl font-bold text-teal-600">₪{Number(stats.profit_total || 0).toLocaleString('he-IL', {minimumFractionDigits: 2})}</p>
                 <p className="text-xs text-gray-400 mt-1">= {stats.margin_pct}% מעל עלות הספק</p>
               </div>
