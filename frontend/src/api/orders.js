@@ -10,6 +10,8 @@ export const ordersApi = {
   return: (id, reason, description) => api.post(`/orders/${id}/return`, null, { params: { reason, description } }),
   invoice: (id) => api.get(`/orders/${id}/invoice`, { responseType: 'blob' }),
   invoiceInline: (id) => api.get(`/orders/${id}/invoice`, { params: { inline: true }, responseType: 'blob' }),
+  returnInvoice: (id) => api.get(`/returns/${id}/invoice`, { responseType: 'blob' }),
+  returnInvoiceInline: (id) => api.get(`/returns/${id}/invoice`, { params: { inline: true }, responseType: 'blob' }),
 }
 
 export const paymentsApi = {

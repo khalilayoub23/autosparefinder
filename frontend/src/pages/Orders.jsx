@@ -784,18 +784,23 @@ export default function Orders() {
                     )}
 
                     {/* Actions */}
-                    {r.status === 'pending' && (
-                      <button
-                        onClick={() => handleCancelReturn(r.id)}
-                        disabled={isCancelling}
-                        className="btn-secondary text-xs flex items-center gap-1.5 text-red-600 border-red-200 hover:bg-red-50"
-                      >
-                        {isCancelling
-                          ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          : <Ban className="w-3.5 h-3.5" />}
-                        בטל בקשה
-                      </button>
-                    )}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {(r.status === 'approved' || r.status === 'completed') && r.id && (
+                        <InvoiceActions returnId={r.id} returnNumber={r.return_number} compact />
+                      )}
+                      {r.status === 'pending' && (
+                        <button
+                          onClick={() => handleCancelReturn(r.id)}
+                          disabled={isCancelling}
+                          className="btn-secondary text-xs flex items-center gap-1.5 text-red-600 border-red-200 hover:bg-red-50"
+                        >
+                          {isCancelling
+                            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            : <Ban className="w-3.5 h-3.5" />}
+                          בטל בקשה
+                        </button>
+                      )}
+                    </div>
                   </div>
                 )
               })}
