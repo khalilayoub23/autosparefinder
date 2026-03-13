@@ -272,7 +272,7 @@ function OrderCard({ order, onReturn, onDelete, selected, onSelect }) {
               <InvoiceActions orderId={order.id} orderNumber={order.order_number} compact />
             )}
             {['delivered', 'shipped'].includes(detail.status) && (
-              <button onClick={() => onReturn(order.id)} className="btn-secondary text-sm flex items-center gap-1">
+              <button onClick={() => onReturn({ id: order.id, total: order.total })} className="btn-secondary text-sm flex items-center gap-1">
                 <RotateCcw className="w-4 h-4" /> החזרה
               </button>
             )}
@@ -332,10 +332,18 @@ const RETURN_STATUS_MAP = {
   cancelled: { label: 'בוטל',          color: 'bg-gray-100   text-gray-500'   },
 }
 
-function ReturnModal({ orderId, onClose, onCreated }) {
+// Policy §3 — reasons that qualify for 100% refund (seller pays return shipping)
+const FULL_REFUND_REASONS = new Set(['defective', 'wrong_part', 'damaged_in_transit'])
+
+function ReturnModal({ orderId, orderAmount, onClose, onCreated }) {
   const [reason, setReason] = useState('')
   const [desc, setDesc] = useState('')
   const [loading, setLoading] = useState(false)
+
+  const isFullRefund = FULL_REFUND_REASONS.has(reason)
+  const suggestedPct = reason ? (isFullRefund ? 100 : 90) : null
+  const estimatedRefund = orderAmount && suggestedPct ? (orderAmount * suggestedPct / 100) : null
+  const handlingFee = orderAmount && suggestedPct ? (orderAmount * (100 - suggestedPct) / 100) : null
 
   const submit = async (e) => {
     e.preventDefault()
@@ -354,7 +362,7 @@ function ReturnModal({ orderId, onClose, onCreated }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
       <div className="card p-6 max-w-md w-full">
         <h3 className="font-bold text-gray-900 mb-1">בקשת החזרה</h3>
-        <p className="text-sm text-gray-500 mb-4">נשלח הודעה לאחר הבדיקה (עד 24 שעות)</p>
+        <p className="text-sm text-gray-500 mb-4">ניתן להחזיר תוך 14 יום מקבלת המשלוח · נחזור תוך 24 שעות</p>
         <form onSubmit={submit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">סיבת ההחזרה</label>
@@ -365,6 +373,26 @@ function ReturnModal({ orderId, onClose, onCreated }) {
               ))}
             </select>
           </div>
+
+          {/* Refund preview based on policy */}
+          {reason && (
+            <div className={`rounded-xl p-3 text-sm border ${isFullRefund ? 'bg-green-50 border-green-200' : 'bg-yellow-50 border-yellow-200'}`}>
+              {isFullRefund ? (
+                <div className="space-y-0.5">
+                  <p className="font-semibold text-green-800">✅ זכאי להחזר מלא 100%</p>
+                  {estimatedRefund && <p className="text-green-700">זיכוי משוער: ₪{estimatedRefund.toFixed(2)}</p>}
+                  <p className="text-green-600 text-xs">אנחנו מממנים את עלות השילוח החזרה</p>
+                </div>
+              ) : (
+                <div className="space-y-0.5">
+                  <p className="font-semibold text-yellow-800">⚠ זכאי להחזר חלקי 90%</p>
+                  {estimatedRefund && <p className="text-yellow-700">זיכוי משוער: ₪{estimatedRefund.toFixed(2)}</p>}
+                  {handlingFee && handlingFee > 0 && <p className="text-yellow-600 text-xs">דמי טיפול: ₪{handlingFee.toFixed(2)} (10%) · עלות שילוח החזרה בחשבונך</p>}
+                </div>
+              )}
+            </div>
+          )}
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">פרטים נוספים (אופציונלי)</label>
             <textarea
@@ -390,7 +418,7 @@ function ReturnModal({ orderId, onClose, onCreated }) {
 export default function Orders() {
   const [orders, setOrders] = useState([])
   const [isLoading, setIsLoading] = useState(true)
-  const [returnOrderId, setReturnOrderId] = useState(null)
+  const [returnOrder, setReturnOrder] = useState(null) // { id, total }
   const [tab, setTab] = useState('all') // 'all' | 'unpaid' | 'refunds' | 'returns'
   const [returns, setReturns] = useState([])
   const [cancellingReturn, setCancellingReturn] = useState(null)
@@ -544,7 +572,7 @@ export default function Orders() {
                 <OrderCard
                   key={o.id}
                   order={o}
-                  onReturn={setReturnOrderId}
+                  onReturn={setReturnOrder}
                   onDelete={handleOrderDelete}
                   selected={selectedIds.has(o.id)}
                   onSelect={handleSelect}
@@ -623,7 +651,7 @@ export default function Orders() {
                   <OrderCard
                     key={o.id}
                     order={o}
-                    onReturn={setReturnOrderId}
+                    onReturn={setReturnOrder}
                     onDelete={handleOrderDelete}
                     selected={selectedIds.has(o.id)}
                     onSelect={handleSelect}
@@ -767,10 +795,11 @@ export default function Orders() {
         </div>
       )}
 
-      {returnOrderId && (
+      {returnOrder && (
         <ReturnModal
-          orderId={returnOrderId}
-          onClose={() => setReturnOrderId(null)}
+          orderId={returnOrder.id}
+          orderAmount={Number(returnOrder.total)}
+          onClose={() => setReturnOrder(null)}
           onCreated={() => { refreshReturns(); setTab('returns') }}
         />
       )}
