@@ -315,7 +315,24 @@ function OrderCard({ order, onReturn, onDelete, selected, onSelect }) {
   )
 }
 
-function ReturnModal({ orderId, onClose }) {
+const RETURN_REASONS = {
+  wrong_part:        'חלק שגוי',
+  defective:         'פגום / לא עובד',
+  not_as_described:  'לא תואם לתיאור',
+  changed_mind:      'שינוי דעה',
+  damaged_in_transit:'נפגע בשילוח',
+  duplicate_order:   'הזמנה כפולה',
+}
+
+const RETURN_STATUS_MAP = {
+  pending:   { label: 'ממתין לאישור', color: 'bg-yellow-100 text-yellow-700' },
+  approved:  { label: 'אושר ✓',       color: 'bg-green-100  text-green-700'  },
+  rejected:  { label: 'נדחה',          color: 'bg-red-100    text-red-700'    },
+  completed: { label: 'הושלם',         color: 'bg-blue-100   text-blue-700'   },
+  cancelled: { label: 'בוטל',          color: 'bg-gray-100   text-gray-500'   },
+}
+
+function ReturnModal({ orderId, onClose, onCreated }) {
   const [reason, setReason] = useState('')
   const [desc, setDesc] = useState('')
   const [loading, setLoading] = useState(false)
@@ -325,35 +342,43 @@ function ReturnModal({ orderId, onClose }) {
     setLoading(true)
     try {
       await returnsApi.create({ order_id: orderId, reason, description: desc })
-      toast.success('בקשת ההחזרה נפתחה בהצלחה')
+      toast.success('בקשת ההחזרה נפתחה — נחזור אליך תוך 24 שעות')
+      onCreated?.()
       onClose()
-    } catch { toast.error('שגיאה') }
-    finally { setLoading(false) }
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'שגיאה בפתיחת בקשת ההחזרה')
+    } finally { setLoading(false) }
   }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
       <div className="card p-6 max-w-md w-full">
-        <h3 className="font-bold text-gray-900 mb-4">בקשת החזרה</h3>
+        <h3 className="font-bold text-gray-900 mb-1">בקשת החזרה</h3>
+        <p className="text-sm text-gray-500 mb-4">נשלח הודעה לאחר הבדיקה (עד 24 שעות)</p>
         <form onSubmit={submit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">סיבה</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">סיבת ההחזרה</label>
             <select className="input-field" value={reason} onChange={(e) => setReason(e.target.value)} required>
               <option value="">בחר סיבה...</option>
-              <option value="wrong_part">חלק שגוי</option>
-              <option value="defective">פגום / לא עובד</option>
-              <option value="not_as_described">לא תואם לתיאור</option>
-              <option value="changed_mind">שינוי דעה</option>
+              {Object.entries(RETURN_REASONS).map(([k, v]) => (
+                <option key={k} value={k}>{v}</option>
+              ))}
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">תיאור (אופציונלי)</label>
-            <textarea className="input-field resize-none" rows={3} placeholder="פרטים נוספים..." value={desc} onChange={(e) => setDesc(e.target.value)} />
+            <label className="block text-sm font-medium text-gray-700 mb-1">פרטים נוספים (אופציונלי)</label>
+            <textarea
+              className="input-field resize-none"
+              rows={3}
+              placeholder="תאר את הבעיה בפירוט כדי לזרז את הטיפול..."
+              value={desc}
+              onChange={(e) => setDesc(e.target.value)}
+            />
           </div>
           <div className="flex gap-3">
             <button type="button" onClick={onClose} className="btn-secondary flex-1">ביטול</button>
             <button type="submit" disabled={!reason || loading} className="btn-primary flex-1 flex items-center justify-center gap-2">
-              {loading && <Loader2 className="w-4 h-4 animate-spin" />} שלח
+              {loading && <Loader2 className="w-4 h-4 animate-spin" />} שלח בקשה
             </button>
           </div>
         </form>
@@ -368,15 +393,32 @@ export default function Orders() {
   const [returnOrderId, setReturnOrderId] = useState(null)
   const [tab, setTab] = useState('all') // 'all' | 'unpaid' | 'refunds' | 'returns'
   const [returns, setReturns] = useState([])
+  const [cancellingReturn, setCancellingReturn] = useState(null)
   const [refunds, setRefunds] = useState([])
   const [selectedIds, setSelectedIds] = useState(new Set())
   const [bulkPaying, setBulkPaying] = useState(false)
 
   useEffect(() => {
     ordersApi.getAll().then(({ data }) => setOrders(data.orders || [])).catch(() => toast.error('שגיאה בטעינת הזמנות')).finally(() => setIsLoading(false))
-    returnsApi.getAll().then(({ data }) => setReturns(data.returns || [])).catch(() => {})
+    const loadReturns = () => returnsApi.getAll().then(({ data }) => setReturns(data.returns || [])).catch(() => {})
+    loadReturns()
     paymentsApi.getRefunds().then(({ data }) => setRefunds(data.refunds || [])).catch(() => {})
   }, [])
+
+  const refreshReturns = () =>
+    returnsApi.getAll().then(({ data }) => setReturns(data.returns || [])).catch(() => {})
+
+  const handleCancelReturn = async (returnId) => {
+    if (!window.confirm('לבטל את בקשת ההחזרה?')) return
+    setCancellingReturn(returnId)
+    try {
+      await returnsApi.cancel(returnId)
+      toast.success('בקשת ההחזרה בוטלה')
+      refreshReturns()
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'שגיאה בביטול')
+    } finally { setCancellingReturn(null) }
+  }
 
   const pendingOrders = orders.filter((o) => o.status === 'pending_payment')
 
@@ -644,27 +686,94 @@ export default function Orders() {
         <div className="space-y-3">
           {returns.length === 0 ? (
             <div className="card p-12 text-center">
-              <RotateCcw className="w-10 h-10 text-gray-300 mx-auto mb-3" />
-              <p className="text-sm text-gray-400">אין בקשות החזרה</p>
+              <RotateCcw className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+              <h3 className="font-semibold text-gray-700 mb-1">אין בקשות החזרה</h3>
+              <p className="text-sm text-gray-400 mb-4">
+                ניתן לפתוח בקשת החזרה מתוך הזמנה שנמסרה או שנשלחה
+              </p>
+              <button onClick={() => setTab('all')} className="btn-secondary text-sm">
+                לכל ההזמנות
+              </button>
             </div>
-          ) : returns.map((r) => (
-            <div key={r.id} className="card p-4">
-              <div className="flex justify-between items-start">
-                <div>
-                  <p className="font-semibold text-gray-900">{r.return_number}</p>
-                  <p className="text-sm text-gray-500">{r.reason}</p>
-                </div>
-                <span className={`badge ${r.status === 'approved' ? 'bg-green-100 text-green-700' : r.status === 'pending' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}`}>
-                  {r.status === 'approved' ? 'אושר' : r.status === 'pending' ? 'ממתין' : r.status}
-                </span>
-              </div>
-              {r.refund_amount && <p className="text-sm text-green-600 mt-1 font-medium">זיכוי: ₪{Number(r.refund_amount).toFixed(2)}</p>}
-            </div>
-          ))}
+          ) : (
+            <>
+              <p className="text-xs text-gray-400 px-1">{returns.length} בקשות החזרה</p>
+              {returns.map((r) => {
+                const st = RETURN_STATUS_MAP[r.status] || { label: r.status, color: 'bg-gray-100 text-gray-600' }
+                const reasonLabel = RETURN_REASONS[r.reason] || r.reason
+                const isCancelling = cancellingReturn === r.id
+                return (
+                  <div key={r.id} className="card p-4 space-y-3">
+                    {/* Header row */}
+                    <div className="flex justify-between items-start gap-3">
+                      <div className="flex items-start gap-3">
+                        <div className="w-9 h-9 rounded-xl bg-orange-50 flex items-center justify-center flex-shrink-0">
+                          <RotateCcw className="w-5 h-5 text-orange-500" />
+                        </div>
+                        <div>
+                          <p className="font-semibold text-gray-900 text-sm">{r.return_number}</p>
+                          {r.order_id && (
+                            <p className="text-xs text-gray-500 mt-0.5">
+                              הזמנה: <span className="text-brand-600 font-medium">{r.order_number || r.order_id?.slice(0, 8)}</span>
+                            </p>
+                          )}
+                          {r.requested_at && (
+                            <p className="text-xs text-gray-400 mt-0.5">
+                              {format(new Date(r.requested_at), 'dd/MM/yyyy HH:mm', { locale: he })}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      <span className={`badge text-xs flex-shrink-0 ${st.color}`}>{st.label}</span>
+                    </div>
+
+                    {/* Reason + description */}
+                    <div className="bg-gray-50 rounded-lg px-3 py-2 text-sm">
+                      <span className="font-medium text-gray-700">סיבה: </span>
+                      <span className="text-gray-600">{reasonLabel}</span>
+                      {r.description && (
+                        <p className="text-xs text-gray-500 mt-1">{r.description}</p>
+                      )}
+                    </div>
+
+                    {/* Refund amount */}
+                    {r.refund_amount && (
+                      <div className="flex items-center gap-2">
+                        <Banknote className="w-4 h-4 text-green-500" />
+                        <span className="text-sm font-semibold text-green-600">
+                          זיכוי מאושר: ₪{Number(r.refund_amount).toFixed(2)}
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Actions */}
+                    {r.status === 'pending' && (
+                      <button
+                        onClick={() => handleCancelReturn(r.id)}
+                        disabled={isCancelling}
+                        className="btn-secondary text-xs flex items-center gap-1.5 text-red-600 border-red-200 hover:bg-red-50"
+                      >
+                        {isCancelling
+                          ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          : <Ban className="w-3.5 h-3.5" />}
+                        בטל בקשה
+                      </button>
+                    )}
+                  </div>
+                )
+              })}
+            </>
+          )}
         </div>
       )}
 
-      {returnOrderId && <ReturnModal orderId={returnOrderId} onClose={() => setReturnOrderId(null)} />}
+      {returnOrderId && (
+        <ReturnModal
+          orderId={returnOrderId}
+          onClose={() => setReturnOrderId(null)}
+          onCreated={() => { refreshReturns(); setTab('returns') }}
+        />
+      )}
     </div>
   )
 }
