@@ -737,10 +737,14 @@ async def upload_image(file: UploadFile = File(...), current_user: User = Depend
                                     "You are an expert automotive parts identifier. "
                                     "Look at this image and identify the car part shown. "
                                     "Respond ONLY with a JSON object, no markdown: "
-                                    '{"part_name_he": "<name in Hebrew>", '
+                                    '{"part_name_he": "<SHORT Hebrew name as used in Israeli auto parts catalogs>", '
                                     '"part_name_en": "<name in English>", '
-                                    '"possible_names": ["<alt 1>", "<alt 2>"], '
-                                    '"confidence": <0.0-1.0>}'
+                                    '"possible_names": ["<alt Hebrew name 1>", "<alt Hebrew name 2>", "<alt Hebrew name 3>"], '
+                                    '"confidence": <0.0-1.0>. '
+                                    'IMPORTANT: part_name_he and ALL possible_names must be SHORT Hebrew terms '
+                                    '(1-3 words) exactly as written in Israeli auto parts price lists, '
+                                    'e.g. "מצערת", "בית מצערת", "מסנן אוויר", "משאבת מים". '
+                                    'Do NOT use English words in possible_names.}'
                                 ),
                             },
                             {
@@ -1490,11 +1494,15 @@ async def identify_part_from_image(
                                     "You are an expert automotive parts identifier. "
                                     "Look at this image and identify the car part shown. "
                                     "Respond ONLY with a JSON object, no markdown: "
-                                    '{"part_name_he": "<name in Hebrew>", '
+                                    '{"part_name_he": "<SHORT Hebrew name as used in Israeli auto parts catalogs>", '
                                     '"part_name_en": "<name in English>", '
-                                    '"possible_names": ["<alt name 1>", "<alt name 2>"], '
+                                    '"possible_names": ["<alt Hebrew name 1>", "<alt Hebrew name 2>", "<alt Hebrew name 3>"], '
                                     '"confidence": <0.0-1.0>, '
-                                    '"description": "<brief description in Hebrew>"}'
+                                    '"description": "<brief description in Hebrew>". '
+                                    'IMPORTANT: part_name_he and ALL possible_names must be SHORT Hebrew terms '
+                                    '(1-3 words) exactly as written in Israeli auto parts price lists, '
+                                    'e.g. "מצערת", "בית מצערת", "מסנן אוויר", "משאבת מים". '
+                                    'Do NOT use English words in possible_names.}'
                                 ),
                             },
                             {
