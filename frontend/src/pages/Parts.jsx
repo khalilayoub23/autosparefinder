@@ -775,39 +775,63 @@ export default function Parts() {
     setIsLoading(true)
     try {
       const top = candidates.slice(0, 3)
-      const queries = vehicleManufacturer
-        ? top.map(c => partsApi.search(c, null, category, null, vehicleManufacturer).catch(() => null))
-        : top.map(c => partsApi.search(c, null, category).catch(() => null))
-      const results = await Promise.all(queries)
 
-      let foundGrouped = null, foundParts = [], foundTotal = 0, usedQuery = top[0]
+      // Fire manufacturer-filtered searches + general searches in parallel
+      const [mfrResults, genResults] = await Promise.all([
+        vehicleManufacturer
+          ? Promise.all(top.map(c => partsApi.search(c, null, category, null, vehicleManufacturer).catch(() => null)))
+          : Promise.resolve(top.map(() => null)),
+        Promise.all(top.map(c => partsApi.search(c, null, category).catch(() => null))),
+      ])
 
+      const flattenGrouped = (r) => [
+        ...(r.original?.part    ? [{ ...r.original.part,    suppliers: r.original.suppliers    }] : []),
+        ...(r.oem?.part         ? [{ ...r.oem.part,         suppliers: r.oem.suppliers         }] : []),
+        ...(r.aftermarket?.part ? [{ ...r.aftermarket.part, suppliers: r.aftermarket.suppliers }] : []),
+      ]
+
+      let foundGrouped = null, foundParts = [], foundTotal = 0, usedQuery = top[0], usedMfr = false
+
+      // Prefer manufacturer-filtered results first
       for (let i = 0; i < top.length; i++) {
-        const d = results[i]?.data
+        const d = mfrResults[i]?.data
         if (!d) continue
         if (d.original !== undefined || d.oem !== undefined) {
-          const flat = [
-            ...(d.original?.part  ? [{ ...d.original.part,  suppliers: d.original.suppliers  }] : []),
-            ...(d.oem?.part       ? [{ ...d.oem.part,       suppliers: d.oem.suppliers       }] : []),
-            ...(d.aftermarket?.part ? [{ ...d.aftermarket.part, suppliers: d.aftermarket.suppliers }] : []),
-          ]
+          const flat = flattenGrouped(d)
           if (flat.length > 0) {
             foundGrouped = { original: d.original, oem: d.oem, aftermarket: d.aftermarket }
-            foundParts = flat; foundTotal = flat.length; usedQuery = top[i]; break
+            foundParts = flat; foundTotal = flat.length; usedQuery = top[i]; usedMfr = true; break
           }
         } else if ((d.parts || []).length > 0) {
-          foundParts = d.parts; foundTotal = d.total || 0; usedQuery = top[i]; break
+          foundParts = d.parts; foundTotal = d.total || 0; usedQuery = top[i]; usedMfr = true; break
+        }
+      }
+
+      // Fallback to general results if manufacturer filter returned nothing
+      if (!usedMfr) {
+        for (let i = 0; i < top.length; i++) {
+          const d = genResults[i]?.data
+          if (!d) continue
+          if (d.original !== undefined || d.oem !== undefined) {
+            const flat = flattenGrouped(d)
+            if (flat.length > 0) {
+              foundGrouped = { original: d.original, oem: d.oem, aftermarket: d.aftermarket }
+              foundParts = flat; foundTotal = flat.length; usedQuery = top[i]; break
+            }
+          } else if ((d.parts || []).length > 0) {
+            foundParts = d.parts; foundTotal = d.total || 0; usedQuery = top[i]; break
+          }
         }
       }
 
       photoSearchCache.current[cacheKey] = {
         query: usedQuery, parts: foundParts, grouped: foundGrouped,
-        total: foundTotal, fallbackMfr: vehicleManufacturer || '',
+        total: foundTotal, fallbackMfr: usedMfr ? vehicleManufacturer || '' : '',
       }
 
       setQuery(usedQuery); setParts(foundParts); setSearchResults(foundGrouped)
       setTotalCount(foundTotal); setSearched(true); setPage(0)
-      setPhotoFallbackMfr('')
+      setPhotoFallbackMfr(usedMfr ? '' : (vehicleManufacturer || ''))
     } finally {
       setIsLoading(false)
     }

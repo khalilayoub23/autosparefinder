@@ -872,8 +872,40 @@ async def search_parts(
         params["cat"] = f"%{category}%"
 
     if vehicle_manufacturer:
-        conditions.append("pc.manufacturer ILIKE :vmfr")
-        params["vmfr"] = f"%{vehicle_manufacturer}%"
+        # Normalize to catalog brand name: vehicle.manufacturer may be Hebrew
+        # (e.g. "סיטרואן ספרד") while parts_catalog stores English ("Citroen").
+        # Look up car_brands by name, name_he, or aliases to find all variants.
+        try:
+            brand_row = (await db.execute(text("""
+                SELECT name, name_he, aliases FROM car_brands
+                WHERE name ILIKE :vmfr_lookup
+                   OR name_he ILIKE :vmfr_lookup
+                   OR :vmfr_lookup ILIKE CONCAT('%', name_he, '%')
+                   OR EXISTS (
+                       SELECT 1 FROM unnest(aliases) a
+                       WHERE :vmfr_lookup ILIKE CONCAT('%', a, '%')
+                          OR a ILIKE :vmfr_lookup
+                   )
+                LIMIT 1
+            """), {"vmfr_lookup": vehicle_manufacturer})).fetchone()
+        except Exception:
+            brand_row = None
+
+        if brand_row:
+            # Build OR filter across all catalog name variants for this brand
+            variants = list({brand_row[0], brand_row[1], *(brand_row[2] or [])})
+            vmfr_clauses = []
+            for idx, v in enumerate(variants):
+                if v:
+                    k = f"vmfr_{idx}"
+                    vmfr_clauses.append(f"pc.manufacturer ILIKE :{k}")
+                    params[k] = f"%{v}%"
+            if vmfr_clauses:
+                conditions.append(f"({' OR '.join(vmfr_clauses)})")
+        else:
+            # Fallback: direct match
+            conditions.append("pc.manufacturer ILIKE :vmfr")
+            params["vmfr"] = f"%{vehicle_manufacturer}%"
 
     if vehicle_id:
         conditions.append(
