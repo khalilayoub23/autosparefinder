@@ -2767,6 +2767,11 @@ async def resend_invoice(invoice_id: str, email: Optional[EmailStr] = None, curr
 # 8. RETURNS  /api/v1/returns  (6 endpoints)
 # ==============================================================================
 
+# Policy constants — per Refund Policy v1.0 (Feb 2026)
+_FULL_REFUND_REASONS = {"defective", "wrong_part", "damaged_in_transit"}
+_RETURN_WINDOW_DAYS = int(os.getenv("RETURN_WINDOW_DAYS", "14"))
+
+
 @app.post("/api/v1/returns", status_code=status.HTTP_201_CREATED)
 async def create_return(data: ReturnRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(Order).where(and_(Order.id == data.order_id, Order.user_id == current_user.id)))
@@ -2775,6 +2780,16 @@ async def create_return(data: ReturnRequest, current_user: User = Depends(get_cu
         raise HTTPException(status_code=404, detail="Order not found")
     if order.status not in ["delivered", "shipped"]:
         raise HTTPException(status_code=400, detail="Order cannot be returned in current status")
+
+    # Enforce 14-day return window (policy §2)
+    if order.status == "delivered" and order.delivered_at:
+        days_since = (datetime.utcnow() - order.delivered_at).days
+        if days_since > _RETURN_WINDOW_DAYS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Return window expired. Returns must be requested within {_RETURN_WINDOW_DAYS} days of delivery (it has been {days_since} days).",
+            )
+
     return_number = f"RET-2026-{str(uuid.uuid4())[:8].upper()}"
     ret = Return(return_number=return_number, order_id=order.id, user_id=current_user.id, reason=data.reason, description=data.description, original_amount=order.total_amount, status="pending")
     db.add(ret)
@@ -2878,15 +2893,32 @@ async def cancel_return(return_id: str, current_user: User = Depends(get_current
 
 
 @app.post("/api/v1/returns/{return_id}/approve")
-async def approve_return(return_id: str, refund_percentage: int = 100, current_user: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_pii_db)):
+async def approve_return(return_id: str, refund_percentage: int = None, current_user: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(Return).where(Return.id == return_id))
     ret = result.scalar_one_or_none()
     if not ret:
         raise HTTPException(status_code=404, detail="Return not found")
+    if ret.status not in ["pending"]:
+        raise HTTPException(status_code=400, detail=f"Cannot approve return in status: {ret.status}")
+
+    # Apply policy-based refund percentage if not explicitly overridden (policy §3)
+    if refund_percentage is None:
+        refund_percentage = 100 if ret.reason in _FULL_REFUND_REASONS else 90
+
+    handling_fee_pct = 100 - refund_percentage
+    handling_fee_amount = (ret.original_amount * handling_fee_pct) / 100
+
     ret.status = "approved"
     ret.approved_at = datetime.utcnow()
     ret.refund_percentage = refund_percentage
     ret.refund_amount = (ret.original_amount * refund_percentage) / 100
+    ret.handling_fee = handling_fee_amount if handling_fee_amount > 0 else None
+
+    shipping_note = (
+        "\nעלות השילוח החזרה תכוסה על ידינו."
+        if ret.reason in _FULL_REFUND_REASONS
+        else "\nשים לב: עלות משלוח ההחזרה באחריות הלקוח."
+    )
 
     # Notify customer of approval
     db.add(Notification(
@@ -2894,14 +2926,15 @@ async def approve_return(return_id: str, refund_percentage: int = 100, current_u
         type="return_update",
         title=f"✅ בקשת ההחזרה אושרה — {ret.return_number}",
         message=(
-            f"בקשת ההחזרה שלך {ret.return_number} אושרה.\n"
-            f"זיכוי של ₪{float(ret.refund_amount):.2f} יועבר לכרטיס האשראי שלך תוך 3-5 ימי עסקים."
+            f"בקשת ההחזרה שלך {ret.return_number} אושרה (החזר {refund_percentage}%).\n"
+            f"זיכוי של ₪{float(ret.refund_amount):.2f} יועבר לכרטיס האשראי שלך תוך 7-14 ימי עסקים."
+            + shipping_note
         ),
-        data={"return_number": ret.return_number, "refund_amount": float(ret.refund_amount), "refund_percentage": refund_percentage},
+        data={"return_number": ret.return_number, "refund_amount": float(ret.refund_amount), "refund_percentage": refund_percentage, "handling_fee": float(handling_fee_amount)},
     ))
 
     await db.commit()
-    return {"message": "Return approved", "refund_amount": float(ret.refund_amount)}
+    return {"message": "Return approved", "refund_amount": float(ret.refund_amount), "refund_percentage": refund_percentage, "handling_fee": float(handling_fee_amount)}
 
 
 @app.post("/api/v1/returns/{return_id}/reject", tags=["Returns"])
@@ -2919,6 +2952,8 @@ async def reject_return(
     if ret.status not in ["pending"]:
         raise HTTPException(status_code=400, detail=f"Cannot reject return in status: {ret.status}")
     ret.status = "rejected"
+    ret.rejection_reason = reason
+    ret.rejected_at = datetime.utcnow()
 
     # Notify customer of rejection
     db.add(Notification(
@@ -2928,13 +2963,60 @@ async def reject_return(
         message=(
             f"לצערנו, בקשת ההחזרה {ret.return_number} נדחתה.\n"
             f"סיבה: {reason}\n"
-            "לשאלות פנה לשירות הלקוחות."
+            "לשאלות פנה לשירות הלקוחות: support@autospare.com"
         ),
         data={"return_number": ret.return_number, "rejection_reason": reason},
     ))
 
     await db.commit()
     return {"message": "Return rejected", "return_number": ret.return_number}
+
+
+@app.get("/api/v1/admin/returns", tags=["Returns"])
+async def admin_get_returns(
+    status_filter: str = "",
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_pii_db),
+):
+    """Admin: list all returns, optionally filtered by status."""
+    q = select(Return).order_by(Return.requested_at.desc())
+    if status_filter:
+        q = q.where(Return.status == status_filter)
+    result = await db.execute(q)
+    returns = result.scalars().all()
+
+    # Fetch order numbers + customer names in one shot
+    order_ids = list({r.order_id for r in returns})
+    user_ids = list({r.user_id for r in returns})
+    order_map = {}
+    user_map = {}
+    if order_ids:
+        ord_res = await db.execute(select(Order.id, Order.order_number).where(Order.id.in_(order_ids)))
+        order_map = {row.id: row.order_number for row in ord_res.all()}
+    if user_ids:
+        usr_res = await db.execute(select(User.id, User.full_name, User.email).where(User.id.in_(user_ids)))
+        user_map = {row.id: {"name": row.full_name, "email": row.email} for row in usr_res.all()}
+
+    return {"returns": [
+        {
+            "id": str(r.id),
+            "return_number": r.return_number,
+            "order_id": str(r.order_id),
+            "order_number": order_map.get(r.order_id, ""),
+            "user_id": str(r.user_id),
+            "user_name": user_map.get(r.user_id, {}).get("name", ""),
+            "user_email": user_map.get(r.user_id, {}).get("email", ""),
+            "reason": r.reason,
+            "description": r.description,
+            "status": r.status,
+            "original_amount": float(r.original_amount) if r.original_amount else None,
+            "refund_amount": float(r.refund_amount) if r.refund_amount else None,
+            "refund_percentage": r.refund_percentage,
+            "requested_at": r.requested_at,
+            "approved_at": r.approved_at,
+        }
+        for r in returns
+    ]}
 
 
 # ==============================================================================

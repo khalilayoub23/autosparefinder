@@ -9,6 +9,7 @@ import {
   Trash2, Pencil, Ban, ShieldCheck, Save,
   Globe, Phone, Mail, Key, Star, MapPin, Eye, EyeOff,
   Bot, MessageSquare, Sliders, Cpu, FlaskConical,
+  RotateCcw, CheckSquare, XCircle,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -52,6 +53,7 @@ const TABS = [
   { id: 'parts',     label: 'ייבוא חלקים', icon: FileSpreadsheet },
   { id: 'social',    label: 'רשתות חברתיות', icon: Wand2   },
   { id: 'agents',    label: 'סוכני AI',        icon: Bot     },
+  { id: 'returns',   label: 'החזרות',          icon: RotateCcw, badge: true },
 ]
 
 function SupplierFormFields({ f, setF, isCreate }) {
@@ -218,6 +220,11 @@ export default function Admin() {
   const [statusFilter, setStatusFilter] = useState('')
   const [updatingStatus, setUpdatingStatus] = useState(null)
   const [categoryStats, setCategoryStats] = useState([])
+  const [adminReturns, setAdminReturns] = useState([])
+  const [returnsFilter, setReturnsFilter] = useState('')
+  const [processingReturn, setProcessingReturn] = useState(null)
+  const [rejectReason, setRejectReason] = useState('')
+  const [showRejectModal, setShowRejectModal] = useState(null)
 
   useEffect(() => {
     loadDashboard()
@@ -228,7 +235,40 @@ export default function Admin() {
     if (tab === 'orders') loadOrders()
     if (tab === 'suppliers') { loadSuppliers(); loadSupplierOrders(); loadSyncStatus() }
     if (tab === 'agents') loadAgents()
+    if (tab === 'returns') loadAdminReturns()
   }, [tab])
+
+  const loadAdminReturns = async (sf = returnsFilter) => {
+    setLoading(true)
+    try {
+      const { data } = await api.get(`/admin/returns${sf ? `?status_filter=${sf}` : ''}`)
+      setAdminReturns(data.returns || [])
+    } catch { toast.error('שגיאה בטעינת החזרות') }
+    finally { setLoading(false) }
+  }
+
+  const handleApproveReturn = async (returnId, pct = 100) => {
+    setProcessingReturn(returnId)
+    try {
+      await api.post(`/returns/${returnId}/approve?refund_percentage=${pct}`)
+      toast.success('בקשת ההחזרה אושרה')
+      loadAdminReturns()
+    } catch (e) { toast.error(e.response?.data?.detail || 'שגיאה באישור') }
+    finally { setProcessingReturn(null) }
+  }
+
+  const handleRejectReturn = async () => {
+    if (!showRejectModal) return
+    setProcessingReturn(showRejectModal)
+    try {
+      await api.post(`/returns/${showRejectModal}/reject?reason=${encodeURIComponent(rejectReason || 'הבקשה לא עומדת בתנאי מדיניות ההחזרה')}`)
+      toast.success('בקשת ההחזרה נדחתה')
+      setShowRejectModal(null)
+      setRejectReason('')
+      loadAdminReturns()
+    } catch (e) { toast.error(e.response?.data?.detail || 'שגיאה בדחיית הבקשה') }
+    finally { setProcessingReturn(null) }
+  }
 
   const loadDashboard = async () => {
     try {
@@ -1588,7 +1628,179 @@ export default function Admin() {
           })()}
         </div>
       )}
+
+      {/* Returns management */}
+      {tab === 'returns' && (
+        <div className="space-y-4">
+          <div className="card p-4 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-xl bg-orange-50"><RotateCcw className="w-5 h-5 text-orange-600" /></div>
+              <div>
+                <h3 className="font-bold text-gray-900">בקשות החזרה ({adminReturns.length})</h3>
+                <p className="text-xs text-gray-400 mt-0.5">אשר או דחה בקשות החזרה מלקוחות</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <select
+                className="input-field text-sm py-1.5 w-44"
+                value={returnsFilter}
+                onChange={(e) => { setReturnsFilter(e.target.value); loadAdminReturns(e.target.value) }}
+              >
+                <option value="">כל הסטטוסים</option>
+                <option value="pending">ממתין לאישור</option>
+                <option value="approved">אושר</option>
+                <option value="rejected">נדחה</option>
+                <option value="cancelled">בוטל</option>
+              </select>
+              <button onClick={() => loadAdminReturns()} className="btn-ghost text-sm flex items-center gap-1">
+                <RefreshCw className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          {loading ? (
+            <div className="flex justify-center p-8"><Loader2 className="w-6 h-6 animate-spin text-brand-600" /></div>
+          ) : adminReturns.length === 0 ? (
+            <div className="card p-8 text-center text-gray-400">
+              <RotateCcw className="w-10 h-10 mx-auto mb-3 opacity-30" />
+              <p className="font-medium">אין בקשות החזרה</p>
+              <p className="text-sm mt-1">כל הבקשות הטופלו</p>
+            </div>
+          ) : (
+            <div className="card overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      {['מס׳ החזרה', 'לקוח', 'הזמנה', 'סיבה', 'סכום', 'סטטוס', 'תאריך', 'פעולות'].map((h) => (
+                        <th key={h} className="px-3 py-3 text-right text-xs font-medium text-gray-500 whitespace-nowrap">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {adminReturns.map((r) => {
+                      const REASON_HE = { wrong_part: 'חלק שגוי', defective: 'פגום / לא עובד', not_as_described: 'לא תואם לתיאור', changed_mind: 'שינוי דעה', damaged_in_transit: 'נפגע בשילוח', duplicate_order: 'הזמנה כפולה' }
+                      const ST = { pending: { label: 'ממתין', cls: 'bg-amber-100 text-amber-700' }, approved: { label: 'אושר', cls: 'bg-green-100 text-green-700' }, rejected: { label: 'נדחה', cls: 'bg-red-100 text-red-600' }, cancelled: { label: 'בוטל', cls: 'bg-gray-100 text-gray-500' } }
+                      const st = ST[r.status] || { label: r.status, cls: 'bg-gray-100 text-gray-600' }
+                      // Policy §3 — full-refund reasons (100%) vs partial (90%)
+                      const FULL_REFUND_REASONS = ['defective', 'wrong_part', 'damaged_in_transit']
+                      const isFullRefund = FULL_REFUND_REASONS.includes(r.reason)
+                      const suggestedPct = isFullRefund ? 100 : 90
+                      const suggestedRefund = ((r.original_amount || 0) * suggestedPct / 100)
+                      const handlingFee = ((r.original_amount || 0) * (100 - suggestedPct) / 100)
+                      return (
+                        <tr key={r.id} className="hover:bg-gray-50">
+                          <td className="px-3 py-3 font-mono text-xs font-medium text-gray-900">{r.return_number}</td>
+                          <td className="px-3 py-3">
+                            <div className="text-xs">
+                              <p className="font-medium text-gray-800">{r.user_name || '—'}</p>
+                              <p className="text-gray-400" dir="ltr">{r.user_email}</p>
+                            </div>
+                          </td>
+                          <td className="px-3 py-3 font-mono text-xs text-gray-500">{r.order_number || '—'}</td>
+                          <td className="px-3 py-3 text-xs text-gray-600">
+                            <div>
+                              <p className="font-medium">{REASON_HE[r.reason] || r.reason}</p>
+                              {/* Policy badge */}
+                              {isFullRefund
+                                ? <span className="inline-flex items-center gap-0.5 mt-1 text-xs px-1.5 py-0.5 rounded bg-green-100 text-green-700 border border-green-200">✅ החזר מלא — אנחנו משלמים שילוח</span>
+                                : <span className="inline-flex items-center gap-0.5 mt-1 text-xs px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 border border-yellow-200">⚠ 90% — דמי טיפול 10%</span>
+                              }
+                              {r.description && <p className="text-gray-400 mt-0.5 max-w-xs truncate">{r.description}</p>}
+                            </div>
+                          </td>
+                          <td className="px-3 py-3 whitespace-nowrap">
+                            <div className="text-xs space-y-0.5">
+                              <p className="text-gray-500">סה״כ: <span className="font-medium text-gray-800">₪{Number(r.original_amount || 0).toFixed(2)}</span></p>
+                              {r.status === 'pending' && (
+                                <>
+                                  <p className="text-green-600">↩ זיכוי: ₪{suggestedRefund.toFixed(2)} ({suggestedPct}%)</p>
+                                  {handlingFee > 0 && <p className="text-orange-500">דמי טיפול: ₪{handlingFee.toFixed(2)}</p>}
+                                </>
+                              )}
+                              {r.refund_amount != null && r.status !== 'pending' && (
+                                <p className="text-green-600 font-medium">↩ ₪{Number(r.refund_amount).toFixed(2)} ({r.refund_percentage}%)</p>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-3 py-3">
+                            <span className={`badge text-xs ${st.cls}`}>{st.label}</span>
+                          </td>
+                          <td className="px-3 py-3 text-gray-500 text-xs whitespace-nowrap">
+                            {r.requested_at ? new Date(r.requested_at).toLocaleDateString('he-IL') : ''}
+                          </td>
+                          <td className="px-3 py-3">
+                            {r.status === 'pending' && (
+                              <div className="flex flex-col items-start gap-1.5">
+                                <button
+                                  onClick={() => handleApproveReturn(r.id, suggestedPct)}
+                                  disabled={processingReturn === r.id}
+                                  className={`flex items-center gap-1 px-2.5 py-1.5 text-xs rounded-lg disabled:opacity-40 transition-colors ${
+                                    isFullRefund
+                                      ? 'bg-green-50 border border-green-200 text-green-700 hover:bg-green-100'
+                                      : 'bg-yellow-50 border border-yellow-200 text-yellow-700 hover:bg-yellow-100'
+                                  }`}
+                                  title={`אשר לפי מדיניות — החזר ${suggestedPct}%`}
+                                >
+                                  {processingReturn === r.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckSquare className="w-3 h-3" />}
+                                  אשר {suggestedPct}%
+                                </button>
+                                <button
+                                  onClick={() => { setShowRejectModal(r.id); setRejectReason('') }}
+                                  disabled={processingReturn === r.id}
+                                  className="flex items-center gap-1 px-2.5 py-1.5 text-xs rounded-lg bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 disabled:opacity-40 transition-colors"
+                                  title="דחה בקשה"
+                                >
+                                  <XCircle className="w-3 h-3" />
+                                  דחה
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
+
+    {/* Reject Return Modal */}
+    {showRejectModal && (
+      <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setShowRejectModal(null)}>
+        <div className="bg-white rounded-2xl shadow-xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center justify-between p-6 border-b border-gray-100">
+            <h3 className="font-bold text-gray-900 flex items-center gap-2"><XCircle className="w-5 h-5 text-red-500" /> דחיית בקשת החזרה</h3>
+            <button onClick={() => setShowRejectModal(null)} className="p-1.5 rounded-full hover:bg-gray-100"><X className="w-5 h-5 text-gray-500" /></button>
+          </div>
+          <div className="p-6">
+            <label className="block text-sm font-medium text-gray-700 mb-2">סיבת הדחייה (תישלח ללקוח)</label>
+            <textarea
+              rows={3}
+              className="input-field w-full text-sm"
+              placeholder="הבקשה לא עומדת בתנאי מדיניות ההחזרה..."
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+            />
+          </div>
+          <div className="flex gap-3 p-6 border-t border-gray-100">
+            <button
+              onClick={handleRejectReturn}
+              disabled={processingReturn === showRejectModal}
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-red-600 text-white font-semibold hover:bg-red-700 disabled:opacity-50 transition-colors"
+            >
+              {processingReturn === showRejectModal ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
+              אשר דחייה
+            </button>
+            <button onClick={() => setShowRejectModal(null)} className="flex-1 btn-secondary">ביטול</button>
+          </div>
+        </div>
+      </div>
+    )}
 
     {/* Edit Agent Modal */}
     {editAgent && (
