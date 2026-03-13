@@ -281,6 +281,211 @@ def generate_invoice_pdf(order, items, user, invoice) -> bytes:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+def generate_credit_note_pdf(ret, items, user) -> bytes:
+    """Generate a Hebrew RTL credit note PDF for an approved return.
+    Shows original items as negative (credit) lines, deducts 10% handling fee,
+    and displays the final approved refund amount.
+    """
+    HANDLING_FEE_RATE = 0.10
+
+    W, H = A4
+    buf  = io.BytesIO()
+    c    = Canvas(buf, pagesize=A4)
+
+    biz_num      = "060633880"
+    original     = float(ret.original_amount or 0)
+    handling_fee = float(ret.handling_fee or round(original * HANDLING_FEE_RATE, 2))
+    refund       = float(ret.refund_amount  or round(original - handling_fee, 2))
+    issued       = ret.approved_at or ret.requested_at or datetime.utcnow()
+
+    order_number = getattr(ret, 'order_number', None) or (
+        ret.order.order_number if (hasattr(ret, 'order') and ret.order) else str(ret.order_id)[:8].upper()
+    )
+
+    REASON_MAP = {
+        'defective':         'פריט פגום',
+        'wrong_item':        'פריט שגוי',
+        'changed_mind':      'שינוי דעה',
+        'damaged_shipping':  'נזק במשלוח',
+        'other':             'אחר',
+    }
+    reason_label = REASON_MAP.get(ret.reason, ret.reason or '')
+
+    # ── Header bar ────────────────────────────────────────────────────────────
+    BAR_H = 100
+    c.setFillColor(BRAND)
+    c.rect(0, H - BAR_H, W, BAR_H, fill=1, stroke=0)
+
+    c.setFillColor(white)
+    c.setFont("DV-Bold", 28)
+    c.drawString(36, H - 44, "Auto Spare")
+    c.setFont("DV", 10)
+    c.drawString(36, H - 63, "support@autospare.co.il  |  www.autospare.co.il")
+    c.drawString(36, H - 79, rtl(f"עוסק מורשה: {biz_num}"))
+
+    c.setFont("DV-Bold", 20)
+    c.drawRightString(W - 36, H - 42, rtl("הודעת זיכוי"))
+    c.setFont("DV", 10)
+    c.drawRightString(W - 36, H - 60, rtl(f"מספר: {ret.return_number}"))
+    c.drawRightString(W - 36, H - 75, rtl(f"תאריך: {issued.strftime('%d/%m/%Y')}"))
+    c.drawRightString(W - 36, H - 90, rtl(f"הזמנה: {order_number}"))
+
+    # ── Orange rule ───────────────────────────────────────────────────────────
+    y = H - BAR_H - 36
+    c.setStrokeColor(BRAND)
+    c.setLineWidth(1.5)
+    c.line(36, y, W - 36, y)
+
+    # ── Customer / Return info ────────────────────────────────────────────────
+    y -= 56
+    c.setFont("DV-Bold", 10.5)
+    c.setFillColor(DARK)
+    c.drawString(36,      y, rtl("פרטי החזרה"))
+    c.drawRightString(W - 36, y, rtl("פרטי לקוח"))
+
+    y -= 12
+    c.setStrokeColor(LIGHT)
+    c.setLineWidth(0.5)
+    c.line(36, y, W - 36, y)
+
+    y -= 36
+    c.setFont("DV", 10)
+    c.setFillColor(MID)
+    c.drawString(36, y, rtl(f"סיבה: {reason_label}"))
+    c.drawRightString(W - 36, y, rtl(str(user.full_name or "")))
+
+    y -= 32
+    c.drawString(36, y, rtl(f"סטטוס: אושר ✓"))
+    c.drawRightString(W - 36, y, user.email or "")
+
+    if ret.description:
+        y -= 32
+        c.setFont("DV", 9)
+        c.setFillColor(GREY)
+        c.drawString(36, y, rtl(str(ret.description)[:80]))
+
+    # ── Items table (negative credit lines) ──────────────────────────────────
+    y -= 72
+
+    COL = {
+        "warranty": (36,   "drawString"),
+        "total":    (104,  "drawCentredString"),
+        "unit":     (178,  "drawCentredString"),
+        "qty":      (248,  "drawCentredString"),
+        "sku":      (336,  "drawCentredString"),
+        "type":     (422,  "drawCentredString"),
+        "name":     (W-36, "drawRightString"),
+    }
+
+    HEADER_H = 24
+    c.setFillColor(DARK)
+    c.rect(30, y - 2, W - 60, HEADER_H, fill=1, stroke=0)
+    c.setFillColor(white)
+    c.setFont("DV-Bold", 9)
+    _draw_row(c, y + 7,
+              rtl("אחריות"), rtl('סה"כ'), rtl("מחיר יח׳"),
+              rtl("כמות"), rtl('מק"ט'), rtl("סוג"), rtl("פריט"),
+              COL, is_header=True)
+
+    display_items = list(items) if items else []
+    if not display_items:
+        class _FallbackItem:
+            part_name       = f"החזרת מוצרים | {order_number}"
+            part_sku        = ""
+            part_type       = "מקורי"
+            quantity        = 1
+            unit_price      = original
+            warranty_months = 12
+        display_items = [_FallbackItem()]
+
+    ROW_H = 22
+    row_colors = [LIGHT, white]
+    y -= HEADER_H
+    for idx, item in enumerate(display_items):
+        c.setFillColor(row_colors[idx % 2])
+        c.rect(30, y - 3, W - 60, ROW_H, fill=1, stroke=0)
+        c.setFillColor(HexColor("#dc2626"))   # red for negative/credit lines
+        c.setFont("DV", 8.5)
+
+        neg_total = -(float(item.unit_price) * int(item.quantity))
+        neg_unit  = -float(item.unit_price)
+
+        war_text  = rtl(f"{item.warranty_months or 12} חודש")
+        tot_text  = f"-₪{abs(neg_total):.2f}"
+        unit_text = f"-₪{abs(neg_unit):.2f}"
+        qty_text  = str(item.quantity)
+        sku_text  = str(getattr(item, 'part_sku', '') or '')[:18]
+        type_text = rtl(str(item.part_type or 'מקורי'))
+        name_text = rtl(str(item.part_name or '')[:42])
+
+        _draw_row(c, y + 4,
+                  war_text, tot_text, unit_text,
+                  qty_text, sku_text, type_text, name_text,
+                  COL, is_header=False)
+        y -= ROW_H
+
+    # ── Totals box ────────────────────────────────────────────────────────────
+    y -= 72
+
+    box_x = 36
+    box_w = 220
+    box_h = 110
+
+    c.setFillColor(LIGHT)
+    c.roundRect(box_x, y - box_h, box_w, box_h, 6, fill=1, stroke=0)
+
+    tot_lines = [
+        (rtl('סה"כ מוחזר (ברוטו)'),          f"-₪{original:.2f}"),
+        (rtl('דמי טיפול 10%'),                 f"+₪{handling_fee:.2f}"),
+    ]
+
+    ly = y - 14
+    c.setFont("DV", 9.5)
+    c.setFillColor(MID)
+    for label, val in tot_lines:
+        c.drawString(box_x + 14, ly, label)
+        c.drawRightString(box_x + box_w - 12, ly, val)
+        ly -= 18
+
+    c.setStrokeColor(BRAND)
+    c.setLineWidth(0.75)
+    c.line(box_x + 10, ly + 8, box_x + box_w - 10, ly + 8)
+
+    ly -= 12
+    c.setFont("DV-Bold", 12)
+    c.setFillColor(DARK)
+    c.drawString(box_x + 14, ly, rtl('סה"כ זיכוי לתשלום'))
+    c.setFillColor(HexColor("#16a34a"))   # green — money back to customer
+    c.drawRightString(box_x + box_w - 12, ly, f"₪{refund:.2f}")
+
+    # ── Legal note ────────────────────────────────────────────────────────────
+    legal_y = min(y - box_h + 10, 90)
+    c.setFont("DV", 8)
+    c.setFillColor(GREY)
+    c.drawString(36, legal_y, rtl(
+        'מסמך זה מהווה הודעת זיכוי כמשמעותה בחוק מע"מ. '
+        "עוסק מורשה — מספר רישום: " + biz_num
+    ))
+    c.drawString(36, legal_y - 14, rtl(
+        "דמי טיפול של 10% נוכו מסכום ההחזר בהתאם למדיניות הביטולים."
+    ))
+
+    # ── Footer bar ────────────────────────────────────────────────────────────
+    c.setFillColor(BRAND)
+    c.rect(0, 0, W, 42, fill=1, stroke=0)
+    c.setFillColor(white)
+    c.setFont("DV-Bold", 9.5)
+    c.drawCentredString(W / 2, 26, rtl("תודה על הבנתך! | Auto Spare"))
+    c.setFont("DV", 8)
+    c.drawCentredString(W / 2, 12, "support@autospare.co.il  |  www.autospare.co.il")
+
+    c.showPage()
+    c.save()
+    buf.seek(0)
+    return buf.read()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 def _draw_row(c, y, warranty, total, unit, qty, sku, ptype, name, COL, is_header):
     """Draw one table row across 7 columns."""
     def _put(key, text):

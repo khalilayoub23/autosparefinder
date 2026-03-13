@@ -4,7 +4,10 @@ import { Download, Eye, Printer, Loader2, X, Share2, Check, FileText, ChevronDow
 import { ordersApi } from '../api/orders'
 import toast from 'react-hot-toast'
 
-export default function InvoiceActions({ orderId, orderNumber, compact = false, buttonClassName = '' }) {
+export default function InvoiceActions({ orderId, orderNumber, returnId, returnNumber, compact = false, buttonClassName = '' }) {
+  const isReturn   = !!returnId
+  const resolvedId = isReturn ? returnId : orderId
+  const resolvedNum = isReturn ? (returnNumber || returnId?.slice(0, 8)) : orderNumber
   const [loading, setLoading]       = useState(null)
   const [previewUrl, setPreviewUrl] = useState(null)
   const [copied, setCopied]         = useState(false)
@@ -48,7 +51,9 @@ export default function InvoiceActions({ orderId, orderNumber, compact = false, 
   }, [open])
 
   const fetchBlob = async () => {
-    const { data } = await ordersApi.invoice(orderId)
+    const { data } = isReturn
+      ? await ordersApi.returnInvoice(resolvedId)
+      : await ordersApi.invoice(resolvedId)
     return URL.createObjectURL(new Blob([data], { type: 'application/pdf' }))
   }
 
@@ -76,7 +81,7 @@ export default function InvoiceActions({ orderId, orderNumber, compact = false, 
     try {
       const url = await fetchBlob()
       const a = document.createElement('a')
-      a.href = url; a.download = `invoice-${orderNumber}.pdf`; a.click()
+      a.href = url; a.download = `${isReturn ? 'credit_note' : 'invoice'}-${resolvedNum}.pdf`; a.click()
       setTimeout(() => URL.revokeObjectURL(url), 10000)
       toast.success('החשבונית הורדה')
     } catch { toast.error('שגיאה בהורדת החשבונית') }
@@ -86,13 +91,17 @@ export default function InvoiceActions({ orderId, orderNumber, compact = false, 
   const handleShare = async () => {
     setOpen(false); setLoading('share')
     try {
-      const { data } = await ordersApi.invoice(orderId)
+      const { data } = isReturn
+        ? await ordersApi.returnInvoice(resolvedId)
+        : await ordersApi.invoice(resolvedId)
       const blob = new Blob([data], { type: 'application/pdf' })
-      const file = new File([blob], `invoice-${orderNumber}.pdf`, { type: 'application/pdf' })
+      const fileName = `${isReturn ? 'credit_note' : 'invoice'}-${resolvedNum}.pdf`
+      const file = new File([blob], fileName, { type: 'application/pdf' })
+      const docTitle = isReturn ? `הודעת זיכוי ${resolvedNum}` : `חשבונית ${resolvedNum}`
       if (navigator.canShare?.({ files: [file] })) {
-        await navigator.share({ title: `חשבונית ${orderNumber}`, files: [file] })
+        await navigator.share({ title: docTitle, files: [file] })
       } else if (navigator.share) {
-        await navigator.share({ title: `חשבונית ${orderNumber}`, url: window.location.href })
+        await navigator.share({ title: docTitle, url: window.location.href })
       } else {
         await navigator.clipboard.writeText(window.location.href)
         setCopied(true); setTimeout(() => setCopied(false), 2500)
@@ -104,10 +113,11 @@ export default function InvoiceActions({ orderId, orderNumber, compact = false, 
 
   const isLoading = !!loading
 
+  const docLabel = isReturn ? 'זיכוי' : 'חשבונית'
   const actions = [
-    { key: 'preview',  label: 'צפה בחשבונית',     icon: <Eye className="w-4 h-4" />,     onClick: handlePreview  },
-    { key: 'print',    label: 'הדפס חשבונית',      icon: <Printer className="w-4 h-4" />, onClick: handlePrint    },
-    { key: 'download', label: 'הורד חשבונית PDF',  icon: <Download className="w-4 h-4" />,onClick: handleDownload },
+    { key: 'preview',  label: `צפה ב${docLabel}`,      icon: <Eye className="w-4 h-4" />,     onClick: handlePreview  },
+    { key: 'print',    label: `הדפס ${docLabel}`,       icon: <Printer className="w-4 h-4" />, onClick: handlePrint    },
+    { key: 'download', label: `הורד ${docLabel} PDF`,   icon: <Download className="w-4 h-4" />,onClick: handleDownload },
     {
       key: 'share',
       label: copied ? 'הועתק!' : 'שתף חשבונית',
@@ -124,7 +134,7 @@ export default function InvoiceActions({ orderId, orderNumber, compact = false, 
       <div className="bg-white rounded-xl shadow-2xl border border-gray-100 overflow-hidden">
         <div className="flex items-center gap-2 px-4 py-2.5 bg-orange-50 border-b border-orange-100">
           <FileText className="w-4 h-4 text-orange-600" />
-          <span className="text-xs font-semibold text-orange-700 tracking-wide">חשבונית מס / קבלה</span>
+          <span className="text-xs font-semibold text-orange-700 tracking-wide">{isReturn ? 'הודעת זיכוי' : 'חשבונית מס / קבלה'}</span>
         </div>
         {actions.map((a) => (
           <button

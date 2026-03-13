@@ -2892,6 +2892,50 @@ async def cancel_return(return_id: str, current_user: User = Depends(get_current
     return {"message": "Return cancelled"}
 
 
+@app.get("/api/v1/returns/{return_id}/invoice")
+async def get_return_invoice(
+    return_id: str,
+    inline: bool = False,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_pii_db),
+):
+    """Generate and stream a Hebrew PDF credit note for an approved return."""
+    from fastapi.responses import StreamingResponse
+    from invoice_generator import generate_credit_note_pdf
+
+    ret_res = await db.execute(
+        select(Return).where(and_(Return.id == return_id, Return.user_id == current_user.id))
+    )
+    ret = ret_res.scalar_one_or_none()
+    if not ret:
+        raise HTTPException(status_code=404, detail="Return not found")
+    if ret.status not in ("approved", "completed"):
+        raise HTTPException(status_code=402, detail="הודעת הזיכוי זמינה רק לאחר אישור ההחזרה")
+
+    # Fetch original order items to list on the credit note
+    items_res = await db.execute(select(OrderItem).where(OrderItem.order_id == ret.order_id))
+    items = items_res.scalars().all()
+
+    # Attach order_number as a plain attribute so the generator can access it without lazy-load
+    ord_res = await db.execute(select(Order.order_number).where(Order.id == ret.order_id))
+    order_number = ord_res.scalar_one_or_none() or str(ret.order_id)[:8].upper()
+    ret.order_number = order_number  # type: ignore[attr-defined]
+
+    pdf_bytes = generate_credit_note_pdf(ret, items, current_user)
+
+    filename = f"credit_note_{ret.return_number}.pdf"
+    disposition = f'inline; filename="{filename}"' if inline else f'attachment; filename="{filename}"'
+    return StreamingResponse(
+        iter([pdf_bytes]),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": disposition,
+            "Content-Length": str(len(pdf_bytes)),
+            "X-Invoice-Number": ret.return_number,
+        },
+    )
+
+
 @app.post("/api/v1/returns/{return_id}/approve")
 async def approve_return(return_id: str, refund_percentage: int = None, current_user: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(Return).where(Return.id == return_id))
