@@ -1910,7 +1910,7 @@ async def get_order_invoice(
     order = ord_res.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
-    INVOICE_ALLOWED = {"paid", "processing", "shipped", "delivered", "refunded"}
+    INVOICE_ALLOWED = {"paid", "processing", "supplier_ordered", "confirmed", "shipped", "delivered", "refunded"}
     if order.status not in INVOICE_ALLOWED:
         raise HTTPException(status_code=402, detail="החשבונית זמינה רק לאחר אישור תשלום")
 
