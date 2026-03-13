@@ -3279,10 +3279,16 @@ async def get_admin_stats(current_user: User = Depends(get_current_admin_user), 
         )
     )).scalar() or 0
 
-    # Refunds issued
-    refunds_total = (await db.execute(
+    # Refunds issued — two sources:
+    # 1. Payment-level refunds (cancellations processed through Stripe)
+    payment_refunds = (await db.execute(
         select(func.sum(Payment.refund_amount)).where(Payment.status == "refunded")
     )).scalar() or 0
+    # 2. Return-level refunds (approved returns via the returns workflow)
+    return_refunds = (await db.execute(
+        select(func.sum(Return.refund_amount)).where(Return.status == "approved")
+    )).scalar() or 0
+    refunds_total = float(payment_refunds) + float(return_refunds)
 
     # Net revenue after refunds
     net_revenue = float(gross_revenue) - float(refunds_total)
