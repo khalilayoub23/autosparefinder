@@ -29,6 +29,14 @@ export default function PaymentSuccess() {
         clear() // clear cart only after confirmed payment
       })
       .catch((err) => {
+        // 401 = token expired during Stripe checkout (can take >15 min).
+        // The Stripe webhook already confirmed the payment on our backend,
+        // so it's safe to redirect to /orders instead of showing an error.
+        if (err.response?.status === 401 || !err.response) {
+          clear()
+          window.location.replace('/orders?payment=done')
+          return
+        }
         setStatus('error')
         setErrorMsg(err.response?.data?.detail || 'שגיאה באימות התשלום')
       })
