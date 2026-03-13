@@ -774,7 +774,7 @@ export default function Parts() {
 
     setIsLoading(true)
     try {
-      const top = candidates.slice(0, 3)
+      const top = candidates.slice(0, 5)
 
       // Fire manufacturer-filtered searches + general searches in parallel
       const [mfrResults, genResults] = await Promise.all([
@@ -852,11 +852,28 @@ export default function Parts() {
       const { data } = await partsApi.identifyFromImage(photoFile)
       setPhotoResult(data)
       if (data.identified_part) {
+        // Build candidates: start with Hebrew name, then its slash/word components,
+        // then possible_names (now Hebrew from updated prompt), then English fallback.
+        const hebrewName = data.identified_part       // e.g. "בית מצערת"
+        const englishName = data.identified_part_en   // e.g. "Throttle Body"
+        const possibleNames = data.possible_names || []
+
+        // Expand Hebrew name: split on "/" and spaces to get sub-terms
+        const heExpanded = hebrewName
+          ? [hebrewName, ...hebrewName.split(/[\/\s]+/).filter(w => w.length > 1)]
+          : []
+
+        // Deduplicate preserving order; Hebrew names first, English last as fallback
+        const seen = new Set()
         const candidates = [
-          data.identified_part_en,
-          data.identified_part,
-          ...(data.possible_names || []),
-        ].filter(Boolean)
+          ...heExpanded,
+          ...possibleNames,
+          englishName,
+        ].filter(t => {
+          if (!t || seen.has(t)) return false
+          seen.add(t); return true
+        })
+
         setPhotoCandidates(candidates)
         await runPhotoPartsSearch(candidates, selectedVehicle?.manufacturer || '')
       }
