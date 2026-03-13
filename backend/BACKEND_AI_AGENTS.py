@@ -1332,6 +1332,122 @@ LANGUAGE: ALWAYS respond in Hebrew (עברית). If the customer writes in Arabi
         }
         return urls.get(carrier, f"https://parcelsapp.com/en/tracking/{n}")
 
+    def _detect_carrier(self, tracking_number: str) -> str:
+        """Infer carrier from tracking number format."""
+        import re as _re
+        n = (tracking_number or "").strip()
+        if _re.match(r'^1Z[A-Z0-9]{16}$', n, _re.I):
+            return "UPS"
+        if _re.match(r'^\d{12}$', n):
+            return "FedEx"
+        if _re.match(r'^\d{10}$', n):
+            return "DHL"
+        if _re.match(r'^[A-Z]{2}\d{9}[A-Z]{2}$', n, _re.I):
+            return "Israel Post"
+        if _re.match(r'^\d{14}$', n):
+            return "AliExpress"
+        return "Israel Post"
+
+    # Estimated transit days per carrier: (supplier_ordered→shipped, shipped→delivered)
+    _TRANSIT_DAYS: Dict[str, tuple] = {
+        "Israel Post": (1, 5),
+        "FedEx":       (1, 3),
+        "DHL":         (1, 4),
+        "UPS":         (1, 4),
+        "AliExpress":  (3, 14),
+    }
+
+    async def advance_shipment_status(
+        self,
+        order,
+        db: "AsyncSession",
+        now: "datetime | None" = None,
+    ) -> str | None:
+        """
+        Check whether a supplier_ordered or shipped order has been in its
+        current status long enough to advance to the next stage.
+
+        Returns the new status string if a transition happened, else None.
+
+        Transit thresholds (configurable via env):
+          supplier_ordered → shipped  : after SHIP_DAYS_<CARRIER> or default
+          shipped          → delivered: after DELIVER_DAYS_<CARRIER> or default
+        """
+        from datetime import datetime as _dt, timedelta as _td
+        from BACKEND_DATABASE_MODELS import Notification, SystemLog, async_session_factory
+
+        now = now or _dt.utcnow()
+        carrier = self._detect_carrier(order.tracking_number or "")
+        default_ship, default_deliver = self._TRANSIT_DAYS.get(carrier, (2, 7))
+
+        ship_days    = int(os.getenv(f"SHIP_DAYS_{carrier.upper().replace(' ', '_')}", str(default_ship)))
+        deliver_days = int(os.getenv(f"DELIVER_DAYS_{carrier.upper().replace(' ', '_')}", str(default_deliver)))
+
+        new_status: str | None = None
+
+        if order.status == "supplier_ordered":
+            elapsed = (now - order.updated_at).total_seconds() / 86400
+            if elapsed >= ship_days:
+                new_status = "shipped"
+                order.status = "shipped"
+                order.shipped_at = now
+                db.add(Notification(
+                    user_id=order.user_id,
+                    type="order_update",
+                    title=f"🚚 הזמנה {order.order_number} נשלחה!",
+                    message=(
+                        f"ההזמנה {order.order_number} בדרך אליך עם {carrier}.\n"
+                        + (f"מספר מעקב: {order.tracking_number}\n" if order.tracking_number else "")
+                        + (f"קישור מעקב: {order.tracking_url}" if order.tracking_url else "")
+                    ),
+                    data={
+                        "order_id": str(order.id),
+                        "order_number": order.order_number,
+                        "status": "shipped",
+                        "carrier": carrier,
+                        "tracking_number": order.tracking_number,
+                        "tracking_url": order.tracking_url,
+                    },
+                ))
+
+        elif order.status == "shipped":
+            ref_time = order.shipped_at or order.updated_at
+            elapsed = (now - ref_time).total_seconds() / 86400
+            if elapsed >= deliver_days:
+                new_status = "delivered"
+                order.status = "delivered"
+                order.delivered_at = now
+                db.add(Notification(
+                    user_id=order.user_id,
+                    type="order_update",
+                    title=f"✅ הזמנה {order.order_number} נמסרה!",
+                    message=(
+                        f"ההזמנה {order.order_number} נמסרה בהצלחה.\n"
+                        "אנחנו שמחים לשרת אותך! אם קיבלת את הפריטים תקינים — אין צורך לפעול."
+                    ),
+                    data={
+                        "order_id": str(order.id),
+                        "order_number": order.order_number,
+                        "status": "delivered",
+                    },
+                ))
+
+        if new_status:
+            # Write to system log
+            try:
+                async with async_session_factory() as cat_db:
+                    cat_db.add(SystemLog(
+                        level="INFO",
+                        logger_name="orders_agent",
+                        message=f"[OrdersAgent] Shipment advance: {order.order_number} → {new_status} (carrier: {carrier})",
+                    ))
+                    await cat_db.commit()
+            except Exception as _e:
+                print(f"[OrdersAgent] SystemLog write skipped: {_e}")
+            print(f"[OrdersAgent] 📦 {order.order_number}: {order.status.replace(new_status, '')}→ {new_status} ({carrier})")
+
+        return new_status
+
 
 # ==============================================================================
 # 4. FINANCE AGENT

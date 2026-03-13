@@ -3989,14 +3989,26 @@ STUCK_ORDER_CHECK_INTERVAL_MIN = 30  # check every 30 minutes
 async def _stuck_orders_monitor_loop():
     """
     Background loop: runs every 30 minutes.
-    Finds orders stuck in 'paid' or 'processing' for > STUCK_ORDER_HOURS hours
-    (payment confirmed but supplier fulfillment never happened) and auto-triggers
-    the OrdersAgent to place the supplier order and notify the customer.
+
+    Pass 1 — Stuck fulfillment:
+      Finds orders in 'paid' or 'processing' for > STUCK_ORDER_HOURS hours
+      (payment confirmed but supplier order never placed) and re-triggers the
+      OrdersAgent to place the supplier order.
+
+    Pass 2 — Shipment tracking:
+      Finds orders in 'supplier_ordered' or 'shipped' and asks the OrdersAgent
+      whether enough transit time has elapsed to advance the status:
+        supplier_ordered → shipped  (after carrier-specific days)
+        shipped          → delivered (after carrier-specific days)
+      Notifies the customer on every transition.
     """
+    from BACKEND_AI_AGENTS import OrdersAgent as _OrdersAgent
     await asyncio.sleep(5)  # let DB pool warm up on startup
     while True:
+        now = datetime.utcnow()
+        # ── Pass 1: stuck fulfillment (paid/processing > 4 h) ────────────────
         try:
-            cutoff = datetime.utcnow() - timedelta(hours=STUCK_ORDER_HOURS)
+            cutoff = now - timedelta(hours=STUCK_ORDER_HOURS)
             async with pii_session_factory() as db:
                 result = await db.execute(
                     select(Order).where(
@@ -4006,10 +4018,9 @@ async def _stuck_orders_monitor_loop():
                 )
                 stuck = result.scalars().all()
                 if stuck:
-                    print(f"[StuckOrderMonitor] Found {len(stuck)} order(s) stuck > {STUCK_ORDER_HOURS}h — triggering fulfillment...")
+                    print(f"[OrderMonitor] Found {len(stuck)} order(s) stuck > {STUCK_ORDER_HOURS}h — triggering fulfillment...")
                     await trigger_supplier_fulfillment(stuck, db)
 
-                    # Notify all admins about the auto-handled orders
                     admins_res = await db.execute(select(User).where(User.is_admin == True))
                     admins = admins_res.scalars().all()
                     order_list = ", ".join(o.order_number for o in stuck)
@@ -4030,11 +4041,51 @@ async def _stuck_orders_monitor_loop():
                             },
                         ))
                     await db.commit()
-                    print(f"[StuckOrderMonitor] ✅ Auto-fulfilled: {order_list}")
+                    print(f"[OrderMonitor] ✅ Auto-fulfilled: {order_list}")
                 else:
-                    print(f"[StuckOrderMonitor] No stuck orders found (threshold: {STUCK_ORDER_HOURS}h).")
+                    print(f"[OrderMonitor] Pass 1: no stuck orders (threshold: {STUCK_ORDER_HOURS}h).")
         except Exception as e:
-            print(f"[StuckOrderMonitor] Error: {e}")
+            print(f"[OrderMonitor] Pass 1 error: {e}")
+
+        # ── Pass 2: shipment status tracking ─────────────────────────────────
+        try:
+            async with pii_session_factory() as db:
+                result = await db.execute(
+                    select(Order).where(
+                        Order.status.in_(["supplier_ordered", "shipped"]),
+                        Order.tracking_number.isnot(None),
+                    )
+                )
+                in_transit = result.scalars().all()
+                if not in_transit:
+                    print("[OrderMonitor] Pass 2: no in-transit orders to check.")
+                else:
+                    agent = _OrdersAgent()
+                    advanced: list[str] = []
+                    for order in in_transit:
+                        new_status = await agent.advance_shipment_status(order, db, now=now)
+                        if new_status:
+                            advanced.append(f"{order.order_number} → {new_status}")
+
+                    if advanced:
+                        # Admin notification summarising all transitions
+                        admins_res = await db.execute(select(User).where(User.is_admin == True))
+                        admins = admins_res.scalars().all()
+                        summary = "\n".join(f"  • {a}" for a in advanced)
+                        for admin in admins:
+                            db.add(Notification(
+                                user_id=admin.id,
+                                type="system",
+                                title=f"📦 עדכון משלוחים: {len(advanced)} הזמנות עודכנו",
+                                message=f"הסוכן עדכן סטטוס עבור {len(advanced)} הזמנות:\n{summary}",
+                                data={"advanced": advanced, "auto_tracked": True},
+                            ))
+                        await db.commit()
+                        print(f"[OrderMonitor] Pass 2: advanced {len(advanced)} order(s): {', '.join(advanced)}")
+                    else:
+                        print(f"[OrderMonitor] Pass 2: {len(in_transit)} in-transit order(s), none ready to advance.")
+        except Exception as e:
+            print(f"[OrderMonitor] Pass 2 error: {e}")
 
         await asyncio.sleep(STUCK_ORDER_CHECK_INTERVAL_MIN * 60)
 
