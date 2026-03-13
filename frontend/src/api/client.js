@@ -49,8 +49,16 @@ api.interceptors.response.use(
       } catch {
         refreshQueue.forEach((p) => p.reject())
         refreshQueue = []
-        localStorage.clear()
-        window.location.href = '/login'
+        // If we failed refreshing while on the payment success flow, redirect to
+        // /orders (payment was already confirmed by Stripe webhook) rather than
+        // sending the user to /login and losing their session silently.
+        const url = original?.url || ''
+        if (url.includes('verify-session') || url.includes('payment')) {
+          window.location.href = '/orders?payment=done'
+        } else {
+          localStorage.clear()
+          window.location.href = '/login'
+        }
       } finally {
         isRefreshing = false
       }

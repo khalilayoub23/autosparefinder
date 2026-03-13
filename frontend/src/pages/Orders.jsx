@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { ordersApi, returnsApi, paymentsApi } from '../api/orders'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Package, Truck, CheckCircle, XCircle, Clock, ChevronRight, RotateCcw, FileText, Loader2, Trash2, Ban, CreditCard, Banknote, ExternalLink, RefreshCw } from 'lucide-react'
 import { format } from 'date-fns'
 import { he } from 'date-fns/locale'
@@ -425,6 +425,15 @@ export default function Orders() {
   const [refunds, setRefunds] = useState([])
   const [selectedIds, setSelectedIds] = useState(new Set())
   const [bulkPaying, setBulkPaying] = useState(false)
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  useEffect(() => {
+    // Show success toast if redirected here after payment (e.g. token expired mid-checkout)
+    if (searchParams.get('payment') === 'done') {
+      toast.success('התשלום התקבל — ההזמנות שלך יעודכנו בקרוב!', { duration: 6000 })
+      setSearchParams({}, { replace: true }) // clean URL
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     ordersApi.getAll().then(({ data }) => setOrders(data.orders || [])).catch(() => toast.error('שגיאה בטעינת הזמנות')).finally(() => setIsLoading(false))
