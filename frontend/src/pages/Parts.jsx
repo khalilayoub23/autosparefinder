@@ -339,6 +339,166 @@ function PartCard({ part, onAddToCart }) {
   )
 }
 
+// ─── Vehicle confirm / picker popup ─────────────────────────────────────────
+function VehicleConfirmModal({ vehicles, selectedVehicle, onConfirm, onClose }) {
+  // If a vehicle is already selected → show quick-confirm screen first
+  const [mode, setMode] = useState(selectedVehicle ? 'confirm' : 'pick')
+  const [chosen, setChosen] = useState(selectedVehicle?.id ?? '__none__')
+
+  // ── Quick-confirm screen ──────────────────────────────────────────────────
+  if (mode === 'confirm' && selectedVehicle) {
+    const sv = selectedVehicle
+    const details = [sv.fuel_type, sv.color, sv.engine_cc ? `${sv.engine_cc}cc` : null].filter(Boolean).join(' · ')
+    return (
+      <div
+        className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center p-4"
+        style={{ background: 'rgba(0,0,0,0.6)' }}
+        onClick={onClose}
+      >
+        <div
+          className="bg-white rounded-3xl w-full max-w-sm shadow-2xl overflow-hidden"
+          onClick={e => e.stopPropagation()}
+        >
+          {/* Top bar */}
+          <div className="bg-gradient-to-r from-brand-600 to-brand-700 px-5 pt-5 pb-4 text-white text-center">
+            <p className="text-xs font-semibold uppercase tracking-widest text-white/70 mb-1">לאיזה רכב לחפש?</p>
+            <h2 className="text-2xl font-bold">{sv.manufacturer} {sv.model}</h2>
+            <p className="text-white/80 text-sm mt-0.5">{sv.year}</p>
+          </div>
+
+          {/* Car details card */}
+          <div className="mx-4 mt-4 bg-brand-50 border border-brand-100 rounded-2xl p-4">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-11 h-11 rounded-xl bg-brand-100 flex items-center justify-center flex-shrink-0">
+                <Car className="w-6 h-6 text-brand-600" />
+              </div>
+              <div className="text-right">
+                <p className="font-bold text-gray-900 text-sm">{sv.manufacturer} {sv.model} {sv.year}</p>
+                {details && <p className="text-xs text-gray-500 mt-0.5">{details}</p>}
+              </div>
+            </div>
+            {(sv.front_tire || sv.test_expiry_date || sv.horsepower) && (
+              <div className="grid grid-cols-3 gap-1.5 text-center">
+                {sv.front_tire && (
+                  <div className="bg-white rounded-xl p-2">
+                    <p className="text-gray-400 text-xs mb-0.5">צמיג</p>
+                    <p className="font-semibold text-gray-700 text-xs">{sv.front_tire}</p>
+                  </div>
+                )}
+                {sv.horsepower > 0 && (
+                  <div className="bg-white rounded-xl p-2">
+                    <p className="text-gray-400 text-xs mb-0.5">כ״ס</p>
+                    <p className="font-semibold text-gray-700 text-xs">{sv.horsepower}</p>
+                  </div>
+                )}
+                {sv.test_expiry_date && (
+                  <div className="bg-white rounded-xl p-2">
+                    <p className="text-gray-400 text-xs mb-0.5">טסט</p>
+                    <p className="font-semibold text-gray-700 text-xs">{sv.test_expiry_date?.split('T')[0]?.slice(0,7)}</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Actions */}
+          <div className="p-4 space-y-2.5">
+            <button
+              onClick={() => onConfirm(sv)}
+              className="w-full py-3.5 rounded-2xl bg-brand-600 hover:bg-brand-700 text-white font-bold text-base transition-colors flex items-center justify-center gap-2 shadow-md shadow-brand-200"
+            >
+              <CheckCircle className="w-5 h-5" />
+              כן, חפש עבור רכב זה
+            </button>
+            {vehicles.length > 1 && (
+              <button
+                onClick={() => setMode('pick')}
+                className="w-full py-2.5 rounded-xl border-2 border-gray-200 text-gray-600 hover:bg-gray-50 hover:border-gray-300 font-medium text-sm transition-all"
+              >
+                בחר רכב אחר
+              </button>
+            )}
+            <button
+              onClick={() => onConfirm(null)}
+              className="w-full py-2 text-sm text-gray-400 hover:text-gray-600 transition-colors"
+            >
+              חפש ללא סינון רכב
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // ── Full picker list ──────────────────────────────────────────────────────
+  return (
+    <div
+      className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center p-4"
+      style={{ background: 'rgba(0,0,0,0.6)' }}
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl w-full max-w-md shadow-2xl"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="p-5 text-center border-b border-gray-100">
+          <div className="w-14 h-14 rounded-full bg-brand-50 flex items-center justify-center mx-auto mb-3">
+            <Car className="w-7 h-7 text-brand-600" />
+          </div>
+          <h2 className="text-lg font-bold text-gray-900">לאיזה רכב לחפש?</h2>
+          <p className="text-sm text-gray-500 mt-1">בחר רכב לצמצום תוצאות החיפוש</p>
+        </div>
+        {/* Vehicle options */}
+        <div className="p-4 space-y-2 max-h-64 overflow-y-auto">
+          {vehicles.map(v => (
+            <button
+              key={v.id}
+              onClick={() => setChosen(v.id)}
+              className={`w-full flex items-center gap-3 p-3 rounded-xl border-2 text-right transition-all ${
+                chosen === v.id ? 'border-brand-500 bg-brand-50' : 'border-gray-100 hover:border-brand-200 bg-white'
+              }`}
+            >
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${chosen === v.id ? 'bg-brand-100' : 'bg-gray-100'}`}>
+                <Car className={`w-5 h-5 ${chosen === v.id ? 'text-brand-600' : 'text-gray-500'}`} />
+              </div>
+              <div className="flex-1 min-w-0 text-right">
+                <p className="font-semibold text-gray-900 text-sm">{v.manufacturer} {v.model}</p>
+                <p className="text-xs text-gray-400 mt-0.5">{v.year}{v.fuel_type ? ` · ${v.fuel_type}` : ''}{v.color ? ` · ${v.color}` : ''}</p>
+              </div>
+              {chosen === v.id && <CheckCircle className="w-5 h-5 text-brand-600 flex-shrink-0" />}
+            </button>
+          ))}
+          <button
+            onClick={() => setChosen('__none__')}
+            className={`w-full flex items-center gap-3 p-3 rounded-xl border-2 text-right transition-all ${
+              chosen === '__none__' ? 'border-gray-400 bg-gray-50' : 'border-gray-100 hover:border-gray-300 bg-white'
+            }`}
+          >
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${chosen === '__none__' ? 'bg-gray-200' : 'bg-gray-100'}`}>
+              <Search className="w-5 h-5 text-gray-500" />
+            </div>
+            <div className="flex-1 text-right">
+              <p className="font-semibold text-gray-700 text-sm">ללא סינון רכב</p>
+              <p className="text-xs text-gray-400">חפש בכל הרכבים</p>
+            </div>
+            {chosen === '__none__' && <CheckCircle className="w-5 h-5 text-gray-500 flex-shrink-0" />}
+          </button>
+        </div>
+        <div className="p-4 border-t border-gray-100 flex gap-3">
+          <button onClick={onClose} className="flex-1 btn-secondary">ביטול</button>
+          <button
+            onClick={() => onConfirm(vehicles.find(v => v.id === chosen) || null)}
+            className="flex-1 btn-primary"
+          >
+            אשר בחירה
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function Parts() {
   const { addItem } = useCartStore()
   const { vehicles, selectedVehicle, loadVehicles, selectVehicle, addVehicle: storeAddVehicle, removeVehicle } = useVehicleStore()
@@ -374,6 +534,7 @@ export default function Parts() {
   const [filterAvail, setFilterAvail] = useState('')
   const [filterType, setFilterType] = useState('')
   const [perType, setPerType] = useState(4)   // suppliers per type shown in grouped view
+  const [showVehiclePicker, setShowVehiclePicker] = useState(false)
 
   const getSortParams = (sv) => {
     if (sv === 'price_asc')    return { sort_by: 'price_asc',    sort_dir: 'asc' }
@@ -491,6 +652,14 @@ export default function Parts() {
     setSearched(false)
     setTotalCount(0)
     setPage(0)
+    if ((mode === 'photo' || mode === 'voice') && vehicles.length > 0) {
+      setShowVehiclePicker(true)
+    }
+  }
+
+  const handleVehiclePickerConfirm = (vehicle) => {
+    selectVehicle(vehicle)
+    setShowVehiclePicker(false)
   }
 
   const buildManualQuery = () => {
@@ -847,35 +1016,94 @@ export default function Parts() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="section-title">חיפוש חלקי חילוף</h1>
-        <p className="text-gray-500 mt-1">חפש לפי הרכב שלך או הזן פרטים ידנית</p>
+      {showVehiclePicker && (
+        <VehicleConfirmModal
+          vehicles={vehicles}
+          selectedVehicle={selectedVehicle}
+          onConfirm={handleVehiclePickerConfirm}
+          onClose={() => setShowVehiclePicker(false)}
+        />
+      )}
+
+      {/* Page hero */}
+      <div className="rounded-2xl bg-gradient-to-br from-brand-600 to-brand-800 px-6 py-5 text-white shadow-lg">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-xl bg-white/20 flex items-center justify-center flex-shrink-0">
+              <Search className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <h1 className="text-xl font-bold leading-tight">חיפוש חלקי חילוף</h1>
+              <p className="text-white/65 text-xs mt-0.5">חפש לפי רכב · תמונה · קול · VIN</p>
+            </div>
+          </div>
+          {selectedVehicle && (
+            <button
+              onClick={() => setShowVehiclePicker(true)}
+              className="flex items-center gap-2 bg-white/15 hover:bg-white/25 transition-colors rounded-xl px-3 py-2 text-right flex-shrink-0"
+            >
+              <div className="text-right">
+                <p className="text-xs text-white/70 leading-none mb-0.5">הרכב שלי</p>
+                <p className="text-sm font-bold leading-none">{selectedVehicle.manufacturer} {selectedVehicle.model} {selectedVehicle.year}</p>
+              </div>
+              <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center flex-shrink-0">
+                <Car className="w-4 h-4 text-white" />
+              </div>
+            </button>
+          )}
+        </div>
+        {/* Quick stats row */}
+        <div className="grid grid-cols-3 gap-2 mt-4">
+          {[
+            { icon: '🚗', label: 'הרכב שלי', sub: `${vehicles.length} רכבים`, mode: 'vehicle' },
+            { icon: '📷', label: 'זיהוי תמונה', sub: 'AI · זהה חלק', mode: 'photo' },
+            { icon: '🎤', label: 'חיפוש קולי', sub: 'אמור שם החלק', mode: 'voice' },
+          ].map(({ icon, label, sub, mode: m }) => (
+            <button
+              key={m}
+              onClick={() => switchMode(m)}
+              className={`rounded-xl p-2.5 text-center transition-all ${
+                searchMode === m ? 'bg-white/25 ring-2 ring-white/40' : 'bg-white/10 hover:bg-white/20'
+              }`}
+            >
+              <div className="text-lg mb-0.5">{icon}</div>
+              <p className="text-xs font-semibold text-white leading-tight">{label}</p>
+              <p className="text-xs text-white/55 leading-tight hidden sm:block">{sub}</p>
+            </button>
+          ))}
+        </div>
       </div>
 
-      {/* Mode toggle */}
-      <div className="card p-1 flex flex-wrap gap-1">
+      {/* Mode tabs */}
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-1.5 flex gap-1">
         {[
-          { key: 'vehicle', icon: <Car className="w-4 h-4" />, label: 'הרכב שלי' },
-          { key: 'manual', icon: <SlidersHorizontal className="w-4 h-4" />, label: 'פרטי רכב' },
-          { key: 'photo', icon: <Camera className="w-4 h-4" />, label: 'תמונה' },
-          { key: 'voice', icon: <Mic className="w-4 h-4" />, label: 'קול' },
-        ].map(({ key, icon, label }) => (
-          <button
-            key={key}
-            onClick={() => switchMode(key)}
-            className={`flex-1 min-w-[80px] flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl text-sm font-medium transition-all ${
-              searchMode === key ? 'bg-brand-600 text-white shadow' : 'text-gray-500 hover:text-gray-800'
-            }`}
-          >
-            {icon}
-            {label}
-            {key === 'manual' && searchMode === 'manual' && activeFiltersCount > 0 && (
-              <span className="bg-white text-brand-600 text-xs rounded-full w-5 h-5 flex items-center justify-center font-bold">
-                {activeFiltersCount}
-              </span>
-            )}
-          </button>
-        ))}
+          { key: 'vehicle', icon: <Car className="w-4 h-4" />,              label: 'הרכב שלי',  activeCls: 'bg-brand-600 text-white shadow-sm',   inactiveCls: 'text-gray-500 hover:text-brand-600 hover:bg-brand-50' },
+          { key: 'manual',  icon: <SlidersHorizontal className="w-4 h-4" />, label: 'פרטי רכב',  activeCls: 'bg-violet-600 text-white shadow-sm',  inactiveCls: 'text-gray-500 hover:text-violet-600 hover:bg-violet-50' },
+          { key: 'photo',   icon: <Camera className="w-4 h-4" />,            label: 'תמונה',     activeCls: 'bg-sky-600 text-white shadow-sm',     inactiveCls: 'text-gray-500 hover:text-sky-600 hover:bg-sky-50' },
+          { key: 'voice',   icon: <Mic className="w-4 h-4" />,               label: 'קול',       activeCls: 'bg-rose-600 text-white shadow-sm',    inactiveCls: 'text-gray-500 hover:text-rose-600 hover:bg-rose-50' },
+        ].map(({ key, icon, label, activeCls, inactiveCls }) => {
+          const isActive = searchMode === key
+          return (
+            <button
+              key={key}
+              onClick={() => switchMode(key)}
+              className={`relative flex-1 flex items-center justify-center gap-1.5 py-2.5 px-2 rounded-xl text-sm font-semibold transition-all ${
+                isActive ? activeCls : inactiveCls
+              }`}
+            >
+              {icon}
+              <span className="hidden sm:inline">{label}</span>
+              <span className="sm:hidden text-xs">{label}</span>
+              {key === 'manual' && activeFiltersCount > 0 && (
+                <span className={`absolute -top-1 -left-1 text-xs rounded-full w-4 h-4 flex items-center justify-center font-bold ${
+                  isActive ? 'bg-white text-violet-600' : 'bg-violet-600 text-white'
+                }`}>
+                  {activeFiltersCount}
+                </span>
+              )}
+            </button>
+          )
+        })}
       </div>
 
       {/* ── VEHICLE MODE ── */}
@@ -1189,40 +1417,42 @@ export default function Parts() {
           </div>
           <p className="text-sm text-gray-500">צלם או העלה תמונה של החלק — ה-AI יזהה אותו ויחפש במאגר</p>
 
-          {/* Vehicle picker — selected = filled, others = outlined */}
+          {/* Vehicle confirmation banner */}
           {vehicles.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {/* General / no-filter option */}
+            selectedVehicle ? (
+              <div className="flex items-center justify-between bg-brand-50 border border-brand-200 rounded-xl p-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-brand-100 flex items-center justify-center flex-shrink-0">
+                    <Car className="w-4 h-4 text-brand-600" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-brand-500 font-medium">מחפש עבור</p>
+                    <p className="text-sm font-bold text-brand-800">
+                      {selectedVehicle.manufacturer} {selectedVehicle.model} {selectedVehicle.year}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowVehiclePicker(true)}
+                  className="text-xs text-brand-600 hover:text-brand-800 font-semibold border border-brand-200 hover:border-brand-400 px-2.5 py-1 rounded-lg transition-colors whitespace-nowrap"
+                >
+                  שנה רכב
+                </button>
+              </div>
+            ) : (
               <button
-                onClick={() => selectVehicle(null)}
-                className={`px-4 py-2 rounded-xl text-sm font-medium border-2 transition-all flex items-center gap-2 ${
-                  !selectedVehicle
-                    ? 'bg-gray-700 border-gray-700 text-white shadow-md'
-                    : 'bg-white border-gray-200 text-gray-500 hover:border-gray-400 hover:text-gray-700'
-                }`}
+                onClick={() => setShowVehiclePicker(true)}
+                className="w-full flex items-center gap-3 p-3 rounded-xl border-2 border-dashed border-brand-200 hover:border-brand-400 hover:bg-brand-50 transition-all text-right"
               >
-                <Search className="w-4 h-4" />
-                כללי
+                <div className="w-9 h-9 rounded-xl bg-brand-50 flex items-center justify-center flex-shrink-0">
+                  <Car className="w-4 h-4 text-brand-500" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-brand-700">בחר רכב לצמצום החיפוש</p>
+                  <p className="text-xs text-brand-400">מומלץ לתוצאות מדויקות יותר</p>
+                </div>
               </button>
-              {vehicles.map((v) => {
-                const isSelected = selectedVehicle?.id === v.id
-                return (
-                  <button
-                    key={v.id}
-                    onClick={() => selectVehicle(isSelected ? null : v)}
-                    className={`px-4 py-2 rounded-xl text-sm font-medium border-2 transition-all flex items-center gap-2 ${
-                      isSelected
-                        ? 'bg-brand-600 border-brand-600 text-white shadow-md'
-                        : 'bg-white border-gray-200 text-gray-700 hover:border-brand-400 hover:text-brand-700'
-                    }`}
-                  >
-                    <Car className="w-4 h-4" />
-                    {v.nickname || v.model}
-                    <span className={`text-xs ml-2 ${isSelected ? 'opacity-80' : 'text-gray-400'}`}>{v.year}</span>
-                  </button>
-                )
-              })}
-            </div>
+            )
           )}
 
           <div
@@ -1302,39 +1532,42 @@ export default function Parts() {
           </div>
           <p className="text-sm text-gray-500">לחץ על המיקרופון ואמור שם החלק שאתה מחפש</p>
 
-          {/* Vehicle picker — same as photo tab */}
+          {/* Vehicle confirmation banner */}
           {vehicles.length > 0 && (
-            <div className="flex flex-wrap gap-2">
+            selectedVehicle ? (
+              <div className="flex items-center justify-between bg-rose-50 border border-rose-200 rounded-xl p-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-rose-100 flex items-center justify-center flex-shrink-0">
+                    <Car className="w-4 h-4 text-rose-600" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-rose-500 font-medium">מכוון לרכב</p>
+                    <p className="text-sm font-bold text-rose-800">
+                      {selectedVehicle.manufacturer} {selectedVehicle.model} {selectedVehicle.year}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowVehiclePicker(true)}
+                  className="text-xs text-rose-600 hover:text-rose-800 font-semibold border border-rose-200 hover:border-rose-400 px-2.5 py-1 rounded-lg transition-colors whitespace-nowrap"
+                >
+                  שנה רכב
+                </button>
+              </div>
+            ) : (
               <button
-                onClick={() => selectVehicle(null)}
-                className={`px-4 py-2 rounded-xl text-sm font-medium border-2 transition-all flex items-center gap-2 ${
-                  !selectedVehicle
-                    ? 'bg-gray-700 border-gray-700 text-white shadow-md'
-                    : 'bg-white border-gray-200 text-gray-500 hover:border-gray-400 hover:text-gray-700'
-                }`}
+                onClick={() => setShowVehiclePicker(true)}
+                className="w-full flex items-center gap-3 p-3 rounded-xl border-2 border-dashed border-rose-200 hover:border-rose-400 hover:bg-rose-50 transition-all text-right"
               >
-                <Search className="w-4 h-4" />
-                כללי
+                <div className="w-9 h-9 rounded-xl bg-rose-50 flex items-center justify-center flex-shrink-0">
+                  <Car className="w-4 h-4 text-rose-500" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-rose-700">בחר רכב לצמצום החיפוש</p>
+                  <p className="text-xs text-rose-400">מומלץ לתוצאות מדויקות יותר</p>
+                </div>
               </button>
-              {vehicles.map((v) => {
-                const isSelected = selectedVehicle?.id === v.id
-                return (
-                  <button
-                    key={v.id}
-                    onClick={() => selectVehicle(isSelected ? null : v)}
-                    className={`px-4 py-2 rounded-xl text-sm font-medium border-2 transition-all flex items-center gap-2 ${
-                      isSelected
-                        ? 'bg-brand-600 border-brand-600 text-white shadow-md'
-                        : 'bg-white border-gray-200 text-gray-700 hover:border-brand-400 hover:text-brand-700'
-                    }`}
-                  >
-                    <Car className="w-4 h-4" />
-                    {v.nickname || v.model}
-                    <span className={`text-xs ml-2 ${isSelected ? 'opacity-80' : 'text-gray-400'}`}>{v.year}</span>
-                  </button>
-                )
-              })}
-            </div>
+            )
           )}
 
           {!voiceSupported && (
