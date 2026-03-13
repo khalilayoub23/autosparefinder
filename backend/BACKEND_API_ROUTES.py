@@ -3975,30 +3975,68 @@ async def startup():
     print("🚀 Auto Spare API starting...")
     print(f"   Environment: {os.getenv('ENVIRONMENT', 'development')}")
     asyncio.create_task(_price_sync_loop())
-    asyncio.create_task(_rescue_stuck_orders())   # ← rescue paid/processing orders
+    asyncio.create_task(_stuck_orders_monitor_loop())   # ← periodic stuck-order monitor (every 30 min)
     start_scraper_task()           # ← catalog scraper background loop
     start_db_agent(get_db, 6.0)   # ← DB cleaning / normalisation agent (every 6h)
     print("✅ All systems ready — price-sync + catalog-scraper + db-agent schedulers started")
 
 
-async def _rescue_stuck_orders():
-    """On startup: find orders stuck at paid/processing and re-run supplier fulfillment."""
-    await asyncio.sleep(5)  # give DB pool a moment to warm up
-    try:
-        async with pii_session_factory() as db:
-            result = await db.execute(
-                select(Order).where(Order.status.in_(["paid", "processing"]))
-            )
-            stuck = result.scalars().all()
-            if not stuck:
-                print("[RescueTask] No stuck orders found.")
-                return
-            print(f"[RescueTask] Found {len(stuck)} stuck order(s) — triggering fulfillment...")
-            await trigger_supplier_fulfillment(stuck, db)
-            await db.commit()
-            print(f"[RescueTask] ✅ Fulfillment re-triggered for {len(stuck)} order(s).")
-    except Exception as e:
-        print(f"[RescueTask] Error rescuing stuck orders: {e}")
+# How many hours before an order in paid/processing is considered stuck
+STUCK_ORDER_HOURS = int(os.getenv("STUCK_ORDER_HOURS", "4"))
+STUCK_ORDER_CHECK_INTERVAL_MIN = 30  # check every 30 minutes
+
+
+async def _stuck_orders_monitor_loop():
+    """
+    Background loop: runs every 30 minutes.
+    Finds orders stuck in 'paid' or 'processing' for > STUCK_ORDER_HOURS hours
+    (payment confirmed but supplier fulfillment never happened) and auto-triggers
+    the OrdersAgent to place the supplier order and notify the customer.
+    """
+    await asyncio.sleep(5)  # let DB pool warm up on startup
+    while True:
+        try:
+            cutoff = datetime.utcnow() - timedelta(hours=STUCK_ORDER_HOURS)
+            async with pii_session_factory() as db:
+                result = await db.execute(
+                    select(Order).where(
+                        Order.status.in_(["paid", "processing"]),
+                        Order.updated_at <= cutoff,
+                    )
+                )
+                stuck = result.scalars().all()
+                if stuck:
+                    print(f"[StuckOrderMonitor] Found {len(stuck)} order(s) stuck > {STUCK_ORDER_HOURS}h — triggering fulfillment...")
+                    await trigger_supplier_fulfillment(stuck, db)
+
+                    # Notify all admins about the auto-handled orders
+                    admins_res = await db.execute(select(User).where(User.is_admin == True))
+                    admins = admins_res.scalars().all()
+                    order_list = ", ".join(o.order_number for o in stuck)
+                    for admin in admins:
+                        db.add(Notification(
+                            user_id=admin.id,
+                            type="system",
+                            title=f"🤖 סוכן הזמנות: {len(stuck)} הזמנות תקועות טופלו אוטומטית",
+                            message=(
+                                f"הסוכן זיהה {len(stuck)} הזמנה/ות שתקועות מעל {STUCK_ORDER_HOURS} שעות "
+                                f"במצב 'ממתין לספק' ופעל אוטומטית להמשך הטיפול.\n"
+                                f"הזמנות: {order_list}"
+                            ),
+                            data={
+                                "stuck_orders": [o.order_number for o in stuck],
+                                "stuck_hours": STUCK_ORDER_HOURS,
+                                "auto_handled": True,
+                            },
+                        ))
+                    await db.commit()
+                    print(f"[StuckOrderMonitor] ✅ Auto-fulfilled: {order_list}")
+                else:
+                    print(f"[StuckOrderMonitor] No stuck orders found (threshold: {STUCK_ORDER_HOURS}h).")
+        except Exception as e:
+            print(f"[StuckOrderMonitor] Error: {e}")
+
+        await asyncio.sleep(STUCK_ORDER_CHECK_INTERVAL_MIN * 60)
 
 
 # ── Background price-sync loop ────────────────────────────────────────────────
