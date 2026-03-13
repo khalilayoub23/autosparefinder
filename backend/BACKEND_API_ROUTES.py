@@ -3263,7 +3263,7 @@ async def get_admin_stats(current_user: User = Depends(get_current_admin_user), 
     users_count   = (await db.execute(select(func.count(User.id)))).scalar()
     orders_count  = (await db.execute(select(func.count(Order.id)))).scalar()
     parts_count   = (await cat_db.execute(select(func.count(PartsCatalog.id)).where(PartsCatalog.is_active == True))).scalar()
-    pending_orders = (await db.execute(select(func.count(Order.id)).where(Order.status.in_(["pending_payment", "paid", "processing"])))).scalar()
+    pending_orders = (await db.execute(select(func.count(Order.id)).where(Order.status.in_(["pending_payment", "paid", "processing", "supplier_ordered", "confirmed"])))).scalar()
 
     # Orders grouped by status
     status_rows = (await db.execute(
@@ -3300,12 +3300,14 @@ async def get_admin_stats(current_user: User = Depends(get_current_admin_user), 
     # cost          = price_no_vat - profit       ← supplier cost
     MARGIN_RATE = 0.45
     VAT_RATE = 0.17
-    paid_statuses = ["paid", "processing", "shipped", "delivered"]
+    paid_statuses = ["paid", "processing", "supplier_ordered", "confirmed", "shipped", "delivered"]
 
-    price_no_vat_net = float(net_revenue) / (1 + VAT_RATE)           # strip VAT
-    profit_total     = round(price_no_vat_net * (MARGIN_RATE / (1 + MARGIN_RATE)), 2)  # 45/145
-    cost_total       = round(price_no_vat_net - profit_total, 2)
-    margin_pct       = round((profit_total / cost_total * 100) if cost_total > 0 else 0, 1)  # ≈ 45%
+    price_no_vat_net   = round(float(net_revenue) / (1 + VAT_RATE), 2)           # strip VAT
+    profit_total      = round(price_no_vat_net * (MARGIN_RATE / (1 + MARGIN_RATE)), 2)  # 45/145
+    cost_total        = round(price_no_vat_net - profit_total, 2)
+    margin_pct        = round((profit_total / cost_total * 100) if cost_total > 0 else 0, 1)  # ≈ 45%
+    vat_total         = round(float(net_revenue) - price_no_vat_net, 2)  # VAT portion
+    net_revenue_ex_vat = price_no_vat_net  # alias for clarity
 
     # Average order value
     avg_order = (await db.execute(
@@ -3324,6 +3326,8 @@ async def get_admin_stats(current_user: User = Depends(get_current_admin_user), 
         "profit_total": profit_total,
         "cost_total": cost_total,
         "margin_pct": margin_pct,
+        "vat_total": vat_total,
+        "net_revenue_ex_vat": net_revenue_ex_vat,
         "avg_order_value": round(float(avg_order), 2),
         "currency": "ILS",
     }
