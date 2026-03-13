@@ -231,6 +231,7 @@ export default function Admin() {
   }, [])
 
   useEffect(() => {
+    if (tab === 'dashboard') loadDashboard()
     if (tab === 'users') loadUsers()
     if (tab === 'orders') loadOrders()
     if (tab === 'suppliers') { loadSuppliers(); loadSupplierOrders(); loadSyncStatus() }
@@ -253,6 +254,7 @@ export default function Admin() {
       await api.post(`/returns/${returnId}/approve?refund_percentage=${pct}`)
       toast.success('בקשת ההחזרה אושרה')
       loadAdminReturns()
+      loadDashboard()
     } catch (e) { toast.error(e.response?.data?.detail || 'שגיאה באישור') }
     finally { setProcessingReturn(null) }
   }
@@ -266,6 +268,7 @@ export default function Admin() {
       setShowRejectModal(null)
       setRejectReason('')
       loadAdminReturns()
+      loadDashboard()
     } catch (e) { toast.error(e.response?.data?.detail || 'שגיאה בדחיית הבקשה') }
     finally { setProcessingReturn(null) }
   }
