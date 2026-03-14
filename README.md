@@ -7,6 +7,7 @@
 [![Endpoints](https://img.shields.io/badge/API%20Endpoints-122-brightgreen)](https://github.com/khalilayoub23/autosparefinder)
 [![Frontend](https://img.shields.io/badge/Frontend-11%20Pages-orange)](https://github.com/khalilayoub23/autosparefinder)
 [![AI Agents](https://img.shields.io/badge/AI%20Agents-10-purple)](https://github.com/khalilayoub23/autosparefinder)
+[![Repo Size](https://img.shields.io/github/repo-size/khalilayoub23/autosparefinder)](https://github.com/khalilayoub23/autosparefinder)
 
 ---
 
