@@ -45,7 +45,7 @@ export default function Refund() {
             {[
               ['ביטול לפני משלוח','החזר מלא 100%','green'],
               ['פגם / נזק / חלק שגוי','החזר מלא 100%\n+ אנחנו משלמים החזרה','green'],
-              ['שינוי דעה / אחר','החזר 90%\n(10% דמי טיפול)','yellow'],
+              ['שינוי דעה / אחר','החזר 90% ממחיר החלק\n(10% דמי טיפול על החלק בלבד)\nמשלוח חזרה — לקוח משלם','yellow'],
             ].map(([title, desc, color], i) => (
               <div key={i} className={`rounded-xl p-4 text-center border-2 ${
                 color === 'green' ? 'bg-green-50 border-green-200' : 'bg-yellow-50 border-yellow-200'
@@ -141,14 +141,20 @@ export default function Refund() {
               </table>
             </div>
 
+            <p className="text-xs text-gray-500">* דמי הטיפול (10%) מחושבים על <strong>מחיר החלק בלבד</strong> — ללא עלות המשלוח המקורי. עלות משלוח ההחזרה (שינוי דעה / אחר) באחריות הלקוח.</p>
+
             <div className="bg-gray-100 rounded-lg p-4 font-mono text-xs space-y-2">
               <p className="font-bold text-gray-700 not-italic mb-2">דוגמת חישוב — שינוי דעה:</p>
               <div className="space-y-1">
-                <p>סכום ששולם:          ₪676</p>
-                <p>דמי טיפול (10%):     ₪67.60</p>
-                <p>משלוח מקורי:         ₪91 (לא מוחזר)</p>
-                <p className="border-t border-gray-300 pt-1 font-bold">זיכוי ללקוח:         ₪517.40</p>
+                <p>סכום ששולם:                          ₪676</p>
+                <p className="text-gray-500">  מתוכם — מחיר חלק:              ₪585</p>
+                <p className="text-gray-500">  מתוכם — משלוח מקורי:           ₪91</p>
+                <p>דמי טיפול (10% ממחיר החלק בלבד):   ₪58.50</p>
+                <p>משלוח מקורי:                        ₪91 (לא מוחזר)</p>
+                <p>דמי משלוח החזרה:                    ₪91 (לקוח משלם)</p>
+                <p className="border-t border-gray-300 pt-1 font-bold">זיכוי ללקוח:                        ₪435.50</p>
               </div>
+              <p className="text-gray-400 not-italic text-[10px] mt-1">* דמי הטיפול מחושבים על מחיר החלק בלבד — ללא דמי המשלוח</p>
             </div>
 
             <div className="bg-gray-100 rounded-lg p-4 font-mono text-xs space-y-2">

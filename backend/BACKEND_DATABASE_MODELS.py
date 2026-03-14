@@ -909,6 +909,40 @@ class PurchaseOrder(Base):
     # order is in autospare_pii — no cross-DB relationship
 
 
+class PartDiagramCache(Base):
+    """
+    Stores AI-identified part results keyed by (image_hash, vehicle).
+    Acts as a growing diagram database — every search enriches the cache
+    so future identical queries return instantly without calling GPT again.
+    """
+    __tablename__ = "part_diagram_cache"
+
+    id              = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    image_hash      = Column(String(64),  nullable=False, index=True,
+                             doc="SHA-256 hex of the uploaded image bytes")
+    vehicle_make    = Column(String(100), nullable=True,  index=True)
+    vehicle_model   = Column(String(100), nullable=True)
+    vehicle_year    = Column(String(10),  nullable=True)
+    part_name_he    = Column(String(200), nullable=False,
+                             doc="Best Hebrew part name returned by / confirmed by GPT")
+    part_name_en    = Column(String(200), nullable=True)
+    possible_names  = Column(ARRAY(String), nullable=True,
+                             doc="All alternative Hebrew names suggested")
+    confidence      = Column(Numeric(4, 3), nullable=True)
+    catalog_part_id = Column(UUID(as_uuid=True), ForeignKey("parts_catalog.id", ondelete="SET NULL"),
+                              nullable=True, index=True,
+                              doc="Matched parts_catalog row if confirmed")
+    times_seen      = Column(Integer, nullable=False, default=1,
+                             doc="How many times this exact image was searched — boosts confidence")
+    created_at      = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at      = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("image_hash", "vehicle_make", "vehicle_model", name="uq_diagram_cache"),
+        Index("ix_diagram_cache_make_part", "vehicle_make", "part_name_he"),
+    )
+
+
 class ScraperApiCall(Base):
     """Tracks every external API call made by the scraper and data.gov.il lookups."""
     __tablename__ = "scraper_api_calls"

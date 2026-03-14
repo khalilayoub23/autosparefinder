@@ -1,10 +1,373 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { partsApi } from '../api/parts'
 import { useCartStore } from '../stores/cartStore'
 import { useVehicleStore } from '../stores/vehicleStore'
-import { Search, ShoppingCart, Car, Loader2, ChevronDown, Package, SlidersHorizontal, X, Camera, Mic, MicOff, Hash, CheckCircle, AlertCircle, Truck, Shield, Tag, ChevronRight, Link2, Bot } from 'lucide-react'
+import { Search, ShoppingCart, Car, Loader2, ChevronDown, Package, SlidersHorizontal, X, Camera, Mic, MicOff, Hash, CheckCircle, AlertCircle, Truck, Shield, Tag, ChevronRight, Link2, Bot, Crop, Pencil, Circle, RotateCcw, Check, MousePointer, ScanLine } from 'lucide-react'
 import toast from 'react-hot-toast'
+
+// ─── Photo Editor Modal ───────────────────────────────────────────────────────
+function PhotoEditorModal({ src, onApply, onClose }) {
+  const canvasRef = useRef(null)
+  const [tool, setTool] = useState('crop') // 'crop' | 'mark' | 'move'
+  const [drawing, setDrawing] = useState(false)
+  const [start, setStart] = useState(null)
+  const dragIdx = useRef(-1)
+  const [crop, setCrop] = useState(null)      // {x,y,w,h} in canvas coords
+  const [marks, setMarks] = useState([])      // [{x,y,r}]
+  const [imgObj, setImgObj] = useState(null)
+  const [scale, setScale] = useState(1)
+  const [zoom, setZoom] = useState(1)         // 1 = fit-to-window
+  const basescale = useRef(1)                 // fit-to-window scale stored here
+
+  // Load image onto canvas
+  useEffect(() => {
+    const img = new Image()
+    img.onload = () => {
+      setImgObj(img)
+      const canvas = canvasRef.current
+      if (!canvas) return
+      const maxW = Math.min(window.innerWidth - 48, 700)
+      const maxH = window.innerHeight * 0.55
+      const s = Math.min(maxW / img.naturalWidth, maxH / img.naturalHeight, 1)
+      basescale.current = s
+      setScale(s)
+      setZoom(1)
+      canvas.width  = img.naturalWidth  * s
+      canvas.height = img.naturalHeight * s
+      drawCanvas(canvas, img, s, null, [])
+    }
+    img.src = src
+  }, [src])
+
+  const drawCanvas = useCallback((canvas, img, s, cropRect, markList) => {
+    if (!canvas || !img) return
+    const ctx = canvas.getContext('2d')
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+
+    // Dim everything outside crop if crop active
+    if (cropRect && cropRect.w > 4 && cropRect.h > 4) {
+      ctx.save()
+      ctx.fillStyle = 'rgba(0,0,0,0.45)'
+      ctx.beginPath()
+      ctx.rect(0, 0, canvas.width, canvas.height)
+      ctx.rect(cropRect.x, cropRect.y, cropRect.w, cropRect.h)
+      ctx.fill('evenodd')
+      // Border
+      ctx.strokeStyle = '#f97316'
+      ctx.lineWidth = 2
+      ctx.strokeRect(cropRect.x, cropRect.y, cropRect.w, cropRect.h)
+      // Corner handles
+      const hs = 8
+      ctx.fillStyle = '#f97316'
+      ;[
+        [cropRect.x, cropRect.y],
+        [cropRect.x + cropRect.w - hs, cropRect.y],
+        [cropRect.x, cropRect.y + cropRect.h - hs],
+        [cropRect.x + cropRect.w - hs, cropRect.y + cropRect.h - hs],
+      ].forEach(([rx, ry]) => ctx.fillRect(rx, ry, hs, hs))
+      ctx.restore()
+    }
+
+    // Draw marks
+    ;(markList || []).forEach(({ x, y, r }) => {
+      ctx.save()
+      ctx.strokeStyle = '#ef4444'
+      ctx.lineWidth = 3
+      ctx.beginPath()
+      ctx.arc(x, y, r, 0, Math.PI * 2)
+      ctx.stroke()
+      // Arrow pointer
+      ctx.beginPath()
+      ctx.moveTo(x + r * 0.7, y - r * 0.7)
+      ctx.lineTo(x + r * 1.4, y - r * 1.4)
+      ctx.stroke()
+      ctx.restore()
+    })
+  }, [])
+
+  // Redraw whenever state changes
+  useEffect(() => {
+    if (canvasRef.current && imgObj) {
+      drawCanvas(canvasRef.current, imgObj, scale, crop, marks)
+    }
+  }, [crop, marks, imgObj, scale, drawCanvas])
+
+  // Apply zoom: rescale canvas + rescale all mark positions
+  const applyZoom = useCallback((newZoom) => {
+    if (!imgObj || !canvasRef.current) return
+    const clampedZoom = Math.min(Math.max(newZoom, 0.25), 5)
+    const oldScale = scale
+    const newScale = basescale.current * clampedZoom
+    const canvas = canvasRef.current
+    canvas.width  = imgObj.naturalWidth  * newScale
+    canvas.height = imgObj.naturalHeight * newScale
+    // Translate mark positions to new scale
+    setMarks(m => m.map(mk => ({
+      x: mk.x * (newScale / oldScale),
+      y: mk.y * (newScale / oldScale),
+      r: mk.r * (newScale / oldScale),
+    })))
+    if (crop) {
+      setCrop(cr => cr ? ({
+        x: cr.x * (newScale / oldScale),
+        y: cr.y * (newScale / oldScale),
+        w: cr.w * (newScale / oldScale),
+        h: cr.h * (newScale / oldScale),
+      }) : null)
+    }
+    setScale(newScale)
+    setZoom(clampedZoom)
+  }, [imgObj, scale, crop])
+
+  const onWheel = useCallback((e) => {
+    e.preventDefault()
+    const delta = e.deltaY < 0 ? 0.15 : -0.15
+    applyZoom(zoom + delta)
+  }, [zoom, applyZoom])
+
+  const getPos = (e) => {
+    const canvas = canvasRef.current
+    const rect = canvas.getBoundingClientRect()
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY
+    return { x: clientX - rect.left, y: clientY - rect.top }
+  }
+
+  const onPointerDown = (e) => {
+    e.preventDefault()
+    const pos = getPos(e)
+
+    // Check if clicking near an existing mark (works in any tool mode)
+    const hitIdx = marks.findIndex(({ x, y, r }) => {
+      const dx = pos.x - x, dy = pos.y - y
+      return Math.sqrt(dx * dx + dy * dy) <= r + 12
+    })
+
+    if (hitIdx >= 0) {
+      // Drag existing mark
+      dragIdx.current = hitIdx
+      setDrawing(true)
+      setStart(pos)
+      return
+    }
+
+    // No hit — normal tool behaviour
+    dragIdx.current = -1
+    setDrawing(true)
+    setStart(pos)
+    if (tool === 'mark') {
+      setMarks(m => [...m, { x: pos.x, y: pos.y, r: 28 }])
+    }
+  }
+
+  const onPointerMove = (e) => {
+    if (!drawing || !start) return
+    e.preventDefault()
+    const pos = getPos(e)
+
+    if (dragIdx.current >= 0) {
+      // Move the dragged mark
+      setMarks(m => {
+        const copy = [...m]
+        copy[dragIdx.current] = { ...copy[dragIdx.current], x: pos.x, y: pos.y }
+        return copy
+      })
+      return
+    }
+
+    if (tool === 'crop') {
+      const x = Math.min(start.x, pos.x)
+      const y = Math.min(start.y, pos.y)
+      const w = Math.abs(pos.x - start.x)
+      const h = Math.abs(pos.y - start.y)
+      setCrop({ x, y, w, h })
+    } else if (tool === 'mark') {
+      // Update last mark radius as user drags
+      const dx = pos.x - start.x, dy = pos.y - start.y
+      const r = Math.max(16, Math.sqrt(dx * dx + dy * dy))
+      setMarks(m => {
+        const copy = [...m]
+        if (copy.length > 0) copy[copy.length - 1] = { ...copy[copy.length - 1], r }
+        return copy
+      })
+    }
+  }
+
+  const onPointerUp = (e) => {
+    e.preventDefault()
+    dragIdx.current = -1
+    setDrawing(false)
+    setStart(null)
+  }
+
+  const handleReset = () => {
+    setCrop(null)
+    setMarks([])
+  }
+
+  const handleApply = () => {
+    const canvas = document.createElement('canvas')
+    if (!imgObj) return
+
+    if (crop && crop.w > 20 && crop.h > 20) {
+      // Crop to natural image coordinates
+      const sx = (crop.x / scale)
+      const sy = (crop.y / scale)
+      const sw = (crop.w / scale)
+      const sh = (crop.h / scale)
+      canvas.width  = sw
+      canvas.height = sh
+      const ctx = canvas.getContext('2d')
+      ctx.drawImage(imgObj, sx, sy, sw, sh, 0, 0, sw, sh)
+
+      // Draw marks relocated to cropped coords
+      marks.forEach(({ x, y, r }) => {
+        const mx = (x / scale) - sx
+        const my = (y / scale) - sy
+        ctx.save()
+        ctx.strokeStyle = '#ef4444'
+        ctx.lineWidth = 3
+        ctx.beginPath()
+        ctx.arc(mx, my, r / scale, 0, Math.PI * 2)
+        ctx.stroke()
+        ctx.restore()
+      })
+    } else {
+      // No crop — use original size with annotations
+      canvas.width  = imgObj.naturalWidth
+      canvas.height = imgObj.naturalHeight
+      const ctx = canvas.getContext('2d')
+      ctx.drawImage(imgObj, 0, 0)
+      marks.forEach(({ x, y, r }) => {
+        const mx = x / scale, my = y / scale
+        ctx.save()
+        ctx.strokeStyle = '#ef4444'
+        ctx.lineWidth = 3
+        ctx.beginPath()
+        ctx.arc(mx, my, r / scale, 0, Math.PI * 2)
+        ctx.stroke()
+        ctx.restore()
+      })
+    }
+
+    canvas.toBlob(blob => {
+      if (!blob) return
+      const file = new File([blob], 'edited.jpg', { type: 'image/jpeg' })
+      onApply(file, canvas.toDataURL('image/jpeg', 0.9))
+    }, 'image/jpeg', 0.9)
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-3" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col overflow-hidden" style={{maxHeight: '95vh'}}>
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+          <div className="flex items-center gap-2">
+            <Camera className="w-5 h-5 text-brand-600" />
+            <h3 className="font-bold text-gray-900">ערוך תמונה לחיפוש מדויק</h3>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100">
+            <X className="w-5 h-5 text-gray-500" />
+          </button>
+        </div>
+
+        {/* Toolbar */}
+        <div className="flex items-center gap-2 px-4 py-2.5 bg-gray-50 border-b border-gray-100">
+          <span className="text-xs text-gray-500 font-medium ml-1">כלי:</span>
+          {[
+            { id: 'crop', icon: <Crop className="w-4 h-4" />, label: 'חתוך' },
+            { id: 'mark', icon: <Circle className="w-4 h-4" />, label: 'סמן חלק' },
+            { id: 'move', icon: <MousePointer className="w-4 h-4" />, label: 'הזז' },
+          ].map(({ id, icon, label }) => (
+            <button
+              key={id}
+              onClick={() => setTool(id)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                tool === id
+                  ? 'bg-brand-600 text-white shadow-sm'
+                  : 'bg-white border border-gray-200 text-gray-600 hover:border-brand-400'
+              }`}
+            >
+              {icon}{label}
+            </button>
+          ))}
+          <div className="h-5 w-px bg-gray-200 mx-1" />
+          <button
+            onClick={handleReset}
+            disabled={!crop && marks.length === 0}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm border border-gray-200 text-gray-500 hover:border-red-300 hover:text-red-500 disabled:opacity-40 transition-all"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />איפוס
+          </button>
+          <div className="h-5 w-px bg-gray-200 mx-1" />
+          {/* Zoom controls */}
+          <button
+            onClick={() => applyZoom(zoom - 0.25)}
+            disabled={zoom <= 0.25}
+            className="w-7 h-7 flex items-center justify-center rounded border border-gray-200 text-gray-600 hover:border-brand-400 disabled:opacity-40 text-base font-bold"
+            title="הקטן"
+          >−</button>
+          <button
+            onClick={() => applyZoom(1)}
+            className="px-2 h-7 rounded border border-gray-200 text-xs text-gray-500 hover:border-brand-400 tabular-nums"
+            title="איפוס זום"
+          >{Math.round(zoom * 100)}%</button>
+          <button
+            onClick={() => applyZoom(zoom + 0.25)}
+            disabled={zoom >= 5}
+            className="w-7 h-7 flex items-center justify-center rounded border border-gray-200 text-gray-600 hover:border-brand-400 disabled:opacity-40 text-base font-bold"
+            title="הגדל"
+          >+</button>
+          <div className="text-xs text-gray-400 mr-auto hidden sm:block">
+            {tool === 'crop' ? 'גרור לבחירת אזור' : tool === 'mark' ? 'לחץ / גרור להגדלת עיגול' : 'גרור עיגול קיים למיקום חדש'}
+          </div>
+        </div>
+
+        {/* Canvas */}
+        <div className="flex-1 overflow-auto bg-gray-900 flex items-center justify-center p-4" style={{minHeight: 200}}>
+          <canvas
+            ref={canvasRef}
+            className="touch-none select-none rounded-lg"
+            style={{cursor: tool === 'move' ? 'grab' : 'crosshair'}}
+            onWheel={onWheel}
+            onMouseDown={onPointerDown}
+            onMouseMove={onPointerMove}
+            onMouseUp={onPointerUp}
+            onMouseLeave={onPointerUp}
+            onTouchStart={onPointerDown}
+            onTouchMove={onPointerMove}
+            onTouchEnd={onPointerUp}
+          />
+        </div>
+
+        {/* Instructions */}
+        <div className="px-4 py-2 bg-blue-50 border-t border-blue-100">
+          <p className="text-xs text-blue-700">
+            {tool === 'crop'
+              ? '✂️ גרור מלבן סביב החלק שרוצים לזהות — ה-AI יתמקד רק בו'
+              : tool === 'mark'
+              ? '🔴 לחץ על החלק ו/או גרור ליצירת עיגול — עוזר ל-AI לזהות מה סימנת'
+              : '↕️ גרור עיגול קיים למיקום חדש על-גבי התמונה'}
+          </p>
+        </div>
+
+        {/* Footer */}
+        <div className="flex gap-2 p-4 border-t border-gray-100">
+          <button onClick={onClose} className="btn-secondary flex-1">ביטול</button>
+          <button
+            onClick={handleApply}
+            className="btn-primary flex-1 flex items-center justify-center gap-2"
+          >
+            <Check className="w-4 h-4" />
+            {crop && crop.w > 20 ? 'החל חיתוך וחפש' : marks.length > 0 ? 'החל סימון וחפש' : 'חפש ללא עריכה'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 function PriceTag({ price, vat, shipping, total }) {
   return (
@@ -53,7 +416,7 @@ const CATEGORY_ACCENT = {
   'מיזוג':           { color: '#22d3ee', bg: 'bg-cyan-50',    text: 'text-cyan-700',    icon: '❄️' },
   'חשמל רכב':        { color: '#a78bfa', bg: 'bg-violet-50',  text: 'text-violet-700',  icon: '⚡' },
   'דלק':             { color: '#34d399', bg: 'bg-emerald-50', text: 'text-emerald-700', icon: '⛽' },
-  'פחיין ומרכב':     { color: '#60a5fa', bg: 'bg-blue-50',    text: 'text-blue-700',    icon: '🚗' },
+  'פח ומרכב':        { color: '#60a5fa', bg: 'bg-blue-50',    text: 'text-blue-700',    icon: '🚗' },
   'ריפוד ופנים':     { color: '#f472b6', bg: 'bg-pink-50',    text: 'text-pink-700',    icon: '🪑' },
   'גלגלים וצמיגים':  { color: '#a8a29e', bg: 'bg-stone-50',   text: 'text-stone-700',   icon: '🛞' },
   'תיבת הילוכים':    { color: '#2dd4bf', bg: 'bg-teal-50',    text: 'text-teal-700',    icon: '🔩' },
@@ -442,12 +805,10 @@ function VehicleConfirmModal({ vehicles, selectedVehicle, onConfirm, onClose }) 
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="p-5 text-center border-b border-gray-100">
-          <div className="w-14 h-14 rounded-full bg-brand-50 flex items-center justify-center mx-auto mb-3">
-            <Car className="w-7 h-7 text-brand-600" />
-          </div>
-          <h2 className="text-lg font-bold text-gray-900">לאיזה רכב לחפש?</h2>
-          <p className="text-sm text-gray-500 mt-1">בחר רכב לצמצום תוצאות החיפוש</p>
+        <div className="bg-gradient-to-r from-brand-600 to-brand-700 px-5 pt-5 pb-4 text-white text-center rounded-t-2xl">
+          <p className="text-xs font-semibold uppercase tracking-widest text-white/70 mb-1">לאיזה רכב לחפש?</p>
+          <h2 className="text-2xl font-bold">בחר רכב</h2>
+          <p className="text-white/80 text-sm mt-0.5">לצמצום תוצאות החיפוש</p>
         </div>
         {/* Vehicle options */}
         <div className="p-4 space-y-2 max-h-64 overflow-y-auto">
@@ -499,6 +860,135 @@ function VehicleConfirmModal({ vehicles, selectedVehicle, onConfirm, onClose }) 
   )
 }
 
+// ─── VIN Scanner Modal ──────────────────────────────────────────────────────
+function VinScannerModal({ onResult, onClose }) {
+  const videoRef = useRef(null)
+  const streamRef = useRef(null)
+  const [error, setError] = useState('')
+  const [scanning, setScanning] = useState(false)
+  const [detected, setDetected] = useState('')
+
+  useEffect(() => {
+    let detector = null
+    let animId = null
+
+    const start = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } }
+        })
+        streamRef.current = stream
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream
+          await videoRef.current.play()
+        }
+
+        // Try BarcodeDetector API (Chrome/Edge)
+        if ('BarcodeDetector' in window) {
+          detector = new window.BarcodeDetector({ formats: ['code_128', 'code_39', 'qr_code', 'ean_13'] })
+          setScanning(true)
+          const scan = async () => {
+            if (!videoRef.current || videoRef.current.readyState < 2) { animId = requestAnimationFrame(scan); return }
+            try {
+              const barcodes = await detector.detect(videoRef.current)
+              for (const bc of barcodes) {
+                const val = bc.rawValue.replace(/[^A-HJ-NPR-Z0-9]/gi, '').toUpperCase()
+                if (val.length === 17) { setDetected(val); return }
+              }
+            } catch {}
+            animId = requestAnimationFrame(scan)
+          }
+          animId = requestAnimationFrame(scan)
+        } else {
+          setScanning(false) // manual capture fallback
+        }
+      } catch (e) {
+        setError('לא ניתן לגשת למצלמה: ' + (e.message || ''))
+      }
+    }
+    start()
+    return () => {
+      cancelAnimationFrame(animId)
+      streamRef.current?.getTracks().forEach(t => t.stop())
+    }
+  }, [])
+
+  const handleConfirm = () => { if (detected) { onResult(detected); onClose() } }
+
+  const handleCapture = () => {
+    // Fallback: capture frame and show it; user reads VIN manually
+    const canvas = document.createElement('canvas')
+    canvas.width = videoRef.current?.videoWidth || 640
+    canvas.height = videoRef.current?.videoHeight || 480
+    canvas.getContext('2d').drawImage(videoRef.current, 0, 0)
+    // Try to parse any text — best effort via BarcodeDetector if available
+    if ('BarcodeDetector' in window) {
+      new window.BarcodeDetector({ formats: ['code_128', 'code_39'] }).detect(canvas)
+        .then(barcodes => {
+          for (const bc of barcodes) {
+            const val = bc.rawValue.replace(/[^A-HJ-NPR-Z0-9]/gi, '').toUpperCase()
+            if (val.length === 17) { setDetected(val) }
+          }
+        }).catch(() => {})
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80" onClick={onClose}>
+      <div className="bg-white rounded-2xl overflow-hidden shadow-2xl w-full max-w-sm mx-4" onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 bg-gray-900">
+          <div className="flex items-center gap-2 text-white">
+            <ScanLine className="w-4 h-4" />
+            <span className="text-sm font-semibold">סריקת VIN</span>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Camera view */}
+        <div className="relative bg-black aspect-video">
+          <video ref={videoRef} className="w-full h-full object-cover" muted playsInline />
+          {/* scan guide overlay */}
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <div className="border-2 border-brand-400 rounded-lg w-4/5 h-12 opacity-70" />
+          </div>
+          {scanning && !detected && (
+            <div className="absolute bottom-2 left-0 right-0 flex justify-center">
+              <span className="bg-black/60 text-white text-xs px-2 py-1 rounded-full animate-pulse">מחפש ברקוד VIN...</span>
+            </div>
+          )}
+        </div>
+
+        {/* Error */}
+        {error && <p className="text-red-500 text-xs text-center px-4 py-2">{error}</p>}
+
+        {/* Detected result */}
+        {detected ? (
+          <div className="p-4 space-y-3">
+            <p className="text-xs text-gray-500 text-center">VIN זוהה:</p>
+            <p className="font-mono font-bold text-center text-gray-900 tracking-widest text-sm bg-green-50 border border-green-200 rounded-xl py-2 px-3">{detected}</p>
+            <div className="flex gap-2">
+              <button onClick={() => setDetected('')} className="flex-1 py-2 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50">נסה שוב</button>
+              <button onClick={handleConfirm} className="flex-1 py-2 rounded-xl bg-brand-600 text-white text-sm font-semibold hover:bg-brand-700">אשר</button>
+            </div>
+          </div>
+        ) : (
+          <div className="p-4 space-y-2">
+            <p className="text-xs text-gray-400 text-center">כוון את המצלמה לברקוד ה-VIN</p>
+            {!scanning && (
+              <button onClick={handleCapture} className="w-full py-2.5 rounded-xl bg-brand-600 text-white text-sm font-semibold hover:bg-brand-700">
+                <Camera className="w-4 h-4 inline ml-1" /> צלם לזיהוי
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function Parts() {
   const { addItem } = useCartStore()
   const { vehicles, selectedVehicle, loadVehicles, selectVehicle, addVehicle: storeAddVehicle, removeVehicle } = useVehicleStore()
@@ -529,6 +1019,8 @@ export default function Parts() {
   const [brands, setBrands] = useState([])
   const [manualManufacturer, setManualManufacturer] = useState('')
   const [manualModel, setManualModel] = useState('')
+  const [modelOptions, setModelOptions] = useState([])
+  const [modelsLoading, setModelsLoading] = useState(false)
   const [manualYear, setManualYear] = useState('')
   const [sortBy, setSortBy] = useState('availability')
   const [filterAvail, setFilterAvail] = useState('')
@@ -577,10 +1069,12 @@ export default function Parts() {
     const urlCategory = searchParams.get('category') || ''
     loadVehicles()
     partsApi.categories().then(({ data }) => {
-      setCategories(data.categories || [])
+      const cats = (data.categories || []).slice().sort((a, b) => a.localeCompare(b, 'he'))
+      setCategories(cats)
       setCategoryCounts(data.counts || {})
     })
     partsApi.brandsWithParts().then(({ data }) => setBrands(data.brands || []))
+    partsApi.models().then(({ data }) => setModelOptions(data.models || []))
     if (urlSearch && !urlSearchDone.current) {
       urlSearchDone.current = true
       if (urlCategory) setCategory(urlCategory)
@@ -613,6 +1107,17 @@ export default function Parts() {
     if (searched && sortBy !== 'availability') search(0)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sortBy])
+
+  // Reload model options when manufacturer changes
+  useEffect(() => {
+    setManualModel('')
+    setModelsLoading(true)
+    partsApi.models(manualManufacturer || null)
+      .then(({ data }) => setModelOptions(data.models || []))
+      .catch(() => setModelOptions([]))
+      .finally(() => setModelsLoading(false))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [manualManufacturer])
 
   useEffect(() => {
     if (searched) search(0)
@@ -744,6 +1249,7 @@ export default function Parts() {
   const [photoResult, setPhotoResult] = useState(null)
   const [photoCandidates, setPhotoCandidates] = useState([])
   const [photoFallbackMfr, setPhotoFallbackMfr] = useState('')
+  const [showPhotoEditor, setShowPhotoEditor] = useState(false)
 
   const handlePhotoFile = (file) => {
     if (!file) return
@@ -755,6 +1261,15 @@ export default function Parts() {
     const reader = new FileReader()
     reader.onload = (e) => setPhotoPreview(e.target.result)
     reader.readAsDataURL(file)
+  }
+
+  const handleEditorApply = (editedFile, editedPreview) => {
+    setPhotoFile(editedFile)
+    setPhotoPreview(editedPreview)
+    setPhotoResult(null)
+    setPhotoCandidates([])
+    photoSearchCache.current = {}
+    setShowPhotoEditor(false)
   }
 
   const photoSearchCache = useRef({})
@@ -807,8 +1322,10 @@ export default function Parts() {
         }
       }
 
-      // Fallback to general results if manufacturer filter returned nothing
-      if (!usedMfr) {
+      // Fallback to general results if manufacturer filter returned nothing.
+      // But if a specific vehicle manufacturer is selected, do NOT show wrong-brand
+      // parts — keep results empty so the "no parts for [brand]" banner is shown.
+      if (!usedMfr && !vehicleManufacturer) {
         for (let i = 0; i < top.length; i++) {
           const d = genResults[i]?.data
           if (!d) continue
@@ -826,12 +1343,12 @@ export default function Parts() {
 
       photoSearchCache.current[cacheKey] = {
         query: usedQuery, parts: foundParts, grouped: foundGrouped,
-        total: foundTotal, fallbackMfr: usedMfr ? vehicleManufacturer || '' : '',
+        total: foundTotal, fallbackMfr: !usedMfr && vehicleManufacturer ? vehicleManufacturer : '',
       }
 
       setQuery(usedQuery); setParts(foundParts); setSearchResults(foundGrouped)
       setTotalCount(foundTotal); setSearched(true); setPage(0)
-      setPhotoFallbackMfr(usedMfr ? '' : (vehicleManufacturer || ''))
+      setPhotoFallbackMfr(!usedMfr && vehicleManufacturer ? vehicleManufacturer : '')
     } finally {
       setIsLoading(false)
     }
@@ -849,7 +1366,7 @@ export default function Parts() {
     setPhotoLoading(true)
     setIsLoading(true)
     try {
-      const { data } = await partsApi.identifyFromImage(photoFile)
+      const { data } = await partsApi.identifyFromImage(photoFile, selectedVehicle || null)
       setPhotoResult(data)
       if (data.identified_part) {
         // Build candidates: start with Hebrew name, then its slash/word components,
@@ -987,8 +1504,10 @@ export default function Parts() {
           foundParts = r.parts; foundTotal = r.total || 0; usedQuery = top[i]; usedMfr = true; break
         }
       }
-      // Fallback to general
-      if (!usedMfr) {
+      // Fallback to general — only when no vehicle manufacturer is selected.
+      // With a selected vehicle, keep results empty so the "no parts for [brand]"
+      // banner shows instead of wrong-brand parts.
+      if (!usedMfr && !vehicleManufacturer) {
         for (let i = 0; i < top.length; i++) {
           const r = genResults[i]?.data
           if (!r) continue
@@ -1004,7 +1523,7 @@ export default function Parts() {
         }
       }
 
-      const fallbackMfr = !usedMfr && vehicleManufacturer && foundParts.length > 0 ? vehicleManufacturer : ''
+      const fallbackMfr = !usedMfr && vehicleManufacturer ? vehicleManufacturer : ''
       voiceSearchCache.current[cacheKey] = { query: usedQuery, parts: foundParts, total: foundTotal, grouped: foundGrouped, fallbackMfr }
       setQuery(usedQuery); setParts(foundParts); setTotalCount(foundTotal); setSearched(true); setPage(0)
       setSearchResults(foundGrouped)
@@ -1035,6 +1554,7 @@ export default function Parts() {
   const [vinLoading, setVinLoading] = useState(false)
   const [vinVehicle, setVinVehicle] = useState(null)
   const [vinPartQuery, setVinPartQuery] = useState('')
+  const [showVinScanner, setShowVinScanner] = useState(false)
 
   const handleVinSearch = async (partQuery = vinPartQuery, pageNum = 0) => {
     if (vinInput.replace(/\s/g, '').length !== 17) { toast.error('VIN חייב להיות בן 17 תווים'); return }
@@ -1057,12 +1577,25 @@ export default function Parts() {
 
   return (
     <div className="space-y-6">
+      {showVinScanner && (
+        <VinScannerModal
+          onResult={(vin) => { setVinInput(vin) }}
+          onClose={() => setShowVinScanner(false)}
+        />
+      )}
       {showVehiclePicker && (
         <VehicleConfirmModal
           vehicles={vehicles}
           selectedVehicle={selectedVehicle}
           onConfirm={handleVehiclePickerConfirm}
           onClose={() => setShowVehiclePicker(false)}
+        />
+      )}
+      {showPhotoEditor && photoPreview && (
+        <PhotoEditorModal
+          src={photoPreview}
+          onApply={handleEditorApply}
+          onClose={() => setShowPhotoEditor(false)}
         />
       )}
 
@@ -1093,35 +1626,16 @@ export default function Parts() {
             </button>
           )}
         </div>
-        {/* Quick stats row */}
-        <div className="grid grid-cols-3 gap-2 mt-4">
-          {[
-            { icon: '🚗', label: 'הרכב שלי', sub: `${vehicles.length} רכבים`, mode: 'vehicle' },
-            { icon: '📷', label: 'זיהוי תמונה', sub: 'AI · זהה חלק', mode: 'photo' },
-            { icon: '🎤', label: 'חיפוש קולי', sub: 'אמור שם החלק', mode: 'voice' },
-          ].map(({ icon, label, sub, mode: m }) => (
-            <button
-              key={m}
-              onClick={() => switchMode(m)}
-              className={`rounded-xl p-2.5 text-center transition-all ${
-                searchMode === m ? 'bg-white/25 ring-2 ring-white/40' : 'bg-white/10 hover:bg-white/20'
-              }`}
-            >
-              <div className="text-lg mb-0.5">{icon}</div>
-              <p className="text-xs font-semibold text-white leading-tight">{label}</p>
-              <p className="text-xs text-white/55 leading-tight hidden sm:block">{sub}</p>
-            </button>
-          ))}
-        </div>
+
       </div>
 
       {/* Mode tabs */}
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-1.5 flex gap-1">
         {[
           { key: 'vehicle', icon: <Car className="w-4 h-4" />,              label: 'הרכב שלי',  activeCls: 'bg-brand-600 text-white shadow-sm',   inactiveCls: 'text-gray-500 hover:text-brand-600 hover:bg-brand-50' },
-          { key: 'manual',  icon: <SlidersHorizontal className="w-4 h-4" />, label: 'פרטי רכב',  activeCls: 'bg-violet-600 text-white shadow-sm',  inactiveCls: 'text-gray-500 hover:text-violet-600 hover:bg-violet-50' },
-          { key: 'photo',   icon: <Camera className="w-4 h-4" />,            label: 'תמונה',     activeCls: 'bg-sky-600 text-white shadow-sm',     inactiveCls: 'text-gray-500 hover:text-sky-600 hover:bg-sky-50' },
-          { key: 'voice',   icon: <Mic className="w-4 h-4" />,               label: 'קול',       activeCls: 'bg-rose-600 text-white shadow-sm',    inactiveCls: 'text-gray-500 hover:text-rose-600 hover:bg-rose-50' },
+          { key: 'manual',  icon: <SlidersHorizontal className="w-4 h-4" />, label: 'פרטי רכב',  activeCls: 'bg-brand-600 text-white shadow-sm',   inactiveCls: 'text-gray-500 hover:text-brand-600 hover:bg-brand-50' },
+          { key: 'photo',   icon: <Camera className="w-4 h-4" />,            label: 'תמונה',     activeCls: 'bg-brand-600 text-white shadow-sm',   inactiveCls: 'text-gray-500 hover:text-brand-600 hover:bg-brand-50' },
+          { key: 'voice',   icon: <Mic className="w-4 h-4" />,               label: 'קול',       activeCls: 'bg-brand-600 text-white shadow-sm',   inactiveCls: 'text-gray-500 hover:text-brand-600 hover:bg-brand-50' },
         ].map(({ key, icon, label, activeCls, inactiveCls }) => {
           const isActive = searchMode === key
           return (
@@ -1133,11 +1647,10 @@ export default function Parts() {
               }`}
             >
               {icon}
-              <span className="hidden sm:inline">{label}</span>
-              <span className="sm:hidden text-xs">{label}</span>
+              <span className="hidden xs:inline">{label}</span>
               {key === 'manual' && activeFiltersCount > 0 && (
                 <span className={`absolute -top-1 -left-1 text-xs rounded-full w-4 h-4 flex items-center justify-center font-bold ${
-                  isActive ? 'bg-white text-violet-600' : 'bg-violet-600 text-white'
+                  isActive ? 'bg-white text-brand-600' : 'bg-brand-600 text-white'
                 }`}>
                   {activeFiltersCount}
                 </span>
@@ -1149,66 +1662,106 @@ export default function Parts() {
 
       {/* ── VEHICLE MODE ── */}
       {searchMode === 'vehicle' && (
-        <div className="card p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <Car className="w-5 h-5 text-brand-600" />
-            <h3 className="font-semibold text-gray-900">בחר רכב לחיפוש</h3>
-          </div>
+        <div className="card p-4 space-y-4">
 
-          {vehicles.length === 0 ? (
-            <p className="text-sm text-gray-400 mb-3">אין רכבים שמורים – הוסף רכב למטה</p>
-          ) : (
-            <div className="flex flex-wrap gap-2 mb-3">
-              {vehicles.map((v) => (
-                <div key={v.id} className={`flex items-center rounded-xl border transition-all overflow-hidden ${
-                  selectedVehicle?.id === v.id
-                    ? 'bg-brand-600 border-brand-600'
-                    : 'bg-white border-gray-200 hover:border-brand-400'
-                }`}>
+          {/* ── Search inputs row: plate + VIN ── */}
+          <div className="grid grid-cols-2 gap-2">
+
+            {/* Israeli license plate input */}
+            <div>
+              <label className="block text-[11px] text-gray-500 mb-1 font-medium">מספר רכב</label>
+              <div className="flex gap-1.5">
+                <div className="relative flex rounded-lg overflow-hidden border border-gray-200 focus-within:border-brand-400 focus-within:ring-1 focus-within:ring-brand-300 transition-colors flex-1 min-w-0">
+                  <input
+                    className="w-full bg-white text-gray-900 font-mono font-semibold text-sm tracking-[0.15em] text-center uppercase placeholder:text-gray-400 placeholder:font-normal placeholder:text-xs placeholder:tracking-normal focus:outline-none px-2 py-2"
+                    placeholder="123-45-678"
+                    dir="ltr"
+                    value={newPlate}
+                    onChange={(e) => setNewPlate(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && addVehicle()}
+                  />
+                </div>
+                <button
+                  onClick={addVehicle}
+                  disabled={addingVehicle}
+                  className="bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white px-3 py-2 rounded-lg font-semibold text-xs flex items-center gap-1 transition-colors whitespace-nowrap flex-shrink-0"
+                >
+                  {addingVehicle ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Car className="w-3.5 h-3.5" />}
+                  הוסף
+                </button>
+              </div>
+            </div>
+
+            {/* VIN input */}
+            <div>
+              <label className="flex items-center gap-1 text-[11px] text-gray-500 mb-1 font-medium">
+                VIN
+                {vinInput.length > 0 && (
+                  <span className={`mr-auto text-[10px] font-semibold ${
+                    vinInput.replace(/\s/g, '').length === 17 ? 'text-green-600' : 'text-orange-400'
+                  }`}>
+                    {vinInput.replace(/\s/g, '').length}/17
+                  </span>
+                )}
+              </label>
+              <div className="flex gap-1.5">
+                <div className="relative flex-1 min-w-0">
+                  <input
+                    className="w-full border border-gray-200 rounded-lg bg-white text-gray-900 font-mono text-xs tracking-wider uppercase focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-2 py-2 pl-7"
+                    placeholder="1HGCM82633..."
+                    dir="ltr"
+                    maxLength={17}
+                    value={vinInput}
+                    onChange={(e) => setVinInput(e.target.value.toUpperCase())}
+                    onKeyDown={(e) => e.key === 'Enter' && handleVinSearch()}
+                  />
                   <button
-                    onClick={() => selectVehicle(v)}
-                    className={`px-4 py-2 text-sm font-medium ${
-                      selectedVehicle?.id === v.id ? 'text-white' : 'text-gray-700'
-                    }`}
+                    type="button"
+                    title="סרוק ברקוד VIN"
+                    onClick={() => setShowVinScanner(true)}
+                    className="absolute left-1.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-brand-600 transition-colors"
                   >
-                    <span>{v.nickname || v.model}</span>
-                    <span className="mr-1 text-xs opacity-70">{v.year}</span>
-                  </button>
-                  <button
-                    onClick={async () => {
-                      if (!window.confirm(`למחוק את ${v.nickname || v.model}?`)) return
-                      await removeVehicle(v.id)
-                      toast.success('הרכב הוסר')
-                    }}
-                    className={`px-2 py-2 border-r transition-colors ${
-                      selectedVehicle?.id === v.id
-                        ? 'border-brand-500 text-brand-200 hover:text-white hover:bg-brand-700'
-                        : 'border-gray-200 text-gray-300 hover:text-red-500 hover:bg-red-50'
-                    }`}
-                    title="הסר רכב"
-                  >
-                    <X className="w-3.5 h-3.5" />
+                    <ScanLine className="w-3.5 h-3.5" />
                   </button>
                 </div>
-              ))}
-              {selectedVehicle && (
                 <button
-                  onClick={() => selectVehicle(null)}
-                  className="px-4 py-2 rounded-xl text-sm border border-gray-200 text-gray-400 hover:border-gray-400 transition-all"
+                  onClick={() => handleVinSearch()}
+                  disabled={vinLoading}
+                  className="bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white px-3 py-2 rounded-lg font-semibold text-xs flex items-center gap-1 transition-colors whitespace-nowrap flex-shrink-0"
                 >
-                  נקה בחירה
+                  {vinLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+                  זהה
                 </button>
-              )}
+              </div>
+            </div>
+          </div>
+
+          {/* ── VIN result ── */}
+          {vinVehicle && (
+            <div className="bg-brand-50 border border-brand-100 rounded-xl p-3 space-y-1">
+              <p className="font-semibold text-brand-700 text-sm">
+                {[vinVehicle.manufacturer, vinVehicle.model, vinVehicle.year].filter(Boolean).join(' ')}
+              </p>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1 text-xs text-gray-700">
+                {vinVehicle.fuel_type && <div><span className="text-gray-400">דלק</span><p className="font-medium">{vinVehicle.fuel_type}</p></div>}
+                {vinVehicle.engine_cc > 0 && <div><span className="text-gray-400">נפח מנוע</span><p className="font-medium">{vinVehicle.engine_cc} cc</p></div>}
+                {vinVehicle.transmission && <div><span className="text-gray-400">תיבת הילוכים</span><p className="font-medium">{vinVehicle.transmission}</p></div>}
+                {vinVehicle.body_class && <div><span className="text-gray-400">סוג גוף</span><p className="font-medium">{vinVehicle.body_class}</p></div>}
+                {vinVehicle.country_of_origin && <div><span className="text-gray-400">ייצור</span><p className="font-medium">{vinVehicle.country_of_origin}</p></div>}
+              </div>
             </div>
           )}
 
-          {/* Enriched vehicle details */}
+          {/* divider */}
+          <div className="border-t border-gray-100" />
+
+          {/* ── Selected vehicle details ── */}
           {selectedVehicle && (
-            <div className="mb-3 bg-brand-50 border border-brand-100 rounded-xl p-3 text-sm">
+            <div className="bg-brand-50 border border-brand-100 rounded-xl p-3">
               <p className="text-xs text-brand-600 font-semibold mb-2">
                 {selectedVehicle.manufacturer} {selectedVehicle.model} {selectedVehicle.year}
               </p>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1 text-gray-700">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1 text-sm text-gray-700">
                 {selectedVehicle.fuel_type && <div><span className="text-gray-400 text-xs">דלק</span><p className="font-medium">{selectedVehicle.fuel_type}</p></div>}
                 {selectedVehicle.color && <div><span className="text-gray-400 text-xs">צבע</span><p className="font-medium">{selectedVehicle.color}</p></div>}
                 {selectedVehicle.engine_cc > 0 && <div><span className="text-gray-400 text-xs">נפח מנוע</span><p className="font-medium">{selectedVehicle.engine_cc} cc</p></div>}
@@ -1218,157 +1771,93 @@ export default function Parts() {
               </div>
             </div>
           )}
-
-          {/* Israeli license plate styled input */}
-          <div className="flex gap-3 items-center">
-            <div className="relative flex rounded-lg overflow-hidden border-2 border-gray-300 shadow-sm flex-1" style={{maxWidth: '260px'}}>
-              {/* Yellow plate area */}
-              <input
-                className="flex-1 bg-orange-400 text-gray-900 font-bold text-xl tracking-[0.2em] text-center uppercase placeholder:text-orange-700 placeholder:font-normal placeholder:text-sm placeholder:tracking-normal focus:outline-none px-3 py-2"
-                placeholder="מספר הרכב שלך"
-                dir="ltr"
-                value={newPlate}
-                onChange={(e) => setNewPlate(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && addVehicle()}
-                style={{fontFamily: 'monospace'}}
-              />
-            </div>
-            <button onClick={addVehicle} disabled={addingVehicle} className="btn-secondary flex items-center gap-2 whitespace-nowrap">
-              {addingVehicle ? <Loader2 className="w-4 h-4 animate-spin" /> : <Car className="w-4 h-4" />}
-              הוסף
-            </button>
-          </div>
-
-          {/* VIN search field */}
-          <div className="pt-2 border-t border-gray-100 mt-2">
-            <label className="block text-xs text-gray-500 mb-1 flex items-center gap-1">
-              <Hash className="w-3 h-3" /> חיפוש לפי VIN (17 תווים)
-            </label>
-            <div className="flex gap-2">
-              <input
-                className="input-field flex-1 font-mono text-sm tracking-widest uppercase"
-                placeholder="לדוג׳: 1HGCM82633A004352"
-                dir="ltr"
-                maxLength={17}
-                value={vinInput}
-                onChange={(e) => setVinInput(e.target.value.toUpperCase())}
-                onKeyDown={(e) => e.key === 'Enter' && handleVinSearch()}
-              />
-              <button onClick={() => handleVinSearch()} disabled={vinLoading} className="btn-secondary flex items-center gap-2 whitespace-nowrap">
-                {vinLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-                זהה
-              </button>
-            </div>
-            {vinInput.length > 0 && (
-              <p className={`text-xs mt-1 ${vinInput.replace(/\s/g, '').length === 17 ? 'text-green-600' : 'text-gray-400'}`}>
-                {vinInput.replace(/\s/g, '').length}/17 תווים
-              </p>
-            )}
-            {vinVehicle && (
-              <div className="mt-3 bg-brand-50 border border-brand-100 rounded-xl p-3 space-y-2">
-                <p className="font-semibold text-brand-700 text-sm">
-                  {[vinVehicle.manufacturer, vinVehicle.model, vinVehicle.year].filter(Boolean).join(' ')}
-                </p>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 text-xs text-gray-700">
-                  {vinVehicle.fuel_type && <div><span className="text-gray-400">דלק</span><p className="font-medium">{vinVehicle.fuel_type}</p></div>}
-                  {vinVehicle.engine_cc > 0 && <div><span className="text-gray-400">נפח מנוע</span><p className="font-medium">{vinVehicle.engine_cc} cc</p></div>}
-                  {vinVehicle.transmission && <div><span className="text-gray-400">תיבת הילוכים</span><p className="font-medium">{vinVehicle.transmission}</p></div>}
-                  {vinVehicle.body_class && <div><span className="text-gray-400">סוג גוף</span><p className="font-medium">{vinVehicle.body_class}</p></div>}
-                  {vinVehicle.country_of_origin && <div><span className="text-gray-400">ייצור</span><p className="font-medium">{vinVehicle.country_of_origin}</p></div>}
-                </div>
-              </div>
-            )}
-          </div>
         </div>
       )}
 
       {/* ── MANUAL MODE ── */}
       {searchMode === 'manual' && (
-        <div className="card p-4 space-y-3">
+        <div className="card p-4 space-y-4">
+          {/* Header */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <SlidersHorizontal className="w-5 h-5 text-brand-600" />
+              <div className="w-8 h-8 rounded-lg bg-brand-100 flex items-center justify-center">
+                <SlidersHorizontal className="w-4 h-4 text-brand-600" />
+              </div>
               <h3 className="font-semibold text-gray-900">חיפוש לפי פרטי רכב</h3>
             </div>
-            {activeFiltersCount > 0 && (
-              <button onClick={clearManual} className="flex items-center gap-1 text-xs text-gray-400 hover:text-red-500 transition-colors">
+            {(activeFiltersCount > 0 || category) && (
+              <button onClick={() => { clearManual(); setCategory('') }} className="flex items-center gap-1 text-xs text-gray-400 hover:text-red-500 transition-colors">
                 <X className="w-3 h-3" /> נקה הכל
               </button>
             )}
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            {/* Manufacturer */}
+          {/* Fields: Manufacturer → Category → Model → Year */}
+          <div className="grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-4 gap-3">
+
+            {/* 1. Manufacturer */}
             <div>
-              <label className="block text-xs text-gray-500 mb-1">
-                יצרן / מותג
-                <span className="mr-1 text-gray-300">({brands.length})</span>
-              </label>
+              <label className="block text-xs text-gray-500 mb-1.5 font-medium">יצרן</label>
               <select
-                className="input-field"
+                className="w-full border border-gray-200 rounded-lg bg-white text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-2.5 py-2 transition-colors"
                 value={manualManufacturer}
                 onChange={(e) => setManualManufacturer(e.target.value)}
               >
                 <option value="">כל היצרנים</option>
-                {brands.some(b => b.has_parts) && (
-                  <optgroup label="── יש מלאי ──">
-                    {brands
-                      .filter(b => b.has_parts)
-                      .sort((a, b) => b.parts_count - a.parts_count)
-                      .map(b => (
-                        <option key={b.name} value={b.name}>
-                          {b.name_he ? `${b.name} · ${b.name_he}` : b.name}
-                          {' '}({b.parts_count.toLocaleString()} חלקים)
-                        </option>
-                      ))}
-                  </optgroup>
-                )}
-                {['Europe', 'Asia', 'America'].map(region => {
-                  const regionBrands = brands.filter(b => b.region === region && !b.has_parts)
-                  if (!regionBrands.length) return null
-                  const regionLabel = { Europe: '🇪🇺 אירופה', Asia: '🌏 אסיה', America: '🌎 אמריקה' }[region]
-                  return (
-                    <optgroup key={region} label={`── ${regionLabel} ──`}>
-                      {regionBrands.sort((a, b) => a.name.localeCompare(b.name)).map(b => (
-                        <option key={b.name} value={b.name}>
-                          {b.name_he ? `${b.name} · ${b.name_he}` : b.name}
-                          {b.is_luxury ? ' ✦' : ''}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )
-                })}
-                {brands.filter(b => !b.region && !b.has_parts).length > 0 && (
-                  <optgroup label="── אחר ──">
-                    {brands.filter(b => !b.region && !b.has_parts).map(b => (
-                      <option key={b.name} value={b.name}>{b.name}</option>
-                    ))}
-                  </optgroup>
-                )}
+                {brands
+                  .slice()
+                  .sort((a, b) => a.name.localeCompare(b.name))
+                  .map(b => (
+                    <option key={b.name} value={b.name}>
+                      {b.name_he ? `${b.name} · ${b.name_he}` : b.name}
+                      {b.has_parts ? ` (${b.parts_count.toLocaleString()})` : ''}
+                    </option>
+                  ))}
               </select>
             </div>
 
-            {/* Model */}
+            {/* 2. Category */}
             <div>
-              <label className="block text-xs text-gray-500 mb-1">דגם (אופציונלי)</label>
-              <input
-                className="input-field"
-                placeholder="לדוג׳ GTC4, C-Class..."
-                value={manualModel}
-                onChange={(e) => setManualModel(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && search()}
-              />
+              <label className="block text-xs text-gray-500 mb-1.5 font-medium">קטגוריה</label>
+              <select
+                className="w-full border border-gray-200 rounded-lg bg-white text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-2.5 py-2 transition-colors"
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+              >
+                <option value="">כל הקטגוריות</option>
+                {categories.map((c) => (
+                  <option key={c} value={c}>
+                    {c}{categoryCounts[c] ? ` (${categoryCounts[c].toLocaleString()})` : ''}
+                  </option>
+                ))}
+              </select>
             </div>
 
-            {/* Year */}
+            {/* 3. Model */}
             <div>
-              <label className="block text-xs text-gray-500 mb-1">שנה (אופציונלי)</label>
+              <label className="block text-xs text-gray-500 mb-1.5 font-medium">דגם</label>
+              <select
+                className="w-full border border-gray-200 rounded-lg bg-white text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-2.5 py-2 transition-colors"
+                value={manualModel}
+                onChange={(e) => setManualModel(e.target.value)}
+                disabled={modelsLoading}
+              >
+                <option value="">{modelsLoading ? 'טוען...' : 'כל הדגמים'}</option>
+                {modelOptions.map(m => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* 4. Year */}
+            <div>
+              <label className="block text-xs text-gray-500 mb-1.5 font-medium">שנה</label>
               <input
-                className="input-field"
-                placeholder="לדוג׳ 2019"
+                className="w-full border border-gray-200 rounded-lg bg-white text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-2.5 py-2 placeholder:text-gray-400 transition-colors"
+                placeholder="2019"
                 type="number"
                 min="1990"
-                max="2026"
+                max="2030"
                 value={manualYear}
                 onChange={(e) => setManualYear(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && search()}
@@ -1377,75 +1866,34 @@ export default function Parts() {
           </div>
 
           {/* Active filter chips */}
-          {activeFiltersCount > 0 && (
+          {(activeFiltersCount > 0 || category) && (
             <div className="flex flex-wrap gap-2">
               {manualManufacturer && (
-                <span className="inline-flex items-center gap-1 bg-brand-100 text-brand-700 text-xs px-2 py-1 rounded-full">
+                <span className="inline-flex items-center gap-1 bg-brand-100 text-brand-700 text-xs px-2.5 py-1 rounded-full font-medium">
                   {manualManufacturer}
                   <button onClick={() => setManualManufacturer('')}><X className="w-3 h-3" /></button>
                 </span>
               )}
+              {category && (
+                <span className="inline-flex items-center gap-1 bg-brand-100 text-brand-700 text-xs px-2.5 py-1 rounded-full font-medium">
+                  {category}
+                  <button onClick={() => setCategory('')}><X className="w-3 h-3" /></button>
+                </span>
+              )}
               {manualModel && (
-                <span className="inline-flex items-center gap-1 bg-brand-100 text-brand-700 text-xs px-2 py-1 rounded-full">
+                <span className="inline-flex items-center gap-1 bg-brand-100 text-brand-700 text-xs px-2.5 py-1 rounded-full font-medium">
                   {manualModel}
                   <button onClick={() => setManualModel('')}><X className="w-3 h-3" /></button>
                 </span>
               )}
               {manualYear && (
-                <span className="inline-flex items-center gap-1 bg-brand-100 text-brand-700 text-xs px-2 py-1 rounded-full">
+                <span className="inline-flex items-center gap-1 bg-brand-100 text-brand-700 text-xs px-2.5 py-1 rounded-full font-medium">
                   {manualYear}
                   <button onClick={() => setManualYear('')}><X className="w-3 h-3" /></button>
                 </span>
               )}
-              {category && (
-                <span className="inline-flex items-center gap-1 bg-purple-100 text-purple-700 text-xs px-2 py-1 rounded-full">
-                  {category}
-                  <button onClick={() => setCategory('')}><X className="w-3 h-3" /></button>
-                </span>
-              )}
             </div>
           )}
-
-          {/* VIN search field */}
-          <div className="pt-2 border-t border-gray-100 mt-2">
-            <label className="block text-xs text-gray-500 mb-1 flex items-center gap-1">
-              <Hash className="w-3 h-3" /> חיפוש לפי VIN (17 תווים)
-            </label>
-            <div className="flex gap-2">
-              <input
-                className="input-field flex-1 font-mono text-sm tracking-widest uppercase"
-                placeholder="לדוג׳: 1HGCM82633A004352"
-                dir="ltr"
-                maxLength={17}
-                value={vinInput}
-                onChange={(e) => setVinInput(e.target.value.toUpperCase())}
-                onKeyDown={(e) => e.key === 'Enter' && handleVinSearch()}
-              />
-              <button onClick={() => handleVinSearch()} disabled={vinLoading} className="btn-secondary flex items-center gap-2 whitespace-nowrap">
-                {vinLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-                זהה
-              </button>
-            </div>
-            {vinInput.length > 0 && (
-              <p className={`text-xs mt-1 ${vinInput.replace(/\s/g, '').length === 17 ? 'text-green-600' : 'text-gray-400'}`}>
-                {vinInput.replace(/\s/g, '').length}/17 תווים
-              </p>
-            )}
-            {vinVehicle && (
-              <div className="mt-3 bg-brand-50 border border-brand-100 rounded-xl p-3 space-y-2">
-                <p className="font-semibold text-brand-700 text-sm">
-                  {[vinVehicle.manufacturer, vinVehicle.model, vinVehicle.year].filter(Boolean).join(' ')}
-                </p>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 text-xs text-gray-700">
-                  {vinVehicle.fuel_type && <div><span className="text-gray-400">דלק</span><p className="font-medium">{vinVehicle.fuel_type}</p></div>}
-                  {vinVehicle.engine_cc > 0 && <div><span className="text-gray-400">נפח מנוע</span><p className="font-medium">{vinVehicle.engine_cc} cc</p></div>}
-                  {vinVehicle.transmission && <div><span className="text-gray-400">תיבת הילוכים</span><p className="font-medium">{vinVehicle.transmission}</p></div>}
-                  {vinVehicle.body_class && <div><span className="text-gray-400">סוג גוף</span><p className="font-medium">{vinVehicle.body_class}</p></div>}
-                  {vinVehicle.country_of_origin && <div><span className="text-gray-400">ייצור</span><p className="font-medium">{vinVehicle.country_of_origin}</p></div>}
-                </div>
-              </div>
-            )}
-          </div>
         </div>
       )}
 
@@ -1503,7 +1951,16 @@ export default function Parts() {
             onDrop={(e) => { e.preventDefault(); handlePhotoFile(e.dataTransfer.files[0]) }}
           >
             {photoPreview ? (
-              <img src={photoPreview} alt="preview" className="max-h-48 mx-auto rounded-lg object-contain" />
+              <div className="relative inline-block">
+                <img src={photoPreview} alt="preview" className="max-h-48 mx-auto rounded-lg object-contain" />
+                <button
+                  onClick={(e) => { e.stopPropagation(); setShowPhotoEditor(true) }}
+                  className="absolute top-2 left-2 bg-black/60 hover:bg-black/80 text-white text-xs px-2.5 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                  ערוך
+                </button>
+              </div>
             ) : (
               <>
                 <Camera className="w-10 h-10 text-gray-300 mx-auto mb-2" />
@@ -1528,6 +1985,14 @@ export default function Parts() {
                 זהה וחפש חלק
               </button>
               <button
+                onClick={() => setShowPhotoEditor(true)}
+                title="ערוך תמונה — חתוך / סמן חלק"
+                className="btn-secondary px-3 flex items-center gap-1.5"
+              >
+                <Crop className="w-4 h-4" />
+                <span className="hidden sm:inline text-sm">ערוך</span>
+              </button>
+              <button
                 onClick={() => { setPhotoFile(null); setPhotoPreview(null); setPhotoResult(null); setPhotoCandidates([]) }}
                 className="btn-secondary px-3"
               >
@@ -1547,7 +2012,8 @@ export default function Parts() {
                   )}
                 </div>
                 {photoResult.confidence && (
-                  <span className="mr-auto badge bg-green-100 text-green-700">
+                  <span className="mr-auto badge bg-green-100 text-green-700 flex items-center gap-1">
+                    {photoResult.cache_hit && <span title="תוצאה מהמאגר השמור">⚡</span>}
                     {Math.round(photoResult.confidence * 100)}% ביטחון
                   </span>
                 )}
@@ -1659,15 +2125,21 @@ export default function Parts() {
         </div>
       )}
 
-      {/* Voice: no parts for selected manufacturer */}
+      {/* Voice / Photo: no parts for selected manufacturer */}
       {!isLoading && searchMode === 'voice' && voiceFallbackMfr && (
         <div className="flex flex-col items-center gap-3 py-10 text-center">
           <div className="w-14 h-14 rounded-full bg-amber-100 flex items-center justify-center">
             <AlertCircle className="w-7 h-7 text-amber-500" />
           </div>
-          <div>
-            <p className="font-semibold text-gray-800 text-base">אין חלקים עבור <span className="text-brand-600">{voiceFallbackMfr}</span> במאגר</p>
-            <p className="text-sm text-gray-400 mt-1">בחר יצרן אחר מהרשימה או לחץ &quot;כללי&quot; לצפייה בכל התוצאות</p>
+          <div className="space-y-2">
+            <p className="font-semibold text-gray-800 text-base">לא נמצאו חלקים עבור <span className="text-brand-600">{voiceFallbackMfr}</span> במאגר</p>
+            <p className="text-sm text-gray-400">ייתכן שהחלק אינו זמין לדגם זה</p>
+            <button
+              onClick={() => runVoicePartsSearch(query, '')}
+              className="mt-2 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-brand-600 text-white text-sm font-medium hover:bg-brand-700 transition-colors"
+            >
+              <Search className="w-4 h-4" /> הצג תוצאות מכל היצרנים
+            </button>
           </div>
         </div>
       )}
@@ -1740,14 +2212,6 @@ export default function Parts() {
                 </ul>
               )}
             </div>
-            <select className="input-field sm:w-44" value={category} onChange={(e) => setCategory(e.target.value)}>
-              <option value="">כל הקטגוריות</option>
-              {categories.map((c) => (
-                <option key={c} value={c}>
-                  {c}{categoryCounts[c] ? ` (${categoryCounts[c].toLocaleString()})` : ''}
-                </option>
-              ))}
-            </select>
             <button onClick={() => search(0)} disabled={isLoading} className="btn-primary flex items-center gap-2 whitespace-nowrap">
               {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
               חפש
@@ -1833,9 +2297,15 @@ export default function Parts() {
           <div className="w-14 h-14 rounded-full bg-amber-100 flex items-center justify-center">
             <AlertCircle className="w-7 h-7 text-amber-500" />
           </div>
-          <div>
-            <p className="font-semibold text-gray-800 text-base">אין חלקים עבור <span className="text-brand-600">{photoFallbackMfr}</span> במאגר</p>
-            <p className="text-sm text-gray-400 mt-1">בחר יצרן אחר מהרשימה או לחץ &quot;כללי&quot; לצפייה בכל התוצאות</p>
+          <div className="space-y-2">
+            <p className="font-semibold text-gray-800 text-base">לא נמצאו חלקים עבור <span className="text-brand-600">{photoFallbackMfr}</span> במאגר</p>
+            <p className="text-sm text-gray-400">ייתכן שהחלק אינו זמין לדגם זה</p>
+            <button
+              onClick={() => runPhotoPartsSearch(photoCandidates, '')}
+              className="mt-2 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-brand-600 text-white text-sm font-medium hover:bg-brand-700 transition-colors"
+            >
+              <Search className="w-4 h-4" /> הצג תוצאות מכל היצרנים
+            </button>
           </div>
         </div>
       )}
