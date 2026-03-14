@@ -869,7 +869,9 @@ async def search_parts(
             "(pc.name ILIKE :q OR pc.sku ILIKE :q OR pc.manufacturer ILIKE :q "
             "OR pc.category ILIKE :q OR pc.oem_number ILIKE :q)"
         )
-        params["q"] = f"%{query}%"
+        params["q"]       = f"%{query}%"
+        params["q_exact"] = query            # for exact-name-match scoring
+        params["q_start"] = f"{query}%"    # for starts-with scoring
 
     if category:
         conditions.append("pc.category ILIKE :cat")
@@ -922,11 +924,31 @@ async def search_parts(
 
     where_sql = " AND ".join(conditions)
 
+    # Relevance score snippet — only meaningful when there's a text query
+    if query:
+        relevance_sql = """
+                CASE
+                    WHEN pc.name ILIKE :q_exact THEN 4
+                    WHEN pc.name ILIKE :q_start THEN 3
+                    WHEN LENGTH(pc.name) - LENGTH(:q_exact) <= 5 THEN 2
+                    ELSE 1
+                END DESC,"""
+        score_col = """,
+                    CASE
+                        WHEN pc.name ILIKE :q_exact THEN 4
+                        WHEN pc.name ILIKE :q_start THEN 3
+                        WHEN LENGTH(pc.name) - LENGTH(:q_exact) <= 5 THEN 2
+                        ELSE 1
+                    END AS match_score"""
+    else:
+        relevance_sql = ""
+        score_col = ""
+
     # ── Helper: fetch one part per type + its supplier list ──────────────────
     async def _fetch_type(part_type_values: list) -> Dict[str, Any]:
         type_params = {**params, "pt": part_type_values, "lim": per_type}
 
-        # Best matching part for this type (ranked by most supplier offers)
+        # Best matching part for this type (relevance first, then supplier count)
         part_row = (await db.execute(
             text(f"""
                 SELECT
@@ -935,10 +957,11 @@ async def search_parts(
                     pc.min_price_ils, pc.max_price_ils, pc.description,
                     pc.oem_number, pc.barcode, pc.weight_kg,
                     pc.is_safety_critical, pc.part_condition,
-                    pc.created_at, pc.updated_at
+                    pc.created_at, pc.updated_at{score_col}
                 FROM parts_catalog pc
                 WHERE {where_sql} AND pc.part_type = ANY(:pt)
-                ORDER BY (
+                ORDER BY {relevance_sql}
+                (
                     SELECT COUNT(*) FROM supplier_parts sp
                     WHERE sp.part_id = pc.id AND sp.is_available = TRUE
                 ) DESC,
@@ -950,6 +973,14 @@ async def search_parts(
 
         if not part_row:
             return {"part": None, "suppliers": []}
+
+        # Reject loose substring matches — only score=1 means the query appears
+        # inside a significantly longer name (e.g. "בורג למשאבת מים" for query
+        # "משאבת מים"). Let the frontend try the next candidate instead.
+        if query and score_col:
+            match_score = part_row[-1]  # last column added above
+            if match_score == 1:
+                return {"part": None, "suppliers": []}
 
         part_id_str = str(part_row[0])
 
@@ -1096,6 +1127,35 @@ async def autocomplete_parts(q: str = "", limit: int = 8, db: AsyncSession = Dep
 async def get_manufacturers(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(PartsCatalog.manufacturer).distinct().where(PartsCatalog.is_active == True))
     return {"manufacturers": [m for m in result.scalars().all() if m]}
+
+
+@app.get("/api/v1/parts/models")
+async def get_models(manufacturer: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+    """Return distinct car models extracted from compatible_vehicles JSON, optionally filtered by manufacturer."""
+    import re as _re
+    where = "compatible_vehicles IS NOT NULL AND compatible_vehicles::text LIKE '%model_year%'"
+    params: dict = {}
+    if manufacturer:
+        where += " AND compatible_vehicles::text ILIKE :mfr_like"
+        params["mfr_like"] = f"%{manufacturer}%"
+    sql = text(f"""
+        SELECT DISTINCT elem->>'model_year' AS model_year
+        FROM parts_catalog,
+             jsonb_array_elements(compatible_vehicles) AS elem
+        WHERE {where}
+          AND elem->>'model_year' IS NOT NULL
+        ORDER BY model_year
+    """)
+    result = await db.execute(sql, params)
+    raw = [row[0] for row in result.fetchall() if row[0]]
+    # Strip trailing year (4-digit number) to get just model name
+    models_set = set()
+    for my in raw:
+        model = _re.sub(r'\s*\d{4}\b.*$', '', my).strip()
+        if model:
+            models_set.add(model)
+    models = sorted(models_set)
+    return {"models": models, "total": len(models)}
 
 
 # ==============================================================================
@@ -1456,53 +1516,144 @@ async def compare_parts(part_id: str, db: AsyncSession = Depends(get_db)):
 @app.post("/api/v1/parts/identify-from-image")
 async def identify_part_from_image(
     file: UploadFile = File(...),
+    vehicle_make:  Optional[str] = Form(None),
+    vehicle_model: Optional[str] = Form(None),
+    vehicle_year:  Optional[str] = Form(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Identify a car part from a photo using GPT-4o Vision, then search the DB."""
-    import base64
-    from openai import AsyncOpenAI
+    """Identify a car part from a photo using GPT-4o Vision.
 
-    # Read & encode image
+    Flow:
+    1. Hash the image → check part_diagram_cache (DB) for an instant answer.
+    2. If not cached: pre-fetch catalog part names for the vehicle and build a
+       context-rich prompt (acts as a digital parts diagram).
+    3. Call GPT-4o Vision with vehicle + catalog context.
+    4. Save the result to part_diagram_cache so future identical searches skip GPT.
+    """
+    import base64
+    import hashlib
+    import json as _json
+    from openai import AsyncOpenAI
+    from BACKEND_DATABASE_MODELS import PartDiagramCache
+
+    # ── Read & hash image ────────────────────────────────────────────────────
     img_bytes = await file.read()
-    if len(img_bytes) > 10 * 1024 * 1024:  # 10 MB limit
+    if len(img_bytes) > 10 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Image too large (max 10 MB)")
-    b64 = base64.b64encode(img_bytes).decode()
+    image_hash = hashlib.sha256(img_bytes).hexdigest()
+    b64  = base64.b64encode(img_bytes).decode()
     mime = file.content_type or "image/jpeg"
 
     identified_name = ""
-    identified_en = ""
-    confidence = 0.0
+    identified_en   = ""
+    confidence      = 0.0
     possible_names: list = []
+    cache_hit       = False
 
-    github_token = os.getenv("GITHUB_TOKEN", "")
-    if github_token:
-        try:
-            client = AsyncOpenAI(
-                base_url="https://models.inference.ai.azure.com",
-                api_key=github_token,
+    # ── 1. Check diagram cache ───────────────────────────────────────────────
+    try:
+        cache_row = (await db.execute(
+            text("""
+                SELECT part_name_he, part_name_en, possible_names, confidence
+                FROM part_diagram_cache
+                WHERE image_hash = :h
+                  AND (vehicle_make ILIKE :mk OR (:mk IS NULL AND vehicle_make IS NULL))
+                ORDER BY times_seen DESC
+                LIMIT 1
+            """),
+            {"h": image_hash, "mk": vehicle_make},
+        )).fetchone()
+        if cache_row:
+            identified_name = cache_row[0]
+            identified_en   = cache_row[1] or ""
+            possible_names  = cache_row[2] or []
+            confidence      = float(cache_row[3] or 0)
+            cache_hit       = True
+            # Increment times_seen counter
+            await db.execute(
+                text("""
+                    UPDATE part_diagram_cache SET times_seen = times_seen + 1, updated_at = NOW()
+                    WHERE image_hash = :h AND (vehicle_make ILIKE :mk OR (:mk IS NULL AND vehicle_make IS NULL))
+                """),
+                {"h": image_hash, "mk": vehicle_make},
             )
-            resp = await client.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {
+            await db.commit()
+    except Exception as e:
+        print(f"[Vision] Cache lookup error: {e}")
+
+    # ── 2 & 3. GPT call if no cache hit ─────────────────────────────────────
+    if not cache_hit:
+        # Pre-fetch catalog names for this vehicle → "digital diagram"
+        catalog_hint   = ""
+        vehicle_context = ""
+        if vehicle_make:
+            try:
+                brand_row = (await db.execute(text("""
+                    SELECT name, aliases FROM car_brands
+                    WHERE name ILIKE :m OR name_he ILIKE :m
+                       OR :m ILIKE CONCAT('%', name_he, '%')
+                       OR EXISTS (SELECT 1 FROM unnest(aliases) a WHERE a ILIKE :m OR :m ILIKE CONCAT('%',a,'%'))
+                    LIMIT 1
+                """), {"m": vehicle_make})).fetchone()
+                mfr_variants = list({vehicle_make, *((brand_row[1] or []) if brand_row else [])})
+                if brand_row and brand_row[0]:
+                    mfr_variants.append(brand_row[0])
+                mfr_clause = " OR ".join(f"manufacturer ILIKE :{f'v{i}'}" for i, _ in enumerate(mfr_variants))
+                mfr_params = {f"v{i}": f"%{v}%" for i, v in enumerate(mfr_variants)}
+                catalog_rows = (await db.execute(
+                    text(f"SELECT DISTINCT name FROM parts_catalog WHERE is_active=TRUE AND ({mfr_clause}) ORDER BY name LIMIT 120"),
+                    mfr_params,
+                )).fetchall()
+                if catalog_rows:
+                    names_csv = ", ".join(r[0] for r in catalog_rows)
+                    label = vehicle_make + (f" {vehicle_model}" if vehicle_model else "") + (f" {vehicle_year}" if vehicle_year else "")
+                    catalog_hint = (
+                        f"Our catalog contains these Hebrew part names for {label}: [{names_csv}]. "
+                        "Select the BEST matching name from this list as part_name_he if it visually matches the image. "
+                        "If nothing matches, use your own SHORT Hebrew name (1–3 words)."
+                    )
+            except Exception as e:
+                print(f"[Vision] Catalog hint error: {e}")
+
+            vehicle_context = (
+                f"The vehicle in question is a {vehicle_make}"
+                + (f" {vehicle_model}" if vehicle_model else "")
+                + (f" (year {vehicle_year})" if vehicle_year else "")
+                + ". "
+            )
+
+        github_token = os.getenv("GITHUB_TOKEN", "")
+        if github_token:
+            try:
+                client = AsyncOpenAI(
+                    base_url="https://models.inference.ai.azure.com",
+                    api_key=github_token,
+                )
+                resp = await client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[{
                         "role": "user",
                         "content": [
                             {
                                 "type": "text",
                                 "text": (
-                                    "You are an expert automotive parts identifier. "
-                                    "Look at this image and identify the car part shown. "
-                                    "Respond ONLY with a JSON object, no markdown: "
-                                    '{"part_name_he": "<SHORT Hebrew name as used in Israeli auto parts catalogs>", '
-                                    '"part_name_en": "<name in English>", '
-                                    '"possible_names": ["<alt Hebrew name 1>", "<alt Hebrew name 2>", "<alt Hebrew name 3>"], '
+                                    "You are an expert automotive parts identifier for an Israeli auto parts store. "
+                                    + vehicle_context
+                                    + catalog_hint
+                                    + " Look at this image and identify the car part shown. "
+                                    "Think step by step: 1) What vehicle system does this part belong to? "
+                                    "2) What is the exact part? "
+                                    "3) Does it match a name from the catalog list above? "
+                                    "Respond ONLY with a valid JSON object, no markdown: "
+                                    '{"part_name_he": "<best Hebrew name — prefer exact catalog match>", '
+                                    '"part_name_en": "<English name>", '
+                                    '"possible_names": ["<alt 1>","<alt 2>","<alt 3>","<alt 4>","<alt 5>","<alt 6>"], '
                                     '"confidence": <0.0-1.0>, '
-                                    '"description": "<brief description in Hebrew>". '
+                                    '"description": "<brief Hebrew description>"}. '
                                     'IMPORTANT: part_name_he and ALL possible_names must be SHORT Hebrew terms '
-                                    '(1-3 words) exactly as written in Israeli auto parts price lists, '
-                                    'e.g. "מצערת", "בית מצערת", "מסנן אוויר", "משאבת מים". '
-                                    'Do NOT use English words in possible_names.}'
+                                    '(1-3 words) as written in Israeli auto parts price lists. '
+                                    'Do NOT use English in possible_names.'
                                 ),
                             },
                             {
@@ -1510,45 +1661,78 @@ async def identify_part_from_image(
                                 "image_url": {"url": f"data:{mime};base64,{b64}"},
                             },
                         ],
-                    }
-                ],
-                max_tokens=300,
-            )
-            import json as _json
-            raw = resp.choices[0].message.content.strip()
-            # strip possible markdown code fences
-            raw = raw.strip("`").removeprefix("json").strip()
-            parsed = _json.loads(raw)
-            identified_name = parsed.get("part_name_he") or parsed.get("part_name_en", "")
-            identified_en = parsed.get("part_name_en", "")
-            confidence = float(parsed.get("confidence", 0.0))
-            possible_names = parsed.get("possible_names", [])
-        except Exception as e:
-            print(f"[Vision] GPT-4o Vision error: {e}")
+                    }],
+                    max_tokens=500,
+                )
+                raw = resp.choices[0].message.content.strip().strip("`").removeprefix("json").strip()
+                parsed = _json.loads(raw)
+                identified_name = parsed.get("part_name_he") or parsed.get("part_name_en", "")
+                identified_en   = parsed.get("part_name_en", "")
+                confidence      = float(parsed.get("confidence", 0.0))
+                possible_names  = parsed.get("possible_names", [])
+            except Exception as e:
+                print(f"[Vision] GPT-4o Vision error: {e}")
 
-    # Search the DB with identified name
+        # ── 4. Persist to diagram cache ──────────────────────────────────────
+        if identified_name:
+            try:
+                await db.execute(
+                    text("""
+                        INSERT INTO part_diagram_cache
+                            (id, image_hash, vehicle_make, vehicle_model, vehicle_year,
+                             part_name_he, part_name_en, possible_names, confidence,
+                             times_seen, created_at, updated_at)
+                        VALUES
+                            (gen_random_uuid(), :h, :mk, :mo, :yr,
+                             :phe, :pen, :pn, :conf,
+                             1, NOW(), NOW())
+                        ON CONFLICT (image_hash, vehicle_make, vehicle_model)
+                        DO UPDATE SET
+                            part_name_he   = EXCLUDED.part_name_he,
+                            part_name_en   = EXCLUDED.part_name_en,
+                            possible_names = EXCLUDED.possible_names,
+                            confidence     = EXCLUDED.confidence,
+                            times_seen     = part_diagram_cache.times_seen + 1,
+                            updated_at     = NOW()
+                    """),
+                    {
+                        "h":    image_hash,
+                        "mk":   vehicle_make,
+                        "mo":   vehicle_model,
+                        "yr":   vehicle_year,
+                        "phe":  identified_name,
+                        "pen":  identified_en,
+                        "pn":   possible_names,
+                        "conf": confidence,
+                    },
+                )
+                await db.commit()
+            except Exception as e:
+                print(f"[Vision] Cache save error: {e}")
+
+    # Search the DB with the identified Hebrew name (most accurate match)
     parts_results = []
     total = 0
-    if identified_name or identified_en:
+    search_term = identified_name or identified_en
+    if search_term:
         agent = get_agent("parts_finder_agent")
-        search_term = identified_en or identified_name
         parts_results = await agent.search_parts_in_db(search_term, None, None, db, limit=20, offset=0)
-        # Count
         from sqlalchemy import func
         from BACKEND_DATABASE_MODELS import PartsCatalog
         count_stmt = select(func.count()).select_from(PartsCatalog).where(
             PartsCatalog.is_active == True,
-            PartsCatalog.name.ilike(f"%{search_term}%")
+            PartsCatalog.name.ilike(f"%{search_term}%"),
         )
         total = (await db.execute(count_stmt)).scalar_one()
 
     return {
-        "identified_part": identified_name,
+        "identified_part":    identified_name,
         "identified_part_en": identified_en,
-        "possible_names": possible_names,
-        "confidence": confidence,
-        "parts": parts_results,
-        "total": total,
+        "possible_names":     possible_names,
+        "confidence":         confidence,
+        "cache_hit":          cache_hit,
+        "parts":              parts_results,
+        "total":              total,
     }
 
 
@@ -2956,10 +3140,13 @@ async def get_return_invoice(
     items_res = await db.execute(select(OrderItem).where(OrderItem.order_id == ret.order_id))
     items = items_res.scalars().all()
 
-    # Attach order_number as a plain attribute so the generator can access it without lazy-load
-    ord_res = await db.execute(select(Order.order_number).where(Order.id == ret.order_id))
-    order_number = ord_res.scalar_one_or_none() or str(ret.order_id)[:8].upper()
-    ret.order_number = order_number  # type: ignore[attr-defined]
+    # Attach order_number and shipping_cost as plain attributes (avoids lazy-load in generator)
+    ord_res = await db.execute(
+        select(Order.order_number, Order.shipping_cost).where(Order.id == ret.order_id)
+    )
+    order_row = ord_res.one_or_none()
+    ret.order_number = (order_row[0] if order_row else None) or str(ret.order_id)[:8].upper()  # type: ignore[attr-defined]
+    ret._shipping_cost = float(order_row[1] or 0) if order_row else 0.0  # type: ignore[attr-defined]
 
     pdf_bytes = generate_credit_note_pdf(ret, items, current_user)
 
@@ -2989,13 +3176,28 @@ async def approve_return(return_id: str, refund_percentage: int = None, current_
     if refund_percentage is None:
         refund_percentage = 100 if ret.reason in _FULL_REFUND_REASONS else 90
 
-    handling_fee_pct = 100 - refund_percentage
-    handling_fee_amount = (ret.original_amount * handling_fee_pct) / 100
+    original = float(ret.original_amount or 0)
+
+    if refund_percentage == 100:
+        # Full refund — return everything including shipping
+        handling_fee_amount = 0
+        refund_calc = original
+    else:
+        # Partial refund — 10% handling fee applied to PART PRICE ONLY (excluding shipping)
+        ord_res = await db.execute(select(Order).where(Order.id == ret.order_id))
+        order_for_fee = ord_res.scalar_one_or_none()
+        shipping_cost = float(order_for_fee.shipping_cost or 0) if order_for_fee else 0
+        parts_base = max(0.0, original - shipping_cost)
+        handling_fee_pct = 100 - refund_percentage
+        handling_fee_amount = round(parts_base * handling_fee_pct / 100, 2)
+        # Refund = parts × 90% − return shipping fee (customer bears return shipping cost)
+        return_shipping_fee = shipping_cost
+        refund_calc = round(parts_base - handling_fee_amount - return_shipping_fee, 2)
 
     ret.status = "approved"
     ret.approved_at = datetime.utcnow()
     ret.refund_percentage = refund_percentage
-    ret.refund_amount = (ret.original_amount * refund_percentage) / 100
+    ret.refund_amount = refund_calc
     ret.handling_fee = handling_fee_amount if handling_fee_amount > 0 else None
 
     shipping_note = (

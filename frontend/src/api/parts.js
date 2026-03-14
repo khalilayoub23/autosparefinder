@@ -8,12 +8,16 @@ export const partsApi = {
     api.get('/parts/search', { params: { query, vehicle_id, category, vehicle_manufacturer } }),
   categories: () => api.get('/parts/categories'),
   manufacturers: () => api.get('/parts/manufacturers'),
+  models: (manufacturer = null) => api.get('/parts/models', { params: manufacturer ? { manufacturer } : {} }),
   brands: (params = {}) => api.get('/brands', { params }),
   brandsWithParts: () => api.get('/brands/with-parts'),
   brandParts: (brandName, params = {}) => api.get(`/brands/${encodeURIComponent(brandName)}/parts`, { params }),
-  identifyFromImage: (file) => {
+  identifyFromImage: (file, vehicle = null) => {
     const fd = new FormData()
     fd.append('file', file)
+    if (vehicle?.manufacturer) fd.append('vehicle_make', vehicle.manufacturer)
+    if (vehicle?.model)        fd.append('vehicle_model', vehicle.model)
+    if (vehicle?.year)         fd.append('vehicle_year', String(vehicle.year))
     return api.post('/parts/identify-from-image', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
   },
   searchByVin: (vin, part_query = '', category = null, limit = 50, offset = 0) =>

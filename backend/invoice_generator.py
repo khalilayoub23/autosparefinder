@@ -294,8 +294,18 @@ def generate_credit_note_pdf(ret, items, user) -> bytes:
 
     biz_num      = "060633880"
     original     = float(ret.original_amount or 0)
-    handling_fee = float(ret.handling_fee or round(original * HANDLING_FEE_RATE, 2))
-    refund       = float(ret.refund_amount  or round(original - handling_fee, 2))
+    shipping_cost = float(getattr(ret, '_shipping_cost', 0) or 0)
+    parts_base   = max(0.0, original - shipping_cost)
+    is_full_refund = ret.reason in ('defective', 'wrong_item', 'damaged_shipping')
+
+    if is_full_refund:
+        handling_fee = 0.0
+        return_shipping_fee = 0.0
+        refund = float(ret.refund_amount or original)
+    else:
+        handling_fee = float(ret.handling_fee or round(parts_base * HANDLING_FEE_RATE, 2))
+        return_shipping_fee = shipping_cost  # customer pays return shipping
+        refund = float(ret.refund_amount or round(parts_base - handling_fee - return_shipping_fee, 2))
     issued       = ret.approved_at or ret.requested_at or datetime.utcnow()
 
     order_number = getattr(ret, 'order_number', None) or (
@@ -428,16 +438,21 @@ def generate_credit_note_pdf(ret, items, user) -> bytes:
     y -= 72
 
     box_x = 36
-    box_w = 220
-    box_h = 110
+    box_w = 240
+    box_h = 148  # taller to accommodate up to 4 detail lines + final
 
     c.setFillColor(LIGHT)
     c.roundRect(box_x, y - box_h, box_w, box_h, 6, fill=1, stroke=0)
 
     tot_lines = [
-        (rtl('סה"כ מוחזר (ברוטו)'),          f"-₪{original:.2f}"),
-        (rtl('דמי טיפול 10%'),                 f"+₪{handling_fee:.2f}"),
+        (rtl('סה"כ מוחזר (ברוטו)'),                       f"-₪{original:.2f}"),
     ]
+    if not is_full_refund and handling_fee > 0:
+        tot_lines.append((rtl('דמי טיפול 10% (ממחיר החלק בלבד)'), f"+₪{handling_fee:.2f}"))
+    if not is_full_refund and shipping_cost > 0:
+        tot_lines.append((rtl('משלוח מקורי (לא מוחזר)'),           f"+₪{shipping_cost:.2f}"))
+    if not is_full_refund and return_shipping_fee > 0:
+        tot_lines.append((rtl('דמי משלוח החזרה (לקוח משלם)'),      f"+₪{return_shipping_fee:.2f}"))
 
     ly = y - 14
     c.setFont("DV", 9.5)
