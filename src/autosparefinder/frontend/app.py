@@ -1,3 +1,15 @@
+# ==============================================================================
+# ABANDONED — DO NOT USE
+# ------------------------------------------------------------------------------
+# This is a Streamlit prototype UI for the BERT-based SalesAgent ("John").
+# It was an early proof-of-concept and is not part of the production frontend.
+#
+# The production frontend is a React/Vite SPA in:
+#   frontend/src/   (served via nginx in Docker)
+#
+# Kept for git history only. Do not run, import, or extend this file.
+# ==============================================================================
+
 import streamlit as st
 from agents.sales_agent import SalesAgent
 import torch

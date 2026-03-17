@@ -1,3 +1,15 @@
+# ==============================================================================
+# ABANDONED — DO NOT USE
+# ------------------------------------------------------------------------------
+# BERT + GPT-2 pipeline SalesAgent prototype (duplicate of src/ version).
+# This was an early NLP experiment before the platform adopted LLM-based agents.
+#
+# The production sales agent is:
+#   backend/BACKEND_AI_AGENTS.py  →  class SalesAgent ("Maya", Ollama/GPT-4o)
+#
+# Kept for git history only. Do not run, import, or extend this file.
+# ==============================================================================
+
 from .base_agent import Agent
 from transformers import AutoTokenizer, AutoModel, pipeline
 import torch

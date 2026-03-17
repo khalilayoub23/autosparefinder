@@ -1,3 +1,16 @@
+# ==============================================================================
+# ABANDONED — DO NOT USE
+# ------------------------------------------------------------------------------
+# Training script for the BERT + scikit-learn SalesAgent prototype.
+# Reads from a Google Sheets CSV export and trains a LogisticRegression model.
+# Has no connection to the production LLM-based agent stack.
+#
+# The production agents are trained/prompted via:
+#   backend/BACKEND_AI_AGENTS.py  (system prompts, Ollama/GPT-4o)
+#
+# Kept for git history only. Do not run, import, or extend this file.
+# ==============================================================================
+
 import pandas as pd
 from agents.sales_agent import SalesAgent
 

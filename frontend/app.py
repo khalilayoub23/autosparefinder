@@ -1,3 +1,15 @@
+# ==============================================================================
+# ABANDONED — DO NOT USE
+# ------------------------------------------------------------------------------
+# Minimal Streamlit prototype for the BERT-based SalesAgent ("John").
+# Not part of the production frontend stack.
+#
+# The production frontend is a React/Vite SPA in:
+#   frontend/src/   (built via npm run build, served by nginx)
+#
+# Kept for git history only. Do not run, import, or extend this file.
+# ==============================================================================
+
 import streamlit as st
 from agents.sales_agent import SalesAgent
 

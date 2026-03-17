@@ -1,3 +1,19 @@
+# ==============================================================================
+# ABANDONED — DO NOT USE
+# ------------------------------------------------------------------------------
+# This file is a legacy Flask + Streamlit + BERT + SQLite prototype from before
+# the production architecture was established. It mixes Flask, Streamlit,
+# transformers (BERT), and SQLite models (categories, brands, models, parts)
+# that have NO relation to the production PostgreSQL schema.
+#
+# It is NOT imported, NOT served, and NOT tested by the production stack.
+# The production backend is exclusively:
+#   backend/BACKEND_API_ROUTES.py  (FastAPI, uvicorn)
+#   backend/BACKEND_DATABASE_MODELS.py  (PostgreSQL via asyncpg)
+#
+# Kept for git history only. Do not run, import, or extend this file.
+# ==============================================================================
+
 from flask import Flask, render_template, jsonify, request
 from flask_cors import CORS
 import datetime

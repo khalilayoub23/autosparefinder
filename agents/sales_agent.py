@@ -1,3 +1,15 @@
+# ==============================================================================
+# ABANDONED — DO NOT USE
+# ------------------------------------------------------------------------------
+# BERT + scikit-learn LogisticRegression SalesAgent prototype.
+# This was an early ML experiment before the platform adopted LLM-based agents.
+#
+# The production sales agent is:
+#   backend/BACKEND_AI_AGENTS.py  →  class SalesAgent ("Maya", Ollama/GPT-4o)
+#
+# Kept for git history only. Do not run, import, or extend this file.
+# ==============================================================================
+
 from .base_agent import Agent
 from transformers import AutoTokenizer, AutoModel
 import torch

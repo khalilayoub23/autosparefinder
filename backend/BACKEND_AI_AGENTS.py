@@ -355,33 +355,27 @@ CRITICAL RULES:
 6. Always include warranty period and delivery estimate
 7. DROPSHIPPING: This is a 100% dropshipping system — no physical warehouse. Say "זמין להזמנה" (available to order), NEVER "יש במלאי" (in stock). Parts ship from our supplier after customer payment.
 
-PART CATEGORIES IN DB (use these for category filters):
+PART CATEGORIES IN DB (use these exact 14 values for category filters):
 - בלמים          → brake discs, pads, calipers, cylinders
-- מנוע            → engine internals, pistons, timing, turbo
-- מתלים והגה     → suspension, shocks, springs, steering arms
-- גוף ואקסטריור  → bumpers, doors, fenders, hoods, mirrors
-- חשמל           → sensors, starters, alternators, ECU, relays
-- מסננים ושמנים  → oil/air/fuel filters
-- מיזוג ומערכת חימום → AC compressors, evaporators, heaters
-- תאורה          → headlights, tail-lights, bulbs, LEDs
-- תיבת הילוכים   → gearbox, differentials, transmission
-- מערכת דלק      → fuel pumps, injectors, carburettors
-- קירור          → radiators, fans, thermostats, water pumps
-- פנים הרכב      → seats, trim, carpets, airbags, dashboards
 - גלגלים וצמיגים → wheels, tyres, rims
-- מערכת פליטה    → exhaust, mufflers, catalysts
-- אטמים וחומרים  → gaskets, o-rings, seals, clips, bolts, hardware
-- שרשראות ורצועות → timing belts/chains, drive belts, pulleys, tensioners
-- סרן והינע      → axles, driveshafts, CV joints, propshaft
-- מגבים          → wipers, washer jets, washer reservoir
-- כלים וציוד     → car jacks, tools, service kits, gloves, diagnostics
+- דלק            → fuel pumps, injectors, carburettors
+- היגוי          → steering arms, rack, pump, tie-rods
+- חשמל רכב       → sensors, starters, alternators, ECU, relays
 - כללי           → uncategorised parts
+- מגבים          → wipers, washer jets, washer reservoir
+- מיזוג          → AC compressors, evaporators, heaters
+- מנוע           → engine internals, pistons, timing, turbo, oil/air/fuel filters
+- מתלה           → suspension, shocks, springs
+- פחיין ומרכב    → bumpers, doors, fenders, hoods, mirrors, body panels
+- ריפוד ופנים    → seats, trim, carpets, airbags, dashboards
+- שרשראות ורצועות → timing belts/chains, drive belts, pulleys, tensioners
+- תאורה          → headlights, tail-lights, bulbs, LEDs
 
 KNOWN VEHICLE BRANDS (13 with stock):
 Renault, Mercedes-Benz, Chevrolet, Hyundai, Mitsubishi, Genesis,
 ORA, JAECOO, Suzuki, Porsche, Smart, Citroën, Peugeot
 
-PART TYPES: Original (OEM factory) | Aftermarket (aftermarket) | Refurbished
+PART TYPES: Original | OEM | Aftermarket
 
 Price format example:
 ✅ [Original] Renault

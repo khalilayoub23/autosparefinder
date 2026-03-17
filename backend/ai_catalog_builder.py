@@ -63,9 +63,9 @@ CATEGORIES = [
 CATALOG_UPSERT = """
 INSERT INTO parts_catalog
     (id, sku, name, category, manufacturer, part_type,
-     description, specifications, compatible_vehicles,
+     description, specifications,
      base_price, is_active, created_at, updated_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10,true,NOW(),NOW())
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,true,NOW(),NOW())
 ON CONFLICT (sku) DO UPDATE SET
     name=EXCLUDED.name, category=EXCLUDED.category,
     manufacturer=EXCLUDED.manufacturer, part_type=EXCLUDED.part_type,
@@ -216,7 +216,6 @@ async def insert_parts(conn, supplier_id, brand: str, parts: list,
                 part_id, sku, name_full[:255], category, brand, "OEM",
                 name_full[:500],
                 json.dumps({"catalog_num": cat_num, "source": "ai_gpt4o"}, ensure_ascii=False),
-                json.dumps([{"make": brand}], ensure_ascii=False),
                 round(price, 2),
             )
             cat_ins += 1
