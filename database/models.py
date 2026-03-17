@@ -1,3 +1,18 @@
+# ==============================================================================
+# ABANDONED — DO NOT USE
+# ------------------------------------------------------------------------------
+# This file is a pre-architecture skeleton from an earlier prototype.
+# It uses Integer PKs, legacy declarative_base(), and 3 stub tables
+# (brands, models, parts) that are NOT connected to any database, engine,
+# session, or Alembic instance in this project.
+#
+# The live schema is defined exclusively in:
+#   backend/BACKEND_DATABASE_MODELS.py
+#
+# This file is kept only to preserve git history. Do not import from it,
+# do not run it, and do not add new code here.
+# ==============================================================================
+
 from sqlalchemy import create_engine, Column, Integer, String, Float, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship

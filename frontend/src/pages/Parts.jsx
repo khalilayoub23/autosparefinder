@@ -1817,6 +1817,23 @@ export default function Parts() {
             </div>
 
             {/* 2. Category */}
+            {/* 2. Model */}
+            <div>
+              <label className="block text-xs text-gray-500 mb-1.5 font-medium">דגם</label>
+              <select
+                className="w-full border border-gray-200 rounded-lg bg-white text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-2.5 py-2 transition-colors"
+                value={manualModel}
+                onChange={(e) => setManualModel(e.target.value)}
+                disabled={modelsLoading}
+              >
+                <option value="">{modelsLoading ? 'טוען...' : 'כל הדגמים'}</option>
+                {modelOptions.map(m => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* 3. Category */}
             <div>
               <label className="block text-xs text-gray-500 mb-1.5 font-medium">קטגוריה</label>
               <select
@@ -1829,22 +1846,6 @@ export default function Parts() {
                   <option key={c} value={c}>
                     {c}{categoryCounts[c] ? ` (${categoryCounts[c].toLocaleString()})` : ''}
                   </option>
-                ))}
-              </select>
-            </div>
-
-            {/* 3. Model */}
-            <div>
-              <label className="block text-xs text-gray-500 mb-1.5 font-medium">דגם</label>
-              <select
-                className="w-full border border-gray-200 rounded-lg bg-white text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-2.5 py-2 transition-colors"
-                value={manualModel}
-                onChange={(e) => setManualModel(e.target.value)}
-                disabled={modelsLoading}
-              >
-                <option value="">{modelsLoading ? 'טוען...' : 'כל הדגמים'}</option>
-                {modelOptions.map(m => (
-                  <option key={m} value={m}>{m}</option>
                 ))}
               </select>
             </div>

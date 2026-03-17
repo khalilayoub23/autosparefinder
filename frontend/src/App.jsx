@@ -14,7 +14,6 @@ import Orders from './pages/Orders'
 import Cart from './pages/Cart'
 import Profile from './pages/Profile'
 import Admin from './pages/Admin'
-import Agents from './pages/Agents'
 import PaymentSuccess from './pages/PaymentSuccess'
 
 export default function App() {
@@ -99,16 +98,7 @@ export default function App() {
             </ProtectedRoute>
           }
         />
-        <Route
-          path="/agents"
-          element={
-            <ProtectedRoute adminOnly>
-              <Layout>
-                <Agents />
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
+        <Route path="/agents" element={<Navigate to="/admin" replace />} />
 
         <Route
           path="/payment/success"

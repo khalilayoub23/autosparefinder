@@ -46,7 +46,8 @@ services:
       JWT_SECRET_KEY: ${JWT_SECRET_KEY}
       JWT_REFRESH_SECRET_KEY: ${JWT_REFRESH_SECRET_KEY}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
-      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      GITHUB_TOKEN: ${GITHUB_TOKEN}  # kept for any legacy integrations — remove once fully migrated
+      OLLAMA_URL: ${OLLAMA_URL}       # e.g. http://VPS_IP:11434
       TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID}
       TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN}
       TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER}
@@ -55,6 +56,8 @@ services:
       SENDGRID_API_KEY: ${SENDGRID_API_KEY}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:3000}
       CLAMD_HOST: clamav
+      MEILI_URL: ${MEILI_URL:-http://meilisearch:7700}
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
       ENVIRONMENT: production
       DEBUG: "false"
     ports:
@@ -100,7 +103,25 @@ services:
       retries: 3
       start_period: 120s
 
+  meilisearch:
+    image: getmeili/meilisearch:v1.7
+    container_name: autospare_meilisearch
+    restart: unless-stopped
+    environment:
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
+      MEILI_ENV: production
+    ports:
+      - "7700:7700"
+    volumes:
+      - meili_data:/meili_data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:7700/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
 volumes:
   postgres_data:
   redis_data:
   upload_files:
+  meili_data:

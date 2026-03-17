@@ -34,18 +34,17 @@ except Exception:  # pragma: no cover - fallback for test/runtime isolation
 
 load_dotenv()
 
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-GITHUB_ENDPOINT = os.getenv("GITHUB_MODELS_ENDPOINT", "https://models.inference.ai.azure.com")
+OLLAMA_URL = os.getenv("OLLAMA_URL", "")  # e.g. http://VPS_IP:11434
 
-# Create LLM client if token present, otherwise operate in offline/mock mode
+# Create LLM client if OLLAMA_URL is set, otherwise operate in offline/mock mode
 _client: Optional[AsyncOpenAI]
-if GITHUB_TOKEN:
-    _client = AsyncOpenAI(base_url=GITHUB_ENDPOINT, api_key=GITHUB_TOKEN)
+if OLLAMA_URL and AsyncOpenAI is not None:
+    _client = AsyncOpenAI(base_url=f"{OLLAMA_URL}/v1", api_key="ollama")
 else:
     _client = None
 
-DEFAULT_MODEL = os.getenv("AGENTS_DEFAULT_MODEL", "gpt-4o")
-FALLBACK_MODEL = os.getenv("AGENTS_FALLBACK_MODEL", "claude-3.5-sonnet")
+DEFAULT_MODEL = os.getenv("AGENTS_DEFAULT_MODEL", "qwen3:8b")
+FALLBACK_MODEL = os.getenv("AGENTS_FALLBACK_MODEL", "qwen3:8b")
 
 
 class BaseAgent:
@@ -56,7 +55,7 @@ class BaseAgent:
         self.model = DEFAULT_MODEL
 
     async def call_llm(self, messages: List[Dict[str, str]], temperature: float = 0.7, max_tokens: int = 2000, tools: Optional[List[Dict]] = None) -> Dict[str, Any]:
-        """Call LLM via GitHub Models; if no credentials available return a deterministic fallback."""
+        """Call LLM via Ollama; if OLLAMA_URL is not set return a deterministic fallback."""
         # Offline/mock fallback
         if _client is None:
             return {

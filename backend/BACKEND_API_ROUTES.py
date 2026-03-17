@@ -11,7 +11,7 @@ from fastapi import FastAPI, Depends, HTTPException, status, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, EmailStr, validator
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Literal
 from datetime import datetime, date, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_, func, desc, text
@@ -26,7 +26,7 @@ from BACKEND_DATABASE_MODELS import (
     get_db, get_pii_db, async_session_factory, pii_session_factory, User, Vehicle, PartsCatalog, Order, OrderItem, Payment,
     Invoice, Return, Conversation, Message, File as FileModel,
     Notification, UserProfile, SystemSetting, SupplierPart, Supplier,
-    CarBrand, SystemLog, USD_TO_ILS,
+    CarBrand, SystemLog, USD_TO_ILS, ApprovalQueue,
 )
 from BACKEND_AUTH_SECURITY import (
     get_current_user, get_current_active_user, get_current_verified_user,
@@ -711,8 +711,8 @@ async def upload_image(file: UploadFile = File(...), current_user: User = Depend
     confidence = 0.0
     possible_names: list = []
 
-    github_token = os.getenv("GITHUB_TOKEN", "")
-    if github_token:
+    ollama_url = os.getenv("OLLAMA_URL", "")
+    if ollama_url:
         try:
             img_bytes = await file.read()
             # Virus scan before processing
@@ -723,11 +723,11 @@ async def upload_image(file: UploadFile = File(...), current_user: User = Depend
                 b64 = _b64.b64encode(img_bytes).decode()
                 mime = file.content_type or "image/jpeg"
                 client = AsyncOpenAI(
-                    base_url="https://models.inference.ai.azure.com",
-                    api_key=github_token,
+                    base_url=f"{ollama_url}/v1",
+                    api_key="ollama",
                 )
                 resp = await client.chat.completions.create(
-                    model="gpt-4o",
+                    model=os.getenv("AGENTS_DEFAULT_MODEL", "qwen3:8b"),
                     messages=[{
                         "role": "user",
                         "content": [
@@ -848,6 +848,7 @@ async def search_parts(
     Suppliers are sorted price_ils ASC (cheapest first).
     The `per_type` param caps how many supplier offers are returned per type
     (default: system_settings.search_results_per_type → 4).
+    Text search is powered by Meilisearch when available; falls back to ILIKE.
     """
     # ── Resolve results_per_type ─────────────────────────────────────────────
     if per_type is None:
@@ -860,18 +861,49 @@ async def search_parts(
         except Exception:
             per_type = 4
 
+    # ── Meilisearch text lookup (optional) ───────────────────────────────────
+    # meili_ids: List[str]  → ranked UUIDs from Meilisearch (use unnest JOIN)
+    # meili_ids: None       → Meilisearch unavailable → fall back to ILIKE
+    # meili_ids: []         → Meilisearch returned 0 hits → short-circuit empty
+    meili_ids: Optional[List[str]] = None
+    _meili_url = os.getenv("MEILI_URL", "")
+    if query and _meili_url:
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as _mc:
+                _resp = await _mc.post(
+                    f"{_meili_url}/indexes/parts/search",
+                    headers={"Authorization": f"Bearer {os.getenv('MEILI_MASTER_KEY', '')}"},
+                    json={"q": query, "limit": 200, "attributesToRetrieve": ["id"]},
+                )
+                _resp.raise_for_status()
+                meili_ids = [h["id"] for h in _resp.json().get("hits", [])]
+        except Exception:
+            meili_ids = None  # keep ILIKE fallback
+
+    # ── Short-circuit when Meilisearch found zero hits ────────────────────────
+    if meili_ids is not None and len(meili_ids) == 0:
+        return {
+            "original":         {"part": None, "suppliers": []},
+            "oem":              {"part": None, "suppliers": []},
+            "aftermarket":      {"part": None, "suppliers": []},
+            "results_per_type": per_type,
+            "query":            query,
+        }
+
     # ── Build shared WHERE conditions ────────────────────────────────────────
     conditions: List[str] = ["pc.is_active = TRUE"]
     params: Dict[str, Any] = {}
 
-    if query:
+    # Text filter: if Meilisearch is live use id-array join (no ILIKE needed);
+    # if it's unavailable fall back to the original ILIKE clause.
+    if query and meili_ids is None:
         conditions.append(
             "(pc.name ILIKE :q OR pc.sku ILIKE :q OR pc.manufacturer ILIKE :q "
             "OR pc.category ILIKE :q OR pc.oem_number ILIKE :q)"
         )
         params["q"]       = f"%{query}%"
-        params["q_exact"] = query            # for exact-name-match scoring
-        params["q_start"] = f"{query}%"    # for starts-with scoring
+        params["q_exact"] = query
+        params["q_start"] = f"{query}%"
 
     if category:
         conditions.append("pc.category ILIKE :cat")
@@ -898,7 +930,6 @@ async def search_parts(
             brand_row = None
 
         if brand_row:
-            # Build OR filter across all catalog name variants for this brand
             variants = list({brand_row[0], brand_row[1], *(brand_row[2] or [])})
             vmfr_clauses = []
             for idx, v in enumerate(variants):
@@ -909,7 +940,6 @@ async def search_parts(
             if vmfr_clauses:
                 conditions.append(f"({' OR '.join(vmfr_clauses)})")
         else:
-            # Fallback: direct match
             conditions.append("pc.manufacturer ILIKE :vmfr")
             params["vmfr"] = f"%{vehicle_manufacturer}%"
 
@@ -924,8 +954,8 @@ async def search_parts(
 
     where_sql = " AND ".join(conditions)
 
-    # Relevance score snippet — only meaningful when there's a text query
-    if query:
+    # ── ILIKE relevance score (only used when Meilisearch is unavailable) ─────
+    if query and meili_ids is None:
         relevance_sql = """
                 CASE
                     WHEN pc.name ILIKE :q_exact THEN 4
@@ -948,39 +978,65 @@ async def search_parts(
     async def _fetch_type(part_type_values: list) -> Dict[str, Any]:
         type_params = {**params, "pt": part_type_values, "lim": per_type}
 
-        # Best matching part for this type (relevance first, then supplier count)
-        part_row = (await db.execute(
-            text(f"""
-                SELECT
-                    pc.id, pc.sku, pc.name, pc.name_he, pc.manufacturer,
-                    pc.category, pc.part_type, pc.base_price,
-                    pc.min_price_ils, pc.max_price_ils, pc.description,
-                    pc.oem_number, pc.barcode, pc.weight_kg,
-                    pc.is_safety_critical, pc.part_condition,
-                    pc.created_at, pc.updated_at{score_col}
-                FROM parts_catalog pc
-                WHERE {where_sql} AND pc.part_type = ANY(:pt)
-                ORDER BY {relevance_sql}
-                (
-                    SELECT COUNT(*) FROM supplier_parts sp
-                    WHERE sp.part_id = pc.id AND sp.is_available = TRUE
-                ) DESC,
-                pc.base_price ASC NULLS LAST
-                LIMIT 1
-            """),
-            type_params,
-        )).fetchone()
+        if meili_ids:
+            # ── Meilisearch path: rank-preserving unnest JOIN ─────────────────
+            # UUIDs come from our own index — hex+dash only, no SQL injection risk.
+            uuid_array = "{" + ",".join(meili_ids) + "}"
+            part_row = (await db.execute(
+                text(f"""
+                    SELECT
+                        pc.id, pc.sku, pc.name, pc.name_he, pc.manufacturer,
+                        pc.category, pc.part_type, pc.base_price,
+                        pc.min_price_ils, pc.max_price_ils, pc.description,
+                        pc.oem_number, pc.barcode, pc.weight_kg,
+                        pc.is_safety_critical, pc.part_condition,
+                        pc.created_at, pc.updated_at
+                    FROM parts_catalog pc
+                    JOIN (
+                        SELECT t.id::uuid AS ranked_id, t.pos
+                        FROM unnest(:uuid_arr::text[]) WITH ORDINALITY AS t(id, pos)
+                    ) ranked ON ranked.ranked_id = pc.id
+                    WHERE {where_sql} AND pc.part_type = ANY(:pt)
+                    ORDER BY ranked.pos ASC,
+                    (
+                        SELECT COUNT(*) FROM supplier_parts sp
+                        WHERE sp.part_id = pc.id AND sp.is_available = TRUE
+                    ) DESC
+                    LIMIT 1
+                """),
+                {**type_params, "uuid_arr": uuid_array},
+            )).fetchone()
+        else:
+            # ── ILIKE fallback path ───────────────────────────────────────────
+            part_row = (await db.execute(
+                text(f"""
+                    SELECT
+                        pc.id, pc.sku, pc.name, pc.name_he, pc.manufacturer,
+                        pc.category, pc.part_type, pc.base_price,
+                        pc.min_price_ils, pc.max_price_ils, pc.description,
+                        pc.oem_number, pc.barcode, pc.weight_kg,
+                        pc.is_safety_critical, pc.part_condition,
+                        pc.created_at, pc.updated_at{score_col}
+                    FROM parts_catalog pc
+                    WHERE {where_sql} AND pc.part_type = ANY(:pt)
+                    ORDER BY {relevance_sql}
+                    (
+                        SELECT COUNT(*) FROM supplier_parts sp
+                        WHERE sp.part_id = pc.id AND sp.is_available = TRUE
+                    ) DESC,
+                    pc.base_price ASC NULLS LAST
+                    LIMIT 1
+                """),
+                type_params,
+            )).fetchone()
+
+            # Reject loose ILIKE-only matches (score == 1)
+            if query and score_col and part_row is not None:
+                if part_row[-1] == 1:
+                    return {"part": None, "suppliers": []}
 
         if not part_row:
             return {"part": None, "suppliers": []}
-
-        # Reject loose substring matches — only score=1 means the query appears
-        # inside a significantly longer name (e.g. "בורג למשאבת מים" for query
-        # "משאבת מים"). Let the frontend try the next candidate instead.
-        if query and score_col:
-            match_score = part_row[-1]  # last column added above
-            if match_score == 1:
-                return {"part": None, "suppliers": []}
 
         part_id_str = str(part_row[0])
 
@@ -1148,13 +1204,33 @@ async def get_models(manufacturer: Optional[str] = None, db: AsyncSession = Depe
     """)
     result = await db.execute(sql, params)
     raw = [row[0] for row in result.fetchall() if row[0]]
-    # Strip trailing year (4-digit number) to get just model name
-    models_set = set()
+    # Two-pass year stripping so year is always separated into the year dropdown:
+    # Pass 1 — strip 4-digit era year (19xx/20xx) AND everything that follows,
+    #   using \s* so it catches both "CAMARO 2021US" and "CAMARO2019 US":
+    #   "SONIC 2014 1.4TURBO" → "SONIC"
+    #   "SAVANA 2017 NEW"     → "SAVANA"
+    #   "CAMARO 2021US"       → "CAMARO"
+    #   "CAMARO2019 US"       → "CAMARO"
+    _era_year_re = _re.compile(r'\s*(?:19|20)\d{2}(?=[^\d]|$).*$')
+    # Pass 2 — strip remaining trailing 2-digit years or year-ranges:
+    #   "CAVALIER 99" → "CAVALIER"
+    #   "CAVALIER 96-67" → "CAVALIER"
+    _trail_num_re = _re.compile(r'\s+\d[\d\-/\.]*\s*$')
+    # Deduplicate case-insensitively: keep the shortest/cleanest variant per normalised key
+    models_map: dict[str, str] = {}  # normalised_key → best display value
     for my in raw:
-        model = _re.sub(r'\s*\d{4}\b.*$', '', my).strip()
-        if model:
-            models_set.add(model)
-    models = sorted(models_set)
+        model = _era_year_re.sub('', my).strip()   # pass 1
+        model = _trail_num_re.sub('', model).strip()  # pass 2
+        # clean extra spaces
+        model = _re.sub(r'\s{2,}', ' ', model).strip()
+        if not model or model.replace('-', '').replace(' ', '').isdigit():
+            continue
+        key = model.upper()
+        # Among duplicates keep the shorter, cleaner form
+        existing = models_map.get(key)
+        if existing is None or len(model) < len(existing):
+            models_map[key] = model
+    models = sorted(models_map.values())
     return {"models": models, "total": len(models)}
 
 
@@ -1623,15 +1699,15 @@ async def identify_part_from_image(
                 + ". "
             )
 
-        github_token = os.getenv("GITHUB_TOKEN", "")
-        if github_token:
+        ollama_url = os.getenv("OLLAMA_URL", "")
+        if ollama_url:
             try:
                 client = AsyncOpenAI(
-                    base_url="https://models.inference.ai.azure.com",
-                    api_key=github_token,
+                    base_url=f"{ollama_url}/v1",
+                    api_key="ollama",
                 )
                 resp = await client.chat.completions.create(
-                    model="gpt-4o",
+                    model=os.getenv("AGENTS_DEFAULT_MODEL", "qwen3:8b"),
                     messages=[{
                         "role": "user",
                         "content": [
@@ -3860,7 +3936,104 @@ async def sync_supplier_catalog(supplier_id: str, current_user: User = Depends(g
 
 
 # ==============================================================================
-# 13c. ADMIN ORDERS  /api/v1/admin/orders  (2 endpoints)
+# 13c. ADMIN APPROVALS  /api/v1/admin/approvals  (2 endpoints)
+# ==============================================================================
+
+@app.get("/api/v1/admin/approvals", tags=["Admin"])
+async def list_approvals(
+    status: Optional[str] = "pending",
+    entity_type: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_pii_db),
+):
+    """List approval queue items, optionally filtered by status and entity_type."""
+    stmt = (
+        select(ApprovalQueue, User)
+        .outerjoin(User, ApprovalQueue.requested_by == User.id)
+        .order_by(ApprovalQueue.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    if status:
+        stmt = stmt.where(ApprovalQueue.status == status)
+    if entity_type:
+        stmt = stmt.where(ApprovalQueue.entity_type == entity_type)
+
+    result = await db.execute(stmt)
+    rows = result.all()
+
+    count_stmt = select(func.count()).select_from(ApprovalQueue)
+    if status:
+        count_stmt = count_stmt.where(ApprovalQueue.status == status)
+    if entity_type:
+        count_stmt = count_stmt.where(ApprovalQueue.entity_type == entity_type)
+    total = (await db.execute(count_stmt)).scalar()
+
+    return {
+        "total": total,
+        "items": [
+            {
+                "id": str(aq.id),
+                "entity_type": aq.entity_type,
+                "entity_id": str(aq.entity_id),
+                "action": aq.action,
+                "payload": aq.payload,
+                "status": aq.status,
+                "requested_by": str(aq.requested_by) if aq.requested_by else None,
+                "requester_name": requester.full_name if requester else None,
+                "resolved_by": str(aq.resolved_by) if aq.resolved_by else None,
+                "resolution_note": aq.resolution_note,
+                "created_at": aq.created_at.isoformat() if aq.created_at else None,
+                "resolved_at": aq.resolved_at.isoformat() if aq.resolved_at else None,
+            }
+            for aq, requester in rows
+        ],
+    }
+
+
+class ResolveApprovalBody(BaseModel):
+    decision: Literal["approved", "rejected"]
+    note: Optional[str] = None
+
+
+@app.post("/api/v1/admin/approvals/{approval_id}/resolve", tags=["Admin"])
+async def resolve_approval(
+    approval_id: str,
+    body: ResolveApprovalBody,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_pii_db),
+):
+    """Approve or reject a pending approval queue item."""
+    result = await db.execute(
+        select(ApprovalQueue).where(ApprovalQueue.id == approval_id)
+    )
+    aq = result.scalar_one_or_none()
+    if not aq:
+        raise HTTPException(status_code=404, detail="Approval item not found")
+    if aq.status != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Already resolved — current status: '{aq.status}'",
+        )
+
+    aq.status = body.decision
+    aq.resolved_by = current_user.id
+    aq.resolved_at = datetime.utcnow()
+    aq.resolution_note = body.note
+    await db.commit()
+
+    return {
+        "message": body.decision,
+        "id": str(aq.id),
+        "entity_type": aq.entity_type,
+        "entity_id": str(aq.entity_id),
+    }
+
+
+# ==============================================================================
+# 13d. ADMIN ORDERS  /api/v1/admin/orders  (2 endpoints)
 # ==============================================================================
 
 @app.get("/api/v1/admin/orders")
@@ -4032,7 +4205,7 @@ AGENTS_METADATA = {
         "description": "Automatically routes messages to the appropriate specialized agent based on intent detection.",
         "description_he": "מנתב הודעות לסוכן המתאים על פי זיהוי כוונה",
         "capabilities": ["Intent detection", "Language detection", "Confidence scoring", "Context routing"],
-        "model": "gpt-4o",
+        "model": "qwen3:8b",
         "temperature": 0.1,
         "type": "internal",
         "icon": "GitBranch",
@@ -4045,7 +4218,7 @@ AGENTS_METADATA = {
         "description": "Finds auto parts by vehicle, category, or part number. Identifies vehicles from Israeli license plates via gov API.",
         "description_he": "מאתר חלקי רכב לפי רכב, קטגוריה או מספר חלק. זיהוי רכב ממספר לוחית ישראלי",
         "capabilities": ["Part search", "Vehicle identification (gov.il)", "Price comparison", "Image-based part ID"],
-        "model": "gpt-4o",
+        "model": "qwen3:8b",
         "temperature": 0.3,
         "type": "customer",
         "icon": "Search",
@@ -4058,7 +4231,7 @@ AGENTS_METADATA = {
         "description": "Smart upselling and cross-selling. Presents Good/Better/Best options. Never reveals supplier names.",
         "description_he": "מכירה חכמה עם Good/Better/Best. לא חושף שמות ספקים",
         "capabilities": ["Product recommendations", "Upselling", "Bundle suggestions", "Price negotiation"],
-        "model": "gpt-4o",
+        "model": "qwen3:8b",
         "temperature": 0.7,
         "type": "customer",
         "icon": "TrendingUp",
@@ -4071,7 +4244,7 @@ AGENTS_METADATA = {
         "description": "Manages order lifecycle from placement to delivery. Handles cancellations and returns. Dropshipping-aware.",
         "description_he": "ניהול מחזור חיי הזמנה. ביטולים וחזרות. תואם דרופשיפינג",
         "capabilities": ["Order status", "Tracking", "Cancellation", "Returns", "Dropshipping flow"],
-        "model": "gpt-4o",
+        "model": "qwen3:8b",
         "temperature": 0.3,
         "type": "customer",
         "icon": "Package",
@@ -4084,7 +4257,7 @@ AGENTS_METADATA = {
         "description": "Handles payments, invoices, and refunds. Licensed business (מס׳ עוסק: 060633880). VAT 17%, refund policy.",
         "description_he": "תשלומים, חשבוניות, החזרים. עוסק מורשה מס׳ 060633880",
         "capabilities": ["Payment questions", "Invoice generation", "Refund calculations", "VAT breakdowns"],
-        "model": "gpt-4o",
+        "model": "qwen3:8b",
         "temperature": 0.2,
         "type": "customer",
         "icon": "DollarSign",
@@ -4097,7 +4270,7 @@ AGENTS_METADATA = {
         "description": "Default fallback agent. Handles general questions, complaints, and technical support with empathy.",
         "description_he": "סוכן ברירת מחדל. שאלות כלליות, תלונות, תמיכה טכנית",
         "capabilities": ["General support", "Complaint handling", "Technical questions", "Escalation"],
-        "model": "gpt-4o",
+        "model": "qwen3:8b",
         "temperature": 0.8,
         "type": "customer",
         "icon": "HeartHandshake",
@@ -4110,7 +4283,7 @@ AGENTS_METADATA = {
         "description": "Handles login issues, 2FA, password reset, and suspicious activity. Strict identity verification.",
         "description_he": "בעיות כניסה, 2FA, איפוס סיסמה, פעילות חשודה",
         "capabilities": ["2FA support", "Password reset", "Account unlock", "Suspicious activity"],
-        "model": "gpt-4o",
+        "model": "qwen3:8b",
         "temperature": 0.2,
         "type": "customer",
         "icon": "Shield",
@@ -4123,7 +4296,7 @@ AGENTS_METADATA = {
         "description": "Manages promotions, coupons, referral program (100₪ + 10%), and loyalty points.",
         "description_he": "קופונים, תוכנית הפניות (100₪ + 10%), נקודות נאמנות",
         "capabilities": ["Coupon management", "Referral program", "Loyalty points", "Newsletter"],
-        "model": "gpt-4o",
+        "model": "qwen3:8b",
         "temperature": 0.7,
         "type": "customer",
         "icon": "Megaphone",
@@ -4136,7 +4309,7 @@ AGENTS_METADATA = {
         "description": "Background agent. Daily price sync at 02:00. Manages 3 active suppliers. Does NOT interact with customers.",
         "description_he": "סוכן רקע. סנכרון מחירים יומי 02:00. לא משוחח עם לקוחות",
         "capabilities": ["Price sync", "Catalog updates", "Availability monitoring", "Supplier performance"],
-        "model": "gpt-4o",
+        "model": "qwen3:8b",
         "temperature": 0.1,
         "type": "admin",
         "icon": "Truck",
@@ -4149,7 +4322,7 @@ AGENTS_METADATA = {
         "description": "Generates content for Facebook, Instagram, TikTok, LinkedIn, Telegram. All posts need approval before publish.",
         "description_he": "יצירת תוכן לפייסבוק, אינסטגרם, טיקטוק, לינקדאין, טלגרם",
         "capabilities": ["Content generation", "Post scheduling", "Platform-specific tone", "Hashtag generation"],
-        "model": "gpt-4o",
+        "model": "qwen3:8b",
         "temperature": 0.9,
         "type": "admin",
         "icon": "Share2",
@@ -4160,8 +4333,8 @@ AGENTS_METADATA = {
 @app.get("/api/v1/admin/agents")
 async def list_agents(current_user: User = Depends(get_current_admin_user)):
     from BACKEND_AI_AGENTS import AGENT_MAP
-    github_token = os.getenv("GITHUB_TOKEN", "")
-    ai_status = "active" if github_token else "mocked"
+    ollama_url = os.getenv("OLLAMA_URL", "")
+    ai_status = "active" if ollama_url else "mocked"
 
     agents = []
     for name, meta in AGENTS_METADATA.items():
@@ -4175,7 +4348,7 @@ async def list_agents(current_user: User = Depends(get_current_admin_user)):
         "agents": agents,
         "total": len(agents),
         "ai_status": ai_status,
-        "github_token_set": bool(github_token),
+        "ollama_configured": bool(ollama_url),
     }
 
 
@@ -4218,10 +4391,13 @@ async def update_agent(
     for k, v in body.items():
         if k in allowed:
             AGENTS_METADATA[agent_name][k] = v
-    # Also update singleton model if loaded
+    # Propagate model + temperature changes to live singleton (affects real agent calls)
     from BACKEND_AI_AGENTS import _agents
-    if agent_name in _agents and "model" in body:
-        _agents[agent_name].model = body["model"]
+    if agent_name in _agents:
+        if "model" in body:
+            _agents[agent_name].model = body["model"]
+        if "temperature" in body:
+            _agents[agent_name].temperature = float(body["temperature"])
     return {"agent": agent_name, **AGENTS_METADATA[agent_name]}
 
 

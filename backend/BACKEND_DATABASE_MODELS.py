@@ -135,6 +135,48 @@ class CarBrand(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    aliases_rel = relationship("BrandAlias", back_populates="brand", cascade="all, delete-orphan")
+
+
+class BrandAlias(Base):
+    """Normalised alias rows for car_brands.  Starts empty; populated by AI/import pipeline."""
+    __tablename__ = "brand_aliases"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    brand_id = Column(UUID(as_uuid=True), ForeignKey("car_brands.id", ondelete="CASCADE"), nullable=False, index=True)
+    alias = Column(String(200), nullable=False)
+    normalized = Column(String(200), nullable=False, index=True)
+    source = Column(String(50), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    brand = relationship("CarBrand", back_populates="aliases_rel")
+
+
+class CatalogVersion(Base):
+    """Audit log for catalog import/sync runs. triggered_by is a plain UUID ref to
+    autospare_pii.users — no FK because cross-database constraints are not possible."""
+    __tablename__ = "catalog_versions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    version_tag = Column(String(50), unique=True, nullable=False)
+    description = Column(Text, nullable=True)
+    parts_added = Column(Integer, nullable=False, default=0)
+    parts_updated = Column(Integer, nullable=False, default=0)
+    parts_total = Column(Integer, nullable=False, default=0)
+    source = Column(String(100), nullable=True)
+    triggered_by = Column(UUID(as_uuid=True), nullable=True)   # ref to autospare_pii.users, no FK
+    started_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    completed_at = Column(DateTime, nullable=True)
+    status = Column(
+        String(20),
+        default="pending",
+        server_default="pending",
+        nullable=False,
+        index=True,
+    )
+    error_log = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
 
 # ==============================================================================
 # 1. USERS & AUTH TABLES (6)
@@ -182,7 +224,7 @@ class UserProfile(PiiBase):
     address_line2 = Column(String(255))                               # encrypted
     city = Column(String(100))
     postal_code = Column(String(20))
-    default_vehicle_id = Column(UUID(as_uuid=True), ForeignKey("vehicles.id"), nullable=True)
+    default_vehicle_id = Column(UUID(as_uuid=True), nullable=True)  # plain UUID — vehicles now in catalog DB
     marketing_consent = Column(Boolean, default=False)
     newsletter_subscribed = Column(Boolean, default=False)
     terms_accepted_at = Column(DateTime, nullable=True)  # NULL = not yet accepted
@@ -263,11 +305,56 @@ class PasswordReset(PiiBase):
     user = relationship("User", back_populates="password_resets")
 
 
+class ApprovalQueue(PiiBase):
+    """Pending changes requiring admin approval.
+    entity_id is a plain UUID — the target table is determined by entity_type;
+    no FK enforced because the target may be in a different database (autospare).
+    """
+    __tablename__ = "approval_queue"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'approved', 'rejected')",
+            name="ck_approval_queue_status",
+        ),
+        Index("ix_approval_queue_status", "status"),
+        Index("ix_approval_queue_entity_type", "entity_type"),
+        Index("ix_approval_queue_requested_by", "requested_by"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    entity_type = Column(String(50), nullable=False)
+    entity_id = Column(
+        UUID(as_uuid=True),
+        nullable=False,
+        comment="UUID reference — target table determined by entity_type; no FK (may be cross-DB)",
+    )
+    action = Column(String(50), nullable=False)
+    payload = Column(JSONB, nullable=False, default=dict)
+    status = Column(String(20), nullable=False, default="pending", server_default="pending")
+    requested_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    resolved_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    resolution_note = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    resolved_at = Column(DateTime, nullable=True)
+
+    requester = relationship("User", foreign_keys=[requested_by])
+    resolver = relationship("User", foreign_keys=[resolved_by])
+
+
 # ==============================================================================
 # 2. VEHICLES & PARTS TABLES (4)
 # ==============================================================================
 
-class Vehicle(PiiBase):
+class Vehicle(Base):
     __tablename__ = "vehicles"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -287,17 +374,13 @@ class Vehicle(PiiBase):
         Index("idx_vehicles_manufacturer_model", "manufacturer", "model"),
     )
 
-    # Relationships
-    user_vehicles = relationship("UserVehicle", back_populates="vehicle")
-    profiles_default = relationship("UserProfile", foreign_keys="UserProfile.default_vehicle_id")
-
 
 class UserVehicle(PiiBase):
     __tablename__ = "user_vehicles"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    vehicle_id = Column(UUID(as_uuid=True), ForeignKey("vehicles.id", ondelete="CASCADE"), nullable=False)
+    vehicle_id = Column(UUID(as_uuid=True), nullable=False)  # plain UUID — vehicles now in catalog DB
     nickname = Column(String(100), nullable=True)
     is_primary = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -309,7 +392,6 @@ class UserVehicle(PiiBase):
 
     # Relationships
     user = relationship("User", back_populates="user_vehicles")
-    vehicle = relationship("Vehicle", back_populates="user_vehicles")
 
 
 class PartsCatalog(Base):
@@ -352,6 +434,7 @@ class PartsCatalog(Base):
     fitments = relationship("PartVehicleFitment", back_populates="part", cascade="all, delete-orphan")
     cross_references = relationship("PartCrossReference", back_populates="part", cascade="all, delete-orphan")
     aliases = relationship("PartAlias", back_populates="part", cascade="all, delete-orphan")
+    variants = relationship("PartVariant", back_populates="catalog_part", cascade="all, delete-orphan")
 
 
 class PartImage(Base):
@@ -369,12 +452,71 @@ class PartImage(Base):
     part = relationship("PartsCatalog", back_populates="images")
 
 
+class PartMaster(Base):
+    """Functional part identity — one record per 'what the vehicle needs',
+    independent of brand or quality level. Populated by scraper / ai_catalog_builder
+    starting Phase 3; existing 278K parts_catalog rows are not backfilled."""
+    __tablename__ = "parts_master"
+
+    id                 = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    canonical_name     = Column(String(255), nullable=False, index=True)
+    canonical_name_he  = Column(String(255), nullable=True)
+    category           = Column(String(100), nullable=False, index=True)
+    part_type          = Column(String(50),  nullable=True)
+    is_safety_critical = Column(Boolean, nullable=False, default=False)
+    created_at         = Column(DateTime, default=datetime.utcnow)
+    updated_at         = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    variants = relationship("PartVariant", back_populates="master_part",
+                            cascade="all, delete-orphan")
+
+
+QUALITY_LEVELS = ("OEM", "OEM_Equivalent", "Aftermarket_Premium",
+                  "Aftermarket_Standard", "Economy")
+
+
+class PartVariant(Base):
+    """Links a parts_master record to one parts_catalog row at a given quality level."""
+    __tablename__ = "part_variants"
+
+    id              = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    master_part_id  = Column(UUID(as_uuid=True),
+                             ForeignKey("parts_master.id",  ondelete="CASCADE"), nullable=False)
+    catalog_part_id = Column(UUID(as_uuid=True),
+                             ForeignKey("parts_catalog.id", ondelete="CASCADE"), nullable=False)
+    quality_level   = Column(String(20), nullable=False)
+    manufacturer    = Column(String(100), nullable=True)
+    sku             = Column(String(100), nullable=True)
+    created_at      = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("master_part_id", "catalog_part_id",
+                         name="uq_part_variants_master_catalog"),
+        CheckConstraint(
+            "quality_level IN ('OEM','OEM_Equivalent','Aftermarket_Premium',"
+            "'Aftermarket_Standard','Economy')",
+            name="ck_part_variants_quality_level",
+        ),
+        Index("idx_part_variants_master_part_id",  "master_part_id"),
+        Index("idx_part_variants_catalog_part_id", "catalog_part_id"),
+    )
+
+    master_part  = relationship("PartMaster",   back_populates="variants")
+    catalog_part = relationship("PartsCatalog", back_populates="variants")
+
+
 # ==============================================================================
 # 3. SUPPLIERS TABLES (2)
 # ==============================================================================
 
 class Supplier(Base):
     __tablename__ = "suppliers"
+    __table_args__ = (
+        CheckConstraint(
+            "reliability_score >= 0.00 AND reliability_score <= 1.00",
+            name="ck_suppliers_reliability_score_range",
+        ),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(255), unique=True, nullable=False)          # RockAuto, FCP Euro...
@@ -385,7 +527,7 @@ class Supplier(Base):
     credentials = Column(JSONB, default=dict)                        # encrypted
     shipping_info = Column(JSONB, default=dict)
     return_policy = Column(JSONB, default=dict)
-    reliability_score = Column(Numeric(3, 2), default=5.0)
+    reliability_score = Column(Numeric(3, 2), default=0.50, server_default="0.50", nullable=False)
     is_active = Column(Boolean, default=True)
     priority = Column(Integer, default=0)                            # lower = higher priority
     # Express shipping

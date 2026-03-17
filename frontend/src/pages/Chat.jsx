@@ -12,24 +12,24 @@ import toast from 'react-hot-toast'
 import { chatApi } from '../api/chat'
 
 const AGENT_LABELS = {
-  router_agent:          { label: 'מנהל',         color: 'bg-purple-100 text-purple-700' },
-  parts_finder_agent:    { label: 'חיפוש חלקים',  color: 'bg-blue-100 text-blue-700'   },
-  sales_agent:           { label: 'מכירות',        color: 'bg-green-100 text-green-700' },
-  orders_agent:          { label: 'הזמנות',        color: 'bg-orange-100 text-orange-700'},
-  finance_agent:         { label: 'כספים',         color: 'bg-yellow-100 text-yellow-700'},
-  service_agent:         { label: 'שירות לקוחות',  color: 'bg-cyan-100 text-cyan-700'   },
-  security_agent:        { label: 'אבטחה',         color: 'bg-red-100 text-red-700'      },
-  marketing_agent:       { label: 'שיווק',         color: 'bg-pink-100 text-pink-700'   },
-  supplier_manager_agent:{ label: 'ספקים',         color: 'bg-gray-100 text-gray-700'   },
-  social_media_manager_agent:{ label: 'רשתות חברתיות', color: 'bg-indigo-100 text-indigo-700'},
+  router_agent:              { label: 'אבי • ניתוב',             color: 'bg-purple-100 text-purple-700'  },
+  parts_finder_agent:        { label: 'ניר • חיפוש חלקים',       color: 'bg-blue-100 text-blue-700'      },
+  sales_agent:               { label: 'מאיה • מכירות',           color: 'bg-green-100 text-green-700'    },
+  orders_agent:              { label: 'ליאור • הזמנות',          color: 'bg-orange-100 text-orange-700'  },
+  finance_agent:             { label: 'טל • כספים',              color: 'bg-yellow-100 text-yellow-700'  },
+  service_agent:             { label: 'דנה • שירות לקוחות',      color: 'bg-cyan-100 text-cyan-700'      },
+  security_agent:            { label: 'אורן • אבטחה',            color: 'bg-red-100 text-red-700'        },
+  marketing_agent:           { label: 'שירה • שיווק',            color: 'bg-pink-100 text-pink-700'      },
+  supplier_manager_agent:    { label: 'בועז • ספקים',            color: 'bg-gray-100 text-gray-700'      },
+  social_media_manager_agent:{ label: 'נועה • רשתות חברתיות',   color: 'bg-indigo-100 text-indigo-700'  },
 }
 
 const QUICK_MSGS = [
-  'רכבי הוא מאזדה 3 2019 – מה שוויו?',
   'אני צריך פילטר שמן לרכב שלי',
-  'מה המחיר של רפידות בלם לטויוטה קורולה?',
+  'כמה עולות רפידות בלם למרצדס?',
   'מה הסטטוס של ההזמנה האחרונה שלי?',
-  'יש לי מספר לוחית: 12-345-67',
+  'יש לי מספר לוחית: 8219512',
+  'יש לכם בולמי זעזועים לרנו?',
 ]
 
 function AgentBadge({ agent }) {

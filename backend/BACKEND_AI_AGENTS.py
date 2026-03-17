@@ -76,13 +76,26 @@ load_dotenv()
 # CONFIGURATION
 # ==============================================================================
 
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
-GITHUB_MODELS_ENDPOINT = "https://models.inference.ai.azure.com"
+OLLAMA_URL = os.getenv("OLLAMA_URL", "")  # e.g. http://VPS_IP:11434 — empty = mock mode
 
-# Model selection
-GPT4O = "gpt-4o"
-CLAUDE_SONNET = "claude-3-5-sonnet"
-LLAMA = "Meta-Llama-3.1-70B-Instruct"
+# Model selection — Ollama model tags, overridable via environment variables
+DEFAULT_OLLAMA_MODEL = "qwen3:8b"   # single model for all tasks
+
+# Aliases kept for backward-compat with agent subclasses that reference these names
+LLAMA_8B      = DEFAULT_OLLAMA_MODEL
+LLAMA_70B     = DEFAULT_OLLAMA_MODEL
+MISTRAL       = DEFAULT_OLLAMA_MODEL
+PHI           = DEFAULT_OLLAMA_MODEL
+VISION_MODEL  = DEFAULT_OLLAMA_MODEL
+GPT4O_MINI    = DEFAULT_OLLAMA_MODEL
+GPT4O         = DEFAULT_OLLAMA_MODEL
+GPT55         = DEFAULT_OLLAMA_MODEL
+CLAUDE_SONNET = DEFAULT_OLLAMA_MODEL
+CLAUDE_SONNET_46 = DEFAULT_OLLAMA_MODEL
+
+# Defaults — override via .env: AGENTS_DEFAULT_MODEL
+FREE_MODEL    = os.getenv("AGENTS_DEFAULT_MODEL", DEFAULT_OLLAMA_MODEL)
+PREMIUM_MODEL = FREE_MODEL  # one model only
 
 # Business constants
 PROFIT_MARGIN = 1.45       # 45% markup on cost
@@ -111,20 +124,20 @@ class BaseAgent:
     """Base class for all Auto Spare AI agents."""
 
     name: str = "base_agent"
-    model: str = GPT4O
+    model: str = FREE_MODEL
     system_prompt: str = "You are a helpful assistant for Auto Spare."
     max_tokens: int = 1500
     temperature: float = 0.7
 
     def __init__(self):
-        if GITHUB_TOKEN:
+        if OLLAMA_URL:
             self.client = AsyncOpenAI(
-                base_url=GITHUB_MODELS_ENDPOINT,
-                api_key=GITHUB_TOKEN,
+                base_url=f"{OLLAMA_URL}/v1",
+                api_key="ollama",  # Ollama ignores this but AsyncOpenAI requires a non-empty value
             )
         else:
             self.client = None
-            print(f"[WARN] {self.name}: No GITHUB_TOKEN set. AI responses will be mocked.")
+            print(f"[WARN] {self.name}: OLLAMA_URL not set. AI responses will be mocked.")
 
     async def think(
         self,
@@ -134,7 +147,7 @@ class BaseAgent:
     ) -> str:
         """Send messages to GitHub Models API and return response text."""
         if not self.client:
-            return f"[Mock] {self.name} received your message. Please set GITHUB_TOKEN in .env for real AI responses."
+            return f"[Mock] {self.name} received your message. Please set OLLAMA_URL in .env for real AI responses."
 
         try:
             kwargs = dict(
@@ -198,6 +211,65 @@ class BaseAgent:
             "profit": profit,
         }
 
+    # ── Shared text-extraction helpers (used by PartsFinderAgent & SalesAgent) ─
+
+    # Hebrew → DB category keyword map
+    _CATEGORY_KEYWORDS: Dict[str, str] = {
+        "בלמ": "בלמים", "רפידות": "בלמים", "דיסק": "בלמים", "צלחות": "בלמים",
+        "קליפר": "בלמים", "רכב בלם": "בלמים",
+        "מנוע": "מנוע", "פיסטון": "מנוע", "גל ארכובה": "מנוע", "גל זיזים": "מנוע",
+        "טורבו": "מנוע", "מצמד": "מנוע", "ראש מנוע": "מנוע",
+        "מתלה": "מתלים והגה", "זרוע": "מתלים והגה", "קפיץ": "מתלים והגה",
+        "בולם": "מתלים והגה", "הגה": "מתלים והגה", "טרפז": "מתלים והגה",
+        "פנס": "תאורה", "פנסים": "תאורה", "נורה": "תאורה",
+        "LED": "תאורה", "בוקר": "גוף ואקסטריור", "פגוש": "גוף ואקסטריור",
+        "כנף": "גוף ואקסטריור", "דלת": "גוף ואקסטריור", "מכסה מנוע": "גוף ואקסטריור",
+        "מראה": "גוף ואקסטריור",
+        "חיישן": "חשמל", "מחוון": "חשמל", "מצתר": "חשמל", "ECU": "חשמל",
+        "ממסר": "חשמל", "אלטרנטור": "חשמל", "מצבר": "חשמל",
+        "מסנן": "מסננים ושמנים", "פילטר": "מסננים ושמנים", "שמן": "מסננים ושמנים",
+        "מיזוג": "מיזוג ומערכת חימום", "AC": "מיזוג ומערכת חימום",
+        "קומפרסור": "מיזוג ומערכת חימום", "אוורור": "מיזוג ומערכת חימום",
+        "תיבת הילוכים": "תיבת הילוכים", "גיר": "תיבת הילוכים",
+        "דלק": "מערכת דלק", "משאבת דלק": "מערכת דלק", "אינג'קטור": "מערכת דלק",
+        "קירור": "קירור", "ראדיאטור": "קירור", "טרמוסטט": "קירור",
+        "משאבת מים": "קירור", "מאוורר": "קירור",
+        "כיסא": "פנים הרכב", "שטיח": "פנים הרכב",
+        "פנים": "פנים הרכב", "דשבורד": "פנים הרכב", "כרית אויר": "פנים הרכב",
+        "גלגל": "גלגלים וצמיגים", "צמיג": "גלגלים וצמיגים", "ג'אנט": "גלגלים וצמיגים",
+        "קטליזטור": "מערכת פליטה", "מאיין": "מערכת פליטה",
+        "אטם": "אטמים וחומרים", "גאסקט": "אטמים וחומרים",
+        "רצועה": "שרשראות ורצועות", "שרשרת": "שרשראות ורצועות",
+        "סרן": "סרן והינע", "כרדן": "סרן והינע", "ג'וינט": "סרן והינע",
+        "מגב": "מגבים",
+        "ג'ק": "כלים וציוד", "כלי עבודה": "כלים וציוד",
+    }
+
+    def _extract_category_hint(self, message: str) -> Optional[str]:
+        """Quick keyword-based category detection without LLM call."""
+        msg_lower = message.lower()
+        for kw, cat in self._CATEGORY_KEYWORDS.items():
+            if kw.lower() in msg_lower:
+                return cat
+        return None
+
+    def _extract_search_query(self, message: str) -> str:
+        """Extract a concise search query: strip common Hebrew filler phrases."""
+        import re
+        filler = [
+            r'אני צריך\s*', r'אני רוצה\s*', r'אנחנו צריכים\s*',
+            r'אני מחפש\s*', r'אני מחפשת\s*', r'אני מ\w+\s+',  # conjugated: ממסנן, מחפש etc.
+            r'מה המחיר של\s*', r'כמה עולה\s*', r'כמה עולות\s*',
+            r'תוכל לבדוק\s*', r'בדוק\s*',
+            r'חפש\s*', r'יש לכם\s*', r'יש לך\s*',
+            r'לרכב שלי\s*', r'עבור הרכב שלי\s*',
+            r'רכבי הוא\s+\S+\s+\d{4}[^,–-]*[,–-]?\s*',
+        ]
+        cleaned = message
+        for f in filler:
+            cleaned = re.sub(f, '', cleaned, flags=re.IGNORECASE).strip()
+        return cleaned[:60].strip()
+
 
 # ==============================================================================
 # 0. ROUTER AGENT
@@ -206,15 +278,22 @@ class BaseAgent:
 class RouterAgent(BaseAgent):
     name = "router_agent"
     agent_name = "Avi"          # אבי — the smart dispatcher
-    model = GPT4O
+    model = FREE_MODEL          # routing is simple — free tier is fine
     temperature = 0.1  # deterministic routing
     system_prompt = """You are Avi, the routing agent for Auto Spare, an Israeli auto parts dropshipping platform.
 
 Your ONLY job is to identify which specialized agent should handle the user's message.
 
 Available agents:
-- parts_finder_agent: Vehicle identification, part search, price comparison, part identification from image
-- sales_agent: Product recommendations, upselling, bundles, purchase decisions
+- parts_finder_agent: License plate lookup, VIN/OEM number identification, part identification from image ONLY. Do NOT use for general part price or availability questions.
+- sales_agent: Any customer inquiry about a specific part — price questions ("כמה עולה X?"), availability ("יש לכם X?"), part search by name or type, Good/Better/Best recommendations, upselling, bundles, purchasing decisions. Use this for ANY "looking for a part" message.
+- orders_agent: Order status, tracking, cancellations, returns AND payment/checkout questions ("אפשר לשלם?", "איך משלמים?", "לינק לתשלום", "להשלים הזמנה"). Route ANY payment or checkout question here.
+- finance_agent: Invoice requests, VAT breakdowns, refund calculations, billing disputes — NOT for payment links or checkout flow.
+- service_agent: Technical support, complaints, general questions, after-sales
+- security_agent: Login issues, 2FA, password reset, account security, suspicious activity
+- marketing_agent: Promotions, coupons, discounts, newsletter, referrals, loyalty points
+- social_media_manager_agent: Social media content, posts (admin only)
+- supplier_manager_agent: Supplier catalog, price updates (admin only)
 - orders_agent: Order creation, order status, tracking, cancellation, dropshipping
 - finance_agent: Payments, invoices, refunds, returns, billing
 - service_agent: Technical support, complaints, general questions, after-sales
@@ -264,7 +343,7 @@ IMPORTANT: Default to "he" (Hebrew) if the message contains only numbers, order 
 class PartsFinderAgent(BaseAgent):
     name = "parts_finder_agent"
     agent_name = "Nir"          # ניר — the parts expert
-    model = GPT4O
+    model = PREMIUM_MODEL       # premium: complex Hebrew part-matching & pricing
     system_prompt = """You are Nir, the Parts Finder Agent for Auto Spare, an Israeli auto parts platform.
 
 CRITICAL RULES:
@@ -274,6 +353,7 @@ CRITICAL RULES:
 4. Results must be sorted by MANUFACTURER, not by supplier
 5. LANGUAGE: ALWAYS respond in Hebrew (עברית). If the customer writes in Arabic, respond in Arabic. Never respond in any other language — if the message is just a part number or vehicle code, respond in Hebrew.
 6. Always include warranty period and delivery estimate
+7. DROPSHIPPING: This is a 100% dropshipping system — no physical warehouse. Say "זמין להזמנה" (available to order), NEVER "יש במלאי" (in stock). Parts ship from our supplier after customer payment.
 
 PART CATEGORIES IN DB (use these for category filters):
 - בלמים          → brake discs, pads, calipers, cylinders
@@ -462,13 +542,12 @@ get_db_stats() to verify what categories and manufacturers currently hold stock.
 
     async def identify_vehicle(self, license_plate: str, db: AsyncSession) -> Dict:
         """Identify vehicle from license plate via Israeli Transport Ministry API (data.gov.il).
-        Always uses its own pii_session_factory session — Vehicle is a PiiBase model.
+        Uses async_session_factory — Vehicle is now a Base model in the catalog DB.
         The `db` parameter is kept for API compatibility but is not used.
         """
-        from BACKEND_DATABASE_MODELS import pii_session_factory
         clean_plate = license_plate.replace("-", "").replace(" ", "")
 
-        async with pii_session_factory() as pii_db:
+        async with async_session_factory() as pii_db:
             # Check DB cache (90-day TTL)
             result = await pii_db.execute(
                 select(Vehicle).where(Vehicle.license_plate == clean_plate)
@@ -818,64 +897,8 @@ get_db_stats() to verify what categories and manufacturers currently hold stock.
 
         return output
 
-    # Hebrew → English category keyword hints for regex-free extraction
-    _CATEGORY_KEYWORDS: Dict[str, str] = {
-        "בלמ": "בלמים", "רפידות": "בלמים", "דיסק": "בלמים", "צלחות": "בלמים",
-        "קליפר": "בלמים", "רכב בלם": "בלמים",
-        "מנוע": "מנוע", "פיסטון": "מנוע", "גל ארכובה": "מנוע", "גל זיזים": "מנוע",
-        "טורבו": "מנוע", "מצמד": "מנוע", "ראש מנוע": "מנוע",
-        "מתלה": "מתלים והגה", "זרוע": "מתלים והגה", "קפיץ": "מתלים והגה",
-        "בולם": "מתלים והגה", "הגה": "מתלים והגה", "טרפז": "מתלים והגה",
-        "פנס": "תאורה", "פנסים": "תאורה", "נורה": "תאורה", "פנס": "תאורה",
-        "LED": "תאורה", "בוקר": "גוף ואקסטריור", "פגוש": "גוף ואקסטריור",
-        "כנף": "גוף ואקסטריור", "דלת": "גוף ואקסטריור", "מכסה מנוע": "גוף ואקסטריור",
-        "מראה": "גוף ואקסטריור",
-        "חיישן": "חשמל", "מחוון": "חשמל", "מצתר": "חשמל", "ECU": "חשמל",
-        "ממסר": "חשמל", "אלטרנטור": "חשמל", "מצבר": "חשמל",
-        "מסנן": "מסננים ושמנים", "פילטר": "מסננים ושמנים", "שמן": "מסננים ושמנים",
-        "מיזוג": "מיזוג ומערכת חימום", "AC": "מיזוג ומערכת חימום",
-        "קומפרסור": "מיזוג ומערכת חימום", "אוורור": "מיזוג ומערכת חימום",
-        "תיבת הילוכים": "תיבת הילוכים", "גיר": "תיבת הילוכים",
-        "דלק": "מערכת דלק", "משאבת דלק": "מערכת דלק", "אינג'קטור": "מערכת דלק",
-        "קירור": "קירור", "ראדיאטור": "קירור", "טרמוסטט": "קירור",
-        "משאבת מים": "קירור", "מאוורר": "קירור",
-        "כיסא": "פנים הרכב", "הגלגל": "פנים הרכב", "שטיח": "פנים הרכב",
-        "פנים": "פנים הרכב", "דשבורד": "פנים הרכב", "כרית אויר": "פנים הרכב",
-        "גלגל": "גלגלים וצמיגים", "צמיג": "גלגלים וצמיגים", "ג'אנט": "גלגלים וצמיגים",
-        "פלדה": "מערכת פליטה", "קטליזטור": "מערכת פליטה", "מאיין": "מערכת פליטה",
-        "אטם": "אטמים וחומרים", "גאסקט": "אטמים וחומרים",
-        "רצועה": "שרשראות ורצועות", "שרשרת": "שרשראות ורצועות",
-        "סרן": "סרן והינע", "כרדן": "סרן והינע", "ג'וינט": "סרן והינע",
-        "מגב": "מגבים",
-        "ג'ק": "כלים וציוד", "כלי עבודה": "כלים וציוד",
-    }
-
-    def _extract_category_hint(self, message: str) -> Optional[str]:
-        """Quick keyword-based category detection without LLM call."""
-        msg_lower = message.lower()
-        for kw, cat in self._CATEGORY_KEYWORDS.items():
-            if kw.lower() in msg_lower:
-                return cat
-        return None
-
-    def _extract_search_query(self, message: str) -> str:
-        """Extract a concise search query from a longer message.
-        Strips common Hebrew filler phrases to get the part name.
-        """
-        import re
-        # Remove common filler phrases
-        filler = [
-            r'אני צריך\s*', r'אני רוצה\s*', r'אנחנו צריכים\s*',
-            r'מה המחיר של\s*', r'תוכל לבדוק\s*', r'בדוק\s*',
-            r'חפש\s*', r'יש לכם\s*', r'יש לך\s*',
-            r'לרכב שלי\s*', r'עבור הרכב שלי\s*',
-            r'רכבי הוא\s+\S+\s+\d{4}[^,–-]*[,–-]?\s*',  # "רכבי הוא מאזדה 3 2019 –"
-        ]
-        cleaned = message
-        for f in filler:
-            cleaned = re.sub(f, '', cleaned, flags=re.IGNORECASE).strip()
-        # Limit to first 60 chars to avoid overly long queries
-        return cleaned[:60].strip()
+    # _CATEGORY_KEYWORDS, _extract_category_hint, _extract_search_query
+    # are inherited from BaseAgent — defined there so SalesAgent can share them.
 
     async def process(self, message: str, conversation_history: List[Dict], db: AsyncSession, **kwargs) -> str:
         """Process a parts-related message with real DB search integration."""
@@ -894,21 +917,22 @@ get_db_stats() to verify what categories and manufacturers currently hold stock.
 
         # ── STEP 1: License plate identification ───────────────────────────────
         vehicle_context = ""
+        identified_vehicle: Optional[Dict] = None   # shared with step 2
         plate_match = re.search(r'(?<!\d)(\d[\d\-]{4,8}\d)(?!\d)', message)
         if plate_match:
             plate_raw = plate_match.group(1).replace("-", "")
             try:
-                vehicle = await self.identify_vehicle(plate_raw, db)
+                identified_vehicle = await self.identify_vehicle(plate_raw, db)
                 vehicle_context = (
                     f"\n\n[VEHICLE FROM PLATE {plate_raw}]\n"
-                    f"יצרן: {vehicle.get('manufacturer')} | דגם: {vehicle.get('model')} | "
-                    f"שנה: {vehicle.get('year')} | מנוע: {vehicle.get('engine_type')} | "
-                    f"דלק: {vehicle.get('fuel_type')} | צבע: {vehicle.get('color', 'לא ידוע')}\n"
-                    f"בדיקה אחרונה: {vehicle.get('last_test_date', 'לא ידוע')} | "
-                    f"תוקף רישיון: {vehicle.get('test_expiry_date', 'לא ידוע')}\n"
+                    f"יצרן: {identified_vehicle.get('manufacturer')} | דגם: {identified_vehicle.get('model')} | "
+                    f"שנה: {identified_vehicle.get('year')} | מנוע: {identified_vehicle.get('engine_type')} | "
+                    f"דלק: {identified_vehicle.get('fuel_type')} | צבע: {identified_vehicle.get('color', 'לא ידוע')}\n"
+                    f"בדיקה אחרונה: {identified_vehicle.get('last_test_date', 'לא ידוע')} | "
+                    f"תוקף רישיון: {identified_vehicle.get('test_expiry_date', 'לא ידוע')}\n"
                 )
                 print(f"[PartsFinderAgent] Identified plate {plate_raw}: "
-                      f"{vehicle.get('manufacturer')} {vehicle.get('model')} {vehicle.get('year')}")
+                      f"{identified_vehicle.get('manufacturer')} {identified_vehicle.get('model')} {identified_vehicle.get('year')}")
             except Exception as e:
                 vehicle_context = f"\n\n[PLATE {plate_raw}: לא נמצא ברישוי ({e})]\n"
 
@@ -928,6 +952,19 @@ get_db_stats() to verify what categories and manufacturers currently hold stock.
                 category_hint = self._extract_category_hint(message)
                 search_q = self._extract_search_query(message)
 
+                # For plate-only queries (nothing beside the plate number),
+                # use vehicle_manufacturer param so normalize_manufacturer runs on each word.
+                # Putting "סיטרואן ספרד BERLINGO" into query never matches "Citroën" in DB.
+                plate_only_vehicle_mfr = None
+                if identified_vehicle:
+                    msg_without_plate = message.replace(plate_match.group(1), "").strip(" -:")
+                    if len(msg_without_plate) < 3:
+                        plate_only_vehicle_mfr = identified_vehicle.get("manufacturer", "")
+                        mod = identified_vehicle.get("model", "")
+                        # Use model as query, manufacturer via dedicated param for proper normalisation
+                        search_q = mod if mod else ""
+                        print(f"[PartsFinderAgent] Plate-only query → mfr='{plate_only_vehicle_mfr}' model='{mod}'")
+
                 print(f"[PartsFinderAgent] Searching: query='{search_q}' category='{category_hint}'")
 
                 results = await self.search_parts_in_db(
@@ -937,6 +974,7 @@ get_db_stats() to verify what categories and manufacturers currently hold stock.
                     db=db,
                     limit=6,
                     sort_by="price_asc",
+                    vehicle_manufacturer=plate_only_vehicle_mfr,
                 )
 
                 if results:
@@ -949,7 +987,7 @@ get_db_stats() to verify what categories and manufacturers currently hold stock.
                     for i, p in enumerate(results, 1):
                         pr = p.get("pricing") or {}
                         avail = pr.get("availability", "unknown")
-                        avail_he = "במלאי ✅" if avail == "in_stock" else "להזמנה ⏳"
+                        avail_he = "זמין להזמנה ✅" if avail == "in_stock" else "זמין בהזמנה מיוחדת ⏳"
                         delivery = pr.get("estimated_delivery_days")
                         delivery_str = f"{delivery} ימים" if delivery else "10-14 ימים"
                         warranty = pr.get("warranty_months", 12)
@@ -989,7 +1027,7 @@ get_db_stats() to verify what categories and manufacturers currently hold stock.
                             total = pr.get("total", 0.0)
                             vat = pr.get("vat", 0.0)
                             pnv = pr.get("price_no_vat", 0.0)
-                            avail_he = "במלאי ✅" if pr.get("availability") == "in_stock" else "להזמנה ⏳"
+                            avail_he = "זמין להזמנה ✅" if pr.get("availability") == "in_stock" else "זמין בהזמנה מיוחדת ⏳"
                             delivery = pr.get("estimated_delivery_days", 14)
                             warranty = pr.get("warranty_months", 12)
                             sp_id = pr.get("supplier_part_id", "")
@@ -1028,22 +1066,53 @@ get_db_stats() to verify what categories and manufacturers currently hold stock.
 
 class SalesAgent(BaseAgent):
     name = "sales_agent"
+    model = PREMIUM_MODEL      # premium: upselling & Good/Better/Best logic
+    temperature = 0.7
     agent_name = "Maya"         # מאיה — the sales pro
-    model = GPT4O
-    system_prompt = """You are Maya, the Sales Agent for Auto Spare, an Israeli auto parts platform.
+    system_prompt = """You are Maya, the Sales Agent for Auto Spare – an Israeli auto parts dropshipping platform.
 
-Your goals:
-1. Understand customer needs (vehicle, usage, budget)
-2. Present 3 options: Good (Aftermarket), Better (OEM), Best (Original)
-3. Smart upselling: if customer wants brake discs, suggest pads too
-4. Close the deal professionally
+DROPSHIPPING CONTEXT (CRITICAL):
+Auto Spare is a 100% dropshipping system. We hold NO physical inventory / warehouse stock.
+When a customer orders, we place the order with our supplier network AFTER confirmed payment.
+NEVER say "יש במלאי" (in stock). Always say "זמין להזמנה" (available to order).
+Delivery: 7-14 business days. Return policy: 14 days (sealed/unopened parts only).
 
-CRITICAL: Never mention supplier names. Show only manufacturer.
-Always show price breakdown: net + 17% VAT + 91₪ shipping.
-LANGUAGE: ALWAYS respond in Hebrew (עברית). If the customer writes in Arabic, respond in Arabic. Never respond in any other language — if the message contains only an order number or part code with no clear language, respond in Hebrew.
+YOUR PROACTIVE SALES CONVERSATION FLOW — follow this EVERY time a customer asks about a part:
 
-Upsell example:
-"נמצאו דיסקי בלמים! יש לך כבר רפידות חדשות? החלפה ביחד חוסכת עבודה ומבטיחה בלימה מיטבית."
+STEP 1 — GREET & QUALIFY (if vehicle is not yet known):
+  שלום! אני מאיה 😊 שמחה לעזור! לאיזה רכב מחפשים? (יצרן, דגם, שנה)
+  If vehicle is already mentioned → skip straight to STEP 2.
+
+STEP 2 — PRESENT RESULTS from the catalog data injected below, as tiers:
+  ✅ טוב       — Aftermarket  (lowest price, good quality)
+  ⭐ טוב יותר  — OEM          (mid price, fits like original)
+  🏆 הכי טוב   — Original     (premium, factory quality)
+  Always show: מחיר ללא מע"מ + מע"מ 17% + משלוח 91₪ = סה"כ
+  If only one type is available, present it and explain why it's the best choice.
+
+STEP 3 — UPSELL SMART:
+  After presenting the part, suggest a complementary part from the catalog data:
+  (brake disc → suggest brake pads, oil filter → suggest engine oil, etc.)
+  Example: "יש לך כבר רפידות? החלפה ביחד חוסכת עבודה ומבטיחה בלימה מיטבית!"
+
+STEP 4 — CLOSE THE DEAL:
+  End every response with a clear call to action directing to the cart.
+  The checkout flow is:
+    1. Customer clicks "הוסף לעגלה" on a part
+    2. They go to the cart page: /cart
+    3. From /cart they click 'לתשלום' → Stripe payment page opens automatically.
+  ALWAYS end with this line (or similar):
+    "להשלמת ההזמנה — עבור לעגלה שלך: /cart ולחץ 'לתשלום'."
+  When the customer asks for a payment link, ALWAYS answer:
+    "כן! כנס לעגלה שלך: /cart ולחץ על 'לתשלום' — התשלום מתבצע דרך Stripe בצורה מאובטחת."
+  Do NOT say you can't provide links — /cart is always valid. Never invent external URLs.
+
+CRITICAL RULES:
+1. NEVER mention supplier names (RockAuto, FCP Euro, Autodoc, AliExpress, Aliexpress, etc.)
+2. NEVER say "יש במלאי" — only "זמין להזמנה" or "זמין בהזמנה מיוחדת"
+3. ONLY use prices from the catalog data injected below — NEVER invent prices
+4. Do NOT answer about: car valuations, insurance, traffic fines, repair costs, or anything outside parts
+5. LANGUAGE: Respond in Hebrew. If the customer writes in Arabic, respond in Arabic.
 """
 
     # Upsell pairings: buying X → suggest Y
@@ -1066,37 +1135,108 @@ Upsell example:
     }
 
     async def process(self, message: str, conversation_history: List[Dict], db: AsyncSession, **kwargs) -> str:
-        """Process a sales query, inject real product data + upsell suggestions."""
+        """Process a part inquiry: search the DB catalog, present Good/Better/Best tiers, upsell, close."""
+        # Delegate DB search to PartsFinderAgent (which owns search_parts_in_db + normalize_manufacturer)
+        _pf = get_agent("parts_finder_agent")
+
+        # ── 1. Search DB for requested part ───────────────────────────────────
+        parts_context = ""
+        is_parts_request = any(kw in message for kw in [
+            "חלק", "חלקים", "מחיר", "כמה עולה", "כמה עולות", "יש לכם", "יש לך",
+            "בלמ", "רפידות", "מנוע", "מתלה", "פנס", "מסנן", "פילטר",
+            "מגב", "גלגל", "צמיג", "מראה", "מיזוג", "חיישן", "אטם",
+            "קירור", "דלק", "גיר", "סרן", "רצועה", "שרשרת", "רדיאטור",
+            "זמין", "קנה", "מוכרים", "אחריות", "אספקה", "חלופי",
+        ])
+        if is_parts_request:
+            try:
+                category_hint = self._extract_category_hint(message)
+                search_q = self._extract_search_query(message)
+                results = await _pf.search_parts_in_db(
+                    query=search_q, vehicle_id=None, category=category_hint,
+                    db=db, limit=6, sort_by="price_asc",
+                )
+                if results:
+                    lines = [
+                        f"\n[CATALOG — {len(results)} חלקים | הצג תוצאות כ-טוב/טוב-יותר/הכי-טוב]\n"
+                        "השתמש ONLY במחירים האלו — אל תמציא!\n"
+                        "סיים כל תשובה ב: 'להשלמת ההזמנה — עבור ל /cart ולחץ לתשלום'\n"
+                    ]
+                    for i, p in enumerate(results, 1):
+                        pr = p.get("pricing") or {}
+                        tier = {"Aftermarket": "✅ טוב", "OEM": "⭐ טוב יותר", "Original": "🏆 הכי טוב"}.get(
+                            p.get("part_type", ""), p.get("part_type", "")
+                        )
+                        pnv = pr.get("price_no_vat", 0.0)
+                        vat = pr.get("vat", 0.0)
+                        total = pr.get("total", 0.0)
+                        delivery = pr.get("estimated_delivery_days", 14)
+                        warranty = pr.get("warranty_months", 12)
+                        sp_id = pr.get("supplier_part_id", "")
+                        avail_he = "זמין להזמנה ✅" if pr.get("availability") == "in_stock" else "זמין בהזמנה מיוחדת ⏳"
+                        price_line = f"{pnv:.0f}₪ + {vat:.0f}₪ מע\"מ + 91₪ משלוח = **{total:.0f}₪**" if total > 0 else "מחיר: לא זמין"
+                        lines.append(
+                            f"{i}. [{tier}] {p.get('manufacturer','?')} – {p.get('name','?')}\n"
+                            f"   {price_line} | {avail_he} | אספקה: {delivery} ימים | אחריות: {warranty} חודשים\n"
+                            f"   supplier_part_id: {sp_id}\n"
+                        )
+                    parts_context = "\n".join(lines)
+                else:
+                    # Broader fallback without category filter
+                    broader = await _pf.search_parts_in_db(
+                        query=search_q, vehicle_id=None, category=None, db=db, limit=4, sort_by="price_asc"
+                    )
+                    if broader:
+                        lines = [f"\n[BROADER SEARCH — '{search_q}' | {len(broader)} תוצאות]\n"]
+                        for i, p in enumerate(broader, 1):
+                            pr = p.get("pricing") or {}
+                            pnv = pr.get("price_no_vat", 0.0)
+                            vat = pr.get("vat", 0.0)
+                            total = pr.get("total", 0.0)
+                            delivery = pr.get("estimated_delivery_days", 14)
+                            warranty = pr.get("warranty_months", 12)
+                            sp_id = pr.get("supplier_part_id", "")
+                            avail_he = "זמין להזמנה ✅" if pr.get("availability") == "in_stock" else "זמין בהזמנה מיוחדת ⏳"
+                            price_line = f"{pnv:.0f}₪ + {vat:.0f}₪ מע\"מ + 91₪ משלוח = **{total:.0f}₪**" if total > 0 else "לא זמין"
+                            lines.append(
+                                f"{i}. {p.get('manufacturer','?')} – {p.get('name','?')} ({p.get('part_type','?')})\n"
+                                f"   {price_line} | {avail_he} | {delivery} ימים | {warranty} חודשים אחריות\n"
+                                f"   supplier_part_id: {sp_id}\n"
+                            )
+                        parts_context = "\n".join(lines)
+                    else:
+                        parts_context = f"\n[DB: אין תוצאות עבור '{search_q}'. ספר ללקוח ובקש פרטים נוספים על הרכב.]\n"
+            except Exception as e:
+                print(f"[SalesAgent] DB search failed: {e}")
+
+        # ── 2. Upsell suggestions ─────────────────────────────────────────────
         upsell_context = ""
         try:
-            # Check for upsell opportunities based on message keywords
             upsell_suggestions = []
             for kw, suggestions in self._UPSELL_MAP.items():
                 if kw in message:
                     upsell_suggestions = suggestions[:2]
                     break
-
             if upsell_suggestions:
-                lines = ["\n[UPSELL OPPORTUNITY — כלול הצעות אלו בתשובה:]\n"]
-                # Always use catalog DB — PartsCatalog lives in autospare, not pii
+                lines = ["\n[UPSELL — הצע ללקוח גם:]\n"]
                 async with async_session_factory() as cat_db:
                     for sugg in upsell_suggestions:
-                        results = await cat_db.execute(
+                        res = await cat_db.execute(
                             select(PartsCatalog.name, PartsCatalog.manufacturer, PartsCatalog.category)
                             .where(PartsCatalog.is_active == True)
                             .where(PartsCatalog.name.ilike(f"%{sugg}%"))
                             .limit(1)
                         )
-                        row = results.fetchone()
+                        row = res.fetchone()
                         if row:
-                            lines.append(f"• {sugg}: ✅ יש במלאי — {row[1]} '{row[0]}' ({row[2]})")
+                            lines.append(f"• {sugg}: זמין להזמנה ✅ — {row[1]} '{row[0]}' ({row[2]})")
                         else:
-                            lines.append(f"• {sugg}: הצע ללקוח לבדוק")
+                            lines.append(f"• {sugg}: הצע ללקוח לבדוק זמינות")
                 upsell_context = "\n".join(lines)
         except Exception as e:
             print(f"[SalesAgent] upsell lookup failed: {e}")
 
-        system = self.system_prompt + upsell_context
+        system = self.system_prompt + parts_context + upsell_context
         return await self.think(
             conversation_history + [{"role": "user", "content": message}],
             system_override=system,
@@ -1110,33 +1250,41 @@ Upsell example:
 class OrdersAgent(BaseAgent):
     name = "orders_agent"
     agent_name = "Lior"         # ליאור — logistics master
-    model = GPT4O
-    system_prompt = """You are the Orders Agent for Auto Spare.
+    model = FREE_MODEL          # free: straightforward DB-driven order queries
+    system_prompt = """You are Lior, the Orders & Logistics Agent for Auto Spare, an Israeli auto parts dropshipping platform.
 
-You handle:
-- Order status queries
-- Tracking information
-- Order cancellation requests
-- Return requests
+Never call yourself 'the system' — introduce yourself as Lior, a personal logistics expert.
 
-CRITICAL DROPSHIPPING RULE: Orders are placed with suppliers ONLY after customer payment.
-Never confirm supplier order before payment.
+You handle: order status, tracking, cancellations, and return requests.
 
-Order statuses:
-- pending_payment → waiting for payment
-- paid → payment received, processing
-- supplier_ordered → placed with supplier, tracking number assigned
-- shipped → in transit (tracking number available)
-- delivered → received by customer
-- cancelled / refunded
+CRITICAL DROPSHIPPING RULE: Orders are placed with suppliers ONLY after customer payment confirmed. Never confirm supplier order before payment.
 
-TRACKING RULES (very important):
-- When order data is injected below, use ONLY those real values — never guess or invent order numbers/statuses.
-- When a tracking URL is present in the data, include it as a clickable markdown link like: [עקוב אחר המשלוח](URL)
-- NEVER tell the customer to "enter the tracking number manually" — the link is already ready.
-- Show the tracking number AND the link together.
+Order statuses (always use these exact labels in Hebrew):
+- pending_payment → ממתין לתשלום
+- paid → שולם, בעיבוד
+- supplier_ordered → הוזמן מספק, מספר מעקב הוקצה
+- shipped → בדרך (מספר מעקב זמין)
+- delivered → נמסר ללקוח
+- cancelled / refunded → בוטל / הוחזר
 
-LANGUAGE: ALWAYS respond in Hebrew (עברית). If the customer writes in Arabic, respond in Arabic."""
+Return & Refund Policy:
+- Manufacturer defect / wrong part sent → 100% refund incl. original shipping, we cover return shipping
+- All other reasons → 90% refund (10% handling fee), original shipping not refunded, customer pays return shipping
+- Returns accepted within 30 days of delivery
+
+TRACKING RULES:
+- Use ONLY real order data injected below — never invent order numbers or statuses
+- Include tracking link as markdown: [עקוב אחר המשלוח](URL)
+- NEVER tell the customer to enter the tracking number manually — the link is pre-built
+
+PAYMENT ROUTING:
+- When a customer asks for a payment link or how to pay, ALWAYS answer:
+  "כן! כנס לעגלה שלך: /cart ולחץ על 'לתשלום' — התשלום מתבצע דרך Stripe בצורה מאובטחת."
+- For pending_payment orders: "כדי להשלים את התשלום — כנס לעגלה שלך: /cart ולחץ 'לתשלום'."
+- /cart is always a valid path — never refuse to direct the customer there.
+- Do NOT invent external URLs. Do NOT write placeholder links like [עמוד תשלום](#).
+
+LANGUAGE: ALWAYS respond in Hebrew. If customer writes in Arabic, respond in Arabic."""
 
     async def process(self, message: str, conversation_history: List[Dict], db: AsyncSession, **kwargs) -> str:
         import re as _re
@@ -1456,28 +1604,31 @@ LANGUAGE: ALWAYS respond in Hebrew (עברית). If the customer writes in Arabi
 class FinanceAgent(BaseAgent):
     name = "finance_agent"
     agent_name = "Tal"          # טל — finance officer
-    model = GPT4O
-    system_prompt = """You are the Finance Agent for Auto Spare (עוסק מורשה 060633880, הרצל 55, עכו).
+    model = FREE_MODEL          # free: rule-based calculations
+    system_prompt = """You are Tal, the Finance Agent for Auto Spare (עוסק מורשה 060633880, הרצל 55, עכו).
 
-You handle:
-- Payment questions
-- Invoice requests
-- Refund calculations
-- Return refund policies
+Never say 'I am the system' — you are Tal, the financial point of contact for the platform.
+
+You handle: payments, invoices, receipts, refund calculations, VAT breakdowns.
+
+Pricing formula (always compute this way):
+  Supplier cost × 1.45 (45% margin) = Price before VAT
+  Price before VAT × 1.17 (17% VAT) = Price incl. VAT
+  Price incl. VAT + ~91₪ shipping = Total customer price
 
 Refund policy:
-- Manufacturer defect: 100% refund (including original shipping, we pay return shipping)
-- Other reasons: 90% refund (10% handling fee, original shipping not refunded, customer pays return)
+- Manufacturer defect / wrong item sent → 100% refund incl. original shipping, return shipping covered by us
+- All other reasons → 90% refund (10% handling fee), original shipping not refunded, customer pays return
+- Returns within 30 days of delivery
 
-Always show full price breakdown with:
-- Net price (without VAT)
-- VAT 17% amount
-- Shipping amount
-- Total
+Payment: Stripe (credit/debit card). NEVER ask for card details.
+CHECKOUT: When a customer asks how to pay or wants a payment link, ALWAYS say:
+  "כן! כנס לעגלה שלך: /cart ולחץ על 'לתשלום' — התשלום מתבצע דרך Stripe בצורה מאובטחת."
+Do NOT say you cannot provide links. /cart is always the correct answer.
+Business: מס' עוסק מורשה 060633880 | הרצל 55, עכו
 
-NEVER ask for credit card details. Use Stripe for payments.
-Business number (מס' עוסק מורשה): 060633880
-LANGUAGE: ALWAYS respond in Hebrew (עברית). If the customer writes in Arabic, respond in Arabic. Never respond in any other language.
+Always show full breakdown: מחיר נטו + מע"מ 17% + משלוח = סה"כ
+LANGUAGE: ALWAYS respond in Hebrew. If customer writes in Arabic, respond in Arabic.
 """
 
     async def process(self, message: str, conversation_history: List[Dict], db: AsyncSession, **kwargs) -> str:
@@ -1491,25 +1642,34 @@ LANGUAGE: ALWAYS respond in Hebrew (עברית). If the customer writes in Arabi
 class ServiceAgent(BaseAgent):
     name = "service_agent"
     agent_name = "Dana"         # דנה — empathetic support
-    model = GPT4O
+    model = FREE_MODEL          # free: conversational support
     temperature = 0.8
-    system_prompt = """You are Dana, the Customer Service Agent for Auto Spare.
+    system_prompt = """You are Dana, the Customer Service Agent for Auto Spare, an Israeli auto parts dropshipping platform.
+
+You are the default fallback agent — handle anything not handled by a specialist.
+
+Platform features customers can use:
+- חיפוש חלקים at /parts — search by license plate, VIN, make/model/year/category
+- הזמנות at /orders — view order status and tracking
+- פרופיל at /profile — address, password, notification settings
+- סל קניות at /cart — shopping cart and Stripe checkout
+- צ'אט AI — this chat (you)
 
 You handle:
-- General questions about the platform
-- Technical support
-- Complaints and escalations
-- Post-purchase support
+- General platform questions and how-to
+- Technical problems (search not working, page errors, etc.)
+- Complaints and escalations — empathy first, then solve
+- Post-purchase issues (defective/wrong parts, delivery problems)
 
 Approach:
-1. Listen - let customer express their concern fully
-2. Diagnose - ask clarifying questions
-3. Solve - offer a specific solution
-4. Follow up - confirm problem is resolved
+1. Listen — let the customer express themselves fully
+2. Diagnose — ask one clarifying question if needed
+3. Solve — give one specific, actionable answer
+4. Confirm — check if the issue is resolved
 
 Tone: Empathetic, patient, professional.
-Hebrew phrases: "אני פה בשבילך", "בואו נפתור את זה ביחד"
-LANGUAGE: ALWAYS respond in Hebrew (עברית). If the customer writes in Arabic, respond in Arabic. Never respond in any other language.
+Hebrew: "אני פה בשבילך", "בואו נפתור את זה ביחד"
+LANGUAGE: ALWAYS respond in Hebrew. If customer writes in Arabic, respond in Arabic.
 """
 
     async def process(self, message: str, conversation_history: List[Dict], db: AsyncSession, **kwargs) -> str:
@@ -1523,7 +1683,7 @@ LANGUAGE: ALWAYS respond in Hebrew (עברית). If the customer writes in Arabi
 class SecurityAgent(BaseAgent):
     name = "security_agent"
     agent_name = "Oren"         # אורן — vigilant guard
-    model = GPT4O
+    model = FREE_MODEL          # free: rule-based deterministic security responses
     temperature = 0.2
     system_prompt = """You are Oren, the Security Agent for Auto Spare.
 
@@ -1552,8 +1712,9 @@ LANGUAGE: ALWAYS respond in Hebrew (עברית). If the customer writes in Arabi
 
 class MarketingAgent(BaseAgent):
     name = "marketing_agent"
+    model = PREMIUM_MODEL      # premium: campaign building requires creativity
+    temperature = 0.8
     agent_name = "Shira"        # שירה — creative marketer
-    model = GPT4O
     system_prompt = """You are Shira, the Marketing Agent for Auto Spare.
 
 You handle:
@@ -1584,18 +1745,20 @@ LANGUAGE: ALWAYS respond in Hebrew (עברית). If the customer writes in Arabi
 class SupplierManagerAgent(BaseAgent):
     name = "supplier_manager_agent"
     agent_name = "Boaz"         # בועז — background supplier manager
-    model = GPT4O
+    model = FREE_MODEL          # free: background tasks, not customer-facing
     temperature = 0.1
-    system_prompt = """You are Boaz, the Supplier Manager for Auto Spare (INTERNAL USE ONLY).
-You manage supplier relationships, catalog sync, and pricing.
-You do NOT interact with customers.
+    system_prompt = """אתה בועז, מנהל הספקים של Auto Spare (פנימי בלבד).
+אתה מנהל קשרי ספקים, סנכרון קטלוג ותמחור. אינך משוחח עם לקוחות.
 
-Daily tasks:
-- Sync catalog from all 4 suppliers (RockAuto, FCP Euro, Autodoc, AliExpress)
-- Update prices (daily at 02:00)
-- Monitor availability
-- Alert on price drops > 10%
-- Monthly performance review
+משימות יומיות:
+- סנכרון קטלוג מכל הספקים (עדכון יומי 02:00)
+- עדכון מחירים
+- ניטור זמינות
+- התראה על ירידת מחיר > 10%
+- סקירת ביצועים חודשית
+
+אם לקוח פנה אליך, השב תמיד:
+"סוכן זה הוא לשימוש פנימי בלבד. כדי לקבל עזרה, פנה לצוות השירות."
 """
 
     async def sync_prices(self, db: AsyncSession) -> Dict:
@@ -1724,7 +1887,7 @@ Daily tasks:
         return report
 
     async def process(self, message: str, conversation_history: List[Dict], db: AsyncSession, **kwargs) -> str:
-        return "Supplier Manager is a background agent and does not interact with customers."
+        return "סוכן זה הוא לשימוש פנימי בלבד. כדי לקבל עזרה עם הזמנה או חלקים, פנה לצוות השירות."
 
 
 # ==============================================================================
@@ -1733,10 +1896,10 @@ Daily tasks:
 
 class SocialMediaManagerAgent(BaseAgent):
     name = "social_media_manager_agent"
-    agent_name = "Noa"          # נועה — social media strategist
-    model = GPT4O
+    model = PREMIUM_MODEL      # premium: creative content generation
     temperature = 0.9
-    system_prompt = """You are the Social Media Manager for Auto Spare.
+    agent_name = "Noa"          # נועה — social media strategist
+    system_prompt = """You are Noa, the Social Media Manager for Auto Spare, an Israeli auto parts platform.
 
 Platforms: Facebook, Instagram, TikTok, Twitter/X, LinkedIn, Telegram.
 
@@ -1752,9 +1915,11 @@ Posting schedule:
 - TikTok: 08:00, 12:00, 20:00
 - LinkedIn: weekdays only
 
-CRITICAL: Paid ads and new campaigns require manager approval.
-Auto-publish only within approved campaign.
-All content must be saved as 'pending_approval' first.
+When asked to create a post or content, ALWAYS generate the full post text directly including hashtags.
+Paid ads and new campaigns require manager approval before publishing.
+
+LANGUAGE: ALWAYS respond in Hebrew (עברית). Write all posts in Hebrew with relevant Hebrew hashtags.
+If the customer writes in Arabic, respond in Arabic. Never respond in any other language.
 """
 
     async def generate_post(self, topic: str, platform: str, tone: str = "professional") -> str:

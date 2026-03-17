@@ -512,9 +512,26 @@ async def fetch_ils_exchange_rate() -> float:
     return ILS_PER_USD
 
 
+
 # ==============================================================================
 # DB UPDATE TOOLS
 # ==============================================================================
+
+async def _meili_sync_part(part_id: str, doc: dict) -> None:
+    """Fire-and-forget: push one updated part document to Meilisearch."""
+    _meili_url = os.getenv("MEILI_URL", "")
+    if not _meili_url:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            await client.put(
+                f"{_meili_url}/indexes/parts/documents",
+                headers={"Authorization": f"Bearer {os.getenv('MEILI_MASTER_KEY', '')}"},
+                json=[{**doc, "id": part_id}],
+            )
+    except Exception:
+        pass  # non-critical — bulk re-sync will catch stragglers
+
 
 async def db_upsert_part(db: AsyncSession, *, sku: str, name: str, manufacturer: str,
                           category: str, part_type: str = "Aftermarket",
@@ -542,6 +559,11 @@ async def db_upsert_part(db: AsyncSession, *, sku: str, name: str, manufacturer:
              "description": description, "sku": sku},
         )
         await db.commit()
+        asyncio.create_task(_meili_sync_part(
+            str(existing[0]),
+            {"sku": sku, "name": name, "manufacturer": manufacturer,
+             "category": category, "part_type": part_type, "base_price": base_price},
+        ))
         return str(existing[0]), False
 
     part_id = str(uuid.uuid4())
@@ -563,6 +585,12 @@ async def db_upsert_part(db: AsyncSession, *, sku: str, name: str, manufacturer:
         },
     )
     await db.commit()
+    asyncio.create_task(_meili_sync_part(
+        part_id,
+        {"sku": sku, "name": name, "manufacturer": manufacturer,
+         "category": category, "part_type": part_type, "base_price": base_price,
+         "is_active": True},
+    ))
     return part_id, True
 
 

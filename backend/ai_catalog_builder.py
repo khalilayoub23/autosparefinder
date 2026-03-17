@@ -1,7 +1,7 @@
 """
 ai_catalog_builder.py
 ---------------------
-Uses GPT-4o (GitHub Models API) to generate real OEM parts catalog data.
+Uses Ollama (self-hosted LLM on VPS) to generate real OEM parts catalog data.
 
 Modes:
   --new      Add completely new brands (BYD, MG, Tesla, etc.)
@@ -25,9 +25,8 @@ load_dotenv()
 _raw_url = os.getenv("DATABASE_URL", "postgresql+asyncpg://autospare:autospare_dev@localhost:5432/autospare")
 DB_URL = _raw_url.replace("postgresql+asyncpg://", "postgresql://").replace("+asyncpg", "")
 
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
-GITHUB_MODELS_ENDPOINT = "https://models.inference.ai.azure.com"
-GPT4O = "gpt-4o-mini"
+OLLAMA_URL = os.getenv("OLLAMA_URL", "")  # e.g. http://VPS_IP:11434
+OLLAMA_MODEL = os.getenv("AGENTS_DEFAULT_MODEL", "qwen3:8b")
 
 SUPPLIER_NAME = "AutoParts Pro IL"
 ILS_TO_USD   = 1 / 3.65
@@ -162,7 +161,7 @@ async def ask_gpt4o(client: AsyncOpenAI, brand: str, prompt: str) -> list:
     for attempt in range(5):
         try:
             resp = await client.chat.completions.create(
-                model=GPT4O,
+                model=OLLAMA_MODEL,
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": prompt},
@@ -238,12 +237,12 @@ async def insert_parts(conn, supplier_id, brand: str, parts: list,
 
 
 async def run(mode_new=True, mode_expand=True, specific_brands=None, dry_run=False):
-    if not GITHUB_TOKEN:
-        print("ERROR: GITHUB_TOKEN not set in .env"); return
+    if not OLLAMA_URL:
+        print("ERROR: OLLAMA_URL not set in .env"); return
 
-    print(f"{'[DRY RUN] ' if dry_run else ''}Connecting to DB and GitHub Models...")
+    print(f"{'[DRY RUN] ' if dry_run else ''}Connecting to DB and Ollama ({OLLAMA_URL})...")
     conn   = await asyncpg.connect(DB_URL)
-    client = AsyncOpenAI(base_url=GITHUB_MODELS_ENDPOINT, api_key=GITHUB_TOKEN)
+    client = AsyncOpenAI(base_url=f"{OLLAMA_URL}/v1", api_key="ollama")
 
     supplier = await conn.fetchrow("SELECT id FROM suppliers WHERE name=$1", SUPPLIER_NAME)
     if not supplier:
