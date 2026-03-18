@@ -734,7 +734,61 @@ get_db_stats() to verify what categories and manufacturers currently hold stock.
         if meili_ids is not None and len(meili_ids) == 0:
             return []
 
-        # ── Meilisearch path: raw SQL with rank-preserving unnest JOIN ───────
+        # ── pgvector: embed the query and find nearest neighbours ────────────
+        # vec_score: {id_str → cosine_similarity}  (empty if unavailable)
+        # Runs only when Meilisearch returned results — no point calling Ollama
+        # if Meilisearch already short-circuited or fell back to ILIKE.
+        vec_score: Dict[str, float] = {}
+        if meili_ids and query and OLLAMA_URL:
+            try:
+                async with httpx.AsyncClient(timeout=3.0) as _vc:
+                    _vresp = await _vc.post(
+                        f"{OLLAMA_URL}/api/embed",
+                        json={"model": "nomic-embed-text", "input": query},
+                        timeout=3.0,
+                    )
+                    _vresp.raise_for_status()
+                    _vdata = _vresp.json()
+                    _embeddings = _vdata.get("embeddings") or _vdata.get("embedding")
+                    if _embeddings and isinstance(_embeddings[0], list):
+                        query_vec: Optional[List[float]] = _embeddings[0]
+                    elif _embeddings and isinstance(_embeddings[0], float):
+                        query_vec = _embeddings
+                    else:
+                        query_vec = None
+
+                if query_vec:
+                    async with async_session_factory() as _vdb:
+                        _vrows = (await _vdb.execute(
+                            text("""
+                                SELECT id::text,
+                                       1 - (embedding <=> CAST(:qvec AS vector)) AS sim
+                                FROM parts_catalog
+                                WHERE is_active = TRUE
+                                  AND embedding IS NOT NULL
+                                ORDER BY embedding <=> CAST(:qvec AS vector)
+                                LIMIT 50
+                            """),
+                            {"qvec": str(query_vec)},
+                        )).fetchall()
+                    vec_score = {r[0]: float(r[1]) for r in _vrows}
+            except Exception:
+                vec_score = {}  # degrade silently to Meilisearch-only
+
+        # ── Hybrid re-rank: 0.6 × meili_score + 0.4 × vec_score ─────────────
+        # meili_score for rank i (0-based): 1/(i+1) → rank 0=1.0, rank 1=0.5 …
+        # vec_score: cosine similarity (1 − distance) → higher = more similar
+        # IDs absent from one source receive 0.0 for that source.
+        if vec_score:
+            meili_scores = {uid: 1.0 / (i + 1) for i, uid in enumerate(meili_ids)}
+            all_ids = list(dict.fromkeys(list(meili_scores) + list(vec_score)))
+            combined = {
+                uid: 0.6 * meili_scores.get(uid, 0.0) + 0.4 * vec_score.get(uid, 0.0)
+                for uid in all_ids
+            }
+            meili_ids = sorted(combined, key=combined.__getitem__, reverse=True)
+
+        # ── Meilisearch / hybrid path: raw SQL with rank-preserving unnest ───
         if meili_ids is not None:
             conditions = ["pc.is_active = TRUE"]
             params: Dict[str, Any] = {}
