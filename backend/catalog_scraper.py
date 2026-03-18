@@ -1549,6 +1549,32 @@ async def run_brand_discovery(
         except Exception as _e:
             print(f"[Rex] ⚠ Post-discovery normalization failed: {_e}")
 
+    # Write job-level catalog_versions audit row
+    try:
+        async with scraper_session_factory() as _cv_db:
+            await _cv_db.execute(
+                text("""
+                    INSERT INTO catalog_versions
+                        (id, version_tag, description, parts_added, parts_updated,
+                         source, status, created_at)
+                    VALUES
+                        (gen_random_uuid(), :vtag, :desc, :added, 0,
+                         'scraper_brand_discovery', 'completed', NOW())
+                    ON CONFLICT (version_tag) DO NOTHING
+                """),
+                {
+                    "vtag": f"discovery-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}",
+                    "desc": (
+                        f"Brand discovery: {report['total_inserted']} parts added "
+                        f"across {len(report['brands'])} brands"
+                    ),
+                    "added": report["total_inserted"],
+                },
+            )
+            await _cv_db.commit()
+    except Exception:
+        pass
+
     report["finished_at"] = datetime.utcnow().isoformat()
     print(f"\n[Rex] ✅ Brand discovery done — total inserted: {report['total_inserted']}")
     return report
@@ -1657,6 +1683,31 @@ async def run_scraper_cycle(*, batch_size: int = SCRAPE_BATCH_SIZE) -> Dict[str,
             f"errors={report['errors']} "
             f"elapsed={elapsed:.0f}s",
         )
+
+        # Write job-level catalog_versions audit row
+        try:
+            await db.execute(
+                text("""
+                    INSERT INTO catalog_versions
+                        (id, version_tag, description, parts_added, parts_updated,
+                         source, status, created_at)
+                    VALUES
+                        (gen_random_uuid(), :vtag, :desc, 0, :updated,
+                         'scraper_price_sync', 'completed', NOW())
+                    ON CONFLICT (version_tag) DO NOTHING
+                """),
+                {
+                    "vtag": f"price-sync-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}",
+                    "desc": (
+                        f"Price sync: {report['prices_updated']} updated, "
+                        f"{report['availability_changes']} availability changes"
+                    ),
+                    "updated": report["prices_updated"],
+                },
+            )
+            await db.commit()
+        except Exception:
+            pass
 
     print(
         f"[Scraper] ✅ Cycle done — "
