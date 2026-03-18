@@ -2285,6 +2285,79 @@ async def create_checkout_session(
     if order.status not in ("pending_payment", "confirmed"):
         raise HTTPException(status_code=400, detail=f"Order is already {order.status}")
 
+    # ── Live price validation ──────────────────────────────────────────────
+    from decimal import Decimal
+    _rate = USD_TO_ILS
+    try:
+        async with async_session_factory() as _cat:
+            _ss = (await _cat.execute(
+                text("SELECT value FROM system_settings WHERE key = 'ils_per_usd' LIMIT 1")
+            )).fetchone()
+            if _ss:
+                _rate = float(_ss[0])
+    except Exception:
+        pass
+
+    _items_res = await db.execute(select(OrderItem).where(OrderItem.order_id == order.id))
+    _order_items = _items_res.scalars().all()
+    _price_changed = False
+    _max_shipping = 0.0
+    _new_items_total = Decimal("0")
+
+    async with async_session_factory() as _cat:
+        for _item in _order_items:
+            if not _item.part_id:
+                _new_items_total += Decimal(str(float(_item.total_price)))
+                continue
+            _sp_row = (await _cat.execute(
+                text("""
+                    SELECT
+                        COALESCE(price_ils, price_usd * :rate) AS cost_ils,
+                        COALESCE(shipping_cost_ils, shipping_cost_usd * :rate) AS ship_ils
+                    FROM supplier_parts
+                    WHERE part_id = :part_id AND is_available = TRUE
+                    ORDER BY COALESCE(price_ils, price_usd * :rate) ASC
+                    LIMIT 1
+                """),
+                {"part_id": str(_item.part_id), "rate": _rate},
+            )).fetchone()
+
+            if _sp_row:
+                _live_unit = round(float(_sp_row[0]) * 1.45 * 1.17, 2)
+                _live_ship = float(_sp_row[1]) if _sp_row[1] is not None else 91.0
+                _max_shipping = max(_max_shipping, _live_ship)
+            else:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "detail": "part_unavailable",
+                        "message": "אחד או יותר מהחלקים אינם זמינים כרגע. אנא צור קשר עם שירות הלקוחות.",
+                    },
+                )
+
+            if abs(_live_unit - round(float(_item.unit_price), 2)) > 0.01:
+                _price_changed = True
+                _item.unit_price = _live_unit
+                _item.total_price = round(_live_unit * _item.quantity, 2)
+            _new_items_total += Decimal(str(float(_item.total_price)))
+
+    if _max_shipping > 0 and abs(_max_shipping - round(float(order.shipping_cost), 2)) > 0.01:
+        _price_changed = True
+        order.shipping_cost = round(_max_shipping, 2)
+
+    if _price_changed:
+        order.total_amount = round(float(_new_items_total) + float(order.shipping_cost), 2)
+        await db.commit()
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "detail": "price_updated",
+                "new_total": float(order.total_amount),
+                "message": "המחיר עודכן. אנא אשר את ההזמנה מחדש.",
+            },
+        )
+    # ── End price validation ───────────────────────────────────────────────
+
     frontend_url = _get_frontend_url(request)
 
     # ── Simulated payment (no Stripe key) ─────────────────────────────────
@@ -2430,6 +2503,84 @@ async def create_multi_checkout_session(
     non_pending = [o.order_number for o in orders if o.status != "pending_payment"]
     if non_pending:
         raise HTTPException(status_code=400, detail=f"הזמנות אלו אינן ממתינות לתשלום: {', '.join(non_pending)}")
+
+    # ── Live price validation ──────────────────────────────────────────────
+    from decimal import Decimal
+    _rate = USD_TO_ILS
+    try:
+        async with async_session_factory() as _cat:
+            _ss = (await _cat.execute(
+                text("SELECT value FROM system_settings WHERE key = 'ils_per_usd' LIMIT 1")
+            )).fetchone()
+            if _ss:
+                _rate = float(_ss[0])
+    except Exception:
+        pass
+
+    _updated_orders: list[str] = []
+    async with async_session_factory() as _cat:
+        for _order in orders:
+            _items_res = await db.execute(select(OrderItem).where(OrderItem.order_id == _order.id))
+            _order_items = _items_res.scalars().all()
+            _order_changed = False
+            _max_shipping = 0.0
+            _new_items_total = Decimal("0")
+
+            for _item in _order_items:
+                if not _item.part_id:
+                    _new_items_total += Decimal(str(float(_item.total_price)))
+                    continue
+                _sp_row = (await _cat.execute(
+                    text("""
+                        SELECT
+                            COALESCE(price_ils, price_usd * :rate) AS cost_ils,
+                            COALESCE(shipping_cost_ils, shipping_cost_usd * :rate) AS ship_ils
+                        FROM supplier_parts
+                        WHERE part_id = :part_id AND is_available = TRUE
+                        ORDER BY COALESCE(price_ils, price_usd * :rate) ASC
+                        LIMIT 1
+                    """),
+                    {"part_id": str(_item.part_id), "rate": _rate},
+                )).fetchone()
+
+                if _sp_row:
+                    _live_unit = round(float(_sp_row[0]) * 1.45 * 1.17, 2)
+                    _live_ship = float(_sp_row[1]) if _sp_row[1] is not None else 91.0
+                    _max_shipping = max(_max_shipping, _live_ship)
+                else:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "detail": "part_unavailable",
+                            "message": "אחד או יותר מהחלקים אינם זמינים כרגע. אנא צור קשר עם שירות הלקוחות.",
+                        },
+                    )
+
+                if abs(_live_unit - round(float(_item.unit_price), 2)) > 0.01:
+                    _order_changed = True
+                    _item.unit_price = _live_unit
+                    _item.total_price = round(_live_unit * _item.quantity, 2)
+                _new_items_total += Decimal(str(float(_item.total_price)))
+
+            if _max_shipping > 0 and abs(_max_shipping - round(float(_order.shipping_cost), 2)) > 0.01:
+                _order_changed = True
+                _order.shipping_cost = round(_max_shipping, 2)
+
+            if _order_changed:
+                _order.total_amount = round(float(_new_items_total) + float(_order.shipping_cost), 2)
+                _updated_orders.append(_order.order_number)
+
+    if _updated_orders:
+        await db.commit()
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "detail": "price_updated",
+                "updated_orders": _updated_orders,
+                "message": "המחיר עודכן בחלק מההזמנות. אנא אשר מחדש.",
+            },
+        )
+    # ── End price validation ───────────────────────────────────────────────
 
     # Build combined Stripe line items
     line_items = []
