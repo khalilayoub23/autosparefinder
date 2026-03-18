@@ -3383,6 +3383,7 @@ _RETURN_WINDOW_DAYS = int(os.getenv("RETURN_WINDOW_DAYS", "14"))
 
 @app.post("/api/v1/returns", status_code=status.HTTP_201_CREATED)
 async def create_return(data: ReturnRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
+    # ── 1. Validate order ownership and status ─────────────────────────────────
     result = await db.execute(select(Order).where(and_(Order.id == data.order_id, Order.user_id == current_user.id)))
     order = result.scalar_one_or_none()
     if not order:
@@ -3390,8 +3391,20 @@ async def create_return(data: ReturnRequest, current_user: User = Depends(get_cu
     if order.status not in ["delivered", "shipped"]:
         raise HTTPException(status_code=400, detail="Order cannot be returned in current status")
 
-    # Enforce 14-day return window (policy §2)
-    if order.status == "delivered" and order.delivered_at:
+    # ── 2. Duplicate guard ────────────────────────────────────────────────────
+    existing = (await db.execute(
+        select(Return.id).where(
+            and_(
+                Return.order_id == order.id,
+                Return.status.notin_(["cancelled", "rejected"]),
+            )
+        )
+    )).scalar_one_or_none()
+    if existing:
+        raise HTTPException(status_code=409, detail="An active return request already exists for this order.")
+
+    # ── 3. 14-day window — only when delivered_at is known ───────────────────
+    if order.delivered_at:
         days_since = (datetime.utcnow() - order.delivered_at).days
         if days_since > _RETURN_WINDOW_DAYS:
             raise HTTPException(
@@ -3399,11 +3412,73 @@ async def create_return(data: ReturnRequest, current_user: User = Depends(get_cu
                 detail=f"Return window expired. Returns must be requested within {_RETURN_WINDOW_DAYS} days of delivery (it has been {days_since} days).",
             )
 
-    return_number = f"RET-2026-{str(uuid.uuid4())[:8].upper()}"
-    ret = Return(return_number=return_number, order_id=order.id, user_id=current_user.id, reason=data.reason, description=data.description, original_amount=order.total_amount, status="pending")
-    db.add(ret)
+    # ── 4. Fraud score ────────────────────────────────────────────────────────
+    fraud_score = 0.0
 
-    # Notify customer that request was received
+    # +0.3 if user has >2 returns in the last 90 days
+    ninety_days_ago = datetime.utcnow() - timedelta(days=90)
+    recent_returns_count = (await db.execute(
+        select(func.count()).select_from(Return).where(
+            and_(
+                Return.user_id == current_user.id,
+                Return.requested_at >= ninety_days_ago,
+            )
+        )
+    )).scalar_one()
+    if recent_returns_count > 2:
+        fraud_score += 0.3
+
+    # +0.3 if order was delivered less than 24 hours ago
+    if order.delivered_at and (datetime.utcnow() - order.delivered_at).total_seconds() < 86400:
+        fraud_score += 0.3
+
+    # +0.2 if reason is changed_mind or other
+    if data.reason in ("changed_mind", "other"):
+        fraud_score += 0.2
+
+    # +0.2 if order total > 500 ILS
+    if order.total_amount and order.total_amount > 500:
+        fraud_score += 0.2
+
+    fraud_score = round(min(fraud_score, 1.0), 2)
+    ret_status = "pending_review" if fraud_score >= 0.5 else "pending"
+
+    # ── 5. Create Return row ──────────────────────────────────────────────────
+    return_number = f"RET-{datetime.utcnow().year}-{str(uuid.uuid4())[:8].upper()}"
+    ret = Return(
+        return_number=return_number,
+        order_id=order.id,
+        user_id=current_user.id,
+        reason=data.reason,
+        description=data.description,
+        original_amount=order.total_amount,
+        status=ret_status,
+    )
+    db.add(ret)
+    await db.flush()   # obtain ret.id before writing approval_queue
+
+    # ── 6. Approval queue — every return goes through the queue ───────────────
+    db.add(ApprovalQueue(
+        entity_type="return",
+        entity_id=ret.id,
+        action="review_return",
+        payload={
+            "return_number": return_number,
+            "order_number": order.order_number,
+            "order_id": str(order.id),
+            "user_id": str(current_user.id),
+            "user_email": current_user.email,
+            "reason": data.reason,
+            "description": data.description,
+            "original_amount": float(order.total_amount),
+            "fraud_score": fraud_score,
+            "flagged": fraud_score >= 0.5,
+        },
+        status="pending",
+        requested_by=current_user.id,
+    ))
+
+    # ── 7. Notify customer ────────────────────────────────────────────────────
     db.add(Notification(
         user_id=current_user.id,
         type="return_update",
@@ -3415,31 +3490,15 @@ async def create_return(data: ReturnRequest, current_user: User = Depends(get_cu
         data={"return_number": return_number, "order_number": order.order_number, "reason": data.reason},
     ))
 
-    # Notify all admins to review
-    admins_res = await db.execute(select(User).where(User.is_admin == True))
-    for admin in admins_res.scalars().all():
-        db.add(Notification(
-            user_id=admin.id,
-            type="return_review",
-            title=f"🔄 בקשת החזרה חדשה — {return_number}",
-            message=(
-                f"לקוח {current_user.full_name or current_user.email} פתח בקשת החזרה\n"
-                f"הזמנה: {order.order_number} | סיבה: {data.reason}\n"
-                + (f"פרטים: {data.description}" if data.description else "")
-            ),
-            data={
-                "return_number": return_number,
-                "order_number": order.order_number,
-                "order_id": str(order.id),
-                "reason": data.reason,
-                "description": data.description,
-                "original_amount": float(order.total_amount),
-            },
-        ))
-
     await db.commit()
     await db.refresh(ret)
-    return {"return_id": str(ret.id), "return_number": ret.return_number, "status": ret.status, "message": "Return request created. We'll review it within 24 hours."}
+    return {
+        "return_id": str(ret.id),
+        "return_number": ret.return_number,
+        "status": ret.status,
+        "fraud_score": fraud_score,
+        "message": "Return request created. We'll review it within 24 hours.",
+    }
 
 
 @app.get("/api/v1/returns")
