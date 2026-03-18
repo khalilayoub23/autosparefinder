@@ -65,7 +65,7 @@ from sqlalchemy import and_, or_, select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from BACKEND_DATABASE_MODELS import (
-    AgentAction, Conversation, Message, Notification, Order, OrderItem,
+    AgentAction, CatalogVersion, Conversation, Message, Notification, Order, OrderItem,
     PartsCatalog, Supplier, SupplierPart, SystemLog, SystemSetting,
     Vehicle, CarBrand, get_db, async_session_factory,
 )
@@ -294,13 +294,6 @@ Available agents:
 - marketing_agent: Promotions, coupons, discounts, newsletter, referrals, loyalty points
 - social_media_manager_agent: Social media content, posts (admin only)
 - supplier_manager_agent: Supplier catalog, price updates (admin only)
-- orders_agent: Order creation, order status, tracking, cancellation, dropshipping
-- finance_agent: Payments, invoices, refunds, returns, billing
-- service_agent: Technical support, complaints, general questions, after-sales
-- security_agent: Login issues, 2FA, password reset, account security, suspicious activity
-- marketing_agent: Promotions, coupons, discounts, newsletter, referrals, loyalty points
-- social_media_manager_agent: Social media content, posts (admin only)
-- supplier_manager_agent: Supplier catalog, price updates (admin only)
 
 Respond ONLY with valid JSON in this exact format:
 {
@@ -393,11 +386,9 @@ get_db_stats() to verify what categories and manufacturers currently hold stock.
 
     # Real part categories as classified in the DB (matches fix_db_quality.py rules)
     KNOWN_CATEGORIES: list[str] = [
-        "בלמים", "מנוע", "מתלים והגה", "גוף ואקסטריור", "חשמל",
-        "מסננים ושמנים", "מיזוג ומערכת חימום", "תאורה", "תיבת הילוכים",
-        "מערכת דלק", "קירור", "פנים הרכב", "גלגלים וצמיגים", "מערכת פליטה",
-        "אטמים וחומרים", "שרשראות ורצועות", "סרן והינע", "מגבים",
-        "כלים וציוד", "כללי",
+        "בלמים", "גלגלים וצמיגים", "דלק", "היגוי", "חשמל רכב",
+        "כללי", "מגבים", "מיזוג", "מנוע", "מתלה",
+        "פחיין ומרכב", "ריפוד ופנים", "שרשראות ורצועות", "תאורה",
     ]
 
     # In-memory stats cache with TTL of 3600 seconds (1 hour)
@@ -1867,6 +1858,23 @@ class SupplierManagerAgent(BaseAgent):
                         f"errors={len(report['errors'])}",
                 endpoint="/background/price-sync",
                 method="CRON",
+            ))
+            await db.commit()
+        except Exception:
+            pass
+
+        # Write catalog version audit row
+        try:
+            db.add(CatalogVersion(
+                version_tag=f"price-sync-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}",
+                description=(
+                    f"Price sync: {report['parts_updated']} updated, "
+                    f"{report['availability_changes']} availability changes"
+                ),
+                parts_added=0,
+                parts_updated=report["parts_updated"],
+                source="supplier_manager_agent",
+                status="completed",
             ))
             await db.commit()
         except Exception:

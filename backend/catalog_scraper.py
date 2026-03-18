@@ -564,6 +564,22 @@ async def db_upsert_part(db: AsyncSession, *, sku: str, name: str, manufacturer:
             {"sku": sku, "name": name, "manufacturer": manufacturer,
              "category": category, "part_type": part_type, "base_price": base_price},
         ))
+        try:
+            await db.execute(
+                text("""
+                    INSERT INTO catalog_versions
+                        (id, version_tag, description, parts_added, parts_updated,
+                         source, status, created_at)
+                    VALUES
+                        (gen_random_uuid(), :vtag, :desc, 0, 1,
+                         'catalog_scraper', 'completed', NOW())
+                    ON CONFLICT (version_tag) DO NOTHING
+                """),
+                {"vtag": f"scraper-upd-{uuid.uuid4().hex[:16]}", "desc": f"Updated: {sku}"},
+            )
+            await db.commit()
+        except Exception:
+            pass
         return str(existing[0]), False
 
     part_id = str(uuid.uuid4())
@@ -591,6 +607,22 @@ async def db_upsert_part(db: AsyncSession, *, sku: str, name: str, manufacturer:
          "category": category, "part_type": part_type, "base_price": base_price,
          "is_active": True},
     ))
+    try:
+        await db.execute(
+            text("""
+                INSERT INTO catalog_versions
+                    (id, version_tag, description, parts_added, parts_updated,
+                     source, status, created_at)
+                VALUES
+                    (gen_random_uuid(), :vtag, :desc, 1, 0,
+                     'catalog_scraper', 'completed', NOW())
+                ON CONFLICT (version_tag) DO NOTHING
+            """),
+            {"vtag": f"scraper-add-{uuid.uuid4().hex[:16]}", "desc": f"Added: {sku}"},
+        )
+        await db.commit()
+    except Exception:
+        pass
     return part_id, True
 
 
