@@ -959,6 +959,57 @@ async def search_parts(
             "query":            query,
         }
 
+    # ── pgvector: embed the query and find nearest neighbours ────────────────
+    # Runs only when Meilisearch returned results (meili_ids is a non-empty list).
+    # vec_score: {id_str → cosine_similarity}  (empty dict if unavailable)
+    _route_vec_score: Dict[str, float] = {}
+    if meili_ids and query:
+        _route_ollama_url = os.getenv("OLLAMA_URL", "")
+        if _route_ollama_url:
+            try:
+                async with httpx.AsyncClient(timeout=3.0) as _vc:
+                    _vresp = await _vc.post(
+                        f"{_route_ollama_url}/api/embed",
+                        json={"model": "nomic-embed-text", "input": query},
+                        timeout=3.0,
+                    )
+                    _vresp.raise_for_status()
+                    _vdata = _vresp.json()
+                    _vemb = _vdata.get("embeddings") or _vdata.get("embedding")
+                    if _vemb and isinstance(_vemb[0], list):
+                        _qvec: Optional[List[float]] = _vemb[0]
+                    elif _vemb and isinstance(_vemb[0], float):
+                        _qvec = _vemb
+                    else:
+                        _qvec = None
+
+                if _qvec:
+                    _vrows = (await db.execute(
+                        text("""
+                            SELECT id::text,
+                                   1 - (embedding <=> CAST(:qvec AS vector)) AS sim
+                            FROM parts_catalog
+                            WHERE is_active = TRUE
+                              AND embedding IS NOT NULL
+                            ORDER BY embedding <=> CAST(:qvec AS vector)
+                            LIMIT 50
+                        """),
+                        {"qvec": str(_qvec)},
+                    )).fetchall()
+                    _route_vec_score = {r[0]: float(r[1]) for r in _vrows}
+            except Exception:
+                _route_vec_score = {}  # degrade silently to Meilisearch-only
+
+    # ── Hybrid re-rank: 0.6 × meili_score + 0.4 × vec_score ─────────────────
+    if _route_vec_score:
+        _meili_scores = {uid: 1.0 / (i + 1) for i, uid in enumerate(meili_ids)}
+        _all_ids = list(dict.fromkeys(list(_meili_scores) + list(_route_vec_score)))
+        _combined = {
+            uid: 0.6 * _meili_scores.get(uid, 0.0) + 0.4 * _route_vec_score.get(uid, 0.0)
+            for uid in _all_ids
+        }
+        meili_ids = sorted(_combined, key=_combined.__getitem__, reverse=True)
+
     # ── Build shared WHERE conditions ────────────────────────────────────────
     conditions: List[str] = ["pc.is_active = TRUE"]
     params: Dict[str, Any] = {}
