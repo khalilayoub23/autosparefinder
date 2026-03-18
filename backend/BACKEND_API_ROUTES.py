@@ -774,8 +774,77 @@ async def upload_image(file: UploadFile = File(...), current_user: User = Depend
 
 
 @app.post("/api/v1/chat/upload-audio")
-async def upload_audio(file: UploadFile = File(...), current_user: User = Depends(get_current_verified_user), db: AsyncSession = Depends(get_pii_db)):
-    return {"message": "Audio upload – transcription coming soon"}
+async def upload_audio(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_verified_user),
+    db: AsyncSession = Depends(get_pii_db),
+):
+    """
+    Receive an audio file, transcribe via Ollama Whisper, then pass the
+    transcription to the router agent as a normal chat message.
+
+    Prerequisites on Ollama VPS:
+        ollama pull whisper
+    """
+    ollama_url = os.getenv("OLLAMA_URL", "")
+    if not ollama_url:
+        raise HTTPException(status_code=503, detail="שירות התמלול אינו זמין כרגע")
+
+    # ── 1. Read & validate ────────────────────────────────────────────────────
+    audio_bytes = await file.read()
+
+    _AUDIO_MAX = 25 * 1024 * 1024  # 25 MB
+    if len(audio_bytes) > _AUDIO_MAX:
+        raise HTTPException(status_code=413, detail="הקובץ גדול מדי — מקסימום 25 MB")
+
+    # ── 2. Virus scan ─────────────────────────────────────────────────────────
+    _scan_status, _virus_name = _scan_bytes_for_virus(audio_bytes)
+    if _scan_status == "infected":
+        raise HTTPException(status_code=400, detail=f"הקובץ נדחה: זוהה וירוס ({_virus_name})")
+
+    # ── 3. Transcribe via Ollama Whisper ──────────────────────────────────────
+    transcription = ""
+    detected_language = ""
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as _wc:
+            _wresp = await _wc.post(
+                f"{ollama_url}/api/transcribe",
+                files={"file": (file.filename or "audio", audio_bytes, file.content_type or "audio/webm")},
+                data={"model": "whisper"},
+            )
+            _wresp.raise_for_status()
+            _wdata = _wresp.json()
+            transcription     = _wdata.get("text", "").strip()
+            detected_language = _wdata.get("language", "")
+    except Exception as exc:
+        print(f"[AudioUpload] Whisper error: {exc}")
+        raise HTTPException(status_code=502, detail="שגיאה בתמלול — נסה שוב")
+
+    if not transcription:
+        raise HTTPException(status_code=422, detail="לא ניתן היה לתמלל את הקובץ")
+
+    # ── 4. Route transcription through Avi (router agent) ─────────────────────
+    agent_response = ""
+    conversation_id_out = None
+    try:
+        result = await process_user_message(
+            user_id=str(current_user.id),
+            message=transcription,
+            conversation_id=None,
+            db=db,
+        )
+        agent_response    = result.get("response", "")
+        conversation_id_out = result.get("conversation_id")
+    except Exception as exc:
+        print(f"[AudioUpload] Agent error: {exc}")
+        # Non-fatal — return transcription even if agent fails
+
+    return {
+        "transcription":   transcription,
+        "agent_response":  agent_response,
+        "language":        detected_language,
+        "conversation_id": conversation_id_out,
+    }
 
 
 @app.post("/api/v1/chat/upload-video")
