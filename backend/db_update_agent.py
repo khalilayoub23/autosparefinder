@@ -794,6 +794,65 @@ async def _enrich_pending_parts_task(db: AsyncSession) -> Dict[str, Any]:
     return await enrich_pending_parts(db, limit=100)
 
 
+async def _trigger_scraper_for_misses_task(db: AsyncSession) -> Dict[str, Any]:
+    """Find high-frequency zero-result queries (miss_count >= 3, not yet triggered)
+    and fire REX brand discovery for the likely brand."""
+    from catalog_scraper import run_brand_discovery
+
+    rows = (await db.execute(
+        text("""
+            SELECT id, query, normalized_query, vehicle_manufacturer
+            FROM search_misses
+            WHERE miss_count >= 3
+              AND triggered_scrape = FALSE
+            ORDER BY miss_count DESC
+            LIMIT 20
+        """)
+    )).fetchall()
+
+    if not rows:
+        return {"task": "trigger_scraper_for_misses", "status": "ok", "triggered": 0, "errors": 0}
+
+    triggered = 0
+    errors = 0
+    triggered_ids = []
+
+    for row in rows:
+        # Prefer explicit vehicle_manufacturer; fall back to first token of query
+        brand = (row.vehicle_manufacturer or "").strip()
+        if not brand:
+            first_token = (row.normalized_query or "").split()
+            brand = first_token[0] if first_token else ""
+        if not brand:
+            continue
+
+        try:
+            asyncio.create_task(run_brand_discovery(brands=[brand]))
+            triggered += 1
+            triggered_ids.append(str(row.id))
+        except Exception as e:
+            logger.warning("trigger_scraper_for_misses: brand=%s error=%s", brand, e)
+            errors += 1
+
+    if triggered_ids:
+        await db.execute(
+            text("""
+                UPDATE search_misses
+                SET triggered_scrape = TRUE
+                WHERE id = ANY(:ids::uuid[])
+            """),
+            {"ids": triggered_ids},
+        )
+        await db.commit()
+
+    return {
+        "task": "trigger_scraper_for_misses",
+        "status": "ok",
+        "triggered": triggered,
+        "errors": errors,
+    }
+
+
 TASK_REGISTRY: Dict[str, Any] = {
     "clean_part_names":       clean_part_names,
     "normalize_part_types":   normalize_part_types,
@@ -804,7 +863,8 @@ TASK_REGISTRY: Dict[str, Any] = {
     "fill_car_brands":        fill_car_brands,
     "refresh_min_max_prices": refresh_min_max_prices,
     "seed_system_settings":   seed_system_settings,
-    "enrich_pending_parts":   _enrich_pending_parts_task,
+    "enrich_pending_parts":        _enrich_pending_parts_task,
+    "trigger_scraper_for_misses":   _trigger_scraper_for_misses_task,
 }
 
 
@@ -843,6 +903,7 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
         "fix_base_prices",
         "refresh_min_max_prices",
         "enrich_pending_parts",
+        "trigger_scraper_for_misses",
     ]
 
     for task_name in ordered_tasks:

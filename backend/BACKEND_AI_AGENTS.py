@@ -54,6 +54,7 @@ import json
 import os
 import random
 import string
+import asyncio
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
@@ -71,6 +72,42 @@ from BACKEND_DATABASE_MODELS import (
 )
 
 load_dotenv()
+
+# ==============================================================================
+# SEARCH MISS LOGGING
+# ==============================================================================
+
+async def _log_search_miss(
+    query: str,
+    category: Optional[str],
+    vehicle_manufacturer: Optional[str],
+) -> None:
+    """Fire-and-forget: upsert a search_misses row for a zero-result query."""
+    if not query or not query.strip():
+        return
+    normalized = query.lower().strip()
+    try:
+        async with async_session_factory() as db:
+            await db.execute(
+                text("""
+                    INSERT INTO search_misses
+                        (query, normalized_query, category, vehicle_manufacturer)
+                    VALUES (:query, :norm, :cat, :vmfr)
+                    ON CONFLICT (normalized_query) DO UPDATE
+                        SET miss_count   = search_misses.miss_count + 1,
+                            last_seen_at = NOW()
+                """),
+                {
+                    "query": query.strip(),
+                    "norm":  normalized,
+                    "cat":   category,
+                    "vmfr":  vehicle_manufacturer,
+                },
+            )
+            await db.commit()
+    except Exception as e:
+        print(f"[search_miss] log error (non-fatal): {e}")
+
 
 # ==============================================================================
 # CONFIGURATION
@@ -732,6 +769,7 @@ get_db_stats() to verify what categories and manufacturers currently hold stock.
 
         # ── Short-circuit: Meilisearch found zero hits ───────────────────────
         if meili_ids is not None and len(meili_ids) == 0:
+            asyncio.create_task(_log_search_miss(query, category, vehicle_manufacturer))
             return []
 
         # ── pgvector: embed the query and find nearest neighbours ────────────
@@ -923,6 +961,7 @@ get_db_stats() to verify what categories and manufacturers currently hold stock.
                 parts = result.scalars().all()
 
         if not parts:
+            asyncio.create_task(_log_search_miss(query, category, vehicle_manufacturer))
             return []
 
         # Batch fetch best supplier_part for all parts in 2 queries
