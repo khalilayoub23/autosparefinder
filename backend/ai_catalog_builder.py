@@ -16,7 +16,7 @@ Modes:
 """
 import asyncio, sys, uuid, json, os, hashlib, re
 from datetime import datetime
-from typing import Dict
+from typing import Any, Dict
 import asyncpg
 from sqlalchemy.ext.asyncio import AsyncSession
 from dotenv import load_dotenv
