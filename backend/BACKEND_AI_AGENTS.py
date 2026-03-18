@@ -81,6 +81,7 @@ async def _log_search_miss(
     query: str,
     category: Optional[str],
     vehicle_manufacturer: Optional[str],
+    user_id: Optional[str] = None,
 ) -> None:
     """Fire-and-forget: upsert a search_misses row for a zero-result query."""
     if not query or not query.strip():
@@ -91,17 +92,19 @@ async def _log_search_miss(
             await db.execute(
                 text("""
                     INSERT INTO search_misses
-                        (query, normalized_query, category, vehicle_manufacturer)
-                    VALUES (:query, :norm, :cat, :vmfr)
+                        (query, normalized_query, category, vehicle_manufacturer, user_id)
+                    VALUES (:query, :norm, :cat, :vmfr, :uid)
                     ON CONFLICT (normalized_query) DO UPDATE
                         SET miss_count   = search_misses.miss_count + 1,
-                            last_seen_at = NOW()
+                            last_seen_at = NOW(),
+                            user_id      = COALESCE(search_misses.user_id, EXCLUDED.user_id)
                 """),
                 {
                     "query": query.strip(),
                     "norm":  normalized,
                     "cat":   category,
                     "vmfr":  vehicle_manufacturer,
+                    "uid":   user_id,
                 },
             )
             await db.commit()
@@ -739,6 +742,7 @@ get_db_stats() to verify what categories and manufacturers currently hold stock.
         sort_by: str = "name",
         sort_dir: str = "asc",
         vehicle_manufacturer: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> List[Dict]:
         """Search parts catalog.
         Text search is powered by Meilisearch when available; falls back to ILIKE.
@@ -769,7 +773,7 @@ get_db_stats() to verify what categories and manufacturers currently hold stock.
 
         # ── Short-circuit: Meilisearch found zero hits ───────────────────────
         if meili_ids is not None and len(meili_ids) == 0:
-            asyncio.create_task(_log_search_miss(query, category, vehicle_manufacturer))
+            asyncio.create_task(_log_search_miss(query, category, vehicle_manufacturer, user_id))
             return []
 
         # ── pgvector: embed the query and find nearest neighbours ────────────
@@ -961,7 +965,7 @@ get_db_stats() to verify what categories and manufacturers currently hold stock.
                 parts = result.scalars().all()
 
         if not parts:
-            asyncio.create_task(_log_search_miss(query, category, vehicle_manufacturer))
+            asyncio.create_task(_log_search_miss(query, category, vehicle_manufacturer, user_id))
             return []
 
         # Batch fetch best supplier_part for all parts in 2 queries

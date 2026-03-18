@@ -4992,6 +4992,66 @@ async def get_version():
 # EVENTS & ERROR HANDLERS
 # ==============================================================================
 
+_SEARCH_MISS_NOTIFY_INTERVAL = 3600  # seconds — 60 minutes
+
+
+async def _notify_search_miss_loop() -> None:
+    """Background loop: notify users when a previously-missed search now has results.
+    Runs every 60 minutes. Writes Notifications to autospare_pii.
+    Marks rows notified=TRUE in autospare (catalog DB).
+    """
+    await asyncio.sleep(30)   # brief startup delay
+    while True:
+        try:
+            async with async_session_factory() as cat_db:
+                rows = (await cat_db.execute(
+                    text("""
+                        SELECT id, query, user_id
+                        FROM search_misses
+                        WHERE triggered_scrape = TRUE
+                          AND notified         = FALSE
+                          AND user_id          IS NOT NULL
+                        ORDER BY last_seen_at DESC
+                        LIMIT 100
+                    """)
+                )).fetchall()
+
+            if rows:
+                notified_ids = []
+                async with pii_session_factory() as pii_db:
+                    for row in rows:
+                        pii_db.add(Notification(
+                            user_id=row.user_id,
+                            type="search_miss_resolved",
+                            title="🔍 מצאנו חלקים חדשים!",
+                            message=(
+                                f"מצאנו חלקים חדשים התואמים לחיפוש שלך! "
+                                f"חפש שוב: {row.query}"
+                            ),
+                            data={"query": row.query, "search_miss_id": str(row.id)},
+                        ))
+                        notified_ids.append(str(row.id))
+                    await pii_db.commit()
+
+                async with async_session_factory() as cat_db:
+                    await cat_db.execute(
+                        text("""
+                            UPDATE search_misses
+                            SET notified = TRUE
+                            WHERE id = ANY(:ids::uuid[])
+                        """),
+                        {"ids": notified_ids},
+                    )
+                    await cat_db.commit()
+
+                print(f"[search_miss_notify] notified {len(notified_ids)} users")
+
+        except Exception as e:
+            print(f"[search_miss_notify] error (non-fatal): {e}")
+
+        await asyncio.sleep(_SEARCH_MISS_NOTIFY_INTERVAL)
+
+
 @app.on_event("startup")
 async def startup():
     from catalog_scraper import start_scraper_task
@@ -5000,6 +5060,7 @@ async def startup():
     print(f"   Environment: {os.getenv('ENVIRONMENT', 'development')}")
     asyncio.create_task(_price_sync_loop())
     asyncio.create_task(_stuck_orders_monitor_loop())   # ← periodic stuck-order monitor (every 30 min)
+    asyncio.create_task(_notify_search_miss_loop())     # ← search-miss user notifications (every 60 min)
     start_scraper_task()           # ← catalog scraper background loop
     start_db_agent(get_db, 6.0)   # ← DB cleaning / normalisation agent (every 6h)
     print("✅ All systems ready — price-sync + catalog-scraper + db-agent schedulers started")
