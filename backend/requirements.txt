@@ -16,6 +16,7 @@ psycopg2-binary==2.9.9
 # Redis
 redis==5.2.1
 hiredis==3.1.1
+sse-starlette==1.8.2
 
 # AI & LLM
 openai==1.59.9

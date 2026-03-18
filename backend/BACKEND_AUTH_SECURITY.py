@@ -14,6 +14,7 @@ Features:
 """
 
 import hashlib
+import json
 import os
 import random
 import secrets
@@ -164,6 +165,13 @@ async def close_redis():
     if _redis_client:
         await _redis_client.close()
         _redis_client = None
+
+
+async def publish_notification(user_id: str, payload: dict) -> None:
+    """Publish a notification payload to the user's Redis Pub/Sub channel."""
+    r = await get_redis()
+    if r:
+        await r.publish(f"user:{user_id}:notifications", json.dumps(payload))
 
 
 # ==============================================================================

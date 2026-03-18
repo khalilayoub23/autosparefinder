@@ -10,6 +10,7 @@ Imports: BACKEND_DATABASE_MODELS, BACKEND_AUTH_SECURITY, BACKEND_AI_AGENTS
 from fastapi import FastAPI, Depends, HTTPException, status, Request, UploadFile, File, Form, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from sse_starlette.sse import EventSourceResponse
 from pydantic import BaseModel, EmailStr, validator
 from typing import List, Optional, Dict, Any, Literal
 from datetime import datetime, date, timedelta
@@ -33,7 +34,7 @@ from BACKEND_AUTH_SECURITY import (
     get_current_admin_user, register_user, login_user, complete_2fa_login,
     refresh_access_token, logout_user, create_password_reset_token,
     use_password_reset_token, change_password, update_phone_number,
-    create_2fa_code, verify_2fa_code, get_redis, hash_password
+    create_2fa_code, verify_2fa_code, get_redis, hash_password, publish_notification
 )
 from BACKEND_AI_AGENTS import process_user_message, process_agent_response_for_message, get_agent, OrdersAgent
 
@@ -3936,8 +3937,50 @@ async def get_loyalty_points(current_user: User = Depends(get_current_user), db:
 
 
 # ==============================================================================
-# 12. NOTIFICATIONS  /api/v1/notifications  (5 endpoints)
+# 12. NOTIFICATIONS  /api/v1/notifications  (6 endpoints)
 # ==============================================================================
+
+_SSE_HEARTBEAT_INTERVAL = 30  # seconds
+
+@app.get("/api/v1/notifications/stream")
+async def notifications_stream(
+    current_user: User = Depends(get_current_verified_user),
+    redis=Depends(get_redis),
+):
+    """SSE stream: subscribe to user:{user_id}:notifications Redis Pub/Sub channel."""
+    user_id = str(current_user.id)
+
+    async def event_generator():
+        if not redis:
+            yield {"event": "connected", "data": ""}
+            return
+
+        channel = f"user:{user_id}:notifications"
+        pubsub = redis.pubsub()
+        await pubsub.subscribe(channel)
+        try:
+            yield {"event": "connected", "data": ""}
+            last_heartbeat = asyncio.get_event_loop().time()
+            while True:
+                now = asyncio.get_event_loop().time()
+                if now - last_heartbeat >= _SSE_HEARTBEAT_INTERVAL:
+                    yield {"event": "heartbeat", "data": ""}
+                    last_heartbeat = now
+                message = await pubsub.get_message(
+                    ignore_subscribe_messages=True, timeout=0.1
+                )
+                if message and message["type"] == "message":
+                    yield {"event": "notification", "data": message["data"]}
+                else:
+                    await asyncio.sleep(0.05)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            await pubsub.unsubscribe(channel)
+            await pubsub.close()
+
+    return EventSourceResponse(event_generator())
+
 
 @app.get("/api/v1/notifications")
 async def get_notifications(current_user: User = Depends(get_current_user), limit: int = 50, db: AsyncSession = Depends(get_pii_db)):
