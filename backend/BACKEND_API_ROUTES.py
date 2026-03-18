@@ -74,13 +74,16 @@ async def trigger_supplier_fulfillment(paid_orders: list, db: AsyncSession) -> N
             print(f"[Fulfillment] No items for order {order.order_number} — marking processing for manual review")
             order.status = "processing"
             for admin in admins:
+                _title = f"⚠️ {order.order_number} – אין נתוני ספק"
+                _msg = f"ההזמנה {order.order_number} שולמה אך אין פריטים. טיפול ידני נדרש."
                 db.add(Notification(
                     user_id=admin.id,
                     type="supplier_order",
-                    title=f"⚠️ {order.order_number} – אין נתוני ספק",
-                    message=f"ההזמנה {order.order_number} שולמה אך אין פריטים. טיפול ידני נדרש.",
+                    title=_title,
+                    message=_msg,
                     data={"order_id": str(order.id), "order_number": order.order_number, "needs_manual": True},
                 ))
+                asyncio.create_task(publish_notification(str(admin.id), {"type": "supplier_order", "title": _title, "message": _msg}))
             continue
 
         # Group items by supplier_name (already stored on OrderItem)
@@ -145,14 +148,16 @@ async def trigger_supplier_fulfillment(paid_orders: list, db: AsyncSession) -> N
                 for it in sup_data["items"]
             )
             for admin in admins:
+                _title2 = f"🤖 הסוכן הזמין מ-{sup_name} עבור {order.order_number}"
+                _msg2 = (
+                    f"הסוכן ביצע הזמנה אוטומטית מ-{sup_name}.\n{items_lines}\n"
+                    f"מספר מעקב: {sup_tracking.get('tracking_number', '—')} ({sup_tracking.get('carrier', '—')})"
+                )
                 db.add(Notification(
                     user_id=admin.id,
                     type="supplier_order",
-                    title=f"🤖 הסוכן הזמין מ-{sup_name} עבור {order.order_number}",
-                    message=(
-                        f"הסוכן ביצע הזמנה אוטומטית מ-{sup_name}.\n{items_lines}\n"
-                        f"מספר מעקב: {sup_tracking.get('tracking_number', '—')} ({sup_tracking.get('carrier', '—')})"
-                    ),
+                    title=_title2,
+                    message=_msg2,
                     data={
                         "order_id": str(order.id),
                         "order_number": order.order_number,
@@ -167,6 +172,7 @@ async def trigger_supplier_fulfillment(paid_orders: list, db: AsyncSession) -> N
                     },
                     read_at=datetime.utcnow(),
                 ))
+                asyncio.create_task(publish_notification(str(admin.id), {"type": "supplier_order", "title": _title2, "message": _msg2}))
 
         print(f"[Fulfillment] Order {order.order_number}: agent auto-fulfilled {len(by_supplier)} supplier(s) → supplier_ordered")
 
@@ -2287,16 +2293,19 @@ async def cancel_order(order_id: str, data: OrderCancelRequest, current_user: Us
             status="approved" if refund_id else "pending",
         ))
 
+        _cancel_title = "ביטול והחזר כספי" + (" ✅" if refund_id else " 🔄")
+        _cancel_msg = (
+            f"הזמנה {order.order_number} בוטלה. "
+            + (f"החזר כספי של ₪{refund_amount:.2f} נשלח לכרטיס האשראי שלך." if refund_id
+               else "בקשת ההחזר הכספי בטיפול.")
+        )
         db.add(Notification(
             user_id=current_user.id,
-            title="ביטול והחזר כספי" + (" ✅" if refund_id else " 🔄"),
-            message=(
-                f"הזמנה {order.order_number} בוטלה. "
-                + (f"החזר כספי של ₪{refund_amount:.2f} נשלח לכרטיס האשראי שלך." if refund_id
-                   else "בקשת ההחזר הכספי בטיפול.")
-            ),
+            title=_cancel_title,
+            message=_cancel_msg,
             type="refund_initiated",
         ))
+        asyncio.create_task(publish_notification(str(current_user.id), {"type": "refund_initiated", "title": _cancel_title, "message": _cancel_msg}))
 
     await db.commit()
     return {
@@ -2894,12 +2903,14 @@ async def verify_checkout_session(
                     business_number=os.getenv("COMPANY_NUMBER", "060633880"),
                 ))
             paid_nums = ", ".join(o.order_number for o in multi_orders)
+            _multi_msg = f"{len(multi_orders)} הזמנות אושרו: {paid_nums}"
             db.add(Notification(
                 user_id=current_user.id,
                 title="תשלום התקבל ✅",
-                message=f"{len(multi_orders)} הזמנות אושרו: {paid_nums}",
+                message=_multi_msg,
                 type="payment_success",
             ))
+            asyncio.create_task(publish_notification(str(current_user.id), {"type": "payment_success", "title": "תשלום התקבל ✅", "message": _multi_msg}))
             # ── Dropshipping: notify admin(s) per supplier & advance → processing
             await trigger_supplier_fulfillment(list(multi_orders), db)
             await db.commit()
@@ -2941,12 +2952,14 @@ async def verify_checkout_session(
             user_id=current_user.id,
             business_number=os.getenv("COMPANY_NUMBER", "060633880"),
         ))
+        _single_pay_msg = f"הזמנה {order.order_number} אושרה."
         db.add(Notification(
             user_id=current_user.id,
             title="תשלום התקבל ✅",
-            message=f"הזמנה {order.order_number} אושרה.",
+            message=_single_pay_msg,
             type="payment_success",
         ))
+        asyncio.create_task(publish_notification(str(current_user.id), {"type": "payment_success", "title": "תשלום התקבל ✅", "message": _single_pay_msg}))
         # ── Dropshipping: notify admin(s) per supplier & advance → processing ─
         await trigger_supplier_fulfillment([order], db)
         await db.commit()
@@ -3199,12 +3212,14 @@ async def refund_payment(
         order_res = await db.execute(select(Order).where(Order.id == payment.order_id))
         order = order_res.scalar_one_or_none()
         if order:
+            _refund_msg = f"החזר כספי של ₪{refund_ils:.2f} בוצע עבור הזמנה {order.order_number}."
             db.add(Notification(
                 user_id=order.user_id,
                 type="refund",
                 title="החזר כספי אושר על ידי מנהל",
-                message=f"החזר כספי של ₪{refund_ils:.2f} בוצע עבור הזמנה {order.order_number}.",
+                message=_refund_msg,
             ))
+            asyncio.create_task(publish_notification(str(order.user_id), {"type": "refund", "title": "החזר כספי אושר על ידי מנהל", "message": _refund_msg}))
             # Ensure an Invoice record exists (credit note for the refund)
             existing_inv = (await db.execute(
                 select(Invoice).where(Invoice.order_id == order.id)
@@ -3308,28 +3323,34 @@ async def mark_supplier_order_done(
                 if tracking_url:
                     order.tracking_url = tracking_url.strip()
                 carrier_label = carrier or "ספק"
+                _track_title = "📦 החלקים הוזמנו – יש מספר מעקב!"
+                _track_msg = (
+                    f"הזמנה {order.order_number} הוזמנה מהספק.\n"
+                    f"מספר מעקב {carrier_label}: {tracking_number}\n"
+                    + (f"קישור מעקב: {tracking_url}" if tracking_url else "")
+                )
                 db.add(Notification(
                     user_id=order.user_id,
                     type="order_update",
-                    title="\U0001f4e6 \u05d4\u05d7\u05dc\u05e7\u05d9\u05dd \u05d4\u05d5\u05d6\u05de\u05e0\u05d5 \u2013 \u05d9\u05e9 \u05de\u05e1\u05e4\u05e8 \u05de\u05e2\u05e7\u05d1!",
-                    message=(
-                        f"\u05d4\u05d6\u05de\u05e0\u05d4 {order.order_number} \u05d4\u05d5\u05d6\u05de\u05e0\u05d4 \u05de\u05d4\u05e1\u05e4\u05e7.\n"
-                        f"\u05de\u05e1\u05e4\u05e8 \u05de\u05e2\u05e7\u05d1 {carrier_label}: {tracking_number}\n"
-                        + (f"\u05e7\u05d9\u05e9\u05d5\u05e8 \u05de\u05e2\u05e7\u05d1: {tracking_url}" if tracking_url else "")
-                    ),
+                    title=_track_title,
+                    message=_track_msg,
                     data={"order_id": str(order.id), "order_number": order.order_number, "tracking_number": tracking_number, "tracking_url": tracking_url},
                 ))
+                asyncio.create_task(publish_notification(str(order.user_id), {"type": "order_update", "title": _track_title, "message": _track_msg}))
             else:
                 # No tracking yet — still advance status so customer sees progress
                 if order.status in ("processing", "paid"):
                     order.status = "supplier_ordered"
+                _notrack_title = "🛒 ההזמנה הועברה לספק"
+                _notrack_msg = f"הזמנה {order.order_number} הוזמנה מהספק ובדרך אליך. מספר מעקב יעודכן בהקדם."
                 db.add(Notification(
                     user_id=order.user_id,
                     type="order_update",
-                    title="\U0001f6d2 \u05d4\u05d4\u05d6\u05de\u05e0\u05d4 \u05d4\u05d5\u05e2\u05d1\u05e8\u05d4 \u05dc\u05e1\u05e4\u05e7",
-                    message=f"\u05d4\u05d6\u05de\u05e0\u05d4 {order.order_number} \u05d4\u05d5\u05d6\u05de\u05e0\u05d4 \u05de\u05d4\u05e1\u05e4\u05e7 \u05d5\u05d1\u05d3\u05e8\u05da \u05d0\u05dc\u05d9\u05da. \u05de\u05e1\u05e4\u05e8 \u05de\u05e2\u05e7\u05d1 \u05d9\u05e2\u05d5\u05d3\u05db\u05df \u05d1\u05d4\u05e7\u05d3\u05dd.",
+                    title=_notrack_title,
+                    message=_notrack_msg,
                     data={"order_id": str(order.id), "order_number": order.order_number},
                 ))
+                asyncio.create_task(publish_notification(str(order.user_id), {"type": "order_update", "title": _notrack_title, "message": _notrack_msg}))
 
     n.read_at = datetime.utcnow()
     await db.commit()
@@ -3480,16 +3501,19 @@ async def create_return(data: ReturnRequest, current_user: User = Depends(get_cu
     ))
 
     # ── 7. Notify customer ────────────────────────────────────────────────────
+    _ret_open_title = f"📦 בקשת החזרה נפתחה — {return_number}"
+    _ret_open_msg = (
+        f"קיבלנו את בקשת ההחזרה שלך עבור הזמנה {order.order_number}.\n"
+        f"נסיבה: {data.reason}. נחזור אליך תוך 24 שעות."
+    )
     db.add(Notification(
         user_id=current_user.id,
         type="return_update",
-        title=f"📦 בקשת החזרה נפתחה — {return_number}",
-        message=(
-            f"קיבלנו את בקשת ההחזרה שלך עבור הזמנה {order.order_number}.\n"
-            f"נסיבה: {data.reason}. נחזור אליך תוך 24 שעות."
-        ),
+        title=_ret_open_title,
+        message=_ret_open_msg,
         data={"return_number": return_number, "order_number": order.order_number, "reason": data.reason},
     ))
+    asyncio.create_task(publish_notification(str(current_user.id), {"type": "return_update", "title": _ret_open_title, "message": _ret_open_msg}))
 
     await db.commit()
     await db.refresh(ret)
@@ -3652,17 +3676,20 @@ async def approve_return(return_id: str, refund_percentage: int = None, current_
     )
 
     # Notify customer of approval
+    _ret_approve_title = f"✅ בקשת ההחזרה אושרה — {ret.return_number}"
+    _ret_approve_msg = (
+        f"בקשת ההחזרה שלך {ret.return_number} אושרה (החזר {refund_percentage}%).\n"
+        f"זיכוי של ₪{float(ret.refund_amount):.2f} יועבר לכרטיס האשראי שלך תוך 7-14 ימי עסקים."
+        + shipping_note
+    )
     db.add(Notification(
         user_id=ret.user_id,
         type="return_update",
-        title=f"✅ בקשת ההחזרה אושרה — {ret.return_number}",
-        message=(
-            f"בקשת ההחזרה שלך {ret.return_number} אושרה (החזר {refund_percentage}%).\n"
-            f"זיכוי של ₪{float(ret.refund_amount):.2f} יועבר לכרטיס האשראי שלך תוך 7-14 ימי עסקים."
-            + shipping_note
-        ),
+        title=_ret_approve_title,
+        message=_ret_approve_msg,
         data={"return_number": ret.return_number, "refund_amount": float(ret.refund_amount), "refund_percentage": refund_percentage, "handling_fee": float(handling_fee_amount)},
     ))
+    asyncio.create_task(publish_notification(str(ret.user_id), {"type": "return_update", "title": _ret_approve_title, "message": _ret_approve_msg}))
 
     await db.commit()
     return {"message": "Return approved", "refund_amount": float(ret.refund_amount), "refund_percentage": refund_percentage, "handling_fee": float(handling_fee_amount)}
@@ -3687,17 +3714,20 @@ async def reject_return(
     ret.rejected_at = datetime.utcnow()
 
     # Notify customer of rejection
+    _ret_reject_title = f"❌ בקשת ההחזרה נדחתה — {ret.return_number}"
+    _ret_reject_msg = (
+        f"לצערנו, בקשת ההחזרה {ret.return_number} נדחתה.\n"
+        f"סיבה: {reason}\n"
+        "לשאלות פנה לשירות הלקוחות: support@autospare.com"
+    )
     db.add(Notification(
         user_id=ret.user_id,
         type="return_update",
-        title=f"❌ בקשת ההחזרה נדחתה — {ret.return_number}",
-        message=(
-            f"לצערנו, בקשת ההחזרה {ret.return_number} נדחתה.\n"
-            f"סיבה: {reason}\n"
-            "לשאלות פנה לשירות הלקוחות: support@autospare.com"
-        ),
+        title=_ret_reject_title,
+        message=_ret_reject_msg,
         data={"return_number": ret.return_number, "rejection_reason": reason},
     ))
+    asyncio.create_task(publish_notification(str(ret.user_id), {"type": "return_update", "title": _ret_reject_title, "message": _ret_reject_msg}))
 
     await db.commit()
     return {"message": "Return rejected", "return_number": ret.return_number}
@@ -4515,12 +4545,14 @@ async def update_order_status_admin(
         "delivered": "נמסר",
         "cancelled": "בוטל",
     }
+    _status_msg = f"הזמנה {order.order_number} עודכנה: {status_labels.get(new_status, new_status)}"
     db.add(Notification(
         user_id=order.user_id,
         type="order_update",
         title="עדכון סטטוס הזמנה",
-        message=f"הזמנה {order.order_number} עודכנה: {status_labels.get(new_status, new_status)}",
+        message=_status_msg,
     ))
+    asyncio.create_task(publish_notification(str(order.user_id), {"type": "order_update", "title": "עדכון סטטוס הזמנה", "message": _status_msg}))
     await db.commit()
     return {"message": "Status updated", "old": old_status, "new": new_status}
 
@@ -5063,16 +5095,19 @@ async def _notify_search_miss_loop() -> None:
                 notified_ids = []
                 async with pii_session_factory() as pii_db:
                     for row in rows:
+                        _sm_title = "🔍 מצאנו חלקים חדשים!"
+                        _sm_msg = (
+                            f"מצאנו חלקים חדשים התואמים לחיפוש שלך! "
+                            f"חפש שוב: {row.query}"
+                        )
                         pii_db.add(Notification(
                             user_id=row.user_id,
                             type="search_miss_resolved",
-                            title="🔍 מצאנו חלקים חדשים!",
-                            message=(
-                                f"מצאנו חלקים חדשים התואמים לחיפוש שלך! "
-                                f"חפש שוב: {row.query}"
-                            ),
+                            title=_sm_title,
+                            message=_sm_msg,
                             data={"query": row.query, "search_miss_id": str(row.id)},
                         ))
+                        asyncio.create_task(publish_notification(str(row.user_id), {"type": "search_miss_resolved", "title": _sm_title, "message": _sm_msg}))
                         notified_ids.append(str(row.id))
                     await pii_db.commit()
 
@@ -5152,22 +5187,25 @@ async def _stuck_orders_monitor_loop():
                     admins_res = await db.execute(select(User).where(User.is_admin == True))
                     admins = admins_res.scalars().all()
                     order_list = ", ".join(o.order_number for o in stuck)
+                    _stuck_title = f"🤖 סוכן הזמנות: {len(stuck)} הזמנות תקועות טופלו אוטומטית"
+                    _stuck_msg = (
+                        f"הסוכן זיהה {len(stuck)} הזמנה/ות שתקועות מעל {STUCK_ORDER_HOURS} שעות "
+                        f"במצב 'ממתין לספק' ופעל אוטומטית להמשך הטיפול.\n"
+                        f"הזמנות: {order_list}"
+                    )
                     for admin in admins:
                         db.add(Notification(
                             user_id=admin.id,
                             type="system",
-                            title=f"🤖 סוכן הזמנות: {len(stuck)} הזמנות תקועות טופלו אוטומטית",
-                            message=(
-                                f"הסוכן זיהה {len(stuck)} הזמנה/ות שתקועות מעל {STUCK_ORDER_HOURS} שעות "
-                                f"במצב 'ממתין לספק' ופעל אוטומטית להמשך הטיפול.\n"
-                                f"הזמנות: {order_list}"
-                            ),
+                            title=_stuck_title,
+                            message=_stuck_msg,
                             data={
                                 "stuck_orders": [o.order_number for o in stuck],
                                 "stuck_hours": STUCK_ORDER_HOURS,
                                 "auto_handled": True,
                             },
                         ))
+                        asyncio.create_task(publish_notification(str(admin.id), {"type": "system", "title": _stuck_title, "message": _stuck_msg}))
                     await db.commit()
                     print(f"[OrderMonitor] ✅ Auto-fulfilled: {order_list}")
                 else:
@@ -5200,14 +5238,17 @@ async def _stuck_orders_monitor_loop():
                         admins_res = await db.execute(select(User).where(User.is_admin == True))
                         admins = admins_res.scalars().all()
                         summary = "\n".join(f"  • {a}" for a in advanced)
+                        _ship_title = f"📦 עדכון משלוחים: {len(advanced)} הזמנות עודכנו"
+                        _ship_msg = f"הסוכן עדכן סטטוס עבור {len(advanced)} הזמנות:\n{summary}"
                         for admin in admins:
                             db.add(Notification(
                                 user_id=admin.id,
                                 type="system",
-                                title=f"📦 עדכון משלוחים: {len(advanced)} הזמנות עודכנו",
-                                message=f"הסוכן עדכן סטטוס עבור {len(advanced)} הזמנות:\n{summary}",
+                                title=_ship_title,
+                                message=_ship_msg,
                                 data={"advanced": advanced, "auto_tracked": True},
                             ))
+                            asyncio.create_task(publish_notification(str(admin.id), {"type": "system", "title": _ship_title, "message": _ship_msg}))
                         await db.commit()
                         print(f"[OrderMonitor] Pass 2: advanced {len(advanced)} order(s): {', '.join(advanced)}")
                     else:
