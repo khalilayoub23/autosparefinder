@@ -1589,7 +1589,7 @@ async def search_parts_by_vin(
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
 ):
-    """Decode a VIN via NHTSA free API and search parts for that vehicle."""
+    """Decode a VIN via NHTSA free API, cache in vehicles table, and search parts."""
     vin_clean = vin.strip().upper().replace("-", "")
     if len(vin_clean) != 17:
         raise HTTPException(status_code=400, detail="VIN must be exactly 17 characters")
@@ -1613,11 +1613,13 @@ async def search_parts_by_vin(
             body_class   = nhtsa("BodyClass")
             doors        = nhtsa("Doors")
             plant_country = nhtsa("PlantCountry")
+            year_int     = int(year_str) if year_str and year_str.isdigit() else 0
+            engine_type  = f"{fuel_type or 'Unknown'} {engine_cc}cc" if engine_cc else fuel_type
             vehicle_info = {
                 "vin": vin_clean,
                 "manufacturer": manufacturer,
                 "model": model,
-                "year": int(year_str) if year_str and year_str.isdigit() else 0,
+                "year": year_int,
                 "engine_cc": engine_cc,
                 "fuel_type": fuel_type,
                 "transmission": transmission,
@@ -1635,18 +1637,54 @@ async def search_parts_by_vin(
     if not vehicle_info.get("manufacturer"):
         raise HTTPException(status_code=404, detail=f"לא נמצא מידע עבור VIN: {vin_clean}")
 
+    # ── Cache VIN in vehicles table (catalog DB) ─────────────────────────────
+    cached_vehicle_id: Optional[str] = None
+    try:
+        vin_row = (await db.execute(
+            select(Vehicle).where(Vehicle.vin == vin_clean)
+        )).scalar_one_or_none()
+        if vin_row:
+            cached_vehicle_id = str(vin_row.id)
+        else:
+            new_vehicle = Vehicle(
+                manufacturer = vehicle_info["manufacturer"],
+                model        = vehicle_info["model"],
+                year         = vehicle_info["year"] or 0,
+                vin          = vin_clean,
+                engine_type  = engine_type,
+                fuel_type    = vehicle_info["fuel_type"],
+                transmission = vehicle_info["transmission"],
+            )
+            db.add(new_vehicle)
+            await db.flush()
+            cached_vehicle_id = str(new_vehicle.id)
+            await db.commit()
+        vehicle_info["id"] = cached_vehicle_id
+    except Exception as e:
+        print(f"[VIN] vehicle cache error (non-fatal): {e}")
+        await db.rollback()
+
+    # ── Search parts ──────────────────────────────────────────────────────────
     agent = get_agent("parts_finder_agent")
-    search_q = " ".join(filter(None, [vehicle_info["manufacturer"], part_query])).strip()
-    parts_list = await agent.search_parts_in_db(search_q, None, category, db, limit=limit, offset=offset)
+    search_q = (part_query or "").strip()
+    parts_list = await agent.search_parts_in_db(
+        search_q,
+        cached_vehicle_id,
+        category,
+        db,
+        limit=limit,
+        offset=offset,
+        vehicle_manufacturer=vehicle_info["manufacturer"],
+    )
 
-    from sqlalchemy import func
-    from BACKEND_DATABASE_MODELS import PartsCatalog as PC2
-    count_stmt = select(func.count()).select_from(PC2).where(PC2.is_active == True)
-    if search_q:
-        count_stmt = count_stmt.where(PC2.name.ilike(f"%{search_q}%") | PC2.manufacturer.ilike(f"%{search_q}%"))
-    total = (await db.execute(count_stmt)).scalar_one()
-
-    return {"vehicle": vehicle_info, "parts": parts_list, "total": total, "offset": offset, "limit": limit}
+    return {
+        "vehicle": vehicle_info,
+        "parts": parts_list,
+        # len(parts_list) reflects actual search results (Meilisearch / ILIKE)
+        "total": len(parts_list),
+        "offset": offset,
+        "limit": limit,
+    }
 
 
 @app.get("/api/v1/parts/{part_id}")
