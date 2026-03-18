@@ -33,6 +33,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker
+from pgvector.sqlalchemy import Vector
 
 load_dotenv()
 
@@ -424,6 +425,8 @@ class PartsCatalog(Base):
     is_safety_critical = Column(Boolean, nullable=False, default=False)  # brakes/steering/airbags
     needs_oem_lookup = Column(Boolean, nullable=False, default=False)    # fake/seeded SKU flag
     master_enriched  = Column(Boolean, nullable=False, default=False)    # linked to parts_master
+    embedding        = Column(Vector(768), nullable=True)                # text embedding (nomic-embed-text, 768-dim)
+    image_embedding  = Column(Vector(512), nullable=True)               # image embedding (512-dim)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
