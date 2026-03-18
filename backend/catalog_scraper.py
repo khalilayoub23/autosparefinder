@@ -1539,6 +1539,16 @@ async def run_brand_discovery(
                   f"dup_skipped={b_report['skipped_dup']}")
             await asyncio.sleep(3)
 
+    # Immediately normalise newly discovered parts — don't wait for the 6h timer
+    if report["total_inserted"] > 0:
+        try:
+            from db_update_agent import run_all_tasks as _run_norm
+            async with scraper_session_factory() as _norm_db:
+                await _run_norm(_norm_db)
+            print("[Rex] ✅ Post-discovery normalization complete")
+        except Exception as _e:
+            print(f"[Rex] ⚠ Post-discovery normalization failed: {_e}")
+
     report["finished_at"] = datetime.utcnow().isoformat()
     print(f"\n[Rex] ✅ Brand discovery done — total inserted: {report['total_inserted']}")
     return report

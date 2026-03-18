@@ -16,7 +16,9 @@ Modes:
 """
 import asyncio, sys, uuid, json, os, hashlib, re
 from datetime import datetime
+from typing import Dict
 import asyncpg
+from sqlalchemy.ext.asyncio import AsyncSession
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
@@ -233,6 +235,157 @@ async def insert_parts(conn, supplier_id, brand: str, parts: list,
             errors += 1
             print(f"    [ERR] {e}")
     return cat_ins, sp_ins, errors
+
+
+async def enrich_pending_parts(db: AsyncSession, limit: int = 100) -> Dict[str, Any]:
+    """
+    Callable enrichment task for db_update_agent / pipeline use.
+
+    Finds up to `limit` parts_catalog rows where:
+        needs_oem_lookup = FALSE AND master_enriched = FALSE
+    For each part:
+      1. Asks Ollama to infer canonical_name, canonical_name_he, quality_level
+      2. Upserts a parts_master row (ON CONFLICT on canonical_name+category)
+      3. Inserts a part_variants row linking parts_master -> parts_catalog
+      4. Sets parts_catalog.master_enriched = TRUE
+
+    Returns {"task": "enrich_pending_parts", "status": "ok",
+             "processed": int, "inserted_master": int,
+             "inserted_variants": int, "errors": int}
+    """
+    from sqlalchemy import text as _text
+    from openai import AsyncOpenAI as _OAI
+
+    report: Dict[str, Any] = {
+        "task": "enrich_pending_parts",
+        "status": "ok",
+        "processed": 0,
+        "inserted_master": 0,
+        "inserted_variants": 0,
+        "errors": 0,
+    }
+
+    if not OLLAMA_URL:
+        report["status"] = "skipped"
+        report["reason"] = "OLLAMA_URL not set"
+        return report
+
+    client = _OAI(base_url=f"{OLLAMA_URL}/v1", api_key="ollama")
+
+    rows = (await db.execute(
+        _text("""
+            SELECT id, sku, name, name_he, category, part_type, manufacturer
+            FROM parts_catalog
+            WHERE needs_oem_lookup = FALSE
+              AND master_enriched  = FALSE
+              AND is_active        = TRUE
+            ORDER BY created_at ASC
+            LIMIT :lim
+        """),
+        {"lim": limit},
+    )).fetchall()
+
+    QUALITY_MAP = {
+        "oem":                  "OEM",
+        "original":             "OEM",
+        "oem_equivalent":       "OEM_Equivalent",
+        "aftermarket_premium":  "Aftermarket_Premium",
+        "aftermarket_standard": "Aftermarket_Standard",
+        "aftermarket":          "Aftermarket_Standard",
+        "economy":              "Economy",
+    }
+    VALID_QUALITY = set(QUALITY_MAP.values())
+
+    for row in rows:
+        try:
+            prompt = (
+                f'Part: "{row.name}" (Hebrew: "{row.name_he or ""}"), '
+                f'category: "{row.category}", type: "{row.part_type}", '
+                f'brand: "{row.manufacturer}".\n'
+                f'Return ONLY valid JSON with keys: '
+                f'"canonical_name" (English, 2-6 words), '
+                f'"canonical_name_he" (Hebrew, 2-6 words), '
+                f'"quality_level" (one of: OEM, OEM_Equivalent, '
+                f'Aftermarket_Premium, Aftermarket_Standard, Economy).'
+            )
+            resp = await client.chat.completions.create(
+                model=OLLAMA_MODEL,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user",   "content": prompt},
+                ],
+                temperature=0.1,
+                max_tokens=120,
+            )
+            raw = resp.choices[0].message.content.strip()
+            s, e = raw.find("{"), raw.rfind("}") + 1
+            data = json.loads(raw[s:e]) if s >= 0 and e > s else {}
+
+            canonical_name    = str(data.get("canonical_name",    row.name))[:255]
+            canonical_name_he = str(data.get("canonical_name_he", row.name_he or ""))[:255]
+            raw_ql            = str(data.get("quality_level", "Aftermarket_Standard")).lower()
+            quality_level     = QUALITY_MAP.get(raw_ql, "Aftermarket_Standard")
+            if quality_level not in VALID_QUALITY:
+                quality_level = "Aftermarket_Standard"
+
+            master_row = (await db.execute(
+                _text("""
+                    INSERT INTO parts_master
+                        (id, canonical_name, canonical_name_he,
+                         category, part_type, is_safety_critical,
+                         created_at, updated_at)
+                    VALUES
+                        (gen_random_uuid(), :cname, :cname_he,
+                         :category, :part_type, false, NOW(), NOW())
+                    ON CONFLICT (canonical_name, category) DO UPDATE
+                        SET updated_at = NOW()
+                    RETURNING id
+                """),
+                {
+                    "cname":     canonical_name,
+                    "cname_he":  canonical_name_he,
+                    "category":  row.category or "כללי",
+                    "part_type": row.part_type or "Aftermarket",
+                },
+            )).fetchone()
+
+            if master_row:
+                report["inserted_master"] += 1
+                await db.execute(
+                    _text("""
+                        INSERT INTO part_variants
+                            (id, master_part_id, catalog_part_id,
+                             quality_level, manufacturer, sku, created_at)
+                        VALUES
+                            (gen_random_uuid(), :mid, :cid,
+                             :ql, :mfr, :sku, NOW())
+                        ON CONFLICT (master_part_id, catalog_part_id) DO NOTHING
+                    """),
+                    {
+                        "mid": str(master_row[0]),
+                        "cid": str(row.id),
+                        "ql":  quality_level,
+                        "mfr": row.manufacturer or "",
+                        "sku": row.sku,
+                    },
+                )
+                report["inserted_variants"] += 1
+
+            await db.execute(
+                _text("UPDATE parts_catalog SET master_enriched = TRUE WHERE id = :id"),
+                {"id": str(row.id)},
+            )
+            await db.commit()
+            report["processed"] += 1
+
+        except Exception:
+            report["errors"] += 1
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+
+    return report
 
 
 async def run(mode_new=True, mode_expand=True, specific_brands=None, dry_run=False):

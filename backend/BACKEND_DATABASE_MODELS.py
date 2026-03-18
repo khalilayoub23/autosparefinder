@@ -423,6 +423,7 @@ class PartsCatalog(Base):
     customs_tariff_code = Column(String(20), nullable=True)        # for Israeli customs
     is_safety_critical = Column(Boolean, nullable=False, default=False)  # brakes/steering/airbags
     needs_oem_lookup = Column(Boolean, nullable=False, default=False)    # fake/seeded SKU flag
+    master_enriched  = Column(Boolean, nullable=False, default=False)    # linked to parts_master
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -466,6 +467,11 @@ class PartMaster(Base):
     is_safety_critical = Column(Boolean, nullable=False, default=False)
     created_at         = Column(DateTime, default=datetime.utcnow)
     updated_at         = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("canonical_name", "category",
+                         name="uq_parts_master_name_category"),
+    )
 
     variants = relationship("PartVariant", back_populates="master_part",
                             cascade="all, delete-orphan")

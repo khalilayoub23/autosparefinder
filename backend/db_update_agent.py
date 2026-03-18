@@ -788,6 +788,12 @@ async def seed_system_settings(db: AsyncSession) -> Dict[str, Any]:
 # Orchestrator – run_all_tasks
 # =========================================================================
 
+async def _enrich_pending_parts_task(db: AsyncSession) -> Dict[str, Any]:
+    """Thin wrapper so enrich_pending_parts integrates with TASK_REGISTRY."""
+    from ai_catalog_builder import enrich_pending_parts
+    return await enrich_pending_parts(db, limit=100)
+
+
 TASK_REGISTRY: Dict[str, Any] = {
     "clean_part_names":       clean_part_names,
     "normalize_part_types":   normalize_part_types,
@@ -798,6 +804,7 @@ TASK_REGISTRY: Dict[str, Any] = {
     "fill_car_brands":        fill_car_brands,
     "refresh_min_max_prices": refresh_min_max_prices,
     "seed_system_settings":   seed_system_settings,
+    "enrich_pending_parts":   _enrich_pending_parts_task,
 }
 
 
@@ -835,6 +842,7 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
         "flag_fake_skus",
         "fix_base_prices",
         "refresh_min_max_prices",
+        "enrich_pending_parts",
     ]
 
     for task_name in ordered_tasks:
