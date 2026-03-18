@@ -704,91 +704,169 @@ get_db_stats() to verify what categories and manufacturers currently hold stock.
         vehicle_manufacturer: Optional[str] = None,
     ) -> List[Dict]:
         """Search parts catalog.
+        Text search is powered by Meilisearch when available; falls back to ILIKE.
         Automatically normalizes manufacturer aliases via car_brands registry
         (e.g. 'מרצדס' → 'Mercedes', 'מרצדס בנץ' → 'Mercedes-Benz').
 
         sort_by options: name, manufacturer, category, part_type, price_asc, price_desc
         sort_dir: asc | desc  (ignored when sort_by is price_asc/price_desc)
         """
-        stmt = select(PartsCatalog).where(PartsCatalog.is_active == True)
+        # ── Meilisearch text lookup (optional) ──────────────────────────────
+        # meili_ids: List[str]  → ranked UUIDs → use unnest JOIN, skip ILIKE
+        # meili_ids: None       → Meilisearch unavailable → fall back to ILIKE
+        # meili_ids: []         → zero hits → short-circuit
+        meili_ids: Optional[List[str]] = None
+        _meili_url = os.getenv("MEILI_URL", "")
+        if query and _meili_url:
+            try:
+                async with httpx.AsyncClient(timeout=2.0) as _mc:
+                    _resp = await _mc.post(
+                        f"{_meili_url}/indexes/parts/search",
+                        headers={"Authorization": f"Bearer {os.getenv('MEILI_MASTER_KEY', '')}"},
+                        json={"q": query, "limit": 200, "attributesToRetrieve": ["id"]},
+                    )
+                    _resp.raise_for_status()
+                    meili_ids = [h["id"] for h in _resp.json().get("hits", [])]
+            except Exception:
+                meili_ids = None  # fall back to ILIKE silently
 
-        if vehicle_manufacturer:
-            normalized_mfr = await self.normalize_manufacturer(vehicle_manufacturer, db)
-            # Also try splitting compound Hebrew names like "סיטרואן ספרד" → try each word
-            words = vehicle_manufacturer.split()
-            word_normalized = normalized_mfr
-            for word in words:
-                if len(word) >= 3:
-                    candidate = await self.normalize_manufacturer(word, db)
-                    if candidate.lower() != word.lower():  # successfully resolved
-                        word_normalized = candidate
-                        break
-            mfr_terms = {vehicle_manufacturer, normalized_mfr, word_normalized}
-            stmt = stmt.where(or_(*[PartsCatalog.manufacturer.ilike(f"%{t}%") for t in mfr_terms]))
+        # ── Short-circuit: Meilisearch found zero hits ───────────────────────
+        if meili_ids is not None and len(meili_ids) == 0:
+            return []
 
-        if query:
-            # Try to resolve the query (or a leading word) as a brand alias
-            normalized = await self.normalize_manufacturer(query, db)
-            search_terms = {query, normalized} if normalized.lower() != query.lower() else {query}
+        # ── Meilisearch path: raw SQL with rank-preserving unnest JOIN ───────
+        if meili_ids is not None:
+            conditions = ["pc.is_active = TRUE"]
+            params: Dict[str, Any] = {}
 
-            conditions = []
-            for term in search_terms:
-                conditions += [
-                    PartsCatalog.name.ilike(f"%{term}%"),
-                    PartsCatalog.manufacturer.ilike(f"%{term}%"),
-                    PartsCatalog.sku.ilike(f"%{term}%"),
-                    PartsCatalog.category.ilike(f"%{term}%"),
-                ]
-            stmt = stmt.where(or_(*conditions))
-        if category:
-            # Try exact match first; fall back to case-insensitive contains
-            stmt = stmt.where(PartsCatalog.category.ilike(category))
+            if category:
+                conditions.append("pc.category ILIKE :cat")
+                params["cat"] = f"%{category}%"
 
-        # Server-side sorting
-        _dir = lambda col: col.asc() if sort_dir == "asc" else col.desc()
-        if sort_by in ("price_asc", "price_desc"):
-            # Join cheapest supplier price per part for accurate ordering
-            price_subq = (
-                select(
-                    SupplierPart.part_id,
-                    func.min(SupplierPart.price_usd).label("min_price"),
+            if vehicle_manufacturer:
+                normalized_mfr = await self.normalize_manufacturer(vehicle_manufacturer, db)
+                mfr_terms = list({vehicle_manufacturer, normalized_mfr})
+                for i, t in enumerate(mfr_terms):
+                    conditions.append(f"pc.manufacturer ILIKE :mfr{i}")
+                    params[f"mfr{i}"] = f"%{t}%"
+
+            if vehicle_id:
+                conditions.append(
+                    "(pc.compatible_vehicles::text ILIKE :vid "
+                    "OR EXISTS (SELECT 1 FROM part_vehicle_fitment pvf "
+                    "           WHERE pvf.part_id = pc.id AND pvf.vehicle_id = :vid_exact))"
                 )
-                .group_by(SupplierPart.part_id)
-                .subquery()
-            )
-            stmt = stmt.outerjoin(price_subq, PartsCatalog.id == price_subq.c.part_id)
-            if sort_by == "price_asc":
-                stmt = stmt.order_by(price_subq.c.min_price.asc().nullslast())
+                params["vid"] = f"%{vehicle_id}%"
+                params["vid_exact"] = vehicle_id
+
+            where_sql = " AND ".join(conditions)
+            _dir_sql = "ASC" if sort_dir == "asc" else "DESC"
+
+            if sort_by in ("price_asc", "price_desc"):
+                order_sql = (
+                    "ORDER BY (SELECT MIN(price_usd) FROM supplier_parts "
+                    "          WHERE part_id = pc.id) "
+                    + ("ASC NULLS LAST" if sort_by == "price_asc" else "DESC NULLS FIRST")
+                )
+            elif sort_by in ("manufacturer", "category", "part_type"):
+                _col_map = {
+                    "manufacturer": "pc.manufacturer",
+                    "category":     "pc.category",
+                    "part_type":    "pc.part_type",
+                }
+                order_sql = f"ORDER BY ranked.pos ASC, {_col_map[sort_by]} {_dir_sql}"
             else:
-                stmt = stmt.order_by(price_subq.c.min_price.desc().nullsfirst())
-        elif sort_by == "availability":
-            # In-stock parts first, then alphabetically by name
-            avail_subq = (
-                select(
-                    SupplierPart.part_id,
-                    func.bool_or(SupplierPart.is_available).label("has_stock"),
-                )
-                .where(SupplierPart.part_id.in_(
-                    select(PartsCatalog.id).where(PartsCatalog.is_active == True)
-                ))
-                .group_by(SupplierPart.part_id)
-                .subquery()
-            )
-            stmt = stmt.outerjoin(avail_subq, PartsCatalog.id == avail_subq.c.part_id)
-            stmt = stmt.order_by(avail_subq.c.has_stock.desc().nullslast(), PartsCatalog.name.asc())
-        elif sort_by == "manufacturer":
-            stmt = stmt.order_by(_dir(PartsCatalog.manufacturer))
-        elif sort_by == "category":
-            stmt = stmt.order_by(_dir(PartsCatalog.category))
-        elif sort_by == "part_type":
-            stmt = stmt.order_by(_dir(PartsCatalog.part_type))
-        else:  # default: name
-            stmt = stmt.order_by(_dir(PartsCatalog.name))
+                order_sql = "ORDER BY ranked.pos ASC"
 
-        # Always use catalog DB — PartsCatalog/SupplierPart live in autospare, not pii
-        async with async_session_factory() as cat_db:
-            result = await cat_db.execute(stmt.offset(offset).limit(limit))
-            parts = result.scalars().all()
+            uuid_array = "{" + ",".join(meili_ids) + "}"
+            params["uuid_arr"] = uuid_array
+            params["lim"] = limit
+            params["off"] = offset
+
+            async with async_session_factory() as cat_db:
+                rows = (await cat_db.execute(
+                    text(f"""
+                        SELECT pc.*
+                        FROM parts_catalog pc
+                        JOIN (
+                            SELECT t.id::uuid AS ranked_id, t.pos
+                            FROM unnest(:uuid_arr::text[]) WITH ORDINALITY AS t(id, pos)
+                        ) ranked ON ranked.ranked_id = pc.id
+                        WHERE {where_sql}
+                        {order_sql}
+                        LIMIT :lim OFFSET :off
+                    """),
+                    params,
+                )).fetchall()
+
+            from types import SimpleNamespace
+            parts = [SimpleNamespace(**dict(r._mapping)) for r in rows]
+
+        else:
+            # ── ILIKE fallback path (original logic, unchanged) ───────────────
+            stmt = select(PartsCatalog).where(PartsCatalog.is_active == True)
+
+            if vehicle_manufacturer:
+                normalized_mfr = await self.normalize_manufacturer(vehicle_manufacturer, db)
+                # Also try splitting compound Hebrew names like "סיטרואן ספרד" → try each word
+                words = vehicle_manufacturer.split()
+                word_normalized = normalized_mfr
+                for word in words:
+                    if len(word) >= 3:
+                        candidate = await self.normalize_manufacturer(word, db)
+                        if candidate.lower() != word.lower():  # successfully resolved
+                            word_normalized = candidate
+                            break
+                mfr_terms = {vehicle_manufacturer, normalized_mfr, word_normalized}
+                stmt = stmt.where(or_(*[PartsCatalog.manufacturer.ilike(f"%{t}%") for t in mfr_terms]))
+
+            if query:
+                normalized = await self.normalize_manufacturer(query, db)
+                search_terms = {query, normalized} if normalized.lower() != query.lower() else {query}
+                conditions = []
+                for term in search_terms:
+                    conditions += [
+                        PartsCatalog.name.ilike(f"%{term}%"),
+                        PartsCatalog.manufacturer.ilike(f"%{term}%"),
+                        PartsCatalog.sku.ilike(f"%{term}%"),
+                        PartsCatalog.category.ilike(f"%{term}%"),
+                    ]
+                stmt = stmt.where(or_(*conditions))
+
+            if category:
+                stmt = stmt.where(PartsCatalog.category.ilike(category))
+
+            _dir = lambda col: col.asc() if sort_dir == "asc" else col.desc()
+            if sort_by in ("price_asc", "price_desc"):
+                price_subq = (
+                    select(SupplierPart.part_id, func.min(SupplierPart.price_usd).label("min_price"))
+                    .group_by(SupplierPart.part_id).subquery()
+                )
+                stmt = stmt.outerjoin(price_subq, PartsCatalog.id == price_subq.c.part_id)
+                if sort_by == "price_asc":
+                    stmt = stmt.order_by(price_subq.c.min_price.asc().nullslast())
+                else:
+                    stmt = stmt.order_by(price_subq.c.min_price.desc().nullsfirst())
+            elif sort_by == "availability":
+                avail_subq = (
+                    select(SupplierPart.part_id, func.bool_or(SupplierPart.is_available).label("has_stock"))
+                    .where(SupplierPart.part_id.in_(select(PartsCatalog.id).where(PartsCatalog.is_active == True)))
+                    .group_by(SupplierPart.part_id).subquery()
+                )
+                stmt = stmt.outerjoin(avail_subq, PartsCatalog.id == avail_subq.c.part_id)
+                stmt = stmt.order_by(avail_subq.c.has_stock.desc().nullslast(), PartsCatalog.name.asc())
+            elif sort_by == "manufacturer":
+                stmt = stmt.order_by(_dir(PartsCatalog.manufacturer))
+            elif sort_by == "category":
+                stmt = stmt.order_by(_dir(PartsCatalog.category))
+            elif sort_by == "part_type":
+                stmt = stmt.order_by(_dir(PartsCatalog.part_type))
+            else:  # default: name
+                stmt = stmt.order_by(_dir(PartsCatalog.name))
+
+            async with async_session_factory() as cat_db:
+                result = await cat_db.execute(stmt.offset(offset).limit(limit))
+                parts = result.scalars().all()
 
         if not parts:
             return []
