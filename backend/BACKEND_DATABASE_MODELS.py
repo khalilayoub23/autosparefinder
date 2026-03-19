@@ -450,6 +450,7 @@ class PartImage(Base):
     url = Column(String(500))
     is_primary = Column(Boolean, default=False)
     sort_order = Column(Integer, default=0)
+    embedding_generated = Column(Boolean, nullable=False, default=False)  # TRUE once image_embedding written to parts_catalog
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships

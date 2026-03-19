@@ -22,7 +22,9 @@ run_agent_background_loop()  – optional periodic loop (disabled by default).
 from __future__ import annotations
 
 import asyncio
+import httpx
 import logging
+import os
 import re
 import time
 from datetime import datetime, timezone
@@ -853,18 +855,85 @@ async def _trigger_scraper_for_misses_task(db: AsyncSession) -> Dict[str, Any]:
     }
 
 
+async def _run_image_embedding_batch(rows: list) -> None:
+    """Background worker: fetch image bytes, embed via CLIP, write vector to DB.
+    Always launched via asyncio.create_task() — never awaited directly."""
+    import base64
+    from BACKEND_DATABASE_MODELS import async_session_factory as _sf
+    OLLAMA_URL = os.getenv("OLLAMA_URL", "")
+    CLIP_MODEL = os.getenv("CLIP_MODEL", "clip")
+    ok = 0
+    async with httpx.AsyncClient() as client:
+        for row in rows:
+            try:
+                r = await client.get(row.url, timeout=15.0, follow_redirects=True)
+                r.raise_for_status()
+                b64 = base64.b64encode(r.content).decode()
+                er = await client.post(
+                    f"{OLLAMA_URL}/api/embed",
+                    json={"model": CLIP_MODEL, "input": b64},
+                    timeout=30.0,
+                )
+                er.raise_for_status()
+                data = er.json()
+                emb = data.get("embeddings") or data.get("embedding")
+                if not emb:
+                    continue
+                vec = emb[0] if isinstance(emb[0], list) else emb
+                async with _sf() as db:
+                    await db.execute(
+                        text("UPDATE parts_catalog SET image_embedding = CAST(:v AS vector) WHERE id = :id"),
+                        {"v": str(vec), "id": str(row.part_id)},
+                    )
+                    await db.execute(
+                        text("UPDATE parts_images SET embedding_generated = TRUE WHERE id = :id"),
+                        {"id": str(row.id)},
+                    )
+                    await db.commit()
+                ok += 1
+            except Exception as e:
+                logger.warning("_run_image_embedding_batch: %s → %s", row.url[:80], e)
+    logger.info("_run_image_embedding_batch: %d/%d embedded", ok, len(rows))
+
+
+async def _generate_image_embeddings_task(db: AsyncSession) -> Dict[str, Any]:
+    """Check for parts_images rows pending CLIP embedding; fire background batch.
+    Returns immediately without blocking run_all_tasks."""
+    OLLAMA_URL = os.getenv("OLLAMA_URL", "")
+    if not OLLAMA_URL:
+        return {"task": "generate_image_embeddings", "status": "ok", "triggered": 0, "note": "OLLAMA_URL not set"}
+
+    rows = (await db.execute(
+        text("""
+            SELECT id, part_id, url
+            FROM parts_images
+            WHERE embedding_generated = FALSE
+              AND url IS NOT NULL
+            ORDER BY is_primary DESC, created_at
+            LIMIT 20
+        """)
+    )).fetchall()
+
+    if not rows:
+        return {"task": "generate_image_embeddings", "status": "ok", "triggered": 0}
+
+    asyncio.create_task(_run_image_embedding_batch(rows))
+    return {"task": "generate_image_embeddings", "status": "ok", "triggered": len(rows)}
+
+
 TASK_REGISTRY: Dict[str, Any] = {
-    "clean_part_names":       clean_part_names,
-    "normalize_part_types":   normalize_part_types,
-    "normalize_categories":   normalize_categories,
-    "normalize_availability": normalize_availability,
-    "fix_base_prices":        fix_base_prices,
-    "flag_fake_skus":         flag_fake_skus,
-    "fill_car_brands":        fill_car_brands,
-    "refresh_min_max_prices": refresh_min_max_prices,
-    "seed_system_settings":   seed_system_settings,
-    "enrich_pending_parts":        _enrich_pending_parts_task,
-    "trigger_scraper_for_misses":   _trigger_scraper_for_misses_task,
+    "clean_part_names":          clean_part_names,
+    "normalize_part_types":      normalize_part_types,
+    "normalize_categories":      normalize_categories,
+    "normalize_availability":    normalize_availability,
+    "fix_base_prices":           fix_base_prices,
+    "flag_fake_skus":            flag_fake_skus,
+    "fill_car_brands":           fill_car_brands,
+    "refresh_min_max_prices":    refresh_min_max_prices,
+    "seed_system_settings":      seed_system_settings,
+    "enrich_pending_parts":      _enrich_pending_parts_task,
+    "trigger_scraper_for_misses": _trigger_scraper_for_misses_task,
+    "generate_image_embeddings": _generate_image_embeddings_task,
 }
 
 
@@ -904,6 +973,7 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
         "refresh_min_max_prices",
         "enrich_pending_parts",
         "trigger_scraper_for_misses",
+        "generate_image_embeddings",
     ]
 
     for task_name in ordered_tasks:
