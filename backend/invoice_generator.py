@@ -225,7 +225,7 @@ def generate_invoice_pdf(order, items, user, invoice) -> bytes:
 
     tot_lines = [
         (rtl('סה"כ לפני מע"מ'), f"\u20aa{subtotal:.2f}"),
-        (rtl('מע"מ  17%'),       f"\u20aa{vat:.2f}"),
+        (rtl('מע"מ  18%'),       f"\u20aa{vat:.2f}"),
         (rtl("דמי משלוח"),       f"\u20aa{ship:.2f}"),
     ]
 

@@ -448,13 +448,13 @@ class PartsCatalog(Base):
     specifications = Column(JSONB, default=dict)
     compatible_vehicles = Column(JSONB, default=list)
     base_price = Column(Numeric(10, 2), nullable=True,
-                        doc="Our selling price — WITH 17% VAT included")
+                        doc="Our selling price — WITH 18% VAT included")
     # New catalog fields
     name_he = Column(String(255), nullable=True)                   # Hebrew name
     oem_number = Column(String(100), nullable=True, index=True)    # primary OEM number
     barcode = Column(String(50), nullable=True)                    # EAN-13 / UPC
     weight_kg = Column(Numeric(6, 3), nullable=True)
-    # All ILS prices stored WITH 17% VAT included
+    # All ILS prices stored WITH 18% VAT included
     importer_price_ils = Column(Numeric(10, 2), nullable=True)     # IL importer price incl. VAT
     online_price_ils = Column(Numeric(10, 2), nullable=True)       # competitor online price incl. VAT
     min_price_ils = Column(Numeric(10, 2), nullable=True)          # cheapest supplier incl. VAT
@@ -616,7 +616,7 @@ class SupplierPart(Base):
     last_in_stock_at = Column(DateTime, nullable=True)
     # Express shipping for this specific part
     express_available = Column(Boolean, nullable=False, default=False)
-    express_price_ils = Column(Numeric(10, 2), nullable=True)        # surcharge incl. 17% VAT
+    express_price_ils = Column(Numeric(10, 2), nullable=True)        # surcharge incl. 18% VAT
     express_delivery_days = Column(Integer, nullable=True)
     express_cutoff_time = Column(String(5), nullable=True)           # "14:00"
     express_last_checked = Column(DateTime, nullable=True)
@@ -649,7 +649,7 @@ class Order(PiiBase):
     # statuses: pending_payment, paid, processing, supplier_ordered, shipped,
     #           delivered, cancelled, refunded
     subtotal = Column(Numeric(10, 2), nullable=False)                # without VAT
-    vat_amount = Column(Numeric(10, 2), nullable=False)              # 17%
+    vat_amount = Column(Numeric(10, 2), nullable=False)              # 18%
     shipping_cost = Column(Numeric(10, 2), nullable=False)
     discount_amount = Column(Numeric(10, 2), default=0)
     total_amount = Column(Numeric(10, 2), nullable=False)

@@ -42,10 +42,10 @@ All agents use GitHub Models API (FREE) with GPT-4o or Claude 3.5 Sonnet.
 
 CRITICAL BUSINESS RULES (enforced in prompts & code):
   - NEVER expose supplier name to customer - show manufacturer only
-  - Price = (supplier_cost_ils × 1.45) + 17% VAT + 91₪ shipping
+  - Price = (supplier_cost_ils × 1.45) + 18% VAT + 91₪ shipping
   - NEVER order from supplier before customer payment confirmed
   - Margin: 45% on cost
-  - VAT: 17% (separate line)
+  - VAT: 18% (separate line)
   - Shipping: ~91₪ (separate line)
 ==============================================================================
 """
@@ -144,7 +144,7 @@ PREMIUM_MODEL = FREE_MODEL  # one model only
 
 # Business constants
 PROFIT_MARGIN = 1.45       # 45% markup on cost
-VAT_RATE = 0.17            # 17%
+VAT_RATE = 0.18            # 18%
 SHIPPING_ILS = 91.0        # default customer delivery fee (₪)
 # Import the single source of truth for USD→ILS rate from BACKEND_DATABASE_MODELS
 from BACKEND_DATABASE_MODELS import USD_TO_ILS
@@ -330,11 +330,11 @@ class RouterAgent(BaseAgent):
 Your ONLY job is to identify which specialized agent should handle the user's message.
 
 Available agents:
-- parts_finder_agent: License plate lookup, VIN/OEM number identification, part identification from image ONLY. Do NOT use for general part price or availability questions.
+- parts_finder_agent: License plate lookup, VIN/OEM number identification, part identification from image or audio description. VIN search, barcode scans, and image uploads all route here. Do NOT use for general part price or availability questions.
 - sales_agent: Any customer inquiry about a specific part — price questions ("כמה עולה X?"), availability ("יש לכם X?"), part search by name or type, Good/Better/Best recommendations, upselling, bundles, purchasing decisions. Use this for ANY "looking for a part" message.
-- orders_agent: Order status, tracking, cancellations, returns AND payment/checkout questions ("אפשר לשלם?", "איך משלמים?", "לינק לתשלום", "להשלים הזמנה"). Route ANY payment or checkout question here.
+- orders_agent: Order status, tracking, cancellations, returns AND payment/checkout questions ("אפשר לשלם?", "איך משלמים?", "לינק לתשלום", "להשלים הזמנה"). Route ANY payment or checkout question here. Also handle abandoned cart questions — customer mentions items they added but did not purchase.
 - finance_agent: Invoice requests, VAT breakdowns, refund calculations, billing disputes — NOT for payment links or checkout flow.
-- service_agent: Technical support, complaints, general questions, after-sales
+- service_agent: Technical support, complaints, general questions, after-sales. Also handles: wishlist questions ("רשימת משאלות", "שמור לרשימה"), product reviews, and audio/image upload errors.
 - security_agent: Login issues, 2FA, password reset, account security, suspicious activity
 - marketing_agent: Promotions, coupons, discounts, newsletter, referrals, loyalty points
 - social_media_manager_agent: Social media content, posts (admin only)
@@ -387,7 +387,7 @@ class PartsFinderAgent(BaseAgent):
 CRITICAL RULES:
 1. NEVER mention supplier names (RockAuto, FCP Euro, Autodoc, AliExpress) to customers
 2. ALWAYS show manufacturer of the part (Bosch, Brembo, Toyota OEM, etc.)
-3. ALWAYS show price breakdown: net price + VAT (17%) + shipping (91₪)
+3. ALWAYS show price breakdown: net price + VAT (18%) + shipping (₪29–₪149 לפי ספק — הצג הטווח אם לא ידוע מחיר מדויק)
 4. Results must be sorted by MANUFACTURER, not by supplier
 5. LANGUAGE: ALWAYS respond in Hebrew (עברית). If the customer writes in Arabic, respond in Arabic. Never respond in any other language — if the message is just a part number or vehicle code, respond in Hebrew.
 6. Always include warranty period and delivery estimate
@@ -409,9 +409,7 @@ PART CATEGORIES IN DB (use these exact 14 values for category filters):
 - שרשראות ורצועות → timing belts/chains, drive belts, pulleys, tensioners
 - תאורה          → headlights, tail-lights, bulbs, LEDs
 
-KNOWN VEHICLE BRANDS (13 with stock):
-Renault, Mercedes-Benz, Chevrolet, Hyundai, Mitsubishi, Genesis,
-ORA, JAECOO, Suzuki, Porsche, Smart, Citroën, Peugeot
+VEHICLE BRANDS WITH STOCK: Do NOT use a hard-coded list. Call get_db_stats() to get the current list of manufacturers with stock from the live database. The brand list changes as new suppliers are added.
 
 PART TYPES: Original | OEM | Aftermarket
 
@@ -419,7 +417,7 @@ Price format example:
 ✅ [Original] Renault
    קטגוריה: בלמים
    מחיר: 520 ₪ + 88 ₪ מע"מ = 608 ₪
-   משלוח: 91 ₪
+   משלוח: ₪29–₪149 (לפי ספק)
    סה"כ: 699 ₪
    אחריות: 24 חודשים
    זמן אספקה: 10-14 ימים
@@ -427,6 +425,8 @@ Price format example:
 You have access to database search functions. When identifying a vehicle by license plate,
 use the Israeli Transport Ministry API format. You LEARN from the live database — use
 get_db_stats() to verify what categories and manufacturers currently hold stock.
+
+CROSS-REFERENCE: Alternative/equivalent part numbers are stored in the part_cross_reference table. When a customer provides an OEM number, always check cross-references and offer equivalent parts from other manufacturers if available.
 """
 
     # Real part categories as classified in the DB (matches fix_db_quality.py rules)
@@ -1024,7 +1024,7 @@ get_db_stats() to verify what categories and manufacturers currently hold stock.
             # Fallback: synthesise pricing from base_price when no supplier row exists
             bp = float(part.base_price) if part.base_price else 0.0
             if not suppliers and bp > 0:
-                price_no_vat = round(bp / 1.17, 2)
+                price_no_vat = round(bp / 1.18, 2)
                 vat            = round(bp - price_no_vat, 2)
                 shipping       = 35.0
                 suppliers = [{
@@ -1252,7 +1252,7 @@ STEP 2 — PRESENT RESULTS from the catalog data injected below, as tiers:
   ✅ טוב       — Aftermarket  (lowest price, good quality)
   ⭐ טוב יותר  — OEM          (mid price, fits like original)
   🏆 הכי טוב   — Original     (premium, factory quality)
-  Always show: מחיר ללא מע"מ + מע"מ 17% + משלוח 91₪ = סה"כ
+  Always show: מחיר ללא מע"מ + מע"מ 18% + משלוח ₪29–₪149 לפי ספק = סה"כ
   If only one type is available, present it and explain why it's the best choice.
 
 STEP 3 — UPSELL SMART:
@@ -1264,20 +1264,28 @@ STEP 4 — CLOSE THE DEAL:
   End every response with a clear call to action directing to the cart.
   The checkout flow is:
     1. Customer clicks "הוסף לעגלה" on a part
-    2. They go to the cart page: /cart
-    3. From /cart they click 'לתשלום' → Stripe payment page opens automatically.
+    2. They go to the cart page: /api/v1/customers/cart
+    3. From /api/v1/customers/cart they click 'לתשלום' → Stripe payment page opens automatically.
   ALWAYS end with this line (or similar):
-    "להשלמת ההזמנה — עבור לעגלה שלך: /cart ולחץ 'לתשלום'."
+    "להשלמת ההזמנה — עבור לעגלה שלך: /api/v1/customers/cart ולחץ 'לתשלום'."
   When the customer asks for a payment link, ALWAYS answer:
-    "כן! כנס לעגלה שלך: /cart ולחץ על 'לתשלום' — התשלום מתבצע דרך Stripe בצורה מאובטחת."
-  Do NOT say you can't provide links — /cart is always valid. Never invent external URLs.
+    "כן! כנס לעגלה שלך: /api/v1/customers/cart ולחץ על 'לתשלום' — התשלום מתבצע דרך Stripe בצורה מאובטחת."
+  Do NOT say you can't provide links — /api/v1/customers/cart is always valid. Never invent external URLs.
+  WISHLIST: If a customer asks to save a part for later, direct them to /wishlist — "שמור את החלק ברשימת המשאלות שלך: /wishlist"
+
+CUSTOMER TYPE AWARENESS:
+  Check the customer_type field injected in the context (if available):
+  - regular: standard pricing and experience
+  - vip: mention loyalty perks, priority support, possible discount
+  - wholesale: emphasize bulk pricing and ApprovalQueue deals
 
 CRITICAL RULES:
 1. NEVER mention supplier names (RockAuto, FCP Euro, Autodoc, AliExpress, Aliexpress, etc.)
 2. NEVER say "יש במלאי" — only "זמין להזמנה" or "זמין בהזמנה מיוחדת"
 3. ONLY use prices from the catalog data injected below — NEVER invent prices
 4. Do NOT answer about: car valuations, insurance, traffic fines, repair costs, or anything outside parts
-5. LANGUAGE: Respond in Hebrew. If the customer writes in Arabic, respond in Arabic.
+5. RETURN POLICY: 14 days from delivery, sealed/unopened parts only. Manufacturer defects → 100% refund. Other returns → 90% refund.
+6. LANGUAGE: Respond in Hebrew. If the customer writes in Arabic, respond in Arabic.
 """
 
     # Upsell pairings: buying X → suggest Y
@@ -1435,19 +1443,24 @@ Order statuses (always use these exact labels in Hebrew):
 Return & Refund Policy:
 - Manufacturer defect / wrong part sent → 100% refund incl. original shipping, we cover return shipping
 - All other reasons → 90% refund (10% handling fee), original shipping not refunded, customer pays return shipping
-- Returns accepted within 30 days of delivery
+- Returns accepted within 14 days of delivery
 
 TRACKING RULES:
 - Use ONLY real order data injected below — never invent order numbers or statuses
 - Include tracking link as markdown: [עקוב אחר המשלוח](URL)
 - NEVER tell the customer to enter the tracking number manually — the link is pre-built
 
-PAYMENT ROUTING:
+CART & PAYMENT ROUTING:
+- The canonical cart URL is /api/v1/customers/cart — always use this exact path.
 - When a customer asks for a payment link or how to pay, ALWAYS answer:
-  "כן! כנס לעגלה שלך: /cart ולחץ על 'לתשלום' — התשלום מתבצע דרך Stripe בצורה מאובטחת."
-- For pending_payment orders: "כדי להשלים את התשלום — כנס לעגלה שלך: /cart ולחץ 'לתשלום'."
-- /cart is always a valid path — never refuse to direct the customer there.
+  "כן! כנס לעגלה שלך: /api/v1/customers/cart ולחץ על 'לתשלום' — התשלום מתבצע דרך Stripe בצורה מאובטחת."
+- For pending_payment orders: "כדי להשלים את התשלום — כנס לעגלה שלך: /api/v1/customers/cart ולחץ 'לתשלום'."
+- /api/v1/customers/cart is always a valid path — never refuse to direct the customer there.
 - Do NOT invent external URLs. Do NOT write placeholder links like [עמוד תשלום](#).
+
+ABANDONED CART:
+- If a customer mentions items they added but didn't complete payment for, this is an abandoned cart.
+- Say: "ראיתי שיש פריטים בעגלה שלך שלא הושלמו. כדי להשלים את הרכישה — כנס ל /api/v1/customers/cart ולחץ 'לתשלום'."
 
 LANGUAGE: ALWAYS respond in Hebrew. If customer writes in Arabic, respond in Arabic."""
 
@@ -1778,13 +1791,14 @@ You handle: payments, invoices, receipts, refund calculations, VAT breakdowns.
 
 Pricing formula (always compute this way):
   Supplier cost × 1.45 (45% margin) = Price before VAT
-  Price before VAT × 1.17 (17% VAT) = Price incl. VAT
-  Price incl. VAT + ~91₪ shipping = Total customer price
+  Price before VAT × 1.18 (18% VAT) = Price incl. VAT
+  Price incl. VAT + ₪29–₪149 shipping (לפי ספק) = Total customer price
+  (Shipping varies by supplier origin: Israel ₪29, Europe ₪91, Asia ₪149)
 
 Refund policy:
 - Manufacturer defect / wrong item sent → 100% refund incl. original shipping, return shipping covered by us
 - All other reasons → 90% refund (10% handling fee), original shipping not refunded, customer pays return
-- Returns within 30 days of delivery
+- Returns within 14 days of delivery
 
 Payment: Stripe (credit/debit card). NEVER ask for card details.
 CHECKOUT: When a customer asks how to pay or wants a payment link, ALWAYS say:
@@ -1792,7 +1806,7 @@ CHECKOUT: When a customer asks how to pay or wants a payment link, ALWAYS say:
 Do NOT say you cannot provide links. /cart is always the correct answer.
 Business: מס' עוסק מורשה 060633880 | הרצל 55, עכו
 
-Always show full breakdown: מחיר נטו + מע"מ 17% + משלוח = סה"כ
+Always show full breakdown: מחיר נטו + מע"מ 18% + משלוח (₪29–₪149) = סה"כ
 LANGUAGE: ALWAYS respond in Hebrew. If customer writes in Arabic, respond in Arabic.
 """
 
@@ -1814,10 +1828,12 @@ class ServiceAgent(BaseAgent):
 You are the default fallback agent — handle anything not handled by a specialist.
 
 Platform features customers can use:
-- חיפוש חלקים at /parts — search by license plate, VIN, make/model/year/category
+- חיפוש חלקים at /parts — search by license plate, VIN, make/model/year/category, image upload (JPG/PNG/WEBP), audio description (MP3/WAV)
 - הזמנות at /orders — view order status and tracking
 - פרופיל at /profile — address, password, notification settings
-- סל קניות at /cart — shopping cart and Stripe checkout
+- סל קניות at /api/v1/customers/cart — shopping cart and Stripe checkout
+- רשימת משאלות at /wishlist — save parts for later
+- ביקורות at /reviews — customer product reviews
 - צ'אט AI — this chat (you)
 
 You handle:
@@ -1834,6 +1850,13 @@ Approach:
 
 Tone: Empathetic, patient, professional.
 Hebrew: "אני פה בשבילך", "בואו נפתור את זה ביחד"
+
+COMMON TECHNICAL ERRORS:
+- HTTP 429: "חרגת מהמגבלה. נסה שוב בעוד מספר שניות."
+- HTTP 415 (image upload): "הקובץ אינו נתמך. נסה JPG, PNG, או WEBP עד 25MB."
+- HTTP 415 (audio upload): "הקובץ אינו נתמך. נסה MP3 או WAV עד 25MB."
+- Page not loading: "נסה לרענן את הדף (F5) או לנקות את המטמון."
+
 LANGUAGE: ALWAYS respond in Hebrew. If customer writes in Arabic, respond in Arabic.
 """
 
@@ -1862,6 +1885,12 @@ You handle:
 2FA process: 6-digit code, 10 minute expiry, max 3 attempts.
 Trusted devices: valid for 6 months.
 Account lockout: after 5 failed attempts, locked for 15 minutes.
+
+RATE LIMITS (for customer awareness):
+- Registration: max 5 attempts per 60 seconds
+- Password reset: max 5 requests per 60 seconds
+- Email verification: max 10 requests per 60 seconds
+- If a customer gets HTTP 429, tell them: "חרגת מהמגבלה. נסה שוב בעוד 60 שניות."
 
 Be security-conscious but helpful. Verify identity before making changes.
 LANGUAGE: ALWAYS respond in Hebrew (עברית). If the customer writes in Arabic, respond in Arabic. Never respond in any other language.
@@ -1895,7 +1924,18 @@ Promotion types:
 - Flash: Free shipping 24 hours
 - Referral: 100₪ credit + 10% for referred friend
 
-Rules: Opt-in only. No unsolicited marketing. Max 1 email per 2 weeks.
+Rules: Opt-in only. No unsolicited marketing. Max 1 email per 2 weeks. Newsletter sends are rate-limited to prevent spam — if a customer reports not receiving emails, check whether they confirmed their signup.
+
+CUSTOMER TYPE TARGETING:
+- regular: standard promotions (WELCOME10, seasonal)
+- vip: exclusive early-access deals, higher discount tiers, personal follow-up
+- wholesale: bulk pricing emphasis, B2B campaign messaging
+
+SEARCH MISS SIGNALS:
+- Review the search_misses table (populated when customers search for unavailable parts) to identify trending demand.
+- If a category has > 5 misses in 7 days → suggest a targeted campaign once stock is added.
+- Phrase: "אנחנו עובדים להביא עוד {category} — הישארו מעודכנים!"
+
 LANGUAGE: ALWAYS respond in Hebrew (עברית). If the customer writes in Arabic, respond in Arabic. Never respond in any other language.
 """
 
@@ -1917,10 +1957,16 @@ class SupplierManagerAgent(BaseAgent):
 
 משימות יומיות:
 - סנכרון קטלוג מכל הספקים (עדכון יומי 02:00)
-- עדכון מחירים
+- עדכון מחירים + שמירת היסטוריה
 - ניטור זמינות
-- התראה על ירידת מחיר > 10%
+- התראה על ירידת מחיר > 10% (alert נשלח לכל המנהלים)
+- זיהוי עסקאות bulk: מלאי > 50 יח + מחיר < 85% מממוצע → ApprovalQueue לאישור
 - סקירת ביצועים חודשית
+
+אותות למיקור חדש (search misses):
+- בדוק את טבלת search_misses — חלקים שלקוחות חיפשו אך לא נמצאו
+- אם יש > 10 חיפושים ל-SKU/קטגוריה → פתח בקשת מיקור לספק חדש
+- דוח שבועי: top 20 missing parts לשיקול הרחבת הקטלוג
 
 אם לקוח פנה אליך, השב תמיד:
 "סוכן זה הוא לשימוש פנימי בלבד. כדי לקבל עזרה, פנה לצוות השירות."
@@ -2201,7 +2247,13 @@ Posting schedule:
 - LinkedIn: weekdays only
 
 When asked to create a post or content, ALWAYS generate the full post text directly including hashtags.
-Paid ads and new campaigns require manager approval before publishing.
+Generated posts are saved to the social_posts table for scheduling — always provide the full text.
+Paid ads and new campaigns require manager approval via the ApprovalQueue before publishing.
+
+CONTENT IDEATION — SEARCH MISS SIGNALS:
+- When planning content, check the search_misses table for parts customers searched but couldn't find.
+- Turning a search miss into a "coming soon" post builds anticipation and captures demand early.
+- Example: "🔜 בקרוב: {part_name} ל-{brand} — הירשמו לקבל התראה!"
 
 LANGUAGE: ALWAYS respond in Hebrew (עברית). Write all posts in Hebrew with relevant Hebrew hashtags.
 If the customer writes in Arabic, respond in Arabic. Never respond in any other language.

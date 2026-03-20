@@ -51,15 +51,15 @@ def upgrade() -> None:
     op.add_column("parts_catalog", sa.Column("oem_number", sa.String(100), nullable=True))
     op.add_column("parts_catalog", sa.Column("barcode", sa.String(50), nullable=True))
     op.add_column("parts_catalog", sa.Column("weight_kg", sa.Numeric(6, 3), nullable=True))
-    # All ILS prices stored WITH 17% VAT included
+    # All ILS prices stored WITH 18% VAT included
     op.add_column("parts_catalog", sa.Column("importer_price_ils", sa.Numeric(10, 2), nullable=True,
-                                              comment="Israeli importer price incl. 17% VAT"))
+                                              comment="Israeli importer price incl. 18% VAT"))
     op.add_column("parts_catalog", sa.Column("online_price_ils", sa.Numeric(10, 2), nullable=True,
-                                              comment="Competitor online reference price incl. 17% VAT"))
+                                              comment="Competitor online reference price incl. 18% VAT"))
     op.add_column("parts_catalog", sa.Column("min_price_ils", sa.Numeric(10, 2), nullable=True,
-                                              comment="Cheapest supplier price incl. 17% VAT — auto-updated by scraper"))
+                                              comment="Cheapest supplier price incl. 18% VAT — auto-updated by scraper"))
     op.add_column("parts_catalog", sa.Column("max_price_ils", sa.Numeric(10, 2), nullable=True,
-                                              comment="Most expensive supplier price incl. 17% VAT"))
+                                              comment="Most expensive supplier price incl. 18% VAT"))
     op.add_column("parts_catalog", sa.Column(
         "part_condition", sa.String(20), nullable=False,
         server_default="New",
@@ -90,7 +90,7 @@ def upgrade() -> None:
     # Express shipping
     op.add_column("supplier_parts", sa.Column("express_available", sa.Boolean(), nullable=False, server_default="false"))
     op.add_column("supplier_parts", sa.Column("express_price_ils", sa.Numeric(10, 2), nullable=True,
-                                               comment="Express surcharge incl. 17% VAT"))
+                                               comment="Express surcharge incl. 18% VAT"))
     op.add_column("supplier_parts", sa.Column("express_delivery_days", sa.Integer(), nullable=True))
     op.add_column("supplier_parts", sa.Column("express_cutoff_time", sa.String(5), nullable=True,
                                                comment="e.g. '14:00' — order before this time for express today"))

@@ -39,7 +39,7 @@ logger = logging.getLogger("db_update_agent")
 # Constants
 # ---------------------------------------------------------------------------
 
-VAT = 0.17          # Israeli VAT rate
+VAT = 0.18          # Israeli VAT rate
 ILS_PER_USD = 3.72  # fallback – overridden at runtime from system_settings
 
 # 14 canonical Hebrew category names
@@ -695,7 +695,7 @@ async def fill_car_brands(db: AsyncSession) -> Dict[str, Any]:
 async def refresh_min_max_prices(db: AsyncSession) -> Dict[str, Any]:
     """
     Recalculate parts_catalog.min_price_ils / max_price_ils from live
-    supplier_parts prices (WITH 17% VAT applied).
+    supplier_parts prices (WITH 18% VAT applied).
     """
     t0 = time.monotonic()
 
@@ -750,7 +750,7 @@ async def seed_system_settings(db: AsyncSession) -> Dict[str, Any]:
         "search_results_per_type": "4",
         "search_type_order": "original,oem,aftermarket",
         "ils_per_usd": str(ILS_PER_USD),
-        "vat_rate": "0.17",
+        "vat_rate": "0.18",
     }
     t0 = time.monotonic()
     inserted = 0

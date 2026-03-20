@@ -114,7 +114,7 @@ SCENARIOS: List[Tuple] = [
     ("FinanceAgent: VAT breakdown",
      "כמה מע\"מ אני משלם על הזמנה של 500 שקל?",
      None,
-     ["מע\"מ", "17%", "שקל"], []),  # accept שקל/ש⋆ח/₪
+     ["מע\"מ", "18%", "שקל"], []),  # accept שקל/ש⋆ח/₪
 
     ("FinanceAgent: refund policy",
      "מה מדיניות ההחזרות שלכם?",

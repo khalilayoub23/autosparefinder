@@ -820,7 +820,7 @@ async def _sync_online_price(
 ) -> None:
     """
     Fetch a Google Shopping reference price for the part and store it in
-    parts_catalog.online_price_ils (incl. 17% VAT).  Runs at most once per
+    parts_catalog.online_price_ils (incl. 18% VAT).  Runs at most once per
     day per part (checked via parts_catalog.updated_at).
     """
     try:
@@ -830,7 +830,7 @@ async def _sync_online_price(
             return
         prices.sort()
         median_ils = prices[len(prices) // 2]
-        # Store WITH 17% VAT (scraped retail prices already include VAT)
+        # Store WITH 18% VAT (scraped retail prices already include VAT)
         await db.execute(
             text("UPDATE parts_catalog SET online_price_ils = :p WHERE id = :id"),
             {"p": round(median_ils, 2), "id": part_id},
@@ -1053,10 +1053,10 @@ async def _scrape_one_part(
     median_ils = scraped_prices[len(scraped_prices) // 2]
 
     # Business rules:
-    # - Customer price = cost × 1.45 + 17% VAT + 91₪ shipping
+    # - Customer price = cost × 1.45 + 18% VAT + 91₪ shipping
     # - Scraped market price ≈ final customer price at competitors
-    # - Derive our cost from scraped reference / 1.45 / 1.17 (rough)
-    derived_cost_ils = median_ils / 1.17 / 1.45
+    # - Derive our cost from scraped reference / 1.45 / 1.18 (rough)
+    derived_cost_ils = median_ils / 1.18 / 1.45
 
     # Clamp update: don't move more than ±25% from current in a single run
     old = current_price_ils or derived_cost_ils
@@ -1128,8 +1128,8 @@ async def _scrape_one_part(
                 FROM (
                     SELECT
                         part_id,
-                        MIN(COALESCE(price_ils, price_usd * :rate)) * 1.17 AS min_p,
-                        MAX(COALESCE(price_ils, price_usd * :rate)) * 1.17 AS max_p
+                        MIN(COALESCE(price_ils, price_usd * :rate)) * 1.18 AS min_p,
+                        MAX(COALESCE(price_ils, price_usd * :rate)) * 1.18 AS max_p
                     FROM supplier_parts
                     WHERE part_id = :part_id AND is_available = TRUE
                     GROUP BY part_id

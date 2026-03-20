@@ -2,7 +2,7 @@
 Populate supplier_parts table — link all active parts to suppliers with pricing.
 
 Business rules:
-  customer_price = supplier_cost_ILS × 1.45 + 17% VAT + 91₪ shipping
+  customer_price = supplier_cost_ILS × 1.45 + 18% VAT + 91₪ shipping
 
 Supplier assignment:
   AutoParts Pro IL (priority=1, Israel) — parts that already have base_price data

@@ -2264,7 +2264,7 @@ async def create_order(data: OrderCreate, current_user: User = Depends(get_curre
         # Record each unique supplier's delivery fee (charged once per supplier, not per item)
         supplier_delivery_fees[str(supplier_rec.id)] = delivery_fee
         unit_price = round(total_cost_ils * 1.45, 2)  # 45% markup on total cost
-        vat = round(unit_price * 0.17, 2)
+        vat = round(unit_price * 0.18, 2)
         subtotal += unit_price * item.quantity
         items_data.append({
             "part_id": item.part_id or str(part.id),
@@ -2277,7 +2277,7 @@ async def create_order(data: OrderCreate, current_user: User = Depends(get_curre
             "supplier_name": _mask_supplier(supplier_rec.name),
         })
 
-    vat_total = round(subtotal * 0.17, 2)
+    vat_total = round(subtotal * 0.18, 2)
     # Sum delivery fees for each unique supplier origin (Israel + Germany = ₪29 + ₪91 = ₪120)
     shipping = round(sum(supplier_delivery_fees.values()), 2)
     total = round(subtotal + vat_total + shipping, 2)
@@ -2626,7 +2626,7 @@ async def create_checkout_session(
             )).fetchone()
 
             if _sp_row:
-                _live_unit = round(float(_sp_row[0]) * 1.45 * 1.17, 2)
+                _live_unit = round(float(_sp_row[0]) * 1.45 * 1.18, 2)
                 _live_ship = float(_sp_row[1]) if _sp_row[1] is not None else 91.0
                 _max_shipping = max(_max_shipping, _live_ship)
             else:
@@ -2847,7 +2847,7 @@ async def create_multi_checkout_session(
                 )).fetchone()
 
                 if _sp_row:
-                    _live_unit = round(float(_sp_row[0]) * 1.45 * 1.17, 2)
+                    _live_unit = round(float(_sp_row[0]) * 1.45 * 1.18, 2)
                     _live_ship = float(_sp_row[1]) if _sp_row[1] is not None else 91.0
                     _max_shipping = max(_max_shipping, _live_ship)
                 else:
@@ -4349,11 +4349,11 @@ async def get_admin_stats(current_user: User = Depends(get_current_admin_user), 
 
     # Profit calculation based on net_revenue (from Payments — reliable source)
     # net_revenue already excludes refunds and includes VAT + shipping.
-    # price_no_vat  = net_revenue / 1.17  (remove 17% VAT)
+    # price_no_vat  = net_revenue / 1.18  (remove 18% VAT)
     # profit        = price_no_vat × (45 / 145)  ← 45% markup portion
     # cost          = price_no_vat - profit       ← supplier cost
     MARGIN_RATE = 0.45
-    VAT_RATE = 0.17
+    VAT_RATE = 0.18
     paid_statuses = ["paid", "processing", "supplier_ordered", "confirmed", "shipped", "delivered"]
 
     price_no_vat_net   = round(float(net_revenue) / (1 + VAT_RATE), 2)           # strip VAT
@@ -5127,7 +5127,7 @@ AGENTS_METADATA = {
         "display_name": "Finance Agent",
         "persona": "Tal",
         "name_he": "סוכן פיננסי",
-        "description": "Handles payments, invoices, and refunds. Licensed business (מס׳ עוסק: 060633880). VAT 17%, refund policy.",
+        "description": "Handles payments, invoices, and refunds. Licensed business (מס׳ עוסק: 060633880). VAT 18%, refund policy.",
         "description_he": "תשלומים, חשבוניות, החזרים. עוסק מורשה מס׳ 060633880",
         "capabilities": ["Payment questions", "Invoice generation", "Refund calculations", "VAT breakdowns"],
         "model": "qwen3:8b",
@@ -6558,7 +6558,7 @@ async def scraper_run_one_part(
         if prices:
             prices.sort()
             median = prices[len(prices) // 2]
-            derived_cost = median / 1.17 / 1.45
+            derived_cost = median / 1.18 / 1.45
             old = float(row.price_ils or derived_cost)
             new_ils = round(max(old * 0.75, min(derived_cost, old * 1.25)), 2)
             await db_update_supplier_part(
