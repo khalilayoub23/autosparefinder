@@ -3,8 +3,8 @@
 **Production-Ready Full-Stack Dropshipping System with 10 AI Agents**
 
 [![Status](https://img.shields.io/badge/Status-Production%20Ready-success)](https://github.com/khalilayoub23/autosparefinder)
-[![Code](https://img.shields.io/badge/Code-8%2C600%2B%20Lines-blue)](https://github.com/khalilayoub23/autosparefinder)
-[![Endpoints](https://img.shields.io/badge/API%20Endpoints-122-brightgreen)](https://github.com/khalilayoub23/autosparefinder)
+[![Code](https://img.shields.io/badge/Code-10%2C000%2B%20Lines-blue)](https://github.com/khalilayoub23/autosparefinder)
+[![Endpoints](https://img.shields.io/badge/API%20Endpoints-130-brightgreen)](https://github.com/khalilayoub23/autosparefinder)
 [![Frontend](https://img.shields.io/badge/Frontend-11%20Pages-orange)](https://github.com/khalilayoub23/autosparefinder)
 [![AI Agents](https://img.shields.io/badge/AI%20Agents-10-purple)](https://github.com/khalilayoub23/autosparefinder)
 
@@ -39,20 +39,43 @@
 - יבוא קטלוג חלקים מ-Excel (SKU/PIN)
 - ניהול ספקים + יצירת תוכן AI לרשתות חברתיות
 
+✅ **פרסום ברשתות חברתיות**
+- `social_posts` — ניהול תוכן עם תהליך אישור (`approval_queue`)
+- פרסום ל-Telegram ישירות מלוח הניהול
+- 5 endpoints: יצירה / רשימה / עריכה / מחיקה (soft) / אנליטיקה
+
+✅ **WhatsApp + Twilio**
+- webhook מאובטח (אימות חתימת Twilio HMAC-SHA1)
+- שיחת WhatsApp → Avi (router agent) → תגובה אוטומטית
+- שכבת הפשטה `WhatsAppProvider` ABC — ניתן להחליף ל-Meta Cloud API
+- משתמש sentinel לשיחות אנונימיות (ללא חשבון רשום)
+
+✅ **Ollama self-hosted AI**
+- מודל שפה: `qwen3:8b` לכל הסוכנים
+- `nomic-embed-text` — embedding טקסט (pgvector)
+- `whisper` — תמלול קול — endpoint `upload-audio`
+- `clip` — embedding תמונה לחיפוש ויזואלי
+
+✅ **Meilisearch**
+- חיפוש full-text מהיר על קטלוג החלקים
+- סנכרון אוטומטי מ-PostgreSQL דרך `meili_sync.py`
+
 ---
 
 ## 📊 סטטיסטיקות הפרויקט
 
 | רכיב | מספר | פרטים |
 |------|------|--------|
-| **קבצי Backend** | 4 | Python — ראה טבלה מפורטת |
-| **שורות קוד (Backend)** | 4,903 | Production-ready |
+| **קבצי Backend** | 4 + social/ | Python — ראה טבלה מפורטת |
+| **שורות קוד (Backend)** | 6,000+ | Production-ready |
 | **שורות קוד (Frontend)** | 3,700+ | React 18 |
-| **שורות קוד (סה"כ)** | ~8,600 | |
-| **טבלאות DB** | 28 | PostgreSQL + SQLAlchemy async |
-| **API Endpoints** | 122 | FastAPI |
+| **שורות קוד (סה"כ)** | ~10,000 | |
+| **טבלאות DB** | 29 | PostgreSQL 16 + pgvector + SQLAlchemy async |
+| **API Endpoints** | 130 | FastAPI |
 | **AI Agents** | 10 | + Router agent |
 | **Frontend Pages** | 11 | React 18 + Tailwind |
+| **Migrations (catalog)** | 13 | Alembic |
+| **Migrations (PII)** | 4 | Alembic |
 
 ---
 
@@ -251,8 +274,10 @@ docker-compose exec backend alembic upgrade head
 ## 🔑 משתני סביבה
 
 ```bash
-# Database
+# Database (catalog — parts, social_posts, car_brands)
 DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/autospare
+# Database (PII — users, orders, payments, approval_queue)
+DATABASE_PII_URL=postgresql+asyncpg://user:pass@host:5432/autospare_pii
 REDIS_URL=redis://:pass@host:6379
 
 # Security
@@ -260,13 +285,27 @@ JWT_SECRET_KEY=             # python -c "import secrets; print(secrets.token_url
 JWT_REFRESH_SECRET_KEY=
 ENCRYPTION_KEY=             # 32 bytes
 
-# GitHub Models (FREE!)
-GITHUB_TOKEN=ghp_your_token
+# Ollama (self-hosted VPS — all AI models)
+OLLAMA_URL=http://YOUR_VPS_IP:11434
+AGENTS_DEFAULT_MODEL=qwen3:8b
+# ollama pull qwen3:8b            — LLM for all agents
+# ollama pull nomic-embed-text    — 768-dim text embeddings (pgvector)
+# ollama pull whisper             — speech-to-text (upload-audio endpoint)
+# ollama pull clip                — image embeddings (visual parts search)
 
-# Twilio (2FA SMS)
+# Twilio (SMS 2FA + WhatsApp)
 TWILIO_ACCOUNT_SID=ACxxxxx
 TWILIO_AUTH_TOKEN=xxxxx
 TWILIO_PHONE_NUMBER=+1234567890
+TWILIO_WHATSAPP_NUMBER=whatsapp:+14155238886
+
+# Telegram (social media publishing)
+TELEGRAM_BOT_TOKEN=your_bot_token_here
+TELEGRAM_CHANNEL_ID=@your_channel_or_chat_id
+
+# Meilisearch (full-text catalog search)
+MEILI_URL=http://localhost:7700
+MEILI_MASTER_KEY=change_me_in_production
 
 # Stripe
 STRIPE_SECRET_KEY=sk_test_xxxxx
@@ -340,6 +379,9 @@ open http://localhost:8000/docs
 | **VPS** — Hetzner 2GB | ~€5/חודש |
 | **GitHub Models (AI)** | **חינם** |
 | Twilio SMS | $0.0075/SMS |
+| Twilio WhatsApp | $0.005/שיחה + $0.0075/הודעה |
+| Telegram Bot API | **חינם** |
+| Meilisearch (self-hosted) | כלול ב-VPS |
 | Stripe | 2.9% + ₪1.20 לעסקה |
 | SendGrid | Free tier (100 emails/day) |
 
@@ -347,11 +389,13 @@ open http://localhost:8000/docs
 
 ## 📚 טכנולוגיות
 
-**Backend:** Python 3.11 · FastAPI · SQLAlchemy 2.0 async · PostgreSQL 15 · Redis 7 · Alembic · Twilio · Stripe · GitHub Models · openpyxl
+**Backend:** Python 3.12 · FastAPI · SQLAlchemy 2.0 async · PostgreSQL 16 + pgvector · Redis 7 · Alembic · Twilio (SMS + WhatsApp) · Stripe · Ollama (qwen3/whisper/clip/nomic-embed) · Meilisearch · httpx · openpyxl
 
 **Frontend:** React 18 · Vite · Tailwind CSS · Zustand · Axios · React Router v6 · Lucide React · React Hot Toast
 
-**DevOps:** Docker & Docker Compose · Nginx · Let's Encrypt · Systemd
+**DevOps:** Docker & Docker Compose · Nginx · ClamAV · Let's Encrypt · Systemd
+
+**Messaging:** Telegram Bot API · Twilio WhatsApp (`WhatsAppProvider` ABC — swappable to Meta Cloud API)
 
 ---
 

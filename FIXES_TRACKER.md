@@ -100,3 +100,28 @@
 | `database/init.sql` | Creates `autospare_pii` PostgreSQL DB on first start (C-2) |
 | `.env.example` | Documents all required env vars |
 | `backend/Dockerfile` | Added `fonts-dejavu-core` for invoice PDF generation (H-11) |
+
+---
+
+## Session — 2026-03-20 (Social Media & Messaging)
+
+| Phase | Status | Description | Files |
+|-------|--------|-------------|-------|
+| S-1 | ✅ | `social_posts` table — migration `0013_add_social_posts`, ORM model `SocialPost(Base)`, Pydantic schemas `CreateSocialPostRequest` / `UpdateSocialPostRequest` | `backend/alembic/versions/0013_add_social_posts.py`, `BACKEND_DATABASE_MODELS.py` |
+| S-2 | ✅ | 5 social endpoints rewritten with real DB logic: `POST /api/v1/admin/social/posts` (persist + `ApprovalQueue(entity_type='social_post')`), `GET` (status filter), `PUT` (update content/schedule), `DELETE` (soft — sets `status='rejected'`), `GET /analytics` (`GROUP BY` counts + `scheduled_next_7d` via `timedelta(days=7)`) | `BACKEND_API_ROUTES.py` |
+| S-3 | ✅ | Telegram publisher `backend/social/telegram_publisher.py` — `publish_to_telegram(content, image_url?)` via raw `httpx`; `POST /api/v1/admin/social/publish/{post_id}` endpoint validates `status=='approved'`, publishes, then sets `status='published'` + stores `external_post_ids={'telegram': message_id}` | `backend/social/telegram_publisher.py`, `BACKEND_API_ROUTES.py` |
+| S-4 | ✅ | `resolve_approval` updated: when `entity_type='social_post'` and `decision='approved'` → syncs `social_posts.status='approved'` and `approved_by` in catalog DB (dual-session cross-DB pattern) | `BACKEND_API_ROUTES.py` |
+| S-5 | ✅ | WhatsApp abstraction layer: `WhatsAppProvider` ABC + `TwilioWhatsAppProvider` (async httpx + Twilio signature validation via HMAC-SHA1); `POST /api/v1/webhooks/whatsapp` (sig check→parse→user lookup→find/create Conversation→Avi agent→send reply→persist messages→empty TwiML `<Response/>`) | `backend/social/whatsapp_provider.py`, `BACKEND_API_ROUTES.py` |
+| S-6 | ✅ | Sentinel user `00000000-0000-0000-0000-000000000001` upserted at `startup()` via `ON CONFLICT (id) DO NOTHING` for anonymous WhatsApp sessions (avoids `Conversation.user_id NOT NULL` violation) | `BACKEND_API_ROUTES.py` |
+| S-7 | ✅ | `send_sms_2fa()` fix — blocking sync Twilio SDK call wrapped in `asyncio.to_thread()` to prevent event-loop stalls during 2FA sends | `BACKEND_AUTH_SECURITY.py` |
+| S-8 | ✅ | `upload_audio` fix — added `conversation_id: Optional[str] = None` query param and passed through to `process_user_message()` (previously hardcoded `None`, always starting a new conversation on every voice message) | `BACKEND_API_ROUTES.py` |
+| S-9 | ✅ | Git history cleaned — `backups/*.sql` (160MB+) removed from all commits via `git filter-branch --index-filter`; `backups/` added to `.gitignore`; force-pushed to remote | `.gitignore` |
+
+### New Files Added (2026-03-20)
+
+| File | Purpose |
+|------|---------|
+| `backend/alembic/versions/0013_add_social_posts.py` | Creates `social_posts` table with `status` CHECK constraint, `external_post_ids JSONB`, composite index `(status, scheduled_at)` |
+| `backend/social/__init__.py` | Package marker for social/ module |
+| `backend/social/telegram_publisher.py` | Async Telegram Bot API publisher — no extra SDK, pure httpx |
+| `backend/social/whatsapp_provider.py` | `WhatsAppProvider` ABC + `TwilioWhatsAppProvider` — pluggable; swap to Meta Cloud API without changing webhook logic |

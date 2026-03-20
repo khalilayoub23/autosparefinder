@@ -1,8 +1,26 @@
+# ============================================================
+# Auto Spare Finder — Docker Compose Stack
+#
+# Services:
+#   postgres     — PostgreSQL 16 + pgvector (two DBs: autospare + autospare_pii)
+#   redis        — Session store, rate limiting, pub/sub notifications
+#   backend      — FastAPI + 10 AI agents (Ollama model server is external/VPS)
+#   frontend     — React 18 / Vite dev server (prod: nginx in frontend/Dockerfile)
+#   clamav       — Antivirus scanning for all uploaded files
+#   meilisearch  — Full-text search index for parts catalog
+#
+# External integrations (no container required):
+#   Telegram Bot API   — social post publishing        (TELEGRAM_BOT_TOKEN)
+#   Twilio WhatsApp    — inbound customer conversations (TWILIO_WHATSAPP_NUMBER)
+#   Twilio SMS         — 2FA codes                     (TWILIO_PHONE_NUMBER)
+#   Ollama (VPS)       — qwen3:8b / whisper / clip / nomic-embed-text (OLLAMA_URL)
+# ============================================================
+
 version: "3.9"
 
 services:
   postgres:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:pg16  # pgvector extension enables vector similarity search (parts images + text)
     container_name: autospare_postgres
     restart: unless-stopped
     environment:
@@ -47,7 +65,7 @@ services:
       JWT_REFRESH_SECRET_KEY: ${JWT_REFRESH_SECRET_KEY}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       GITHUB_TOKEN: ${GITHUB_TOKEN}  # kept for any legacy integrations — remove once fully migrated
-      OLLAMA_URL: ${OLLAMA_URL}       # e.g. http://VPS_IP:11434
+      OLLAMA_URL: ${OLLAMA_URL}       # Ollama VPS URL — serves qwen3:8b (agents), nomic-embed-text, whisper (upload-audio), clip (visual search)
       TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID}
       TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN}
       TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER}
@@ -104,7 +122,7 @@ services:
       start_period: 120s
 
   meilisearch:
-    image: getmeili/meilisearch:v1.7
+    image: getmeili/meilisearch:v1.7  # full-text search for parts catalog; synced from PostgreSQL via meili_sync.py
     container_name: autospare_meilisearch
     restart: unless-stopped
     environment:
