@@ -9,7 +9,7 @@ Imports: BACKEND_DATABASE_MODELS, BACKEND_AUTH_SECURITY, BACKEND_AI_AGENTS
 
 from fastapi import FastAPI, Depends, HTTPException, status, Request, UploadFile, File, Form, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, Response
 from sse_starlette.sse import EventSourceResponse
 from pydantic import BaseModel, EmailStr, validator
 from typing import List, Optional, Dict, Any, Literal
@@ -17,11 +17,15 @@ from datetime import datetime, date, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_, func, desc, text
 import uuid
+from uuid import UUID as _UUID
 import os
 import io
 import asyncio
 import httpx
 from dotenv import load_dotenv
+
+# Sentinel user for anonymous WhatsApp conversations (no registered account found)
+WHATSAPP_ANON_USER_ID = _UUID("00000000-0000-0000-0000-000000000001")
 
 from BACKEND_DATABASE_MODELS import (
     get_db, get_pii_db, async_session_factory, pii_session_factory, User, Vehicle, PartsCatalog, Order, OrderItem, Payment,
@@ -3169,6 +3173,115 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_pii_db
     return {"received": True}
 
 
+# ==============================================================================
+# WHATSAPP WEBHOOK  /api/v1/webhooks/whatsapp
+# ==============================================================================
+
+@app.post("/api/v1/webhooks/whatsapp")
+async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_pii_db)):
+    """Inbound WhatsApp messages from Twilio.
+    No JWT auth — Twilio calls this directly.
+    Signature validated via X-Twilio-Signature.
+    """
+    from social.whatsapp_provider import get_whatsapp_provider, TwilioWhatsAppProvider
+
+    provider   = get_whatsapp_provider()
+    auth_token = os.getenv("TWILIO_AUTH_TOKEN", "")
+    twilio_sig = request.headers.get("X-Twilio-Signature", "")
+
+    # ── 1. Parse form body ────────────────────────────────────────────────────
+    raw_data = dict(await request.form())
+
+    # ── 2. Signature validation (skip in dev when token not configured) ───────
+    if auth_token:
+        if isinstance(provider, TwilioWhatsAppProvider):
+            if not provider.validate_signature(auth_token, str(request.url), raw_data, twilio_sig):
+                raise HTTPException(status_code=403, detail="Invalid Twilio signature")
+
+    # ── 3. Parse incoming fields ──────────────────────────────────────────────
+    parsed       = await provider.parse_incoming(raw_data)
+    sender_phone = parsed["from"]        # e.g. "whatsapp:+972501234567"
+    body         = parsed["body"].strip()
+    profile_name = parsed["profile_name"]
+
+    # Twilio sends status callbacks with empty Body — ignore silently
+    if not sender_phone or not body:
+        return Response(content="<Response/>", media_type="application/xml")
+
+    # Normalise: strip "whatsapp:" prefix for DB lookup / agent routing
+    phone_e164 = sender_phone.replace("whatsapp:", "").strip()
+
+    # ── 4. Resolve user_id ────────────────────────────────────────────────────
+    user_result = await db.execute(select(User).where(User.phone == phone_e164))
+    user = user_result.scalar_one_or_none()
+    conversation_user_id = user.id if user else WHATSAPP_ANON_USER_ID
+
+    # ── 5. Find or create Conversation keyed on whatsapp_phone ───────────────
+    conv_result = await db.execute(
+        select(Conversation).where(
+            Conversation.context["whatsapp_phone"].astext == phone_e164
+        ).order_by(Conversation.last_message_at.desc()).limit(1)
+    )
+    conversation = conv_result.scalar_one_or_none()
+
+    if not conversation:
+        conversation = Conversation(
+            user_id=conversation_user_id,
+            title=f"WhatsApp {profile_name or phone_e164}",
+            is_active=True,
+            started_at=datetime.utcnow(),
+            last_message_at=datetime.utcnow(),
+            context={"whatsapp_phone": phone_e164, "profile_name": profile_name},
+        )
+        db.add(conversation)
+        await db.flush()
+    else:
+        conversation.last_message_at = datetime.utcnow()
+
+    conv_id = str(conversation.id)
+
+    # ── 6. Persist user message ───────────────────────────────────────────────
+    user_msg = Message(
+        conversation_id=conversation.id,
+        role="user",
+        content=body,
+        content_type="text",
+    )
+    db.add(user_msg)
+    await db.flush()
+
+    # ── 7. Route through Avi ──────────────────────────────────────────────────
+    try:
+        agent_result = await process_user_message(
+            user_id=str(conversation_user_id),
+            message=body,
+            conversation_id=conv_id,
+            db=db,
+        )
+        reply_text = agent_result.get("response", "מצטערים, נתקלנו בבעיה. אנא נסה שוב.")
+    except Exception as exc:
+        print(f"[WhatsApp] Agent error for {phone_e164}: {exc}")
+        reply_text = "מצטערים, נתקלנו בבעיה. אנא נסה שוב."
+
+    # ── 8. Send reply via WhatsApp API ────────────────────────────────────────
+    send_result = await provider.send_message(sender_phone, reply_text)
+    if not send_result["ok"]:
+        print(f"[WhatsApp] Send failed to {sender_phone}: {send_result['error']}")
+
+    # ── 9. Persist assistant message ──────────────────────────────────────────
+    assistant_msg = Message(
+        conversation_id=conversation.id,
+        role="assistant",
+        content=reply_text,
+        content_type="text",
+    )
+    db.add(assistant_msg)
+    await db.commit()
+
+    # Empty TwiML — reply sent proactively via API, not TwiML verb
+    return Response(content="<Response/>", media_type="application/xml")
+
+
 @app.post("/api/v1/payments/refund")
 async def refund_payment(
     payment_id: str,
@@ -5327,6 +5440,17 @@ async def startup():
     from db_update_agent import start_agent_task as start_db_agent
     print("🚀 Auto Spare API starting...")
     print(f"   Environment: {os.getenv('ENVIRONMENT', 'development')}")
+    # Ensure the WhatsApp sentinel user exists (anonymous conversations fallback)
+    async with pii_session_factory() as _db:
+        await _db.execute(text("""
+            INSERT INTO users (id, email, phone, password_hash, full_name, role,
+                               is_active, is_verified, is_admin, failed_login_count)
+            VALUES ('00000000-0000-0000-0000-000000000001',
+                    'whatsapp@autospare.internal', '+00000000000000',
+                    '!disabled!', 'WhatsApp Bot', 'system', true, true, false, 0)
+            ON CONFLICT (id) DO NOTHING
+        """))
+        await _db.commit()
     asyncio.create_task(_price_sync_loop())
     asyncio.create_task(_stuck_orders_monitor_loop())   # ← periodic stuck-order monitor (every 30 min)
     asyncio.create_task(_notify_search_miss_loop())     # ← search-miss user notifications (every 60 min)

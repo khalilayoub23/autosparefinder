@@ -279,13 +279,18 @@ async def send_sms_2fa(phone: str, code: str) -> bool:
         print(f"[DEV] 2FA code for {phone}: {code}")
         return True
     try:
+        import asyncio as _asyncio
         from twilio.rest import Client
-        client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-        client.messages.create(
-            body=f"קוד האימות שלך ל-Auto Spare: {code}\nתוקף: 10 דקות",
-            from_=TWILIO_PHONE_NUMBER,
-            to=phone,
-        )
+
+        def _send_sync():
+            client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+            client.messages.create(
+                body=f"קוד האימות שלך ל-Auto Spare: {code}\nתוקף: 10 דקות",
+                from_=TWILIO_PHONE_NUMBER,
+                to=phone,
+            )
+
+        await _asyncio.to_thread(_send_sync)
         return True
     except Exception as e:
         print(f"[ERROR] SMS send failed: {e}")
