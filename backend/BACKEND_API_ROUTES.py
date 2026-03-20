@@ -5504,6 +5504,7 @@ async def startup():
     asyncio.create_task(_stuck_orders_monitor_loop())   # ← periodic stuck-order monitor (every 30 min)
     asyncio.create_task(_notify_search_miss_loop())     # ← search-miss user notifications (every 60 min)
     asyncio.create_task(_abandoned_cart_loop())         # ← abandoned-cart WhatsApp re-engagement (every 60 min)
+    asyncio.create_task(_pending_payment_reminder_loop())  # ← pending-payment WhatsApp reminder (every 30 min)
     start_scraper_task()           # ← catalog scraper background loop
     start_db_agent(get_db, 6.0)   # ← DB cleaning / normalisation agent (every 6h)
     print("✅ All systems ready — price-sync + catalog-scraper + db-agent schedulers started")
@@ -5517,6 +5518,11 @@ STUCK_ORDER_CHECK_INTERVAL_MIN = 30  # check every 30 minutes
 ABANDONED_CART_INTERVAL_S = int(os.getenv("ABANDONED_CART_INTERVAL_S", "3600"))
 # How long a cart must be idle before it is considered abandoned (default: 2 hours)
 ABANDONED_CART_IDLE_HOURS = int(os.getenv("ABANDONED_CART_IDLE_HOURS", "2"))
+
+# How often the pending-payment reminder runs (default: every 30 min)
+PAYMENT_REMINDER_INTERVAL_S = int(os.getenv("PAYMENT_REMINDER_INTERVAL_S", "1800"))
+# Minimum age of a pending_payment order before first reminder (default: 1 hour)
+PAYMENT_REMINDER_AFTER_H    = int(os.getenv("PAYMENT_REMINDER_AFTER_H", "1"))
 
 
 async def _stuck_orders_monitor_loop():
@@ -5803,6 +5809,147 @@ async def _abandoned_cart_loop():
             print(f"[AbandonedCart] Outer error: {e}")
 
         await asyncio.sleep(ABANDONED_CART_INTERVAL_S)
+
+
+# ── Pending-payment reminder loop ───────────────────────────────────────────
+async def _pending_payment_reminder_loop():
+    """
+    Background loop: runs every PAYMENT_REMINDER_INTERVAL_S seconds (default 30 min).
+
+    Finds orders that are:
+      - status = 'pending_payment'
+      - created more than PAYMENT_REMINDER_AFTER_H hours ago (gave them time to pay)
+      - created less than 24 hours ago (not too old / auto-cancelled)
+      - have no Notification with type='payment_reminder' created in the last 6 hours
+        (prevents re-spamming the same order)
+
+    For each qualifying order:
+      1. Loads user (phone + full_name), skips sentinel user
+      2. Calls LIOR (OrdersAgent) to generate a personalised Hebrew WhatsApp reminder
+      3. Sends via WhatsApp (TwilioWhatsAppProvider)
+      4. Persists a Notification row (type='payment_reminder') and pushes SSE
+    """
+    from BACKEND_AI_AGENTS import OrdersAgent as _OrdersAgent
+    from social.whatsapp_provider import get_whatsapp_provider
+
+    await asyncio.sleep(15)   # let DB pool warm up on startup
+    while True:
+        try:
+            old_cutoff      = datetime.utcnow() - timedelta(hours=PAYMENT_REMINDER_AFTER_H)
+            max_age_cutoff  = datetime.utcnow() - timedelta(hours=24)
+            reminder_cutoff = datetime.utcnow() - timedelta(hours=6)
+
+            async with pii_session_factory() as db:
+                from sqlalchemy import exists as sa_exists, cast as sa_cast, String as sa_String
+
+                recent_reminder_sq = (
+                    select(Notification.id)
+                    .where(
+                        Notification.type == "payment_reminder",
+                        Notification.user_id == Order.user_id,
+                        Notification.data["order_id"].astext == sa_cast(Order.id, sa_String),
+                        Notification.created_at > reminder_cutoff,
+                    )
+                    .correlate(Order)
+                )
+
+                result = await db.execute(
+                    select(Order).where(
+                        Order.status == "pending_payment",
+                        Order.created_at < old_cutoff,
+                        Order.created_at > max_age_cutoff,
+                        ~sa_exists(recent_reminder_sq),
+                    )
+                )
+                pending_orders = result.scalars().all()
+
+        except Exception as e:
+            print(f"[PaymentReminder] Outer query error: {e}")
+            await asyncio.sleep(PAYMENT_REMINDER_INTERVAL_S)
+            continue
+
+        if not pending_orders:
+            print("[PaymentReminder] No remindable pending_payment orders found.")
+        else:
+            print(f"[PaymentReminder] Found {len(pending_orders)} order(s) — sending reminders...")
+            provider   = get_whatsapp_provider()
+            lior       = _OrdersAgent()
+            sent_count = 0
+            skip_count = 0
+
+            for order in pending_orders:
+                try:
+                    async with pii_session_factory() as db:
+                        user_res = await db.execute(
+                            select(User).where(User.id == order.user_id)
+                        )
+                        user = user_res.scalar_one_or_none()
+                        if (
+                            not user
+                            or not user.phone
+                            or str(user.id) == str(WHATSAPP_ANON_USER_ID)
+                        ):
+                            skip_count += 1
+                            continue
+
+                    # Call LIOR to generate a personalised payment reminder
+                    async with pii_session_factory() as db:
+                        lior_prompt = (
+                            f"לקוח {user.full_name} לא השלים תשלום להזמנה {order.order_number} "
+                            f"בסך {order.total_amount}₪. "
+                            f"צור הודעת WhatsApp קצרה ומשכנעת בעברית (עד 3 משפטים) שתזכיר לו "
+                            f"לסיים את התשלום דרך /cart"
+                        )
+                        wa_message = await lior.process(
+                            message=lior_prompt,
+                            conversation_history=[],
+                            db=db,
+                        )
+
+                    # Send WhatsApp
+                    wa_result = await provider.send_message(to=user.phone, body=wa_message)
+                    if not wa_result.get("ok"):
+                        print(f"[PaymentReminder] WhatsApp failed for user {user.id}: {wa_result.get('error')}")
+                        skip_count += 1
+                        continue
+
+                    # Persist Notification + SSE push
+                    _title = "⏳ הזמנה ממתינה לתשלום"
+                    _msg   = f"הזמנה {order.order_number} בסך {order.total_amount}₪ מחכה לתשלום."
+                    async with pii_session_factory() as db:
+                        db.add(Notification(
+                            user_id=user.id,
+                            type="payment_reminder",
+                            title=_title,
+                            message=_msg,
+                            channel="whatsapp",
+                            data={
+                                "order_id":     str(order.id),
+                                "order_number": order.order_number,
+                                "total_amount": float(order.total_amount),
+                                "wa_sid":       wa_result.get("sid"),
+                            },
+                            sent_at=datetime.utcnow(),
+                        ))
+                        await db.commit()
+
+                    asyncio.create_task(
+                        publish_notification(str(user.id), {
+                            "type":    "payment_reminder",
+                            "title":   _title,
+                            "message": _msg,
+                        })
+                    )
+                    sent_count += 1
+                    print(f"[PaymentReminder] ✅ Sent to {user.full_name} ({user.phone}) — order {order.order_number}")
+
+                except Exception as e:
+                    print(f"[PaymentReminder] Error processing order {order.order_number}: {e}")
+                    skip_count += 1
+
+            print(f"[PaymentReminder] Done — sent: {sent_count}, skipped: {skip_count}")
+
+        await asyncio.sleep(PAYMENT_REMINDER_INTERVAL_S)
 
 
 # ── Background price-sync loop ────────────────────────────────────────────────
