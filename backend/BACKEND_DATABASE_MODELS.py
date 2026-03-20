@@ -28,7 +28,7 @@ from dotenv import load_dotenv
 from sqlalchemy import (
     Boolean, Column, DateTime, ForeignKey, Integer, Numeric,
     String, Text, BigInteger, JSON, UniqueConstraint, CheckConstraint,
-    Index, func,
+    Index, func, text,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -762,6 +762,38 @@ class Return(PiiBase):
     # Relationships
     order = relationship("Order", back_populates="returns")
     user = relationship("User", back_populates="returns")
+
+
+# ==============================================================================
+# CART TABLES (2)
+# ==============================================================================
+
+class Cart(PiiBase):
+    __tablename__ = "carts"
+
+    id         = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id    = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"),
+                        nullable=False, unique=True)
+    created_at = Column(DateTime, server_default=text("now()"), nullable=False)
+    updated_at = Column(DateTime, server_default=text("now()"), nullable=False)
+
+    items = relationship("CartItem", back_populates="cart", cascade="all, delete-orphan")
+
+
+class CartItem(PiiBase):
+    __tablename__ = "cart_items"
+
+    id               = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    cart_id          = Column(UUID(as_uuid=True), ForeignKey("carts.id", ondelete="CASCADE"),
+                              nullable=False, index=True)
+    part_id          = Column(UUID(as_uuid=True), nullable=False)   # cross-DB ref → autospare.parts_catalog
+    supplier_part_id = Column(UUID(as_uuid=True), nullable=False)   # cross-DB ref → autospare.supplier_parts
+    quantity         = Column(Integer, nullable=False, default=1)
+    unit_price       = Column(Numeric(10, 2), nullable=False)       # price snapshot at add-time
+    added_at         = Column(DateTime, server_default=text("now()"), nullable=False)
+    updated_at       = Column(DateTime, server_default=text("now()"), nullable=False)
+
+    cart = relationship("Cart", back_populates="items")
 
 
 # ==============================================================================
