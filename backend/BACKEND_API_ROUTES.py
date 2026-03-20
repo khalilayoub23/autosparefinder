@@ -4456,10 +4456,11 @@ async def resolve_approval(
     approval_id: str,
     body: ResolveApprovalBody,
     current_user: User = Depends(get_current_admin_user),
-    db: AsyncSession = Depends(get_pii_db),
+    db: AsyncSession = Depends(get_db),
+    pii_db: AsyncSession = Depends(get_pii_db),
 ):
     """Approve or reject a pending approval queue item."""
-    result = await db.execute(
+    result = await pii_db.execute(
         select(ApprovalQueue).where(ApprovalQueue.id == approval_id)
     )
     aq = result.scalar_one_or_none()
@@ -4475,13 +4476,25 @@ async def resolve_approval(
     aq.resolved_by = current_user.id
     aq.resolved_at = datetime.utcnow()
     aq.resolution_note = body.note
-    await db.commit()
+    await pii_db.commit()
+
+    # ── Side-effect: sync social_posts.status when a social_post is approved ──
+    if aq.entity_type == "social_post" and body.decision == "approved":
+        sp_result = await db.execute(
+            select(SocialPost).where(SocialPost.id == aq.entity_id)
+        )
+        post = sp_result.scalar_one_or_none()
+        if post and post.status == "pending_approval":
+            post.status = "approved"
+            post.approved_by = current_user.id
+            post.updated_at = datetime.utcnow()
+            await db.commit()
 
     return {
-        "message": body.decision,
-        "id": str(aq.id),
+        "message":     body.decision,
+        "id":          str(aq.id),
         "entity_type": aq.entity_type,
-        "entity_id": str(aq.entity_id),
+        "entity_id":   str(aq.entity_id),
     }
 
 
@@ -4683,6 +4696,45 @@ async def delete_social_post(
 
     await db.commit()
     return {"message": "Post deleted", "post_id": post_id}
+
+
+@app.post("/api/v1/admin/social/publish/{post_id}")
+async def publish_social_post(
+    post_id: str,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from social.telegram_publisher import publish_to_telegram
+
+    result = await db.execute(select(SocialPost).where(SocialPost.id == post_id))
+    post = result.scalar_one_or_none()
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    if post.status != "approved":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Post must be 'approved' before publishing (current status: '{post.status}')",
+        )
+
+    tg_result = await publish_to_telegram(post.content)
+    if not tg_result["ok"]:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Telegram publish failed: {tg_result['error']}",
+        )
+
+    post.status = "published"
+    post.published_at = datetime.utcnow()
+    post.external_post_ids = {"telegram": tg_result["message_id"]}
+    post.updated_at = datetime.utcnow()
+    await db.commit()
+
+    return {
+        "message":             "Post published",
+        "post_id":             post_id,
+        "telegram_message_id": tg_result["message_id"],
+        "published_at":        post.published_at,
+    }
 
 
 @app.get("/api/v1/admin/social/analytics")
