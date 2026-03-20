@@ -7,7 +7,7 @@ Imports: BACKEND_DATABASE_MODELS, BACKEND_AUTH_SECURITY, BACKEND_AI_AGENTS
 ==============================================================================
 """
 
-from fastapi import FastAPI, Depends, HTTPException, status, Request, UploadFile, File, Form, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Depends, HTTPException, status, Request, UploadFile, File, Form, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, Response
 from sse_starlette.sse import EventSourceResponse
@@ -791,27 +791,34 @@ async def delete_conversation(conversation_id: str, current_user: User = Depends
 
 
 @app.post("/api/v1/chat/upload-image")
-async def upload_image(file: UploadFile = File(...), current_user: User = Depends(get_current_verified_user), db: AsyncSession = Depends(get_pii_db)):
+async def upload_image(file: UploadFile = File(...), current_user: User = Depends(get_current_verified_user), db: AsyncSession = Depends(get_pii_db), request: Request = None, redis=Depends(get_redis)):
     """Upload an image and immediately run GPT-4o Vision to identify the part."""
     import base64 as _b64
     from openai import AsyncOpenAI
     import json as _json
 
+    if redis and request:
+        await check_rate_limit(redis, f"upload_image:{current_user.id}", 10, 60)
     file_id = str(uuid.uuid4())
     identified_part = ""
     identified_part_en = ""
     confidence = 0.0
     possible_names: list = []
 
+    img_bytes = await file.read()
+    if len(img_bytes) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large — maximum 10 MB")
+    _ALLOWED_IMAGE_MIMES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+    if file.content_type not in _ALLOWED_IMAGE_MIMES:
+        raise HTTPException(status_code=415, detail=f"Unsupported image type: {file.content_type}")
+    _img_scan, _img_virus = _scan_bytes_for_virus(img_bytes)
+    if _img_scan == "infected":
+        raise HTTPException(status_code=400, detail=f"File rejected: malware detected ({_img_virus})")
+
     ollama_url = os.getenv("OLLAMA_URL", "")
     if ollama_url:
         try:
-            img_bytes = await file.read()
-            # Virus scan before processing
-            _img_scan, _img_virus = _scan_bytes_for_virus(img_bytes)
-            if _img_scan == "infected":
-                raise HTTPException(status_code=400, detail=f"File rejected: malware detected ({_img_virus})")
-            if len(img_bytes) <= 10 * 1024 * 1024:  # 10 MB limit
+            if len(img_bytes) <= 10 * 1024 * 1024:  # always True (size validated above)
                 b64 = _b64.b64encode(img_bytes).decode()
                 mime = file.content_type or "image/jpeg"
                 client = AsyncOpenAI(
@@ -871,6 +878,8 @@ async def upload_audio(
     conversation_id: Optional[str] = None,
     current_user: User = Depends(get_current_verified_user),
     db: AsyncSession = Depends(get_pii_db),
+    request: Request = None,
+    redis=Depends(get_redis),
 ):
     """
     Receive an audio file, transcribe via Ollama Whisper, then pass the
@@ -879,6 +888,8 @@ async def upload_audio(
     Prerequisites on Ollama VPS:
         ollama pull whisper
     """
+    if redis and request:
+        await check_rate_limit(redis, f"upload_audio:{current_user.id}", 10, 60)
     ollama_url = os.getenv("OLLAMA_URL", "")
     if not ollama_url:
         raise HTTPException(status_code=503, detail="שירות התמלול אינו זמין כרגע")
@@ -889,6 +900,10 @@ async def upload_audio(
     _AUDIO_MAX = 25 * 1024 * 1024  # 25 MB
     if len(audio_bytes) > _AUDIO_MAX:
         raise HTTPException(status_code=413, detail="הקובץ גדול מדי — מקסימום 25 MB")
+
+    _ALLOWED_AUDIO_MIMES = {"audio/webm", "audio/mp4", "audio/mpeg", "audio/ogg", "audio/wav"}
+    if file.content_type not in _ALLOWED_AUDIO_MIMES:
+        raise HTTPException(status_code=415, detail=f"Unsupported audio type: {file.content_type}")
 
     # ── 2. Virus scan ─────────────────────────────────────────────────────────
     _scan_status, _virus_name = _scan_bytes_for_virus(audio_bytes)
@@ -987,7 +1002,7 @@ async def rate_agent(conversation_id: str, agent_name: str, rating: int, feedbac
 
 @app.get("/api/v1/parts/search")
 async def search_parts(
-    query: str = "",
+    query: str = Query(default="", max_length=200),
     vehicle_id: Optional[str] = None,
     category: Optional[str] = None,
     per_type: Optional[int] = None,        # override system_settings.search_results_per_type
@@ -1688,8 +1703,13 @@ async def search_parts_by_vin(
     limit: int = 50,
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
+    request: Request = None,
+    redis=Depends(get_redis),
 ):
     """Decode a VIN via NHTSA free API, cache in vehicles table, and search parts."""
+    if redis and request:
+        _vin_ip = request.client.host if request.client else "anon"
+        await check_rate_limit(redis, f"search_by_vin:{_vin_ip}", 10, 60)
     vin_clean = vin.strip().upper().replace("-", "")
     if len(vin_clean) != 17:
         raise HTTPException(status_code=400, detail="VIN must be exactly 17 characters")
@@ -2078,7 +2098,10 @@ async def identify_part_from_image(
 # ==============================================================================
 
 @app.post("/api/v1/vehicles/identify")
-async def identify_vehicle(data: VehicleIdentifyRequest, db: AsyncSession = Depends(get_pii_db)):
+async def identify_vehicle(data: VehicleIdentifyRequest, db: AsyncSession = Depends(get_pii_db), request: Request = None, redis=Depends(get_redis)):
+    if redis and request:
+        _iv_ip = request.client.host if request.client else "anon"
+        await check_rate_limit(redis, f"identify_vehicle:{_iv_ip}", 10, 60)
     agent = get_agent("parts_finder_agent")
     try:
         result = await agent.identify_vehicle(data.license_plate, db)
@@ -2091,7 +2114,9 @@ async def identify_vehicle(data: VehicleIdentifyRequest, db: AsyncSession = Depe
 
 
 @app.post("/api/v1/vehicles/identify-from-image")
-async def identify_vehicle_from_image(file: UploadFile = File(...), current_user: User = Depends(get_current_verified_user), db: AsyncSession = Depends(get_pii_db)):
+async def identify_vehicle_from_image(file: UploadFile = File(...), current_user: User = Depends(get_current_verified_user), db: AsyncSession = Depends(get_pii_db), request: Request = None, redis=Depends(get_redis)):
+    if redis and request:
+        await check_rate_limit(redis, f"identify_from_image:{current_user.id}", 10, 60)
     return {"message": "License plate OCR – coming soon"}
 
 
@@ -5503,10 +5528,8 @@ async def price_sync_status(
 
 
 @app.post("/api/v1/admin/orders/fulfill-stuck", tags=["Admin – Orders"])
-async def admin_fulfill_stuck_orders(db: AsyncSession = Depends(get_pii_db), current_user: User = Depends(get_current_user)):
+async def admin_fulfill_stuck_orders(db: AsyncSession = Depends(get_pii_db), current_user: User = Depends(get_current_admin_user)):
     """Admin: manually re-trigger supplier fulfillment for all paid/processing orders."""
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin only")
     result = await db.execute(select(Order).where(Order.status.in_(["paid", "processing"])))
     stuck = result.scalars().all()
     if not stuck:
