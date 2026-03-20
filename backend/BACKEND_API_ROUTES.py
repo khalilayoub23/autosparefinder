@@ -27,7 +27,7 @@ from BACKEND_DATABASE_MODELS import (
     get_db, get_pii_db, async_session_factory, pii_session_factory, User, Vehicle, PartsCatalog, Order, OrderItem, Payment,
     Invoice, Return, Conversation, Message, File as FileModel,
     Notification, UserProfile, SystemSetting, SupplierPart, Supplier,
-    CarBrand, SystemLog, USD_TO_ILS, ApprovalQueue,
+    CarBrand, SystemLog, USD_TO_ILS, ApprovalQueue, SocialPost,
 )
 from BACKEND_AUTH_SECURITY import (
     get_current_user, get_current_active_user, get_current_verified_user,
@@ -371,6 +371,18 @@ class SupplierUpdateBody(BaseModel):
     supports_express: Optional[bool] = None
     express_carrier: Optional[str] = None
     express_base_cost_usd: Optional[float] = None
+
+
+class CreateSocialPostRequest(BaseModel):
+    content: str
+    platforms: List[str]
+    schedule_time: Optional[datetime] = None
+
+
+class UpdateSocialPostRequest(BaseModel):
+    content: Optional[str] = None
+    platforms: Optional[List[str]] = None
+    schedule_time: Optional[datetime] = None
 
 
 # ==============================================================================
@@ -4557,29 +4569,156 @@ async def update_order_status_admin(
     return {"message": "Status updated", "old": old_status, "new": new_status}
 
 
+@app.post("/api/v1/admin/social/posts", status_code=201)
+async def create_social_post(
+    data: CreateSocialPostRequest,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+    pii_db: AsyncSession = Depends(get_pii_db),
+):
+    post = SocialPost(
+        content=data.content,
+        platforms=data.platforms,
+        scheduled_at=data.schedule_time,
+        status="pending_approval",
+        created_by=current_user.id,
+    )
+    db.add(post)
+    await db.flush()          # get post.id before writing to pii_db
+
+    pii_db.add(ApprovalQueue(
+        entity_type="social_post",
+        entity_id=post.id,
+        action="review_social_post",
+        payload={
+            "content":      data.content,
+            "platforms":    data.platforms,
+            "scheduled_at": data.schedule_time.isoformat() if data.schedule_time else None,
+            "created_by":   str(current_user.id),
+        },
+        status="pending",
+        requested_by=current_user.id,
+    ))
+    await db.commit()
+    await pii_db.commit()
+
+    return {
+        "post_id":    str(post.id),
+        "status":     post.status,
+        "created_at": post.created_at,
+    }
+
+
 @app.get("/api/v1/admin/social/posts")
-async def get_scheduled_posts(current_user: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_db)):
-    return {"posts": []}
-
-
-@app.post("/api/v1/admin/social/posts")
-async def create_social_post(content: str, platforms: List[str], schedule_time: Optional[datetime] = None, current_user: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_db)):
-    return {"post_id": str(uuid.uuid4()), "status": "pending_approval"}
+async def get_scheduled_posts(
+    status: Optional[str] = None,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    stmt = select(SocialPost).order_by(SocialPost.created_at.desc())
+    if status:
+        stmt = stmt.where(SocialPost.status == status)
+    result = await db.execute(stmt)
+    posts = result.scalars().all()
+    return {
+        "posts": [
+            {
+                "id":           str(p.id),
+                "content":      p.content,
+                "platforms":    p.platforms,
+                "status":       p.status,
+                "scheduled_at": p.scheduled_at,
+                "published_at": p.published_at,
+                "created_by":   str(p.created_by),
+                "created_at":   p.created_at,
+                "updated_at":   p.updated_at,
+            }
+            for p in posts
+        ]
+    }
 
 
 @app.put("/api/v1/admin/social/posts/{post_id}")
-async def update_social_post(post_id: str, content: Optional[str] = None, current_user: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_db)):
-    return {"message": "Post updated"}
+async def update_social_post(
+    post_id: str,
+    data: UpdateSocialPostRequest,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(SocialPost).where(SocialPost.id == post_id))
+    post = result.scalar_one_or_none()
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    if post.status == "published":
+        raise HTTPException(status_code=400, detail="Cannot edit a published post")
+
+    if data.content is not None:
+        post.content = data.content
+    if data.platforms is not None:
+        post.platforms = data.platforms
+    if data.schedule_time is not None:
+        post.scheduled_at = data.schedule_time
+    post.updated_at = datetime.utcnow()
+
+    await db.commit()
+    return {"message": "Post updated", "post_id": post_id}
 
 
 @app.delete("/api/v1/admin/social/posts/{post_id}")
-async def delete_social_post(post_id: str, current_user: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_db)):
-    return {"message": "Post deleted"}
+async def delete_social_post(
+    post_id: str,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(SocialPost).where(SocialPost.id == post_id))
+    post = result.scalar_one_or_none()
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    if post.status == "published":
+        raise HTTPException(status_code=400, detail="Cannot delete a published post")
+
+    post.status = "rejected"
+    post.rejection_reason = f"Deleted by admin {current_user.id}"
+    post.updated_at = datetime.utcnow()
+
+    await db.commit()
+    return {"message": "Post deleted", "post_id": post_id}
 
 
 @app.get("/api/v1/admin/social/analytics")
-async def get_social_analytics(current_user: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_db)):
-    return {"followers": {"facebook": 0, "instagram": 0, "tiktok": 0}, "engagement": {"likes": 0, "comments": 0, "shares": 0}}
+async def get_social_analytics(
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from datetime import timedelta
+    rows = (await db.execute(
+        select(SocialPost.status, func.count(SocialPost.id).label("cnt"))
+        .group_by(SocialPost.status)
+    )).all()
+    counts = {r.status: r.cnt for r in rows}
+
+    now = datetime.utcnow()
+    scheduled_next_7d = (await db.execute(
+        select(func.count(SocialPost.id)).where(
+            and_(
+                SocialPost.status.in_(["approved", "pending_approval"]),
+                SocialPost.scheduled_at.between(now, now + timedelta(days=7)),
+            )
+        )
+    )).scalar() or 0
+
+    return {
+        "counts": {
+            "draft":            counts.get("draft", 0),
+            "pending_approval": counts.get("pending_approval", 0),
+            "approved":         counts.get("approved", 0),
+            "published":        counts.get("published", 0),
+            "rejected":         counts.get("rejected", 0),
+        },
+        "scheduled_next_7d": scheduled_next_7d,
+        "followers":  {"facebook": 0, "instagram": 0, "tiktok": 0},
+        "engagement": {"likes": 0, "comments": 0, "shares": 0},
+    }
 
 
 @app.post("/api/v1/admin/social/generate-content")

@@ -352,6 +352,38 @@ class ApprovalQueue(PiiBase):
 
 
 # ==============================================================================
+# SOCIAL POSTS  (autospare catalog DB)
+# ==============================================================================
+
+class SocialPost(Base):
+    """Content scheduled for social-media publishing.
+    created_by / approved_by reference user UUIDs in autospare_pii — no FK enforced (cross-DB).
+    """
+    __tablename__ = "social_posts"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('draft','pending_approval','approved','published','rejected')",
+            name="ck_social_posts_status",
+        ),
+        Index("ix_social_posts_status_scheduled", "status", "scheduled_at"),
+    )
+
+    id                = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    content           = Column(Text, nullable=False)
+    platforms         = Column(ARRAY(String), nullable=False)
+    status            = Column(String(20), nullable=False, default="draft", server_default="draft")
+    scheduled_at      = Column(DateTime, nullable=True)
+    published_at      = Column(DateTime, nullable=True)
+    external_post_ids = Column(JSONB, nullable=False, default=dict)
+    created_by        = Column(UUID(as_uuid=True), nullable=False,
+                               comment="User UUID from autospare_pii — no FK (cross-DB)")
+    approved_by       = Column(UUID(as_uuid=True), nullable=True)
+    rejection_reason  = Column(Text, nullable=True)
+    created_at        = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at        = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+# ==============================================================================
 # 2. VEHICLES & PARTS TABLES (4)
 # ==============================================================================
 
