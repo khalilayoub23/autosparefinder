@@ -38,7 +38,8 @@ from BACKEND_AUTH_SECURITY import (
     get_current_admin_user, register_user, login_user, complete_2fa_login,
     refresh_access_token, logout_user, create_password_reset_token,
     use_password_reset_token, change_password, update_phone_number,
-    create_2fa_code, verify_2fa_code, get_redis, hash_password, publish_notification
+    create_2fa_code, verify_2fa_code, get_redis, hash_password, publish_notification,
+    check_rate_limit
 )
 from BACKEND_AI_AGENTS import process_user_message, process_agent_response_for_message, get_agent, OrdersAgent
 
@@ -442,8 +443,13 @@ class UpdateSocialPostRequest(BaseModel):
 # ==============================================================================
 
 @app.post("/api/v1/auth/register", status_code=status.HTTP_201_CREATED)
-async def register(data: RegisterRequest, request: Request, db: AsyncSession = Depends(get_pii_db)):
+async def register(data: RegisterRequest, request: Request, db: AsyncSession = Depends(get_pii_db), redis=Depends(get_redis)):
     """Register new user and send 2FA SMS"""
+    ip = request.client.host if request.client else "unknown"
+    if redis:
+        allowed = await check_rate_limit(redis, f'rate:register:{ip}', 5, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
     user = await register_user(data.email, data.phone, data.password, data.full_name, db)
     await create_2fa_code(str(user.id), user.phone, db)
     return {
@@ -505,10 +511,15 @@ async def refresh_token(data: RefreshTokenRequest, db: AsyncSession = Depends(ge
 
 
 @app.post("/api/v1/auth/verify-email")
-async def verify_email(token: str, db: AsyncSession = Depends(get_pii_db)):
+async def verify_email(token: str, request: Request, db: AsyncSession = Depends(get_pii_db), redis=Depends(get_redis)):
     """Validate an email verification token (re-uses the PasswordReset table as
     a lightweight token store — a dedicated EmailVerification table can replace
     this when full email verification flow is implemented)."""
+    ip = request.client.host if request.client else "unknown"
+    if redis:
+        allowed = await check_rate_limit(redis, f'rate:verify_email:{ip}', 10, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
     from BACKEND_DATABASE_MODELS import PasswordReset
     from datetime import datetime
     if not token:
@@ -603,7 +614,12 @@ async def accept_terms(current_user: User = Depends(get_current_user), db: Async
 
 
 @app.post("/api/v1/auth/reset-password")
-async def reset_password(data: PasswordResetRequest, db: AsyncSession = Depends(get_pii_db)):
+async def reset_password(data: PasswordResetRequest, request: Request, db: AsyncSession = Depends(get_pii_db), redis=Depends(get_redis)):
+    ip = request.client.host if request.client else "unknown"
+    if redis:
+        allowed = await check_rate_limit(redis, f'rate:reset_password:{ip}', 5, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
     await create_password_reset_token(data.email, db)
     return {"message": "אם המייל קיים במערכת, נשלח קישור לאיפוס סיסמה"}
 
@@ -674,7 +690,12 @@ async def delete_trusted_device(device_id: str, current_user: User = Depends(get
 # ==============================================================================
 
 @app.post("/api/v1/chat/message")
-async def send_message(data: ChatMessageRequest, current_user: User = Depends(get_current_verified_user), db: AsyncSession = Depends(get_pii_db)):
+async def send_message(data: ChatMessageRequest, request: Request, current_user: User = Depends(get_current_verified_user), db: AsyncSession = Depends(get_pii_db), redis=Depends(get_redis)):
+    ip = request.client.host if request.client else "unknown"
+    if redis:
+        allowed = await check_rate_limit(redis, f'rate:chat:{ip}', 20, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
     # ── 1. Get or create conversation (fast DB write only) ──────────────────
     conversation = None
     if data.conversation_id:
@@ -973,6 +994,8 @@ async def search_parts(
     sort_by: str = "price_ils",            # cheapest first by default
     vehicle_manufacturer: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
+    request: Request = None,
+    redis=Depends(get_redis),
 ):
     """
     Search the parts catalogue and return results grouped by part type.
@@ -991,6 +1014,11 @@ async def search_parts(
     (default: system_settings.search_results_per_type → 4).
     Text search is powered by Meilisearch when available; falls back to ILIKE.
     """
+    ip = request.client.host if (request and request.client) else "unknown"
+    if redis:
+        allowed = await check_rate_limit(redis, f'rate:search:{ip}', 30, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
     # ── Resolve results_per_type ─────────────────────────────────────────────
     if per_type is None:
         try:
@@ -3246,6 +3274,8 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_pii_
         if isinstance(provider, TwilioWhatsAppProvider):
             if not provider.validate_signature(auth_token, str(request.url), raw_data, twilio_sig):
                 raise HTTPException(status_code=403, detail="Invalid Twilio signature")
+    else:
+        print("[WhatsApp] WARNING: TWILIO_AUTH_TOKEN not set — signature validation skipped (dev mode only)")
 
     # ── 3. Parse incoming fields ──────────────────────────────────────────────
     parsed       = await provider.parse_incoming(raw_data)
@@ -4106,7 +4136,12 @@ async def get_order_history_summary(current_user: User = Depends(get_current_use
 # ==============================================================================
 
 @app.post("/api/v1/marketing/subscribe")
-async def subscribe_newsletter(data: NewsletterSubscribeRequest, db: AsyncSession = Depends(get_pii_db)):
+async def subscribe_newsletter(data: NewsletterSubscribeRequest, request: Request, db: AsyncSession = Depends(get_pii_db), redis=Depends(get_redis)):
+    ip = request.client.host if request.client else "unknown"
+    if redis:
+        allowed = await check_rate_limit(redis, f'rate:subscribe:{ip}', 3, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
     return {"message": "Subscribed successfully"}
 
 
