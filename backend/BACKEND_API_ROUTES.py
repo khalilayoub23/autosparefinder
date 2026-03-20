@@ -799,6 +799,7 @@ async def upload_image(file: UploadFile = File(...), current_user: User = Depend
 @app.post("/api/v1/chat/upload-audio")
 async def upload_audio(
     file: UploadFile = File(...),
+    conversation_id: Optional[str] = None,
     current_user: User = Depends(get_current_verified_user),
     db: AsyncSession = Depends(get_pii_db),
 ):
@@ -853,7 +854,7 @@ async def upload_audio(
         result = await process_user_message(
             user_id=str(current_user.id),
             message=transcription,
-            conversation_id=None,
+            conversation_id=conversation_id,
             db=db,
         )
         agent_response    = result.get("response", "")
