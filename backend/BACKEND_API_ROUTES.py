@@ -5339,7 +5339,104 @@ async def import_parts_excel(
 
 @app.get("/api/v1/system/health")
 async def health_check():
-    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat(), "version": "1.0.0"}
+    import time as _time
+    results: dict = {}
+
+    # ── PostgreSQL catalog ────────────────────────────────────────────────────
+    try:
+        _t = _time.monotonic()
+        async with async_session_factory() as _db:
+            await _db.execute(text("SELECT 1"))
+        results["postgres_catalog"] = {"status": "ok", "latency_ms": round((_time.monotonic() - _t) * 1000, 1)}
+    except Exception as _e:
+        results["postgres_catalog"] = {"status": "error", "error": str(_e)}
+
+    # ── PostgreSQL PII ────────────────────────────────────────────────────────
+    try:
+        _t = _time.monotonic()
+        async with pii_session_factory() as _db:
+            await _db.execute(text("SELECT 1"))
+        results["postgres_pii"] = {"status": "ok", "latency_ms": round((_time.monotonic() - _t) * 1000, 1)}
+    except Exception as _e:
+        results["postgres_pii"] = {"status": "error", "error": str(_e)}
+
+    # ── Redis ─────────────────────────────────────────────────────────────────
+    try:
+        import redis.asyncio as _aioredis
+        _r = _aioredis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"), decode_responses=True, socket_connect_timeout=2)
+        await _r.ping()
+        await _r.aclose()
+        results["redis"] = {"status": "ok"}
+    except Exception as _e:
+        results["redis"] = {"status": "error", "error": str(_e)}
+
+    # ── Meilisearch ───────────────────────────────────────────────────────────
+    _meili_url = os.getenv("MEILI_URL", "")
+    if _meili_url:
+        try:
+            import httpx as _httpx
+            async with _httpx.AsyncClient(timeout=3) as _hc:
+                _resp = await _hc.get(f"{_meili_url}/health")
+            results["meilisearch"] = {"status": "ok"} if _resp.status_code == 200 else {"status": "error", "code": _resp.status_code}
+        except Exception as _e:
+            results["meilisearch"] = {"status": "error", "error": str(_e)}
+    else:
+        results["meilisearch"] = {"status": "ok", "note": "not_configured"}
+
+    # ── Ollama ────────────────────────────────────────────────────────────────
+    _ollama_url = os.getenv("OLLAMA_URL", "")
+    if _ollama_url:
+        try:
+            import httpx as _httpx
+            async with _httpx.AsyncClient(timeout=3) as _hc:
+                _resp = await _hc.get(f"{_ollama_url}/api/tags")
+            results["ollama"] = {"status": "ok"} if _resp.status_code == 200 else {"status": "error", "code": _resp.status_code}
+        except Exception as _e:
+            results["ollama"] = {"status": "error", "error": str(_e)}
+    else:
+        results["ollama"] = {"status": "ok", "note": "not_configured"}
+
+    # ── ClamAV ────────────────────────────────────────────────────────────────
+    try:
+        _clam_ok = False
+        for _make_scanner in (
+            lambda: _clamd.ClamdUnixSocket(),
+            lambda: _clamd.ClamdNetworkSocket(host=os.getenv("CLAMD_HOST", "clamav"), port=3310),
+        ):
+            try:
+                _make_scanner().ping()
+                _clam_ok = True
+                break
+            except Exception:
+                continue
+        results["clamav"] = {"status": "ok"} if _clam_ok else {"status": "error", "error": "daemon unreachable"}
+    except Exception as _e:
+        results["clamav"] = {"status": "error", "error": str(_e)}
+
+    # ── Stripe ────────────────────────────────────────────────────────────────
+    _stripe_key = os.getenv("STRIPE_SECRET_KEY", "")
+    if _stripe_key and not _stripe_key.startswith("sk_test_xxxxx"):
+        results["stripe"] = {"status": "ok"}
+    else:
+        results["stripe"] = {"status": "error", "error": "key not configured"}
+
+    # ── Aggregate ─────────────────────────────────────────────────────────────
+    critical = ["postgres_catalog", "postgres_pii"]
+    critical_ok = all(results.get(s, {}).get("status") == "ok" for s in critical)
+    all_ok = all(v.get("status") == "ok" for v in results.values())
+    if all_ok:
+        overall = "healthy"
+    elif critical_ok:
+        overall = "degraded"
+    else:
+        overall = "unhealthy"
+
+    return {
+        "status": overall,
+        "timestamp": datetime.utcnow().isoformat(),
+        "version": "1.0.0",
+        "services": results,
+    }
 
 
 # ── Admin: price-sync status & manual trigger ─────────────────────────────────
@@ -5505,6 +5602,7 @@ async def startup():
     asyncio.create_task(_notify_search_miss_loop())     # ← search-miss user notifications (every 60 min)
     asyncio.create_task(_abandoned_cart_loop())         # ← abandoned-cart WhatsApp re-engagement (every 60 min)
     asyncio.create_task(_pending_payment_reminder_loop())  # ← pending-payment WhatsApp reminder (every 30 min)
+    asyncio.create_task(_health_monitor_loop())            # ← service health monitoring + admin alerting (every 5 min)
     start_scraper_task()           # ← catalog scraper background loop
     start_db_agent(get_db, 6.0)   # ← DB cleaning / normalisation agent (every 6h)
     print("✅ All systems ready — price-sync + catalog-scraper + db-agent schedulers started")
@@ -5523,6 +5621,9 @@ ABANDONED_CART_IDLE_HOURS = int(os.getenv("ABANDONED_CART_IDLE_HOURS", "2"))
 PAYMENT_REMINDER_INTERVAL_S = int(os.getenv("PAYMENT_REMINDER_INTERVAL_S", "1800"))
 # Minimum age of a pending_payment order before first reminder (default: 1 hour)
 PAYMENT_REMINDER_AFTER_H    = int(os.getenv("PAYMENT_REMINDER_AFTER_H", "1"))
+
+# How often the health monitor probes all services (default: every 5 min)
+HEALTH_MONITOR_INTERVAL_S = int(os.getenv("HEALTH_MONITOR_INTERVAL_S", "300"))
 
 
 async def _stuck_orders_monitor_loop():
@@ -5633,6 +5734,171 @@ async def _stuck_orders_monitor_loop():
             print(f"[OrderMonitor] Pass 2 error: {e}")
 
         await asyncio.sleep(STUCK_ORDER_CHECK_INTERVAL_MIN * 60)
+
+
+# ── Health monitor loop ─────────────────────────────────────────────────────
+async def _health_monitor_loop():
+    """
+    Background loop: runs every HEALTH_MONITOR_INTERVAL_S seconds (default 5 min).
+
+    Probes all 7 external services. Tracks previous state per service.
+    On service DOWN:      notifies all admins via WhatsApp + Notification row + SSE.
+    On service RESTORED:  notifies all admins the same way.
+    Never sends the same alert twice in a row for the same service.
+    """
+    import httpx as _httpx
+    import redis.asyncio as _aioredis
+    from social.whatsapp_provider import get_whatsapp_provider
+
+    await asyncio.sleep(20)  # let DB pool warm up on startup
+
+    _prev_states: dict = {}  # service_name → "ok" | "error"
+
+    SERVICE_LABELS = {
+        "postgres_catalog": "PostgreSQL Catalog",
+        "postgres_pii":     "PostgreSQL PII",
+        "redis":            "Redis",
+        "meilisearch":      "Meilisearch",
+        "ollama":           "Ollama",
+        "clamav":           "ClamAV",
+        "stripe":           "Stripe",
+    }
+
+    async def _probe() -> dict:
+        states: dict = {}
+
+        try:
+            async with async_session_factory() as _db:
+                await _db.execute(text("SELECT 1"))
+            states["postgres_catalog"] = "ok"
+        except Exception:
+            states["postgres_catalog"] = "error"
+
+        try:
+            async with pii_session_factory() as _db:
+                await _db.execute(text("SELECT 1"))
+            states["postgres_pii"] = "ok"
+        except Exception:
+            states["postgres_pii"] = "error"
+
+        try:
+            _r = _aioredis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"), decode_responses=True, socket_connect_timeout=2)
+            await _r.ping()
+            await _r.aclose()
+            states["redis"] = "ok"
+        except Exception:
+            states["redis"] = "error"
+
+        _meili_url = os.getenv("MEILI_URL", "")
+        if _meili_url:
+            try:
+                async with _httpx.AsyncClient(timeout=3) as _hc:
+                    _resp = await _hc.get(f"{_meili_url}/health")
+                states["meilisearch"] = "ok" if _resp.status_code == 200 else "error"
+            except Exception:
+                states["meilisearch"] = "error"
+        else:
+            states["meilisearch"] = "ok"
+
+        _ollama_url = os.getenv("OLLAMA_URL", "")
+        if _ollama_url:
+            try:
+                async with _httpx.AsyncClient(timeout=3) as _hc:
+                    _resp = await _hc.get(f"{_ollama_url}/api/tags")
+                states["ollama"] = "ok" if _resp.status_code == 200 else "error"
+            except Exception:
+                states["ollama"] = "error"
+        else:
+            states["ollama"] = "ok"
+
+        _clam_ok = False
+        for _make_scanner in (
+            lambda: _clamd.ClamdUnixSocket(),
+            lambda: _clamd.ClamdNetworkSocket(host=os.getenv("CLAMD_HOST", "clamav"), port=3310),
+        ):
+            try:
+                _make_scanner().ping()
+                _clam_ok = True
+                break
+            except Exception:
+                continue
+        states["clamav"] = "ok" if _clam_ok else "error"
+
+        _stripe_key = os.getenv("STRIPE_SECRET_KEY", "")
+        states["stripe"] = "ok" if (_stripe_key and not _stripe_key.startswith("sk_test_xxxxx")) else "error"
+
+        return states
+
+    while True:
+        try:
+            current_states = await _probe()
+            provider = get_whatsapp_provider()
+
+            for svc, state in current_states.items():
+                prev = _prev_states.get(svc)
+                if prev is None:
+                    # First pass — record state silently, warn if already down
+                    _prev_states[svc] = state
+                    if state == "error":
+                        print(f"[HealthMonitor] Startup: {svc} is DOWN")
+                    continue
+
+                if prev == state:
+                    continue  # no change — no alert
+
+                label = SERVICE_LABELS.get(svc, svc)
+                if state == "error":
+                    _title = f"\U0001f534 שירות {label} נפל!"
+                    _msg   = f"שירות {label} אינו זמין. בדוק את המערכת בהקדם."
+                    _notif_type = "service_down"
+                    print(f"[HealthMonitor] \u26a0\ufe0f  {svc} went DOWN")
+                else:
+                    _title = f"\u2705 שירות {label} חזר לעבוד"
+                    _msg   = f"שירות {label} חזר לפעול נורמלית."
+                    _notif_type = "service_restored"
+                    print(f"[HealthMonitor] \u2705  {svc} RESTORED")
+
+                _prev_states[svc] = state
+
+                try:
+                    async with pii_session_factory() as db:
+                        admins_res = await db.execute(select(User).where(User.is_admin == True))
+                        admins = admins_res.scalars().all()
+                        for admin in admins:
+                            db.add(Notification(
+                                user_id=admin.id,
+                                type=_notif_type,
+                                title=_title,
+                                message=_msg,
+                                channel="whatsapp",
+                                data={"service": svc, "state": state},
+                                sent_at=datetime.utcnow(),
+                            ))
+                            asyncio.create_task(
+                                publish_notification(str(admin.id), {
+                                    "type":    _notif_type,
+                                    "title":   _title,
+                                    "message": _msg,
+                                })
+                            )
+                            if admin.phone and str(admin.id) != str(WHATSAPP_ANON_USER_ID):
+                                wa_result = await provider.send_message(to=admin.phone, body=f"{_title}\n{_msg}")
+                                if not wa_result.get("ok"):
+                                    print(f"[HealthMonitor] WhatsApp failed for admin {admin.id}: {wa_result.get('error')}")
+                        await db.commit()
+                except Exception as _e:
+                    print(f"[HealthMonitor] Notify error for {svc}: {_e}")
+
+            down = [s for s, v in current_states.items() if v == "error"]
+            if down:
+                print(f"[HealthMonitor] Pass complete — DOWN: {', '.join(down)}")
+            else:
+                print("[HealthMonitor] Pass complete — all services OK")
+
+        except Exception as e:
+            print(f"[HealthMonitor] Outer error: {e}")
+
+        await asyncio.sleep(HEALTH_MONITOR_INTERVAL_S)
 
 
 # ── Abandoned-cart re-engagement loop ───────────────────────────────────────
