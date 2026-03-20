@@ -301,11 +301,20 @@ def _scan_bytes_for_virus(content: bytes) -> tuple:
 # SCHEMAS
 # ==============================================================================
 
+_VALID_CUSTOMER_TYPES = {"individual", "mechanic", "garage", "retailer", "fleet"}
+
 class RegisterRequest(BaseModel):
     email: EmailStr
     phone: str
     password: str
     full_name: str
+    customer_type: str = "individual"
+
+    @validator("customer_type")
+    def validate_customer_type(cls, v):
+        if v not in _VALID_CUSTOMER_TYPES:
+            raise ValueError(f"customer_type must be one of: {', '.join(sorted(_VALID_CUSTOMER_TYPES))}")
+        return v
 
     @validator("phone")
     def validate_phone(cls, v):
@@ -451,9 +460,17 @@ async def register(data: RegisterRequest, request: Request, db: AsyncSession = D
         if not allowed:
             raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
     user = await register_user(data.email, data.phone, data.password, data.full_name, db)
+    # Persist customer_type on the auto-created profile
+    profile_res = await db.execute(select(UserProfile).where(UserProfile.user_id == user.id))
+    profile = profile_res.scalar_one_or_none()
+    if profile:
+        profile.customer_type = data.customer_type
+    else:
+        db.add(UserProfile(user_id=user.id, customer_type=data.customer_type))
+    await db.commit()
     await create_2fa_code(str(user.id), user.phone, db)
     return {
-        "user": {"id": str(user.id), "email": user.email, "full_name": user.full_name},
+        "user": {"id": str(user.id), "email": user.email, "full_name": user.full_name, "customer_type": data.customer_type},
         "message": f"קוד אימות נשלח ל-{user.phone[-4:]}",
     }
 
@@ -5638,6 +5655,105 @@ async def _notify_search_miss_loop() -> None:
         await asyncio.sleep(_SEARCH_MISS_NOTIFY_INTERVAL)
 
 
+# How often the VIP detection + stats sync runs (default: every 24 hours)
+VIP_DETECTION_INTERVAL_S = int(os.getenv("VIP_DETECTION_INTERVAL_S", "86400"))
+# Thresholds for automatic VIP promotion
+VIP_MIN_ORDERS = int(os.getenv("VIP_MIN_ORDERS",    "5"))
+VIP_MIN_SPENT  = int(os.getenv("VIP_MIN_SPENT_ILS", "2000"))
+
+
+async def _vip_detection_loop() -> None:
+    """
+    Background loop (every 24 h):
+      1. Sync total_orders + total_spent_ils for ALL users from orders table.
+      2. Promote users to VIP where (total_orders >= VIP_MIN_ORDERS OR
+         total_spent_ils >= VIP_MIN_SPENT) AND is_vip = FALSE.
+      3. Send Notification + SSE to newly-promoted VIP users.
+    """
+    await asyncio.sleep(60)  # brief startup delay
+    while True:
+        try:
+            async with pii_session_factory() as pii_db:
+                # ── 1. Sync order stats for all users ──────────────────────────────────
+                await pii_db.execute(text("""
+                    UPDATE user_profiles up
+                    SET
+                        total_orders    = agg.cnt,
+                        total_spent_ils = agg.spent,
+                        updated_at      = NOW()
+                    FROM (
+                        SELECT
+                            user_id,
+                            COUNT(*)                       AS cnt,
+                            COALESCE(SUM(total_amount), 0) AS spent
+                        FROM orders
+                        WHERE status NOT IN ('cancelled', 'refunded')
+                        GROUP BY user_id
+                    ) agg
+                    WHERE up.user_id = agg.user_id
+                """))
+
+                # ── 2. Find newly-qualifying VIP users ───────────────────────────────
+                rows = (await pii_db.execute(text("""
+                    SELECT up.user_id, u.full_name, u.phone,
+                           up.total_orders, up.total_spent_ils
+                    FROM user_profiles up
+                    JOIN users u ON u.id = up.user_id
+                    WHERE up.is_vip = FALSE
+                      AND (
+                            up.total_orders    >= :min_orders
+                         OR up.total_spent_ils >= :min_spent
+                      )
+                """), {"min_orders": VIP_MIN_ORDERS, "min_spent": VIP_MIN_SPENT})).fetchall()
+
+                if rows:
+                    # ── 3. Promote + notify ────────────────────────────────────────────
+                    new_vip_ids = [str(r.user_id) for r in rows]
+                    await pii_db.execute(text("""
+                        UPDATE user_profiles
+                        SET is_vip     = TRUE,
+                            vip_since  = NOW(),
+                            updated_at = NOW()
+                        WHERE user_id = ANY(:ids::uuid[])
+                          AND is_vip  = FALSE
+                    """), {"ids": new_vip_ids})
+
+                    for row in rows:
+                        _vip_title = "🏆 ברוך הבא למועדון הVIP של Auto Spare!"
+                        _vip_msg   = (
+                            f"שלום {row.full_name}! הפכת ללקוח VIP! "
+                            f"קבל הנחות מיוחדות, משלוח מהיר עדיפות ושירות אישי. "
+                            f"סה\"\"\u05db הזמנות: {row.total_orders} | "
+                            f"סה\"\"\u05db קניות: ₪{float(row.total_spent_ils):.0f}"
+                        )
+                        pii_db.add(Notification(
+                            user_id=row.user_id,
+                            type="vip_promotion",
+                            title=_vip_title,
+                            message=_vip_msg,
+                            data={
+                                "total_orders": row.total_orders,
+                                "total_spent_ils": float(row.total_spent_ils),
+                                "vip_since": datetime.utcnow().isoformat(),
+                            },
+                        ))
+                        asyncio.create_task(publish_notification(
+                            str(row.user_id),
+                            {"type": "vip_promotion", "title": _vip_title, "message": _vip_msg},
+                        ))
+
+                    await pii_db.commit()
+                    print(f"[VIP] Promoted {len(rows)} user(s) to VIP: {new_vip_ids}")
+                else:
+                    await pii_db.commit()
+                    print("[VIP] Stats synced, no new VIP promotions")
+
+        except Exception as e:
+            print(f"[VIP detection] error (non-fatal): {e}")
+
+        await asyncio.sleep(VIP_DETECTION_INTERVAL_S)
+
+
 @app.on_event("startup")
 async def startup():
     from catalog_scraper import start_scraper_task
@@ -5661,6 +5777,7 @@ async def startup():
     asyncio.create_task(_abandoned_cart_loop())         # ← abandoned-cart WhatsApp re-engagement (every 60 min)
     asyncio.create_task(_pending_payment_reminder_loop())  # ← pending-payment WhatsApp reminder (every 30 min)
     asyncio.create_task(_health_monitor_loop())            # ← service health monitoring + admin alerting (every 5 min)
+    asyncio.create_task(_vip_detection_loop())             # ← VIP promotion + order stats sync (every 24 h)
     start_scraper_task()           # ← catalog scraper background loop
     start_db_agent(get_db, 6.0)   # ← DB cleaning / normalisation agent (every 6h)
     print("✅ All systems ready — price-sync + catalog-scraper + db-agent schedulers started")

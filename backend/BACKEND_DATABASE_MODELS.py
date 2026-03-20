@@ -234,6 +234,12 @@ class UserProfile(PiiBase):
     marketing_preferences = Column(JSONB, default=dict)
     preferred_language = Column(String(10), default="he")
     avatar_url = Column(String(500), nullable=True)
+    # ── Customer segmentation ────────────────────────────────────────────────────────────
+    customer_type    = Column(String(20), nullable=False, default="individual")  # individual/mechanic/garage/retailer/fleet
+    total_orders     = Column(Integer, nullable=False, default=0)
+    total_spent_ils  = Column(Numeric(12, 2), nullable=False, default=0)
+    is_vip           = Column(Boolean, nullable=False, default=False, index=True)
+    vip_since        = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
