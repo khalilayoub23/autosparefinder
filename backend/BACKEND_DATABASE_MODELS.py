@@ -213,7 +213,9 @@ class User(PiiBase):
     conversations = relationship("Conversation", back_populates="user")
     files = relationship("File", back_populates="user")
     notifications = relationship("Notification", back_populates="user")
-    agent_ratings = relationship("AgentRating", back_populates="user")
+    agent_ratings   = relationship("AgentRating",   back_populates="user")
+    wishlist_items  = relationship("WishlistItem",  back_populates="user", cascade="all, delete-orphan")
+    part_reviews    = relationship("PartReview",    back_populates="user", cascade="all, delete-orphan")
 
 
 class UserProfile(PiiBase):
@@ -794,6 +796,35 @@ class CartItem(PiiBase):
     updated_at       = Column(DateTime, server_default=text("now()"), nullable=False)
 
     cart = relationship("Cart", back_populates="items")
+
+
+class WishlistItem(PiiBase):
+    __tablename__ = "wishlist_items"
+
+    id       = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id  = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    part_id  = Column(UUID(as_uuid=True), nullable=False)   # cross-DB ref → autospare.parts_catalog
+    added_at = Column(DateTime, server_default=text("now()"), nullable=False)
+
+    user = relationship("User", back_populates="wishlist_items")
+
+
+class PartReview(PiiBase):
+    __tablename__ = "part_reviews"
+
+    id                   = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id              = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    part_id              = Column(UUID(as_uuid=True), nullable=False, index=True)  # cross-DB ref
+    order_id             = Column(UUID(as_uuid=True), ForeignKey("orders.id", ondelete="SET NULL"), nullable=True)
+    rating               = Column(Integer, nullable=False)
+    title                = Column(String(255), nullable=True)
+    body                 = Column(Text, nullable=True)
+    is_verified_purchase = Column(Boolean, server_default=text("false"), nullable=False)
+    created_at           = Column(DateTime, server_default=text("now()"), nullable=False)
+    updated_at           = Column(DateTime, server_default=text("now()"), nullable=False)
+
+    user  = relationship("User", back_populates="part_reviews")
+    order = relationship("Order", foreign_keys=[order_id])
 
 
 # ==============================================================================

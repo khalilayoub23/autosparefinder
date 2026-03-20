@@ -6721,6 +6721,264 @@ async def checkout(
     return order_result
 
 
+# ==============================================================================
+# WISHLIST
+# ==============================================================================
+
+class WishlistAddRequest(BaseModel):
+    part_id: str
+
+
+async def _wishlist_item_to_response(item, cat_db: AsyncSession) -> dict:
+    """Resolve part details from catalog DB for a single WishlistItem row."""
+    from BACKEND_DATABASE_MODELS import PartsCatalog, PartImage
+    part_res = await cat_db.execute(
+        select(PartsCatalog).where(PartsCatalog.id == item.part_id)
+    )
+    part = part_res.scalar_one_or_none()
+    if not part:
+        return None
+
+    img_res = await cat_db.execute(
+        select(PartImage).where(
+            and_(PartImage.part_id == part.id, PartImage.is_primary == True)
+        ).limit(1)
+    )
+    img = img_res.scalar_one_or_none()
+
+    return {
+        "id":           str(item.id),
+        "partId":       str(item.part_id),
+        "name":         part.name,
+        "category":     part.category,
+        "manufacturer": part.manufacturer,
+        "price":        float(part.min_price_ils or part.base_price or 0),
+        "imageUrl":     img.url if img else None,
+        "addedAt":      item.added_at.isoformat(),
+    }
+
+
+@app.get("/api/v1/customers/wishlist")
+async def get_wishlist(
+    current_user: User = Depends(get_current_verified_user),
+    db: AsyncSession = Depends(get_pii_db),
+    cat_db: AsyncSession = Depends(get_db),
+):
+    from BACKEND_DATABASE_MODELS import WishlistItem
+    res = await db.execute(
+        select(WishlistItem)
+        .where(WishlistItem.user_id == current_user.id)
+        .order_by(WishlistItem.added_at.desc())
+    )
+    items = res.scalars().all()
+    out = []
+    for item in items:
+        row = await _wishlist_item_to_response(item, cat_db)
+        if row:
+            out.append(row)
+    return {"items": out, "count": len(out)}
+
+
+@app.post("/api/v1/customers/wishlist", status_code=status.HTTP_201_CREATED)
+async def add_to_wishlist(
+    body: WishlistAddRequest,
+    current_user: User = Depends(get_current_verified_user),
+    db: AsyncSession = Depends(get_pii_db),
+    cat_db: AsyncSession = Depends(get_db),
+):
+    from BACKEND_DATABASE_MODELS import WishlistItem
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    try:
+        part_uuid = uuid.UUID(body.part_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid part_id")
+
+    stmt = pg_insert(WishlistItem).values(
+        user_id=current_user.id,
+        part_id=part_uuid,
+    ).on_conflict_do_nothing(constraint="uq_wishlist_item")
+    await db.execute(stmt)
+    await db.commit()
+
+    res = await db.execute(
+        select(WishlistItem).where(
+            WishlistItem.user_id == current_user.id,
+            WishlistItem.part_id == part_uuid,
+        )
+    )
+    item = res.scalar_one()
+    return await _wishlist_item_to_response(item, cat_db)
+
+
+@app.delete("/api/v1/customers/wishlist/{part_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_from_wishlist(
+    part_id: str,
+    current_user: User = Depends(get_current_verified_user),
+    db: AsyncSession = Depends(get_pii_db),
+):
+    from BACKEND_DATABASE_MODELS import WishlistItem
+
+    try:
+        part_uuid = uuid.UUID(part_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid part_id")
+
+    res = await db.execute(
+        select(WishlistItem).where(
+            WishlistItem.user_id == current_user.id,
+            WishlistItem.part_id == part_uuid,
+        )
+    )
+    item = res.scalar_one_or_none()
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not in wishlist")
+    await db.delete(item)
+    await db.commit()
+
+
+# ==============================================================================
+# PART REVIEWS
+# ==============================================================================
+
+class ReviewCreateRequest(BaseModel):
+    rating: int
+    title:  Optional[str] = None
+    body:   Optional[str] = None
+
+    @validator("rating")
+    def validate_rating(cls, v):
+        if not 1 <= v <= 5:
+            raise ValueError("rating must be 1–5")
+        return v
+
+
+@app.get("/api/v1/parts/{part_id}/reviews")
+async def get_part_reviews(
+    part_id: str,
+    db: AsyncSession = Depends(get_pii_db),
+):
+    from BACKEND_DATABASE_MODELS import PartReview
+
+    try:
+        part_uuid = uuid.UUID(part_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid part_id")
+
+    res = await db.execute(
+        select(PartReview, User)
+        .join(User, PartReview.user_id == User.id)
+        .where(PartReview.part_id == part_uuid)
+        .order_by(PartReview.created_at.desc())
+    )
+    rows = res.all()
+
+    reviews = []
+    total_rating = 0
+    for review, user in rows:
+        total_rating += review.rating
+        reviews.append({
+            "id":                 str(review.id),
+            "rating":             review.rating,
+            "title":              review.title,
+            "body":               review.body,
+            "isVerifiedPurchase": review.is_verified_purchase,
+            "createdAt":          review.created_at.isoformat(),
+            "user": {
+                "id":       str(user.id),
+                "fullName": user.full_name,
+            },
+        })
+
+    avg = round(total_rating / len(reviews), 1) if reviews else None
+    return {"reviews": reviews, "count": len(reviews), "averageRating": avg}
+
+
+@app.post("/api/v1/parts/{part_id}/reviews", status_code=status.HTTP_201_CREATED)
+async def create_part_review(
+    part_id: str,
+    body: ReviewCreateRequest,
+    current_user: User = Depends(get_current_verified_user),
+    db: AsyncSession = Depends(get_pii_db),
+):
+    from BACKEND_DATABASE_MODELS import PartReview, OrderItem as _OrderItem
+
+    try:
+        part_uuid = uuid.UUID(part_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid part_id")
+
+    existing = await db.execute(
+        select(PartReview).where(
+            PartReview.user_id == current_user.id,
+            PartReview.part_id == part_uuid,
+        )
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="You have already reviewed this part")
+
+    # Verified purchase: user must have a delivered order containing this part
+    verified_res = await db.execute(
+        select(Order)
+        .join(_OrderItem, _OrderItem.order_id == Order.id)
+        .where(
+            Order.user_id == current_user.id,
+            Order.status == "delivered",
+            _OrderItem.part_id == part_uuid,
+        )
+        .limit(1)
+    )
+    verified_order = verified_res.scalar_one_or_none()
+
+    review = PartReview(
+        user_id=current_user.id,
+        part_id=part_uuid,
+        order_id=verified_order.id if verified_order else None,
+        rating=body.rating,
+        title=body.title,
+        body=body.body,
+        is_verified_purchase=verified_order is not None,
+    )
+    db.add(review)
+    await db.commit()
+    await db.refresh(review)
+
+    return {
+        "id":                 str(review.id),
+        "partId":             str(review.part_id),
+        "rating":             review.rating,
+        "title":              review.title,
+        "body":               review.body,
+        "isVerifiedPurchase": review.is_verified_purchase,
+        "createdAt":          review.created_at.isoformat(),
+    }
+
+
+@app.delete("/api/v1/customers/reviews/{review_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_review(
+    review_id: str,
+    current_user: User = Depends(get_current_verified_user),
+    db: AsyncSession = Depends(get_pii_db),
+):
+    from BACKEND_DATABASE_MODELS import PartReview
+
+    try:
+        review_uuid = uuid.UUID(review_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid review_id")
+
+    res = await db.execute(
+        select(PartReview).where(PartReview.id == review_uuid)
+    )
+    review = res.scalar_one_or_none()
+    if not review:
+        raise HTTPException(status_code=404, detail="Review not found")
+    if str(review.user_id) != str(current_user.id) and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Not your review")
+    await db.delete(review)
+    await db.commit()
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("BACKEND_API_ROUTES:app", host="0.0.0.0", port=8000, reload=True)
