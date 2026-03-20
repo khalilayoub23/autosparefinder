@@ -59,6 +59,8 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
+import logging
+
 import httpx
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
@@ -66,12 +68,15 @@ from sqlalchemy import and_, or_, select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from BACKEND_DATABASE_MODELS import (
-    AgentAction, CatalogVersion, Conversation, Message, Notification, Order, OrderItem,
+    AgentAction, ApprovalQueue, CatalogVersion, Conversation, Message, Notification, Order, OrderItem,
     PartsCatalog, Supplier, SupplierPart, SystemLog, SystemSetting,
-    Vehicle, CarBrand, get_db, async_session_factory,
+    User, Vehicle, CarBrand, get_db, async_session_factory,
 )
+from BACKEND_AUTH_SECURITY import publish_notification
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 # ==============================================================================
 # SEARCH MISS LOGGING
@@ -1962,6 +1967,7 @@ class SupplierManagerAgent(BaseAgent):
             "availability_changes": 0,
             "errors": [],
         }
+        drops: List[Dict] = []
 
         BATCH = 5000
         offset = 0
@@ -2001,6 +2007,16 @@ class SupplierManagerAgent(BaseAgent):
                         sp.price_ils = new_ils
                         sp.price_usd = round(new_ils / USD_TO_ILS, 2)
                         report["parts_updated"] += 1
+                        # Drop > 10% detection
+                        if new_ils < cur_ils * 0.90:
+                            drop_pct = round((cur_ils - new_ils) / cur_ils * 100, 2)
+                            drops.append({
+                                "part_id": str(sp.part_id),
+                                "supplier_id": str(sp.supplier_id),
+                                "old_price": cur_ils,
+                                "new_price": new_ils,
+                                "drop_pct": drop_pct,
+                            })
 
                     # Availability simulation
                     avail_roll = rng.random()
@@ -2023,6 +2039,39 @@ class SupplierManagerAgent(BaseAgent):
 
         await db.commit()
 
+        # Price drop alerts — notify all admins
+        report["price_drops"] = drops
+        drop_summary = "no significant drops"
+        if drops:
+            drops_sorted = sorted(drops, key=lambda d: d["drop_pct"], reverse=True)[:10]
+            drop_summary = "; ".join(
+                f"part {d['part_id'][:8]} -{d['drop_pct']}%"
+                for d in drops_sorted[:3]
+            )
+            try:
+                admins_res = await db.execute(select(User).where(User.is_admin == True))
+                admins = admins_res.scalars().all()
+                _alert_title = f"ירידת מחיר בסנכרון — {len(drops)} חלקים"
+                _alert_msg = (
+                    f"נמצאו {len(drops)} ירידות מחיר מעל 10%%. "
+                    f"הגדולות: {drop_summary}"
+                )
+                for admin in admins:
+                    db.add(Notification(
+                        user_id=admin.id,
+                        type="price_drop_alert",
+                        title=_alert_title,
+                        message=_alert_msg,
+                        data={"drops": drops_sorted},
+                    ))
+                    asyncio.create_task(publish_notification(
+                        str(admin.id),
+                        {"type": "price_drop_alert", "title": _alert_title, "message": _alert_msg},
+                    ))
+                await db.commit()
+            except Exception as e:
+                logger.error("Price drop alert failed: %s", e)
+
         # Write to system log
         try:
             db.add(SystemLog(
@@ -2044,7 +2093,8 @@ class SupplierManagerAgent(BaseAgent):
                 version_tag=f"price-sync-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}",
                 description=(
                     f"Price sync: {report['parts_updated']} updated, "
-                    f"{report['availability_changes']} availability changes"
+                    f"{report['availability_changes']} availability changes; "
+                    f"drops: {drop_summary}"
                 ),
                 parts_added=0,
                 parts_updated=report["parts_updated"],
@@ -2052,16 +2102,74 @@ class SupplierManagerAgent(BaseAgent):
                 status="completed",
             ))
             await db.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error("CatalogVersion write failed: %s", e)
 
         print(
             f"[Supplier Manager] Price sync complete — "
             f"updated={report['parts_updated']:,} "
             f"avail_changes={report['availability_changes']} "
+            f"drops={len(drops)} "
             f"errors={len(report['errors'])}"
         )
+
+        # Fire-and-forget bulk deal scan
+        async def _bulk_task() -> None:
+            async with async_session_factory() as bulk_db:
+                await self.detect_bulk_opportunities(bulk_db)
+
+        asyncio.create_task(_bulk_task())
         return report
+
+    async def detect_bulk_opportunities(self, db: AsyncSession) -> int:
+        """
+        Find SupplierPart rows with high stock and price significantly below
+        the per-catalog average.  Creates ApprovalQueue entries for admin review.
+        Threshold: stock_quantity > 50 AND price_ils < avg_price * 0.85
+        """
+        avg_sq = (
+            select(
+                SupplierPart.part_id,
+                func.avg(SupplierPart.price_ils).label("avg_price"),
+            )
+            .where(SupplierPart.price_ils > 0)
+            .group_by(SupplierPart.part_id)
+            .subquery()
+        )
+        stmt = (
+            select(SupplierPart, avg_sq.c.avg_price)
+            .join(avg_sq, SupplierPart.part_id == avg_sq.c.part_id)
+            .where(
+                SupplierPart.stock_quantity > 50,
+                SupplierPart.price_ils > 0,
+                SupplierPart.price_ils < avg_sq.c.avg_price * 0.85,
+            )
+            .limit(200)
+        )
+        rows = (await db.execute(stmt)).all()
+        created = 0
+        for sp, avg_price in rows:
+            discount_pct = round(
+                (float(avg_price) - float(sp.price_ils)) / float(avg_price) * 100, 2
+            )
+            db.add(ApprovalQueue(
+                entity_type="bulk_deal",
+                entity_id=sp.id,
+                action="approve_bulk_deal",
+                payload={
+                    "supplier_part_id": str(sp.id),
+                    "supplier_id": str(sp.supplier_id),
+                    "part_id": str(sp.part_id),
+                    "price_ils": float(sp.price_ils),
+                    "avg_market_price_ils": round(float(avg_price), 2),
+                    "discount_pct": discount_pct,
+                    "stock_quantity": sp.stock_quantity,
+                },
+            ))
+            created += 1
+        if created:
+            await db.commit()
+        return created
 
     async def process(self, message: str, conversation_history: List[Dict], db: AsyncSession, **kwargs) -> str:
         return "סוכן זה הוא לשימוש פנימי בלבד. כדי לקבל עזרה עם הזמנה או חלקים, פנה לצוות השירות."
