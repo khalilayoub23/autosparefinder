@@ -5503,6 +5503,7 @@ async def startup():
     asyncio.create_task(_price_sync_loop())
     asyncio.create_task(_stuck_orders_monitor_loop())   # ← periodic stuck-order monitor (every 30 min)
     asyncio.create_task(_notify_search_miss_loop())     # ← search-miss user notifications (every 60 min)
+    asyncio.create_task(_abandoned_cart_loop())         # ← abandoned-cart WhatsApp re-engagement (every 60 min)
     start_scraper_task()           # ← catalog scraper background loop
     start_db_agent(get_db, 6.0)   # ← DB cleaning / normalisation agent (every 6h)
     print("✅ All systems ready — price-sync + catalog-scraper + db-agent schedulers started")
@@ -5511,6 +5512,11 @@ async def startup():
 # How many hours before an order in paid/processing is considered stuck
 STUCK_ORDER_HOURS = int(os.getenv("STUCK_ORDER_HOURS", "4"))
 STUCK_ORDER_CHECK_INTERVAL_MIN = 30  # check every 30 minutes
+
+# How often the abandoned-cart worker runs (default: every 60 minutes)
+ABANDONED_CART_INTERVAL_S = int(os.getenv("ABANDONED_CART_INTERVAL_S", "3600"))
+# How long a cart must be idle before it is considered abandoned (default: 2 hours)
+ABANDONED_CART_IDLE_HOURS = int(os.getenv("ABANDONED_CART_IDLE_HOURS", "2"))
 
 
 async def _stuck_orders_monitor_loop():
@@ -5621,6 +5627,182 @@ async def _stuck_orders_monitor_loop():
             print(f"[OrderMonitor] Pass 2 error: {e}")
 
         await asyncio.sleep(STUCK_ORDER_CHECK_INTERVAL_MIN * 60)
+
+
+# ── Abandoned-cart re-engagement loop ───────────────────────────────────────
+async def _abandoned_cart_loop():
+    """
+    Background loop: runs every ABANDONED_CART_INTERVAL_S seconds (default 60 min).
+
+    Finds carts that are:
+      - idle for > ABANDONED_CART_IDLE_HOURS hours (updated_at threshold)
+      - contain at least one cart_item
+      - whose owner has no pending_payment order created in the last
+        ABANDONED_CART_IDLE_HOURS hours (prevents double-messaging someone
+        who already reached checkout)
+
+    For each qualifying cart:
+      1. Loads user (phone + full_name) and resolves part names from catalog DB
+      2. Calls MAYA (SalesAgent) to generate a personalised Hebrew WhatsApp message
+      3. Sends via WhatsApp (TwilioWhatsAppProvider)
+      4. Persists a Notification row and pushes SSE
+      5. Touches cart.updated_at = now() to suppress re-sending for another interval
+    """
+    from BACKEND_AI_AGENTS import SalesAgent as _SalesAgent
+    from social.whatsapp_provider import get_whatsapp_provider
+    from BACKEND_DATABASE_MODELS import Cart, CartItem as CartItemModel, PartsCatalog, SupplierPart
+
+    await asyncio.sleep(10)   # let DB pool warm up on startup
+    while True:
+        try:
+            idle_cutoff   = datetime.utcnow() - timedelta(hours=ABANDONED_CART_IDLE_HOURS)
+            recent_cutoff = datetime.utcnow() - timedelta(hours=ABANDONED_CART_IDLE_HOURS)
+
+            async with pii_session_factory() as db:
+                from sqlalchemy import exists as sa_exists
+
+                pending_order_sq = (
+                    select(Order.id)
+                    .where(
+                        Order.user_id == Cart.user_id,
+                        Order.status == "pending_payment",
+                        Order.created_at > recent_cutoff,
+                    )
+                    .correlate(Cart)
+                )
+                cart_item_sq = (
+                    select(CartItemModel.id)
+                    .where(CartItemModel.cart_id == Cart.id)
+                    .correlate(Cart)
+                )
+
+                result = await db.execute(
+                    select(Cart).where(
+                        Cart.updated_at < idle_cutoff,
+                        sa_exists(cart_item_sq),
+                        ~sa_exists(pending_order_sq),
+                    )
+                )
+                abandoned_carts = result.scalars().all()
+
+            if not abandoned_carts:
+                print(f"[AbandonedCart] No abandoned carts found (idle > {ABANDONED_CART_IDLE_HOURS}h).")
+            else:
+                print(f"[AbandonedCart] Found {len(abandoned_carts)} abandoned cart(s) — processing...")
+                provider  = get_whatsapp_provider()
+                maya      = _SalesAgent()
+                sent_count = 0
+                skip_count = 0
+
+                for cart in abandoned_carts:
+                    try:
+                        async with pii_session_factory() as db:
+                            # Load user
+                            user_res = await db.execute(
+                                select(User).where(User.id == cart.user_id)
+                            )
+                            user = user_res.scalar_one_or_none()
+                            if (
+                                not user
+                                or not user.phone
+                                or str(user.id) == str(WHATSAPP_ANON_USER_ID)
+                            ):
+                                skip_count += 1
+                                continue
+
+                            # Load cart items
+                            items_res = await db.execute(
+                                select(CartItemModel).where(CartItemModel.cart_id == cart.id)
+                            )
+                            items = items_res.scalars().all()
+                            if not items:
+                                skip_count += 1
+                                continue
+
+                        # Resolve part names from catalog DB (cross-DB)
+                        sp_ids = [i.supplier_part_id for i in items]
+                        async with async_session_factory() as cat_db:
+                            parts_res = await cat_db.execute(
+                                select(SupplierPart, PartsCatalog)
+                                .join(PartsCatalog, SupplierPart.part_id == PartsCatalog.id)
+                                .where(SupplierPart.id.in_(sp_ids))
+                            )
+                            part_rows = {str(r.SupplierPart.id): r.PartsCatalog for r in parts_res}
+
+                        total_value = sum(float(i.unit_price) * i.quantity for i in items)
+                        item_lines  = []
+                        for i in items:
+                            part = part_rows.get(str(i.supplier_part_id))
+                            name = part.name if part else "חלק לא ידוע"
+                            item_lines.append(f"{name} (x{i.quantity})")
+                        items_summary = ", ".join(item_lines)
+
+                        # Ask MAYA to generate a personalised WhatsApp message
+                        async with pii_session_factory() as db:
+                            maya_prompt = (
+                                f"לקוח בשם {user.full_name} השאיר {len(items)} פריטים בסל: {items_summary}. "
+                                f"שווי הסל: {total_value:.0f}₪. "
+                                f"צור הודעת WhatsApp קצרה ומשכנעת בעברית (עד 3 משפטים) שתחזיר אותו לסל לסיים את הרכישה."
+                            )
+                            wa_message = await maya.process(
+                                message=maya_prompt,
+                                conversation_history=[],
+                                db=db,
+                            )
+
+                        # Send WhatsApp
+                        wa_result = await provider.send_message(to=user.phone, body=wa_message)
+                        if not wa_result.get("ok"):
+                            print(f"[AbandonedCart] WhatsApp failed for user {user.id}: {wa_result.get('error')}")
+                            skip_count += 1
+                            continue
+
+                        # Persist Notification + SSE push + touch cart.updated_at
+                        _title = "🛒 שכחת משהו בסל?"
+                        _msg   = f"יש לך {len(items)} פריטים בסל בשווי {total_value:.0f}₪ מחכים לך!"
+                        async with pii_session_factory() as db:
+                            db.add(Notification(
+                                user_id=user.id,
+                                type="abandoned_cart",
+                                title=_title,
+                                message=_msg,
+                                channel="whatsapp",
+                                data={
+                                    "cart_id":     str(cart.id),
+                                    "item_count":  len(items),
+                                    "total_value": round(total_value, 2),
+                                    "items":       item_lines,
+                                    "wa_sid":      wa_result.get("sid"),
+                                },
+                                sent_at=datetime.utcnow(),
+                            ))
+                            # Touch updated_at to suppress re-sending for another interval
+                            await db.execute(
+                                text("UPDATE carts SET updated_at = now() WHERE id = :cid"),
+                                {"cid": str(cart.id)},
+                            )
+                            await db.commit()
+
+                        asyncio.create_task(
+                            publish_notification(str(user.id), {
+                                "type":    "abandoned_cart",
+                                "title":   _title,
+                                "message": _msg,
+                            })
+                        )
+                        sent_count += 1
+                        print(f"[AbandonedCart] ✅ Sent to {user.full_name} ({user.phone}) — cart {cart.id}")
+
+                    except Exception as e:
+                        print(f"[AbandonedCart] Error processing cart {cart.id}: {e}")
+                        skip_count += 1
+
+                print(f"[AbandonedCart] Done — sent: {sent_count}, skipped: {skip_count}")
+
+        except Exception as e:
+            print(f"[AbandonedCart] Outer error: {e}")
+
+        await asyncio.sleep(ABANDONED_CART_INTERVAL_S)
 
 
 # ── Background price-sync loop ────────────────────────────────────────────────
