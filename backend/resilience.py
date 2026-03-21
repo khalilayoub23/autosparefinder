@@ -191,3 +191,57 @@ def get_supplier_domain_from_url(url: Optional[str]) -> Optional[str]:
         logger.warning(f"Failed to parse URL {url}: {str(e)}")
     
     return None
+
+
+async def log_job_failure(
+    db_session,
+    job_name: str,
+    error: str,
+    payload: Optional[dict] = None,
+    attempts: int = 1,
+    next_retry_at: Optional[object] = None,
+) -> None:
+    """
+    Write a job failure to the job_failures table (Dead Letter Queue).
+    
+    Args:
+        db_session: AsyncSession connected to PII database.
+        job_name: Name of the failed job (e.g., 'sync_prices', 'run_scraper_cycle').
+        error: Exception message / traceback.
+        payload: Original job parameters (dict).
+        attempts: Number of attempts so far (default 1).
+        next_retry_at: When to retry next (optional; if None, job won't auto-retry).
+    
+    Example:
+        try:
+            await sync_prices()
+        except Exception as e:
+            await log_job_failure(
+                db_session=db,
+                job_name='sync_prices',
+                error=str(e),
+                payload={},
+                attempts=1,
+                next_retry_at=datetime.now() + timedelta(hours=1)
+            )
+            raise
+    """
+    from datetime import datetime
+    
+    try:
+        # Import JobFailure model (deferred to avoid circular imports)
+        from BACKEND_DATABASE_MODELS import JobFailure
+        
+        failure = JobFailure(
+            job_name=job_name,
+            payload=payload or {},
+            error=error[:2000],  # truncate traceback if very long
+            attempts=attempts,
+            next_retry_at=next_retry_at,
+            status='pending',
+        )
+        db_session.add(failure)
+        await db_session.commit()
+        logger.info(f"Logged job failure: {job_name} (ID: {failure.id})")
+    except Exception as e:
+        logger.error(f"Failed to log job failure for {job_name}: {str(e)}")

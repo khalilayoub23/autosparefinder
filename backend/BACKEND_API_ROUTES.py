@@ -5421,6 +5421,108 @@ async def import_parts_excel(
     }
 
 
+# 13a. ADMIN JOB FAILURES  /api/v1/admin/job-failures  (2 endpoints)
+
+@app.get("/api/v1/admin/job-failures")
+async def list_job_failures(
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_pii_db),
+    status: Optional[str] = None,
+    job_name: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+):
+    """List dead-letter queue (job failures) with optional filtering.
+    
+    Query params:
+      status: 'pending' | 'retrying' | 'resolved' (optional)
+      job_name: filter by job name (optional)
+      limit: rows to fetch (default 100, max 1000)
+      offset: pagination offset (default 0)
+    
+    Returns: {failures: [...], total: int}
+    """
+    from BACKEND_DATABASE_MODELS import JobFailure
+    
+    limit = min(limit, 1000)
+    query = select(JobFailure)
+    
+    if status:
+        query = query.where(JobFailure.status == status)
+    if job_name:
+        query = query.where(JobFailure.job_name == job_name)
+    
+    # Get total count
+    total = (await db.execute(select(func.count(JobFailure.id)).filter(query.whereclause if hasattr(query, 'whereclause') else None))).scalar() or 0
+    
+    # Fetch paginated results, sorted by created_at DESC
+    query = query.order_by(JobFailure.created_at.desc()).limit(limit).offset(offset)
+    results = (await db.execute(query)).scalars().all()
+    
+    failures = []
+    for f in results:
+        failures.append({
+            "id": str(f.id),
+            "job_name": f.job_name,
+            "status": f.status,
+            "attempts": f.attempts,
+            "error": f.error[:200] if f.error else None,  # truncate for readability
+            "next_retry_at": f.next_retry_at.isoformat() if f.next_retry_at else None,
+            "created_at": f.created_at.isoformat(),
+            "resolved_at": f.resolved_at.isoformat() if f.resolved_at else None,
+            "resolved_by": f.resolved_by,
+        })
+    
+    return {
+        "failures": failures,
+        "total": total,
+        "fetched": len(failures),
+    }
+
+
+@app.post("/api/v1/admin/job-failures/{job_id}/retry")
+async def retry_job_failure(
+    job_id: str,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_pii_db),
+):
+    """Manually retry a failed job.
+    
+    Sets status='retrying' and next_retry_at=NOW (immediate retry).
+    Returns the updated job failure record.
+    """
+    from BACKEND_DATABASE_MODELS import JobFailure
+    from uuid import UUID as PyUUID
+    
+    try:
+        job_uuid = PyUUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid job ID")
+    
+    result = await db.execute(select(JobFailure).where(JobFailure.id == job_uuid))
+    failure = result.scalar_one_or_none()
+    
+    if not failure:
+        raise HTTPException(status_code=404, detail="Job failure not found")
+    
+    # Update for immediate retry
+    failure.status = "retrying"
+    failure.next_retry_at = datetime.utcnow()
+    failure.attempts += 1
+    
+    db.add(failure)
+    await db.commit()
+    
+    return {
+        "id": str(failure.id),
+        "job_name": failure.job_name,
+        "status": failure.status,
+        "attempts": failure.attempts,
+        "next_retry_at": failure.next_retry_at.isoformat(),
+        "message": f"Job {failure.job_name} (ID: {job_id}) scheduled for immediate retry",
+    }
+
+
 # ==============================================================================
 # 14. SYSTEM  /api/v1/system  (3 endpoints)
 # ==============================================================================

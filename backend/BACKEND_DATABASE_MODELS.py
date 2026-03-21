@@ -360,6 +360,89 @@ class ApprovalQueue(PiiBase):
 
 
 # ==============================================================================
+# JOB FAILURES  (Dead Letter Queue - autospare_pii DB)
+# ==============================================================================
+
+class JobFailure(PiiBase):
+    """Dead Letter Queue (DLQ) — captures background job failures for retry and alerting.
+    
+    Used by 4 background workers:
+      • sync_prices (BACKEND_AI_AGENTS)
+      • run_all_tasks (db_update_agent)
+      • run_scraper_cycle (catalog_scraper)
+      • run_brand_discovery (catalog_scraper)
+    
+    Job failures are inserted on exception, with exponential backoff retry scheduling.
+    Admin can manually retry or resolve failures via /api/v1/admin/job-failures endpoints.
+    """
+    __tablename__ = "job_failures"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'retrying', 'resolved')",
+            name="ck_job_failures_status",
+        ),
+        Index("ix_job_failures_status", "status"),
+        Index("ix_job_failures_job_name", "job_name"),
+        Index("ix_job_failures_created_at", "created_at"),
+        Index("ix_job_failures_next_retry_at", "next_retry_at"),
+        Index("ix_job_failures_status_next_retry", "status", "next_retry_at"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    job_name = Column(
+        String(255),
+        nullable=False,
+        comment="Name of failed job (e.g., 'sync_prices', 'run_scraper_cycle')",
+    )
+    payload = Column(
+        JSONB,
+        nullable=True,
+        comment="Original job parameters (dict) — passed to job function",
+    )
+    error = Column(
+        Text,
+        nullable=True,
+        comment="Exception message / traceback from failed execution",
+    )
+    attempts = Column(
+        Integer,
+        nullable=False,
+        default=1,
+        server_default="1",
+        comment="Number of retry attempts so far (increments on each retry)",
+    )
+    next_retry_at = Column(
+        DateTime,
+        nullable=True,
+        comment="Scheduled time for next retry (NULL = don't retry, max attempts reached)",
+    )
+    status = Column(
+        String(50),
+        nullable=False,
+        default="pending",
+        server_default="'pending'",
+        comment="pending | retrying | resolved",
+    )
+    created_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        server_default=func.now(),
+        comment="When the failure was first logged",
+    )
+    resolved_at = Column(
+        DateTime,
+        nullable=True,
+        comment="When job was manually resolved or deleted by admin",
+    )
+    resolved_by = Column(
+        String(255),
+        nullable=True,
+        comment="Admin user ID who resolved the failure",
+    )
+
+
+# ==============================================================================
 # SOCIAL POSTS  (autospare catalog DB)
 # ==============================================================================
 
