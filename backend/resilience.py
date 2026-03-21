@@ -9,6 +9,8 @@ import logging
 import random
 from typing import Callable, Set, Tuple, Type, TypeVar, Optional
 
+from sqlalchemy import text
+
 logger = logging.getLogger(__name__)
 
 T = TypeVar('T')
@@ -110,45 +112,33 @@ def retry_with_backoff(
     return decorator
 
 
-def check_supplier_rate_limit(
+async def check_supplier_rate_limit(
     redis_client,
     supplier_domain: str,
     limit_per_minute: int = 30,
 ) -> bool:
     """
     Check if a supplier domain has exceeded its rate limit (sliding window per minute).
-    
+
     Args:
-        redis_client: Redis client instance (e.g., from app state or dependency injection).
+        redis_client: Async Redis client instance.
         supplier_domain: Domain name extracted from supplier API endpoint or website URL.
         limit_per_minute: Rate limit threshold (default 30 requests/minute).
-    
+
     Returns:
         True if limit is OK (proceed); False if limit exceeded (skip call).
-    
-    Example:
-        if check_supplier_rate_limit(redis_client, "api.supplier.com", limit_per_minute=30):
-            # Make HTTP call
-            response = await httpx_client.get(url)
-        else:
-            logger.warning(f"Rate limit exceeded for {supplier_domain}")
-            # Add to job_failures DLQ
     """
     from datetime import datetime, timezone
-    
-    # Use minute granularity (YYYY-MM-DD HH:MM format)
+
     current_minute = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
     key = f"rate:supplier:{supplier_domain}:{current_minute}"
-    
+
     try:
-        # Increment counter for this minute
-        count = redis_client.incr(key)
-        
-        # Set expiration if this is the first increment in the minute
+        count = await redis_client.incr(key)
+
         if count == 1:
-            redis_client.expire(key, 60)
-        
-        # Check if limit exceeded
+            await redis_client.expire(key, 60)
+
         if count > limit_per_minute:
             logger.warning(
                 f"Supplier rate limit exceeded for {supplier_domain}: "
@@ -156,9 +146,9 @@ def check_supplier_rate_limit(
                 extra={"domain": supplier_domain, "count": count, "limit": limit_per_minute}
             )
             return False
-        
+
         return True
-    
+
     except Exception as e:
         # If Redis fails, log and allow the call (fail-open for resilience)
         logger.error(
@@ -245,3 +235,59 @@ async def log_job_failure(
         logger.info(f"Logged job failure: {job_name} (ID: {failure.id})")
     except Exception as e:
         logger.error(f"Failed to log job failure for {job_name}: {str(e)}")
+
+
+async def job_registry_start(
+    db_session,
+    job_name: str,
+    ttl_seconds: int,
+    *,
+    job_id: Optional[str] = None,
+    worker_host: Optional[str] = None,
+) -> str:
+    """Insert or upsert a job_registry row on job start."""
+    from datetime import datetime
+    import os
+
+    jid = job_id or f"{job_name}:{datetime.utcnow().isoformat()}"
+    host = worker_host or os.getenv("HOSTNAME", "unknown")
+
+    await db_session.execute(
+        text(
+            """
+            INSERT INTO job_registry (job_id, job_name, worker_host, status, started_at, ttl_seconds, last_heartbeat_at)
+            VALUES (:job_id, :job_name, :host, 'running', NOW(), :ttl, NOW())
+            ON CONFLICT (job_id) DO UPDATE
+            SET status = 'running', started_at = NOW(), completed_at = NULL,
+                error_message = NULL, ttl_seconds = EXCLUDED.ttl_seconds,
+                worker_host = EXCLUDED.worker_host, last_heartbeat_at = NOW()
+            """
+        ),
+        {"job_id": jid, "job_name": job_name, "host": host, "ttl": ttl_seconds},
+    )
+    await db_session.commit()
+    return jid
+
+
+async def job_registry_finish(
+    db_session,
+    job_id: str,
+    *,
+    status: str = "completed",
+    error_message: Optional[str] = None,
+) -> None:
+    """Update job_registry row on completion or failure."""
+    await db_session.execute(
+        text(
+            """
+            UPDATE job_registry
+            SET status = :status,
+                completed_at = NOW(),
+                error_message = :err,
+                last_heartbeat_at = NOW()
+            WHERE job_id = :job_id
+            """
+        ),
+        {"status": status, "err": (error_message[:1000] if error_message else None), "job_id": job_id},
+    )
+    await db_session.commit()

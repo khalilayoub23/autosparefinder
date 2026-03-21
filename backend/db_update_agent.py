@@ -34,6 +34,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from resilience import job_registry_start, job_registry_finish
+
 logger = logging.getLogger("db_update_agent")
 
 # ---------------------------------------------------------------------------
@@ -1033,53 +1035,74 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
     started_at = datetime.now(timezone.utc).isoformat()
     t0 = time.monotonic()
     results: List[Dict[str, Any]] = []
+    job_id: Optional[str] = None
+    try:
+        try:
+            job_id = await job_registry_start(db, "run_all_tasks", ttl_seconds=3600)
+        except Exception as exc:
+            logger.warning("run_all_tasks job_registry_start failed: %s", exc)
 
-    ordered_tasks = [
-        "seed_system_settings",
-        "fill_car_brands",
-        "clean_part_names",
-        "normalize_part_types",
-        "normalize_categories",
-        "dedup_catalog_parts",
-        "normalize_availability",
-        "flag_fake_skus",
-        "fix_base_prices",
-        "refresh_min_max_prices",
-        "enrich_pending_parts",
-        "trigger_scraper_for_misses",
-        "generate_image_embeddings",
-    ]
+        ordered_tasks = [
+            "seed_system_settings",
+            "fill_car_brands",
+            "clean_part_names",
+            "normalize_part_types",
+            "normalize_categories",
+            "dedup_catalog_parts",
+            "normalize_availability",
+            "flag_fake_skus",
+            "fix_base_prices",
+            "refresh_min_max_prices",
+            "enrich_pending_parts",
+            "trigger_scraper_for_misses",
+            "generate_image_embeddings",
+        ]
 
-    for task_name in ordered_tasks:
-        logger.info("run_all_tasks → starting: %s", task_name)
-        result = await run_task(task_name, db)
-        results.append(result)
-        if result.get("status") == "error":
-            logger.warning("run_all_tasks: task %s errored, continuing", task_name)
+        for task_name in ordered_tasks:
+            logger.info("run_all_tasks → starting: %s", task_name)
+            result = await run_task(task_name, db)
+            results.append(result)
+            if result.get("status") == "error":
+                logger.warning("run_all_tasks: task %s errored, continuing", task_name)
 
-    total_elapsed = round(time.monotonic() - t0, 2)
-    ok_count = sum(1 for r in results if r.get("status") == "ok")
-    err_count = len(results) - ok_count
+        total_elapsed = round(time.monotonic() - t0, 2)
+        ok_count = sum(1 for r in results if r.get("status") == "ok")
+        err_count = len(results) - ok_count
 
-    report = {
-        "started_at": started_at,
-        "finished_at": datetime.now(timezone.utc).isoformat(),
-        "total_elapsed_s": total_elapsed,
-        "tasks_ok": ok_count,
-        "tasks_error": err_count,
-        "results": results,
-    }
+        report = {
+            "started_at": started_at,
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+            "total_elapsed_s": total_elapsed,
+            "tasks_ok": ok_count,
+            "tasks_error": err_count,
+            "results": results,
+        }
 
-    _last_report = report
-    _agent_running = False
-    logger.info(
-        "run_all_tasks finished: ok=%d err=%d elapsed=%.1fs",
-        ok_count,
-        err_count,
-        total_elapsed,
-    )
-    await _agent_lock.__aexit__(None, None, None)
-    return report
+        _last_report = report
+        _agent_running = False
+        logger.info(
+            "run_all_tasks finished: ok=%d err=%d elapsed=%.1fs",
+            ok_count,
+            err_count,
+            total_elapsed,
+        )
+        if job_id:
+            try:
+                await job_registry_finish(db, job_id, status="completed")
+            except Exception as exc:
+                logger.warning("run_all_tasks job_registry_finish failed: %s", exc)
+        await _agent_lock.__aexit__(None, None, None)
+        return report
+
+    except Exception as exc:
+        if job_id:
+            try:
+                await job_registry_finish(db, job_id, status="dead", error_message=str(exc)[:500])
+            except Exception:
+                pass
+        _agent_running = False
+        await _agent_lock.__aexit__(None, None, None)
+        raise
 
 
 def get_last_report() -> Dict[str, Any]:
@@ -1100,6 +1123,7 @@ _bg_task: Optional[asyncio.Task] = None
 
 async def _agent_loop(get_db_fn, interval_hours: float = 6.0) -> None:
     """Periodic background loop.  Runs run_all_tasks every `interval_hours`."""
+    from resilience import log_job_failure
     logger.info(
         "DB update agent background loop started (interval=%.1fh)", interval_hours
     )
@@ -1108,7 +1132,22 @@ async def _agent_loop(get_db_fn, interval_hours: float = 6.0) -> None:
             async for db in get_db_fn():
                 await run_all_tasks(db)
         except Exception as exc:
-            logger.error("DB update agent loop error: %s", exc)
+            error_msg = str(exc)[:500]
+            logger.error("DB update agent loop error: %s", error_msg)
+            # Log failure to DLQ (Gap 2b)
+            try:
+                # Import get_pii_db to access PII database for logging
+                from BACKEND_DATABASE_MODELS import pii_session_factory
+                async with pii_session_factory() as pii_db:
+                    await log_job_failure(
+                        pii_db,
+                        job_name="run_all_tasks",
+                        error=error_msg,
+                        payload={},
+                        attempts=1,
+                    )
+            except Exception as dlq_err:
+                logger.error("Failed to log run_all_tasks to DLQ: %s", dlq_err)
 
         await asyncio.sleep(interval_hours * 3600)
 

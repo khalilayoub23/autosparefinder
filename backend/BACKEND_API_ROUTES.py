@@ -2762,6 +2762,7 @@ async def create_checkout_session(
                 "user_id": str(current_user.id),
             },
             locale="auto",
+            idempotency_key=f"order:{order.id}",  # Gap 6: Idempotency
         )
     )
 
@@ -2938,6 +2939,7 @@ async def create_multi_checkout_session(
                 "user_id": str(current_user.id),
             },
             locale="auto",
+            idempotency_key=f"orders:{':'.join(str(o.id) for o in orders)}",  # Gap 6: Idempotency
         )
     )
 
@@ -3241,6 +3243,7 @@ async def get_payment(payment_id: str, current_user: User = Depends(get_current_
 async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_pii_db)):
     """Stripe webhook for async payment confirmation (backup to verify-session)."""
     import stripe as stripe_sdk
+    from BACKEND_DATABASE_MODELS import StripeWebhookLog
     payload = await request.body()
     sig_header = request.headers.get("stripe-signature", "")
     webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET", "")
@@ -3259,47 +3262,96 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_pii_db
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    if event.type == "checkout.session.completed":
-        session = event.data.object
-        if session.payment_status == "paid":
-            orders_to_fulfill = []
+    # ── Gap 6: Idempotency check (webhook deduplication) ────────────────────────────────
+    # Check if we've already processed this exact event
+    event_id = event.get("id", "")
+    event_type = event.get("type", "")
+    
+    existing_log = None
+    if event_id:
+        result = await db.execute(
+            select(StripeWebhookLog).where(StripeWebhookLog.event_id == event_id)
+        )
+        existing_log = result.scalar_one_or_none()
+    
+    # If we've seen this event AND processed it successfully, return 200 immediately
+    if existing_log and existing_log.processed:
+        logger.info(f"[Webhook] Deduped event {event_id} (already processed)")
+        return {"received": True, "status": "deduped"}
+    
+    # If we've seen it but processing failed, retry processing it
+    if existing_log:
+        logger.info(f"[Webhook] Retrying failed event {event_id}")
+    else:
+        # First time seeing this event — create a log entry
+        if event_id:
+            existing_log = StripeWebhookLog(
+                event_id=event_id,
+                event_type=event_type,
+                payload=event,
+                processed=False,
+            )
+            db.add(existing_log)
+            await db.commit()
 
-            # Single-order
-            order_id = session.metadata.get("order_id")
-            if order_id:
-                res = await db.execute(select(Order).where(Order.id == order_id))
-                order = res.scalar_one_or_none()
-                if order and order.status == "pending_payment":
-                    order.status = "paid"
-                    orders_to_fulfill.append(order)
+    # ── Process the webhook event ──────────────────────────────────────────────────────
+    processing_error = None
+    try:
+        if event.type == "checkout.session.completed":
+            session = event.data.object
+            if session.payment_status == "paid":
+                orders_to_fulfill = []
 
-            # Multi-order
-            order_ids_str = session.metadata.get("order_ids", "")
-            if order_ids_str:
-                oid_list = [x.strip() for x in order_ids_str.split(",") if x.strip()]
-                res = await db.execute(select(Order).where(Order.id.in_(oid_list)))
-                for ord in res.scalars().all():
-                    if ord.status == "pending_payment":
-                        ord.status = "paid"
-                        orders_to_fulfill.append(ord)
+                # Single-order
+                order_id = session.metadata.get("order_id")
+                if order_id:
+                    res = await db.execute(select(Order).where(Order.id == order_id))
+                    order = res.scalar_one_or_none()
+                    if order and order.status == "pending_payment":
+                        order.status = "paid"
+                        orders_to_fulfill.append(order)
 
-            if orders_to_fulfill:
-                await trigger_supplier_fulfillment(orders_to_fulfill, db)
-                # Auto-create Invoice record for every newly-paid order
-                for ord in orders_to_fulfill:
-                    existing = (await db.execute(
-                        select(Invoice).where(Invoice.order_id == ord.id)
-                    )).scalar_one_or_none()
-                    if not existing:
-                        db.add(Invoice(
-                            invoice_number=f"INV-{datetime.utcnow().strftime('%Y%m')}-{str(ord.id)[:8].upper()}",
-                            order_id=ord.id,
-                            user_id=ord.user_id,
-                            business_number=os.getenv("COMPANY_NUMBER", "060633880"),
-                            issued_at=datetime.utcnow(),
-                        ))
-                await db.commit()
+                # Multi-order
+                order_ids_str = session.metadata.get("order_ids", "")
+                if order_ids_str:
+                    oid_list = [x.strip() for x in order_ids_str.split(",") if x.strip()]
+                    res = await db.execute(select(Order).where(Order.id.in_(oid_list)))
+                    for ord in res.scalars().all():
+                        if ord.status == "pending_payment":
+                            ord.status = "paid"
+                            orders_to_fulfill.append(ord)
 
+                if orders_to_fulfill:
+                    await trigger_supplier_fulfillment(orders_to_fulfill, db)
+                    # Auto-create Invoice record for every newly-paid order
+                    for ord in orders_to_fulfill:
+                        existing = (await db.execute(
+                            select(Invoice).where(Invoice.order_id == ord.id)
+                        )).scalar_one_or_none()
+                        if not existing:
+                            db.add(Invoice(
+                                invoice_number=f"INV-{datetime.utcnow().strftime('%Y%m')}-{str(ord.id)[:8].upper()}",
+                                order_id=ord.id,
+                                user_id=ord.user_id,
+                                business_number=os.getenv("COMPANY_NUMBER", "060633880"),
+                                issued_at=datetime.utcnow(),
+                            ))
+                    await db.commit()
+    except Exception as e:
+        processing_error = str(e)[:500]
+        logger.error(f"[Webhook] Error processing event {event_id}: {processing_error}")
+
+    # ── Mark event as processed (or failed) in log ─────────────────────────────────────
+    if existing_log:
+        existing_log.processed = (processing_error is None)
+        existing_log.result = {
+            "processed": existing_log.processed,
+            "error": processing_error,
+            "processed_at": datetime.utcnow().isoformat(),
+        }
+        await db.commit()
+
+    # Return 200 to Stripe regardless (prevents redelivery)
     return {"received": True}
 
 
@@ -4252,9 +4304,9 @@ async def notifications_stream(
         await pubsub.subscribe(channel)
         try:
             yield {"event": "connected", "data": ""}
-            last_heartbeat = asyncio.get_event_loop().time()
+            last_heartbeat = asyncio.get_running_loop().time()
             while True:
-                now = asyncio.get_event_loop().time()
+                now = asyncio.get_running_loop().time()
                 if now - last_heartbeat >= _SSE_HEARTBEAT_INTERVAL:
                     yield {"event": "heartbeat", "data": ""}
                     last_heartbeat = now
@@ -5837,7 +5889,21 @@ async def _notify_search_miss_loop() -> None:
                 print(f"[search_miss_notify] notified {len(notified_ids)} users")
 
         except Exception as e:
-            print(f"[search_miss_notify] error (non-fatal): {e}")
+            error_msg = str(e)[:500]
+            print(f"[search_miss_notify] error (non-fatal): {error_msg}")
+            # Log failure to DLQ (Gap 2b: Worker integration)
+            try:
+                async with pii_session_factory() as pii_db:
+                    from resilience import log_job_failure
+                    await log_job_failure(
+                        pii_db,
+                        job_name="notify_search_misses",
+                        error=error_msg,
+                        payload={},
+                        attempts=1,
+                    )
+            except Exception as dlq_err:
+                print(f"[search_miss_notify] Failed to log to DLQ: {dlq_err}")
 
         await asyncio.sleep(_SEARCH_MISS_NOTIFY_INTERVAL)
 
@@ -6258,6 +6324,167 @@ async def _health_monitor_loop():
             else:
                 print("[HealthMonitor] Pass complete — all services OK")
 
+            # ── Threshold checks (Gap 3 — Alerting) ────────────────────────────────
+            # Check 1: parts_updated < 100 in last 6 hours (catalog stagnation)
+            try:
+                async with async_session_factory() as _db:
+                    cutoff_6h = datetime.utcnow() - timedelta(hours=6)
+                    parts_updated_6h = (await _db.execute(
+                        select(func.count(SystemLog.id)).where(
+                            SystemLog.logger_name == "catalog_scraper",
+                            SystemLog.level.in_(["INFO", "WARNING"]),
+                            SystemLog.created_at >= cutoff_6h,
+                        )
+                    )).scalar() or 0
+                    
+                    if parts_updated_6h < 100:
+                        _alert_title = "⚠️  קטלוג: עדכונים נמוכים בשעות האחרונות"
+                        _alert_msg = (
+                            f"קטלוג עלומים {parts_updated_6h} עדכונים בשעות ה-6 האחרונות (יעד: 100+). "
+                            f"בדוק את ה scraper."
+                        )
+                        print(f"[HealthMonitor] ALERT: parts_updated={parts_updated_6h} < 100 in 6h")
+                        
+                        async with pii_session_factory() as _pii_db:
+                            admins_res = await _pii_db.execute(select(User).where(User.is_admin == True))
+                            admins = admins_res.scalars().all()
+                            for admin in admins:
+                                _pii_db.add(Notification(
+                                    user_id=admin.id,
+                                    type="threshold_alert",
+                                    title=_alert_title,
+                                    message=_alert_msg,
+                                    channel="whatsapp",
+                                    data={"threshold_type": "catalog_stagnation", "parts_updated": parts_updated_6h},
+                                ))
+                                asyncio.create_task(_guarded_task(publish_notification(str(admin.id), {
+                                    "type": "threshold_alert",
+                                    "title": _alert_title,
+                                    "message": _alert_msg,
+                                })))
+                            await _pii_db.commit()
+            except Exception as _e:
+                print(f"[HealthMonitor] Threshold check 1 error: {_e}")
+
+            # Check 2: error_rate > 5% in last 1 hour
+            try:
+                async with async_session_factory() as _db:
+                    cutoff_1h = datetime.utcnow() - timedelta(hours=1)
+                    log_stats = (await _db.execute(
+                        select(
+                            func.count(SystemLog.id).label("total"),
+                            func.count(SystemLog.id).filter(SystemLog.level == "ERROR").label("errors"),
+                        ).where(
+                            SystemLog.created_at >= cutoff_1h,
+                            SystemLog.logger_name.in_(["api_routes", "agents", "scraper"]),
+                        )
+                    )).fetchone()
+                    
+                    total = log_stats.total if log_stats else 0
+                    errors = log_stats.errors if log_stats else 0
+                    error_rate = (errors / total * 100) if total > 0 else 0
+                    
+                    if error_rate > 5.0:
+                        _alert_title = f"🚨 שגיאות גבוהות: {error_rate:.1f}% בשעה האחרונה"
+                        _alert_msg = (
+                            f"שיעור שגיאות {error_rate:.1f}% עולה על הסף (5%). "
+                            f"בדוק לוגים: {errors}/{total} שגיאות בשעה האחרונה."
+                        )
+                        print(f"[HealthMonitor] ALERT: error_rate={error_rate:.1f}% > 5%")
+                        
+                        async with pii_session_factory() as _pii_db:
+                            admins_res = await _pii_db.execute(select(User).where(User.is_admin == True))
+                            admins = admins_res.scalars().all()
+                            for admin in admins:
+                                _pii_db.add(Notification(
+                                    user_id=admin.id,
+                                    type="threshold_alert",
+                                    title=_alert_title,
+                                    message=_alert_msg,
+                                    channel="whatsapp",
+                                    data={"threshold_type": "error_rate", "error_rate": error_rate, "errors": errors, "total": total},
+                                ))
+                                asyncio.create_task(_guarded_task(publish_notification(str(admin.id), {
+                                    "type": "threshold_alert",
+                                    "title": _alert_title,
+                                    "message": _alert_msg,
+                                })))
+                            await _pii_db.commit()
+            except Exception as _e:
+                print(f"[HealthMonitor] Threshold check 2 error: {_e}")
+
+            # Check 3: worker silent > 2 hours (no recent heartbeat from db_update_agent)
+            try:
+                from db_update_agent import _last_report
+                if _last_report:
+                    last_heartbeat = datetime.fromisoformat(_last_report) if isinstance(_last_report, str) else _last_report
+                    silence_mins = (datetime.utcnow() - last_heartbeat).total_seconds() / 60
+                    
+                    if silence_mins > 120:  # 2 hours
+                        _alert_title = "⏱️  Worker db_update_agent: שקט למעל 2 שעות"
+                        _alert_msg = (
+                            f"העובד db_update_agent לא שלח heartbeat במשך {silence_mins:.0f} דקות. "
+                            f"אם הוא צריך לרוץ הוא אולי תקוע."
+                        )
+                        print(f"[HealthMonitor] ALERT: worker silence={silence_mins:.0f} min > 120 min")
+                        
+                        async with pii_session_factory() as _pii_db:
+                            admins_res = await _pii_db.execute(select(User).where(User.is_admin == True))
+                            admins = admins_res.scalars().all()
+                            for admin in admins:
+                                _pii_db.add(Notification(
+                                    user_id=admin.id,
+                                    type="threshold_alert",
+                                    title=_alert_title,
+                                    message=_alert_msg,
+                                    channel="whatsapp",
+                                    data={"threshold_type": "worker_silence", "silence_minutes": silence_mins},
+                                ))
+                                asyncio.create_task(_guarded_task(publish_notification(str(admin.id), {
+                                    "type": "threshold_alert",
+                                    "title": _alert_title,
+                                    "message": _alert_msg,
+                                })))
+                            await _pii_db.commit()
+            except Exception as _e:
+                print(f"[HealthMonitor] Threshold check 3 error: {_e}")
+
+            # Check 4: unprocessed job failures > threshold (Gap 3: Alerting thresholds)
+            try:
+                JOB_FAILURES_ALERT_THRESHOLD = int(os.getenv("JOB_FAILURES_ALERT_THRESHOLD", "10"))
+                async with pii_session_factory() as _pii_db:
+                    unprocessed_count = (await _pii_db.execute(
+                        select(func.count(JobFailure.id)).where(JobFailure.processed == False)
+                    )).scalar() or 0
+                    
+                    if unprocessed_count >= JOB_FAILURES_ALERT_THRESHOLD:
+                        _alert_title = f"🔴 DLQ Alert: {unprocessed_count} unprocessed failures"
+                        _alert_msg = (
+                            f"Dead Letter Queue has {unprocessed_count} unprocessed job failures "
+                            f"(threshold: {JOB_FAILURES_ALERT_THRESHOLD}). Review failures in admin dashboard."
+                        )
+                        print(f"[HealthMonitor] ALERT: job_failures={unprocessed_count} >= {JOB_FAILURES_ALERT_THRESHOLD}")
+                        
+                        admins_res = await _pii_db.execute(select(User).where(User.is_admin == True))
+                        admins = admins_res.scalars().all()
+                        for admin in admins:
+                            _pii_db.add(Notification(
+                                user_id=admin.id,
+                                type="threshold_alert",
+                                title=_alert_title,
+                                message=_alert_msg,
+                                channel="whatsapp",
+                                data={"threshold_type": "job_failures_dlq", "count": unprocessed_count, "threshold": JOB_FAILURES_ALERT_THRESHOLD},
+                            ))
+                            asyncio.create_task(_guarded_task(publish_notification(str(admin.id), {
+                                "type": "threshold_alert",
+                                "title": _alert_title,
+                                "message": _alert_msg,
+                            })))
+                        await _pii_db.commit()
+            except Exception as _e:
+                print(f"[HealthMonitor] Threshold check 4 (job_failures) error: {_e}")
+
         except Exception as e:
             print(f"[HealthMonitor] Outer error: {e}")
 
@@ -6592,6 +6819,7 @@ async def _price_sync_loop():
     remainder; otherwise runs immediately.
     """
     from BACKEND_AI_AGENTS import SupplierManagerAgent
+    from resilience import log_job_failure, job_registry_start, job_registry_finish
     interval_s = PRICE_SYNC_INTERVAL_H * 3600
 
     # Determine how long to wait before the first run
@@ -6618,8 +6846,14 @@ async def _price_sync_loop():
     await asyncio.sleep(first_wait)
 
     while True:
+        job_id = None
         try:
             async with async_session_factory() as db:
+                try:
+                    job_id = await job_registry_start(db, "sync_prices", ttl_seconds=interval_s)
+                except Exception as exc:
+                    print(f"[PriceSync] job_registry_start failed: {exc}")
+
                 agent = SupplierManagerAgent()
                 report = await agent.sync_prices(db)
                 print(
@@ -6628,8 +6862,34 @@ async def _price_sync_loop():
                     f"avail_changes={report['availability_changes']}  "
                     f"errors={len(report['errors'])}"
                 )
+                if job_id:
+                    try:
+                        await job_registry_finish(db, job_id, status="completed")
+                    except Exception as exc:
+                        print(f"[PriceSync] job_registry_finish failed: {exc}")
         except Exception as exc:
-            print(f"[PriceSync] ❌ error: {exc}")
+            error_msg = str(exc)[:500]
+            print(f"[PriceSync] ❌ error: {error_msg}")
+            # Log failure to DLQ (Gap 2b)
+            try:
+                async with pii_session_factory() as pii_db:
+                    await log_job_failure(
+                        pii_db,
+                        job_name="sync_prices",
+                        error=error_msg,
+                        payload={},
+                        attempts=1,
+                    )
+            except Exception as dlq_err:
+                print(f"[PriceSync] Failed to log to DLQ: {dlq_err}")
+
+            if job_id:
+                try:
+                    async with async_session_factory() as db:
+                        await job_registry_finish(db, job_id, status="dead", error_message=error_msg)
+                except Exception:
+                    pass
+        
         await asyncio.sleep(interval_s)
 
 
@@ -6716,7 +6976,8 @@ async def scraper_run_one_part(
             SELECT sp.id  AS sp_id,
                    sp.price_ils,
                    sp.availability,
-                   s.name AS supplier_name,
+                     s.name AS supplier_name,
+                     s.rate_limit_per_minute,
                    pc.sku, pc.name AS part_name, pc.manufacturer
             FROM supplier_parts sp
             JOIN suppliers s ON s.id = sp.supplier_id
@@ -6738,7 +6999,7 @@ async def scraper_run_one_part(
             if primary_fn is scrape_aliexpress:
                 data = await primary_fn(f"{mfr} {cat_num} auto part")
             else:
-                data = await primary_fn(cat_num, mfr)
+                data = await primary_fn(cat_num, mfr, rate_limit_per_minute=row.rate_limit_per_minute)
         except Exception as exc:
             data = {"results": []}
 

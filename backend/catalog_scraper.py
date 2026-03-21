@@ -54,7 +54,13 @@ from sqlalchemy import select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 
-from resilience import retry_with_backoff
+from resilience import (
+    retry_with_backoff,
+    check_supplier_rate_limit,
+    get_supplier_domain_from_url,
+    job_registry_start,
+    job_registry_finish,
+)
 
 load_dotenv()
 
@@ -229,12 +235,28 @@ async def fetch_html(url: str, css_selector: str = "body") -> Dict[str, Any]:
     return {"url": url, "text": soup.get_text(separator=" ", strip=True)[:3000], "elements": elements, "ok": True}
 
 
-async def scrape_autodoc(part_number: str, manufacturer: str = "") -> Dict[str, Any]:
+async def scrape_autodoc(
+    part_number: str,
+    manufacturer: str = "",
+    *,
+    rate_limit_per_minute: Optional[int] = None,
+) -> Dict[str, Any]:
     """
     Search autodoc.co.il (Autodoc's Israeli presence) for a part number.
     Falls back to autodoc.eu JSON API which is publicly accessible.
     Returns list of {name, price_ils, currency, url, availability, brand}
     """
+    # Rate-limit check (Gap 4)
+    import redis.asyncio as _aioredis
+    try:
+        redis_client = _aioredis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"), decode_responses=True)
+        limit = rate_limit_per_minute or 30
+        if not await check_supplier_rate_limit(redis_client, "autodoc.co.il", limit_per_minute=limit):
+            logger.warning("Autodoc rate limit exceeded, skipping scrape")
+            return {"results": [], "skipped": True, "reason": "rate_limit"}
+    except Exception as e:
+        logger.warning(f"Rate limit check failed for autodoc: {e}")
+    
     results: List[Dict] = []
     await asyncio.sleep(SCRAPE_REQUEST_DELAY + random.uniform(0, 0.5))
 
@@ -291,11 +313,27 @@ async def scrape_autodoc(part_number: str, manufacturer: str = "") -> Dict[str, 
     return {"tool": "scrape_autodoc", "part_number": part_number, "results": results}
 
 
-async def scrape_ebay_motors(part_number: str, manufacturer: str = "") -> Dict[str, Any]:
+async def scrape_ebay_motors(
+    part_number: str,
+    manufacturer: str = "",
+    *,
+    rate_limit_per_minute: Optional[int] = None,
+) -> Dict[str, Any]:
     """
     Search eBay Motors for a part number and return sold/listed price range.
     Uses eBay's public search endpoint (no API key required for basic results).
     """
+    # Rate-limit check (Gap 4)
+    import redis.asyncio as _aioredis
+    try:
+        redis_client = _aioredis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"), decode_responses=True)
+        limit = rate_limit_per_minute or 30
+        if not await check_supplier_rate_limit(redis_client, "ebay.com", limit_per_minute=limit):
+            logger.warning("eBay Motors rate limit exceeded, skipping scrape")
+            return {"results": [], "skipped": True, "reason": "rate_limit"}
+    except Exception as e:
+        logger.warning(f"Rate limit check failed for eBay: {e}")
+    
     await asyncio.sleep(SCRAPE_REQUEST_DELAY + random.uniform(0, 0.8))
     results: List[Dict] = []
 
@@ -438,11 +476,27 @@ async def scrape_google_shopping(query: str) -> Dict[str, Any]:
     return {"tool": "scrape_google_shopping", "query": query, "results": results}
 
 
-async def scrape_rockauto(part_number: str, manufacturer: str = "") -> Dict[str, Any]:
+async def scrape_rockauto(
+    part_number: str,
+    manufacturer: str = "",
+    *,
+    rate_limit_per_minute: Optional[int] = None,
+) -> Dict[str, Any]:
     """
     Scrape RockAuto for a part number.  RockAuto uses a React/JSON structure;
     we extract prices from the embedded JSON data payload.
     """
+    # Rate-limit check (Gap 4)
+    import redis.asyncio as _aioredis
+    try:
+        redis_client = _aioredis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"), decode_responses=True)
+        limit = rate_limit_per_minute or 30
+        if not await check_supplier_rate_limit(redis_client, "rockauto.com", limit_per_minute=limit):
+            logger.warning("RockAuto rate limit exceeded, skipping scrape")
+            return {"results": [], "skipped": True, "reason": "rate_limit"}
+    except Exception as e:
+        logger.warning(f"Rate limit check failed for RockAuto: {e}")
+    
     await asyncio.sleep(SCRAPE_REQUEST_DELAY + random.uniform(0, 0.5))
 
     url = f"https://www.rockauto.com/en/partsearch/?partnum={part_number}"
@@ -952,6 +1006,7 @@ async def _scrape_one_part(
     part_id: str, sku: str, name: str,
     manufacturer: str, category: str, part_type: str,
     supplier_id: str, supplier_name: str, supplier_part_id: str,
+    rate_limit_per_minute: Optional[int],
     current_price_ils: float,
 ) -> Dict[str, Any]:
     """
@@ -978,7 +1033,7 @@ async def _scrape_one_part(
         if primary_fn is scrape_aliexpress:
             data = await primary_fn(f"{manufacturer} {cat_num} auto part")
         else:
-            data = await primary_fn(cat_num, manufacturer)
+            data = await primary_fn(cat_num, manufacturer, rate_limit_per_minute=rate_limit_per_minute)
         ms = int((datetime.utcnow() - t_start).total_seconds() * 1000)
         await _record_api_call(
             db,
@@ -1389,150 +1444,173 @@ async def run_brand_discovery(
     }
 
     async with scraper_session_factory() as db:
-        # Get supplier id
-        supplier = (await db.execute(
-            text("SELECT id FROM suppliers WHERE name ILIKE '%AutoParts%' LIMIT 1")
-        )).fetchone()
-        supplier_id = str(supplier[0]) if supplier else None
-
-        # Auto-select thin brands if none provided
-        if not brands:
-            rows = (await db.execute(
-                text("""
-                    SELECT manufacturer, COUNT(*) AS cnt
-                    FROM parts_catalog
-                    WHERE is_active = true
-                    GROUP BY manufacturer
-                    HAVING COUNT(*) < :target
-                    ORDER BY COUNT(*) ASC
-                    LIMIT :lim
-                """),
-                {"target": target, "lim": per_run},
-            )).fetchall()
-            brands = [r[0] for r in rows if r[0]]
-
-        if not brands:
-            print("[Rex] All brands already meet the target — nothing to discover.")
-            report["status"] = "nothing_to_do"
-            return report
-
-        await fetch_ils_exchange_rate()
-        print(f"[Rex] Brand discovery starting — {len(brands)} brands: {brands}")
-
-        for brand in brands:
-            b_report: Dict[str, Any] = {"inserted": 0, "skipped_dup": 0, "sources": []}
-            print(f"\n[Rex] ── Discovering: {brand} ──")
-
-            # Existing SKUs to avoid duplicates
-            existing = (await db.execute(
-                text("SELECT sku FROM parts_catalog WHERE manufacturer = :m"),
-                {"m": brand},
-            )).fetchall()
-            existing_skus = {r[0] for r in existing}
-            need = max(0, target - len(existing_skus))
-            print(f"[Rex]   existing={len(existing_skus)}  need={need}")
-            if need <= 0:
-                report["brands"][brand] = b_report
-                continue
-
-            parts: List[Dict] = []
-
-            # Source 1 — autodoc.eu
+        job_id: Optional[str] = None
+        try:
             try:
-                autodoc_parts = await _discover_via_autodoc(brand, max_parts=min(need + 20, 300))
-                parts.extend(autodoc_parts)
-                b_report["sources"].append(f"autodoc:{len(autodoc_parts)}")
-                print(f"[Rex]   autodoc → {len(autodoc_parts)}")
+                job_id = await job_registry_start(db, "run_brand_discovery", ttl_seconds=int(DISCOVERY_INTERVAL_H * 3600))
             except Exception as exc:
-                print(f"[Rex]   autodoc error: {exc}")
+                print(f"[Rex] job_registry_start error: {exc}")
 
-            await asyncio.sleep(2)
+            # Get supplier id
+            supplier = (await db.execute(
+                text("SELECT id FROM suppliers WHERE name ILIKE '%AutoParts%' LIMIT 1")
+            )).fetchone()
+            supplier_id = str(supplier[0]) if supplier else None
 
-            # Source 2 — eBay Motors (if still need more)
-            if len(parts) < need:
+            # Auto-select thin brands if none provided
+            if not brands:
+                rows = (await db.execute(
+                    text("""
+                        SELECT manufacturer, COUNT(*) AS cnt
+                        FROM parts_catalog
+                        WHERE is_active = true
+                        GROUP BY manufacturer
+                        HAVING COUNT(*) < :target
+                        ORDER BY COUNT(*) ASC
+                        LIMIT :lim
+                    """),
+                    {"target": target, "lim": per_run},
+                )).fetchall()
+                brands = [r[0] for r in rows if r[0]]
+
+            if not brands:
+                print("[Rex] All brands already meet the target — nothing to discover.")
+                report["status"] = "nothing_to_do"
+                if job_id:
+                    await job_registry_finish(db, job_id, status="completed")
+                return report
+
+            await fetch_ils_exchange_rate()
+            print(f"[Rex] Brand discovery starting — {len(brands)} brands: {brands}")
+
+            for brand in brands:
+                b_report: Dict[str, Any] = {"inserted": 0, "skipped_dup": 0, "sources": []}
+                print(f"\n[Rex] ── Discovering: {brand} ──")
+
+                # Existing SKUs to avoid duplicates
+                existing = (await db.execute(
+                    text("SELECT sku FROM parts_catalog WHERE manufacturer = :m"),
+                    {"m": brand},
+                )).fetchall()
+                existing_skus = {r[0] for r in existing}
+                need = max(0, target - len(existing_skus))
+                print(f"[Rex]   existing={len(existing_skus)}  need={need}")
+                if need <= 0:
+                    report["brands"][brand] = b_report
+                    continue
+
+                parts: List[Dict] = []
+
+                # Source 1 — autodoc.eu
                 try:
-                    ebay_parts = await _discover_via_ebay(brand, max_parts=min(need - len(parts) + 30, 150))
-                    parts.extend(ebay_parts)
-                    b_report["sources"].append(f"ebay:{len(ebay_parts)}")
-                    print(f"[Rex]   eBay → {len(ebay_parts)}")
+                    autodoc_parts = await _discover_via_autodoc(brand, max_parts=min(need + 20, 300))
+                    parts.extend(autodoc_parts)
+                    b_report["sources"].append(f"autodoc:{len(autodoc_parts)}")
+                    print(f"[Rex]   autodoc → {len(autodoc_parts)}")
                 except Exception as exc:
-                    print(f"[Rex]   eBay error: {exc}")
+                    print(f"[Rex]   autodoc error: {exc}")
 
-            # Deduplicate and filter out already-known SKUs
-            seen: set = set()
-            deduped: List[Dict] = []
-            for p in parts:
-                pn = p["part_number"].upper().replace(" ", "")
-                if pn and pn not in seen and pn not in existing_skus:
-                    seen.add(pn)
-                    deduped.append(p)
+                await asyncio.sleep(2)
 
-            print(f"[Rex]   unique new: {len(deduped)}")
+                # Source 2 — eBay Motors (if still need more)
+                if len(parts) < need:
+                    try:
+                        ebay_parts = await _discover_via_ebay(brand, max_parts=min(need - len(parts) + 30, 150))
+                        parts.extend(ebay_parts)
+                        b_report["sources"].append(f"ebay:{len(ebay_parts)}")
+                        print(f"[Rex]   eBay → {len(ebay_parts)}")
+                    except Exception as exc:
+                        print(f"[Rex]   eBay error: {exc}")
 
-            for part in deduped:
-                try:
-                    sku_clean = part["part_number"].upper().replace(" ", "")
-                    part_id, created = await db_upsert_part(
-                        db,
-                        sku=sku_clean,
-                        name=part["name"],
-                        manufacturer=part["manufacturer"],
-                        category=part["category"],
-                        part_type=part["part_type"],
-                        base_price=part["price_usd"],
-                        description=(
-                            f"{part['part_type']} part for {brand}. "
-                            f"Part: {sku_clean}. Category: {part['category']}. "
-                            f"Source: {part['source']}."
-                        ),
-                    )
-                    if created and supplier_id:
-                        # Insert supplier_parts row
-                        await db.execute(
-                            text("""
-                                INSERT INTO supplier_parts
-                                    (id, supplier_id, part_id, supplier_sku,
-                                     price_ils, price_usd, is_available,
-                                     availability, stock_quantity,
-                                     min_order_qty, last_checked_at,
-                                     created_at, supplier_url)
-                                VALUES
-                                    (:id, :sid, :pid, :sku,
-                                     :pils, :pusd, :avail,
-                                     'in_stock', :stock,
-                                     1, NOW(), NOW(), :url)
-                            """),
-                            {
-                                "id":   str(uuid.uuid4()),
-                                "sid":  supplier_id,
-                                "pid":  part_id,
-                                "sku":  sku_clean,
-                                "pils": part["price_ils"] or 0.0,
-                                "pusd": part["price_usd"] or 0.0,
-                                "avail": part.get("in_stock", True),
-                                "stock": random.randint(1, 40),
-                                "url":  (part.get("url") or "")[:500],
-                            },
+                # Deduplicate and filter out already-known SKUs
+                seen: set = set()
+                deduped: List[Dict] = []
+                for p in parts:
+                    pn = p["part_number"].upper().replace(" ", "")
+                    if pn and pn not in seen and pn not in existing_skus:
+                        seen.add(pn)
+                        deduped.append(p)
+
+                print(f"[Rex]   unique new: {len(deduped)}")
+
+                for part in deduped:
+                    try:
+                        sku_clean = part["part_number"].upper().replace(" ", "")
+                        part_id, created = await db_upsert_part(
+                            db,
+                            sku=sku_clean,
+                            name=part["name"],
+                            manufacturer=part["manufacturer"],
+                            category=part["category"],
+                            part_type=part["part_type"],
+                            base_price=part["price_usd"],
+                            description=(
+                                f"{part['part_type']} part for {brand}. "
+                                f"Part: {sku_clean}. Category: {part['category']}. "
+                                f"Source: {part['source']}."
+                            ),
                         )
-                        await db.commit()
-                        b_report["inserted"] += 1
-                    elif not created:
-                        b_report["skipped_dup"] += 1
+                        if created and supplier_id:
+                            # Insert supplier_parts row
+                            await db.execute(
+                                text("""
+                                    INSERT INTO supplier_parts
+                                        (id, supplier_id, part_id, supplier_sku,
+                                         price_ils, price_usd, is_available,
+                                         availability, stock_quantity,
+                                         min_order_qty, last_checked_at,
+                                         created_at, supplier_url)
+                                    VALUES
+                                        (:id, :sid, :pid, :sku,
+                                         :pils, :pusd, :avail,
+                                         'in_stock', :stock,
+                                         1, NOW(), NOW(), :url)
+                                """),
+                                {
+                                    "id":   str(uuid.uuid4()),
+                                    "sid":  supplier_id,
+                                    "pid":  part_id,
+                                    "sku":  sku_clean,
+                                    "pils": part["price_ils"] or 0.0,
+                                    "pusd": part["price_usd"] or 0.0,
+                                    "avail": part.get("in_stock", True),
+                                    "stock": random.randint(1, 40),
+                                    "url":  (part.get("url") or "")[:500],
+                                },
+                            )
+                            await db.commit()
+                            b_report["inserted"] += 1
+                        elif not created:
+                            b_report["skipped_dup"] += 1
 
+                    except Exception as exc:
+                        print(f"[Rex]   insert error ({part.get('part_number')}): {exc}")
+
+                report["brands"][brand]  = b_report
+                report["total_inserted"] += b_report["inserted"]
+                report["total_skipped"]  += b_report["skipped_dup"]
+                await db_log(
+                    db, "INFO",
+                    f"[Rex] discovery brand={brand} inserted={b_report['inserted']} "
+                    f"sources={b_report['sources']}",
+                )
+                print(f"[Rex]   ✅ {brand}: inserted={b_report['inserted']}  "
+                      f"dup_skipped={b_report['skipped_dup']}")
+                await asyncio.sleep(3)
+
+            if job_id:
+                try:
+                    await job_registry_finish(db, job_id, status="completed")
                 except Exception as exc:
-                    print(f"[Rex]   insert error ({part.get('part_number')}): {exc}")
+                    print(f"[Rex] job_registry_finish error: {exc}")
 
-            report["brands"][brand]  = b_report
-            report["total_inserted"] += b_report["inserted"]
-            report["total_skipped"]  += b_report["skipped_dup"]
-            await db_log(
-                db, "INFO",
-                f"[Rex] discovery brand={brand} inserted={b_report['inserted']} "
-                f"sources={b_report['sources']}",
-            )
-            print(f"[Rex]   ✅ {brand}: inserted={b_report['inserted']}  "
-                  f"dup_skipped={b_report['skipped_dup']}")
-            await asyncio.sleep(3)
+        except Exception as exc:
+            if job_id:
+                try:
+                    await job_registry_finish(db, job_id, status="dead", error_message=str(exc)[:500])
+                except Exception:
+                    pass
+            raise
 
     # Immediately normalise newly discovered parts — don't wait for the 6h timer
     if report["total_inserted"] > 0:
@@ -1612,103 +1690,120 @@ async def run_scraper_cycle(*, batch_size: int = SCRAPE_BATCH_SIZE) -> Dict[str,
     }
 
     async with scraper_session_factory() as db:
-        # Pull oldest-checked supplier_parts joined to parts_catalog
-        rows = (await db.execute(
-            text("""
-                SELECT
-                    sp.id            AS supplier_part_id,
-                    sp.supplier_id,
-                    sp.price_ils,
-                    sp.availability,
-                    s.name           AS supplier_name,
-                    pc.id            AS part_id,
-                    pc.sku,
-                    pc.name          AS part_name,
-                    pc.manufacturer,
-                    pc.category,
-                    pc.part_type
-                FROM supplier_parts sp
-                JOIN suppliers       s  ON s.id  = sp.supplier_id
-                JOIN parts_catalog   pc ON pc.id = sp.part_id
-                WHERE pc.is_active = true
-                ORDER BY sp.last_checked_at ASC NULLS FIRST
-                LIMIT :lim
-            """),
-            {"lim": batch_size},
-        )).fetchall()
-
-        print(f"[Scraper] Cycle started — {len(rows)} parts to check, "
-              f"ILS/USD={ILS_PER_USD}")
-
-        for row in rows:
-            if report["errors"] >= SCRAPE_MAX_ERRORS:
-                print(f"[Scraper] Max errors ({SCRAPE_MAX_ERRORS}) reached — stopping batch")
-                break
-
-            try:
-                result = await _scrape_one_part(
-                    db=db,
-                    part_id=str(row.part_id),
-                    sku=row.sku,
-                    name=row.part_name,
-                    manufacturer=row.manufacturer or "",
-                    category=row.category or "כללי",
-                    part_type=row.part_type or "Aftermarket",
-                    supplier_id=str(row.supplier_id),
-                    supplier_name=row.supplier_name,
-                    supplier_part_id=str(row.supplier_part_id),
-                    current_price_ils=float(row.price_ils or 0),
-                )
-                report["parts_checked"] += 1
-                if result["action"] == "price_updated":
-                    report["prices_updated"] += 1
-                if result.get("availability"):
-                    report["availability_changes"] += 1
-                report["rows"].append(result)
-
-            except Exception as exc:
-                report["errors"] += 1
-                print(f"[Scraper] Error on {row.sku}: {exc}")
-
-            await asyncio.sleep(SCRAPE_REQUEST_DELAY * 0.3)  # short inter-part delay
-
-        elapsed = (datetime.utcnow() - started_at).total_seconds()
-        report["elapsed_s"] = round(elapsed, 1)
-
-        # Summarize to system_log
-        await db_log(
-            db, "INFO",
-            f"[Scraper cycle] checked={report['parts_checked']} "
-            f"updated={report['prices_updated']} "
-            f"avail_changes={report['availability_changes']} "
-            f"errors={report['errors']} "
-            f"elapsed={elapsed:.0f}s",
-        )
-
-        # Write job-level catalog_versions audit row
+        job_id = None
         try:
-            await db.execute(
+            job_id = await job_registry_start(db, "run_scraper_cycle", ttl_seconds=int(SCRAPE_INTERVAL_H * 3600))
+
+            # Pull oldest-checked supplier_parts joined to parts_catalog
+            rows = (await db.execute(
                 text("""
-                    INSERT INTO catalog_versions
-                        (id, version_tag, description, parts_added, parts_updated,
-                         source, status, created_at)
-                    VALUES
-                        (gen_random_uuid(), :vtag, :desc, 0, :updated,
-                         'scraper_price_sync', 'completed', NOW())
-                    ON CONFLICT (version_tag) DO NOTHING
+                    SELECT
+                        sp.id            AS supplier_part_id,
+                        sp.supplier_id,
+                        sp.price_ils,
+                        sp.availability,
+                        s.name           AS supplier_name,
+                        s.rate_limit_per_minute,
+                        pc.id            AS part_id,
+                        pc.sku,
+                        pc.name          AS part_name,
+                        pc.manufacturer,
+                        pc.category,
+                        pc.part_type
+                    FROM supplier_parts sp
+                    JOIN suppliers       s  ON s.id  = sp.supplier_id
+                    JOIN parts_catalog   pc ON pc.id = sp.part_id
+                    WHERE pc.is_active = true
+                    ORDER BY sp.last_checked_at ASC NULLS FIRST
+                    LIMIT :lim
                 """),
-                {
-                    "vtag": f"price-sync-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}",
-                    "desc": (
-                        f"Price sync: {report['prices_updated']} updated, "
-                        f"{report['availability_changes']} availability changes"
-                    ),
-                    "updated": report["prices_updated"],
-                },
+                {"lim": batch_size},
+            )).fetchall()
+
+            print(f"[Scraper] Cycle started — {len(rows)} parts to check, "
+                  f"ILS/USD={ILS_PER_USD}")
+
+            for row in rows:
+                if report["errors"] >= SCRAPE_MAX_ERRORS:
+                    print(f"[Scraper] Max errors ({SCRAPE_MAX_ERRORS}) reached — stopping batch")
+                    break
+
+                try:
+                    result = await _scrape_one_part(
+                        db=db,
+                        part_id=str(row.part_id),
+                        sku=row.sku,
+                        name=row.part_name,
+                        manufacturer=row.manufacturer or "",
+                        category=row.category or "כללי",
+                        part_type=row.part_type or "Aftermarket",
+                        supplier_id=str(row.supplier_id),
+                        supplier_name=row.supplier_name,
+                        supplier_part_id=str(row.supplier_part_id),
+                        rate_limit_per_minute=row.rate_limit_per_minute,
+                        current_price_ils=float(row.price_ils or 0),
+                    )
+                    report["parts_checked"] += 1
+                    if result["action"] == "price_updated":
+                        report["prices_updated"] += 1
+                    if result.get("availability"):
+                        report["availability_changes"] += 1
+                    report["rows"].append(result)
+
+                except Exception as exc:
+                    report["errors"] += 1
+                    print(f"[Scraper] Error on {row.sku}: {exc}")
+
+                await asyncio.sleep(SCRAPE_REQUEST_DELAY * 0.3)  # short inter-part delay
+
+            elapsed = (datetime.utcnow() - started_at).total_seconds()
+            report["elapsed_s"] = round(elapsed, 1)
+
+            # Summarize to system_log
+            await db_log(
+                db, "INFO",
+                f"[Scraper cycle] checked={report['parts_checked']} "
+                f"updated={report['prices_updated']} "
+                f"avail_changes={report['availability_changes']} "
+                f"errors={report['errors']} "
+                f"elapsed={elapsed:.0f}s",
             )
-            await db.commit()
-        except Exception:
-            pass
+
+            # Write job-level catalog_versions audit row
+            try:
+                await db.execute(
+                    text("""
+                        INSERT INTO catalog_versions
+                            (id, version_tag, description, parts_added, parts_updated,
+                             source, status, created_at)
+                        VALUES
+                            (gen_random_uuid(), :vtag, :desc, 0, :updated,
+                             'scraper_price_sync', 'completed', NOW())
+                        ON CONFLICT (version_tag) DO NOTHING
+                    """),
+                    {
+                        "vtag": f"price-sync-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}",
+                        "desc": (
+                            f"Price sync: {report['prices_updated']} updated, "
+                            f"{report['availability_changes']} availability changes"
+                        ),
+                        "updated": report["prices_updated"],
+                    },
+                )
+                await db.commit()
+            except Exception:
+                pass
+
+            if job_id:
+                await job_registry_finish(db, job_id, status="completed")
+
+        except Exception as exc:
+            if job_id:
+                try:
+                    await job_registry_finish(db, job_id, status="dead", error_message=str(exc)[:500])
+                except Exception:
+                    pass
+            raise
 
     print(
         f"[Scraper] ✅ Cycle done — "
@@ -1736,6 +1831,7 @@ async def scraper_background_loop():
     Smart start: if a recent run exists in system_log, waits the remainder of
     the interval before the first run.
     """
+    from resilience import log_job_failure
     global _last_run_report
     interval_s = SCRAPE_INTERVAL_H * 3600
 
@@ -1782,14 +1878,51 @@ async def scraper_background_loop():
                 or (now - last_discovery_at).total_seconds() >= discovery_interval_s
             )
             if run_discovery and DISCOVERY_ENABLED:
-                _last_discovery_report = await run_brand_discovery()
+                try:
+                    _last_discovery_report = await run_brand_discovery()
+                except Exception as exc:
+                    error_msg = str(exc)[:500]
+                    print(f"[Scraper] Brand discovery error: {error_msg}")
+                    # Log failure to DLQ (Gap 2b)
+                    try:
+                        from BACKEND_DATABASE_MODELS import pii_session_factory
+                        async with pii_session_factory() as pii_db:
+                            await log_job_failure(
+                                pii_db,
+                                job_name="run_brand_discovery",
+                                error=error_msg,
+                                payload={},
+                                attempts=1,
+                            )
+                    except Exception as dlq_err:
+                        print(f"[Scraper] Failed to log brand_discovery to DLQ: {dlq_err}")
+                
                 last_discovery_at = datetime.utcnow()
                 await asyncio.sleep(30)
 
             # Job 1 — Price Sync (every SCRAPE_INTERVAL_H hours)
-            _last_run_report = await run_scraper_cycle()
+            try:
+                _last_run_report = await run_scraper_cycle()
+            except Exception as exc:
+                error_msg = str(exc)[:500]
+                print(f"[Scraper] Scraper cycle error: {error_msg}")
+                # Log failure to DLQ (Gap 2b)
+                try:
+                    from BACKEND_DATABASE_MODELS import pii_session_factory
+                    async with pii_session_factory() as pii_db:
+                        await log_job_failure(
+                            pii_db,
+                            job_name="run_scraper_cycle",
+                            error=error_msg,
+                            payload={},
+                            attempts=1,
+                        )
+                except Exception as dlq_err:
+                    print(f"[Scraper] Failed to log scraper_cycle to DLQ: {dlq_err}")
+        
         except Exception as exc:
             print(f"[Rex] ❌ Unhandled error in cycle: {exc}")
+        
         await asyncio.sleep(interval_s)
 
 

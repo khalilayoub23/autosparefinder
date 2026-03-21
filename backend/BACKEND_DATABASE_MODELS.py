@@ -328,6 +328,7 @@ class ApprovalQueue(PiiBase):
         Index("ix_approval_queue_status", "status"),
         Index("ix_approval_queue_entity_type", "entity_type"),
         Index("ix_approval_queue_requested_by", "requested_by"),
+        Index("ix_approval_queue_idempotency_key", "idempotency_key"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -354,6 +355,12 @@ class ApprovalQueue(PiiBase):
     resolution_note = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     resolved_at = Column(DateTime, nullable=True)
+    idempotency_key = Column(
+        String(255),
+        unique=True,
+        nullable=True,
+        comment="Idempotency key for deduplication (Gap 6)",
+    )
 
     requester = relationship("User", foreign_keys=[requested_by])
     resolver = relationship("User", foreign_keys=[resolved_by])
@@ -439,6 +446,68 @@ class JobFailure(PiiBase):
         String(255),
         nullable=True,
         comment="Admin user ID who resolved the failure",
+    )
+
+
+# ==============================================================================
+# STRIPE WEBHOOK LOGGING  (autospare_pii DB)
+# ==============================================================================
+
+class StripeWebhookLog(PiiBase):
+    """Log of Stripe webhook events for deduplication and audit.
+    
+    Stripe redelivers webhooks if we don't respond 2xx. This table prevents
+    double-processing of the same webhook event by storing event_id.
+    """
+    __tablename__ = "stripe_webhook_logs"
+    __table_args__ = (
+        Index("ix_stripe_webhook_logs_event_id", "event_id"),
+        Index("ix_stripe_webhook_logs_event_type", "event_type"),
+        Index("ix_stripe_webhook_logs_created_at", "created_at"),
+        Index("ix_stripe_webhook_logs_processed", "processed"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    event_id = Column(
+        String(255),
+        unique=True,
+        nullable=False,
+        comment="Stripe event_id for deduplication (comes in webhook header)",
+    )
+    event_type = Column(
+        String(100),
+        nullable=False,
+        index=True,
+        comment="Stripe event type (e.g., charge.succeeded, payment_intent.succeeded)",
+    )
+    processed = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="FALSE",
+        comment="Whether event was successfully processed",
+    )
+    payload = Column(
+        JSONB,
+        nullable=True,
+        comment="Full Stripe event payload (for audit)",
+    )
+    result = Column(
+        JSONB,
+        nullable=True,
+        comment="Processing result or error details",
+    )
+    created_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        server_default=func.now(),
+        comment="When webhook was received",
+    )
+    processed_at = Column(
+        DateTime,
+        nullable=True,
+        comment="When event was processed (if processed=TRUE)",
     )
 
 
