@@ -837,7 +837,7 @@ async def delete_conversation(conversation_id: str, current_user: User = Depends
 async def upload_image(file: UploadFile = File(...), current_user: User = Depends(get_current_verified_user), db: AsyncSession = Depends(get_pii_db), request: Request = None, redis=Depends(get_redis)):
     """Upload an image and immediately run GPT-4o Vision to identify the part."""
     import base64 as _b64
-    from openai import AsyncOpenAI
+    from hf_client import hf_vision
     import json as _json
 
     if redis and request:
@@ -858,53 +858,32 @@ async def upload_image(file: UploadFile = File(...), current_user: User = Depend
     if _img_scan == "infected":
         raise HTTPException(status_code=400, detail=f"File rejected: malware detected ({_img_virus})")
 
-    ollama_url = os.getenv("OLLAMA_URL", "")
-    if ollama_url:
-        try:
-            if len(img_bytes) <= 10 * 1024 * 1024:  # always True (size validated above)
-                b64 = _b64.b64encode(img_bytes).decode()
-                mime = file.content_type or "image/jpeg"
-                client = AsyncOpenAI(
-                    base_url=f"{ollama_url}/v1",
-                    api_key="ollama",
-                )
-                resp = await client.chat.completions.create(
-                    model=os.getenv("AGENTS_DEFAULT_MODEL", "qwen3:8b"),
-                    messages=[{
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": (
-                                    "You are an expert automotive parts identifier. "
-                                    "Look at this image and identify the car part shown. "
-                                    "Respond ONLY with a JSON object, no markdown: "
-                                    '{"part_name_he": "<SHORT Hebrew name as used in Israeli auto parts catalogs>", '
-                                    '"part_name_en": "<name in English>", '
-                                    '"possible_names": ["<alt Hebrew name 1>", "<alt Hebrew name 2>", "<alt Hebrew name 3>"], '
-                                    '"confidence": <0.0-1.0>. '
-                                    'IMPORTANT: part_name_he and ALL possible_names must be SHORT Hebrew terms '
-                                    '(1-3 words) exactly as written in Israeli auto parts price lists, '
-                                    'e.g. "מצערת", "בית מצערת", "מסנן אוויר", "משאבת מים". '
-                                    'Do NOT use English words in possible_names.}'
-                                ),
-                            },
-                            {
-                                "type": "image_url",
-                                "image_url": {"url": f"data:{mime};base64,{b64}"},
-                            },
-                        ],
-                    }],
-                    max_tokens=200,
-                )
-                raw = resp.choices[0].message.content.strip().strip("`").removeprefix("json").strip()
-                parsed = _json.loads(raw)
-                identified_part = parsed.get("part_name_he") or parsed.get("part_name_en", "")
-                identified_part_en = parsed.get("part_name_en", "")
-                confidence = float(parsed.get("confidence", 0.0))
-                possible_names = parsed.get("possible_names", [])
-        except Exception as e:
-            print(f"[Chat Vision] error: {e}")
+    try:
+        if len(img_bytes) <= 10 * 1024 * 1024:  # always True (size validated above)
+            b64 = _b64.b64encode(img_bytes).decode()
+            mime = file.content_type or "image/jpeg"
+            prompt = (
+                "You are an expert automotive parts identifier. "
+                "Look at this image and identify the car part shown. "
+                "Respond ONLY with a JSON object, no markdown: "
+                '{"part_name_he": "<SHORT Hebrew name as used in Israeli auto parts catalogs>", '
+                '"part_name_en": "<name in English>", '
+                '"possible_names": ["<alt Hebrew name 1>", "<alt Hebrew name 2>", "<alt Hebrew name 3>"], '
+                '"confidence": <0.0-1.0>. '
+                'IMPORTANT: part_name_he and ALL possible_names must be SHORT Hebrew terms '
+                '(1-3 words) exactly as written in Israeli auto parts price lists, '
+                'e.g. "מצערת", "בית מצערת", "מסנן אוויר", "משאבת מים". '
+                'Do NOT use English words in possible_names.}'
+            )
+            raw = await hf_vision(b64, prompt, mime=mime)
+            raw = raw.strip().strip("`").removeprefix("json").strip()
+            parsed = _json.loads(raw)
+            identified_part = parsed.get("part_name_he") or parsed.get("part_name_en", "")
+            identified_part_en = parsed.get("part_name_en", "")
+            confidence = float(parsed.get("confidence", 0.0))
+            possible_names = parsed.get("possible_names", [])
+    except Exception as e:
+        print(f"[Chat Vision] error: {e}")
 
     return {
         "file_id": file_id,
@@ -925,16 +904,14 @@ async def upload_audio(
     redis=Depends(get_redis),
 ):
     """
-    Receive an audio file, transcribe via Ollama Whisper, then pass the
+    Receive an audio file, transcribe via Hugging Face Whisper, then pass the
     transcription to the router agent as a normal chat message.
-
-    Prerequisites on Ollama VPS:
-        ollama pull whisper
     """
+    from hf_client import hf_audio
+
     if redis and request:
         await check_rate_limit(redis, f"upload_audio:{current_user.id}", 10, 60)
-    ollama_url = os.getenv("OLLAMA_URL", "")
-    if not ollama_url:
+    if not os.getenv("HF_TOKEN", ""):
         raise HTTPException(status_code=503, detail="שירות התמלול אינו זמין כרגע")
 
     # ── 1. Read & validate ────────────────────────────────────────────────────
@@ -953,20 +930,12 @@ async def upload_audio(
     if _scan_status == "infected":
         raise HTTPException(status_code=400, detail=f"הקובץ נדחה: זוהה וירוס ({_virus_name})")
 
-    # ── 3. Transcribe via Ollama Whisper ──────────────────────────────────────
+    # ── 3. Transcribe via Hugging Face Whisper ────────────────────────────────
     transcription = ""
     detected_language = ""
     try:
-        async with httpx.AsyncClient(timeout=60.0) as _wc:
-            _wresp = await _wc.post(
-                f"{ollama_url}/api/transcribe",
-                files={"file": (file.filename or "audio", audio_bytes, file.content_type or "audio/webm")},
-                data={"model": "whisper"},
-            )
-            _wresp.raise_for_status()
-            _wdata = _wresp.json()
-            transcription     = _wdata.get("text", "").strip()
-            detected_language = _wdata.get("language", "")
+        transcription = (await hf_audio(audio_bytes)).strip()
+        detected_language = ""
     except Exception as exc:
         print(f"[AudioUpload] Whisper error: {exc}")
         raise HTTPException(status_code=502, detail="שגיאה בתמלול — נסה שוב")
@@ -1147,41 +1116,26 @@ async def search_parts(
     # vec_score: {id_str → cosine_similarity}  (empty dict if unavailable)
     _route_vec_score: Dict[str, float] = {}
     if meili_ids and query:
-        _route_ollama_url = os.getenv("OLLAMA_URL", "")
-        if _route_ollama_url:
-            try:
-                async with httpx.AsyncClient(timeout=3.0) as _vc:
-                    _vresp = await _vc.post(
-                        f"{_route_ollama_url}/api/embed",
-                        json={"model": "nomic-embed-text", "input": query},
-                        timeout=3.0,
-                    )
-                    _vresp.raise_for_status()
-                    _vdata = _vresp.json()
-                    _vemb = _vdata.get("embeddings") or _vdata.get("embedding")
-                    if _vemb and isinstance(_vemb[0], list):
-                        _qvec: Optional[List[float]] = _vemb[0]
-                    elif _vemb and isinstance(_vemb[0], float):
-                        _qvec = _vemb
-                    else:
-                        _qvec = None
+        from hf_client import hf_embed
+        try:
+            _qvec = await hf_embed(query, timeout=3.0)
 
-                if _qvec:
-                    _vrows = (await db.execute(
-                        text("""
-                            SELECT id::text,
-                                   1 - (embedding <=> CAST(:qvec AS vector)) AS sim
-                            FROM parts_catalog
-                            WHERE is_active = TRUE
-                              AND embedding IS NOT NULL
-                            ORDER BY embedding <=> CAST(:qvec AS vector)
-                            LIMIT 50
-                        """),
-                        {"qvec": str(_qvec)},
-                    )).fetchall()
-                    _route_vec_score = {r[0]: float(r[1]) for r in _vrows}
-            except Exception:
-                _route_vec_score = {}  # degrade silently to Meilisearch-only
+            if _qvec:
+                _vrows = (await db.execute(
+                    text("""
+                        SELECT id::text,
+                               1 - (embedding <=> CAST(:qvec AS vector)) AS sim
+                        FROM parts_catalog
+                        WHERE is_active = TRUE
+                          AND embedding IS NOT NULL
+                        ORDER BY embedding <=> CAST(:qvec AS vector)
+                        LIMIT 50
+                    """),
+                    {"qvec": str(_qvec)},
+                )).fetchall()
+                _route_vec_score = {r[0]: float(r[1]) for r in _vrows}
+        except Exception:
+            _route_vec_score = {}  # degrade silently to Meilisearch-only
 
     # ── Hybrid re-rank: 0.6 × meili_score + 0.4 × vec_score ─────────────────
     if _route_vec_score:
@@ -2218,7 +2172,7 @@ async def identify_vehicle_from_image(
     request: Request = None,
     redis=Depends(get_redis),
 ):
-    """Extract license plate from image via Ollama OCR, then look up vehicle via data.gov.il"""
+    """Extract license plate from image via HF vision OCR, then look up vehicle via data.gov.il"""
     # Rate limit
     if redis and request:
         ip = request.client.host if request.client else 'unknown'
@@ -2234,28 +2188,20 @@ async def identify_vehicle_from_image(
     if (file.content_type or '').split(';')[0].strip() not in _ALLOWED:
         raise HTTPException(status_code=415, detail='Unsupported image type')
 
-    # OCR via Ollama Vision
-    ollama_url = os.getenv('OLLAMA_URL', '')
-    if not ollama_url:
+    # OCR via Hugging Face Vision
+    if not os.getenv("HF_TOKEN", ""):
         raise HTTPException(status_code=503, detail='ocr_service_unavailable')
 
     import base64 as _b64
-    from openai import AsyncOpenAI
+    from hf_client import hf_vision
     b64 = _b64.b64encode(img_bytes).decode()
-    client = AsyncOpenAI(base_url=f'{ollama_url}/v1', api_key='ollama', timeout=15.0)
     try:
-        resp = await client.chat.completions.create(
-            model=os.getenv('AGENTS_DEFAULT_MODEL', 'qwen3:8b'),
-            messages=[{
-                'role': 'user',
-                'content': [
-                    {'type': 'text', 'text': 'Extract the Israeli license plate number from this image. Return ONLY the digits and dashes, for example: 123-45-678. If no plate is visible return empty string.'},
-                    {'type': 'image_url', 'image_url': {'url': f'data:{file.content_type};base64,{b64}'}}
-                ]
-            }],
-            max_tokens=20,
+        plate_raw = await hf_vision(
+            b64,
+            'Extract the Israeli license plate number from this image. Return ONLY the digits and dashes, for example: 123-45-678. If no plate is visible return empty string.',
+            mime=(file.content_type or "image/jpeg"),
         )
-        plate_raw = resp.choices[0].message.content.strip()
+        plate_raw = plate_raw.strip()
     except Exception as e:
         raise HTTPException(status_code=503, detail=f'ocr_failed: {str(e)[:100]}')
 
@@ -5803,18 +5749,12 @@ async def health_check():
     else:
         results["meilisearch"] = {"status": "ok", "note": "not_configured"}
 
-    # ── Ollama ────────────────────────────────────────────────────────────────
-    _ollama_url = os.getenv("OLLAMA_URL", "")
-    if _ollama_url:
-        try:
-            import httpx as _httpx
-            async with _httpx.AsyncClient(timeout=3) as _hc:
-                _resp = await _hc.get(f"{_ollama_url}/api/tags")
-            results["ollama"] = {"status": "ok"} if _resp.status_code == 200 else {"status": "error", "code": _resp.status_code}
-        except Exception as _e:
-            results["ollama"] = {"status": "error", "error": str(_e)}
+    # ── Hugging Face Inference API ────────────────────────────────────────────
+    _hf_token = os.getenv("HF_TOKEN", "")
+    if _hf_token:
+        results["huggingface"] = {"status": "ok"}
     else:
-        results["ollama"] = {"status": "ok", "note": "not_configured"}
+        results["huggingface"] = {"status": "error", "error": "HF_TOKEN not configured"}
 
     # ── ClamAV ────────────────────────────────────────────────────────────────
     try:

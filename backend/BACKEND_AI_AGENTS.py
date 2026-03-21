@@ -63,9 +63,9 @@ import logging
 
 import httpx
 from dotenv import load_dotenv
-from openai import AsyncOpenAI
 from sqlalchemy import and_, or_, select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from hf_client import hf_embed, hf_text
 
 from BACKEND_DATABASE_MODELS import (
     AgentAction, ApprovalQueue, CatalogVersion, Conversation, Message, Notification, Order, OrderItem,
@@ -176,14 +176,8 @@ class BaseAgent:
     temperature: float = 0.7
 
     def __init__(self):
-        if OLLAMA_URL:
-            self.client = AsyncOpenAI(
-                base_url=f"{OLLAMA_URL}/v1",
-                api_key="ollama",  # Ollama ignores this but AsyncOpenAI requires a non-empty value
-            )
-        else:
-            self.client = None
-            print(f"[WARN] {self.name}: OLLAMA_URL not set. AI responses will be mocked.")
+        if not os.getenv("HF_TOKEN", ""):
+            print(f"[WARN] {self.name}: HF_TOKEN not set. AI responses will be mocked.")
 
     async def think(
         self,
@@ -192,21 +186,17 @@ class BaseAgent:
         system_override: Optional[str] = None,
     ) -> str:
         """Send messages to GitHub Models API and return response text."""
-        if not self.client:
-            return f"[Mock] {self.name} received your message. Please set OLLAMA_URL in .env for real AI responses."
+        if not os.getenv("HF_TOKEN", ""):
+            return f"[Mock] {self.name} received your message. Please set HF_TOKEN in .env for real AI responses."
 
         try:
-            kwargs = dict(
-                messages=[{"role": "system", "content": system_override or self.system_prompt}] + messages,
-                model=self.model,
-                max_tokens=self.max_tokens,
-                temperature=self.temperature,
-            )
-            if tools:
-                kwargs["tools"] = tools
-
-            response = await self.client.chat.completions.create(**kwargs)
-            return response.choices[0].message.content or ""
+            prompt = "\n".join(
+                f"{m.get('role', 'user')}: {m.get('content', '')}"
+                for m in messages
+            ).strip()
+            if not prompt:
+                prompt = "Please continue."
+            return await hf_text(prompt, system=(system_override or self.system_prompt))
         except Exception as e:
             print(f"[ERROR] {self.name} API call failed: {e}")
             return f"אני מצטער, נתקלתי בבעיה טכנית. אנא נסה שוב."
@@ -786,26 +776,12 @@ CROSS-REFERENCE: Alternative/equivalent part numbers are stored in the part_cros
 
         # ── pgvector: embed the query and find nearest neighbours ────────────
         # vec_score: {id_str → cosine_similarity}  (empty if unavailable)
-        # Runs only when Meilisearch returned results — no point calling Ollama
+        # Runs only when Meilisearch returned results.
         # if Meilisearch already short-circuited or fell back to ILIKE.
         vec_score: Dict[str, float] = {}
-        if meili_ids and query and OLLAMA_URL:
+        if meili_ids and query:
             try:
-                async with httpx.AsyncClient(timeout=3.0) as _vc:
-                    _vresp = await _vc.post(
-                        f"{OLLAMA_URL}/api/embed",
-                        json={"model": "nomic-embed-text", "input": query},
-                        timeout=3.0,
-                    )
-                    _vresp.raise_for_status()
-                    _vdata = _vresp.json()
-                    _embeddings = _vdata.get("embeddings") or _vdata.get("embedding")
-                    if _embeddings and isinstance(_embeddings[0], list):
-                        query_vec: Optional[List[float]] = _embeddings[0]
-                    elif _embeddings and isinstance(_embeddings[0], float):
-                        query_vec = _embeddings
-                    else:
-                        query_vec = None
+                query_vec: Optional[List[float]] = await hf_embed(query, timeout=3.0)
 
                 if query_vec:
                     async with async_session_factory() as _vdb:

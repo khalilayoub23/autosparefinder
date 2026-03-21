@@ -1,7 +1,7 @@
 """
 ai_catalog_builder.py
 ---------------------
-Uses Ollama (self-hosted LLM on VPS) to generate real OEM parts catalog data.
+Uses Hugging Face Inference API to generate real OEM parts catalog data.
 
 Modes:
   --new      Add completely new brands (BYD, MG, Tesla, etc.)
@@ -20,15 +20,12 @@ from typing import Any, Dict
 import asyncpg
 from sqlalchemy.ext.asyncio import AsyncSession
 from dotenv import load_dotenv
-from openai import AsyncOpenAI
+from hf_client import hf_text
 
 load_dotenv()
 
 _raw_url = os.getenv("DATABASE_URL", "postgresql+asyncpg://autospare:autospare_dev@localhost:5432/autospare")
 DB_URL = _raw_url.replace("postgresql+asyncpg://", "postgresql://").replace("+asyncpg", "")
-
-OLLAMA_URL = os.getenv("OLLAMA_URL", "")  # e.g. http://VPS_IP:11434
-OLLAMA_MODEL = os.getenv("AGENTS_DEFAULT_MODEL", "qwen3:8b")
 
 SUPPLIER_NAME = "AutoParts Pro IL"
 ILS_TO_USD   = 1 / 3.65
@@ -157,21 +154,12 @@ def _extract_json_list(raw: str) -> list:
     return []
 
 
-async def ask_gpt4o(client: AsyncOpenAI, brand: str, prompt: str) -> list:
+async def ask_gpt4o(brand: str, prompt: str) -> list:
     """Call GPT-4o with the given prompt. Returns list of part dicts.
     Handles 429 rate-limit by waiting and retrying automatically."""
     for attempt in range(5):
         try:
-            resp = await client.chat.completions.create(
-                model=OLLAMA_MODEL,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt},
-                ],
-                max_tokens=4500,
-                temperature=0.3,
-            )
-            raw = resp.choices[0].message.content or ""
+            raw = await hf_text(prompt, system=SYSTEM_PROMPT, timeout=30.0)
             parts = _extract_json_list(raw)
             if parts:
                 return parts
@@ -244,7 +232,7 @@ async def enrich_pending_parts(db: AsyncSession, limit: int = 100) -> Dict[str, 
     Finds up to `limit` parts_catalog rows where:
         needs_oem_lookup = FALSE AND master_enriched = FALSE
     For each part:
-      1. Asks Ollama to infer canonical_name, canonical_name_he, quality_level
+    1. Asks HF text model to infer canonical_name, canonical_name_he, quality_level
       2. Upserts a parts_master row (ON CONFLICT on canonical_name+category)
       3. Inserts a part_variants row linking parts_master -> parts_catalog
       4. Sets parts_catalog.master_enriched = TRUE
@@ -254,7 +242,6 @@ async def enrich_pending_parts(db: AsyncSession, limit: int = 100) -> Dict[str, 
              "inserted_variants": int, "errors": int}
     """
     from sqlalchemy import text as _text
-    from openai import AsyncOpenAI as _OAI
 
     report: Dict[str, Any] = {
         "task": "enrich_pending_parts",
@@ -265,12 +252,10 @@ async def enrich_pending_parts(db: AsyncSession, limit: int = 100) -> Dict[str, 
         "errors": 0,
     }
 
-    if not OLLAMA_URL:
+    if not os.getenv("HF_TOKEN", ""):
         report["status"] = "skipped"
-        report["reason"] = "OLLAMA_URL not set"
+        report["reason"] = "HF_TOKEN not set"
         return report
-
-    client = _OAI(base_url=f"{OLLAMA_URL}/v1", api_key="ollama")
 
     rows = (await db.execute(
         _text("""
@@ -308,16 +293,7 @@ async def enrich_pending_parts(db: AsyncSession, limit: int = 100) -> Dict[str, 
                 f'"quality_level" (one of: OEM, OEM_Equivalent, '
                 f'Aftermarket_Premium, Aftermarket_Standard, Economy).'
             )
-            resp = await client.chat.completions.create(
-                model=OLLAMA_MODEL,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user",   "content": prompt},
-                ],
-                temperature=0.1,
-                max_tokens=120,
-            )
-            raw = resp.choices[0].message.content.strip()
+            raw = (await hf_text(prompt, system=SYSTEM_PROMPT, timeout=30.0)).strip()
             s, e = raw.find("{"), raw.rfind("}") + 1
             data = json.loads(raw[s:e]) if s >= 0 and e > s else {}
 
@@ -389,12 +365,11 @@ async def enrich_pending_parts(db: AsyncSession, limit: int = 100) -> Dict[str, 
 
 
 async def run(mode_new=True, mode_expand=True, specific_brands=None, dry_run=False):
-    if not OLLAMA_URL:
-        print("ERROR: OLLAMA_URL not set in .env"); return
+    if not os.getenv("HF_TOKEN", ""):
+        print("ERROR: HF_TOKEN not set in .env"); return
 
-    print(f"{'[DRY RUN] ' if dry_run else ''}Connecting to DB and Ollama ({OLLAMA_URL})...")
+    print(f"{'[DRY RUN] ' if dry_run else ''}Connecting to DB and Hugging Face Inference API...")
     conn   = await asyncpg.connect(DB_URL)
-    client = AsyncOpenAI(base_url=f"{OLLAMA_URL}/v1", api_key="ollama")
 
     supplier = await conn.fetchrow("SELECT id FROM suppliers WHERE name=$1", SUPPLIER_NAME)
     if not supplier:
@@ -429,7 +404,7 @@ async def run(mode_new=True, mode_expand=True, specific_brands=None, dry_run=Fal
 
             print(f"\n[{brand}] Asking GPT-4o for 50 parts...")
             prompt = build_new_prompt(brand)
-            parts  = await ask_gpt4o(client, brand, prompt)
+            parts  = await ask_gpt4o(brand, prompt)
             if not parts:
                 print(f"  ⚠ No parts returned, skipping"); continue
             print(f"  Got {len(parts)} parts")
@@ -472,7 +447,7 @@ async def run(mode_new=True, mode_expand=True, specific_brands=None, dry_run=Fal
 
             print(f"\n[{brand}] has {current} parts → need {need} more (target={EXPAND_TARGET})")
             prompt = build_expand_prompt(brand, existing_cats, need)
-            parts  = await ask_gpt4o(client, brand, prompt)
+            parts  = await ask_gpt4o(brand, prompt)
             if not parts:
                 print(f"  ⚠ No parts returned, skipping"); continue
             print(f"  Got {len(parts)} new parts from GPT-4o")
@@ -493,7 +468,7 @@ async def run(mode_new=True, mode_expand=True, specific_brands=None, dry_run=Fal
         print(f"[DRY RUN] Would insert ~{total_cat} catalog + supplier_parts entries")
     else:
         print(f"✅ Done!  catalog={total_cat:,}  supplier_parts={total_sp:,}")
-        print("  (GPT-4o via GitHub Models API)")
+        print("  (HF text model via Hugging Face Inference API)")
     print("=" * 60)
 
 

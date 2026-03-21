@@ -2,7 +2,7 @@
 generate_image_embeddings.py
 ────────────────────────────
 One-shot backfill script: for every parts_images row where embedding_generated
-is FALSE, download the image, embed it via Ollama CLIP, and write the resulting
+is FALSE, download the image, embed it via HF CLIP, and write the resulting
 512-dim vector into parts_catalog.image_embedding.
 
 Usage
@@ -29,12 +29,12 @@ from sqlalchemy import text
 sys.path.insert(0, os.path.dirname(__file__))
 
 from BACKEND_DATABASE_MODELS import async_session_factory  # noqa: E402
+from hf_client import HF_CLIP_MODEL, hf_clip  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
-OLLAMA_URL: str = os.getenv("OLLAMA_URL", "http://localhost:11434")
-CLIP_MODEL: str = os.getenv("CLIP_MODEL", "clip")
+CLIP_MODEL: str = os.getenv("HF_CLIP_MODEL", HF_CLIP_MODEL)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -45,28 +45,19 @@ async def _embed_image(client: httpx.AsyncClient, image_url: str) -> list[float]
     r = await client.get(image_url, timeout=15.0, follow_redirects=True)
     r.raise_for_status()
     b64 = base64.b64encode(r.content).decode()
-
-    er = await client.post(
-        f"{OLLAMA_URL}/api/embed",
-        json={"model": CLIP_MODEL, "input": b64},
-        timeout=30.0,
-    )
-    er.raise_for_status()
-    data = er.json()
-
-    emb = data.get("embeddings") or data.get("embedding")
-    if not emb:
-        return None
-    # Ollama may return [[...]] or [...]
-    return emb[0] if isinstance(emb[0], list) else emb
+    return await hf_clip(b64, timeout=30.0)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 
 
 async def run(batch_size: int, dry_run: bool) -> None:
-    logger.info("OLLAMA_URL=%s  CLIP_MODEL=%s  batch=%d  dry_run=%s",
-                OLLAMA_URL, CLIP_MODEL, batch_size, dry_run)
+    if not os.getenv("HF_TOKEN", ""):
+        logger.error("HF_TOKEN is not set in .env")
+        return
+
+    logger.info("HF_CLIP_MODEL=%s  batch=%d  dry_run=%s",
+                CLIP_MODEL, batch_size, dry_run)
 
     total_ok = 0
     total_err = 0
