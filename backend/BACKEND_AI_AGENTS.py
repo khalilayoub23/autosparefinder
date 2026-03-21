@@ -42,11 +42,11 @@ All agents use GitHub Models API (FREE) with GPT-4o or Claude 3.5 Sonnet.
 
 CRITICAL BUSINESS RULES (enforced in prompts & code):
   - NEVER expose supplier name to customer - show manufacturer only
-  - Price = (supplier_cost_ils × 1.45) + 18% VAT + 91₪ shipping
+    - Price = (supplier_cost_ils × 1.45) + 18% VAT + ₪29-149 shipping (by supplier)
   - NEVER order from supplier before customer payment confirmed
   - Margin: 45% on cost
   - VAT: 18% (separate line)
-  - Shipping: ~91₪ (separate line)
+    - Shipping: ₪29-149 (לפי ספק)
 ==============================================================================
 """
 
@@ -1146,7 +1146,7 @@ CROSS-REFERENCE: Alternative/equivalent part numbers are stored in the part_cros
                         pnv = pr.get("price_no_vat", 0.0)
                         sp_id = pr.get("supplier_part_id", "")
                         if total > 0:
-                            price_line = f"מחיר: {pnv:.0f}₪ + {vat:.0f}₪ מע\"מ + 91₪ משלוח = **{total:.0f}₪ סה\"כ**"
+                            price_line = f"מחיר: {pnv:.0f}₪ + {vat:.0f}₪ מע\"מ + ₪29-149 משלוח (לפי ספק) = **{total:.0f}₪ סה\"כ**"
                         else:
                             price_line = "מחיר: לא זמין"
                         lines.append(
@@ -1181,7 +1181,7 @@ CROSS-REFERENCE: Alternative/equivalent part numbers are stored in the part_cros
                             delivery = pr.get("estimated_delivery_days", 14)
                             warranty = pr.get("warranty_months", 12)
                             sp_id = pr.get("supplier_part_id", "")
-                            price_line = f"{pnv:.0f}₪ + {vat:.0f}₪ מע\"מ + 91₪ משלוח = **{total:.0f}₪**" if total > 0 else "מחיר: לא זמין"
+                            price_line = f"{pnv:.0f}₪ + {vat:.0f}₪ מע\"מ + ₪29-149 משלוח (לפי ספק) = **{total:.0f}₪**" if total > 0 else "מחיר: לא זמין"
                             lines.append(
                                 f"{i}. [{p.get('part_type','?')}] {p.get('manufacturer','?')} – {p.get('name','?')}\n"
                                 f"   {price_line} | {avail_he} | {delivery} ימים | אחריות {warranty} חודשים\n"
@@ -1332,7 +1332,7 @@ CRITICAL RULES:
                         warranty = pr.get("warranty_months", 12)
                         sp_id = pr.get("supplier_part_id", "")
                         avail_he = "זמין להזמנה ✅" if pr.get("availability") == "in_stock" else "זמין בהזמנה מיוחדת ⏳"
-                        price_line = f"{pnv:.0f}₪ + {vat:.0f}₪ מע\"מ + 91₪ משלוח = **{total:.0f}₪**" if total > 0 else "מחיר: לא זמין"
+                        price_line = f"{pnv:.0f}₪ + {vat:.0f}₪ מע\"מ + ₪29-149 משלוח (לפי ספק) = **{total:.0f}₪**" if total > 0 else "מחיר: לא זמין"
                         lines.append(
                             f"{i}. [{tier}] {p.get('manufacturer','?')} – {p.get('name','?')}\n"
                             f"   {price_line} | {avail_he} | אספקה: {delivery} ימים | אחריות: {warranty} חודשים\n"
@@ -1355,7 +1355,7 @@ CRITICAL RULES:
                             warranty = pr.get("warranty_months", 12)
                             sp_id = pr.get("supplier_part_id", "")
                             avail_he = "זמין להזמנה ✅" if pr.get("availability") == "in_stock" else "זמין בהזמנה מיוחדת ⏳"
-                            price_line = f"{pnv:.0f}₪ + {vat:.0f}₪ מע\"מ + 91₪ משלוח = **{total:.0f}₪**" if total > 0 else "לא זמין"
+                            price_line = f"{pnv:.0f}₪ + {vat:.0f}₪ מע\"מ + ₪29-149 משלוח (לפי ספק) = **{total:.0f}₪**" if total > 0 else "לא זמין"
                             lines.append(
                                 f"{i}. {p.get('manufacturer','?')} – {p.get('name','?')} ({p.get('part_type','?')})\n"
                                 f"   {price_line} | {avail_he} | {delivery} ימים | {warranty} חודשים אחריות\n"

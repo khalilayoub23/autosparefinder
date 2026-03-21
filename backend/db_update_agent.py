@@ -10,7 +10,7 @@ Tasks
 2. normalize_part_types      – unify to "Original" / "OEM" / "Aftermarket"
 3. normalize_categories      – map variants to 14 canonical Hebrew categories
 4. normalize_availability    – unify to "in_stock" / "out_of_stock" / "on_order"
-5. fix_base_prices           – ensure base_price = supplier min + 17 % VAT markup
+5. fix_base_prices           – ensure base_price = supplier min + 18 % VAT markup
 6. flag_fake_skus            – set needs_oem_lookup=True for auto-generated SKUs
 7. fill_car_brands           – seed il_importer / warranty_* for known makes
 8. run_all_tasks             – orchestrator that runs 1-7 and returns a report dict
@@ -493,7 +493,7 @@ async def normalize_availability(db: AsyncSession) -> Dict[str, Any]:
 
 async def fix_base_prices(db: AsyncSession) -> Dict[str, Any]:
     """
-    Ensure parts_catalog.base_price (incl. 17 % VAT) is not below the
+    Ensure parts_catalog.base_price (incl. 18 % VAT) is not below the
     cheapest supplier cost:
 
         min_supplier_cost_ils * (1 + VAT) * MARGIN
