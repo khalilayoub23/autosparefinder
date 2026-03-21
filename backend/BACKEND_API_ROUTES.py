@@ -42,8 +42,19 @@ from BACKEND_AUTH_SECURITY import (
     check_rate_limit
 )
 from BACKEND_AI_AGENTS import process_user_message, process_agent_response_for_message, get_agent, OrdersAgent
+from auto_backup import _backup_loop
 
 load_dotenv()
+
+# Fire-and-forget task semaphore: cap unbounded asyncio.create_task(_guarded_task()) fan-out.
+_TASK_SEMAPHORE = asyncio.Semaphore(50)
+
+
+async def _guarded_task(coro) -> None:
+    """Acquire the shared semaphore before running a fire-and-forget coroutine."""
+    async with _TASK_SEMAPHORE:
+        await coro
+
 
 # ==============================================================================
 # DROPSHIPPING FULFILLMENT
@@ -88,7 +99,7 @@ async def trigger_supplier_fulfillment(paid_orders: list, db: AsyncSession) -> N
                     message=_msg,
                     data={"order_id": str(order.id), "order_number": order.order_number, "needs_manual": True},
                 ))
-                asyncio.create_task(publish_notification(str(admin.id), {"type": "supplier_order", "title": _title, "message": _msg}))
+                asyncio.create_task(_guarded_task(publish_notification(str(admin.id), {"type": "supplier_order", "title": _title, "message": _msg})))
             continue
 
         # Group items by supplier_name (already stored on OrderItem)
@@ -177,7 +188,7 @@ async def trigger_supplier_fulfillment(paid_orders: list, db: AsyncSession) -> N
                     },
                     read_at=datetime.utcnow(),
                 ))
-                asyncio.create_task(publish_notification(str(admin.id), {"type": "supplier_order", "title": _title2, "message": _msg2}))
+                asyncio.create_task(_guarded_task(publish_notification(str(admin.id), {"type": "supplier_order", "title": _title2, "message": _msg2})))
 
         print(f"[Fulfillment] Order {order.order_number}: agent auto-fulfilled {len(by_supplier)} supplier(s) → supplier_ordered")
 
@@ -753,7 +764,7 @@ async def send_message(data: ChatMessageRequest, request: Request, current_user:
             except Exception as exc:
                 print(f"[BG AGENT FATAL] conv={conv_id}: {exc}")
 
-    asyncio.create_task(_run_agent_bg())
+    asyncio.create_task(_guarded_task(_run_agent_bg()))
 
     # ── 4. Return immediately — frontend will poll for the assistant reply ───
     return {
@@ -2440,7 +2451,7 @@ async def cancel_order(order_id: str, data: OrderCancelRequest, current_user: Us
             message=_cancel_msg,
             type="refund_initiated",
         ))
-        asyncio.create_task(publish_notification(str(current_user.id), {"type": "refund_initiated", "title": _cancel_title, "message": _cancel_msg}))
+        asyncio.create_task(_guarded_task(publish_notification(str(current_user.id), {"type": "refund_initiated", "title": _cancel_title, "message": _cancel_msg})))
 
     await db.commit()
     return {
@@ -2693,7 +2704,7 @@ async def create_checkout_session(
                         await bg_db.commit()
                 except Exception as _e:
                     print(f"[Fulfillment BG] error: {_e}")
-        asyncio.create_task(_fulfill_bg())
+        asyncio.create_task(_guarded_task(_fulfill_bg()))
         return {
             "checkout_url": f"{frontend_url}/payment/success?session_id={sim_session_id}&simulated=1",
             "session_id": sim_session_id,
@@ -3045,7 +3056,7 @@ async def verify_checkout_session(
                 message=_multi_msg,
                 type="payment_success",
             ))
-            asyncio.create_task(publish_notification(str(current_user.id), {"type": "payment_success", "title": "תשלום התקבל ✅", "message": _multi_msg}))
+            asyncio.create_task(_guarded_task(publish_notification(str(current_user.id), {"type": "payment_success", "title": "תשלום התקבל ✅", "message": _multi_msg})))
             # ── Dropshipping: notify admin(s) per supplier & advance → processing
             await trigger_supplier_fulfillment(list(multi_orders), db)
             await db.commit()
@@ -3094,7 +3105,7 @@ async def verify_checkout_session(
             message=_single_pay_msg,
             type="payment_success",
         ))
-        asyncio.create_task(publish_notification(str(current_user.id), {"type": "payment_success", "title": "תשלום התקבל ✅", "message": _single_pay_msg}))
+        asyncio.create_task(_guarded_task(publish_notification(str(current_user.id), {"type": "payment_success", "title": "תשלום התקבל ✅", "message": _single_pay_msg})))
         # ── Dropshipping: notify admin(s) per supplier & advance → processing ─
         await trigger_supplier_fulfillment([order], db)
         await db.commit()
@@ -3465,7 +3476,7 @@ async def refund_payment(
                 title="החזר כספי אושר על ידי מנהל",
                 message=_refund_msg,
             ))
-            asyncio.create_task(publish_notification(str(order.user_id), {"type": "refund", "title": "החזר כספי אושר על ידי מנהל", "message": _refund_msg}))
+            asyncio.create_task(_guarded_task(publish_notification(str(order.user_id), {"type": "refund", "title": "החזר כספי אושר על ידי מנהל", "message": _refund_msg})))
             # Ensure an Invoice record exists (credit note for the refund)
             existing_inv = (await db.execute(
                 select(Invoice).where(Invoice.order_id == order.id)
@@ -3582,7 +3593,7 @@ async def mark_supplier_order_done(
                     message=_track_msg,
                     data={"order_id": str(order.id), "order_number": order.order_number, "tracking_number": tracking_number, "tracking_url": tracking_url},
                 ))
-                asyncio.create_task(publish_notification(str(order.user_id), {"type": "order_update", "title": _track_title, "message": _track_msg}))
+                asyncio.create_task(_guarded_task(publish_notification(str(order.user_id), {"type": "order_update", "title": _track_title, "message": _track_msg})))
             else:
                 # No tracking yet — still advance status so customer sees progress
                 if order.status in ("processing", "paid"):
@@ -3596,7 +3607,7 @@ async def mark_supplier_order_done(
                     message=_notrack_msg,
                     data={"order_id": str(order.id), "order_number": order.order_number},
                 ))
-                asyncio.create_task(publish_notification(str(order.user_id), {"type": "order_update", "title": _notrack_title, "message": _notrack_msg}))
+                asyncio.create_task(_guarded_task(publish_notification(str(order.user_id), {"type": "order_update", "title": _notrack_title, "message": _notrack_msg})))
 
     n.read_at = datetime.utcnow()
     await db.commit()
@@ -3759,7 +3770,7 @@ async def create_return(data: ReturnRequest, current_user: User = Depends(get_cu
         message=_ret_open_msg,
         data={"return_number": return_number, "order_number": order.order_number, "reason": data.reason},
     ))
-    asyncio.create_task(publish_notification(str(current_user.id), {"type": "return_update", "title": _ret_open_title, "message": _ret_open_msg}))
+    asyncio.create_task(_guarded_task(publish_notification(str(current_user.id), {"type": "return_update", "title": _ret_open_title, "message": _ret_open_msg})))
 
     await db.commit()
     await db.refresh(ret)
@@ -3935,7 +3946,7 @@ async def approve_return(return_id: str, refund_percentage: int = None, current_
         message=_ret_approve_msg,
         data={"return_number": ret.return_number, "refund_amount": float(ret.refund_amount), "refund_percentage": refund_percentage, "handling_fee": float(handling_fee_amount)},
     ))
-    asyncio.create_task(publish_notification(str(ret.user_id), {"type": "return_update", "title": _ret_approve_title, "message": _ret_approve_msg}))
+    asyncio.create_task(_guarded_task(publish_notification(str(ret.user_id), {"type": "return_update", "title": _ret_approve_title, "message": _ret_approve_msg})))
 
     await db.commit()
     return {"message": "Return approved", "refund_amount": float(ret.refund_amount), "refund_percentage": refund_percentage, "handling_fee": float(handling_fee_amount)}
@@ -3973,7 +3984,7 @@ async def reject_return(
         message=_ret_reject_msg,
         data={"return_number": ret.return_number, "rejection_reason": reason},
     ))
-    asyncio.create_task(publish_notification(str(ret.user_id), {"type": "return_update", "title": _ret_reject_title, "message": _ret_reject_msg}))
+    asyncio.create_task(_guarded_task(publish_notification(str(ret.user_id), {"type": "return_update", "title": _ret_reject_title, "message": _ret_reject_msg})))
 
     await db.commit()
     return {"message": "Return rejected", "return_number": ret.return_number}
@@ -4816,7 +4827,7 @@ async def update_order_status_admin(
         title="עדכון סטטוס הזמנה",
         message=_status_msg,
     ))
-    asyncio.create_task(publish_notification(str(order.user_id), {"type": "order_update", "title": "עדכון סטטוס הזמנה", "message": _status_msg}))
+    asyncio.create_task(_guarded_task(publish_notification(str(order.user_id), {"type": "order_update", "title": "עדכון סטטוס הזמנה", "message": _status_msg})))
     await db.commit()
     return {"message": "Status updated", "old": old_status, "new": new_status}
 
@@ -5572,7 +5583,7 @@ async def trigger_price_sync(
             except Exception as e:
                 print(f"[PriceSync manual] error: {e}")
 
-    asyncio.create_task(_run())
+    asyncio.create_task(_guarded_task(_run()))
     return {"status": "started", "message": "Price sync triggered in background"}
 
 
@@ -5586,6 +5597,56 @@ async def get_public_settings(db: AsyncSession = Depends(get_db)):
 @app.get("/api/v1/system/version")
 async def get_version():
     return {"version": "1.0.0", "build": "2026.02.28", "environment": os.getenv("ENVIRONMENT", "development")}
+
+
+@app.get("/api/v1/system/metrics")
+async def get_system_metrics(
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Real-time operational health snapshot for admins."""
+    rows = (await db.execute(text("""
+        SELECT
+            COUNT(*)                                                          AS total_parts,
+            COUNT(*) FILTER (WHERE is_available)                             AS active_parts,
+            COUNT(*) FILTER (WHERE needs_oem_lookup)                         AS pending_enrichment
+        FROM parts_catalog
+    """))).fetchone()
+
+    embed_pending = (await db.execute(text(
+        "SELECT COUNT(*) FROM parts_images WHERE embedding IS NULL"
+    ))).scalar()
+
+    approval_pending = (await db.execute(text(
+        "SELECT COUNT(*) FROM approval_queue WHERE status = 'pending'"
+    ))).scalar()
+
+    search_misses = (await db.execute(text(
+        "SELECT COUNT(*) FROM search_misses WHERE triggered_scrape = FALSE"
+    ))).scalar()
+
+    bulk_deals = (await db.execute(text(
+        "SELECT COUNT(*) FROM approval_queue WHERE entity_type = 'bulk_deal' AND status = 'pending'"
+    ))).scalar()
+
+    from db_update_agent import _last_report, _agent_running
+    return {
+        "catalog": {
+            "total_parts":        rows.total_parts if rows else 0,
+            "active_parts":       rows.active_parts if rows else 0,
+            "pending_enrichment": rows.pending_enrichment if rows else 0,
+            "pending_embedding":  embed_pending,
+        },
+        "queues": {
+            "approval_pending":           approval_pending,
+            "bulk_deals_pending":         bulk_deals,
+            "search_misses_untriggered": search_misses,
+        },
+        "workers": {
+            "db_agent_running":     _agent_running,
+            "db_agent_last_report": _last_report,
+        },
+    }
 
 
 # ==============================================================================
@@ -5632,7 +5693,7 @@ async def _notify_search_miss_loop() -> None:
                             message=_sm_msg,
                             data={"query": row.query, "search_miss_id": str(row.id)},
                         ))
-                        asyncio.create_task(publish_notification(str(row.user_id), {"type": "search_miss_resolved", "title": _sm_title, "message": _sm_msg}))
+                        asyncio.create_task(_guarded_task(publish_notification(str(row.user_id), {"type": "search_miss_resolved", "title": _sm_title, "message": _sm_msg})))
                         notified_ids.append(str(row.id))
                     await pii_db.commit()
 
@@ -5778,6 +5839,7 @@ async def startup():
     asyncio.create_task(_pending_payment_reminder_loop())  # ← pending-payment WhatsApp reminder (every 30 min)
     asyncio.create_task(_health_monitor_loop())            # ← service health monitoring + admin alerting (every 5 min)
     asyncio.create_task(_vip_detection_loop())             # ← VIP promotion + order stats sync (every 24 h)
+    asyncio.create_task(_backup_loop())                    # ← pg_dump autospare + autospare_pii (every 24 h)
     start_scraper_task()           # ← catalog scraper background loop
     start_db_agent(get_db, 6.0)   # ← DB cleaning / normalisation agent (every 6h)
     print("✅ All systems ready — price-sync + catalog-scraper + db-agent schedulers started")
@@ -5857,7 +5919,7 @@ async def _stuck_orders_monitor_loop():
                                 "auto_handled": True,
                             },
                         ))
-                        asyncio.create_task(publish_notification(str(admin.id), {"type": "system", "title": _stuck_title, "message": _stuck_msg}))
+                        asyncio.create_task(_guarded_task(publish_notification(str(admin.id), {"type": "system", "title": _stuck_title, "message": _stuck_msg})))
                     await db.commit()
                     print(f"[OrderMonitor] ✅ Auto-fulfilled: {order_list}")
                 else:
@@ -5900,7 +5962,7 @@ async def _stuck_orders_monitor_loop():
                                 message=_ship_msg,
                                 data={"advanced": advanced, "auto_tracked": True},
                             ))
-                            asyncio.create_task(publish_notification(str(admin.id), {"type": "system", "title": _ship_title, "message": _ship_msg}))
+                            asyncio.create_task(_guarded_task(publish_notification(str(admin.id), {"type": "system", "title": _ship_title, "message": _ship_msg})))
                         await db.commit()
                         print(f"[OrderMonitor] Pass 2: advanced {len(advanced)} order(s): {', '.join(advanced)}")
                     else:
@@ -6498,7 +6560,7 @@ async def scraper_run_now(
         except Exception as exc:
             print(f"[Scraper] manual run error: {exc}")
 
-    asyncio.create_task(_run())
+    asyncio.create_task(_guarded_task(_run()))
     return {
         "status": "started",
         "message": f"Scraper cycle started for {batch_size} parts",
@@ -6596,7 +6658,7 @@ async def scraper_discover_all(
         except Exception as exc:
             print(f"[Rex] discovery error: {exc}")
 
-    asyncio.create_task(_run())
+    asyncio.create_task(_guarded_task(_run()))
     return {
         "status": "started",
         "message": f"Rex brand discovery started (target={target}, per_run={per_run})",
@@ -6623,7 +6685,7 @@ async def scraper_discover_brand(
         except Exception as exc:
             print(f"[Rex] discovery error for {brand}: {exc}")
 
-    asyncio.create_task(_run())
+    asyncio.create_task(_guarded_task(_run()))
     return {
         "status": "started",
         "message": f"Rex discovering parts for '{brand}' (target={target} parts)",
@@ -6675,7 +6737,7 @@ async def db_agent_run_all(
             except Exception as exc:
                 print(f"[DB Agent] background run error: {exc}")
 
-    asyncio.create_task(_run())
+    asyncio.create_task(_guarded_task(_run()))
     return {"status": "started", "message": "All DB agent tasks triggered in the background"}
 
 

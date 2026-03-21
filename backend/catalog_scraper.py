@@ -1380,6 +1380,11 @@ async def run_brand_discovery(
     if not DISCOVERY_ENABLED:
         return {"status": "disabled", "message": "DISCOVERY_ENABLED=false"}
 
+    from distributed_lock import acquire_lock
+    _disc_lock = acquire_lock("brand_discovery", ttl=86400)
+    if not await _disc_lock.__aenter__():
+        return {"status": "skipped", "reason": "brand_discovery already running on another worker"}
+
     target  = target  or DISCOVERY_TARGET
     per_run = per_run or DISCOVERY_PER_RUN
 
@@ -1577,6 +1582,7 @@ async def run_brand_discovery(
 
     report["finished_at"] = datetime.utcnow().isoformat()
     print(f"\n[Rex] ✅ Brand discovery done — total inserted: {report['total_inserted']}")
+    await _disc_lock.__aexit__(None, None, None)
     return report
 
 
@@ -1594,6 +1600,11 @@ async def run_scraper_cycle(*, batch_size: int = SCRAPE_BATCH_SIZE) -> Dict[str,
     """
     if not SCRAPE_ENABLED:
         return {"status": "disabled", "message": "SCRAPE_ENABLED=false"}
+
+    from distributed_lock import acquire_lock
+    _cycle_lock = acquire_lock("scraper_cycle", ttl=7200)
+    if not await _cycle_lock.__aenter__():
+        return {"status": "skipped", "reason": "scraper_cycle already running on another worker"}
 
     started_at = datetime.utcnow()
     await fetch_ils_exchange_rate()
@@ -1716,6 +1727,7 @@ async def run_scraper_cycle(*, batch_size: int = SCRAPE_BATCH_SIZE) -> Dict[str,
         f"errors={report['errors']}  "
         f"elapsed={report['elapsed_s']}s"
     )
+    await _cycle_lock.__aexit__(None, None, None)
     return report
 
 

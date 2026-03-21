@@ -70,7 +70,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from BACKEND_DATABASE_MODELS import (
     AgentAction, ApprovalQueue, CatalogVersion, Conversation, Message, Notification, Order, OrderItem,
     PartsCatalog, Supplier, SupplierPart, SystemLog, SystemSetting,
-    User, Vehicle, CarBrand, get_db, async_session_factory,
+    User, Vehicle, CarBrand, PriceHistory, get_db, async_session_factory,
 )
 from BACKEND_AUTH_SECURITY import publish_notification
 
@@ -1973,6 +1973,7 @@ class SupplierManagerAgent(BaseAgent):
 """
 
     async def sync_prices(self, db: AsyncSession) -> Dict:
+        # PRICE PIPELINE OWNER: Boaz — simulates daily market drift on supplier_parts.price_ils/price_usd
         """
         Daily price sync job.
 
@@ -1989,6 +1990,10 @@ class SupplierManagerAgent(BaseAgent):
           - ~5% of on_order parts flip to in_stock each run (restocking simulation)
           - ~3% of in_stock parts flip to on_order (stock-out simulation)
         """
+        from distributed_lock import acquire_lock
+        _sync_lock = acquire_lock("sync_prices", ttl=3600)
+        if not await _sync_lock.__aenter__():
+            return {"status": "skipped", "reason": "sync_prices already running on another worker"}
         import random
         import hashlib
 
@@ -2025,6 +2030,7 @@ class SupplierManagerAgent(BaseAgent):
                 .order_by(SupplierPart.id)
                 .offset(offset)
                 .limit(BATCH)
+                .with_for_update(skip_locked=True)
             )).scalars().all()
 
             if not rows:
@@ -2053,6 +2059,16 @@ class SupplierManagerAgent(BaseAgent):
                         sp.price_ils = new_ils
                         sp.price_usd = round(new_ils / USD_TO_ILS, 2)
                         report["parts_updated"] += 1
+                        db.add(PriceHistory(
+                            supplier_part_id=sp.id,
+                            old_price_ils=cur_ils,
+                            new_price_ils=new_ils,
+                            old_price_usd=round(cur_ils / USD_TO_ILS, 2),
+                            new_price_usd=round(new_ils / USD_TO_ILS, 2),
+                            change_pct=round((new_ils - cur_ils) / cur_ils * 100, 4),
+                            source="boaz_sync",
+                            ils_per_usd_rate=USD_TO_ILS,
+                        ))
                         # Drop > 10% detection
                         if new_ils < cur_ils * 0.90:
                             drop_pct = round((cur_ils - new_ils) / cur_ils * 100, 2)
@@ -2080,10 +2096,8 @@ class SupplierManagerAgent(BaseAgent):
                 except Exception as e:
                     report["errors"].append(str(e)[:120])
 
-            await db.flush()
+            await db.commit()   # persist this batch; partial progress saved on crash
             offset += BATCH
-
-        await db.commit()
 
         # Price drop alerts — notify all admins
         report["price_drops"] = drops
@@ -2165,6 +2179,7 @@ class SupplierManagerAgent(BaseAgent):
                 await self.detect_bulk_opportunities(bulk_db)
 
         asyncio.create_task(_bulk_task())
+        await _sync_lock.__aexit__(None, None, None)
         return report
 
     async def detect_bulk_opportunities(self, db: AsyncSession) -> int:

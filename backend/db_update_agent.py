@@ -18,6 +18,7 @@ Tasks
 Admin endpoints call run_all_tasks or individual tasks through get_db.
 run_agent_background_loop()  – optional periodic loop (disabled by default).
 """
+# DATA QUALITY PIPELINE OWNER: DB Update Agent — normalises and enriches parts_catalog
 
 from __future__ import annotations
 
@@ -921,10 +922,77 @@ async def _generate_image_embeddings_task(db: AsyncSession) -> Dict[str, Any]:
     return {"task": "generate_image_embeddings", "status": "ok", "triggered": len(rows)}
 
 
+async def dedup_catalog_parts(db: AsyncSession) -> Dict[str, Any]:
+    """
+    Remove duplicate rows in parts_catalog:
+      1. Same SKU → null out the older duplicate's SKU (keep newest).
+      2. Same (name, manufacturer_id) → flag older rows with needs_oem_lookup=True for manual review.
+    Both steps are idempotent.
+    """
+    t0 = time.monotonic()
+    nulled_skus = 0
+    flagged_dupes = 0
+
+    try:
+        # Step 1 — duplicate SKUs: null out older row's sku
+        r1 = await db.execute(text("""
+            WITH dupes AS (
+                SELECT id FROM (
+                    SELECT id,
+                           ROW_NUMBER() OVER (PARTITION BY sku ORDER BY created_at DESC) AS rn
+                    FROM parts_catalog
+                    WHERE sku IS NOT NULL
+                ) ranked
+                WHERE rn > 1
+            )
+            UPDATE parts_catalog SET sku = NULL, updated_at = NOW()
+            FROM dupes WHERE parts_catalog.id = dupes.id
+            RETURNING parts_catalog.id
+        """))
+        nulled_skus = len(r1.fetchall())
+
+        # Step 2 — duplicate (name, manufacturer_id): flag older rows for review
+        r2 = await db.execute(text("""
+            WITH dupes AS (
+                SELECT id FROM (
+                    SELECT id,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY lower(name), manufacturer_id
+                               ORDER BY created_at DESC
+                           ) AS rn
+                    FROM parts_catalog
+                    WHERE name IS NOT NULL AND manufacturer_id IS NOT NULL
+                ) ranked
+                WHERE rn > 1
+            )
+            UPDATE parts_catalog SET needs_oem_lookup = TRUE, updated_at = NOW()
+            FROM dupes WHERE parts_catalog.id = dupes.id
+            RETURNING parts_catalog.id
+        """))
+        flagged_dupes = len(r2.fetchall())
+
+        await db.commit()
+        logger.info("dedup_catalog_parts: nulled_skus=%d flagged_dupes=%d", nulled_skus, flagged_dupes)
+
+    except Exception as exc:
+        await db.rollback()
+        logger.error("dedup_catalog_parts failed: %s", exc)
+        return {"task": "dedup_catalog_parts", "status": "error", "error": str(exc)}
+
+    return {
+        "task": "dedup_catalog_parts",
+        "status": "ok",
+        "nulled_skus": nulled_skus,
+        "flagged_dupes": flagged_dupes,
+        "elapsed_s": round(time.monotonic() - t0, 2),
+    }
+
+
 TASK_REGISTRY: Dict[str, Any] = {
     "clean_part_names":          clean_part_names,
     "normalize_part_types":      normalize_part_types,
     "normalize_categories":      normalize_categories,
+    "dedup_catalog_parts":       dedup_catalog_parts,
     "normalize_availability":    normalize_availability,
     "fix_base_prices":           fix_base_prices,
     "flag_fake_skus":            flag_fake_skus,
@@ -955,6 +1023,11 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
     Run all cleaning + normalisation tasks in the recommended order.
     Returns a summary report dict.
     """
+    from distributed_lock import acquire_lock
+    _agent_lock = acquire_lock("db_update_agent", ttl=3600)
+    if not await _agent_lock.__aenter__():
+        return {"status": "skipped", "reason": "db_update_agent already running on another worker",
+                "tasks_ok": 0, "tasks_error": 0}
     global _agent_running, _last_report
     _agent_running = True
     started_at = datetime.now(timezone.utc).isoformat()
@@ -967,6 +1040,7 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
         "clean_part_names",
         "normalize_part_types",
         "normalize_categories",
+        "dedup_catalog_parts",
         "normalize_availability",
         "flag_fake_skus",
         "fix_base_prices",
@@ -1004,6 +1078,7 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
         err_count,
         total_elapsed,
     )
+    await _agent_lock.__aexit__(None, None, None)
     return report
 
 

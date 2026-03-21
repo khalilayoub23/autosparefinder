@@ -663,6 +663,7 @@ class Order(PiiBase):
     shipped_at = Column(DateTime, nullable=True)
     delivered_at = Column(DateTime, nullable=True)
     cancelled_at = Column(DateTime, nullable=True)
+    deleted_at = Column(DateTime, nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -849,6 +850,7 @@ class Conversation(PiiBase):
     started_at = Column(DateTime, default=datetime.utcnow)
     last_message_at = Column(DateTime, default=datetime.utcnow)
     ended_at = Column(DateTime, nullable=True)
+    deleted_at = Column(DateTime, nullable=True, index=True)
 
     # Relationships
     user = relationship("User", back_populates="conversations")
@@ -871,6 +873,7 @@ class Message(PiiBase):
     model_used = Column(String(100), nullable=True)
     tokens_used = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    deleted_at = Column(DateTime, nullable=True, index=True)
 
     # Relationships
     conversation = relationship("Conversation", back_populates="messages")
