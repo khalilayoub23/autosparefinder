@@ -8,39 +8,60 @@ can still run (avoids a Redis outage taking down all background jobs).
 from __future__ import annotations
 
 import logging
-from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from dataclasses import dataclass
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-@asynccontextmanager
+@dataclass
+class DistributedLock:
+    redis: Any
+    key: str
+    acquired: bool
+
+    def __bool__(self) -> bool:
+        return self.acquired
+
+    async def release(self) -> None:
+        if not self.acquired or self.redis is None:
+            return
+        try:
+            await self.redis.delete(self.key)
+        except Exception as exc:
+            logger.warning("acquire_lock: failed to release %s: %s", self.key, exc)
+
+    async def __aenter__(self) -> bool:
+        return self.acquired
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        await self.release()
+
+
 async def acquire_lock(
+    redis: Any,
     lock_name: str,
     *,
-    ttl: int = 3600,
+    ttl_seconds: int = 3600,
     namespace: str = "autospare:lock:",
-) -> AsyncIterator[bool]:
+) -> DistributedLock:
     """
-    Async context manager that acquires a Redis SET NX EX lock.
+    Acquire a Redis SET NX EX lock and return a lock handle.
 
-    Yields:
-        True  — lock acquired (proceed normally)
-        False — lock already held by another worker (caller should skip)
-
-    Fails open: if Redis is unavailable, always yields True so the worker
-    still runs rather than silently doing nothing.
+    The returned lock handle is truthy only when acquired.
+    Fails open: if Redis is unavailable, returns acquired=True so workers
+    still run rather than silently doing nothing.
 
     Usage::
 
-        async with acquire_lock("my_job", ttl=3600) as locked:
-            if not locked:
-                return {"status": "skipped"}
+        lock = await acquire_lock(redis, "my_job", ttl_seconds=3600)
+        if not lock:
+            return {"status": "skipped"}
+        try:
             # ... do work ...
+        finally:
+            await lock.release()
     """
-    from BACKEND_AUTH_SECURITY import get_redis
-
-    redis = await get_redis()
     key = f"{namespace}{lock_name}"
     acquired = False
 
@@ -48,19 +69,7 @@ async def acquire_lock(
         logger.warning(
             "acquire_lock: Redis unavailable — proceeding without lock (%s)", key
         )
-        try:
-            yield True
-        finally:
-            return
+        return DistributedLock(redis=None, key=key, acquired=True)
 
-    try:
-        acquired = bool(await redis.set(key, "1", ex=ttl, nx=True))
-        yield acquired
-    finally:
-        if acquired:
-            try:
-                await redis.delete(key)
-            except Exception as exc:
-                logger.warning(
-                    "acquire_lock: failed to release %s: %s", key, exc
-                )
+    acquired = bool(await redis.set(key, "1", ex=ttl_seconds, nx=True))
+    return DistributedLock(redis=redis, key=key, acquired=acquired)

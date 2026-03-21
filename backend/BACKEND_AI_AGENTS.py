@@ -2001,9 +2001,10 @@ class SupplierManagerAgent(BaseAgent):
           - ~5% of on_order parts flip to in_stock each run (restocking simulation)
           - ~3% of in_stock parts flip to on_order (stock-out simulation)
         """
+        from BACKEND_AUTH_SECURITY import get_redis
         from distributed_lock import acquire_lock
-        _sync_lock = acquire_lock("sync_prices", ttl=3600)
-        if not await _sync_lock.__aenter__():
+        _sync_lock = await acquire_lock(await get_redis(), "sync_prices", ttl_seconds=3600)
+        if not _sync_lock:
             return {"status": "skipped", "reason": "sync_prices already running on another worker"}
         import random
         import hashlib
@@ -2190,7 +2191,7 @@ class SupplierManagerAgent(BaseAgent):
                 await self.detect_bulk_opportunities(bulk_db)
 
         asyncio.create_task(_bulk_task())
-        await _sync_lock.__aexit__(None, None, None)
+        await _sync_lock.release()
         return report
 
     async def detect_bulk_opportunities(self, db: AsyncSession) -> int:

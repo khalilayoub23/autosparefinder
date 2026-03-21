@@ -1032,9 +1032,10 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
     Run all cleaning + normalisation tasks in the recommended order.
     Returns a summary report dict.
     """
+    from BACKEND_AUTH_SECURITY import get_redis
     from distributed_lock import acquire_lock
-    _agent_lock = acquire_lock("db_update_agent", ttl=3600)
-    if not await _agent_lock.__aenter__():
+    _agent_lock = await acquire_lock(await get_redis(), "db_update_agent", ttl_seconds=3600)
+    if not _agent_lock:
         return {"status": "skipped", "reason": "db_update_agent already running on another worker",
                 "tasks_ok": 0, "tasks_error": 0}
     global _agent_running, _last_report
@@ -1098,7 +1099,7 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
                 await job_registry_finish(db, job_id, status="completed")
             except Exception as exc:
                 logger.warning("run_all_tasks job_registry_finish failed: %s", exc)
-        await _agent_lock.__aexit__(None, None, None)
+        await _agent_lock.release()
         return report
 
     except Exception as exc:
@@ -1108,7 +1109,7 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
             except Exception:
                 pass
         _agent_running = False
-        await _agent_lock.__aexit__(None, None, None)
+        await _agent_lock.release()
         raise
 
 

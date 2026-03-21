@@ -35,6 +35,7 @@ Tools exposed to admin API via /api/v1/admin/scraper/*:
   db_upsert_part · db_update_supplier_part · db_log
 ==============================================================================
 """
+# CATALOG PIPELINE OWNER: Rex — writes parts_catalog + supplier_parts (real scraped prices).
 from __future__ import annotations
 
 import asyncio
@@ -1415,9 +1416,10 @@ async def run_brand_discovery(
     if not DISCOVERY_ENABLED:
         return {"status": "disabled", "message": "DISCOVERY_ENABLED=false"}
 
+    from BACKEND_AUTH_SECURITY import get_redis
     from distributed_lock import acquire_lock
-    _disc_lock = acquire_lock("brand_discovery", ttl=86400)
-    if not await _disc_lock.__aenter__():
+    _disc_lock = await acquire_lock(await get_redis(), "brand_discovery", ttl_seconds=86400)
+    if not _disc_lock:
         return {"status": "skipped", "reason": "brand_discovery already running on another worker"}
 
     target  = target  or DISCOVERY_TARGET
@@ -1640,7 +1642,7 @@ async def run_brand_discovery(
 
     report["finished_at"] = datetime.utcnow().isoformat()
     print(f"\n[Rex] ✅ Brand discovery done — total inserted: {report['total_inserted']}")
-    await _disc_lock.__aexit__(None, None, None)
+    await _disc_lock.release()
     return report
 
 
@@ -1659,9 +1661,10 @@ async def run_scraper_cycle(*, batch_size: int = SCRAPE_BATCH_SIZE) -> Dict[str,
     if not SCRAPE_ENABLED:
         return {"status": "disabled", "message": "SCRAPE_ENABLED=false"}
 
+    from BACKEND_AUTH_SECURITY import get_redis
     from distributed_lock import acquire_lock
-    _cycle_lock = acquire_lock("scraper_cycle", ttl=7200)
-    if not await _cycle_lock.__aenter__():
+    _cycle_lock = await acquire_lock(await get_redis(), "scraper_cycle", ttl_seconds=7200)
+    if not _cycle_lock:
         return {"status": "skipped", "reason": "scraper_cycle already running on another worker"}
 
     started_at = datetime.utcnow()
@@ -1802,7 +1805,7 @@ async def run_scraper_cycle(*, batch_size: int = SCRAPE_BATCH_SIZE) -> Dict[str,
         f"errors={report['errors']}  "
         f"elapsed={report['elapsed_s']}s"
     )
-    await _cycle_lock.__aexit__(None, None, None)
+    await _cycle_lock.release()
     return report
 
 
