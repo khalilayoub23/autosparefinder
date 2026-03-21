@@ -206,6 +206,7 @@ async def restore_latest_backup(db_label: str = "autospare", dry_run: bool = Tru
         {"status": "ok"|"error", "test_db": str, "backup_file": str, ...}
     """
     import psycopg2
+    from psycopg2 import sql
     import tempfile
     import shutil
     
@@ -250,7 +251,8 @@ async def restore_latest_backup(db_label: str = "autospare", dry_run: bool = Tru
         cur = conn.cursor()
         
         # Create empty test DB
-        cur.execute(f"CREATE DATABASE {test_dbname}")
+        cur.execute(sql.SQL("CREATE DATABASE {}")
+                .format(sql.Identifier(test_dbname)))
         logger.info(f"Created test database: {test_dbname}")
         cur.close()
         conn.close()
@@ -288,7 +290,10 @@ async def restore_latest_backup(db_label: str = "autospare", dry_run: bool = Tru
                 database="postgres",
             )
             conn.autocommit = True
-            conn.cursor().execute(f"DROP DATABASE IF EXISTS {test_dbname}")
+            conn.cursor().execute(
+                sql.SQL("DROP DATABASE IF EXISTS {}")
+                .format(sql.Identifier(test_dbname))
+            )
             conn.close()
             return {"status": "error", "reason": f"restore failed: {result.stderr[:200]}"}
         
@@ -317,7 +322,10 @@ async def restore_latest_backup(db_label: str = "autospare", dry_run: bool = Tru
             # Sample row counts from major tables
             for table in ["suppliers", "parts_catalog", "system_logs"]:
                 try:
-                    cur.execute(f"SELECT COUNT(*) FROM {table}")
+                    cur.execute(
+                        sql.SQL("SELECT COUNT(*) FROM {}")
+                        .format(sql.Identifier(table))
+                    )
                     validation_result[f"{table}_rows"] = cur.fetchone()[0]
                 except:
                     pass
@@ -340,7 +348,10 @@ async def restore_latest_backup(db_label: str = "autospare", dry_run: bool = Tru
                 database="postgres",
             )
             conn.autocommit = True
-            conn.cursor().execute(f"DROP DATABASE IF EXISTS {test_dbname}")
+            conn.cursor().execute(
+                sql.SQL("DROP DATABASE IF EXISTS {}")
+                .format(sql.Identifier(test_dbname))
+            )
             conn.close()
             logger.info(f"Dropped test database: {test_dbname}")
             test_db_status = "dropped"

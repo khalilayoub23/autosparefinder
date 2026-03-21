@@ -213,9 +213,13 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:3000").split(","),
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_headers=["Content-Type", "Authorization", "X-Request-ID", "X-Idempotency-Key"],
 )
+
+if os.getenv("ENVIRONMENT", "development") == "production":
+    from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
+    app.add_middleware(HTTPSRedirectMiddleware)
 
 # ==============================================================================
 # SUPPLIER MASKING  — customer-facing routes never expose real supplier names.
@@ -987,7 +991,32 @@ async def upload_audio(
 
 
 @app.post("/api/v1/chat/upload-video")
-async def upload_video(file: UploadFile = File(...), current_user: User = Depends(get_current_verified_user), db: AsyncSession = Depends(get_pii_db)):
+async def upload_video(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_verified_user),
+    db: AsyncSession = Depends(get_pii_db),
+    request: Request = None,
+    redis=Depends(get_redis),
+):
+    if redis and request:
+        ip = request.client.host if request.client else "unknown"
+        allowed = await check_rate_limit(redis, f"rate:upload_video:{ip}", 5, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail="יותר מדי בקשות — נסה שוב בעוד דקה")
+
+    content = await file.read()
+    if len(content) > 50 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Video too large (max 50 MB)")
+
+    allowed_mimes = {"video/mp4", "video/webm", "video/ogg"}
+    mime = (file.content_type or "").split(";")[0].strip().lower()
+    if mime not in allowed_mimes:
+        raise HTTPException(status_code=415, detail="Unsupported video type")
+
+    scan_status, virus_name = _scan_bytes_for_virus(content)
+    if scan_status == "infected":
+        raise HTTPException(status_code=400, detail=f"File rejected: malware detected ({virus_name})")
+
     return {"message": "Video upload – frame analysis coming soon"}
 
 
@@ -1243,6 +1272,9 @@ async def search_parts(
     # ── Helper: fetch one part per type + its supplier list ──────────────────
     async def _fetch_type(part_type_values: list) -> Dict[str, Any]:
         type_params = {**params, "pt": part_type_values, "lim": per_type}
+        _unsafe_sql_tokens = (";", "--", "/*", "*/")
+        if any(tok in where_sql for tok in _unsafe_sql_tokens):
+            raise HTTPException(status_code=400, detail="unsafe_query_rejected")
 
         if meili_ids:
             # ── Meilisearch path: rank-preserving unnest JOIN ─────────────────
@@ -1274,6 +1306,8 @@ async def search_parts(
             )).fetchone()
         else:
             # ── ILIKE fallback path ───────────────────────────────────────────
+            if relevance_sql and any(tok in relevance_sql for tok in _unsafe_sql_tokens):
+                raise HTTPException(status_code=400, detail="unsafe_query_rejected")
             part_row = (await db.execute(
                 text(f"""
                     SELECT
@@ -1455,20 +1489,17 @@ async def get_manufacturers(db: AsyncSession = Depends(get_db)):
 async def get_models(manufacturer: Optional[str] = None, db: AsyncSession = Depends(get_db)):
     """Return distinct car models extracted from compatible_vehicles JSON, optionally filtered by manufacturer."""
     import re as _re
-    where = "compatible_vehicles IS NOT NULL AND compatible_vehicles::text LIKE '%model_year%'"
-    params: dict = {}
-    if manufacturer:
-        where += " AND compatible_vehicles::text ILIKE :mfr_like"
-        params["mfr_like"] = f"%{manufacturer}%"
-    sql = text(f"""
+    sql = text("""
         SELECT DISTINCT elem->>'model_year' AS model_year
         FROM parts_catalog,
              jsonb_array_elements(compatible_vehicles) AS elem
-        WHERE {where}
+        WHERE compatible_vehicles IS NOT NULL
+          AND compatible_vehicles::text LIKE '%model_year%'
+          AND (:mfr_like IS NULL OR compatible_vehicles::text ILIKE :mfr_like)
           AND elem->>'model_year' IS NOT NULL
         ORDER BY model_year
     """)
-    result = await db.execute(sql, params)
+    result = await db.execute(sql, {"mfr_like": f"%{manufacturer}%" if manufacturer else None})
     raw = [row[0] for row in result.fetchall() if row[0]]
     # Two-pass year stripping so year is always separated into the year dropdown:
     # Pass 1 — strip 4-digit era year (19xx/20xx) AND everything that follows,
@@ -1984,12 +2015,16 @@ async def identify_part_from_image(
                 mfr_variants = list({vehicle_make, *((brand_row[1] or []) if brand_row else [])})
                 if brand_row and brand_row[0]:
                     mfr_variants.append(brand_row[0])
-                mfr_clause = " OR ".join(f"manufacturer ILIKE :{f'v{i}'}" for i, _ in enumerate(mfr_variants))
-                mfr_params = {f"v{i}": f"%{v}%" for i, v in enumerate(mfr_variants)}
-                catalog_rows = (await db.execute(
-                    text(f"SELECT DISTINCT name FROM parts_catalog WHERE is_active=TRUE AND ({mfr_clause}) ORDER BY name LIMIT 120"),
-                    mfr_params,
-                )).fetchall()
+                mfr_filters = [PartsCatalog.manufacturer.ilike(f"%{v}%") for v in mfr_variants if v]
+                catalog_rows = []
+                if mfr_filters:
+                    catalog_rows = (await db.execute(
+                        select(PartsCatalog.name)
+                        .distinct()
+                        .where(PartsCatalog.is_active == True, or_(*mfr_filters))
+                        .order_by(PartsCatalog.name)
+                        .limit(120)
+                    )).fetchall()
                 if catalog_rows:
                     names_csv = ", ".join(r[0] for r in catalog_rows)
                     label = vehicle_make + (f" {vehicle_model}" if vehicle_model else "") + (f" {vehicle_year}" if vehicle_year else "")
@@ -3506,13 +3541,17 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_pii_
         )
         reply_text = agent_result.get("response", "מצטערים, נתקלנו בבעיה. אנא נסה שוב.")
     except Exception as exc:
-        print(f"[WhatsApp] Agent error for {phone_e164}: {exc}")
+        safe_phone = (phone_e164 or "")
+        safe_tail = safe_phone[-4:] if len(safe_phone) >= 4 else safe_phone
+        print(f"[WhatsApp] Agent error for ****{safe_tail}: {exc}")
         reply_text = "מצטערים, נתקלנו בבעיה. אנא נסה שוב."
 
     # ── 8. Send reply via WhatsApp API ────────────────────────────────────────
     send_result = await provider.send_message(sender_phone, reply_text)
     if not send_result["ok"]:
-        print(f"[WhatsApp] Send failed to {sender_phone}: {send_result['error']}")
+        safe_phone = (sender_phone or "")
+        safe_tail = safe_phone[-4:] if len(safe_phone) >= 4 else safe_phone
+        print(f"[WhatsApp] Send failed to ****{safe_tail}: {send_result['error']}")
 
     # ── 9. Persist assistant message ──────────────────────────────────────────
     assistant_msg = Message(
@@ -4254,7 +4293,26 @@ async def update_profile(address_line1: Optional[str] = None, address_line2: Opt
 
 
 @app.post("/api/v1/profile/avatar")
-async def upload_avatar(file: UploadFile = File(...), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
+async def upload_avatar(file: UploadFile = File(...), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db), request: Request = None, redis=Depends(get_redis)):
+    if redis and request:
+        ip = request.client.host if request.client else "unknown"
+        allowed = await check_rate_limit(redis, f"rate:upload_avatar:{ip}", 10, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail="יותר מדי בקשות — נסה שוב בעוד דקה")
+
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Avatar too large (max 5 MB)")
+
+    allowed_mimes = {"image/jpeg", "image/png", "image/webp"}
+    mime = (file.content_type or "").split(";")[0].strip().lower()
+    if mime not in allowed_mimes:
+        raise HTTPException(status_code=415, detail="Unsupported image type")
+
+    scan_status, virus_name = _scan_bytes_for_virus(content)
+    if scan_status == "infected":
+        raise HTTPException(status_code=400, detail=f"File rejected: malware detected ({virus_name})")
+
     return {"avatar_url": "https://cdn.autospare.com/avatars/coming-soon.jpg"}
 
 
@@ -6715,7 +6773,9 @@ async def _abandoned_cart_loop():
                             })
                         )
                         sent_count += 1
-                        print(f"[AbandonedCart] ✅ Sent to {user.full_name} ({user.phone}) — cart {cart.id}")
+                        safe_phone = (user.phone or "")
+                        safe_tail = safe_phone[-4:] if len(safe_phone) >= 4 else safe_phone
+                        print(f"[AbandonedCart] ✅ Sent to {user.full_name} (****{safe_tail}) — cart {cart.id}")
 
                     except Exception as e:
                         print(f"[AbandonedCart] Error processing cart {cart.id}: {e}")
@@ -6859,7 +6919,9 @@ async def _pending_payment_reminder_loop():
                         })
                     )
                     sent_count += 1
-                    print(f"[PaymentReminder] ✅ Sent to {user.full_name} ({user.phone}) — order {order.order_number}")
+                    safe_phone = (user.phone or "")
+                    safe_tail = safe_phone[-4:] if len(safe_phone) >= 4 else safe_phone
+                    print(f"[PaymentReminder] ✅ Sent to {user.full_name} (****{safe_tail}) — order {order.order_number}")
 
                 except Exception as e:
                     print(f"[PaymentReminder] Error processing order {order.order_number}: {e}")

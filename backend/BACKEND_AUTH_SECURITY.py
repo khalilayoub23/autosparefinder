@@ -276,7 +276,8 @@ async def send_sms_2fa(phone: str, code: str) -> bool:
     """Send 2FA code via Twilio SMS. Returns True if sent."""
     if not TWILIO_ACCOUNT_SID:
         # Dev mode: print code to console
-        print(f"[DEV] 2FA code for {phone}: {code}")
+        if os.getenv("ENVIRONMENT", "production") == "development":
+            print(f"[DEV] 2FA code for {phone}: {code}")
         return True
     try:
         import asyncio as _asyncio
@@ -490,7 +491,8 @@ async def login_user(
     if not is_trusted:
         # Dev mode: skip 2FA when DEV_2FA_CODE is set
         if os.getenv("DEV_2FA_CODE") and os.getenv("ENVIRONMENT", "development") == "development":
-            print(f"[DEV] Skipping 2FA for {email} (DEV_2FA_CODE is set)")
+            if os.getenv("ENVIRONMENT", "production") == "development":
+                print(f"[DEV] Skipping 2FA for {email} (DEV_2FA_CODE is set)")
         else:
             # Send 2FA and raise 202
             await create_2fa_code(str(user.id), user.phone, db)
@@ -637,7 +639,8 @@ async def create_password_reset_token(email: str, db: AsyncSession) -> Optional[
             print(f"[ERROR] Failed to send password reset email: {exc}")
     else:
         # Development fallback: print to console
-        print(f"[DEV] Password reset link for {email}: {reset_link}")
+        if os.getenv("ENVIRONMENT", "production") == "development":
+            print(f"[DEV] Password reset link for {email}: {reset_link}")
     return token
 
 

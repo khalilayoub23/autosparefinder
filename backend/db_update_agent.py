@@ -340,21 +340,28 @@ async def normalize_part_types(db: AsyncSession) -> Dict[str, Any]:
 
     try:
         for table in ("parts_catalog", "supplier_parts"):
-            col = "part_type"
-            result = await db.execute(
-                text(f"SELECT id, {col} FROM {table} WHERE {col} IS NOT NULL")
-            )
+            if table == "parts_catalog":
+                result = await db.execute(
+                    text("SELECT id, part_type FROM parts_catalog WHERE part_type IS NOT NULL")
+                )
+            else:
+                result = await db.execute(
+                    text("SELECT id, part_type FROM supplier_parts WHERE part_type IS NOT NULL")
+                )
             rows = result.fetchall()
             for row_id, raw_type in rows:
                 canonical = _normalize_part_type(raw_type)
                 if canonical and canonical != raw_type:
-                    await db.execute(
-                        text(
-                            f"UPDATE {table} SET {col} = :val, updated_at = NOW() "
-                            "WHERE id = :id"
-                        ),
-                        {"val": canonical, "id": row_id},
-                    )
+                    if table == "parts_catalog":
+                        await db.execute(
+                            text("UPDATE parts_catalog SET part_type = :val, updated_at = NOW() WHERE id = :id"),
+                            {"val": canonical, "id": row_id},
+                        )
+                    else:
+                        await db.execute(
+                            text("UPDATE supplier_parts SET part_type = :val, updated_at = NOW() WHERE id = :id"),
+                            {"val": canonical, "id": row_id},
+                        )
                     if table == "parts_catalog":
                         catalog_updated += 1
                     else:

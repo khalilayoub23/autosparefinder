@@ -866,6 +866,11 @@ CROSS-REFERENCE: Alternative/equivalent part numbers are stored in the part_cros
             where_sql = " AND ".join(conditions)
             _dir_sql = "ASC" if sort_dir == "asc" else "DESC"
 
+            # Defensive guard: dynamic SQL fragments must remain clause-only.
+            _unsafe_sql_tokens = (";", "--", "/*", "*/")
+            if any(tok in where_sql for tok in _unsafe_sql_tokens):
+                raise ValueError("Unsafe WHERE fragment detected")
+
             if sort_by in ("price_asc", "price_desc"):
                 order_sql = (
                     "ORDER BY (SELECT MIN(price_usd) FROM supplier_parts "
@@ -881,6 +886,9 @@ CROSS-REFERENCE: Alternative/equivalent part numbers are stored in the part_cros
                 order_sql = f"ORDER BY ranked.pos ASC, {_col_map[sort_by]} {_dir_sql}"
             else:
                 order_sql = "ORDER BY ranked.pos ASC"
+
+            if any(tok in order_sql for tok in _unsafe_sql_tokens):
+                raise ValueError("Unsafe ORDER BY fragment detected")
 
             uuid_array = "{" + ",".join(meili_ids) + "}"
             params["uuid_arr"] = uuid_array

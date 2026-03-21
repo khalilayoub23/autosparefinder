@@ -685,48 +685,38 @@ async def db_update_supplier_part(
 ) -> bool:
     """Update price, availability, stock and express details for a supplier_parts row."""
     try:
-        set_clauses = [
-            "price_ils = :price_ils",
-            "price_usd = :price_usd",
-            "last_checked_at = NOW()",
-        ]
-        params: Dict[str, Any] = {
+        values: Dict[str, Any] = {
             "price_ils": price_ils,
             "price_usd": price_usd,
-            "id": supplier_part_id,
+            "last_checked_at": text("NOW()"),
         }
 
         if availability is not None:
-            set_clauses.append("availability = :availability")
-            set_clauses.append("is_available = (:availability = 'in_stock')")
-            params["availability"] = availability
+            values["availability"] = availability
+            values["is_available"] = (availability == "in_stock")
 
         if stock_quantity is not None:
-            set_clauses.append("stock_quantity = :stock_qty")
-            params["stock_qty"] = stock_quantity
+            values["stock_quantity"] = stock_quantity
             if stock_quantity > 0:
-                set_clauses.append("last_in_stock_at = NOW()")
+                values["last_in_stock_at"] = text("NOW()")
 
         if supplier_url:
-            set_clauses.append("supplier_url = :supplier_url")
-            params["supplier_url"] = supplier_url[:1000]
+            values["supplier_url"] = supplier_url[:1000]
 
         if express_available is not None:
-            set_clauses.append("express_available = :express_avail")
-            set_clauses.append("express_last_checked = NOW()")
-            params["express_avail"] = express_available
+            values["express_available"] = express_available
+            values["express_last_checked"] = text("NOW()")
 
         if express_price_ils is not None:
-            set_clauses.append("express_price_ils = :express_price")
-            params["express_price"] = express_price_ils
+            values["express_price_ils"] = express_price_ils
 
         if express_delivery_days is not None:
-            set_clauses.append("express_delivery_days = :express_days")
-            params["express_days"] = express_delivery_days
+            values["express_delivery_days"] = express_delivery_days
 
         await db.execute(
-            text(f"UPDATE supplier_parts SET {', '.join(set_clauses)} WHERE id = :id"),
-            params,
+            update(SupplierPart)
+            .where(SupplierPart.id == supplier_part_id)
+            .values(**values)
         )
         await db.commit()
         return True
