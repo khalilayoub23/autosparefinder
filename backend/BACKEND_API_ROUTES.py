@@ -11,7 +11,7 @@ from fastapi import FastAPI, Depends, HTTPException, status, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, Response
 from sse_starlette.sse import EventSourceResponse
-from pydantic import BaseModel, EmailStr, validator
+from pydantic import BaseModel, EmailStr, Field, validator
 from typing import List, Optional, Dict, Any, Literal
 from datetime import datetime, date, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -323,9 +323,9 @@ _VALID_CUSTOMER_TYPES = {"individual", "mechanic", "garage", "retailer", "fleet"
 
 class RegisterRequest(BaseModel):
     email: EmailStr
-    phone: str
-    password: str
-    full_name: str
+    phone: str = Field(..., max_length=20)
+    password: str = Field(..., min_length=8, max_length=128)
+    full_name: str = Field(..., max_length=100)
     customer_type: str = "individual"
 
     @validator("customer_type")
@@ -358,45 +358,45 @@ class RegisterRequest(BaseModel):
 
 class LoginRequest(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(..., min_length=8, max_length=128)
     trust_device: bool = False
 
 class Login2FARequest(BaseModel):
     user_id: str
-    code: str
+    code: str = Field(..., max_length=10)
     trust_device: bool = False
 
 class RefreshTokenRequest(BaseModel):
-    refresh_token: str
+    refresh_token: str = Field(..., max_length=256)
 
 class PasswordResetRequest(BaseModel):
     email: EmailStr
 
 class PasswordResetConfirmRequest(BaseModel):
-    token: str
-    new_password: str
+    token: str = Field(..., max_length=256)
+    new_password: str = Field(..., min_length=8, max_length=128)
 
 class ChangePasswordRequest(BaseModel):
-    current_password: str
-    new_password: str
+    current_password: str = Field(..., min_length=8, max_length=128)
+    new_password: str = Field(..., min_length=8, max_length=128)
 
 class UpdatePhoneRequest(BaseModel):
-    new_phone: str
-    verification_code: str
+    new_phone: str = Field(..., max_length=20)
+    verification_code: str = Field(..., max_length=10)
 
 class ChatMessageRequest(BaseModel):
     conversation_id: Optional[str] = None
-    message: str
+    message: str = Field(..., max_length=2000)
     content_type: str = "text"
 
 class PartsSearchRequest(BaseModel):
-    query: str
+    query: str = Field(..., max_length=200)
     vehicle_id: Optional[str] = None
     category: Optional[str] = None
     limit: int = 20
 
 class VehicleIdentifyRequest(BaseModel):
-    license_plate: str
+    license_plate: str = Field(..., max_length=15)
 
 class OrderItemCreate(BaseModel):
     part_id: Optional[str] = None
@@ -408,19 +408,19 @@ class OrderCreate(BaseModel):
     shipping_address: Dict[str, str]
 
 class OrderCancelRequest(BaseModel):
-    reason: str
+    reason: str = Field(..., max_length=500)
 
 class ReturnRequest(BaseModel):
     order_id: str
-    reason: str
-    description: Optional[str] = None
+    reason: str = Field(..., max_length=500)
+    description: Optional[str] = Field(None, max_length=1000)
 
 class NewsletterSubscribeRequest(BaseModel):
     email: EmailStr
     preferences: Optional[List[str]] = ["promotions"]
 
 class CouponValidateRequest(BaseModel):
-    code: str
+    code: str = Field(..., max_length=50)
 
 class SupplierCreate(BaseModel):
     name: str
@@ -454,13 +454,13 @@ class SupplierUpdateBody(BaseModel):
 
 
 class CreateSocialPostRequest(BaseModel):
-    content: str
+    content: str = Field(..., max_length=5000)
     platforms: List[str]
     schedule_time: Optional[datetime] = None
 
 
 class UpdateSocialPostRequest(BaseModel):
-    content: Optional[str] = None
+    content: Optional[str] = Field(None, max_length=5000)
     platforms: Optional[List[str]] = None
     schedule_time: Optional[datetime] = None
 
@@ -499,6 +499,10 @@ async def login(data: LoginRequest, request: Request, db: AsyncSession = Depends
     from BACKEND_AUTH_SECURITY import generate_device_fingerprint
     device_fp = generate_device_fingerprint(request)
     ip = request.client.host if request.client else "unknown"
+    if redis:
+        allowed = await check_rate_limit(redis, f'rate:login:{ip}', 5, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
     ua = request.headers.get("user-agent", "")
     try:
         user, access_token, refresh_token = await login_user(
@@ -521,11 +525,15 @@ async def login(data: LoginRequest, request: Request, db: AsyncSession = Depends
 
 
 @app.post("/api/v1/auth/verify-2fa")
-async def verify_2fa(data: Login2FARequest, request: Request, db: AsyncSession = Depends(get_pii_db)):
+async def verify_2fa(data: Login2FARequest, request: Request, db: AsyncSession = Depends(get_pii_db), redis=Depends(get_redis)):
     """Complete login with 2FA code"""
     from BACKEND_AUTH_SECURITY import generate_device_fingerprint
     device_fp = generate_device_fingerprint(request)
     ip = request.client.host if request.client else "unknown"
+    if redis:
+        allowed = await check_rate_limit(redis, f'rate:verify_2fa:{ip}', 5, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
     ua = request.headers.get("user-agent", "")
     user, access_token, refresh_token = await complete_2fa_login(
         data.user_id, data.code, device_fp, ip, ua, data.trust_device, db
@@ -1433,7 +1441,12 @@ async def search_parts(
 
 
 @app.post("/api/v1/parts/search-by-vehicle")
-async def search_parts_by_vehicle(vehicle_id: str, category: Optional[str] = None, db: AsyncSession = Depends(get_db), pii_db: AsyncSession = Depends(get_pii_db)):
+async def search_parts_by_vehicle(vehicle_id: str, category: Optional[str] = None, db: AsyncSession = Depends(get_db), pii_db: AsyncSession = Depends(get_pii_db), request: Request = None, redis=Depends(get_redis)):
+    if redis and request:
+        ip = request.client.host if request.client else "unknown"
+        allowed = await check_rate_limit(redis, f'rate:search_by_vehicle:{ip}', 30, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
     result = await pii_db.execute(select(Vehicle).where(Vehicle.id == vehicle_id))
     vehicle = result.scalar_one_or_none()
     if not vehicle:
@@ -1459,8 +1472,13 @@ async def get_categories(db: AsyncSession = Depends(get_db)):
 
 
 @app.get("/api/v1/parts/autocomplete")
-async def autocomplete_parts(q: str = "", limit: int = 8, db: AsyncSession = Depends(get_db)):
+async def autocomplete_parts(q: str = "", limit: int = 8, db: AsyncSession = Depends(get_db), request: Request = None, redis=Depends(get_redis)):
     """Return distinct part names containing the query string (uses GIN trigram index)."""
+    if redis and request:
+        ip = request.client.host if request.client else "unknown"
+        allowed = await check_rate_limit(redis, f'rate:autocomplete:{ip}', 30, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
     q = q.strip()
     if len(q) < 2:
         return {"suggestions": []}
@@ -1879,8 +1897,13 @@ async def get_part(part_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @app.post("/api/v1/parts/compare")
-async def compare_parts(part_id: str, db: AsyncSession = Depends(get_db)):
+async def compare_parts(part_id: str, db: AsyncSession = Depends(get_db), request: Request = None, redis=Depends(get_redis)):
     """Return all supplier options for a part (in_stock first, then on_order fallback)."""
+    if redis and request:
+        ip = request.client.host if request.client else "unknown"
+        allowed = await check_rate_limit(redis, f'rate:parts_compare:{ip}', 30, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
     # Try in_stock first
     result = await db.execute(
         select(SupplierPart, Supplier).join(Supplier)
@@ -1937,6 +1960,8 @@ async def identify_part_from_image(
     vehicle_year:  Optional[str] = Form(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    request: Request = None,
+    redis=Depends(get_redis),
 ):
     """Identify a car part from a photo using GPT-4o Vision.
 
@@ -1952,6 +1977,12 @@ async def identify_part_from_image(
     import json as _json
     from openai import AsyncOpenAI
     from BACKEND_DATABASE_MODELS import PartDiagramCache
+
+    if redis and request:
+        ip = request.client.host if request.client else "unknown"
+        allowed = await check_rate_limit(redis, f'rate:identify_part_image:{ip}', 10, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
 
     # ── Read & hash image ────────────────────────────────────────────────────
     img_bytes = await file.read()
@@ -2679,9 +2710,15 @@ async def create_checkout_session(
     request: Request,
     current_user: User = Depends(get_current_verified_user),
     db: AsyncSession = Depends(get_pii_db),
+    redis=Depends(get_redis),
 ):
     """Create a Stripe Checkout Session (or simulate payment if Stripe not configured)."""
     import stripe as stripe_sdk
+
+    if redis:
+        allowed = await check_rate_limit(redis, f'rate:create_checkout:{current_user.id}', 5, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
 
     stripe_key = os.getenv("STRIPE_SECRET_KEY", "")
     stripe_configured = bool(stripe_key and not stripe_key.startswith("sk_test_xxxxx"))
@@ -2891,9 +2928,15 @@ async def create_multi_checkout_session(
     request: Request,
     current_user: User = Depends(get_current_verified_user),
     db: AsyncSession = Depends(get_pii_db),
+    redis=Depends(get_redis),
 ):
     """Create a single Stripe Checkout Session for multiple pending orders."""
     import stripe as stripe_sdk
+
+    if redis:
+        allowed = await check_rate_limit(redis, f'rate:create_multi_checkout:{current_user.id}', 5, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
 
     stripe_key = os.getenv("STRIPE_SECRET_KEY", "")
     if not stripe_key or stripe_key.startswith("sk_test_xxxxx"):
@@ -3219,13 +3262,21 @@ async def verify_checkout_session(
 
 
 @app.post("/api/v1/payments/create-intent")
-async def create_payment_intent_legacy(order_id: str, request: Request, current_user: User = Depends(get_current_verified_user), db: AsyncSession = Depends(get_pii_db)):
+async def create_payment_intent_legacy(order_id: str, request: Request, current_user: User = Depends(get_current_verified_user), db: AsyncSession = Depends(get_pii_db), redis=Depends(get_redis)):
     """Legacy endpoint – redirects to create-checkout."""
-    return await create_checkout_session(order_id, request, current_user, db)
+    if redis:
+        allowed = await check_rate_limit(redis, f'rate:create_intent:{current_user.id}', 5, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
+    return await create_checkout_session(order_id, request, current_user, db, redis)
 
 
 @app.post("/api/v1/payments/confirm")
-async def confirm_payment(payment_intent_id: str, current_user: User = Depends(get_current_verified_user), db: AsyncSession = Depends(get_pii_db)):
+async def confirm_payment(payment_intent_id: str, current_user: User = Depends(get_current_verified_user), db: AsyncSession = Depends(get_pii_db), request: Request = None, redis=Depends(get_redis)):
+    if redis:
+        allowed = await check_rate_limit(redis, f'rate:confirm_payment:{current_user.id}', 5, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
     return {"status": "redirect_to_stripe", "message": "Use /payments/create-checkout to get a Stripe Checkout URL"}
 
 
@@ -3574,9 +3625,16 @@ async def refund_payment(
     reason: str,
     current_user: User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_pii_db),
+    request: Request = None,
+    redis=Depends(get_redis),
 ):
     """Admin: manually refund a payment via Stripe."""
     import stripe as stripe_sdk
+
+    if redis:
+        allowed = await check_rate_limit(redis, f'rate:refund:{current_user.id}', 5, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
 
     result = await db.execute(
         select(Payment).options().where(Payment.id == payment_id)
@@ -7591,8 +7649,8 @@ async def remove_from_wishlist(
 
 class ReviewCreateRequest(BaseModel):
     rating: int
-    title:  Optional[str] = None
-    body:   Optional[str] = None
+    title:  Optional[str] = Field(None, max_length=255)
+    body:   Optional[str] = Field(None, max_length=2000)
 
     @validator("rating")
     def validate_rating(cls, v):
