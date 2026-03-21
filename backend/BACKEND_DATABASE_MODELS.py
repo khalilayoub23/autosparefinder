@@ -732,6 +732,7 @@ class Supplier(Base):
     reliability_score = Column(Numeric(3, 2), default=0.50, server_default="0.50", nullable=False)
     is_active = Column(Boolean, default=True)
     priority = Column(Integer, default=0)                            # lower = higher priority
+    rate_limit_per_minute = Column(Integer, nullable=False, default=30)
     # Express shipping
     supports_express = Column(Boolean, nullable=False, default=False)
     express_carrier = Column(String(100), nullable=True)             # DHL Express, Israel Post Express
