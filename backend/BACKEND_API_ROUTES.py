@@ -2242,7 +2242,7 @@ async def identify_vehicle_from_image(
     import base64 as _b64
     from openai import AsyncOpenAI
     b64 = _b64.b64encode(img_bytes).decode()
-    client = AsyncOpenAI(base_url=f'{ollama_url}/v1', api_key='ollama')
+    client = AsyncOpenAI(base_url=f'{ollama_url}/v1', api_key='ollama', timeout=15.0)
     try:
         resp = await client.chat.completions.create(
             model=os.getenv('AGENTS_DEFAULT_MODEL', 'qwen3:8b'),
@@ -5782,10 +5782,10 @@ async def health_check():
 
     # ── Redis ─────────────────────────────────────────────────────────────────
     try:
-        import redis.asyncio as _aioredis
-        _r = _aioredis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"), decode_responses=True, socket_connect_timeout=2)
+        _r = await get_redis()
+        if _r is None:
+            raise RuntimeError("redis_unavailable")
         await _r.ping()
-        await _r.aclose()
         results["redis"] = {"status": "ok"}
     except Exception as _e:
         results["redis"] = {"status": "error", "error": str(_e)}
@@ -6202,6 +6202,10 @@ async def startup():
             ON CONFLICT (id) DO NOTHING
         """))
         await _db.commit()
+    # QUEUE ARCHITECTURE: No external message broker (no Celery/RQ).
+    # All async work uses asyncio.create_task() + Semaphore(50) cap.
+    # ApprovalQueue table = admin approval workflow (not a message queue).
+    # Upgrade to Celery/Redis Streams when scaling beyond single VPS.
     asyncio.create_task(_price_sync_loop())
     asyncio.create_task(_stuck_orders_monitor_loop())   # ← periodic stuck-order monitor (every 30 min)
     asyncio.create_task(_notify_search_miss_loop())     # ← search-miss user notifications (every 60 min)
@@ -6354,7 +6358,6 @@ async def _health_monitor_loop():
     Never sends the same alert twice in a row for the same service.
     """
     import httpx as _httpx
-    import redis.asyncio as _aioredis
     from social.whatsapp_provider import get_whatsapp_provider
 
     await asyncio.sleep(20)  # let DB pool warm up on startup
@@ -6389,9 +6392,10 @@ async def _health_monitor_loop():
             states["postgres_pii"] = "error"
 
         try:
-            _r = _aioredis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"), decode_responses=True, socket_connect_timeout=2)
+            _r = await get_redis()
+            if _r is None:
+                raise RuntimeError("redis_unavailable")
             await _r.ping()
-            await _r.aclose()
             states["redis"] = "ok"
         except Exception:
             states["redis"] = "error"
