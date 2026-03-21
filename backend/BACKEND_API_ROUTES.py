@@ -5731,6 +5731,29 @@ async def get_system_metrics(
         "SELECT COUNT(*) FROM approval_queue WHERE entity_type = 'bulk_deal' AND status = 'pending'"
     ))).scalar()
 
+    # Queue monitoring: detect stuck jobs (running > TTL without heartbeat)
+    stuck_jobs = (await db.execute(text("""
+        SELECT
+            COUNT(*)                                       AS stuck_count,
+            ARRAY_AGG(job_name)                           AS job_names,
+            ARRAY_AGG(EXTRACT(EPOCH FROM (NOW() - last_heartbeat_at))::INTEGER) AS stale_seconds
+        FROM job_registry
+        WHERE status = 'running'
+          AND ttl_seconds IS NOT NULL
+          AND (NOW() - last_heartbeat_at) > (ttl_seconds * INTERVAL '1 second')
+    """))).fetchone()
+
+    stuck_details = {
+        "count": stuck_jobs.stuck_count or 0,
+        "jobs": [],
+    }
+    if stuck_jobs and stuck_jobs.stuck_count and stuck_jobs.stuck_count > 0:
+        for job_name, stale_sec in zip(stuck_jobs.job_names or [], stuck_jobs.stale_seconds or []):
+            stuck_details["jobs"].append({
+                "name": job_name,
+                "stale_seconds": stale_sec,
+            })
+
     from db_update_agent import _last_report, _agent_running
     return {
         "catalog": {
@@ -5748,6 +5771,7 @@ async def get_system_metrics(
             "db_agent_running":     _agent_running,
             "db_agent_last_report": _last_report,
         },
+        "jobs": stuck_details,  # Queue monitoring
     }
 
 

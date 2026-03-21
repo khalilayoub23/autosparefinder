@@ -1148,6 +1148,38 @@ class Notification(PiiBase):
 
 
 # ==============================================================================
+# QUEUE MONITORING  (autospare catalog DB)
+# ==============================================================================
+
+class JobRegistry(Base):
+    """Background job heartbeat registry for monitoring and stuck-job detection.
+    
+    Each background worker INSERT a row on job start, UPDATE on completion, and
+    periodically UPDATE last_heartbeat_at to signal liveness. Admin can query stuck
+    jobs (status='running' AND last_heartbeat_at < NOW() - ttl_seconds).
+    """
+    __tablename__ = "job_registry"
+    __table_args__ = (
+        Index("ix_job_registry_job_id", "job_id"),
+        Index("ix_job_registry_job_name", "job_name"),
+        Index("ix_job_registry_status", "status"),
+        Index("ix_job_registry_started_at", "started_at"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    job_id = Column(String(255), unique=True, nullable=False, comment="Unique job ID (e.g., 'sync_prices-2026-03-21T10:00:00')")
+    job_name = Column(String(255), nullable=False, index=True, comment="Job name (e.g., 'sync_prices', 'run_scraper_cycle')")
+    worker_host = Column(String(255), nullable=True, comment="Hostname/K8s pod where job runs")
+    status = Column(String(50), nullable=False, default="running", comment="running | completed | failed")
+    started_at = Column(DateTime, nullable=False, default=datetime.utcnow, comment="When job started")
+    completed_at = Column(DateTime, nullable=True, comment="When job finished (success or error)")
+    ttl_seconds = Column(Integer, nullable=True, comment="Expected job duration (for stuck detection)")
+    error_message = Column(Text, nullable=True, comment="Error message if status='failed'")
+    last_heartbeat_at = Column(DateTime, nullable=False, default=datetime.utcnow, comment="Last liveness heartbeat")
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, comment="Record creation time")
+
+
+# ==============================================================================
 # CATALOG ENHANCEMENT TABLES (6)
 # ==============================================================================
 
