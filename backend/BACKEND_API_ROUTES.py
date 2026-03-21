@@ -16,6 +16,7 @@ from typing import List, Optional, Dict, Any, Literal
 from datetime import datetime, date, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_, func, desc, text
+import logging
 import uuid
 from uuid import UUID as _UUID
 import os
@@ -31,7 +32,7 @@ from BACKEND_DATABASE_MODELS import (
     get_db, get_pii_db, async_session_factory, pii_session_factory, User, Vehicle, PartsCatalog, Order, OrderItem, Payment,
     Invoice, Return, Conversation, Message, File as FileModel,
     Notification, UserProfile, SystemSetting, SupplierPart, Supplier,
-    CarBrand, SystemLog, USD_TO_ILS, ApprovalQueue, SocialPost,
+    CarBrand, SystemLog, USD_TO_ILS, ApprovalQueue, SocialPost, JobFailure,
 )
 from BACKEND_AUTH_SECURITY import (
     get_current_user, get_current_active_user, get_current_verified_user,
@@ -45,6 +46,8 @@ from BACKEND_AI_AGENTS import process_user_message, process_agent_response_for_m
 from auto_backup import _backup_loop
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 # Fire-and-forget task semaphore: cap unbounded asyncio.create_task(_guarded_task()) fan-out.
 _TASK_SEMAPHORE = asyncio.Semaphore(50)
