@@ -195,6 +195,7 @@ class User(PiiBase):
     is_active = Column(Boolean, default=True, nullable=False)
     is_verified = Column(Boolean, default=False, nullable=False)
     is_admin = Column(Boolean, default=False, nullable=False)
+    is_super_admin = Column(Boolean, default=False, nullable=False)
     failed_login_count = Column(Integer, default=0, nullable=False)
     locked_until = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

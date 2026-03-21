@@ -32,11 +32,11 @@ from BACKEND_DATABASE_MODELS import (
     get_db, get_pii_db, async_session_factory, pii_session_factory, User, Vehicle, PartsCatalog, Order, OrderItem, Payment,
     Invoice, Return, Conversation, Message, File as FileModel,
     Notification, UserProfile, SystemSetting, SupplierPart, Supplier,
-    CarBrand, SystemLog, USD_TO_ILS, ApprovalQueue, SocialPost, JobFailure,
+    CarBrand, SystemLog, USD_TO_ILS, ApprovalQueue, SocialPost, JobFailure, AuditLog,
 )
 from BACKEND_AUTH_SECURITY import (
     get_current_user, get_current_active_user, get_current_verified_user,
-    get_current_admin_user, register_user, login_user, complete_2fa_login,
+    get_current_admin_user, get_current_super_admin, register_user, login_user, complete_2fa_login,
     refresh_access_token, logout_user, create_password_reset_token,
     use_password_reset_token, change_password, update_phone_number,
     create_2fa_code, verify_2fa_code, get_redis, hash_password, publish_notification,
@@ -49,6 +49,13 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
+BLOCKED_SETTINGS = {
+    "jwt_secret", "jwt_refresh_secret", "stripe_secret_key",
+    "stripe_webhook_secret", "hf_token", "database_url",
+    "database_pii_url", "redis_url", "encryption_key",
+    "twilio_auth_token", "sendgrid_api_key",
+}
+
 # Fire-and-forget task semaphore: cap unbounded asyncio.create_task(_guarded_task()) fan-out.
 _TASK_SEMAPHORE = asyncio.Semaphore(50)
 
@@ -57,6 +64,56 @@ async def _guarded_task(coro) -> None:
     """Acquire the shared semaphore before running a fire-and-forget coroutine."""
     async with _TASK_SEMAPHORE:
         await coro
+
+
+class SuperAdminSettingCreateBody(BaseModel):
+    key: str
+    value: Optional[str] = None
+    value_type: str = "string"
+    description: Optional[str] = None
+    is_public: bool = False
+
+
+class SuperAdminSettingUpdateBody(BaseModel):
+    value: Optional[str] = None
+    value_type: Optional[str] = None
+    description: Optional[str] = None
+    is_public: Optional[bool] = None
+
+
+class SuperAdminUserRoleUpdateBody(BaseModel):
+    is_admin: bool
+    is_super_admin: bool
+    role: Optional[str] = None
+
+
+def _is_blocked_setting_key(key: str) -> bool:
+    return key.strip().lower() in BLOCKED_SETTINGS
+
+
+async def _write_audit_log(
+    db: AsyncSession,
+    current_user: User,
+    action: str,
+    entity_type: str,
+    entity_id: Optional[_UUID] = None,
+    old_value: Optional[Dict[str, Any]] = None,
+    new_value: Optional[Dict[str, Any]] = None,
+    request: Optional[Request] = None,
+) -> None:
+    db.add(
+        AuditLog(
+            user_id=current_user.id,
+            action=action,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            old_value=old_value,
+            new_value=new_value,
+            ip_address=request.client.host if (request and request.client) else None,
+            user_agent=request.headers.get("user-agent") if request else None,
+        )
+    )
+    await db.commit()
 
 
 # ==============================================================================
@@ -4559,6 +4616,314 @@ async def get_admin_users(current_user: User = Depends(get_current_admin_user), 
     result = await db.execute(select(User).order_by(User.created_at.desc()).limit(limit))
     users = result.scalars().all()
     return {"users": [{"id": str(u.id), "email": u.email, "full_name": u.full_name, "phone": u.phone, "is_verified": u.is_verified, "is_admin": u.is_admin, "is_active": u.is_active, "role": u.role, "failed_login_count": u.failed_login_count, "locked_until": u.locked_until.isoformat() if u.locked_until else None, "created_at": u.created_at} for u in users]}
+
+
+@app.get("/api/v1/admin/super/settings")
+async def super_admin_list_settings(
+    current_user: User = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+    request: Request = None,
+):
+    result = await db.execute(select(SystemSetting).order_by(SystemSetting.key.asc()))
+    settings = result.scalars().all()
+
+    await _write_audit_log(
+        db=db,
+        current_user=current_user,
+        action="super_admin.settings.list",
+        entity_type="system_settings",
+        old_value=None,
+        new_value={"count": len(settings)},
+        request=request,
+    )
+
+    return {
+        "settings": [
+            {
+                "id": str(s.id),
+                "key": s.key,
+                "value": s.value,
+                "value_type": s.value_type,
+                "description": s.description,
+                "is_public": s.is_public,
+                "updated_by": str(s.updated_by) if s.updated_by else None,
+                "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+            }
+            for s in settings
+        ]
+    }
+
+
+@app.put("/api/v1/admin/super/settings/{key}")
+async def super_admin_update_setting(
+    key: str,
+    body: SuperAdminSettingUpdateBody,
+    current_user: User = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+    request: Request = None,
+):
+    if _is_blocked_setting_key(key):
+        raise HTTPException(status_code=403, detail="This setting is blocked")
+
+    result = await db.execute(select(SystemSetting).where(SystemSetting.key == key))
+    setting = result.scalar_one_or_none()
+    if not setting:
+        raise HTTPException(status_code=404, detail="Setting not found")
+
+    old_payload = {
+        "key": setting.key,
+        "value": setting.value,
+        "value_type": setting.value_type,
+        "description": setting.description,
+        "is_public": setting.is_public,
+    }
+
+    if body.value is not None:
+        setting.value = body.value
+    if body.value_type is not None:
+        setting.value_type = body.value_type
+    if body.description is not None:
+        setting.description = body.description
+    if body.is_public is not None:
+        setting.is_public = body.is_public
+
+    setting.updated_by = current_user.id
+    setting.updated_at = datetime.utcnow()
+    await db.flush()
+
+    new_payload = {
+        "key": setting.key,
+        "value": setting.value,
+        "value_type": setting.value_type,
+        "description": setting.description,
+        "is_public": setting.is_public,
+    }
+
+    db.add(
+        AuditLog(
+            user_id=current_user.id,
+            action="super_admin.settings.update",
+            entity_type="system_settings",
+            entity_id=setting.id,
+            old_value=old_payload,
+            new_value=new_payload,
+            ip_address=request.client.host if (request and request.client) else None,
+            user_agent=request.headers.get("user-agent") if request else None,
+        )
+    )
+    await db.commit()
+
+    return {"message": "Setting updated", "setting": new_payload}
+
+
+@app.post("/api/v1/admin/super/settings")
+async def super_admin_create_setting(
+    body: SuperAdminSettingCreateBody,
+    current_user: User = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+    request: Request = None,
+):
+    key = body.key.strip()
+    if _is_blocked_setting_key(key):
+        raise HTTPException(status_code=403, detail="This setting is blocked")
+
+    existing = await db.execute(select(SystemSetting).where(SystemSetting.key == key))
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="Setting already exists")
+
+    setting = SystemSetting(
+        key=key,
+        value=body.value,
+        value_type=body.value_type,
+        description=body.description,
+        is_public=body.is_public,
+        updated_by=current_user.id,
+        updated_at=datetime.utcnow(),
+    )
+    db.add(setting)
+    await db.flush()
+
+    new_payload = {
+        "key": setting.key,
+        "value": setting.value,
+        "value_type": setting.value_type,
+        "description": setting.description,
+        "is_public": setting.is_public,
+    }
+
+    db.add(
+        AuditLog(
+            user_id=current_user.id,
+            action="super_admin.settings.create",
+            entity_type="system_settings",
+            entity_id=setting.id,
+            old_value=None,
+            new_value=new_payload,
+            ip_address=request.client.host if (request and request.client) else None,
+            user_agent=request.headers.get("user-agent") if request else None,
+        )
+    )
+    await db.commit()
+
+    return {
+        "message": "Setting created",
+        "setting": {
+            "id": str(setting.id),
+            **new_payload,
+            "updated_by": str(setting.updated_by) if setting.updated_by else None,
+            "updated_at": setting.updated_at.isoformat() if setting.updated_at else None,
+        },
+    }
+
+
+@app.delete("/api/v1/admin/super/settings/{key}")
+async def super_admin_delete_setting(
+    key: str,
+    current_user: User = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+    request: Request = None,
+):
+    if _is_blocked_setting_key(key):
+        raise HTTPException(status_code=403, detail="This setting is blocked")
+
+    result = await db.execute(select(SystemSetting).where(SystemSetting.key == key))
+    setting = result.scalar_one_or_none()
+    if not setting:
+        raise HTTPException(status_code=404, detail="Setting not found")
+
+    old_payload = {
+        "id": str(setting.id),
+        "key": setting.key,
+        "value": setting.value,
+        "value_type": setting.value_type,
+        "description": setting.description,
+        "is_public": setting.is_public,
+        "updated_by": str(setting.updated_by) if setting.updated_by else None,
+        "updated_at": setting.updated_at.isoformat() if setting.updated_at else None,
+    }
+
+    db.add(
+        AuditLog(
+            user_id=current_user.id,
+            action="super_admin.settings.delete",
+            entity_type="system_settings",
+            entity_id=setting.id,
+            old_value=old_payload,
+            new_value=None,
+            ip_address=request.client.host if (request and request.client) else None,
+            user_agent=request.headers.get("user-agent") if request else None,
+        )
+    )
+    await db.delete(setting)
+    await db.commit()
+
+    return {"message": "Setting deleted", "key": key}
+
+
+@app.get("/api/v1/admin/super/users")
+async def super_admin_list_users(
+    current_user: User = Depends(get_current_super_admin),
+    limit: int = 100,
+    pii_db: AsyncSession = Depends(get_pii_db),
+    db: AsyncSession = Depends(get_db),
+    request: Request = None,
+):
+    result = await pii_db.execute(select(User).order_by(User.created_at.desc()).limit(limit))
+    users = result.scalars().all()
+
+    await _write_audit_log(
+        db=db,
+        current_user=current_user,
+        action="super_admin.users.list",
+        entity_type="users",
+        old_value=None,
+        new_value={"count": len(users), "limit": limit},
+        request=request,
+    )
+
+    return {
+        "users": [
+            {
+                "id": str(u.id),
+                "email": u.email,
+                "full_name": u.full_name,
+                "phone": u.phone[-4:] if u.phone else None,
+                "role": u.role,
+                "is_admin": u.is_admin,
+                "is_super_admin": u.is_super_admin,
+                "is_active": u.is_active,
+                "is_verified": u.is_verified,
+                "created_at": u.created_at.isoformat() if u.created_at else None,
+            }
+            for u in users
+        ]
+    }
+
+
+@app.put("/api/v1/admin/super/users/{user_id}/role")
+async def super_admin_update_user_role(
+    user_id: str,
+    body: SuperAdminUserRoleUpdateBody,
+    current_user: User = Depends(get_current_super_admin),
+    pii_db: AsyncSession = Depends(get_pii_db),
+    db: AsyncSession = Depends(get_db),
+    request: Request = None,
+):
+    try:
+        target_user_uuid = _UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid user id")
+
+    result = await pii_db.execute(select(User).where(User.id == target_user_uuid))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if user.id == current_user.id and (not body.is_admin or not body.is_super_admin):
+        raise HTTPException(status_code=403, detail="Super admin cannot demote themselves")
+
+    old_payload = {
+        "role": user.role,
+        "is_admin": user.is_admin,
+        "is_super_admin": user.is_super_admin,
+    }
+
+    user.is_admin = body.is_admin
+    user.is_super_admin = body.is_super_admin
+    user.role = body.role if body.role is not None else ("admin" if body.is_admin else "customer")
+    await pii_db.commit()
+
+    new_payload = {
+        "role": user.role,
+        "is_admin": user.is_admin,
+        "is_super_admin": user.is_super_admin,
+    }
+
+    db.add(
+        AuditLog(
+            user_id=current_user.id,
+            action="super_admin.users.update_role",
+            entity_type="users",
+            entity_id=user.id,
+            old_value=old_payload,
+            new_value=new_payload,
+            ip_address=request.client.host if (request and request.client) else None,
+            user_agent=request.headers.get("user-agent") if request else None,
+        )
+    )
+    await db.commit()
+
+    return {
+        "message": "User role updated",
+        "user": {
+            "id": str(user.id),
+            "email": user.email,
+            "full_name": user.full_name,
+            "role": user.role,
+            "is_admin": user.is_admin,
+            "is_super_admin": user.is_super_admin,
+        },
+    }
 
 
 class UserUpdateBody(BaseModel):
