@@ -2145,10 +2145,69 @@ async def identify_vehicle(data: VehicleIdentifyRequest, db: AsyncSession = Depe
 
 
 @app.post("/api/v1/vehicles/identify-from-image")
-async def identify_vehicle_from_image(file: UploadFile = File(...), current_user: User = Depends(get_current_verified_user), db: AsyncSession = Depends(get_pii_db), request: Request = None, redis=Depends(get_redis)):
+async def identify_vehicle_from_image(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_verified_user),
+    db: AsyncSession = Depends(get_pii_db),
+    request: Request = None,
+    redis=Depends(get_redis),
+):
+    """Extract license plate from image via Ollama OCR, then look up vehicle via data.gov.il"""
+    # Rate limit
     if redis and request:
-        await check_rate_limit(redis, f"identify_from_image:{current_user.id}", 10, 60)
-    return {"message": "License plate OCR – coming soon"}
+        ip = request.client.host if request.client else 'unknown'
+        allowed = await check_rate_limit(redis, f'rate:identify_img:{ip}', 10, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
+
+    # Validate file
+    img_bytes = await file.read()
+    if len(img_bytes) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail='Image too large (max 10 MB)')
+    _ALLOWED = {'image/jpeg', 'image/png', 'image/webp'}
+    if (file.content_type or '').split(';')[0].strip() not in _ALLOWED:
+        raise HTTPException(status_code=415, detail='Unsupported image type')
+
+    # OCR via Ollama Vision
+    ollama_url = os.getenv('OLLAMA_URL', '')
+    if not ollama_url:
+        raise HTTPException(status_code=503, detail='ocr_service_unavailable')
+
+    import base64 as _b64
+    from openai import AsyncOpenAI
+    b64 = _b64.b64encode(img_bytes).decode()
+    client = AsyncOpenAI(base_url=f'{ollama_url}/v1', api_key='ollama')
+    try:
+        resp = await client.chat.completions.create(
+            model=os.getenv('AGENTS_DEFAULT_MODEL', 'qwen3:8b'),
+            messages=[{
+                'role': 'user',
+                'content': [
+                    {'type': 'text', 'text': 'Extract the Israeli license plate number from this image. Return ONLY the digits and dashes, for example: 123-45-678. If no plate is visible return empty string.'},
+                    {'type': 'image_url', 'image_url': {'url': f'data:{file.content_type};base64,{b64}'}}
+                ]
+            }],
+            max_tokens=20,
+        )
+        plate_raw = resp.choices[0].message.content.strip()
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f'ocr_failed: {str(e)[:100]}')
+
+    # Clean plate number — keep only digits and dashes
+    import re
+    plate = re.sub(r'[^0-9\-]', '', plate_raw).strip('-')
+    if not plate or len(plate) < 5:
+        raise HTTPException(status_code=422, detail='no_plate_detected')
+
+    # Reuse NIR agent's identify_vehicle (data.gov.il + DB cache)
+    agent = get_agent('parts_finder_agent')
+    try:
+        result = await agent.identify_vehicle(plate, db)
+        result['plate_extracted'] = plate
+        result['ocr_raw'] = plate_raw
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f'vehicle_not_found: {str(e)[:100]}')
 
 
 @app.get("/api/v1/vehicles/my-vehicles")
