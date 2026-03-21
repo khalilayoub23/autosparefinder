@@ -1929,7 +1929,7 @@ async def identify_part_from_image(
     import base64
     import hashlib
     import json as _json
-    from openai import AsyncOpenAI
+    from hf_client import hf_vision
     from BACKEND_DATABASE_MODELS import PartDiagramCache
 
     if redis and request:
@@ -2028,55 +2028,35 @@ async def identify_part_from_image(
                 + ". "
             )
 
-        ollama_url = os.getenv("OLLAMA_URL", "")
-        if ollama_url:
+        if os.getenv("HF_TOKEN", ""):
             try:
-                client = AsyncOpenAI(
-                    base_url=f"{ollama_url}/v1",
-                    api_key="ollama",
+                prompt = (
+                    "You are an expert automotive parts identifier for an Israeli auto parts store. "
+                    + vehicle_context
+                    + catalog_hint
+                    + " Look at this image and identify the car part shown. "
+                    "Think step by step: 1) What vehicle system does this part belong to? "
+                    "2) What is the exact part? "
+                    "3) Does it match a name from the catalog list above? "
+                    "Respond ONLY with a valid JSON object, no markdown: "
+                    '{"part_name_he": "<best Hebrew name — prefer exact catalog match>", '
+                    '"part_name_en": "<English name>", '
+                    '"possible_names": ["<alt 1>","<alt 2>","<alt 3>","<alt 4>","<alt 5>","<alt 6>"], '
+                    '"confidence": <0.0-1.0>, '
+                    '"description": "<brief Hebrew description>"}. '
+                    'IMPORTANT: part_name_he and ALL possible_names must be SHORT Hebrew terms '
+                    '(1-3 words) as written in Israeli auto parts price lists. '
+                    'Do NOT use English in possible_names.'
                 )
-                resp = await client.chat.completions.create(
-                    model=os.getenv("AGENTS_DEFAULT_MODEL", "qwen3:8b"),
-                    messages=[{
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": (
-                                    "You are an expert automotive parts identifier for an Israeli auto parts store. "
-                                    + vehicle_context
-                                    + catalog_hint
-                                    + " Look at this image and identify the car part shown. "
-                                    "Think step by step: 1) What vehicle system does this part belong to? "
-                                    "2) What is the exact part? "
-                                    "3) Does it match a name from the catalog list above? "
-                                    "Respond ONLY with a valid JSON object, no markdown: "
-                                    '{"part_name_he": "<best Hebrew name — prefer exact catalog match>", '
-                                    '"part_name_en": "<English name>", '
-                                    '"possible_names": ["<alt 1>","<alt 2>","<alt 3>","<alt 4>","<alt 5>","<alt 6>"], '
-                                    '"confidence": <0.0-1.0>, '
-                                    '"description": "<brief Hebrew description>"}. '
-                                    'IMPORTANT: part_name_he and ALL possible_names must be SHORT Hebrew terms '
-                                    '(1-3 words) as written in Israeli auto parts price lists. '
-                                    'Do NOT use English in possible_names.'
-                                ),
-                            },
-                            {
-                                "type": "image_url",
-                                "image_url": {"url": f"data:{mime};base64,{b64}"},
-                            },
-                        ],
-                    }],
-                    max_tokens=500,
-                )
-                raw = resp.choices[0].message.content.strip().strip("`").removeprefix("json").strip()
+                raw = await hf_vision(b64, prompt, mime=(file.content_type or "image/jpeg"))
+                raw = raw.strip().strip("`").removeprefix("json").strip()
                 parsed = _json.loads(raw)
                 identified_name = parsed.get("part_name_he") or parsed.get("part_name_en", "")
                 identified_en   = parsed.get("part_name_en", "")
                 confidence      = float(parsed.get("confidence", 0.0))
                 possible_names  = parsed.get("possible_names", [])
             except Exception as e:
-                print(f"[Vision] GPT-4o Vision error: {e}")
+                print(f"[Vision] HF Vision error: {e}")
 
         # ── 4. Persist to diagram cache ──────────────────────────────────────
         if identified_name:
@@ -5393,8 +5373,8 @@ AGENTS_METADATA = {
 @app.get("/api/v1/admin/agents")
 async def list_agents(current_user: User = Depends(get_current_admin_user)):
     from BACKEND_AI_AGENTS import AGENT_MAP
-    ollama_url = os.getenv("OLLAMA_URL", "")
-    ai_status = "active" if ollama_url else "mocked"
+    hf_token = os.getenv("HF_TOKEN", "")
+    ai_status = "active" if hf_token else "mocked"
 
     agents = []
     for name, meta in AGENTS_METADATA.items():
@@ -5408,7 +5388,7 @@ async def list_agents(current_user: User = Depends(get_current_admin_user)):
         "agents": agents,
         "total": len(agents),
         "ai_status": ai_status,
-        "ollama_configured": bool(ollama_url),
+        "hf_configured": bool(hf_token),
     }
 
 
@@ -6309,7 +6289,7 @@ async def _health_monitor_loop():
         "postgres_pii":     "PostgreSQL PII",
         "redis":            "Redis",
         "meilisearch":      "Meilisearch",
-        "ollama":           "Ollama",
+        "huggingface":      "Hugging Face",
         "clamav":           "ClamAV",
         "stripe":           "Stripe",
     }
@@ -6351,16 +6331,8 @@ async def _health_monitor_loop():
         else:
             states["meilisearch"] = "ok"
 
-        _ollama_url = os.getenv("OLLAMA_URL", "")
-        if _ollama_url:
-            try:
-                async with _httpx.AsyncClient(timeout=3) as _hc:
-                    _resp = await _hc.get(f"{_ollama_url}/api/tags")
-                states["ollama"] = "ok" if _resp.status_code == 200 else "error"
-            except Exception:
-                states["ollama"] = "error"
-        else:
-            states["ollama"] = "ok"
+        _hf_token = os.getenv("HF_TOKEN", "")
+        states["huggingface"] = "ok" if _hf_token else "error"
 
         _clam_ok = False
         for _make_scanner in (

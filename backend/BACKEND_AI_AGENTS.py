@@ -122,25 +122,23 @@ async def _log_search_miss(
 # CONFIGURATION
 # ==============================================================================
 
-OLLAMA_URL = os.getenv("OLLAMA_URL", "")  # e.g. http://VPS_IP:11434 — empty = mock mode
-
-# Model selection — Ollama model tags, overridable via environment variables
-DEFAULT_OLLAMA_MODEL = "qwen3:8b"   # single model for all tasks
+# Model selection — HF-backed default model alias
+HF_DEFAULT_MODEL = os.getenv("HF_TEXT_MODEL", "Qwen/Qwen2.5-72B-Instruct")
 
 # Aliases kept for backward-compat with agent subclasses that reference these names
-LLAMA_8B      = DEFAULT_OLLAMA_MODEL
-LLAMA_70B     = DEFAULT_OLLAMA_MODEL
-MISTRAL       = DEFAULT_OLLAMA_MODEL
-PHI           = DEFAULT_OLLAMA_MODEL
-VISION_MODEL  = DEFAULT_OLLAMA_MODEL
-GPT4O_MINI    = DEFAULT_OLLAMA_MODEL
-GPT4O         = DEFAULT_OLLAMA_MODEL
-GPT55         = DEFAULT_OLLAMA_MODEL
-CLAUDE_SONNET = DEFAULT_OLLAMA_MODEL
-CLAUDE_SONNET_46 = DEFAULT_OLLAMA_MODEL
+LLAMA_8B      = HF_DEFAULT_MODEL
+LLAMA_70B     = HF_DEFAULT_MODEL
+MISTRAL       = HF_DEFAULT_MODEL
+PHI           = HF_DEFAULT_MODEL
+VISION_MODEL  = HF_DEFAULT_MODEL
+GPT4O_MINI    = HF_DEFAULT_MODEL
+GPT4O         = HF_DEFAULT_MODEL
+GPT55         = HF_DEFAULT_MODEL
+CLAUDE_SONNET = HF_DEFAULT_MODEL
+CLAUDE_SONNET_46 = HF_DEFAULT_MODEL
 
 # Defaults — override via .env: AGENTS_DEFAULT_MODEL
-FREE_MODEL    = os.getenv("AGENTS_DEFAULT_MODEL", DEFAULT_OLLAMA_MODEL)
+FREE_MODEL    = os.getenv("AGENTS_DEFAULT_MODEL", HF_DEFAULT_MODEL)
 PREMIUM_MODEL = FREE_MODEL  # one model only
 
 # Business constants

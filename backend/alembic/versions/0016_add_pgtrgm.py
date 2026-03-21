@@ -7,7 +7,7 @@ Create Date: 2026-03-21
 from alembic import op
 
 revision = "0016"
-down_revision = "0015"
+down_revision = "0015_catalog_social_indexes"
 branch_labels = None
 depends_on = None
 

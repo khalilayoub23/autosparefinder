@@ -870,8 +870,7 @@ async def _run_image_embedding_batch(rows: list) -> None:
     Always launched via asyncio.create_task() — never awaited directly."""
     import base64
     from BACKEND_DATABASE_MODELS import async_session_factory as _sf
-    OLLAMA_URL = os.getenv("OLLAMA_URL", "")
-    CLIP_MODEL = os.getenv("CLIP_MODEL", "clip")
+    from hf_client import hf_clip
     ok = 0
     async with httpx.AsyncClient() as client:
         for row in rows:
@@ -879,17 +878,7 @@ async def _run_image_embedding_batch(rows: list) -> None:
                 r = await client.get(row.url, timeout=15.0, follow_redirects=True)
                 r.raise_for_status()
                 b64 = base64.b64encode(r.content).decode()
-                er = await client.post(
-                    f"{OLLAMA_URL}/api/embed",
-                    json={"model": CLIP_MODEL, "input": b64},
-                    timeout=30.0,
-                )
-                er.raise_for_status()
-                data = er.json()
-                emb = data.get("embeddings") or data.get("embedding")
-                if not emb:
-                    continue
-                vec = emb[0] if isinstance(emb[0], list) else emb
+                vec = await hf_clip(b64, timeout=30.0)
                 async with _sf() as db:
                     await db.execute(
                         text("UPDATE parts_catalog SET image_embedding = CAST(:v AS vector) WHERE id = :id"),
@@ -909,9 +898,8 @@ async def _run_image_embedding_batch(rows: list) -> None:
 async def _generate_image_embeddings_task(db: AsyncSession) -> Dict[str, Any]:
     """Check for parts_images rows pending CLIP embedding; fire background batch.
     Returns immediately without blocking run_all_tasks."""
-    OLLAMA_URL = os.getenv("OLLAMA_URL", "")
-    if not OLLAMA_URL:
-        return {"task": "generate_image_embeddings", "status": "ok", "triggered": 0, "note": "OLLAMA_URL not set"}
+    if not os.getenv("HF_TOKEN", ""):
+        return {"task": "generate_image_embeddings", "status": "ok", "triggered": 0, "note": "HF_TOKEN not set"}
 
     rows = (await db.execute(
         text("""
