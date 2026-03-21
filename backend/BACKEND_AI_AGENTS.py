@@ -73,6 +73,7 @@ from BACKEND_DATABASE_MODELS import (
     User, Vehicle, CarBrand, PriceHistory, get_db, async_session_factory,
 )
 from BACKEND_AUTH_SECURITY import publish_notification
+from resilience import retry_with_backoff
 
 load_dotenv()
 
@@ -703,6 +704,7 @@ CROSS-REFERENCE: Alternative/equivalent part numbers are stored in the part_cros
             "_raw": r,
         }
 
+    @retry_with_backoff(max_retries=2, base_delay=1.0, max_delay=30.0, retry_on=(429, 503, 504))
     async def _call_gov_api(self, license_plate: str) -> Optional[Dict]:
         """Call Israeli Transport Ministry API (data.gov.il) with dual-source fallback."""
         clean_plate = license_plate.replace("-", "").replace(" ", "")
@@ -736,6 +738,7 @@ CROSS-REFERENCE: Alternative/equivalent part numbers are stored in the part_cros
         print(f"[GOV_API] Plate {clean_plate} not found in any resource")
         return None
 
+    @retry_with_backoff(max_retries=2, base_delay=1.0, max_delay=30.0, retry_on=(429, 503, 504))
     async def search_parts_in_db(
         self,
         query: str,

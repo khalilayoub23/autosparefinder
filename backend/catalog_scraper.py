@@ -54,6 +54,8 @@ from sqlalchemy import select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 
+from resilience import retry_with_backoff
+
 load_dotenv()
 
 # ── DB ─────────────────────────────────────────────────────────────────────────
@@ -171,6 +173,8 @@ def classify_part_type(brand: str, part_name: str, source: str = "") -> str:
     # Default
     return "OEM Original"
 
+
+@retry_with_backoff(max_retries=2, base_delay=1.0, max_delay=60.0, retry_on=(429, 503, 504), jitter=True)
 async def _get(
     url: str,
     *,
@@ -186,40 +190,26 @@ async def _get(
      • Random UA rotation
      • Full browser Sec-Fetch-* headers (Cloudflare bypass)
      • Optional residential proxy via SCRAPER_PROXY env var
-     • Exponential back-off on 429 / 5xx
+     • Exponential back-off on 429 / 5xx (via @retry_with_backoff decorator)
     Works on any real VPS IP without proxy.  For Codespaces/dev containers
     set SCRAPER_PROXY to a residential proxy.
     """
     merged_headers = {**_base_headers(referer=referer), **(headers or {})}
     proxy = SCRAPER_PROXY if (use_proxy and SCRAPER_PROXY) else None
-    for attempt in range(retries + 1):
-        jitter = random.uniform(0.2, 0.8)
-        try:
-            async with httpx.AsyncClient(
-                follow_redirects=True,
-                timeout=timeout,
-                headers=merged_headers,
-                proxy=proxy,
-            ) as client:
-                resp = await client.get(url, params=params)
-                if resp.status_code == 429:
-                    wait = 5 * (attempt + 1) + jitter
-                    print(f"[Rex] 429 rate-limit on {url[:60]} — retrying in {wait:.1f}s")
-                    await asyncio.sleep(wait)
-                    continue
-                if resp.status_code in (503, 520, 521, 522, 523, 524):
-                    # Cloudflare challenge — works from real IPs; retry
-                    wait = 3 * (attempt + 1) + jitter
-                    print(f"[Rex] {resp.status_code} on {url[:60]} — retrying in {wait:.1f}s")
-                    await asyncio.sleep(wait)
-                    continue
-                return resp
-        except (httpx.TimeoutException, httpx.NetworkError, httpx.ConnectError) as exc:
-            if attempt == retries:
-                print(f"[Rex] GET failed after {retries+1} tries: {url[:80]} — {exc}")
-                return None
-            await asyncio.sleep(2 * (attempt + 1) + jitter)
-    return None
+    jitter = random.uniform(0.2, 0.8)
+    
+    try:
+        async with httpx.AsyncClient(
+            follow_redirects=True,
+            timeout=timeout,
+            headers=merged_headers,
+            proxy=proxy,
+        ) as client:
+            resp = await client.get(url, params=params)
+            return resp
+    except (httpx.TimeoutException, httpx.NetworkError, httpx.ConnectError) as exc:
+        print(f"[Rex] GET failed: {url[:80]} — {exc}")
+        raise  # Let decorator handle retry
 
 
 # ==============================================================================
