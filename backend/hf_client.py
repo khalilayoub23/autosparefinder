@@ -6,8 +6,8 @@ import httpx
 
 HF_TOKEN = os.getenv("HF_TOKEN", "")
 
-HF_TEXT_MODEL   = os.getenv("HF_TEXT_MODEL",   "Qwen/Qwen3.5-35B-A3B")
-HF_VISION_MODEL = os.getenv("HF_VISION_MODEL", "Qwen/Qwen3.5-35B-A3B")
+HF_TEXT_MODEL   = os.getenv("HF_TEXT_MODEL",   "moonshotai/Kimi-K2-Instruct-0905")
+HF_VISION_MODEL = os.getenv("HF_VISION_MODEL", "moonshotai/Kimi-K2-Instruct-0905")
 HF_EMBED_MODEL  = os.getenv("HF_EMBED_MODEL",  "Qwen/Qwen3-Embedding-8B")
 HF_AUDIO_MODEL  = os.getenv("HF_AUDIO_MODEL",  "openai/whisper-large-v3")
 HF_CLIP_MODEL   = os.getenv("HF_CLIP_MODEL",   "openai/clip-vit-large-patch14")
@@ -24,7 +24,7 @@ def _headers() -> dict[str, str]:
     }
 
 
-async def hf_text(prompt: str, system: str = "", timeout: float = 30.0) -> str:
+async def hf_text(prompt: str, system: str = "", timeout: float = 60.0) -> str:
     messages: list[dict[str, str]] = []
     if system:
         messages.append({"role": "system", "content": system})
