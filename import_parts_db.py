@@ -35,7 +35,7 @@ DB_URL = _raw_url.replace("postgresql+asyncpg://", "postgresql://").replace("+as
 
 SHEET_TYPES = {
     # Type A
-    "Chevrolet": "A", "Citroen": "A2", "Peugeot": "A2",
+    "Chevrolet": "A", "Citroen": "A", "Peugeot": "A",
     # Type B (single-block)
     "Hyundai": "B", "Mercedes": "B", "Mitsubishi": "B", "Smart": "B",
     # Type B-multi (horizontal multi-block layout)
@@ -83,27 +83,6 @@ def parse_price(val):
         return min(max(p, 0.0), 99_999_999.99)
     except (ValueError, TypeError):
         return 0.0
-
-
-def parse_vehicle(vehicle_str: str, brand: str) -> dict | None:
-    import re
-    if not vehicle_str:
-        return None
-    s = str(vehicle_str).strip()
-    if not s or s in ('-', 'None', 'מק"ט', 'דגם'):
-        return None
-    years = re.findall(r'\b(?:19|20)\d{2}\b', s)
-    year = int(years[-1]) if years else None
-    model = re.sub(r'\b(?:19|20)\d{2}\b', '', s).strip()
-    model = re.sub(r'\s*\bNEW\b\s*$', '', model).strip()
-    if not model:
-        model = s
-    return {
-        "manufacturer": brand,
-        "model": model[:100],
-        "year_from": year or 2000,
-        "year_to": year,
-    }
 
 
 # Known header cell values to skip in multi-block sheets
@@ -199,25 +178,15 @@ def parse_row(sheet_name: str, row: tuple, row_idx: int) -> dict | None:
     def g(idx):
         return row[idx] if idx < len(row) else None
 
-    if stype in ("A", "A2"):
-        if stype == "A2":
-            catalog_num = g(7)
-            name = clean(g(6)) or "(ללא שם)"
-            part_type = (clean(g(5)) or "unknown")[:50]
-            stock = clean(g(1))
-            price = parse_price(g(2))
-            warranty = clean(g(3))
-            vehicle = clean(g(0))
-            importer = clean(g(4))
-        else:
-            catalog_num = g(1)
-            name = clean(g(2)) or "(ללא שם)"
-            part_type = (clean(g(3)) or "unknown")[:50]
-            stock = clean(g(4))
-            price = parse_price(g(5))
-            warranty = clean(g(6))
-            vehicle = clean(g(7))
-            importer = clean(g(0))
+    if stype == "A":
+        catalog_num = g(1)
+        name = clean(g(2)) or "(ללא שם)"
+        part_type = (clean(g(3)) or "unknown")[:50]
+        stock = clean(g(4))
+        price = parse_price(g(5))
+        warranty = clean(g(6))
+        vehicle = clean(g(7))
+        importer = clean(g(0))
         specs = {k: v for k, v in {"stock_status": stock, "warranty": warranty, "importer": importer}.items() if v}
         compat = [{"make": brand, "model_year": vehicle}] if vehicle else []
 
@@ -266,8 +235,6 @@ def parse_row(sheet_name: str, row: tuple, row_idx: int) -> dict | None:
 
     sku = make_sku(brand, catalog_num, row_idx)
 
-    fitment = parse_vehicle(vehicle, brand) if stype in ("A", "A2") else None
-
     return {
         "sku": sku,
         "name": name[:255],
@@ -278,7 +245,6 @@ def parse_row(sheet_name: str, row: tuple, row_idx: int) -> dict | None:
         "specifications": json.dumps(specs, ensure_ascii=False),
         "compatible_vehicles": json.dumps(compat, ensure_ascii=False),
         "base_price": price,
-        "fitment": fitment,
     }
 
 
@@ -299,14 +265,6 @@ ON CONFLICT (sku) DO UPDATE SET
     base_price = EXCLUDED.base_price,
     is_active = true,
     updated_at = NOW()
-RETURNING id
-"""
-
-FITMENT_SQL = """
-INSERT INTO part_vehicle_fitment
-    (id, part_id, manufacturer, model, year_from, year_to, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, NOW())
-ON CONFLICT DO NOTHING
 """
 
 BATCH_SIZE = 500
@@ -334,7 +292,7 @@ async def import_parts():
         # Multi-block sheets: start from row 1 (include all rows; header cols are
         # filtered by _HEADER_VALS inside the parser).
         # Regular sheets: start from row 3 (2-row header).
-        start_row = 1 if is_multiblock else (8 if stype == "A2" else 3)
+        start_row = 1 if is_multiblock else 3
 
         for row_idx, row in enumerate(ws.iter_rows(min_row=start_row, values_only=True), 1):
             if is_multiblock:
@@ -347,52 +305,40 @@ async def import_parts():
                 if parsed is None:
                     continue
 
-                part_id = uuid.uuid4()
-                batch.append({
-                    "rec": (
-                        part_id,
-                        parsed["sku"], parsed["name"], parsed["category"],
-                        parsed["manufacturer"], parsed["part_type"], parsed["description"],
-                        parsed["specifications"], parsed["compatible_vehicles"],
-                        parsed["base_price"],
-                    ),
-                    "fitment": parsed.get("fitment"),
-                    "part_id": part_id,
-                })
+                batch.append((
+                    uuid.uuid4(),
+                    parsed["sku"], parsed["name"], parsed["category"],
+                    parsed["manufacturer"], parsed["part_type"], parsed["description"],
+                    parsed["specifications"], parsed["compatible_vehicles"],
+                    parsed["base_price"],
+                ))
 
             if len(batch) >= BATCH_SIZE:
-                for r in batch:
-                    try:
-                        row_result = await conn.fetchrow(UPSERT_SQL, *r["rec"])
-                        sheet_rows += 1
-                        if r["fitment"] and row_result:
-                            actual_id = row_result["id"]
-                            await conn.execute(FITMENT_SQL,
-                                uuid.uuid4(), actual_id,
-                                r["fitment"]["manufacturer"],
-                                r["fitment"]["model"],
-                                r["fitment"]["year_from"],
-                                r["fitment"]["year_to"])
-                    except Exception:
-                        sheet_errors += 1
+                try:
+                    await conn.executemany(UPSERT_SQL, batch)
+                    sheet_rows += len(batch)
+                except Exception as e:
+                    # Fall back to one-by-one to skip bad rows
+                    for rec in batch:
+                        try:
+                            await conn.execute(UPSERT_SQL, *rec)
+                            sheet_rows += 1
+                        except Exception:
+                            sheet_errors += 1
                 batch = []
 
         # Flush remaining
         if batch:
-            for r in batch:
-                try:
-                    row_result = await conn.fetchrow(UPSERT_SQL, *r["rec"])
-                    sheet_rows += 1
-                    if r["fitment"] and row_result:
-                        actual_id = row_result["id"]
-                        await conn.execute(FITMENT_SQL,
-                            uuid.uuid4(), actual_id,
-                            r["fitment"]["manufacturer"],
-                            r["fitment"]["model"],
-                            r["fitment"]["year_from"],
-                            r["fitment"]["year_to"])
-                except Exception:
-                    sheet_errors += 1
+            try:
+                await conn.executemany(UPSERT_SQL, batch)
+                sheet_rows += len(batch)
+            except Exception:
+                for rec in batch:
+                    try:
+                        await conn.execute(UPSERT_SQL, *rec)
+                        sheet_rows += 1
+                    except Exception:
+                        sheet_errors += 1
 
         total_upserted += sheet_rows
         total_errors += sheet_errors
