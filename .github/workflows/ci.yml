@@ -34,10 +34,8 @@ jobs:
 
       - name: Secret-scan (basic)
         run: |
-          set -e
           if git grep -nE "ghp_[A-Za-z0-9_\-]+|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}" -- './' ':(exclude)*/tests/*' ':(exclude)*/test_*'; then
-            echo "Potential secret pattern found in repository — please ensure no secrets are committed.";
-            git grep -nE "ghp_[A-Za-z0-9_\-]+|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}" -- './' ':(exclude)*/tests/*' ':(exclude)*/test_*' || true
+            echo "Potential secret pattern found — please ensure no secrets are committed."
             exit 1
           fi
 
