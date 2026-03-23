@@ -66,10 +66,9 @@ from resilience import (
 load_dotenv()
 
 # ── DB ─────────────────────────────────────────────────────────────────────────
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+asyncpg://autospare:autospare_dev@localhost:5432/autospare",
-)
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL environment variable is not set")
 _engine = create_async_engine(DATABASE_URL, pool_size=5, max_overflow=2, echo=False)
 scraper_session_factory = async_sessionmaker(_engine, expire_on_commit=False)
 
