@@ -22,7 +22,7 @@ jobs:
           python -m venv .venv-ci
           source .venv-ci/bin/activate
           pip install --upgrade pip
-          pip install -r backend/requirements.txt
+          pip install pytest pyyaml
 
       - name: Run pytest (smoke)
         run: |
