@@ -35,9 +35,26 @@ jobs:
       - name: Secret-scan (basic)
         run: |
           set -e
-          # look for common public token patterns (fail on match)
           if git grep -nE "ghp_[A-Za-z0-9_\-]+|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}" -- './' || true; then
             echo "Potential secret pattern found in repository — please ensure no secrets are committed.";
             git grep -nE "ghp_[A-Za-z0-9_\-]+|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}" -- './' || true
             exit 1
           fi
+
+      - name: Notify mobile repo (sync trigger)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: |
+          curl -s -X POST \
+            -H "Authorization: Bearer ${{ secrets.MOBILE_REPO_PAT }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            -H "Content-Type: application/json" \
+            https://api.github.com/repos/khalilayoub23/autosparefinder_moblie/dispatches \
+            -d '{
+              "event_type": "backend-updated",
+              "client_payload": {
+                "backend_commit": "${{ github.sha }}",
+                "api_version": "v1",
+                "triggered_by": "${{ github.actor }}"
+              }
+            }'
+          echo "Mobile repo notified"
