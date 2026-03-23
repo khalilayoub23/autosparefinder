@@ -13,7 +13,7 @@
 #   Telegram Bot API   — social post publishing        (TELEGRAM_BOT_TOKEN)
 #   Twilio WhatsApp    — inbound customer conversations (TWILIO_WHATSAPP_NUMBER)
 #   Twilio SMS         — 2FA codes                     (TWILIO_PHONE_NUMBER)
-#   Ollama (VPS)       — qwen3:8b / whisper / clip / nomic-embed-text (OLLAMA_URL)
+#   HuggingFace API    — Kimi-K2 / multilingual embed / whisper (HF_TOKEN)
 # ============================================================
 
 version: "3.9"
@@ -65,7 +65,7 @@ services:
       JWT_REFRESH_SECRET_KEY: ${JWT_REFRESH_SECRET_KEY}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       GITHUB_TOKEN: ${GITHUB_TOKEN}  # kept for any legacy integrations — remove once fully migrated
-      OLLAMA_URL: ${OLLAMA_URL}       # Ollama VPS URL — serves qwen3:8b (agents), nomic-embed-text, whisper (upload-audio), clip (visual search)
+      HF_TOKEN: ${HF_TOKEN}           # HuggingFace API token — serves Kimi-K2 (agents), multilingual embed, whisper (upload-audio)
       TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID}
       TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN}
       TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER}

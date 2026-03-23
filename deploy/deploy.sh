@@ -12,7 +12,7 @@ else
   python3 -m venv venv
   source venv/bin/activate
 fi
-pip install -r requirements.txt
+pip install -r requirements.txt --upgrade-strategy only-if-needed
 
 echo "Running migrations..."
 alembic upgrade head
