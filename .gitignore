@@ -66,3 +66,6 @@ htmlcov/
 
 # Large DB backup dumps
 backups/
+backend/data.ms/
+backend/meilisearch
+backend/hf_test_fix_tmp.py
