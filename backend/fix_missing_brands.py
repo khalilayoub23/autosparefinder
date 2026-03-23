@@ -24,7 +24,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 XLSX_FILE = Path(__file__).parent.parent / "parts data base.xlsx"
-_raw_url = os.getenv("DATABASE_URL", "postgresql+asyncpg://autospare:autospare_dev@localhost:5432/autospare")
+_raw_url = os.getenv("DATABASE_URL", "")
+if not _raw_url:
+    raise RuntimeError("DATABASE_URL environment variable is required")
 DB_URL = _raw_url.replace("postgresql+asyncpg://", "postgresql://").replace("+asyncpg", "")
 
 SUPPLIER_NAME = "AutoParts Pro IL"

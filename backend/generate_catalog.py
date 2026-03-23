@@ -3,13 +3,16 @@ Template-based parts catalog generator.
 Fills all brands under 100 parts to exactly 100+ parts using realistic OEM data.
 No external API needed.
 """
+import os
 import psycopg2
 import uuid
 from datetime import datetime, UTC
 from decimal import Decimal
 import random
 
-DB = "postgresql://autospare:autospare_dev@localhost:5432/autospare"
+DB = os.getenv("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://").replace("+asyncpg", "")
+if not DB:
+    raise RuntimeError("DATABASE_URL environment variable is required")
 SUPPLIER_ID = "af51a161-9c1a-4988-b762-271ca22e197c"
 TARGET = 100
 

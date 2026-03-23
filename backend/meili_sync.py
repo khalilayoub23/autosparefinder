@@ -21,11 +21,11 @@ load_dotenv()
 
 MEILI_URL = os.getenv("MEILI_URL", "http://localhost:7700")
 MEILI_MASTER_KEY = os.getenv("MEILI_MASTER_KEY", "")
+_raw_meili_db = os.getenv("DATABASE_URL", "")
+if not _raw_meili_db:
+    raise RuntimeError("DATABASE_URL environment variable is required")
 DB_URL = (
-    os.getenv(
-        "DATABASE_URL",
-        "postgresql+asyncpg://autospare:autospare_dev@localhost:5432/autospare",
-    )
+    _raw_meili_db
     .replace("postgresql+asyncpg://", "postgresql://")
     .replace("+asyncpg", "")
 )
