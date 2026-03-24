@@ -25,11 +25,12 @@ import hashlib
 import uuid
 import json
 import os
+from pathlib import Path
 import asyncpg
 import openpyxl
 from datetime import datetime
 
-XLSX_FILE = "parts data base.xlsx"
+XLSX_FILE = Path(__file__).parent / "data" / "parts_database.xlsx"
 _raw_url = os.getenv("DATABASE_URL", "postgresql://autospare:autospare_dev@localhost:5432/autospare")
 DB_URL = _raw_url.replace("postgresql+asyncpg://", "postgresql://").replace("+asyncpg", "")
 

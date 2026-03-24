@@ -1,4 +1,5 @@
 import pandas as pd
+from pathlib import Path
 
 # Create sample data matching our column mapping
 data = {
@@ -7,4 +8,4 @@ data = {
 }
 
 df = pd.DataFrame(data)
-df.to_excel('data/part_data.xlsx', index=False)
+df.to_excel(Path(__file__).parent / 'data' / 'part_data.xlsx', index=False)

@@ -1,8 +1,10 @@
 import struct, zlib, re
+from pathlib import Path
 
 OUTPUT = '/tmp/xlsx_info.txt'
+XLSX_FILE = Path(__file__).parent / "data" / "parts_database.xlsx"
 
-with open('parts data base.xlsx', 'rb') as f:
+with open(XLSX_FILE, 'rb') as f:
     raw = f.read()
 
 out = open(OUTPUT, 'w')

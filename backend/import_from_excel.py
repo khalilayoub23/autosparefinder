@@ -22,7 +22,7 @@ import os
 
 load_dotenv()
 
-XLSX_FILE = Path(__file__).parent.parent / "parts data base.xlsx"
+XLSX_FILE = Path(__file__).parent / "data" / "parts_database.xlsx"
 _raw_url = os.getenv("DATABASE_URL", "")
 if not _raw_url:
     raise RuntimeError("DATABASE_URL environment variable is required")
