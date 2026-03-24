@@ -1402,6 +1402,32 @@ class ScraperApiCall(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
 
+class BugReport(Base):
+    __tablename__ = "bug_reports"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), nullable=True)
+    user_role = Column(String(20), nullable=True)
+    title = Column(String(255), nullable=False)
+    description = Column(Text, nullable=False)
+    severity = Column(String(20), default="medium")
+    platform = Column(String(20), nullable=True)
+    app_version = Column(String(20), nullable=True)
+    screen_name = Column(String(100), nullable=True)
+    endpoint_url = Column(String(500), nullable=True)
+    http_method = Column(String(10), nullable=True)
+    http_status_code = Column(Integer, nullable=True)
+    error_trace = Column(Text, nullable=True)
+    last_api_calls = Column(JSONB, nullable=True)
+    device_info = Column(JSONB, nullable=True)
+    tech_analysis = Column(JSONB, nullable=True)
+    status = Column(String(20), default="open")
+    admin_notes = Column(Text, nullable=True)
+    resolved_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 # ==============================================================================
 # DATABASE INITIALIZATION
 # ==============================================================================
