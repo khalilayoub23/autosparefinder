@@ -1,0 +1,39 @@
+{
+  "name": "AutoSpareFinder Dev",
+  "image": "mcr.microsoft.com/devcontainers/python:3.11",
+
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": { "version": "20" },
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+
+  // Only install lightweight production/backend deps on startup.
+  // Heavy ML packages (torch, transformers, jupyter) are in requirements-dev.txt
+  // and must be installed manually when needed: pip install -r requirements-dev.txt
+  "postCreateCommand": "pip install -r requirements.txt && pip install -r backend/requirements.txt && cd frontend && npm install",
+
+  "forwardPorts": [8000, 5173, 5432, 6379, 7700],
+  "portsAttributes": {
+    "8000": { "label": "Backend (FastAPI)" },
+    "5173": { "label": "Frontend (Vite)" },
+    "5432": { "label": "PostgreSQL" },
+    "6379": { "label": "Redis" },
+    "7700": { "label": "Meilisearch" }
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "ms-azuretools.vscode-docker"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "editor.formatOnSave": true
+      }
+    }
+  }
+}

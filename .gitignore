@@ -69,6 +69,16 @@ backups/
 backend/data.ms/
 backend/meilisearch
 backend/hf_test_fix_tmp.py
+
+# Large data files — use cloud storage instead of committing to repo
+*.xlsx
+*.csv
+*.parquet
+
+# ML/AI caches (can reach several GB)
+.cache/huggingface/
+.cache/torch/
+.cache/pip/
 __pycache__/
 *.pyc
 *.pyo
