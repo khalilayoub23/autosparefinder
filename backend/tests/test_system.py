@@ -251,16 +251,21 @@ def test_orders_agent_opens_pii_session():
 # ===========================================================================
 
 def _routes_source() -> str:
-    routes_path = os.path.join(BACKEND_DIR, "BACKEND_API_ROUTES.py")
-    with open(routes_path, encoding="utf-8") as f:
-        return f.read()
+    import glob
+    parts = []
+    with open(os.path.join(BACKEND_DIR, "BACKEND_API_ROUTES.py"), encoding="utf-8") as f:
+        parts.append(f.read())
+    for fpath in sorted(glob.glob(os.path.join(BACKEND_DIR, "routes", "*.py"))):
+        with open(fpath, encoding="utf-8") as f:
+            parts.append(f.read())
+    return "\n".join(parts)
 
 
 def test_identify_vehicle_route_uses_pii_db():
     src = _routes_source()
     # Find the route definition and check its dependency
     match = re.search(
-        r'@app\.post\("/api/v1/vehicles/identify"\).*?async def identify_vehicle\([^)]+\)',
+        r'@(?:app|router)\.post\("/api/v1/vehicles/identify"\).*?async def identify_vehicle\([^)]+\)',
         src, re.DOTALL
     )
     assert match, "Could not locate identify_vehicle route"
@@ -272,7 +277,7 @@ def test_identify_vehicle_route_uses_pii_db():
 def test_identify_vehicle_from_image_route_uses_pii_db():
     src = _routes_source()
     # Find the route decorator and extract the next ~500 chars (covers full multi-line signature)
-    idx = src.find('@app.post("/api/v1/vehicles/identify-from-image")')
+    idx = src.find('@router.post("/api/v1/vehicles/identify-from-image")')
     assert idx != -1, "Could not locate identify_vehicle_from_image route decorator"
     snippet = src[idx : idx + 600]
     assert "get_pii_db" in snippet, (

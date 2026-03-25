@@ -56,30 +56,36 @@ BLOCKED_SETTINGS = {
     "twilio_auth_token", "sendgrid_api_key",
 }
 
-from routes.utils import _scan_bytes_for_virus, _guarded_task, _mask_supplier  # uses clamd (ClamAV) — see routes/utils.py
-from routes.schemas import (
-    SuperAdminSettingCreateBody,
-    SuperAdminSettingUpdateBody,
-    SuperAdminUserRoleUpdateBody,
-    UpdatePhoneRequest,
-    PartsSearchRequest,
-    OrderItemCreate,
-    OrderCreate,
-    OrderCancelRequest,
-    ReturnRequest,
-    MultiCheckoutRequest,
-    NewsletterSubscribeRequest,
-    CouponValidateRequest,
-    SupplierCreate,
-    SupplierUpdateBody,
-    CreateSocialPostRequest,
-    UpdateSocialPostRequest,
-    UserUpdateBody,
-    UserCreateBody,
-    ResolveApprovalBody,
-    CartAddRequest,
-    WishlistAddRequest,
-)
+# Fire-and-forget task semaphore: cap unbounded asyncio.create_task(_guarded_task()) fan-out.
+_TASK_SEMAPHORE = asyncio.Semaphore(50)
+
+
+async def _guarded_task(coro) -> None:
+    """Acquire the shared semaphore before running a fire-and-forget coroutine."""
+    async with _TASK_SEMAPHORE:
+        await coro
+
+
+class SuperAdminSettingCreateBody(BaseModel):
+    key: str
+    value: Optional[str] = None
+    value_type: str = "string"
+    description: Optional[str] = None
+    is_public: bool = False
+
+
+class SuperAdminSettingUpdateBody(BaseModel):
+    value: Optional[str] = None
+    value_type: Optional[str] = None
+    description: Optional[str] = None
+    is_public: Optional[bool] = None
+
+
+class SuperAdminUserRoleUpdateBody(BaseModel):
+    is_admin: bool
+    is_super_admin: bool
+    role: Optional[str] = None
+
 
 def _is_blocked_setting_key(key: str) -> bool:
     return key.strip().lower() in BLOCKED_SETTINGS
@@ -272,6 +278,26 @@ if os.getenv("ENVIRONMENT", "development") == "production":
     from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
     app.add_middleware(HTTPSRedirectMiddleware)
 
+# ==============================================================================
+# SUPPLIER MASKING  — customer-facing routes never expose real supplier names.
+# Uses a deterministic hash so the same supplier always maps to the same number,
+# regardless of which worker process handles the request.
+# ==============================================================================
+import hashlib as _hashlib
+
+def _mask_supplier(name: str) -> str:
+    """Return a deterministic numbered alias for a supplier name (e.g. 'ספק #3').
+    The number is derived from the supplier name via SHA-256, so it is consistent
+    across all worker processes and restarts without shared state.
+    """
+    if not name:
+        return "ספק"
+    # Take first 4 hex bytes of SHA-256 → 0..4294967295, map to 1..9999
+    digest = int(_hashlib.sha256(name.encode("utf-8")).hexdigest()[:8], 16)
+    num = (digest % 9999) + 1
+    return f"ספק #{num}"
+
+
 async def _cart_to_response(items: list, cat_db: AsyncSession) -> list:
     """
     Convert CartItem ORM rows → camelCase dicts matching the mobile cartStore.ts CartItem shape:
@@ -321,65 +347,1217 @@ async def _cart_to_response(items: list, cat_db: AsyncSession) -> list:
 
 
 # ==============================================================================
-# VIRUS SCANNING  → routes/utils.py (_scan_bytes_for_virus)
-# TASK SEMAPHORE  → routes/utils.py (_guarded_task)
-# SUPPLIER MASKING → routes/utils.py (_mask_supplier)
+# VIRUS SCANNING — ClamAV via clamd (graceful degradation when daemon absent)
 # ==============================================================================
+import clamd as _clamd
 
+def _scan_bytes_for_virus(content: bytes) -> tuple:
+    """
+    Scan raw bytes with ClamAV daemon.
+    Returns: ('clean', None) | ('infected', '<VirusName>') | ('skipped', None)
+    Tries Unix socket first, falls back to TCP, then skips gracefully.
+    """
+    for _make_scanner in (
+        lambda: _clamd.ClamdUnixSocket(),
+        lambda: _clamd.ClamdNetworkSocket(host=os.getenv("CLAMD_HOST", "clamav"), port=3310),
+    ):
+        try:
+            scanner = _make_scanner()
+            result = scanner.instream(io.BytesIO(content))
+            status, virus_name = result.get("stream", ("skipped", None))
+            return (status.lower(), virus_name)
+        except Exception:
+            continue
+    # ClamAV daemon unavailable — skip scan (dev/CI without ClamAV)
+    return ("skipped", None)
 
-# ==============================================================================
-# 1. AUTH  /api/v1/auth  → routes/auth.py
-# ==============================================================================
-
-# POST   /api/v1/auth/register                          → routes/auth.py
-# POST   /api/v1/auth/login                             → routes/auth.py
-# POST   /api/v1/auth/verify-2fa                        → routes/auth.py
-# POST   /api/v1/auth/refresh                           → routes/auth.py
-# POST   /api/v1/auth/verify-email                      → routes/auth.py
-# POST   /api/v1/auth/verify-phone                      → routes/auth.py
-# POST   /api/v1/auth/send-2fa                          → routes/auth.py
-# POST   /api/v1/auth/logout                            → routes/auth.py
-# GET    /api/v1/auth/me                                → routes/auth.py
-# POST   /api/v1/auth/accept-terms                      → routes/auth.py
-# POST   /api/v1/auth/reset-password                    → routes/auth.py
-# POST   /api/v1/auth/reset-password/confirm            → routes/auth.py
-# POST   /api/v1/auth/change-password                   → routes/auth.py
-# GET    /api/v1/auth/trusted-devices                   → routes/auth.py
-# POST   /api/v1/auth/trust-device                      → routes/auth.py
-# DELETE /api/v1/auth/trusted-devices/{device_id}       → routes/auth.py
-# _VALID_CUSTOMER_TYPES + 7 request models              → routes/auth.py
-
-
-
-# 2. CHAT  /api/v1/chat  (10 endpoints)  → routes/chat.py
-# ==============================================================================
-# POST   /api/v1/chat/message                         → routes/chat.py
-# GET    /api/v1/chat/conversations                   → routes/chat.py
-# GET    /api/v1/chat/conversations/{id}              → routes/chat.py
-# GET    /api/v1/chat/conversations/{id}/messages     → routes/chat.py
-# DELETE /api/v1/chat/conversations/{id}              → routes/chat.py
-# POST   /api/v1/chat/upload-image                    → routes/chat.py
-# POST   /api/v1/chat/upload-audio                    → routes/chat.py
-# POST   /api/v1/chat/upload-video                    → routes/chat.py
-# WS     /api/v1/chat/ws                              → routes/chat.py
-# POST   /api/v1/chat/rate                            → routes/chat.py
-# ChatMessageRequest model                            → routes/chat.py
 
 # ==============================================================================
-# 3. PARTS  /api/v1/parts
-#    GET  /api/v1/parts/search            → routes/parts.py
-#    GET  /api/v1/parts/categories        → routes/parts.py
-#    GET  /api/v1/parts/autocomplete      → routes/parts.py
-#    POST /api/v1/parts/search-by-vehicle → routes/parts.py
-#    GET  /api/v1/parts/manufacturers     → routes/parts.py
-#    GET  /api/v1/parts/models            → routes/parts.py
-#    GET  /api/v1/parts/search-by-vin     → routes/parts.py
-#    GET  /api/v1/parts/{part_id}         → routes/parts.py
-#    POST /api/v1/parts/compare           → routes/parts.py
-#    POST /api/v1/parts/identify-from-image → routes/parts.py
-#    GET  /api/v1/parts/{part_id}/reviews → routes/parts.py
-#    POST /api/v1/parts/{part_id}/reviews → routes/parts.py
+# SCHEMAS
 # ==============================================================================
+
+_VALID_CUSTOMER_TYPES = {"individual", "mechanic", "garage", "retailer", "fleet"}
+
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    phone: str = Field(..., max_length=20)
+    password: str = Field(..., min_length=8, max_length=128)
+    full_name: str = Field(..., max_length=100)
+    customer_type: str = "individual"
+
+    @validator("customer_type")
+    def validate_customer_type(cls, v):
+        if v not in _VALID_CUSTOMER_TYPES:
+            raise ValueError(f"customer_type must be one of: {', '.join(sorted(_VALID_CUSTOMER_TYPES))}")
+        return v
+
+    @validator("phone")
+    def validate_phone(cls, v):
+        # Accept Israeli domestic (05XXXXXXXX) or international E.164 (+XXXXXXXXXXX)
+        if v.startswith("+"):
+            if len(v) < 8 or len(v) > 16 or not v[1:].isdigit():
+                raise ValueError("Invalid international phone number")
+        elif not v.startswith("05") or len(v) != 10 or not v.isdigit():
+            raise ValueError("Invalid Israeli phone number (must start with 05, 10 digits)")
+        return v
+
+    @validator("password")
+    def validate_password_strength(cls, v):
+        min_len = int(os.getenv("PASSWORD_MIN_LENGTH", 8))
+        if len(v) < min_len:
+            raise ValueError(f"Password must be at least {min_len} characters long")
+        # Require at least one digit and one letter
+        if not any(c.isdigit() for c in v):
+            raise ValueError("Password must contain at least one digit")
+        if not any(c.isalpha() for c in v):
+            raise ValueError("Password must contain at least one letter")
+        return v
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(..., min_length=8, max_length=128)
+    trust_device: bool = False
+
+class Login2FARequest(BaseModel):
+    user_id: str
+    code: str = Field(..., max_length=10)
+    trust_device: bool = False
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str = Field(..., max_length=256)
+
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+class PasswordResetConfirmRequest(BaseModel):
+    token: str = Field(..., max_length=256)
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(..., min_length=8, max_length=128)
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+class UpdatePhoneRequest(BaseModel):
+    new_phone: str = Field(..., max_length=20)
+    verification_code: str = Field(..., max_length=10)
+
+class ChatMessageRequest(BaseModel):
+    conversation_id: Optional[str] = None
+    message: str = Field(..., max_length=2000)
+    content_type: str = "text"
+
+class PartsSearchRequest(BaseModel):
+    query: str = Field(..., max_length=200)
+    vehicle_id: Optional[str] = None
+    category: Optional[str] = None
+    limit: int = 20
+
+class VehicleIdentifyRequest(BaseModel):
+    license_plate: str = Field(..., max_length=15)
+
+class OrderItemCreate(BaseModel):
+    part_id: Optional[str] = None
+    supplier_part_id: str
+    quantity: int = 1
+
+class OrderCreate(BaseModel):
+    items: List[OrderItemCreate]
+    shipping_address: Dict[str, str]
+
+class OrderCancelRequest(BaseModel):
+    reason: str = Field(..., max_length=500)
+
+class ReturnRequest(BaseModel):
+    order_id: str
+    reason: str = Field(..., max_length=500)
+    description: Optional[str] = Field(None, max_length=1000)
+
+class NewsletterSubscribeRequest(BaseModel):
+    email: EmailStr
+    preferences: Optional[List[str]] = ["promotions"]
+
+class CouponValidateRequest(BaseModel):
+    code: str = Field(..., max_length=50)
+
+class SupplierCreate(BaseModel):
+    name: str
+    country: str
+    website: Optional[str] = None
+    api_endpoint: Optional[str] = None
+    api_key: Optional[str] = None
+    contact_email: Optional[str] = None
+    contact_phone: Optional[str] = None
+    priority: int = 0
+    reliability_score: float = 5.0
+    supports_express: bool = False
+    express_carrier: Optional[str] = None
+    express_base_cost_usd: Optional[float] = None
+
+
+class SupplierUpdateBody(BaseModel):
+    name: Optional[str] = None
+    country: Optional[str] = None
+    website: Optional[str] = None
+    api_endpoint: Optional[str] = None
+    api_key: Optional[str] = None
+    contact_email: Optional[str] = None
+    contact_phone: Optional[str] = None
+    priority: Optional[int] = None
+    reliability_score: Optional[float] = None
+    is_active: Optional[bool] = None
+    supports_express: Optional[bool] = None
+    express_carrier: Optional[str] = None
+    express_base_cost_usd: Optional[float] = None
+
+
+class CreateSocialPostRequest(BaseModel):
+    content: str = Field(..., max_length=5000)
+    platforms: List[str]
+    schedule_time: Optional[datetime] = None
+
+
+class UpdateSocialPostRequest(BaseModel):
+    content: Optional[str] = Field(None, max_length=5000)
+    platforms: Optional[List[str]] = None
+    schedule_time: Optional[datetime] = None
+
+
+# ==============================================================================
+# 1. AUTH  /api/v1/auth  (15 endpoints)
+# ==============================================================================
+
+@app.post("/api/v1/auth/register", status_code=status.HTTP_201_CREATED)
+async def register(data: RegisterRequest, request: Request, db: AsyncSession = Depends(get_pii_db), redis=Depends(get_redis)):
+    """Register new user and send 2FA SMS"""
+    ip = request.client.host if request.client else "unknown"
+    if redis:
+        allowed = await check_rate_limit(redis, f'rate:register:{ip}', 5, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
+    user = await register_user(data.email, data.phone, data.password, data.full_name, db)
+    # Persist customer_type on the auto-created profile
+    profile_res = await db.execute(select(UserProfile).where(UserProfile.user_id == user.id))
+    profile = profile_res.scalar_one_or_none()
+    if profile:
+        profile.customer_type = data.customer_type
+    else:
+        db.add(UserProfile(user_id=user.id, customer_type=data.customer_type))
+    await db.commit()
+    await create_2fa_code(str(user.id), user.phone, db)
+    return {
+        "user": {"id": str(user.id), "email": user.email, "full_name": user.full_name, "customer_type": data.customer_type},
+        "message": f"קוד אימות נשלח ל-{user.phone[-4:]}",
+    }
+
+
+@app.post("/api/v1/auth/login")
+async def login(data: LoginRequest, request: Request, db: AsyncSession = Depends(get_pii_db), redis=Depends(get_redis)):
+    """Login – returns tokens or triggers 2FA"""
+    from BACKEND_AUTH_SECURITY import generate_device_fingerprint
+    device_fp = generate_device_fingerprint(request)
+    ip = request.client.host if request.client else "unknown"
+    if redis:
+        allowed = await check_rate_limit(redis, f'rate:login:{ip}', 5, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
+    ua = request.headers.get("user-agent", "")
+    try:
+        user, access_token, refresh_token = await login_user(
+            data.email, data.password, device_fp, ip, ua, data.trust_device, db, redis
+        )
+        return {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": "bearer",
+            "user": {"id": str(user.id), "email": user.email, "full_name": user.full_name, "is_verified": user.is_verified, "is_admin": user.is_admin},
+        }
+    except HTTPException as e:
+        if e.status_code == status.HTTP_202_ACCEPTED:
+            return JSONResponse(status_code=202, content={
+                "requires_2fa": True,
+                "user_id": e.headers.get("X-User-ID"),
+                "message": e.detail,
+            })
+        raise
+
+
+@app.post("/api/v1/auth/verify-2fa")
+async def verify_2fa(data: Login2FARequest, request: Request, db: AsyncSession = Depends(get_pii_db), redis=Depends(get_redis)):
+    """Complete login with 2FA code"""
+    from BACKEND_AUTH_SECURITY import generate_device_fingerprint
+    device_fp = generate_device_fingerprint(request)
+    ip = request.client.host if request.client else "unknown"
+    if redis:
+        allowed = await check_rate_limit(redis, f'rate:verify_2fa:{ip}', 5, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
+    ua = request.headers.get("user-agent", "")
+    user, access_token, refresh_token = await complete_2fa_login(
+        data.user_id, data.code, device_fp, ip, ua, data.trust_device, db
+    )
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+        "user": {"id": str(user.id), "email": user.email, "full_name": user.full_name, "is_verified": user.is_verified, "is_admin": user.is_admin},
+    }
+
+
+@app.post("/api/v1/auth/refresh")
+async def refresh_token(data: RefreshTokenRequest, db: AsyncSession = Depends(get_pii_db)):
+    """Refresh access token"""
+    new_access, new_refresh = await refresh_access_token(data.refresh_token, db)
+    return {"access_token": new_access, "refresh_token": new_refresh, "token_type": "bearer"}
+
+
+@app.post("/api/v1/auth/verify-email")
+async def verify_email(token: str, request: Request, db: AsyncSession = Depends(get_pii_db), redis=Depends(get_redis)):
+    """Validate an email verification token (re-uses the PasswordReset table as
+    a lightweight token store — a dedicated EmailVerification table can replace
+    this when full email verification flow is implemented)."""
+    ip = request.client.host if request.client else "unknown"
+    if redis:
+        allowed = await check_rate_limit(redis, f'rate:verify_email:{ip}', 10, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
+    from BACKEND_DATABASE_MODELS import PasswordReset
+    from datetime import datetime
+    if not token:
+        raise HTTPException(status_code=400, detail="Token required")
+    result = await db.execute(
+        select(PasswordReset).where(
+            and_(
+                PasswordReset.token == token,
+                PasswordReset.used_at.is_(None),
+                PasswordReset.expires_at > datetime.utcnow(),
+            )
+        )
+    )
+    reset = result.scalar_one_or_none()
+    if not reset:
+        raise HTTPException(status_code=400, detail="Invalid or expired verification token")
+    # Mark user as verified
+    user_result = await db.execute(select(User).where(User.id == reset.user_id))
+    user = user_result.scalar_one_or_none()
+    if user:
+        user.is_verified = True
+    reset.used_at = datetime.utcnow()
+    await db.commit()
+    return {"message": "Email verified"}
+
+
+@app.post("/api/v1/auth/verify-phone")
+async def verify_phone(code: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
+    success = await verify_2fa_code(str(current_user.id), code, db)
+    if not success:
+        raise HTTPException(status_code=400, detail="Invalid code")
+    current_user.is_verified = True
+    await db.commit()
+    return {"message": "Phone verified"}
+
+
+@app.post("/api/v1/auth/send-2fa")
+async def send_2fa(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
+    await create_2fa_code(str(current_user.id), current_user.phone, db)
+    return {"message": f"קוד נשלח ל-{current_user.phone[-4:]}"}
+
+
+@app.post("/api/v1/auth/logout")
+async def logout(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_pii_db),
+):
+    # Revoke the current session token so it can no longer be used
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.removeprefix("Bearer ").strip() if auth_header.startswith("Bearer ") else ""
+    if token:
+        await logout_user(token, db)
+    return {"message": "Logged out successfully"}
+
+
+@app.get("/api/v1/auth/me")
+async def get_me(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
+    profile = await db.get(UserProfile, current_user.id)
+    terms_accepted_at = None
+    if profile is None:
+        # try by user_id FK
+        result = await db.execute(select(UserProfile).where(UserProfile.user_id == current_user.id))
+        profile = result.scalar_one_or_none()
+    if profile:
+        terms_accepted_at = profile.terms_accepted_at
+    return {
+        "id": str(current_user.id),
+        "email": current_user.email,
+        "phone": current_user.phone,
+        "full_name": current_user.full_name,
+        "is_verified": current_user.is_verified,
+        "is_admin": current_user.is_admin,
+        "created_at": current_user.created_at,
+        "terms_accepted_at": terms_accepted_at,
+    }
+
+
+@app.post("/api/v1/auth/accept-terms")
+async def accept_terms(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
+    """Record that the logged-in user has accepted the privacy policy and terms of service."""
+    result = await db.execute(select(UserProfile).where(UserProfile.user_id == current_user.id))
+    profile = result.scalar_one_or_none()
+    now = datetime.utcnow()
+    if profile is None:
+        profile = UserProfile(user_id=current_user.id, terms_accepted_at=now)
+        db.add(profile)
+    else:
+        profile.terms_accepted_at = now
+    await db.commit()
+    return {"terms_accepted_at": now}
+
+
+@app.post("/api/v1/auth/reset-password")
+async def reset_password(data: PasswordResetRequest, request: Request, db: AsyncSession = Depends(get_pii_db), redis=Depends(get_redis)):
+    ip = request.client.host if request.client else "unknown"
+    if redis:
+        allowed = await check_rate_limit(redis, f'rate:reset_password:{ip}', 5, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
+    await create_password_reset_token(data.email, db)
+    return {"message": "אם המייל קיים במערכת, נשלח קישור לאיפוס סיסמה"}
+
+
+@app.post("/api/v1/auth/reset-password/confirm")
+async def reset_password_confirm(data: PasswordResetConfirmRequest, db: AsyncSession = Depends(get_pii_db)):
+    success = await use_password_reset_token(data.token, data.new_password, db)
+    if not success:
+        raise HTTPException(status_code=400, detail="Invalid or expired token")
+    return {"message": "הסיסמה שונתה בהצלחה"}
+
+
+@app.post("/api/v1/auth/change-password")
+async def change_password_ep(data: ChangePasswordRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
+    await change_password(current_user, data.current_password, data.new_password, db)
+    return {"message": "הסיסמה שונתה בהצלחה"}
+
+
+@app.get("/api/v1/auth/trusted-devices")
+async def get_trusted_devices(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
+    from BACKEND_DATABASE_MODELS import UserSession
+    result = await db.execute(
+        select(UserSession).where(and_(
+            UserSession.user_id == current_user.id,
+            UserSession.is_trusted_device == True,
+            UserSession.trusted_until > datetime.utcnow(),
+            UserSession.revoked_at.is_(None),
+        ))
+    )
+    sessions = result.scalars().all()
+    return {"devices": [{"id": str(s.id), "device_name": s.device_name or "Unknown", "last_used": s.last_used_at, "trusted_until": s.trusted_until} for s in sessions]}
+
+
+@app.post("/api/v1/auth/trust-device")
+async def trust_device(device_fingerprint: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
+    from BACKEND_DATABASE_MODELS import UserSession
+    result = await db.execute(
+        select(UserSession).where(and_(
+            UserSession.user_id == current_user.id,
+            UserSession.device_fingerprint == device_fingerprint,
+            UserSession.revoked_at.is_(None),
+        )).order_by(UserSession.created_at.desc()).limit(1)
+    )
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    session.is_trusted_device = True
+    session.trusted_until = datetime.utcnow() + timedelta(days=180)
+    await db.commit()
+    return {"message": "Device trusted for 6 months"}
+
+
+@app.delete("/api/v1/auth/trusted-devices/{device_id}")
+async def delete_trusted_device(device_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
+    from BACKEND_DATABASE_MODELS import UserSession
+    result = await db.execute(select(UserSession).where(and_(UserSession.id == device_id, UserSession.user_id == current_user.id)))
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Device not found")
+    session.is_trusted_device = False
+    session.trusted_until = None
+    await db.commit()
+    return {"message": "Device trust removed"}
+
+
+# ==============================================================================
+# 2. CHAT  /api/v1/chat  (10 endpoints)
+# ==============================================================================
+
+@app.post("/api/v1/chat/message")
+async def send_message(data: ChatMessageRequest, request: Request, current_user: User = Depends(get_current_verified_user), db: AsyncSession = Depends(get_pii_db), redis=Depends(get_redis)):
+    ip = request.client.host if request.client else "unknown"
+    if redis:
+        allowed = await check_rate_limit(redis, f'rate:chat:{ip}', 20, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
+    # ── 1. Get or create conversation (fast DB write only) ──────────────────
+    conversation = None
+    if data.conversation_id:
+        result = await db.execute(select(Conversation).where(Conversation.id == data.conversation_id))
+        conversation = result.scalar_one_or_none()
+    if not conversation:
+        conversation = Conversation(
+            user_id=current_user.id,
+            title=data.message[:60] + ("..." if len(data.message) > 60 else ""),
+            is_active=True,
+            started_at=datetime.utcnow(),
+            last_message_at=datetime.utcnow(),
+        )
+        db.add(conversation)
+        await db.flush()
+
+    # ── 2. Save user message immediately ─────────────────────────────────────
+    user_msg = Message(
+        conversation_id=conversation.id,
+        role="user",
+        content=data.message,
+        content_type="text",
+    )
+    db.add(user_msg)
+    await db.commit()
+    await db.refresh(user_msg)
+
+    conv_id   = str(conversation.id)
+    msg_id    = str(user_msg.id)
+    user_id   = str(current_user.id)
+    message   = data.message
+
+    # ── 3. Fire agent as asyncio background task (non-blocking) ──────────────
+    async def _run_agent_bg():
+        async with pii_session_factory() as bg_db:
+            try:
+                await process_agent_response_for_message(user_id, message, conv_id, bg_db)
+            except Exception as exc:
+                print(f"[BG AGENT FATAL] conv={conv_id}: {exc}")
+
+    asyncio.create_task(_guarded_task(_run_agent_bg()))
+
+    # ── 4. Return immediately — frontend will poll for the assistant reply ───
+    return {
+        "status": "processing",
+        "conversation_id": conv_id,
+        "user_message_id": msg_id,
+        "created_at": user_msg.created_at.isoformat(),
+    }
+
+
+@app.get("/api/v1/chat/conversations")
+async def get_conversations(current_user: User = Depends(get_current_user), limit: int = 50, db: AsyncSession = Depends(get_pii_db)):
+    from sqlalchemy import func as sa_func
+    msg_counts_res = await db.execute(
+        select(Message.conversation_id, sa_func.count(Message.id).label("cnt"))
+        .group_by(Message.conversation_id)
+    )
+    counts = {str(row.conversation_id): row.cnt for row in msg_counts_res}
+    result = await db.execute(select(Conversation).where(Conversation.user_id == current_user.id).order_by(Conversation.last_message_at.desc()).limit(limit))
+    convs = result.scalars().all()
+    return {"conversations": [{"id": str(c.id), "title": c.title, "current_agent": c.current_agent, "last_message_at": c.last_message_at, "is_active": c.is_active, "message_count": counts.get(str(c.id), 0)} for c in convs]}
+
+
+@app.get("/api/v1/chat/conversations/{conversation_id}")
+async def get_conversation(conversation_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
+    result = await db.execute(select(Conversation).where(and_(Conversation.id == conversation_id, Conversation.user_id == current_user.id)))
+    conv = result.scalar_one_or_none()
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {"id": str(conv.id), "title": conv.title, "current_agent": conv.current_agent, "started_at": conv.started_at, "last_message_at": conv.last_message_at}
+
+
+@app.get("/api/v1/chat/conversations/{conversation_id}/messages")
+async def get_messages(conversation_id: str, current_user: User = Depends(get_current_user), limit: int = 100, db: AsyncSession = Depends(get_pii_db)):
+    result = await db.execute(select(Conversation).where(and_(Conversation.id == conversation_id, Conversation.user_id == current_user.id)))
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    result = await db.execute(select(Message).where(Message.conversation_id == conversation_id).order_by(Message.created_at.asc()).limit(limit))
+    msgs = result.scalars().all()
+    return {"messages": [{"id": str(m.id), "role": m.role, "agent_name": m.agent_name, "content": m.content, "content_type": m.content_type, "created_at": m.created_at} for m in msgs]}
+
+
+@app.delete("/api/v1/chat/conversations/{conversation_id}")
+async def delete_conversation(conversation_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
+    result = await db.execute(select(Conversation).where(and_(Conversation.id == conversation_id, Conversation.user_id == current_user.id)))
+    conv = result.scalar_one_or_none()
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    await db.delete(conv)
+    await db.commit()
+    return {"message": "Conversation deleted"}
+
+
+@app.post("/api/v1/chat/upload-image")
+async def upload_image(file: UploadFile = File(...), current_user: User = Depends(get_current_verified_user), db: AsyncSession = Depends(get_pii_db), request: Request = None, redis=Depends(get_redis)):
+    """Upload an image and immediately run GPT-4o Vision to identify the part."""
+    import base64 as _b64
+    from hf_client import hf_vision
+    import json as _json
+
+    if redis and request:
+        await check_rate_limit(redis, f"upload_image:{current_user.id}", 10, 60)
+    file_id = str(uuid.uuid4())
+    identified_part = ""
+    identified_part_en = ""
+    confidence = 0.0
+    possible_names: list = []
+
+    img_bytes = await file.read()
+    if len(img_bytes) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large — maximum 10 MB")
+    _ALLOWED_IMAGE_MIMES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+    if file.content_type not in _ALLOWED_IMAGE_MIMES:
+        raise HTTPException(status_code=415, detail=f"Unsupported image type: {file.content_type}")
+    _img_scan, _img_virus = _scan_bytes_for_virus(img_bytes)
+    if _img_scan == "infected":
+        raise HTTPException(status_code=400, detail=f"File rejected: malware detected ({_img_virus})")
+
+    try:
+        if len(img_bytes) <= 10 * 1024 * 1024:  # always True (size validated above)
+            b64 = _b64.b64encode(img_bytes).decode()
+            mime = file.content_type or "image/jpeg"
+            prompt = (
+                "You are an expert automotive parts identifier. "
+                "Look at this image and identify the car part shown. "
+                "Respond ONLY with a JSON object, no markdown: "
+                '{"part_name_he": "<SHORT Hebrew name as used in Israeli auto parts catalogs>", '
+                '"part_name_en": "<name in English>", '
+                '"possible_names": ["<alt Hebrew name 1>", "<alt Hebrew name 2>", "<alt Hebrew name 3>"], '
+                '"confidence": <0.0-1.0>. '
+                'IMPORTANT: part_name_he and ALL possible_names must be SHORT Hebrew terms '
+                '(1-3 words) exactly as written in Israeli auto parts price lists, '
+                'e.g. "מצערת", "בית מצערת", "מסנן אוויר", "משאבת מים". '
+                'Do NOT use English words in possible_names.}'
+            )
+            raw = await hf_vision(b64, prompt, mime=mime)
+            raw = raw.strip().strip("`").removeprefix("json").strip()
+            parsed = _json.loads(raw)
+            identified_part = parsed.get("part_name_he") or parsed.get("part_name_en", "")
+            identified_part_en = parsed.get("part_name_en", "")
+            confidence = float(parsed.get("confidence", 0.0))
+            possible_names = parsed.get("possible_names", [])
+    except Exception as e:
+        print(f"[Chat Vision] error: {e}")
+
+    return {
+        "file_id": file_id,
+        "identified_part": identified_part,
+        "identified_part_en": identified_part_en,
+        "confidence": confidence,
+        "possible_names": possible_names,
+    }
+
+
+@app.post("/api/v1/chat/upload-audio")
+async def upload_audio(
+    file: UploadFile = File(...),
+    conversation_id: Optional[str] = None,
+    current_user: User = Depends(get_current_verified_user),
+    db: AsyncSession = Depends(get_pii_db),
+    request: Request = None,
+    redis=Depends(get_redis),
+):
+    """
+    Receive an audio file, transcribe via Hugging Face Whisper, then pass the
+    transcription to the router agent as a normal chat message.
+    """
+    from hf_client import hf_audio
+
+    if redis and request:
+        await check_rate_limit(redis, f"upload_audio:{current_user.id}", 10, 60)
+    if not os.getenv("HF_TOKEN", ""):
+        raise HTTPException(status_code=503, detail="שירות התמלול אינו זמין כרגע")
+
+    # ── 1. Read & validate ────────────────────────────────────────────────────
+    audio_bytes = await file.read()
+
+    _AUDIO_MAX = 25 * 1024 * 1024  # 25 MB
+    if len(audio_bytes) > _AUDIO_MAX:
+        raise HTTPException(status_code=413, detail="הקובץ גדול מדי — מקסימום 25 MB")
+
+    _ALLOWED_AUDIO_MIMES = {"audio/webm", "audio/mp4", "audio/mpeg", "audio/ogg", "audio/wav"}
+    if file.content_type not in _ALLOWED_AUDIO_MIMES:
+        raise HTTPException(status_code=415, detail=f"Unsupported audio type: {file.content_type}")
+
+    # ── 2. Virus scan ─────────────────────────────────────────────────────────
+    _scan_status, _virus_name = _scan_bytes_for_virus(audio_bytes)
+    if _scan_status == "infected":
+        raise HTTPException(status_code=400, detail=f"הקובץ נדחה: זוהה וירוס ({_virus_name})")
+
+    # ── 3. Transcribe via Hugging Face Whisper ────────────────────────────────
+    transcription = ""
+    detected_language = ""
+    try:
+        transcription = (await hf_audio(audio_bytes)).strip()
+        detected_language = ""
+    except Exception as exc:
+        print(f"[AudioUpload] Whisper error: {exc}")
+        raise HTTPException(status_code=502, detail="שגיאה בתמלול — נסה שוב")
+
+    if not transcription:
+        raise HTTPException(status_code=422, detail="לא ניתן היה לתמלל את הקובץ")
+
+    # ── 4. Route transcription through Avi (router agent) ─────────────────────
+    agent_response = ""
+    conversation_id_out = None
+    try:
+        result = await process_user_message(
+            user_id=str(current_user.id),
+            message=transcription,
+            conversation_id=conversation_id,
+            db=db,
+        )
+        agent_response    = result.get("response", "")
+        conversation_id_out = result.get("conversation_id")
+    except Exception as exc:
+        print(f"[AudioUpload] Agent error: {exc}")
+        # Non-fatal — return transcription even if agent fails
+
+    return {
+        "transcription":   transcription,
+        "agent_response":  agent_response,
+        "language":        detected_language,
+        "conversation_id": conversation_id_out,
+    }
+
+
+@app.post("/api/v1/chat/upload-video")
+async def upload_video(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_verified_user),
+    db: AsyncSession = Depends(get_pii_db),
+    request: Request = None,
+    redis=Depends(get_redis),
+):
+    if redis and request:
+        ip = request.client.host if request.client else "unknown"
+        allowed = await check_rate_limit(redis, f"rate:upload_video:{ip}", 5, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail="יותר מדי בקשות — נסה שוב בעוד דקה")
+
+    content = await file.read()
+    if len(content) > 50 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Video too large (max 50 MB)")
+
+    allowed_mimes = {"video/mp4", "video/webm", "video/ogg"}
+    mime = (file.content_type or "").split(";")[0].strip().lower()
+    if mime not in allowed_mimes:
+        raise HTTPException(status_code=415, detail="Unsupported video type")
+
+    scan_status, virus_name = _scan_bytes_for_virus(content)
+    if scan_status == "infected":
+        raise HTTPException(status_code=400, detail=f"File rejected: malware detected ({virus_name})")
+
+    return {"message": "Video upload – frame analysis coming soon"}
+
+
+@app.websocket("/api/v1/chat/ws")
+async def chat_websocket(websocket: WebSocket, token: Optional[str] = None, db: AsyncSession = Depends(get_pii_db)):
+    """Authenticated WebSocket. Client must pass ?token=<access_token> as a query param."""
+    from BACKEND_AUTH_SECURITY import decode_access_token
+    from jose import JWTError
+    # Validate token before accepting the connection
+    if not token:
+        await websocket.close(code=4001, reason="Authentication required")
+        return
+    try:
+        payload = decode_access_token(token)
+        user_id = payload.get("sub")
+        if not user_id:
+            raise JWTError("No user id in token")
+    except (JWTError, Exception):
+        await websocket.close(code=4003, reason="Invalid or expired token")
+        return
+
+    await websocket.accept()
+    try:
+        while True:
+            data = await websocket.receive_json()
+            response = {"type": "response", "content": "Echo: " + data.get("content", ""), "timestamp": datetime.utcnow().isoformat()}
+            await websocket.send_json(response)
+    except WebSocketDisconnect:
+        pass
+
+
+@app.post("/api/v1/chat/rate")
+async def rate_agent(conversation_id: str, agent_name: str, rating: int, feedback: Optional[str] = None, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
+    from BACKEND_DATABASE_MODELS import AgentRating
+    db.add(AgentRating(conversation_id=conversation_id, user_id=current_user.id, agent_name=agent_name, rating=rating, feedback=feedback))
+    await db.commit()
+    return {"message": "Rating submitted"}
+
+
+# ==============================================================================
+# 3. PARTS  /api/v1/parts  (7 endpoints)
+# ==============================================================================
+
+@app.get("/api/v1/parts/search")
+async def search_parts(
+    query: str = Query(default="", max_length=200),
+    vehicle_id: Optional[str] = None,
+    category: Optional[str] = None,
+    per_type: Optional[int] = None,        # override system_settings.search_results_per_type
+    sort_by: str = "price_ils",            # cheapest first by default
+    vehicle_manufacturer: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    request: Request = None,
+    redis=Depends(get_redis),
+):
+    """
+    Search the parts catalogue and return results grouped by part type.
+
+    Response shape:
+    {
+      "original":    {"part": {...} | null, "suppliers": [...]},
+      "oem":         {"part": {...} | null, "suppliers": [...]},
+      "aftermarket": {"part": {...} | null, "suppliers": [...]},
+      "results_per_type": <int>,
+      "query": <str>
+    }
+
+    Suppliers are sorted price_ils ASC (cheapest first).
+    The `per_type` param caps how many supplier offers are returned per type
+    (default: system_settings.search_results_per_type → 4).
+    Text search is powered by Meilisearch when available; falls back to ILIKE.
+    """
+    ip = request.client.host if (request and request.client) else "unknown"
+    if redis:
+        allowed = await check_rate_limit(redis, f'rate:search:{ip}', 30, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
+    # ── Resolve results_per_type ─────────────────────────────────────────────
+    if per_type is None:
+        try:
+            ss_res = await db.execute(
+                text("SELECT value FROM system_settings WHERE key = 'search_results_per_type' LIMIT 1")
+            )
+            row_ss = ss_res.fetchone()
+            per_type = int(row_ss[0]) if row_ss else 4
+        except Exception:
+            per_type = 4
+
+    # ── Meilisearch text lookup (optional) ───────────────────────────────────
+    # meili_ids: List[str]  → ranked UUIDs from Meilisearch (use unnest JOIN)
+    # meili_ids: None       → Meilisearch unavailable → fall back to ILIKE
+    # meili_ids: []         → Meilisearch returned 0 hits → short-circuit empty
+    meili_ids: Optional[List[str]] = None
+    _meili_url = os.getenv("MEILI_URL", "")
+    if query and _meili_url:
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as _mc:
+                _resp = await _mc.post(
+                    f"{_meili_url}/indexes/parts/search",
+                    headers={"Authorization": f"Bearer {os.getenv('MEILI_MASTER_KEY', '')}"},
+                    json={"q": query, "limit": 200, "attributesToRetrieve": ["id"]},
+                )
+                _resp.raise_for_status()
+                meili_ids = [h["id"] for h in _resp.json().get("hits", [])]
+        except Exception:
+            meili_ids = None  # keep ILIKE fallback
+
+    # ── Short-circuit when Meilisearch found zero hits ────────────────────────
+    if meili_ids is not None and len(meili_ids) == 0:
+        return {
+            "original":         {"part": None, "suppliers": []},
+            "oem":              {"part": None, "suppliers": []},
+            "aftermarket":      {"part": None, "suppliers": []},
+            "results_per_type": per_type,
+            "query":            query,
+        }
+
+    # ── pgvector: embed the query and find nearest neighbours ────────────────
+    # Runs only when Meilisearch returned results (meili_ids is a non-empty list).
+    # vec_score: {id_str → cosine_similarity}  (empty dict if unavailable)
+    _route_vec_score: Dict[str, float] = {}
+    if meili_ids and query:
+        from hf_client import hf_embed
+        try:
+            _qvec = await hf_embed(query, timeout=3.0)
+
+            if _qvec:
+                _vrows = (await db.execute(
+                    text("""
+                        SELECT id::text,
+                               1 - (embedding <=> CAST(:qvec AS vector)) AS sim
+                        FROM parts_catalog
+                        WHERE is_active = TRUE
+                          AND embedding IS NOT NULL
+                        ORDER BY embedding <=> CAST(:qvec AS vector)
+                        LIMIT 50
+                    """),
+                    {"qvec": str(_qvec)},
+                )).fetchall()
+                _route_vec_score = {r[0]: float(r[1]) for r in _vrows}
+        except Exception:
+            _route_vec_score = {}  # degrade silently to Meilisearch-only
+
+    # ── Hybrid re-rank: 0.6 × meili_score + 0.4 × vec_score ─────────────────
+    if _route_vec_score:
+        _meili_scores = {uid: 1.0 / (i + 1) for i, uid in enumerate(meili_ids)}
+        _all_ids = list(dict.fromkeys(list(_meili_scores) + list(_route_vec_score)))
+        _combined = {
+            uid: 0.6 * _meili_scores.get(uid, 0.0) + 0.4 * _route_vec_score.get(uid, 0.0)
+            for uid in _all_ids
+        }
+        meili_ids = sorted(_combined, key=_combined.__getitem__, reverse=True)
+
+    # ── Build shared WHERE conditions ────────────────────────────────────────
+    conditions: List[str] = ["pc.is_active = TRUE"]
+    params: Dict[str, Any] = {}
+
+    # Text filter: if Meilisearch is live use id-array join (no ILIKE needed);
+    # if it's unavailable fall back to the original ILIKE clause.
+    if query and meili_ids is None:
+        conditions.append(
+            "(pc.name ILIKE :q OR pc.sku ILIKE :q OR pc.manufacturer ILIKE :q "
+            "OR pc.category ILIKE :q OR pc.oem_number ILIKE :q)"
+        )
+        params["q"]       = f"%{query}%"
+        params["q_exact"] = query
+        params["q_start"] = f"{query}%"
+
+    if category:
+        conditions.append("pc.category ILIKE :cat")
+        params["cat"] = f"%{category}%"
+
+    if vehicle_manufacturer:
+        # Normalize to catalog brand name: vehicle.manufacturer may be Hebrew
+        # (e.g. "סיטרואן ספרד") while parts_catalog stores English ("Citroen").
+        # Look up car_brands by name, name_he, or aliases to find all variants.
+        try:
+            brand_row = (await db.execute(text("""
+                SELECT name, name_he, aliases FROM car_brands
+                WHERE name ILIKE :vmfr_lookup
+                   OR name_he ILIKE :vmfr_lookup
+                   OR :vmfr_lookup ILIKE CONCAT('%', name_he, '%')
+                   OR EXISTS (
+                       SELECT 1 FROM unnest(aliases) a
+                       WHERE :vmfr_lookup ILIKE CONCAT('%', a, '%')
+                          OR a ILIKE :vmfr_lookup
+                   )
+                LIMIT 1
+            """), {"vmfr_lookup": vehicle_manufacturer})).fetchone()
+        except Exception:
+            brand_row = None
+
+        if brand_row:
+            variants = list({brand_row[0], brand_row[1], *(brand_row[2] or [])})
+            vmfr_clauses = []
+            for idx, v in enumerate(variants):
+                if v:
+                    k = f"vmfr_{idx}"
+                    vmfr_clauses.append(f"pc.manufacturer ILIKE :{k}")
+                    params[k] = f"%{v}%"
+            if vmfr_clauses:
+                conditions.append(f"({' OR '.join(vmfr_clauses)})")
+        else:
+            conditions.append("pc.manufacturer ILIKE :vmfr")
+            params["vmfr"] = f"%{vehicle_manufacturer}%"
+
+    if vehicle_id:
+        conditions.append(
+            "(pc.compatible_vehicles::text ILIKE :vid "
+            "OR EXISTS (SELECT 1 FROM part_vehicle_fitment pvf "
+            "           WHERE pvf.part_id = pc.id AND pvf.vehicle_id = :vid_exact))"
+        )
+        params["vid"] = f"%{vehicle_id}%"
+        params["vid_exact"] = vehicle_id
+
+    where_sql = " AND ".join(conditions)
+
+    # ── ILIKE relevance score (only used when Meilisearch is unavailable) ─────
+    if query and meili_ids is None:
+        relevance_sql = """
+                CASE
+                    WHEN pc.name ILIKE :q_exact THEN 4
+                    WHEN pc.name ILIKE :q_start THEN 3
+                    WHEN LENGTH(pc.name) - LENGTH(:q_exact) <= 5 THEN 2
+                    ELSE 1
+                END DESC,"""
+        score_col = """,
+                    CASE
+                        WHEN pc.name ILIKE :q_exact THEN 4
+                        WHEN pc.name ILIKE :q_start THEN 3
+                        WHEN LENGTH(pc.name) - LENGTH(:q_exact) <= 5 THEN 2
+                        ELSE 1
+                    END AS match_score"""
+    else:
+        relevance_sql = ""
+        score_col = ""
+
+    # ── Helper: fetch one part per type + its supplier list ──────────────────
+    async def _fetch_type(part_type_values: list) -> Dict[str, Any]:
+        type_params = {**params, "pt": part_type_values, "lim": per_type}
+        _unsafe_sql_tokens = (";", "--", "/*", "*/")
+        if any(tok in where_sql for tok in _unsafe_sql_tokens):
+            raise HTTPException(status_code=400, detail="unsafe_query_rejected")
+
+        if meili_ids:
+            # ── Meilisearch path: rank-preserving unnest JOIN ─────────────────
+            # UUIDs come from our own index — hex+dash only, no SQL injection risk.
+            uuid_array = "{" + ",".join(meili_ids) + "}"
+            part_row = (await db.execute(
+                text(f"""
+                    SELECT
+                        pc.id, pc.sku, pc.name, pc.name_he, pc.manufacturer,
+                        pc.category, pc.part_type, pc.base_price,
+                        pc.min_price_ils, pc.max_price_ils, pc.description,
+                        pc.oem_number, pc.barcode, pc.weight_kg,
+                        pc.is_safety_critical, pc.part_condition,
+                        pc.created_at, pc.updated_at
+                    FROM parts_catalog pc
+                    JOIN (
+                        SELECT t.id::uuid AS ranked_id, t.pos
+                        FROM unnest(:uuid_arr::text[]) WITH ORDINALITY AS t(id, pos)
+                    ) ranked ON ranked.ranked_id = pc.id
+                    WHERE {where_sql} AND pc.part_type = ANY(:pt)
+                    ORDER BY ranked.pos ASC,
+                    (
+                        SELECT COUNT(*) FROM supplier_parts sp
+                        WHERE sp.part_id = pc.id AND sp.is_available = TRUE
+                    ) DESC
+                    LIMIT 1
+                """),
+                {**type_params, "uuid_arr": uuid_array},
+            )).fetchone()
+        else:
+            # ── ILIKE fallback path ───────────────────────────────────────────
+            if relevance_sql and any(tok in relevance_sql for tok in _unsafe_sql_tokens):
+                raise HTTPException(status_code=400, detail="unsafe_query_rejected")
+            part_row = (await db.execute(
+                text(f"""
+                    SELECT
+                        pc.id, pc.sku, pc.name, pc.name_he, pc.manufacturer,
+                        pc.category, pc.part_type, pc.base_price,
+                        pc.min_price_ils, pc.max_price_ils, pc.description,
+                        pc.oem_number, pc.barcode, pc.weight_kg,
+                        pc.is_safety_critical, pc.part_condition,
+                        pc.created_at, pc.updated_at{score_col}
+                    FROM parts_catalog pc
+                    WHERE {where_sql} AND pc.part_type = ANY(:pt)
+                    ORDER BY {relevance_sql}
+                    (
+                        SELECT COUNT(*) FROM supplier_parts sp
+                        WHERE sp.part_id = pc.id AND sp.is_available = TRUE
+                    ) DESC,
+                    pc.base_price ASC NULLS LAST
+                    LIMIT 1
+                """),
+                type_params,
+            )).fetchone()
+
+            # Reject loose ILIKE-only matches (score == 1)
+            if query and score_col and part_row is not None:
+                if part_row[-1] == 1:
+                    return {"part": None, "suppliers": []}
+
+        if not part_row:
+            return {"part": None, "suppliers": []}
+
+        part_id_str = str(part_row[0])
+
+        # All available supplier offers for this part, sorted cheapest first
+        sup_rows = (await db.execute(
+            text("""
+                SELECT
+                    sp.id            AS sp_id,
+                    s.name           AS supplier_name,
+                    s.country        AS supplier_country,
+                    sp.supplier_sku,
+                    sp.price_usd,
+                    sp.price_ils,
+                    sp.shipping_cost_ils,
+                    sp.availability,
+                    sp.warranty_months,
+                    sp.estimated_delivery_days,
+                    sp.stock_quantity,
+                    sp.supplier_url,
+                    sp.express_available,
+                    sp.express_price_ils,
+                    sp.express_delivery_days,
+                    sp.express_cutoff_time,
+                    sp.last_checked_at
+                FROM supplier_parts sp
+                JOIN suppliers s ON s.id = sp.supplier_id
+                WHERE sp.part_id = :part_id AND sp.is_available = TRUE
+                ORDER BY COALESCE(sp.price_ils, sp.price_usd * 3.72) ASC
+                LIMIT :lim
+            """),
+            {"part_id": part_id_str, "lim": per_type},
+        )).fetchall()
+
+        part_dict = {
+            "id":               str(part_row[0]),
+            "sku":              part_row[1],
+            "name":             part_row[2],
+            "name_he":          part_row[3],
+            "manufacturer":     part_row[4],
+            "category":         part_row[5],
+            "part_type":        part_row[6],
+            "base_price":       float(part_row[7]) if part_row[7] else None,
+            "min_price_ils":    float(part_row[8]) if part_row[8] else None,
+            "max_price_ils":    float(part_row[9]) if part_row[9] else None,
+            "description":      part_row[10],
+            "oem_number":       part_row[11],
+            "barcode":          part_row[12],
+            "weight_kg":        float(part_row[13]) if part_row[13] else None,
+            "is_safety_critical": part_row[14],
+            "part_condition":   part_row[15],
+            "created_at":       part_row[16].isoformat() if part_row[16] else None,
+            "updated_at":       part_row[17].isoformat() if part_row[17] else None,
+        }
+
+        suppliers_list = []
+        for sp in sup_rows:
+            price_ils = float(sp[5]) if sp[5] else (float(sp[4]) * 3.72 if sp[4] else None)
+            suppliers_list.append({
+                "supplier_part_id":      str(sp[0]),
+                "supplier_name":         _mask_supplier(sp[1]),
+                "supplier_country":      "",
+                "supplier_sku":          sp[3],
+                "price_usd":             float(sp[4]) if sp[4] else None,
+                "price_ils":             round(price_ils, 2) if price_ils else None,
+                "shipping_cost_ils":     float(sp[6]) if sp[6] else None,
+                "availability":          sp[7],
+                "warranty_months":       sp[8],
+                "estimated_delivery_days": sp[9],
+                "stock_quantity":        sp[10],
+                "supplier_url":          sp[11],
+                "express_available":     sp[12],
+                "express_price_ils":     float(sp[13]) if sp[13] else None,
+                "express_delivery_days": sp[14],
+                "express_cutoff_time":   sp[15],
+                "last_checked_at":       sp[16].isoformat() if sp[16] else None,
+            })
+
+        return {"part": part_dict, "suppliers": suppliers_list}
+
+    # ── Run all 3 type queries (concurrently) ────────────────────────────────
+    original_res, oem_res, aftermarket_res = await asyncio.gather(
+        _fetch_type(["Original"]),                         # מקורי / OEM original
+        _fetch_type(["OEM"]),                              # OEM equivalent
+        _fetch_type(["Aftermarket", "Refurbished"]),       # חליפי / aftermarket
+    )
+
+    return {
+        "original":         original_res,
+        "oem":              oem_res,
+        "aftermarket":      aftermarket_res,
+        "results_per_type": per_type,
+        "query":            query,
+    }
+
+
+@app.post("/api/v1/parts/search-by-vehicle")
+async def search_parts_by_vehicle(vehicle_id: str, category: Optional[str] = None, db: AsyncSession = Depends(get_db), pii_db: AsyncSession = Depends(get_pii_db), request: Request = None, redis=Depends(get_redis)):
+    if redis and request:
+        ip = request.client.host if request.client else "unknown"
+        allowed = await check_rate_limit(redis, f'rate:search_by_vehicle:{ip}', 30, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
+    result = await pii_db.execute(select(Vehicle).where(Vehicle.id == vehicle_id))
+    vehicle = result.scalar_one_or_none()
+    if not vehicle:
+        raise HTTPException(status_code=404, detail="Vehicle not found")
+    agent = get_agent("parts_finder_agent")
+    parts = await agent.search_parts_in_db("", vehicle_id, category, db)
+    return {"vehicle": {"manufacturer": vehicle.manufacturer, "model": vehicle.model, "year": vehicle.year}, "parts": parts}
+
+
+@app.get("/api/v1/parts/categories")
+async def get_categories(db: AsyncSession = Depends(get_db)):
+    from sqlalchemy import func
+    result = await db.execute(
+        select(PartsCatalog.category, func.count(PartsCatalog.id).label("cnt"))
+        .where(PartsCatalog.is_active == True)
+        .group_by(PartsCatalog.category)
+        .order_by(func.count(PartsCatalog.id).desc())
+    )
+    rows = result.fetchall()
+    categories = [r[0] for r in rows if r[0]]
+    counts = {r[0]: r[1] for r in rows if r[0]}
+    return {"categories": categories, "counts": counts, "total": len(categories)}
+
+
+@app.get("/api/v1/parts/autocomplete")
+async def autocomplete_parts(q: str = "", limit: int = 8, db: AsyncSession = Depends(get_db), request: Request = None, redis=Depends(get_redis)):
+    """Return distinct part names containing the query string (uses GIN trigram index)."""
+    if redis and request:
+        ip = request.client.host if request.client else "unknown"
+        allowed = await check_rate_limit(redis, f'rate:autocomplete:{ip}', 30, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
+    q = q.strip()
+    if len(q) < 2:
+        return {"suggestions": []}
+    result = await db.execute(
+        select(PartsCatalog.name, PartsCatalog.manufacturer, PartsCatalog.category)
+        .where(PartsCatalog.is_active == True)
+        .where(PartsCatalog.name.ilike(f"%{q}%"))
+        .order_by(PartsCatalog.name)
+        .limit(limit)
+    )
+    rows = result.fetchall()
+    suggestions = [
+        {"name": r[0], "manufacturer": r[1], "category": r[2]}
+        for r in rows
+    ]
+    return {"suggestions": suggestions, "query": q}
+
+
+@app.get("/api/v1/parts/manufacturers")
+async def get_manufacturers(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(PartsCatalog.manufacturer).distinct().where(PartsCatalog.is_active == True))
+    return {"manufacturers": [m for m in result.scalars().all() if m]}
+
+
+@app.get("/api/v1/parts/models")
+async def get_models(manufacturer: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+    """Return distinct car models extracted from compatible_vehicles JSON, optionally filtered by manufacturer."""
+    import re as _re
+    sql = text("""
+        SELECT DISTINCT elem->>'model_year' AS model_year
+        FROM parts_catalog,
+             jsonb_array_elements(compatible_vehicles) AS elem
+        WHERE compatible_vehicles IS NOT NULL
+          AND compatible_vehicles::text LIKE '%model_year%'
+          AND (:mfr_like IS NULL OR compatible_vehicles::text ILIKE :mfr_like)
+          AND elem->>'model_year' IS NOT NULL
+        ORDER BY model_year
+    """)
+    result = await db.execute(sql, {"mfr_like": f"%{manufacturer}%" if manufacturer else None})
+    raw = [row[0] for row in result.fetchall() if row[0]]
+    # Two-pass year stripping so year is always separated into the year dropdown:
+    # Pass 1 — strip 4-digit era year (19xx/20xx) AND everything that follows,
+    #   using \s* so it catches both "CAMARO 2021US" and "CAMARO2019 US":
+    #   "SONIC 2014 1.4TURBO" → "SONIC"
+    #   "SAVANA 2017 NEW"     → "SAVANA"
+    #   "CAMARO 2021US"       → "CAMARO"
+    #   "CAMARO2019 US"       → "CAMARO"
+    _era_year_re = _re.compile(r'\s*(?:19|20)\d{2}(?=[^\d]|$).*$')
+    # Pass 2 — strip remaining trailing 2-digit years or year-ranges:
+    #   "CAVALIER 99" → "CAVALIER"
+    #   "CAVALIER 96-67" → "CAVALIER"
+    _trail_num_re = _re.compile(r'\s+\d[\d\-/\.]*\s*$')
+    # Deduplicate case-insensitively: keep the shortest/cleanest variant per normalised key
+    models_map: dict[str, str] = {}  # normalised_key → best display value
+    for my in raw:
+        model = _era_year_re.sub('', my).strip()   # pass 1
+        model = _trail_num_re.sub('', model).strip()  # pass 2
+        # clean extra spaces
+        model = _re.sub(r'\s{2,}', ' ', model).strip()
+        if not model or model.replace('-', '').replace(' ', '').isdigit():
+            continue
+        key = model.upper()
+        # Among duplicates keep the shorter, cleaner form
+        existing = models_map.get(key)
+        if existing is None or len(model) < len(existing):
+            models_map[key] = model
+    models = sorted(models_map.values())
+    return {"models": models, "total": len(models)}
 
 
 # ==============================================================================
@@ -608,39 +1786,892 @@ async def get_parts_by_brand(
     }
 
 
-# GET  /api/v1/parts/search-by-vin        → routes/parts.py
-# GET  /api/v1/parts/{part_id}             → routes/parts.py
-# POST /api/v1/parts/compare               → routes/parts.py
-# POST /api/v1/parts/identify-from-image   → routes/parts.py
+@app.get("/api/v1/parts/search-by-vin")
+async def search_parts_by_vin(
+    vin: str,
+    part_query: Optional[str] = "",
+    category: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+    request: Request = None,
+    redis=Depends(get_redis),
+):
+    """Decode a VIN via NHTSA free API, cache in vehicles table, and search parts."""
+    if redis and request:
+        _vin_ip = request.client.host if request.client else "anon"
+        await check_rate_limit(redis, f"search_by_vin:{_vin_ip}", 10, 60)
+    vin_clean = vin.strip().upper().replace("-", "")
+    if len(vin_clean) != 17:
+        raise HTTPException(status_code=400, detail="VIN must be exactly 17 characters")
+
+    nhtsa_url = f"https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValuesExtended/{vin_clean}?format=json"
+    vehicle_info = {}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(nhtsa_url)
+            resp.raise_for_status()
+            data = resp.json()
+            results = data.get("Results", [{}])[0]
+            def nhtsa(key): return (results.get(key) or "").strip() or None
+            manufacturer = nhtsa("Make") or nhtsa("Manufacturer") or ""
+            model        = nhtsa("Model") or ""
+            year_str     = nhtsa("ModelYear") or ""
+            engine_cc    = nhtsa("DisplacementCC")
+            fuel_type    = nhtsa("FuelTypePrimary")
+            transmission = nhtsa("TransmissionStyle")
+            drive_type   = nhtsa("DriveType")
+            body_class   = nhtsa("BodyClass")
+            doors        = nhtsa("Doors")
+            plant_country = nhtsa("PlantCountry")
+            year_int     = int(year_str) if year_str and year_str.isdigit() else 0
+            engine_type  = f"{fuel_type or 'Unknown'} {engine_cc}cc" if engine_cc else fuel_type
+            vehicle_info = {
+                "vin": vin_clean,
+                "manufacturer": manufacturer,
+                "model": model,
+                "year": year_int,
+                "engine_cc": engine_cc,
+                "fuel_type": fuel_type,
+                "transmission": transmission,
+                "drive_type": drive_type,
+                "body_class": body_class,
+                "doors": doors,
+                "country_of_origin": plant_country,
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[VIN] NHTSA error: {e}")
+        raise HTTPException(status_code=502, detail="שגיאה בפענוח ה-VIN – נסה שוב")
+
+    if not vehicle_info.get("manufacturer"):
+        raise HTTPException(status_code=404, detail=f"לא נמצא מידע עבור VIN: {vin_clean}")
+
+    # ── Cache VIN in vehicles table (catalog DB) ─────────────────────────────
+    cached_vehicle_id: Optional[str] = None
+    try:
+        vin_row = (await db.execute(
+            select(Vehicle).where(Vehicle.vin == vin_clean)
+        )).scalar_one_or_none()
+        if vin_row:
+            cached_vehicle_id = str(vin_row.id)
+        else:
+            new_vehicle = Vehicle(
+                manufacturer = vehicle_info["manufacturer"],
+                model        = vehicle_info["model"],
+                year         = vehicle_info["year"] or 0,
+                vin          = vin_clean,
+                engine_type  = engine_type,
+                fuel_type    = vehicle_info["fuel_type"],
+                transmission = vehicle_info["transmission"],
+            )
+            db.add(new_vehicle)
+            await db.flush()
+            cached_vehicle_id = str(new_vehicle.id)
+            await db.commit()
+        vehicle_info["id"] = cached_vehicle_id
+    except Exception as e:
+        print(f"[VIN] vehicle cache error (non-fatal): {e}")
+        await db.rollback()
+
+    # ── Search parts ──────────────────────────────────────────────────────────
+    agent = get_agent("parts_finder_agent")
+    search_q = (part_query or "").strip()
+    parts_list = await agent.search_parts_in_db(
+        search_q,
+        cached_vehicle_id,
+        category,
+        db,
+        limit=limit,
+        offset=offset,
+        vehicle_manufacturer=vehicle_info["manufacturer"],
+    )
+
+    return {
+        "vehicle": vehicle_info,
+        "parts": parts_list,
+        # len(parts_list) reflects actual search results (Meilisearch / ILIKE)
+        "total": len(parts_list),
+        "offset": offset,
+        "limit": limit,
+    }
+
+
+@app.get("/api/v1/parts/{part_id}")
+async def get_part(part_id: str, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(PartsCatalog).where(PartsCatalog.id == part_id))
+    part = result.scalar_one_or_none()
+    if not part:
+        raise HTTPException(status_code=404, detail="Part not found")
+    return {"id": str(part.id), "name": part.name, "manufacturer": part.manufacturer, "category": part.category, "part_type": part.part_type, "description": part.description, "specifications": part.specifications}
+
+
+@app.post("/api/v1/parts/compare")
+async def compare_parts(part_id: str, db: AsyncSession = Depends(get_db), request: Request = None, redis=Depends(get_redis)):
+    """Return all supplier options for a part (in_stock first, then on_order fallback)."""
+    if redis and request:
+        ip = request.client.host if request.client else "unknown"
+        allowed = await check_rate_limit(redis, f'rate:parts_compare:{ip}', 30, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
+    # Try in_stock first
+    result = await db.execute(
+        select(SupplierPart, Supplier).join(Supplier)
+        .where(and_(SupplierPart.part_id == part_id, SupplierPart.is_available == True, Supplier.is_active == True))
+        .order_by(Supplier.priority.asc())
+    )
+    rows = result.all()
+
+    # Fallback to on_order if nothing in stock
+    if not rows:
+        result2 = await db.execute(
+            select(SupplierPart, Supplier).join(Supplier)
+            .where(and_(SupplierPart.part_id == part_id, Supplier.is_active == True))
+            .order_by(Supplier.priority.asc())
+        )
+        rows = result2.all()
+
+    from BACKEND_AI_AGENTS import get_supplier_shipping as _get_ship
+    agent = get_agent("parts_finder_agent")
+    comparisons = []
+    for sp, supplier in rows:
+        cost_ils = float(sp.price_ils or 0)
+        ship_ils = float(sp.shipping_cost_ils or 0)
+        delivery_fee = _get_ship(supplier.name or "")
+        if cost_ils > 0:
+            pricing = agent.calculate_customer_price_from_ils(cost_ils, ship_ils, customer_shipping=delivery_fee)
+        else:
+            pricing = agent.calculate_customer_price(
+                float(sp.price_usd),
+                float(sp.shipping_cost_usd or 0),
+                customer_shipping=delivery_fee,
+            )
+        comparisons.append({
+            "supplier_part_id": str(sp.id),
+            "supplier_name": _mask_supplier(supplier.name),
+            "supplier_country": "",
+            "availability": "in_stock" if sp.is_available else "on_order",
+            "subtotal": pricing["price_no_vat"],
+            "vat": pricing["vat"],
+            "shipping": pricing["shipping"],
+            "total": pricing["total"],
+            "profit": pricing["profit"],
+            "warranty_months": sp.warranty_months,
+            "estimated_delivery": f"{sp.estimated_delivery_days}-{sp.estimated_delivery_days + 7} ימים",
+        })
+    return {"comparisons": sorted(comparisons, key=lambda x: (x["availability"] != "in_stock", x["total"]))}
+
+
+@app.post("/api/v1/parts/identify-from-image")
+async def identify_part_from_image(
+    file: UploadFile = File(...),
+    vehicle_make:  Optional[str] = Form(None),
+    vehicle_model: Optional[str] = Form(None),
+    vehicle_year:  Optional[str] = Form(None),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    request: Request = None,
+    redis=Depends(get_redis),
+):
+    """Identify a car part from a photo using GPT-4o Vision.
+
+    Flow:
+    1. Hash the image → check part_diagram_cache (DB) for an instant answer.
+    2. If not cached: pre-fetch catalog part names for the vehicle and build a
+       context-rich prompt (acts as a digital parts diagram).
+    3. Call GPT-4o Vision with vehicle + catalog context.
+    4. Save the result to part_diagram_cache so future identical searches skip GPT.
+    """
+    import base64
+    import hashlib
+    import json as _json
+    from hf_client import hf_vision
+    from BACKEND_DATABASE_MODELS import PartDiagramCache
+
+    if redis and request:
+        ip = request.client.host if request.client else "unknown"
+        allowed = await check_rate_limit(redis, f'rate:identify_part_image:{ip}', 10, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
+
+    # ── Read & hash image ────────────────────────────────────────────────────
+    img_bytes = await file.read()
+    if len(img_bytes) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Image too large (max 10 MB)")
+    image_hash = hashlib.sha256(img_bytes).hexdigest()
+    b64  = base64.b64encode(img_bytes).decode()
+    mime = file.content_type or "image/jpeg"
+
+    identified_name = ""
+    identified_en   = ""
+    confidence      = 0.0
+    possible_names: list = []
+    cache_hit       = False
+
+    # ── 1. Check diagram cache ───────────────────────────────────────────────
+    try:
+        cache_row = (await db.execute(
+            text("""
+                SELECT part_name_he, part_name_en, possible_names, confidence
+                FROM part_diagram_cache
+                WHERE image_hash = :h
+                  AND (vehicle_make ILIKE :mk OR (:mk IS NULL AND vehicle_make IS NULL))
+                ORDER BY times_seen DESC
+                LIMIT 1
+            """),
+            {"h": image_hash, "mk": vehicle_make},
+        )).fetchone()
+        if cache_row:
+            identified_name = cache_row[0]
+            identified_en   = cache_row[1] or ""
+            possible_names  = cache_row[2] or []
+            confidence      = float(cache_row[3] or 0)
+            cache_hit       = True
+            # Increment times_seen counter
+            await db.execute(
+                text("""
+                    UPDATE part_diagram_cache SET times_seen = times_seen + 1, updated_at = NOW()
+                    WHERE image_hash = :h AND (vehicle_make ILIKE :mk OR (:mk IS NULL AND vehicle_make IS NULL))
+                """),
+                {"h": image_hash, "mk": vehicle_make},
+            )
+            await db.commit()
+    except Exception as e:
+        print(f"[Vision] Cache lookup error: {e}")
+
+    # ── 2 & 3. GPT call if no cache hit ─────────────────────────────────────
+    if not cache_hit:
+        # Pre-fetch catalog names for this vehicle → "digital diagram"
+        catalog_hint   = ""
+        vehicle_context = ""
+        if vehicle_make:
+            try:
+                brand_row = (await db.execute(text("""
+                    SELECT name, aliases FROM car_brands
+                    WHERE name ILIKE :m OR name_he ILIKE :m
+                       OR :m ILIKE CONCAT('%', name_he, '%')
+                       OR EXISTS (SELECT 1 FROM unnest(aliases) a WHERE a ILIKE :m OR :m ILIKE CONCAT('%',a,'%'))
+                    LIMIT 1
+                """), {"m": vehicle_make})).fetchone()
+                mfr_variants = list({vehicle_make, *((brand_row[1] or []) if brand_row else [])})
+                if brand_row and brand_row[0]:
+                    mfr_variants.append(brand_row[0])
+                mfr_filters = [PartsCatalog.manufacturer.ilike(f"%{v}%") for v in mfr_variants if v]
+                catalog_rows = []
+                if mfr_filters:
+                    catalog_rows = (await db.execute(
+                        select(PartsCatalog.name)
+                        .distinct()
+                        .where(PartsCatalog.is_active == True, or_(*mfr_filters))
+                        .order_by(PartsCatalog.name)
+                        .limit(120)
+                    )).fetchall()
+                if catalog_rows:
+                    names_csv = ", ".join(r[0] for r in catalog_rows)
+                    label = vehicle_make + (f" {vehicle_model}" if vehicle_model else "") + (f" {vehicle_year}" if vehicle_year else "")
+                    catalog_hint = (
+                        f"Our catalog contains these Hebrew part names for {label}: [{names_csv}]. "
+                        "Select the BEST matching name from this list as part_name_he if it visually matches the image. "
+                        "If nothing matches, use your own SHORT Hebrew name (1–3 words)."
+                    )
+            except Exception as e:
+                print(f"[Vision] Catalog hint error: {e}")
+
+            vehicle_context = (
+                f"The vehicle in question is a {vehicle_make}"
+                + (f" {vehicle_model}" if vehicle_model else "")
+                + (f" (year {vehicle_year})" if vehicle_year else "")
+                + ". "
+            )
+
+        if os.getenv("HF_TOKEN", ""):
+            try:
+                prompt = (
+                    "You are an expert automotive parts identifier for an Israeli auto parts store. "
+                    + vehicle_context
+                    + catalog_hint
+                    + " Look at this image and identify the car part shown. "
+                    "Think step by step: 1) What vehicle system does this part belong to? "
+                    "2) What is the exact part? "
+                    "3) Does it match a name from the catalog list above? "
+                    "Respond ONLY with a valid JSON object, no markdown: "
+                    '{"part_name_he": "<best Hebrew name — prefer exact catalog match>", '
+                    '"part_name_en": "<English name>", '
+                    '"possible_names": ["<alt 1>","<alt 2>","<alt 3>","<alt 4>","<alt 5>","<alt 6>"], '
+                    '"confidence": <0.0-1.0>, '
+                    '"description": "<brief Hebrew description>"}. '
+                    'IMPORTANT: part_name_he and ALL possible_names must be SHORT Hebrew terms '
+                    '(1-3 words) as written in Israeli auto parts price lists. '
+                    'Do NOT use English in possible_names.'
+                )
+                raw = await hf_vision(b64, prompt, mime=(file.content_type or "image/jpeg"))
+                raw = raw.strip().strip("`").removeprefix("json").strip()
+                parsed = _json.loads(raw)
+                identified_name = parsed.get("part_name_he") or parsed.get("part_name_en", "")
+                identified_en   = parsed.get("part_name_en", "")
+                confidence      = float(parsed.get("confidence", 0.0))
+                possible_names  = parsed.get("possible_names", [])
+            except Exception as e:
+                print(f"[Vision] HF Vision error: {e}")
+
+        # ── 4. Persist to diagram cache ──────────────────────────────────────
+        if identified_name:
+            try:
+                await db.execute(
+                    text("""
+                        INSERT INTO part_diagram_cache
+                            (id, image_hash, vehicle_make, vehicle_model, vehicle_year,
+                             part_name_he, part_name_en, possible_names, confidence,
+                             times_seen, created_at, updated_at)
+                        VALUES
+                            (gen_random_uuid(), :h, :mk, :mo, :yr,
+                             :phe, :pen, :pn, :conf,
+                             1, NOW(), NOW())
+                        ON CONFLICT (image_hash, vehicle_make, vehicle_model)
+                        DO UPDATE SET
+                            part_name_he   = EXCLUDED.part_name_he,
+                            part_name_en   = EXCLUDED.part_name_en,
+                            possible_names = EXCLUDED.possible_names,
+                            confidence     = EXCLUDED.confidence,
+                            times_seen     = part_diagram_cache.times_seen + 1,
+                            updated_at     = NOW()
+                    """),
+                    {
+                        "h":    image_hash,
+                        "mk":   vehicle_make,
+                        "mo":   vehicle_model,
+                        "yr":   vehicle_year,
+                        "phe":  identified_name,
+                        "pen":  identified_en,
+                        "pn":   possible_names,
+                        "conf": confidence,
+                    },
+                )
+                await db.commit()
+            except Exception as e:
+                print(f"[Vision] Cache save error: {e}")
+
+    # Search the DB with the identified Hebrew name (most accurate match)
+    parts_results = []
+    total = 0
+    search_term = identified_name or identified_en
+    if search_term:
+        agent = get_agent("parts_finder_agent")
+        parts_results = await agent.search_parts_in_db(search_term, None, None, db, limit=20, offset=0)
+        from sqlalchemy import func
+        from BACKEND_DATABASE_MODELS import PartsCatalog
+        count_stmt = select(func.count()).select_from(PartsCatalog).where(
+            PartsCatalog.is_active == True,
+            PartsCatalog.name.ilike(f"%{search_term}%"),
+        )
+        total = (await db.execute(count_stmt)).scalar_one()
+
+    return {
+        "identified_part":    identified_name,
+        "identified_part_en": identified_en,
+        "possible_names":     possible_names,
+        "confidence":         confidence,
+        "cache_hit":          cache_hit,
+        "parts":              parts_results,
+        "total":              total,
+    }
+
+
+# search-by-vin endpoint is defined above {part_id} to ensure correct route matching
 
 
 # ==============================================================================
-# 4. VEHICLES  /api/v1/vehicles  → routes/vehicles.py
+# 4. VEHICLES  /api/v1/vehicles  (8 endpoints)
 # ==============================================================================
 
-# POST   /api/v1/vehicles/identify                          → routes/vehicles.py
-# POST   /api/v1/vehicles/identify-from-image               → routes/vehicles.py
-# GET    /api/v1/vehicles/my-vehicles                       → routes/vehicles.py
-# POST   /api/v1/vehicles/my-vehicles                       → routes/vehicles.py
-# PUT    /api/v1/vehicles/my-vehicles/{vehicle_id}          → routes/vehicles.py
-# DELETE /api/v1/vehicles/my-vehicles/{vehicle_id}          → routes/vehicles.py
-# POST   /api/v1/vehicles/my-vehicles/set-primary           → routes/vehicles.py
-# GET    /api/v1/vehicles/{vehicle_id}/compatible-parts     → routes/vehicles.py
-# VehicleIdentifyRequest model                              → routes/vehicles.py
+@app.post("/api/v1/vehicles/identify")
+async def identify_vehicle(data: VehicleIdentifyRequest, db: AsyncSession = Depends(get_pii_db), request: Request = None, redis=Depends(get_redis)):
+    if redis and request:
+        _iv_ip = request.client.host if request.client else "anon"
+        await check_rate_limit(redis, f"identify_vehicle:{_iv_ip}", 10, 60)
+    agent = get_agent("parts_finder_agent")
+    try:
+        result = await agent.identify_vehicle(data.license_plate, db)
+    except Exception as e:
+        msg = str(e)
+        if "not found" in msg.lower():
+            raise HTTPException(status_code=404, detail=f"לוחית רישוי {data.license_plate} לא נמצאה במאגר משרד התחבורה")
+        raise HTTPException(status_code=502, detail=f"שגיאה בקריאת מאגר הרכבים: {msg}")
+    return result
+
+
+@app.post("/api/v1/vehicles/identify-from-image")
+async def identify_vehicle_from_image(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_verified_user),
+    db: AsyncSession = Depends(get_pii_db),
+    request: Request = None,
+    redis=Depends(get_redis),
+):
+    """Extract license plate from image via HF vision OCR, then look up vehicle via data.gov.il"""
+    # Rate limit
+    if redis and request:
+        ip = request.client.host if request.client else 'unknown'
+        allowed = await check_rate_limit(redis, f'rate:identify_img:{ip}', 10, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
+
+    # Validate file
+    img_bytes = await file.read()
+    if len(img_bytes) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail='Image too large (max 10 MB)')
+    _ALLOWED = {'image/jpeg', 'image/png', 'image/webp'}
+    if (file.content_type or '').split(';')[0].strip() not in _ALLOWED:
+        raise HTTPException(status_code=415, detail='Unsupported image type')
+
+    # OCR via Hugging Face Vision
+    if not os.getenv("HF_TOKEN", ""):
+        raise HTTPException(status_code=503, detail='ocr_service_unavailable')
+
+    import base64 as _b64
+    from hf_client import hf_vision
+    b64 = _b64.b64encode(img_bytes).decode()
+    try:
+        plate_raw = await hf_vision(
+            b64,
+            'Extract the Israeli license plate number from this image. Return ONLY the digits and dashes, for example: 123-45-678. If no plate is visible return empty string.',
+            mime=(file.content_type or "image/jpeg"),
+        )
+        plate_raw = plate_raw.strip()
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f'ocr_failed: {str(e)[:100]}')
+
+    # Clean plate number — keep only digits and dashes
+    import re
+    plate = re.sub(r'[^0-9\-]', '', plate_raw).strip('-')
+    if not plate or len(plate) < 5:
+        raise HTTPException(status_code=422, detail='no_plate_detected')
+
+    # Reuse NIR agent's identify_vehicle (data.gov.il + DB cache)
+    agent = get_agent('parts_finder_agent')
+    try:
+        result = await agent.identify_vehicle(plate, db)
+        result['plate_extracted'] = plate
+        result['ocr_raw'] = plate_raw
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f'vehicle_not_found: {str(e)[:100]}')
+
+
+@app.get("/api/v1/vehicles/my-vehicles")
+async def get_my_vehicles(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
+    from BACKEND_DATABASE_MODELS import UserVehicle
+    result = await db.execute(select(UserVehicle, Vehicle).join(Vehicle).where(UserVehicle.user_id == current_user.id))
+    rows = result.all()
+    vehicles = []
+    for uv, v in rows:
+        gov = v.gov_api_data or {}
+        vehicles.append({
+            "id": str(v.id),
+            "nickname": uv.nickname,
+            "is_primary": uv.is_primary,
+            "license_plate": v.license_plate,
+            "manufacturer": v.manufacturer,
+            "model": v.model,
+            "year": v.year,
+            "engine_type": v.engine_type,
+            "fuel_type": v.fuel_type or gov.get("fuel_type"),
+            "color": gov.get("color"),
+            "transmission": v.transmission or gov.get("transmission"),
+            "engine_cc": gov.get("engine_cc"),
+            "horsepower": gov.get("horsepower"),
+            "vehicle_type": gov.get("vehicle_type"),
+            "doors": gov.get("doors"),
+            "seats": gov.get("seats"),
+            "front_tire": gov.get("front_tire"),
+            "rear_tire": gov.get("rear_tire"),
+            "emissions_group": gov.get("emissions_group"),
+            "last_test_date": gov.get("last_test_date"),
+            "test_expiry_date": gov.get("test_expiry_date"),
+            "ownership": gov.get("ownership"),
+            "country_of_origin": gov.get("country_of_origin"),
+        })
+    return {"vehicles": vehicles}
+
+
+@app.post("/api/v1/vehicles/my-vehicles")
+async def add_my_vehicle(license_plate: str = Form(...), nickname: Optional[str] = Form(None), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
+    from BACKEND_DATABASE_MODELS import UserVehicle
+    agent = get_agent("parts_finder_agent")
+    try:
+        vehicle_data = await agent.identify_vehicle(license_plate, db)
+    except Exception as e:
+        msg = str(e)
+        if "not found" in msg.lower():
+            raise HTTPException(status_code=404, detail=f"לוחית רישוי {license_plate} לא נמצאה במאגר משרד התחבורה")
+        raise HTTPException(status_code=502, detail=f"שגיאה בקריאת מאגר הרכבים: {msg}")
+    db.add(UserVehicle(user_id=current_user.id, vehicle_id=vehicle_data["id"], nickname=nickname, is_primary=False))
+    await db.commit()
+    return {"message": "Vehicle added", "vehicle": vehicle_data}
+
+
+@app.put("/api/v1/vehicles/my-vehicles/{vehicle_id}")
+async def update_my_vehicle(vehicle_id: str, nickname: Optional[str] = None, is_primary: Optional[bool] = None, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
+    from BACKEND_DATABASE_MODELS import UserVehicle
+    result = await db.execute(select(UserVehicle).where(and_(UserVehicle.vehicle_id == vehicle_id, UserVehicle.user_id == current_user.id)))
+    uv = result.scalar_one_or_none()
+    if not uv:
+        raise HTTPException(status_code=404, detail="Vehicle not found")
+    if nickname is not None:
+        uv.nickname = nickname
+    if is_primary is not None:
+        uv.is_primary = is_primary
+    await db.commit()
+    return {"message": "Vehicle updated"}
+
+
+@app.delete("/api/v1/vehicles/my-vehicles/{vehicle_id}")
+async def delete_my_vehicle(vehicle_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
+    from BACKEND_DATABASE_MODELS import UserVehicle
+    result = await db.execute(select(UserVehicle).where(and_(UserVehicle.vehicle_id == vehicle_id, UserVehicle.user_id == current_user.id)))
+    uv = result.scalar_one_or_none()
+    if not uv:
+        raise HTTPException(status_code=404, detail="Vehicle not found")
+    await db.delete(uv)
+    await db.commit()
+    return {"message": "Vehicle removed"}
+
+
+@app.post("/api/v1/vehicles/my-vehicles/set-primary")
+async def set_primary_vehicle(vehicle_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
+    from BACKEND_DATABASE_MODELS import UserVehicle
+    result = await db.execute(select(UserVehicle).where(UserVehicle.user_id == current_user.id))
+    for uv in result.scalars().all():
+        uv.is_primary = (str(uv.vehicle_id) == vehicle_id)
+    await db.commit()
+    return {"message": "Primary vehicle updated"}
+
+
+@app.get("/api/v1/vehicles/{vehicle_id}/compatible-parts")
+async def get_compatible_parts(vehicle_id: str, category: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+    return {"parts": [], "message": "Compatibility filter coming soon"}
 
 
 # ==============================================================================
-# 5. ORDERS  /api/v1/orders  → routes/orders.py
+# 5. ORDERS  /api/v1/orders  (7 endpoints)
 # ==============================================================================
 
-# POST   /api/v1/orders                           → routes/orders.py
-# GET    /api/v1/orders                           → routes/orders.py
-# GET    /api/v1/orders/{order_id}                → routes/orders.py
-# GET    /api/v1/orders/{order_id}/track          → routes/orders.py
-# PUT    /api/v1/orders/{order_id}/cancel         → routes/orders.py
-# POST   /api/v1/orders/{order_id}/return         → routes/orders.py
-# DELETE /api/v1/orders/{order_id}                → routes/orders.py
-# GET    /api/v1/orders/{order_id}/invoice        → routes/orders.py
+@app.post("/api/v1/orders", status_code=status.HTTP_201_CREATED)
+async def create_order(data: OrderCreate, current_user: User = Depends(get_current_verified_user), cat_db: AsyncSession = Depends(get_db), db: AsyncSession = Depends(get_pii_db)):
+    from BACKEND_DATABASE_MODELS import SupplierPart
+    from BACKEND_DATABASE_MODELS import Supplier as SupplierModel
+    from BACKEND_AI_AGENTS import get_supplier_shipping as _get_ship2
+    subtotal = 0.0
+    items_data = []
+    # USD_TO_ILS is imported from BACKEND_DATABASE_MODELS (single source of truth)
+    # Track unique suppliers in this order → charge delivery fee once per supplier origin
+    supplier_delivery_fees: dict[str, float] = {}  # supplier_id -> delivery_fee
+
+    for item in data.items:
+        res = await cat_db.execute(
+            select(SupplierPart, PartsCatalog, SupplierModel)
+            .join(PartsCatalog, SupplierPart.part_id == PartsCatalog.id)
+            .join(SupplierModel, SupplierPart.supplier_id == SupplierModel.id)
+            .where(SupplierPart.id == item.supplier_part_id)
+        )
+        row = res.first()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"חלק {item.supplier_part_id} לא נמצא. נסה לרענן את הדף ולהוסיף את החלק מחדש לסל.")
+        sp, part, supplier_rec = row
+        cost_ils = float(sp.price_ils or 0) or (float(sp.price_usd or 0) * USD_TO_ILS)
+        ship_ils = float(sp.shipping_cost_ils or 0)
+        total_cost_ils = cost_ils + ship_ils  # total procurement cost (part + supplier shipping)
+        delivery_fee = _get_ship2(supplier_rec.name or "")  # customer delivery fee for this supplier origin
+        # Record each unique supplier's delivery fee (charged once per supplier, not per item)
+        supplier_delivery_fees[str(supplier_rec.id)] = delivery_fee
+        unit_price = round(total_cost_ils * 1.45, 2)  # 45% markup on total cost
+        vat = round(unit_price * 0.18, 2)
+        subtotal += unit_price * item.quantity
+        items_data.append({
+            "part_id": item.part_id or str(part.id),
+            "supplier_part_id": item.supplier_part_id,
+            "quantity": item.quantity,
+            "unit_price": unit_price,
+            "vat": vat,
+            "part": part,
+            "sp": sp,
+            "supplier_name": _mask_supplier(supplier_rec.name),
+        })
+
+    vat_total = round(subtotal * 0.18, 2)
+    # Sum delivery fees for each unique supplier origin (Israel + Germany = ₪29 + ₪91 = ₪120)
+    shipping = round(sum(supplier_delivery_fees.values()), 2)
+    total = round(subtotal + vat_total + shipping, 2)
+    order_number = f"AUTO-2026-{str(uuid.uuid4())[:8].upper()}"
+
+    order = Order(
+        order_number=order_number, user_id=current_user.id, status="pending_payment",
+        subtotal=subtotal, vat_amount=vat_total, shipping_cost=shipping,
+        total_amount=total, shipping_address=data.shipping_address,
+    )
+    db.add(order)
+    await db.flush()
+
+    for d in items_data:
+        try:
+            _part_id = uuid.UUID(str(d["part_id"])) if d["part_id"] else None
+            _sp_id   = uuid.UUID(str(d["supplier_part_id"]))
+        except (ValueError, AttributeError):
+            _part_id = None
+            _sp_id   = None
+        db.add(OrderItem(
+            order_id=order.id,
+            part_id=_part_id,
+            supplier_part_id=_sp_id,
+            part_name=d["part"].name, part_sku=d["part"].sku, manufacturer=d["part"].manufacturer,
+            part_type=d["part"].part_type, supplier_name=d["supplier_name"],
+            quantity=d["quantity"], unit_price=d["unit_price"], vat_amount=d["vat"],
+            total_price=(d["unit_price"] + d["vat"]) * d["quantity"], warranty_months=d["sp"].warranty_months,
+        ))
+
+    await db.commit()
+    await db.refresh(order)
+    return {"order_id": str(order.id), "order_number": order.order_number, "status": order.status, "subtotal": float(order.subtotal), "vat": float(order.vat_amount), "shipping": float(order.shipping_cost), "total": float(order.total_amount)}
+
+
+@app.get("/api/v1/orders")
+async def get_orders(current_user: User = Depends(get_current_user), limit: int = 50, db: AsyncSession = Depends(get_pii_db)):
+    result = await db.execute(select(Order).where(Order.user_id == current_user.id).order_by(Order.created_at.desc()).limit(limit))
+    orders = result.scalars().all()
+    return {"orders": [{"id": str(o.id), "order_number": o.order_number, "status": o.status, "total": float(o.total_amount), "created_at": o.created_at, "tracking_number": o.tracking_number, "tracking_url": o.tracking_url, "estimated_delivery": o.estimated_delivery} for o in orders]}
+
+
+@app.get("/api/v1/orders/{order_id}")
+async def get_order(order_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
+    result = await db.execute(select(Order).where(and_(Order.id == order_id, Order.user_id == current_user.id)))
+    order = result.scalar_one_or_none()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    result = await db.execute(select(OrderItem).where(OrderItem.order_id == order_id))
+    items = result.scalars().all()
+    return {
+        "id": str(order.id), "order_number": order.order_number, "status": order.status,
+        "subtotal": float(order.subtotal), "vat": float(order.vat_amount),
+        "shipping": float(order.shipping_cost), "total": float(order.total_amount),
+        "tracking_number": order.tracking_number, "tracking_url": order.tracking_url, "estimated_delivery": order.estimated_delivery,
+        "items": [{"part_id": str(i.part_id) if i.part_id else None, "supplier_part_id": str(i.supplier_part_id) if i.supplier_part_id else None, "part_name": i.part_name, "manufacturer": i.manufacturer, "quantity": i.quantity, "unit_price": float(i.unit_price), "total": float(i.total_price)} for i in items],
+    }
+
+
+@app.get("/api/v1/orders/{order_id}/track")
+async def track_order(order_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
+    result = await db.execute(select(Order).where(and_(Order.id == order_id, Order.user_id == current_user.id)))
+    order = result.scalar_one_or_none()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    return {"order_number": order.order_number, "status": order.status, "tracking_number": order.tracking_number, "tracking_url": order.tracking_url, "estimated_delivery": order.estimated_delivery}
+
+
+@app.put("/api/v1/orders/{order_id}/cancel")
+async def cancel_order(order_id: str, data: OrderCancelRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
+    import stripe as stripe_sdk
+
+    result = await db.execute(select(Order).where(and_(Order.id == order_id, Order.user_id == current_user.id)))
+    order = result.scalar_one_or_none()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order.status not in ["pending_payment", "paid", "processing"]:
+        raise HTTPException(status_code=400, detail="Cannot cancel order in current status")
+
+    was_paid = order.status in ["paid", "processing"]
+    order.status = "cancelled"
+    order.cancelled_at = datetime.utcnow()
+
+    refund_id = None
+    refund_amount = None
+
+    # ── Auto-refund via Stripe if the order was already paid ─────────────────
+    if was_paid:
+        pay_res = await db.execute(
+            select(Payment).where(and_(Payment.order_id == order.id, Payment.status == "paid"))
+        )
+        payment = pay_res.scalar_one_or_none()
+
+        if payment and payment.payment_intent_id:
+            stripe_key = os.getenv("STRIPE_SECRET_KEY", "")
+            if stripe_key and not stripe_key.startswith("sk_test_xxxxx"):
+                stripe_sdk.api_key = stripe_key
+                try:
+                    # payment_intent_id stores the Checkout Session ID (cs_...)
+                    # Retrieve session to get the actual payment_intent (pi_...)
+                    session_obj = await asyncio.get_running_loop().run_in_executor(
+                        None,
+                        lambda: stripe_sdk.checkout.Session.retrieve(payment.payment_intent_id)
+                    )
+                    pi_id = session_obj.payment_intent
+                    if pi_id:
+                        stripe_refund = await asyncio.get_running_loop().run_in_executor(
+                            None,
+                            lambda: stripe_sdk.Refund.create(
+                                payment_intent=pi_id,
+                                reason="requested_by_customer",
+                            )
+                        )
+                        refund_id = stripe_refund.id
+                        refund_amount = float(stripe_refund.amount) / 100  # agorot → ILS
+
+                        # Update Payment record
+                        payment.status = "refunded"
+                        payment.refunded_at = datetime.utcnow()
+                        payment.refund_amount = refund_amount
+                        payment.refund_reason = data.reason or "ביטול על ידי לקוח"
+                        # Auto-create Invoice record on refund
+                        existing_inv = (await db.execute(
+                            select(Invoice).where(Invoice.order_id == order.id)
+                        )).scalar_one_or_none()
+                        if not existing_inv:
+                            db.add(Invoice(
+                                invoice_number=f"INV-{datetime.utcnow().strftime('%Y%m')}-{str(order.id)[:8].upper()}",
+                                order_id=order.id,
+                                user_id=current_user.id,
+                                business_number=os.getenv("COMPANY_NUMBER", "060633880"),
+                                issued_at=datetime.utcnow(),
+                            ))
+                except Exception as stripe_err:
+                    # Don't block cancellation; just log the refund failure
+                    print(f"[Stripe refund error] {stripe_err}")
+
+        # Create a Return record to track the refund
+        ret_number = f"REF-{datetime.utcnow().strftime('%Y%m')}-{str(order.id)[:8].upper()}"
+        db.add(Return(
+            return_number=ret_number,
+            order_id=order.id,
+            user_id=current_user.id,
+            reason="cancellation",
+            description=data.reason or "ביטול על ידי לקוח",
+            original_amount=order.total_amount,
+            refund_amount=refund_amount or order.total_amount,
+            status="approved" if refund_id else "pending",
+        ))
+
+        _cancel_title = "ביטול והחזר כספי" + (" ✅" if refund_id else " 🔄")
+        _cancel_msg = (
+            f"הזמנה {order.order_number} בוטלה. "
+            + (f"החזר כספי של ₪{refund_amount:.2f} נשלח לכרטיס האשראי שלך." if refund_id
+               else "בקשת ההחזר הכספי בטיפול.")
+        )
+        db.add(Notification(
+            user_id=current_user.id,
+            title=_cancel_title,
+            message=_cancel_msg,
+            type="refund_initiated",
+        ))
+        asyncio.create_task(_guarded_task(publish_notification(str(current_user.id), {"type": "refund_initiated", "title": _cancel_title, "message": _cancel_msg})))
+
+    await db.commit()
+    return {
+        "message": "Order cancelled",
+        "refund_initiated": was_paid,
+        "refund_id": refund_id,
+        "refund_amount": refund_amount,
+    }
+
+
+@app.post("/api/v1/orders/{order_id}/return")
+async def create_order_return(
+    order_id: str,
+    data: ReturnRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_pii_db),
+):
+    result = await db.execute(select(Order).where(and_(Order.id == order_id, Order.user_id == current_user.id)))
+    order = result.scalar_one_or_none()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    return_number = f"RET-2026-{str(uuid.uuid4())[:8].upper()}"
+    ret = Return(return_number=return_number, order_id=order.id, user_id=current_user.id, reason=data.reason, description=data.description, original_amount=order.total_amount, status="pending")
+    db.add(ret)
+    await db.commit()
+    await db.refresh(ret)
+    return {"return_id": str(ret.id), "return_number": ret.return_number, "status": "pending"}
+
+
+@app.delete("/api/v1/orders/{order_id}")
+async def delete_order(order_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
+    result = await db.execute(select(Order).where(and_(Order.id == order_id, Order.user_id == current_user.id)))
+    order = result.scalar_one_or_none()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order.status not in ["pending_payment", "cancelled"]:
+        raise HTTPException(status_code=400, detail="ניתן למחוק רק הזמנות שבוטלו או שממתינות לתשלום")
+    # Delete child records that have non-nullable FKs first
+    # Returns must be deleted before the Order (no CASCADE defined)
+    ret_res = await db.execute(select(Return).where(Return.order_id == order.id))
+    for ret in ret_res.scalars().all():
+        await db.delete(ret)
+    pay_res = await db.execute(select(Payment).where(Payment.order_id == order.id))
+    for pay in pay_res.scalars().all():
+        await db.delete(pay)
+    inv_res = await db.execute(select(Invoice).where(Invoice.order_id == order.id))
+    for inv in inv_res.scalars().all():
+        await db.delete(inv)
+    await db.flush()
+    await db.delete(order)
+    await db.commit()
+    return {"message": "Order deleted"}
+
+
+@app.get("/api/v1/orders/{order_id}/invoice")
+async def get_order_invoice(
+    order_id: str,
+    inline: bool = False,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_pii_db),
+):
+    """Generate and stream a Hebrew PDF invoice for a paid order."""
+    from fastapi.responses import StreamingResponse
+    from invoice_generator import generate_invoice_pdf
+
+    # Load order (must belong to requesting user)
+    ord_res = await db.execute(
+        select(Order).where(and_(Order.id == order_id, Order.user_id == current_user.id))
+    )
+    order = ord_res.scalar_one_or_none()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    INVOICE_ALLOWED = {"paid", "processing", "supplier_ordered", "confirmed", "shipped", "delivered", "refunded"}
+    if order.status not in INVOICE_ALLOWED:
+        raise HTTPException(status_code=402, detail="החשבונית זמינה רק לאחר אישור תשלום")
+
+    # Load order items
+    items_res = await db.execute(select(OrderItem).where(OrderItem.order_id == order.id))
+    items = items_res.scalars().all()
+
+    # Get or auto-create invoice record
+    inv_res = await db.execute(select(Invoice).where(Invoice.order_id == order.id))
+    invoice = inv_res.scalar_one_or_none()
+    if not invoice:
+        invoice = Invoice(
+            invoice_number=f"INV-{datetime.utcnow().strftime('%Y%m')}-{str(order.id)[:8].upper()}",
+            order_id=order.id,
+            user_id=current_user.id,
+            business_number=os.getenv("COMPANY_NUMBER", "060633880"),
+            issued_at=order.updated_at or datetime.utcnow(),
+        )
+        db.add(invoice)
+        await db.commit()
+        await db.refresh(invoice)
+
+    # Generate PDF bytes
+    pdf_bytes = generate_invoice_pdf(order, items, current_user, invoice)
+
+    filename = f"invoice_{invoice.invoice_number}.pdf"
+    disposition = f'inline; filename="{filename}"' if inline else f'attachment; filename="{filename}"'
+    return StreamingResponse(
+        iter([pdf_bytes]),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": disposition,
+            "Content-Length": str(len(pdf_bytes)),
+            "X-Frame-Options": "SAMEORIGIN",
+        },
+    )
 
 
 # ==============================================================================
@@ -868,6 +2899,10 @@ async def create_checkout_session(
         "amount": float(order.total_amount),
         "currency": "ILS",
     }
+
+
+class MultiCheckoutRequest(BaseModel):
+    order_ids: List[str]
 
 
 @app.post("/api/v1/payments/create-multi-checkout")
@@ -2891,6 +4926,26 @@ async def super_admin_update_user_role(
     }
 
 
+class UserUpdateBody(BaseModel):
+    full_name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    role: Optional[str] = None
+    is_verified: Optional[bool] = None
+    is_active: Optional[bool] = None
+    is_admin: Optional[bool] = None
+
+
+class UserCreateBody(BaseModel):
+    full_name: str
+    email: str
+    phone: str
+    password: str
+    role: str = "customer"
+    is_admin: bool = False
+    is_verified: bool = True
+
+
 @app.post("/api/v1/admin/users")
 async def create_admin_user(body: UserCreateBody, current_user: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_pii_db)):
     dup_email = await db.execute(select(User).where(User.email == body.email))
@@ -3160,6 +5215,11 @@ async def list_approvals(
             for aq, requester in rows
         ],
     }
+
+
+class ResolveApprovalBody(BaseModel):
+    decision: Literal["approved", "rejected"]
+    note: Optional[str] = None
 
 
 @app.post("/api/v1/admin/approvals/{approval_id}/resolve", tags=["Admin"])
@@ -5707,6 +7767,11 @@ async def db_agent_run_task(
 # CUSTOMERS CART  /api/v1/customers/cart  (4 endpoints)
 # ==============================================================================
 
+class CartAddRequest(BaseModel):
+    part_id: str
+    quantity: int = 1
+
+
 async def _get_or_create_cart(user_id, db: AsyncSession):
     """Return the user's Cart row, creating one if it doesn't exist yet."""
     from BACKEND_DATABASE_MODELS import Cart
@@ -5840,7 +7905,6 @@ async def checkout(
     Delegates all pricing / OrderItem creation to the existing create_order logic.
     """
     from BACKEND_DATABASE_MODELS import Cart, CartItem as CartItemModel
-    from routes.orders import create_order
 
     cart_res = await db.execute(
         select(Cart).where(Cart.user_id == current_user.id)
@@ -5893,6 +7957,10 @@ async def checkout(
 # ==============================================================================
 # WISHLIST
 # ==============================================================================
+
+class WishlistAddRequest(BaseModel):
+    part_id: str
+
 
 async def _wishlist_item_to_response(item, cat_db: AsyncSession) -> dict:
     """Resolve part details from catalog DB for a single WishlistItem row."""
@@ -6003,12 +8071,120 @@ async def remove_from_wishlist(
 
 
 # ==============================================================================
-# PART REVIEWS  → routes/reviews.py
+# PART REVIEWS
 # ==============================================================================
 
-# @router.get("/api/v1/parts/{part_id}/reviews")    → routes/reviews.py
-# @router.post("/api/v1/parts/{part_id}/reviews")   → routes/reviews.py
-# ReviewCreateRequest model                          → routes/reviews.py
+class ReviewCreateRequest(BaseModel):
+    rating: int
+    title:  Optional[str] = Field(None, max_length=255)
+    body:   Optional[str] = Field(None, max_length=2000)
+
+    @validator("rating")
+    def validate_rating(cls, v):
+        if not 1 <= v <= 5:
+            raise ValueError("rating must be 1–5")
+        return v
+
+
+@app.get("/api/v1/parts/{part_id}/reviews")
+async def get_part_reviews(
+    part_id: str,
+    db: AsyncSession = Depends(get_pii_db),
+):
+    from BACKEND_DATABASE_MODELS import PartReview
+
+    try:
+        part_uuid = uuid.UUID(part_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid part_id")
+
+    res = await db.execute(
+        select(PartReview, User)
+        .join(User, PartReview.user_id == User.id)
+        .where(PartReview.part_id == part_uuid)
+        .order_by(PartReview.created_at.desc())
+    )
+    rows = res.all()
+
+    reviews = []
+    total_rating = 0
+    for review, user in rows:
+        total_rating += review.rating
+        reviews.append({
+            "id":                 str(review.id),
+            "rating":             review.rating,
+            "title":              review.title,
+            "body":               review.body,
+            "isVerifiedPurchase": review.is_verified_purchase,
+            "createdAt":          review.created_at.isoformat(),
+            "user": {
+                "id":       str(user.id),
+                "fullName": user.full_name,
+            },
+        })
+
+    avg = round(total_rating / len(reviews), 1) if reviews else None
+    return {"reviews": reviews, "count": len(reviews), "averageRating": avg}
+
+
+@app.post("/api/v1/parts/{part_id}/reviews", status_code=status.HTTP_201_CREATED)
+async def create_part_review(
+    part_id: str,
+    body: ReviewCreateRequest,
+    current_user: User = Depends(get_current_verified_user),
+    db: AsyncSession = Depends(get_pii_db),
+):
+    from BACKEND_DATABASE_MODELS import PartReview, OrderItem as _OrderItem
+
+    try:
+        part_uuid = uuid.UUID(part_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid part_id")
+
+    existing = await db.execute(
+        select(PartReview).where(
+            PartReview.user_id == current_user.id,
+            PartReview.part_id == part_uuid,
+        )
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="You have already reviewed this part")
+
+    # Verified purchase: user must have a delivered order containing this part
+    verified_res = await db.execute(
+        select(Order)
+        .join(_OrderItem, _OrderItem.order_id == Order.id)
+        .where(
+            Order.user_id == current_user.id,
+            Order.status == "delivered",
+            _OrderItem.part_id == part_uuid,
+        )
+        .limit(1)
+    )
+    verified_order = verified_res.scalar_one_or_none()
+
+    review = PartReview(
+        user_id=current_user.id,
+        part_id=part_uuid,
+        order_id=verified_order.id if verified_order else None,
+        rating=body.rating,
+        title=body.title,
+        body=body.body,
+        is_verified_purchase=verified_order is not None,
+    )
+    db.add(review)
+    await db.commit()
+    await db.refresh(review)
+
+    return {
+        "id":                 str(review.id),
+        "partId":             str(review.part_id),
+        "rating":             review.rating,
+        "title":              review.title,
+        "body":               review.body,
+        "isVerifiedPurchase": review.is_verified_purchase,
+        "createdAt":          review.created_at.isoformat(),
+    }
 
 
 @app.delete("/api/v1/customers/reviews/{review_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -6035,22 +8211,6 @@ async def delete_review(
     await db.delete(review)
     await db.commit()
 
-
-# ── Route modules extracted from this file (loaded after all symbols are defined)
-# NOTE: The circular import between routes/* and BACKEND_API_ROUTES is intentional
-#       and safe ONLY because this block runs after all function/helper definitions.
-from routes.parts import router as parts_router
-app.include_router(parts_router)
-from routes.reviews import router as reviews_router
-app.include_router(reviews_router)
-from routes.vehicles import router as vehicles_router
-app.include_router(vehicles_router)
-from routes.auth import router as auth_router
-app.include_router(auth_router)
-from routes.chat import router as chat_router
-app.include_router(chat_router)
-from routes.orders import router as orders_router
-app.include_router(orders_router)
 
 if __name__ == "__main__":
     import uvicorn
