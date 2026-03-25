@@ -153,6 +153,7 @@
 |------|--------|---------------|---------------|-------------|--------------------|------------------|
 | 8 | Orders + Shared Schemas | `backend/routes/orders.py`, `backend/routes/schemas.py` | 2459 | 734 | `pytest tests/test_security.py`: 35 passed, 49 skipped, 0 broken; full `pytest -q` still blocked by pre-existing `pytest_asyncio` missing in `tests/test_system.py` | R-1 resolved (parts/utils circular removed); checkout now uses lazy import from `routes.orders` and must move with checkout in Step 15 |
 | 9 | Payments + Shared fulfillment/frontend helpers | `backend/routes/payments.py` | 1037 | 1069 | Exact baseline re-run: `pytest tests/ -q --tb=no --ignore=tests/test_system.py` -> 91 failed / 120 passed (after one temporary regression in clamd source-string test was fixed) | Avoided new circular import by not importing fulfillment from monolith; `trigger_supplier_fulfillment` + `_get_frontend_url` now centralized in `routes/utils.py` |
+| 10 | Invoices | `backend/routes/invoices.py` | 32 | 52 | Exact baseline re-run: `pytest tests/ -q --tb=no --ignore=tests/test_system.py` -> 91 failed / 120 passed (no new regressions) | No new circular dependency; endpoints were self-contained and required no shared schema/utils extraction |
 
 ---
 
@@ -191,12 +192,12 @@ Execution policy:
 | 7 | Chat | `backend/routes/chat.py`, `backend/routes/utils.py` | ✅ Completed |
 | 8 | Orders + Schemas consolidation | `backend/routes/orders.py`, `backend/routes/schemas.py` | ✅ Completed |
 | 9 | Payments | `backend/routes/payments.py` | ✅ Completed |
+| 10 | Invoices | `backend/routes/invoices.py` | ✅ Completed |
 
 ### Pending Steps (Approved Extraction Order)
 
 | Step | Domain | Files planned | Status |
 |------|--------|---------------|--------|
-| 10 | Returns | `backend/routes/returns.py` | ❌ Pending |
 | 11 | Profile | `backend/routes/profile.py` | ❌ Pending |
 | 12 | Marketing + Social | `backend/routes/marketing.py`, `backend/routes/social.py` | ❌ Pending |
 | 13 | Admin (users/settings/approvals) | `backend/routes/admin.py` | ❌ Pending |
