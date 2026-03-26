@@ -145,6 +145,19 @@
 | `backend/social/telegram_publisher.py` | Async Telegram Bot API publisher — no extra SDK, pure httpx |
 | `backend/social/whatsapp_provider.py` | `WhatsAppProvider` ABC + `TwilioWhatsAppProvider` — pluggable; swap to Meta Cloud API without changing webhook logic |
 
+### Recent Extraction (2026-03-25)
+
+| Step | Domain | Files created | Status |
+|------|--------|---------------|--------|
+| 15 | Notifications | `backend/routes/notifications.py` | ✅ Completed — moved 6 endpoints (stream, list, unread-count, read, read-all, delete) from `BACKEND_API_ROUTES.py` into `routes/notifications.py` and wired via `app.include_router(notifications_router)` |
+
+**Note:** `_SSE_HEARTBEAT_INTERVAL` moved into `backend/routes/notifications.py` (module-scoped constant). See REFACTOR LOG updates below.
+
+### REFACTOR LOG — Pending Steps Update
+
+- 2026-03-25: Notifications (Step 15) extracted and included. Remove from pending extraction list.
+
+
 ---
 
 ## Refactor Step Summary
@@ -154,6 +167,10 @@
 | 8 | Orders + Shared Schemas | `backend/routes/orders.py`, `backend/routes/schemas.py` | 2459 | 734 | `pytest tests/test_security.py`: 35 passed, 49 skipped, 0 broken; full `pytest -q` still blocked by pre-existing `pytest_asyncio` missing in `tests/test_system.py` | R-1 resolved (parts/utils circular removed); checkout now uses lazy import from `routes.orders` and must move with checkout in Step 15 |
 | 9 | Payments + Shared fulfillment/frontend helpers | `backend/routes/payments.py` | 1037 | 1069 | Exact baseline re-run: `pytest tests/ -q --tb=no --ignore=tests/test_system.py` -> 91 failed / 120 passed (after one temporary regression in clamd source-string test was fixed) | Avoided new circular import by not importing fulfillment from monolith; `trigger_supplier_fulfillment` + `_get_frontend_url` now centralized in `routes/utils.py` |
 | 10 | Invoices | `backend/routes/invoices.py` | 32 | 52 | Exact baseline re-run: `pytest tests/ -q --tb=no --ignore=tests/test_system.py` -> 91 failed / 120 passed (no new regressions) | No new circular dependency; endpoints were self-contained and required no shared schema/utils extraction |
+| 11 | Returns | `backend/routes/returns.py` | 412 | 414 | Exact baseline re-run: `pytest -q --tb=no --ignore=tests/test_system.py` -> 91 failed / 120 passed (no new regressions) | No new circular dependency; all endpoints and logic moved verbatim, with import hygiene and type annotation fixes. |
+| 12 | Files | `backend/routes/files.py` | 49 | 67 | Exact baseline re-run: `pytest -q --tb=no --ignore=tests/test_system.py` -> 91 failed / 120 passed (no new regressions) | No new circular dependency; _scan_bytes_for_virus already in utils, FileModel import alias resolved. |
+| 13 | Profile | `backend/routes/profile.py` | 143 | 180 | Exact baseline re-run: `pytest -q --tb=no --ignore=tests/test_system.py` -> 91 failed / 120 passed (no new regressions) | No new circular dependency; all endpoints and logic moved verbatim, with import hygiene and type annotation fixes. |
+| 14 | Marketing | `backend/routes/marketing.py` | 87 | 92 | Exact baseline re-run: `pytest -q --tb=no --ignore=tests/test_system.py` -> 91 failed / 120 passed (no new regressions) | No new circular dependency; all endpoints and logic moved verbatim, with import hygiene and type annotation fixes. |
 
 ---
 
@@ -198,7 +215,6 @@ Execution policy:
 
 | Step | Domain | Files planned | Status |
 |------|--------|---------------|--------|
-| 11 | Profile | `backend/routes/profile.py` | ❌ Pending |
 | 12 | Marketing + Social | `backend/routes/marketing.py`, `backend/routes/social.py` | ❌ Pending |
 | 13 | Admin (users/settings/approvals) | `backend/routes/admin.py` | ❌ Pending |
 | 14 | Wishlist | `backend/routes/wishlist.py` | ❌ Pending |

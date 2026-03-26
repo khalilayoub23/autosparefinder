@@ -183,42 +183,10 @@ async def _cart_to_response(items: list, cat_db: AsyncSession) -> list:
             "supplierName":   _mask_supplier(supplier.name),
             "stockAvailable": sp.stock_quantity if sp.stock_quantity is not None else 99,
         })
-    return result
 
-
-# ==============================================================================
-# VIRUS SCANNING  → routes/utils.py (_scan_bytes_for_virus)
-# TASK SEMAPHORE  → routes/utils.py (_guarded_task)
-# SUPPLIER MASKING → routes/utils.py (_mask_supplier)
-# ==============================================================================
-
-
-# ==============================================================================
-# 1. AUTH  /api/v1/auth  → routes/auth.py
-# ==============================================================================
-
-# POST   /api/v1/auth/register                          → routes/auth.py
-# POST   /api/v1/auth/login                             → routes/auth.py
-# POST   /api/v1/auth/verify-2fa                        → routes/auth.py
-# POST   /api/v1/auth/refresh                           → routes/auth.py
-# POST   /api/v1/auth/verify-email                      → routes/auth.py
-# POST   /api/v1/auth/verify-phone                      → routes/auth.py
-# POST   /api/v1/auth/send-2fa                          → routes/auth.py
-# POST   /api/v1/auth/logout                            → routes/auth.py
-# GET    /api/v1/auth/me                                → routes/auth.py
-# POST   /api/v1/auth/accept-terms                      → routes/auth.py
-# POST   /api/v1/auth/reset-password                    → routes/auth.py
-# POST   /api/v1/auth/reset-password/confirm            → routes/auth.py
-# POST   /api/v1/auth/change-password                   → routes/auth.py
-# GET    /api/v1/auth/trusted-devices                   → routes/auth.py
-# POST   /api/v1/auth/trust-device                      → routes/auth.py
-# DELETE /api/v1/auth/trusted-devices/{device_id}       → routes/auth.py
-# _VALID_CUSTOMER_TYPES + 7 request models              → routes/auth.py
-
-
-
-# 2. CHAT  /api/v1/chat  (10 endpoints)  → routes/chat.py
-# ==============================================================================
+    # Returns router
+    from routes.returns import router as returns_router
+    app.include_router(returns_router)
 # POST   /api/v1/chat/message                         → routes/chat.py
 # GET    /api/v1/chat/conversations                   → routes/chat.py
 # GET    /api/v1/chat/conversations/{id}              → routes/chat.py
@@ -1148,56 +1116,19 @@ async def admin_get_returns(
 # 9. FILES  /api/v1/files  (4 endpoints)
 # ==============================================================================
 
-@app.post("/api/v1/files/upload")
-async def upload_file(file: UploadFile = File(...), current_user: User = Depends(get_current_verified_user), db: AsyncSession = Depends(get_pii_db)):
-    allowed = ["image/jpeg", "image/png", "image/webp", "audio/mpeg", "audio/wav", "video/mp4"]
-    if file.content_type not in allowed:
-        raise HTTPException(status_code=400, detail="File type not allowed")
-    content = await file.read()
-    if len(content) > 25 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="File too large (max 25MB)")
-    # Virus scan before persisting anything
-    scan_status, virus_name = _scan_bytes_for_virus(content)
-    if scan_status == "infected":
-        raise HTTPException(status_code=400, detail=f"File rejected: malware detected ({virus_name})")
-    stored_filename = f"{uuid.uuid4()}_{file.filename}"
-    ftype = "image" if "image" in (file.content_type or "") else ("audio" if "audio" in (file.content_type or "") else "video")
-    file_record = FileModel(
-        user_id=current_user.id,
-        original_filename=file.filename,
-        stored_filename=stored_filename,
-        file_type=ftype,
-        mime_type=file.content_type,
-        file_size_bytes=len(content),
-        storage_path=f"/uploads/{stored_filename}",
-        expires_at=datetime.utcnow() + timedelta(days=30),
-        virus_scan_status=scan_status,
-        virus_scan_at=datetime.utcnow() if scan_status != "skipped" else None,
-    )
-    db.add(file_record)
-    await db.commit()
-    await db.refresh(file_record)
-    return {"file_id": str(file_record.id), "url": f"/api/v1/files/{file_record.id}", "expires_at": file_record.expires_at}
+
+# /api/v1/files/upload — see routes/files.py
 
 
-@app.get("/api/v1/files/{file_id}")
-async def get_file(file_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
-    result = await db.execute(select(FileModel).where(and_(FileModel.id == file_id, FileModel.user_id == current_user.id)))
-    f = result.scalar_one_or_none()
-    if not f:
-        raise HTTPException(status_code=404, detail="File not found")
-    return {"id": str(f.id), "filename": f.original_filename, "file_type": f.file_type, "size_bytes": f.file_size_bytes, "url": f.cdn_url or f.storage_path, "expires_at": f.expires_at}
+
+# /api/v1/files/{file_id} — see routes/files.py
 
 
-@app.delete("/api/v1/files/{file_id}")
-async def delete_file(file_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
-    result = await db.execute(select(FileModel).where(and_(FileModel.id == file_id, FileModel.user_id == current_user.id)))
-    f = result.scalar_one_or_none()
-    if not f:
-        raise HTTPException(status_code=404, detail="File not found")
-    f.deleted_at = datetime.utcnow()
-    await db.commit()
-    return {"message": "File deleted"}
+
+# DELETE /api/v1/files/{file_id} — see routes/files.py
+# Add files_router to include_router block
+from routes.files import router as files_router
+app.include_router(files_router)
 
 
 # ==============================================================================
@@ -1205,244 +1136,65 @@ async def delete_file(file_id: str, current_user: User = Depends(get_current_use
 # ==============================================================================
 
 @app.get("/api/v1/profile")
-async def get_profile(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
-    result = await db.execute(select(UserProfile).where(UserProfile.user_id == current_user.id))
-    profile = result.scalar_one_or_none()
-    return {
-        "user": {"id": str(current_user.id), "email": current_user.email, "phone": current_user.phone, "full_name": current_user.full_name, "is_verified": current_user.is_verified},
-        "profile": {"address": profile.address_line1 if profile else None, "apartment": profile.address_line2 if profile else None, "city": profile.city if profile else None, "postal_code": profile.postal_code if profile else None, "preferred_language": profile.preferred_language if profile else "he", "avatar_url": profile.avatar_url if profile else None} if profile else None,
-    }
+    # /api/v1/profile — see routes/profile.py
 
 
 @app.put("/api/v1/profile")
-async def update_profile(address_line1: Optional[str] = None, address_line2: Optional[str] = None, city: Optional[str] = None, postal_code: Optional[str] = None, full_name: Optional[str] = None, phone: Optional[str] = None, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
-    result = await db.execute(select(UserProfile).where(UserProfile.user_id == current_user.id))
-    profile = result.scalar_one_or_none()
-    if not profile:
-        profile = UserProfile(user_id=current_user.id)
-        db.add(profile)
-    if address_line1 is not None:
-        profile.address_line1 = address_line1
-    if address_line2 is not None:
-        profile.address_line2 = address_line2
-    if city is not None:
-        profile.city = city
-    if postal_code is not None:
-        profile.postal_code = postal_code
-    if full_name is not None:
-        current_user.full_name = full_name
-    if phone is not None and phone.strip() != (current_user.phone or ''):
-        from sqlalchemy import update as sa_update
-        from fastapi import HTTPException
-        existing = await db.execute(select(User).where(User.phone == phone.strip(), User.id != current_user.id))
-        if existing.scalar_one_or_none():
-            raise HTTPException(status_code=400, detail="מספר הטלפון כבר רשום לחשבון אחר")
-        await db.execute(sa_update(User).where(User.id == current_user.id).values(phone=phone.strip()))
-    try:
-        await db.commit()
-    except Exception as e:
-        await db.rollback()
-        raise
-    return {"message": "Profile updated"}
+    # PUT /api/v1/profile — see routes/profile.py
 
 
 @app.post("/api/v1/profile/avatar")
-async def upload_avatar(file: UploadFile = File(...), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db), request: Request = None, redis=Depends(get_redis)):
-    if redis and request:
-        ip = request.client.host if request.client else "unknown"
-        allowed = await check_rate_limit(redis, f"rate:upload_avatar:{ip}", 10, 60)
-        if not allowed:
-            raise HTTPException(status_code=429, detail="יותר מדי בקשות — נסה שוב בעוד דקה")
-
-    content = await file.read()
-    if len(content) > 5 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="Avatar too large (max 5 MB)")
-
-    allowed_mimes = {"image/jpeg", "image/png", "image/webp"}
-    mime = (file.content_type or "").split(";")[0].strip().lower()
-    if mime not in allowed_mimes:
-        raise HTTPException(status_code=415, detail="Unsupported image type")
-
-    scan_status, virus_name = _scan_bytes_for_virus(content)
-    if scan_status == "infected":
-        raise HTTPException(status_code=400, detail=f"File rejected: malware detected ({virus_name})")
-
-    return {"avatar_url": "https://cdn.autospare.com/avatars/coming-soon.jpg"}
+    # POST /api/v1/profile/avatar — see routes/profile.py
 
 
 @app.delete("/api/v1/profile/avatar")
-async def delete_avatar(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
-    return {"message": "Avatar deleted"}
+    # DELETE /api/v1/profile/avatar — see routes/profile.py
 
 
 @app.post("/api/v1/profile/update-phone")
-async def update_phone(data: UpdatePhoneRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
-    await update_phone_number(current_user, data.new_phone, data.verification_code, db)
-    return {"message": "Phone number updated"}
+    # POST /api/v1/profile/update-phone — see routes/profile.py
 
 
 @app.get("/api/v1/profile/marketing-preferences")
-async def get_marketing_preferences(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
-    result = await db.execute(select(UserProfile).where(UserProfile.user_id == current_user.id))
-    profile = result.scalar_one_or_none()
-    return {"marketing_consent": profile.marketing_consent if profile else False, "newsletter_subscribed": profile.newsletter_subscribed if profile else False, "preferences": profile.marketing_preferences if profile else {}}
+    # GET /api/v1/profile/marketing-preferences — see routes/profile.py
 
 
 @app.put("/api/v1/profile/marketing-preferences")
-async def update_marketing_preferences(marketing_consent: Optional[bool] = None, newsletter_subscribed: Optional[bool] = None, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
-    result = await db.execute(select(UserProfile).where(UserProfile.user_id == current_user.id))
-    profile = result.scalar_one_or_none()
-    if not profile:
-        profile = UserProfile(user_id=current_user.id)
-        db.add(profile)
-    if marketing_consent is not None:
-        profile.marketing_consent = marketing_consent
-    if newsletter_subscribed is not None:
-        profile.newsletter_subscribed = newsletter_subscribed
-    await db.commit()
-    return {"message": "Preferences updated"}
+    # PUT /api/v1/profile/marketing-preferences — see routes/profile.py
 
 
 @app.get("/api/v1/profile/order-history")
-async def get_order_history_summary(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
-    result = await db.execute(select(func.count(Order.id).label("total"), func.sum(Order.total_amount).label("spent")).where(Order.user_id == current_user.id))
-    stats = result.first()
-    return {"total_orders": stats.total or 0, "total_spent": float(stats.spent or 0)}
+    # GET /api/v1/profile/order-history — see routes/profile.py
+# Add profile_router to include_router block
+from routes.profile import router as profile_router
+app.include_router(profile_router)
 
 
 # ==============================================================================
 # 11. MARKETING  /api/v1/marketing  (7 endpoints)
 # ==============================================================================
 
-@app.post("/api/v1/marketing/subscribe")
-async def subscribe_newsletter(data: NewsletterSubscribeRequest, request: Request, db: AsyncSession = Depends(get_pii_db), redis=Depends(get_redis)):
-    ip = request.client.host if request.client else "unknown"
-    if redis:
-        allowed = await check_rate_limit(redis, f'rate:subscribe:{ip}', 3, 60)
-        if not allowed:
-            raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
-    return {"message": "Subscribed successfully"}
 
+# /api/v1/marketing/* endpoints → routes/marketing.py
+# (subscribe, validate-coupon, coupons, apply-coupon, promotions, referral, loyalty-points)
 
-@app.post("/api/v1/marketing/validate-coupon")
-async def validate_coupon(data: CouponValidateRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
-    return {"valid": True, "code": data.code, "discount_type": "percentage", "discount_value": 10}
-
-
-@app.get("/api/v1/marketing/coupons")
-async def get_available_coupons(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
-    return {"coupons": []}
-
-
-@app.post("/api/v1/marketing/apply-coupon")
-async def apply_coupon(order_id: str, coupon_code: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
-    return {"discount": 0, "message": "Coupon system coming soon"}
-
-
-@app.get("/api/v1/marketing/promotions")
-async def get_active_promotions(db: AsyncSession = Depends(get_db)):
-    return {"promotions": [{"code": "WELCOME10", "description": "10% on first order", "discount_type": "percentage", "value": 10}]}
-
-
-@app.post("/api/v1/marketing/referral")
-async def create_referral(email: EmailStr, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
-    return {"message": "Referral sent", "referral_link": f"https://autospare.com?ref={str(current_user.id)[:8]}"}
-
-
-@app.get("/api/v1/marketing/loyalty-points")
-async def get_loyalty_points(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
-    return {"points": 0, "tier": "bronze", "next_tier": "silver", "points_needed": 500}
+# Add marketing_router to include_router block
+from routes.marketing import router as marketing_router
+app.include_router(marketing_router)
 
 
 # ==============================================================================
 # 12. NOTIFICATIONS  /api/v1/notifications  (6 endpoints)
 # ==============================================================================
+#
+# /api/v1/notifications/* endpoints → routes/notifications.py
+# (stream, list, unread-count, read, read-all, delete)
+#
+# See: backend/routes/notifications.py
 
-_SSE_HEARTBEAT_INTERVAL = 30  # seconds
-
-@app.get("/api/v1/notifications/stream")
-async def notifications_stream(
-    current_user: User = Depends(get_current_verified_user),
-    redis=Depends(get_redis),
-):
-    """SSE stream: subscribe to user:{user_id}:notifications Redis Pub/Sub channel."""
-    user_id = str(current_user.id)
-
-    async def event_generator():
-        if not redis:
-            yield {"event": "connected", "data": ""}
-            return
-
-        channel = f"user:{user_id}:notifications"
-        pubsub = redis.pubsub()
-        await pubsub.subscribe(channel)
-        try:
-            yield {"event": "connected", "data": ""}
-            last_heartbeat = asyncio.get_running_loop().time()
-            while True:
-                now = asyncio.get_running_loop().time()
-                if now - last_heartbeat >= _SSE_HEARTBEAT_INTERVAL:
-                    yield {"event": "heartbeat", "data": ""}
-                    last_heartbeat = now
-                message = await pubsub.get_message(
-                    ignore_subscribe_messages=True, timeout=0.1
-                )
-                if message and message["type"] == "message":
-                    yield {"event": "notification", "data": message["data"]}
-                else:
-                    await asyncio.sleep(0.05)
-        except asyncio.CancelledError:
-            pass
-        finally:
-            await pubsub.unsubscribe(channel)
-            await pubsub.close()
-
-    return EventSourceResponse(event_generator())
-
-
-@app.get("/api/v1/notifications")
-async def get_notifications(current_user: User = Depends(get_current_user), limit: int = 50, db: AsyncSession = Depends(get_pii_db)):
-    result = await db.execute(select(Notification).where(Notification.user_id == current_user.id).order_by(Notification.created_at.desc()).limit(limit))
-    notifs = result.scalars().all()
-    return {"notifications": [{"id": str(n.id), "type": n.type, "title": n.title, "message": n.message, "read_at": n.read_at, "created_at": n.created_at} for n in notifs]}
-
-
-@app.get("/api/v1/notifications/unread-count")
-async def get_unread_count(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
-    result = await db.execute(select(func.count(Notification.id)).where(and_(Notification.user_id == current_user.id, Notification.read_at.is_(None))))
-    return {"unread_count": result.scalar() or 0}
-
-
-@app.put("/api/v1/notifications/{notification_id}/read")
-async def mark_notification_read(notification_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
-    result = await db.execute(select(Notification).where(and_(Notification.id == notification_id, Notification.user_id == current_user.id)))
-    n = result.scalar_one_or_none()
-    if not n:
-        raise HTTPException(status_code=404, detail="Notification not found")
-    n.read_at = datetime.utcnow()
-    await db.commit()
-    return {"message": "Marked as read"}
-
-
-@app.put("/api/v1/notifications/read-all")
-async def mark_all_read(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
-    result = await db.execute(select(Notification).where(and_(Notification.user_id == current_user.id, Notification.read_at.is_(None))))
-    notifs = result.scalars().all()
-    for n in notifs:
-        n.read_at = datetime.utcnow()
-    await db.commit()
-    return {"message": f"Marked {len(notifs)} notifications as read"}
-
-
-@app.delete("/api/v1/notifications/{notification_id}")
-async def delete_notification(notification_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
-    result = await db.execute(select(Notification).where(and_(Notification.id == notification_id, Notification.user_id == current_user.id)))
-    n = result.scalar_one_or_none()
-    if not n:
-        raise HTTPException(status_code=404, detail="Notification not found")
-    await db.delete(n)
-    await db.commit()
-    return {"message": "Notification deleted"}
+# Add notifications_router to include_router block
+from routes.notifications import router as notifications_router
+app.include_router(notifications_router)
 
 
 # ==============================================================================
