@@ -28,11 +28,11 @@ Endpoints:
 """
 import asyncio
 import uuid
-from datetime import datetime
+from datetime import datetime, date
 from typing import Any, Dict, Optional
 from uuid import UUID as _UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import and_, func, select
 
@@ -55,6 +55,8 @@ from routes.schemas import (
     UserCreateBody,
     UserUpdateBody,
     ResolveApprovalBody,
+    CreateSocialPostRequest,
+    UpdateSocialPostRequest,
 )
 
 router = APIRouter()
@@ -1012,3 +1014,939 @@ async def update_order_status_admin(
     asyncio.create_task(_guarded_task(publish_notification(str(order.user_id), {"type": "order_update", "title": "עדכון סטטוס הזמנה", "message": _status_msg})))
     await db.commit()
     return {"message": "Status updated", "old": old_status, "new": new_status}
+
+
+# ==============================================================================
+# SOCIAL POSTS  /api/v1/admin/social/*
+# ==============================================================================
+
+@router.post("/api/v1/admin/social/posts", status_code=201)
+async def create_social_post(
+    data: CreateSocialPostRequest,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+    pii_db: AsyncSession = Depends(get_pii_db),
+):
+    post = SocialPost(
+        content=data.content,
+        platforms=data.platforms,
+        scheduled_at=data.schedule_time,
+        status="pending_approval",
+        created_by=current_user.id,
+    )
+    db.add(post)
+    await db.flush()          # get post.id before writing to pii_db
+
+    pii_db.add(ApprovalQueue(
+        entity_type="social_post",
+        entity_id=post.id,
+        action="review_social_post",
+        payload={
+            "content":      data.content,
+            "platforms":    data.platforms,
+            "scheduled_at": data.schedule_time.isoformat() if data.schedule_time else None,
+            "created_by":   str(current_user.id),
+        },
+        status="pending",
+        requested_by=current_user.id,
+    ))
+    await db.commit()
+    await pii_db.commit()
+
+    return {
+        "post_id":    str(post.id),
+        "status":     post.status,
+        "created_at": post.created_at,
+    }
+
+
+@router.get("/api/v1/admin/social/posts")
+async def get_scheduled_posts(
+    status: Optional[str] = None,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    stmt = select(SocialPost).order_by(SocialPost.created_at.desc())
+    if status:
+        stmt = stmt.where(SocialPost.status == status)
+    result = await db.execute(stmt)
+    posts = result.scalars().all()
+    return {
+        "posts": [
+            {
+                "id":           str(p.id),
+                "content":      p.content,
+                "platforms":    p.platforms,
+                "status":       p.status,
+                "scheduled_at": p.scheduled_at,
+                "published_at": p.published_at,
+                "created_by":   str(p.created_by),
+                "created_at":   p.created_at,
+                "updated_at":   p.updated_at,
+            }
+            for p in posts
+        ]
+    }
+
+
+@router.put("/api/v1/admin/social/posts/{post_id}")
+async def update_social_post(
+    post_id: str,
+    data: UpdateSocialPostRequest,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(SocialPost).where(SocialPost.id == post_id))
+    post = result.scalar_one_or_none()
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    if post.status == "published":
+        raise HTTPException(status_code=400, detail="Cannot edit a published post")
+
+    if data.content is not None:
+        post.content = data.content
+    if data.platforms is not None:
+        post.platforms = data.platforms
+    if data.schedule_time is not None:
+        post.scheduled_at = data.schedule_time
+    post.updated_at = datetime.utcnow()
+
+    await db.commit()
+    return {"message": "Post updated", "post_id": post_id}
+
+
+@router.delete("/api/v1/admin/social/posts/{post_id}")
+async def delete_social_post(
+    post_id: str,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(SocialPost).where(SocialPost.id == post_id))
+    post = result.scalar_one_or_none()
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    if post.status == "published":
+        raise HTTPException(status_code=400, detail="Cannot delete a published post")
+
+    post.status = "rejected"
+    post.rejection_reason = f"Deleted by admin {current_user.id}"
+    post.updated_at = datetime.utcnow()
+
+    await db.commit()
+    return {"message": "Post deleted", "post_id": post_id}
+
+
+@router.post("/api/v1/admin/social/publish/{post_id}")
+async def publish_social_post(
+    post_id: str,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from social.telegram_publisher import publish_to_telegram
+
+    result = await db.execute(select(SocialPost).where(SocialPost.id == post_id))
+    post = result.scalar_one_or_none()
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    if post.status != "approved":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Post must be 'approved' before publishing (current status: '{post.status}')",
+        )
+
+    tg_result = await publish_to_telegram(post.content)
+    if not tg_result["ok"]:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Telegram publish failed: {tg_result['error']}",
+        )
+
+    post.status = "published"
+    post.published_at = datetime.utcnow()
+    post.external_post_ids = {"telegram": tg_result["message_id"]}
+    post.updated_at = datetime.utcnow()
+    await db.commit()
+
+    return {
+        "message":             "Post published",
+        "post_id":             post_id,
+        "telegram_message_id": tg_result["message_id"],
+        "published_at":        post.published_at,
+    }
+
+
+@router.get("/api/v1/admin/social/analytics")
+async def get_social_analytics(
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from datetime import timedelta
+    rows = (await db.execute(
+        select(SocialPost.status, func.count(SocialPost.id).label("cnt"))
+        .group_by(SocialPost.status)
+    )).all()
+    counts = {r.status: r.cnt for r in rows}
+
+    now = datetime.utcnow()
+    scheduled_next_7d = (await db.execute(
+        select(func.count(SocialPost.id)).where(
+            and_(
+                SocialPost.status.in_(["approved", "pending_approval"]),
+                SocialPost.scheduled_at.between(now, now + timedelta(days=7)),
+            )
+        )
+    )).scalar() or 0
+
+    return {
+        "counts": {
+            "draft":            counts.get("draft", 0),
+            "pending_approval": counts.get("pending_approval", 0),
+            "approved":         counts.get("approved", 0),
+            "published":        counts.get("published", 0),
+            "rejected":         counts.get("rejected", 0),
+        },
+        "scheduled_next_7d": scheduled_next_7d,
+        "followers":  {"facebook": 0, "instagram": 0, "tiktok": 0},
+        "engagement": {"likes": 0, "comments": 0, "shares": 0},
+    }
+
+
+@router.post("/api/v1/admin/social/generate-content")
+async def generate_social_content(topic: str, platform: str, tone: str = "professional", current_user: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_db)):
+    from BACKEND_AI_AGENTS import get_agent
+    agent = get_agent("social_media_manager_agent")
+    content = await agent.generate_post(topic, platform, tone)
+    return {"content": content, "status": "pending_approval"}
+
+
+# ==============================================================================
+# ANALYTICS  /api/v1/admin/analytics/*
+# ==============================================================================
+
+@router.get("/api/v1/admin/analytics/dashboard")
+async def get_analytics_dashboard(current_user: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_pii_db)):
+    users_count = (await db.execute(select(func.count(User.id)))).scalar()
+    orders_count = (await db.execute(select(func.count(Order.id)))).scalar()
+    revenue = (await db.execute(select(func.sum(Order.total_amount)).where(Order.status.in_(["paid", "processing", "shipped", "delivered"])))).scalar() or 0
+    return {"users": users_count, "orders": orders_count, "revenue": float(revenue), "period": "all_time"}
+
+
+@router.get("/api/v1/admin/analytics/sales")
+async def get_sales_analytics(start_date=None, end_date=None, current_user: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_pii_db)):
+    from datetime import date, timedelta
+    from typing import Optional as _Opt
+    d_end   = end_date   or date.today()
+    d_start = start_date or (d_end - timedelta(days=29))
+
+    stmt = (
+        select(
+            func.date(Order.created_at).label("date"),
+            func.count(Order.id).label("orders"),
+            func.sum(Order.total_amount).label("revenue"),
+        )
+        .where(Order.created_at >= d_start)
+        .where(Order.created_at < d_end + timedelta(days=1))
+        .group_by(func.date(Order.created_at))
+        .order_by(func.date(Order.created_at))
+    )
+    result = await db.execute(stmt)
+    rows = {str(row.date): {"orders": row.orders, "revenue": float(row.revenue or 0)} for row in result}
+
+    data = []
+    current = d_start
+    while current <= d_end:
+        ds = str(current)
+        data.append({"date": ds, "orders": rows.get(ds, {}).get("orders", 0), "revenue": rows.get(ds, {}).get("revenue", 0.0)})
+        current += timedelta(days=1)
+
+    return {"data": data}
+
+
+@router.get("/api/v1/admin/analytics/users")
+async def get_user_analytics(current_user: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_pii_db)):
+    total = (await db.execute(select(func.count(User.id)))).scalar()
+    verified = (await db.execute(select(func.count(User.id)).where(User.is_verified == True))).scalar()
+    return {"total_users": total, "verified_users": verified}
+
+
+# ==============================================================================
+# AGENTS CONTROL PANEL  /api/v1/admin/agents
+# ==============================================================================
+
+AGENTS_METADATA = {
+    "router_agent": {
+        "display_name": "Router Agent",
+        "persona": "Avi",
+        "name_he": "סוכן ניתוב",
+        "description": "Automatically routes messages to the appropriate specialized agent based on intent detection.",
+        "description_he": "מנתב הודעות לסוכן המתאים על פי זיהוי כוונה",
+        "capabilities": ["Intent detection", "Language detection", "Confidence scoring", "Context routing"],
+        "model": "qwen3:8b",
+        "temperature": 0.1,
+        "type": "internal",
+        "icon": "GitBranch",
+        "color": "gray",
+    },
+    "parts_finder_agent": {
+        "display_name": "Parts Finder Agent",
+        "persona": "Nir",
+        "name_he": "סוכן חיפוש חלקים",
+        "description": "Finds auto parts by vehicle, category, or part number. Identifies vehicles from Israeli license plates via gov API.",
+        "description_he": "מאתר חלקי רכב לפי רכב, קטגוריה או מספר חלק. זיהוי רכב ממספר לוחית ישראלי",
+        "capabilities": ["Part search", "Vehicle identification (gov.il)", "Price comparison", "Image-based part ID"],
+        "model": "qwen3:8b",
+        "temperature": 0.3,
+        "type": "customer",
+        "icon": "Search",
+        "color": "blue",
+    },
+    "sales_agent": {
+        "display_name": "Sales Agent",
+        "persona": "Maya",
+        "name_he": "סוכן מכירות",
+        "description": "Smart upselling and cross-selling. Presents Good/Better/Best options. Never reveals supplier names.",
+        "description_he": "מכירה חכמה עם Good/Better/Best. לא חושף שמות ספקים",
+        "capabilities": ["Product recommendations", "Upselling", "Bundle suggestions", "Price negotiation"],
+        "model": "qwen3:8b",
+        "temperature": 0.7,
+        "type": "customer",
+        "icon": "TrendingUp",
+        "color": "green",
+    },
+    "orders_agent": {
+        "display_name": "Orders Agent",
+        "persona": "Lior",
+        "name_he": "סוכן הזמנות",
+        "description": "Manages order lifecycle from placement to delivery. Handles cancellations and returns. Dropshipping-aware.",
+        "description_he": "ניהול מחזור חיי הזמנה. ביטולים וחזרות. תואם דרופשיפינג",
+        "capabilities": ["Order status", "Tracking", "Cancellation", "Returns", "Dropshipping flow"],
+        "model": "qwen3:8b",
+        "temperature": 0.3,
+        "type": "customer",
+        "icon": "Package",
+        "color": "orange",
+    },
+    "finance_agent": {
+        "display_name": "Finance Agent",
+        "persona": "Tal",
+        "name_he": "סוכן פיננסי",
+        "description": "Handles payments, invoices, and refunds. Licensed business (מס׳ עוסק: 060633880). VAT 18%, refund policy.",
+        "description_he": "תשלומים, חשבוניות, החזרים. עוסק מורשה מס׳ 060633880",
+        "capabilities": ["Payment questions", "Invoice generation", "Refund calculations", "VAT breakdowns"],
+        "model": "qwen3:8b",
+        "temperature": 0.2,
+        "type": "customer",
+        "icon": "DollarSign",
+        "color": "yellow",
+    },
+    "service_agent": {
+        "display_name": "Service Agent",
+        "persona": "Dana",
+        "name_he": "סוכן שירות לקוחות",
+        "description": "Default fallback agent. Handles general questions, complaints, and technical support with empathy.",
+        "description_he": "סוכן ברירת מחדל. שאלות כלליות, תלונות, תמיכה טכנית",
+        "capabilities": ["General support", "Complaint handling", "Technical questions", "Escalation"],
+        "model": "qwen3:8b",
+        "temperature": 0.8,
+        "type": "customer",
+        "icon": "HeartHandshake",
+        "color": "pink",
+    },
+    "security_agent": {
+        "display_name": "Security Agent",
+        "persona": "Oren",
+        "name_he": "סוכן אבטחה",
+        "description": "Handles login issues, 2FA, password reset, and suspicious activity. Strict identity verification.",
+        "description_he": "בעיות כניסה, 2FA, איפוס סיסמה, פעילות חשודה",
+        "capabilities": ["2FA support", "Password reset", "Account unlock", "Suspicious activity"],
+        "model": "qwen3:8b",
+        "temperature": 0.2,
+        "type": "customer",
+        "icon": "Shield",
+        "color": "red",
+    },
+    "marketing_agent": {
+        "display_name": "Marketing Agent",
+        "persona": "Shira",
+        "name_he": "סוכן שיווק",
+        "description": "Manages promotions, coupons, referral program (100₪ + 10%), and loyalty points.",
+        "description_he": "קופונים, תוכנית הפניות (100₪ + 10%), נקודות נאמנות",
+        "capabilities": ["Coupon management", "Referral program", "Loyalty points", "Newsletter"],
+        "model": "qwen3:8b",
+        "temperature": 0.7,
+        "type": "customer",
+        "icon": "Megaphone",
+        "color": "purple",
+    },
+    "supplier_manager_agent": {
+        "display_name": "Supplier Manager Agent",
+        "persona": "Boaz",
+        "name_he": "סוכן ניהול ספקים",
+        "description": "Background agent. Daily price sync at 02:00. Manages 3 active suppliers. Does NOT interact with customers.",
+        "description_he": "סוכן רקע. סנכרון מחירים יומי 02:00. לא משוחח עם לקוחות",
+        "capabilities": ["Price sync", "Catalog updates", "Availability monitoring", "Supplier performance"],
+        "model": "qwen3:8b",
+        "temperature": 0.1,
+        "type": "admin",
+        "icon": "Truck",
+        "color": "indigo",
+    },
+    "social_media_manager_agent": {
+        "display_name": "Social Media Manager Agent",
+        "persona": "Noa",
+        "name_he": "סוכן מנהל מדיה חברתית",
+        "description": "Generates content for Facebook, Instagram, TikTok, LinkedIn, Telegram. All posts need approval before publish.",
+        "description_he": "יצירת תוכן לפייסבוק, אינסטגרם, טיקטוק, לינקדאין, טלגרם",
+        "capabilities": ["Content generation", "Post scheduling", "Platform-specific tone", "Hashtag generation"],
+        "model": "qwen3:8b",
+        "temperature": 0.9,
+        "type": "admin",
+        "icon": "Share2",
+        "color": "teal",
+    },
+}
+
+@router.get("/api/v1/admin/agents")
+async def list_agents(current_user: User = Depends(get_current_admin_user)):
+    from BACKEND_AI_AGENTS import AGENT_MAP
+    import os as _os
+    hf_token = _os.getenv("HF_TOKEN", "")
+    ai_status = "active" if hf_token else "mocked"
+
+    agents = []
+    for name, meta in AGENTS_METADATA.items():
+        agents.append({
+            "name": name,
+            **meta,
+            "ai_status": ai_status,
+            "is_loaded": name in AGENT_MAP,
+        })
+    return {
+        "agents": agents,
+        "total": len(agents),
+        "ai_status": ai_status,
+        "hf_configured": bool(hf_token),
+    }
+
+
+@router.post("/api/v1/admin/agents/{agent_name}/test")
+async def test_agent(
+    agent_name: str,
+    body: dict,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_pii_db),
+):
+    from BACKEND_AI_AGENTS import get_agent, AGENT_MAP
+    if agent_name not in AGENT_MAP:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
+
+    message = body.get("message", "")
+    if not message:
+        raise HTTPException(status_code=400, detail="message is required")
+
+    agent = get_agent(agent_name)
+    try:
+        response = await agent.process(
+            message=message,
+            conversation_history=[],
+            db=db,
+        )
+        return {"agent": agent_name, "response": response, "status": "ok"}
+    except Exception as e:
+        return {"agent": agent_name, "response": str(e), "status": "error"}
+
+
+@router.put("/api/v1/admin/agents/{agent_name}")
+async def update_agent(
+    agent_name: str,
+    body: dict,
+    current_user: User = Depends(get_current_admin_user),
+):
+    if agent_name not in AGENTS_METADATA:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
+    allowed = {"display_name", "persona", "name_he", "description", "description_he", "model", "temperature", "capabilities", "enabled"}
+    for k, v in body.items():
+        if k in allowed:
+            AGENTS_METADATA[agent_name][k] = v
+    from BACKEND_AI_AGENTS import _agents
+    if agent_name in _agents:
+        if "model" in body:
+            _agents[agent_name].model = body["model"]
+        if "temperature" in body:
+            _agents[agent_name].temperature = float(body["temperature"])
+    return {"agent": agent_name, **AGENTS_METADATA[agent_name]}
+
+
+# ==============================================================================
+# PARTS IMPORT  /api/v1/admin/parts/import
+# ==============================================================================
+
+@router.post("/api/v1/admin/parts/import")
+async def import_parts_excel(
+    file,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Import parts from Excel (.xlsx / .xls) file."""
+    import openpyxl, io as _io
+
+    if not file.filename.lower().endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="יש להעלות קובץ Excel (.xlsx או .xls) בלבד")
+
+    contents = await file.read()
+    try:
+        wb = openpyxl.load_workbook(_io.BytesIO(contents), read_only=True, data_only=True)
+    except Exception:
+        raise HTTPException(status_code=400, detail="לא ניתן לפתוח את הקובץ - ודא שהוא קובץ Excel תקין")
+
+    ws = wb.active
+    rows = list(ws.iter_rows(values_only=True))
+    if not rows:
+        raise HTTPException(status_code=400, detail="הקובץ ריק")
+
+    header = [str(c).strip().lower() if c else '' for c in rows[0]]
+
+    _SKU   = {'sku', 'pin', 'part_number', 'מקט', 'מק"ט', 'part number'}
+    _NAME  = {'name', 'part_name', 'שם', 'שם חלק', 'part name'}
+    _CAT   = {'category', 'קטגוריה', 'cat'}
+    _MFR   = {'manufacturer', 'יצרן', 'brand', 'מותג'}
+    _TYPE  = {'part_type', 'type', 'סוג', 'סוג חלק'}
+    _DESC  = {'description', 'תיאור', 'desc'}
+    _PRICE = {'base_price', 'price', 'מחיר', 'base price'}
+    _COMPAT= {'compatible_vehicles', 'רכבים', 'רכבים תואמים', 'compatible vehicles'}
+
+    def _col(names):
+        for i, h in enumerate(header):
+            if h in names:
+                return i
+        return None
+
+    ci = {k: _col(v) for k, v in {
+        'sku': _SKU, 'name': _NAME, 'category': _CAT,
+        'manufacturer': _MFR, 'part_type': _TYPE, 'description': _DESC,
+        'base_price': _PRICE, 'compatible_vehicles': _COMPAT,
+    }.items()}
+
+    if ci['sku'] is None or ci['name'] is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"לא נמצאו עמודות חובה (sku/pin ו-name). כותרות שנמצאו: {', '.join(header)}"
+        )
+
+    def _get(row, key):
+        idx = ci.get(key)
+        if idx is None or idx >= len(row):
+            return None
+        v = row[idx]
+        return str(v).strip() if v is not None else None
+
+    created = updated = skipped = 0
+    errors = []
+
+    for row_num, row in enumerate(rows[1:], start=2):
+        sku_val = _get(row, 'sku')
+        name_val = _get(row, 'name')
+        if not sku_val or not name_val:
+            skipped += 1
+            continue
+        try:
+            price_raw = _get(row, 'base_price')
+            try:
+                price = float(price_raw) if price_raw else None
+            except (ValueError, TypeError):
+                price = None
+
+            compat_raw = _get(row, 'compatible_vehicles')
+            compat = [v.strip() for v in compat_raw.split(',')] if compat_raw else []
+
+            existing = (await db.execute(
+                select(PartsCatalog).where(PartsCatalog.sku == sku_val)
+            )).scalars().first()
+
+            if existing:
+                existing.name          = name_val
+                existing.category      = _get(row, 'category') or existing.category
+                existing.manufacturer  = _get(row, 'manufacturer') or existing.manufacturer
+                existing.part_type     = _get(row, 'part_type') or existing.part_type
+                existing.description   = _get(row, 'description') or existing.description
+                if price is not None:
+                    existing.base_price = price
+                if compat:
+                    existing.compatible_vehicles = compat
+                existing.updated_at = datetime.utcnow()
+                updated += 1
+            else:
+                db.add(PartsCatalog(
+                    sku=sku_val,
+                    name=name_val,
+                    category=_get(row, 'category'),
+                    manufacturer=_get(row, 'manufacturer'),
+                    part_type=_get(row, 'part_type') or 'Aftermarket',
+                    description=_get(row, 'description'),
+                    base_price=price,
+                    compatible_vehicles=compat,
+                    is_active=True,
+                ))
+                created += 1
+        except Exception as e:
+            errors.append(f"שורה {row_num}: {str(e)}")
+
+    await db.commit()
+    return {
+        "created": created,
+        "updated": updated,
+        "skipped": skipped,
+        "errors": errors,
+        "total_processed": created + updated,
+    }
+
+
+# ==============================================================================
+# JOB FAILURES  /api/v1/admin/job-failures
+# ==============================================================================
+
+@router.get("/api/v1/admin/job-failures")
+async def list_job_failures(
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_pii_db),
+    status: Optional[str] = None,
+    job_name: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+):
+    from BACKEND_DATABASE_MODELS import JobFailure
+
+    limit = min(limit, 1000)
+    query = select(JobFailure)
+
+    if status:
+        query = query.where(JobFailure.status == status)
+    if job_name:
+        query = query.where(JobFailure.job_name == job_name)
+
+    total = (await db.execute(select(func.count(JobFailure.id)).filter(query.whereclause if hasattr(query, 'whereclause') else None))).scalar() or 0
+
+    query = query.order_by(JobFailure.created_at.desc()).limit(limit).offset(offset)
+    results = (await db.execute(query)).scalars().all()
+
+    failures = []
+    for f in results:
+        failures.append({
+            "id": str(f.id),
+            "job_name": f.job_name,
+            "status": f.status,
+            "attempts": f.attempts,
+            "error": f.error[:200] if f.error else None,
+            "next_retry_at": f.next_retry_at.isoformat() if f.next_retry_at else None,
+            "created_at": f.created_at.isoformat(),
+            "resolved_at": f.resolved_at.isoformat() if f.resolved_at else None,
+            "resolved_by": f.resolved_by,
+        })
+
+    return {
+        "failures": failures,
+        "total": total,
+        "fetched": len(failures),
+    }
+
+
+@router.post("/api/v1/admin/job-failures/{job_id}/retry")
+async def retry_job_failure(
+    job_id: str,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_pii_db),
+):
+    from BACKEND_DATABASE_MODELS import JobFailure
+    from uuid import UUID as PyUUID
+
+    try:
+        job_uuid = PyUUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid job ID")
+
+    result = await db.execute(select(JobFailure).where(JobFailure.id == job_uuid))
+    failure = result.scalar_one_or_none()
+
+    if not failure:
+        raise HTTPException(status_code=404, detail="Job failure not found")
+
+    failure.status = "retrying"
+    failure.next_retry_at = datetime.utcnow()
+    failure.attempts += 1
+
+    db.add(failure)
+    await db.commit()
+
+    return {
+        "id": str(failure.id),
+        "job_name": failure.job_name,
+        "status": failure.status,
+        "attempts": failure.attempts,
+        "next_retry_at": failure.next_retry_at.isoformat(),
+        "message": f"Job {failure.job_name} (ID: {job_id}) scheduled for immediate retry",
+    }
+
+
+# ==============================================================================
+# PRICE SYNC + FULFILL-STUCK  /api/v1/admin/price-sync  /api/v1/admin/orders/fulfill-stuck
+# ==============================================================================
+
+PRICE_SYNC_INTERVAL_H = int(__import__('os').getenv("PRICE_SYNC_INTERVAL_H", "24"))
+
+
+@router.get("/api/v1/admin/price-sync/status")
+async def price_sync_status(
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from BACKEND_DATABASE_MODELS import SystemLog
+    last = (await db.execute(
+        select(SystemLog)
+        .where(SystemLog.logger_name == "supplier_manager_agent")
+        .order_by(SystemLog.created_at.desc())
+        .limit(1)
+    )).scalar_one_or_none()
+
+    if not last:
+        return {"last_sync": None, "next_sync_in_h": 0, "status": "never_run"}
+
+    elapsed_h = (datetime.utcnow() - last.created_at).total_seconds() / 3600
+    next_in_h = max(0.0, PRICE_SYNC_INTERVAL_H - elapsed_h)
+    return {
+        "last_sync": last.created_at.isoformat(),
+        "message": last.message,
+        "elapsed_h": round(elapsed_h, 2),
+        "next_sync_in_h": round(next_in_h, 2),
+        "interval_h": PRICE_SYNC_INTERVAL_H,
+    }
+
+
+@router.post("/api/v1/admin/orders/fulfill-stuck", tags=["Admin – Orders"])
+async def admin_fulfill_stuck_orders(db: AsyncSession = Depends(get_pii_db), current_user: User = Depends(get_current_admin_user)):
+    from routes.utils import trigger_supplier_fulfillment as _tsf
+    result = await db.execute(select(Order).where(Order.status.in_(["paid", "processing"])))
+    stuck = result.scalars().all()
+    if not stuck:
+        return {"message": "No stuck orders found", "count": 0}
+    await _tsf(stuck, db)
+    await db.commit()
+    return {"message": f"Fulfillment triggered for {len(stuck)} order(s)", "count": len(stuck), "orders": [o.order_number for o in stuck]}
+
+
+@router.post("/api/v1/admin/price-sync/run")
+async def trigger_price_sync(
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from BACKEND_AI_AGENTS import SupplierManagerAgent
+    from BACKEND_DATABASE_MODELS import async_session_factory as _asf
+
+    async def _run():
+        async with _asf() as session:
+            try:
+                agent = SupplierManagerAgent()
+                await agent.sync_prices(session)
+            except Exception as e:
+                print(f"[PriceSync manual] error: {e}")
+
+    asyncio.create_task(_guarded_task(_run()))
+    return {"status": "started", "message": "Price sync triggered in background"}
+
+
+# ==============================================================================
+# SCRAPER CONTROLS  /api/v1/admin/scraper/*
+# ==============================================================================
+
+@router.get("/api/v1/admin/scraper/status", tags=["Admin – Scraper"])
+async def scraper_status(
+    current_user=Depends(get_current_admin_user),
+):
+    from catalog_scraper import get_scraper_status
+    return get_scraper_status()
+
+
+@router.post("/api/v1/admin/scraper/run", tags=["Admin – Scraper"])
+async def scraper_run_now(
+    batch_size: int = 100,
+    current_user=Depends(get_current_admin_user),
+):
+    from catalog_scraper import run_scraper_cycle
+
+    async def _run():
+        try:
+            await run_scraper_cycle(batch_size=batch_size)
+        except Exception as exc:
+            print(f"[Scraper] manual run error: {exc}")
+
+    asyncio.create_task(_guarded_task(_run()))
+    return {
+        "status": "started",
+        "message": f"Scraper cycle started for {batch_size} parts",
+        "batch_size": batch_size,
+    }
+
+
+@router.post("/api/v1/admin/scraper/run-part/{part_id}", tags=["Admin – Scraper"])
+async def scraper_run_one_part(
+    part_id: str,
+    current_user=Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from sqlalchemy import text as _text
+    from catalog_scraper import (
+        scrape_autodoc, scrape_ebay_motors, scrape_aliexpress,
+        db_update_supplier_part, db_log, SUPPLIER_TOOL_MAP, FALLBACK_TOOLS,
+        ILS_PER_USD, SCRAPE_REQUEST_DELAY,
+    )
+
+    rows = (await db.execute(
+        _text("""
+            SELECT sp.id  AS sp_id,
+                   sp.price_ils,
+                   sp.availability,
+                     s.name AS supplier_name,
+                     s.rate_limit_per_minute,
+                   pc.sku, pc.name AS part_name, pc.manufacturer
+            FROM supplier_parts sp
+            JOIN suppliers s ON s.id = sp.supplier_id
+            JOIN parts_catalog pc ON pc.id = sp.part_id
+            WHERE pc.id = :pid
+        """),
+        {"pid": part_id},
+    )).fetchall()
+
+    if not rows:
+        raise HTTPException(404, detail=f"Part {part_id} not found")
+
+    results = []
+    for row in rows:
+        cat_num = row.sku.split("-", 1)[-1] if "-" in row.sku else row.sku
+        mfr = row.manufacturer or ""
+        primary_fn = SUPPLIER_TOOL_MAP.get(row.supplier_name, scrape_ebay_motors)
+        try:
+            if primary_fn is scrape_aliexpress:
+                data = await primary_fn(f"{mfr} {cat_num} auto part")
+            else:
+                data = await primary_fn(cat_num, mfr, rate_limit_per_minute=row.rate_limit_per_minute)
+        except Exception as exc:
+            data = {"results": []}
+
+        prices = [r["price_ils"] for r in data.get("results", []) if r.get("price_ils", 0) > 10]
+        if prices:
+            prices.sort()
+            median = prices[len(prices) // 2]
+            derived_cost = median / 1.18 / 1.45
+            old = float(row.price_ils or derived_cost)
+            new_ils = round(max(old * 0.75, min(derived_cost, old * 1.25)), 2)
+            await db_update_supplier_part(
+                db,
+                supplier_part_id=str(row.sp_id),
+                price_ils=new_ils,
+                price_usd=round(new_ils / ILS_PER_USD, 2),
+            )
+            results.append({"supplier": row.supplier_name, "old_price": old, "new_price": new_ils, "action": "updated"})
+        else:
+            results.append({"supplier": row.supplier_name, "old_price": float(row.price_ils or 0), "action": "no_data"})
+
+    await db_log(db, "INFO", f"Manual scrape of part {part_id}: {len(results)} supplier rows processed")
+    return {"part_id": part_id, "sku": rows[0].sku, "supplier_results": results}
+
+
+@router.post("/api/v1/admin/scraper/discover", tags=["Admin – Scraper"])
+async def scraper_discover_all(
+    target: int = 200,
+    per_run: int = 5,
+    current_user=Depends(get_current_admin_user),
+):
+    from catalog_scraper import run_brand_discovery
+
+    async def _run():
+        try:
+            await run_brand_discovery(target=target, per_run=per_run)
+        except Exception as exc:
+            print(f"[Rex] discovery error: {exc}")
+
+    asyncio.create_task(_guarded_task(_run()))
+    return {
+        "status": "started",
+        "message": f"Rex brand discovery started (target={target}, per_run={per_run})",
+    }
+
+
+@router.post("/api/v1/admin/scraper/discover/{brand}", tags=["Admin – Scraper"])
+async def scraper_discover_brand(
+    brand: str,
+    target: int = 200,
+    current_user=Depends(get_current_admin_user),
+):
+    from catalog_scraper import run_brand_discovery
+
+    async def _run():
+        try:
+            await run_brand_discovery(brands=[brand], target=target)
+        except Exception as exc:
+            print(f"[Rex] discovery error for {brand}: {exc}")
+
+    asyncio.create_task(_guarded_task(_run()))
+    return {
+        "status": "started",
+        "message": f"Rex discovering parts for '{brand}' (target={target} parts)",
+        "brand": brand,
+    }
+
+
+# ==============================================================================
+# DB UPDATE AGENT  /api/v1/admin/db-agent/*
+# ==============================================================================
+
+@router.get("/api/v1/admin/db-agent/status", tags=["Admin – DB Agent"])
+async def db_agent_status(
+    current_user=Depends(get_current_admin_user),
+):
+    from db_update_agent import get_last_report, is_running, TASK_REGISTRY
+    return {
+        "running": is_running(),
+        "available_tasks": list(TASK_REGISTRY.keys()),
+        "last_report": get_last_report(),
+    }
+
+
+@router.post("/api/v1/admin/db-agent/run", tags=["Admin – DB Agent"])
+async def db_agent_run_all(
+    current_user=Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from db_update_agent import run_all_tasks, is_running
+    from BACKEND_DATABASE_MODELS import async_session_factory as _asf
+
+    if is_running():
+        return {"status": "already_running", "message": "DB agent is already running"}
+
+    async def _run():
+        async with _asf() as bg_db:
+            try:
+                await run_all_tasks(bg_db)
+            except Exception as exc:
+                print(f"[DB Agent] background run error: {exc}")
+
+    asyncio.create_task(_guarded_task(_run()))
+    return {"status": "started", "message": "All DB agent tasks triggered in the background"}
+
+
+@router.post("/api/v1/admin/db-agent/run/{task_name}", tags=["Admin – DB Agent"])
+async def db_agent_run_task(
+    task_name: str,
+    current_user=Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from db_update_agent import run_task, TASK_REGISTRY
+
+    if task_name not in TASK_REGISTRY:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown task '{task_name}'. "
+                   f"Valid tasks: {list(TASK_REGISTRY.keys())}",
+        )
+
+    result = await run_task(task_name, db)
+    return result
