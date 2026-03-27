@@ -1,5 +1,22 @@
 # AutoSpareFinder — Bug & Breaking Points Fix Tracker
-> Last scan: 2026-03-11 | Total issues found: 42 | Fixed: 42 | In Progress: 0 | Open: 0
+> Last scan: 2026-03-27 | Total issues found: 42 | Fixed: 42 | In Progress: 0 | Open: 0
+
+---
+
+## ROUTES EXTRACTION VERIFICATION — 2026-03-27
+
+1. Route files in backend/routes/:
+	- Confirmed present: auth.py, chat.py, files.py, invoices.py, marketing.py, notifications.py, orders.py, parts.py, payments.py, profile.py, returns.py, reviews.py, schemas.py, utils.py, vehicles.py
+2. Routers registered in BACKEND_API_ROUTES.py:
+	- All routers found in include_router statements
+3. Baseline pytest run (backend/tests/):
+	- 85 failed / 126 passed / 51 skipped
+	- Note: improvement due to new Codespace environment
+	- Note: test_M_identify_vehicle_opens_pii_session is a pre-existing failure, not refactor-related
+4. Import check for backend.BACKEND_API_ROUTES:
+	- FAILED: SyntaxError: invalid syntax at 'from routes.profile import router as profile_router'
+
+See terminal output above for details. Blockers must be resolved before further refactor steps.
 
 ---
 
@@ -215,11 +232,9 @@ Execution policy:
 
 | Step | Domain | Files planned | Status |
 |------|--------|---------------|--------|
-| 12 | Marketing + Social | `backend/routes/marketing.py`, `backend/routes/social.py` | ❌ Pending |
-| 13 | Admin (users/settings/approvals) | `backend/routes/admin.py` | ❌ Pending |
-| 14 | Wishlist | `backend/routes/wishlist.py` | ❌ Pending |
-| 15 | Cart + Checkout | `backend/routes/cart.py` | ❌ Pending |
-| 16 | System/Health/Utility leftovers | `backend/routes/system.py` | ❌ Pending |
+| 16 | System/Health/Utility leftovers | `backend/routes/system.py` | ✅ Completed — extracted health, settings, version, metrics endpoints; ClamAV uses _clamd_ping from routes.utils; lazy import for agent status |
+| 17 | Cart + Wishlist + Checkout | `backend/routes/cart.py` | ❌ Pending |
+| 18 | Admin (all admin + social) | `backend/routes/admin.py` | ❌ Pending |
 
 ### Required Note
 

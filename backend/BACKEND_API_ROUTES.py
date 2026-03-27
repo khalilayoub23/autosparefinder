@@ -1135,36 +1135,28 @@ app.include_router(files_router)
 # 10. PROFILE  /api/v1/profile  (7 endpoints)
 # ==============================================================================
 
-@app.get("/api/v1/profile")
-    # /api/v1/profile — see routes/profile.py
+# /api/v1/profile — see routes/profile.py
 
 
-@app.put("/api/v1/profile")
-    # PUT /api/v1/profile — see routes/profile.py
+# PUT /api/v1/profile — see routes/profile.py
 
 
-@app.post("/api/v1/profile/avatar")
-    # POST /api/v1/profile/avatar — see routes/profile.py
+# POST /api/v1/profile/avatar — see routes/profile.py
 
 
-@app.delete("/api/v1/profile/avatar")
-    # DELETE /api/v1/profile/avatar — see routes/profile.py
+# DELETE /api/v1/profile/avatar — see routes/profile.py
 
 
-@app.post("/api/v1/profile/update-phone")
-    # POST /api/v1/profile/update-phone — see routes/profile.py
+# POST /api/v1/profile/update-phone — see routes/profile.py
 
 
-@app.get("/api/v1/profile/marketing-preferences")
-    # GET /api/v1/profile/marketing-preferences — see routes/profile.py
+# GET /api/v1/profile/marketing-preferences — see routes/profile.py
 
 
-@app.put("/api/v1/profile/marketing-preferences")
-    # PUT /api/v1/profile/marketing-preferences — see routes/profile.py
+# PUT /api/v1/profile/marketing-preferences — see routes/profile.py
 
 
-@app.get("/api/v1/profile/order-history")
-    # GET /api/v1/profile/order-history — see routes/profile.py
+# GET /api/v1/profile/order-history — see routes/profile.py
 # Add profile_router to include_router block
 from routes.profile import router as profile_router
 app.include_router(profile_router)
@@ -1614,6 +1606,7 @@ async def create_admin_user(body: UserCreateBody, current_user: User = Depends(g
     await db.refresh(new_user)
     return {"message": "User created", "user": {"id": str(new_user.id), "email": new_user.email, "full_name": new_user.full_name, "phone": new_user.phone, "role": new_user.role, "is_admin": new_user.is_admin, "is_active": new_user.is_active, "is_verified": new_user.is_verified, "failed_login_count": 0, "locked_until": None, "created_at": new_user.created_at}}
 
+
 @app.put("/api/v1/admin/users/{user_id}")
 async def update_admin_user(user_id: str, body: UserUpdateBody = None, is_active: Optional[bool] = None, is_admin: Optional[bool] = None, current_user: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(User).where(User.id == user_id))
@@ -1739,7 +1732,8 @@ async def create_supplier(data: SupplierCreate, current_user: User = Depends(get
         "reliability_score": float(supplier.reliability_score),
         "supports_express": supplier.supports_express, "express_carrier": supplier.express_carrier,
         "express_base_cost_usd": float(supplier.express_base_cost_usd) if supplier.express_base_cost_usd else None,
-        "avg_delivery_days_actual": None, "shipping_info": {}, "return_policy": {}, "created_at": supplier.created_at,
+        "avg_delivery_days_actual": float(supplier.avg_delivery_days_actual) if supplier.avg_delivery_days_actual else None,
+        "shipping_info": supplier.shipping_info or {}, "return_policy": supplier.return_policy or {}, "created_at": supplier.created_at,
     }}
 
 
@@ -4755,7 +4749,5 @@ from routes.payments import router as payments_router
 app.include_router(payments_router)
 from routes.invoices import router as invoices_router
 app.include_router(invoices_router)
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("BACKEND_API_ROUTES:app", host="0.0.0.0", port=8000, reload=True)
+from routes.system import router as system_router
+app.include_router(system_router)
