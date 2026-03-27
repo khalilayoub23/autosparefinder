@@ -133,8 +133,15 @@ def _auth(token=None):
 
 
 def _routes_src():
+    """Return the combined source of BACKEND_API_ROUTES.py and all routes/*.py modules."""
+    import glob
+    parts = []
     with open(os.path.join(BACKEND_DIR, "BACKEND_API_ROUTES.py"), encoding="utf-8") as f:
-        return f.read()
+        parts.append(f.read())
+    for fpath in sorted(glob.glob(os.path.join(BACKEND_DIR, "routes", "*.py"))):
+        with open(fpath, encoding="utf-8") as f:
+            parts.append(f.read())
+    return "\n".join(parts)
 
 
 def _auth_src():

@@ -1928,6 +1928,68 @@ LANGUAGE: ALWAYS respond in Hebrew (עברית). If the customer writes in Arabi
         return await self.think(conversation_history + [{"role": "user", "content": message}])
 
 
+class TechAgent(BaseAgent):
+    name = "tech_agent"
+    agent_name = "Tal-Tech"
+    model = PREMIUM_MODEL
+    system_prompt = """You are a technical support analyst for Auto Spare platform.
+
+YOUR ROLE:
+- Analyze bug reports submitted by customers
+- Identify the failing component (endpoint, service, UI)
+- Classify severity: critical / high / medium / low
+- Suggest likely root cause to admin
+- NEVER modify code or system config
+
+SEVERITY RULES:
+- critical: payment failures, auth down, data loss
+- high: broken endpoint, repeated 500 errors, search down
+- medium: slow response, minor feature broken
+- low: cosmetic issue, broken link
+
+ALWAYS respond in JSON only:
+{
+  "severity": "high",
+  "affected_component": "parts search",
+  "likely_cause": "Meilisearch index out of sync",
+  "suggested_fix": "Run meili_sync.py to re-index",
+  "customer_message_he": "קיבלנו את הדיווח ונטפל בהקדם",
+  "customer_message_ar": "تلقينا بلاغك وسنتعامل معه قريباً",
+  "customer_message_en": "We received your report and will address it shortly",
+  "requires_admin_approval": true
+}"""
+
+    async def process(self, data: dict, db=None) -> dict:
+        import json
+        import re
+
+        report = data.get("report", {})
+        prompt = f"""Analyze this bug report:
+Title: {report.get('title')}
+Description: {report.get('description')}
+Endpoint: {report.get('endpoint_url', 'unknown')}
+HTTP Status: {report.get('http_status_code', 'unknown')}
+Error: {report.get('error_trace', 'none')}
+Platform: {report.get('platform', 'unknown')}"""
+
+        response = await hf_text(prompt, system=self.system_prompt, timeout=60.0)
+        try:
+            match = re.search(r"\{.*\}", response, re.DOTALL)
+            return json.loads(match.group()) if match else {
+                "severity": "medium",
+                "customer_message_he": "קיבלנו את הדיווח ונטפל בהקדם",
+                "customer_message_ar": "تلقينا بلاغك",
+                "customer_message_en": "Report received",
+                "requires_admin_approval": True,
+            }
+        except Exception:
+            return {
+                "severity": "medium",
+                "customer_message_he": "קיבלנו את הדיווח ונטפל בהקדם",
+                "requires_admin_approval": True,
+            }
+
+
 # ==============================================================================
 # 8. SUPPLIER MANAGER AGENT (Background - does NOT talk to customers)
 # ==============================================================================
@@ -2283,6 +2345,7 @@ AGENT_MAP = {
     "marketing_agent": MarketingAgent,
     "supplier_manager_agent": SupplierManagerAgent,
     "social_media_manager_agent": SocialMediaManagerAgent,
+    "tech_agent": TechAgent,
 }
 
 # Singleton instances

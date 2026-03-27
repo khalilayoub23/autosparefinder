@@ -117,8 +117,15 @@ def _auth(token: str) -> dict:
 
 
 def _routes_src() -> str:
+    """Return the combined source of BACKEND_API_ROUTES.py and all routes/*.py modules."""
+    import glob
+    parts = []
     with open(os.path.join(BACKEND_DIR, "BACKEND_API_ROUTES.py"), encoding="utf-8") as f:
-        return f.read()
+        parts.append(f.read())
+    for fpath in sorted(glob.glob(os.path.join(BACKEND_DIR, "routes", "*.py"))):
+        with open(fpath, encoding="utf-8") as f:
+            parts.append(f.read())
+    return "\n".join(parts)
 
 
 def _auth_src() -> str:
@@ -945,8 +952,8 @@ def test_I_supplier_name_masked_in_parts_search():
         # The search function is large and nests _fetch_type which does the masking;
         # look for masking usage anywhere after the function definition
         rest_of_src = src[search_idx:]
-        next_top_fn = re.search(r'^@app\.(get|post|put|delete|patch)', rest_of_src, re.MULTILINE)
-        search_body = rest_of_src[:next_top_fn.start()] if next_top_fn else rest_of_src[:8000]
+        next_top_fn = re.search(r'^@(?:app|router)\.(get|post|put|delete|patch)', rest_of_src, re.MULTILINE)
+        search_body = rest_of_src[:next_top_fn.start()] if next_top_fn else rest_of_src
         assert "_mask_supplier" in search_body, \
             "search_parts must call _mask_supplier to hide real supplier names"
 

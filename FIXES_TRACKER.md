@@ -117,6 +117,25 @@
 | S-8 | ✅ | `upload_audio` fix — added `conversation_id: Optional[str] = None` query param and passed through to `process_user_message()` (previously hardcoded `None`, always starting a new conversation on every voice message) | `BACKEND_API_ROUTES.py` |
 | S-9 | ✅ | Git history cleaned — `backups/*.sql` (160MB+) removed from all commits via `git filter-branch --index-filter`; `backups/` added to `.gitignore`; force-pushed to remote | `.gitignore` |
 
+---
+
+## Refactor Risks — BACKEND_API_ROUTES.py → routes/
+
+| # | Status | Risk | Resolution |
+|---|--------|------|------------|
+| R-1 | ✅ Resolved | `routes/parts.py` previously imported `_mask_supplier` from `BACKEND_API_ROUTES`, creating circular import risk. | Moved `_mask_supplier` to `backend/routes/utils.py`; `routes/parts.py` now imports from `routes.utils`, so module import is one-way and safe in isolation. |
+| R-2 | ✅ Resolved | `routes/chat.py` would have needed **two** symbols from `BACKEND_API_ROUTES` (`_scan_bytes_for_virus` + `_guarded_task`), increasing circular-import risk compared to R-1. | Both functions are fully self-contained (stdlib + `clamd` only). Moved to `routes/utils.py`. `BACKEND_API_ROUTES` now imports them via `from routes.utils import ...` (one-way, no circular). `routes/chat.py` imports from `routes.utils` with zero circularity. |
+
+---
+
+## Lessons Learned — Refactor Execution
+
+| # | Step | Lesson | Prevention |
+|---|------|--------|------------|
+| L-1 | Auth (STEP 6) | `str_replace` inserted stub comments WITHOUT removing the original endpoint bodies when the removal hunk exceeded ~50 lines. Left duplicate endpoint definitions and a spurious section header. Detected by `read_file` around the insertion point. Fixed by Python line-slice script. | For any removal block > 50 lines, skip `str_replace` entirely. Use Python line-slice script. Document target 1-indexed line numbers via `grep_search` before executing. |
+
+---
+
 ### New Files Added (2026-03-20)
 
 | File | Purpose |
@@ -125,3 +144,83 @@
 | `backend/social/__init__.py` | Package marker for social/ module |
 | `backend/social/telegram_publisher.py` | Async Telegram Bot API publisher — no extra SDK, pure httpx |
 | `backend/social/whatsapp_provider.py` | `WhatsAppProvider` ABC + `TwilioWhatsAppProvider` — pluggable; swap to Meta Cloud API without changing webhook logic |
+
+### Recent Extraction (2026-03-25)
+
+| Step | Domain | Files created | Status |
+|------|--------|---------------|--------|
+| 15 | Notifications | `backend/routes/notifications.py` | ✅ Completed — moved 6 endpoints (stream, list, unread-count, read, read-all, delete) from `BACKEND_API_ROUTES.py` into `routes/notifications.py` and wired via `app.include_router(notifications_router)` |
+
+**Note:** `_SSE_HEARTBEAT_INTERVAL` moved into `backend/routes/notifications.py` (module-scoped constant). See REFACTOR LOG updates below.
+
+### REFACTOR LOG — Pending Steps Update
+
+- 2026-03-25: Notifications (Step 15) extracted and included. Remove from pending extraction list.
+
+
+---
+
+## Refactor Step Summary
+
+| Step | Domain | Files created | Lines removed | Lines added | Tests broken+fixed | Risks identified |
+|------|--------|---------------|---------------|-------------|--------------------|------------------|
+| 8 | Orders + Shared Schemas | `backend/routes/orders.py`, `backend/routes/schemas.py` | 2459 | 734 | `pytest tests/test_security.py`: 35 passed, 49 skipped, 0 broken; full `pytest -q` still blocked by pre-existing `pytest_asyncio` missing in `tests/test_system.py` | R-1 resolved (parts/utils circular removed); checkout now uses lazy import from `routes.orders` and must move with checkout in Step 15 |
+| 9 | Payments + Shared fulfillment/frontend helpers | `backend/routes/payments.py` | 1037 | 1069 | Exact baseline re-run: `pytest tests/ -q --tb=no --ignore=tests/test_system.py` -> 91 failed / 120 passed (after one temporary regression in clamd source-string test was fixed) | Avoided new circular import by not importing fulfillment from monolith; `trigger_supplier_fulfillment` + `_get_frontend_url` now centralized in `routes/utils.py` |
+| 10 | Invoices | `backend/routes/invoices.py` | 32 | 52 | Exact baseline re-run: `pytest tests/ -q --tb=no --ignore=tests/test_system.py` -> 91 failed / 120 passed (no new regressions) | No new circular dependency; endpoints were self-contained and required no shared schema/utils extraction |
+| 11 | Returns | `backend/routes/returns.py` | 412 | 414 | Exact baseline re-run: `pytest -q --tb=no --ignore=tests/test_system.py` -> 91 failed / 120 passed (no new regressions) | No new circular dependency; all endpoints and logic moved verbatim, with import hygiene and type annotation fixes. |
+| 12 | Files | `backend/routes/files.py` | 49 | 67 | Exact baseline re-run: `pytest -q --tb=no --ignore=tests/test_system.py` -> 91 failed / 120 passed (no new regressions) | No new circular dependency; _scan_bytes_for_virus already in utils, FileModel import alias resolved. |
+| 13 | Profile | `backend/routes/profile.py` | 143 | 180 | Exact baseline re-run: `pytest -q --tb=no --ignore=tests/test_system.py` -> 91 failed / 120 passed (no new regressions) | No new circular dependency; all endpoints and logic moved verbatim, with import hygiene and type annotation fixes. |
+| 14 | Marketing | `backend/routes/marketing.py` | 87 | 92 | Exact baseline re-run: `pytest -q --tb=no --ignore=tests/test_system.py` -> 91 failed / 120 passed (no new regressions) | No new circular dependency; all endpoints and logic moved verbatim, with import hygiene and type annotation fixes. |
+
+---
+
+## REFACTOR LOG
+
+### Agent Prompt (Operating Prompt Snapshot)
+
+```
+You are an expert AI programming assistant, working with a user in the VS Code editor.
+Your name is GitHub Copilot.
+
+Core workflow constraints used in this refactor:
+- Strict PROPOSE -> APPROVE -> EXECUTE -> TEST cycle for each extraction step.
+- Preserve behavior while extracting domains from BACKEND_API_ROUTES.py into routes/*.py.
+- Keep include_router wiring in BACKEND_API_ROUTES.py after symbol definitions.
+- Use routes/utils.py for shared helpers to reduce circular imports.
+- Keep changes minimal and avoid unrelated formatting.
+- Do not revert unrelated user changes.
+- Validate after edits via import checks and pytest.
+- Track risks and lessons in FIXES_TRACKER.md.
+
+Execution policy:
+- Persist until task is fully handled end-to-end.
+- Prefer direct implementation over only proposing when approved.
+- Surface blockers explicitly (for this repo: pre-existing missing pytest_asyncio for tests/test_system.py).
+```
+
+### Completed Steps
+
+| Step | Domain | Files created | Status |
+|------|--------|---------------|--------|
+| 3 | Parts | `backend/routes/parts.py` | ✅ Completed |
+| 4 | Reviews | `backend/routes/reviews.py` | ✅ Completed |
+| 5 | Vehicles | `backend/routes/vehicles.py` | ✅ Completed |
+| 6 | Auth | `backend/routes/auth.py` | ✅ Completed |
+| 7 | Chat | `backend/routes/chat.py`, `backend/routes/utils.py` | ✅ Completed |
+| 8 | Orders + Schemas consolidation | `backend/routes/orders.py`, `backend/routes/schemas.py` | ✅ Completed |
+| 9 | Payments | `backend/routes/payments.py` | ✅ Completed |
+| 10 | Invoices | `backend/routes/invoices.py` | ✅ Completed |
+
+### Pending Steps (Approved Extraction Order)
+
+| Step | Domain | Files planned | Status |
+|------|--------|---------------|--------|
+| 12 | Marketing + Social | `backend/routes/marketing.py`, `backend/routes/social.py` | ❌ Pending |
+| 13 | Admin (users/settings/approvals) | `backend/routes/admin.py` | ❌ Pending |
+| 14 | Wishlist | `backend/routes/wishlist.py` | ❌ Pending |
+| 15 | Cart + Checkout | `backend/routes/cart.py` | ❌ Pending |
+| 16 | System/Health/Utility leftovers | `backend/routes/system.py` | ❌ Pending |
+
+### Required Note
+
+checkout lazy-imports create_order from routes.orders — must move with checkout to routes/cart.py in Step 15
