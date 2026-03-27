@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams, Link } from 'react-router-dom'
-import { paymentsApi } from '../api/orders'
+import { paymentsApi, ordersApi } from '../api/orders'
 import { useCartStore } from '../stores/cartStore'
-import { CheckCircle2, XCircle, Loader2, ShoppingBag, ArrowLeft } from 'lucide-react'
-import InvoiceActions from '../components/InvoiceActions'
+import { CheckCircle2, XCircle, Loader2, ShoppingBag, ArrowLeft, FileText } from 'lucide-react'
+import toast from 'react-hot-toast'
 
 export default function PaymentSuccess() {
   const [searchParams] = useSearchParams()
@@ -11,11 +11,27 @@ export default function PaymentSuccess() {
   const [status, setStatus] = useState('loading') // 'loading' | 'success' | 'error'
   const [orderData, setOrderData] = useState(null)
   const [errorMsg, setErrorMsg] = useState('')
+  const [dlLoading, setDlLoading] = useState({}) // orderId -> bool
 
+  const downloadInvoice = async (orderId, orderNumber) => {
+    setDlLoading((p) => ({ ...p, [orderId]: true }))
+    try {
+      const { data } = await ordersApi.invoice(orderId)
+      const url = URL.createObjectURL(new Blob([data], { type: 'application/pdf' }))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `invoice-${orderNumber}.pdf`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      toast.error('שגיאה בהורדת החשבונית')
+    } finally {
+      setDlLoading((p) => ({ ...p, [orderId]: false }))
+    }
+  }
 
   useEffect(() => {
     const sessionId = searchParams.get('session_id')
-    const simulated = searchParams.get('simulated') === '1'
     if (!sessionId) {
       setStatus('error')
       setErrorMsg('מזהה תשלום חסר בכתובת ה-URL')
@@ -24,19 +40,11 @@ export default function PaymentSuccess() {
 
     paymentsApi.verifySession(sessionId)
       .then(({ data }) => {
-        setOrderData({ ...data, simulated })
+        setOrderData(data)
         setStatus('success')
         clear() // clear cart only after confirmed payment
       })
       .catch((err) => {
-        // 401 = token expired during Stripe checkout (can take >15 min).
-        // The Stripe webhook already confirmed the payment on our backend,
-        // so it's safe to redirect to /orders instead of showing an error.
-        if (err.response?.status === 401 || !err.response) {
-          clear()
-          window.location.replace('/orders?payment=done')
-          return
-        }
         setStatus('error')
         setErrorMsg(err.response?.data?.detail || 'שגיאה באימות התשלום')
       })
@@ -91,7 +99,7 @@ export default function PaymentSuccess() {
         )
       )}
 
-      <p className="text-sm text-gray-400 mb-2">{orderData?.simulated ? 'תשלום אושר' : 'תשלום אושר על ידי Stripe'}</p>
+      <p className="text-sm text-gray-400 mb-2">תשלום אושר על ידי Stripe</p>
       {orderData?.amount && (
         <p className="text-sm text-gray-500 mb-6">
           סכום ששולם: <strong>₪{parseFloat(orderData.amount).toFixed(2)}</strong>
@@ -107,27 +115,44 @@ export default function PaymentSuccess() {
         </ul>
       </div>
 
-      {/* Multi-order invoices stay above */}
-      {isMulti && (
-        <div className="mb-4 space-y-3">
-          <p className="text-xs text-gray-400 mb-1">חשבוניות להזמנות:</p>
-          {orderData.orders.map((o) => (
-            <div key={o.order_id} className="flex flex-col gap-1 items-end">
-              <p className="text-xs text-gray-500 font-medium">{o.order_number}</p>
-              <InvoiceActions orderId={o.order_id} orderNumber={o.order_number} />
-            </div>
-          ))}
-        </div>
-      )}
+      {/* Invoice download */}
+      <div className="mb-6">
+        {isMulti ? (
+          <div className="space-y-2">
+            <p className="text-xs text-gray-400 mb-2">הורד חשבונית לכל הזמנה:</p>
+            {orderData.orders.map((o) => (
+              <button
+                key={o.order_id}
+                onClick={() => downloadInvoice(o.order_id, o.order_number)}
+                disabled={dlLoading[o.order_id]}
+                className="w-full btn-secondary text-sm flex items-center justify-center gap-2"
+              >
+                {dlLoading[o.order_id]
+                  ? <Loader2 className="w-4 h-4 animate-spin" />
+                  : <FileText className="w-4 h-4 text-brand-600" />}
+                חשבונית — {o.order_number}
+              </button>
+            ))}
+          </div>
+        ) : orderData?.order_id && (
+          <button
+            onClick={() => downloadInvoice(orderData.order_id, orderData.order_number)}
+            disabled={dlLoading[orderData.order_id]}
+            className="w-full btn-secondary text-sm flex items-center justify-center gap-2"
+          >
+            {dlLoading[orderData.order_id]
+              ? <Loader2 className="w-4 h-4 animate-spin" />
+              : <FileText className="w-4 h-4 text-brand-600" />}
+            הורד חשבונית PDF
+          </button>
+        )}
+      </div>
 
-      <div className="grid grid-cols-3 gap-3">
-        {!isMulti && orderData?.order_id
-          ? <InvoiceActions orderId={orderData.order_id} orderNumber={orderData.order_number} buttonClassName="w-full justify-center" />
-          : <div />}
-        <Link to="/orders" className="btn-primary flex items-center justify-center gap-2">
+      <div className="flex gap-3 justify-center">
+        <Link to="/orders" className="btn-primary flex items-center gap-2">
           <ShoppingBag className="w-4 h-4" /> הזמנות שלי
         </Link>
-        <Link to="/parts" className="btn-secondary flex items-center justify-center gap-2">
+        <Link to="/parts" className="btn-secondary flex items-center gap-2">
           <ArrowLeft className="w-4 h-4" /> המשך קניות
         </Link>
       </div>
