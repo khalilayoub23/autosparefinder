@@ -66,10 +66,7 @@ function AgentCard({ agent, onTest }) {
               <Icon className={`w-6 h-6 ${colors.text}`} />
             </div>
             <div>
-              <div className="flex items-baseline gap-2">
-                <h3 className="font-bold text-gray-900 text-base">{agent.persona}</h3>
-                <span className="text-xs text-gray-500 font-medium">{agent.name_he}</span>
-              </div>
+              <h3 className="font-bold text-gray-900 text-sm">{agent.name_he}</h3>
               <p className="text-xs text-gray-400 font-mono">{agent.name}</p>
             </div>
           </div>
@@ -210,12 +207,12 @@ export default function Agents() {
             <p className={`text-sm font-semibold ${data.ai_status === 'active' ? 'text-green-800' : 'text-amber-800'}`}>
               {data.ai_status === 'active'
                 ? `AI פעיל — ${data.total} סוכנים טעונים`
-                : 'Mock Mode — OLLAMA_URL לא מוגדר'}
+                : 'Mock Mode — GITHUB_TOKEN לא מוגדר'}
             </p>
             <p className={`text-xs mt-0.5 ${data.ai_status === 'active' ? 'text-green-600' : 'text-amber-600'}`}>
               {data.ai_status === 'active'
-                ? `כל הסוכנים עובדים עם Ollama (${data.agents?.[0]?.model || 'qwen3:8b'})`
-                : 'הגדר OLLAMA_URL ב-backend/.env לקבלת תגובות AI אמיתיות'}
+                ? 'כל הסוכנים עובדים עם GitHub Models API (GPT-4o)'
+                : 'הגדר GITHUB_TOKEN ב-backend/.env לקבלת תגובות AI אמיתיות'}
             </p>
           </div>
         </div>
