@@ -1135,37 +1135,9 @@ app.include_router(files_router)
 # 10. PROFILE  /api/v1/profile  (7 endpoints)
 # ==============================================================================
 
-@app.get("/api/v1/profile")
-    # /api/v1/profile — see routes/profile.py
+# /api/v1/profile/* endpoints → routes/profile.py
+# (get-profile, update-profile, avatar, update-phone, marketing-preferences, order-history)
 
-
-@app.put("/api/v1/profile")
-    # PUT /api/v1/profile — see routes/profile.py
-
-
-@app.post("/api/v1/profile/avatar")
-    # POST /api/v1/profile/avatar — see routes/profile.py
-
-
-@app.delete("/api/v1/profile/avatar")
-    # DELETE /api/v1/profile/avatar — see routes/profile.py
-
-
-@app.post("/api/v1/profile/update-phone")
-    # POST /api/v1/profile/update-phone — see routes/profile.py
-
-
-@app.get("/api/v1/profile/marketing-preferences")
-    # GET /api/v1/profile/marketing-preferences — see routes/profile.py
-
-
-@app.put("/api/v1/profile/marketing-preferences")
-    # PUT /api/v1/profile/marketing-preferences — see routes/profile.py
-
-
-@app.get("/api/v1/profile/order-history")
-    # GET /api/v1/profile/order-history — see routes/profile.py
-# Add profile_router to include_router block
 from routes.profile import router as profile_router
 app.include_router(profile_router)
 
@@ -4707,33 +4679,8 @@ async def remove_from_wishlist(
 # ==============================================================================
 
 # @router.get("/api/v1/parts/{part_id}/reviews")    → routes/reviews.py
-# @router.post("/api/v1/parts/{part_id}/reviews")   → routes/reviews.py
-# ReviewCreateRequest model                          → routes/reviews.py
-
-
-@app.delete("/api/v1/customers/reviews/{review_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_review(
-    review_id: str,
-    current_user: User = Depends(get_current_verified_user),
-    db: AsyncSession = Depends(get_pii_db),
-):
-    from BACKEND_DATABASE_MODELS import PartReview
-
-    try:
-        review_uuid = uuid.UUID(review_id)
-    except ValueError:
-        raise HTTPException(status_code=422, detail="Invalid review_id")
-
-    res = await db.execute(
-        select(PartReview).where(PartReview.id == review_uuid)
-    )
-    review = res.scalar_one_or_none()
-    if not review:
-        raise HTTPException(status_code=404, detail="Review not found")
-    if str(review.user_id) != str(current_user.id) and not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Not your review")
-    await db.delete(review)
-    await db.commit()
+# @router.get/post/delete /api/v1/parts/{part_id}/reviews   → routes/reviews.py
+# @router.delete /api/v1/customers/reviews/{review_id}      → routes/reviews.py
 
 
 # ── Route modules extracted from this file (loaded after all symbols are defined)
