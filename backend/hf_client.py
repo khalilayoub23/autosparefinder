@@ -89,10 +89,19 @@ async def hf_embed(text: str, timeout: float = 10.0) -> list[float]:
     if not _is_model_cached():
         return []
     import asyncio
+
+    def _load_and_encode() -> list[float]:
+        return _get_embed_model().encode(text).tolist()
+
     loop = asyncio.get_event_loop()
-    model = _get_embed_model()
-    embedding = await loop.run_in_executor(None, lambda: model.encode(text).tolist())
-    return embedding
+    try:
+        embedding = await asyncio.wait_for(
+            loop.run_in_executor(None, _load_and_encode),
+            timeout=timeout,
+        )
+        return embedding
+    except (asyncio.TimeoutError, Exception):
+        return []
 
 
 async def hf_vision(
