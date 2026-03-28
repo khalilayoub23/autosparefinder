@@ -1,18 +1,22 @@
-from transformers import BertTokenizer, BertModel
-import torch
+"""
+multilingual_bert.py — thin wrapper kept for backwards compatibility.
+
+The project uses sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+via hf_client.hf_embed().  Use that function for all new code.
+
+This module is intentionally NOT imported by the main application.
+"""
+from hf_client import _get_embed_model
+
 
 class MultilingualBERTHandler:
-    def __init__(self):
-        self.tokenizer = BertTokenizer.from_pretrained('bert-base-multilingual-cased')
-        self.model = BertModel.from_pretrained('bert-base-multilingual-cased')
-        self.model.eval()  # Set to evaluation mode
-        
-    def encode_text(self, text):
-        # Tokenize and encode the text
-        inputs = self.tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
-        with torch.no_grad():
-            outputs = self.model(**inputs)
-        return outputs.last_hidden_state.mean(dim=1)  # Get sentence embedding
+    """Thin facade over the project's sentence-transformers model."""
 
-# Initialize the model
-bert_handler = MultilingualBERTHandler()
+    def encode_text(self, text: str):
+        model = _get_embed_model()
+        return model.encode(text)
+
+
+# Do NOT instantiate at module level — _get_embed_model() loads a ~90 MB model
+# lazily on first use.  Instantiate only when needed:
+#   handler = MultilingualBERTHandler()

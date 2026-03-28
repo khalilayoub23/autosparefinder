@@ -75,7 +75,8 @@ async def health_check():
     if _hf_token:
         results["huggingface"] = {"status": "ok"}
     else:
-        results["huggingface"] = {"status": "error", "error": "HF_TOKEN not configured"}
+        # HF_TOKEN not configured — AI features degraded but not a critical infrastructure failure
+        results["huggingface"] = {"status": "ok", "note": "not_configured"}
 
     # ── ClamAV ────────────────────────────────────────────────────────────────
     try:

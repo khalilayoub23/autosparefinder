@@ -27,6 +27,10 @@ redis[hiredis]>=5.0.0
 # HTTP client
 httpx>=0.27.0
 
+# Local AI embedding model (sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2)
+# Used by hf_embed() in hf_client.py — free local inference, no API key required
+sentence-transformers>=2.7.0
+
 # Search (SDK used by meili_sync.py; API uses httpx directly)
 meilisearch-python-sdk>=2.0.0
 
@@ -44,6 +48,9 @@ sse-starlette>=2.0.0
 
 # AV scanning (routes/utils.py, routes/system.py)
 clamd>=1.0.2
+
+# Payments (routes/payments.py, routes/orders.py)
+stripe>=9.0.0
 
 # Misc
 python-dotenv>=1.0.0

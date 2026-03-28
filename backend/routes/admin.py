@@ -144,13 +144,20 @@ async def get_admin_supplier_orders(
 @router.put("/api/v1/admin/supplier-orders/{notification_id}/done")
 async def mark_supplier_order_done(
     notification_id: str,
-    tracking_number: Optional[str] = None,
-    tracking_url: Optional[str] = None,
-    carrier: Optional[str] = None,
     current_user: User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_pii_db),
+    request: Request = None,
 ):
     """Admin: mark a supplier purchase task as ordered, optionally recording a tracking number."""
+    body: dict = {}
+    if request:
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+    tracking_number: Optional[str] = body.get("tracking_number") or None
+    tracking_url: Optional[str] = body.get("tracking_url") or None
+    carrier: Optional[str] = body.get("carrier") or None
     result = await db.execute(
         select(Notification).where(and_(
             Notification.id == notification_id,
@@ -565,6 +572,13 @@ async def super_admin_update_user_role(
 
     if user.id == current_user.id and (not body.is_admin or not body.is_super_admin):
         raise HTTPException(status_code=403, detail="Super admin cannot demote themselves")
+
+    # Enforce single super admin: block promoting a second user
+    if body.is_super_admin and user.id != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Only one super admin is allowed. Cannot grant super admin to another user.",
+        )
 
     old_payload = {
         "role": user.role,

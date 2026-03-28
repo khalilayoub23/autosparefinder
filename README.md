@@ -130,6 +130,7 @@ All backend dependencies are in `backend/requirements.txt` and have been audited
 | `redis` | Session store, rate limiting, pub-sub |
 | `httpx` | Async HTTP client (HuggingFace API, scraper) |
 | `meilisearch-python-sdk` | Full-text search sync |
+| `sentence-transformers` | Local AI embeddings (`paraphrase-multilingual-MiniLM-L12-v2`) |
 | `reportlab` | PDF invoice generation |
 | `openpyxl` | Excel parts import |
 | `beautifulsoup4` | Catalog scraper |
@@ -157,7 +158,8 @@ Key groups (full list in `backend/.env.example`):
 | Security | `JWT_SECRET_KEY`, `JWT_REFRESH_SECRET_KEY`, `ENCRYPTION_KEY` |
 | Search | `MEILI_URL`, `MEILI_MASTER_KEY` |
 | Integrations | `TWILIO_*`, `STRIPE_*`, `SENDGRID_API_KEY`, `TELEGRAM_BOT_TOKEN` |
-| AI | `HF_TOKEN` (HuggingFace — agents, embeddings, whisper) |
+| AI | `HF_TOKEN` (HuggingFace — agents, whisper; **optional** — local embeddings work without it) |
+| Embedding model | `HF_EMBED_MODEL` (default: `paraphrase-multilingual-MiniLM-L12-v2` — runs locally, no key needed) |
 
 ## Testing
 

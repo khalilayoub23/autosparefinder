@@ -29,6 +29,12 @@ export const returnsApi = {
   getAll: () => api.get('/returns'),
   getById: (id) => api.get(`/returns/${id}`),
   cancel: (id) => api.put(`/returns/${id}/cancel`),
+  track: (id) => api.post(`/returns/${id}/track`),
+  ship: (id, tracking_number, tracking_url) =>
+    api.post(`/returns/${id}/ship`, null, { params: { tracking_number, tracking_url } }),
+  supplierConfirm: (id, supplier_notes) =>
+    api.post(`/returns/${id}/supplier-confirm`, null, { params: { supplier_notes } }),
+  issueRefund: (id) => api.post(`/returns/${id}/issue-refund`),
 }
 
 export const invoicesApi = {

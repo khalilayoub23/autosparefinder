@@ -1,5 +1,5 @@
 # AutoSpareFinder — Bug & Breaking Points Fix Tracker
-> Last scan: 2026-03-11 | Total issues found: 42 | Fixed: 42 | In Progress: 0 | Open: 0
+> Last scan: 2026-03-28 | Total issues found: 49 | Fixed: 49 | In Progress: 0 | Open: 0
 
 ---
 
@@ -224,3 +224,30 @@ Execution policy:
 ### Required Note
 
 checkout lazy-imports create_order from routes.orders — must move with checkout to routes/cart.py in Step 15
+
+---
+
+## Session — 2026-03-28 (Post-Refactor Audit)
+
+Full audit of all extracted `routes/*.py` modules, `social/` module, background loops, and remaining
+`BACKEND_API_ROUTES.py` code. 7 new issues found and all fixed in this session.
+
+| # | Severity | Status | Description | File(s) | Fix |
+|---|----------|--------|-------------|---------|-----|
+| N-1 | HIGH | ✅ | `_clamd` not imported in `BACKEND_API_ROUTES.py` → `NameError` in `_health_monitor_loop` every ClamAV probe | `backend/BACKEND_API_ROUTES.py` | Added `import clamd as _clamd` next to existing `import httpx as _httpx` |
+| N-2 | HIGH | ✅ | `routes/orders.py` circular import — `from BACKEND_API_ROUTES import publish_notification` inside `cancel_order()` body; wrong module, creates hidden circular dep | `backend/routes/orders.py:300` | Changed to `from BACKEND_AUTH_SECURITY import publish_notification` |
+| N-3 | HIGH | ✅ | Rate limiting disabled for `upload_image` and `upload_audio` — `check_rate_limit()` return value not checked, 429 never raised | `backend/routes/chat.py:141,210` | Assigned result to `allowed`; added `if not allowed: raise HTTPException(429, ...)` |
+| N-4 | MEDIUM | ✅ | `_vip_detection_loop` bypasses `_guarded_task` semaphore — `asyncio.create_task(publish_notification(...))` called directly, unlimited concurrency during bulk VIP promotions | `backend/BACKEND_API_ROUTES.py:473` | Wrapped in `asyncio.create_task(_guarded_task(publish_notification(...)))` |
+| N-5 | MEDIUM | ✅ | `POST /api/v1/support/report` (public endpoint) has no rate limiting → unlimited TechAgent calls possible | `backend/routes/support.py` | Added `redis=Depends(get_redis)` + IP-based rate limit `rate:bug_report:{ip}` 10/min |
+| N-6 | MEDIUM | ✅ | `PUT /api/v1/admin/supplier-orders/{id}/done` sends `tracking_number`, `tracking_url`, `carrier` as query params → appear in server logs / browser history | `backend/routes/admin.py:145` | Moved all three to JSON request body (read via `request.json()`) |
+| N-7 | LOW | ✅ | `CartAddRequest.quantity` has no minimum → `quantity=0` or negative accepted, silently corrupting cart totals | `backend/routes/schemas.py:146` | Changed to `Field(default=1, ge=1, le=100)` |
+
+### Test results after N-1 to N-7
+
+```
+pytest tests/ -q --tb=no --ignore=tests/test_system.py
+23 failed, 207 passed, 32 skipped
+```
+
+All 23 failures are pre-existing (integration tests requiring a live DB + SQL injection tests).
+Zero regressions introduced.

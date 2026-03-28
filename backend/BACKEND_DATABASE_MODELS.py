@@ -153,6 +153,48 @@ class BrandAlias(Base):
     brand = relationship("CarBrand", back_populates="aliases_rel")
 
 
+class TruckBrand(Base):
+    """Reference table of known truck/commercial-vehicle manufacturers.
+    Separate from car_brands so truck-specific brands do not pollute passenger-car listings.
+    """
+    __tablename__ = "truck_brands"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String(100), unique=True, nullable=False, index=True)
+    name_he = Column(String(100), nullable=True)
+    group_name = Column(String(100), nullable=True, index=True)
+    country = Column(String(100), nullable=True)
+    region = Column(String(50), nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    logo_url = Column(String(500), nullable=True)
+    website = Column(String(500), nullable=True)
+    notes = Column(Text, nullable=True)
+    aliases = Column(ARRAY(String), default=list)
+    il_importer = Column(String(200), nullable=True)
+    il_importer_website = Column(String(500), nullable=True)
+    parts_availability = Column(String(20), nullable=True)
+    avg_service_interval_km = Column(Integer, nullable=True)
+    popular_models_il = Column(JSONB, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    aliases_rel = relationship("TruckBrandAlias", back_populates="brand", cascade="all, delete-orphan")
+
+
+class TruckBrandAlias(Base):
+    """Normalised alias rows for truck_brands."""
+    __tablename__ = "truck_brand_aliases"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    brand_id = Column(UUID(as_uuid=True), ForeignKey("truck_brands.id", ondelete="CASCADE"), nullable=False, index=True)
+    alias = Column(String(200), nullable=False)
+    normalized = Column(String(200), nullable=False, index=True)
+    source = Column(String(50), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    brand = relationship("TruckBrand", back_populates="aliases_rel")
+
+
 class CatalogVersion(Base):
     """Audit log for catalog import/sync runs. triggered_by is a plain UUID ref to
     autospare_pii.users — no FK because cross-database constraints are not possible."""
@@ -618,7 +660,7 @@ class PartsCatalog(Base):
     is_safety_critical = Column(Boolean, nullable=False, default=False)  # brakes/steering/airbags
     needs_oem_lookup = Column(Boolean, nullable=False, default=False)    # fake/seeded SKU flag
     master_enriched  = Column(Boolean, nullable=False, default=False)    # linked to parts_master
-    embedding        = Column(Vector(768), nullable=True)                # text embedding (nomic-embed-text, 768-dim)
+    embedding        = Column(Vector(384), nullable=True)                # text embedding (paraphrase-multilingual-MiniLM-L12-v2, 384-dim)
     image_embedding  = Column(Vector(512), nullable=True)               # image embedding (512-dim)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -739,6 +781,9 @@ class Supplier(Base):
     express_carrier = Column(String(100), nullable=True)             # DHL Express, Israel Post Express
     express_base_cost_usd = Column(Numeric(8, 2), nullable=True)
     avg_delivery_days_actual = Column(Numeric(5, 1), nullable=True)  # from real order history
+    # Manufacturer-as-supplier: when the brand sells direct (e.g. Hyundai Mobis, Bosch Direct)
+    is_manufacturer = Column(Boolean, nullable=False, default=False)
+    manufacturer_name = Column(String(255), nullable=True, index=True)  # matches parts_catalog.manufacturer
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -909,7 +954,9 @@ class Return(PiiBase):
     # reasons: defective, wrong_item, changed_mind, damaged_shipping, other
     description = Column(Text, nullable=True)
     status = Column(String(50), default="pending")
-    # statuses: pending, approved, rejected, completed, cancelled
+    # statuses: pending → approved → item_in_transit → supplier_confirmed → refund_issued → completed
+    #           pending_review (high fraud score, held for manual review)
+    #           rejected, cancelled (terminal)
     original_amount = Column(Numeric(10, 2), nullable=False)
     refund_amount = Column(Numeric(10, 2), nullable=True)
     refund_percentage = Column(Numeric(5, 2), nullable=True)         # 90% or 100%
@@ -919,6 +966,10 @@ class Return(PiiBase):
     rejection_reason = Column(String(255), nullable=True)
     requested_at = Column(DateTime, default=datetime.utcnow)
     approved_at = Column(DateTime, nullable=True)
+    item_shipped_at = Column(DateTime, nullable=True)          # customer confirmed return shipment
+    supplier_confirmed_at = Column(DateTime, nullable=True)    # supplier confirmed part received
+    refund_issued_at = Column(DateTime, nullable=True)         # refund actually sent to customer
+    supplier_notes = Column(Text, nullable=True)               # internal admin / supplier notes
     rejected_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
 

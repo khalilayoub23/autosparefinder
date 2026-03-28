@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from BACKEND_DATABASE_MODELS import get_db, get_pii_db, User, BugReport, ApprovalQueue
-from BACKEND_AUTH_SECURITY import get_current_user, get_current_admin_user
+from BACKEND_AUTH_SECURITY import get_current_user, get_current_admin_user, get_redis, check_rate_limit
 from BACKEND_AI_AGENTS import TechAgent
 
 router = APIRouter()
@@ -26,7 +26,13 @@ async def submit_bug_report(
     request: Request,
     db: AsyncSession = Depends(get_db),
     pii_db: AsyncSession = Depends(get_pii_db),
+    redis=Depends(get_redis),
 ):
+    ip = request.client.host if request.client else "unknown"
+    if redis:
+        allowed = await check_rate_limit(redis, f"rate:bug_report:{ip}", 10, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail="יותר מדי בקשות — נסה שוב בעוד דקה")
     body = await request.json()
     user = None
     try:

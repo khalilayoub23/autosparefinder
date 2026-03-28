@@ -74,9 +74,9 @@ services:
       SENDGRID_API_KEY: ${SENDGRID_API_KEY}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:3000}
       CLAMD_HOST: clamav
-      MEILI_URL: ${MEILI_URL:-http://meilisearch:7700}
+      MEILI_URL: http://meilisearch:7700
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
-      ENVIRONMENT: production
+      ENVIRONMENT: ${ENVIRONMENT:-development}
       DEBUG: "false"
     ports:
       - "8000:8000"
@@ -86,16 +86,17 @@ services:
       clamav:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8000/api/v1/system/health || exit 1"]
+      test: ["CMD-SHELL", "python -c \"import urllib.request; r=urllib.request.urlopen('http://localhost:8000/api/v1/system/health',timeout=3); exit(0 if r.status==200 else 1)\" 2>/dev/null || exit 1"]
       interval: 10s
-      timeout: 3s
+      timeout: 5s
       retries: 5
-      start_period: 5s
+      start_period: 10s
     volumes:
       - upload_files:/app/uploads
     command: >
       /bin/bash -c "
         alembic -c alembic.ini upgrade head &&
+        alembic -c alembic_pii.ini upgrade head &&
         uvicorn BACKEND_API_ROUTES:app --host 0.0.0.0 --port 8000 --workers 4
       "
 

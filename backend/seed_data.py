@@ -15,9 +15,17 @@ from BACKEND_DATABASE_MODELS import (
 
 # ---------------------------------------------------------------------------
 SUPPLIERS = [
-    {"name": "AutoParts Pro IL", "country": "Israel", "website": "https://autopartspro.co.il", "priority": 1, "reliability_score": 4.8},
-    {"name": "Global Parts Hub", "country": "Germany",  "website": "https://globalpartshub.de",  "priority": 2, "reliability_score": 4.5},
-    {"name": "EastAuto Supply",  "country": "China",    "website": "https://eastauto.cn",          "priority": 3, "reliability_score": 3.9},
+    {"name": "AutoParts Pro IL", "country": "Israel",      "website": "https://autopartspro.co.il",    "priority": 1, "reliability_score": 4.8, "is_manufacturer": False, "manufacturer_name": None},
+    {"name": "Global Parts Hub", "country": "Germany",     "website": "https://globalpartshub.de",     "priority": 2, "reliability_score": 4.5, "is_manufacturer": False, "manufacturer_name": None},
+    {"name": "EastAuto Supply",  "country": "China",       "website": "https://eastauto.cn",           "priority": 3, "reliability_score": 3.9, "is_manufacturer": False, "manufacturer_name": None},
+    {"name": "PartsPro USA",     "country": "USA",         "website": "https://partspro.com",          "priority": 4, "reliability_score": 4.6, "is_manufacturer": False, "manufacturer_name": None},
+    {"name": "AutoZone Direct",  "country": "USA",         "website": "https://autozone.com",          "priority": 5, "reliability_score": 4.3, "is_manufacturer": False, "manufacturer_name": None},
+    # Korean suppliers
+    {"name": "Hyundai Mobis",    "country": "South Korea", "website": "https://mobis.co.kr",           "priority": 6, "reliability_score": 4.9, "is_manufacturer": True,  "manufacturer_name": "Hyundai"},
+    {"name": "Kia Parts Direct", "country": "South Korea", "website": "https://kiapartsnow.com",       "priority": 7, "reliability_score": 4.8, "is_manufacturer": True,  "manufacturer_name": "Kia"},
+    # Manufacturer-direct suppliers
+    {"name": "Bosch Direct",     "country": "Germany",     "website": "https://boschaftermarket.com",  "priority": 8, "reliability_score": 4.9, "is_manufacturer": True,  "manufacturer_name": "Bosch"},
+    {"name": "Toyota Genuine",   "country": "Japan",       "website": "https://parts.toyota.com",     "priority": 9, "reliability_score": 5.0, "is_manufacturer": True,  "manufacturer_name": "Toyota"},
 ]
 
 PARTS = [

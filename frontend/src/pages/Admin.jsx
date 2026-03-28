@@ -54,6 +54,7 @@ const TABS = [
   { id: 'social',    label: 'רשתות חברתיות', icon: Wand2   },
   { id: 'agents',    label: 'סוכני AI',        icon: Bot     },
   { id: 'returns',   label: 'החזרות',          icon: RotateCcw, badge: true },
+  { id: 'superadmin', label: 'הגדרות מערכת', icon: ShieldCheck, superOnly: true },
 ]
 
 function SupplierFormFields({ f, setF, isCreate }) {
@@ -179,6 +180,8 @@ function countryFlag(name) {
 
 
 export default function Admin() {
+  const { user } = useAuthStore()
+  const isSuperAdmin = user?.is_super_admin === true
   const [tab, setTab] = useState('dashboard')
   const [stats, setStats] = useState(null)
   const [importFile, setImportFile] = useState(null)
@@ -223,6 +226,13 @@ export default function Admin() {
   const [processingReturn, setProcessingReturn] = useState(null)
   const [rejectReason, setRejectReason] = useState('')
   const [showRejectModal, setShowRejectModal] = useState(null)
+  // Super admin settings
+  const [sysSettings, setSysSettings] = useState([])
+  const [editSetting, setEditSetting] = useState(null)   // { key, value, description, value_type, is_public }
+  const [savingSetting, setSavingSetting] = useState(false)
+  const [showNewSetting, setShowNewSetting] = useState(false)
+  const [newSetting, setNewSetting] = useState({ key: '', value: '', value_type: 'string', description: '', is_public: false })
+  const [showSettingValues, setShowSettingValues] = useState({})
 
   useEffect(() => {
     loadDashboard()
@@ -235,7 +245,49 @@ export default function Admin() {
     if (tab === 'suppliers') { loadSuppliers(); loadSupplierOrders(); loadSyncStatus() }
     if (tab === 'agents') loadAgents()
     if (tab === 'returns') loadAdminReturns()
+    if (tab === 'superadmin') loadSysSettings()
   }, [tab])
+
+  const loadSysSettings = async () => {
+    try {
+      const { data } = await api.get('/admin/super/settings')
+      setSysSettings(data.settings || [])
+    } catch { toast.error('שגיאה בטעינת הגדרות') }
+  }
+
+  const saveSysSetting = async () => {
+    if (!editSetting) return
+    setSavingSetting(true)
+    try {
+      await api.put(`/admin/super/settings/${editSetting.key}`, { value: editSetting.value, description: editSetting.description, is_public: editSetting.is_public })
+      toast.success('הגדרה עודכנה')
+      setEditSetting(null)
+      loadSysSettings()
+    } catch { toast.error('שגיאה בשמירת הגדרה') }
+    finally { setSavingSetting(false) }
+  }
+
+  const createSysSetting = async () => {
+    if (!newSetting.key.trim()) { toast.error('שדה מפתח חובה'); return }
+    setSavingSetting(true)
+    try {
+      await api.post('/admin/super/settings', newSetting)
+      toast.success('הגדרה נוצרה')
+      setShowNewSetting(false)
+      setNewSetting({ key: '', value: '', value_type: 'string', description: '', is_public: false })
+      loadSysSettings()
+    } catch (e) { toast.error(e?.response?.data?.detail || 'שגיאה ביצירת הגדרה') }
+    finally { setSavingSetting(false) }
+  }
+
+  const deleteSysSetting = async (key) => {
+    if (!window.confirm(`מחק הגדרה "${key}"?`)) return
+    try {
+      await api.delete(`/admin/super/settings/${key}`)
+      toast.success('הגדרה נמחקה')
+      loadSysSettings()
+    } catch { toast.error('שגיאה במחיקת הגדרה') }
+  }
 
   const loadAdminReturns = async (sf = returnsFilter) => {
     setLoading(true)
@@ -556,7 +608,7 @@ export default function Admin() {
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-gray-200 overflow-x-auto">
-        {TABS.map(({ id, label, icon: Icon, badge }) => (
+        {TABS.filter(t => !t.superOnly || isSuperAdmin).map(({ id, label, icon: Icon, badge }) => (
           <button
             key={id}
             onClick={() => setTab(id)}
@@ -1678,7 +1730,11 @@ export default function Admin() {
               >
                 <option value="">כל הסטטוסים</option>
                 <option value="pending">ממתין לאישור</option>
+                <option value="pending_review">בבדיקה</option>
                 <option value="approved">אושר</option>
+                <option value="item_in_transit">בדרך לספק</option>
+                <option value="supplier_confirmed">ספק אישר</option>
+                <option value="refund_issued">זיכוי הועבר</option>
                 <option value="rejected">נדחה</option>
                 <option value="cancelled">בוטל</option>
               </select>
@@ -1710,7 +1766,7 @@ export default function Admin() {
                   <tbody className="divide-y divide-gray-100">
                     {adminReturns.map((r) => {
                       const REASON_HE = { wrong_part: 'חלק שגוי', defective: 'פגום / לא עובד', not_as_described: 'לא תואם לתיאור', changed_mind: 'שינוי דעה', damaged_in_transit: 'נפגע בשילוח', duplicate_order: 'הזמנה כפולה' }
-                      const ST = { pending: { label: 'ממתין', cls: 'bg-amber-100 text-amber-700' }, approved: { label: 'אושר', cls: 'bg-green-100 text-green-700' }, rejected: { label: 'נדחה', cls: 'bg-red-100 text-red-600' }, cancelled: { label: 'בוטל', cls: 'bg-gray-100 text-gray-500' } }
+                      const ST = { pending: { label: 'ממתין', cls: 'bg-amber-100 text-amber-700' }, pending_review: { label: 'בבדיקה', cls: 'bg-orange-100 text-orange-700' }, approved: { label: 'אושר', cls: 'bg-green-100 text-green-700' }, item_in_transit: { label: 'בדרך לספק', cls: 'bg-purple-100 text-purple-700' }, supplier_confirmed: { label: 'ספק אישר', cls: 'bg-teal-100 text-teal-700' }, refund_issued: { label: 'זיכוי הועבר', cls: 'bg-blue-100 text-blue-800' }, rejected: { label: 'נדחה', cls: 'bg-red-100 text-red-600' }, cancelled: { label: 'בוטל', cls: 'bg-gray-100 text-gray-500' } }
                       const st = ST[r.status] || { label: r.status, cls: 'bg-gray-100 text-gray-600' }
                       // Policy §3 — full-refund reasons (100%) vs partial (90%)
                       const FULL_REFUND_REASONS = ['defective', 'wrong_part', 'damaged_in_transit']
@@ -1760,32 +1816,72 @@ export default function Admin() {
                             {r.requested_at ? new Date(r.requested_at).toLocaleDateString('he-IL') : ''}
                           </td>
                           <td className="px-3 py-3">
-                            {r.status === 'pending' && (
-                              <div className="flex flex-col items-start gap-1.5">
+                            <div className="flex flex-col items-start gap-1.5">
+                              {r.status === 'pending' && (
+                                <>
+                                  <button
+                                    onClick={() => handleApproveReturn(r.id, suggestedPct)}
+                                    disabled={processingReturn === r.id}
+                                    className={`flex items-center gap-1 px-2.5 py-1.5 text-xs rounded-lg disabled:opacity-40 transition-colors ${
+                                      isFullRefund
+                                        ? 'bg-green-50 border border-green-200 text-green-700 hover:bg-green-100'
+                                        : 'bg-yellow-50 border border-yellow-200 text-yellow-700 hover:bg-yellow-100'
+                                    }`}
+                                    title={`אשר לפי מדיניות — החזר ${suggestedPct}%`}
+                                  >
+                                    {processingReturn === r.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckSquare className="w-3 h-3" />}
+                                    אשר {suggestedPct}%
+                                  </button>
+                                  <button
+                                    onClick={() => { setShowRejectModal(r.id); setRejectReason('') }}
+                                    disabled={processingReturn === r.id}
+                                    className="flex items-center gap-1 px-2.5 py-1.5 text-xs rounded-lg bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 disabled:opacity-40 transition-colors"
+                                    title="דחה בקשה"
+                                  >
+                                    <XCircle className="w-3 h-3" />
+                                    דחה
+                                  </button>
+                                </>
+                              )}
+                              {r.status === 'item_in_transit' && (
                                 <button
-                                  onClick={() => handleApproveReturn(r.id, suggestedPct)}
+                                  onClick={async () => {
+                                    setProcessingReturn(r.id)
+                                    try {
+                                      await api.post(`/returns/${r.id}/supplier-confirm`)
+                                      toast.success('ספק אישר קבלת הפריט')
+                                      loadAdminReturns(returnsFilter)
+                                    } catch (e) {
+                                      toast.error(e.response?.data?.detail || 'שגיאה')
+                                    } finally { setProcessingReturn(null) }
+                                  }}
                                   disabled={processingReturn === r.id}
-                                  className={`flex items-center gap-1 px-2.5 py-1.5 text-xs rounded-lg disabled:opacity-40 transition-colors ${
-                                    isFullRefund
-                                      ? 'bg-green-50 border border-green-200 text-green-700 hover:bg-green-100'
-                                      : 'bg-yellow-50 border border-yellow-200 text-yellow-700 hover:bg-yellow-100'
-                                  }`}
-                                  title={`אשר לפי מדיניות — החזר ${suggestedPct}%`}
+                                  className="flex items-center gap-1 px-2.5 py-1.5 text-xs rounded-lg bg-teal-50 border border-teal-200 text-teal-700 hover:bg-teal-100 disabled:opacity-40 transition-colors"
                                 >
                                   {processingReturn === r.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckSquare className="w-3 h-3" />}
-                                  אשר {suggestedPct}%
+                                  ספק אישר קבלה
                                 </button>
+                              )}
+                              {r.status === 'supplier_confirmed' && (
                                 <button
-                                  onClick={() => { setShowRejectModal(r.id); setRejectReason('') }}
+                                  onClick={async () => {
+                                    setProcessingReturn(r.id)
+                                    try {
+                                      await api.post(`/returns/${r.id}/issue-refund`)
+                                      toast.success('הזיכוי הונפק ללקוח')
+                                      loadAdminReturns(returnsFilter)
+                                    } catch (e) {
+                                      toast.error(e.response?.data?.detail || 'שגיאה')
+                                    } finally { setProcessingReturn(null) }
+                                  }}
                                   disabled={processingReturn === r.id}
-                                  className="flex items-center gap-1 px-2.5 py-1.5 text-xs rounded-lg bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 disabled:opacity-40 transition-colors"
-                                  title="דחה בקשה"
+                                  className="flex items-center gap-1 px-2.5 py-1.5 text-xs rounded-lg bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 disabled:opacity-40 transition-colors"
                                 >
-                                  <XCircle className="w-3 h-3" />
-                                  דחה
+                                  {processingReturn === r.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckSquare className="w-3 h-3" />}
+                                  הנפק זיכוי
                                 </button>
-                              </div>
-                            )}
+                              )}
+                            </div>
                           </td>
                         </tr>
                       )

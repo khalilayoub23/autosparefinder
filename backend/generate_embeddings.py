@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-generate_embeddings.py — Populate parts_catalog.embedding via Hugging Face embeddings.
+generate_embeddings.py — Populate parts_catalog.embedding via local sentence-transformers embeddings.
 
 Usage:
     python generate_embeddings.py            # embed all pending parts
@@ -11,7 +11,8 @@ A part is "pending" if:  embedding IS NULL AND is_active = TRUE
 Text input per part:
     "{name} | {name_he} | {category} | {manufacturer} | {part_type} | {description[:200]}"
 
-Model: sentence-transformers/paraphrase-multilingual-mpnet-base-v2 (default).
+Model: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 (384-dim, local, no API key needed).
+Override with env var HF_EMBED_MODEL.
 """
 from __future__ import annotations
 

@@ -8,7 +8,7 @@ HF_TOKEN = os.getenv("HF_TOKEN", "")
 
 HF_TEXT_MODEL   = os.getenv("HF_TEXT_MODEL",   "moonshotai/Kimi-K2-Instruct-0905")
 HF_VISION_MODEL = os.getenv("HF_VISION_MODEL", "moonshotai/Kimi-K2-Instruct-0905")
-HF_EMBED_MODEL  = os.getenv("HF_EMBED_MODEL",  "Qwen/Qwen3-Embedding-8B")
+HF_EMBED_MODEL  = os.getenv("HF_EMBED_MODEL",  "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
 HF_AUDIO_MODEL  = os.getenv("HF_AUDIO_MODEL",  "openai/whisper-large-v3")
 HF_CLIP_MODEL   = os.getenv("HF_CLIP_MODEL",   "openai/clip-vit-large-patch14")
 
@@ -54,9 +54,7 @@ def _get_embed_model():
     global _embed_model
     if _embed_model is None:
         from sentence_transformers import SentenceTransformer
-        _embed_model = SentenceTransformer(
-            os.getenv("HF_EMBED_MODEL", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
-        )
+        _embed_model = SentenceTransformer(HF_EMBED_MODEL)
     return _embed_model
 
 

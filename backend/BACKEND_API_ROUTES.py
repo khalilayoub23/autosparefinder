@@ -44,6 +44,7 @@ from BACKEND_AI_AGENTS import OrdersAgent, OrdersAgent as _OrdersAgent, SalesAge
 from auto_backup import _backup_loop
 from social.whatsapp_provider import get_whatsapp_provider
 import httpx as _httpx
+import clamd as _clamd
 
 load_dotenv()
 
@@ -469,10 +470,10 @@ async def _vip_detection_loop() -> None:
                                 "vip_since": datetime.utcnow().isoformat(),
                             },
                         ))
-                        asyncio.create_task(publish_notification(
+                        asyncio.create_task(_guarded_task(publish_notification(
                             str(row.user_id),
                             {"type": "vip_promotion", "title": _vip_title, "message": _vip_msg},
-                        ))
+                        )))
 
                     await pii_db.commit()
                     print(f"[VIP] Promoted {len(rows)} user(s) to VIP: {new_vip_ids}")
@@ -776,13 +777,11 @@ async def _health_monitor_loop():
                                 data={"service": svc, "state": state},
                                 sent_at=datetime.utcnow(),
                             ))
-                            asyncio.create_task(
-                                publish_notification(str(admin.id), {
-                                    "type":    _notif_type,
-                                    "title":   _title,
-                                    "message": _msg,
-                                })
-                            )
+                            asyncio.create_task(_guarded_task(publish_notification(str(admin.id), {
+                                "type":    _notif_type,
+                                "title":   _title,
+                                "message": _msg,
+                            })))
                             if admin.phone and str(admin.id) != str(WHATSAPP_ANON_USER_ID):
                                 wa_result = await provider.send_message(to=admin.phone, body=f"{_title}\n{_msg}")
                                 if not wa_result.get("ok"):
@@ -927,7 +926,7 @@ async def _health_monitor_loop():
                 JOB_FAILURES_ALERT_THRESHOLD = int(os.getenv("JOB_FAILURES_ALERT_THRESHOLD", "10"))
                 async with pii_session_factory() as _pii_db:
                     unprocessed_count = (await _pii_db.execute(
-                        select(func.count(JobFailure.id)).where(JobFailure.processed == False)
+                        select(func.count(JobFailure.id)).where(JobFailure.status.in_(["pending", "retrying"]))
                     )).scalar() or 0
                     
                     if unprocessed_count >= JOB_FAILURES_ALERT_THRESHOLD:
@@ -1116,13 +1115,11 @@ async def _abandoned_cart_loop():
                             )
                             await db.commit()
 
-                        asyncio.create_task(
-                            publish_notification(str(user.id), {
-                                "type":    "abandoned_cart",
-                                "title":   _title,
-                                "message": _msg,
-                            })
-                        )
+                        asyncio.create_task(_guarded_task(publish_notification(str(user.id), {
+                            "type":    "abandoned_cart",
+                            "title":   _title,
+                            "message": _msg,
+                        })))
                         sent_count += 1
                         safe_phone = (user.phone or "")
                         safe_tail = safe_phone[-4:] if len(safe_phone) >= 4 else safe_phone
@@ -1259,13 +1256,11 @@ async def _pending_payment_reminder_loop():
                         ))
                         await db.commit()
 
-                    asyncio.create_task(
-                        publish_notification(str(user.id), {
-                            "type":    "payment_reminder",
-                            "title":   _title,
-                            "message": _msg,
-                        })
-                    )
+                    asyncio.create_task(_guarded_task(publish_notification(str(user.id), {
+                        "type":    "payment_reminder",
+                        "title":   _title,
+                        "message": _msg,
+                    })))
                     sent_count += 1
                     safe_phone = (user.phone or "")
                     safe_tail = safe_phone[-4:] if len(safe_phone) >= 4 else safe_phone

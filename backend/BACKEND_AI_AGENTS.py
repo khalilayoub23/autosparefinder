@@ -70,7 +70,7 @@ from hf_client import hf_embed, hf_text
 from BACKEND_DATABASE_MODELS import (
     AgentAction, ApprovalQueue, CatalogVersion, Conversation, Message, Notification, Order, OrderItem,
     PartsCatalog, Supplier, SupplierPart, SystemLog, SystemSetting,
-    User, Vehicle, CarBrand, PriceHistory, get_db, async_session_factory,
+    User, Vehicle, CarBrand, TruckBrand, PriceHistory, get_db, async_session_factory,
 )
 from BACKEND_AUTH_SECURITY import publish_notification
 from resilience import retry_with_backoff
@@ -78,6 +78,15 @@ from resilience import retry_with_backoff
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+
+# Cap fire-and-forget asyncio.create_task() fan-out (mirrors routes/utils._TASK_SEMAPHORE).
+_TASK_SEMAPHORE = asyncio.Semaphore(50)
+
+
+async def _guarded_task(coro) -> None:
+    """Acquire the shared semaphore before running a fire-and-forget coroutine."""
+    async with _TASK_SEMAPHORE:
+        await coro
 
 # ==============================================================================
 # SEARCH MISS LOGGING
@@ -153,6 +162,12 @@ SUPPLIER_SHIPPING_RATES: dict = {
     "AutoParts Pro IL": 29.0,     # Israel domestic delivery
     "Global Parts Hub": 91.0,     # Germany / Europe
     "EastAuto Supply":  149.0,    # China / Far East
+    "PartsPro USA":     110.0,    # USA → Israel (UPS/FedEx)
+    "AutoZone Direct":  120.0,    # USA → Israel (retail shipping)
+    "Hyundai Mobis":    95.0,     # South Korea → Israel (OEM direct)
+    "Kia Parts Direct": 95.0,     # South Korea → Israel (OEM direct)
+    "Bosch Direct":     80.0,     # Germany (manufacturer direct)
+    "Toyota Genuine":   99.0,     # Japan → Israel (OEM direct)
 }
 
 def get_supplier_shipping(supplier_name: str) -> float:
@@ -468,56 +483,64 @@ CROSS-REFERENCE: Alternative/equivalent part numbers are stored in the part_cros
             }
 
     async def normalize_manufacturer(self, raw_name: str, db: AsyncSession) -> str:
-        """Normalize a raw manufacturer string to the canonical car_brands.name.
-        Checks: exact name, Hebrew name, aliases array.
+        """Normalize a raw manufacturer string to the canonical car_brands or truck_brands name.
+        Checks: exact name, Hebrew name, aliases array — in both tables.
         Falls back to original string if no match.
         """
         if not raw_name or not raw_name.strip():
             return raw_name
         cleaned = raw_name.strip()
-        # Always use catalog DB — CarBrand lives in autospare, not pii
+        # Always use catalog DB — CarBrand/TruckBrand live in autospare, not pii
         async with async_session_factory() as cat_db:
-            # 1. Exact match on name or name_he
-            result = await cat_db.execute(
-                select(CarBrand.name).where(CarBrand.is_active == True).where(
-                    or_(CarBrand.name.ilike(cleaned), CarBrand.name_he.ilike(cleaned))
-                ).limit(1)
-            )
-            row = result.scalar_one_or_none()
-            if row:
-                return row
-            # 2. Check aliases array (text[] in DB — use ANY operator)
-            result2 = await cat_db.execute(
-                select(CarBrand.name).where(CarBrand.is_active == True).where(
-                    text("(:val)::text = ANY(car_brands.aliases)")
-                ).params(val=cleaned).limit(1)
-            )
-            row2 = result2.scalar_one_or_none()
-            if row2:
-                return row2
-            # 3. Case-insensitive alias check via unnest
-            result3 = await cat_db.execute(
-                select(CarBrand.name).where(CarBrand.is_active == True).where(
-                    or_(
-                        CarBrand.name.ilike(f"{cleaned}%"),
-                        CarBrand.name.ilike(f"%{cleaned}%"),
-                    )
-                ).order_by(CarBrand.name).limit(1)
-            )
-            row3 = result3.scalar_one_or_none()
-            return row3 if row3 else cleaned
+            for Model, aliases_col in (
+                (CarBrand, "car_brands.aliases"),
+                (TruckBrand, "truck_brands.aliases"),
+            ):
+                # 1. Exact match on name or name_he
+                result = await cat_db.execute(
+                    select(Model.name).where(Model.is_active == True).where(
+                        or_(Model.name.ilike(cleaned), Model.name_he.ilike(cleaned))
+                    ).limit(1)
+                )
+                row = result.scalar_one_or_none()
+                if row:
+                    return row
+                # 2. Check aliases array (text[] in DB — use ANY operator)
+                result2 = await cat_db.execute(
+                    select(Model.name).where(Model.is_active == True).where(
+                        text(f"(:val)::text = ANY({aliases_col})")
+                    ).params(val=cleaned).limit(1)
+                )
+                row2 = result2.scalar_one_or_none()
+                if row2:
+                    return row2
+                # 3. Prefix / substring match
+                result3 = await cat_db.execute(
+                    select(Model.name).where(Model.is_active == True).where(
+                        or_(
+                            Model.name.ilike(f"{cleaned}%"),
+                            Model.name.ilike(f"%{cleaned}%"),
+                        )
+                    ).order_by(Model.name).limit(1)
+                )
+                row3 = result3.scalar_one_or_none()
+                if row3:
+                    return row3
+            return cleaned
 
     async def list_known_brands(self, db: AsyncSession) -> List[Dict]:
-        """Return all active brands from the car_brands registry."""
-        # Always use catalog DB — CarBrand lives in autospare, not pii
+        """Return all active brands from car_brands (passenger) and truck_brands registries."""
+        # Always use catalog DB — CarBrand/TruckBrand live in autospare, not pii
         async with async_session_factory() as cat_db:
-            result = await cat_db.execute(
-                select(CarBrand)
-                .where(CarBrand.is_active == True)
-                .order_by(CarBrand.name)
+            car_result = await cat_db.execute(
+                select(CarBrand).where(CarBrand.is_active == True).order_by(CarBrand.name)
             )
-            brands = result.scalars().all()
-            return [
+            truck_result = await cat_db.execute(
+                select(TruckBrand).where(TruckBrand.is_active == True).order_by(TruckBrand.name)
+            )
+            car_brands = car_result.scalars().all()
+            truck_brands = truck_result.scalars().all()
+            output: List[Dict] = [
                 {
                     "name": b.name,
                     "name_he": b.name_he,
@@ -526,9 +549,24 @@ CROSS-REFERENCE: Alternative/equivalent part numbers are stored in the part_cros
                     "region": b.region,
                     "is_luxury": b.is_luxury,
                     "is_electric": b.is_electric_focused,
+                    "vehicle_type": "car",
                 }
-                for b in brands
+                for b in car_brands
             ]
+            output += [
+                {
+                    "name": b.name,
+                    "name_he": b.name_he,
+                    "group": b.group_name,
+                    "country": b.country,
+                    "region": b.region,
+                    "is_luxury": False,
+                    "is_electric": False,
+                    "vehicle_type": "truck",
+                }
+                for b in truck_brands
+            ]
+            return output
 
     @staticmethod
     def _vehicle_response(vehicle: "Vehicle", extra: dict | None = None) -> Dict:
@@ -561,7 +599,7 @@ CROSS-REFERENCE: Alternative/equivalent part numbers are stored in the part_cros
 
     async def identify_vehicle(self, license_plate: str, db: AsyncSession) -> Dict:
         """Identify vehicle from license plate via Israeli Transport Ministry API (data.gov.il).
-        Uses async_session_factory — Vehicle is now a Base model in the catalog DB.
+        Vehicle is Base (catalog DB) — uses async_session_factory.
         The `db` parameter is kept for API compatibility but is not used.
         """
         clean_plate = license_plate.replace("-", "").replace(" ", "")
@@ -864,8 +902,8 @@ CROSS-REFERENCE: Alternative/equivalent part numbers are stored in the part_cros
             if any(tok in order_sql for tok in _unsafe_sql_tokens):
                 raise ValueError("Unsafe ORDER BY fragment detected")
 
-            uuid_array = "{" + ",".join(meili_ids) + "}"
-            params["uuid_arr"] = uuid_array
+            # Pass as Python list so asyncpg maps it correctly to PostgreSQL text[].
+            params["uuid_arr"] = meili_ids
             params["lim"] = limit
             params["off"] = offset
 
@@ -876,7 +914,7 @@ CROSS-REFERENCE: Alternative/equivalent part numbers are stored in the part_cros
                         FROM parts_catalog pc
                         JOIN (
                             SELECT t.id::uuid AS ranked_id, t.pos
-                            FROM unnest(:uuid_arr::text[]) WITH ORDINALITY AS t(id, pos)
+                            FROM unnest(CAST(:uuid_arr AS text[])) WITH ORDINALITY AS t(id, pos)
                         ) ranked ON ranked.ranked_id = pc.id
                         WHERE {where_sql}
                         {order_sql}
@@ -1225,7 +1263,7 @@ DROPSHIPPING CONTEXT (CRITICAL):
 Auto Spare is a 100% dropshipping system. We hold NO physical inventory / warehouse stock.
 When a customer orders, we place the order with our supplier network AFTER confirmed payment.
 NEVER say "יש במלאי" (in stock). Always say "זמין להזמנה" (available to order).
-Delivery: 7-14 business days. Return policy: 14 days (sealed/unopened parts only).
+Delivery: 7-14 business days. Return policy: 14 days from delivery. Refund is issued ONLY after the supplier confirms receipt of the returned part (3-5 business days after confirmation).
 
 YOUR PROACTIVE SALES CONVERSATION FLOW — follow this EVERY time a customer asks about a part:
 
@@ -1269,7 +1307,7 @@ CRITICAL RULES:
 2. NEVER say "יש במלאי" — only "זמין להזמנה" or "זמין בהזמנה מיוחדת"
 3. ONLY use prices from the catalog data injected below — NEVER invent prices
 4. Do NOT answer about: car valuations, insurance, traffic fines, repair costs, or anything outside parts
-5. RETURN POLICY: 14 days from delivery, sealed/unopened parts only. Manufacturer defects → 100% refund. Other returns → 90% refund.
+5. RETURN POLICY: 14 days from delivery. Manufacturer defects / wrong part / damaged in transit → 100% refund (we cover return shipping). Other reasons → 90% refund (10% handling fee, customer covers return shipping). Refund is sent to the customer ONLY after the supplier confirms receipt of the returned part.
 6. LANGUAGE: Respond in Hebrew. If the customer writes in Arabic, respond in Arabic.
 """
 
@@ -1426,9 +1464,10 @@ Order statuses (always use these exact labels in Hebrew):
 - cancelled / refunded → בוטל / הוחזר
 
 Return & Refund Policy:
-- Manufacturer defect / wrong part sent → 100% refund incl. original shipping, we cover return shipping
+- Manufacturer defect / wrong part sent / damaged in transit → 100% refund incl. original shipping, we cover return shipping
 - All other reasons → 90% refund (10% handling fee), original shipping not refunded, customer pays return shipping
 - Returns accepted within 14 days of delivery
+- Refund process: request → admin approves → customer ships item back → supplier confirms receipt → refund issued to card (3-5 business days)
 
 TRACKING RULES:
 - Use ONLY real order data injected below — never invent order numbers or statuses
@@ -1781,9 +1820,10 @@ Pricing formula (always compute this way):
   (Shipping varies by supplier origin: Israel ₪29, Europe ₪91, Asia ₪149)
 
 Refund policy:
-- Manufacturer defect / wrong item sent → 100% refund incl. original shipping, return shipping covered by us
+- Manufacturer defect / wrong item sent / damaged in transit → 100% refund incl. original shipping, return shipping covered by us
 - All other reasons → 90% refund (10% handling fee), original shipping not refunded, customer pays return
 - Returns within 14 days of delivery
+- Refund flow: approved → customer ships back → supplier confirms → refund to card (3-5 business days)
 
 Payment: Stripe (credit/debit card). NEVER ask for card details.
 CHECKOUT: When a customer asks how to pay or wants a payment link, ALWAYS say:
@@ -2033,6 +2073,12 @@ class SupplierManagerAgent(BaseAgent):
           - AutoParts Pro IL  : ±1–2%  (stable local stock)
           - Global Parts Hub  : ±2–4%  (European market)
           - EastAuto Supply   : ±3–6%  (Chinese market, higher swing)
+          - PartsPro USA      : ±2–4%  (US market)
+          - AutoZone Direct   : ±1–3%  (US retail)
+          - Hyundai Mobis     : ±1–2%  (Korean OEM, very stable)
+          - Kia Parts Direct  : ±1–2%  (Korean OEM, very stable)
+          - Bosch Direct      : ±1–2%  (German manufacturer direct)
+          - Toyota Genuine    : ±1–2%  (Japanese OEM, very stable)
           - Prices never drop below 80% or rise above 150% of the original base
           - ~5% of on_order parts flip to in_stock each run (restocking simulation)
           - ~3% of in_stock parts flip to on_order (stock-out simulation)
@@ -2053,6 +2099,12 @@ class SupplierManagerAgent(BaseAgent):
             "AutoParts Pro IL": (0.01, 0.02),
             "Global Parts Hub": (0.02, 0.04),
             "EastAuto Supply":  (0.03, 0.06),
+            "PartsPro USA":     (0.02, 0.04),
+            "AutoZone Direct":  (0.01, 0.03),
+            "Hyundai Mobis":    (0.01, 0.02),
+            "Kia Parts Direct": (0.01, 0.02),
+            "Bosch Direct":     (0.01, 0.02),
+            "Toyota Genuine":   (0.01, 0.02),
         }
 
         # Load active suppliers
@@ -2172,10 +2224,10 @@ class SupplierManagerAgent(BaseAgent):
                         message=_alert_msg,
                         data={"drops": drops_sorted},
                     ))
-                    asyncio.create_task(publish_notification(
+                    asyncio.create_task(_guarded_task(publish_notification(
                         str(admin.id),
                         {"type": "price_drop_alert", "title": _alert_title, "message": _alert_msg},
-                    ))
+                    )))
                 await db.commit()
             except Exception as e:
                 logger.error("Price drop alert failed: %s", e)

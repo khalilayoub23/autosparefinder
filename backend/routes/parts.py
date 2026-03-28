@@ -20,7 +20,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFil
 from typing import Optional, List, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, text, and_, or_
-import asyncio
 import httpx
 import os
 
@@ -245,7 +244,7 @@ async def search_parts(
         if meili_ids:
             # ── Meilisearch path: rank-preserving unnest JOIN ─────────────────
             # UUIDs come from our own index — hex+dash only, no SQL injection risk.
-            uuid_array = "{" + ",".join(meili_ids) + "}"
+            # Pass as a Python list so asyncpg maps it to a PostgreSQL text[] array.
             part_row = (await db.execute(
                 text(f"""
                     SELECT
@@ -258,7 +257,7 @@ async def search_parts(
                     FROM parts_catalog pc
                     JOIN (
                         SELECT t.id::uuid AS ranked_id, t.pos
-                        FROM unnest(:uuid_arr::text[]) WITH ORDINALITY AS t(id, pos)
+                        FROM unnest(CAST(:uuid_arr AS text[])) WITH ORDINALITY AS t(id, pos)
                     ) ranked ON ranked.ranked_id = pc.id
                     WHERE {where_sql} AND pc.part_type = ANY(:pt)
                     ORDER BY ranked.pos ASC,
@@ -268,7 +267,7 @@ async def search_parts(
                     ) DESC
                     LIMIT 1
                 """),
-                {**type_params, "uuid_arr": uuid_array},
+                {**type_params, "uuid_arr": meili_ids},
             )).fetchone()
         else:
             # ── ILIKE fallback path ───────────────────────────────────────────
@@ -382,12 +381,11 @@ async def search_parts(
 
         return {"part": part_dict, "suppliers": suppliers_list}
 
-    # ── Run all 3 type queries (concurrently) ────────────────────────────────
-    original_res, oem_res, aftermarket_res = await asyncio.gather(
-        _fetch_type(["Original"]),                         # מקורי / OEM original
-        _fetch_type(["OEM"]),                              # OEM equivalent
-        _fetch_type(["Aftermarket", "Refurbished"]),       # חליפי / aftermarket
-    )
+    # ── Run all 3 type queries sequentially (shared AsyncSession is not
+    # ── safe for concurrent use — concurrent gather causes InvalidRequestError)
+    original_res    = await _fetch_type(["Original"])
+    oem_res         = await _fetch_type(["OEM"])
+    aftermarket_res = await _fetch_type(["Aftermarket", "Refurbished"])
 
     return {
         "original":         original_res,
