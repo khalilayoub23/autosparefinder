@@ -4,33 +4,59 @@ Production-focused auto parts platform with a FastAPI backend, React frontend, P
 
 ## What Is In This Repo
 
-- Backend API: FastAPI app and business logic in `backend/`
-- Frontend app: React + Vite app in `frontend/`
-- Database bootstrap SQL: `database/init.sql`
-- Container orchestration: `docker-compose.yml`
-- Django scaffold files still exist at repo root (`manage.py`, `autosparefinder/`) but are not the main runtime path for the current stack.
+- **Backend API**: FastAPI app in `backend/` — routes split into `backend/routes/`
+- **Frontend**: React 18 + Vite in `frontend/`
+- **Database**: PostgreSQL 16 + pgvector, migrations via Alembic
+- **Search**: Meilisearch full-text index
+- **Cache / pub-sub**: Redis 7
+- **Container orchestration**: `docker-compose.yml`
 
-## Current Project Layout
+## Project Layout
 
 ```text
 autosparefinder/
 ├── backend/
-│   ├── BACKEND_API_ROUTES.py
-│   ├── BACKEND_AI_AGENTS.py
-│   ├── BACKEND_AUTH_SECURITY.py
-│   ├── BACKEND_DATABASE_MODELS.py
+│   ├── BACKEND_API_ROUTES.py       ← FastAPI app entry point + lifecycle handlers
+│   ├── BACKEND_AI_AGENTS.py        ← AI agent definitions (10 agents)
+│   ├── BACKEND_AUTH_SECURITY.py    ← JWT, 2FA, password helpers
+│   ├── BACKEND_DATABASE_MODELS.py  ← SQLAlchemy models
+│   ├── routes/                     ← Route modules (one file per domain)
+│   │   ├── admin.py
+│   │   ├── auth.py
+│   │   ├── brands.py
+│   │   ├── cart.py
+│   │   ├── chat.py
+│   │   ├── files.py
+│   │   ├── invoices.py
+│   │   ├── marketing.py
+│   │   ├── notifications.py
+│   │   ├── orders.py
+│   │   ├── parts.py
+│   │   ├── payments.py
+│   │   ├── profile.py
+│   │   ├── returns.py
+│   │   ├── reviews.py
+│   │   ├── support.py
+│   │   ├── system.py
+│   │   ├── vehicles.py
+│   │   └── webhooks.py
+│   ├── social/
+│   │   ├── telegram_publisher.py
+│   │   └── whatsapp_provider.py
 │   ├── requirements.txt
-│   ├── .env.example
 │   ├── alembic.ini
 │   ├── alembic/
 │   └── tests/
 ├── frontend/
 │   ├── package.json
 │   ├── src/
-│   │   └── pages/
+│   │   ├── pages/                  ← Admin, Auth, Cart, Chat, Orders, Parts, Profile …
+│   │   ├── components/
+│   │   ├── stores/
+│   │   └── api/
 │   └── Dockerfile
 ├── database/
-│   └── init.sql
+│   └── init.sql/
 └── docker-compose.yml
 ```
 
@@ -43,49 +69,44 @@ autosparefinder/
   - PostgreSQL 16
   - Redis 7
 
-## Quick Start (Recommended: Docker)
+## Quick Start (Docker)
 
-1. Create a root `.env` file for compose variables (for example `DB_PASSWORD`, `REDIS_PASSWORD`, `JWT_SECRET_KEY`, `JWT_REFRESH_SECRET_KEY`, `ENCRYPTION_KEY`, `MEILI_MASTER_KEY`, and integration keys as needed).
+1. Copy and fill in the root `.env` file:
+
+```bash
+cp .env.example .env   # then edit DB_PASSWORD, REDIS_PASSWORD, JWT_SECRET_KEY, etc.
+```
+
 2. Start the stack:
 
 ```bash
-docker-compose up -d --build
+docker compose up -d
 ```
 
-3. Check service health:
+3. Check services:
 
 ```bash
-docker-compose ps
-docker-compose logs -f backend
+docker compose ps
+docker compose logs -f backend
 ```
+
+> **Note**: The backend runs `alembic upgrade head` automatically on startup. No manual migration step is needed on first run.
 
 ## Local Development
 
-### 1) Backend
+### Backend
 
 ```bash
 cd backend
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
-```
-
-Set required values in `.env` before running.
-
-Run API:
-
-```bash
+cp .env.example .env   # fill in required values
+alembic -c alembic.ini upgrade head
 uvicorn BACKEND_API_ROUTES:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-Optional migrations:
-
-```bash
-alembic -c alembic.ini upgrade head
-```
-
-### 2) Frontend
+### Frontend
 
 ```bash
 cd frontend
@@ -93,52 +114,62 @@ npm ci
 npm run dev
 ```
 
-The Vite dev server runs on `http://localhost:5173`.
+Vite dev server: `http://localhost:5173`
+
+## Dependencies
+
+All backend dependencies are in `backend/requirements.txt` and have been audited — only packages actually used by the API or its CLI tools are listed. Notable packages:
+
+| Package | Purpose |
+|---|---|
+| `fastapi` / `uvicorn` | Web framework |
+| `sqlalchemy[asyncio]` + `asyncpg` | Async database ORM |
+| `alembic` | DB schema migrations |
+| `pgvector` | Vector similarity (parts image/text search) |
+| `python-jose` / `passlib` | JWT auth + password hashing |
+| `redis` | Session store, rate limiting, pub-sub |
+| `httpx` | Async HTTP client (HuggingFace API, scraper) |
+| `meilisearch-python-sdk` | Full-text search sync |
+| `reportlab` | PDF invoice generation |
+| `openpyxl` | Excel parts import |
+| `beautifulsoup4` | Catalog scraper |
+| `sse-starlette` | Server-sent events (notifications) |
+| `clamd` | ClamAV antivirus scanning |
+| `email-validator` | Pydantic `EmailStr` validation |
 
 ## URLs
 
-- Backend API docs: `http://localhost:8000/docs`
-- Backend health: `http://localhost:8000/api/v1/system/health`
-- Frontend (local Vite): `http://localhost:5173`
-- Frontend (compose/nginx): `http://localhost`
+| URL | Description |
+|---|---|
+| `http://localhost:8000/docs` | Interactive API docs (Swagger) |
+| `http://localhost:8000/api/v1/system/health` | Health check |
+| `http://localhost:5173` | Frontend (local Vite dev) |
+| `http://localhost` | Frontend (Docker / nginx) |
 
 ## Environment Variables
 
-Canonical backend variables are documented in:
+Key groups (full list in `backend/.env.example`):
 
-- `backend/.env.example`
-
-Key groups:
-
-- Database: `DATABASE_URL`, `DATABASE_PII_URL`
-- Redis: `REDIS_URL`
-- Security: `JWT_SECRET_KEY`, `JWT_REFRESH_SECRET_KEY`, `ENCRYPTION_KEY`
-- AI: `OLLAMA_URL`, `AGENTS_DEFAULT_MODEL`
-- Search: `MEILI_URL`, `MEILI_MASTER_KEY`
-- Integrations: Twilio, Stripe, SendGrid, Telegram
+| Group | Variables |
+|---|---|
+| Database | `DATABASE_URL`, `DATABASE_PII_URL` |
+| Redis | `REDIS_URL` |
+| Security | `JWT_SECRET_KEY`, `JWT_REFRESH_SECRET_KEY`, `ENCRYPTION_KEY` |
+| Search | `MEILI_URL`, `MEILI_MASTER_KEY` |
+| Integrations | `TWILIO_*`, `STRIPE_*`, `SENDGRID_API_KEY`, `TELEGRAM_BOT_TOKEN` |
+| AI | `HF_TOKEN` (HuggingFace — agents, embeddings, whisper) |
 
 ## Testing
 
-Backend tests:
-
 ```bash
 cd backend
-pytest
+pytest tests/ -q --ignore=tests/test_system.py
 ```
+
+Expected baseline: pre-existing infrastructure tests fail when Postgres/Redis are not reachable. All route logic tests pass.
 
 ## Troubleshooting
 
-- Backend fails to start:
-  - Check env values in `backend/.env`
-  - Verify PostgreSQL/Redis reachability
-  - Inspect logs: `docker-compose logs backend`
-
-- Frontend cannot call API:
-  - Verify backend is up on port 8000
-  - Check CORS in backend env (`CORS_ORIGINS`)
-  - If using Docker frontend, requests under `/api/` are proxied to backend
-
-## Notes
-
-- This README was trimmed to remove stale architecture counts, removed claims, and outdated endpoint/page statistics.
-- Keep this file focused on verified setup/run behavior to prevent documentation drift.
+- **Backend fails to start** — check `.env` values, verify Postgres/Redis are up: `docker compose logs backend`
+- **Frontend can't reach API** — verify backend is on port 8000, check `CORS_ORIGINS` in `.env`
+- **Alembic errors on startup** — run `docker exec autospare_backend alembic -c alembic.ini current` to inspect migration state

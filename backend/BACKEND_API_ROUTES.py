@@ -2,20 +2,18 @@
 ==============================================================================
 AUTO SPARE - API ROUTES (FastAPI)
 ==============================================================================
-114 endpoints across 14 categories.
-Imports: BACKEND_DATABASE_MODELS, BACKEND_AUTH_SECURITY, BACKEND_AI_AGENTS
+Lifecycle handlers + background loops.
+All API endpoints live in backend/routes/*.py
 ==============================================================================
 """
 
-from fastapi import FastAPI, Depends, HTTPException, status, Request, UploadFile, File, Form, WebSocket, WebSocketDisconnect, Query
+from fastapi import FastAPI, Depends, HTTPException, status, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse, Response
-from sse_starlette.sse import EventSourceResponse
-from pydantic import BaseModel, EmailStr, Field, validator
+from fastapi.responses import JSONResponse, Response
 from typing import List, Optional, Dict, Any, Literal
 from datetime import datetime, date, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, or_, func, desc, text
+from sqlalchemy import select, and_, func, text
 import logging
 import uuid
 from uuid import UUID as _UUID
@@ -42,8 +40,10 @@ from BACKEND_AUTH_SECURITY import (
     create_2fa_code, verify_2fa_code, get_redis, hash_password, publish_notification,
     check_rate_limit
 )
-from BACKEND_AI_AGENTS import process_user_message, process_agent_response_for_message, get_agent, OrdersAgent, TechAgent
+from BACKEND_AI_AGENTS import OrdersAgent, OrdersAgent as _OrdersAgent, SalesAgent as _SalesAgent
 from auto_backup import _backup_loop
+from social.whatsapp_provider import get_whatsapp_provider
+import httpx as _httpx
 
 load_dotenv()
 
@@ -56,30 +56,8 @@ BLOCKED_SETTINGS = {
     "twilio_auth_token", "sendgrid_api_key",
 }
 
-from routes.utils import _scan_bytes_for_virus, _guarded_task, _mask_supplier, trigger_supplier_fulfillment  # shared route utilities (clamd)
-from routes.schemas import (
-    SuperAdminSettingCreateBody,
-    SuperAdminSettingUpdateBody,
-    SuperAdminUserRoleUpdateBody,
-    UpdatePhoneRequest,
-    PartsSearchRequest,
-    OrderItemCreate,
-    OrderCreate,
-    OrderCancelRequest,
-    ReturnRequest,
-    MultiCheckoutRequest,
-    NewsletterSubscribeRequest,
-    CouponValidateRequest,
-    SupplierCreate,
-    SupplierUpdateBody,
-    CreateSocialPostRequest,
-    UpdateSocialPostRequest,
-    UserUpdateBody,
-    UserCreateBody,
-    ResolveApprovalBody,
-    CartAddRequest,
-    WishlistAddRequest,
-)
+from routes.utils import _guarded_task, trigger_supplier_fulfillment  # shared background-loop utilities
+
 
 def _is_blocked_setting_key(key: str) -> bool:
     return key.strip().lower() in BLOCKED_SETTINGS
@@ -518,10 +496,12 @@ async def startup():
     async with pii_session_factory() as _db:
         await _db.execute(text("""
             INSERT INTO users (id, email, phone, password_hash, full_name, role,
-                               is_active, is_verified, is_admin, failed_login_count)
+                               is_active, is_verified, is_admin, failed_login_count,
+                               created_at, updated_at)
             VALUES ('00000000-0000-0000-0000-000000000001',
                     'whatsapp@autospare.internal', '+00000000000000',
-                    '!disabled!', 'WhatsApp Bot', 'system', true, true, false, 0)
+                    '!disabled!', 'WhatsApp Bot', 'system', true, true, false, 0,
+                    NOW(), NOW())
             ON CONFLICT (id) DO NOTHING
         """))
         await _db.commit()
@@ -576,7 +556,6 @@ async def _stuck_orders_monitor_loop():
         shipped          → delivered (after carrier-specific days)
       Notifies the customer on every transition.
     """
-    from BACKEND_AI_AGENTS import OrdersAgent as _OrdersAgent
     await asyncio.sleep(5)  # let DB pool warm up on startup
     while True:
         now = datetime.utcnow()
@@ -680,9 +659,6 @@ async def _health_monitor_loop():
     On service RESTORED:  notifies all admins the same way.
     Never sends the same alert twice in a row for the same service.
     """
-    import httpx as _httpx
-    from social.whatsapp_provider import get_whatsapp_provider
-
     await asyncio.sleep(20)  # let DB pool warm up on startup
 
     _prev_states: dict = {}  # service_name → "ok" | "error"
@@ -1007,8 +983,6 @@ async def _abandoned_cart_loop():
       4. Persists a Notification row and pushes SSE
       5. Touches cart.updated_at = now() to suppress re-sending for another interval
     """
-    from BACKEND_AI_AGENTS import SalesAgent as _SalesAgent
-    from social.whatsapp_provider import get_whatsapp_provider
     from BACKEND_DATABASE_MODELS import Cart, CartItem as CartItemModel, PartsCatalog, SupplierPart
 
     await asyncio.sleep(10)   # let DB pool warm up on startup
@@ -1184,9 +1158,6 @@ async def _pending_payment_reminder_loop():
       3. Sends via WhatsApp (TwilioWhatsAppProvider)
       4. Persists a Notification row (type='payment_reminder') and pushes SSE
     """
-    from BACKEND_AI_AGENTS import OrdersAgent as _OrdersAgent
-    from social.whatsapp_provider import get_whatsapp_provider
-
     await asyncio.sleep(15)   # let DB pool warm up on startup
     while True:
         try:

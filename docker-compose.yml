@@ -31,7 +31,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./database/init.sql:/docker-entrypoint-initdb.d/:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U autospare"]
       interval: 5s
@@ -94,9 +94,9 @@ services:
     volumes:
       - upload_files:/app/uploads
     command: >
-      sh -c "
-        python -c 'import asyncio; from BACKEND_DATABASE_MODELS import create_tables; asyncio.run(create_tables())'
-        && uvicorn BACKEND_API_ROUTES:app --host 0.0.0.0 --port 8000 --workers 4
+      /bin/bash -c "
+        alembic -c alembic.ini upgrade head &&
+        uvicorn BACKEND_API_ROUTES:app --host 0.0.0.0 --port 8000 --workers 4
       "
 
   frontend:

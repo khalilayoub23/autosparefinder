@@ -115,3 +115,6 @@ lib/
 *.sqlite
 data.ms/
 meilisearch
+backend/BACKEND_API_ROUTES.py.bak
+*.bak
+*.swp
