@@ -113,11 +113,32 @@ async def identify_vehicle_from_image(
 # ==============================================================================
 
 @router.get("/api/v1/vehicles/my-vehicles")
-async def get_my_vehicles(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
-    result = await db.execute(select(UserVehicle, Vehicle).join(Vehicle).where(UserVehicle.user_id == current_user.id))
-    rows = result.all()
+async def get_my_vehicles(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_pii_db),
+    catalog_db: AsyncSession = Depends(get_db),
+):
+    # Step 1: fetch UserVehicle rows from PII DB
+    uv_result = await db.execute(
+        select(UserVehicle).where(UserVehicle.user_id == current_user.id)
+    )
+    user_vehicles = uv_result.scalars().all()
+
+    if not user_vehicles:
+        return {"vehicles": []}
+
+    # Step 2: fetch Vehicle details from catalog DB (separate database)
+    vehicle_ids = [uv.vehicle_id for uv in user_vehicles]
+    v_result = await catalog_db.execute(
+        select(Vehicle).where(Vehicle.id.in_(vehicle_ids))
+    )
+    vehicle_map = {v.id: v for v in v_result.scalars().all()}
+
     vehicles = []
-    for uv, v in rows:
+    for uv in user_vehicles:
+        v = vehicle_map.get(uv.vehicle_id)
+        if not v:
+            continue
         gov = v.gov_api_data or {}
         vehicles.append({
             "id": str(v.id),

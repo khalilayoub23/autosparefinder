@@ -50,6 +50,27 @@ async def hf_text(prompt: str, system: str = "", timeout: float = 60.0) -> str:
 _embed_model = None
 
 
+def _is_model_cached() -> bool:
+    """Return True only if the model weights are already on disk — never trigger a download."""
+    import os
+    from pathlib import Path
+    # HuggingFace caches under HF_HOME / TRANSFORMERS_CACHE / XDG_CACHE_HOME
+    cache_dirs = [
+        os.getenv("HF_HOME", ""),
+        os.getenv("TRANSFORMERS_CACHE", ""),
+        os.path.join(os.path.expanduser("~"), ".cache", "huggingface"),
+        "/root/.cache/huggingface",
+    ]
+    model_slug = HF_EMBED_MODEL.replace("/", "--")
+    for base in cache_dirs:
+        if not base:
+            continue
+        candidate = Path(base) / "hub" / f"models--{model_slug}"
+        if candidate.exists():
+            return True
+    return False
+
+
 def _get_embed_model():
     global _embed_model
     if _embed_model is None:
@@ -59,7 +80,14 @@ def _get_embed_model():
 
 
 async def hf_embed(text: str, timeout: float = 10.0) -> list[float]:
-    """Local embedding - free, no API call needed."""
+    """Local embedding using paraphrase-multilingual-MiniLM-L12-v2.
+
+    Returns an empty list if the model weights are not yet cached locally,
+    so the web worker never blocks waiting for a model download.
+    Use generate_embeddings.py to pre-cache the model on first run.
+    """
+    if not _is_model_cached():
+        return []
     import asyncio
     loop = asyncio.get_event_loop()
     model = _get_embed_model()
