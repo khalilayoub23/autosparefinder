@@ -38,7 +38,7 @@ class VehicleIdentifyRequest(BaseModel):
 # ==============================================================================
 
 @router.post("/api/v1/vehicles/identify")
-async def identify_vehicle(data: VehicleIdentifyRequest, db: AsyncSession = Depends(get_pii_db), request: Request = None, redis=Depends(get_redis)):
+async def identify_vehicle(data: VehicleIdentifyRequest, db: AsyncSession = Depends(get_db), request: Request = None, redis=Depends(get_redis)):
     if redis and request:
         _iv_ip = request.client.host if request.client else "anon"
         await check_rate_limit(redis, f"identify_vehicle:{_iv_ip}", 10, 60)
@@ -61,7 +61,7 @@ async def identify_vehicle(data: VehicleIdentifyRequest, db: AsyncSession = Depe
 async def identify_vehicle_from_image(
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_verified_user),
-    db: AsyncSession = Depends(get_pii_db),
+    db: AsyncSession = Depends(get_db),
     request: Request = None,
     redis=Depends(get_redis),
 ):

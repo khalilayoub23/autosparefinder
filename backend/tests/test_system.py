@@ -262,27 +262,28 @@ def _routes_source() -> str:
     return "\n".join(parts)
 
 
-def test_identify_vehicle_route_uses_pii_db():
+def test_identify_vehicle_route_uses_catalog_db():
     src = _routes_source()
     # Find the route definition and check its dependency
+    # Vehicle is Base (catalog DB) — session must be get_db, not get_pii_db
     match = re.search(
         r'@(?:app|router)\.post\("/api/v1/vehicles/identify"\).*?async def identify_vehicle\([^)]+\)',
         src, re.DOTALL
     )
     assert match, "Could not locate identify_vehicle route"
-    assert "get_pii_db" in match.group(), (
-        "identify_vehicle route does not use get_pii_db — Vehicle is PiiBase"
+    assert "get_db" in match.group(), (
+        "identify_vehicle route does not use get_db — Vehicle is Base (catalog DB)"
     )
 
 
-def test_identify_vehicle_from_image_route_uses_pii_db():
+def test_identify_vehicle_from_image_route_uses_catalog_db():
     src = _routes_source()
-    # Find the route decorator and extract the next ~500 chars (covers full multi-line signature)
+    # Vehicle is Base (catalog DB) — session must be get_db, not get_pii_db
     idx = src.find('@router.post("/api/v1/vehicles/identify-from-image")')
     assert idx != -1, "Could not locate identify_vehicle_from_image route decorator"
     snippet = src[idx : idx + 600]
-    assert "get_pii_db" in snippet, (
-        "identify_vehicle_from_image does not use get_pii_db\n" + snippet[:300]
+    assert "get_db" in snippet, (
+        "identify_vehicle_from_image does not use get_db — Vehicle is Base (catalog DB)\n" + snippet[:300]
     )
 
 

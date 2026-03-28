@@ -24,7 +24,7 @@ import httpx
 import os
 
 from BACKEND_DATABASE_MODELS import (
-    get_db, get_pii_db, PartsCatalog, Vehicle, SupplierPart, Supplier,
+    get_db, PartsCatalog, Vehicle, SupplierPart, Supplier,
     CarBrand, User,
 )
 from BACKEND_AUTH_SECURITY import (
@@ -450,13 +450,13 @@ async def autocomplete_parts(q: str = "", limit: int = 8, db: AsyncSession = Dep
 # ==============================================================================
 
 @router.post("/api/v1/parts/search-by-vehicle")
-async def search_parts_by_vehicle(vehicle_id: str, category: Optional[str] = None, db: AsyncSession = Depends(get_db), pii_db: AsyncSession = Depends(get_pii_db), request: Request = None, redis=Depends(get_redis)):
+async def search_parts_by_vehicle(vehicle_id: str, category: Optional[str] = None, db: AsyncSession = Depends(get_db), request: Request = None, redis=Depends(get_redis)):
     if redis and request:
         ip = request.client.host if request.client else "unknown"
         allowed = await check_rate_limit(redis, f'rate:search_by_vehicle:{ip}', 30, 60)
         if not allowed:
             raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
-    result = await pii_db.execute(select(Vehicle).where(Vehicle.id == vehicle_id))
+    result = await db.execute(select(Vehicle).where(Vehicle.id == vehicle_id))
     vehicle = result.scalar_one_or_none()
     if not vehicle:
         raise HTTPException(status_code=404, detail="Vehicle not found")

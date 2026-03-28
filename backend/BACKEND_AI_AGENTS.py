@@ -604,9 +604,9 @@ CROSS-REFERENCE: Alternative/equivalent part numbers are stored in the part_cros
         """
         clean_plate = license_plate.replace("-", "").replace(" ", "")
 
-        async with async_session_factory() as pii_db:
+        async with async_session_factory() as catalog_db:
             # Check DB cache (90-day TTL)
-            result = await pii_db.execute(
+            result = await catalog_db.execute(
                 select(Vehicle).where(Vehicle.license_plate == clean_plate)
             )
             vehicle = result.scalar_one_or_none()
@@ -647,10 +647,10 @@ CROSS-REFERENCE: Alternative/equivalent part numbers are stored in the part_cros
                     gov_api_data    = gov_cache,
                     cached_at       = datetime.utcnow(),
                 )
-                pii_db.add(vehicle)
+                catalog_db.add(vehicle)
 
-            await pii_db.commit()
-            await pii_db.refresh(vehicle)
+            await catalog_db.commit()
+            await catalog_db.refresh(vehicle)
             return self._vehicle_response(vehicle)
 
     # data.gov.il resource IDs (Ministry of Transport – private & commercial vehicles)
