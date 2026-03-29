@@ -670,7 +670,6 @@ class PartsCatalog(Base):
     images = relationship("PartImage", back_populates="part", cascade="all, delete-orphan")
     supplier_parts = relationship("SupplierPart", back_populates="part")
     # order_items are in autospare_pii — no cross-DB relationship
-    fitments = relationship("PartVehicleFitment", back_populates="part", cascade="all, delete-orphan")
     cross_references = relationship("PartCrossReference", back_populates="part", cascade="all, delete-orphan")
     aliases = relationship("PartAlias", back_populates="part", cascade="all, delete-orphan")
     variants = relationship("PartVariant", back_populates="catalog_part", cascade="all, delete-orphan")
@@ -1261,6 +1260,7 @@ class Notification(PiiBase):
     message = Column(Text)
     data = Column(JSONB, default=dict)
     channel = Column(String(20), default="push")                    # email, sms, whatsapp, push
+    is_read = Column(Boolean, default=False)
     sent_at = Column(DateTime, nullable=True)
     read_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -1304,29 +1304,6 @@ class JobRegistry(Base):
 # ==============================================================================
 # CATALOG ENHANCEMENT TABLES (6)
 # ==============================================================================
-
-class PartVehicleFitment(Base):
-    """Make / model / year fitment link — replaces the compatible_vehicles JSON blob."""
-    __tablename__ = "part_vehicle_fitment"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    part_id = Column(UUID(as_uuid=True), ForeignKey("parts_catalog.id", ondelete="CASCADE"), nullable=False, index=True)
-    manufacturer = Column(String(100), nullable=False, index=True)
-    model = Column(String(100), nullable=False)
-    year_from = Column(Integer, nullable=False)
-    year_to = Column(Integer, nullable=True)                          # NULL = still in production
-    engine_type = Column(String(50), nullable=True)
-    transmission = Column(String(50), nullable=True)
-    notes = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-
-    __table_args__ = (
-        Index("idx_fitment_mfr_model", "manufacturer", "model"),
-        Index("idx_fitment_years", "year_from", "year_to"),
-    )
-
-    part = relationship("PartsCatalog", back_populates="fitments")
-
 
 class PartCrossReference(Base):
     """

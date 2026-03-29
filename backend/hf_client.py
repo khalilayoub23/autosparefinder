@@ -65,9 +65,12 @@ def _is_model_cached() -> bool:
     for base in cache_dirs:
         if not base:
             continue
-        candidate = Path(base) / "hub" / f"models--{model_slug}"
-        if candidate.exists():
-            return True
+        try:
+            candidate = Path(base) / "hub" / f"models--{model_slug}"
+            if candidate.exists():
+                return True
+        except (PermissionError, OSError):
+            continue
     return False
 
 
@@ -93,7 +96,7 @@ async def hf_embed(text: str, timeout: float = 10.0) -> list[float]:
     def _load_and_encode() -> list[float]:
         return _get_embed_model().encode(text).tolist()
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         embedding = await asyncio.wait_for(
             loop.run_in_executor(None, _load_and_encode),

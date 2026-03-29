@@ -68,7 +68,6 @@ from BACKEND_DATABASE_MODELS import (
     PartCrossReference,
     PartImage,
     PartsCatalog,
-    PartVehicleFitment,
     PasswordReset,
     Payment,
     PiiBase,
@@ -156,7 +155,7 @@ def _auth_src():
 CATALOG_MODELS = [
     CarBrand, PartsCatalog, PartImage, Supplier, SupplierPart,
     SystemLog, AuditLog, SystemSetting, CacheEntry,
-    PartVehicleFitment, PartCrossReference, PartAlias,
+    PartCrossReference, PartAlias,
     PriceHistory, PurchaseOrder, ScraperApiCall,
     Vehicle,  # vehicle reference data (specs/make/model) lives in catalog DB; UserVehicle holds the PII link
 ]

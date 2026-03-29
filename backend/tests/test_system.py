@@ -54,7 +54,6 @@ from BACKEND_DATABASE_MODELS import (
     AuditLog,
     SystemSetting,
     CacheEntry,
-    PartVehicleFitment,
     PartCrossReference,
     PartAlias,
     PriceHistory,
@@ -107,7 +106,7 @@ def _make_pii_session():
 CATALOG_MODELS = [
     CarBrand, PartsCatalog, PartImage, Supplier, SupplierPart,
     SystemLog, AuditLog, SystemSetting, CacheEntry,
-    PartVehicleFitment, PartCrossReference, PartAlias,
+    PartCrossReference, PartAlias,
     PriceHistory, PurchaseOrder, ScraperApiCall,
     Vehicle,  # vehicle reference data (specs/make/model) — catalog DB; UserVehicle holds PII
 ]
@@ -438,8 +437,9 @@ async def test_orders_accessible_from_pii_db():
 
 
 @pytest.mark.asyncio
-async def test_vehicles_accessible_from_pii_db():
-    eng, factory = _make_pii_session()
+async def test_vehicles_accessible_from_catalog_db():
+    """Vehicle table lives in the catalog (autospare) DB — not the PII DB."""
+    eng, factory = _make_catalog_session()
     try:
         async with factory() as db:
             result = await db.execute(select(func.count(Vehicle.id)))

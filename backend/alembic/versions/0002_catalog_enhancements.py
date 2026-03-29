@@ -46,6 +46,30 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # ── car_brands — create table if not present (missing from initial schema) ─
+    op.execute(sa.text("""
+        CREATE TABLE IF NOT EXISTS car_brands (
+            id          uuid         PRIMARY KEY DEFAULT gen_random_uuid(),
+            name        varchar(100) NOT NULL UNIQUE,
+            name_he     varchar(100),
+            group_name  varchar(100),
+            country     varchar(100),
+            region      varchar(50),
+            is_luxury   boolean      NOT NULL DEFAULT false,
+            is_electric_focused boolean NOT NULL DEFAULT false,
+            is_active   boolean      NOT NULL DEFAULT true,
+            logo_url    varchar(500),
+            website     varchar(500),
+            notes       text,
+            aliases     text[]       DEFAULT '{}',
+            created_at  timestamp    NOT NULL DEFAULT now(),
+            updated_at  timestamp             DEFAULT now()
+        )
+    """))
+    op.execute(sa.text(
+        "CREATE INDEX IF NOT EXISTS ix_car_brands_name ON car_brands (name)"
+    ))
+
     # ── parts_catalog — new columns ──────────────────────────────────────────
     op.add_column("parts_catalog", sa.Column("name_he", sa.String(255), nullable=True))
     op.add_column("parts_catalog", sa.Column("oem_number", sa.String(100), nullable=True))

@@ -487,6 +487,26 @@ async def _vip_detection_loop() -> None:
         await asyncio.sleep(VIP_DETECTION_INTERVAL_S)
 
 
+async def _warmup_embed_model():
+    """Load the local embedding model into memory at startup.
+
+    Runs in a background thread via run_in_executor so the event loop stays
+    free during the ~19s SentenceTransformer() constructor.  Once loaded,
+    the global _embed_model singleton is set and all subsequent hf_embed()
+    calls complete in ~0.7s instead of triggering a cold-load timeout.
+    """
+    try:
+        from hf_client import _is_model_cached, _get_embed_model
+        if not _is_model_cached():
+            print("[EmbedWarmup] Model not cached — skipping warmup (run generate_embeddings.py first)")
+            return
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, _get_embed_model)
+        print("[EmbedWarmup] paraphrase-multilingual-MiniLM-L12-v2 loaded into memory")
+    except Exception as e:
+        print(f"[EmbedWarmup] non-fatal warmup error: {e}")
+
+
 @app.on_event("startup")
 async def startup():
     from catalog_scraper import start_scraper_task
@@ -510,6 +530,7 @@ async def startup():
     # All async work uses asyncio.create_task() + Semaphore(50) cap.
     # ApprovalQueue table = admin approval workflow (not a message queue).
     # Upgrade to Celery/Redis Streams when scaling beyond single VPS.
+    asyncio.create_task(_warmup_embed_model())             # ← pre-load embedding model into memory
     asyncio.create_task(_price_sync_loop())
     asyncio.create_task(_stuck_orders_monitor_loop())   # ← periodic stuck-order monitor (every 30 min)
     asyncio.create_task(_notify_search_miss_loop())     # ← search-miss user notifications (every 60 min)
