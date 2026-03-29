@@ -544,6 +544,13 @@ async def startup():
     print("✅ All systems ready — price-sync + catalog-scraper + db-agent schedulers started")
 
 
+@app.on_event("shutdown")
+async def shutdown():
+    from hf_client import close_http
+    await close_http()
+    print("✅ HF connection pool closed")
+
+
 # How many hours before an order in paid/processing is considered stuck
 STUCK_ORDER_HOURS = int(os.getenv("STUCK_ORDER_HOURS", "4"))
 STUCK_ORDER_CHECK_INTERVAL_MIN = 30  # check every 30 minutes
