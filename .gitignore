@@ -1,120 +1,70 @@
-# Python
+# ── Secrets — NEVER commit ────────────────────────────────────────────────────
+.env
+backend/.env
+frontend/.env
+*.env.local
+*.env.production
+*.env.staging
+
+# ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
-.Python
+*.so
 *.egg
 *.egg-info/
 dist/
 build/
-eggs/
-parts/
-var/
-sdist/
-develop-eggs/
-.installed.cfg
-lib/python*/
-*.so
+.Python
 
-# Virtual environments
-lib/
+# ── Virtual environments ──────────────────────────────────────────────────────
+.venv/
 venv/
 env/
 ENV/
-.venv/
+lib/python*/
 
-# Environment variables (secrets!)
-.env
-backend/.env
-*.env.local
-*.env.production
-
-# Node / Frontend
-frontend/node_modules/
+# ── Node / Frontend ───────────────────────────────────────────────────────────
 node_modules/
+frontend/node_modules/
 frontend/dist/
 frontend/.vite/
 .vite/
 *.lock
 
-# Database
+# ── Databases & search index ──────────────────────────────────────────────────
 *.db
 *.sqlite3
 *.sqlite
+data.ms/
+meilisearch/
+backend/data.ms/
+backend/meilisearch/
 
-# Logs
+# ── Logs ──────────────────────────────────────────────────────────────────────
 *.log
 logs/
 
-# IDE
-.vscode/settings.json
-.idea/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Alembic (keep versions, not these)
-backend/alembic/__pycache__/
-
-# Coverage / test artifacts
+# ── Test / coverage artifacts ─────────────────────────────────────────────────
 .coverage
 htmlcov/
 .pytest_cache/
 
-# Large DB backup dumps
-backups/
-backend/data.ms/
-backend/meilisearch
-backend/hf_test_fix_tmp.py
-__pycache__/
-*.pyc
-*.pyo
-lib/
-*.zip
-*.db
-*.sqlite
-data.ms/
-meilisearch
-__pycache__/
-*.pyc
-*.pyo
-lib/
-*.zip
-*.db
-*.sqlite
-data.ms/
-meilisearch
-__pycache__/
-*.pyc
-*.pyo
-lib/
-*.zip
-*.db
-*.sqlite
-data.ms/
-meilisearch
-__pycache__/
-*.pyc
-*.pyo
-lib/
-*.zip
-*.db
-*.sqlite
-data.ms/
-meilisearch
-__pycache__/
-*.pyc
-*.pyo
-lib/
-*.zip
-*.db
-*.sqlite
-data.ms/
-meilisearch
-backend/BACKEND_API_ROUTES.py.bak
-*.bak
+# ── IDE / OS ──────────────────────────────────────────────────────────────────
+.vscode/settings.json
+.idea/
 *.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── Build artifacts / backups ─────────────────────────────────────────────────
+backups/
+*.bak
+*.zip
+backend/BACKEND_API_ROUTES.py.bak
+backend/hf_test_fix_tmp.py
+
+# ── Alembic cache ─────────────────────────────────────────────────────────────
+backend/alembic/__pycache__/
