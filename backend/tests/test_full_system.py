@@ -1412,7 +1412,7 @@ def test_O_openapi_json_accessible():
 # ===========================================================================
 
 def test_P_env_example_has_required_vars():
-    env_example = os.path.join(REPO_DIR, ".env.example")
+    env_example = os.path.join(BACKEND_DIR, ".env.example")
     with open(env_example) as f:
         content = f.read()
     for var in ["JWT_SECRET_KEY", "JWT_REFRESH_SECRET_KEY", "STRIPE_SECRET_KEY",
