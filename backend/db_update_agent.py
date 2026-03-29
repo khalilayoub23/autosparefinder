@@ -6,14 +6,20 @@ Each task is idempotent: re-running it is always safe.
 
 Tasks
 -----
-1. clean_part_names          – strip trailing car-model suffixes from part names
-2. normalize_part_types      – unify to "Original" / "OEM" / "Aftermarket"
-3. normalize_categories      – map variants to 14 canonical Hebrew categories
-4. normalize_availability    – unify to "in_stock" / "out_of_stock" / "on_order"
-5. fix_base_prices           – ensure base_price = supplier min + 18 % VAT markup
-6. flag_fake_skus            – set needs_oem_lookup=True for auto-generated SKUs
-7. fill_car_brands           – seed il_importer / warranty_* for known makes
-8. run_all_tasks             – orchestrator that runs 1-7 and returns a report dict
+1.  clean_part_names          – strip trailing car-model suffixes from part names
+2.  normalize_part_types      – unify to "Original" / "OEM" / "Aftermarket"
+3.  normalize_categories      – map variants to 14 canonical Hebrew categories
+4.  normalize_availability    – unify to "in_stock" / "out_of_stock" / "on_order"
+5.  fix_base_prices           – ensure base_price = supplier min + 18 % VAT markup
+6.  flag_fake_skus            – set needs_oem_lookup=True for auto-generated SKUs
+7.  fill_car_brands           – seed il_importer / warranty_* for known makes
+8.  run_all_tasks             – orchestrator that runs 1-7 and returns a report dict
+
+On-demand tasks (NOT in run_all_tasks — must be triggered explicitly):
+9.  populate_supplier_parts   – link every active part to every active supplier
+                                (ON CONFLICT DO NOTHING; safe to re-run)
+10. validate_migrations       – pre-flight safety scan of all Alembic migration
+                                files for patterns that can cause downtime
 
 Admin endpoints call run_all_tasks or individual tasks through get_db.
 run_agent_background_loop()  – optional periodic loop (disabled by default).
@@ -985,6 +991,308 @@ async def dedup_catalog_parts(db: AsyncSession) -> Dict[str, Any]:
     }
 
 
+
+# ---------------------------------------------------------------------------
+# Task: populate_supplier_parts
+# Links every active part to every active supplier with correct pricing.
+# Safe to re-run: uses ON CONFLICT DO NOTHING.
+# Call via: POST /api/v1/admin/db-agent/run/populate_supplier_parts
+# ---------------------------------------------------------------------------
+
+#  (supplier_name, sku_prefix, price_multiplier, ship_ils, ship_usd, transit_days, avail, is_avail)
+_UNIVERSAL_SUPPLIERS = [
+    ("AutoParts Pro IL", "IL",  1.00,   0.0,  0.0,  3, "in_stock", True),
+    ("Global Parts Hub", "DE",  1.10,  93.0, 25.0, 10, "on_order", False),
+    ("EastAuto Supply",  "CN",  0.85, 130.0, 35.0, 21, "on_order", False),
+    ("PartsPro USA",     "US1", 1.05, 110.0, 30.0, 12, "on_order", False),
+    ("AutoZone Direct",  "US2", 1.15, 120.0, 33.0, 14, "on_order", False),
+]
+_MANUFACTURER_SUPPLIERS = [
+    ("Hyundai Mobis",    "KR1", 0.95, 95.0, 26.0,  8, "on_order", False),
+    ("Kia Parts Direct", "KR2", 0.95, 95.0, 26.0,  8, "on_order", False),
+    ("Bosch Direct",     "DE2", 1.00, 80.0, 22.0,  7, "on_order", False),
+    ("Toyota Genuine",   "JP",  1.05, 99.0, 27.0, 10, "on_order", False),
+]
+_CATEGORY_FALLBACK_ILS: Dict[str, float] = {
+    "גוף ואקסטריור": 1206, "כללי": 1320, "מתלים והגה": 1178, "מנוע": 1522,
+    "חשמל": 862, "בלמים": 648, "מערכת דלק": 909, "מסננים ושמנים": 958,
+    "אטמים וחומרים": 302, "תאורה": 1560, "מיזוג ומערכת חימום": 997,
+    "גלגלים וצמיגים": 889, "פנים הרכב": 1224, "תיבת הילוכים": 2398,
+    "קירור": 1027, "מערכת פליטה": 2365, "סרן והינע": 891,
+    "מגבים": 446, "שרשראות ורצועות": 429, "כלים וציוד": 350,
+}
+_WARRANTY_MAP = {"Original": 24, "OEM": 24, "Aftermarket": 12, "Refurbished": 6}
+_BATCH = 5_000
+_DEFAULT_PRICE = 800.0
+
+
+async def _populate_supplier_parts_task(db: AsyncSession) -> Dict[str, Any]:
+    """
+    Link every active part to every active supplier with computed pricing.
+    Idempotent — uses ON CONFLICT DO NOTHING on (supplier_id, part_id).
+    Heavy operation; only runs on demand via the admin API, not in run_all_tasks.
+    """
+    import json
+    import uuid as _uuid
+
+    t0 = time.monotonic()
+
+    # ── Load active suppliers ────────────────────────────────────────────────
+    rows = (await db.execute(text(
+        "SELECT id, name, is_manufacturer, manufacturer_name "
+        "FROM suppliers WHERE is_active = TRUE ORDER BY priority"
+    ))).mappings().fetchall()
+    suppliers: Dict[str, Any] = {r["name"]: dict(r) for r in rows}
+
+    if not suppliers:
+        return {"task": "populate_supplier_parts", "status": "error",
+                "error": "No active suppliers found — run seed_data.py first"}
+
+    ils_rate: float = ILS_PER_USD  # from module-level constant (overridden by settings)
+    total_inserted = 0
+
+    async def _insert_batch(records: list) -> int:
+        if not records:
+            return 0
+        payload = json.dumps(records)
+        result = await db.execute(text("""
+            INSERT INTO supplier_parts (
+                id, supplier_id, part_id, supplier_sku,
+                price_usd, price_ils, shipping_cost_usd, shipping_cost_ils,
+                availability, warranty_months, estimated_delivery_days,
+                is_available, last_checked_at, created_at
+            )
+            SELECT
+                CAST(j->>'id' AS UUID),
+                CAST(j->>'supplier_id' AS UUID),
+                CAST(j->>'part_id' AS UUID),
+                j->>'supplier_sku',
+                CAST(j->>'price_usd' AS NUMERIC),
+                CAST(j->>'price_ils' AS NUMERIC),
+                CAST(j->>'shipping_cost_usd' AS NUMERIC),
+                CAST(j->>'shipping_cost_ils' AS NUMERIC),
+                j->>'availability',
+                CAST(j->>'warranty_months' AS INT),
+                CAST(j->>'estimated_delivery_days' AS INT),
+                CAST(j->>'is_available' AS BOOLEAN),
+                NOW(), NOW()
+            FROM json_array_elements(:payload::json) AS j
+            ON CONFLICT (supplier_id, part_id) DO NOTHING
+        """), {"payload": payload})
+        await db.commit()
+        return result.rowcount if result.rowcount and result.rowcount > 0 else len(records)
+
+    # ── Pass 1: Universal suppliers → all active parts ───────────────────────
+    offset = 0
+    while True:
+        parts = (await db.execute(text(
+            "SELECT id, category, part_type, base_price FROM parts_catalog "
+            "WHERE is_active = TRUE ORDER BY id OFFSET :o LIMIT :l"
+        ), {"o": offset, "l": _BATCH})).mappings().fetchall()
+        if not parts:
+            break
+
+        records: list = []
+        for part in parts:
+            part_id = str(part["id"])
+            base = float(part["base_price"] or 0)
+            if base <= 1.0:
+                base = _CATEGORY_FALLBACK_ILS.get(part["category"] or "כללי", _DEFAULT_PRICE)
+            warranty = _WARRANTY_MAP.get(part["part_type"] or "", 12)
+
+            for (s_name, prefix, mult, s_ils, s_usd, days, avail, is_av) in _UNIVERSAL_SUPPLIERS:
+                if s_name not in suppliers:
+                    continue
+                price = round(base * mult, 2)
+                records.append({
+                    "id": str(_uuid.uuid4()),
+                    "supplier_id": str(suppliers[s_name]["id"]),
+                    "part_id": part_id,
+                    "supplier_sku": f"{prefix}-{part_id}",
+                    "price_usd": round(price / ils_rate, 2),
+                    "price_ils": price,
+                    "shipping_cost_usd": s_usd,
+                    "shipping_cost_ils": s_ils,
+                    "availability": avail,
+                    "warranty_months": warranty,
+                    "estimated_delivery_days": days,
+                    "is_available": is_av,
+                })
+
+        total_inserted += await _insert_batch(records)
+        offset += _BATCH
+
+    # ── Pass 2: Manufacturer-direct suppliers → filtered by manufacturer ──────
+    for (s_name, prefix, mult, s_ils, s_usd, days, avail, is_av) in _MANUFACTURER_SUPPLIERS:
+        if s_name not in suppliers:
+            continue
+        sup = suppliers[s_name]
+        mfr = sup.get("manufacturer_name") if sup.get("is_manufacturer") else None
+        where = "AND LOWER(manufacturer) = LOWER(:mfr)" if mfr else ""
+        params_base: Dict[str, Any] = {"mfr": mfr} if mfr else {}
+
+        offset = 0
+        while True:
+            parts = (await db.execute(text(
+                f"SELECT id, category, part_type, base_price FROM parts_catalog "
+                f"WHERE is_active = TRUE {where} ORDER BY id OFFSET :o LIMIT :l"
+            ), {**params_base, "o": offset, "l": _BATCH})).mappings().fetchall()
+            if not parts:
+                break
+
+            records = []
+            for part in parts:
+                part_id = str(part["id"])
+                base = float(part["base_price"] or 0)
+                if base <= 1.0:
+                    base = _CATEGORY_FALLBACK_ILS.get(part["category"] or "כללי", _DEFAULT_PRICE)
+                warranty = _WARRANTY_MAP.get(part["part_type"] or "", 12)
+                price = round(base * mult, 2)
+                records.append({
+                    "id": str(_uuid.uuid4()),
+                    "supplier_id": str(sup["id"]),
+                    "part_id": part_id,
+                    "supplier_sku": f"{prefix}-{part_id}",
+                    "price_usd": round(price / ils_rate, 2),
+                    "price_ils": price,
+                    "shipping_cost_usd": s_usd,
+                    "shipping_cost_ils": s_ils,
+                    "availability": avail,
+                    "warranty_months": warranty,
+                    "estimated_delivery_days": days,
+                    "is_available": is_av,
+                })
+
+            total_inserted += await _insert_batch(records)
+            offset += _BATCH
+
+    # ── Final count ──────────────────────────────────────────────────────────
+    total_rows = (await db.execute(text("SELECT COUNT(*) FROM supplier_parts"))).scalar_one()
+    parts_covered = (await db.execute(text(
+        "SELECT COUNT(*) FROM (SELECT part_id FROM supplier_parts "
+        "GROUP BY part_id HAVING COUNT(DISTINCT supplier_id) >= 5) t"
+    ))).scalar_one()
+
+    logger.info("populate_supplier_parts: inserted=%d total_rows=%d", total_inserted, total_rows)
+    return {
+        "task": "populate_supplier_parts",
+        "status": "ok",
+        "inserted": total_inserted,
+        "total_supplier_parts_rows": total_rows,
+        "parts_with_5plus_suppliers": parts_covered,
+        "elapsed_s": round(time.monotonic() - t0, 2),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Task: validate_migrations
+# Pre-flight safety check for Alembic migration files.
+# Call via: POST /api/v1/admin/db-agent/run/validate_migrations
+# ---------------------------------------------------------------------------
+
+import re as _re
+from pathlib import Path as _Path
+
+
+def _check_migration_file(path: _Path) -> Tuple[bool, List[str], List[str]]:
+    """
+    Scan a single Alembic migration file for unsafe patterns.
+    Returns (is_safe, errors, warnings).
+    """
+    errors: List[str] = []
+    warnings: List[str] = []
+
+    content = path.read_text()
+    m = _re.search(r"def upgrade\(\):(.*?)(?=def downgrade|$)", content, _re.DOTALL)
+    if not m:
+        errors.append(f"{path.name}: no upgrade() function found")
+        return False, errors, warnings
+
+    code = m.group(1)
+
+    # 1. NOT NULL column without server_default
+    for match in _re.finditer(r"sa\.Column\([^)]*nullable=False[^)]*\)", code):
+        start = code.rfind("\n", 0, match.start()) + 1
+        line = code[start:code.find("\n", match.end())].strip()
+        if "server_default" not in line:
+            errors.append(f"{path.name}: NOT NULL without server_default → {line[:120]}")
+
+    # 2. Column drops (warn — app code may still reference)
+    for match in _re.finditer(r"op\.drop_column\(", code):
+        start = code.rfind("\n", 0, match.start()) + 1
+        line = code[start:code.find("\n", match.end())].strip()
+        warnings.append(f"{path.name}: column drop — verify no live references → {line[:120]}")
+
+    # 3. Table renames (warn)
+    if _re.search(r"op\.rename_table\(", code):
+        warnings.append(f"{path.name}: table rename — ensure compatibility views exist")
+
+    # 4. Type change without VARCHAR intermediate (warn)
+    for match in _re.finditer(r"op\.alter_column\([^,]+,\s*type_=", code):
+        start = code.rfind("\n", 0, match.start()) + 1
+        line = code[start:code.find("\n", match.end())].strip()
+        if "VARCHAR" not in line and "String" not in line:
+            warnings.append(f"{path.name}: type change without VARCHAR step → {line[:120]}")
+
+    return len(errors) == 0, errors, warnings
+
+
+async def _validate_migrations_task(db: AsyncSession) -> Dict[str, Any]:
+    """
+    Scan all Alembic migration files in both catalog and PII directories
+    for patterns that could cause downtime on production deployment.
+    Safe read-only operation; does not touch the database.
+    """
+    import asyncio as _asyncio
+
+    base = _Path(__file__).parent
+    dirs = {
+        "catalog": base / "alembic" / "versions",
+        "pii":     base / "alembic_pii" / "versions",
+    }
+
+    all_errors: List[str] = []
+    all_warnings: List[str] = []
+    files_checked = 0
+    files_failed = 0
+
+    def _scan_dirs() -> Tuple[int, int, List[str], List[str]]:
+        _checked = 0
+        _failed = 0
+        _errors: List[str] = []
+        _warnings: List[str] = []
+        for label, mdir in dirs.items():
+            if not mdir.exists():
+                _warnings.append(f"{label}: directory not found ({mdir})")
+                continue
+            for mfile in sorted(mdir.glob("*.py")):
+                if mfile.name.startswith("__"):
+                    continue
+                _checked += 1
+                safe, errs, warns = _check_migration_file(mfile)
+                _errors.extend(errs)
+                _warnings.extend(warns)
+                if not safe:
+                    _failed += 1
+        return _checked, _failed, _errors, _warnings
+
+    files_checked, files_failed, all_errors, all_warnings = await asyncio.to_thread(_scan_dirs)
+
+    status = "ok" if files_failed == 0 else "unsafe"
+    logger.info(
+        "validate_migrations: checked=%d failed=%d errors=%d warnings=%d",
+        files_checked, files_failed, len(all_errors), len(all_warnings),
+    )
+    return {
+        "task": "validate_migrations",
+        "status": status,
+        "files_checked": files_checked,
+        "files_failed": files_failed,
+        "errors": all_errors,
+        "warnings": all_warnings,
+    }
+
+
 TASK_REGISTRY: Dict[str, Any] = {
     "clean_part_names":          clean_part_names,
     "normalize_part_types":      normalize_part_types,
@@ -999,6 +1307,9 @@ TASK_REGISTRY: Dict[str, Any] = {
     "enrich_pending_parts":      _enrich_pending_parts_task,
     "trigger_scraper_for_misses": _trigger_scraper_for_misses_task,
     "generate_image_embeddings": _generate_image_embeddings_task,
+    # on-demand heavy tasks — NOT included in run_all_tasks
+    "populate_supplier_parts":   _populate_supplier_parts_task,
+    "validate_migrations":       _validate_migrations_task,
 }
 
 
