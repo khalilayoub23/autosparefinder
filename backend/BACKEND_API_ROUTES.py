@@ -113,9 +113,7 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization", "X-Request-ID", "X-Idempotency-Key"],
 )
 
-if os.getenv("ENVIRONMENT", "development") == "production":
-    from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
-    app.add_middleware(HTTPSRedirectMiddleware)
+# SSL is terminated by Cloudflare — no HTTPSRedirectMiddleware needed
 
 # _cart_to_response helper → routes/cart.py
 # POST   /api/v1/chat/message                         → routes/chat.py
