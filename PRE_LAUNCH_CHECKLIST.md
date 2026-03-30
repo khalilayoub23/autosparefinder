@@ -2,43 +2,38 @@
 
 ## 🔴 BLOCKERS — must be done before first real user
 
-- [ ] **JWT_SECRET_KEY** — replace dev placeholder in `backend/.env`
+- [x] **JWT_SECRET_KEY** — replace dev placeholder in `backend/.env`
       ```
       python -c "import secrets; print(secrets.token_hex(32))"
       ```
 
-- [ ] **JWT_REFRESH_SECRET_KEY** — replace dev placeholder in `backend/.env`
+- [x] **JWT_REFRESH_SECRET_KEY** — replace dev placeholder in `backend/.env`
       ```
       python -c "import secrets; print(secrets.token_hex(32))"
       ```
 
-- [ ] **ENCRYPTION_KEY** — currently empty; PII field encryption broken without it.
+- [x] **ENCRYPTION_KEY** — currently empty; PII field encryption broken without it.
       Set before ANY user registers — fields written with no key are unreadable after adding one.
       ```
       python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
       ```
 
-- [ ] **STRIPE_SECRET_KEY** — replace `sk_test_***` with live `sk_live_***` key from Stripe dashboard
+- [ ] **STRIPE_SECRET_KEY** — sandbox key in place; swap for `sk_live_***` at go-live
 
 - [ ] **STRIPE_WEBHOOK_SECRET** — register webhook URL `https://autospare.com/api/v1/payments/webhook`
-      in Stripe dashboard → copy the signing secret → paste into `backend/.env`
+      in Stripe dashboard (live mode) → copy `whsec_***` → paste into `backend/.env` at go-live
 
-- [ ] **SENDGRID_API_KEY** — required for order confirmation emails and password reset flow
+- [ ] **SENDGRID_API_KEY** — left empty; fill at go-live (emails fail gracefully until set)
 
-- [ ] **SUPERUSER_PASSWORD** — currently empty in `backend/.env`; set a strong password before first deploy
+- [x] **SUPERUSER_PASSWORD** — set
 
-- [ ] **ENVIRONMENT + DEBUG flags** — change in `backend/.env`:
+- [x] **ENVIRONMENT + DEBUG flags** — change in `backend/.env`:
       ```
       ENVIRONMENT=production
       DEBUG=false
       ```
 
-- [ ] **SSL certificate** — nginx expects `/etc/nginx/ssl/fullchain.pem` and `privkey.pem` on the VPS
-      ```
-      certbot certonly --standalone -d autospare.com -d www.autospare.com
-      cp /etc/letsencrypt/live/autospare.com/fullchain.pem /etc/nginx/ssl/
-      cp /etc/letsencrypt/live/autospare.com/privkey.pem   /etc/nginx/ssl/
-      ```
+- [x] **SSL** — handled by Cloudflare; nginx now listens on port 80 only. Set Cloudflare SSL/TLS mode to **Full**.
 
 ---
 
