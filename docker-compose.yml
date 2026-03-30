@@ -2,12 +2,19 @@
 # Auto Spare Finder — Docker Compose Stack
 #
 # Services:
-#   postgres     — PostgreSQL 16 + pgvector (two DBs: autospare + autospare_pii)
-#   redis        — Session store, rate limiting, pub/sub notifications
-#   backend      — FastAPI + 10 AI agents (Ollama model server is external/VPS)
-#   frontend     — React 18 / Vite dev server (prod: nginx in frontend/Dockerfile)
-#   clamav       — Antivirus scanning for all uploaded files
-#   meilisearch  — Full-text search index for parts catalog
+#   postgres_catalog — PostgreSQL 16 + pgvector (autospare DB — catalog, parts, brands)
+#   postgres_pii     — PostgreSQL 16 + pgvector (autospare_pii DB — users, orders, PII)
+#   redis            — Session store, rate limiting, pub/sub notifications
+#   backend          — FastAPI + 10 AI agents
+#   frontend         — React 18 build (static assets → frontend_build volume)
+#   nginx            — Reverse proxy (Cloudflare → nginx → backend/frontend)
+#   clamav           — Antivirus scanning for uploaded files
+#   meilisearch      — Full-text search for parts catalog
+#   backup           — Scheduled DB + Meili backups (daily 02:00)
+#
+# Networks:
+#   internal  — service-to-service only (no external exposure)
+#   public    — nginx edge (Cloudflare SSL termination)
 #
 # External integrations (no container required):
 #   Telegram Bot API   — social post publishing        (TELEGRAM_BOT_TOKEN)
@@ -19,53 +26,101 @@
 version: "3.9"
 
 services:
-  postgres:
-    image: pgvector/pgvector:pg16  # pgvector extension enables vector similarity search (parts images + text)
-    container_name: autospare_postgres
+
+  # ── Databases ────────────────────────────────────────────────────────────────
+
+  postgres_catalog:
+    image: pgvector/pgvector:pg16
+    container_name: autospare_postgres_catalog
     restart: unless-stopped
+    mem_limit: 1536m
     environment:
       POSTGRES_DB: autospare
       POSTGRES_USER: autospare
       POSTGRES_PASSWORD: ${DB_PASSWORD}
-    ports:
-      - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_catalog_data:/var/lib/postgresql/data
       - ./database/init.sql:/docker-entrypoint-initdb.d/:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U autospare"]
+      test: ["CMD-SHELL", "pg_isready -U autospare -d autospare"]
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - internal
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  postgres_pii:
+    image: pgvector/pgvector:pg16
+    container_name: autospare_postgres_pii
+    restart: unless-stopped
+    mem_limit: 768m
+    environment:
+      POSTGRES_DB: autospare_pii
+      POSTGRES_USER: autospare
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres_pii_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U autospare -d autospare_pii"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
 
   redis:
     image: redis:7-alpine
     container_name: autospare_redis
     restart: unless-stopped
+    mem_limit: 256m
     command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
     volumes:
       - redis_data:/data
-    ports:
-      - "6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5
+    networks:
+      - internal
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "3"
+
+  # ── Application ──────────────────────────────────────────────────────────────
 
   backend:
     build: ./backend
     container_name: autospare_backend
     restart: unless-stopped
+    mem_limit: 1024m
     environment:
-      DATABASE_URL: postgresql+asyncpg://autospare:${DB_PASSWORD}@postgres:5432/autospare
-      DATABASE_PII_URL: postgresql+asyncpg://autospare:${DB_PASSWORD}@postgres:5432/autospare_pii
+      DATABASE_URL: postgresql+asyncpg://autospare:${DB_PASSWORD}@postgres_catalog:5432/autospare
+      DATABASE_PII_URL: postgresql+asyncpg://autospare:${DB_PASSWORD}@postgres_pii:5432/autospare_pii
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       JWT_SECRET_KEY: ${JWT_SECRET_KEY}
       JWT_REFRESH_SECRET_KEY: ${JWT_REFRESH_SECRET_KEY}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
-      GITHUB_TOKEN: ${GITHUB_TOKEN}  # kept for any legacy integrations — remove once fully migrated
-      HF_TOKEN: ${HF_TOKEN}           # HuggingFace API token — serves Kimi-K2 (agents), multilingual embed, whisper (upload-audio)
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      HF_TOKEN: ${HF_TOKEN}
       TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID}
       TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN}
       TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER}
@@ -76,12 +131,16 @@ services:
       CLAMD_HOST: clamav
       MEILI_URL: http://meilisearch:7700
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
-      ENVIRONMENT: ${ENVIRONMENT:-development}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
       DEBUG: "false"
-    ports:
-      - "8000:8000"
     depends_on:
-      postgres:
+      postgres_catalog:
+        condition: service_healthy
+      postgres_pii:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      meilisearch:
         condition: service_healthy
       clamav:
         condition: service_healthy
@@ -99,38 +158,96 @@ services:
         alembic -c alembic_pii.ini upgrade head &&
         uvicorn BACKEND_API_ROUTES:app --host 0.0.0.0 --port 8000 --workers 4
       "
+    networks:
+      - internal
+      - public
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "5"
 
   frontend:
     build: ./frontend
     container_name: autospare_frontend
     restart: unless-stopped
-    ports:
-      - "80:80"
+    mem_limit: 128m
+    volumes:
+      - frontend_build:/usr/share/nginx/html
     depends_on:
       - backend
+    networks:
+      - internal
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "3"
+
+  nginx:
+    image: nginx:alpine
+    container_name: autospare_nginx
+    restart: unless-stopped
+    mem_limit: 128m
+    ports:
+      - "80:80"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/nginx.conf:ro
+      - frontend_build:/usr/share/nginx/html:ro
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - public
+      - internal
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost/api/v1/system/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # ── Support services ─────────────────────────────────────────────────────────
 
   clamav:
     image: clamav/clamav:stable
     container_name: autospare_clamav
     restart: unless-stopped
-    ports:
-      - "3310:3310"
+    mem_limit: 768m
     healthcheck:
       test: ["CMD-SHELL", "clamdcheck.sh || exit 1"]
       interval: 60s
       timeout: 10s
       retries: 3
       start_period: 120s
+    networks:
+      - internal
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "3"
 
   meilisearch:
-    image: getmeili/meilisearch:v1.7  # full-text search for parts catalog; synced from PostgreSQL via meili_sync.py
+    image: getmeili/meilisearch:v1.7
     container_name: autospare_meilisearch
     restart: unless-stopped
+    mem_limit: 1024m
     environment:
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
       MEILI_ENV: production
-    ports:
-      - "7700:7700"
     volumes:
       - meili_data:/meili_data
     healthcheck:
@@ -138,9 +255,50 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+    networks:
+      - internal
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "3"
+
+  backup:
+    image: alpine:3.19
+    container_name: autospare_backup
+    restart: unless-stopped
+    mem_limit: 256m
+    environment:
+      DB_PASSWORD: ${DB_PASSWORD}
+      PGPASSWORD: ${DB_PASSWORD}
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
+    volumes:
+      - backup_data:/var/backups/autosparefinder
+      - ./scripts/backup.sh:/backup.sh:ro
+    command: sh -c 'apk add --no-cache postgresql16-client curl && echo "0 2 * * * /backup.sh" > /etc/crontabs/root && crond -f -d 8'
+    networks:
+      - internal
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "3"
+
+networks:
+  internal:
+    driver: bridge
+  public:
+    driver: bridge
 
 volumes:
-  postgres_data:
+  postgres_catalog_data:
+  postgres_pii_data:
   redis_data:
   upload_files:
+  frontend_build:
   meili_data:
+  backup_data:
