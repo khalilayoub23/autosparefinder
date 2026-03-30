@@ -17,17 +17,18 @@ jobs:
           python-version: '3.11'
 
       - name: Install backend deps
-        working-directory: ./
+        working-directory: ./backend
         run: |
           python -m venv .venv-ci
           source .venv-ci/bin/activate
           pip install --upgrade pip
-          pip install pytest pyyaml
+          pip install -r requirements.txt
 
       - name: Run pytest (smoke)
+        working-directory: ./backend
         run: |
           source .venv-ci/bin/activate
-          pytest -q src/tests/test_config.py::test_config_values src/tests/test_deployment.py::test_docker_compose_has_required_services
+          pytest -q tests/ --tb=short
 
       - name: Docker Compose config (validate)
         run: docker compose -f docker-compose.yml config
