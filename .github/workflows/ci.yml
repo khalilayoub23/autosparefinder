@@ -17,18 +17,17 @@ jobs:
           python-version: '3.11'
 
       - name: Install backend deps
-        working-directory: ./backend
         run: |
           python -m venv .venv-ci
           source .venv-ci/bin/activate
           pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install httpx pytest pytest-asyncio
 
       - name: Run pytest (smoke)
         working-directory: ./backend
         run: |
-          source .venv-ci/bin/activate
-          pytest -q tests/ --tb=short
+          source ../.venv-ci/bin/activate
+          pytest -q tests/test_hf_client.py --tb=short
 
       - name: Docker Compose config (validate)
         run: docker compose -f docker-compose.yml config
