@@ -1,37 +1,30 @@
 name: CI
-
 on:
   pull_request:
   push:
     branches: [ main ]
-
 jobs:
   test-and-smoke:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
-
       - name: Install backend deps
         run: |
           python -m venv .venv-ci
           source .venv-ci/bin/activate
           pip install --upgrade pip
           pip install httpx pytest pytest-asyncio
-
       - name: Run pytest (smoke)
         working-directory: ./backend
         run: |
           source ../.venv-ci/bin/activate
           pytest -q tests/test_hf_client.py --tb=short
-
       - name: Docker Compose config (validate)
         run: docker compose -f docker-compose.yml config
-
       - name: Secret-scan (basic)
         run: |
           set -e
@@ -39,7 +32,6 @@ jobs:
             echo "Potential secret pattern found — please ensure no secrets are committed."
             exit 1
           fi
-
       - name: Notify mobile repo (sync trigger)
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: |
@@ -57,7 +49,8 @@ jobs:
               }
             }'
           echo "Mobile repo notified"
-          deploy:
+
+  deploy:
     needs: test-and-smoke
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
