@@ -7,7 +7,7 @@ import ConsentModal from './ConsentModal'
 import {
   MessageSquare, Search, ShoppingCart, Package, User,
   Settings, LogOut, Menu, X, Bell, Car, ChevronDown,
-  LayoutDashboard, Wrench,
+  LayoutDashboard, Wrench, Bot,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -101,6 +101,17 @@ export default function Layout({ children }) {
                 >
                   <LayoutDashboard className="w-4 h-4" />
                   ניהול
+                </Link>
+                <Link
+                  to="/agents"
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors
+                    ${location.pathname === '/agents'
+                      ? 'bg-brand-50 text-brand-700'
+                      : 'text-gray-600 hover:bg-gray-100'
+                    }`}
+                >
+                  <Bot className="w-4 h-4" />
+                  סוכני AI
                 </Link>
               </>
             )}
