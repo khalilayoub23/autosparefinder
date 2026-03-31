@@ -57,3 +57,19 @@ jobs:
               }
             }'
           echo "Mobile repo notified"
+          deploy:
+    needs: test-and-smoke
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd /opt/autosparefinder
+            git pull origin main
+            docker compose up -d --build frontend backend
+            docker cp /opt/autosparefinder/backend/BACKEND_AUTH_SECURITY.py autospare_backend:/app/BACKEND_AUTH_SECURITY.py
