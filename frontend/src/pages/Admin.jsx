@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import api from '../api/client'
+import { useAuthStore } from '../stores/authStore'
 import {
   LayoutDashboard, Users, Package, TrendingUp, Settings,
   DollarSign, ShoppingBag, BarChart2, Loader2, RefreshCw,
