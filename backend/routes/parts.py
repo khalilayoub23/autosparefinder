@@ -74,6 +74,14 @@ async def search_parts(
         allowed = await check_rate_limit(redis, f'rate:search:{ip}', 30, 60)
         if not allowed:
             raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
+
+    # ── Normalize mixed-language query (He→En for catalog matching) ──────────
+    if query:
+        try:
+            from hf_client import hf_normalize_query
+            query = await hf_normalize_query(query)
+        except Exception:
+            pass  # degrade silently — use raw query
     # ── Resolve results_per_type ─────────────────────────────────────────────
     if per_type is None:
         try:
@@ -816,6 +824,7 @@ async def identify_part_from_image(
             await db.commit()
     except Exception as e:
         print(f"[Vision] Cache lookup error: {e}")
+        await db.rollback()  # reset aborted transaction so subsequent queries work
 
     # ── 2 & 3. GPT call if no cache hit ─────────────────────────────────────
     if not cache_hit:

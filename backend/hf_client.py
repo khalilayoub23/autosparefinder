@@ -25,11 +25,13 @@ logger = logging.getLogger("hf_client")
 
 # ── Env config ────────────────────────────────────────────────────────────────
 HF_TOKEN        = os.getenv("HF_TOKEN", "")
-HF_TEXT_MODEL   = os.getenv("HF_TEXT_MODEL",   "moonshotai/Kimi-K2-Instruct-0905")
-HF_VISION_MODEL = os.getenv("HF_VISION_MODEL", "moonshotai/Kimi-K2-Instruct-0905")
-HF_EMBED_MODEL  = os.getenv("HF_EMBED_MODEL",  "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
-HF_AUDIO_MODEL  = os.getenv("HF_AUDIO_MODEL",  "openai/whisper-large-v3")
-HF_CLIP_MODEL   = os.getenv("HF_CLIP_MODEL",   "openai/clip-vit-large-patch14")
+HF_TEXT_MODEL   = os.getenv("HF_TEXT_MODEL",   "moonshotai/Kimi-K2-Instruct-0905")   # chat/text — handles He/En mix
+HF_VISION_MODEL = os.getenv("HF_VISION_MODEL", "Qwen/Qwen2.5-VL-7B-Instruct")         # multimodal image understanding
+HF_EMBED_MODEL  = os.getenv("HF_EMBED_MODEL",  "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")  # local multilingual embeddings (He/En/Ar)
+HF_AUDIO_MODEL  = os.getenv("HF_AUDIO_MODEL",  "openai/whisper-large-v3")              # speech-to-text, mixed-language aware
+HF_CLIP_MODEL   = os.getenv("HF_CLIP_MODEL",   "openai/clip-vit-large-patch14")        # image embeddings
+# For mixed He+En query normalization (transliteration, spelling fixes, synonym expansion)
+HF_LANG_MODEL   = os.getenv("HF_LANG_MODEL",   "Helsinki-NLP/opus-mt-tc-big-he-en")   # He→En for mixed queries
 
 ROUTER_BASE  = "https://router.huggingface.co/v1"
 INFER_BASE   = "https://router.huggingface.co/hf-inference/models"
@@ -282,6 +284,65 @@ async def hf_audio(audio_bytes: bytes, timeout: float = 60.0) -> str:
     )
     resp.raise_for_status()
     return resp.json().get("text", "")
+
+
+def _is_mostly_hebrew(text: str) -> bool:
+    """True if >30% of alpha chars are Hebrew."""
+    heb = sum(1 for c in text if '\u05d0' <= c <= '\u05ea')
+    alpha = sum(1 for c in text if c.isalpha())
+    return alpha > 0 and heb / alpha > 0.3
+
+
+async def hf_normalize_query(query: str, timeout: float = 10.0) -> str:
+    """
+    Normalize a mixed Hebrew/English auto-parts search query.
+
+    - If the query is purely English — return as-is (search handles it).
+    - If the query contains Hebrew — translate Hebrew words to English using
+      Helsinki-NLP He→En model, then merge with any English terms already present.
+      Result is a clean English search string the catalog can match against.
+    - Falls back to original query on any error.
+    """
+    if not query or not _is_mostly_hebrew(query):
+        return query
+
+    cache_key = _cache_key("lang", HF_LANG_MODEL, query)
+    cached = await _cache_get(cache_key)
+    if cached:
+        return cached
+
+    try:
+        payload = _json.dumps(
+            {"inputs": query}, ensure_ascii=False
+        ).encode()
+        resp = await _post_with_retry(
+            f"{INFER_BASE}/{HF_LANG_MODEL}",
+            _headers(),
+            payload,
+            timeout,
+            "lang",
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            # Response: [{"translation_text": "..."}]
+            translated = ""
+            if isinstance(data, list) and data:
+                translated = data[0].get("translation_text", "")
+            elif isinstance(data, dict):
+                translated = data.get("translation_text", "")
+
+            if translated:
+                # Keep English words from original query + translated Hebrew
+                en_words_orig = [w for w in query.split() if all(c.isascii() for c in w) and len(w) > 1]
+                merged = " ".join(dict.fromkeys(en_words_orig + translated.split()))
+                result = merged.strip() or query
+                await _cache_set(cache_key, result, _TEXT_CACHE_TTL)
+                logger.debug("hf_client [lang] '%s' → '%s'", query, result)
+                return result
+    except Exception as exc:
+        logger.warning("hf_client [lang] normalize failed: %s", exc)
+
+    return query
 
 
 async def hf_clip(image_b64: str, timeout: float = 15.0) -> list[float]:

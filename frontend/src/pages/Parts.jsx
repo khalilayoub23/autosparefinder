@@ -1420,10 +1420,20 @@ export default function Parts() {
     if (!SR) { toast.error('הדפדפן לא תומך בזיהוי קול'); return }
     const rec = new SR()
     recognizerRef.current = rec
+    // Accept Hebrew primary + English fallback for mixed-language terms
     rec.lang = 'he-IL'
     rec.interimResults = true
+    rec.maxAlternatives = 3
     rec.onresult = (e) => {
-      const transcript = Array.from(e.results).map(r => r[0].transcript).join('')
+      // Pick the alternative with the most content (handles mixed He+En best)
+      const getBest = (result) => {
+        let best = result[0].transcript
+        for (let i = 1; i < result.length; i++) {
+          if (result[i].transcript.length > best.length) best = result[i].transcript
+        }
+        return best
+      }
+      const transcript = Array.from(e.results).map(r => getBest(r)).join('')
       setVoiceTranscript(transcript)
     }
     rec.onerror = () => { setIsListening(false); toast.error('שגיאה בזיהוי קול') }
