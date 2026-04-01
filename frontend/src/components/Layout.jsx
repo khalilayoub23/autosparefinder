@@ -28,7 +28,7 @@ export default function Layout({ children }) {
   const { totals } = useCartStore()
   const location = useLocation()
   const navigate = useNavigate()
-  const cartTotals = totals()
+  const cartTotals = (() => { try { return totals() } catch { return { subtotal: 0, vat: 0, shipping: 0, total: 0, count: 0 } } })()
 
   // Refresh user on mount to ensure is_admin and other fields are current
   useEffect(() => { fetchMe() }, [])
