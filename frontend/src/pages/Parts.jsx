@@ -6,6 +6,21 @@ import { useVehicleStore } from '../stores/vehicleStore'
 import { Search, ShoppingCart, Car, Loader2, ChevronDown, Package, SlidersHorizontal, X, Camera, Mic, MicOff, Hash, CheckCircle, AlertCircle, Truck, Shield, Tag, ChevronRight, Link2, Bot, Crop, Pencil, Circle, RotateCcw, Check, MousePointer, ScanLine } from 'lucide-react'
 import toast from 'react-hot-toast'
 
+// ── Country flag helper ───────────────────────────────────────────────────────
+const COUNTRY_ISO = {
+  israel: 'il', 'il': 'il', germany: 'de', 'de': 'de', japan: 'jp', 'jp': 'jp',
+  usa: 'us', 'us': 'us', china: 'cn', 'cn': 'cn', korea: 'kr', 'kr': 'kr',
+  taiwan: 'tw', 'tw': 'tw', uk: 'gb', 'gb': 'gb', france: 'fr', 'fr': 'fr',
+  italy: 'it', 'it': 'it', spain: 'es', 'es': 'es', netherlands: 'nl', 'nl': 'nl',
+  turkey: 'tr', 'tr': 'tr', czechia: 'cz', 'cz': 'cz',
+}
+function CountryFlag({ country }) {
+  if (!country) return null
+  const iso = COUNTRY_ISO[country.toLowerCase().trim()]
+  if (!iso) return null
+  return <img src={`https://flagcdn.com/16x12/${iso}.png`} alt={country} className="inline-block rounded-sm" width={16} height={12} />
+}
+
 // ─── Photo Editor Modal ───────────────────────────────────────────────────────
 function PhotoEditorModal({ src, onApply, onClose }) {
   const canvasRef = useRef(null)
@@ -540,7 +555,10 @@ function TypeSection({ typeKey, data, onAddToCart }) {
               >
                 {/* Row 1: supplier label + availability */}
                 <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <span className="text-xs font-medium text-gray-700 truncate">{sp.supplier_name || `ספק #${i + 1}`}</span>
+                  <span className="flex items-center gap-1 text-xs font-medium text-gray-700 truncate">
+                    <CountryFlag country={sp.supplier_country} />
+                    {sp.supplier_name || `ספק #${i + 1}`}
+                  </span>
                   <div className="flex items-center gap-1 flex-wrap">
                     <AvailabilityBadge availability={sp.availability} deliveryDays={sp.estimated_delivery_days} />
                     {sp.express_available && (
@@ -2419,13 +2437,19 @@ export default function Parts() {
           </div>
 
           {/* ── Grouped 3-type results (new API) ─────────────────────────── */}
-          {searchResults ? (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {['original', 'oem', 'aftermarket'].map((key) => (
-                <TypeSection key={key} typeKey={key} data={searchResults[key]} onAddToCart={addItem} />
-              ))}
-            </div>
-          ) : (
+          {searchResults ? (() => {
+            const activeKeys = ['original', 'oem', 'aftermarket'].filter(k => searchResults[k]?.part)
+            const colClass = activeKeys.length === 1 ? 'max-w-lg mx-auto' : activeKeys.length === 2 ? 'grid grid-cols-1 md:grid-cols-2 gap-6' : 'grid grid-cols-1 lg:grid-cols-3 gap-6'
+            return activeKeys.length > 0 ? (
+              <div className={colClass}>
+                {activeKeys.map((key) => (
+                  <TypeSection key={key} typeKey={key} data={searchResults[key]} onAddToCart={addItem} />
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-12 text-gray-400 text-sm">לא נמצאו תוצאות</div>
+            )
+          })() : (
             <>
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {displayParts.map((p) => <PartCard key={p.id} part={p} onAddToCart={addItem} />)}

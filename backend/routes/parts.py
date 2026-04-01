@@ -166,7 +166,7 @@ async def search_parts(
     # if it's unavailable fall back to the original ILIKE clause.
     if query and meili_ids is None:
         conditions.append(
-            "(pc.name ILIKE :q OR pc.sku ILIKE :q OR pc.manufacturer ILIKE :q "
+            "(pc.name ILIKE :q OR pc.name_he ILIKE :q OR pc.sku ILIKE :q OR pc.manufacturer ILIKE :q "
             "OR pc.category ILIKE :q OR pc.oem_number ILIKE :q)"
         )
         params["q"]       = f"%{query}%"
@@ -227,16 +227,16 @@ async def search_parts(
     if query and meili_ids is None:
         relevance_sql = """
                 CASE
-                    WHEN pc.name ILIKE :q_exact THEN 4
-                    WHEN pc.name ILIKE :q_start THEN 3
-                    WHEN LENGTH(pc.name) - LENGTH(:q_exact) <= 5 THEN 2
+                    WHEN pc.name ILIKE :q_exact OR pc.name_he ILIKE :q_exact THEN 4
+                    WHEN pc.name ILIKE :q_start OR pc.name_he ILIKE :q_start THEN 3
+                    WHEN LENGTH(COALESCE(pc.name,'')) - LENGTH(:q_exact) <= 5 THEN 2
                     ELSE 1
                 END DESC,"""
         score_col = """,
                     CASE
-                        WHEN pc.name ILIKE :q_exact THEN 4
-                        WHEN pc.name ILIKE :q_start THEN 3
-                        WHEN LENGTH(pc.name) - LENGTH(:q_exact) <= 5 THEN 2
+                        WHEN pc.name ILIKE :q_exact OR pc.name_he ILIKE :q_exact THEN 4
+                        WHEN pc.name ILIKE :q_start OR pc.name_he ILIKE :q_start THEN 3
+                        WHEN LENGTH(COALESCE(pc.name,'')) - LENGTH(:q_exact) <= 5 THEN 2
                         ELSE 1
                     END AS match_score"""
     else:
@@ -304,10 +304,7 @@ async def search_parts(
                 type_params,
             )).fetchone()
 
-            # Reject loose ILIKE-only matches (score == 1)
-            if query and score_col and part_row is not None:
-                if part_row[-1] == 1:
-                    return {"part": None, "suppliers": []}
+            # Allow all ILIKE matches — score just affects ordering, not rejection
 
         if not part_row:
             return {"part": None, "suppliers": []}
@@ -371,7 +368,7 @@ async def search_parts(
             suppliers_list.append({
                 "supplier_part_id":      str(sp[0]),
                 "supplier_name":         _mask_supplier(sp[1]),
-                "supplier_country":      "",
+                "supplier_country":      sp[2] or "",
                 "supplier_sku":          sp[3],
                 "price_usd":             float(sp[4]) if sp[4] else None,
                 "price_ils":             round(price_ils, 2) if price_ils else None,
@@ -731,7 +728,7 @@ async def compare_parts(part_id: str, db: AsyncSession = Depends(get_db), reques
         comparisons.append({
             "supplier_part_id": str(sp.id),
             "supplier_name": _mask_supplier(supplier.name),
-            "supplier_country": "",
+            "supplier_country": supplier.country or "",
             "availability": "in_stock" if sp.is_available else "on_order",
             "subtotal": pricing["price_no_vat"],
             "vat": pricing["vat"],
