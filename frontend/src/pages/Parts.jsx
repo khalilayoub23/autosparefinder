@@ -996,7 +996,7 @@ export default function Parts() {
   const navigate = useNavigate()
   const PAGE_SIZE = 50
 
-  const [searchMode, setSearchMode] = useState('vehicle')
+  const [searchMode, setSearchMode] = useState('manual')
 
   const [query, setQuery] = useState(searchParams.get('search') || '')
   const [category, setCategory] = useState('')
@@ -1632,8 +1632,8 @@ export default function Parts() {
       {/* Mode tabs */}
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-1.5 flex gap-1">
         {[
+          { key: 'manual',  icon: <SlidersHorizontal className="w-4 h-4" />, label: 'פרטי כרטיס',  activeCls: 'bg-brand-600 text-white shadow-sm',   inactiveCls: 'text-gray-500 hover:text-brand-600 hover:bg-brand-50' },
           { key: 'vehicle', icon: <Car className="w-4 h-4" />,              label: 'הרכב שלי',  activeCls: 'bg-brand-600 text-white shadow-sm',   inactiveCls: 'text-gray-500 hover:text-brand-600 hover:bg-brand-50' },
-          { key: 'manual',  icon: <SlidersHorizontal className="w-4 h-4" />, label: 'פרטי רכב',  activeCls: 'bg-brand-600 text-white shadow-sm',   inactiveCls: 'text-gray-500 hover:text-brand-600 hover:bg-brand-50' },
           { key: 'photo',   icon: <Camera className="w-4 h-4" />,            label: 'תמונה',     activeCls: 'bg-brand-600 text-white shadow-sm',   inactiveCls: 'text-gray-500 hover:text-brand-600 hover:bg-brand-50' },
           { key: 'voice',   icon: <Mic className="w-4 h-4" />,               label: 'קול',       activeCls: 'bg-brand-600 text-white shadow-sm',   inactiveCls: 'text-gray-500 hover:text-brand-600 hover:bg-brand-50' },
         ].map(({ key, icon, label, activeCls, inactiveCls }) => {
@@ -1816,15 +1816,15 @@ export default function Parts() {
               </select>
             </div>
 
-            {/* 2. Category */}
+            {/* 2. Category / Part Type */}
             <div>
-              <label className="block text-xs text-gray-500 mb-1.5 font-medium">קטגוריה</label>
+              <label className="block text-xs text-gray-500 mb-1.5 font-medium">סוג חלק</label>
               <select
                 className="w-full border border-gray-200 rounded-lg bg-white text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-2.5 py-2 transition-colors"
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
               >
-                <option value="">כל הקטגוריות</option>
+                <option value="">כל הסוגים</option>
                 {categories.map((c) => (
                   <option key={c} value={c}>
                     {c}{categoryCounts[c] ? ` (${categoryCounts[c].toLocaleString()})` : ''}

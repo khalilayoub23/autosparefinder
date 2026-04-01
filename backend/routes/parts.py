@@ -166,7 +166,8 @@ async def search_parts(
         params["q_start"] = f"{query}%"
 
     if category:
-        conditions.append("pc.category ILIKE :cat")
+        # category may be a part_type value (from supplier_parts) OR a legacy pc.category brand name
+        conditions.append("(pc.category ILIKE :cat OR EXISTS (SELECT 1 FROM supplier_parts sp2 WHERE sp2.part_id = pc.id AND sp2.part_type ILIKE :cat))")
         params["cat"] = f"%{category}%"
 
     if vehicle_manufacturer:
@@ -403,11 +404,15 @@ async def search_parts(
 @router.get("/api/v1/parts/categories")
 async def get_categories(db: AsyncSession = Depends(get_db)):
     from sqlalchemy import func
+    # Return distinct part_type values with counts from supplier_parts
     result = await db.execute(
-        select(PartsCatalog.category, func.count(PartsCatalog.id).label("cnt"))
-        .where(PartsCatalog.is_active == True)
-        .group_by(PartsCatalog.category)
-        .order_by(func.count(PartsCatalog.id).desc())
+        text("""
+            SELECT sp.part_type, COUNT(DISTINCT sp.part_id) as cnt
+            FROM supplier_parts sp
+            WHERE sp.part_type IS NOT NULL AND sp.part_type != ''
+            GROUP BY sp.part_type
+            ORDER BY cnt DESC
+        """)
     )
     rows = result.fetchall()
     categories = [r[0] for r in rows if r[0]]
@@ -483,17 +488,30 @@ async def get_manufacturers(db: AsyncSession = Depends(get_db)):
 async def get_models(manufacturer: Optional[str] = None, db: AsyncSession = Depends(get_db)):
     """Return distinct car models extracted from compatible_vehicles JSON, optionally filtered by manufacturer."""
     import re as _re
-    sql = text("""
-        SELECT DISTINCT elem->>'model_year' AS model_year
-        FROM parts_catalog,
-             jsonb_array_elements(compatible_vehicles) AS elem
-        WHERE compatible_vehicles IS NOT NULL
-          AND compatible_vehicles::text LIKE '%model_year%'
-          AND (CAST(:mfr_like AS text) IS NULL OR compatible_vehicles::text ILIKE CAST(:mfr_like AS text))
-          AND elem->>'model_year' IS NOT NULL
-        ORDER BY model_year
-    """)
-    result = await db.execute(sql, {"mfr_like": f"%{manufacturer}%" if manufacturer else None})
+    if manufacturer:
+        # Filter by parts_catalog.manufacturer (the car brand column)
+        sql = text("""
+            SELECT DISTINCT elem->>'model_year' AS model_year
+            FROM parts_catalog,
+                 jsonb_array_elements(compatible_vehicles) AS elem
+            WHERE compatible_vehicles IS NOT NULL
+              AND compatible_vehicles::text LIKE '%model_year%'
+              AND manufacturer ILIKE :mfr_exact
+              AND elem->>'model_year' IS NOT NULL
+            ORDER BY model_year
+        """)
+        result = await db.execute(sql, {"mfr_exact": manufacturer})
+    else:
+        sql = text("""
+            SELECT DISTINCT elem->>'model_year' AS model_year
+            FROM parts_catalog,
+                 jsonb_array_elements(compatible_vehicles) AS elem
+            WHERE compatible_vehicles IS NOT NULL
+              AND compatible_vehicles::text LIKE '%model_year%'
+              AND elem->>'model_year' IS NOT NULL
+            ORDER BY model_year
+        """)
+        result = await db.execute(sql)
     raw = [row[0] for row in result.fetchall() if row[0]]
     # Two-pass year stripping so year is always separated into the year dropdown:
     # Pass 1 — strip 4-digit era year (19xx/20xx) AND everything that follows,
@@ -522,6 +540,11 @@ async def get_models(manufacturer: Optional[str] = None, db: AsyncSession = Depe
         if existing is None or len(model) < len(existing):
             models_map[key] = model
     models = sorted(models_map.values())
+    # If manufacturer was specified but no models found (compatible_vehicles not yet
+    # enriched for this brand), fall back to returning all models so the dropdown
+    # is never empty.
+    if manufacturer and not models:
+        return await get_models(manufacturer=None, db=db)
     return {"models": models, "total": len(models)}
 
 
