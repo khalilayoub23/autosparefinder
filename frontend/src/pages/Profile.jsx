@@ -21,7 +21,7 @@ function Section({ title, icon: Icon, children }) {
 export default function Profile() {
   const { user, fetchMe, logout } = useAuthStore()
   const { vehicles, loadVehicles, addVehicle, removeVehicle, setPrimary } = useVehicleStore()
-  const [form, setForm] = useState({ full_name: '', address_line1: '', apartment: '', city: '', postal_code: '' })
+  const [form, setForm] = useState({ full_name: '', phone: '', address_line1: '', apartment: '', city: '', postal_code: '' })
   const [passwords, setPasswords] = useState({ current: '', new: '', confirm: '' })
   const [newPlate, setNewPlate] = useState('')
   const [saving, setSaving] = useState(false)
@@ -53,8 +53,9 @@ export default function Profile() {
     api.get('/profile').then(({ data }) => {
       setForm({
         full_name: data.user?.full_name || '',
-        address_line1: data.profile?.address || '',
-        apartment: data.profile?.apartment || '',
+        phone: data.user?.phone || '',
+        address_line1: data.profile?.address_line1 || data.profile?.address || '',
+        apartment: data.profile?.address_line2 || data.profile?.apartment || '',
         city: data.profile?.city || '',
         postal_code: data.profile?.postal_code || '',
       })
@@ -67,6 +68,7 @@ export default function Profile() {
     try {
       await api.put('/profile', null, { params: {
         full_name: form.full_name,
+        phone: form.phone || undefined,
         address_line1: form.address_line1,
         address_line2: form.apartment,
         city: form.city,
@@ -74,7 +76,7 @@ export default function Profile() {
       }})
       await fetchMe()
       toast.success('הפרופיל עודכן')
-    } catch { toast.error('שגיאה בשמירה') }
+    } catch (err) { toast.error(err.response?.data?.detail || 'שגיאה בשמירה') }
     finally { setSaving(false) }
   }
 
@@ -153,7 +155,7 @@ export default function Profile() {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">טלפון</label>
-              <input className="input-field bg-gray-50" value={user?.phone || ''} readOnly dir="ltr" />
+              <input className="input-field" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} dir="ltr" placeholder="+972501234567" />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">עיר</label>

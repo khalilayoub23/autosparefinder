@@ -325,15 +325,11 @@ const RETURN_REASONS = {
 }
 
 const RETURN_STATUS_MAP = {
-  pending:            { label: 'ממתין לאישור',      color: 'bg-yellow-100 text-yellow-700'  },
-  pending_review:     { label: 'בבדיקה',            color: 'bg-orange-100 text-orange-700'  },
-  approved:           { label: 'אושר ✓',             color: 'bg-green-100  text-green-700'   },
-  item_in_transit:    { label: '📬 פריט בדרך לספק', color: 'bg-purple-100 text-purple-700'  },
-  supplier_confirmed: { label: '✅ ספק אישר קבלה',  color: 'bg-teal-100   text-teal-700'    },
-  refund_issued:      { label: '💳 זיכוי הועבר',    color: 'bg-blue-100   text-blue-800'    },
-  rejected:           { label: 'נדחה',               color: 'bg-red-100    text-red-700'     },
-  completed:          { label: 'הושלם',              color: 'bg-blue-100   text-blue-700'    },
-  cancelled:          { label: 'בוטל',               color: 'bg-gray-100   text-gray-500'    },
+  pending:   { label: 'ממתין לאישור', color: 'bg-yellow-100 text-yellow-700' },
+  approved:  { label: 'אושר ✓',       color: 'bg-green-100  text-green-700'  },
+  rejected:  { label: 'נדחה',          color: 'bg-red-100    text-red-700'    },
+  completed: { label: 'הושלם',         color: 'bg-blue-100   text-blue-700'   },
+  cancelled: { label: 'בוטל',          color: 'bg-gray-100   text-gray-500'   },
 }
 
 // Policy §3 — reasons that qualify for 100% refund (seller pays return shipping)
@@ -426,7 +422,6 @@ export default function Orders() {
   const [tab, setTab] = useState('all') // 'all' | 'unpaid' | 'refunds' | 'returns'
   const [returns, setReturns] = useState([])
   const [cancellingReturn, setCancellingReturn] = useState(null)
-  const [shippingReturn, setShippingReturn] = useState(null)
   const [refunds, setRefunds] = useState([])
   const [selectedIds, setSelectedIds] = useState(new Set())
   const [bulkPaying, setBulkPaying] = useState(false)
@@ -460,18 +455,6 @@ export default function Orders() {
     } catch (err) {
       toast.error(err.response?.data?.detail || 'שגיאה בביטול')
     } finally { setCancellingReturn(null) }
-  }
-
-  const handleShipReturn = async (returnId) => {
-    if (!window.confirm('לאשר שליחת הפריט בחזרה לספק?')) return
-    setShippingReturn(returnId)
-    try {
-      await returnsApi.ship(returnId)
-      toast.success('אושר — הפריט בדרך לספק')
-      refreshReturns()
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'שגיאה באישור השילוח')
-    } finally { setShippingReturn(null) }
   }
 
   const pendingOrders = orders.filter((o) => o.status === 'pending_payment')
@@ -804,18 +787,6 @@ export default function Orders() {
                     <div className="flex items-center gap-2 flex-wrap">
                       {(r.status === 'approved' || r.status === 'completed') && r.id && (
                         <InvoiceActions returnId={r.id} returnNumber={r.return_number} compact />
-                      )}
-                      {r.status === 'approved' && (
-                        <button
-                          onClick={() => handleShipReturn(r.id)}
-                          disabled={shippingReturn === r.id}
-                          className="btn-secondary text-xs flex items-center gap-1.5 text-purple-600 border-purple-200 hover:bg-purple-50"
-                        >
-                          {shippingReturn === r.id
-                            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            : <span>📦</span>}
-                          שלחתי את הפריט חזרה
-                        </button>
                       )}
                       {r.status === 'pending' && (
                         <button

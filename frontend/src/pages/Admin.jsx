@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react'
 import api from '../api/client'
-import { useAuthStore } from '../stores/authStore'
 import {
   LayoutDashboard, Users, Package, TrendingUp, Settings,
   DollarSign, ShoppingBag, BarChart2, Loader2, RefreshCw,
@@ -55,7 +54,6 @@ const TABS = [
   { id: 'social',    label: 'רשתות חברתיות', icon: Wand2   },
   { id: 'agents',    label: 'סוכני AI',        icon: Bot     },
   { id: 'returns',   label: 'החזרות',          icon: RotateCcw, badge: true },
-  { id: 'superadmin', label: 'הגדרות מערכת', icon: ShieldCheck, superOnly: true },
 ]
 
 function SupplierFormFields({ f, setF, isCreate }) {
@@ -181,8 +179,6 @@ function countryFlag(name) {
 
 
 export default function Admin() {
-  const { user } = useAuthStore()
-  const isSuperAdmin = user?.is_super_admin === true
   const [tab, setTab] = useState('dashboard')
   const [stats, setStats] = useState(null)
   const [importFile, setImportFile] = useState(null)
@@ -216,7 +212,9 @@ export default function Admin() {
   const [editAgent, setEditAgent] = useState(null)
   const [editAgentForm, setEditAgentForm] = useState({})
   const [savingAgent, setSavingAgent] = useState(false)
-  const [cardTests, setCardTests] = useState({}) // { [agentName]: { expanded, message, testing, result } }
+  const [testingAgent, setTestingAgent] = useState(null)
+  const [testMessage, setTestMessage] = useState('')
+  const [testResult, setTestResult] = useState(null)
   const [loading, setLoading] = useState(false)
   const [salesData, setSalesData] = useState([])
   const [statusFilter, setStatusFilter] = useState('')
@@ -227,13 +225,6 @@ export default function Admin() {
   const [processingReturn, setProcessingReturn] = useState(null)
   const [rejectReason, setRejectReason] = useState('')
   const [showRejectModal, setShowRejectModal] = useState(null)
-  // Super admin settings
-  const [sysSettings, setSysSettings] = useState([])
-  const [editSetting, setEditSetting] = useState(null)   // { key, value, description, value_type, is_public }
-  const [savingSetting, setSavingSetting] = useState(false)
-  const [showNewSetting, setShowNewSetting] = useState(false)
-  const [newSetting, setNewSetting] = useState({ key: '', value: '', value_type: 'string', description: '', is_public: false })
-  const [showSettingValues, setShowSettingValues] = useState({})
 
   useEffect(() => {
     loadDashboard()
@@ -246,49 +237,7 @@ export default function Admin() {
     if (tab === 'suppliers') { loadSuppliers(); loadSupplierOrders(); loadSyncStatus() }
     if (tab === 'agents') loadAgents()
     if (tab === 'returns') loadAdminReturns()
-    if (tab === 'superadmin') loadSysSettings()
   }, [tab])
-
-  const loadSysSettings = async () => {
-    try {
-      const { data } = await api.get('/admin/super/settings')
-      setSysSettings(data.settings || [])
-    } catch { toast.error('שגיאה בטעינת הגדרות') }
-  }
-
-  const saveSysSetting = async () => {
-    if (!editSetting) return
-    setSavingSetting(true)
-    try {
-      await api.put(`/admin/super/settings/${editSetting.key}`, { value: editSetting.value, description: editSetting.description, is_public: editSetting.is_public })
-      toast.success('הגדרה עודכנה')
-      setEditSetting(null)
-      loadSysSettings()
-    } catch { toast.error('שגיאה בשמירת הגדרה') }
-    finally { setSavingSetting(false) }
-  }
-
-  const createSysSetting = async () => {
-    if (!newSetting.key.trim()) { toast.error('שדה מפתח חובה'); return }
-    setSavingSetting(true)
-    try {
-      await api.post('/admin/super/settings', newSetting)
-      toast.success('הגדרה נוצרה')
-      setShowNewSetting(false)
-      setNewSetting({ key: '', value: '', value_type: 'string', description: '', is_public: false })
-      loadSysSettings()
-    } catch (e) { toast.error(e?.response?.data?.detail || 'שגיאה ביצירת הגדרה') }
-    finally { setSavingSetting(false) }
-  }
-
-  const deleteSysSetting = async (key) => {
-    if (!window.confirm(`מחק הגדרה "${key}"?`)) return
-    try {
-      await api.delete(`/admin/super/settings/${key}`)
-      toast.success('הגדרה נמחקה')
-      loadSysSettings()
-    } catch { toast.error('שגיאה במחיקת הגדרה') }
-  }
 
   const loadAdminReturns = async (sf = returnsFilter) => {
     setLoading(true)
@@ -360,17 +309,15 @@ export default function Admin() {
     finally { setSavingAgent(false) }
   }
 
-  const setCardTest = (name, patch) => setCardTests((prev) => ({ ...prev, [name]: { ...(prev[name] || {}), ...patch } }))
-
   const testAgent = async (agentName) => {
-    const msg = cardTests[agentName]?.message || ''
-    if (!msg.trim()) return
-    setCardTest(agentName, { testing: true, result: null })
+    if (!testMessage.trim()) return
+    setTestingAgent(agentName)
+    setTestResult(null)
     try {
-      const { data } = await api.post(`/admin/agents/${agentName}/test`, { message: msg })
-      setCardTest(agentName, { result: data })
-    } catch (e) { setCardTest(agentName, { result: { status: 'error', response: e.response?.data?.detail || 'שגיאה' } }) }
-    finally { setCardTest(agentName, { testing: false }) }
+      const { data } = await api.post(`/admin/agents/${agentName}/test`, { message: testMessage })
+      setTestResult(data)
+    } catch (e) { setTestResult({ status: 'error', response: e.response?.data?.detail || 'שגיאה' }) }
+    finally { setTestingAgent(null) }
   }
 
   const loadUsers = async () => {
@@ -609,7 +556,7 @@ export default function Admin() {
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-gray-200 overflow-x-auto">
-        {TABS.filter(t => !t.superOnly || isSuperAdmin).map(({ id, label, icon: Icon, badge }) => (
+        {TABS.map(({ id, label, icon: Icon, badge }) => (
           <button
             key={id}
             onClick={() => setTab(id)}
@@ -1573,9 +1520,9 @@ export default function Admin() {
                 <h3 className="font-bold text-gray-900">סוכני AI ({agents.length})</h3>
                 {agentsAiStatus && (
                   <p className="text-xs text-gray-400 mt-0.5">
-                    {agentsAiStatus.ollama_configured
-                      ? <span className="text-green-600">✔ Ollama פעיל — תגובות AI אמיתיות</span>
-                      : <span className="text-amber-600">⚠ אין OLLAMA_URL — מצב Mock</span>}
+                    {agentsAiStatus.github_token_set
+                      ? <span className="text-green-600">✔ GITHUB_TOKEN פעיל — תגובות AI אמיתיות</span>
+                      : <span className="text-amber-600">⚠ אין GITHUB_TOKEN — מצב Mock</span>}
                   </p>
                 )}
               </div>
@@ -1590,7 +1537,24 @@ export default function Admin() {
             </div>
           </div>
 
-
+          {/* Test message bar */}
+          <div className="card p-4">
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">בדיקת סוכן</p>
+            <div className="flex gap-2">
+              <input
+                className="input-field flex-1 text-sm"
+                placeholder="הקלד הודעה לבדיקת הסוכן..."
+                value={testMessage}
+                onChange={(e) => { setTestMessage(e.target.value); setTestResult(null) }}
+              />
+            </div>
+            {testResult && (
+              <div className={`mt-3 p-3 rounded-xl text-sm ${testResult.status === 'ok' ? 'bg-green-50 border border-green-200 text-green-800' : 'bg-red-50 border border-red-200 text-red-700'}`}>
+                <p className="text-xs font-semibold mb-1 opacity-60">תגובת הסוכן ({testResult.agent})</p>
+                <p className="whitespace-pre-wrap">{testResult.response}</p>
+              </div>
+            )}
+          </div>
 
           {/* Agent cards grid */}
           {(() => {
@@ -1621,9 +1585,6 @@ export default function Admin() {
                     <div className="flex items-center gap-2 text-xs text-gray-400">
                       <Cpu className="w-3 h-3" />
                       <span dir="ltr">{a.model}</span>
-                      <span className="px-1.5 py-0.5 rounded-md font-medium bg-green-50 text-green-700 border border-green-200">
-                        Ollama
-                      </span>
                       <span className="mx-1">·</span>
                       <Sliders className="w-3 h-3" />
                       <span dir="ltr">{a.temperature}</span>
@@ -1636,40 +1597,6 @@ export default function Admin() {
                         {a.capabilities.length > 3 && <span className="text-xs text-gray-400">+{a.capabilities.length - 3}</span>}
                       </div>
                     )}
-                    {/* Inline test panel */}
-                    {cardTests[a.name]?.expanded && (
-                      <div className="-mx-4 px-4 pb-3 pt-2 bg-gray-50 border-t border-gray-100 space-y-2">
-                        <div className="flex gap-2">
-                          <input
-                            className="input-field flex-1 text-xs py-1.5"
-                            placeholder="הקלד הודעת בדיקה..."
-                            value={cardTests[a.name]?.message || ''}
-                            onChange={(e) => setCardTest(a.name, { message: e.target.value, result: null })}
-                            onKeyDown={(e) => { if (e.key === 'Enter') testAgent(a.name) }}
-                            dir="rtl"
-                            autoFocus
-                          />
-                          <button
-                            onClick={() => testAgent(a.name)}
-                            disabled={!(cardTests[a.name]?.message || '').trim() || cardTests[a.name]?.testing}
-                            className="px-3 py-1.5 rounded-lg bg-brand-600 text-white text-xs font-medium disabled:opacity-40 hover:bg-brand-700 transition-colors flex items-center gap-1"
-                          >
-                            {cardTests[a.name]?.testing ? <Loader2 className="w-3 h-3 animate-spin" /> : <MessageSquare className="w-3 h-3" />}
-                            שלח
-                          </button>
-                        </div>
-                        {cardTests[a.name]?.result && (
-                          <div className={`rounded-xl p-2.5 text-xs ${
-                            cardTests[a.name].result.status === 'ok'
-                              ? 'bg-white border border-green-200 text-green-900'
-                              : 'bg-red-50 border border-red-200 text-red-700'
-                          }`}>
-                            <p className="font-semibold mb-1 opacity-60">{cardTests[a.name].result.status === 'ok' ? 'תגובה' : 'שגיאה'}</p>
-                            <p className="whitespace-pre-wrap leading-relaxed">{cardTests[a.name].result.response}</p>
-                          </div>
-                        )}
-                      </div>
-                    )}
                     <div className="flex gap-2 mt-auto pt-1">
                       <button
                         onClick={() => { setEditAgent(a); setEditAgentForm({ display_name: a.display_name, persona: a.persona, name_he: a.name_he, description: a.description, description_he: a.description_he, model: a.model, temperature: a.temperature, capabilities: (a.capabilities || []).join(', '), enabled: a.enabled !== false }) }}
@@ -1678,14 +1605,12 @@ export default function Admin() {
                         <Pencil className="w-3 h-3" /> ערוך
                       </button>
                       <button
-                        onClick={() => setCardTest(a.name, { expanded: !cardTests[a.name]?.expanded, result: null })}
-                        className={`flex-1 text-xs flex items-center justify-center gap-1.5 py-1.5 rounded-lg border transition-colors ${
-                          cardTests[a.name]?.expanded
-                            ? 'bg-brand-50 border-brand-200 text-brand-700'
-                            : 'btn-secondary'
-                        }`}
+                        onClick={() => testAgent(a.name)}
+                        disabled={!testMessage.trim() || testingAgent === a.name}
+                        className="flex-1 btn-secondary text-xs flex items-center justify-center gap-1.5 py-1.5 disabled:opacity-40"
                       >
-                        <MessageSquare className="w-3 h-3" /> בדוק
+                        {testingAgent === a.name ? <Loader2 className="w-3 h-3 animate-spin" /> : <MessageSquare className="w-3 h-3" />}
+                        בדוק
                       </button>
                       <button
                         onClick={() => {
@@ -1731,11 +1656,7 @@ export default function Admin() {
               >
                 <option value="">כל הסטטוסים</option>
                 <option value="pending">ממתין לאישור</option>
-                <option value="pending_review">בבדיקה</option>
                 <option value="approved">אושר</option>
-                <option value="item_in_transit">בדרך לספק</option>
-                <option value="supplier_confirmed">ספק אישר</option>
-                <option value="refund_issued">זיכוי הועבר</option>
                 <option value="rejected">נדחה</option>
                 <option value="cancelled">בוטל</option>
               </select>
@@ -1767,7 +1688,7 @@ export default function Admin() {
                   <tbody className="divide-y divide-gray-100">
                     {adminReturns.map((r) => {
                       const REASON_HE = { wrong_part: 'חלק שגוי', defective: 'פגום / לא עובד', not_as_described: 'לא תואם לתיאור', changed_mind: 'שינוי דעה', damaged_in_transit: 'נפגע בשילוח', duplicate_order: 'הזמנה כפולה' }
-                      const ST = { pending: { label: 'ממתין', cls: 'bg-amber-100 text-amber-700' }, pending_review: { label: 'בבדיקה', cls: 'bg-orange-100 text-orange-700' }, approved: { label: 'אושר', cls: 'bg-green-100 text-green-700' }, item_in_transit: { label: 'בדרך לספק', cls: 'bg-purple-100 text-purple-700' }, supplier_confirmed: { label: 'ספק אישר', cls: 'bg-teal-100 text-teal-700' }, refund_issued: { label: 'זיכוי הועבר', cls: 'bg-blue-100 text-blue-800' }, rejected: { label: 'נדחה', cls: 'bg-red-100 text-red-600' }, cancelled: { label: 'בוטל', cls: 'bg-gray-100 text-gray-500' } }
+                      const ST = { pending: { label: 'ממתין', cls: 'bg-amber-100 text-amber-700' }, approved: { label: 'אושר', cls: 'bg-green-100 text-green-700' }, rejected: { label: 'נדחה', cls: 'bg-red-100 text-red-600' }, cancelled: { label: 'בוטל', cls: 'bg-gray-100 text-gray-500' } }
                       const st = ST[r.status] || { label: r.status, cls: 'bg-gray-100 text-gray-600' }
                       // Policy §3 — full-refund reasons (100%) vs partial (90%)
                       const FULL_REFUND_REASONS = ['defective', 'wrong_part', 'damaged_in_transit']
@@ -1817,72 +1738,32 @@ export default function Admin() {
                             {r.requested_at ? new Date(r.requested_at).toLocaleDateString('he-IL') : ''}
                           </td>
                           <td className="px-3 py-3">
-                            <div className="flex flex-col items-start gap-1.5">
-                              {r.status === 'pending' && (
-                                <>
-                                  <button
-                                    onClick={() => handleApproveReturn(r.id, suggestedPct)}
-                                    disabled={processingReturn === r.id}
-                                    className={`flex items-center gap-1 px-2.5 py-1.5 text-xs rounded-lg disabled:opacity-40 transition-colors ${
-                                      isFullRefund
-                                        ? 'bg-green-50 border border-green-200 text-green-700 hover:bg-green-100'
-                                        : 'bg-yellow-50 border border-yellow-200 text-yellow-700 hover:bg-yellow-100'
-                                    }`}
-                                    title={`אשר לפי מדיניות — החזר ${suggestedPct}%`}
-                                  >
-                                    {processingReturn === r.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckSquare className="w-3 h-3" />}
-                                    אשר {suggestedPct}%
-                                  </button>
-                                  <button
-                                    onClick={() => { setShowRejectModal(r.id); setRejectReason('') }}
-                                    disabled={processingReturn === r.id}
-                                    className="flex items-center gap-1 px-2.5 py-1.5 text-xs rounded-lg bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 disabled:opacity-40 transition-colors"
-                                    title="דחה בקשה"
-                                  >
-                                    <XCircle className="w-3 h-3" />
-                                    דחה
-                                  </button>
-                                </>
-                              )}
-                              {r.status === 'item_in_transit' && (
+                            {r.status === 'pending' && (
+                              <div className="flex flex-col items-start gap-1.5">
                                 <button
-                                  onClick={async () => {
-                                    setProcessingReturn(r.id)
-                                    try {
-                                      await api.post(`/returns/${r.id}/supplier-confirm`)
-                                      toast.success('ספק אישר קבלת הפריט')
-                                      loadAdminReturns(returnsFilter)
-                                    } catch (e) {
-                                      toast.error(e.response?.data?.detail || 'שגיאה')
-                                    } finally { setProcessingReturn(null) }
-                                  }}
+                                  onClick={() => handleApproveReturn(r.id, suggestedPct)}
                                   disabled={processingReturn === r.id}
-                                  className="flex items-center gap-1 px-2.5 py-1.5 text-xs rounded-lg bg-teal-50 border border-teal-200 text-teal-700 hover:bg-teal-100 disabled:opacity-40 transition-colors"
+                                  className={`flex items-center gap-1 px-2.5 py-1.5 text-xs rounded-lg disabled:opacity-40 transition-colors ${
+                                    isFullRefund
+                                      ? 'bg-green-50 border border-green-200 text-green-700 hover:bg-green-100'
+                                      : 'bg-yellow-50 border border-yellow-200 text-yellow-700 hover:bg-yellow-100'
+                                  }`}
+                                  title={`אשר לפי מדיניות — החזר ${suggestedPct}%`}
                                 >
                                   {processingReturn === r.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckSquare className="w-3 h-3" />}
-                                  ספק אישר קבלה
+                                  אשר {suggestedPct}%
                                 </button>
-                              )}
-                              {r.status === 'supplier_confirmed' && (
                                 <button
-                                  onClick={async () => {
-                                    setProcessingReturn(r.id)
-                                    try {
-                                      await api.post(`/returns/${r.id}/issue-refund`)
-                                      toast.success('הזיכוי הונפק ללקוח')
-                                      loadAdminReturns(returnsFilter)
-                                    } catch (e) {
-                                      toast.error(e.response?.data?.detail || 'שגיאה')
-                                    } finally { setProcessingReturn(null) }
-                                  }}
+                                  onClick={() => { setShowRejectModal(r.id); setRejectReason('') }}
                                   disabled={processingReturn === r.id}
-                                  className="flex items-center gap-1 px-2.5 py-1.5 text-xs rounded-lg bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 disabled:opacity-40 transition-colors"
+                                  className="flex items-center gap-1 px-2.5 py-1.5 text-xs rounded-lg bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 disabled:opacity-40 transition-colors"
+                                  title="דחה בקשה"
                                 >
-                                  {processingReturn === r.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckSquare className="w-3 h-3" />}
-                                  הנפק זיכוי
+                                  <XCircle className="w-3 h-3" />
+                                  דחה
                                 </button>
-                              )}
-                            </div>
+                              </div>
+                            )}
                           </td>
                         </tr>
                       )
@@ -1958,8 +1839,10 @@ export default function Admin() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">מודל AI</label>
-                <select className="input-field w-full text-sm" dir="ltr" value={editAgentForm.model || 'qwen3:8b'} onChange={(e) => setEditAgentForm((f) => ({ ...f, model: e.target.value }))}>
-                  <option value="qwen3:8b">qwen3:8b (default)</option>
+                <select className="input-field w-full text-sm" dir="ltr" value={editAgentForm.model || 'gpt-4o'} onChange={(e) => setEditAgentForm((f) => ({ ...f, model: e.target.value }))}>
+                  <option value="gpt-4o">gpt-4o</option>
+                  <option value="gpt-4o-mini">gpt-4o-mini</option>
+                  <option value="o1-mini">o1-mini</option>
                 </select>
               </div>
               <div>

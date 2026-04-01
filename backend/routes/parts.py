@@ -489,7 +489,7 @@ async def get_models(manufacturer: Optional[str] = None, db: AsyncSession = Depe
              jsonb_array_elements(compatible_vehicles) AS elem
         WHERE compatible_vehicles IS NOT NULL
           AND compatible_vehicles::text LIKE '%model_year%'
-          AND (:mfr_like IS NULL OR compatible_vehicles::text ILIKE :mfr_like)
+          AND (CAST(:mfr_like AS text) IS NULL OR compatible_vehicles::text ILIKE CAST(:mfr_like AS text))
           AND elem->>'model_year' IS NOT NULL
         ORDER BY model_year
     """)
