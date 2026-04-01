@@ -78,6 +78,18 @@ export const useAuthStore = create(
       },
 
       isAuthenticated: () => !!get().user && !!localStorage.getItem('access_token'),
+
+      socialLogin: async (provider, token) => {
+        set({ isLoading: true })
+        try {
+          const { data } = await authApi.socialLogin(provider, token)
+          get().setTokens(data.access_token, data.refresh_token)
+          set({ user: data.user })
+          return { success: true }
+        } finally {
+          set({ isLoading: false })
+        }
+      },
     }),
     {
       name: 'auth-store',

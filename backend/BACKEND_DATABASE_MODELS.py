@@ -230,8 +230,8 @@ class User(PiiBase):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email = Column(String(255), unique=True, nullable=False, index=True)
-    phone = Column(String(20), unique=True, nullable=False)           # encrypted
-    password_hash = Column(String(255), nullable=False)
+    phone = Column(String(20), unique=True, nullable=True)            # encrypted; nullable for OAuth users
+    password_hash = Column(String(255), nullable=True)               # nullable for OAuth-only accounts
     full_name = Column(String(255), nullable=False)
     role = Column(String(50), nullable=False, default="customer")     # customer / admin
     is_active = Column(Boolean, default=True, nullable=False)
@@ -240,6 +240,8 @@ class User(PiiBase):
     is_super_admin = Column(Boolean, default=False, nullable=False)
     failed_login_count = Column(Integer, default=0, nullable=False)
     locked_until = Column(DateTime, nullable=True)
+    oauth_provider = Column(String(32), nullable=True)               # 'google' | 'facebook' | None
+    oauth_id = Column(String(255), nullable=True, index=True)        # provider's user ID
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

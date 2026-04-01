@@ -13,4 +13,5 @@ export const authApi = {
   trustedDevices: () => api.get('/auth/trusted-devices'),
   removeTrustedDevice: (id) => api.delete(`/auth/trusted-devices/${id}`),
   acceptTerms: () => api.post('/auth/accept-terms'),
+  socialLogin: (provider, token) => api.post('/auth/social-login', { provider, token }),
 }

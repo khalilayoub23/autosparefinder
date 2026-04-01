@@ -1084,15 +1084,14 @@ export default function Admin() {
                                 {s.supports_express && <span className="badge bg-blue-100 text-blue-600 text-[10px]">אקספרס</span>}
                               </div>
                               <p className="text-xs text-gray-400">עדיפות {s.priority} · ★ {Number(s.reliability_score).toFixed(1)}</p>
+                                {s.country && (
+                                  <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-100 border border-gray-200 ml-1">
+                                    {countryFlag(s.country)}
+                                    <span className="text-[10px] font-bold text-gray-500 tracking-wide leading-none">{countryISO(s.country)}</span>
+                                  </div>
+                                )}
                             </div>
                           </div>
-                          {/* Country badge */}
-                          {s.country && (
-                            <div className="hidden sm:flex items-center gap-1.5 px-2 py-1 rounded-lg bg-gray-50 border border-gray-200 text-gray-600 justify-center mx-2">
-                              {countryFlag(s.country)}
-                              <span className="text-[11px] font-bold tracking-wide">{countryISO(s.country)}</span>
-                            </div>
-                          )}
                           <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                             <button onClick={() => syncSupplier(s.id)} className="btn-secondary text-xs px-3 py-1.5">סנכרן</button>
                             <button onClick={() => { openEditSupplier(s); }} title="ערוך" className="p-1.5 rounded hover:bg-blue-50 text-blue-500 hover:text-blue-700 transition-colors"><Pencil className="w-4 h-4" /></button>

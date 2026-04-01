@@ -3,6 +3,7 @@ import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../stores/authStore'
 import { Eye, EyeOff, Wrench, Loader2 } from 'lucide-react'
 import toast from 'react-hot-toast'
+import SocialLoginButtons from '../components/SocialLoginButtons'
 
 export default function Login() {
   const navigate = useNavigate()
@@ -62,27 +63,33 @@ export default function Login() {
           {step === 'login' ? (
             <>
               <h2 className="text-xl font-bold text-gray-900 mb-6">כניסה לחשבון</h2>
-              <form onSubmit={handleLogin} className="space-y-4">
+              <form onSubmit={handleLogin} className="space-y-4" autoComplete="on">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">אימייל</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="login-email">אימייל</label>
                   <input
+                    id="login-email"
+                    name="email"
                     type="email"
                     className="input-field"
                     placeholder="your@email.com"
                     value={form.email}
+                    autoComplete="email"
                     onChange={(e) => setForm({ ...form, email: e.target.value })}
                     required
                     dir="ltr"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">סיסמה</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="login-password">סיסמה</label>
                   <div className="relative">
                     <input
+                      id="login-password"
+                      name="password"
                       type={showPass ? 'text' : 'password'}
                       className="input-field pl-10"
                       placeholder="••••••••"
                       value={form.password}
+                      autoComplete="current-password"
                       onChange={(e) => setForm({ ...form, password: e.target.value })}
                       required
                       dir="ltr"
@@ -115,6 +122,9 @@ export default function Login() {
                   {isLoading ? 'מתחבר...' : 'כניסה'}
                 </button>
               </form>
+
+              <SocialLoginButtons redirectTo={from} />
+
               <p className="text-center text-sm text-gray-500 mt-6">
                 אין לך חשבון?{' '}
                 <Link to="/register" className="text-brand-600 hover:text-brand-700 font-semibold">הירשם עכשיו</Link>
@@ -154,3 +164,4 @@ export default function Login() {
     </div>
   )
 }
+

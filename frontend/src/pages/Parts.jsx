@@ -1195,12 +1195,7 @@ export default function Parts() {
     setShowVehiclePicker(false)
   }
 
-  const buildManualQuery = () => {
-    const parts = []
-    if (manualModel.trim()) parts.push(manualModel.trim())
-    if (query.trim()) parts.push(query.trim())
-    return parts.join(' ')
-  }
+  const buildManualQuery = () => query.trim()
 
   const activeFiltersCount = [manualManufacturer, manualModel, manualYear].filter(Boolean).length
 
@@ -1213,7 +1208,7 @@ export default function Parts() {
   const search = async (pageNum = 0) => {
     const q = buildManualQuery()
 
-    if (!q && !category) {
+    if (!q && !category && !manualManufacturer) {
       toast.error('הזן שם חלק, בחר קטגוריה, או בחר יצרן')
       return
     }
@@ -1221,7 +1216,7 @@ export default function Parts() {
     setIsLoading(true)
     setSearched(true)
     try {
-      const { data } = await partsApi.search(q, null, category, perType, manualManufacturer || null)
+      const { data } = await partsApi.search(q, null, category, perType, manualManufacturer || null, manualModel || null, manualYear ? parseInt(manualYear) : null)
       // New grouped response
       if (data.original !== undefined || data.oem !== undefined || data.aftermarket !== undefined) {
         setSearchResults({ original: data.original, oem: data.oem, aftermarket: data.aftermarket })
@@ -1587,15 +1582,44 @@ export default function Parts() {
   const [vinPartQuery, setVinPartQuery] = useState('')
   const [showVinScanner, setShowVinScanner] = useState(false)
 
-  const handleVinSearch = async (partQuery = vinPartQuery, pageNum = 0) => {
-    if (vinInput.replace(/\s/g, '').length !== 17) { toast.error('VIN חייב להיות בן 17 תווים'); return }
+  const handleVinSearch = async (partQuery = vinPartQuery, pageNum = 0, explicitVin) => {
+    const vin = (explicitVin || vinInput).replace(/\s/g, '').toUpperCase()
+    if (vin.length !== 17) { toast.error('VIN חייב להיות בן 17 תווים'); return }
     setVinLoading(true)
     setIsLoading(true)
     try {
-      const { data } = await partsApi.searchByVin(vinInput.trim().toUpperCase(), partQuery, category, PAGE_SIZE, pageNum * PAGE_SIZE)
+      const { data } = await partsApi.searchByVin(vin, partQuery, category, PAGE_SIZE, pageNum * PAGE_SIZE)
       setVinVehicle(data.vehicle || null)
-      setParts(data.parts || [])
-      setTotalCount(data.total || 0)
+      const vinParts = data.parts || []
+      if (vinParts.length > 0) {
+        // Vehicle-id matched parts found
+        setParts(vinParts)
+        setSearchResults(null)
+        setTotalCount(data.total || vinParts.length)
+      } else if (data.vehicle?.manufacturer) {
+        // Fallback: search by manufacturer + model using grouped search API
+        const mfr = data.vehicle.manufacturer
+        const q = [data.vehicle.model, partQuery].filter(Boolean).join(' ')
+        const { data: gd } = await partsApi.search(q, null, category, perType, mfr)
+        if (gd.original !== undefined || gd.oem !== undefined || gd.aftermarket !== undefined) {
+          setSearchResults({ original: gd.original, oem: gd.oem, aftermarket: gd.aftermarket })
+          const flat = [
+            ...(gd.original?.part    ? [{ ...gd.original.part,    suppliers: gd.original.suppliers    }] : []),
+            ...(gd.oem?.part         ? [{ ...gd.oem.part,         suppliers: gd.oem.suppliers         }] : []),
+            ...(gd.aftermarket?.part ? [{ ...gd.aftermarket.part, suppliers: gd.aftermarket.suppliers }] : []),
+          ]
+          setParts(flat)
+          setTotalCount(flat.length)
+        } else {
+          setParts([])
+          setSearchResults(null)
+          setTotalCount(0)
+        }
+      } else {
+        setParts([])
+        setSearchResults(null)
+        setTotalCount(0)
+      }
       setSearched(true)
       setPage(pageNum)
     } catch (err) {
@@ -1610,7 +1634,11 @@ export default function Parts() {
     <div className="space-y-6">
       {showVinScanner && (
         <VinScannerModal
-          onResult={(vin) => { setVinInput(vin) }}
+          onResult={(vin) => {
+            setVinInput(vin)
+            setShowVinScanner(false)
+            handleVinSearch(vinPartQuery, 0, vin)
+          }}
           onClose={() => setShowVinScanner(false)}
         />
       )}
@@ -1749,7 +1777,7 @@ export default function Parts() {
         )}
         {activeFiltersCount > 0 && (
           <p className="text-xs text-brand-600 mt-2">
-            🔍 מחפש: {buildManualQuery() || query || 'כל החלקים'}
+            🔍 מחפש: {[manualManufacturer, manualModel, manualYear, query].filter(Boolean).join(' ') || 'כל החלקים'}
           </p>
         )}
       </div>
@@ -1849,6 +1877,24 @@ export default function Parts() {
                 {vinVehicle.body_class && <div><span className="text-gray-400">סוג גוף</span><p className="font-medium">{vinVehicle.body_class}</p></div>}
                 {vinVehicle.country_of_origin && <div><span className="text-gray-400">ייצור</span><p className="font-medium">{vinVehicle.country_of_origin}</p></div>}
               </div>
+              {/* Part search after VIN decode */}
+              <div className="pt-2 flex gap-2">
+                <input
+                  className="flex-1 border border-gray-200 rounded-lg text-sm px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-400"
+                  placeholder="שם חלק לחיפוש (רפידות, פילטר...)"
+                  value={vinPartQuery}
+                  onChange={(e) => setVinPartQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleVinSearch(vinPartQuery)}
+                />
+                <button
+                  onClick={() => handleVinSearch(vinPartQuery)}
+                  disabled={vinLoading}
+                  className="bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white px-4 py-1.5 rounded-lg text-sm font-semibold flex items-center gap-1 whitespace-nowrap"
+                >
+                  {vinLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+                  חפש חלק
+                </button>
+              </div>
             </div>
           )}
 
@@ -1933,16 +1979,16 @@ export default function Parts() {
             {/* 3. Year */}
             <div>
               <label className="block text-xs text-gray-500 mb-1.5 font-medium">שנה</label>
-              <input
-                className="w-full border border-gray-200 rounded-lg bg-white text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-2.5 py-2 placeholder:text-gray-400 transition-colors"
-                placeholder="2019"
-                type="number"
-                min="1990"
-                max="2030"
+              <select
+                className="w-full border border-gray-200 rounded-lg bg-white text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-2.5 py-2 transition-colors"
                 value={manualYear}
                 onChange={(e) => setManualYear(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && search()}
-              />
+              >
+                <option value="">כל השנים</option>
+                {Array.from({ length: 2026 - 1980 + 1 }, (_, i) => 2026 - i).map(y => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
             </div>
 
             {/* 4. Part Type / Category */}

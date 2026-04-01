@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../stores/authStore'
 import { Eye, EyeOff, Wrench, Loader2, CheckCircle2 } from 'lucide-react'
 import toast from 'react-hot-toast'
+import SocialLoginButtons from '../components/SocialLoginButtons'
 
 export default function Register() {
   const navigate = useNavigate()
@@ -62,6 +63,19 @@ export default function Register() {
         </div>
 
         <div className="card p-8 shadow-md">
+          {/* Social sign-up */}
+          <SocialLoginButtons redirectTo="/" />
+
+          {/* Divider */}
+          <div className="relative my-5">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-gray-200" />
+            </div>
+            <div className="relative flex justify-center text-sm">
+              <span className="bg-white px-3 text-gray-400">או הירשם עם אימייל</span>
+            </div>
+          </div>
+
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">שם מלא</label>

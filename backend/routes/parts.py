@@ -48,6 +48,8 @@ async def search_parts(
     per_type: Optional[int] = None,        # override system_settings.search_results_per_type
     sort_by: str = "price_ils",            # cheapest first by default
     vehicle_manufacturer: Optional[str] = None,
+    vehicle_model: Optional[str] = None,
+    vehicle_year: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
     request: Request = None,
     redis=Depends(get_redis),
@@ -220,6 +222,38 @@ async def search_parts(
         )
         params["vid"] = f"%{vehicle_id}%"
         params["vid_exact"] = vehicle_id
+
+    # Vehicle model filter – searches the compatible_vehicles JSON array
+    # Matches both new format (elem->>'model') and legacy (elem->>'model_year')
+    if vehicle_model:
+        conditions.append(
+            "(pc.compatible_vehicles IS NOT NULL"
+            " AND jsonb_typeof(pc.compatible_vehicles) = 'array'"
+            " AND EXISTS ("
+            "     SELECT 1 FROM jsonb_array_elements(pc.compatible_vehicles) cv_el"
+            "     WHERE COALESCE(cv_el->>'model', cv_el->>'model_year') ILIKE :cv_model"
+            " ))"
+        )
+        params["cv_model"] = f"%{vehicle_model}%"
+
+    # Vehicle year filter – checks year range (new format) or model_year string (legacy)
+    if vehicle_year:
+        conditions.append(
+            "(pc.compatible_vehicles IS NOT NULL"
+            " AND jsonb_typeof(pc.compatible_vehicles) = 'array'"
+            " AND EXISTS ("
+            "     SELECT 1 FROM jsonb_array_elements(pc.compatible_vehicles) cv_yr"
+            "     WHERE cv_yr->>'model_year' ILIKE :cv_year_str"
+            "         OR ("
+            "             cv_yr->>'year_from' ~ '^[0-9]+$'"
+            "             AND cv_yr->>'year_to' ~ '^[0-9]+$'"
+            "             AND (cv_yr->>'year_from')::int <= :cv_year_int"
+            "             AND (cv_yr->>'year_to')::int >= :cv_year_int"
+            "         )"
+            " ))"
+        )
+        params["cv_year_str"] = f"%{vehicle_year}%"
+        params["cv_year_int"] = vehicle_year
 
     where_sql = " AND ".join(conditions)
 
