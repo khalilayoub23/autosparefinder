@@ -515,11 +515,11 @@ async def startup():
     async with pii_session_factory() as _db:
         await _db.execute(text("""
             INSERT INTO users (id, email, phone, password_hash, full_name, role,
-                               is_active, is_verified, is_admin, failed_login_count,
+                               is_active, is_verified, is_admin, is_super_admin, failed_login_count,
                                created_at, updated_at)
             VALUES ('00000000-0000-0000-0000-000000000001',
                     'whatsapp@autospare.internal', '+00000000000000',
-                    '!disabled!', 'WhatsApp Bot', 'system', true, true, false, 0,
+                    '!disabled!', 'WhatsApp Bot', 'system', true, true, false, false, 0,
                     NOW(), NOW())
             ON CONFLICT (id) DO NOTHING
         """))

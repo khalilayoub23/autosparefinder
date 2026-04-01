@@ -28,6 +28,24 @@ class WhatsAppProvider(ABC):
         ...
 
 
+def normalize_e164(phone: str, default_country_code: str = "972") -> str:
+    """Normalize a phone number to E.164 format.
+    Israeli local numbers (05XXXXXXXX) → +97205XXXXXXXX.
+    Numbers already starting with '+' are returned as-is.
+    """
+    # Strip whatsapp: prefix if present
+    if phone.startswith("whatsapp:"):
+        phone = phone[len("whatsapp:"):]
+    phone = phone.strip()
+    if phone.startswith("+"):
+        return phone
+    # Local format: starts with 0 → replace with country code
+    if phone.startswith("0"):
+        return f"+{default_country_code}{phone[1:]}"
+    # Assume already country-prefixed without '+'
+    return f"+{phone}"
+
+
 class TwilioWhatsAppProvider(WhatsAppProvider):
     """Twilio WhatsApp Messaging API over httpx (fully async — no blocking SDK)."""
 
@@ -41,9 +59,8 @@ class TwilioWhatsAppProvider(WhatsAppProvider):
         if not self._sid or not self._token:
             return {"ok": False, "sid": None, "error": "Twilio credentials not configured"}
 
-        # Ensure the destination is prefixed correctly
-        if not to.startswith("whatsapp:"):
-            to = f"whatsapp:{to}"
+        # Normalize to E.164 then add whatsapp: prefix
+        to = f"whatsapp:{normalize_e164(to)}"
 
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:

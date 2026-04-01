@@ -388,7 +388,6 @@ class ApprovalQueue(PiiBase):
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
-        index=True,
     )
     resolved_by = Column(
         UUID(as_uuid=True),
@@ -520,7 +519,6 @@ class StripeWebhookLog(PiiBase):
     event_type = Column(
         String(100),
         nullable=False,
-        index=True,
         comment="Stripe event type (e.g., charge.succeeded, payment_intent.succeeded)",
     )
     processed = Column(
@@ -1290,7 +1288,7 @@ class JobRegistry(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     job_id = Column(String(255), unique=True, nullable=False, comment="Unique job ID (e.g., 'sync_prices-2026-03-21T10:00:00')")
-    job_name = Column(String(255), nullable=False, index=True, comment="Job name (e.g., 'sync_prices', 'run_scraper_cycle')")
+    job_name = Column(String(255), nullable=False, comment="Job name (e.g., 'sync_prices', 'run_scraper_cycle')")
     worker_host = Column(String(255), nullable=True, comment="Hostname/K8s pod where job runs")
     status = Column(String(50), nullable=False, default="running", comment="running | completed | failed")
     started_at = Column(DateTime, nullable=False, default=datetime.utcnow, comment="When job started")

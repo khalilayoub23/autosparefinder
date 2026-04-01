@@ -253,8 +253,10 @@ UPSERT_SQL = """
 INSERT INTO parts_catalog
     (id, sku, name, category, manufacturer, part_type,
      description, specifications, compatible_vehicles,
-     base_price, is_active, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, true, NOW(), NOW())
+     base_price, part_condition, is_safety_critical, needs_oem_lookup,
+     master_enriched, is_active, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10,
+        'new', false, false, false, true, NOW(), NOW())
 ON CONFLICT (sku) DO UPDATE SET
     name = EXCLUDED.name,
     category = EXCLUDED.category,

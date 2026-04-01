@@ -18,7 +18,17 @@ function CountryFlag({ country }) {
   if (!country) return null
   const iso = COUNTRY_ISO[country.toLowerCase().trim()]
   if (!iso) return null
-  return <img src={`https://flagcdn.com/16x12/${iso}.png`} alt={country} className="inline-block rounded-sm" width={16} height={12} />
+  return (
+    <span className="inline-flex items-center justify-center flex-shrink-0" style={{ width: 18, height: 14 }}>
+      <img
+        src={`https://flagcdn.com/16x12/${iso}.png`}
+        srcSet={`https://flagcdn.com/32x24/${iso}.png 2x`}
+        alt={country}
+        className="rounded-sm object-cover block"
+        style={{ width: 16, height: 12 }}
+      />
+    </span>
+  )
 }
 
 // ─── Photo Editor Modal ───────────────────────────────────────────────────────
@@ -1201,24 +1211,17 @@ export default function Parts() {
   }
 
   const search = async (pageNum = 0) => {
-    let q = query.trim()
-    let vehicleId = null
+    const q = buildManualQuery()
 
-    if (searchMode === 'vehicle') {
-      vehicleId = selectedVehicle?.id || null
-    } else if (searchMode === 'manual') {
-      q = buildManualQuery()
-    }
-
-    if (!q && !vehicleId && !category) {
-      toast.error('הזן שם חלק, בחר קטגוריה, או בחר רכב')
+    if (!q && !category) {
+      toast.error('הזן שם חלק, בחר קטגוריה, או בחר יצרן')
       return
     }
 
     setIsLoading(true)
     setSearched(true)
     try {
-      const { data } = await partsApi.search(q, vehicleId, category, perType, searchMode === 'manual' ? manualManufacturer : null)
+      const { data } = await partsApi.search(q, null, category, perType, manualManufacturer || null)
       // New grouped response
       if (data.original !== undefined || data.oem !== undefined || data.aftermarket !== undefined) {
         setSearchResults({ original: data.original, oem: data.oem, aftermarket: data.aftermarket })
@@ -1372,9 +1375,9 @@ export default function Parts() {
     }
   }
 
-  // Re-run parts search when vehicle selection changes (photo mode only)
+  // Re-run parts search when vehicle selection changes (if photo search is active)
   useEffect(() => {
-    if (searchMode === 'photo' && photoCandidates.length > 0) {
+    if (photoCandidates.length > 0) {
       runPhotoPartsSearch(photoCandidates, selectedVehicle?.manufacturer || '')
     }
   }, [selectedVehicle])
@@ -1560,9 +1563,9 @@ export default function Parts() {
     finally { setIsLoading(false) }
   }
 
-  // Re-run voice search when vehicle changes
+  // Re-run voice search when vehicle changes (if voice transcript is active)
   useEffect(() => {
-    if (searchMode === 'voice' && voiceTranscript.trim()) {
+    if (voiceTranscript.trim()) {
       const cleaned = cleanVoiceQuery(voiceTranscript.trim(), selectedVehicle)
       runVoicePartsSearch(cleaned, selectedVehicle?.manufacturer || '')
     }
@@ -1657,40 +1660,109 @@ export default function Parts() {
 
       </div>
 
-      {/* Mode tabs */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-1.5 flex gap-1">
-        {[
-          { key: 'manual',  icon: <SlidersHorizontal className="w-4 h-4" />, label: 'פרטי כרטיס',  activeCls: 'bg-brand-600 text-white shadow-sm',   inactiveCls: 'text-gray-500 hover:text-brand-600 hover:bg-brand-50' },
-          { key: 'vehicle', icon: <Car className="w-4 h-4" />,              label: 'הרכב שלי',  activeCls: 'bg-brand-600 text-white shadow-sm',   inactiveCls: 'text-gray-500 hover:text-brand-600 hover:bg-brand-50' },
-          { key: 'photo',   icon: <Camera className="w-4 h-4" />,            label: 'תמונה',     activeCls: 'bg-brand-600 text-white shadow-sm',   inactiveCls: 'text-gray-500 hover:text-brand-600 hover:bg-brand-50' },
-          { key: 'voice',   icon: <Mic className="w-4 h-4" />,               label: 'קול',       activeCls: 'bg-brand-600 text-white shadow-sm',   inactiveCls: 'text-gray-500 hover:text-brand-600 hover:bg-brand-50' },
-        ].map(({ key, icon, label, activeCls, inactiveCls }) => {
-          const isActive = searchMode === key
-          return (
-            <button
-              key={key}
-              onClick={() => switchMode(key)}
-              className={`relative flex-1 flex items-center justify-center gap-1.5 py-2.5 px-2 rounded-xl text-sm font-semibold transition-all ${
-                isActive ? activeCls : inactiveCls
-              }`}
-            >
-              {icon}
-              <span className="hidden xs:inline">{label}</span>
-              {key === 'manual' && activeFiltersCount > 0 && (
-                <span className={`absolute -top-1 -left-1 text-xs rounded-full w-4 h-4 flex items-center justify-center font-bold ${
-                  isActive ? 'bg-white text-brand-600' : 'bg-brand-600 text-white'
-                }`}>
-                  {activeFiltersCount}
-                </span>
-              )}
-            </button>
-          )
-        })}
+      {/* ── 4 search blocks — visual order controlled by CSS flex order ── */}
+      <div className="flex flex-col gap-6">
+
+      {/* ── BLOCK 1: Free text search ── */}
+      <div className="card p-4" style={{order: 1}}>
+        <div className="flex items-center gap-2 mb-3">
+          <div className="w-8 h-8 rounded-lg bg-brand-100 flex items-center justify-center flex-shrink-0">
+            <Search className="w-4 h-4 text-brand-600" />
+          </div>
+          <h3 className="font-semibold text-gray-900">חיפוש חופשי</h3>
+          {activeFiltersCount > 0 && (
+            <span className="text-xs bg-brand-100 text-brand-700 px-2 py-0.5 rounded-full font-medium mr-auto">
+              {activeFiltersCount} פילטרים פעילים
+            </span>
+          )}
+        </div>
+        <div className="flex flex-col sm:flex-row gap-3">
+          <div className="relative flex-1" ref={suggestRef}>
+            <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+            <input
+              className="input-field pr-10"
+              placeholder="שם החלק לחיפוש... (רפידות בלם, פילטר שמן, מצמד...)"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { setShowSuggestions(false); search() } }}
+              onFocus={() => {
+                if (query.length >= 2 && suggestions.length > 0) setShowSuggestions(true)
+                else if (query.length < 2 && recentSearches.length > 0) setShowSuggestions(true)
+              }}
+              autoComplete="off"
+            />
+            {showSuggestions && (query.length >= 2 ? suggestions.length > 0 : recentSearches.length > 0) && (
+              <ul className="absolute z-50 right-0 left-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-64 overflow-y-auto">
+                {query.length < 2 && recentSearches.length > 0 && (
+                  <>
+                    <li className="px-3 py-1.5 text-xs text-gray-400 font-medium border-b border-gray-100 flex items-center justify-between">
+                      <span>חיפושים אחרונים</span>
+                      <button
+                        onMouseDown={(e) => {
+                          e.preventDefault()
+                          setRecentSearches([])
+                          localStorage.removeItem('recentPartSearches')
+                          setShowSuggestions(false)
+                        }}
+                        className="text-gray-300 hover:text-red-400 text-xs"
+                      >מחק</button>
+                    </li>
+                    {recentSearches.map((s, i) => (
+                      <li
+                        key={i}
+                        className="flex items-center gap-2 px-3 py-2 hover:bg-brand-50 cursor-pointer border-b border-gray-50 last:border-0"
+                        onMouseDown={(e) => { e.preventDefault(); setQuery(s); setShowSuggestions(false); setTimeout(() => search(), 0) }}
+                      >
+                        <span className="text-gray-300 text-xs">🕐</span>
+                        <span className="text-sm text-gray-700">{s}</span>
+                      </li>
+                    ))}
+                  </>
+                )}
+                {query.length >= 2 && suggestions.map((s, i) => (
+                  <li
+                    key={i}
+                    className="flex items-center justify-between px-3 py-2 hover:bg-brand-50 cursor-pointer border-b border-gray-50 last:border-0"
+                    onMouseDown={(e) => {
+                      e.preventDefault()
+                      setQuery(s.name)
+                      setShowSuggestions(false)
+                      setTimeout(() => search(), 0)
+                    }}
+                  >
+                    <span className="text-sm font-medium text-gray-800 truncate flex-1">{s.name}</span>
+                    <span className="text-xs text-gray-400 mr-2 shrink-0">{s.category}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <button onClick={() => search(0)} disabled={isLoading} className="btn-primary flex items-center gap-2 whitespace-nowrap">
+            {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+            חפש
+          </button>
+        </div>
+        {/^[A-Z0-9]{2,6}[-/]?[A-Z0-9]{3,}$/i.test(query.trim()) && query.trim().length >= 5 && (
+          <p className="text-xs text-amber-600 mt-2 flex items-center gap-1">
+            <Hash className="w-3 h-3" /> זה נראה כמספר קטלוג (SKU) – החיפוש יכלול גם התאמות מספר בלבד
+          </p>
+        )}
+        {activeFiltersCount > 0 && (
+          <p className="text-xs text-brand-600 mt-2">
+            🔍 מחפש: {buildManualQuery() || query || 'כל החלקים'}
+          </p>
+        )}
       </div>
 
-      {/* ── VEHICLE MODE ── */}
-      {searchMode === 'vehicle' && (
-        <div className="card p-4 space-y-4">
+      {/* ── BLOCK 4: Search by plate / VIN ── */}
+      <div className="card p-4 space-y-4" style={{order: 4}}>
+          {/* Header */}
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-green-100 flex items-center justify-center flex-shrink-0">
+              <Car className="w-4 h-4 text-green-600" />
+            </div>
+            <h3 className="font-semibold text-gray-900">חיפוש לפי רכב (לוחית / VIN)</h3>
+          </div>
 
           {/* ── Search inputs row: plate + VIN ── */}
           <div className="grid grid-cols-2 gap-2">
@@ -1800,11 +1872,9 @@ export default function Parts() {
             </div>
           )}
         </div>
-      )}
 
-      {/* ── MANUAL MODE ── */}
-      {searchMode === 'manual' && (
-        <div className="card p-4 space-y-4">
+      {/* ── BLOCK 2: Car details (filters) ── */}
+      <div className="card p-4 space-y-4" style={{order: 2}}>
           {/* Header */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -1820,7 +1890,7 @@ export default function Parts() {
             )}
           </div>
 
-          {/* Fields: Manufacturer → Category → Model → Year */}
+          {/* Fields: Manufacturer → Model → Year → Part Type (todo #4 order) */}
           <div className="grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-4 gap-3">
 
             {/* 1. Manufacturer */}
@@ -1844,24 +1914,7 @@ export default function Parts() {
               </select>
             </div>
 
-            {/* 2. Category / Part Type */}
-            <div>
-              <label className="block text-xs text-gray-500 mb-1.5 font-medium">סוג חלק</label>
-              <select
-                className="w-full border border-gray-200 rounded-lg bg-white text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-2.5 py-2 transition-colors"
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-              >
-                <option value="">כל הסוגים</option>
-                {categories.map((c) => (
-                  <option key={c} value={c}>
-                    {c}{categoryCounts[c] ? ` (${categoryCounts[c].toLocaleString()})` : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* 3. Model */}
+            {/* 2. Model */}
             <div>
               <label className="block text-xs text-gray-500 mb-1.5 font-medium">דגם</label>
               <select
@@ -1877,7 +1930,7 @@ export default function Parts() {
               </select>
             </div>
 
-            {/* 4. Year */}
+            {/* 3. Year */}
             <div>
               <label className="block text-xs text-gray-500 mb-1.5 font-medium">שנה</label>
               <input
@@ -1890,6 +1943,23 @@ export default function Parts() {
                 onChange={(e) => setManualYear(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && search()}
               />
+            </div>
+
+            {/* 4. Part Type / Category */}
+            <div>
+              <label className="block text-xs text-gray-500 mb-1.5 font-medium">סוג חלק</label>
+              <select
+                className="w-full border border-gray-200 rounded-lg bg-white text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-2.5 py-2 transition-colors"
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+              >
+                <option value="">כל הסוגים</option>
+                {categories.map((c) => (
+                  <option key={c} value={c}>
+                    {c}{categoryCounts[c] ? ` (${categoryCounts[c].toLocaleString()})` : ''}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
 
@@ -1922,11 +1992,151 @@ export default function Parts() {
               )}
             </div>
           )}
+          {/* Search button for Block 2 */}
+          <div className="flex justify-start pt-1">
+            <button onClick={() => search(0)} disabled={isLoading} className="btn-primary flex items-center gap-2">
+              {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+              חפש לפי פרטי רכב
+            </button>
+          </div>
         </div>
-      )}
 
-      {/* ── PHOTO MODE ── */}
-      {searchMode === 'photo' && (
+      {/* ── BLOCK 3: Photo / Voice ── */}
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm" style={{order: 3}}>
+          {/* Header */}
+          <div className="flex items-center gap-2 px-4 pt-4">
+            <div className="w-8 h-8 rounded-lg bg-purple-100 flex items-center justify-center flex-shrink-0">
+              <Camera className="w-4 h-4 text-purple-600" />
+            </div>
+            <h3 className="font-semibold text-gray-900">חיפוש בתמונה / קול</h3>
+          </div>
+          {/* Sub-tab bar */}
+          <div className="flex border-b border-gray-100 p-1.5 gap-1 mt-3">
+            {[
+              { key: 'photo', icon: <Camera className="w-4 h-4" />, label: 'תמונה' },
+              { key: 'voice', icon: <Mic className="w-4 h-4" />, label: 'קול' },
+            ].map(({ key, icon, label }) => {
+              const active = (key === 'photo' && photoPreview) || (key === 'voice' && isListening)
+              return (
+                <button
+                  key={key}
+                  onClick={() => {
+                    if (key === 'voice') toggleVoice()
+                    else fileInputRef.current?.click()
+                  }}
+                  className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
+                    active
+                      ? 'bg-brand-600 text-white shadow-sm'
+                      : 'text-gray-500 hover:text-brand-600 hover:bg-brand-50'
+                  }`}
+                >
+                  {icon}<span>{label}</span>
+                </button>
+              )
+            })}
+            {/* hidden file input still works */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              onChange={(e) => handlePhotoFile(e.target.files[0])}
+            />
+          </div>
+
+          {/* Photo preview + controls */}
+          {photoPreview && (
+            <div className="p-4 space-y-3">
+              <div className="relative inline-block w-full">
+                <img src={photoPreview} alt="preview" className="max-h-48 mx-auto rounded-lg object-contain block" />
+                <button
+                  onClick={() => setShowPhotoEditor(true)}
+                  className="absolute top-2 left-2 bg-black/60 hover:bg-black/80 text-white text-xs px-2.5 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors"
+                >
+                  <Pencil className="w-3.5 h-3.5" />ערוך
+                </button>
+              </div>
+              {photoResult && (
+                <div className="bg-green-50 border border-green-200 rounded-xl p-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
+                    <div>
+                      <p className="font-semibold text-green-800">{photoResult.identified_part}</p>
+                      {photoResult.identified_part_en && <p className="text-xs text-green-600">{photoResult.identified_part_en}</p>}
+                    </div>
+                    {photoResult.confidence && (
+                      <span className="mr-auto badge bg-green-100 text-green-700 flex items-center gap-1">
+                        {photoResult.cache_hit && <span title="תוצאה מהמאגר השמור">⚡</span>}
+                        {Math.round(photoResult.confidence * 100)}% ביטחון
+                      </span>
+                    )}
+                  </div>
+                  {photoResult.possible_names?.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {photoResult.possible_names.map((n, i) => (
+                        <span key={i} className="text-xs bg-white border border-green-200 text-green-700 px-2 py-0.5 rounded-full">{n}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="flex gap-2">
+                <button onClick={handlePhotoSearch} disabled={photoLoading} className="btn-primary flex-1 flex items-center justify-center gap-2">
+                  {photoLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                  זהה וחפש חלק
+                </button>
+                <button onClick={() => setShowPhotoEditor(true)} className="btn-secondary px-3 flex items-center gap-1.5">
+                  <Crop className="w-4 h-4" /><span className="hidden sm:inline text-sm">ערוך</span>
+                </button>
+                <button onClick={() => { setPhotoFile(null); setPhotoPreview(null); setPhotoResult(null); setPhotoCandidates([]) }} className="btn-secondary px-3">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Voice listening indicator */}
+          {(isListening || voiceTranscript) && (
+            <div className="p-4 space-y-3">
+              <div className="flex flex-col items-center gap-3 py-2">
+                <button
+                  onClick={toggleVoice}
+                  className={`relative w-16 h-16 rounded-full flex items-center justify-center transition-all shadow-lg ${
+                    isListening ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-brand-600 hover:bg-brand-700 text-white'
+                  }`}
+                >
+                  {isListening && <span className="absolute inset-0 rounded-full bg-red-400 animate-ping opacity-75" />}
+                  {isListening ? <MicOff className="w-6 h-6 relative" /> : <Mic className="w-6 h-6 relative" />}
+                </button>
+                <p className="text-sm text-gray-500">{isListening ? '🔴 מקשיב... לחץ לעצור' : 'לחץ להתחיל'}</p>
+              </div>
+              {voiceTranscript && (
+                <div className="bg-gray-50 border border-gray-200 rounded-xl p-3">
+                  <p className="text-xs text-gray-400 mb-1">זוהה:</p>
+                  <p className="font-medium text-gray-800">{voiceTranscript}</p>
+                </div>
+              )}
+              <div className="flex gap-2">
+                <input
+                  className="input-field flex-1"
+                  placeholder="או הקלד שם חלק..."
+                  value={voiceTranscript}
+                  onChange={(e) => setVoiceTranscript(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleVoiceSearch()}
+                />
+                <button onClick={handleVoiceSearch} disabled={isLoading || !voiceTranscript.trim()} className="btn-primary flex items-center gap-2 whitespace-nowrap">
+                  {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}חפש
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+      </div>{/* end 4-blocks flex */}
+
+      {/* ── OLD STANDALONE PHOTO MODE (replaced — kept as dead block, never shown) ── */}
+      {false && searchMode === 'photo' && (
         <div className="card p-4 space-y-4">
           <div className="flex items-center gap-2 mb-1">
             <Camera className="w-5 h-5 text-brand-600" />
@@ -2058,8 +2268,8 @@ export default function Parts() {
         </div>
       )}
 
-      {/* ── VOICE MODE ── */}
-      {searchMode === 'voice' && (
+      {/* ── OLD STANDALONE VOICE MODE (replaced — never shown) ── */}
+      {false && searchMode === 'voice' && (
         <div className="card p-4 space-y-4">
           <div className="flex items-center gap-2 mb-1">
             <Mic className="w-5 h-5 text-brand-600" />
@@ -2154,7 +2364,7 @@ export default function Parts() {
       )}
 
       {/* Voice / Photo: no parts for selected manufacturer */}
-      {!isLoading && searchMode === 'voice' && voiceFallbackMfr && (
+      {!isLoading && voiceFallbackMfr && (
         <div className="flex flex-col items-center gap-3 py-10 text-center">
           <div className="w-14 h-14 rounded-full bg-amber-100 flex items-center justify-center">
             <AlertCircle className="w-7 h-7 text-amber-500" />
@@ -2172,93 +2382,7 @@ export default function Parts() {
         </div>
       )}
 
-      {/* ── SEARCH BAR (manual mode only) ── */}
-      {searchMode === 'manual' && (
-        <div className="card p-4">
-          <div className="flex flex-col sm:flex-row gap-3">
-            <div className="relative flex-1" ref={suggestRef}>
-              <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-              <input
-                className="input-field pr-10"
-                placeholder={
-                  searchMode === 'vehicle'
-                    ? 'שם החלק... (פילטר שמן, רפידות בלם, מצמד...)'
-                    : 'שם החלק לחיפוש...'
-                }
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') { setShowSuggestions(false); search() } }}
-                onFocus={() => {
-                  if (query.length >= 2 && suggestions.length > 0) setShowSuggestions(true)
-                  else if (query.length < 2 && recentSearches.length > 0) setShowSuggestions(true)
-                }}
-                autoComplete="off"
-              />
-              {showSuggestions && (query.length >= 2 ? suggestions.length > 0 : recentSearches.length > 0) && (
-                <ul className="absolute z-50 right-0 left-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-64 overflow-y-auto">
-                  {query.length < 2 && recentSearches.length > 0 && (
-                    <>
-                      <li className="px-3 py-1.5 text-xs text-gray-400 font-medium border-b border-gray-100 flex items-center justify-between">
-                        <span>חיפושים אחרונים</span>
-                        <button
-                          onMouseDown={(e) => {
-                            e.preventDefault()
-                            setRecentSearches([])
-                            localStorage.removeItem('recentPartSearches')
-                            setShowSuggestions(false)
-                          }}
-                          className="text-gray-300 hover:text-red-400 text-xs"
-                        >מחק</button>
-                      </li>
-                      {recentSearches.map((s, i) => (
-                        <li
-                          key={i}
-                          className="flex items-center gap-2 px-3 py-2 hover:bg-brand-50 cursor-pointer border-b border-gray-50 last:border-0"
-                          onMouseDown={(e) => { e.preventDefault(); setQuery(s); setShowSuggestions(false); setTimeout(() => search(), 0) }}
-                        >
-                          <span className="text-gray-300 text-xs">🕐</span>
-                          <span className="text-sm text-gray-700">{s}</span>
-                        </li>
-                      ))}
-                    </>
-                  )}
-                  {query.length >= 2 && suggestions.map((s, i) => (
-                    <li
-                      key={i}
-                      className="flex items-center justify-between px-3 py-2 hover:bg-brand-50 cursor-pointer border-b border-gray-50 last:border-0"
-                      onMouseDown={(e) => {
-                        e.preventDefault()
-                        setQuery(s.name)
-                        setShowSuggestions(false)
-                        setTimeout(() => search(), 0)
-                      }}
-                    >
-                      <span className="text-sm font-medium text-gray-800 truncate flex-1">{s.name}</span>
-                      <span className="text-xs text-gray-400 mr-2 shrink-0">{s.category}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-            <button onClick={() => search(0)} disabled={isLoading} className="btn-primary flex items-center gap-2 whitespace-nowrap">
-              {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-              חפש
-            </button>
-          </div>
-
-          {/^[A-Z0-9]{2,6}[-/]?[A-Z0-9]{3,}$/i.test(query.trim()) && query.trim().length >= 5 && (
-            <p className="text-xs text-amber-600 mt-2 flex items-center gap-1">
-              <Hash className="w-3 h-3" /> זה נראה כמספר קטלוג (SKU) – החיפוש יכלול גם התאמות מספר בלבד
-            </p>
-          )}
-
-          {searchMode === 'manual' && activeFiltersCount > 0 && (
-            <p className="text-xs text-brand-600 mt-2">
-              🔍 מחפש: {buildManualQuery() || query || 'כל החלקים'}
-            </p>
-          )}
-        </div>
-      )}
+      {/* ── Block 1 search bar has been moved above (after hero) ── */}
 
       {/* ── RESULTS ── */}
       {isLoading && (
@@ -2305,9 +2429,9 @@ export default function Parts() {
             </div>
           )}
           <div className="flex items-center justify-center gap-3 flex-wrap">
-            {searchMode === 'manual' && (
-              <button onClick={() => switchMode('vehicle')} className="btn-ghost text-sm">
-                חפש לפי הרכב שלי
+            {selectedVehicle && (
+              <button onClick={() => { setParts([]); setSearchResults(null); setSearched(true); setIsLoading(true); partsApi.search('', selectedVehicle.id, category, perType, null).then(({data}) => { setParts(data.parts || []); setTotalCount(data.total || 0); }).catch(() => {}).finally(() => setIsLoading(false)) }} className="btn-ghost text-sm">
+                חפש לפי {selectedVehicle.manufacturer} {selectedVehicle.model}
               </button>
             )}
             <button
@@ -2320,7 +2444,7 @@ export default function Parts() {
         </div>
       )}
 
-      {!isLoading && searchMode === 'photo' && photoFallbackMfr && (
+      {!isLoading && photoFallbackMfr && (
         <div className="flex flex-col items-center gap-3 py-10 text-center">
           <div className="w-14 h-14 rounded-full bg-amber-100 flex items-center justify-center">
             <AlertCircle className="w-7 h-7 text-amber-500" />
@@ -2347,7 +2471,7 @@ export default function Parts() {
                 נמצאו <strong>{totalCount.toLocaleString()}</strong> חלקים
                 {totalCount > PAGE_SIZE && ` · עמוד ${page + 1}/${Math.ceil(totalCount / PAGE_SIZE)}`}
               </p>
-              {selectedVehicle && searchMode === 'photo' && (() => {
+              {selectedVehicle && parts.length > 0 && (() => {
                 const mfr = selectedVehicle.manufacturer?.toLowerCase() || ''
                 const matchCount = parts.filter(p => p.manufacturer?.toLowerCase().includes(mfr)).length
                 return matchCount > 0 ? (

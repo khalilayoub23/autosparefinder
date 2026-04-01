@@ -1426,12 +1426,22 @@ async def list_agents(current_user: User = Depends(get_current_admin_user)):
     import os as _os
     hf_token = _os.getenv("HF_TOKEN", "")
     ai_status = "active" if hf_token else "mocked"
+    # Derive display model name from the actual running agent instance
+    actual_model = _os.getenv("HF_TEXT_MODEL", "Qwen/Qwen2.5-72B-Instruct")
+    # Shorten for display: take the part after the last '/'
+    display_model = actual_model.split("/")[-1] if "/" in actual_model else actual_model
 
     agents = []
     for name, meta in AGENTS_METADATA.items():
+        # Use live model from running agent if loaded, else env model
+        live_model = display_model
+        if name in AGENT_MAP:
+            raw = getattr(AGENT_MAP[name], "model", actual_model)
+            live_model = raw.split("/")[-1] if "/" in raw else raw
         agents.append({
             "name": name,
             **meta,
+            "model": live_model,
             "ai_status": ai_status,
             "is_loaded": name in AGENT_MAP,
         })

@@ -255,8 +255,8 @@ async def job_registry_start(
     await db_session.execute(
         text(
             """
-            INSERT INTO job_registry (job_id, job_name, worker_host, status, started_at, ttl_seconds, last_heartbeat_at)
-            VALUES (:job_id, :job_name, :host, 'running', NOW(), :ttl, NOW())
+            INSERT INTO job_registry (id, job_id, job_name, worker_host, status, started_at, ttl_seconds, last_heartbeat_at)
+            VALUES (gen_random_uuid(), :job_id, :job_name, :host, 'running', NOW(), :ttl, NOW())
             ON CONFLICT (job_id) DO UPDATE
             SET status = 'running', started_at = NOW(), completed_at = NULL,
                 error_message = NULL, ttl_seconds = EXCLUDED.ttl_seconds,

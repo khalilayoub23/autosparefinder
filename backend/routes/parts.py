@@ -42,7 +42,7 @@ router = APIRouter()
 
 @router.get("/api/v1/parts/search")
 async def search_parts(
-    query: str = Query(default="", max_length=200),
+    query: str = Query(default="", alias="q", max_length=200),
     vehicle_id: Optional[str] = None,
     category: Optional[str] = None,
     per_type: Optional[int] = None,        # override system_settings.search_results_per_type
@@ -491,65 +491,57 @@ async def get_manufacturers(db: AsyncSession = Depends(get_db)):
 
 @router.get("/api/v1/parts/models")
 async def get_models(manufacturer: Optional[str] = None, db: AsyncSession = Depends(get_db)):
-    """Return distinct car models extracted from compatible_vehicles JSON, optionally filtered by manufacturer."""
+    """Return distinct car models from compatible_vehicles JSON, optionally filtered by manufacturer.
+
+    Handles two data shapes:
+      {"model": "Elantra", "year_from": ..., "year_to": ...}  — new structured format
+      {"model_year": "SILVERADO 2016"}                         — legacy combined format
+    Uses COALESCE so either key works.
+    """
     import re as _re
     if manufacturer:
-        # Filter by parts_catalog.manufacturer (the car brand column)
         sql = text("""
-            SELECT DISTINCT elem->>'model_year' AS model_year
+            SELECT DISTINCT COALESCE(elem->>'model', elem->>'model_year') AS model
             FROM parts_catalog,
                  jsonb_array_elements(compatible_vehicles) AS elem
             WHERE compatible_vehicles IS NOT NULL
-              AND compatible_vehicles::text LIKE '%model_year%'
-              AND manufacturer ILIKE :mfr_exact
-              AND elem->>'model_year' IS NOT NULL
-            ORDER BY model_year
+              AND jsonb_typeof(compatible_vehicles) = 'array'
+              AND manufacturer ILIKE :mfr
+              AND COALESCE(elem->>'model', elem->>'model_year') IS NOT NULL
+              AND COALESCE(elem->>'model', elem->>'model_year') <> ''
+            ORDER BY model
         """)
-        result = await db.execute(sql, {"mfr_exact": manufacturer})
+        result = await db.execute(sql, {"mfr": manufacturer})
     else:
         sql = text("""
-            SELECT DISTINCT elem->>'model_year' AS model_year
+            SELECT DISTINCT COALESCE(elem->>'model', elem->>'model_year') AS model
             FROM parts_catalog,
                  jsonb_array_elements(compatible_vehicles) AS elem
             WHERE compatible_vehicles IS NOT NULL
-              AND compatible_vehicles::text LIKE '%model_year%'
-              AND elem->>'model_year' IS NOT NULL
-            ORDER BY model_year
+              AND jsonb_typeof(compatible_vehicles) = 'array'
+              AND COALESCE(elem->>'model', elem->>'model_year') IS NOT NULL
+              AND COALESCE(elem->>'model', elem->>'model_year') <> ''
+            ORDER BY model
         """)
         result = await db.execute(sql)
     raw = [row[0] for row in result.fetchall() if row[0]]
-    # Two-pass year stripping so year is always separated into the year dropdown:
-    # Pass 1 — strip 4-digit era year (19xx/20xx) AND everything that follows,
-    #   using \s* so it catches both "CAMARO 2021US" and "CAMARO2019 US":
-    #   "SONIC 2014 1.4TURBO" → "SONIC"
-    #   "SAVANA 2017 NEW"     → "SAVANA"
-    #   "CAMARO 2021US"       → "CAMARO"
-    #   "CAMARO2019 US"       → "CAMARO"
+    # Pass 1: strip 4-digit era year (19xx/20xx) and everything following it
     _era_year_re = _re.compile(r'\s*(?:19|20)\d{2}(?=[^\d]|$).*$')
-    # Pass 2 — strip remaining trailing 2-digit years or year-ranges:
-    #   "CAVALIER 99" → "CAVALIER"
-    #   "CAVALIER 96-67" → "CAVALIER"
+    # Pass 2: strip trailing 2-digit years or year-ranges ("CAVALIER 99" → "CAVALIER")
     _trail_num_re = _re.compile(r'\s+\d[\d\-/\.]*\s*$')
-    # Deduplicate case-insensitively: keep the shortest/cleanest variant per normalised key
-    models_map: dict[str, str] = {}  # normalised_key → best display value
+    # Deduplicate case-insensitively; keep the shortest/cleanest variant
+    models_map: dict[str, str] = {}
     for my in raw:
-        model = _era_year_re.sub('', my).strip()   # pass 1
-        model = _trail_num_re.sub('', model).strip()  # pass 2
-        # clean extra spaces
+        model = _era_year_re.sub('', my).strip()
+        model = _trail_num_re.sub('', model).strip()
         model = _re.sub(r'\s{2,}', ' ', model).strip()
         if not model or model.replace('-', '').replace(' ', '').isdigit():
             continue
         key = model.upper()
-        # Among duplicates keep the shorter, cleaner form
         existing = models_map.get(key)
         if existing is None or len(model) < len(existing):
             models_map[key] = model
     models = sorted(models_map.values())
-    # If manufacturer was specified but no models found (compatible_vehicles not yet
-    # enriched for this brand), fall back to returning all models so the dropdown
-    # is never empty.
-    if manufacturer and not models:
-        return await get_models(manufacturer=None, db=db)
     return {"models": models, "total": len(models)}
 
 
