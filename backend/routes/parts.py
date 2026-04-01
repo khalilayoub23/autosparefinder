@@ -442,20 +442,21 @@ async def search_parts(
 
 @router.get("/api/v1/parts/categories")
 async def get_categories(db: AsyncSession = Depends(get_db)):
-    from sqlalchemy import func
-    # Return distinct part_type values with counts from supplier_parts
+    # Return distinct category values from parts_catalog with part counts
     result = await db.execute(
         text("""
-            SELECT sp.part_type, COUNT(DISTINCT sp.part_id) as cnt
-            FROM supplier_parts sp
-            WHERE sp.part_type IS NOT NULL AND sp.part_type != ''
-            GROUP BY sp.part_type
+            SELECT category, COUNT(*) as cnt
+            FROM parts_catalog
+            WHERE is_active = TRUE
+              AND category IS NOT NULL
+              AND category != ''
+            GROUP BY category
             ORDER BY cnt DESC
         """)
     )
     rows = result.fetchall()
     categories = [r[0] for r in rows if r[0]]
-    counts = {r[0]: r[1] for r in rows if r[0]}
+    counts = {r[0]: int(r[1]) for r in rows if r[0]}
     return {"categories": categories, "counts": counts, "total": len(categories)}
 
 

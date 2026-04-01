@@ -86,6 +86,30 @@ def parse_price(val):
         return 0.0
 
 
+def parse_manufacturer_fields(raw_mfr, fallback_brand: str) -> tuple[str, int | None]:
+    """Parse manufacturer display value and optional numeric manufacturer_id."""
+    manufacturer_name = fallback_brand
+    manufacturer_id = None
+    mfr = clean(raw_mfr)
+    if not mfr:
+        return manufacturer_name, manufacturer_id
+
+    s = str(mfr).strip()
+    try:
+        if s.isdigit():
+            manufacturer_id = int(s)
+            return manufacturer_name, manufacturer_id
+        f = float(s)
+        if f.is_integer():
+            manufacturer_id = int(f)
+            return manufacturer_name, manufacturer_id
+    except (ValueError, TypeError):
+        pass
+
+    manufacturer_name = s
+    return manufacturer_name, manufacturer_id
+
+
 # Known header cell values to skip in multi-block sheets
 _HEADER_VALS = {'זמינות מלאי', 'מחיר לצרכן', 'תיאור החלק', 'מותג', 'מספר קטלוגי'}
 
@@ -99,17 +123,20 @@ def _make_part_record(brand: str, avail, price, name, mfr, catalog, row_idx: int
     if name in _HEADER_VALS:
         return None
     stock = clean(avail)
-    manufacturer = clean(mfr) or brand
+    manufacturer, manufacturer_id = parse_manufacturer_fields(mfr, brand)
     specs = {}
     if stock:
         specs["stock_status"] = stock
     specs["manufacturer_name"] = manufacturer
+    if manufacturer_id is not None:
+        specs["manufacturer_id"] = manufacturer_id
     sku = make_sku(brand, catalog, row_idx)
     return {
         "sku": sku,
         "name": name[:255],
         "category": brand[:100],
         "manufacturer": manufacturer[:100],
+        "manufacturer_id": manufacturer_id,
         "part_type": "unknown",
         "description": name[:500],
         "specifications": json.dumps(specs, ensure_ascii=False),
@@ -197,10 +224,12 @@ def parse_row(sheet_name: str, row: tuple, row_idx: int) -> dict | None:
         part_type = "unknown"
         stock = clean(g(0))
         price = 0.0
-        manufacturer_override = clean(g(3))
+        manufacturer_override = g(3)
+        manufacturer, manufacturer_id = parse_manufacturer_fields(manufacturer_override, brand)
         specs = {k: v for k, v in {"stock_status": stock}.items() if v}
-        if manufacturer_override:
-            specs["manufacturer_name"] = manufacturer_override
+        specs["manufacturer_name"] = manufacturer
+        if manufacturer_id is not None:
+            specs["manufacturer_id"] = manufacturer_id
         compat = []
 
     elif stype == "C":
@@ -219,7 +248,10 @@ def parse_row(sheet_name: str, row: tuple, row_idx: int) -> dict | None:
         part_type = (clean(g(4)) or "unknown")[:50]
         stock = clean(g(1))
         price = parse_price(g(0))
-        specs = {k: v for k, v in {"stock_status": stock}.items() if v}
+        manufacturer, manufacturer_id = parse_manufacturer_fields(g(3), brand)
+        specs = {k: v for k, v in {"stock_status": stock, "manufacturer_name": manufacturer}.items() if v}
+        if manufacturer_id is not None:
+            specs["manufacturer_id"] = manufacturer_id
         compat = []
 
     elif stype == "E":
@@ -236,11 +268,15 @@ def parse_row(sheet_name: str, row: tuple, row_idx: int) -> dict | None:
 
     sku = make_sku(brand, catalog_num, row_idx)
 
+    manufacturer = locals().get("manufacturer", brand)
+    manufacturer_id = locals().get("manufacturer_id", None)
+
     return {
         "sku": sku,
         "name": name[:255],
         "category": brand[:100],
-        "manufacturer": brand[:100],
+        "manufacturer": manufacturer[:100],
+        "manufacturer_id": manufacturer_id,
         "part_type": part_type[:50],
         "description": name[:500],
         "specifications": json.dumps(specs, ensure_ascii=False),
@@ -249,7 +285,7 @@ def parse_row(sheet_name: str, row: tuple, row_idx: int) -> dict | None:
     }
 
 
-UPSERT_SQL = """
+UPSERT_SQL_BASE = """
 INSERT INTO parts_catalog
     (id, sku, name, category, manufacturer, part_type,
      description, specifications, compatible_vehicles,
@@ -270,6 +306,28 @@ ON CONFLICT (sku) DO UPDATE SET
     updated_at = NOW()
 """
 
+UPSERT_SQL_WITH_MANUFACTURER_ID = """
+INSERT INTO parts_catalog
+    (id, sku, name, category, manufacturer, manufacturer_id, part_type,
+     description, specifications, compatible_vehicles,
+     base_price, part_condition, is_safety_critical, needs_oem_lookup,
+     master_enriched, is_active, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11,
+        'new', false, false, false, true, NOW(), NOW())
+ON CONFLICT (sku) DO UPDATE SET
+    name = EXCLUDED.name,
+    category = EXCLUDED.category,
+    manufacturer = EXCLUDED.manufacturer,
+    manufacturer_id = EXCLUDED.manufacturer_id,
+    part_type = EXCLUDED.part_type,
+    description = EXCLUDED.description,
+    specifications = EXCLUDED.specifications,
+    compatible_vehicles = EXCLUDED.compatible_vehicles,
+    base_price = EXCLUDED.base_price,
+    is_active = true,
+    updated_at = NOW()
+"""
+
 BATCH_SIZE = 500
 
 
@@ -280,6 +338,17 @@ async def import_parts():
 
     conn = await asyncpg.connect(DB_URL)
     print("Connected to PostgreSQL\n")
+
+    has_manufacturer_id_col = await conn.fetchval("""
+        SELECT EXISTS (
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_name = 'parts_catalog'
+              AND column_name = 'manufacturer_id'
+        )
+    """)
+    upsert_sql = UPSERT_SQL_WITH_MANUFACTURER_ID if has_manufacturer_id_col else UPSERT_SQL_BASE
+    print(f"parts_catalog.manufacturer_id column detected: {bool(has_manufacturer_id_col)}")
 
     total_upserted = total_errors = 0
 
@@ -308,23 +377,43 @@ async def import_parts():
                 if parsed is None:
                     continue
 
-                batch.append((
-                    uuid.uuid4(),
-                    parsed["sku"], parsed["name"], parsed["category"],
-                    parsed["manufacturer"], parsed["part_type"], parsed["description"],
-                    parsed["specifications"], parsed["compatible_vehicles"],
-                    parsed["base_price"],
-                ))
+                if has_manufacturer_id_col:
+                    batch.append((
+                        uuid.uuid4(),
+                        parsed["sku"],
+                        parsed["name"],
+                        parsed["category"],
+                        parsed["manufacturer"],
+                        parsed.get("manufacturer_id"),
+                        parsed["part_type"],
+                        parsed["description"],
+                        parsed["specifications"],
+                        parsed["compatible_vehicles"],
+                        parsed["base_price"],
+                    ))
+                else:
+                    batch.append((
+                        uuid.uuid4(),
+                        parsed["sku"],
+                        parsed["name"],
+                        parsed["category"],
+                        parsed["manufacturer"],
+                        parsed["part_type"],
+                        parsed["description"],
+                        parsed["specifications"],
+                        parsed["compatible_vehicles"],
+                        parsed["base_price"],
+                    ))
 
             if len(batch) >= BATCH_SIZE:
                 try:
-                    await conn.executemany(UPSERT_SQL, batch)
+                    await conn.executemany(upsert_sql, batch)
                     sheet_rows += len(batch)
                 except Exception as e:
                     # Fall back to one-by-one to skip bad rows
                     for rec in batch:
                         try:
-                            await conn.execute(UPSERT_SQL, *rec)
+                            await conn.execute(upsert_sql, *rec)
                             sheet_rows += 1
                         except Exception:
                             sheet_errors += 1
@@ -333,12 +422,12 @@ async def import_parts():
         # Flush remaining
         if batch:
             try:
-                await conn.executemany(UPSERT_SQL, batch)
+                await conn.executemany(upsert_sql, batch)
                 sheet_rows += len(batch)
             except Exception:
                 for rec in batch:
                     try:
-                        await conn.execute(UPSERT_SQL, *rec)
+                        await conn.execute(upsert_sql, *rec)
                         sheet_rows += 1
                     except Exception:
                         sheet_errors += 1

@@ -927,9 +927,10 @@ async def _generate_image_embeddings_task(db: AsyncSession) -> Dict[str, Any]:
 
 async def dedup_catalog_parts(db: AsyncSession) -> Dict[str, Any]:
     """
-    Remove duplicate rows in parts_catalog:
-      1. Same SKU → null out the older duplicate's SKU (keep newest).
-      2. Same (name, manufacturer_id) → flag older rows with needs_oem_lookup=True for manual review.
+        Remove duplicate rows in parts_catalog:
+            1. Same SKU → null out the older duplicate's SKU (keep newest).
+            2. Same (name, manufacturer key) → flag older rows with needs_oem_lookup=True for manual review.
+                 Manufacturer key prefers manufacturer_id when the column exists, else falls back to manufacturer text.
     Both steps are idempotent.
     """
     t0 = time.monotonic()
@@ -954,17 +955,33 @@ async def dedup_catalog_parts(db: AsyncSession) -> Dict[str, Any]:
         """))
         nulled_skus = len(r1.fetchall())
 
-        # Step 2 — duplicate (name, manufacturer_id): flag older rows for review
-        r2 = await db.execute(text("""
+        has_manufacturer_id = bool((await db.execute(text("""
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_name = 'parts_catalog'
+                  AND column_name = 'manufacturer_id'
+            )
+        """))).scalar())
+
+        # Step 2 — duplicate (name, manufacturer key): flag older rows for review
+        if has_manufacturer_id:
+            manufacturer_partition = "manufacturer_id"
+            manufacturer_filter = "manufacturer_id IS NOT NULL"
+        else:
+            manufacturer_partition = "lower(COALESCE(manufacturer, ''))"
+            manufacturer_filter = "manufacturer IS NOT NULL"
+
+        r2 = await db.execute(text(f"""
             WITH dupes AS (
                 SELECT id FROM (
                     SELECT id,
                            ROW_NUMBER() OVER (
-                               PARTITION BY lower(name), manufacturer_id
+                               PARTITION BY lower(name), {manufacturer_partition}
                                ORDER BY created_at DESC
                            ) AS rn
                     FROM parts_catalog
-                    WHERE name IS NOT NULL AND manufacturer_id IS NOT NULL
+                    WHERE name IS NOT NULL AND {manufacturer_filter}
                 ) ranked
                 WHERE rn > 1
             )
@@ -1348,6 +1365,10 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
             job_id = await job_registry_start(db, "run_all_tasks", ttl_seconds=3600)
         except Exception as exc:
             logger.warning("run_all_tasks job_registry_start failed: %s", exc)
+            try:
+                await db.rollback()
+            except Exception:
+                pass
 
         ordered_tasks = [
             "seed_system_settings",

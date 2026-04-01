@@ -1453,6 +1453,10 @@ async def run_brand_discovery(
                 job_id = await job_registry_start(db, "run_brand_discovery", ttl_seconds=int(DISCOVERY_INTERVAL_H * 3600))
             except Exception as exc:
                 print(f"[Rex] job_registry_start error: {exc}")
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
 
             # Get supplier id
             supplier = (await db.execute(
@@ -1696,7 +1700,14 @@ async def run_scraper_cycle(*, batch_size: int = SCRAPE_BATCH_SIZE) -> Dict[str,
     async with scraper_session_factory() as db:
         job_id = None
         try:
-            job_id = await job_registry_start(db, "run_scraper_cycle", ttl_seconds=int(SCRAPE_INTERVAL_H * 3600))
+            try:
+                job_id = await job_registry_start(db, "run_scraper_cycle", ttl_seconds=int(SCRAPE_INTERVAL_H * 3600))
+            except Exception as exc:
+                print(f"[Scraper] job_registry_start error: {exc}")
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
 
             # Pull oldest-checked supplier_parts joined to parts_catalog
             rows = (await db.execute(

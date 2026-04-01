@@ -107,7 +107,12 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:3000").split(","),
+    allow_origins=os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000",
+    ).split(","),
+    # Allow GitHub forwarded dev URLs (for example: https://<slug>-5173.app.github.dev)
+    allow_origin_regex=os.getenv("CORS_ORIGIN_REGEX", r"https://.*\.app\.github\.dev"),
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["Content-Type", "Authorization", "X-Request-ID", "X-Idempotency-Key"],
@@ -1346,6 +1351,10 @@ async def _price_sync_loop():
                     job_id = await job_registry_start(db, "sync_prices", ttl_seconds=interval_s)
                 except Exception as exc:
                     print(f"[PriceSync] job_registry_start failed: {exc}")
+                    try:
+                        await db.rollback()
+                    except Exception:
+                        pass
 
                 agent = SupplierManagerAgent()
                 report = await agent.sync_prices(db)

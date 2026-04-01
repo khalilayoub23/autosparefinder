@@ -1064,6 +1064,32 @@ export default function Parts() {
     return                            { sort_by: 'name',         sort_dir: 'asc' }
   }
 
+  const flattenGroupedResults = (grouped) => {
+    const toFlat = (bucket, fallbackType) => {
+      if (!bucket?.part) return null
+      const suppliers = bucket.suppliers || []
+      const firstPriced = suppliers.find((s) => Number.isFinite(Number(s?.price_ils)))
+      const availability = suppliers.some((s) => s?.availability === 'in_stock')
+        ? 'in_stock'
+        : (suppliers[0]?.availability || null)
+      return {
+        ...bucket.part,
+        part_type: bucket.part.part_type || fallbackType,
+        suppliers,
+        pricing: {
+          availability,
+          total_price: firstPriced?.price_ils ?? bucket.part.min_price_ils ?? bucket.part.base_price ?? null,
+        },
+      }
+    }
+
+    return [
+      toFlat(grouped?.original, 'Original'),
+      toFlat(grouped?.oem, 'OEM'),
+      toFlat(grouped?.aftermarket, 'Aftermarket'),
+    ].filter(Boolean)
+  }
+
   const [recentSearches, setRecentSearches] = useState(() => {
     try { return JSON.parse(localStorage.getItem('recentPartSearches') || '[]') } catch { return [] }
   })
@@ -1114,11 +1140,7 @@ export default function Parts() {
           .then(({ data }) => {
             if (data.original !== undefined || data.oem !== undefined) {
               setSearchResults({ original: data.original, oem: data.oem, aftermarket: data.aftermarket })
-              const flat = [
-                ...(data.original?.part  ? [{ ...data.original.part,  suppliers: data.original.suppliers  }] : []),
-                ...(data.oem?.part       ? [{ ...data.oem.part,       suppliers: data.oem.suppliers       }] : []),
-                ...(data.aftermarket?.part ? [{ ...data.aftermarket.part, suppliers: data.aftermarket.suppliers }] : []),
-              ]
+              const flat = flattenGroupedResults(data)
               setParts(flat); setTotalCount(flat.length)
             } else {
               setParts(data.parts || []); setTotalCount(data.total || 0)
@@ -1221,11 +1243,7 @@ export default function Parts() {
       if (data.original !== undefined || data.oem !== undefined || data.aftermarket !== undefined) {
         setSearchResults({ original: data.original, oem: data.oem, aftermarket: data.aftermarket })
         // Also flatten for backwards compat (stats, filters)
-        const flat = [
-          ...(data.original?.part  ? [{ ...data.original.part,  suppliers: data.original.suppliers  }] : []),
-          ...(data.oem?.part       ? [{ ...data.oem.part,       suppliers: data.oem.suppliers       }] : []),
-          ...(data.aftermarket?.part ? [{ ...data.aftermarket.part, suppliers: data.aftermarket.suppliers }] : []),
-        ]
+        const flat = flattenGroupedResults(data)
         setParts(flat)
         setTotalCount(flat.length)
       } else {
@@ -1315,11 +1333,7 @@ export default function Parts() {
         Promise.all(top.map(c => partsApi.search(c, null, category).catch(() => null))),
       ])
 
-      const flattenGrouped = (r) => [
-        ...(r.original?.part    ? [{ ...r.original.part,    suppliers: r.original.suppliers    }] : []),
-        ...(r.oem?.part         ? [{ ...r.oem.part,         suppliers: r.oem.suppliers         }] : []),
-        ...(r.aftermarket?.part ? [{ ...r.aftermarket.part, suppliers: r.aftermarket.suppliers }] : []),
-      ]
+      const flattenGrouped = (r) => flattenGroupedResults(r)
 
       let foundGrouped = null, foundParts = [], foundTotal = 0, usedQuery = top[0], usedMfr = false
 
@@ -1510,11 +1524,7 @@ export default function Parts() {
       let foundParts = [], foundTotal = 0, foundGrouped = null, usedQuery = top[0], usedMfr = false
 
       // Helper: extract flat array from grouped response
-      const flattenGrouped = (r) => [
-        ...(r.original?.part    ? [{ ...r.original.part,    suppliers: r.original.suppliers    }] : []),
-        ...(r.oem?.part         ? [{ ...r.oem.part,         suppliers: r.oem.suppliers         }] : []),
-        ...(r.aftermarket?.part ? [{ ...r.aftermarket.part, suppliers: r.aftermarket.suppliers }] : []),
-      ]
+      const flattenGrouped = (r) => flattenGroupedResults(r)
 
       // Prefer manufacturer-filtered results
       for (let i = 0; i < top.length; i++) {
@@ -1603,11 +1613,7 @@ export default function Parts() {
         const { data: gd } = await partsApi.search(q, null, category, perType, mfr)
         if (gd.original !== undefined || gd.oem !== undefined || gd.aftermarket !== undefined) {
           setSearchResults({ original: gd.original, oem: gd.oem, aftermarket: gd.aftermarket })
-          const flat = [
-            ...(gd.original?.part    ? [{ ...gd.original.part,    suppliers: gd.original.suppliers    }] : []),
-            ...(gd.oem?.part         ? [{ ...gd.oem.part,         suppliers: gd.oem.suppliers         }] : []),
-            ...(gd.aftermarket?.part ? [{ ...gd.aftermarket.part, suppliers: gd.aftermarket.suppliers }] : []),
-          ]
+          const flat = flattenGroupedResults(gd)
           setParts(flat)
           setTotalCount(flat.length)
         } else {
