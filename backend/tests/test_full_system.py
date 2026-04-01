@@ -500,9 +500,34 @@ def test_D_login():
         "email": _EMAIL,
         "password": _PASSWORD,
     }, timeout=15)
-    assert r.status_code == 200, f"Login failed: {r.text}"
+    assert r.status_code in (200, 202), f"Login failed: {r.text}"
     body = r.json()
-    assert "access_token" in body
+
+    if r.status_code == 202:
+        # 2FA is required — retrieve the code directly from the PII DB
+        assert body.get("requires_2fa"), "202 should signal requires_2fa"
+        user_id = body["user_id"]
+        import asyncio as _asyncio, asyncpg as _asyncpg
+        async def _get_code():
+            conn = await _asyncpg.connect(DATABASE_PII_URL.replace("+asyncpg", ""))
+            row = await conn.fetchrow(
+                "SELECT code FROM two_factor_codes WHERE user_id=$1 "
+                "AND verified_at IS NULL AND expires_at > NOW() "
+                "ORDER BY created_at DESC LIMIT 1",
+                _uuid.UUID(user_id),
+            )
+            await conn.close()
+            return row["code"] if row else None
+        code = _asyncio.run(_get_code())
+        assert code, "No unexpired 2FA code found in DB for test user"
+        r2 = httpx.post(f"{BASE_URL}/api/v1/auth/verify-2fa", json={
+            "user_id": user_id,
+            "code": code,
+        }, timeout=10)
+        assert r2.status_code == 200, f"verify-2fa failed: {r2.text}"
+        body = r2.json()
+
+    assert "access_token" in body, f"No access_token in login response: {body}"
     assert body.get("token_type", "").lower() == "bearer"
     _TOKEN = body["access_token"]
 
@@ -610,6 +635,38 @@ def test_E_parts_search_returns_dict():
     r = httpx.get(f"{BASE_URL}/api/v1/parts/search?query=brake", timeout=15)
     assert r.status_code == 200
     assert isinstance(r.json(), dict)
+
+
+def test_E_parts_search_grouped_shape():
+    """Search response must have original/oem/aftermarket buckets."""
+    r = httpx.get(f"{BASE_URL}/api/v1/parts/search?query=brake", timeout=15)
+    assert r.status_code == 200
+    body = r.json()
+    for bucket in ("original", "oem", "aftermarket"):
+        assert bucket in body, f"Missing bucket '{bucket}' in search response"
+        assert "part" in body[bucket], f"Bucket '{bucket}' missing 'part' key"
+        assert "suppliers" in body[bucket], f"Bucket '{bucket}' missing 'suppliers' key"
+    assert "query" in body, "Response missing 'query' echo"
+
+
+def test_E_parts_search_empty_result_shape():
+    """Search with no-match query must still return grouped shape with nulls."""
+    r = httpx.get(f"{BASE_URL}/api/v1/parts/search?query=zzznomatch9999", timeout=15)
+    assert r.status_code == 200
+    body = r.json()
+    assert "original" in body and body["original"]["part"] is None
+    assert "oem" in body and body["oem"]["part"] is None
+    assert "aftermarket" in body and body["aftermarket"]["part"] is None
+
+
+def test_E_parts_search_supplier_country_field():
+    """Suppliers in search results must include supplier_country field."""
+    r = httpx.get(f"{BASE_URL}/api/v1/parts/search?query=brake", timeout=15)
+    body = r.json()
+    for bucket in ("original", "oem", "aftermarket"):
+        for sp in body[bucket].get("suppliers", []):
+            assert "supplier_country" in sp, \
+                f"Supplier in '{bucket}' bucket missing supplier_country field"
 
 
 def test_E_parts_search_empty_query():

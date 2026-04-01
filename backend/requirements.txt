@@ -52,5 +52,22 @@ clamd>=1.0.2
 # Payments (routes/payments.py, routes/orders.py)
 stripe>=9.0.0
 
+# Image processing (identify-from-image endpoint, generate_image_embeddings.py)
+Pillow>=10.0.0
+
+# Numerical computing (image embeddings, vector ops)
+numpy>=1.26.0
+
+# SMS / 2FA
+twilio>=9.0.0
+
+# Async HTTP (catalog_scraper.py, social publisher)
+aiohttp>=3.9.0
+aiohttp-retry>=2.8.0
+
+# Templating (invoice_generator.py)
+Jinja2>=3.1.0
+
 # Misc
 python-dotenv>=1.0.0
+aiofiles>=23.0.0

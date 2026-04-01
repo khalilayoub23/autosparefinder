@@ -774,3 +774,80 @@ def test_agent_map_contains_expected_agent(agent_name):
     assert agent_name in AGENT_MAP, (
         f"'{agent_name}' is missing from AGENT_MAP — agent router will silently fall back"
     )
+
+
+# ===========================================================================
+# SECTION 14 — HF Client (vision / translation helpers)
+# ===========================================================================
+
+def test_hf_client_imports():
+    """hf_client module must import without error."""
+    import importlib
+    mod = importlib.import_module("hf_client")
+    assert mod is not None
+
+
+def test_hf_normalize_query_passthrough_english():
+    """English-only queries must be returned unchanged (or translated)."""
+    import asyncio as _asyncio
+    from hf_client import hf_normalize_query
+    result = _asyncio.run(hf_normalize_query("brake pad"))
+    # Must be non-empty string
+    assert isinstance(result, str) and len(result) > 0
+
+
+def test_hf_is_mostly_hebrew_detects_hebrew():
+    """_is_mostly_hebrew must return True for Hebrew-dominant strings."""
+    from hf_client import _is_mostly_hebrew
+    assert _is_mostly_hebrew("רפידת בלם") is True
+
+
+def test_hf_is_mostly_hebrew_rejects_english():
+    """_is_mostly_hebrew must return False for English strings."""
+    from hf_client import _is_mostly_hebrew
+    assert _is_mostly_hebrew("brake pad") is False
+
+
+def test_hf_vision_model_env():
+    """HF_VISION_MODEL env var must be set and point to a vision-capable model."""
+    import os
+    model = os.getenv("HF_VISION_MODEL", "")
+    assert model, "HF_VISION_MODEL is not set"
+    # Must not be a text-only model (past regression: Kimi was set by mistake)
+    TEXT_ONLY_MODELS = {"moonshotai/kimi-k2-instruct-0905", "meta-llama/llama-3.1-8b-instruct"}
+    assert model.lower() not in TEXT_ONLY_MODELS, \
+        f"HF_VISION_MODEL is set to a text-only model: {model}"
+
+
+# ===========================================================================
+# SECTION 15 — Catalog DB — part_diagram_cache table
+# ===========================================================================
+
+@pytest.mark.asyncio
+async def test_part_diagram_cache_table_exists():
+    """part_diagram_cache must exist in catalog DB (created by migration/manual DDL)."""
+    eng, factory = _make_catalog_session()
+    async with factory() as session:
+        result = await session.execute(
+            text("SELECT 1 FROM pg_tables WHERE schemaname='public' AND tablename='part_diagram_cache'")
+        )
+        assert result.scalar() == 1, "part_diagram_cache table is missing from catalog DB"
+    await eng.dispose()
+
+
+@pytest.mark.asyncio
+async def test_part_diagram_cache_columns():
+    """part_diagram_cache must have all required columns."""
+    eng, factory = _make_catalog_session()
+    async with factory() as session:
+        result = await session.execute(
+            text("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='part_diagram_cache'
+            """)
+        )
+        cols = {r[0] for r in result.fetchall()}
+    await eng.dispose()
+    required = {"id", "image_hash", "part_name_he", "part_name_en", "confidence", "created_at"}
+    missing = required - cols
+    assert not missing, f"part_diagram_cache missing columns: {missing}"

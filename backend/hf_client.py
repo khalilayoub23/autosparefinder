@@ -26,7 +26,7 @@ logger = logging.getLogger("hf_client")
 # ── Env config ────────────────────────────────────────────────────────────────
 HF_TOKEN        = os.getenv("HF_TOKEN", "")
 HF_TEXT_MODEL   = os.getenv("HF_TEXT_MODEL",   "moonshotai/Kimi-K2-Instruct-0905")   # chat/text — handles He/En mix
-HF_VISION_MODEL = os.getenv("HF_VISION_MODEL", "Qwen/Qwen2.5-VL-7B-Instruct")         # multimodal image understanding
+HF_VISION_MODEL = os.getenv("HF_VISION_MODEL", "Qwen/Qwen3-VL-8B-Instruct")           # multimodal image understanding
 HF_EMBED_MODEL  = os.getenv("HF_EMBED_MODEL",  "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")  # local multilingual embeddings (He/En/Ar)
 HF_AUDIO_MODEL  = os.getenv("HF_AUDIO_MODEL",  "openai/whisper-large-v3")              # speech-to-text, mixed-language aware
 HF_CLIP_MODEL   = os.getenv("HF_CLIP_MODEL",   "openai/clip-vit-large-patch14")        # image embeddings
