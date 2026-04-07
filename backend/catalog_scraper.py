@@ -831,6 +831,12 @@ SUPPLIER_TOOL_MAP = {
     "AutoParts Pro IL": scrape_autodoc,      # Israeli → autodoc.co.il
     "Global Parts Hub": scrape_rockauto,     # European → RockAuto (USD)
     "EastAuto Supply":  scrape_aliexpress,   # Chinese → AliExpress
+    "PartsPro USA":     scrape_rockauto,     # USA → RockAuto (USD)
+    "AutoZone Direct":  scrape_ebay_motors,  # USA → eBay Motors
+    "Hyundai Mobis":    scrape_google_shopping,  # Korean OEM → Google Shopping
+    "Kia Parts Direct": scrape_google_shopping,  # Korean OEM → Google Shopping
+    "Bosch Direct":     scrape_autodoc,          # Bosch → autodoc
+    "Toyota Genuine":   scrape_google_shopping,  # Toyota OEM → Google Shopping
 }
 
 # Fallback priority: if primary returns nothing, try these in order
@@ -842,6 +848,12 @@ _EXPRESS_CONFIG: Dict[str, Tuple[bool, float, int, str]] = {
     "AutoParts Pro IL": (True,  35.0, 1,  "14:00"),  # same/next-day Israel
     "Global Parts Hub": (True,  85.0, 6,  "12:00"),  # DHL Express 5-7d
     "EastAuto Supply":  (False, 0.0,  0,  ""),        # no express from China
+    "PartsPro USA":     (True,  95.0, 5,  "13:00"),  # FedEx Express USA→IL
+    "AutoZone Direct":  (True, 105.0, 6,  "12:00"),  # UPS Express USA→IL
+    "Hyundai Mobis":    (True,  90.0, 5,  "13:00"),  # Korean Air Cargo
+    "Kia Parts Direct": (True,  90.0, 5,  "13:00"),  # Korean Air Cargo
+    "Bosch Direct":     (True,  80.0, 5,  "12:00"),  # DHL from Germany
+    "Toyota Genuine":   (True,  99.0, 6,  "12:00"),  # Japan Air Express
 }
 
 
@@ -1441,6 +1453,10 @@ async def run_brand_discovery(
                 job_id = await job_registry_start(db, "run_brand_discovery", ttl_seconds=int(DISCOVERY_INTERVAL_H * 3600))
             except Exception as exc:
                 print(f"[Rex] job_registry_start error: {exc}")
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
 
             # Get supplier id
             supplier = (await db.execute(
@@ -1684,7 +1700,14 @@ async def run_scraper_cycle(*, batch_size: int = SCRAPE_BATCH_SIZE) -> Dict[str,
     async with scraper_session_factory() as db:
         job_id = None
         try:
-            job_id = await job_registry_start(db, "run_scraper_cycle", ttl_seconds=int(SCRAPE_INTERVAL_H * 3600))
+            try:
+                job_id = await job_registry_start(db, "run_scraper_cycle", ttl_seconds=int(SCRAPE_INTERVAL_H * 3600))
+            except Exception as exc:
+                print(f"[Scraper] job_registry_start error: {exc}")
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
 
             # Pull oldest-checked supplier_parts joined to parts_catalog
             rows = (await db.execute(

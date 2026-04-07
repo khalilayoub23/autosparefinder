@@ -1,5 +1,5 @@
 # AutoSpareFinder — Bug & Breaking Points Fix Tracker
-> Last scan: 2026-03-27 | Total issues found: 42 | Fixed: 42 | In Progress: 0 | Open: 0
+> Last scan: 2026-03-28 | Total issues found: 49 | Fixed: 49 | In Progress: 0 | Open: 0
 
 ---
 
@@ -239,3 +239,65 @@ Execution policy:
 ### Required Note
 
 checkout lazy-imports create_order from routes.orders — must move with checkout to routes/cart.py in Step 15
+
+---
+
+## Session — 2026-03-28 (Post-Refactor Audit)
+
+Full audit of all extracted `routes/*.py` modules, `social/` module, background loops, and remaining
+`BACKEND_API_ROUTES.py` code. 7 new issues found and all fixed in this session.
+
+| # | Severity | Status | Description | File(s) | Fix |
+|---|----------|--------|-------------|---------|-----|
+| N-1 | HIGH | ✅ | `_clamd` not imported in `BACKEND_API_ROUTES.py` → `NameError` in `_health_monitor_loop` every ClamAV probe | `backend/BACKEND_API_ROUTES.py` | Added `import clamd as _clamd` next to existing `import httpx as _httpx` |
+| N-2 | HIGH | ✅ | `routes/orders.py` circular import — `from BACKEND_API_ROUTES import publish_notification` inside `cancel_order()` body; wrong module, creates hidden circular dep | `backend/routes/orders.py:300` | Changed to `from BACKEND_AUTH_SECURITY import publish_notification` |
+| N-3 | HIGH | ✅ | Rate limiting disabled for `upload_image` and `upload_audio` — `check_rate_limit()` return value not checked, 429 never raised | `backend/routes/chat.py:141,210` | Assigned result to `allowed`; added `if not allowed: raise HTTPException(429, ...)` |
+| N-4 | MEDIUM | ✅ | `_vip_detection_loop` bypasses `_guarded_task` semaphore — `asyncio.create_task(publish_notification(...))` called directly, unlimited concurrency during bulk VIP promotions | `backend/BACKEND_API_ROUTES.py:473` | Wrapped in `asyncio.create_task(_guarded_task(publish_notification(...)))` |
+| N-5 | MEDIUM | ✅ | `POST /api/v1/support/report` (public endpoint) has no rate limiting → unlimited TechAgent calls possible | `backend/routes/support.py` | Added `redis=Depends(get_redis)` + IP-based rate limit `rate:bug_report:{ip}` 10/min |
+| N-6 | MEDIUM | ✅ | `PUT /api/v1/admin/supplier-orders/{id}/done` sends `tracking_number`, `tracking_url`, `carrier` as query params → appear in server logs / browser history | `backend/routes/admin.py:145` | Moved all three to JSON request body (read via `request.json()`) |
+| N-7 | LOW | ✅ | `CartAddRequest.quantity` has no minimum → `quantity=0` or negative accepted, silently corrupting cart totals | `backend/routes/schemas.py:146` | Changed to `Field(default=1, ge=1, le=100)` |
+
+### Test results after N-1 to N-7
+
+```
+pytest tests/ -q --tb=no --ignore=tests/test_system.py
+23 failed, 207 passed, 32 skipped
+```
+
+---
+
+## Deferred Cleanup Backlog (2026-04-01)
+
+Scope: keep current search/data fix work focused; defer unrelated files below to a dedicated cleanup pass.
+
+### A) Accidental terminal artifact files (safe delete later)
+
+- [ ] Remove [": print(dict(r))"](:%20print(dict(r)))
+- [ ] Remove ["= await c.fetch('SELECT name, name_he FROM car_brands LIMIT 5')"](=%20await%20c.fetch('SELECT%20name,%20name_he%20FROM%20car_brands%20LIMIT%205'))
+- [ ] Remove ["=(await c.execute(q,{\"t\":table})).fetchall()"](=(await%20c.execute(q,%7B%22t%22:table%7D)).fetchall())
+- [ ] Remove ["_db import parse_manufacturer_fields"](_db%20import%20parse_manufacturer_fields)
+- [ ] Remove ["a.text(\"\"\""](a.text(%22%22%22))
+- [ ] Remove ["actionError:\";"](actionError:%22;)
+- [ ] Remove ["aux | grep -E 'import_parts_db.py|python .*import_parts_db.py' | grep -v grep || true"](aux%20%7C%20grep%20-E%20'import_parts_db.py%7Cpython%20.*import_parts_db.py'%20%7C%20grep%20-v%20grep%20%7C%7C%20true)
+- [ ] Remove [e](e)
+- [ ] Remove ["et -e"](et%20-e)
+- [ ] Remove ["leep 6"](leep%206)
+- [ ] Remove [ult.stdout)](ult.stdout))
+- [ ] Remove ["upplier_parts sp JOIN suppliers s ON s.id=sp.supplier_id LIMIT 9"](upplier_parts%20sp%20JOIN%20suppliers%20s%20ON%20s.id=sp.supplier_id%20LIMIT%209)
+- [ ] Remove [yncio](yncio)
+- [ ] Remove ["yncio, asyncpg"](yncio,%20asyncpg)
+
+### B) Unrelated feature/UI changes to review later (do not edit in current pass)
+
+- [ ] Review auth + social login additions in [frontend/src/components/SocialLoginButtons.jsx](frontend/src/components/SocialLoginButtons.jsx), [frontend/src/stores/authStore.js](frontend/src/stores/authStore.js), [backend/routes/auth.py](backend/routes/auth.py)
+- [ ] Review cart/admin/payment UX/logic deltas in [frontend/src/pages/Cart.jsx](frontend/src/pages/Cart.jsx), [frontend/src/pages/Admin.jsx](frontend/src/pages/Admin.jsx), [backend/routes/payments.py](backend/routes/payments.py)
+- [ ] Review 2FA/branding/env changes in [backend/BACKEND_AUTH_SECURITY.py](backend/BACKEND_AUTH_SECURITY.py), [backend/.env.example](backend/.env.example), [frontend/.env.example](frontend/.env.example)
+- [ ] Review route/model migration changes in [backend/BACKEND_DATABASE_MODELS.py](backend/BACKEND_DATABASE_MODELS.py), [backend/alembic_pii/versions/0027_add_oauth_columns.py](backend/alembic_pii/versions/0027_add_oauth_columns.py)
+
+### C) Search-fix validation follow-up (current track)
+
+- [ ] Verify grouped search tabs/filters in [frontend/src/pages/Parts.jsx](frontend/src/pages/Parts.jsx)
+- [ ] Confirm API query params alignment in [frontend/src/api/parts.js](frontend/src/api/parts.js) and [backend/routes/parts.py](backend/routes/parts.py)
+
+All 23 failures are pre-existing (integration tests requiring a live DB + SQL injection tests).
+Zero regressions introduced.

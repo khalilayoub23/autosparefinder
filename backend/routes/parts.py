@@ -20,12 +20,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFil
 from typing import Optional, List, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, text, and_, or_
-import asyncio
 import httpx
 import os
 
 from BACKEND_DATABASE_MODELS import (
-    get_db, get_pii_db, PartsCatalog, Vehicle, SupplierPart, Supplier,
+    get_db, PartsCatalog, Vehicle, SupplierPart, Supplier,
     CarBrand, User,
 )
 from BACKEND_AUTH_SECURITY import (
@@ -43,12 +42,14 @@ router = APIRouter()
 
 @router.get("/api/v1/parts/search")
 async def search_parts(
-    query: str = Query(default="", max_length=200),
+    query: str = Query(default="", alias="q", max_length=200),
     vehicle_id: Optional[str] = None,
     category: Optional[str] = None,
     per_type: Optional[int] = None,        # override system_settings.search_results_per_type
     sort_by: str = "price_ils",            # cheapest first by default
     vehicle_manufacturer: Optional[str] = None,
+    vehicle_model: Optional[str] = None,
+    vehicle_year: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
     request: Request = None,
     redis=Depends(get_redis),
@@ -75,6 +76,14 @@ async def search_parts(
         allowed = await check_rate_limit(redis, f'rate:search:{ip}', 30, 60)
         if not allowed:
             raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
+
+    # ── Normalize mixed-language query (He→En for catalog matching) ──────────
+    if query:
+        try:
+            from hf_client import hf_normalize_query
+            query = await hf_normalize_query(query)
+        except Exception:
+            pass  # degrade silently — use raw query
     # ── Resolve results_per_type ─────────────────────────────────────────────
     if per_type is None:
         try:
@@ -159,7 +168,7 @@ async def search_parts(
     # if it's unavailable fall back to the original ILIKE clause.
     if query and meili_ids is None:
         conditions.append(
-            "(pc.name ILIKE :q OR pc.sku ILIKE :q OR pc.manufacturer ILIKE :q "
+            "(pc.name ILIKE :q OR pc.name_he ILIKE :q OR pc.sku ILIKE :q OR pc.manufacturer ILIKE :q "
             "OR pc.category ILIKE :q OR pc.oem_number ILIKE :q)"
         )
         params["q"]       = f"%{query}%"
@@ -167,7 +176,8 @@ async def search_parts(
         params["q_start"] = f"{query}%"
 
     if category:
-        conditions.append("pc.category ILIKE :cat")
+        # category may be a part_type value (from supplier_parts) OR a legacy pc.category brand name
+        conditions.append("(pc.category ILIKE :cat OR EXISTS (SELECT 1 FROM supplier_parts sp2 WHERE sp2.part_id = pc.id AND sp2.part_type ILIKE :cat))")
         params["cat"] = f"%{category}%"
 
     if vehicle_manufacturer:
@@ -213,22 +223,54 @@ async def search_parts(
         params["vid"] = f"%{vehicle_id}%"
         params["vid_exact"] = vehicle_id
 
+    # Vehicle model filter – searches the compatible_vehicles JSON array
+    # Matches both new format (elem->>'model') and legacy (elem->>'model_year')
+    if vehicle_model:
+        conditions.append(
+            "(pc.compatible_vehicles IS NOT NULL"
+            " AND jsonb_typeof(pc.compatible_vehicles) = 'array'"
+            " AND EXISTS ("
+            "     SELECT 1 FROM jsonb_array_elements(pc.compatible_vehicles) cv_el"
+            "     WHERE COALESCE(cv_el->>'model', cv_el->>'model_year') ILIKE :cv_model"
+            " ))"
+        )
+        params["cv_model"] = f"%{vehicle_model}%"
+
+    # Vehicle year filter – checks year range (new format) or model_year string (legacy)
+    if vehicle_year:
+        conditions.append(
+            "(pc.compatible_vehicles IS NOT NULL"
+            " AND jsonb_typeof(pc.compatible_vehicles) = 'array'"
+            " AND EXISTS ("
+            "     SELECT 1 FROM jsonb_array_elements(pc.compatible_vehicles) cv_yr"
+            "     WHERE cv_yr->>'model_year' ILIKE :cv_year_str"
+            "         OR ("
+            "             cv_yr->>'year_from' ~ '^[0-9]+$'"
+            "             AND cv_yr->>'year_to' ~ '^[0-9]+$'"
+            "             AND (cv_yr->>'year_from')::int <= :cv_year_int"
+            "             AND (cv_yr->>'year_to')::int >= :cv_year_int"
+            "         )"
+            " ))"
+        )
+        params["cv_year_str"] = f"%{vehicle_year}%"
+        params["cv_year_int"] = vehicle_year
+
     where_sql = " AND ".join(conditions)
 
     # ── ILIKE relevance score (only used when Meilisearch is unavailable) ─────
     if query and meili_ids is None:
         relevance_sql = """
                 CASE
-                    WHEN pc.name ILIKE :q_exact THEN 4
-                    WHEN pc.name ILIKE :q_start THEN 3
-                    WHEN LENGTH(pc.name) - LENGTH(:q_exact) <= 5 THEN 2
+                    WHEN pc.name ILIKE :q_exact OR pc.name_he ILIKE :q_exact THEN 4
+                    WHEN pc.name ILIKE :q_start OR pc.name_he ILIKE :q_start THEN 3
+                    WHEN LENGTH(COALESCE(pc.name,'')) - LENGTH(:q_exact) <= 5 THEN 2
                     ELSE 1
                 END DESC,"""
         score_col = """,
                     CASE
-                        WHEN pc.name ILIKE :q_exact THEN 4
-                        WHEN pc.name ILIKE :q_start THEN 3
-                        WHEN LENGTH(pc.name) - LENGTH(:q_exact) <= 5 THEN 2
+                        WHEN pc.name ILIKE :q_exact OR pc.name_he ILIKE :q_exact THEN 4
+                        WHEN pc.name ILIKE :q_start OR pc.name_he ILIKE :q_start THEN 3
+                        WHEN LENGTH(COALESCE(pc.name,'')) - LENGTH(:q_exact) <= 5 THEN 2
                         ELSE 1
                     END AS match_score"""
     else:
@@ -245,7 +287,7 @@ async def search_parts(
         if meili_ids:
             # ── Meilisearch path: rank-preserving unnest JOIN ─────────────────
             # UUIDs come from our own index — hex+dash only, no SQL injection risk.
-            uuid_array = "{" + ",".join(meili_ids) + "}"
+            # Pass as a Python list so asyncpg maps it to a PostgreSQL text[] array.
             part_row = (await db.execute(
                 text(f"""
                     SELECT
@@ -258,7 +300,7 @@ async def search_parts(
                     FROM parts_catalog pc
                     JOIN (
                         SELECT t.id::uuid AS ranked_id, t.pos
-                        FROM unnest(:uuid_arr::text[]) WITH ORDINALITY AS t(id, pos)
+                        FROM unnest(CAST(:uuid_arr AS text[])) WITH ORDINALITY AS t(id, pos)
                     ) ranked ON ranked.ranked_id = pc.id
                     WHERE {where_sql} AND pc.part_type = ANY(:pt)
                     ORDER BY ranked.pos ASC,
@@ -268,7 +310,7 @@ async def search_parts(
                     ) DESC
                     LIMIT 1
                 """),
-                {**type_params, "uuid_arr": uuid_array},
+                {**type_params, "uuid_arr": meili_ids},
             )).fetchone()
         else:
             # ── ILIKE fallback path ───────────────────────────────────────────
@@ -296,10 +338,7 @@ async def search_parts(
                 type_params,
             )).fetchone()
 
-            # Reject loose ILIKE-only matches (score == 1)
-            if query and score_col and part_row is not None:
-                if part_row[-1] == 1:
-                    return {"part": None, "suppliers": []}
+            # Allow all ILIKE matches — score just affects ordering, not rejection
 
         if not part_row:
             return {"part": None, "suppliers": []}
@@ -363,7 +402,7 @@ async def search_parts(
             suppliers_list.append({
                 "supplier_part_id":      str(sp[0]),
                 "supplier_name":         _mask_supplier(sp[1]),
-                "supplier_country":      "",
+                "supplier_country":      sp[2] or "",
                 "supplier_sku":          sp[3],
                 "price_usd":             float(sp[4]) if sp[4] else None,
                 "price_ils":             round(price_ils, 2) if price_ils else None,
@@ -382,12 +421,11 @@ async def search_parts(
 
         return {"part": part_dict, "suppliers": suppliers_list}
 
-    # ── Run all 3 type queries (concurrently) ────────────────────────────────
-    original_res, oem_res, aftermarket_res = await asyncio.gather(
-        _fetch_type(["Original"]),                         # מקורי / OEM original
-        _fetch_type(["OEM"]),                              # OEM equivalent
-        _fetch_type(["Aftermarket", "Refurbished"]),       # חליפי / aftermarket
-    )
+    # ── Run all 3 type queries sequentially (shared AsyncSession is not
+    # ── safe for concurrent use — concurrent gather causes InvalidRequestError)
+    original_res    = await _fetch_type(["Original"])
+    oem_res         = await _fetch_type(["OEM"])
+    aftermarket_res = await _fetch_type(["Aftermarket", "Refurbished"])
 
     return {
         "original":         original_res,
@@ -404,16 +442,21 @@ async def search_parts(
 
 @router.get("/api/v1/parts/categories")
 async def get_categories(db: AsyncSession = Depends(get_db)):
-    from sqlalchemy import func
+    # Return distinct category values from parts_catalog with part counts
     result = await db.execute(
-        select(PartsCatalog.category, func.count(PartsCatalog.id).label("cnt"))
-        .where(PartsCatalog.is_active == True)
-        .group_by(PartsCatalog.category)
-        .order_by(func.count(PartsCatalog.id).desc())
+        text("""
+            SELECT category, COUNT(*) as cnt
+            FROM parts_catalog
+            WHERE is_active = TRUE
+              AND category IS NOT NULL
+              AND category != ''
+            GROUP BY category
+            ORDER BY cnt DESC
+        """)
     )
     rows = result.fetchall()
     categories = [r[0] for r in rows if r[0]]
-    counts = {r[0]: r[1] for r in rows if r[0]}
+    counts = {r[0]: int(r[1]) for r in rows if r[0]}
     return {"categories": categories, "counts": counts, "total": len(categories)}
 
 
@@ -452,13 +495,13 @@ async def autocomplete_parts(q: str = "", limit: int = 8, db: AsyncSession = Dep
 # ==============================================================================
 
 @router.post("/api/v1/parts/search-by-vehicle")
-async def search_parts_by_vehicle(vehicle_id: str, category: Optional[str] = None, db: AsyncSession = Depends(get_db), pii_db: AsyncSession = Depends(get_pii_db), request: Request = None, redis=Depends(get_redis)):
+async def search_parts_by_vehicle(vehicle_id: str, category: Optional[str] = None, db: AsyncSession = Depends(get_db), request: Request = None, redis=Depends(get_redis)):
     if redis and request:
         ip = request.client.host if request.client else "unknown"
         allowed = await check_rate_limit(redis, f'rate:search_by_vehicle:{ip}', 30, 60)
         if not allowed:
             raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
-    result = await pii_db.execute(select(Vehicle).where(Vehicle.id == vehicle_id))
+    result = await db.execute(select(Vehicle).where(Vehicle.id == vehicle_id))
     vehicle = result.scalar_one_or_none()
     if not vehicle:
         raise HTTPException(status_code=404, detail="Vehicle not found")
@@ -483,43 +526,53 @@ async def get_manufacturers(db: AsyncSession = Depends(get_db)):
 
 @router.get("/api/v1/parts/models")
 async def get_models(manufacturer: Optional[str] = None, db: AsyncSession = Depends(get_db)):
-    """Return distinct car models extracted from compatible_vehicles JSON, optionally filtered by manufacturer."""
+    """Return distinct car models from compatible_vehicles JSON, optionally filtered by manufacturer.
+
+    Handles two data shapes:
+      {"model": "Elantra", "year_from": ..., "year_to": ...}  — new structured format
+      {"model_year": "SILVERADO 2016"}                         — legacy combined format
+    Uses COALESCE so either key works.
+    """
     import re as _re
-    sql = text("""
-        SELECT DISTINCT elem->>'model_year' AS model_year
-        FROM parts_catalog,
-             jsonb_array_elements(compatible_vehicles) AS elem
-        WHERE compatible_vehicles IS NOT NULL
-          AND compatible_vehicles::text LIKE '%model_year%'
-          AND (:mfr_like IS NULL OR compatible_vehicles::text ILIKE :mfr_like)
-          AND elem->>'model_year' IS NOT NULL
-        ORDER BY model_year
-    """)
-    result = await db.execute(sql, {"mfr_like": f"%{manufacturer}%" if manufacturer else None})
+    if manufacturer:
+        sql = text("""
+            SELECT DISTINCT COALESCE(elem->>'model', elem->>'model_year') AS model
+            FROM parts_catalog,
+                 jsonb_array_elements(compatible_vehicles) AS elem
+            WHERE compatible_vehicles IS NOT NULL
+              AND jsonb_typeof(compatible_vehicles) = 'array'
+              AND manufacturer ILIKE :mfr
+              AND COALESCE(elem->>'model', elem->>'model_year') IS NOT NULL
+              AND COALESCE(elem->>'model', elem->>'model_year') <> ''
+            ORDER BY model
+        """)
+        result = await db.execute(sql, {"mfr": manufacturer})
+    else:
+        sql = text("""
+            SELECT DISTINCT COALESCE(elem->>'model', elem->>'model_year') AS model
+            FROM parts_catalog,
+                 jsonb_array_elements(compatible_vehicles) AS elem
+            WHERE compatible_vehicles IS NOT NULL
+              AND jsonb_typeof(compatible_vehicles) = 'array'
+              AND COALESCE(elem->>'model', elem->>'model_year') IS NOT NULL
+              AND COALESCE(elem->>'model', elem->>'model_year') <> ''
+            ORDER BY model
+        """)
+        result = await db.execute(sql)
     raw = [row[0] for row in result.fetchall() if row[0]]
-    # Two-pass year stripping so year is always separated into the year dropdown:
-    # Pass 1 — strip 4-digit era year (19xx/20xx) AND everything that follows,
-    #   using \s* so it catches both "CAMARO 2021US" and "CAMARO2019 US":
-    #   "SONIC 2014 1.4TURBO" → "SONIC"
-    #   "SAVANA 2017 NEW"     → "SAVANA"
-    #   "CAMARO 2021US"       → "CAMARO"
-    #   "CAMARO2019 US"       → "CAMARO"
+    # Pass 1: strip 4-digit era year (19xx/20xx) and everything following it
     _era_year_re = _re.compile(r'\s*(?:19|20)\d{2}(?=[^\d]|$).*$')
-    # Pass 2 — strip remaining trailing 2-digit years or year-ranges:
-    #   "CAVALIER 99" → "CAVALIER"
-    #   "CAVALIER 96-67" → "CAVALIER"
+    # Pass 2: strip trailing 2-digit years or year-ranges ("CAVALIER 99" → "CAVALIER")
     _trail_num_re = _re.compile(r'\s+\d[\d\-/\.]*\s*$')
-    # Deduplicate case-insensitively: keep the shortest/cleanest variant per normalised key
-    models_map: dict[str, str] = {}  # normalised_key → best display value
+    # Deduplicate case-insensitively; keep the shortest/cleanest variant
+    models_map: dict[str, str] = {}
     for my in raw:
-        model = _era_year_re.sub('', my).strip()   # pass 1
-        model = _trail_num_re.sub('', model).strip()  # pass 2
-        # clean extra spaces
+        model = _era_year_re.sub('', my).strip()
+        model = _trail_num_re.sub('', model).strip()
         model = _re.sub(r'\s{2,}', ' ', model).strip()
         if not model or model.replace('-', '').replace(' ', '').isdigit():
             continue
         key = model.upper()
-        # Among duplicates keep the shorter, cleaner form
         existing = models_map.get(key)
         if existing is None or len(model) < len(existing):
             models_map[key] = model
@@ -702,7 +755,7 @@ async def compare_parts(part_id: str, db: AsyncSession = Depends(get_db), reques
         comparisons.append({
             "supplier_part_id": str(sp.id),
             "supplier_name": _mask_supplier(supplier.name),
-            "supplier_country": "",
+            "supplier_country": supplier.country or "",
             "availability": "in_stock" if sp.is_available else "on_order",
             "subtotal": pricing["price_no_vat"],
             "vat": pricing["vat"],
@@ -795,6 +848,7 @@ async def identify_part_from_image(
             await db.commit()
     except Exception as e:
         print(f"[Vision] Cache lookup error: {e}")
+        await db.rollback()  # reset aborted transaction so subsequent queries work
 
     # ── 2 & 3. GPT call if no cache hit ─────────────────────────────────────
     if not cache_hit:

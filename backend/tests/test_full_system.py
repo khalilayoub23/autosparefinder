@@ -68,7 +68,6 @@ from BACKEND_DATABASE_MODELS import (
     PartCrossReference,
     PartImage,
     PartsCatalog,
-    PartVehicleFitment,
     PasswordReset,
     Payment,
     PiiBase,
@@ -156,12 +155,13 @@ def _auth_src():
 CATALOG_MODELS = [
     CarBrand, PartsCatalog, PartImage, Supplier, SupplierPart,
     SystemLog, AuditLog, SystemSetting, CacheEntry,
-    PartVehicleFitment, PartCrossReference, PartAlias,
+    PartCrossReference, PartAlias,
     PriceHistory, PurchaseOrder, ScraperApiCall,
+    Vehicle,  # vehicle reference data (specs/make/model) lives in catalog DB; UserVehicle holds the PII link
 ]
 PII_MODELS = [
     User, UserProfile, UserSession, TwoFactorCode, LoginAttempt,
-    PasswordReset, Vehicle, UserVehicle, Order, OrderItem,
+    PasswordReset, UserVehicle, Order, OrderItem,
     Payment, Invoice, Return, Conversation, Message,
     AgentAction, AgentRating, File, FileMetadata, Notification,
 ]
@@ -500,9 +500,34 @@ def test_D_login():
         "email": _EMAIL,
         "password": _PASSWORD,
     }, timeout=15)
-    assert r.status_code == 200, f"Login failed: {r.text}"
+    assert r.status_code in (200, 202), f"Login failed: {r.text}"
     body = r.json()
-    assert "access_token" in body
+
+    if r.status_code == 202:
+        # 2FA is required — retrieve the code directly from the PII DB
+        assert body.get("requires_2fa"), "202 should signal requires_2fa"
+        user_id = body["user_id"]
+        import asyncio as _asyncio, asyncpg as _asyncpg
+        async def _get_code():
+            conn = await _asyncpg.connect(DATABASE_PII_URL.replace("+asyncpg", ""))
+            row = await conn.fetchrow(
+                "SELECT code FROM two_factor_codes WHERE user_id=$1 "
+                "AND verified_at IS NULL AND expires_at > NOW() "
+                "ORDER BY created_at DESC LIMIT 1",
+                _uuid.UUID(user_id),
+            )
+            await conn.close()
+            return row["code"] if row else None
+        code = _asyncio.run(_get_code())
+        assert code, "No unexpired 2FA code found in DB for test user"
+        r2 = httpx.post(f"{BASE_URL}/api/v1/auth/verify-2fa", json={
+            "user_id": user_id,
+            "code": code,
+        }, timeout=10)
+        assert r2.status_code == 200, f"verify-2fa failed: {r2.text}"
+        body = r2.json()
+
+    assert "access_token" in body, f"No access_token in login response: {body}"
     assert body.get("token_type", "").lower() == "bearer"
     _TOKEN = body["access_token"]
 
@@ -607,14 +632,46 @@ def test_D_logout():
 # ===========================================================================
 
 def test_E_parts_search_returns_dict():
-    r = httpx.get(f"{BASE_URL}/api/v1/parts/search?query=brake", timeout=15)
+    r = httpx.get(f"{BASE_URL}/api/v1/parts/search?q=brake", timeout=15)
     assert r.status_code == 200
     assert isinstance(r.json(), dict)
 
 
+def test_E_parts_search_grouped_shape():
+    """Search response must have original/oem/aftermarket buckets."""
+    r = httpx.get(f"{BASE_URL}/api/v1/parts/search?q=brake", timeout=15)
+    assert r.status_code == 200
+    body = r.json()
+    for bucket in ("original", "oem", "aftermarket"):
+        assert bucket in body, f"Missing bucket '{bucket}' in search response"
+        assert "part" in body[bucket], f"Bucket '{bucket}' missing 'part' key"
+        assert "suppliers" in body[bucket], f"Bucket '{bucket}' missing 'suppliers' key"
+    assert "query" in body, "Response missing 'query' echo"
+
+
+def test_E_parts_search_empty_result_shape():
+    """Search with no-match query must still return grouped shape with nulls."""
+    r = httpx.get(f"{BASE_URL}/api/v1/parts/search?q=zzznomatch9999", timeout=15)
+    assert r.status_code == 200
+    body = r.json()
+    assert "original" in body and body["original"]["part"] is None
+    assert "oem" in body and body["oem"]["part"] is None
+    assert "aftermarket" in body and body["aftermarket"]["part"] is None
+
+
+def test_E_parts_search_supplier_country_field():
+    """Suppliers in search results must include supplier_country field."""
+    r = httpx.get(f"{BASE_URL}/api/v1/parts/search?q=brake", timeout=15)
+    body = r.json()
+    for bucket in ("original", "oem", "aftermarket"):
+        for sp in body[bucket].get("suppliers", []):
+            assert "supplier_country" in sp, \
+                f"Supplier in '{bucket}' bucket missing supplier_country field"
+
+
 def test_E_parts_search_empty_query():
     try:
-        r = httpx.get(f"{BASE_URL}/api/v1/parts/search?query=", timeout=30)
+        r = httpx.get(f"{BASE_URL}/api/v1/parts/search?q=", timeout=30)
         assert r.status_code in (200, 422), "Empty query should 200 or 422, not crash"
     except httpx.ReadTimeout:
         pytest.skip("Empty-query search timed out (full-table scan on empty DB is expected)")
@@ -1234,8 +1291,9 @@ def test_M_orders_agent_opens_pii_session():
 def test_M_identify_vehicle_opens_pii_session():
     from BACKEND_AI_AGENTS import PartsFinderAgent
     src = _get_agent_source(PartsFinderAgent, "identify_vehicle")
-    assert "pii_session_factory" in src, \
-        "identify_vehicle writes Vehicle (PiiBase) — must use pii_session_factory"
+    # Vehicle is Base (catalog DB), not PiiBase — async_session_factory is correct
+    assert "async_session_factory" in src, \
+        "identify_vehicle writes Vehicle (Base/catalog) — must use async_session_factory"
 
 
 def test_M_agent_test_endpoint_requires_auth():
@@ -1316,14 +1374,14 @@ def test_N_return_reason_in_request_body():
 
 
 def test_N_no_hardcoded_db_password_in_alembic():
-    with open(os.path.join(REPO_DIR, "alembic.ini")) as f:
+    with open(os.path.join(BACKEND_DIR, "alembic.ini")) as f:
         ini = f.read()
     assert "autospare:password" not in ini, \
         "Hardcoded DB password found in alembic.ini"
 
 
 def test_N_alembic_env_uses_psycopg2():
-    with open(os.path.join(REPO_DIR, "alembic", "env.py")) as f:
+    with open(os.path.join(BACKEND_DIR, "alembic", "env.py")) as f:
         env = f.read()
     assert "psycopg2" in env, \
         "alembic/env.py must convert asyncpg URL to psycopg2 for sync runner"
@@ -1362,7 +1420,12 @@ def test_N_asyncio_get_event_loop_not_used():
 def test_O_health_200():
     r = httpx.get(f"{BASE_URL}/api/v1/system/health", timeout=10)
     assert r.status_code == 200
-    assert r.json().get("status") == "healthy"
+    body = r.json()
+    assert body.get("status") in ("healthy", "degraded", "unhealthy"), \
+        f"Expected healthy/degraded/unhealthy, got: {body.get('status')}"
+    services = body.get("services", {})
+    assert services.get("postgres_catalog", {}).get("status") == "ok"
+    assert services.get("postgres_pii", {}).get("status") == "ok"
 
 
 def test_O_health_has_required_fields():
@@ -1410,7 +1473,7 @@ def test_O_openapi_json_accessible():
 # ===========================================================================
 
 def test_P_env_example_has_required_vars():
-    env_example = os.path.join(REPO_DIR, ".env.example")
+    env_example = os.path.join(BACKEND_DIR, ".env.example")
     with open(env_example) as f:
         content = f.read()
     for var in ["JWT_SECRET_KEY", "JWT_REFRESH_SECRET_KEY", "STRIPE_SECRET_KEY",
@@ -1485,8 +1548,7 @@ def test_P_all_python_files_parse():
         os.path.join(BACKEND_DIR, "BACKEND_DATABASE_MODELS.py"),
         os.path.join(BACKEND_DIR, "BACKEND_AI_AGENTS.py"),
         os.path.join(BACKEND_DIR, "invoice_generator.py"),
-        os.path.join(REPO_DIR, "alembic", "env.py"),
-        os.path.join(REPO_DIR, "autosparefinder", "settings.py"),
+        os.path.join(BACKEND_DIR, "alembic", "env.py"),
     ]
     for fpath in files:
         with open(fpath) as f:

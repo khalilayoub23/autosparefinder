@@ -1,6 +1,73 @@
 # Backend Requirements
+# Audited 2026-03-28 — only packages actually imported by API runtime or CLI tools in this repo
 
-flask==2.0.0
-pytest==8.0.0
-pytest-asyncio==0.23.5
-pytest-cov==4.1.0
+# Web framework
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+starlette>=0.37.0
+pydantic>=2.0.0
+email-validator>=2.1.0
+
+# Database
+sqlalchemy[asyncio]>=2.0.0
+asyncpg>=0.29.0
+psycopg2-binary>=2.9.9
+alembic>=1.13.0
+pgvector>=0.3.0          # Python client — also requires OS pkg: postgresql-16-pgvector
+
+# Auth / security
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+python-multipart>=0.0.9
+cryptography>=42.0.0
+
+# Redis
+redis[hiredis]>=5.0.0
+
+# HTTP client
+httpx>=0.27.0
+
+# Local AI embedding model (sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2)
+# Used by hf_embed() in hf_client.py — free local inference, no API key required
+sentence-transformers>=2.7.0
+
+# Search (SDK used by meili_sync.py; API uses httpx directly)
+meilisearch-python-sdk>=2.0.0
+
+# PDF / invoices
+reportlab>=4.1.0
+
+# Excel import (routes/admin.py parts-import endpoint)
+openpyxl>=3.1.0
+
+# Web scraping (catalog_scraper.py — started at API startup)
+beautifulsoup4>=4.12.0
+
+# SSE (routes/notifications.py)
+sse-starlette>=2.0.0
+
+# AV scanning (routes/utils.py, routes/system.py)
+clamd>=1.0.2
+
+# Payments (routes/payments.py, routes/orders.py)
+stripe>=9.0.0
+
+# Image processing (identify-from-image endpoint, generate_image_embeddings.py)
+Pillow>=10.0.0
+
+# Numerical computing (image embeddings, vector ops)
+numpy>=1.26.0
+
+# SMS / 2FA
+twilio>=9.0.0
+
+# Async HTTP (catalog_scraper.py, social publisher)
+aiohttp>=3.9.0
+aiohttp-retry>=2.8.0
+
+# Templating (invoice_generator.py)
+Jinja2>=3.1.0
+
+# Misc
+python-dotenv>=1.0.0
+aiofiles>=23.0.0

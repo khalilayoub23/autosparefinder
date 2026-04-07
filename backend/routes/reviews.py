@@ -129,3 +129,28 @@ async def create_part_review(
         "isVerifiedPurchase": review.is_verified_purchase,
         "createdAt":          review.created_at.isoformat(),
     }
+
+
+@router.delete("/api/v1/customers/reviews/{review_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_review(
+    review_id: str,
+    current_user: User = Depends(get_current_verified_user),
+    db: AsyncSession = Depends(get_pii_db),
+):
+    from BACKEND_DATABASE_MODELS import PartReview
+
+    try:
+        review_uuid = uuid.UUID(review_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid review_id")
+
+    res = await db.execute(
+        select(PartReview).where(PartReview.id == review_uuid)
+    )
+    review = res.scalar_one_or_none()
+    if not review:
+        raise HTTPException(status_code=404, detail="Review not found")
+    if str(review.user_id) != str(current_user.id) and not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Not your review")
+    await db.delete(review)
+    await db.commit()

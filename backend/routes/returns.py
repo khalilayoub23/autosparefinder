@@ -172,6 +172,9 @@ async def get_returns(current_user: User = Depends(get_current_user), db: AsyncS
             "refund_amount": float(r.refund_amount) if r.refund_amount else None,
             "requested_at": r.requested_at,
             "approved_at": r.approved_at,
+            "item_shipped_at": r.item_shipped_at,
+            "supplier_confirmed_at": r.supplier_confirmed_at,
+            "refund_issued_at": r.refund_issued_at,
         }
         for r in returns
     ]}
@@ -183,7 +186,24 @@ async def get_return(return_id: str, current_user: User = Depends(get_current_us
     ret = result.scalar_one_or_none()
     if not ret:
         raise HTTPException(status_code=404, detail="Return not found")
-    return {"id": str(ret.id), "return_number": ret.return_number, "status": ret.status, "reason": ret.reason, "description": ret.description, "original_amount": float(ret.original_amount), "refund_amount": float(ret.refund_amount) if ret.refund_amount else None, "requested_at": ret.requested_at, "approved_at": ret.approved_at}
+    return {
+        "id": str(ret.id),
+        "return_number": ret.return_number,
+        "status": ret.status,
+        "reason": ret.reason,
+        "description": ret.description,
+        "original_amount": float(ret.original_amount),
+        "refund_amount": float(ret.refund_amount) if ret.refund_amount else None,
+        "refund_percentage": float(ret.refund_percentage) if ret.refund_percentage else None,
+        "handling_fee": float(ret.handling_fee) if ret.handling_fee else None,
+        "tracking_number": ret.tracking_number,
+        "requested_at": ret.requested_at,
+        "approved_at": ret.approved_at,
+        "item_shipped_at": ret.item_shipped_at,
+        "supplier_confirmed_at": ret.supplier_confirmed_at,
+        "refund_issued_at": ret.refund_issued_at,
+        "supplier_notes": ret.supplier_notes,
+    }
 
 
 @router.post("/api/v1/returns/{return_id}/track")
@@ -201,9 +221,9 @@ async def cancel_return(return_id: str, current_user: User = Depends(get_current
     ret = result.scalar_one_or_none()
     if not ret:
         raise HTTPException(status_code=404, detail="Return not found")
-    if ret.status not in ["pending", "approved"]:
+    if ret.status not in ["pending", "pending_review", "approved"]:
         raise HTTPException(status_code=400, detail="Cannot cancel return in current status")
-    await db.delete(ret)
+    ret.status = "cancelled"
     await db.commit()
     return {"message": "Return cancelled"}
 
@@ -222,7 +242,7 @@ async def get_return_invoice(
     ret = ret_res.scalar_one_or_none()
     if not ret:
         raise HTTPException(status_code=404, detail="Return not found")
-    if ret.status not in ("approved", "completed"):
+    if ret.status not in ("approved", "item_in_transit", "supplier_confirmed", "refund_issued", "completed"):
         raise HTTPException(status_code=402, detail="הודעת הזיכוי זמינה רק לאחר אישור ההחזרה")
 
     # Fetch original order items to list on the credit note
@@ -254,9 +274,11 @@ async def get_return_invoice(
 
 @router.post("/api/v1/returns/{return_id}/approve")
 async def approve_return(return_id: str, refund_percentage: int = None, current_user: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_pii_db)):
+    result = await db.execute(select(Return).where(Return.id == return_id))
+    ret = result.scalar_one_or_none()
     if not ret:
         raise HTTPException(status_code=404, detail="Return not found")
-    if ret.status not in ["pending"]:
+    if ret.status not in ["pending", "pending_review"]:
         raise HTTPException(status_code=400, detail=f"Cannot approve return in status: {ret.status}")
 
     # Apply policy-based refund percentage if not explicitly overridden (policy §3)
@@ -297,7 +319,7 @@ async def approve_return(return_id: str, refund_percentage: int = None, current_
     _ret_approve_title = f"✅ בקשת ההחזרה אושרה — {ret.return_number}"
     _ret_approve_msg = (
         f"בקשת ההחזרה שלך {ret.return_number} אושרה (החזר {refund_percentage}%).\n"
-        f"זיכוי של ₪{float(ret.refund_amount):.2f} יועבר לכרטיס האשראי שלך תוך 7-14 ימי עסקים."
+        f"הזיכוי של ₪{float(ret.refund_amount):.2f} יועבר לכרטיס האשראי שלך לאחר שהספק יאשר קבלת החלק בחזרה."
         + shipping_note
     )
     db.add(Notification(
@@ -325,7 +347,7 @@ async def reject_return(
     ret = result.scalar_one_or_none()
     if not ret:
         raise HTTPException(status_code=404, detail="Return not found")
-    if ret.status not in ["pending"]:
+    if ret.status not in ["pending", "pending_review", "approved"]:
         raise HTTPException(status_code=400, detail=f"Cannot reject return in status: {ret.status}")
     ret.status = "rejected"
     ret.rejection_reason = reason
@@ -349,6 +371,142 @@ async def reject_return(
 
     await db.commit()
     return {"message": "Return rejected", "return_number": ret.return_number}
+
+
+@router.post("/api/v1/returns/{return_id}/ship", tags=["Returns"])
+async def customer_ship_return(
+    return_id: str,
+    tracking_number: Optional[str] = None,
+    tracking_url: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_pii_db),
+):
+    """Customer confirms they have shipped the item back to the supplier."""
+    result = await db.execute(
+        select(Return).where(and_(Return.id == return_id, Return.user_id == current_user.id))
+    )
+    ret = result.scalar_one_or_none()
+    if not ret:
+        raise HTTPException(status_code=404, detail="Return not found")
+    if ret.status != "approved":
+        raise HTTPException(status_code=400, detail="Return must be in 'approved' status before marking as shipped")
+
+    ret.status = "item_in_transit"
+    ret.item_shipped_at = datetime.utcnow()
+    if tracking_number:
+        ret.tracking_number = tracking_number
+    if tracking_url:
+        ret.tracking_url = tracking_url
+
+    _title = f"📬 פריט נשלח בחזרה — {ret.return_number}"
+    _msg = (
+        f"אישרת שהפריט נשלח בחזרה לספק עבור בקשה {ret.return_number}.\n"
+        "הזיכוי יועבר אחרי שהספק יאשר קבלת הפריט."
+    )
+    db.add(Notification(
+        user_id=ret.user_id, type="return_update", title=_title, message=_msg,
+        data={"return_number": ret.return_number, "tracking_number": tracking_number},
+    ))
+    asyncio.create_task(_guarded_task(publish_notification(str(ret.user_id), {"type": "return_update", "title": _title, "message": _msg})))
+
+    await db.commit()
+    return {"message": "Shipment confirmed", "status": ret.status, "return_number": ret.return_number}
+
+
+@router.post("/api/v1/returns/{return_id}/supplier-confirm", tags=["Returns"])
+async def supplier_confirm_return(
+    return_id: str,
+    supplier_notes: Optional[str] = None,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_pii_db),
+):
+    """Admin: mark that the supplier confirmed receipt of the returned part.
+    Unlocks the issue-refund step — refund is NOT sent yet."""
+    result = await db.execute(select(Return).where(Return.id == return_id))
+    ret = result.scalar_one_or_none()
+    if not ret:
+        raise HTTPException(status_code=404, detail="Return not found")
+    if ret.status != "item_in_transit":
+        raise HTTPException(
+            status_code=400,
+            detail="Return must be 'item_in_transit' before supplier can confirm",
+        )
+
+    ret.status = "supplier_confirmed"
+    ret.supplier_confirmed_at = datetime.utcnow()
+    if supplier_notes:
+        ret.supplier_notes = supplier_notes
+
+    _title = f"✅ הספק אישר קבלת הפריט — {ret.return_number}"
+    _msg = (
+        f"הספק אישר שקיבל את הפריט בחזרה עבור בקשה {ret.return_number}.\n"
+        f"הזיכוי של ₪{float(ret.refund_amount):.2f} יועבר לכרטיס האשראי שלך תוך 3-5 ימי עסקים."
+    )
+    db.add(Notification(
+        user_id=ret.user_id, type="return_update", title=_title, message=_msg,
+        data={"return_number": ret.return_number, "refund_amount": float(ret.refund_amount)},
+    ))
+    asyncio.create_task(_guarded_task(publish_notification(str(ret.user_id), {"type": "return_update", "title": _title, "message": _msg})))
+
+    await db.commit()
+    return {"message": "Supplier confirmation recorded", "status": ret.status, "return_number": ret.return_number}
+
+
+@router.post("/api/v1/returns/{return_id}/issue-refund", tags=["Returns"])
+async def issue_refund(
+    return_id: str,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_pii_db),
+):
+    """Admin: issue the actual payment refund to the customer.
+    Only allowed after supplier_confirmed. Marks Payment as refunded and return as refund_issued."""
+    from BACKEND_DATABASE_MODELS import Payment
+    result = await db.execute(select(Return).where(Return.id == return_id))
+    ret = result.scalar_one_or_none()
+    if not ret:
+        raise HTTPException(status_code=404, detail="Return not found")
+    if ret.status != "supplier_confirmed":
+        raise HTTPException(
+            status_code=400,
+            detail="Refund can only be issued after the supplier has confirmed receipt of the returned part",
+        )
+    if not ret.refund_amount or float(ret.refund_amount) <= 0:
+        raise HTTPException(status_code=400, detail="No refund amount calculated — approve the return first")
+
+    # Mark the Payment as refunded
+    pay_result = await db.execute(
+        select(Payment).where(Payment.order_id == ret.order_id)
+        .order_by(Payment.id.desc()).limit(1)
+    )
+    payment = pay_result.scalar_one_or_none()
+    if payment and payment.status == "paid":
+        payment.status = "refunded"
+        payment.refunded_at = datetime.utcnow()
+        payment.refund_amount = ret.refund_amount
+        payment.refund_reason = ret.reason
+
+    ret.status = "refund_issued"
+    ret.refund_issued_at = datetime.utcnow()
+    ret.completed_at = datetime.utcnow()
+
+    _title = f"💳 הזיכוי הועבר — {ret.return_number}"
+    _msg = (
+        f"זיכוי של ₪{float(ret.refund_amount):.2f} הועבר לכרטיס האשראי שלך עבור בקשה {ret.return_number}.\n"
+        "הזיכוי יופיע בחשבונך תוך 3-5 ימי עסקים בהתאם לחברת האשראי."
+    )
+    db.add(Notification(
+        user_id=ret.user_id, type="return_update", title=_title, message=_msg,
+        data={"return_number": ret.return_number, "refund_amount": float(ret.refund_amount)},
+    ))
+    asyncio.create_task(_guarded_task(publish_notification(str(ret.user_id), {"type": "return_update", "title": _title, "message": _msg})))
+
+    await db.commit()
+    return {
+        "message": "Refund issued successfully",
+        "return_number": ret.return_number,
+        "refund_amount": float(ret.refund_amount),
+        "status": ret.status,
+    }
 
 
 @router.get("/api/v1/admin/returns", tags=["Returns"])
@@ -390,9 +548,13 @@ async def admin_get_returns(
             "status": r.status,
             "original_amount": float(r.original_amount) if r.original_amount else None,
             "refund_amount": float(r.refund_amount) if r.refund_amount else None,
-            "refund_percentage": r.refund_percentage,
+            "refund_percentage": float(r.refund_percentage) if r.refund_percentage else None,
             "requested_at": r.requested_at,
             "approved_at": r.approved_at,
+            "item_shipped_at": r.item_shipped_at,
+            "supplier_confirmed_at": r.supplier_confirmed_at,
+            "refund_issued_at": r.refund_issued_at,
+            "supplier_notes": r.supplier_notes,
         }
         for r in returns
     ]}

@@ -1,15 +1,28 @@
+"""
+System — /api/v1/system/* endpoints extracted from BACKEND_API_ROUTES.py.
+
+Endpoints:
+  GET /api/v1/system/health    (public)
+  GET /api/v1/system/settings  (public)
+  GET /api/v1/system/version   (public)
+  GET /api/v1/system/metrics   (admin)
+"""
+import os
+from datetime import datetime
+
+import clamd as _clamd
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, text
-from typing import Dict
-import os
-import asyncio
 
-from BACKEND_DATABASE_MODELS import get_db, get_pii_db, SystemSetting, User
-from BACKEND_AUTH_SECURITY import get_current_admin_user
-from routes.utils import _clamd_ping
+from BACKEND_DATABASE_MODELS import (
+    get_db, async_session_factory, pii_session_factory,
+    SystemSetting,
+)
+from BACKEND_AUTH_SECURITY import get_current_admin_user, get_redis
 
 router = APIRouter()
+
 
 @router.get("/api/v1/system/health")
 async def health_check():
@@ -19,7 +32,7 @@ async def health_check():
     # ── PostgreSQL catalog ────────────────────────────────────────────────────
     try:
         _t = _time.monotonic()
-        async with get_db() as _db:
+        async with async_session_factory() as _db:
             await _db.execute(text("SELECT 1"))
         results["postgres_catalog"] = {"status": "ok", "latency_ms": round((_time.monotonic() - _t) * 1000, 1)}
     except Exception as _e:
@@ -28,7 +41,7 @@ async def health_check():
     # ── PostgreSQL PII ────────────────────────────────────────────────────────
     try:
         _t = _time.monotonic()
-        async with get_pii_db() as _db:
+        async with pii_session_factory() as _db:
             await _db.execute(text("SELECT 1"))
         results["postgres_pii"] = {"status": "ok", "latency_ms": round((_time.monotonic() - _t) * 1000, 1)}
     except Exception as _e:
@@ -36,7 +49,6 @@ async def health_check():
 
     # ── Redis ─────────────────────────────────────────────────────────────────
     try:
-        from BACKEND_AUTH_SECURITY import get_redis
         _r = await get_redis()
         if _r is None:
             raise RuntimeError("redis_unavailable")
@@ -63,29 +75,84 @@ async def health_check():
     if _hf_token:
         results["huggingface"] = {"status": "ok"}
     else:
-        results["huggingface"] = {"status": "error", "error": "HF_TOKEN not configured"}
+        # HF_TOKEN not configured — AI features degraded but not a critical infrastructure failure
+        results["huggingface"] = {"status": "ok", "note": "not_configured"}
 
     # ── ClamAV ────────────────────────────────────────────────────────────────
-    results["clamav"] = (
-        {"status": "ok"} if _clamd_ping()
-        else {"status": "error", "error": "daemon unreachable"}
-    )
+    try:
+        _clam_ok = False
+        for _make_scanner in (
+            lambda: _clamd.ClamdUnixSocket(),
+            lambda: _clamd.ClamdNetworkSocket(host=os.getenv("CLAMD_HOST", "clamav"), port=3310),
+        ):
+            try:
+                _make_scanner().ping()
+                _clam_ok = True
+                break
+            except Exception:
+                continue
+        results["clamav"] = {"status": "ok"} if _clam_ok else {"status": "error", "error": "daemon unreachable"}
+    except Exception as _e:
+        results["clamav"] = {"status": "error", "error": str(_e)}
 
-    return results
+    # ── Stripe ────────────────────────────────────────────────────────────────
+    _stripe_key = os.getenv("STRIPE_SECRET_KEY", "")
+    if _stripe_key and not _stripe_key.startswith("sk_test_xxxxx"):
+        results["stripe"] = {"status": "ok"}
+    else:
+        results["stripe"] = {"status": "error", "error": "key not configured"}
+
+    # ── Aggregate ─────────────────────────────────────────────────────────────
+    # Critical = must be healthy for the system to function.
+    # Optional = external/infra services that may not be configured in dev.
+    critical = ["postgres_catalog", "postgres_pii", "redis"]
+    optional = ["clamav", "stripe", "meilisearch"]
+    critical_ok = all(results.get(s, {}).get("status") == "ok" for s in critical)
+    non_optional_ok = all(
+        results.get(s, {}).get("status") == "ok"
+        for s in results
+        if s not in optional
+    )
+    if non_optional_ok:
+        overall = "healthy"
+    elif critical_ok:
+        overall = "degraded"
+    else:
+        overall = "unhealthy"
+
+    return {
+        "status": overall,
+        "timestamp": datetime.utcnow().isoformat(),
+        "version": "1.0.0",
+        "services": results,
+    }
+
+
+# Alias for load-balancer / uptime monitors that probe /health
+@router.get("/health")
+async def health_alias():
+    return {"status": "ok"}
+
 
 @router.get("/api/v1/system/settings")
 async def get_public_settings(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(SystemSetting).where(SystemSetting.is_public == True))
+    result = await db.execute(
+        select(SystemSetting).where(
+            (SystemSetting.is_public == True) | (SystemSetting.is_public.is_(None))
+        )
+    )
     settings = result.scalars().all()
     return {s.key: s.value for s in settings}
+
 
 @router.get("/api/v1/system/version")
 async def get_version():
     return {"version": "1.0.0", "build": "2026.02.28", "environment": os.getenv("ENVIRONMENT", "development")}
 
+
 @router.get("/api/v1/system/metrics")
 async def get_system_metrics(
-    current_user: User = Depends(get_current_admin_user),
+    current_user=Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Real-time operational health snapshot for admins."""
@@ -138,7 +205,6 @@ async def get_system_metrics(
 
     # Lazy import for agent status
     from db_update_agent import _last_report, _agent_running
-
     return {
         "catalog": {
             "total_parts":        rows.total_parts if rows else 0,

@@ -153,6 +153,48 @@ class BrandAlias(Base):
     brand = relationship("CarBrand", back_populates="aliases_rel")
 
 
+class TruckBrand(Base):
+    """Reference table of known truck/commercial-vehicle manufacturers.
+    Separate from car_brands so truck-specific brands do not pollute passenger-car listings.
+    """
+    __tablename__ = "truck_brands"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String(100), unique=True, nullable=False, index=True)
+    name_he = Column(String(100), nullable=True)
+    group_name = Column(String(100), nullable=True, index=True)
+    country = Column(String(100), nullable=True)
+    region = Column(String(50), nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    logo_url = Column(String(500), nullable=True)
+    website = Column(String(500), nullable=True)
+    notes = Column(Text, nullable=True)
+    aliases = Column(ARRAY(String), default=list)
+    il_importer = Column(String(200), nullable=True)
+    il_importer_website = Column(String(500), nullable=True)
+    parts_availability = Column(String(20), nullable=True)
+    avg_service_interval_km = Column(Integer, nullable=True)
+    popular_models_il = Column(JSONB, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    aliases_rel = relationship("TruckBrandAlias", back_populates="brand", cascade="all, delete-orphan")
+
+
+class TruckBrandAlias(Base):
+    """Normalised alias rows for truck_brands."""
+    __tablename__ = "truck_brand_aliases"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    brand_id = Column(UUID(as_uuid=True), ForeignKey("truck_brands.id", ondelete="CASCADE"), nullable=False, index=True)
+    alias = Column(String(200), nullable=False)
+    normalized = Column(String(200), nullable=False, index=True)
+    source = Column(String(50), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    brand = relationship("TruckBrand", back_populates="aliases_rel")
+
+
 class CatalogVersion(Base):
     """Audit log for catalog import/sync runs. triggered_by is a plain UUID ref to
     autospare_pii.users — no FK because cross-database constraints are not possible."""
@@ -188,8 +230,8 @@ class User(PiiBase):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email = Column(String(255), unique=True, nullable=False, index=True)
-    phone = Column(String(20), unique=True, nullable=False)           # encrypted
-    password_hash = Column(String(255), nullable=False)
+    phone = Column(String(20), unique=True, nullable=True)            # encrypted; nullable for OAuth users
+    password_hash = Column(String(255), nullable=True)               # nullable for OAuth-only accounts
     full_name = Column(String(255), nullable=False)
     role = Column(String(50), nullable=False, default="customer")     # customer / admin
     is_active = Column(Boolean, default=True, nullable=False)
@@ -198,6 +240,8 @@ class User(PiiBase):
     is_super_admin = Column(Boolean, default=False, nullable=False)
     failed_login_count = Column(Integer, default=0, nullable=False)
     locked_until = Column(DateTime, nullable=True)
+    oauth_provider = Column(String(32), nullable=True)               # 'google' | 'facebook' | None
+    oauth_id = Column(String(255), nullable=True, index=True)        # provider's user ID
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -346,7 +390,6 @@ class ApprovalQueue(PiiBase):
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
-        index=True,
     )
     resolved_by = Column(
         UUID(as_uuid=True),
@@ -478,7 +521,6 @@ class StripeWebhookLog(PiiBase):
     event_type = Column(
         String(100),
         nullable=False,
-        index=True,
         comment="Stripe event type (e.g., charge.succeeded, payment_intent.succeeded)",
     )
     processed = Column(
@@ -618,7 +660,7 @@ class PartsCatalog(Base):
     is_safety_critical = Column(Boolean, nullable=False, default=False)  # brakes/steering/airbags
     needs_oem_lookup = Column(Boolean, nullable=False, default=False)    # fake/seeded SKU flag
     master_enriched  = Column(Boolean, nullable=False, default=False)    # linked to parts_master
-    embedding        = Column(Vector(768), nullable=True)                # text embedding (nomic-embed-text, 768-dim)
+    embedding        = Column(Vector(384), nullable=True)                # text embedding (paraphrase-multilingual-MiniLM-L12-v2, 384-dim)
     image_embedding  = Column(Vector(512), nullable=True)               # image embedding (512-dim)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -628,7 +670,6 @@ class PartsCatalog(Base):
     images = relationship("PartImage", back_populates="part", cascade="all, delete-orphan")
     supplier_parts = relationship("SupplierPart", back_populates="part")
     # order_items are in autospare_pii — no cross-DB relationship
-    fitments = relationship("PartVehicleFitment", back_populates="part", cascade="all, delete-orphan")
     cross_references = relationship("PartCrossReference", back_populates="part", cascade="all, delete-orphan")
     aliases = relationship("PartAlias", back_populates="part", cascade="all, delete-orphan")
     variants = relationship("PartVariant", back_populates="catalog_part", cascade="all, delete-orphan")
@@ -739,6 +780,9 @@ class Supplier(Base):
     express_carrier = Column(String(100), nullable=True)             # DHL Express, Israel Post Express
     express_base_cost_usd = Column(Numeric(8, 2), nullable=True)
     avg_delivery_days_actual = Column(Numeric(5, 1), nullable=True)  # from real order history
+    # Manufacturer-as-supplier: when the brand sells direct (e.g. Hyundai Mobis, Bosch Direct)
+    is_manufacturer = Column(Boolean, nullable=False, default=False)
+    manufacturer_name = Column(String(255), nullable=True, index=True)  # matches parts_catalog.manufacturer
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -909,7 +953,9 @@ class Return(PiiBase):
     # reasons: defective, wrong_item, changed_mind, damaged_shipping, other
     description = Column(Text, nullable=True)
     status = Column(String(50), default="pending")
-    # statuses: pending, approved, rejected, completed, cancelled
+    # statuses: pending → approved → item_in_transit → supplier_confirmed → refund_issued → completed
+    #           pending_review (high fraud score, held for manual review)
+    #           rejected, cancelled (terminal)
     original_amount = Column(Numeric(10, 2), nullable=False)
     refund_amount = Column(Numeric(10, 2), nullable=True)
     refund_percentage = Column(Numeric(5, 2), nullable=True)         # 90% or 100%
@@ -919,6 +965,10 @@ class Return(PiiBase):
     rejection_reason = Column(String(255), nullable=True)
     requested_at = Column(DateTime, default=datetime.utcnow)
     approved_at = Column(DateTime, nullable=True)
+    item_shipped_at = Column(DateTime, nullable=True)          # customer confirmed return shipment
+    supplier_confirmed_at = Column(DateTime, nullable=True)    # supplier confirmed part received
+    refund_issued_at = Column(DateTime, nullable=True)         # refund actually sent to customer
+    supplier_notes = Column(Text, nullable=True)               # internal admin / supplier notes
     rejected_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
 
@@ -1210,6 +1260,7 @@ class Notification(PiiBase):
     message = Column(Text)
     data = Column(JSONB, default=dict)
     channel = Column(String(20), default="push")                    # email, sms, whatsapp, push
+    is_read = Column(Boolean, default=False)
     sent_at = Column(DateTime, nullable=True)
     read_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -1239,7 +1290,7 @@ class JobRegistry(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     job_id = Column(String(255), unique=True, nullable=False, comment="Unique job ID (e.g., 'sync_prices-2026-03-21T10:00:00')")
-    job_name = Column(String(255), nullable=False, index=True, comment="Job name (e.g., 'sync_prices', 'run_scraper_cycle')")
+    job_name = Column(String(255), nullable=False, comment="Job name (e.g., 'sync_prices', 'run_scraper_cycle')")
     worker_host = Column(String(255), nullable=True, comment="Hostname/K8s pod where job runs")
     status = Column(String(50), nullable=False, default="running", comment="running | completed | failed")
     started_at = Column(DateTime, nullable=False, default=datetime.utcnow, comment="When job started")
@@ -1253,29 +1304,6 @@ class JobRegistry(Base):
 # ==============================================================================
 # CATALOG ENHANCEMENT TABLES (6)
 # ==============================================================================
-
-class PartVehicleFitment(Base):
-    """Make / model / year fitment link — replaces the compatible_vehicles JSON blob."""
-    __tablename__ = "part_vehicle_fitment"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    part_id = Column(UUID(as_uuid=True), ForeignKey("parts_catalog.id", ondelete="CASCADE"), nullable=False, index=True)
-    manufacturer = Column(String(100), nullable=False, index=True)
-    model = Column(String(100), nullable=False)
-    year_from = Column(Integer, nullable=False)
-    year_to = Column(Integer, nullable=True)                          # NULL = still in production
-    engine_type = Column(String(50), nullable=True)
-    transmission = Column(String(50), nullable=True)
-    notes = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-
-    __table_args__ = (
-        Index("idx_fitment_mfr_model", "manufacturer", "model"),
-        Index("idx_fitment_years", "year_from", "year_to"),
-    )
-
-    part = relationship("PartsCatalog", back_populates="fitments")
-
 
 class PartCrossReference(Base):
     """

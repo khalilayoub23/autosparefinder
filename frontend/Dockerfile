@@ -6,6 +6,9 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci --ignore-scripts
 
+ARG VITE_API_URL=https://api.autosparefinder.co.il
+ENV VITE_API_URL=$VITE_API_URL
+
 COPY . .
 RUN npm run build
 

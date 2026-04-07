@@ -138,7 +138,9 @@ async def upload_image(file: UploadFile = File(...), current_user: User = Depend
     from hf_client import hf_vision
 
     if redis and request:
-        await check_rate_limit(redis, f"upload_image:{current_user.id}", 10, 60)
+        allowed = await check_rate_limit(redis, f"upload_image:{current_user.id}", 10, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail="יותר מדי בקשות — נסה שוב בעוד דקה")
     file_id = str(uuid.uuid4())
     identified_part = ""
     identified_part_en = ""
@@ -207,7 +209,9 @@ async def upload_audio(
     from hf_client import hf_audio
 
     if redis and request:
-        await check_rate_limit(redis, f"upload_audio:{current_user.id}", 10, 60)
+        allowed = await check_rate_limit(redis, f"upload_audio:{current_user.id}", 10, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail="יותר מדי בקשות — נסה שוב בעוד דקה")
     if not os.getenv("HF_TOKEN", ""):
         raise HTTPException(status_code=503, detail="שירות התמלול אינו זמין כרגע")
 

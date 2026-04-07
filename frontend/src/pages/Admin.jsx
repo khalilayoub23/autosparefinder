@@ -212,7 +212,9 @@ export default function Admin() {
   const [editAgent, setEditAgent] = useState(null)
   const [editAgentForm, setEditAgentForm] = useState({})
   const [savingAgent, setSavingAgent] = useState(false)
-  const [cardTests, setCardTests] = useState({}) // { [agentName]: { expanded, message, testing, result } }
+  const [testingAgent, setTestingAgent] = useState(null)
+  const [testMessage, setTestMessage] = useState('')
+  const [testResult, setTestResult] = useState(null)
   const [loading, setLoading] = useState(false)
   const [salesData, setSalesData] = useState([])
   const [statusFilter, setStatusFilter] = useState('')
@@ -307,17 +309,15 @@ export default function Admin() {
     finally { setSavingAgent(false) }
   }
 
-  const setCardTest = (name, patch) => setCardTests((prev) => ({ ...prev, [name]: { ...(prev[name] || {}), ...patch } }))
-
   const testAgent = async (agentName) => {
-    const msg = cardTests[agentName]?.message || ''
-    if (!msg.trim()) return
-    setCardTest(agentName, { testing: true, result: null })
+    if (!testMessage.trim()) return
+    setTestingAgent(agentName)
+    setTestResult(null)
     try {
-      const { data } = await api.post(`/admin/agents/${agentName}/test`, { message: msg })
-      setCardTest(agentName, { result: data })
-    } catch (e) { setCardTest(agentName, { result: { status: 'error', response: e.response?.data?.detail || 'שגיאה' } }) }
-    finally { setCardTest(agentName, { testing: false }) }
+      const { data } = await api.post(`/admin/agents/${agentName}/test`, { message: testMessage })
+      setTestResult(data)
+    } catch (e) { setTestResult({ status: 'error', response: e.response?.data?.detail || 'שגיאה' }) }
+    finally { setTestingAgent(null) }
   }
 
   const loadUsers = async () => {
@@ -1084,15 +1084,14 @@ export default function Admin() {
                                 {s.supports_express && <span className="badge bg-blue-100 text-blue-600 text-[10px]">אקספרס</span>}
                               </div>
                               <p className="text-xs text-gray-400">עדיפות {s.priority} · ★ {Number(s.reliability_score).toFixed(1)}</p>
+                                {s.country && (
+                                  <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-100 border border-gray-200 ml-1">
+                                    {countryFlag(s.country)}
+                                    <span className="text-[10px] font-bold text-gray-500 tracking-wide leading-none">{countryISO(s.country)}</span>
+                                  </div>
+                                )}
                             </div>
                           </div>
-                          {/* Country badge */}
-                          {s.country && (
-                            <div className="hidden sm:flex items-center gap-1.5 px-2 py-1 rounded-lg bg-gray-50 border border-gray-200 text-gray-600 justify-center mx-2">
-                              {countryFlag(s.country)}
-                              <span className="text-[11px] font-bold tracking-wide">{countryISO(s.country)}</span>
-                            </div>
-                          )}
                           <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                             <button onClick={() => syncSupplier(s.id)} className="btn-secondary text-xs px-3 py-1.5">סנכרן</button>
                             <button onClick={() => { openEditSupplier(s); }} title="ערוך" className="p-1.5 rounded hover:bg-blue-50 text-blue-500 hover:text-blue-700 transition-colors"><Pencil className="w-4 h-4" /></button>
@@ -1520,9 +1519,9 @@ export default function Admin() {
                 <h3 className="font-bold text-gray-900">סוכני AI ({agents.length})</h3>
                 {agentsAiStatus && (
                   <p className="text-xs text-gray-400 mt-0.5">
-                    {agentsAiStatus.ollama_configured
-                      ? <span className="text-green-600">✔ Ollama פעיל — תגובות AI אמיתיות</span>
-                      : <span className="text-amber-600">⚠ אין OLLAMA_URL — מצב Mock</span>}
+                    {agentsAiStatus.github_token_set
+                      ? <span className="text-green-600">✔ GITHUB_TOKEN פעיל — תגובות AI אמיתיות</span>
+                      : <span className="text-amber-600">⚠ אין GITHUB_TOKEN — מצב Mock</span>}
                   </p>
                 )}
               </div>
@@ -1537,7 +1536,24 @@ export default function Admin() {
             </div>
           </div>
 
-
+          {/* Test message bar */}
+          <div className="card p-4">
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">בדיקת סוכן</p>
+            <div className="flex gap-2">
+              <input
+                className="input-field flex-1 text-sm"
+                placeholder="הקלד הודעה לבדיקת הסוכן..."
+                value={testMessage}
+                onChange={(e) => { setTestMessage(e.target.value); setTestResult(null) }}
+              />
+            </div>
+            {testResult && (
+              <div className={`mt-3 p-3 rounded-xl text-sm ${testResult.status === 'ok' ? 'bg-green-50 border border-green-200 text-green-800' : 'bg-red-50 border border-red-200 text-red-700'}`}>
+                <p className="text-xs font-semibold mb-1 opacity-60">תגובת הסוכן ({testResult.agent})</p>
+                <p className="whitespace-pre-wrap">{testResult.response}</p>
+              </div>
+            )}
+          </div>
 
           {/* Agent cards grid */}
           {(() => {
@@ -1568,9 +1584,6 @@ export default function Admin() {
                     <div className="flex items-center gap-2 text-xs text-gray-400">
                       <Cpu className="w-3 h-3" />
                       <span dir="ltr">{a.model}</span>
-                      <span className="px-1.5 py-0.5 rounded-md font-medium bg-green-50 text-green-700 border border-green-200">
-                        Ollama
-                      </span>
                       <span className="mx-1">·</span>
                       <Sliders className="w-3 h-3" />
                       <span dir="ltr">{a.temperature}</span>
@@ -1583,40 +1596,6 @@ export default function Admin() {
                         {a.capabilities.length > 3 && <span className="text-xs text-gray-400">+{a.capabilities.length - 3}</span>}
                       </div>
                     )}
-                    {/* Inline test panel */}
-                    {cardTests[a.name]?.expanded && (
-                      <div className="-mx-4 px-4 pb-3 pt-2 bg-gray-50 border-t border-gray-100 space-y-2">
-                        <div className="flex gap-2">
-                          <input
-                            className="input-field flex-1 text-xs py-1.5"
-                            placeholder="הקלד הודעת בדיקה..."
-                            value={cardTests[a.name]?.message || ''}
-                            onChange={(e) => setCardTest(a.name, { message: e.target.value, result: null })}
-                            onKeyDown={(e) => { if (e.key === 'Enter') testAgent(a.name) }}
-                            dir="rtl"
-                            autoFocus
-                          />
-                          <button
-                            onClick={() => testAgent(a.name)}
-                            disabled={!(cardTests[a.name]?.message || '').trim() || cardTests[a.name]?.testing}
-                            className="px-3 py-1.5 rounded-lg bg-brand-600 text-white text-xs font-medium disabled:opacity-40 hover:bg-brand-700 transition-colors flex items-center gap-1"
-                          >
-                            {cardTests[a.name]?.testing ? <Loader2 className="w-3 h-3 animate-spin" /> : <MessageSquare className="w-3 h-3" />}
-                            שלח
-                          </button>
-                        </div>
-                        {cardTests[a.name]?.result && (
-                          <div className={`rounded-xl p-2.5 text-xs ${
-                            cardTests[a.name].result.status === 'ok'
-                              ? 'bg-white border border-green-200 text-green-900'
-                              : 'bg-red-50 border border-red-200 text-red-700'
-                          }`}>
-                            <p className="font-semibold mb-1 opacity-60">{cardTests[a.name].result.status === 'ok' ? 'תגובה' : 'שגיאה'}</p>
-                            <p className="whitespace-pre-wrap leading-relaxed">{cardTests[a.name].result.response}</p>
-                          </div>
-                        )}
-                      </div>
-                    )}
                     <div className="flex gap-2 mt-auto pt-1">
                       <button
                         onClick={() => { setEditAgent(a); setEditAgentForm({ display_name: a.display_name, persona: a.persona, name_he: a.name_he, description: a.description, description_he: a.description_he, model: a.model, temperature: a.temperature, capabilities: (a.capabilities || []).join(', '), enabled: a.enabled !== false }) }}
@@ -1625,14 +1604,12 @@ export default function Admin() {
                         <Pencil className="w-3 h-3" /> ערוך
                       </button>
                       <button
-                        onClick={() => setCardTest(a.name, { expanded: !cardTests[a.name]?.expanded, result: null })}
-                        className={`flex-1 text-xs flex items-center justify-center gap-1.5 py-1.5 rounded-lg border transition-colors ${
-                          cardTests[a.name]?.expanded
-                            ? 'bg-brand-50 border-brand-200 text-brand-700'
-                            : 'btn-secondary'
-                        }`}
+                        onClick={() => testAgent(a.name)}
+                        disabled={!testMessage.trim() || testingAgent === a.name}
+                        className="flex-1 btn-secondary text-xs flex items-center justify-center gap-1.5 py-1.5 disabled:opacity-40"
                       >
-                        <MessageSquare className="w-3 h-3" /> בדוק
+                        {testingAgent === a.name ? <Loader2 className="w-3 h-3 animate-spin" /> : <MessageSquare className="w-3 h-3" />}
+                        בדוק
                       </button>
                       <button
                         onClick={() => {
@@ -1861,8 +1838,10 @@ export default function Admin() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">מודל AI</label>
-                <select className="input-field w-full text-sm" dir="ltr" value={editAgentForm.model || 'qwen3:8b'} onChange={(e) => setEditAgentForm((f) => ({ ...f, model: e.target.value }))}>
-                  <option value="qwen3:8b">qwen3:8b (default)</option>
+                <select className="input-field w-full text-sm" dir="ltr" value={editAgentForm.model || 'gpt-4o'} onChange={(e) => setEditAgentForm((f) => ({ ...f, model: e.target.value }))}>
+                  <option value="gpt-4o">gpt-4o</option>
+                  <option value="gpt-4o-mini">gpt-4o-mini</option>
+                  <option value="o1-mini">o1-mini</option>
                 </select>
               </div>
               <div>

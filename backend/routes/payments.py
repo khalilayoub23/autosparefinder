@@ -212,33 +212,40 @@ async def create_checkout_session(
         })
 
     # Create Stripe Checkout Session (async)
-    session = await asyncio.get_running_loop().run_in_executor(
-        None,
-        lambda: stripe_sdk.checkout.Session.create(
-            payment_method_types=["card"],
-            line_items=line_items,
-            mode="payment",
-            success_url=f"{frontend_url}/payment/success?session_id={{CHECKOUT_SESSION_ID}}",
-            cancel_url=f"{frontend_url}/cart",
-            customer_email=current_user.email,
-            metadata={
-                "order_id": str(order.id),
-                "order_number": order.order_number,
-                "user_id": str(current_user.id),
-            },
-            locale="auto",
-            idempotency_key=f"order:{order.id}",  # Gap 6: Idempotency
+    try:
+        session = await asyncio.get_running_loop().run_in_executor(
+            None,
+            lambda: stripe_sdk.checkout.Session.create(
+                payment_method_types=["card"],
+                line_items=line_items,
+                mode="payment",
+                success_url=f"{frontend_url}/payment/success?session_id={{CHECKOUT_SESSION_ID}}",
+                cancel_url=f"{frontend_url}/cart",
+                customer_email=current_user.email,
+                metadata={
+                    "order_id": str(order.id),
+                    "order_number": order.order_number,
+                    "user_id": str(current_user.id),
+                },
+                locale="auto",
+                idempotency_key=f"order:{order.id}",  # Gap 6: Idempotency
+            )
         )
-    )
+    except Exception as stripe_err:
+        raise HTTPException(status_code=503, detail=f"שגיאת שירות תשלום: {stripe_err}")
 
-    # Save pending payment record
-    db.add(Payment(
-        order_id=order.id,
-        payment_intent_id=session.id,
-        amount=order.total_amount,
-        currency="ILS",
-        status="pending",
-    ))
+    # Save pending payment record (guard against duplicate on retry)
+    existing_pay = await db.execute(
+        select(Payment).where(Payment.payment_intent_id == session.id)
+    )
+    if not existing_pay.scalar_one_or_none():
+        db.add(Payment(
+            order_id=order.id,
+            payment_intent_id=session.id,
+            amount=order.total_amount,
+            currency="ILS",
+            status="pending",
+        ))
     await db.commit()
 
     return {

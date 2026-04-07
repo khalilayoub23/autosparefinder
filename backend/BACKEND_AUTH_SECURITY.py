@@ -73,7 +73,19 @@ TRUST_DEVICE_DAYS = int(os.getenv("TRUST_DEVICE_DAYS", "180"))
 
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+TWILIO_MESSAGING_SERVICE_SID = os.getenv("TWILIO_MESSAGING_SERVICE_SID")
 TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
+USE_TWILIO_MESSAGING_SERVICE = os.getenv("USE_TWILIO_MESSAGING_SERVICE", "false").lower() in ("1", "true", "yes", "on")
+ENABLE_WHATSAPP_2FA = os.getenv("ENABLE_WHATSAPP_2FA", "false").lower() in ("1", "true", "yes", "on")
+
+# Branded/private 2FA text template.
+# Placeholders: {code}, {minutes}
+TWO_FA_MESSAGE_TEMPLATE = os.getenv(
+    "TWO_FA_MESSAGE_TEMPLATE",
+    "שלום {name}, קוד האימות שלך ל-AutoSpare הוא {code}. תוקף הקוד {minutes} דקות. אין לשתף קוד זה עם אף גורם.",
+)
+TWO_FA_BRAND_ICON = os.getenv("TWO_FA_BRAND_ICON", "🔧")
+TWO_FA_LOGO_URL = os.getenv("TWO_FA_LOGO_URL", "").strip()
 
 # ==============================================================================
 # PASSWORD HASHING
@@ -179,12 +191,17 @@ async def publish_notification(user_id: str, payload: dict) -> None:
 # ==============================================================================
 
 def generate_device_fingerprint(request: Request) -> str:
-    """Generate a stable fingerprint from request headers."""
+    """Generate a stable per-browser fingerprint from request headers.
+
+    Avoid using client IP here because it can change frequently behind reverse
+    proxies/tunnels and causes trusted-device checks to fail unexpectedly.
+    """
     components = [
         request.headers.get("user-agent", ""),
         request.headers.get("accept-language", ""),
         request.headers.get("accept-encoding", ""),
-        request.client.host if request.client else "",
+        request.headers.get("sec-ch-ua", ""),
+        request.headers.get("sec-ch-ua-platform", ""),
     ]
     raw = "|".join(components)
     return hashlib.sha256(raw.encode()).hexdigest()[:32]
@@ -272,9 +289,45 @@ def generate_2fa_code() -> str:
     return "".join(random.choices(string.digits, k=6))
 
 
-async def send_sms_2fa(phone: str, code: str) -> bool:
+def _normalize_e164(phone: str, default_cc: str = "972") -> str:
+    """Normalize phone to E.164. Israeli 05XXXXXXXX → +97205XXXXXXXX."""
+    phone = phone.strip()
+    if phone.startswith("+"):
+        return phone
+    if phone.startswith("0"):
+        return f"+{default_cc}{phone[1:]}"
+    return f"+{phone}"
+
+
+def _build_2fa_message(code: str, full_name: Optional[str] = None) -> str:
+    """Render the configured 2FA message text safely."""
+    safe_name = (full_name or "").strip()[:60]
+    try:
+        base = TWO_FA_MESSAGE_TEMPLATE.format(
+            code=code,
+            minutes=TWO_FA_EXPIRY_MINUTES,
+            name=safe_name or "לקוח יקר",
+        ).strip()
+    except Exception:
+        # Fallback to a safe default if template placeholders are invalid
+        greeting = f"שלום {safe_name}, " if safe_name else ""
+        base = f"{greeting}AutoSpare: קוד האימות שלך הוא {code}. תוקף הקוד {TWO_FA_EXPIRY_MINUTES} דקות."
+
+    lines = []
+    if TWO_FA_BRAND_ICON:
+        lines.append(TWO_FA_BRAND_ICON)
+    lines.append(base)
+    if TWO_FA_LOGO_URL:
+        # SMS cannot embed an inline image reliably, so include a direct logo link.
+        lines.append(f"לוגו: {TWO_FA_LOGO_URL}")
+    return "\n".join(lines)
+
+
+async def send_sms_2fa(phone: str, code: str, full_name: Optional[str] = None) -> bool:
     """Send 2FA code via Twilio SMS. Returns True if sent."""
-    if not TWILIO_ACCOUNT_SID:
+    phone = _normalize_e164(phone)
+    # Real SMS mode requires both account SID and auth token.
+    if not TWILIO_ACCOUNT_SID or not TWILIO_AUTH_TOKEN:
         # Dev mode: print code to console
         if os.getenv("ENVIRONMENT", "production") == "development":
             print(f"[DEV] 2FA code for {phone}: {code}")
@@ -285,11 +338,28 @@ async def send_sms_2fa(phone: str, code: str) -> bool:
 
         def _send_sync():
             client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-            client.messages.create(
-                body=f"קוד האימות שלך ל-Auto Spare: {code}\nתוקף: 10 דקות",
-                from_=TWILIO_PHONE_NUMBER,
-                to=phone,
-            )
+            base_params = {
+                "body": _build_2fa_message(code, full_name),
+                "to": phone,
+            }
+            # Preferred path: explicit sender number for deterministic delivery
+            # (some Messaging Service setups fail with 21704 on trial/misconfigured accounts).
+            if TWILIO_PHONE_NUMBER:
+                client.messages.create(
+                    **base_params,
+                    from_=TWILIO_PHONE_NUMBER,
+                )
+                return
+
+            # Optional path: Messaging Service SID (disabled by default).
+            if USE_TWILIO_MESSAGING_SERVICE and TWILIO_MESSAGING_SERVICE_SID:
+                client.messages.create(
+                    **base_params,
+                    messaging_service_sid=TWILIO_MESSAGING_SERVICE_SID,
+                )
+                return
+
+            raise RuntimeError("No Twilio sender configured: set TWILIO_PHONE_NUMBER (or enable USE_TWILIO_MESSAGING_SERVICE)")
 
         await _asyncio.to_thread(_send_sync)
         return True
@@ -298,10 +368,33 @@ async def send_sms_2fa(phone: str, code: str) -> bool:
         return False
 
 
+async def send_whatsapp_2fa(phone: str, code: str, full_name: Optional[str] = None) -> bool:
+    """Send 2FA code via WhatsApp as a parallel channel. Returns True if sent."""
+    if not ENABLE_WHATSAPP_2FA:
+        return False
+    try:
+        from social.whatsapp_provider import get_whatsapp_provider
+        provider = get_whatsapp_provider()
+        result = await provider.send_message(
+            phone,
+            _build_2fa_message(code, full_name)
+        )
+        if not result["ok"]:
+            print(f"[WARN] WhatsApp 2FA failed: {result['error']}")
+        return result["ok"]
+    except Exception as e:
+        print(f"[WARN] WhatsApp 2FA error: {e}")
+        return False
+
+
 async def create_2fa_code(user_id: str, phone: str, db: AsyncSession) -> Optional[str]:
     """Create and store a 2FA code, send via SMS."""
     code = generate_2fa_code()
     expires = datetime.utcnow() + timedelta(minutes=TWO_FA_EXPIRY_MINUTES)
+
+    user_row = await db.execute(select(User).where(User.id == user_id))
+    user = user_row.scalar_one_or_none()
+    full_name = user.full_name if user and user.full_name else None
 
     two_fa = TwoFactorCode(
         user_id=user_id,
@@ -312,7 +405,12 @@ async def create_2fa_code(user_id: str, phone: str, db: AsyncSession) -> Optiona
     db.add(two_fa)
     await db.commit()
 
-    await send_sms_2fa(phone, code)
+    import asyncio as _asyncio
+    # Send SMS as the primary 2FA channel. WhatsApp is optional via env flag.
+    tasks = [send_sms_2fa(phone, code, full_name)]
+    if ENABLE_WHATSAPP_2FA:
+        tasks.append(send_whatsapp_2fa(phone, code, full_name))
+    await _asyncio.gather(*tasks, return_exceptions=True)
     return code
 
 

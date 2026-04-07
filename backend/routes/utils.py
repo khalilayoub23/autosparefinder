@@ -114,7 +114,13 @@ async def trigger_supplier_fulfillment(paid_orders: list, db: AsyncSession) -> N
         _supplier_country_map = {
             "AutoParts Pro IL": "il",
             "Global Parts Hub": "de",
-            "EastAuto Supply": "cn",
+            "EastAuto Supply":  "cn",
+            "PartsPro USA":     "us",
+            "AutoZone Direct":  "us",
+            "Hyundai Mobis":    "kr",
+            "Kia Parts Direct": "kr",
+            "Bosch Direct":     "de",
+            "Toyota Genuine":   "jp",
         }
         by_supplier_for_agent = {
             f"name:{k}": {

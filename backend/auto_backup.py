@@ -161,7 +161,7 @@ async def run_backup(dry_run: bool = False) -> dict:
             results[label] = "dry_run"
             continue
         t0 = time.monotonic()
-        ok = await asyncio.get_event_loop().run_in_executor(None, _pg_dump, url, out_path)
+        ok = await asyncio.get_running_loop().run_in_executor(None, _pg_dump, url, out_path)
         elapsed = round(time.monotonic() - t0, 1)
         if ok:
             size_mb = round(os.path.getsize(out_path) / 1_048_576, 1)

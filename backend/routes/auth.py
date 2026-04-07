@@ -27,6 +27,8 @@ from sqlalchemy import select, and_
 from pydantic import BaseModel, EmailStr, Field, validator
 from datetime import datetime, timedelta
 import os
+import uuid as _uuid
+import httpx as _httpx
 
 from BACKEND_DATABASE_MODELS import get_pii_db, User, UserProfile, PasswordReset, UserSession
 from BACKEND_AUTH_SECURITY import (
@@ -36,6 +38,7 @@ from BACKEND_AUTH_SECURITY import (
     create_password_reset_token, use_password_reset_token,
     change_password, create_2fa_code, verify_2fa_code,
     get_redis, check_rate_limit, generate_device_fingerprint,
+    create_access_token, create_refresh_token,
 )
 
 router = APIRouter()
@@ -280,6 +283,142 @@ async def logout(
     if token:
         await logout_user(token, db)
     return {"message": "Logged out successfully"}
+
+
+# ==============================================================================
+# POST /api/v1/auth/social-login
+# ==============================================================================
+
+class SocialLoginRequest(BaseModel):
+    provider: str            # 'google' | 'facebook'
+    token: str               # ID token (Google) or access token (Facebook)
+
+
+@router.post("/api/v1/auth/social-login")
+async def social_login(
+    data: SocialLoginRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_pii_db),
+    redis=Depends(get_redis),
+):
+    """Verify a Google/Facebook OAuth token and return JWT access+refresh tokens.
+
+    Google:   data.token is the credential (ID token) from Google Identity Services.
+    Facebook: data.token is the user access token from the Facebook JS SDK.
+    """
+    ip = request.client.host if request.client else "unknown"
+    if redis:
+        allowed = await check_rate_limit(redis, f'rate:social_login:{ip}', 10, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
+
+    provider = data.provider.lower()
+    if provider not in ("google", "facebook"):
+        raise HTTPException(status_code=400, detail="ספק לא נתמך")
+
+    # ── Verify token with provider and extract profile ───────────────────────
+    oauth_id: str = ""
+    email: str = ""
+    full_name: str = ""
+    try:
+        async with _httpx.AsyncClient(timeout=10.0) as client:
+            if provider == "google":
+                resp = await client.get(
+                    "https://oauth2.googleapis.com/tokeninfo",
+                    params={"id_token": data.token},
+                )
+                if resp.status_code != 200:
+                    raise HTTPException(status_code=401, detail="Google token לא תקין")
+                info = resp.json()
+                # Optionally verify audience (aud) matches our client ID
+                client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
+                if client_id and info.get("aud") != client_id:
+                    raise HTTPException(status_code=401, detail="Google token לא תקין")
+                oauth_id = info.get("sub", "")
+                email = info.get("email", "")
+                full_name = info.get("name", email.split("@")[0])
+            else:  # facebook
+                resp = await client.get(
+                    "https://graph.facebook.com/me",
+                    params={"fields": "id,name,email", "access_token": data.token},
+                )
+                if resp.status_code != 200:
+                    raise HTTPException(status_code=401, detail="Facebook token לא תקין")
+                info = resp.json()
+                oauth_id = info.get("id", "")
+                email = info.get("email", "")
+                full_name = info.get("name", "")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=502, detail="שגיאה בכניסה עם הספק")
+
+    if not oauth_id or not email:
+        raise HTTPException(status_code=401, detail="לא ניתן לאמת — אנא נסה שוב")
+
+    # ── Find or create user ──────────────────────────────────────────────────
+    user: Optional[User] = (await db.execute(
+        select(User).where(and_(User.oauth_provider == provider, User.oauth_id == oauth_id))
+    )).scalar_one_or_none()
+
+    if user is None:
+        # Check if e-mail already registered (link accounts)
+        user = (await db.execute(select(User).where(User.email == email))).scalar_one_or_none()
+        if user:
+            user.oauth_provider = provider
+            user.oauth_id = oauth_id
+            user.is_verified = True
+        else:
+            user = User(
+                email=email,
+                full_name=full_name,
+                password_hash=None,
+                phone=None,
+                oauth_provider=provider,
+                oauth_id=oauth_id,
+                is_verified=True,
+                is_active=True,
+            )
+            db.add(user)
+            await db.flush()
+            db.add(UserProfile(user_id=user.id))
+        await db.commit()
+        await db.refresh(user)
+
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="החשבון הושעה")
+
+    # ── Issue JWT tokens (reuse session machinery) ───────────────────────────
+    session_id = str(_uuid.uuid4())
+    access_token  = create_access_token(str(user.id), session_id)
+    refresh_token = create_refresh_token(str(user.id), session_id)
+
+    ua = request.headers.get("user-agent", "")[:255]
+    session = UserSession(
+        id=_uuid.UUID(session_id),
+        user_id=user.id,
+        token=access_token,
+        refresh_token=refresh_token,
+        device_fingerprint=generate_device_fingerprint(request),
+        ip_address=ip,
+        user_agent=ua,
+        expires_at=datetime.utcnow() + timedelta(days=1),
+    )
+    db.add(session)
+    await db.commit()
+
+    return {
+        "access_token":  access_token,
+        "refresh_token": refresh_token,
+        "token_type":    "bearer",
+        "user": {
+            "id":          str(user.id),
+            "email":       user.email,
+            "full_name":   user.full_name,
+            "is_verified": user.is_verified,
+            "is_admin":    user.is_admin,
+        },
+    }
 
 
 # ==============================================================================
