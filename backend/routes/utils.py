@@ -178,18 +178,3 @@ async def trigger_supplier_fulfillment(paid_orders: list, db: AsyncSession) -> N
         print(f"[Fulfillment] Order {order.order_number}: agent auto-fulfilled {len(by_supplier)} supplier(s) -> supplier_ordered")
 
     await db.flush()
-
-
-def _clamd_ping() -> bool:
-    """Returns True if ClamAV daemon is reachable."""
-    for _make_scanner in (
-        lambda: _clamd.ClamdUnixSocket(),
-        lambda: _clamd.ClamdNetworkSocket(
-            host=os.getenv("CLAMD_HOST", "clamav"), port=3310),
-    ):
-        try:
-            _make_scanner().ping()
-            return True
-        except Exception:
-            continue
-    return False

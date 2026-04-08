@@ -232,7 +232,7 @@ Execution policy:
 
 | Step | Domain | Files planned | Status |
 |------|--------|---------------|--------|
-| 16 | System/Health/Utility leftovers | `backend/routes/system.py` | ✅ Completed — extracted health, settings, version, metrics endpoints; ClamAV uses _clamd_ping from routes.utils; lazy import for agent status |
+| 16 | System/Health/Utility leftovers | `backend/routes/system.py` | ✅ Completed — extracted health, settings, version, metrics endpoints; ClamAV connectivity check remains implemented in `backend/routes/system.py`; lazy import for agent status |
 | 17 | Cart + Wishlist + Checkout | `backend/routes/cart.py` | ❌ Pending |
 | 18 | Admin (all admin + social) | `backend/routes/admin.py` | ❌ Pending |
 
