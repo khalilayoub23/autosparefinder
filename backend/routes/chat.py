@@ -75,7 +75,13 @@ async def send_message(data: ChatMessageRequest, request: Request, current_user:
     async def _run_agent_bg():
         async with pii_session_factory() as bg_db:
             try:
-                await process_agent_response_for_message(user_id, message, conv_id, bg_db)
+                await process_agent_response_for_message(
+                    user_id,
+                    message,
+                    conv_id,
+                    bg_db,
+                    source="web",
+                )
             except Exception as exc:
                 print(f"[BG AGENT FATAL] conv={conv_id}: {exc}")
 
@@ -253,6 +259,7 @@ async def upload_audio(
             message=transcription,
             conversation_id=conversation_id,
             db=db,
+            source="web",
         )
         agent_response    = result.get("response", "")
         conversation_id_out = result.get("conversation_id")

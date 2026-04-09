@@ -112,6 +112,7 @@ services:
     container_name: autospare_backend
     restart: unless-stopped
     mem_limit: 1024m
+    shm_size: 256m
     environment:
       DATABASE_URL: postgresql+asyncpg://autospare:${DB_PASSWORD}@postgres_catalog:5432/autospare
       DATABASE_PII_URL: postgresql+asyncpg://autospare:${DB_PASSWORD}@postgres_pii:5432/autospare_pii
@@ -121,12 +122,25 @@ services:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       GITHUB_TOKEN: ${GITHUB_TOKEN}
       HF_TOKEN: ${HF_TOKEN}
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      CEREBRAS_API_KEY: ${CEREBRAS_API_KEY}
+      CEREBRAS_TEXT_MODEL: ${CEREBRAS_TEXT_MODEL:-llama3.1-8b}
+      HF_TEXT_MODEL: ${HF_TEXT_MODEL}
+      AGENTS_DEFAULT_MODEL: ${AGENTS_DEFAULT_MODEL}
+      WEB_AI_MODEL: ${WEB_AI_MODEL}
+      WHATSAPP_AI_MODEL: ${WHATSAPP_AI_MODEL}
+      TELEGRAM_AI_MODEL: ${TELEGRAM_AI_MODEL}
       TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID}
       TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN}
       TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
       SENDGRID_API_KEY: ${SENDGRID_API_KEY}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHANNEL_ID: ${TELEGRAM_CHANNEL_ID}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET}
+      DEV_2FA_CODE: ${DEV_2FA_CODE}
       CORS_ORIGINS: ${CORS_ORIGINS:-https://autosparefinder.co.il,https://www.autosparefinder.co.il}
       CLAMD_HOST: clamav
       MEILI_URL: http://meilisearch:7700
@@ -142,8 +156,6 @@ services:
         condition: service_healthy
       meilisearch:
         condition: service_healthy
-      clamav:
-        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; r=urllib.request.urlopen('http://localhost:8000/api/v1/system/health',timeout=3); exit(0 if r.status==200 else 1)\" 2>/dev/null || exit 1"]
       interval: 10s
@@ -156,7 +168,7 @@ services:
       /bin/bash -c "
         alembic -c alembic.ini upgrade head &&
         alembic -c alembic_pii.ini upgrade head &&
-        uvicorn BACKEND_API_ROUTES:app --host 0.0.0.0 --port 8000 --workers 4
+        uvicorn BACKEND_API_ROUTES:app --host 0.0.0.0 --port 8000 --workers ${API_WORKERS:-1}
       "
     networks:
       - internal
@@ -212,33 +224,12 @@ services:
         max-size: 10m
         max-file: "3"
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost/api/v1/system/health || exit 1"]
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/api/v1/system/health || exit 1"]
       interval: 10s
       timeout: 3s
       retries: 3
 
   # ── Support services ─────────────────────────────────────────────────────────
-
-  clamav:
-    image: clamav/clamav:stable
-    container_name: autospare_clamav
-    restart: unless-stopped
-    mem_limit: 768m
-    healthcheck:
-      test: ["CMD-SHELL", "clamdcheck.sh || exit 1"]
-      interval: 60s
-      timeout: 10s
-      retries: 3
-      start_period: 120s
-    networks:
-      - internal
-    security_opt:
-      - no-new-privileges:true
-    logging:
-      driver: json-file
-      options:
-        max-size: 5m
-        max-file: "3"
 
   meilisearch:
     image: getmeili/meilisearch:v1.7
