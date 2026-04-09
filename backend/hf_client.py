@@ -243,6 +243,38 @@ async def hf_text(
         await _cache_set(cache_key, result, _TEXT_CACHE_TTL)
         return result
 
+
+async def hf_text_fast(
+    prompt: str,
+    system: str = "",
+    timeout: float = 90.0,
+) -> str:
+    """Chat completion via Cerebras — for background jobs and routing."""
+    cache_key = _cache_key("txt_fast", CEREBRAS_TEXT_MODEL, system, prompt)
+    cached = await _cache_get(cache_key)
+    if cached is not None:
+        return cached
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+    payload = _json.dumps({
+        "model": CEREBRAS_TEXT_MODEL,
+        "messages": messages,
+        "max_tokens": 1000,
+    }, ensure_ascii=False).encode()
+    try:
+        resp = await _post_with_retry(
+            CEREBRAS_BASE, _cerebras_headers(), payload, timeout, "text_fast"
+        )
+        resp.raise_for_status()
+        result = resp.json()["choices"][0]["message"]["content"]
+        await _cache_set(cache_key, result, _TEXT_CACHE_TTL)
+        return result
+    except Exception as exc:
+        logger.warning("hf_client [text_fast] failed: %s", exc)
+        return ""
+
 async def hf_embed(text: str, timeout: float = 10.0) -> list[float]:
     """Text embedding via Google Gemini embeddings API."""
     if not GEMINI_API_KEY:

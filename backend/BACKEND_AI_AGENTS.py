@@ -66,7 +66,7 @@ import httpx
 from dotenv import load_dotenv
 from sqlalchemy import and_, or_, select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
-from hf_client import hf_embed, hf_text
+from hf_client import hf_embed, hf_text, hf_text_fast
 
 from BACKEND_DATABASE_MODELS import (
     AgentAction, ApprovalQueue, CatalogVersion, Conversation, Message, Notification, Order, OrderItem,
@@ -296,7 +296,7 @@ class BaseAgent:
 
     name: str = "base_agent"
     model: str = FREE_MODEL
-    system_prompt: str = "You are a helpful assistant for Auto Spare."
+    system_prompt: str = "אתה נציג שירות של Auto Spare. ענה תמיד בעברית בלבד ללא מילים באנגלית. אם הלקוח כותב ערבית — ענה בערבית בלבד."
     max_tokens: int = 1500
     temperature: float = 0.7
 
@@ -428,6 +428,12 @@ class BaseAgent:
             ).strip()
             if not prompt:
                 prompt = "Please continue."
+            _fast_agents = {"router_agent", "orders_agent", "security_agent", "tech_agent", "supplier_manager_agent", "social_media_manager_agent"}
+            if self.name in _fast_agents:
+                return await hf_text_fast(
+                    prompt,
+                    system=(system_override or self.system_prompt),
+                )
             return await hf_text(
                 prompt,
                 system=(system_override or self.system_prompt),
@@ -615,6 +621,13 @@ class PartsFinderAgent(BaseAgent):
     agent_name = "Nir"          # ניר — the parts expert
     model = PREMIUM_MODEL       # premium: complex Hebrew part-matching & pricing
     system_prompt = """You are Nir, the Parts Finder Agent for Auto Spare, an Israeli auto parts platform.
+
+CRITICAL CONVERSATION RULES:
+1. NEVER address the agent by name — always address the CUSTOMER directly
+2. When confirming vehicle details, address the customer as "אתה/את" not by any name
+3. When asking for part type, use only common real car parts as examples: פנס קדמי, רפידות בלם, מצמד, מסנן שמן, פילטר אוויר, בולם זעזועים, מצבר
+4. NEVER use technical jargon like "מסוף", "זיז כפתור", "מנוע וין"
+5. Keep responses short — maximum 4 lines
 
 CRITICAL RULES:
 1. NEVER mention supplier names (RockAuto, FCP Euro, Autodoc, AliExpress) to customers
@@ -2260,7 +2273,7 @@ HTTP Status: {report.get('http_status_code', 'unknown')}
 Error: {report.get('error_trace', 'none')}
 Platform: {report.get('platform', 'unknown')}"""
 
-        response = await hf_text(prompt, system=self.system_prompt, timeout=60.0)
+        response = await hf_text_fast(prompt, system=self.system_prompt, timeout=60.0)
         try:
             match = re.search(r"\{.*\}", response, re.DOTALL)
             return json.loads(match.group()) if match else {

@@ -272,9 +272,9 @@ async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_pii_
 
         # ── Welcome message for new conversations or /start ──────────────────
         is_new_conversation = conversation is None or not history_rows if 'history_rows' in dir() else True
-        if not conversation or text.strip() in ("/start", "/התחל", "start", "hello", "hi", "היי", "הי", "هلا", "مرحبا", "שלום"):
-            female_names = ["ענת", "דנה", "מאיה", "שירה", "נועה"]
-            male_names = ["יוסי", "מוחמד", "ליאור", "ניר", "אורן"]
+        if text.strip() in ("/start", "/התחל", "start", "hello", "hi", "היי", "הי", "هلا", "مرحبا", "שלום") and not conversation:
+            female_names = ["ענת", "דנה", "מאיה", "שירה"]
+            male_names = ["יוסי", "מוחמד", "ליאור", "כרם"]
             import random
             all_names = female_names + male_names
             worker = random.choice(all_names)
