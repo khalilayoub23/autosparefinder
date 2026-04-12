@@ -2792,6 +2792,49 @@ async def _infer_parts_flow_reply(
         return agent._offline_reply(messages), model_used
 
 
+async def _format_response_for_customer(
+    raw_response: str,
+    agent_name: str,
+    source: str,
+    history: List[Dict[str, str]],
+) -> str:
+    """Use Gemini to reformat a raw agent response into warm, natural customer-facing text."""
+    fast_agents = {"router_agent", "orders_agent", "security_agent", "tech_agent",
+                   "supplier_manager_agent", "social_media_manager_agent", "parts_finder_agent"}
+    if agent_name not in fast_agents:
+        return raw_response
+
+    last_user_msg = ""
+    for m in reversed(history):
+        if m.get("role") == "user":
+            last_user_msg = m.get("content", "")
+            break
+
+    system = """אתה עוזר לנסח תשובות שירות לקוחות בעברית או ערבית.
+קיבלת תשובה גולמית מסוכן מידע.
+עליך לנסח אותה מחדש בצורה חמה, טבעית ומקצועית — כאילו אתה נציג שירות אנושי.
+חוקים:
+- שמור על כל המידע העובדתי מהתשובה הגולמית
+- אל תוסיף מידע שאינו בתשובה הגולמית
+- ענה בעברית אם הלקוח כתב עברית, ערבית אם כתב ערבית
+- תשובה קצרה ומדויקת — לא יותר מ-4 משפטים
+- אל תשתמש ב-HTML, markdown, או קישורים
+- טון חם וידידותי"""
+
+    prompt = f"""תשובה גולמית מהמערכת:
+{raw_response}
+
+הודעת הלקוח:
+{last_user_msg}
+
+נסח מחדש בצורה טבעית וחמה:"""
+
+    try:
+        return await hf_text(prompt, system=system)
+    except Exception:
+        return raw_response
+
+
 async def process_user_message(
     user_id: str,
     message: str,
@@ -3273,6 +3316,12 @@ async def process_user_message(
             agent_name = "service_agent"
             model_used = _channel_model_for_source(source, FREE_MODEL)
         exec_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+
+    # Format response through Gemini for customer-facing channels
+    if source in ("telegram", "whatsapp"):
+        response_text = await _format_response_for_customer(
+            response_text, agent_name, source, history
+        )
 
     # Persist state updates for this turn.
     conversation.context = context_data
