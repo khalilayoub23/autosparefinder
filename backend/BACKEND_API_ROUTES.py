@@ -8,7 +8,6 @@ All API endpoints live in backend/routes/*.py
 """
 
 from fastapi import FastAPI, Depends, HTTPException, status, Request, Query
-import traceback
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from typing import List, Optional, Dict, Any, Literal
@@ -108,12 +107,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv(
-        "CORS_ORIGINS",
-        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000",
-    ).split(","),
-    # Allow GitHub forwarded dev URLs (for example: https://<slug>-5173.app.github.dev)
-    allow_origin_regex=os.getenv("CORS_ORIGIN_REGEX", r"https://.*\.app\.github\.dev"),
+    allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:3000").split(","),
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["Content-Type", "Authorization", "X-Request-ID", "X-Idempotency-Key"],
@@ -228,6 +222,7 @@ app.add_middleware(
 # POST /api/v1/invoices/{invoice_id}/resend      -> routes/invoices.py
 
 
+# ==============================================================================
 # 8. RETURNS  /api/v1/returns  → routes/returns.py
 # ==============================================================================
 
@@ -243,6 +238,7 @@ app.add_middleware(
 # _FULL_REFUND_REASONS, _RETURN_WINDOW_DAYS          → routes/returns.py
 
 
+# ==============================================================================
 # 9. FILES  /api/v1/files  (4 endpoints)
 # ==============================================================================
 
@@ -378,9 +374,9 @@ async def _notify_search_miss_loop() -> None:
                         text("""
                             UPDATE search_misses
                             SET notified = TRUE
-                            WHERE id = ANY(:ids)
+                            WHERE id = ANY(:ids::uuid[])
                         """),
-                        {"ids": [uuid.UUID(x) for x in notified_ids]},
+                        {"ids": notified_ids},
                     )
                     await cat_db.commit()
 
@@ -388,10 +384,6 @@ async def _notify_search_miss_loop() -> None:
 
         except Exception as e:
             error_msg = str(e)[:500]
-            if "relation \"search_misses\" does not exist" in error_msg.lower():
-                print("[search_miss_notify] search_misses table missing — skipping until migration is applied")
-                await asyncio.sleep(_SEARCH_MISS_NOTIFY_INTERVAL)
-                continue
             print(f"[search_miss_notify] error (non-fatal): {error_msg}")
             # Log failure to DLQ (Gap 2b: Worker integration)
             try:
@@ -469,9 +461,9 @@ async def _vip_detection_loop() -> None:
                         SET is_vip     = TRUE,
                             vip_since  = NOW(),
                             updated_at = NOW()
-                        WHERE user_id = ANY(:ids)
+                        WHERE user_id = ANY(:ids::uuid[])
                           AND is_vip  = FALSE
-                    """), {"ids": [uuid.UUID(x) for x in new_vip_ids]})
+                    """), {"ids": new_vip_ids})
 
                     for row in rows:
                         _vip_title = "🏆 ברוך הבא למועדון הVIP של Auto Spare!"
@@ -523,11 +515,11 @@ async def startup():
     async with pii_session_factory() as _db:
         await _db.execute(text("""
             INSERT INTO users (id, email, phone, password_hash, full_name, role,
-                               is_active, is_verified, is_admin, is_super_admin, failed_login_count,
+                               is_active, is_verified, is_admin, failed_login_count,
                                created_at, updated_at)
             VALUES ('00000000-0000-0000-0000-000000000001',
                     'whatsapp@autospare.internal', '+00000000000000',
-                    '!disabled!', 'WhatsApp Bot', 'system', true, true, false, false, 0,
+                    '!disabled!', 'WhatsApp Bot', 'system', true, true, false, 0,
                     NOW(), NOW())
             ON CONFLICT (id) DO NOTHING
         """))
@@ -603,7 +595,7 @@ async def _stuck_orders_monitor_loop():
             async with pii_session_factory() as db:
                 result = await db.execute(
                     select(Order).where(
-                        Order.status.in_(["paid", "confirmed", "processing"]),
+                        Order.status.in_(["paid", "processing"]),
                         Order.updated_at <= cutoff,
                     )
                 )
@@ -926,49 +918,35 @@ async def _health_monitor_loop():
             try:
                 from db_update_agent import _last_report
                 if _last_report:
-                    last_heartbeat = None
-
-                    if isinstance(_last_report, datetime):
-                        last_heartbeat = _last_report
-                    elif isinstance(_last_report, str):
-                        last_heartbeat = datetime.fromisoformat(_last_report.replace("Z", "+00:00"))
-                    elif isinstance(_last_report, dict):
-                        hb_candidate = _last_report.get("finished_at") or _last_report.get("started_at")
-                        if isinstance(hb_candidate, datetime):
-                            last_heartbeat = hb_candidate
-                        elif isinstance(hb_candidate, str):
-                            last_heartbeat = datetime.fromisoformat(hb_candidate.replace("Z", "+00:00"))
-
-                    if last_heartbeat:
-                        now_for_delta = datetime.now(last_heartbeat.tzinfo) if last_heartbeat.tzinfo else datetime.utcnow()
-                        silence_mins = (now_for_delta - last_heartbeat).total_seconds() / 60
-
-                        if silence_mins > 120:  # 2 hours
-                            _alert_title = "⏱️  Worker db_update_agent: שקט למעל 2 שעות"
-                            _alert_msg = (
-                                f"העובד db_update_agent לא שלח heartbeat במשך {silence_mins:.0f} דקות. "
-                                f"אם הוא צריך לרוץ הוא אולי תקוע."
-                            )
-                            print(f"[HealthMonitor] ALERT: worker silence={silence_mins:.0f} min > 120 min")
-
-                            async with pii_session_factory() as _pii_db:
-                                admins_res = await _pii_db.execute(select(User).where(User.is_admin == True))
-                                admins = admins_res.scalars().all()
-                                for admin in admins:
-                                    _pii_db.add(Notification(
-                                        user_id=admin.id,
-                                        type="threshold_alert",
-                                        title=_alert_title,
-                                        message=_alert_msg,
-                                        channel="whatsapp",
-                                        data={"threshold_type": "worker_silence", "silence_minutes": silence_mins},
-                                    ))
-                                    asyncio.create_task(_guarded_task(publish_notification(str(admin.id), {
-                                        "type": "threshold_alert",
-                                        "title": _alert_title,
-                                        "message": _alert_msg,
-                                    })))
-                                await _pii_db.commit()
+                    last_heartbeat = datetime.fromisoformat(_last_report) if isinstance(_last_report, str) else _last_report
+                    silence_mins = (datetime.utcnow() - last_heartbeat).total_seconds() / 60
+                    
+                    if silence_mins > 120:  # 2 hours
+                        _alert_title = "⏱️  Worker db_update_agent: שקט למעל 2 שעות"
+                        _alert_msg = (
+                            f"העובד db_update_agent לא שלח heartbeat במשך {silence_mins:.0f} דקות. "
+                            f"אם הוא צריך לרוץ הוא אולי תקוע."
+                        )
+                        print(f"[HealthMonitor] ALERT: worker silence={silence_mins:.0f} min > 120 min")
+                        
+                        async with pii_session_factory() as _pii_db:
+                            admins_res = await _pii_db.execute(select(User).where(User.is_admin == True))
+                            admins = admins_res.scalars().all()
+                            for admin in admins:
+                                _pii_db.add(Notification(
+                                    user_id=admin.id,
+                                    type="threshold_alert",
+                                    title=_alert_title,
+                                    message=_alert_msg,
+                                    channel="whatsapp",
+                                    data={"threshold_type": "worker_silence", "silence_minutes": silence_mins},
+                                ))
+                                asyncio.create_task(_guarded_task(publish_notification(str(admin.id), {
+                                    "type": "threshold_alert",
+                                    "title": _alert_title,
+                                    "message": _alert_msg,
+                                })))
+                            await _pii_db.commit()
             except Exception as _e:
                 print(f"[HealthMonitor] Threshold check 3 error: {_e}")
 
@@ -1371,10 +1349,6 @@ async def _price_sync_loop():
                     job_id = await job_registry_start(db, "sync_prices", ttl_seconds=interval_s)
                 except Exception as exc:
                     print(f"[PriceSync] job_registry_start failed: {exc}")
-                    try:
-                        await db.rollback()
-                    except Exception:
-                        pass
 
                 agent = SupplierManagerAgent()
                 report = await agent.sync_prices(db)
@@ -1429,8 +1403,7 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
-    print(f"[ERROR] Unhandled exception on {request.method} {request.url.path}: {exc}")
-    print(traceback.format_exc())
+    print(f"[ERROR] Unhandled exception: {exc}")
     return JSONResponse(status_code=500, content={"error": "Internal server error", "status_code": 500})
 
 
