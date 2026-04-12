@@ -25,11 +25,11 @@ const AGENT_LABELS = {
 }
 
 const QUICK_MSGS = [
-  'רכבי הוא מאזדה 3 2019 – מה שוויו?',
   'אני צריך פילטר שמן לרכב שלי',
   'מה המחיר של רפידות בלם לטויוטה קורולה?',
-  'מה הסטטוס של ההזמנה האחרונה שלי?',
   'יש לי מספר לוחית: 12-345-67',
+  'מה הסטטוס של ההזמנה האחרונה שלי?',
+  'חפש מצת לרנו קליאו 2020',
 ]
 
 function AgentBadge({ agent }) {
@@ -223,7 +223,13 @@ export default function Chat() {
   const fileRef = useRef(null)
   const autoSentRef = useRef(false)
 
-  useEffect(() => { loadConversations() }, [])
+  useEffect(() => {
+    loadConversations()
+    // Re-load messages for the last open conversation after page refresh
+    if (currentConversationId) {
+      selectConversation(currentConversationId)
+    }
+  }, [])
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, isTyping])
 
   // Auto-send when navigated here with ?msg= (e.g. from Parts no-results AI button)
