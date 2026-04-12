@@ -27,7 +27,10 @@ jobs:
         run: docker compose -f docker-compose.yml config
       - name: Secret-scan (basic)
         run: |
+<<<<<<< HEAD
+=======
           set -e
+>>>>>>> 8219d3866ad562a8d02cd1af344f50bec1b6b762
           if git grep -nE "ghp_[A-Za-z0-9_\-]+|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}" -- './' ':(exclude)*/tests/*' ':(exclude)*/test_*'; then
             echo "Potential secret pattern found — please ensure no secrets are committed."
             exit 1
