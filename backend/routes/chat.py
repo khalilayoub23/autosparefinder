@@ -54,6 +54,8 @@ async def send_message(data: ChatMessageRequest, request: Request, current_user:
         )
         db.add(conversation)
         await db.flush()
+    else:
+        conversation.last_message_at = datetime.utcnow()
 
     # ── 2. Save user message immediately ─────────────────────────────────────
     user_msg = Message(
@@ -84,6 +86,19 @@ async def send_message(data: ChatMessageRequest, request: Request, current_user:
                 )
             except Exception as exc:
                 print(f"[BG AGENT FATAL] conv={conv_id}: {exc}")
+                # Save a visible error message so the user isn't left with a stuck spinner
+                try:
+                    async with pii_session_factory() as err_db:
+                        err_db.add(Message(
+                            conversation_id=conv_id,
+                            role="assistant",
+                            agent_name="service_agent",
+                            content="מצטער, נתקלתי בבעיה טכנית. אנא נסה שוב בעוד מספר שניות.",
+                            content_type="text",
+                        ))
+                        await err_db.commit()
+                except Exception:
+                    pass
 
     asyncio.create_task(_guarded_task(_run_agent_bg()))
 

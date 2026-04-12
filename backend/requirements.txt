@@ -1,12 +1,45 @@
+<<<<<<< HEAD
+# Backend production dependencies
+fastapi>=0.115
+uvicorn[standard]>=0.32
+sqlalchemy[asyncio]>=2.0
+asyncpg>=0.30
+alembic>=1.14
+pydantic>=2.10
+python-jose[cryptography]>=3.3
+passlib[bcrypt]>=1.7
+bcrypt>=4.2
+redis[hiredis]>=5.2
+httpx>=0.28
+stripe>=11.0
+python-dotenv>=1.0
+pgvector>=0.3
+meilisearch>=0.31
+openpyxl>=3.1
+reportlab>=4.2
+python-bidi>=0.4
+clamd>=1.0
+beautifulsoup4>=4.12
+sse-starlette>=2.1
+python-multipart>=0.0.19
+=======
 # Backend Requirements
 # Audited 2026-03-28 — only packages actually imported by API runtime or CLI tools in this repo
+>>>>>>> 943109468395bf2ee8304bf12c5a87d0fc2a501e
 
+<<<<<<< HEAD
+# Testing
+pytest>=8.3
+pytest-asyncio>=0.24
+pytest-cov>=4.1
+=======
 # Web framework
 fastapi>=0.111.0
 uvicorn[standard]>=0.29.0
 starlette>=0.37.0
 pydantic>=2.0.0
 email-validator>=2.1.0
+>>>>>>> 943109468395bf2ee8304bf12c5a87d0fc2a501e
 
 # Database
 sqlalchemy[asyncio]>=2.0.0
