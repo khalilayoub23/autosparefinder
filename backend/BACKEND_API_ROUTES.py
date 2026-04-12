@@ -223,7 +223,6 @@ app.add_middleware(
 
 
 # ==============================================================================
-<<<<<<< HEAD
 # 8. RETURNS  /api/v1/returns  → routes/returns.py
 # ==============================================================================
 
@@ -240,8 +239,6 @@ app.add_middleware(
 
 
 # ==============================================================================
-=======
->>>>>>> 943109468395bf2ee8304bf12c5a87d0fc2a501e
 # 9. FILES  /api/v1/files  (4 endpoints)
 # ==============================================================================
 
@@ -1447,10 +1444,6 @@ from routes.returns import router as returns_router
 app.include_router(returns_router)
 from routes.invoices import router as invoices_router
 app.include_router(invoices_router)
-<<<<<<< HEAD
-from routes.returns import router as returns_router
-app.include_router(returns_router)
-=======
 from routes.system import router as system_router
 app.include_router(system_router)
 from routes.cart import router as cart_router
@@ -1463,7 +1456,6 @@ from routes.support import router as support_router
 app.include_router(support_router, tags=["Support"])
 from routes.admin import router as admin_router
 app.include_router(admin_router, tags=["Admin"])
->>>>>>> 943109468395bf2ee8304bf12c5a87d0fc2a501e
 
 if __name__ == "__main__":
     import uvicorn
