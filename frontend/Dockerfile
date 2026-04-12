@@ -10,7 +10,8 @@ ARG VITE_API_URL=https://api.autosparefinder.co.il
 ENV VITE_API_URL=$VITE_API_URL
 
 COPY . .
-RUN npm run build
+# scripts/ dir lives outside this build context; skip asset-gen steps in Docker
+RUN npx vite build
 
 # ── Stage 2: serve with nginx ─────────────────────────────────────────────────
 FROM nginx:1.27-alpine

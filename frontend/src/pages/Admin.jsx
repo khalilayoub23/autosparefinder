@@ -184,6 +184,8 @@ export default function Admin() {
   const [importFile, setImportFile] = useState(null)
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState(null)
+  const [fitmentBackfillRunning, setFitmentBackfillRunning] = useState(false)
+  const [fitmentBackfillResult, setFitmentBackfillResult] = useState(null)
   const [users, setUsers] = useState([])
   const [editUser, setEditUser] = useState(null)
   const [editForm, setEditForm] = useState({ full_name: '', email: '', phone: '', role: 'customer', is_verified: false, is_active: true, is_admin: false })
@@ -239,6 +241,14 @@ export default function Admin() {
     if (tab === 'returns') loadAdminReturns()
   }, [tab])
 
+  useEffect(() => {
+    if (tab !== 'dashboard') return
+    const timer = setInterval(() => {
+      loadDashboard()
+    }, 30000)
+    return () => clearInterval(timer)
+  }, [tab])
+
   const loadAdminReturns = async (sf = returnsFilter) => {
     setLoading(true)
     try {
@@ -257,6 +267,22 @@ export default function Admin() {
       loadDashboard()
     } catch (e) { toast.error(e.response?.data?.detail || 'שגיאה באישור') }
     finally { setProcessingReturn(null) }
+  }
+
+  const runFitmentBackfill = async () => {
+    setFitmentBackfillRunning(true)
+    setFitmentBackfillResult(null)
+    try {
+      const { data } = await api.post('/admin/db-agent/run/backfill_catalog_fitment_from_xls')
+      setFitmentBackfillResult({ ok: true, ...data })
+      toast.success(`הותאמו ${data.matched_rows || 0} שורות ועודכנו ${data.updated_parts || 0} חלקים`)
+    } catch (err) {
+      const msg = err.response?.data?.detail || 'שגיאה בהרצת התאמת התאימות'
+      setFitmentBackfillResult({ ok: false, msg })
+      toast.error(msg)
+    } finally {
+      setFitmentBackfillRunning(false)
+    }
   }
 
   const handleRejectReturn = async () => {
@@ -343,6 +369,7 @@ export default function Admin() {
     try {
       await api.put(`/admin/orders/${orderId}/status`, null, { params: { new_status: newStatus } })
       setOrders((os) => os.map((o) => o.id === orderId ? { ...o, status: newStatus } : o))
+      loadDashboard()
       toast.success('סטטוס עודכן')
     } catch { toast.error('שגיאה בעדכון סטטוס') }
     finally { setUpdatingStatus(null) }
@@ -626,7 +653,7 @@ export default function Admin() {
                 <p className="text-xl font-bold text-brand-600">₪{Number(stats.total_revenue || 0).toLocaleString('he-IL', {minimumFractionDigits: 2})}</p>
               </div>
               <div className="card p-4 border-l-4 border-yellow-400">
-                <p className="text-xs text-gray-500 mb-1">מע״מ 17%</p>
+                <p className="text-xs text-gray-500 mb-1">מע״מ 18%</p>
                 <p className="text-xl font-bold text-yellow-600">₪{Number(stats.vat_total || 0).toLocaleString('he-IL', {minimumFractionDigits: 2})}</p>
                 <p className="text-xs text-gray-400 mt-1">הכנסות נטו − ₪{Number(stats.net_revenue_ex_vat || 0).toLocaleString('he-IL', {minimumFractionDigits: 0})}</p>
               </div>
@@ -1434,6 +1461,47 @@ export default function Admin() {
                   </>
                 ) : (
                   <p className="text-red-700">❌ {importResult.msg}</p>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="card p-6">
+            <h3 className="font-bold text-gray-900 mb-1 flex items-center gap-2">
+              <CheckSquare className="w-5 h-5 text-brand-600" />
+              התאמת תאימות מדויקת מהרשומות ב-Excel
+            </h3>
+            <p className="text-sm text-gray-400 mb-5">
+              מריץ את משימת השרת שמחברת שורות מהקובץ לחלקים בקטלוג וכותבת התאמת רכב מדויקת ל- compatible_vehicles.
+            </p>
+            <button
+              onClick={runFitmentBackfill}
+              disabled={fitmentBackfillRunning}
+              className="btn-primary w-full flex items-center justify-center gap-2"
+            >
+              {fitmentBackfillRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckSquare className="w-4 h-4" />}
+              {fitmentBackfillRunning ? 'מריץ התאמת תאימות...' : 'הרץ התאמת תאימות מה-Excel'}
+            </button>
+
+            {fitmentBackfillResult && (
+              <div className={`mt-4 rounded-xl p-4 text-sm ${fitmentBackfillResult.ok ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
+                {fitmentBackfillResult.ok ? (
+                  <div className="grid grid-cols-3 gap-3 text-center">
+                    <div className="bg-white rounded-lg p-3">
+                      <p className="text-2xl font-bold text-green-600">{fitmentBackfillResult.matched_rows || 0}</p>
+                      <p className="text-xs text-gray-500">שורות מותאמות</p>
+                    </div>
+                    <div className="bg-white rounded-lg p-3">
+                      <p className="text-2xl font-bold text-blue-600">{fitmentBackfillResult.updated_parts || 0}</p>
+                      <p className="text-xs text-gray-500">חלקים שעודכנו</p>
+                    </div>
+                    <div className="bg-white rounded-lg p-3">
+                      <p className="text-2xl font-bold text-brand-600">{fitmentBackfillResult.fitment_rows || 0}</p>
+                      <p className="text-xs text-gray-500">רשומות תאימות</p>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-red-700">{fitmentBackfillResult.msg}</p>
                 )}
               </div>
             )}

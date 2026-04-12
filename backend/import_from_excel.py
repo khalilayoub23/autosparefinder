@@ -1,28 +1,33 @@
 """
 import_from_excel.py
 --------------------
-Imports REAL supplier data from 'parts data base.xlsx' into supplier_parts.
+Imports supplier pricing and availability into supplier_parts.
 
-Uses the same multi-block parsing logic as import_parts_db.py.
-Also fixes parts_catalog.part_type and sets importer_price_ils.
+This importer now consumes the curated normalized workbook so supplier sync and
+catalog sync use the same parsed source rows.
 
 Supplier: AutoParts Pro IL (official Israeli importer)
 
 Run:
-  python3 import_from_excel.py              # all sheets
-  python3 import_from_excel.py JAECOO       # just JAECOO
-  python3 import_from_excel.py JAECOO --dry-run
+    python3 import_from_excel.py              # all sheets
+    python3 import_from_excel.py JAECOO       # just JAECOO
+    python3 import_from_excel.py JAECOO --dry-run
 """
-import asyncio, sys, uuid, hashlib, json
-from datetime import datetime
-from pathlib import Path
-import asyncpg, openpyxl
-from dotenv import load_dotenv
+import asyncio
+import json
 import os
+import sys
+import uuid
+from datetime import datetime
+
+import asyncpg
+from dotenv import load_dotenv
+
+from manufacturer_normalization import normalize_manufacturer_name
+from workbook_normalizer import build_normalized_workbook, iter_normalized_rows
 
 load_dotenv()
 
-XLSX_FILE = Path(__file__).parent / "data" / "parts_database.xlsx"
 _raw_url = os.getenv("DATABASE_URL", "")
 if not _raw_url:
     raise RuntimeError("DATABASE_URL environment variable is required")
@@ -32,134 +37,145 @@ SUPPLIER_NAME = "AutoParts Pro IL"
 ILS_TO_USD = 1 / 3.65
 
 SHEET_CONFIG = {
-    "JAECOO":     ("Jaecoo",    "JAEC-", "BM"),
-    "ORA":        ("ORA",       "ORA-",  "BM"),
-    "GEN":        ("ג'נסיס",   "GEN-",  "BM"),
-    "Hyundai":    ("Hyundai",   "HYUN-", "B"),
-    "Mercedes":   ("Mercedes",  "MERC-", "B"),
-    "Mitsubishi": ("Mitsubishi","MITS-", "B"),
-    "Smart":      ("Smart",     "SMAR-", "B"),
-    "Porsche":    ("Porsche",   "PORS-", "C"),
-    "Suzuki":     ("Suzuki",    "SUZU-", "D"),
-    "Renault":    ("Renault",   "RENA-", "E"),
-    "Chevrolet":  ("Chevrolet", "CHEV-", "A"),
-    "Citroen":    ("Citroen",   "CITR-", "F"),
-    "Peugeot":    ("Peugeot",   "PEUG-", "F"),
+    "JAECOO": "Jaecoo",
+    "ORA": "ORA",
+    "GEN": "ג'נסיס",
+    "Hyundai": "Hyundai",
+    "Mercedes": "Mercedes",
+    "Mitsubishi": "Mitsubishi",
+    "Smart": "Smart",
+    "Porsche": "Porsche",
+    "Suzuki": "Suzuki",
+    "Renault": "Renault",
+    "Chevrolet": "Chevrolet",
+    "Citroen": "Citroen",
+    "Peugeot": "Peugeot",
 }
 
-_HEADER_VALS = {'זמינות מלאי','מחיר לצרכן','תיאור החלק','מותג','מספר קטלוגי'}
-
 def clean(val):
-    if val is None: return None
+    if val is None:
+        return None
     s = str(val).strip()
-    return s if s and s not in ('-','None','nan') else None
+    return s if s and s not in ("-", "None", "nan") else None
 
-def parse_price(val):
-    if val is None: return None
-    try:
-        p = float(str(val).replace('₪','').replace(',','').strip())
-        return round(p, 2) if p > 0 else None
-    except: return None
 
 def parse_avail(val):
-    if val is None: return None, None
+    if val is None:
+        return None, None
     s = str(val).strip()
-    if s in ('זמין','in_stock','available','yes','כן','זמין במלאי'): return True, 'in_stock'
-    if s in ('לא זמין','out_of_stock','no','לא','אזל','אין במלאי'): return False, 'on_order'
+    if s in ("זמין", "in_stock", "available", "yes", "כן", "זמין במלאי"):
+        return True, "in_stock"
+    if s in ("לא זמין", "out_of_stock", "no", "לא", "אזל", "אין במלאי"):
+        return False, "on_order"
     return None, None
 
-def parse_multiblock(sheet_name, row, row_idx):
-    row = list(row); mc = len(row)
-    def g(i): return row[i] if i < mc else None
-    results = []
 
-    def add(avail_v, price_v, name_v, mfr_v, cat_v):
-        cat = clean(cat_v)
-        if not cat or cat in _HEADER_VALS: return
-        name = clean(name_v) or "(ללא שם)"
-        if name in _HEADER_VALS: return
-        is_av, av_code = parse_avail(avail_v)
-        results.append({"catalog": cat, "name": name, "price": parse_price(price_v),
-                        "is_available": is_av, "availability": av_code})
+def parse_specs(value):
+    if isinstance(value, dict):
+        return value
+    if not value:
+        return {}
+    try:
+        return json.loads(value)
+    except (TypeError, ValueError):
+        return {}
 
-    if any(g(i) is not None for i in range(5)):
-        add(g(0), g(1), g(2), g(3), g(4))
-    if mc > 5 and any(g(i) is not None for i in range(5, 10)):
-        if g(9) is not None or g(7) is not None:
-            add(g(5), g(6), g(7), g(8), g(9))
-    avail_c, mfr_c = g(5), g(8)
-    for x in range(10, mc - 1, 3):
-        pv, nv = g(x), g(x+1)
-        cv = g(x+2) if x+2 < mc else None
-        if any(v is not None for v in (pv, nv, cv)):
-            add(avail_c, pv, nv, mfr_c, cv)
-    return results
 
-def parse_single_block(sheet_name, row, row_idx):
-    row = list(row)
-    if len(row) < 5: return None
-    def g(i): return row[i] if i < len(row) else None
-    cat = clean(g(4))
-    if not cat or cat in _HEADER_VALS: return None
-    name = clean(g(2))
-    if not name or name in _HEADER_VALS: return None
-    is_av, av_code = parse_avail(g(0))
-    return {"catalog": cat, "name": name, "price": parse_price(g(1)),
-            "is_available": is_av, "availability": av_code}
+def parse_price(value):
+    try:
+        price = float(value)
+        return round(price, 2) if price > 0 else None
+    except (TypeError, ValueError):
+        return None
 
-def parse_porsche(row, row_idx):
-    row = list(row)
-    if len(row) < 6: return None
-    cat, name = clean(row[5]), clean(row[4])
-    if not cat or not name: return None
-    is_av, av_code = parse_avail(row[1])
-    return {"catalog": cat, "name": name, "price": parse_price(row[0]),
-            "is_available": is_av, "availability": av_code}
 
-def parse_suzuki(row, row_idx):
-    row = list(row)
-    if len(row) < 6: return None
-    cat = clean(row[2]); name = clean(row[5]) or clean(row[4])
-    if not cat or not name: return None
-    is_av, av_code = parse_avail(row[1])
-    return {"catalog": cat, "name": name, "price": parse_price(row[0]),
-            "is_available": is_av, "availability": av_code}
+def load_normalized_records(brands=None):
+    grouped = {sheet_name: [] for sheet_name in SHEET_CONFIG}
+    seen = {sheet_name: set() for sheet_name in SHEET_CONFIG}
 
-def parse_renault(row, row_idx):
-    # Renault: col[4]=name, col[1]=availability.
-    # The original import_parts_db.py used row-index SKUs (RENA-R{ri})
-    # because col[5] catalog was None. We mirror that so by_sku matching works.
-    row = list(row)
-    name = clean(row[4]) if len(row) > 4 else None
-    if not name: return None
-    is_av, av_code = parse_avail(row[1] if len(row) > 1 else None)
-    # Use same row_idx-based key as the original importer (RENA-R{ri} → strip prefix → R{ri})
-    return {"catalog": f"R{row_idx}", "name": name, "price": None,
-            "is_available": is_av, "availability": av_code}
+    for record in iter_normalized_rows(selected_sheets=brands):
+        sheet_name = record.get("source_sheet")
+        if sheet_name not in SHEET_CONFIG:
+            continue
 
-def parse_citroen_peugeot(row, row_idx):
-    # Format F: 7-row header then data.
-    # col[0]=model col[1]=avail(כן/לא) col[2]=price(incl VAT)
-    # col[3]=warranty col[4]=mfr col[5]=type col[6]=name col[7]=catalog_num
-    row = list(row)
-    if len(row) < 8: return None
-    cat = clean(row[7])
-    name = clean(row[6])
-    if not cat or not name: return None
-    is_av, av_code = parse_avail(row[1])
-    return {"catalog": cat, "name": name, "price": parse_price(row[2]),
-            "is_available": is_av, "availability": av_code}
+        catalog = clean(record.get("catalog_num") or record.get("oem_number"))
+        name = clean(record.get("name"))
+        sku = clean(record.get("sku"))
+        if not catalog or not name:
+            continue
 
-def parse_chevrolet(row, row_idx):
-    row = list(row)
-    if len(row) < 2: return None
-    cat = clean(row[1]); name = clean(row[2]) if len(row) > 2 else None
-    if not cat or not name: return None
-    price = parse_price(row[5]) if len(row) > 5 else None
-    stock = clean(row[4]) if len(row) > 4 else None
-    is_av, av_code = parse_avail(stock)
-    return {"catalog": cat, "name": name, "price": price,
-            "is_available": is_av, "availability": av_code}
+        dedupe_key = catalog.upper()
+        if dedupe_key in seen[sheet_name]:
+            continue
+        seen[sheet_name].add(dedupe_key)
+
+        specs = parse_specs(record.get("specifications"))
+        is_av, av_code = parse_avail(specs.get("stock_status"))
+        grouped[sheet_name].append({
+            "catalog": catalog,
+            "sku": sku,
+            "name": name,
+            "price": parse_price(record.get("base_price")),
+            "part_type": clean(record.get("part_type")) or "unknown",
+            "is_available": is_av,
+            "availability": av_code,
+        })
+
+    return grouped
+
+
+async def get_supplier_parts_columns(conn):
+    rows = await conn.fetch(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'supplier_parts'
+        ORDER BY ordinal_position
+        """
+    )
+    return {row["column_name"] for row in rows}
+
+
+def build_supplier_insert_sql(column_names):
+    placeholders = ", ".join(f"${index}" for index in range(1, len(column_names) + 1))
+    columns_sql = ", ".join(column_names)
+    return f"""
+        INSERT INTO supplier_parts
+            ({columns_sql})
+        VALUES ({placeholders})
+        ON CONFLICT DO NOTHING
+    """
+
+
+def build_supplier_insert_payload(column_names, supplier_id, part_id, rec, now, price, price_usd, is_av, av_code):
+    values = {
+        "id": uuid.uuid4(),
+        "supplier_id": supplier_id,
+        "part_id": uuid.UUID(part_id),
+        "supplier_sku": rec["catalog"],
+        "price_ils": price,
+        "price_usd": price_usd,
+        "shipping_cost_usd": 0.0,
+        "shipping_cost_ils": 0.0,
+        "is_available": is_av,
+        "availability": av_code,
+        "warranty_months": 12,
+        "estimated_delivery_days": 7 if is_av else 14,
+        "last_checked_at": now,
+        "stock_quantity": 10 if is_av else 0,
+        "min_order_qty": 1,
+        "supplier_url": None,
+        "last_in_stock_at": now if is_av else None,
+        "express_available": False,
+        "express_price_ils": None,
+        "express_delivery_days": None,
+        "express_cutoff_time": None,
+        "express_last_checked": now,
+        "created_at": now,
+        "updated_at": now,
+        "part_type": rec["part_type"] if rec["part_type"] != "unknown" else "OEM",
+    }
+    return [values[column_name] for column_name in column_names]
 
 
 async def run(brands=None, dry_run=False):
@@ -172,122 +188,148 @@ async def run(brands=None, dry_run=False):
     supplier_id = supplier['id']
     print(f"Supplier id: {supplier_id}")
 
-    wb = openpyxl.load_workbook(XLSX_FILE, read_only=True, data_only=True)
-    print(f"Opened: {XLSX_FILE}\n")
+    supplier_part_columns = await get_supplier_parts_columns(conn)
+    insert_column_order = [
+        "id",
+        "supplier_id",
+        "part_id",
+        "supplier_sku",
+        "price_ils",
+        "price_usd",
+        "shipping_cost_usd",
+        "shipping_cost_ils",
+        "is_available",
+        "availability",
+        "warranty_months",
+        "estimated_delivery_days",
+        "last_checked_at",
+        "stock_quantity",
+        "min_order_qty",
+        "supplier_url",
+        "last_in_stock_at",
+        "express_available",
+        "express_price_ils",
+        "express_delivery_days",
+        "express_cutoff_time",
+        "express_last_checked",
+        "created_at",
+        "updated_at",
+        "part_type",
+    ]
+    insert_column_order = [column for column in insert_column_order if column in supplier_part_columns]
+    supplier_insert_sql = build_supplier_insert_sql(insert_column_order)
+
+    normalized_path = build_normalized_workbook(selected_sheets=brands)
+    normalized_records = load_normalized_records(brands=brands)
+    print(f"Opened normalized source: {normalized_path}\n")
 
     all_stats = []
-    for sheet_name, (manufacturer, sku_prefix, stype) in SHEET_CONFIG.items():
+    for sheet_name, manufacturer in SHEET_CONFIG.items():
         if brands and sheet_name.upper() not in [b.upper() for b in brands]:
             continue
-        if sheet_name not in wb.sheetnames:
-            print(f"  [{sheet_name}] not in workbook, skip"); continue
 
-        print(f"=== {sheet_name} ===")
+        manufacturer = normalize_manufacturer_name(manufacturer, manufacturer)
+
+        print(f"=== {sheet_name} ({manufacturer}) ===")
         stats = dict(sheet=sheet_name, parsed=0, matched=0, not_found=0,
                      sp_ins=0, cat_fixed=0, errors=0)
 
         # Build SKU/name lookup: key → (part_id_str, base_price)
+        mfr_variants = sorted({
+            manufacturer,
+            normalize_manufacturer_name(manufacturer, manufacturer),
+            sheet_name,
+        })
         db_parts = await conn.fetch(
-            "SELECT id, sku, name, base_price FROM parts_catalog WHERE LOWER(manufacturer)=LOWER($1)",
-            manufacturer)
-        by_sku, by_name = {}, {}
+            """
+            SELECT id, sku, oem_number, name, base_price
+            FROM parts_catalog
+            WHERE LOWER(manufacturer) = ANY($1::text[])
+            """,
+            [m.lower() for m in mfr_variants if m],
+        )
+        by_sku, by_oem, by_name = {}, {}, {}
         for p in db_parts:
-            full = p['sku'] or ""
-            orig = full[len(sku_prefix):] if full.startswith(sku_prefix) else full
             val = (str(p['id']), float(p['base_price']) if p['base_price'] else None)
-            if orig: by_sku[orig.upper()] = val
-            if p['name']: by_name[p['name'].strip()] = val
+            if p['sku']:
+                by_sku[p['sku'].strip().upper()] = val
+            if p['oem_number']:
+                by_oem[str(p['oem_number']).strip().upper()] = val
+            if p['name']:
+                by_name[p['name'].strip()] = val
         print(f"  DB: {len(db_parts)} parts")
 
         # Delete old supplier_parts
         if not dry_run:
             dr = await conn.execute("""
                 DELETE FROM supplier_parts WHERE supplier_id=$1
-                AND part_id IN (SELECT id FROM parts_catalog WHERE LOWER(manufacturer)=LOWER($2))
-            """, supplier_id, manufacturer)
+                AND part_id IN (
+                    SELECT id
+                    FROM parts_catalog
+                    WHERE LOWER(manufacturer) = ANY($2::text[])
+                )
+            """, supplier_id, [m.lower() for m in mfr_variants if m])
             print(f"  Deleted: {dr}")
 
-        # Parse Excel
-        ws = wb[sheet_name]
-        # BM/B: start_row=1 (no separate header rows)
-        # F (Citroen/Peugeot): start_row=8 (7 metadata rows + 1 column-header row)
-        # Others (A/C/D/E): start_row=3 (2-row header, matching import_parts_db.py)
-        if stype in ("BM", "B"): start_row = 1
-        elif stype == "F": start_row = 8
-        else: start_row = 3
-        recs = []
-        for ri, row in enumerate(ws.iter_rows(min_row=start_row, values_only=True), 1):
-            if stype == "BM": recs.extend(parse_multiblock(sheet_name, row, ri))
-            elif stype == "B":
-                r = parse_single_block(sheet_name, row, ri)
-                if r: recs.append(r)
-            elif stype == "C":
-                r = parse_porsche(row, ri)
-                if r: recs.append(r)
-            elif stype == "D":
-                r = parse_suzuki(row, ri)
-                if r: recs.append(r)
-            elif stype == "E":
-                r = parse_renault(row, ri)
-                if r: recs.append(r)
-            elif stype == "A":
-                r = parse_chevrolet(row, ri)
-                if r: recs.append(r)
-            elif stype == "F":
-                r = parse_citroen_peugeot(row, ri)
-                if r: recs.append(r)
-
-        # Deduplicate
-        seen, unique = set(), []
-        for r in recs:
-            k = r["catalog"].upper()
-            if k not in seen:
-                seen.add(k); unique.append(r)
-
+        unique = normalized_records.get(sheet_name, [])
         stats["parsed"] = len(unique)
-        print(f"  Excel: {len(recs)} raw / {len(unique)} unique")
+        print(f"  Normalized rows: {len(unique)}")
 
         now = datetime.utcnow()
         for rec in unique:
-            lookup = by_sku.get(rec["catalog"].upper()) or by_name.get(rec["name"])
+            lookup = (
+                by_sku.get((rec.get("sku") or "").upper())
+                or by_oem.get(rec["catalog"].upper())
+                or by_name.get(rec["name"])
+            )
             if not lookup:
-                stats["not_found"] += 1; continue
+                stats["not_found"] += 1
+                continue
             part_id, base_price_db = lookup
             stats["matched"] += 1
             if dry_run:
-                stats["sp_ins"] += 1; continue
+                stats["sp_ins"] += 1
+                continue
 
-            # Use Excel price; fallback to catalog base_price; last resort 100
+            # Use normalized workbook price; fallback to catalog base_price; last resort 100.
             price = rec["price"] or base_price_db or 100.0
             price_usd = round(price * ILS_TO_USD, 2)
             is_av = rec["is_available"] if rec["is_available"] is not None else False
             av_code = rec["availability"] or "on_order"
             try:
                 await conn.execute("""
-                    UPDATE parts_catalog SET part_type='OEM',
-                        importer_price_ils=$1, online_price_ils=$2, updated_at=NOW()
+                    UPDATE parts_catalog
+                    SET part_type = CASE
+                            WHEN $1::text IS NOT NULL AND $1::text <> 'unknown' THEN LEFT($1::text, 50)
+                            ELSE COALESCE(NULLIF(part_type, ''), 'OEM')
+                        END,
+                        importer_price_ils=$2, online_price_ils=$2, updated_at=NOW()
                     WHERE id=$3
-                """, price, price, uuid.UUID(part_id))
+                """, rec["part_type"], price, uuid.UUID(part_id))
                 stats["cat_fixed"] += 1
-                await conn.execute("""
-                    INSERT INTO supplier_parts
-                        (id,supplier_id,part_id,supplier_sku,price_ils,price_usd,
-                         is_available,availability,warranty_months,estimated_delivery_days,
-                         stock_quantity,min_order_qty,last_checked_at,created_at)
-                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13)
-                """, uuid.uuid4(), supplier_id, uuid.UUID(part_id), rec["catalog"],
-                    price, price_usd, is_av, av_code,
-                    12, 7 if is_av else 14, 10 if is_av else 0, 1, now)
+                payload = build_supplier_insert_payload(
+                    insert_column_order,
+                    supplier_id,
+                    part_id,
+                    rec,
+                    now,
+                    price,
+                    price_usd,
+                    is_av,
+                    av_code,
+                )
+                await conn.execute(supplier_insert_sql, *payload)
                 stats["sp_ins"] += 1
             except Exception as e:
                 stats["errors"] += 1
-                if stats["errors"] <= 3: print(f"  ERR: {e}")
+                if stats["errors"] <= 3:
+                    print(f"  ERR: {e}")
 
         all_stats.append(stats)
         print(f"  Result: matched={stats['matched']}, not_found={stats['not_found']}, "
               f"sp_ins={stats['sp_ins']}, cat_fixed={stats['cat_fixed']}, err={stats['errors']}\n")
 
-    wb.close(); await conn.close()
+    await conn.close()
     print("="*55)
     print("SUMMARY")
     print("="*55)

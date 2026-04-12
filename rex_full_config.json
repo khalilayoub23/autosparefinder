@@ -1,0 +1,474 @@
+{
+  "agent": "Rex",
+  "module": "catalog_scraper.py",
+  "runtime": {
+    "scrape_enabled": true,
+    "scrape_interval_h": 6.0,
+    "scrape_batch_size": 200,
+    "scrape_request_delay_s": 1.5,
+    "scrape_max_errors": 30,
+    "proxy_configured": false,
+    "proxy_host": null,
+    "discovery_enabled": true,
+    "discovery_interval_h": 24.0,
+    "discovery_target": 120,
+    "discovery_per_run": 20,
+    "discovery_use_official_sites": true,
+    "discovery_official_only": true,
+    "discovery_official_max_requests": 18,
+    "discovery_official_max_domains": 18,
+    "discovery_official_max_urls": 72,
+    "discovery_official_max_price_usd": 10000.0,
+    "discovery_official_suffixes": [
+      "com",
+      "co.il",
+      "de",
+      "co.uk",
+      "fr",
+      "it",
+      "es",
+      "nl",
+      "be",
+      "ch",
+      "at",
+      "pl",
+      "cz",
+      "pt",
+      "se",
+      "no",
+      "fi",
+      "dk",
+      "com.au",
+      "co.jp",
+      "co.kr",
+      "com.br",
+      "mx",
+      "ae",
+      "sa",
+      "tr"
+    ],
+    "usd_to_ils": 3.72
+  },
+  "source_order": [
+    "official_sites",
+    "autodoc",
+    "ebay"
+  ],
+  "source_maps": {
+    "autodoc_brand_slugs": {
+      "Toyota": "toyota",
+      "BMW": "bmw",
+      "Mercedes": "mercedes-benz",
+      "Volkswagen": "vw",
+      "Ford": "ford",
+      "Audi": "audi",
+      "Honda": "honda",
+      "Nissan": "nissan",
+      "Hyundai": "hyundai",
+      "Kia": "kia",
+      "Mazda": "mazda",
+      "Subaru": "subaru",
+      "Skoda": "skoda",
+      "Renault": "renault",
+      "Peugeot": "peugeot",
+      "Citroen": "citroen",
+      "Opel": "opel",
+      "Volvo": "volvo",
+      "Seat": "seat",
+      "Lexus": "lexus",
+      "Jeep": "jeep",
+      "Dodge": "dodge",
+      "Chevrolet": "chevrolet",
+      "Mitsubishi": "mitsubishi",
+      "Suzuki": "suzuki",
+      "Fiat": "fiat",
+      "Alfa Romeo": "alfa-romeo",
+      "Porsche": "porsche",
+      "Dacia": "dacia",
+      "Mini": "mini",
+      "Land Rover": "land-rover",
+      "Jaguar": "jaguar",
+      "Infiniti": "infiniti",
+      "Buick": "buick",
+      "Cadillac": "cadillac",
+      "GMC": "gmc",
+      "RAM": "ram",
+      "Geely": "geely",
+      "BYD": "byd",
+      "MG": "mg",
+      "Haval": "haval",
+      "Chery": "chery",
+      "Tesla": "tesla",
+      "Smart": "smart",
+      "ORA": "ora",
+      "Jaecoo": "jaecoo",
+      "Genesis": "genesis"
+    },
+    "autodoc_categories": [
+      [
+        "Filters",
+        "filters"
+      ],
+      [
+        "Brakes",
+        "brakes"
+      ],
+      [
+        "Suspension",
+        "suspension"
+      ],
+      [
+        "Engine",
+        "engine-parts"
+      ],
+      [
+        "Electrical",
+        "electrical"
+      ],
+      [
+        "Steering",
+        "steering"
+      ],
+      [
+        "Cooling",
+        "cooling"
+      ],
+      [
+        "Exhaust",
+        "exhaust"
+      ],
+      [
+        "Transmission",
+        "transmission"
+      ],
+      [
+        "Fuel System",
+        "fuel-system"
+      ]
+    ],
+    "oem_num_patterns": {
+      "Toyota": [
+        "\\b\\d{5}-[A-Z0-9]{5}\\b"
+      ],
+      "BMW": [
+        "\\b\\d{2}\\s?\\d{2}\\s?\\d\\s?\\d{3}\\s?\\d{3}\\b"
+      ],
+      "Mercedes": [
+        "\\bA?\\d{3}\\s?\\d{3}\\s?\\d{2}\\s?\\d{2}\\b"
+      ],
+      "Volkswagen": [
+        "\\b\\d[A-Z]\\d{3}\\s?\\d{3}\\s?[A-Z0-9]+\\b"
+      ],
+      "Honda": [
+        "\\b\\d{5}-[A-Z0-9]{3}-[A-Z0-9]{3}\\b"
+      ],
+      "Ford": [
+        "\\b[A-Z]{1,2}\\d[A-Z]-\\d{4,6}-[A-Z0-9]+\\b"
+      ],
+      "default": [
+        "\\b[A-Z]{2,4}[-_]?\\d{4,12}[A-Z0-9]{0,6}\\b",
+        "\\b\\d{4,12}[-][A-Z0-9]{3,10}\\b"
+      ]
+    },
+    "official_site_search_urls": {
+      "Toyota": [
+        "https://autoparts.toyota.com/search?search_str={q}"
+      ],
+      "Lexus": [
+        "https://parts.lexus.com/search?search_str={q}"
+      ],
+      "Ford": [
+        "https://parts.ford.com/shop/en/us/search?q={q}"
+      ],
+      "Volkswagen": [
+        "https://parts.vw.com/search?searchTerm={q}"
+      ],
+      "Audi": [
+        "https://parts.audiusa.com/search?searchTerm={q}"
+      ],
+      "Subaru": [
+        "https://parts.subaru.com/search?searchTerm={q}"
+      ],
+      "Mazda": [
+        "https://parts.mazdausa.com/search?searchTerm={q}"
+      ],
+      "Nissan": [
+        "https://parts.nissanusa.com/search?searchTerm={q}"
+      ],
+      "Honda": [
+        "https://dreamshop.honda.com/s/search?q={q}"
+      ]
+    },
+    "official_brand_domains": {
+      "Toyota": "toyota.com",
+      "Lexus": "lexus.com",
+      "BMW": "bmw.com",
+      "Mercedes": "mercedes-benz.com",
+      "Volkswagen": "vw.com",
+      "Ford": "ford.com",
+      "Audi": "audi.com",
+      "Honda": "honda.com",
+      "Nissan": "nissanusa.com",
+      "Hyundai": "hyundai.com",
+      "Kia": "kia.com",
+      "Mazda": "mazdausa.com",
+      "Subaru": "subaru.com",
+      "Skoda": "skoda-auto.com",
+      "Renault": "renaultgroup.com",
+      "Peugeot": "peugeot.com",
+      "Citroen": "citroen.com",
+      "Opel": "opel.com",
+      "Volvo": "volvocars.com",
+      "Seat": "seat.com",
+      "Jeep": "jeep.com",
+      "Dodge": "dodge.com",
+      "Chevrolet": "chevrolet.com",
+      "Mitsubishi": "mitsubishicars.com",
+      "Suzuki": "suzuki.com",
+      "Fiat": "fiat.com",
+      "Alfa Romeo": "alfaromeo.com",
+      "Porsche": "porsche.com",
+      "Dacia": "dacia.com",
+      "Mini": "mini.com",
+      "Land Rover": "landrover.com",
+      "Jaguar": "jaguar.com",
+      "Infiniti": "infinitiusa.com",
+      "Buick": "buick.com",
+      "Cadillac": "cadillac.com",
+      "GMC": "gmc.com",
+      "RAM": "ramtrucks.com",
+      "Geely": "geely.com",
+      "BYD": "byd.com",
+      "MG": "mg.co.uk",
+      "Haval": "haval.com",
+      "Chery": "cheryinternational.com",
+      "Tesla": "tesla.com",
+      "Smart": "smart.com",
+      "ORA": "ora.co.uk",
+      "Jaecoo": "jaecoo-global.com",
+      "Genesis": "genesis.com"
+    },
+    "official_brand_domain_aliases": {
+      "Volkswagen": [
+        "volkswagen.com"
+      ],
+      "Mercedes": [
+        "mercedes.com",
+        "mercedes-benz.co.uk",
+        "mercedes-benz.de"
+      ],
+      "Nissan": [
+        "nissan.com",
+        "nissan.co.uk",
+        "nissan.de"
+      ],
+      "Mazda": [
+        "mazda.com",
+        "mazda.co.uk",
+        "mazda.de"
+      ],
+      "Renault": [
+        "renault.com",
+        "renault.fr"
+      ],
+      "Skoda": [
+        "skoda.com",
+        "skoda-auto.de"
+      ],
+      "Volvo": [
+        "volvo.com",
+        "volvocars.de",
+        "volvocars.co.uk"
+      ],
+      "Mitsubishi": [
+        "mitsubishi-motors.com",
+        "mitsubishi-motors.co.uk"
+      ],
+      "Infiniti": [
+        "infiniti.com",
+        "infiniti.co.uk"
+      ],
+      "RAM": [
+        "ram.com",
+        "ramtrucks.com"
+      ]
+    },
+    "official_search_path_templates": [
+      "/search?q={q}",
+      "/search?query={q}",
+      "/search?searchTerm={q}",
+      "/search?search_str={q}",
+      "/search?keyword={q}",
+      "/parts/search?q={q}",
+      "/parts/search?query={q}",
+      "/parts?query={q}",
+      "/catalog/search?q={q}",
+      "/shop/search?q={q}",
+      "/s/search?q={q}"
+    ],
+    "official_discovery_queries": [
+      "{brand} genuine parts",
+      "{brand} oem part number",
+      "{brand} spare parts"
+    ],
+    "official_discovery_queries_by_suffix": {
+      "co.il": [
+        "{brand} oem spare parts israel",
+        "{brand} genuine parts il"
+      ],
+      "de": [
+        "{brand} ersatzteile",
+        "{brand} oem teilenummer"
+      ],
+      "fr": [
+        "{brand} pieces detachees",
+        "{brand} numero de piece oem"
+      ],
+      "it": [
+        "{brand} ricambi originali",
+        "{brand} codice oem"
+      ],
+      "es": [
+        "{brand} recambios originales",
+        "{brand} referencia oem"
+      ],
+      "co.uk": [
+        "{brand} genuine parts uk",
+        "{brand} oem part number uk"
+      ],
+      "com.au": [
+        "{brand} genuine parts australia"
+      ],
+      "co.jp": [
+        "{brand} genuine parts japan"
+      ]
+    },
+    "category_hint_map": [
+      [
+        "Filters",
+        [
+          "filter",
+          "oil filter",
+          "air filter",
+          "cabin filter",
+          "fuel filter"
+        ]
+      ],
+      [
+        "Brakes",
+        [
+          "brake",
+          "pad",
+          "rotor",
+          "disc",
+          "caliper",
+          "abs"
+        ]
+      ],
+      [
+        "Suspension",
+        [
+          "shock",
+          "strut",
+          "spring",
+          "arm",
+          "bushing",
+          "ball joint",
+          "sway"
+        ]
+      ],
+      [
+        "Steering",
+        [
+          "tie rod",
+          "rack",
+          "steering",
+          "power steering"
+        ]
+      ],
+      [
+        "Engine",
+        [
+          "gasket",
+          "timing",
+          "belt",
+          "chain",
+          "piston",
+          "valve",
+          "head"
+        ]
+      ],
+      [
+        "Electrical",
+        [
+          "sensor",
+          "alternator",
+          "starter",
+          "coil",
+          "relay",
+          "switch",
+          "ecu"
+        ]
+      ],
+      [
+        "Transmission",
+        [
+          "clutch",
+          "transmission",
+          "gearbox",
+          "flywheel",
+          "cv axle"
+        ]
+      ],
+      [
+        "Cooling",
+        [
+          "thermostat",
+          "water pump",
+          "radiator",
+          "coolant",
+          "fan"
+        ]
+      ],
+      [
+        "Exhaust",
+        [
+          "exhaust",
+          "muffler",
+          "catalytic",
+          "egr",
+          "manifold"
+        ]
+      ],
+      [
+        "Body",
+        [
+          "bumper",
+          "fender",
+          "mirror",
+          "headlight",
+          "tail light"
+        ]
+      ],
+      [
+        "HVAC",
+        [
+          "ac",
+          "compressor",
+          "condenser",
+          "evaporator",
+          "hvac"
+        ]
+      ],
+      [
+        "Fuel System",
+        [
+          "fuel pump",
+          "injector",
+          "fuel rail",
+          "tank"
+        ]
+      ]
+    ]
+  }
+}

@@ -93,7 +93,7 @@ class Login2FARequest(BaseModel):
 
 
 class RefreshTokenRequest(BaseModel):
-    refresh_token: str = Field(..., max_length=256)
+    refresh_token: str = Field(..., max_length=1024)
 
 
 class PasswordResetRequest(BaseModel):
@@ -101,7 +101,7 @@ class PasswordResetRequest(BaseModel):
 
 
 class PasswordResetConfirmRequest(BaseModel):
-    token: str = Field(..., max_length=256)
+    token: str = Field(..., max_length=1024)
     new_password: str = Field(..., min_length=8, max_length=128)
 
 
@@ -323,20 +323,32 @@ async def social_login(
     try:
         async with _httpx.AsyncClient(timeout=10.0) as client:
             if provider == "google":
+                # Try ID-token verification first (One Tap flow)
                 resp = await client.get(
                     "https://oauth2.googleapis.com/tokeninfo",
                     params={"id_token": data.token},
                 )
                 if resp.status_code != 200:
-                    raise HTTPException(status_code=401, detail="Google token לא תקין")
-                info = resp.json()
-                # Optionally verify audience (aud) matches our client ID
-                client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
-                if client_id and info.get("aud") != client_id:
-                    raise HTTPException(status_code=401, detail="Google token לא תקין")
-                oauth_id = info.get("sub", "")
-                email = info.get("email", "")
-                full_name = info.get("name", email.split("@")[0])
+                    # Fallback: treat as access token (popup/token-client flow)
+                    resp = await client.get(
+                        "https://www.googleapis.com/oauth2/v3/userinfo",
+                        headers={"Authorization": f"Bearer {data.token}"},
+                    )
+                    if resp.status_code != 200:
+                        raise HTTPException(status_code=401, detail="Google token לא תקין")
+                    info = resp.json()
+                    oauth_id = info.get("sub", "")
+                    email = info.get("email", "")
+                    full_name = info.get("name", email.split("@")[0])
+                else:
+                    info = resp.json()
+                    # Optionally verify audience (aud) matches our client ID
+                    client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
+                    if client_id and info.get("aud") != client_id:
+                        raise HTTPException(status_code=401, detail="Google token לא תקין")
+                    oauth_id = info.get("sub", "")
+                    email = info.get("email", "")
+                    full_name = info.get("name", email.split("@")[0])
             else:  # facebook
                 resp = await client.get(
                     "https://graph.facebook.com/me",

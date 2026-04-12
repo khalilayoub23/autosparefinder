@@ -26,6 +26,7 @@ function buildTrackingUrl(trackingNumber, storedUrl) {
 const STATUS_MAP = {
   pending_payment:   { label: 'ממתין לתשלום', icon: Clock,       color: 'bg-yellow-100 text-yellow-700' },
   paid:              { label: 'שולם',          icon: CheckCircle, color: 'bg-blue-100 text-blue-700'    },
+  confirmed:         { label: 'אושר',          icon: CheckCircle, color: 'bg-blue-100 text-blue-700'    },
   processing:        { label: 'בעיבוד',        icon: Clock,       color: 'bg-indigo-100 text-indigo-700'},
   supplier_ordered:  { label: 'הוזמן מספק',    icon: Truck,       color: 'bg-cyan-100 text-cyan-700'   },
   shipped:           { label: 'נשלח',          icon: Truck,       color: 'bg-purple-100 text-purple-700'},
@@ -102,13 +103,37 @@ function OrderCard({ order, onReturn, onDelete, selected, onSelect }) {
   const [cancelling, setCancelling] = useState(false)
   const [paying, setPaying] = useState(false)
 
+  const parseApiErrorMessage = (err, fallback) => {
+    const data = err?.response?.data
+    const detail = data?.detail
+    if (typeof detail === 'string') return detail
+    if (detail && typeof detail === 'object') {
+      if (typeof detail.message === 'string') return detail.message
+      if (typeof detail.detail === 'string' && !['price_updated', 'part_unavailable'].includes(detail.detail)) return detail.detail
+    }
+    if (typeof data?.error === 'string') return data.error
+    if (typeof data?.message === 'string') return data.message
+    return fallback
+  }
+
   const handlePay = async (e) => {
     e.stopPropagation()
     setPaying(true)
     try {
       const { data } = await paymentsApi.createCheckout(order.id)
       window.location.href = data.checkout_url
-    } catch (err) { toast.error(err.response?.data?.detail || 'שגיאה בתשלום') }
+    } catch (err) {
+      const detailObj = err.response?.data?.detail_obj
+      if (detailObj?.detail === 'price_updated') {
+        const nextTotal = Number(detailObj.new_total)
+        const amountLabel = Number.isFinite(nextTotal) ? nextTotal.toFixed(2) : '---'
+        toast(`המחיר עודכן ל-₪${amountLabel}. לחץ שלם שוב לאישור.`, { icon: '💰', duration: 6000 })
+      } else if (detailObj?.detail === 'part_unavailable') {
+        toast.error(typeof detailObj?.message === 'string' ? detailObj.message : 'חלק אינו זמין כרגע')
+      } else {
+        toast.error(parseApiErrorMessage(err, 'שגיאה בתשלום'))
+      }
+    }
     finally { setPaying(false) }
   }
 
@@ -127,7 +152,7 @@ function OrderCard({ order, onReturn, onDelete, selected, onSelect }) {
         toast.success('ההזמנה בוטלה')
       }
       onDelete(order.id, 'cancelled')
-    } catch (err) { toast.error(err.response?.data?.detail || 'שגיאה בביטול') }
+    } catch (err) { const d = err.response?.data?.detail; toast.error(typeof d === 'string' ? d : 'שגיאה בביטול') }
     finally { setCancelling(false) }
   }
 
@@ -139,7 +164,7 @@ function OrderCard({ order, onReturn, onDelete, selected, onSelect }) {
       await ordersApi.delete(order.id)
       toast.success('ההזמנה נמחקה')
       onDelete(order.id)
-    } catch (err) { toast.error(err.response?.data?.detail || 'שגיאה במחיקה') }
+    } catch (err) { const d = err.response?.data?.detail; toast.error(typeof d === 'string' ? d : 'שגיאה במחיקה') }
     finally { setDeleting(false) }
   }
 
@@ -235,7 +260,7 @@ function OrderCard({ order, onReturn, onDelete, selected, onSelect }) {
           {/* Totals */}
           <div className="border-t border-gray-200 pt-3 space-y-1 text-sm">
             <div className="flex justify-between text-gray-600"><span>סכום ביניים</span><span>₪{Number(detail.subtotal).toFixed(2)}</span></div>
-            <div className="flex justify-between text-gray-600"><span>מע״מ 17%</span><span>₪{Number(detail.vat).toFixed(2)}</span></div>
+            <div className="flex justify-between text-gray-600"><span>מע״מ 18%</span><span>₪{Number(detail.vat).toFixed(2)}</span></div>
             <div className="flex justify-between text-gray-600"><span>משלוח</span><span>₪{Number(detail.shipping).toFixed(2)}</span></div>
             <div className="flex justify-between font-bold text-gray-900 text-base pt-1 border-t border-gray-200"><span>סה״כ</span><span className="text-brand-600">₪{Number(detail.total).toFixed(2)}</span></div>
           </div>
@@ -354,7 +379,8 @@ function ReturnModal({ orderId, orderAmount, onClose, onCreated }) {
       onCreated?.()
       onClose()
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'שגיאה בפתיחת בקשת ההחזרה')
+      const d = err.response?.data?.detail
+      toast.error(typeof d === 'string' ? d : 'שגיאה בפתיחת בקשת ההחזרה')
     } finally { setLoading(false) }
   }
 
@@ -453,7 +479,8 @@ export default function Orders() {
       toast.success('בקשת ההחזרה בוטלה')
       refreshReturns()
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'שגיאה בביטול')
+      const d = err.response?.data?.detail
+      toast.error(typeof d === 'string' ? d : 'שגיאה בביטול')
     } finally { setCancellingReturn(null) }
   }
 
@@ -490,7 +517,7 @@ export default function Orders() {
         const { data } = await paymentsApi.createMultiCheckout(ids)
         window.location.href = data.checkout_url
       }
-    } catch (err) { toast.error(err.response?.data?.detail || 'שגיאה בתשלום') }
+    } catch (err) { const d = err.response?.data?.detail; toast.error(typeof d === 'string' ? d : 'שגיאה בתשלום') }
     finally { setBulkPaying(false) }
   }
 

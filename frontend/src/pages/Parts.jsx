@@ -1,10 +1,34 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useDeferredValue } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { partsApi } from '../api/parts'
+import { cartApi } from '../api/orders'
 import { useCartStore } from '../stores/cartStore'
 import { useVehicleStore } from '../stores/vehicleStore'
+import { useAuthStore } from '../stores/authStore'
+import { partFamilyImageSrc } from '../components/partFamilyVisuals'
+import {
+  buildActiveVehicleFilterOrder,
+  createCategoryFilterTransition,
+  createManufacturerFilterTransition,
+  createModelFilterTransition,
+  createSubModelFilterTransition,
+  createYearFilterTransition,
+  getSubModelPlaceholder,
+  getYearPlaceholder,
+} from './partsFilterState'
 import { Search, ShoppingCart, Car, Loader2, ChevronDown, Package, SlidersHorizontal, X, Camera, Mic, MicOff, Hash, CheckCircle, AlertCircle, Truck, Shield, Tag, ChevronRight, Link2, Bot, Crop, Pencil, Circle, RotateCcw, Check, MousePointer, ScanLine } from 'lucide-react'
 import toast from 'react-hot-toast'
+
+const MANUFACTURER_LOGO_SIZE = 34
+const MANUFACTURER_CHIP_LOGO_SIZE = 32
+const PART_FAMILY_MENU_IMAGE_WIDTH = 52
+const PART_FAMILY_MENU_IMAGE_HEIGHT = 34
+const PART_FAMILY_TRIGGER_IMAGE_WIDTH = 44
+const PART_FAMILY_TRIGGER_IMAGE_HEIGHT = 28
+const PART_FAMILY_CHIP_IMAGE_WIDTH = 34
+const PART_FAMILY_CHIP_IMAGE_HEIGHT = 24
+const FILTER_SELECT_CLASS = 'w-full h-11 border border-gray-200 rounded-lg bg-white text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-2.5 transition-colors disabled:bg-gray-50 disabled:text-gray-400'
+const FILTER_MENU_TRIGGER_CLASS = 'w-full h-11 border border-gray-200 rounded-lg bg-white text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-2.5 transition-colors flex items-center justify-between'
 
 // ── Country flag helper ───────────────────────────────────────────────────────
 const COUNTRY_ISO = {
@@ -398,7 +422,7 @@ function PriceTag({ price, vat, shipping, total }) {
   return (
     <div className="bg-gray-50 rounded-lg p-3 text-sm space-y-1">
       <div className="flex justify-between text-gray-600"><span>מחיר נטו</span><span className="font-medium">₪{price?.toFixed(0)}</span></div>
-      <div className="flex justify-between text-gray-500"><span>מע״מ 17%</span><span>₪{vat?.toFixed(0)}</span></div>
+      <div className="flex justify-between text-gray-500"><span>מע״מ 18%</span><span>₪{vat?.toFixed(0)}</span></div>
       <div className="flex justify-between text-gray-500"><span>משלוח</span><span>₪{shipping?.toFixed(0)}</span></div>
       <div className="flex justify-between font-bold text-gray-900 border-t border-gray-200 pt-1 mt-1">
         <span>סה״כ לתשלום</span>
@@ -465,7 +489,7 @@ function AvailabilityBadge({ availability, deliveryDays }) {
 function _supplierForCard(sp) {
   const costIls    = parseFloat(sp.price_ils) || 0
   const priceNet   = Math.round(costIls * 1.30)           // 30 % retail margin
-  const vatAmount  = Math.round(priceNet * 0.17)
+  const vatAmount  = Math.round(priceNet * 0.18)
   const ship       = Math.round(parseFloat(sp.shipping_cost_ils) || 91)
   return {
     ...sp,
@@ -495,6 +519,131 @@ const TYPE_META = {
   original:    { label: 'מקורי',   color: '#3b82f6', bg: 'bg-blue-50',   text: 'text-blue-700',  icon: '🔵', badge: 'bg-blue-100 text-blue-700 border-blue-300' },
   oem:         { label: 'OEM',     color: '#7c3aed', bg: 'bg-violet-50', text: 'text-violet-700',icon: '🔷', badge: 'bg-violet-100 text-violet-700 border-violet-300' },
   aftermarket: { label: 'חליפי',   color: '#d97706', bg: 'bg-amber-50',  text: 'text-amber-700', icon: '🟡', badge: 'bg-amber-100 text-amber-700 border-amber-300' },
+}
+
+function normalizeBrandDisplay(name) {
+  if (!name) return ''
+  return name
+    .replace(/\b(spare\s*parts?|auto\s*parts?|parts?)\b/gi, '')
+    .replace(/\bחלפים\b/g, '')
+    .replace(/\bמותג\b/g, '')
+    .replace(/[\-_/]+/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+}
+
+function logoForManufacturer(name, logoMap = {}) {
+  if (!name) return ''
+  const key = normalizeBrandDisplay(name)
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!key) return ''
+  const primary = key.split(' ')[0]
+
+  const remoteByKey = {
+    'alfa romeo': 'https://www.carlogos.org/car-logos/alfa-romeo-logo.png',
+    alpine: 'https://www.carlogos.org/car-logos/alpine-logo.png',
+    aion: 'https://www.carlogos.org/car-logos/gac-logo.png',
+    byd: 'https://www.carlogos.org/car-logos/byd-logo.png',
+    buick: 'https://www.carlogos.org/car-logos/buick-logo.png',
+    chery: 'https://www.carlogos.org/car-logos/chery-logo.png',
+    chrysler: 'https://www.carlogos.org/car-logos/chrysler-logo.png',
+    cupra: 'https://www.carlogos.org/car-logos/seat-logo.png',
+    dacia: 'https://www.carlogos.org/car-logos/dacia-logo.png',
+    daihatsu: 'https://www.carlogos.org/car-logos/daihatsu-logo.png',
+    datsun: 'https://www.carlogos.org/car-logos/datsun-logo.png',
+    dodge: 'https://www.carlogos.org/car-logos/dodge-logo.png',
+    'ds automobiles': 'https://www.carlogos.org/car-logos/ds-logo.png',
+    geely: 'https://www.carlogos.org/car-logos/geely-logo.png',
+    genesis: 'https://www.carlogos.org/car-logos/genesis-logo.png',
+    gmc: 'https://www.carlogos.org/car-logos/gmc-logo.png',
+    gwm: 'https://www.carlogos.org/car-logos/great-wall-logo.png',
+    haval: 'https://www.carlogos.org/car-logos/haval-logo.png',
+    holden: 'https://www.carlogos.org/car-logos/holden-logo.png',
+    infiniti: 'https://www.carlogos.org/car-logos/infiniti-logo.png',
+    jaecoo: 'https://www.carlogos.org/car-logos/chery-logo.png',
+    jaguar: 'https://www.carlogos.org/car-logos/jaguar-logo.png',
+    'kg mobility': 'https://www.carlogos.org/car-logos/ssangyong-logo.png',
+    'land rover': 'https://www.carlogos.org/car-logos/land-rover-logo.png',
+    lancia: 'https://www.carlogos.org/car-logos/lancia-logo.png',
+    lexus: 'https://www.carlogos.org/car-logos/lexus-logo.png',
+    lincoln: 'https://www.carlogos.org/car-logos/lincoln-logo.png',
+    lucid: 'https://www.carlogos.org/car-logos/lucid-logo.png',
+    maybach: 'https://www.carlogos.org/car-logos/maybach-logo.png',
+    mg: '/brand-logos/mg.png',
+    nio: 'https://www.carlogos.org/car-logos/nio-logo.png',
+    omoda: 'https://www.carlogos.org/car-logos/chery-logo.png',
+    ora: 'https://www.carlogos.org/car-logos/great-wall-logo.png',
+    pagani: 'https://www.carlogos.org/car-logos/pagani-logo.png',
+    rivian: 'https://www.carlogos.org/car-logos/rivian-logo.png',
+    roewe: 'https://www.carlogos.org/car-logos/roewe-logo.png',
+    saab: 'https://www.carlogos.org/car-logos/saab-logo.png',
+    ssangyong: 'https://www.carlogos.org/car-logos/ssangyong-logo.png',
+    trumpchi: 'https://www.carlogos.org/car-logos/trumpchi-logo.png',
+    wey: 'https://www.carlogos.org/car-logos/wey-logo.png',
+    xpeng: 'https://www.carlogos.org/car-logos/xpeng-logo.png',
+    koenigsegg: 'https://www.carlogos.org/car-logos/koenigsegg-logo.png',
+    lotus: '/brand-logos/lotus.png',
+    'li auto': 'https://www.carlogos.org/car-logos/geely-logo.png',
+    'lynk co': 'https://www.carlogos.org/car-logos/geely-logo.png',
+    levc: 'https://www.carlogos.org/car-logos/geely-logo.png',
+  }
+  const remote = remoteByKey[key] || remoteByKey[primary]
+  if (remote) return remote
+
+  // Backend logo URLs are a last resort because some providers throttle heavily.
+  const mapped = logoMap[name] || logoMap[key] || logoMap[primary]
+  if (mapped) return mapped
+
+  return ''
+}
+
+function fallbackLogoDataUri(name, bg = null, fg = '#ffffff') {
+  const label = (name || '?')
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((p) => p[0]?.toUpperCase() || '')
+    .join('')
+    .slice(0, 2) || '?'
+
+  // Keep final fallback neutral (not playful random colors).
+  const fill = bg || '#f3f4f6'
+  const textColor = fg || '#374151'
+
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'>
+    <rect x='0.5' y='0.5' width='23' height='23' rx='6' fill='${fill}' stroke='#d1d5db'/>
+    <text x='12' y='15' text-anchor='middle' font-family='Arial, sans-serif' font-size='9' font-weight='700' fill='${textColor}'>${label}</text>
+  </svg>`
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`
+}
+
+function normalizeCategoryToken(value) {
+  return String(value || '').trim().toLowerCase()
+}
+
+function hierarchyCacheKey(...parts) {
+  return parts.map((part) => String(part || '').trim().toUpperCase()).join('::')
+}
+
+function findPartFamilyByValue(families, value) {
+  const normalized = normalizeCategoryToken(value)
+  if (!normalized) return null
+  return families.find((family) => {
+    const aliases = [family.id, family.label, ...(family.aliases || []), ...(family.legacy_categories || [])]
+    return aliases.some((alias) => normalizeCategoryToken(alias) === normalized)
+  }) || null
+}
+
+function categoryLabelForValue(families, value) {
+  return findPartFamilyByValue(families, value)?.label || value || ''
+}
+
+function partFamilyHierarchyLabel(family) {
+  if (!family) return 'כל סוגי החלקים'
+  return family.group ? `${family.group} / ${family.label}` : family.label
 }
 
 function TypeSection({ typeKey, data, onAddToCart }) {
@@ -1018,7 +1167,14 @@ function VinScannerModal({ onResult, onClose }) {
 }
 
 export default function Parts() {
-  const { addItem } = useCartStore()
+  const { user } = useAuthStore()
+  const isAdmin = !!user?.is_admin
+  const { addItem: addItemLocal } = useCartStore()
+  // Wrapper: saves to local store immediately, then syncs to server in background
+  const addItem = (item) => {
+    addItemLocal(item)
+    if (item.partId) cartApi.addItem(item.partId, item.quantity ?? 1).catch(() => {})
+  }
   const { vehicles, selectedVehicle, loadVehicles, selectVehicle, addVehicle: storeAddVehicle, removeVehicle } = useVehicleStore()
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
@@ -1040,21 +1196,64 @@ export default function Parts() {
   const [suggestions, setSuggestions] = useState([])
   const [showSuggestions, setShowSuggestions] = useState(false)
   const suggestRef = useRef(null)
+  const manufacturerMenuRef = useRef(null)
+  const partTypeMenuRef = useRef(null)
 
   const [newPlate, setNewPlate] = useState('')
   const [addingVehicle, setAddingVehicle] = useState(false)
 
   const [brands, setBrands] = useState([])
+  const [brandCounts, setBrandCounts] = useState({})
+  const [brandLogos, setBrandLogos] = useState({})
+  const [brandCountInfoOpenFor, setBrandCountInfoOpenFor] = useState('')
+  const [manufacturerMenuOpen, setManufacturerMenuOpen] = useState(false)
+  const [manufacturerSearch, setManufacturerSearch] = useState('')
+  const [partFamilies, setPartFamilies] = useState([])
+  const [partFamilyGroups, setPartFamilyGroups] = useState([])
+  const [partTypeMenuOpen, setPartTypeMenuOpen] = useState(false)
+
   const [manualManufacturer, setManualManufacturer] = useState('')
   const [manualModel, setManualModel] = useState('')
+  const [manualSubModel, setManualSubModel] = useState('')
   const [modelOptions, setModelOptions] = useState([])
   const [modelsLoading, setModelsLoading] = useState(false)
+  const [modelOptionsKey, setModelOptionsKey] = useState('')
+  const [subModelOptions, setSubModelOptions] = useState([])
+  const [subModelsLoading, setSubModelsLoading] = useState(false)
+  const [subModelOptionsKey, setSubModelOptionsKey] = useState('')
   const [manualYear, setManualYear] = useState('')
+  const [yearOptions, setYearOptions] = useState([])
+  const [yearsLoading, setYearsLoading] = useState(false)
+  const [yearOptionsKey, setYearOptionsKey] = useState('')
   const [sortBy, setSortBy] = useState('availability')
   const [filterAvail, setFilterAvail] = useState('')
   const [filterType, setFilterType] = useState('')
   const [perType, setPerType] = useState(4)   // suppliers per type shown in grouped view
   const [showVehiclePicker, setShowVehiclePicker] = useState(false)
+  const modelOptionsCacheRef = useRef(new Map())
+  const subModelOptionsCacheRef = useRef(new Map())
+  const yearOptionsCacheRef = useRef(new Map())
+  const categoryMetaCacheRef = useRef(new Map())
+  const categoryMetaRequestIdRef = useRef(0)
+  const modelOptionsRequestIdRef = useRef(0)
+  const subModelOptionsRequestIdRef = useRef(0)
+  const yearOptionsRequestIdRef = useRef(0)
+  const modelsLoadingTimerRef = useRef(null)
+  const subModelsLoadingTimerRef = useRef(null)
+  const yearsLoadingTimerRef = useRef(null)
+  const pendingSubModelFetchRef = useRef(new Map())
+  const pendingYearFetchRef = useRef(new Map())
+  const searchPrewarmRef = useRef(null)
+  const currentManufacturerKey = hierarchyCacheKey(manualManufacturer)
+  const currentSubModelParentKey = hierarchyCacheKey(manualManufacturer, manualModel)
+  const currentYearParentKey = hierarchyCacheKey(manualManufacturer, manualModel, manualSubModel)
+  const effectiveManualModel = manualManufacturer ? manualModel : ''
+  const effectiveManualSubModel = manualManufacturer && effectiveManualModel ? manualSubModel : ''
+  const effectiveManualYear = manualManufacturer && effectiveManualModel ? manualYear : ''
+  const deferredManualManufacturer = useDeferredValue(manualManufacturer)
+  const deferredEffectiveManualModel = useDeferredValue(effectiveManualModel)
+  const deferredEffectiveManualSubModel = useDeferredValue(effectiveManualSubModel)
+  const deferredEffectiveManualYear = useDeferredValue(effectiveManualYear)
 
   const getSortParams = (sv) => {
     if (sv === 'price_asc')    return { sort_by: 'price_asc',    sort_dir: 'asc' }
@@ -1065,7 +1264,7 @@ export default function Parts() {
   }
 
   const flattenGroupedResults = (grouped) => {
-    const toFlat = (bucket, fallbackType) => {
+    const bucketToFlat = (bucket, fallbackType) => {
       if (!bucket?.part) return null
       const suppliers = bucket.suppliers || []
       const firstPriced = suppliers.find((s) => Number.isFinite(Number(s?.price_ils)))
@@ -1083,10 +1282,32 @@ export default function Parts() {
       }
     }
 
+    // New response format: all_parts includes every matching part across all types
+    if (Array.isArray(grouped?.all_parts) && grouped.all_parts.length > 0) {
+      return grouped.all_parts
+        .filter((b) => b?.part)
+        .map((b) => {
+          const suppliers = b.suppliers || []
+          const firstPriced = suppliers.find((s) => Number.isFinite(Number(s?.price_ils)))
+          const availability = suppliers.some((s) => s?.availability === 'in_stock')
+            ? 'in_stock'
+            : (suppliers[0]?.availability || null)
+          return {
+            ...b.part,
+            suppliers,
+            pricing: {
+              availability,
+              total_price: firstPriced?.price_ils ?? b.part.min_price_ils ?? b.part.base_price ?? null,
+            },
+          }
+        })
+    }
+
+    // Legacy format: single bucket per type
     return [
-      toFlat(grouped?.original, 'Original'),
-      toFlat(grouped?.oem, 'OEM'),
-      toFlat(grouped?.aftermarket, 'Aftermarket'),
+      bucketToFlat(grouped?.original, 'Original'),
+      bucketToFlat(grouped?.oem, 'OEM'),
+      bucketToFlat(grouped?.aftermarket, 'Aftermarket'),
     ].filter(Boolean)
   }
 
@@ -1118,17 +1339,120 @@ export default function Parts() {
   parts.forEach(p => { if (typeCounts[p.part_type] !== undefined) typeCounts[p.part_type]++ })
 
   const urlSearchDone = useRef(false)
+  const loadPartFamilies = useCallback(async () => {
+    const requestId = ++categoryMetaRequestIdRef.current
+    const cacheKey = hierarchyCacheKey(
+      deferredManualManufacturer,
+      deferredEffectiveManualModel,
+      deferredEffectiveManualSubModel,
+      deferredEffectiveManualYear
+    )
+    const cached = categoryMetaCacheRef.current.get(cacheKey)
+    if (cached) {
+      if (requestId !== categoryMetaRequestIdRef.current) return
+      setPartFamilies(cached.families)
+      setPartFamilyGroups(cached.groups)
+      setCategories(cached.categories)
+      setCategoryCounts(cached.familyCounts)
+      setCategory((current) => findPartFamilyByValue(cached.families, current)?.id || current)
+      return
+    }
+
+    try {
+      // Only pass vehicle filter when model is also set — the manufacturer-only
+      // path hits a slow full-table JSONB scan (~20 s). With model the query is fast.
+      const hasFullVehicleFilter = deferredManualManufacturer && deferredEffectiveManualModel
+      const params = {
+        vehicle_manufacturer: hasFullVehicleFilter ? deferredManualManufacturer : null,
+        vehicle_model: hasFullVehicleFilter ? deferredEffectiveManualModel : null,
+        vehicle_submodel: hasFullVehicleFilter ? (deferredEffectiveManualSubModel || null) : null,
+        vehicle_year: hasFullVehicleFilter && deferredEffectiveManualYear ? parseInt(deferredEffectiveManualYear, 10) : null,
+      }
+      const { data } = await partsApi.categories(params)
+      if (requestId !== categoryMetaRequestIdRef.current) return
+      const families = data.families || []
+      const nextPayload = {
+        families,
+        groups: data.groups || [],
+        categories: (data.categories || []).slice(),
+        familyCounts: data.family_counts || {},
+      }
+      categoryMetaCacheRef.current.set(cacheKey, nextPayload)
+      setPartFamilies(nextPayload.families)
+      setPartFamilyGroups(nextPayload.groups)
+      setCategories(nextPayload.categories)
+      setCategoryCounts(nextPayload.familyCounts)
+      setCategory((current) => findPartFamilyByValue(families, current)?.id || current)
+    } catch {
+      if (requestId !== categoryMetaRequestIdRef.current) return
+      setPartFamilies([])
+      setPartFamilyGroups([])
+      setCategories([])
+      setCategoryCounts({})
+    }
+  }, [deferredManualManufacturer, deferredEffectiveManualModel, deferredEffectiveManualSubModel, deferredEffectiveManualYear])
+
   useEffect(() => {
     const urlSearch   = searchParams.get('search')   || ''
     const urlCategory = searchParams.get('category') || ''
     loadVehicles()
-    partsApi.categories().then(({ data }) => {
-      const cats = (data.categories || []).slice().sort((a, b) => a.localeCompare(b, 'he'))
-      setCategories(cats)
-      setCategoryCounts(data.counts || {})
-    })
-    partsApi.brandsWithParts().then(({ data }) => setBrands(data.brands || []))
-    partsApi.models().then(({ data }) => setModelOptions(data.models || []))
+    partsApi.manufacturers()
+      .then(async ({ data }) => {
+        let list = data.manufacturers || []
+        let counts = data.counts || {}
+        const logos = { ...(data.logos || {}) }
+
+        // If vehicles dataset is sparse, enrich from brands-with-parts and normalize labels.
+        if (list.length < 10) {
+          try {
+            const fallback = await partsApi.brandsWithParts()
+            const fb = fallback.data?.brands || []
+            const merged = [...list, ...fb.map((b) => b.name).filter(Boolean)]
+            const map = new Map()
+            for (const raw of merged) {
+              const clean = normalizeBrandDisplay(raw)
+              if (!clean) continue
+              const key = clean.toUpperCase()
+              const prev = map.get(key) || { name: clean, count: 0 }
+              const rawCount = Number(counts[raw] || 0)
+              map.set(key, { name: prev.name.length <= clean.length ? prev.name : clean, count: prev.count + rawCount })
+            }
+            list = Array.from(map.values()).map((x) => x.name).sort((a, b) => a.localeCompare(b, 'he'))
+            counts = Object.fromEntries(Array.from(map.values()).map((x) => [x.name, x.count]))
+            for (const b of fb) {
+              if (b?.name && b?.logo_url && !logos[b.name]) logos[b.name] = b.logo_url
+            }
+          } catch {
+            // keep primary list
+          }
+        }
+
+        setBrands(list.map((name) => ({ name })))
+        setBrandCounts(counts)
+        setBrandLogos(logos)
+      })
+      .catch(async () => {
+        try {
+          const fallback = await partsApi.brandsWithParts()
+          const fb = fallback.data?.brands || []
+          const cleaned = fb
+            .map((b) => normalizeBrandDisplay(b.name))
+            .filter(Boolean)
+          const uniq = Array.from(new Set(cleaned.map((x) => x.toUpperCase())))
+            .map((k) => cleaned.find((x) => x.toUpperCase() === k))
+          setBrands((uniq || []).map((name) => ({ name })))
+          setBrandCounts({})
+          const logos = {}
+          for (const b of fb) {
+            if (b?.name && b?.logo_url) logos[b.name] = b.logo_url
+          }
+          setBrandLogos(logos)
+        } catch {
+          setBrands([])
+          setBrandCounts({})
+          setBrandLogos({})
+        }
+      })
     if (urlSearch && !urlSearchDone.current) {
       urlSearchDone.current = true
       if (urlCategory) setCategory(urlCategory)
@@ -1154,20 +1478,222 @@ export default function Parts() {
   }, [])
 
   useEffect(() => {
+    loadPartFamilies()
+  }, [loadPartFamilies])
+
+  useEffect(() => {
     if (searched && sortBy !== 'availability') search(0)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sortBy])
 
   // Reload model options when manufacturer changes
   useEffect(() => {
-    setManualModel('')
-    setModelsLoading(true)
+    const requestId = ++modelOptionsRequestIdRef.current
+    if (!manualManufacturer) {
+      setManualModel('')
+      setManualSubModel('')
+      setManualYear('')
+      setModelOptions([])
+      setSubModelOptions([])
+      setYearOptions([])
+      setModelOptionsKey('')
+      setSubModelOptionsKey('')
+      setYearOptionsKey('')
+      clearLoadingState(modelsLoadingTimerRef, setModelsLoading)
+      clearLoadingState(subModelsLoadingTimerRef, setSubModelsLoading)
+      clearLoadingState(yearsLoadingTimerRef, setYearsLoading)
+      return
+    }
+
+    const modelCacheKey = hierarchyCacheKey(manualManufacturer)
+    const applyNextModels = (nextModels) => {
+      setModelOptions(nextModels)
+      setModelOptionsKey(modelCacheKey)
+      setManualModel((current) => (current && nextModels.includes(current) ? current : ''))
+    }
+
+    const cachedModels = modelOptionsCacheRef.current.get(modelCacheKey)
+    if (cachedModels) {
+      if (requestId !== modelOptionsRequestIdRef.current) return
+      applyNextModels(cachedModels)
+      clearLoadingState(modelsLoadingTimerRef, setModelsLoading)
+      return
+    }
+
+    scheduleLoadingState(modelsLoadingTimerRef, setModelsLoading)
     partsApi.models(manualManufacturer || null)
-      .then(({ data }) => setModelOptions(data.models || []))
-      .catch(() => setModelOptions([]))
-      .finally(() => setModelsLoading(false))
+      .then(({ data }) => {
+        if (requestId !== modelOptionsRequestIdRef.current) return
+        const nextModels = data.models || []
+        modelOptionsCacheRef.current.set(modelCacheKey, nextModels)
+        applyNextModels(nextModels)
+
+        // Warm submodel/year caches for first models to make subsequent filter
+        // selections feel instant.
+        nextModels.slice(0, 8).forEach((modelName) => {
+          prefetchSubModelsAndYears(manualManufacturer, modelName, 6)
+        })
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (requestId === modelOptionsRequestIdRef.current) clearLoadingState(modelsLoadingTimerRef, setModelsLoading)
+      })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [manualManufacturer])
+
+  // Reload sub-model options when manufacturer/model changes
+  useEffect(() => {
+    const requestId = ++subModelOptionsRequestIdRef.current
+    if (!manualManufacturer) {
+      setManualSubModel('')
+      setManualYear('')
+      setSubModelOptions([])
+      setYearOptions([])
+      setSubModelOptionsKey('')
+      setYearOptionsKey('')
+      clearLoadingState(subModelsLoadingTimerRef, setSubModelsLoading)
+      return
+    }
+
+    if (!effectiveManualModel) {
+      if (!manualModel) {
+        setManualSubModel('')
+        setManualYear('')
+        setSubModelOptions([])
+        setYearOptions([])
+        setSubModelOptionsKey('')
+        setYearOptionsKey('')
+      }
+      clearLoadingState(subModelsLoadingTimerRef, setSubModelsLoading)
+      return
+    }
+
+    const subModelCacheKey = hierarchyCacheKey(manualManufacturer, effectiveManualModel)
+    const applyNextSubModels = (nextSubModels) => {
+      setSubModelOptions(nextSubModels)
+      setSubModelOptionsKey(subModelCacheKey)
+      setManualSubModel((current) => (current && nextSubModels.includes(current) ? current : ''))
+    }
+
+    const cachedSubModels = subModelOptionsCacheRef.current.get(subModelCacheKey)
+    if (cachedSubModels) {
+      if (requestId !== subModelOptionsRequestIdRef.current) return
+      applyNextSubModels(cachedSubModels)
+      clearLoadingState(subModelsLoadingTimerRef, setSubModelsLoading)
+      return
+    }
+
+    // Piggyback on pre-fetch started in the change handler if available
+    const pendingSubModel = pendingSubModelFetchRef.current.get(subModelCacheKey)
+    if (pendingSubModel) {
+      scheduleLoadingState(subModelsLoadingTimerRef, setSubModelsLoading)
+      pendingSubModel
+        .then((nextSubModels) => {
+          if (requestId !== subModelOptionsRequestIdRef.current) return
+          applyNextSubModels(nextSubModels)
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (requestId === subModelOptionsRequestIdRef.current) clearLoadingState(subModelsLoadingTimerRef, setSubModelsLoading)
+        })
+      return
+    }
+
+    scheduleLoadingState(subModelsLoadingTimerRef, setSubModelsLoading)
+    partsApi.submodels(manualManufacturer, effectiveManualModel)
+      .then(({ data }) => {
+        if (requestId !== subModelOptionsRequestIdRef.current) return
+        const nextSubModels = data.submodels || []
+        subModelOptionsCacheRef.current.set(subModelCacheKey, nextSubModels)
+        applyNextSubModels(nextSubModels)
+
+        // Warm year options for model and likely submodels.
+        prefetchYears(manualManufacturer, effectiveManualModel, '')
+        nextSubModels.slice(0, 8).forEach((sm) => prefetchYears(manualManufacturer, effectiveManualModel, sm))
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (requestId === subModelOptionsRequestIdRef.current) clearLoadingState(subModelsLoadingTimerRef, setSubModelsLoading)
+      })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [manualManufacturer, manualModel, effectiveManualModel])
+
+  // Reload year options when manufacturer/model/sub-model changes
+  useEffect(() => {
+    const requestId = ++yearOptionsRequestIdRef.current
+    if (!manualManufacturer) {
+      setManualYear('')
+      setYearOptions([])
+      setYearOptionsKey('')
+      clearLoadingState(yearsLoadingTimerRef, setYearsLoading)
+      return
+    }
+
+    if (!effectiveManualModel) {
+      if (!manualModel) {
+        setManualYear('')
+        setYearOptions([])
+        setYearOptionsKey('')
+      }
+      clearLoadingState(yearsLoadingTimerRef, setYearsLoading)
+      return
+    }
+
+    const yearCacheKey = hierarchyCacheKey(manualManufacturer, effectiveManualModel, effectiveManualSubModel)
+    const applyNextYears = (nextYears) => {
+      setYearOptions(nextYears)
+      setYearOptionsKey(yearCacheKey)
+      setManualYear((current) => (current && nextYears.includes(current) ? current : ''))
+    }
+
+    const cachedYears = yearOptionsCacheRef.current.get(yearCacheKey)
+    if (cachedYears) {
+      if (requestId !== yearOptionsRequestIdRef.current) return
+      applyNextYears(cachedYears)
+      clearLoadingState(yearsLoadingTimerRef, setYearsLoading)
+      return
+    }
+
+    // If sub-model years are not cached yet, show model-level years immediately
+    // while the precise sub-model years load in the background.
+    if (effectiveManualSubModel) {
+      const broadYearKey = hierarchyCacheKey(manualManufacturer, effectiveManualModel, '')
+      const broadYears = yearOptionsCacheRef.current.get(broadYearKey)
+      if (broadYears && requestId === yearOptionsRequestIdRef.current) {
+        applyNextYears(broadYears)
+      }
+    }
+
+    // Piggyback on pre-fetch started in the change handler if available
+    const pendingYear = pendingYearFetchRef.current.get(yearCacheKey)
+    if (pendingYear) {
+      scheduleLoadingState(yearsLoadingTimerRef, setYearsLoading)
+      pendingYear
+        .then((nextYears) => {
+          if (requestId !== yearOptionsRequestIdRef.current) return
+          applyNextYears(nextYears)
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (requestId === yearOptionsRequestIdRef.current) clearLoadingState(yearsLoadingTimerRef, setYearsLoading)
+        })
+      return
+    }
+
+    scheduleLoadingState(yearsLoadingTimerRef, setYearsLoading)
+    partsApi.years(manualManufacturer, effectiveManualModel, effectiveManualSubModel || null)
+      .then(({ data }) => {
+        if (requestId !== yearOptionsRequestIdRef.current) return
+        const nextYears = (data.years || []).map((y) => String(y))
+        yearOptionsCacheRef.current.set(yearCacheKey, nextYears)
+        applyNextYears(nextYears)
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (requestId === yearOptionsRequestIdRef.current) clearLoadingState(yearsLoadingTimerRef, setYearsLoading)
+      })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [manualManufacturer, manualModel, manualSubModel, effectiveManualModel, effectiveManualSubModel])
 
   useEffect(() => {
     if (searched) search(0)
@@ -1200,6 +1726,19 @@ export default function Parts() {
     return () => document.removeEventListener('mousedown', handler)
   }, [])
 
+  useEffect(() => {
+    const handler = (e) => {
+      if (manufacturerMenuRef.current && !manufacturerMenuRef.current.contains(e.target)) {
+        setManufacturerMenuOpen(false)
+      }
+      if (partTypeMenuRef.current && !partTypeMenuRef.current.contains(e.target)) {
+        setPartTypeMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
   const switchMode = (mode) => {
     setSearchMode(mode)
     setParts([])
@@ -1219,12 +1758,226 @@ export default function Parts() {
 
   const buildManualQuery = () => query.trim()
 
-  const activeFiltersCount = [manualManufacturer, manualModel, manualYear].filter(Boolean).length
+  const filteredBrands = brands
+    .filter((b) => {
+      if (!manufacturerSearch.trim()) return true
+      return b.name.toLowerCase().includes(manufacturerSearch.trim().toLowerCase())
+    })
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name))
+
+  const selectedPartFamily = findPartFamilyByValue(partFamilies, category)
+  const selectedPartFamilyLabel = categoryLabelForValue(partFamilies, category)
+  const filteredPartFamilies = []
+  const partFamiliesByGroup = new Map()
+  const derivedPartFamilyGroupsMap = new Map()
+
+  partFamilies.forEach((family) => {
+    const currentGroup = derivedPartFamilyGroupsMap.get(family.group_id)
+    if (currentGroup) {
+      currentGroup.count += categoryCounts[family.id] || 0
+    } else {
+      derivedPartFamilyGroupsMap.set(family.group_id, {
+        id: family.group_id,
+        label: family.group,
+        count: categoryCounts[family.id] || 0,
+      })
+    }
+
+    filteredPartFamilies.push(family)
+    const groupFamilies = partFamiliesByGroup.get(family.group_id)
+    if (groupFamilies) {
+      groupFamilies.push(family)
+    } else {
+      partFamiliesByGroup.set(family.group_id, [family])
+    }
+  })
+
+  for (const groupFamilies of partFamiliesByGroup.values()) {
+    groupFamilies.sort((left, right) => (categoryCounts[right.id] || 0) - (categoryCounts[left.id] || 0) || left.label.localeCompare(right.label, 'he'))
+  }
+
+  const derivedPartFamilyGroups = Array.from(derivedPartFamilyGroupsMap.values())
+  const sortedPartFamilyGroups = (partFamilyGroups.length ? partFamilyGroups : derivedPartFamilyGroups)
+    .slice()
+    .map((group) => ({
+      ...group,
+      count: group.count ?? derivedPartFamilyGroupsMap.get(group.id)?.count ?? 0,
+    }))
+    .sort((left, right) => (right.count || 0) - (left.count || 0) || left.label.localeCompare(right.label, 'he'))
+  const suggestedPartFamilies = categories
+    .filter((familyId) => familyId !== category)
+    .sort((left, right) => (categoryCounts[right] || 0) - (categoryCounts[left] || 0))
+    .slice(0, 8)
+
+  const activeFiltersCount = [manualManufacturer, effectiveManualModel, effectiveManualSubModel, effectiveManualYear].filter(Boolean).length
+  const hasVisibleResults = parts.length > 0
+  const activeVehicleFilterOrder = buildActiveVehicleFilterOrder({
+    manualManufacturer,
+    effectiveManualModel,
+    effectiveManualSubModel,
+    effectiveManualYear,
+    category,
+  })
 
   const clearManual = () => {
     setManualManufacturer('')
     setManualModel('')
+    setManualSubModel('')
     setManualYear('')
+    setBrandCountInfoOpenFor('')
+  }
+
+  const scheduleLoadingState = (timerRef, setLoading) => {
+    if (timerRef.current) clearTimeout(timerRef.current)
+    timerRef.current = setTimeout(() => {
+      timerRef.current = null
+      setLoading(true)
+    }, 400)
+  }
+
+  const clearLoadingState = (timerRef, setLoading) => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current)
+      timerRef.current = null
+    }
+    setLoading(false)
+  }
+
+  const prefetchYears = (manufacturer, model, subModel = '') => {
+    if (!manufacturer || !model) return
+    const yearKey = hierarchyCacheKey(manufacturer, model, subModel)
+    if (yearOptionsCacheRef.current.has(yearKey) || pendingYearFetchRef.current.has(yearKey)) return
+
+    const p = partsApi.years(manufacturer, model, subModel || null)
+      .then(({ data }) => {
+        const items = (data.years || []).map((y) => String(y))
+        yearOptionsCacheRef.current.set(yearKey, items)
+        pendingYearFetchRef.current.delete(yearKey)
+        return items
+      })
+      .catch(() => {
+        pendingYearFetchRef.current.delete(yearKey)
+        return []
+      })
+
+    pendingYearFetchRef.current.set(yearKey, p)
+  }
+
+  const prefetchSubModelsAndYears = (manufacturer, model, maxSubModels = 8) => {
+    if (!manufacturer || !model) return
+    const subKey = hierarchyCacheKey(manufacturer, model)
+
+    if (!subModelOptionsCacheRef.current.has(subKey) && !pendingSubModelFetchRef.current.has(subKey)) {
+      const p = partsApi.submodels(manufacturer, model)
+        .then(({ data }) => {
+          const items = data.submodels || []
+          subModelOptionsCacheRef.current.set(subKey, items)
+          pendingSubModelFetchRef.current.delete(subKey)
+          prefetchYears(manufacturer, model, '')
+          items.slice(0, maxSubModels).forEach((sm) => prefetchYears(manufacturer, model, sm))
+          return items
+        })
+        .catch(() => {
+          pendingSubModelFetchRef.current.delete(subKey)
+          return []
+        })
+
+      pendingSubModelFetchRef.current.set(subKey, p)
+      return
+    }
+
+    const cachedSub = subModelOptionsCacheRef.current.get(subKey) || []
+    prefetchYears(manufacturer, model, '')
+    cachedSub.slice(0, maxSubModels).forEach((sm) => prefetchYears(manufacturer, model, sm))
+  }
+
+  useEffect(() => () => {
+    if (modelsLoadingTimerRef.current) clearTimeout(modelsLoadingTimerRef.current)
+    if (subModelsLoadingTimerRef.current) clearTimeout(subModelsLoadingTimerRef.current)
+    if (yearsLoadingTimerRef.current) clearTimeout(yearsLoadingTimerRef.current)
+  }, [])
+
+  const handleManualManufacturerChange = (nextManufacturer) => {
+    const nextState = createManufacturerFilterTransition(nextManufacturer)
+    categoryMetaRequestIdRef.current += 1
+    modelOptionsRequestIdRef.current += 1
+    subModelOptionsRequestIdRef.current += 1
+    yearOptionsRequestIdRef.current += 1
+    clearLoadingState(modelsLoadingTimerRef, setModelsLoading)
+    clearLoadingState(subModelsLoadingTimerRef, setSubModelsLoading)
+    clearLoadingState(yearsLoadingTimerRef, setYearsLoading)
+    setManualManufacturer(nextState.manualManufacturer)
+    setManualModel(nextState.manualModel)
+    setManualSubModel(nextState.manualSubModel)
+    setManualYear(nextState.manualYear)
+    setModelOptions(nextState.modelOptions)
+    setSubModelOptions(nextState.subModelOptions)
+    setYearOptions(nextState.yearOptions)
+    setModelOptionsKey(nextState.modelOptionsKey)
+    setSubModelOptionsKey(nextState.subModelOptionsKey)
+    setYearOptionsKey(nextState.yearOptionsKey)
+    setBrandCountInfoOpenFor(nextState.brandCountInfoOpenFor)
+  }
+
+  const handleManualModelChange = (nextModel) => {
+    const nextState = createModelFilterTransition(nextModel)
+    categoryMetaRequestIdRef.current += 1
+    subModelOptionsRequestIdRef.current += 1
+    yearOptionsRequestIdRef.current += 1
+    clearLoadingState(subModelsLoadingTimerRef, setSubModelsLoading)
+    clearLoadingState(yearsLoadingTimerRef, setYearsLoading)
+    setManualModel(nextState.manualModel)
+    setManualSubModel(nextState.manualSubModel)
+    setManualYear(nextState.manualYear)
+    setSubModelOptions(nextState.subModelOptions)
+    setYearOptions(nextState.yearOptions)
+    setSubModelOptionsKey(nextState.subModelOptionsKey)
+    setYearOptionsKey(nextState.yearOptionsKey)
+
+    // Pre-warm caches immediately so the effect finds data already cached
+    if (nextModel && manualManufacturer) {
+      prefetchSubModelsAndYears(manualManufacturer, nextModel, 8)
+    }
+
+    // Pre-warm the search result for the new model selection in the background.
+    // By the time the user clicks "search", the backend cache will already be warm.
+    if (nextModel && manualManufacturer) {
+      if (searchPrewarmRef.current) clearTimeout(searchPrewarmRef.current)
+      searchPrewarmRef.current = setTimeout(() => {
+        partsApi.search('', null, category || null, 3, manualManufacturer, nextModel, null, null)
+          .catch(() => {}) // fire-and-forget
+      }, 300)
+    }
+  }
+
+  const handleManualSubModelChange = (nextSubModel) => {
+    const nextState = createSubModelFilterTransition(nextSubModel)
+    categoryMetaRequestIdRef.current += 1
+    yearOptionsRequestIdRef.current += 1
+    clearLoadingState(yearsLoadingTimerRef, setYearsLoading)
+    setManualSubModel(nextState.manualSubModel)
+    setManualYear(nextState.manualYear)
+    setYearOptions(nextState.yearOptions)
+    setYearOptionsKey(nextState.yearOptionsKey)
+
+    // Pre-warm year cache for this sub-model immediately
+    if (manualManufacturer && effectiveManualModel) {
+      const subVal = nextSubModel || ''
+      prefetchYears(manualManufacturer, effectiveManualModel, subVal)
+      prefetchYears(manualManufacturer, effectiveManualModel, '')
+    }
+  }
+
+  const handleManualYearChange = (nextYear) => {
+    const nextState = createYearFilterTransition(nextYear)
+    categoryMetaRequestIdRef.current += 1
+    setManualYear(nextState.manualYear)
+  }
+
+  const handlePartFamilyChange = (nextCategory) => {
+    const nextState = createCategoryFilterTransition(nextCategory)
+    setCategory(nextState.category)
   }
 
   const search = async (pageNum = 0) => {
@@ -1238,7 +1991,16 @@ export default function Parts() {
     setIsLoading(true)
     setSearched(true)
     try {
-      const { data } = await partsApi.search(q, null, category, perType, manualManufacturer || null, manualModel || null, manualYear ? parseInt(manualYear) : null)
+      const { data } = await partsApi.search(
+        q,
+        null,
+        category,
+        perType,
+        manualManufacturer || null,
+        effectiveManualModel || null,
+        effectiveManualYear ? parseInt(effectiveManualYear, 10) : null,
+        effectiveManualSubModel || null
+      )
       // New grouped response
       if (data.original !== undefined || data.oem !== undefined || data.aftermarket !== undefined) {
         setSearchResults({ original: data.original, oem: data.oem, aftermarket: data.aftermarket })
@@ -1255,7 +2017,8 @@ export default function Parts() {
       setPage(pageNum)
       saveRecentSearch(q)
     } catch (err) {
-      toast.error(err?.response?.data?.detail || 'שגיאה בחיפוש')
+      const detail = err?.response?.data?.detail
+      toast.error(typeof detail === 'string' ? detail : detail?.message || 'שגיאה בחיפוש')
     } finally {
       setIsLoading(false)
     }
@@ -1269,7 +2032,8 @@ export default function Parts() {
       setNewPlate('')
       toast.success('רכב נוסף בהצלחה!')
     } catch (err) {
-      toast.error(err?.response?.data?.detail || 'לא הצלחנו לאתר את הרכב')
+      const detail = err?.response?.data?.detail
+      toast.error(typeof detail === 'string' ? detail : detail?.message || 'לא הצלחנו לאתר את הרכב')
     } finally {
       setAddingVehicle(false)
     }
@@ -1425,7 +2189,8 @@ export default function Parts() {
         await runPhotoPartsSearch(candidates, selectedVehicle?.manufacturer || '')
       }
     } catch (err) {
-      toast.error(err?.response?.data?.detail || 'שגיאה בזיהוי התמונה')
+      const detail = err?.response?.data?.detail
+      toast.error(typeof detail === 'string' ? detail : detail?.message || 'שגיאה בזיהוי התמונה')
     } finally {
       setPhotoLoading(false)
       setIsLoading(false)
@@ -1629,7 +2394,8 @@ export default function Parts() {
       setSearched(true)
       setPage(pageNum)
     } catch (err) {
-      toast.error(err?.response?.data?.detail || 'VIN לא זוהה')
+      const detail = err?.response?.data?.detail
+      toast.error(typeof detail === 'string' ? detail : detail?.message || 'VIN לא זוהה')
     } finally {
       setVinLoading(false)
       setIsLoading(false)
@@ -1671,7 +2437,7 @@ export default function Parts() {
             <div className="w-11 h-11 rounded-xl bg-white/20 flex items-center justify-center flex-shrink-0">
               <Search className="w-5 h-5 text-white" />
             </div>
-            <div>
+            <div className="lg:order-1">
               <h1 className="text-xl font-bold leading-tight">חיפוש חלקי חילוף</h1>
               <p className="text-white/65 text-xs mt-0.5">חפש לפי רכב · תמונה · קול · VIN</p>
             </div>
@@ -1783,7 +2549,7 @@ export default function Parts() {
         )}
         {activeFiltersCount > 0 && (
           <p className="text-xs text-brand-600 mt-2">
-            🔍 מחפש: {[manualManufacturer, manualModel, manualYear, query].filter(Boolean).join(' ') || 'כל החלקים'}
+            🔍 מחפש: {[manualManufacturer, effectiveManualModel, effectiveManualSubModel, effectiveManualYear, query].filter(Boolean).join(' ') || 'כל החלקים'}
           </p>
         )}
       </div>
@@ -1802,7 +2568,7 @@ export default function Parts() {
           <div className="grid grid-cols-2 gap-2">
 
             {/* Israeli license plate input */}
-            <div>
+            <div className="lg:order-2">
               <label className="block text-[11px] text-gray-500 mb-1 font-medium">מספר רכב</label>
               <div className="flex gap-1.5">
                 <div className="relative flex rounded-lg overflow-hidden border border-gray-200 focus-within:border-brand-400 focus-within:ring-1 focus-within:ring-brand-300 transition-colors flex-1 min-w-0">
@@ -1873,6 +2639,18 @@ export default function Parts() {
           {/* ── VIN result ── */}
           {vinVehicle && (
             <div className="bg-brand-50 border border-brand-100 rounded-xl p-3 space-y-1">
+              <div className="flex items-center justify-end">
+                <button
+                  onClick={() => {
+                    setVinVehicle(null)
+                    setVinInput('')
+                    setVinPartQuery('')
+                  }}
+                  className="text-xs text-gray-500 hover:text-red-500 transition-colors flex items-center gap-1"
+                >
+                  <X className="w-3 h-3" /> הסר רכב VIN
+                </button>
+              </div>
               <p className="font-semibold text-brand-700 text-sm">
                 {[vinVehicle.manufacturer, vinVehicle.model, vinVehicle.year].filter(Boolean).join(' ')}
               </p>
@@ -1936,110 +2714,339 @@ export default function Parts() {
               <h3 className="font-semibold text-gray-900">חיפוש לפי פרטי רכב</h3>
             </div>
             {(activeFiltersCount > 0 || category) && (
-              <button onClick={() => { clearManual(); setCategory('') }} className="flex items-center gap-1 text-xs text-gray-400 hover:text-red-500 transition-colors">
+              <button onClick={() => { clearManual(); handlePartFamilyChange('') }} className="flex items-center gap-1 text-xs text-gray-400 hover:text-red-500 transition-colors">
                 <X className="w-3 h-3" /> נקה הכל
               </button>
             )}
           </div>
 
-          {/* Fields: Manufacturer → Model → Year → Part Type (todo #4 order) */}
-          <div className="grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-4 gap-3">
+          {/* Fields: Manufacturer → Model → Sub-model → Year → Part Type */}
+          <div className="grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-5 gap-3">
 
             {/* 1. Manufacturer */}
             <div>
               <label className="block text-xs text-gray-500 mb-1.5 font-medium">יצרן</label>
-              <select
-                className="w-full border border-gray-200 rounded-lg bg-white text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-2.5 py-2 transition-colors"
-                value={manualManufacturer}
-                onChange={(e) => setManualManufacturer(e.target.value)}
-              >
-                <option value="">כל היצרנים</option>
-                {brands
-                  .slice()
-                  .sort((a, b) => a.name.localeCompare(b.name))
-                  .map(b => (
-                    <option key={b.name} value={b.name}>
-                      {b.name_he ? `${b.name} · ${b.name_he}` : b.name}
-                      {b.has_parts ? ` (${b.parts_count.toLocaleString()})` : ''}
-                    </option>
-                  ))}
-              </select>
+              <div className="relative" ref={manufacturerMenuRef}>
+                <button
+                  type="button"
+                  className={FILTER_MENU_TRIGGER_CLASS}
+                  onClick={() => setManufacturerMenuOpen((v) => !v)}
+                >
+                  <span className="truncate inline-flex items-center gap-2">
+                    {manualManufacturer ? (
+                      <img
+                        src={logoForManufacturer(manualManufacturer, brandLogos) || fallbackLogoDataUri(manualManufacturer)}
+                        alt=""
+                        aria-hidden="true"
+                        className="object-contain flex-shrink-0"
+                        style={{ width: MANUFACTURER_LOGO_SIZE, height: MANUFACTURER_LOGO_SIZE }}
+                        onError={(e) => {
+                          e.currentTarget.onerror = null
+                          e.currentTarget.src = fallbackLogoDataUri(manualManufacturer)
+                        }}
+                      />
+                    ) : null}
+                    <span>{manualManufacturer || 'כל היצרנים'}</span>
+                  </span>
+                  <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${manufacturerMenuOpen ? 'rotate-180' : ''}`} />
+                </button>
+
+                {manufacturerMenuOpen && (
+                  <div className="absolute z-30 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg">
+                    <div className="p-2 border-b border-gray-100">
+                      <input
+                        className="w-full border border-gray-200 rounded-md bg-white text-gray-900 text-xs focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-2 py-1.5"
+                        value={manufacturerSearch}
+                        onChange={(e) => setManufacturerSearch(e.target.value)}
+                        placeholder="חפש יצרן..."
+                      />
+                    </div>
+                    {isAdmin && brandCountInfoOpenFor && (
+                      <div
+                        className="mx-2 mt-2 rounded-lg border border-brand-100 bg-brand-50 px-2 py-1.5 text-[11px] text-gray-700"
+                        onClick={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          setBrandCountInfoOpenFor('')
+                        }}
+                      >
+                        מספר הרכבים שנשמרו במערכת עבור {brandCountInfoOpenFor}. לחץ שוב על המספר כדי לסגור.
+                      </div>
+                    )}
+                    <div className="max-h-64 overflow-y-auto p-1">
+                      <button
+                        type="button"
+                        className="w-full text-right px-2 py-1.5 rounded-md hover:bg-gray-50 text-sm"
+                        onClick={() => { handleManualManufacturerChange(''); setManufacturerMenuOpen(false) }}
+                      >
+                        כל היצרנים
+                      </button>
+                      {filteredBrands.map((b) => (
+                        <button
+                          type="button"
+                          key={b.name}
+                          className="w-full flex items-center justify-between px-2 py-1.5 rounded-md hover:bg-gray-50 text-sm"
+                          onClick={() => { handleManualManufacturerChange(b.name); setManufacturerMenuOpen(false) }}
+                        >
+                          <span className="flex items-center gap-2.5 min-w-0">
+                            <span className="inline-flex items-center justify-center flex-shrink-0" style={{ width: MANUFACTURER_LOGO_SIZE, height: MANUFACTURER_LOGO_SIZE }}>
+                              {logoForManufacturer(b.name, brandLogos) ? (
+                                <img
+                                  src={logoForManufacturer(b.name, brandLogos)}
+                                  alt=""
+                                  aria-hidden="true"
+                                  className="object-contain"
+                                  style={{ width: MANUFACTURER_LOGO_SIZE, height: MANUFACTURER_LOGO_SIZE }}
+                                  onError={(e) => {
+                                    e.currentTarget.onerror = null
+                                    e.currentTarget.src = fallbackLogoDataUri(b.name)
+                                  }}
+                                />
+                              ) : (
+                                <img src={fallbackLogoDataUri(b.name)} alt="" aria-hidden="true" className="object-contain" style={{ width: MANUFACTURER_LOGO_SIZE, height: MANUFACTURER_LOGO_SIZE }} />
+                              )}
+                            </span>
+                            <span className="truncate">{b.name}</span>
+                          </span>
+                          {isAdmin && !!brandCounts[b.name] && (
+                            <span
+                              className="ml-2 text-xs text-gray-500 hover:text-brand-600 cursor-pointer"
+                              onClick={(e) => {
+                                e.preventDefault()
+                                e.stopPropagation()
+                                setBrandCountInfoOpenFor((curr) => (curr === b.name ? '' : b.name))
+                              }}
+                            >
+                              {brandCounts[b.name].toLocaleString()}
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* 2. Model */}
             <div>
               <label className="block text-xs text-gray-500 mb-1.5 font-medium">דגם</label>
               <select
-                className="w-full border border-gray-200 rounded-lg bg-white text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-2.5 py-2 transition-colors"
-                value={manualModel}
-                onChange={(e) => setManualModel(e.target.value)}
-                disabled={modelsLoading}
+                className={FILTER_SELECT_CLASS}
+                value={effectiveManualModel}
+                onChange={(e) => handleManualModelChange(e.target.value)}
+                disabled={!manualManufacturer || modelsLoading}
               >
-                <option value="">{modelsLoading ? 'טוען...' : 'כל הדגמים'}</option>
-                {modelOptions.map(m => (
+                <option value="">
+                  {manualManufacturer
+                    ? (modelOptions.length ? 'כל הדגמים' : 'אין דגמים ליצרן זה')
+                    : 'בחר יצרן תחילה'}
+                </option>
+                {modelOptions.map((m) => (
                   <option key={m} value={m}>{m}</option>
                 ))}
               </select>
             </div>
 
-            {/* 3. Year */}
-            <div>
+            {/* 3. Sub-model */}
+            <div className="lg:order-3">
+              <label className="block text-xs text-gray-500 mb-1.5 font-medium">תת-דגם / גרסה</label>
+              <select
+                className={FILTER_SELECT_CLASS}
+                value={effectiveManualSubModel}
+                onChange={(e) => handleManualSubModelChange(e.target.value)}
+                disabled={!manualManufacturer || !effectiveManualModel || subModelsLoading}
+              >
+                <option value="">
+                  {getSubModelPlaceholder({
+                    loading: subModelsLoading,
+                    hasManufacturer: Boolean(manualManufacturer),
+                    hasModel: Boolean(effectiveManualModel),
+                    optionCount: subModelOptions.length,
+                  })}
+                </option>
+                {subModelOptions.map((sm) => (
+                  <option key={sm} value={sm}>{sm}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* 4. Year */}
+            <div className="lg:order-4">
               <label className="block text-xs text-gray-500 mb-1.5 font-medium">שנה</label>
               <select
-                className="w-full border border-gray-200 rounded-lg bg-white text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-2.5 py-2 transition-colors"
-                value={manualYear}
-                onChange={(e) => setManualYear(e.target.value)}
+                className={FILTER_SELECT_CLASS}
+                value={effectiveManualYear}
+                onChange={(e) => handleManualYearChange(e.target.value)}
+                disabled={!manualManufacturer || !effectiveManualModel || yearsLoading}
               >
-                <option value="">כל השנים</option>
-                {Array.from({ length: 2026 - 1980 + 1 }, (_, i) => 2026 - i).map(y => (
+                <option value="">
+                  {getYearPlaceholder({
+                    loading: yearsLoading,
+                    hasManufacturer: Boolean(manualManufacturer),
+                    hasModel: Boolean(effectiveManualModel),
+                    optionCount: yearOptions.length,
+                  })}
+                </option>
+                {yearOptions.map((y) => (
                   <option key={y} value={y}>{y}</option>
                 ))}
               </select>
             </div>
 
-            {/* 4. Part Type / Category */}
-            <div>
+            {/* 5. Part Type / Category */}
+            <div className="lg:order-5">
               <label className="block text-xs text-gray-500 mb-1.5 font-medium">סוג חלק</label>
-              <select
-                className="w-full border border-gray-200 rounded-lg bg-white text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-2.5 py-2 transition-colors"
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-              >
-                <option value="">כל הסוגים</option>
-                {categories.map((c) => (
-                  <option key={c} value={c}>
-                    {c}{categoryCounts[c] ? ` (${categoryCounts[c].toLocaleString()})` : ''}
-                  </option>
-                ))}
-              </select>
+              <div className="relative" ref={partTypeMenuRef}>
+                <button
+                  type="button"
+                  className={FILTER_MENU_TRIGGER_CLASS}
+                  onClick={() => setPartTypeMenuOpen((value) => !value)}
+                >
+                  <span className="truncate inline-flex items-center gap-2 min-w-0 flex-1">
+                    {selectedPartFamily ? (
+                      <span className="inline-flex items-center justify-center rounded-lg bg-white border border-gray-200 overflow-hidden shadow-sm flex-shrink-0" style={{ width: PART_FAMILY_TRIGGER_IMAGE_WIDTH, height: PART_FAMILY_TRIGGER_IMAGE_HEIGHT }}>
+                        <img
+                          src={partFamilyImageSrc(selectedPartFamily)}
+                          alt=""
+                          aria-hidden="true"
+                          className="h-full w-full object-cover flex-shrink-0"
+                        />
+                      </span>
+                    ) : null}
+                    <span className="truncate">{partFamilyHierarchyLabel(selectedPartFamily)}</span>
+                  </span>
+                  <span className="flex items-center gap-2 pl-2 flex-shrink-0">
+                    {selectedPartFamily && categoryCounts[selectedPartFamily.id] ? (
+                      <span className="text-xs text-gray-500">{categoryCounts[selectedPartFamily.id].toLocaleString()}</span>
+                    ) : null}
+                    <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${partTypeMenuOpen ? 'rotate-180' : ''}`} />
+                  </span>
+                </button>
+
+                {partTypeMenuOpen && (
+                  <div className="absolute z-30 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg">
+                    <div className="max-h-72 overflow-y-auto p-1">
+                      <button
+                        type="button"
+                        className="w-full text-right px-2 py-1.5 rounded-md hover:bg-gray-50 text-sm"
+                        onClick={() => { handlePartFamilyChange(''); setPartTypeMenuOpen(false) }}
+                      >
+                        כל סוגי החלקים
+                      </button>
+                      {sortedPartFamilyGroups.map((group) => {
+                        const familiesInGroup = partFamiliesByGroup.get(group.id) || []
+                        if (!familiesInGroup.length) return null
+                        return (
+                          <div key={group.id} className="pt-1">
+                            <div className="px-2 py-1 text-[11px] font-semibold text-gray-400 uppercase tracking-[0.08em]">
+                              {group.label}
+                            </div>
+                            {familiesInGroup.map((family) => (
+                              <button
+                                type="button"
+                                key={family.id}
+                                className={`w-full flex items-center justify-between px-2 py-2 rounded-md text-sm ${category === family.id ? 'bg-brand-50 text-brand-700' : 'hover:bg-gray-50 text-gray-900'} ${categoryCounts[family.id] === 0 ? 'opacity-60' : ''}`}
+                                onClick={() => { handlePartFamilyChange(family.id); setPartTypeMenuOpen(false) }}
+                              >
+                                <span className="flex items-center gap-3 min-w-0">
+                                  <img
+                                    src={partFamilyImageSrc(family)}
+                                    alt=""
+                                    aria-hidden="true"
+                                    className="rounded-lg object-cover border border-gray-200 bg-white shadow-sm flex-shrink-0"
+                                    style={{ width: PART_FAMILY_MENU_IMAGE_WIDTH, height: PART_FAMILY_MENU_IMAGE_HEIGHT }}
+                                  />
+                                  <span className="truncate">{family.label}</span>
+                                </span>
+                                <span className="ml-2 text-xs text-gray-500">
+                                  {(categoryCounts[family.id] || 0).toLocaleString()}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        )
+                      })}
+                      {!sortedPartFamilyGroups.length && filteredPartFamilies.map((family) => (
+                        <button
+                          type="button"
+                          key={family.id}
+                          className={`w-full flex items-center justify-between px-2 py-2 rounded-md text-sm ${category === family.id ? 'bg-brand-50 text-brand-700' : 'hover:bg-gray-50 text-gray-900'} ${categoryCounts[family.id] === 0 ? 'opacity-60' : ''}`}
+                          onClick={() => { handlePartFamilyChange(family.id); setPartTypeMenuOpen(false) }}
+                        >
+                          <span className="flex items-center gap-3 min-w-0">
+                            <img
+                              src={partFamilyImageSrc(family)}
+                              alt=""
+                              aria-hidden="true"
+                              className="rounded-lg object-cover border border-gray-200 bg-white shadow-sm flex-shrink-0"
+                              style={{ width: PART_FAMILY_MENU_IMAGE_WIDTH, height: PART_FAMILY_MENU_IMAGE_HEIGHT }}
+                            />
+                            <span className="truncate">{family.label}</span>
+                          </span>
+                          <span className="ml-2 text-xs text-gray-500">
+                            {(categoryCounts[family.id] || 0).toLocaleString()}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
           {/* Active filter chips */}
           {(activeFiltersCount > 0 || category) && (
             <div className="flex flex-wrap gap-2">
-              {manualManufacturer && (
+              {activeVehicleFilterOrder.includes('manufacturer') && (
                 <span className="inline-flex items-center gap-1 bg-brand-100 text-brand-700 text-xs px-2.5 py-1 rounded-full font-medium">
+                  <img
+                    src={logoForManufacturer(manualManufacturer, brandLogos) || fallbackLogoDataUri(manualManufacturer)}
+                    alt=""
+                    aria-hidden="true"
+                    className="object-contain flex-shrink-0"
+                    style={{ width: MANUFACTURER_CHIP_LOGO_SIZE, height: MANUFACTURER_CHIP_LOGO_SIZE }}
+                    onError={(e) => {
+                      e.currentTarget.onerror = null
+                      e.currentTarget.src = fallbackLogoDataUri(manualManufacturer)
+                    }}
+                  />
                   {manualManufacturer}
-                  <button onClick={() => setManualManufacturer('')}><X className="w-3 h-3" /></button>
+                  <button onClick={() => handleManualManufacturerChange('')}><X className="w-3 h-3" /></button>
                 </span>
               )}
-              {category && (
+              {activeVehicleFilterOrder.includes('model') && (
                 <span className="inline-flex items-center gap-1 bg-brand-100 text-brand-700 text-xs px-2.5 py-1 rounded-full font-medium">
-                  {category}
-                  <button onClick={() => setCategory('')}><X className="w-3 h-3" /></button>
+                  {effectiveManualModel}
+                  <button onClick={() => handleManualModelChange('')}><X className="w-3 h-3" /></button>
                 </span>
               )}
-              {manualModel && (
+              {activeVehicleFilterOrder.includes('submodel') && (
                 <span className="inline-flex items-center gap-1 bg-brand-100 text-brand-700 text-xs px-2.5 py-1 rounded-full font-medium">
-                  {manualModel}
-                  <button onClick={() => setManualModel('')}><X className="w-3 h-3" /></button>
+                  {effectiveManualSubModel}
+                  <button onClick={() => handleManualSubModelChange('')}><X className="w-3 h-3" /></button>
                 </span>
               )}
-              {manualYear && (
+              {activeVehicleFilterOrder.includes('year') && (
                 <span className="inline-flex items-center gap-1 bg-brand-100 text-brand-700 text-xs px-2.5 py-1 rounded-full font-medium">
-                  {manualYear}
-                  <button onClick={() => setManualYear('')}><X className="w-3 h-3" /></button>
+                  {effectiveManualYear}
+                  <button onClick={() => handleManualYearChange('')}><X className="w-3 h-3" /></button>
+                </span>
+              )}
+              {selectedPartFamily && activeVehicleFilterOrder.includes('category') && (
+                <span className="inline-flex items-center gap-1 bg-brand-100 text-brand-700 text-xs px-2.5 py-1 rounded-full font-medium">
+                  {selectedPartFamily ? (
+                    <img
+                      src={partFamilyImageSrc(selectedPartFamily)}
+                      alt=""
+                      aria-hidden="true"
+                      className="object-cover flex-shrink-0 rounded-full"
+                      style={{ width: MANUFACTURER_CHIP_LOGO_SIZE, height: MANUFACTURER_CHIP_LOGO_SIZE }}
+                    />
+                  ) : null}
+                  {selectedPartFamilyLabel}
+                  <button onClick={() => handlePartFamilyChange('')}><X className="w-3 h-3" /></button>
                 </span>
               )}
             </div>
@@ -2437,9 +3444,18 @@ export default function Parts() {
       {/* ── Block 1 search bar has been moved above (after hero) ── */}
 
       {/* ── RESULTS ── */}
-      {isLoading && (
-        <div className="flex justify-center py-12">
-          <Loader2 className="w-8 h-8 animate-spin text-brand-600" />
+      <div className="space-y-6">
+      {isLoading && !hasVisibleResults && (
+        <div className="card p-4 flex items-center justify-center gap-3 text-brand-700 border border-brand-100 bg-brand-50/70">
+          <Loader2 className="w-5 h-5 animate-spin text-brand-600" />
+          <span className="text-sm font-medium">מחפש חלקים מתאימים...</span>
+        </div>
+      )}
+
+      {isLoading && hasVisibleResults && (
+        <div className="flex items-center justify-end gap-2 text-xs text-brand-700">
+          <Loader2 className="w-4 h-4 animate-spin text-brand-600" />
+          <span>מעדכן את התוצאות...</span>
         </div>
       )}
 
@@ -2449,9 +3465,9 @@ export default function Parts() {
           <h3 className="font-semibold text-gray-700 mb-2">לא נמצאו חלקים</h3>
           <p className="text-sm text-gray-400 mb-5">
             {category && query
-              ? `לא נמצאו תוצאות עבור "${query}" בקטגוריה "${category}"`
+              ? `לא נמצאו תוצאות עבור "${query}" בקטגוריה "${selectedPartFamilyLabel}"`
               : category
-              ? `לא נמצאו תוצאות בקטגוריה "${category}"`
+              ? `לא נמצאו תוצאות בקטגוריה "${selectedPartFamilyLabel}"`
               : query
               ? `לא נמצאו תוצאות עבור "${query}"`
               : 'לא נמצאו חלקים עם הפרמטרים הנוכחיים'}
@@ -2462,19 +3478,28 @@ export default function Parts() {
               <div className="flex flex-wrap justify-center gap-2">
                 {category && (
                   <button
-                    onClick={() => setCategory('')}
+                    onClick={() => handlePartFamilyChange('')}
                     className="inline-flex items-center gap-1 text-xs px-3 py-1.5 rounded-full bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 transition-colors"
                   >
-                    <X className="w-3 h-3" /> הסר פילטר: {category}
+                    <X className="w-3 h-3" /> הסר פילטר: {selectedPartFamilyLabel}
                   </button>
                 )}
-                {categories.filter((c) => c !== category).slice(0, 8).map((c) => (
+                {suggestedPartFamilies.map((familyId) => (
                   <button
-                    key={c}
-                    onClick={() => { setCategory(c) }}
-                    className="text-xs px-3 py-1.5 rounded-full bg-brand-50 text-brand-700 border border-brand-200 hover:bg-brand-100 transition-colors"
+                    key={familyId}
+                    onClick={() => { handlePartFamilyChange(familyId) }}
+                    className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded-full bg-brand-50 text-brand-700 border border-brand-200 hover:bg-brand-100 transition-colors"
                   >
-                    {c}{categoryCounts[c] ? ` (${categoryCounts[c].toLocaleString()})` : ''}
+                    {findPartFamilyByValue(partFamilies, familyId) ? (
+                      <img
+                        src={partFamilyImageSrc(findPartFamilyByValue(partFamilies, familyId))}
+                        alt=""
+                        aria-hidden="true"
+                        className="object-cover flex-shrink-0 rounded-full"
+                        style={{ width: MANUFACTURER_CHIP_LOGO_SIZE, height: MANUFACTURER_CHIP_LOGO_SIZE }}
+                      />
+                    ) : null}
+                    {categoryLabelForValue(partFamilies, familyId)}{categoryCounts[familyId] ? ` (${categoryCounts[familyId].toLocaleString()})` : ''}
                   </button>
                 ))}
               </div>
@@ -2514,7 +3539,7 @@ export default function Parts() {
         </div>
       )}
 
-      {!isLoading && !photoFallbackMfr && !voiceFallbackMfr && parts.length > 0 && (
+      {!photoFallbackMfr && !voiceFallbackMfr && parts.length > 0 && (
         <>
           {/* Results header */}
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -2674,6 +3699,7 @@ export default function Parts() {
           )}
         </>
       )}
+      </div>
     </div>
   )
 }

@@ -3,9 +3,13 @@ Import parts from 'parts data base.xlsx' into the parts_catalog PostgreSQL table
 
 Column layouts per sheet type (row 2 = headers, row 3+ = data):
 
-Type A  – Chevrolet, Citroen, Peugeot  (7-9 cols)
+Type A  – Chevrolet  (7-9 cols)
   [0] importer  [1] catalog_num  [2] name  [3] part_type
   [4] stock     [5] price        [6] warranty  [7] vehicle
+
+Type F  – Citroen, Peugeot  (8-9 cols)
+    [0] vehicle/model  [1] stock  [2] price  [3] warranty
+    [4] importer       [5] part_type  [6] name  [7] catalog_num
 
 Type B  – GEN, Hyundai, JAECOO, Mercedes, Mitsubishi, ORA, Smart  (5-254 cols)
   [0] stock  [1] qty_or_num  [2] name  [3] manufacturer  [4] catalog_num
@@ -29,6 +33,8 @@ from pathlib import Path
 import asyncpg
 import openpyxl
 from datetime import datetime
+from manufacturer_normalization import normalize_manufacturer_name
+from workbook_normalizer import build_normalized_workbook, iter_normalized_rows, NORMALIZED_XLSX_FILE
 
 XLSX_FILE = Path(__file__).parent / "data" / "parts_database.xlsx"
 _raw_url = os.getenv("DATABASE_URL", "postgresql://autospare:autospare_dev@localhost:5432/autospare")
@@ -36,7 +42,9 @@ DB_URL = _raw_url.replace("postgresql+asyncpg://", "postgresql://").replace("+as
 
 SHEET_TYPES = {
     # Type A
-    "Chevrolet": "A", "Citroen": "A", "Peugeot": "A",
+    "Chevrolet": "A",
+    # Type F
+    "Citroen": "F", "Peugeot": "F",
     # Type B (single-block)
     "Hyundai": "B", "Mercedes": "B", "Mitsubishi": "B", "Smart": "B",
     # Type B-multi (horizontal multi-block layout)
@@ -88,7 +96,7 @@ def parse_price(val):
 
 def parse_manufacturer_fields(raw_mfr, fallback_brand: str) -> tuple[str, int | None]:
     """Parse manufacturer display value and optional numeric manufacturer_id."""
-    manufacturer_name = fallback_brand
+    manufacturer_name = normalize_manufacturer_name(fallback_brand, fallback_brand)
     manufacturer_id = None
     mfr = clean(raw_mfr)
     if not mfr:
@@ -106,7 +114,7 @@ def parse_manufacturer_fields(raw_mfr, fallback_brand: str) -> tuple[str, int | 
     except (ValueError, TypeError):
         pass
 
-    manufacturer_name = s
+    manufacturer_name = normalize_manufacturer_name(s, fallback_brand)
     return manufacturer_name, manufacturer_id
 
 
@@ -218,6 +226,18 @@ def parse_row(sheet_name: str, row: tuple, row_idx: int) -> dict | None:
         specs = {k: v for k, v in {"stock_status": stock, "warranty": warranty, "importer": importer}.items() if v}
         compat = [{"make": brand, "model_year": vehicle}] if vehicle else []
 
+    elif stype == "F":
+        vehicle = clean(g(0))
+        stock = clean(g(1))
+        price = parse_price(g(2))
+        warranty = clean(g(3))
+        importer = clean(g(4))
+        part_type = (clean(g(5)) or "unknown")[:50]
+        name = clean(g(6)) or "(ללא שם)"
+        catalog_num = g(7)
+        specs = {k: v for k, v in {"stock_status": stock, "warranty": warranty, "importer": importer}.items() if v}
+        compat = [{"manufacturer": brand, "model_year": vehicle, "source": "parts_database.xlsx"}] if vehicle else []
+
     elif stype in ("B", "BM"):
         catalog_num = g(4)
         name = clean(g(2)) or "(ללא שם)"
@@ -288,10 +308,10 @@ def parse_row(sheet_name: str, row: tuple, row_idx: int) -> dict | None:
 UPSERT_SQL_BASE = """
 INSERT INTO parts_catalog
     (id, sku, name, category, manufacturer, part_type,
-     description, specifications, compatible_vehicles,
+    description, specifications, compatible_vehicles, oem_number,
      base_price, part_condition, is_safety_critical, needs_oem_lookup,
      master_enriched, is_active, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10,
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, $11,
         'new', false, false, false, true, NOW(), NOW())
 ON CONFLICT (sku) DO UPDATE SET
     name = EXCLUDED.name,
@@ -301,6 +321,7 @@ ON CONFLICT (sku) DO UPDATE SET
     description = EXCLUDED.description,
     specifications = EXCLUDED.specifications,
     compatible_vehicles = EXCLUDED.compatible_vehicles,
+    oem_number = EXCLUDED.oem_number,
     base_price = EXCLUDED.base_price,
     is_active = true,
     updated_at = NOW()
@@ -309,10 +330,10 @@ ON CONFLICT (sku) DO UPDATE SET
 UPSERT_SQL_WITH_MANUFACTURER_ID = """
 INSERT INTO parts_catalog
     (id, sku, name, category, manufacturer, manufacturer_id, part_type,
-     description, specifications, compatible_vehicles,
+     description, specifications, compatible_vehicles, oem_number,
      base_price, part_condition, is_safety_critical, needs_oem_lookup,
      master_enriched, is_active, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11,
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11, $12,
         'new', false, false, false, true, NOW(), NOW())
 ON CONFLICT (sku) DO UPDATE SET
     name = EXCLUDED.name,
@@ -323,6 +344,7 @@ ON CONFLICT (sku) DO UPDATE SET
     description = EXCLUDED.description,
     specifications = EXCLUDED.specifications,
     compatible_vehicles = EXCLUDED.compatible_vehicles,
+    oem_number = EXCLUDED.oem_number,
     base_price = EXCLUDED.base_price,
     is_active = true,
     updated_at = NOW()
@@ -331,10 +353,11 @@ ON CONFLICT (sku) DO UPDATE SET
 BATCH_SIZE = 500
 
 
-async def import_parts():
-    print(f"[{datetime.now():%H:%M:%S}] Opening workbook…")
-    wb = openpyxl.load_workbook(XLSX_FILE, read_only=True, data_only=True)
-    print(f"Sheets: {wb.sheetnames}")
+async def import_parts(selected_sheets: list[str] | None = None):
+    print(f"[{datetime.now():%H:%M:%S}] Building normalized workbook…")
+    normalized_path = build_normalized_workbook(selected_sheets=selected_sheets)
+    print(f"Normalized workbook: {normalized_path}")
+    print("Sheets: ['parts_catalog_import']")
 
     conn = await asyncpg.connect(DB_URL)
     print("Connected to PostgreSQL\n")
@@ -352,91 +375,87 @@ async def import_parts():
 
     total_upserted = total_errors = 0
 
-    for sheet_name in wb.sheetnames:
-        ws = wb[sheet_name]
-        stype = SHEET_TYPES.get(sheet_name, "A")
-        is_multiblock = sheet_name in MULTIBLOCK_SHEETS
-        print(f"  → {sheet_name} (type {stype})")
-        sheet_rows = 0
-        sheet_errors = 0
+    wanted = {s.lower() for s in (selected_sheets or [])}
+
+    sheet_stats: dict[str, dict[str, int]] = {}
+    batch: list[tuple[str, tuple]] = []
+
+    async def flush_batch() -> None:
+        nonlocal batch, total_upserted, total_errors
+        if not batch:
+            return
+
+        params_only = [params for _, params in batch]
+        try:
+            await conn.executemany(upsert_sql, params_only)
+            for source_sheet, _params in batch:
+                sheet_stats.setdefault(source_sheet, {"rows": 0, "errors": 0})
+                sheet_stats[source_sheet]["rows"] += 1
+                total_upserted += 1
+        except Exception:
+            for source_sheet, params in batch:
+                try:
+                    await conn.execute(upsert_sql, *params)
+                    sheet_stats.setdefault(source_sheet, {"rows": 0, "errors": 0})
+                    sheet_stats[source_sheet]["rows"] += 1
+                    total_upserted += 1
+                except Exception:
+                    sheet_stats.setdefault(source_sheet, {"rows": 0, "errors": 0})
+                    sheet_stats[source_sheet]["errors"] += 1
+                    total_errors += 1
         batch = []
 
-        # Multi-block sheets: start from row 1 (include all rows; header cols are
-        # filtered by _HEADER_VALS inside the parser).
-        # Regular sheets: start from row 3 (2-row header).
-        start_row = 1 if is_multiblock else 3
+    for record in iter_normalized_rows(selected_sheets=selected_sheets):
+        sheet_name = str(record.get("source_sheet", "") or "")
+        if wanted and sheet_name.lower() not in wanted:
+            continue
 
-        for row_idx, row in enumerate(ws.iter_rows(min_row=start_row, values_only=True), 1):
-            if is_multiblock:
-                parsed_list = parse_multiblock_row(sheet_name, row, row_idx)
-            else:
-                p = parse_row(sheet_name, row, row_idx)
-                parsed_list = [p] if p else []
+        sheet_stats.setdefault(sheet_name, {"rows": 0, "errors": 0})
+        manufacturer_id = record.get("manufacturer_id")
+        if manufacturer_id in ("", None):
+            manufacturer_id = None
 
-            for parsed in parsed_list:
-                if parsed is None:
-                    continue
+        if has_manufacturer_id_col:
+            params = (
+                uuid.uuid4(),
+                str(record.get("sku", "")),
+                str(record.get("name", "")),
+                str(record.get("category", "")),
+                str(record.get("manufacturer", "")),
+                manufacturer_id,
+                str(record.get("part_type", "unknown")),
+                str(record.get("description", "")),
+                str(record.get("specifications", "{}")),
+                str(record.get("compatible_vehicles", "[]")),
+                str(record.get("oem_number", "")) or None,
+                float(record.get("base_price", 0.0) or 0.0),
+            )
+        else:
+            params = (
+                uuid.uuid4(),
+                str(record.get("sku", "")),
+                str(record.get("name", "")),
+                str(record.get("category", "")),
+                str(record.get("manufacturer", "")),
+                str(record.get("part_type", "unknown")),
+                str(record.get("description", "")),
+                str(record.get("specifications", "{}")),
+                str(record.get("compatible_vehicles", "[]")),
+                str(record.get("oem_number", "")) or None,
+                float(record.get("base_price", 0.0) or 0.0),
+            )
 
-                if has_manufacturer_id_col:
-                    batch.append((
-                        uuid.uuid4(),
-                        parsed["sku"],
-                        parsed["name"],
-                        parsed["category"],
-                        parsed["manufacturer"],
-                        parsed.get("manufacturer_id"),
-                        parsed["part_type"],
-                        parsed["description"],
-                        parsed["specifications"],
-                        parsed["compatible_vehicles"],
-                        parsed["base_price"],
-                    ))
-                else:
-                    batch.append((
-                        uuid.uuid4(),
-                        parsed["sku"],
-                        parsed["name"],
-                        parsed["category"],
-                        parsed["manufacturer"],
-                        parsed["part_type"],
-                        parsed["description"],
-                        parsed["specifications"],
-                        parsed["compatible_vehicles"],
-                        parsed["base_price"],
-                    ))
+        batch.append((sheet_name, params))
 
-            if len(batch) >= BATCH_SIZE:
-                try:
-                    await conn.executemany(upsert_sql, batch)
-                    sheet_rows += len(batch)
-                except Exception as e:
-                    # Fall back to one-by-one to skip bad rows
-                    for rec in batch:
-                        try:
-                            await conn.execute(upsert_sql, *rec)
-                            sheet_rows += 1
-                        except Exception:
-                            sheet_errors += 1
-                batch = []
+        if len(batch) >= BATCH_SIZE:
+            await flush_batch()
 
-        # Flush remaining
-        if batch:
-            try:
-                await conn.executemany(upsert_sql, batch)
-                sheet_rows += len(batch)
-            except Exception:
-                for rec in batch:
-                    try:
-                        await conn.execute(upsert_sql, *rec)
-                        sheet_rows += 1
-                    except Exception:
-                        sheet_errors += 1
+    await flush_batch()
 
-        total_upserted += sheet_rows
-        total_errors += sheet_errors
-        print(f"     ✓ {sheet_rows:,} rows  ({sheet_errors} errors)")
-
-    wb.close()
+    for sheet_name in sorted(sheet_stats):
+        stats = sheet_stats[sheet_name]
+        print(f"  → {sheet_name} (normalized)")
+        print(f"     ✓ {stats['rows']:,} rows  ({stats['errors']} errors)")
 
     final_count = await conn.fetchval("SELECT COUNT(*) FROM parts_catalog")
     await conn.close()
@@ -450,5 +469,7 @@ async def import_parts():
 
 
 if __name__ == "__main__":
-    asyncio.run(import_parts())
+    import sys
+    sheets = [arg for arg in sys.argv[1:] if not arg.startswith("-")]
+    asyncio.run(import_parts(sheets or None))
 

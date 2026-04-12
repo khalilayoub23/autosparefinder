@@ -630,8 +630,40 @@ class UserVehicle(PiiBase):
     user = relationship("User", back_populates="user_vehicles")
 
 
+class AftermarketBrand(Base):
+    __tablename__ = "aftermarket_brands"
+    __table_args__ = (
+        CheckConstraint(
+            "tier IN ('OE_equivalent','economy','generic')",
+            name="ck_aftermarket_brands_tier",
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String(100), unique=True, nullable=False, index=True)
+    tier = Column(String(20), nullable=False, default="generic", server_default="generic")
+    categories = Column(JSONB, nullable=True)
+    country = Column(String(50), nullable=True)
+    website = Column(String(255), nullable=True)
+    logo_url = Column(String(255), nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    parts = relationship("PartsCatalog", back_populates="aftermarket_brand")
+
+
 class PartsCatalog(Base):
     __tablename__ = "parts_catalog"
+    __table_args__ = (
+        CheckConstraint(
+            "aftermarket_tier IS NULL OR aftermarket_tier IN ('OE_equivalent','economy','generic')",
+            name="ck_parts_catalog_aftermarket_tier",
+        ),
+        Index("idx_parts_catalog_aftermarket_brand", "aftermarket_brand_id"),
+        Index("idx_parts_catalog_part_condition_tier", "part_condition", "aftermarket_tier"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     sku = Column(String(100), unique=True, nullable=False, index=True)
@@ -655,6 +687,12 @@ class PartsCatalog(Base):
     min_price_ils = Column(Numeric(10, 2), nullable=True)          # cheapest supplier incl. VAT
     max_price_ils = Column(Numeric(10, 2), nullable=True)          # most expensive supplier incl. VAT
     part_condition = Column(String(20), nullable=False, default="New")  # New/Used/Remanufactured
+    aftermarket_tier = Column(String(20), nullable=True)
+    aftermarket_brand_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("aftermarket_brands.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     superseded_by_sku = Column(String(100), nullable=True)         # replacement SKU if discontinued
     customs_tariff_code = Column(String(20), nullable=True)        # for Israeli customs
     is_safety_critical = Column(Boolean, nullable=False, default=False)  # brakes/steering/airbags
@@ -673,6 +711,7 @@ class PartsCatalog(Base):
     cross_references = relationship("PartCrossReference", back_populates="part", cascade="all, delete-orphan")
     aliases = relationship("PartAlias", back_populates="part", cascade="all, delete-orphan")
     variants = relationship("PartVariant", back_populates="catalog_part", cascade="all, delete-orphan")
+    aftermarket_brand = relationship("AftermarketBrand", back_populates="parts")
 
 
 class PartImage(Base):
@@ -905,15 +944,21 @@ class Payment(PiiBase):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     order_id = Column(UUID(as_uuid=True), ForeignKey("orders.id"), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
     payment_intent_id = Column(String(255), unique=True, nullable=True)  # Stripe
+    provider = Column(String(50), nullable=True)
+    provider_transaction_id = Column(String(255), nullable=True)
+    amount_ils = Column(Numeric(12, 2), nullable=False)
     amount = Column(Numeric(10, 2), nullable=False)
     currency = Column(String(3), default="ILS")
     status = Column(String(50), default="pending")
     # statuses: pending, succeeded, failed, refunded, partially_refunded
     payment_method = Column(String(50), nullable=True)
     stripe_customer_id = Column(String(255), nullable=True)
+    last_four = Column(String(4), nullable=True)
     last_4_digits = Column(String(4), nullable=True)
     card_brand = Column(String(50), nullable=True)
+    error_message = Column(Text, nullable=True)
     paid_at = Column(DateTime, nullable=True)
     refunded_at = Column(DateTime, nullable=True)
     refund_amount = Column(Numeric(10, 2), nullable=True)

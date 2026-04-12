@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useSearchParams, Link } from 'react-router-dom'
 import { paymentsApi } from '../api/orders'
 import { useCartStore } from '../stores/cartStore'
@@ -8,17 +8,23 @@ import InvoiceActions from '../components/InvoiceActions'
 export default function PaymentSuccess() {
   const [searchParams] = useSearchParams()
   const { clear } = useCartStore()
+  const verifyStartedRef = useRef(false)
   const [status, setStatus] = useState('loading') // 'loading' | 'success' | 'error'
   const [orderData, setOrderData] = useState(null)
   const [errorMsg, setErrorMsg] = useState('')
 
 
   useEffect(() => {
+    if (verifyStartedRef.current) return
+    verifyStartedRef.current = true
+
     const sessionId = searchParams.get('session_id')
     const simulated = searchParams.get('simulated') === '1'
     if (!sessionId) {
-      setStatus('error')
-      setErrorMsg('מזהה תשלום חסר בכתובת ה-URL')
+      // No session_id means we cannot verify against Stripe from this URL.
+      // Send user to orders instead of showing a hard failure screen.
+      clear()
+      window.location.replace('/orders?payment=done')
       return
     }
 
@@ -37,8 +43,25 @@ export default function PaymentSuccess() {
           window.location.replace('/orders?payment=done')
           return
         }
+
+        // If backend verification transiently fails after Stripe redirect,
+        // route user to orders where the paid order is still visible.
+        if (err.response?.status >= 500) {
+          clear()
+          window.location.replace('/orders?payment=done')
+          return
+        }
+
+        const detail = err.response?.data?.detail
+        const msg = typeof detail === 'string' ? detail : detail?.message || err.response?.data?.message
+        if (err.response?.status === 400 && msg?.includes('עבור להזמנות שלך לבדיקה')) {
+          clear()
+          window.location.replace('/orders?payment=done')
+          return
+        }
+
         setStatus('error')
-        setErrorMsg(err.response?.data?.detail || 'שגיאה באימות התשלום')
+        setErrorMsg(msg || 'שגיאה באימות התשלום — עבור להזמנות שלך לבדיקה.')
       })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -59,7 +82,7 @@ export default function PaymentSuccess() {
         <h2 className="text-2xl font-bold text-gray-900 mb-2">אימות התשלום נכשל</h2>
         <p className="text-gray-500 mb-6">{errorMsg}</p>
         <div className="flex gap-3 justify-center">
-          <Link to="/cart" className="btn-primary">חזור לסל</Link>
+          <Link to="/orders" className="btn-primary">ההזמנות שלי</Link>
           <Link to="/" className="btn-secondary">דף הבית</Link>
         </div>
       </div>

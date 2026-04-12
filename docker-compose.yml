@@ -23,8 +23,6 @@
 #   HuggingFace API    — Kimi-K2 / multilingual embed / whisper (HF_TOKEN)
 # ============================================================
 
-version: "3.9"
-
 services:
 
   # ── Databases ────────────────────────────────────────────────────────────────
@@ -112,6 +110,8 @@ services:
     container_name: autospare_backend
     restart: unless-stopped
     mem_limit: 1024m
+    ports:
+      - "127.0.0.1:8000:8000"
     environment:
       DATABASE_URL: postgresql+asyncpg://autospare:${DB_PASSWORD}@postgres_catalog:5432/autospare
       DATABASE_PII_URL: postgresql+asyncpg://autospare:${DB_PASSWORD}@postgres_pii:5432/autospare_pii
@@ -132,7 +132,21 @@ services:
       MEILI_URL: http://meilisearch:7700
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
       ENVIRONMENT: ${ENVIRONMENT:-production}
+      DEV_2FA_CODE: ${DEV_2FA_CODE:-000000}
       DEBUG: "false"
+      DISCOVERY_TARGET: ${DISCOVERY_TARGET:-120}
+      DISCOVERY_PER_RUN: ${DISCOVERY_PER_RUN:-20}
+      DISCOVERY_USE_OFFICIAL_SITES: ${DISCOVERY_USE_OFFICIAL_SITES:-true}
+      DISCOVERY_OFFICIAL_ONLY: ${DISCOVERY_OFFICIAL_ONLY:-true}
+      DISCOVERY_OFFICIAL_MAX_REQUESTS: ${DISCOVERY_OFFICIAL_MAX_REQUESTS:-18}
+      DISCOVERY_OFFICIAL_MAX_DOMAINS: ${DISCOVERY_OFFICIAL_MAX_DOMAINS:-18}
+      DISCOVERY_OFFICIAL_MAX_URLS: ${DISCOVERY_OFFICIAL_MAX_URLS:-72}
+      DISCOVERY_OFFICIAL_SUFFIXES: ${DISCOVERY_OFFICIAL_SUFFIXES:-com,co.il,de,co.uk,fr,it,es,nl,be,ch,at,pl,cz,pt,se,no,fi,dk,com.au,co.jp,co.kr,com.br,mx,ae,sa,tr}
+      DISCOVERY_TRUCK_DELAY_DAYS: ${DISCOVERY_TRUCK_DELAY_DAYS:-30}
+      DEPLOYED_AT_ISO: ${DEPLOYED_AT_ISO:-2026-04-02T00:00:00Z}
+      RUN_NORMALIZED_IMPORT_ON_STARTUP: ${RUN_NORMALIZED_IMPORT_ON_STARTUP:-false}
+      RUN_DB_UPDATE_TASKS_ON_STARTUP: ${RUN_DB_UPDATE_TASKS_ON_STARTUP:-true}
+      UVICORN_WORKERS: ${UVICORN_WORKERS:-4}
     depends_on:
       postgres_catalog:
         condition: service_healthy
@@ -143,7 +157,7 @@ services:
       meilisearch:
         condition: service_healthy
       clamav:
-        condition: service_healthy
+        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; r=urllib.request.urlopen('http://localhost:8000/api/v1/system/health',timeout=3); exit(0 if r.status==200 else 1)\" 2>/dev/null || exit 1"]
       interval: 10s
@@ -152,12 +166,7 @@ services:
       start_period: 10s
     volumes:
       - upload_files:/app/uploads
-    command: >
-      /bin/bash -c "
-        alembic -c alembic.ini upgrade head &&
-        alembic -c alembic_pii.ini upgrade head &&
-        uvicorn BACKEND_API_ROUTES:app --host 0.0.0.0 --port 8000 --workers 4
-      "
+    command: ["/app/start.sh"]
     networks:
       - internal
       - public
@@ -227,9 +236,9 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "clamdcheck.sh || exit 1"]
       interval: 60s
-      timeout: 10s
-      retries: 3
-      start_period: 120s
+      timeout: 15s
+      retries: 5
+      start_period: 300s
     networks:
       - internal
     security_opt:

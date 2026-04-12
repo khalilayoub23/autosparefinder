@@ -18,6 +18,8 @@ const NAV_ITEMS = [
   { path: '/profile', icon: User,          label: 'פרופיל'       },
 ]
 
+const TOP_NAV_ITEMS = NAV_ITEMS.filter((item) => item.path !== '/profile')
+
 export default function Layout({ children }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [unreadCount, setUnreadCount] = useState(0)
@@ -75,7 +77,7 @@ export default function Layout({ children }) {
 
           {/* Desktop nav */}
           <nav className="hidden md:flex items-center gap-1">
-            {NAV_ITEMS.map(({ path, icon: Icon, label }) => (
+            {TOP_NAV_ITEMS.map(({ path, icon: Icon, label }) => (
               <Link
                 key={path}
                 to={path}
@@ -204,11 +206,6 @@ export default function Layout({ children }) {
                   <Link to="/profile" className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-50 text-sm text-gray-700">
                     <User className="w-4 h-4" /> הפרופיל שלי
                   </Link>
-                  {user?.is_admin && (
-                    <Link to="/admin" className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-50 text-sm text-gray-700">
-                      <LayoutDashboard className="w-4 h-4" /> לוח ניהול
-                    </Link>
-                  )}
                   <button
                     onClick={handleLogout}
                     className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-red-50 text-sm text-red-600"

@@ -9,7 +9,8 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',
+        // From this dev-container, host-published ports are reachable via docker bridge gateway.
+        target: 'http://172.18.0.1',
         changeOrigin: true,
       },
     },

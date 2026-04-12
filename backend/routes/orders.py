@@ -35,6 +35,9 @@ router = APIRouter()
 async def create_order(data: OrderCreate, current_user: User = Depends(get_current_verified_user), cat_db: AsyncSession = Depends(get_db), db: AsyncSession = Depends(get_pii_db)):
     from BACKEND_AI_AGENTS import get_supplier_shipping as _get_ship2
 
+    if not data.items:
+        raise HTTPException(status_code=400, detail="לא ניתן ליצור הזמנה ללא פריטים")
+
     subtotal = 0.0
     items_data = []
     # USD_TO_ILS is imported from BACKEND_DATABASE_MODELS (single source of truth)
@@ -76,6 +79,14 @@ async def create_order(data: OrderCreate, current_user: User = Depends(get_curre
     vat_total = round(subtotal * 0.18, 2)
     shipping = round(sum(supplier_delivery_fees.values()), 2)
     total = round(subtotal + vat_total + shipping, 2)
+
+    # Guardrail: never create non-payable (zero/negative) orders.
+    if total <= 0:
+        raise HTTPException(status_code=400, detail="לא ניתן ליצור הזמנה בסכום 0")
+
+    if not items_data:
+        raise HTTPException(status_code=400, detail="לא ניתן ליצור הזמנה ללא פריטים")
+
     order_number = f"AUTO-2026-{str(uuid.uuid4())[:8].upper()}"
 
     order = Order(

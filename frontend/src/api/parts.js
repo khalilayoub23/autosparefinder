@@ -1,14 +1,18 @@
 import api from './client'
 
 export const partsApi = {
-  search: (query, vehicle_id, category, per_type = null, vehicle_manufacturer = null, vehicle_model = null, vehicle_year = null) =>
-    api.get('/parts/search', { params: { q: query, vehicle_id, category, per_type, vehicle_manufacturer, vehicle_model, vehicle_year } }),
+  search: (query, vehicle_id, category, per_type = null, vehicle_manufacturer = null, vehicle_model = null, vehicle_year = null, vehicle_submodel = null) =>
+    api.get('/parts/search', { params: { q: query, vehicle_id, category, per_type, vehicle_manufacturer, vehicle_model, vehicle_year, vehicle_submodel } }),
   // Legacy flat search kept for photo-search and URL-triggered flows
   searchFlat: (query, vehicle_id, category, limit = 50, offset = 0, sort_by = 'name', sort_dir = 'asc', vehicle_manufacturer = null) =>
     api.get('/parts/search', { params: { q: query, vehicle_id, category, vehicle_manufacturer } }),
-  categories: () => api.get('/parts/categories'),
+  categories: (params = {}) => api.get('/parts/categories', { params }),
   manufacturers: () => api.get('/parts/manufacturers'),
   models: (manufacturer = null) => api.get('/parts/models', { params: manufacturer ? { manufacturer } : {} }),
+  submodels: (manufacturer = null, model = null) =>
+    api.get('/parts/submodels', { params: { manufacturer, model } }),
+  years: (manufacturer = null, model = null, sub_model = null) =>
+    api.get('/parts/years', { params: { manufacturer, model, sub_model } }),
   brands: (params = {}) => api.get('/brands', { params }),
   brandsWithParts: () => api.get('/brands/with-parts'),
   brandParts: (brandName, params = {}) => api.get(`/brands/${encodeURIComponent(brandName)}/parts`, { params }),

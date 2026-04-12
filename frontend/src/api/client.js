@@ -23,9 +23,32 @@ let refreshQueue = []
 // Endpoints that should NEVER trigger auto-refresh (they ARE the auth endpoints)
 const AUTH_ENDPOINTS = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/forgot', '/auth/reset']
 
+function normalizeErrorPayload(error) {
+  const data = error?.response?.data
+  if (!data || typeof data !== 'object') return
+
+  // Preserve the original structured detail for flows that need machine codes
+  // (e.g. price_updated / part_unavailable), but ensure detail is UI-safe text.
+  if (data.detail && typeof data.detail === 'object' && !Array.isArray(data.detail)) {
+    data.detail_obj = data.detail
+    if (typeof data.detail.message === 'string') data.detail = data.detail.message
+    else if (typeof data.detail.detail === 'string') data.detail = data.detail.detail
+    else data.detail = 'אירעה שגיאה'
+  }
+
+  if (data.error && typeof data.error === 'object' && !Array.isArray(data.error)) {
+    data.error = data.error.message || data.error.detail || 'אירעה שגיאה'
+  }
+
+  if (data.message && typeof data.message === 'object' && !Array.isArray(data.message)) {
+    data.message = data.message.message || data.message.detail || 'אירעה שגיאה'
+  }
+}
+
 api.interceptors.response.use(
   (res) => res,
   async (error) => {
+    normalizeErrorPayload(error)
     const original = error.config
     const url = original?.url || ''
     // Don't intercept auth endpoints — let the caller handle the error directly
@@ -55,21 +78,28 @@ api.interceptors.response.use(
       } catch {
         refreshQueue.forEach((p) => p.reject())
         refreshQueue = []
+        // Clear only the invalid tokens, not the entire localStorage (which would lose cart etc.)
+        localStorage.removeItem('access_token')
+        localStorage.removeItem('refresh_token')
         // If we failed refreshing while on the payment success flow, redirect to
         // /orders (payment was already confirmed by Stripe webhook) rather than
         // sending the user to /login and losing their session silently.
         if (url.includes('verify-session') || url.includes('payment')) {
           window.location.href = '/orders?payment=done'
         } else {
-          localStorage.clear()
           window.location.href = '/login'
         }
       } finally {
         isRefreshing = false
       }
     }
-    const msg = error.response?.data?.error || error.response?.data?.detail || error.message
-    if (error.response?.status >= 500) toast.error(`שגיאת שרת: ${msg}`)
+    const detail = error.response?.data?.detail
+    const detailMsg = typeof detail === 'string' ? detail : detail?.message
+    const msg = error.response?.data?.error || detailMsg || error.response?.data?.message || error.message
+    const isVerifySessionEndpoint = url.includes('/payments/verify-session')
+    if (error.response?.status >= 500 && !isAuthEndpoint && !isVerifySessionEndpoint) {
+      toast.error(`שגיאת שרת: ${msg}`)
+    }
     return Promise.reject(error)
   }
 )

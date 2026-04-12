@@ -17,20 +17,44 @@ export default function Login() {
 
   const from = location.state?.from?.pathname || '/'
 
+  const getLoginErrorMessage = (err) => {
+    if (!err?.response) {
+      return 'שרת ההתחברות אינו זמין כעת. ודא שה-backend פועל על פורט 8000.'
+    }
+
+    if (err.response.status >= 500) {
+      return 'שירות ההתחברות אינו זמין כעת. נסה שוב לאחר שהשרת יעלה.'
+    }
+
+    const detail = err.response?.data?.detail
+    const detailMsg = typeof detail === 'string' ? detail : detail?.message
+    return err.response?.data?.error || detailMsg || 'שם משתמש או סיסמה שגויים'
+  }
+
   const handleLogin = async (e) => {
     e.preventDefault()
+    const email = form.email.trim()
+    const password = form.password
+    if (!email) {
+      toast.error('יש להזין אימייל')
+      return
+    }
+    if (password.length < 8) {
+      toast.error('הסיסמה חייבת להכיל לפחות 8 תווים')
+      return
+    }
     try {
-      const res = await login(form.email, form.password, form.trustDevice)
+      const res = await login(email, password, form.trustDevice)
       if (res.requires2fa) {
         setStep('2fa')
         toast('קוד אימות נשלח לטלפון שלך', { icon: '📱' })
       } else {
-        toast.success('!ברוך הבא')
+        const firstName = useAuthStore.getState().user?.full_name?.split(' ')[0]
+        toast.success(firstName ? `!ברוך הבא, ${firstName}` : '!ברוך הבא')
         navigate(from, { replace: true })
       }
     } catch (err) {
-      const msg = err.response?.data?.error || err.response?.data?.detail || 'שם משתמש או סיסמה שגויים'
-      toast.error(msg)
+      toast.error(getLoginErrorMessage(err))
     }
   }
 
@@ -39,10 +63,13 @@ export default function Login() {
     try {
       const userId = pendingUserId || useAuthStore.getState().pendingUserId
       await verify2fa(userId, code, form.trustDevice)
-      toast.success('!ברוך הבא')
+      const firstName = useAuthStore.getState().user?.full_name?.split(' ')[0]
+      toast.success(firstName ? `!ברוך הבא, ${firstName}` : '!ברוך הבא')
       navigate(from, { replace: true })
     } catch (err) {
-      const msg = err.response?.data?.error || 'קוד שגוי, נסה שוב'
+      const detail = err.response?.data?.detail
+      const detailMsg = typeof detail === 'string' ? detail : detail?.message
+      const msg = err.response?.data?.error || detailMsg || 'קוד שגוי, נסה שוב'
       toast.error(msg)
     }
   }
@@ -61,16 +88,17 @@ export default function Login() {
         <div className="card p-8 shadow-md">
           {step === 'login' ? (
             <>
-              <h2 className="text-xl font-bold text-gray-900 mb-6">כניסה לחשבון</h2>
+              <h2 className="text-xl font-bold text-gray-900 mb-6 text-center">ברוך הבא</h2>
+
+              {/* Email / password form */}
               <form onSubmit={handleLogin} className="space-y-4" autoComplete="on">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="login-email">אימייל</label>
                   <input
                     id="login-email"
                     name="email"
                     type="email"
                     className="input-field"
-                    placeholder="your@email.com"
+                    placeholder="אימייל"
                     value={form.email}
                     autoComplete="email"
                     onChange={(e) => setForm({ ...form, email: e.target.value })}
@@ -79,16 +107,16 @@ export default function Login() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="login-password">סיסמה</label>
                   <div className="relative">
                     <input
                       id="login-password"
                       name="password"
                       type={showPass ? 'text' : 'password'}
                       className="input-field pl-10"
-                      placeholder="••••••••"
+                      placeholder="סיסמה"
                       value={form.password}
                       autoComplete="current-password"
+                      minLength={8}
                       onChange={(e) => setForm({ ...form, password: e.target.value })}
                       required
                       dir="ltr"
@@ -110,7 +138,7 @@ export default function Login() {
                       checked={form.trustDevice}
                       onChange={(e) => setForm({ ...form, trustDevice: e.target.checked })}
                     />
-                    <span className="text-sm text-gray-600">סמוך על המכשיר הזה</span>
+                    <span className="text-sm text-gray-600">זכור אותי</span>
                   </label>
                   <Link to="/reset-password" className="text-sm text-brand-600 hover:text-brand-700 font-medium">
                     שכחת סיסמה?
@@ -122,6 +150,17 @@ export default function Login() {
                 </button>
               </form>
 
+              {/* OR divider */}
+              <div className="relative my-5">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-gray-200" />
+                </div>
+                <div className="relative flex justify-center text-sm">
+                  <span className="bg-white px-3 text-gray-400 font-medium">OR</span>
+                </div>
+              </div>
+
+              {/* Social login — below form */}
               <SocialLoginButtons redirectTo={from} />
 
               <p className="text-center text-sm text-gray-500 mt-6">

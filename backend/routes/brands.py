@@ -103,6 +103,7 @@ async def get_brands_with_parts(db: AsyncSession = Depends(get_db)):
             "region": b.region, "is_luxury": b.is_luxury,
             "is_electric_focused": b.is_electric_focused,
             "website": b.website, "parts_count": count,
+            "logo_url": b.logo_url,
             "has_parts": count > 0,
             "aliases": aliases,
         })
@@ -118,6 +119,7 @@ async def get_brands_with_parts(db: AsyncSession = Depends(get_db)):
                     "country": None, "region": None, "is_luxury": False,
                     "is_electric_focused": False, "website": None,
                     "parts_count": mfr_count, "has_parts": True,
+                    "logo_url": None,
                 })
 
     return {"brands": merged, "total": len(merged)}

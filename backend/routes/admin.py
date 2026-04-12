@@ -233,12 +233,21 @@ async def get_admin_stats(current_user: User = Depends(get_current_admin_user), 
     )).fetchall()
     orders_by_status = {r[0]: r[1] for r in status_rows}
 
-    # Gross revenue: sum of all payments that were ever successfully paid
+    paid_statuses = ["paid", "processing", "supplier_ordered", "confirmed", "shipped", "delivered"]
+
+    # Gross revenue (primary source): successful payment rows.
     gross_revenue = (await db.execute(
         select(func.sum(Payment.amount)).where(
             Payment.status.in_(["paid", "refunded"])
         )
     )).scalar() or 0
+
+    # Compatibility fallback for environments with legacy/missing payment rows:
+    # derive gross from paid-like orders so dashboard cards don't show false zeros.
+    if float(gross_revenue or 0) <= 0:
+        gross_revenue = (await db.execute(
+            select(func.sum(Order.total_amount)).where(Order.status.in_(paid_statuses))
+        )).scalar() or 0
 
     # Refunds issued — two sources:
     # 1. Payment-level refunds (cancellations processed through Stripe)
@@ -261,8 +270,6 @@ async def get_admin_stats(current_user: User = Depends(get_current_admin_user), 
     # cost          = price_no_vat - profit       ← supplier cost
     MARGIN_RATE = 0.45
     VAT_RATE = 0.18
-    paid_statuses = ["paid", "processing", "supplier_ordered", "confirmed", "shipped", "delivered"]
-
     price_no_vat_net   = round(float(net_revenue) / (1 + VAT_RATE), 2)           # strip VAT
     profit_total      = round(price_no_vat_net * (MARGIN_RATE / (1 + MARGIN_RATE)), 2)  # 45/145
     cost_total        = round(price_no_vat_net - profit_total, 2)

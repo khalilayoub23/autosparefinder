@@ -23,7 +23,10 @@ export const useAuthStore = create(
           const { data, status } = await authApi.login({ email, password, trust_device: trustDevice })
           if (status === 202 || data.requires_2fa) {
             set({ pendingUserId: data.user_id, isLoading: false })
-            return { requires2fa: true, userId: data.user_id }
+            return {
+              requires2fa: true,
+              userId: data.user_id,
+            }
           }
           get().setTokens(data.access_token, data.refresh_token)
           set({ user: data.user, pendingUserId: null })
