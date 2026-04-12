@@ -225,10 +225,7 @@ def _get_embed_model():
 
 
 async def hf_embed(text: str, timeout: float = 10.0) -> list[float]:
-    """Local text embedding. Returns [] if model not cached yet (never blocks on download)."""
-    if not _is_model_cached():
-        return []
-
+    """Remote text embedding via HF Inference API — no local model needed."""
     cache_key = _cache_key("emb", HF_EMBED_MODEL, text)
     cached = await _cache_get(cache_key)
     if cached is not None:
@@ -236,23 +233,27 @@ async def hf_embed(text: str, timeout: float = 10.0) -> list[float]:
             return _json.loads(cached)
         except Exception:
             pass
-
-    def _encode() -> list[float]:
-        return _get_embed_model().encode(text).tolist()
-
     try:
         t0 = time.monotonic()
-        result: list[float] = await asyncio.wait_for(
-            asyncio.get_running_loop().run_in_executor(None, _encode),
+        http = _get_http()
+        resp = await asyncio.wait_for(
+            http.post(
+                f"{INFER_BASE}/{HF_EMBED_MODEL}",
+                headers={"Authorization": f"Bearer {HF_TOKEN}"},
+                json={"inputs": text},
+            ),
             timeout=timeout,
         )
+        resp.raise_for_status()
+        result = resp.json()
+        if isinstance(result, list) and isinstance(result[0], list):
+            result = result[0]
         logger.debug("hf_client [embed] latency_ms=%d", round((time.monotonic() - t0) * 1000))
         await _cache_set(cache_key, _json.dumps(result), _EMBED_CACHE_TTL)
         return result
-    except (asyncio.TimeoutError, Exception) as exc:
+    except Exception as exc:
         logger.warning("hf_client [embed] failed: %s", exc)
         return []
-
 
 async def hf_vision(
     image_b64: str,

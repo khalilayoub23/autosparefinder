@@ -437,7 +437,6 @@ class BaseAgent:
             return await hf_text(
                 prompt,
                 system=(system_override or self.system_prompt),
-                model=selected_model,
             )
         except Exception as e:
             status = getattr(getattr(e, "response", None), "status_code", None)
