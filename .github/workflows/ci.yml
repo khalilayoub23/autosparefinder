@@ -17,7 +17,8 @@ jobs:
           python -m venv .venv-ci
           source .venv-ci/bin/activate
           pip install --upgrade pip
-          pip install httpx pytest pytest-asyncio
+          # numpy is required by backend/tests/test_hf_client.py embedding mocks.
+          pip install httpx pytest pytest-asyncio numpy
       - name: Run pytest (smoke)
         working-directory: ./backend
         run: |
@@ -27,10 +28,7 @@ jobs:
         run: docker compose -f docker-compose.yml config
       - name: Secret-scan (basic)
         run: |
-<<<<<<< HEAD
-=======
           set -e
->>>>>>> 8219d3866ad562a8d02cd1af344f50bec1b6b762
           if git grep -nE "ghp_[A-Za-z0-9_\-]+|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}" -- './' ':(exclude)*/tests/*' ':(exclude)*/test_*'; then
             echo "Potential secret pattern found — please ensure no secrets are committed."
             exit 1
