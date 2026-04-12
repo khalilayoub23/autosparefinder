@@ -223,7 +223,13 @@ export default function Chat() {
   const fileRef = useRef(null)
   const autoSentRef = useRef(false)
 
-  useEffect(() => { loadConversations() }, [])
+  useEffect(() => {
+    loadConversations()
+    // Re-load messages for the last open conversation after page refresh
+    if (currentConversationId) {
+      selectConversation(currentConversationId)
+    }
+  }, [])
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, isTyping])
 
   // Auto-send when navigated here with ?msg= (e.g. from Parts no-results AI button)

@@ -187,6 +187,11 @@ async def hf_text(prompt: str, system: str = "", timeout: float = 90.0) -> str:
     return result
 
 
+async def hf_text_fast(prompt: str, system: str = "", timeout: float = 90.0) -> str:
+    """Fast path alias kept for compatibility with agent routing code."""
+    return await hf_text(prompt=prompt, system=system, timeout=timeout)
+
+
 # ── Local embedding model ─────────────────────────────────────────────────────
 _embed_model = None
 

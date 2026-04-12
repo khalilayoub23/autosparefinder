@@ -1,5 +1,3 @@
-"""Returns — all /api/v1/returns* endpoints extracted from BACKEND_API_ROUTES.py."""
-
 import os
 import uuid
 from datetime import datetime, timedelta
@@ -558,3 +556,4 @@ async def admin_get_returns(
         }
         for r in returns
     ]}
+
