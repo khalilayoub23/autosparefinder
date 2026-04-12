@@ -157,7 +157,7 @@ Key groups (full list in `backend/.env.example`):
 | Redis | `REDIS_URL` |
 | Security | `JWT_SECRET_KEY`, `JWT_REFRESH_SECRET_KEY`, `ENCRYPTION_KEY` |
 | Search | `MEILI_URL`, `MEILI_MASTER_KEY` |
-| Integrations | `TWILIO_*`, `STRIPE_*`, `SENDGRID_API_KEY`, `TELEGRAM_BOT_TOKEN` |
+p| Integrations | `TWILIO_*`, `STRIPE_*`, `SENDGRID_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHANNEL_ID`, `TELEGRAM_WEBHOOK_SECRET` |
 | AI | `HF_TOKEN` (HuggingFace — agents, whisper; **optional** — local embeddings work without it) |
 | Embedding model | `HF_EMBED_MODEL` (default: `paraphrase-multilingual-MiniLM-L12-v2` — runs locally, no key needed) |
 

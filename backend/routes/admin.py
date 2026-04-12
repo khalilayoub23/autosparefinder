@@ -27,6 +27,7 @@ Endpoints:
   PUT    /api/v1/admin/orders/{order_id}/status
 """
 import asyncio
+import os
 import uuid
 from datetime import datetime, date
 from typing import Any, Dict, Optional
@@ -1193,6 +1194,32 @@ async def publish_social_post(
         "post_id":             post_id,
         "telegram_message_id": tg_result["message_id"],
         "published_at":        post.published_at,
+    }
+
+
+@router.post("/api/v1/admin/social/telegram/webhook")
+async def configure_telegram_webhook(
+    webhook_url: str,
+    current_user: User = Depends(get_current_admin_user),
+):
+    from social.telegram_publisher import set_telegram_webhook
+
+    if not webhook_url.startswith("https://"):
+        raise HTTPException(status_code=400, detail="webhook_url must be HTTPS")
+
+    secret = os.getenv("TELEGRAM_WEBHOOK_SECRET", "").strip() or None
+    result = await set_telegram_webhook(webhook_url, secret_token=secret)
+    if not result.get("ok"):
+        raise HTTPException(
+            status_code=502,
+            detail=f"Telegram webhook setup failed: {result.get('error', 'unknown error')}",
+        )
+
+    return {
+        "message": "Telegram webhook configured",
+        "webhook_url": webhook_url,
+        "secret_configured": bool(secret),
+        "telegram": result,
     }
 
 

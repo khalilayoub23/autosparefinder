@@ -167,6 +167,8 @@
 | 8 | Orders + Shared Schemas | `backend/routes/orders.py`, `backend/routes/schemas.py` | 2459 | 734 | `pytest tests/test_security.py`: 35 passed, 49 skipped, 0 broken; full `pytest -q` still blocked by pre-existing `pytest_asyncio` missing in `tests/test_system.py` | R-1 resolved (parts/utils circular removed); checkout now uses lazy import from `routes.orders` and must move with checkout in Step 15 |
 | 9 | Payments + Shared fulfillment/frontend helpers | `backend/routes/payments.py` | 1037 | 1069 | Exact baseline re-run: `pytest tests/ -q --tb=no --ignore=tests/test_system.py` -> 91 failed / 120 passed (after one temporary regression in clamd source-string test was fixed) | Avoided new circular import by not importing fulfillment from monolith; `trigger_supplier_fulfillment` + `_get_frontend_url` now centralized in `routes/utils.py` |
 | 10 | Invoices | `backend/routes/invoices.py` | 32 | 52 | Exact baseline re-run: `pytest tests/ -q --tb=no --ignore=tests/test_system.py` -> 91 failed / 120 passed (no new regressions) | No new circular dependency; endpoints were self-contained and required no shared schema/utils extraction |
+| 11 | Returns | `backend/routes/returns.py` | 428 | 406 | Baseline expected: 91 failed / 120 passed | `_FULL_REFUND_REASONS` + `_RETURN_WINDOW_DAYS` moved with the module (only used within section 8); `ReturnRequest` schema already in `routes/schemas.py` from Step 8 — no duplication; `from fastapi.responses import StreamingResponse` promoted to module-level import in `routes/returns.py` (was inline in original); no new circular imports |
+
 | 11 | Returns | `backend/routes/returns.py` | 412 | 414 | Exact baseline re-run: `pytest -q --tb=no --ignore=tests/test_system.py` -> 91 failed / 120 passed (no new regressions) | No new circular dependency; all endpoints and logic moved verbatim, with import hygiene and type annotation fixes. |
 | 12 | Files | `backend/routes/files.py` | 49 | 67 | Exact baseline re-run: `pytest -q --tb=no --ignore=tests/test_system.py` -> 91 failed / 120 passed (no new regressions) | No new circular dependency; _scan_bytes_for_virus already in utils, FileModel import alias resolved. |
 | 13 | Profile | `backend/routes/profile.py` | 143 | 180 | Exact baseline re-run: `pytest -q --tb=no --ignore=tests/test_system.py` -> 91 failed / 120 passed (no new regressions) | No new circular dependency; all endpoints and logic moved verbatim, with import hygiene and type annotation fixes. |
@@ -210,16 +212,18 @@ Execution policy:
 | 8 | Orders + Schemas consolidation | `backend/routes/orders.py`, `backend/routes/schemas.py` | ✅ Completed |
 | 9 | Payments | `backend/routes/payments.py` | ✅ Completed |
 | 10 | Invoices | `backend/routes/invoices.py` | ✅ Completed |
+| 11 | Returns | `backend/routes/returns.py` | ✅ Completed |
 
 ### Pending Steps (Approved Extraction Order)
 
 | Step | Domain | Files planned | Status |
 |------|--------|---------------|--------|
-| 12 | Marketing + Social | `backend/routes/marketing.py`, `backend/routes/social.py` | ❌ Pending |
-| 13 | Admin (users/settings/approvals) | `backend/routes/admin.py` | ❌ Pending |
-| 14 | Wishlist | `backend/routes/wishlist.py` | ❌ Pending |
-| 15 | Cart + Checkout | `backend/routes/cart.py` | ❌ Pending |
-| 16 | System/Health/Utility leftovers | `backend/routes/system.py` | ❌ Pending |
+| 12 | Profile | `backend/routes/profile.py` | ❌ Pending |
+| 13 | Marketing + Social | `backend/routes/marketing.py`, `backend/routes/social.py` | ❌ Pending |
+| 14 | Admin (users/settings/approvals) | `backend/routes/admin.py` | ❌ Pending |
+| 15 | Wishlist | `backend/routes/wishlist.py` | ❌ Pending |
+| 16 | Cart + Checkout | `backend/routes/cart.py` | ❌ Pending |
+| 17 | System/Health/Utility leftovers | `backend/routes/system.py` | ❌ Pending |
 
 ### Required Note
 

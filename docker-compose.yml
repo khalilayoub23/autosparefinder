@@ -44,6 +44,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    ports:
+      - "5432:5432"
     networks:
       - internal
     security_opt:
@@ -70,6 +72,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    ports:
+      - "5433:5432"
     networks:
       - internal
     security_opt:
@@ -112,6 +116,7 @@ services:
     mem_limit: 1024m
     ports:
       - "127.0.0.1:8000:8000"
+    shm_size: 256m
     environment:
       DATABASE_URL: postgresql+asyncpg://autospare:${DB_PASSWORD}@postgres_catalog:5432/autospare
       DATABASE_PII_URL: postgresql+asyncpg://autospare:${DB_PASSWORD}@postgres_pii:5432/autospare_pii
@@ -121,12 +126,25 @@ services:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       GITHUB_TOKEN: ${GITHUB_TOKEN}
       HF_TOKEN: ${HF_TOKEN}
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      CEREBRAS_API_KEY: ${CEREBRAS_API_KEY}
+      CEREBRAS_TEXT_MODEL: ${CEREBRAS_TEXT_MODEL:-llama3.1-8b}
+      HF_TEXT_MODEL: ${HF_TEXT_MODEL}
+      AGENTS_DEFAULT_MODEL: ${AGENTS_DEFAULT_MODEL}
+      WEB_AI_MODEL: ${WEB_AI_MODEL}
+      WHATSAPP_AI_MODEL: ${WHATSAPP_AI_MODEL}
+      TELEGRAM_AI_MODEL: ${TELEGRAM_AI_MODEL}
       TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID}
       TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN}
       TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
       SENDGRID_API_KEY: ${SENDGRID_API_KEY}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHANNEL_ID: ${TELEGRAM_CHANNEL_ID}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET}
+      DEV_2FA_CODE: ${DEV_2FA_CODE}
       CORS_ORIGINS: ${CORS_ORIGINS:-https://autosparefinder.co.il,https://www.autosparefinder.co.il}
       CLAMD_HOST: clamav
       MEILI_URL: http://meilisearch:7700
@@ -221,7 +239,7 @@ services:
         max-size: 10m
         max-file: "3"
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost/api/v1/system/health || exit 1"]
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/api/v1/system/health || exit 1"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -248,7 +266,6 @@ services:
       options:
         max-size: 5m
         max-file: "3"
-
   meilisearch:
     image: getmeili/meilisearch:v1.7
     container_name: autospare_meilisearch
