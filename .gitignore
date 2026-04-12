@@ -68,3 +68,5 @@ backend/hf_test_fix_tmp.py
 
 # ── Alembic cache ─────────────────────────────────────────────────────────────
 backend/alembic/__pycache__/
+
+.venv-ci/
