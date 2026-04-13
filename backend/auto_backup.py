@@ -16,10 +16,12 @@ from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
-BACKUP_DIR = os.environ.get("BACKUP_DIR", "/backups")
+BACKUP_DIR = os.environ.get("BACKUP_DIR", os.path.join(os.path.dirname(__file__), "backups"))
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 PII_DATABASE_URL = os.environ.get("PII_DATABASE_URL", "")
 KEEP_LAST = 7  # Keep last 7 daily backups
+
+os.makedirs(BACKUP_DIR, exist_ok=True)
 
 
 def _pg_dump(db_url: str, out_path: str) -> bool:

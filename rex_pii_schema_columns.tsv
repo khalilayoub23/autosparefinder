@@ -1,0 +1,249 @@
+alembic_version	version_num	character varying	NO
+approval_queue	id	uuid	NO
+approval_queue	entity_type	character varying	NO
+approval_queue	entity_id	uuid	NO
+approval_queue	action	character varying	NO
+approval_queue	payload	jsonb	NO
+approval_queue	status	character varying	NO
+approval_queue	requested_by	uuid	YES
+approval_queue	resolved_by	uuid	YES
+approval_queue	resolution_note	text	YES
+approval_queue	created_at	timestamp without time zone	NO
+approval_queue	resolved_at	timestamp without time zone	YES
+approval_queue	idempotency_key	character varying	YES
+cart_items	id	uuid	NO
+cart_items	cart_id	uuid	NO
+cart_items	part_id	uuid	NO
+cart_items	supplier_part_id	uuid	NO
+cart_items	quantity	integer	NO
+cart_items	unit_price	numeric	NO
+cart_items	added_at	timestamp without time zone	NO
+cart_items	updated_at	timestamp without time zone	NO
+carts	id	uuid	NO
+carts	user_id	uuid	NO
+carts	created_at	timestamp without time zone	NO
+carts	updated_at	timestamp without time zone	NO
+conversations	id	uuid	NO
+conversations	user_id	uuid	NO
+conversations	session_id	character varying	YES
+conversations	context	jsonb	YES
+conversations	status	character varying	YES
+conversations	created_at	timestamp without time zone	YES
+conversations	updated_at	timestamp without time zone	YES
+conversations	deleted_at	timestamp without time zone	YES
+invoices	id	uuid	NO
+invoices	order_id	uuid	NO
+invoices	user_id	uuid	NO
+invoices	invoice_number	character varying	NO
+invoices	total_ils	numeric	NO
+invoices	vat_ils	numeric	NO
+invoices	issued_at	timestamp without time zone	YES
+invoices	due_at	timestamp without time zone	YES
+invoices	pdf_url	character varying	YES
+invoices	status	character varying	YES
+invoices	created_at	timestamp without time zone	YES
+job_failures	id	uuid	NO
+job_failures	job_name	character varying	NO
+job_failures	payload	json	YES
+job_failures	error	text	YES
+job_failures	attempts	integer	NO
+job_failures	next_retry_at	timestamp with time zone	YES
+job_failures	status	character varying	NO
+job_failures	created_at	timestamp with time zone	NO
+job_failures	resolved_at	timestamp with time zone	YES
+job_failures	resolved_by	character varying	YES
+login_attempts	id	uuid	NO
+login_attempts	user_id	uuid	YES
+login_attempts	email	character varying	YES
+login_attempts	ip_address	character varying	NO
+login_attempts	success	boolean	NO
+login_attempts	failure_reason	character varying	YES
+login_attempts	created_at	timestamp without time zone	YES
+messages	id	uuid	NO
+messages	conversation_id	uuid	NO
+messages	role	character varying	NO
+messages	content	text	NO
+messages	metadata	jsonb	YES
+messages	created_at	timestamp without time zone	YES
+messages	deleted_at	timestamp without time zone	YES
+notifications	id	uuid	NO
+notifications	user_id	uuid	NO
+notifications	title	character varying	NO
+notifications	message	text	YES
+notifications	type	character varying	YES
+notifications	is_read	boolean	YES
+notifications	data	jsonb	YES
+notifications	created_at	timestamp without time zone	YES
+notifications	read_at	timestamp without time zone	YES
+notifications	channel	character varying	YES
+notifications	sent_at	timestamp without time zone	YES
+order_items	id	uuid	NO
+order_items	order_id	uuid	NO
+order_items	part_id	uuid	YES
+order_items	supplier_part_id	uuid	YES
+order_items	part_sku	character varying	YES
+order_items	name_he	character varying	YES
+order_items	name_en	character varying	YES
+order_items	quantity	integer	NO
+order_items	unit_price	numeric	NO
+order_items	total_price	numeric	NO
+order_items	is_express	boolean	YES
+order_items	created_at	timestamp without time zone	YES
+order_items	part_name	character varying	NO
+order_items	manufacturer	character varying	YES
+order_items	part_type	character varying	YES
+order_items	supplier_name	character varying	YES
+order_items	supplier_order_id	character varying	YES
+order_items	vat_amount	numeric	NO
+order_items	warranty_months	integer	YES
+orders	id	uuid	NO
+orders	user_id	uuid	NO
+orders	vehicle_id	uuid	YES
+orders	status	character varying	NO
+orders	subtotal	numeric	NO
+orders	vat_amount	numeric	NO
+orders	shipping_cost	numeric	YES
+orders	total_amount	numeric	NO
+orders	currency	character varying	YES
+orders	notes	text	YES
+orders	shipping_address	jsonb	YES
+orders	created_at	timestamp without time zone	NO
+orders	updated_at	timestamp without time zone	YES
+orders	deleted_at	timestamp without time zone	YES
+orders	order_number	character varying	NO
+orders	discount_amount	numeric	YES
+orders	tracking_number	character varying	YES
+orders	tracking_url	character varying	YES
+orders	estimated_delivery	timestamp without time zone	YES
+orders	coupon_code	character varying	YES
+orders	shipping_type	character varying	YES
+orders	shipped_at	timestamp without time zone	YES
+orders	delivered_at	timestamp without time zone	YES
+orders	cancelled_at	timestamp without time zone	YES
+part_reviews	id	uuid	NO
+part_reviews	user_id	uuid	NO
+part_reviews	part_id	uuid	NO
+part_reviews	order_id	uuid	YES
+part_reviews	rating	integer	NO
+part_reviews	title	character varying	YES
+part_reviews	body	text	YES
+part_reviews	is_verified_purchase	boolean	NO
+part_reviews	created_at	timestamp without time zone	NO
+part_reviews	updated_at	timestamp without time zone	NO
+password_resets	id	uuid	NO
+password_resets	user_id	uuid	NO
+password_resets	token	character varying	NO
+password_resets	expires_at	timestamp without time zone	NO
+password_resets	used_at	timestamp without time zone	YES
+password_resets	created_at	timestamp without time zone	YES
+payments	id	uuid	NO
+payments	order_id	uuid	NO
+payments	user_id	uuid	NO
+payments	amount_ils	numeric	NO
+payments	currency	character varying	YES
+payments	status	character varying	NO
+payments	provider	character varying	YES
+payments	provider_transaction_id	character varying	YES
+payments	last_four	character varying	YES
+payments	card_brand	character varying	YES
+payments	error_message	text	YES
+payments	created_at	timestamp without time zone	YES
+payments	updated_at	timestamp without time zone	YES
+payments	payment_intent_id	character varying	YES
+payments	amount	numeric	NO
+payments	payment_method	character varying	YES
+payments	stripe_customer_id	character varying	YES
+payments	last_4_digits	character varying	YES
+payments	paid_at	timestamp without time zone	YES
+payments	refunded_at	timestamp without time zone	YES
+payments	refund_amount	numeric	YES
+payments	refund_reason	character varying	YES
+returns	id	uuid	NO
+returns	order_id	uuid	NO
+returns	user_id	uuid	NO
+returns	reason	text	YES
+returns	status	character varying	YES
+returns	refund_amount_ils	numeric	YES
+returns	approved_at	timestamp without time zone	YES
+returns	created_at	timestamp without time zone	YES
+returns	updated_at	timestamp without time zone	YES
+returns	item_shipped_at	timestamp without time zone	YES
+returns	supplier_confirmed_at	timestamp without time zone	YES
+returns	refund_issued_at	timestamp without time zone	YES
+returns	supplier_notes	text	YES
+stripe_webhook_logs	id	uuid	NO
+stripe_webhook_logs	event_id	character varying	NO
+stripe_webhook_logs	event_type	character varying	NO
+stripe_webhook_logs	processed	boolean	NO
+stripe_webhook_logs	payload	json	YES
+stripe_webhook_logs	result	json	YES
+stripe_webhook_logs	created_at	timestamp with time zone	NO
+stripe_webhook_logs	processed_at	timestamp with time zone	YES
+two_factor_codes	id	uuid	NO
+two_factor_codes	user_id	uuid	NO
+two_factor_codes	code	character varying	NO
+two_factor_codes	phone	character varying	YES
+two_factor_codes	attempts	integer	YES
+two_factor_codes	expires_at	timestamp without time zone	NO
+two_factor_codes	verified_at	timestamp without time zone	YES
+two_factor_codes	created_at	timestamp without time zone	YES
+user_profiles	id	uuid	NO
+user_profiles	user_id	uuid	NO
+user_profiles	address_line1	character varying	YES
+user_profiles	address_line2	character varying	YES
+user_profiles	city	character varying	YES
+user_profiles	postal_code	character varying	YES
+user_profiles	default_vehicle_id	uuid	YES
+user_profiles	marketing_consent	boolean	YES
+user_profiles	newsletter_subscribed	boolean	YES
+user_profiles	terms_accepted_at	timestamp without time zone	YES
+user_profiles	marketing_preferences	jsonb	YES
+user_profiles	preferred_language	character varying	YES
+user_profiles	avatar_url	character varying	YES
+user_profiles	created_at	timestamp without time zone	YES
+user_profiles	updated_at	timestamp without time zone	YES
+user_profiles	customer_type	character varying	NO
+user_profiles	total_orders	integer	NO
+user_profiles	total_spent_ils	numeric	NO
+user_profiles	is_vip	boolean	NO
+user_profiles	vip_since	timestamp without time zone	YES
+user_sessions	id	uuid	NO
+user_sessions	user_id	uuid	NO
+user_sessions	token	character varying	NO
+user_sessions	refresh_token	character varying	YES
+user_sessions	device_fingerprint	character varying	YES
+user_sessions	device_name	character varying	YES
+user_sessions	ip_address	character varying	YES
+user_sessions	user_agent	text	YES
+user_sessions	is_trusted_device	boolean	YES
+user_sessions	trusted_until	timestamp without time zone	YES
+user_sessions	expires_at	timestamp without time zone	NO
+user_sessions	last_used_at	timestamp without time zone	YES
+user_sessions	revoked_at	timestamp without time zone	YES
+user_sessions	created_at	timestamp without time zone	YES
+user_vehicles	id	uuid	NO
+user_vehicles	user_id	uuid	NO
+user_vehicles	vehicle_id	uuid	NO
+user_vehicles	nickname	character varying	YES
+user_vehicles	is_primary	boolean	YES
+user_vehicles	created_at	timestamp without time zone	YES
+users	id	uuid	NO
+users	email	character varying	NO
+users	phone	character varying	YES
+users	password_hash	character varying	YES
+users	full_name	character varying	NO
+users	role	character varying	NO
+users	is_active	boolean	NO
+users	is_verified	boolean	NO
+users	is_admin	boolean	NO
+users	failed_login_count	integer	NO
+users	locked_until	timestamp without time zone	YES
+users	created_at	timestamp without time zone	NO
+users	updated_at	timestamp without time zone	YES
+users	is_super_admin	boolean	NO
+users	oauth_provider	character varying	YES
+users	oauth_id	character varying	YES
+wishlist_items	id	uuid	NO
+wishlist_items	user_id	uuid	NO
+wishlist_items	part_id	uuid	NO
+wishlist_items	added_at	timestamp without time zone	NO

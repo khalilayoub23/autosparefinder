@@ -234,12 +234,21 @@ async def get_admin_stats(current_user: User = Depends(get_current_admin_user), 
     )).fetchall()
     orders_by_status = {r[0]: r[1] for r in status_rows}
 
-    # Gross revenue: sum of all payments that were ever successfully paid
+    paid_statuses = ["paid", "processing", "supplier_ordered", "confirmed", "shipped", "delivered"]
+
+    # Gross revenue (primary source): successful payment rows.
     gross_revenue = (await db.execute(
         select(func.sum(Payment.amount)).where(
             Payment.status.in_(["paid", "refunded"])
         )
     )).scalar() or 0
+
+    # Compatibility fallback for environments with legacy/missing payment rows:
+    # derive gross from paid-like orders so dashboard cards don't show false zeros.
+    if float(gross_revenue or 0) <= 0:
+        gross_revenue = (await db.execute(
+            select(func.sum(Order.total_amount)).where(Order.status.in_(paid_statuses))
+        )).scalar() or 0
 
     # Refunds issued — two sources:
     # 1. Payment-level refunds (cancellations processed through Stripe)
@@ -262,8 +271,6 @@ async def get_admin_stats(current_user: User = Depends(get_current_admin_user), 
     # cost          = price_no_vat - profit       ← supplier cost
     MARGIN_RATE = 0.45
     VAT_RATE = 0.18
-    paid_statuses = ["paid", "processing", "supplier_ordered", "confirmed", "shipped", "delivered"]
-
     price_no_vat_net   = round(float(net_revenue) / (1 + VAT_RATE), 2)           # strip VAT
     profit_total      = round(price_no_vat_net * (MARGIN_RATE / (1 + MARGIN_RATE)), 2)  # 45/145
     cost_total        = round(price_no_vat_net - profit_total, 2)
@@ -1453,12 +1460,22 @@ async def list_agents(current_user: User = Depends(get_current_admin_user)):
     import os as _os
     hf_token = _os.getenv("HF_TOKEN", "")
     ai_status = "active" if hf_token else "mocked"
+    # Derive display model name from the actual running agent instance
+    actual_model = _os.getenv("HF_TEXT_MODEL", "Qwen/Qwen2.5-72B-Instruct")
+    # Shorten for display: take the part after the last '/'
+    display_model = actual_model.split("/")[-1] if "/" in actual_model else actual_model
 
     agents = []
     for name, meta in AGENTS_METADATA.items():
+        # Use live model from running agent if loaded, else env model
+        live_model = display_model
+        if name in AGENT_MAP:
+            raw = getattr(AGENT_MAP[name], "model", actual_model)
+            live_model = raw.split("/")[-1] if "/" in raw else raw
         agents.append({
             "name": name,
             **meta,
+            "model": live_model,
             "ai_status": ai_status,
             "is_loaded": name in AGENT_MAP,
         })

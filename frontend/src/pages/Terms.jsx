@@ -147,12 +147,12 @@ export default function Terms() {
               <h3 className="font-semibold text-gray-800 mb-1">5.1 מחירים</h3>
               <p className="mb-2">כל המחירים באתר הם ב-<strong>שקלים חדשים (₪)</strong>.</p>
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs space-y-1 text-amber-800">
-                <p>⚠️ <strong>המחיר המוצג אינו כולל מע&quot;מ (17%) ודמי משלוח.</strong></p>
+                <p>⚠️ <strong>המחיר המוצג אינו כולל מע&quot;מ (18%) ודמי משלוח.</strong></p>
                 <p>מע&quot;מ ודמי משלוח יתווספו בעמוד התשלום.</p>
               </div>
               <div className="bg-gray-100 rounded-lg p-3 font-mono text-xs mt-2 space-y-1">
                 <p>מחיר מוצר באתר:  ₪500</p>
-                <p>מע&quot;מ (17%):       ₪85</p>
+                <p>מע&quot;מ (18%):       ₪85</p>
                 <p>משלוח:            ₪91</p>
                 <p className="border-t border-gray-300 pt-1 font-bold">סה&quot;כ לתשלום:   ₪676</p>
               </div>

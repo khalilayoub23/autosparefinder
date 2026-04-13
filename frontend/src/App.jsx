@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { Component } from 'react'
 import { Toaster } from 'react-hot-toast'
 import Layout from './components/Layout'
 import ProtectedRoute from './components/ProtectedRoute'
@@ -17,8 +18,31 @@ import Admin from './pages/Admin'
 import Agents from './pages/Agents'
 import PaymentSuccess from './pages/PaymentSuccess'
 
+class ErrorBoundary extends Component {
+  state = { error: null }
+  static getDerivedStateFromError(error) { return { error } }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ padding: '2rem', textAlign: 'center', fontFamily: 'sans-serif' }}>
+          <h2>משהו השתבש</h2>
+          <p style={{ color: '#666', fontSize: '0.9rem' }}>{this.state.error?.message}</p>
+          <button
+            style={{ marginTop: '1rem', padding: '0.5rem 1.5rem', background: '#ea580c', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer' }}
+            onClick={() => { localStorage.removeItem('cart-store'); window.location.reload() }}
+          >
+            נקה מטמון וטען מחדש
+          </button>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
 export default function App() {
   return (
+    <ErrorBoundary>
     <BrowserRouter>
       <Toaster
         position="top-center"
@@ -125,5 +149,6 @@ export default function App() {
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
+    </ErrorBoundary>
   )
 }

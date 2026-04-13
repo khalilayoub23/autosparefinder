@@ -7,11 +7,19 @@ export const ordersApi = {
   track: (id) => api.get(`/orders/${id}/track`),
   cancel: (id, reason) => api.put(`/orders/${id}/cancel`, { reason }),
   delete: (id) => api.delete(`/orders/${id}`),
-  return: (id, reason, description) => api.post(`/orders/${id}/return`, null, { params: { reason, description } }),
+  return: (id, reason, description) => api.post(`/orders/${id}/return`, { reason, description }),
   invoice: (id) => api.get(`/orders/${id}/invoice`, { responseType: 'blob' }),
   invoiceInline: (id) => api.get(`/orders/${id}/invoice`, { params: { inline: true }, responseType: 'blob' }),
   returnInvoice: (id) => api.get(`/returns/${id}/invoice`, { responseType: 'blob' }),
   returnInvoiceInline: (id) => api.get(`/returns/${id}/invoice`, { params: { inline: true }, responseType: 'blob' }),
+}
+
+export const cartApi = {
+  get: () => api.get('/customers/cart'),
+  addItem: (part_id, quantity = 1) => api.post('/customers/cart/items', { part_id, quantity }),
+  removeItem: (item_id) => api.delete(`/customers/cart/items/${item_id}`),
+  checkout: (shipping_address, selected_supplier_part_ids = []) =>
+    api.post('/customers/checkout', { shipping_address, selected_supplier_part_ids }),
 }
 
 export const paymentsApi = {
@@ -29,12 +37,6 @@ export const returnsApi = {
   getAll: () => api.get('/returns'),
   getById: (id) => api.get(`/returns/${id}`),
   cancel: (id) => api.put(`/returns/${id}/cancel`),
-  track: (id) => api.post(`/returns/${id}/track`),
-  ship: (id, tracking_number, tracking_url) =>
-    api.post(`/returns/${id}/ship`, null, { params: { tracking_number, tracking_url } }),
-  supplierConfirm: (id, supplier_notes) =>
-    api.post(`/returns/${id}/supplier-confirm`, null, { params: { supplier_notes } }),
-  issueRefund: (id) => api.post(`/returns/${id}/issue-refund`),
 }
 
 export const invoicesApi = {

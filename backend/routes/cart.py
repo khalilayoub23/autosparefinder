@@ -12,6 +12,8 @@ Endpoints:
   DELETE /api/v1/customers/wishlist/{part_id}
 """
 import uuid
+from datetime import datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -80,10 +82,11 @@ async def _cart_to_response(items: list, cat_db: AsyncSession) -> list:
         row = catalog.get(str(item.supplier_part_id))
         if not row:  # supplier_part deleted from catalog — skip silently
             continue
-        sp, part, supplier = row.SupplierPart, row.PartsCatalog, row.SupplierModel
+        sp, part, supplier = row[0], row[1], row[2]
         result.append({
             "id":             str(item.id),
             "partId":         str(item.part_id),
+            "supplierPartId": str(item.supplier_part_id),
             "name":           part.name,
             "price":          float(item.unit_price),
             "quantity":       item.quantity,
@@ -149,7 +152,6 @@ async def add_cart_item(
     cat_db: AsyncSession = Depends(get_db),
 ):
     from BACKEND_DATABASE_MODELS import Cart, CartItem as CartItemModel, SupplierPart
-    from sqlalchemy.dialects.postgresql import insert as pg_insert
 
     # Resolve cheapest available supplier_part for the given catalog part
     sp_res = await cat_db.execute(
@@ -170,26 +172,31 @@ async def add_cart_item(
     unit_price = float(sp.price_ils or 0) or (float(sp.price_usd or 0) * USD_TO_ILS)
     cart = await _get_or_create_cart(current_user.id, db)
 
-    # Upsert: increment quantity if the same supplier_part is already in the cart
-    stmt = (
-        pg_insert(CartItemModel)
-        .values(
-            cart_id=cart.id,
-            part_id=uuid.UUID(str(data.part_id)),
-            supplier_part_id=sp.id,
-            quantity=data.quantity,
-            unit_price=round(unit_price, 2),
-        )
-        .on_conflict_do_update(
-            constraint="uq_cart_item",
-            set_={
-                "quantity": CartItemModel.quantity + data.quantity,
-                "unit_price": round(unit_price, 2),
-                "updated_at": text("now()"),
-            },
+    # Compatible upsert: update existing row if found, otherwise insert.
+    # Avoids reliance on a DB-level constraint name that may not exist in older deployments.
+    existing_res = await db.execute(
+        select(CartItemModel).where(
+            and_(
+                CartItemModel.cart_id == cart.id,
+                CartItemModel.supplier_part_id == sp.id,
+            )
         )
     )
-    await db.execute(stmt)
+    existing_item = existing_res.scalar_one_or_none()
+    if existing_item:
+        existing_item.quantity += data.quantity
+        existing_item.unit_price = round(unit_price, 2)
+        existing_item.updated_at = datetime.utcnow()
+    else:
+        db.add(
+            CartItemModel(
+                cart_id=cart.id,
+                part_id=uuid.UUID(str(data.part_id)),
+                supplier_part_id=sp.id,
+                quantity=data.quantity,
+                unit_price=round(unit_price, 2),
+            )
+        )
     await db.execute(
         text("UPDATE carts SET updated_at = now() WHERE id = :cid"),
         {"cid": str(cart.id)},
@@ -237,7 +244,7 @@ async def remove_cart_item(
 
 @router.post("/api/v1/customers/checkout", status_code=status.HTTP_201_CREATED)
 async def checkout(
-    shipping_address: dict,
+    payload: dict,
     current_user: User = Depends(get_current_verified_user),
     db: AsyncSession = Depends(get_pii_db),
     cat_db: AsyncSession = Depends(get_db),
@@ -245,9 +252,35 @@ async def checkout(
     """
     Convert the user's server-side cart into an Order, then empty the cart.
     Delegates all pricing / OrderItem creation to the existing create_order logic.
+    Supports partial checkout via optional selected_supplier_part_ids.
     """
     from BACKEND_DATABASE_MODELS import Cart, CartItem as CartItemModel
     from routes.orders import create_order
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=422, detail="Invalid checkout payload")
+
+    # Backward-compatible body support:
+    # 1) old clients send shipping_address object directly
+    # 2) new clients send { shipping_address: {...}, selected_supplier_part_ids: [...] }
+    if isinstance(payload.get("shipping_address"), dict):
+        shipping_address: dict[str, Any] = payload.get("shipping_address") or {}
+    else:
+        shipping_address = payload
+
+    if not isinstance(shipping_address, dict):
+        raise HTTPException(status_code=422, detail="Invalid shipping address")
+
+    raw_selected = payload.get("selected_supplier_part_ids") if isinstance(payload.get("selected_supplier_part_ids"), list) else None
+    selected_supplier_part_ids: set[str] = set()
+    if raw_selected is not None:
+        for raw in raw_selected:
+            try:
+                selected_supplier_part_ids.add(str(uuid.UUID(str(raw))))
+            except Exception:
+                continue
+        if not selected_supplier_part_ids:
+            raise HTTPException(status_code=400, detail="לא נבחרו פריטים לתשלום")
 
     cart_res = await db.execute(
         select(Cart).where(Cart.user_id == current_user.id)
@@ -263,6 +296,15 @@ async def checkout(
     if not cart_items:
         raise HTTPException(status_code=400, detail="Cart is empty")
 
+    selected_cart_items = cart_items
+    if selected_supplier_part_ids:
+        selected_cart_items = [
+            ci for ci in cart_items
+            if str(ci.supplier_part_id) in selected_supplier_part_ids
+        ]
+        if not selected_cart_items:
+            raise HTTPException(status_code=400, detail="הפריטים שנבחרו אינם נמצאים בסל")
+
     # Build the same OrderCreate payload the existing endpoint expects
     order_payload = OrderCreate(
         items=[
@@ -271,7 +313,7 @@ async def checkout(
                 supplier_part_id=str(ci.supplier_part_id),
                 quantity=ci.quantity,
             )
-            for ci in cart_items
+            for ci in selected_cart_items
         ],
         shipping_address=shipping_address,
     )
@@ -284,11 +326,12 @@ async def checkout(
         db=db,
     )
 
-    # Clear cart on success
-    await db.execute(
-        text("DELETE FROM cart_items WHERE cart_id = :cid"),
-        {"cid": str(cart.id)},
-    )
+    # Clear only checked-out items on success.
+    # If no explicit selection was sent, this removes all items (legacy behavior).
+    for ci in selected_cart_items:
+        await db.delete(ci)
+    await db.flush()
+
     await db.execute(
         text("UPDATE carts SET updated_at = now() WHERE id = :cid"),
         {"cid": str(cart.id)},

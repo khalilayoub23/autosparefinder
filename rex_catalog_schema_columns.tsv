@@ -1,0 +1,338 @@
+alembic_version	version_num	character varying	NO
+audit_logs	id	uuid	NO
+audit_logs	user_id	uuid	YES
+audit_logs	action	character varying	NO
+audit_logs	entity_type	character varying	YES
+audit_logs	entity_id	uuid	YES
+audit_logs	old_value	jsonb	YES
+audit_logs	new_value	jsonb	YES
+audit_logs	ip_address	character varying	YES
+audit_logs	user_agent	text	YES
+audit_logs	created_at	timestamp without time zone	YES
+brand_aliases	id	uuid	NO
+brand_aliases	brand_id	uuid	NO
+brand_aliases	alias	character varying	NO
+brand_aliases	normalized	character varying	NO
+brand_aliases	source	character varying	YES
+brand_aliases	created_at	timestamp without time zone	NO
+bug_reports	id	uuid	NO
+bug_reports	user_id	uuid	YES
+bug_reports	user_role	character varying	YES
+bug_reports	title	character varying	NO
+bug_reports	description	text	NO
+bug_reports	severity	character varying	YES
+bug_reports	platform	character varying	YES
+bug_reports	app_version	character varying	YES
+bug_reports	screen_name	character varying	YES
+bug_reports	endpoint_url	character varying	YES
+bug_reports	http_method	character varying	YES
+bug_reports	http_status_code	integer	YES
+bug_reports	error_trace	text	YES
+bug_reports	last_api_calls	jsonb	YES
+bug_reports	device_info	jsonb	YES
+bug_reports	tech_analysis	jsonb	YES
+bug_reports	status	character varying	YES
+bug_reports	admin_notes	text	YES
+bug_reports	resolved_at	timestamp without time zone	YES
+bug_reports	created_at	timestamp without time zone	YES
+bug_reports	updated_at	timestamp without time zone	YES
+cache_entries	id	uuid	NO
+cache_entries	cache_key	character varying	NO
+cache_entries	cache_value	jsonb	YES
+cache_entries	expires_at	timestamp without time zone	YES
+cache_entries	created_at	timestamp without time zone	YES
+car_brands	id	uuid	NO
+car_brands	name	character varying	NO
+car_brands	name_he	character varying	YES
+car_brands	group_name	character varying	YES
+car_brands	country	character varying	YES
+car_brands	region	character varying	YES
+car_brands	is_luxury	boolean	NO
+car_brands	is_electric_focused	boolean	NO
+car_brands	is_active	boolean	NO
+car_brands	logo_url	character varying	YES
+car_brands	website	character varying	YES
+car_brands	notes	text	YES
+car_brands	aliases	ARRAY	YES
+car_brands	created_at	timestamp without time zone	NO
+car_brands	updated_at	timestamp without time zone	YES
+car_brands	warranty_years	integer	YES
+car_brands	warranty_km	integer	YES
+car_brands	warranty_notes	text	YES
+car_brands	il_importer	character varying	YES
+car_brands	il_importer_website	character varying	YES
+car_brands	parts_availability	character varying	YES
+car_brands	avg_service_interval_km	integer	YES
+car_brands	popular_models_il	jsonb	YES
+catalog_versions	id	uuid	NO
+catalog_versions	version_tag	character varying	NO
+catalog_versions	description	text	YES
+catalog_versions	parts_added	integer	NO
+catalog_versions	parts_updated	integer	NO
+catalog_versions	parts_total	integer	NO
+catalog_versions	source	character varying	YES
+catalog_versions	triggered_by	uuid	YES
+catalog_versions	started_at	timestamp without time zone	NO
+catalog_versions	completed_at	timestamp without time zone	YES
+catalog_versions	status	character varying	NO
+catalog_versions	error_log	text	YES
+catalog_versions	created_at	timestamp without time zone	NO
+job_registry	id	uuid	NO
+job_registry	job_id	character varying	NO
+job_registry	job_name	character varying	NO
+job_registry	worker_host	character varying	YES
+job_registry	status	character varying	NO
+job_registry	started_at	timestamp with time zone	NO
+job_registry	completed_at	timestamp with time zone	YES
+job_registry	ttl_seconds	integer	YES
+job_registry	error_message	text	YES
+job_registry	last_heartbeat_at	timestamp with time zone	NO
+job_registry	created_at	timestamp with time zone	NO
+part_aliases	id	uuid	NO
+part_aliases	part_id	uuid	NO
+part_aliases	alias	character varying	NO
+part_aliases	language	character varying	NO
+part_aliases	created_at	timestamp without time zone	NO
+part_cross_reference	id	uuid	NO
+part_cross_reference	part_id	uuid	NO
+part_cross_reference	ref_number	character varying	NO
+part_cross_reference	manufacturer	character varying	NO
+part_cross_reference	ref_type	character varying	NO
+part_cross_reference	is_superseded	boolean	NO
+part_cross_reference	superseded_by	character varying	YES
+part_cross_reference	created_at	timestamp without time zone	NO
+part_variants	id	uuid	NO
+part_variants	master_part_id	uuid	NO
+part_variants	catalog_part_id	uuid	NO
+part_variants	quality_level	character varying	NO
+part_variants	manufacturer	character varying	YES
+part_variants	sku	character varying	YES
+part_variants	created_at	timestamp without time zone	YES
+part_vehicle_fitment	id	uuid	NO
+part_vehicle_fitment	part_id	uuid	NO
+part_vehicle_fitment	manufacturer	character varying	NO
+part_vehicle_fitment	model	character varying	NO
+part_vehicle_fitment	year_from	integer	NO
+part_vehicle_fitment	year_to	integer	YES
+part_vehicle_fitment	engine_type	character varying	YES
+part_vehicle_fitment	transmission	character varying	YES
+part_vehicle_fitment	notes	text	YES
+part_vehicle_fitment	created_at	timestamp without time zone	NO
+parts_catalog	id	uuid	NO
+parts_catalog	sku	character varying	NO
+parts_catalog	name	character varying	NO
+parts_catalog	category	character varying	YES
+parts_catalog	manufacturer	character varying	YES
+parts_catalog	part_type	character varying	YES
+parts_catalog	description	text	YES
+parts_catalog	specifications	jsonb	YES
+parts_catalog	compatible_vehicles	jsonb	YES
+parts_catalog	base_price	numeric	YES
+parts_catalog	is_active	boolean	YES
+parts_catalog	created_at	timestamp without time zone	YES
+parts_catalog	updated_at	timestamp without time zone	YES
+parts_catalog	name_he	character varying	YES
+parts_catalog	oem_number	character varying	YES
+parts_catalog	barcode	character varying	YES
+parts_catalog	weight_kg	numeric	YES
+parts_catalog	importer_price_ils	numeric	YES
+parts_catalog	online_price_ils	numeric	YES
+parts_catalog	min_price_ils	numeric	YES
+parts_catalog	max_price_ils	numeric	YES
+parts_catalog	part_condition	character varying	NO
+parts_catalog	superseded_by_sku	character varying	YES
+parts_catalog	customs_tariff_code	character varying	YES
+parts_catalog	is_safety_critical	boolean	NO
+parts_catalog	search_vector	tsvector	YES
+parts_catalog	needs_oem_lookup	boolean	NO
+parts_catalog	master_enriched	boolean	NO
+parts_catalog	image_embedding	USER-DEFINED	YES
+parts_catalog	embedding	USER-DEFINED	YES
+parts_images	id	uuid	NO
+parts_images	part_id	uuid	NO
+parts_images	file_id	uuid	YES
+parts_images	url	character varying	YES
+parts_images	is_primary	boolean	YES
+parts_images	sort_order	integer	YES
+parts_images	created_at	timestamp without time zone	YES
+parts_images	embedding_generated	boolean	NO
+parts_master	id	uuid	NO
+parts_master	canonical_name	character varying	NO
+parts_master	canonical_name_he	character varying	YES
+parts_master	category	character varying	NO
+parts_master	part_type	character varying	YES
+parts_master	is_safety_critical	boolean	NO
+parts_master	created_at	timestamp without time zone	YES
+parts_master	updated_at	timestamp without time zone	YES
+price_history	id	uuid	NO
+price_history	supplier_part_id	uuid	NO
+price_history	old_price_ils	numeric	YES
+price_history	new_price_ils	numeric	NO
+price_history	old_price_usd	numeric	YES
+price_history	new_price_usd	numeric	NO
+price_history	change_pct	numeric	YES
+price_history	source	character varying	YES
+price_history	ils_per_usd_rate	numeric	YES
+price_history	created_at	timestamp without time zone	NO
+purchase_orders	id	uuid	NO
+purchase_orders	po_number	character varying	NO
+purchase_orders	order_id	uuid	YES
+purchase_orders	supplier_id	uuid	NO
+purchase_orders	status	character varying	NO
+purchase_orders	total_usd	numeric	YES
+purchase_orders	total_ils	numeric	YES
+purchase_orders	shipping_type	character varying	NO
+purchase_orders	tracking_number	character varying	YES
+purchase_orders	shipped_at	timestamp without time zone	YES
+purchase_orders	received_at	timestamp without time zone	YES
+purchase_orders	notes	text	YES
+purchase_orders	created_at	timestamp without time zone	NO
+purchase_orders	updated_at	timestamp without time zone	NO
+scraper_api_calls	id	uuid	NO
+scraper_api_calls	source	character varying	NO
+scraper_api_calls	query	character varying	YES
+scraper_api_calls	part_number	character varying	YES
+scraper_api_calls	http_status	integer	YES
+scraper_api_calls	success	boolean	NO
+scraper_api_calls	results_count	integer	YES
+scraper_api_calls	response_ms	integer	YES
+scraper_api_calls	error_message	text	YES
+scraper_api_calls	created_at	timestamp without time zone	NO
+search_misses	id	uuid	NO
+search_misses	query	text	NO
+search_misses	normalized_query	text	NO
+search_misses	category	character varying	YES
+search_misses	vehicle_manufacturer	character varying	YES
+search_misses	miss_count	integer	NO
+search_misses	last_seen_at	timestamp without time zone	NO
+search_misses	first_seen_at	timestamp without time zone	NO
+search_misses	triggered_scrape	boolean	NO
+search_misses	created_at	timestamp without time zone	NO
+search_misses	user_id	uuid	YES
+search_misses	notified	boolean	NO
+social_posts	id	uuid	NO
+social_posts	content	text	NO
+social_posts	platforms	ARRAY	NO
+social_posts	status	character varying	NO
+social_posts	scheduled_at	timestamp without time zone	YES
+social_posts	published_at	timestamp without time zone	YES
+social_posts	external_post_ids	jsonb	NO
+social_posts	created_by	uuid	NO
+social_posts	approved_by	uuid	YES
+social_posts	rejection_reason	text	YES
+social_posts	created_at	timestamp without time zone	NO
+social_posts	updated_at	timestamp without time zone	NO
+supplier_parts	id	uuid	NO
+supplier_parts	supplier_id	uuid	NO
+supplier_parts	part_id	uuid	NO
+supplier_parts	supplier_sku	character varying	YES
+supplier_parts	price_usd	numeric	NO
+supplier_parts	price_ils	numeric	YES
+supplier_parts	shipping_cost_usd	numeric	YES
+supplier_parts	shipping_cost_ils	numeric	YES
+supplier_parts	availability	character varying	YES
+supplier_parts	warranty_months	integer	YES
+supplier_parts	estimated_delivery_days	integer	YES
+supplier_parts	last_checked_at	timestamp without time zone	YES
+supplier_parts	is_available	boolean	YES
+supplier_parts	created_at	timestamp without time zone	YES
+supplier_parts	stock_quantity	integer	YES
+supplier_parts	min_order_qty	integer	NO
+supplier_parts	supplier_url	character varying	YES
+supplier_parts	last_in_stock_at	timestamp without time zone	YES
+supplier_parts	express_available	boolean	NO
+supplier_parts	express_price_ils	numeric	YES
+supplier_parts	express_delivery_days	integer	YES
+supplier_parts	express_cutoff_time	character varying	YES
+supplier_parts	express_last_checked	timestamp without time zone	YES
+supplier_parts	updated_at	timestamp without time zone	YES
+supplier_parts	part_type	character varying	YES
+suppliers	id	uuid	NO
+suppliers	name	character varying	NO
+suppliers	country	character varying	YES
+suppliers	website	character varying	YES
+suppliers	api_endpoint	character varying	YES
+suppliers	api_key	text	YES
+suppliers	credentials	jsonb	YES
+suppliers	shipping_info	jsonb	YES
+suppliers	return_policy	jsonb	YES
+suppliers	reliability_score	numeric	NO
+suppliers	is_active	boolean	YES
+suppliers	priority	integer	YES
+suppliers	created_at	timestamp without time zone	YES
+suppliers	updated_at	timestamp without time zone	YES
+suppliers	supports_express	boolean	NO
+suppliers	express_carrier	character varying	YES
+suppliers	express_base_cost_usd	numeric	YES
+suppliers	avg_delivery_days_actual	numeric	YES
+suppliers	rate_limit_per_minute	integer	NO
+suppliers	is_manufacturer	boolean	NO
+suppliers	manufacturer_name	character varying	YES
+system_logs	id	uuid	NO
+system_logs	level	character varying	NO
+system_logs	logger_name	character varying	YES
+system_logs	message	text	NO
+system_logs	user_id	uuid	YES
+system_logs	ip_address	character varying	YES
+system_logs	endpoint	character varying	YES
+system_logs	method	character varying	YES
+system_logs	status_code	integer	YES
+system_logs	request_data	jsonb	YES
+system_logs	response_data	jsonb	YES
+system_logs	exception	text	YES
+system_logs	stack_trace	text	YES
+system_logs	created_at	timestamp without time zone	YES
+system_settings	id	uuid	NO
+system_settings	key	character varying	NO
+system_settings	value	text	YES
+system_settings	value_type	character varying	YES
+system_settings	description	text	YES
+system_settings	is_public	boolean	YES
+system_settings	updated_by	uuid	YES
+system_settings	updated_at	timestamp without time zone	YES
+truck_brand_aliases	id	uuid	NO
+truck_brand_aliases	brand_id	uuid	NO
+truck_brand_aliases	alias	character varying	NO
+truck_brand_aliases	normalized	character varying	NO
+truck_brand_aliases	source	character varying	YES
+truck_brand_aliases	created_at	timestamp with time zone	NO
+truck_brands	id	uuid	NO
+truck_brands	name	character varying	NO
+truck_brands	name_he	character varying	YES
+truck_brands	group_name	character varying	YES
+truck_brands	country	character varying	YES
+truck_brands	region	character varying	YES
+truck_brands	is_active	boolean	NO
+truck_brands	logo_url	character varying	YES
+truck_brands	website	character varying	YES
+truck_brands	notes	text	YES
+truck_brands	aliases	ARRAY	YES
+truck_brands	il_importer	character varying	YES
+truck_brands	il_importer_website	character varying	YES
+truck_brands	parts_availability	character varying	YES
+truck_brands	avg_service_interval_km	integer	YES
+truck_brands	popular_models_il	json	YES
+truck_brands	created_at	timestamp with time zone	NO
+truck_brands	updated_at	timestamp with time zone	NO
+vehicle_hierarchy_xls	id	bigint	NO
+vehicle_hierarchy_xls	manufacturer	text	NO
+vehicle_hierarchy_xls	model	text	NO
+vehicle_hierarchy_xls	sub_model	text	NO
+vehicle_hierarchy_xls	year_from	integer	NO
+vehicle_hierarchy_xls	year_to	integer	NO
+vehicle_hierarchy_xls	year_hint	integer	NO
+vehicle_hierarchy_xls	source_sheet	text	YES
+vehicle_hierarchy_xls	source_tag	text	NO
+vehicle_hierarchy_xls	updated_at	timestamp with time zone	NO
+vehicles	id	uuid	NO
+vehicles	license_plate	character varying	YES
+vehicles	manufacturer	character varying	NO
+vehicles	model	character varying	NO
+vehicles	year	integer	NO
+vehicles	vin	character varying	YES
+vehicles	engine_type	character varying	YES
+vehicles	transmission	character varying	YES
+vehicles	fuel_type	character varying	YES
+vehicles	gov_api_data	jsonb	YES
+vehicles	cached_at	timestamp without time zone	YES
+vehicles	created_at	timestamp without time zone	YES

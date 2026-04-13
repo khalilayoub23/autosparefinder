@@ -8,6 +8,13 @@ Quick start (production-ready checklist):
 - Build frontend (`/frontend`) and serve via Nginx.
 - Use a process manager (systemd) or container orchestrator in production.
 
+Normalized workbook import deployment flags:
+
+- Default container startup does **not** reimport the workbook; it only runs migrations, brand seeding, and API boot.
+- To rebuild catalog + supplier data during deploy, set `RUN_NORMALIZED_IMPORT_ON_STARTUP=true` for the backend container.
+- To skip the follow-up DB cleanup/task chain during that startup import, set `RUN_DB_UPDATE_TASKS_ON_STARTUP=false`.
+- `UVICORN_WORKERS` is now configurable via env instead of being hardcoded in Compose.
+
 Supported targets:
 - Railway — quick, managed (see steps in repository root).
 - VPS (Ubuntu) — full control; use the `deploy/deploy.sh` helper.

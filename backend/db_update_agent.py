@@ -13,7 +13,8 @@ Tasks
 5.  fix_base_prices           – ensure base_price = supplier min + 18 % VAT markup
 6.  flag_fake_skus            – set needs_oem_lookup=True for auto-generated SKUs
 7.  fill_car_brands           – seed il_importer / warranty_* for known makes
-8.  run_all_tasks             – orchestrator that runs 1-7 and returns a report dict
+8.  sync_manufacturer_registries – keep car/truck brand registries clean + logos
+9.  run_all_tasks             – orchestrator that runs core tasks and returns a report dict
 
 On-demand tasks (NOT in run_all_tasks — must be triggered explicitly):
 9.  populate_supplier_parts   – link every active part to every active supplier
@@ -29,18 +30,24 @@ run_agent_background_loop()  – optional periodic loop (disabled by default).
 from __future__ import annotations
 
 import asyncio
+from collections import defaultdict
 import httpx
+import json
 import logging
 import os
 import re
 import time
-from datetime import datetime, timezone
+import uuid
+from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from resilience import job_registry_start, job_registry_finish
+from manufacturer_normalization import PARTS_BRANDS, canonicalize_vehicle_model_for_manufacturer
+from manufacturer_normalization import normalize_vehicle_model_name, normalize_vehicle_submodel_name
+from manufacturer_normalization import normalize_manufacturer_name
 
 logger = logging.getLogger("db_update_agent")
 
@@ -132,6 +139,51 @@ CATEGORY_MAP: Dict[str, str] = {
     "light": "תאורה",
     "lamps": "תאורה",
     "תאור": "תאורה",
+
+    # reference taxonomy (Autodoc-like families)
+    "tyres and related products": "גלגלים וצמיגים",
+    "tires and related products": "גלגלים וצמיגים",
+    "brake system": "בלמים",
+    "filters": "כללי",
+    "oils and fluids": "כללי",
+    "body": "פחיין ומרכב",
+    "suspension and arms": "מתלה",
+    "turbocharger": "מנוע",
+    "air conditioning": "מיזוג",
+    "fuel supply system": "דלק",
+    "steering": "היגוי",
+    "transmission": "כללי",
+    "fasteners": "כללי",
+    "pipes and hoses": "מנוע",
+    "gaskets and sealing rings": "מנוע",
+    "damping": "מתלה",
+    "windscreen cleaning system": "מגבים",
+    "exhaust system": "כללי",
+    "accessories": "כללי",
+    "ignition and glowplug system": "חשמל רכב",
+    "tuning": "כללי",
+    "interior and comfort": "ריפוד ופנים",
+    "belts, chains, rollers": "שרשראות ורצועות",
+    "exhaust gas recirculation": "מנוע",
+    "towbar / parts": "פחיין ומרכב",
+    "towbar": "פחיין ומרכב",
+    "heater": "מיזוג",
+    "bearings": "מתלה",
+    "air suspension": "מתלה",
+    "sensors, relays, control units": "חשמל רכב",
+    "repair kits": "כללי",
+    "propshafts and differentials": "מתלה",
+    "electrics": "חשמל רכב",
+    "engine cooling system": "מנוע",
+    "clutch / parts": "מנוע",
+    "drive shaft and cv joint": "מתלה",
+    "auto detailing & car care": "כללי",
+    "tools": "כללי",
+
+    # non-car families -> keep out of core car categories
+    "motorcycle accessories": "כללי",
+    "motorcycle clothing": "כללי",
+    "motorcycle helmets": "כללי",
 }
 
 # Normalisation map for part_type
@@ -210,6 +262,16 @@ BRAND_IMPORTER_MAP: Dict[str, Tuple[str, int, Optional[int], str]] = {
     "tesla":    ("Tesla Israel",           4, None,    "Unlimited km / 8yr battery"),
 }
 
+# Curated generation/platform year ranges used for strict workbook fitment.
+GENERATION_YEAR_RULES: Dict[Tuple[str, str, str], Tuple[int, int]] = {
+    ("citroen", "berlingo", "b9"): (2008, 2018),
+    ("citroen", "berlingo", "k9"): (2018, 2027),
+    ("citroen", "berlingo", "k9 acc"): (2018, 2027),
+    ("peugeot", "partner", "b9"): (2008, 2018),
+    ("peugeot", "partner", "k9"): (2018, 2027),
+    ("peugeot", "partner", "k9 acc"): (2018, 2027),
+}
+
 # Regex patterns that identify auto-generated / fake SKUs
 _FAKE_SKU_PATTERNS = [
     re.compile(r"^[A-Z]{2,6}-[A-Z]{2,6}-\d{3,6}$"),        # OIL-TOY-001
@@ -273,6 +335,33 @@ def _normalize_category(raw: str) -> Optional[str]:
 
 def _normalize_availability(raw: str) -> Optional[str]:
     return AVAILABILITY_MAP.get(raw.strip().lower())
+
+
+def _clean_vehicle_model(value: Optional[str]) -> str:
+    """Normalize model names extracted from catalog compatibility blobs."""
+    return normalize_vehicle_model_name(value)
+
+
+async def ensure_part_vehicle_fitment_table(db: AsyncSession) -> None:
+    """Create the scraped fitment table on demand when runtime code still relies on it."""
+    await db.execute(text("""
+        CREATE TABLE IF NOT EXISTS part_vehicle_fitment (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            part_id UUID NOT NULL REFERENCES parts_catalog(id) ON DELETE CASCADE,
+            manufacturer VARCHAR(100) NOT NULL,
+            model VARCHAR(100) NOT NULL,
+            year_from INTEGER NOT NULL,
+            year_to INTEGER NULL,
+            engine_type VARCHAR(50) NULL,
+            transmission VARCHAR(50) NULL,
+            notes TEXT NULL,
+            created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
+        )
+    """))
+    await db.execute(text("CREATE INDEX IF NOT EXISTS idx_fitment_part_id ON part_vehicle_fitment (part_id)"))
+    await db.execute(text("CREATE INDEX IF NOT EXISTS idx_fitment_mfr_model ON part_vehicle_fitment (manufacturer, model)"))
+    await db.execute(text("CREATE INDEX IF NOT EXISTS idx_fitment_years ON part_vehicle_fitment (year_from, year_to)"))
+    await db.commit()
 
 
 # =========================================================================
@@ -704,6 +793,900 @@ async def fill_car_brands(db: AsyncSession) -> Dict[str, Any]:
     }
 
 
+async def normalize_imported_manufacturers(db: AsyncSession) -> Dict[str, Any]:
+    """
+    Normalize free-text manufacturer values introduced by imports so search and
+    registry mapping remain stable across reruns.
+    """
+    t0 = time.monotonic()
+    catalog_updated = 0
+    vehicles_updated = 0
+    try:
+        from manufacturer_normalization import normalize_manufacturer_name
+
+        cat_rows = (await db.execute(text("""
+            SELECT DISTINCT manufacturer
+            FROM parts_catalog
+            WHERE manufacturer IS NOT NULL
+              AND manufacturer <> ''
+        """))).fetchall()
+
+        for (raw,) in cat_rows:
+            if not raw:
+                continue
+            canon = normalize_manufacturer_name(raw, raw)
+            if canon and canon != raw:
+                res = await db.execute(
+                    text("""
+                        UPDATE parts_catalog
+                        SET manufacturer = :canon,
+                            updated_at = NOW()
+                        WHERE manufacturer = :raw
+                    """),
+                    {"raw": raw, "canon": canon},
+                )
+                catalog_updated += res.rowcount or 0
+
+        veh_rows = (await db.execute(text("""
+            SELECT DISTINCT manufacturer
+            FROM vehicles
+            WHERE manufacturer IS NOT NULL
+              AND manufacturer <> ''
+        """))).fetchall()
+
+        for (raw,) in veh_rows:
+            if not raw:
+                continue
+            canon = normalize_manufacturer_name(raw, raw)
+            if canon and canon != raw:
+                res = await db.execute(
+                    text("""
+                        UPDATE vehicles
+                        SET manufacturer = :canon
+                        WHERE manufacturer = :raw
+                    """),
+                    {"raw": raw, "canon": canon},
+                )
+                vehicles_updated += res.rowcount or 0
+
+        await db.commit()
+        return {
+            "task": "normalize_imported_manufacturers",
+            "status": "ok",
+            "catalog_updated": catalog_updated,
+            "vehicles_updated": vehicles_updated,
+            "elapsed_s": round(time.monotonic() - t0, 2),
+        }
+    except Exception as exc:
+        await db.rollback()
+        logger.error("normalize_imported_manufacturers failed: %s", exc)
+        return {
+            "task": "normalize_imported_manufacturers",
+            "status": "error",
+            "error": str(exc),
+        }
+
+
+async def sync_manufacturer_registries(db: AsyncSession) -> Dict[str, Any]:
+    """
+    Keep brand registries deployment-safe and idempotent:
+    - canonicalize noisy manufacturers into car_brands
+    - ensure baseline truck brands in truck_brands
+    - keep logo_url/aliases populated
+    """
+    t0 = time.monotonic()
+    try:
+        from clean_manufacturers_registry import sync_manufacturer_registries as _sync
+        report = await _sync(db)
+        return {
+            "task": "sync_manufacturer_registries",
+            "status": "ok",
+            **report,
+            "elapsed_s": round(time.monotonic() - t0, 2),
+        }
+    except Exception as exc:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.error("sync_manufacturer_registries failed: %s", exc)
+        return {
+            "task": "sync_manufacturer_registries",
+            "status": "error",
+            "error": str(exc),
+        }
+
+
+async def sync_models_from_catalog(db: AsyncSession) -> Dict[str, Any]:
+    """Backfill vehicles(manufacturer, model, year) from parts_catalog.compatible_vehicles.
+
+    This gives the manufacturer→model hierarchy a richer source even when
+    imported vehicle rows are sparse.
+    """
+    t0 = time.monotonic()
+    inserted = 0
+    scanned = 0
+
+    rows = (await db.execute(text("""
+        SELECT manufacturer, compatible_vehicles
+        FROM parts_catalog
+        WHERE is_active = TRUE
+          AND manufacturer IS NOT NULL
+          AND TRIM(manufacturer) <> ''
+          AND compatible_vehicles IS NOT NULL
+          AND jsonb_typeof(compatible_vehicles) = 'array'
+    """))).fetchall()
+
+    if not rows:
+        return {"task": "sync_models_from_catalog", "status": "ok", "scanned": 0, "inserted": 0}
+
+    # Track seen combinations in this run to minimize duplicate DB checks.
+    seen_keys = set()
+
+    for manufacturer, compat in rows:
+        mfr = (manufacturer or "").strip()
+        if not mfr:
+            continue
+        if not isinstance(compat, list):
+            continue
+
+        for item in compat:
+            if not isinstance(item, dict):
+                continue
+
+            raw_model = item.get("model") or item.get("model_year")
+            model = _clean_vehicle_model(raw_model)
+            if not model:
+                continue
+
+            # Prefer structured years when available; else use 0 placeholder.
+            y_from = item.get("year_from")
+            y_to = item.get("year_to")
+            year = 0
+            try:
+                if isinstance(y_from, int):
+                    year = y_from
+                elif isinstance(y_from, str) and y_from.isdigit():
+                    year = int(y_from)
+                elif isinstance(y_to, int):
+                    year = y_to
+                elif isinstance(y_to, str) and y_to.isdigit():
+                    year = int(y_to)
+            except Exception:
+                year = 0
+
+            key = (mfr.casefold(), model.casefold(), int(year))
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            scanned += 1
+
+            exists = (await db.execute(text("""
+                SELECT 1
+                FROM vehicles
+                WHERE LOWER(TRIM(manufacturer)) = LOWER(TRIM(:mfr))
+                  AND LOWER(TRIM(model)) = LOWER(TRIM(:model))
+                  AND year = :year
+                LIMIT 1
+            """), {"mfr": mfr, "model": model, "year": year})).fetchone()
+            if exists:
+                continue
+
+            await db.execute(text("""
+                INSERT INTO vehicles
+                    (id, license_plate, manufacturer, model, year, vin, created_at)
+                VALUES
+                    (gen_random_uuid(), NULL, :mfr, :model, :year, NULL, NOW())
+            """), {"mfr": mfr, "model": model, "year": year})
+            inserted += 1
+
+    await db.commit()
+    return {
+        "task": "sync_models_from_catalog",
+        "status": "ok",
+        "scanned": scanned,
+        "inserted": inserted,
+        "elapsed_s": round(time.monotonic() - t0, 2),
+    }
+
+
+async def sync_models_from_catalog_file(db: AsyncSession) -> Dict[str, Any]:
+    """Extract manufacturer->model pairs from backend/data/parts_database.xlsx.
+
+    This uses the original catalog workbook (not only already-imported rows),
+    so brand model dropdowns get a richer hierarchy (notably Citroen/Peugeot).
+    """
+    t0 = time.monotonic()
+    scanned = 0
+    inserted = 0
+    hierarchy_rows: set[Tuple[str, str, str, int, int, str]] = set()
+
+    def _add_hierarchy_row(mfr: Optional[str], model: Optional[str], sub_model: Optional[str], year_from: int = 0, year_to: int = 0, source_sheet: str = "derived") -> None:
+        canonical_mfr = normalize_manufacturer_name(mfr, mfr)
+        if not canonical_mfr or canonical_mfr.strip().lower() in PARTS_BRANDS:
+            return
+        canonical_model = canonicalize_vehicle_model_for_manufacturer(canonical_mfr, model)
+        canonical_sub = normalize_vehicle_submodel_name(sub_model)
+        if not canonical_mfr or not canonical_model:
+            return
+        hierarchy_rows.add((canonical_mfr, canonical_model, canonical_sub or "", int(year_from or 0), int(year_to or 0), source_sheet))
+
+    try:
+        import openpyxl
+        from pathlib import Path
+        
+    except Exception as exc:
+        return {
+            "task": "sync_models_from_catalog_file",
+            "status": "error",
+            "error": f"dependency_error: {exc}",
+        }
+
+    xlsx_path = Path(__file__).resolve().parent / "data" / "parts_database.xlsx"
+    if not xlsx_path.exists():
+        return {
+            "task": "sync_models_from_catalog_file",
+            "status": "skipped",
+            "reason": "catalog_file_missing",
+            "path": str(xlsx_path),
+        }
+
+    # Keep consistent with importer sheet mapping.
+    sheet_map = {
+        "Chevrolet": ("Chevrolet", "A"),
+        "Citroen": ("Citroen", "F"),
+        "Peugeot": ("Peugeot", "F"),
+    }
+
+    def _norm_spaces(s: str) -> str:
+        return re.sub(r"\s+", " ", (s or "").strip())
+
+    def _extract_years(values: List[Any]) -> List[int]:
+        years: set[int] = set()
+        for v in values:
+            if v is None:
+                continue
+            s = str(v)
+            for m in re.findall(r"(?<!\d)(19\d{2}|20\d{2})(?!\d)", s):
+                try:
+                    yy = int(m)
+                except Exception:
+                    continue
+                if 1990 <= yy <= 2027:
+                    years.add(yy)
+        return sorted(years)
+
+    def _split_model_submodel(raw: Optional[str], mfr_variants: List[str], row_values: Optional[List[Any]] = None) -> Tuple[str, str, int, int, int]:
+        years = _extract_years([raw or ""])
+        year_hint = years[0] if years else 0
+        year_from = years[0] if years else 0
+        year_to = years[-1] if years else 0
+        target_mfr = normalize_manufacturer_name(
+            mfr_variants[0] if mfr_variants else "",
+            mfr_variants[0] if mfr_variants else "",
+        )
+
+        m = _clean_vehicle_model(raw)
+        if not m:
+            return "", "", year_hint, year_from, year_to
+        m2 = _norm_spaces(m)
+
+        # Remove leading manufacturer tokens from model labels
+        # e.g. "CITROEN C4" -> "C4".
+        low = m2.lower()
+        for v in sorted({x.lower() for x in mfr_variants if x}, key=len, reverse=True):
+            if low.startswith(v + " "):
+                m2 = m2[len(v):].strip()
+                break
+
+        # Remove trailing noisy qualifiers often present in workbook model fields.
+        m2 = re.sub(r"\b(new|basic|accessories|accessory)\b", "", m2, flags=re.IGNORECASE).strip()
+        m2 = re.sub(r"\b(19|20)\d{2}\b", "", m2).strip()
+        m2 = re.sub(r"\s{2,}", " ", m2).strip()
+
+        if not _clean_vehicle_model(m2):
+            return "", "", year_hint, year_from, year_to
+
+        # Split base model and submodel/trim for hierarchy.
+        if re.search(r"\s-\s*", m2):
+            base, sub = [x.strip() for x in re.split(r"\s-\s*", m2, maxsplit=1)]
+        else:
+            # Platform/trim variants frequently appear as trailing tokens in workbook rows.
+            # Examples: "BERLINGO B9", "BERLINGO K9", "BERLINGO K9 ACC".
+            m_code = re.match(
+                r"^(?P<base>[A-Za-z0-9\u0590-\u05FF\s]+?)\s+(?P<sub>[A-Z]\d{1,3}(?:\s+[A-Z]{2,8})?)$",
+                m2,
+                flags=re.IGNORECASE,
+            )
+            if m_code:
+                base, sub = m_code.group("base").strip(), m_code.group("sub").upper()
+            else:
+                base, sub = m2, ""
+
+        base = canonicalize_vehicle_model_for_manufacturer(target_mfr, base)
+        sub = normalize_vehicle_submodel_name(sub)
+        if not base:
+            return "", "", year_hint, year_from, year_to
+        return base, sub, year_hint, year_from, year_to
+
+    wb = openpyxl.load_workbook(xlsx_path, read_only=True, data_only=True)
+
+    seen_run = set()
+    for sheet_name, (raw_mfr, stype) in sheet_map.items():
+        if sheet_name not in wb.sheetnames:
+            continue
+
+        canonical_mfr = normalize_manufacturer_name(raw_mfr, raw_mfr)
+        mfr_variants = [canonical_mfr, raw_mfr, sheet_name]
+        ws = wb[sheet_name]
+
+        # Sheet-specific model column location.
+        if stype == "F":
+            start_row = 8
+            model_idx = 0
+        elif stype == "A":
+            start_row = 3
+            model_idx = 7
+        else:
+            continue
+
+        for row in ws.iter_rows(min_row=start_row, values_only=True):
+            if model_idx >= len(row):
+                continue
+            model_raw = row[model_idx]
+            model, sub_model, year_hint, year_from, year_to = _split_model_submodel(
+                str(model_raw) if model_raw is not None else "",
+                mfr_variants,
+                None,
+            )
+            if not model:
+                continue
+
+            target_mfr = canonical_mfr
+            # Known PSA cross-brand correction: Partner belongs under Peugeot.
+            if canonical_mfr.casefold() == "citroen" and model.casefold().startswith("partner"):
+                target_mfr = "Peugeot"
+
+            key = (target_mfr.casefold(), model.casefold(), sub_model.casefold(), int(year_hint or 0))
+            if key in seen_run:
+                continue
+            seen_run.add(key)
+            scanned += 1
+            _add_hierarchy_row(target_mfr, model, sub_model, int(year_from or 0), int(year_to or 0), sheet_name)
+
+            exists = (await db.execute(text("""
+                SELECT 1
+                FROM vehicles
+                WHERE LOWER(TRIM(manufacturer)) = LOWER(TRIM(:mfr))
+                  AND LOWER(TRIM(model)) = LOWER(TRIM(:model))
+                  AND LOWER(COALESCE(gov_api_data->>'sub_model', '')) = LOWER(:sub_model)
+                                    AND year = :year
+                LIMIT 1
+                        """), {"mfr": target_mfr, "model": model, "sub_model": sub_model or "", "year": int(year_hint or 0)})).fetchone()
+            if exists:
+                continue
+
+            await db.execute(text("""
+                INSERT INTO vehicles
+                    (id, license_plate, manufacturer, model, year, vin, gov_api_data, created_at)
+                VALUES
+                    (gen_random_uuid(), NULL, :mfr, :model, :year, NULL, CAST(:gov AS jsonb), NOW())
+            """), {
+                "mfr": target_mfr,
+                "model": model,
+                "year": int(year_hint or 0),
+                "gov": json.dumps({"sub_model": sub_model} if sub_model else {}, ensure_ascii=False),
+            })
+            inserted += 1
+
+    compat_rows = (await db.execute(text("""
+        SELECT DISTINCT
+            COALESCE(elem->>'make', elem->>'manufacturer') AS manufacturer,
+            COALESCE(elem->>'model', elem->>'model_year') AS model,
+            COALESCE(elem->>'sub_model', '') AS sub_model,
+            COALESCE(elem->>'year_from', '') AS year_from,
+            COALESCE(elem->>'year_to', '') AS year_to,
+            COALESCE(elem->>'year', '') AS year_hint
+        FROM parts_catalog,
+             jsonb_array_elements(coalesce(compatible_vehicles, '[]'::jsonb)) AS elem
+        WHERE compatible_vehicles IS NOT NULL
+          AND jsonb_typeof(compatible_vehicles) = 'array'
+          AND COALESCE(elem->>'make', elem->>'manufacturer') IS NOT NULL
+          AND COALESCE(elem->>'make', elem->>'manufacturer') <> ''
+          AND COALESCE(elem->>'model', elem->>'model_year') IS NOT NULL
+          AND COALESCE(elem->>'model', elem->>'model_year') <> ''
+    """))).fetchall()
+    for mfr, model, sub_model, year_from, year_to, year_hint in compat_rows:
+        try:
+            yf = int(year_from) if str(year_from).isdigit() else 0
+        except Exception:
+            yf = 0
+        try:
+            yt = int(year_to) if str(year_to).isdigit() else 0
+        except Exception:
+            yt = 0
+        if not yf or not yt:
+            try:
+                yv = int(year_hint) if str(year_hint).isdigit() else 0
+            except Exception:
+                yv = 0
+            if yv:
+                yf = yt = yv
+        _add_hierarchy_row(mfr, model, sub_model, yf, yt, "compatible_vehicles")
+
+    vehicle_rows = (await db.execute(text("""
+        SELECT manufacturer, model, COALESCE(gov_api_data->>'sub_model', '') AS sub_model, year
+        FROM vehicles
+        WHERE manufacturer IS NOT NULL
+          AND manufacturer <> ''
+          AND model IS NOT NULL
+          AND model <> ''
+    """))).fetchall()
+    for mfr, model, sub_model, year in vehicle_rows:
+        yv = int(year or 0) if isinstance(year, int) else 0
+        _add_hierarchy_row(mfr, model, sub_model, yv, yv, "vehicles")
+
+    # Backfill model/sub-model year bounds from vehicles when workbook row lacks year data.
+    v_rows = (await db.execute(text("""
+        SELECT
+            manufacturer,
+            model,
+            COALESCE(gov_api_data->>'sub_model', '') AS sub_model,
+            MIN(year) AS y_from,
+            MAX(year) AS y_to
+        FROM vehicles
+        WHERE year BETWEEN 1990 AND 2027
+          AND manufacturer IS NOT NULL
+          AND model IS NOT NULL
+        GROUP BY manufacturer, model, COALESCE(gov_api_data->>'sub_model', '')
+    """))).fetchall()
+    exact_years: Dict[Tuple[str, str, str], Tuple[int, int]] = {}
+    model_years: Dict[Tuple[str, str], Tuple[int, int]] = {}
+    for mfr, mdl, sub, y_from, y_to in v_rows:
+        if not mfr or not mdl:
+            continue
+        mf = str(mfr).strip().casefold()
+        md = normalize_vehicle_model_name(str(mdl)).casefold()
+        sb = normalize_vehicle_submodel_name(str(sub or "")).casefold()
+        if not md:
+            continue
+        yf = int(y_from or 0)
+        yt = int(y_to or 0)
+        if yf and yt:
+            exact_years[(mf, md, sb)] = (yf, yt)
+            prev = model_years.get((mf, md))
+            if not prev:
+                model_years[(mf, md)] = (yf, yt)
+            else:
+                model_years[(mf, md)] = (min(prev[0], yf), max(prev[1], yt))
+
+    enriched_rows: set[Tuple[str, str, str, int, int, str]] = set()
+    for mfr, model, sub_model, y_from, y_to, source_sheet in hierarchy_rows:
+        yf = int(y_from or 0)
+        yt = int(y_to or 0)
+        rule_span = GENERATION_YEAR_RULES.get((mfr.casefold(), model.casefold(), (sub_model or "").casefold()))
+        if rule_span:
+            yf, yt = int(rule_span[0]), int(rule_span[1])
+        if not yf or not yt:
+            ek = (mfr.casefold(), model.casefold(), (sub_model or "").casefold())
+            mk = (mfr.casefold(), model.casefold())
+            by_sub = exact_years.get(ek)
+            by_model = model_years.get(mk)
+            # For specific sub-model entries, avoid over-broad model-level spans.
+            span = by_sub or (by_model if not (sub_model or "").strip() else None)
+            if span:
+                yf, yt = int(span[0]), int(span[1])
+        enriched_rows.add((mfr, model, sub_model, yf, yt, source_sheet))
+    hierarchy_rows = enriched_rows
+
+    # Materialize a dedicated XLS hierarchy table for frontend filters.
+    await db.execute(text("""
+        CREATE TABLE IF NOT EXISTS vehicle_hierarchy_xls (
+            id BIGSERIAL PRIMARY KEY,
+            manufacturer TEXT NOT NULL,
+            model TEXT NOT NULL,
+            sub_model TEXT NOT NULL DEFAULT '',
+            year_from INTEGER NOT NULL DEFAULT 0,
+            year_to INTEGER NOT NULL DEFAULT 0,
+            year_hint INTEGER NOT NULL DEFAULT 0,
+            source_sheet TEXT,
+            source_tag TEXT NOT NULL DEFAULT 'parts_database.xlsx',
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """))
+    await db.execute(text("ALTER TABLE vehicle_hierarchy_xls ADD COLUMN IF NOT EXISTS year_from INTEGER NOT NULL DEFAULT 0"))
+    await db.execute(text("ALTER TABLE vehicle_hierarchy_xls ADD COLUMN IF NOT EXISTS year_to INTEGER NOT NULL DEFAULT 0"))
+    await db.execute(text("TRUNCATE TABLE vehicle_hierarchy_xls"))
+
+    for mfr, model, sub_model, year_from, year_to, source_sheet in sorted(hierarchy_rows):
+        await db.execute(text("""
+            INSERT INTO vehicle_hierarchy_xls
+                (manufacturer, model, sub_model, year_from, year_to, year_hint, source_sheet, source_tag, updated_at)
+            VALUES
+                (:mfr, :model, :sub_model, :year_from, :year_to, :year_hint, :source_sheet, 'parts_database.xlsx', NOW())
+        """), {
+            "mfr": mfr,
+            "model": model,
+            "sub_model": sub_model,
+            "year_from": int(year_from or 0),
+            "year_to": int(year_to or 0),
+            "year_hint": int(year_from or 0),
+            "source_sheet": source_sheet,
+        })
+
+    await db.commit()
+    return {
+        "task": "sync_models_from_catalog_file",
+        "status": "ok",
+        "scanned": scanned,
+        "inserted": inserted,
+        "hierarchy_rows": len(hierarchy_rows),
+        "elapsed_s": round(time.monotonic() - t0, 2),
+    }
+
+
+async def backfill_catalog_fitment_from_xls(db: AsyncSession) -> Dict[str, Any]:
+    """Backfill exact workbook fitment into parts_catalog.compatible_vehicles."""
+    t0 = time.monotonic()
+    try:
+        import openpyxl
+        from pathlib import Path
+    except Exception as exc:
+        return {
+            "task": "backfill_catalog_fitment_from_xls",
+            "status": "error",
+            "error": f"dependency_error: {exc}",
+        }
+
+    xlsx_path = Path(__file__).resolve().parent / "data" / "parts_database.xlsx"
+    if not xlsx_path.exists():
+        return {
+            "task": "backfill_catalog_fitment_from_xls",
+            "status": "skipped",
+            "reason": "catalog_file_missing",
+            "path": str(xlsx_path),
+        }
+
+    sheet_map = {
+        "Chevrolet": ("Chevrolet", "CHEV-", "A"),
+        "Citroen": ("Citroen", "CITR-", "F"),
+        "Peugeot": ("Peugeot", "PEUG-", "F"),
+    }
+
+    def _norm_spaces(s: str) -> str:
+        return re.sub(r"\s+", " ", (s or "").strip())
+
+    def _extract_years(values: List[Any]) -> List[int]:
+        years: set[int] = set()
+        for v in values:
+            if v is None:
+                continue
+            for m in re.findall(r"(?<!\d)(19\d{2}|20\d{2})(?!\d)", str(v)):
+                try:
+                    yy = int(m)
+                except Exception:
+                    continue
+                if 1990 <= yy <= 2027:
+                    years.add(yy)
+        return sorted(years)
+
+    def _split_model_submodel(raw: Optional[str], mfr_variants: List[str]) -> Tuple[str, str, int, int]:
+        years = _extract_years([raw or ""])
+        year_from = years[0] if years else 0
+        year_to = years[-1] if years else 0
+        target_mfr = normalize_manufacturer_name(
+            mfr_variants[0] if mfr_variants else "",
+            mfr_variants[0] if mfr_variants else "",
+        )
+
+        model_text = _clean_vehicle_model(raw)
+        if not model_text:
+            return "", "", year_from, year_to
+        model_text = _norm_spaces(model_text)
+
+        low = model_text.lower()
+        for v in sorted({x.lower() for x in mfr_variants if x}, key=len, reverse=True):
+            if low.startswith(v + " "):
+                model_text = model_text[len(v):].strip()
+                break
+
+        model_text = re.sub(r"\b(new|basic|accessories|accessory)\b", "", model_text, flags=re.IGNORECASE).strip()
+        model_text = re.sub(r"\b(19|20)\d{2}\b", "", model_text).strip()
+        model_text = re.sub(r"\s{2,}", " ", model_text).strip()
+        if not _clean_vehicle_model(model_text):
+            return "", "", year_from, year_to
+
+        if re.search(r"\s-\s*", model_text):
+            base, sub = [x.strip() for x in re.split(r"\s-\s*", model_text, maxsplit=1)]
+        else:
+            m_code = re.match(
+                r"^(?P<base>[A-Za-z0-9\u0590-\u05FF\s]+?)\s+(?P<sub>[A-Z]\d{1,3}(?:\s+[A-Z]{2,8})?)$",
+                model_text,
+                flags=re.IGNORECASE,
+            )
+            if m_code:
+                base, sub = m_code.group("base").strip(), m_code.group("sub").upper()
+            else:
+                base, sub = model_text, ""
+
+        base = canonicalize_vehicle_model_for_manufacturer(target_mfr, base)
+        sub = normalize_vehicle_submodel_name(sub)
+        return base, sub, year_from, year_to
+
+    def _parse_fitment_row(row: Any, stype: str) -> Optional[Dict[str, str]]:
+        row = list(row)
+        if stype == "F":
+            if len(row) < 8:
+                return None
+            model_raw = (str(row[0]).strip() if row[0] is not None else "")
+            name = (str(row[6]).strip() if row[6] is not None else "")
+            catalog = (str(row[7]).strip() if row[7] is not None else "")
+        elif stype == "A":
+            if len(row) < 8:
+                return None
+            model_raw = (str(row[7]).strip() if row[7] is not None else "")
+            name = (str(row[2]).strip() if row[2] is not None else "")
+            catalog = (str(row[1]).strip() if row[1] is not None else "")
+        else:
+            return None
+        if not model_raw or not name or not catalog:
+            return None
+        return {"model_raw": model_raw, "name": name, "catalog": catalog}
+
+    hierarchy_rows = (await db.execute(text("""
+        SELECT manufacturer, model, sub_model, year_from, year_to
+        FROM vehicle_hierarchy_xls
+    """))).fetchall()
+    hierarchy_map: Dict[Tuple[str, str, str], Tuple[int, int]] = {}
+    for mfr, model, sub_model, year_from, year_to in hierarchy_rows:
+        key = (
+            str(mfr or "").strip().casefold(),
+            normalize_vehicle_model_name(str(model or "")).casefold(),
+            normalize_vehicle_submodel_name(str(sub_model or "")).casefold(),
+        )
+        if key[0] and key[1]:
+            hierarchy_map[key] = (int(year_from or 0), int(year_to or 0))
+
+    wb = openpyxl.load_workbook(xlsx_path, read_only=True, data_only=True)
+    matched_rows = 0
+    updated_parts = 0
+    fitment_rows = 0
+
+    for sheet_name, (raw_mfr, sku_prefix, stype) in sheet_map.items():
+        if sheet_name not in wb.sheetnames:
+            continue
+
+        canonical_mfr = normalize_manufacturer_name(raw_mfr, raw_mfr)
+        mfr_variants = [canonical_mfr, raw_mfr, sheet_name]
+
+        part_rows = (await db.execute(text("""
+            SELECT id, sku, oem_number, name, compatible_vehicles
+            FROM parts_catalog
+            WHERE manufacturer IS NOT NULL
+              AND (
+                    LOWER(TRIM(manufacturer)) = LOWER(TRIM(:m0))
+                 OR LOWER(TRIM(manufacturer)) = LOWER(TRIM(:m1))
+                 OR LOWER(TRIM(manufacturer)) = LOWER(TRIM(:m2))
+              )
+        """), {"m0": canonical_mfr, "m1": raw_mfr, "m2": sheet_name})).fetchall()
+
+        by_sku: Dict[str, Tuple[str, Any]] = {}
+        by_oem: Dict[str, Tuple[str, Any]] = {}
+        by_name: Dict[str, Tuple[str, Any]] = {}
+        part_compat_by_id: Dict[str, List[Any]] = {}
+        for part_id, sku, oem_number, name, compat in part_rows:
+            pid = str(part_id)
+            part_compat_by_id[pid] = list(compat or []) if isinstance(compat, list) else []
+            if sku:
+                sku_str = str(sku).strip()
+                by_sku[sku_str.upper()] = (pid, compat)
+                if sku_str.upper().startswith(sku_prefix):
+                    by_sku[sku_str[len(sku_prefix):].upper()] = (pid, compat)
+            if oem_number:
+                by_oem[str(oem_number).strip().upper()] = (pid, compat)
+            if name:
+                by_name[str(name).strip()] = (pid, compat)
+
+        part_fitments: Dict[str, List[Dict[str, Any]]] = {}
+        ws = wb[sheet_name]
+        start_row = 8 if stype == "F" else 3
+        seen_rows: set[Tuple[str, str, str]] = set()
+        for row in ws.iter_rows(min_row=start_row, values_only=True):
+            rec = _parse_fitment_row(row, stype)
+            if not rec:
+                continue
+
+            model, sub_model, year_from, year_to = _split_model_submodel(rec["model_raw"], mfr_variants)
+            if not model:
+                continue
+
+            target_mfr = canonical_mfr
+            if canonical_mfr.casefold() == "citroen" and model.casefold().startswith("partner"):
+                target_mfr = "Peugeot"
+
+            row_key = (rec["catalog"].upper(), model.casefold(), sub_model.casefold())
+            if row_key in seen_rows:
+                continue
+            seen_rows.add(row_key)
+
+            match = by_sku.get(rec["catalog"].upper()) or by_oem.get(rec["catalog"].upper()) or by_name.get(rec["name"])
+            if not match:
+                continue
+
+            span = hierarchy_map.get((target_mfr.casefold(), model.casefold(), sub_model.casefold()))
+            if span:
+                year_from, year_to = span
+            if not year_from or not year_to:
+                rule_span = GENERATION_YEAR_RULES.get((target_mfr.casefold(), model.casefold(), sub_model.casefold()))
+                if rule_span:
+                    year_from, year_to = rule_span
+
+            part_id, _existing = match
+            entry: Dict[str, Any] = {
+                "manufacturer": target_mfr,
+                "model": model,
+                "source": "parts_database.xlsx",
+            }
+            if sub_model:
+                entry["sub_model"] = sub_model
+            if year_from and year_to and 1990 <= int(year_from) <= int(year_to) <= 2027:
+                entry["year_from"] = int(year_from)
+                entry["year_to"] = int(year_to)
+
+            part_fitments.setdefault(part_id, []).append(entry)
+            matched_rows += 1
+
+        for part_id, entries in part_fitments.items():
+            preserved = [
+                item for item in part_compat_by_id.get(part_id, [])
+                if not (isinstance(item, dict) and item.get("source") == "parts_database.xlsx")
+            ]
+            merged: List[Dict[str, Any]] = []
+            seen_json = set()
+            for item in preserved + entries:
+                if not isinstance(item, dict):
+                    continue
+                key = json.dumps(item, sort_keys=True, ensure_ascii=False)
+                if key in seen_json:
+                    continue
+                seen_json.add(key)
+                merged.append(item)
+
+            await db.execute(text("""
+                UPDATE parts_catalog
+                SET compatible_vehicles = CAST(:compat AS jsonb),
+                    updated_at = NOW()
+                WHERE id = CAST(:part_id AS uuid)
+            """), {
+                "part_id": part_id,
+                "compat": json.dumps(merged, ensure_ascii=False),
+            })
+            updated_parts += 1
+            fitment_rows += len(entries)
+
+    await db.commit()
+    return {
+        "task": "backfill_catalog_fitment_from_xls",
+        "status": "ok",
+        "matched_rows": matched_rows,
+        "updated_parts": updated_parts,
+        "fitment_rows": fitment_rows,
+        "elapsed_s": round(time.monotonic() - t0, 2),
+    }
+
+
+async def merge_catalog_fitment_from_part_vehicle_fitment(db: AsyncSession) -> Dict[str, Any]:
+    """Promote scraped part_vehicle_fitment rows into parts_catalog.compatible_vehicles."""
+    t0 = time.monotonic()
+    await ensure_part_vehicle_fitment_table(db)
+
+    rows = (await db.execute(text("""
+        SELECT
+            pc.id,
+            pc.compatible_vehicles,
+            pvf.manufacturer,
+            pvf.model,
+            pvf.year_from,
+            pvf.year_to,
+            pvf.engine_type
+        FROM parts_catalog pc
+        JOIN part_vehicle_fitment pvf
+          ON pvf.part_id = pc.id
+        WHERE pvf.manufacturer IS NOT NULL
+          AND TRIM(pvf.manufacturer) <> ''
+          AND pvf.model IS NOT NULL
+          AND TRIM(pvf.model) <> ''
+    """))).fetchall()
+
+    part_existing: Dict[str, List[Dict[str, Any]]] = {}
+    part_fitments: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    scanned_rows = 0
+
+    for part_id, compat, manufacturer, model, year_from, year_to, engine_type in rows:
+        scanned_rows += 1
+        pid = str(part_id)
+        if pid not in part_existing:
+            part_existing[pid] = list(compat or []) if isinstance(compat, list) else []
+
+        canonical_manufacturer = normalize_manufacturer_name(str(manufacturer or ""), str(manufacturer or ""))
+        canonical_model = canonicalize_vehicle_model_for_manufacturer(canonical_manufacturer, model)
+        if not canonical_manufacturer or not canonical_model:
+            continue
+
+        fitment: Dict[str, Any] = {
+            "manufacturer": canonical_manufacturer,
+            "model": canonical_model,
+            "source": "part_vehicle_fitment",
+        }
+
+        if engine_type:
+            fitment["engine"] = str(engine_type).strip()[:50]
+
+        try:
+            yf = int(year_from or 0)
+        except Exception:
+            yf = 0
+        try:
+            yt = int(year_to or 0)
+        except Exception:
+            yt = 0
+        if yf and not yt:
+            yt = yf
+        if yf and yt and 1990 <= yf <= yt <= 2027:
+            fitment["year_from"] = yf
+            fitment["year_to"] = yt
+
+        part_fitments[pid].append(fitment)
+
+    updated_parts = 0
+    merged_fitment_rows = 0
+
+    for part_id, entries in part_fitments.items():
+        preserved = [
+            item for item in part_existing.get(part_id, [])
+            if not (isinstance(item, dict) and item.get("source") == "part_vehicle_fitment")
+        ]
+        merged: List[Dict[str, Any]] = []
+        seen_json = set()
+
+        for item in preserved + entries:
+            if not isinstance(item, dict):
+                continue
+            key = json.dumps(item, sort_keys=True, ensure_ascii=False)
+            if key in seen_json:
+                continue
+            seen_json.add(key)
+            merged.append(item)
+
+        existing_json = json.dumps(part_existing.get(part_id, []), sort_keys=True, ensure_ascii=False)
+        merged_json = json.dumps(merged, sort_keys=True, ensure_ascii=False)
+        if existing_json == merged_json:
+            continue
+
+        await db.execute(text("""
+            UPDATE parts_catalog
+            SET compatible_vehicles = CAST(:compat AS jsonb),
+                updated_at = NOW()
+            WHERE id = CAST(:part_id AS uuid)
+        """), {
+            "part_id": part_id,
+            "compat": json.dumps(merged, ensure_ascii=False),
+        })
+        updated_parts += 1
+        merged_fitment_rows += len(entries)
+
+    await db.commit()
+    return {
+        "task": "merge_catalog_fitment_from_part_vehicle_fitment",
+        "status": "ok",
+        "scanned_rows": scanned_rows,
+        "parts_with_fitment": len(part_fitments),
+        "updated_parts": updated_parts,
+        "merged_fitment_rows": merged_fitment_rows,
+        "elapsed_s": round(time.monotonic() - t0, 2),
+    }
+
+
 # =========================================================================
 # Task 8 – Refresh min / max prices on parts_catalog
 # =========================================================================
@@ -817,16 +1800,27 @@ async def _trigger_scraper_for_misses_task(db: AsyncSession) -> Dict[str, Any]:
     and fire REX brand discovery for the likely brand."""
     from catalog_scraper import run_brand_discovery
 
-    rows = (await db.execute(
-        text("""
-            SELECT id, query, normalized_query, vehicle_manufacturer
-            FROM search_misses
-            WHERE miss_count >= 3
-              AND triggered_scrape = FALSE
-            ORDER BY miss_count DESC
-            LIMIT 20
-        """)
-    )).fetchall()
+    try:
+        rows = (await db.execute(
+            text("""
+                SELECT id, query, normalized_query, vehicle_manufacturer
+                FROM search_misses
+                WHERE miss_count >= 3
+                  AND triggered_scrape = FALSE
+                ORDER BY miss_count DESC
+                LIMIT 20
+            """)
+        )).fetchall()
+    except Exception as exc:
+        if "search_misses" in str(exc).lower() and "does not exist" in str(exc).lower():
+            return {
+                "task": "trigger_scraper_for_misses",
+                "status": "skipped",
+                "reason": "search_misses_table_missing",
+                "triggered": 0,
+                "errors": 0,
+            }
+        raise
 
     if not rows:
         return {"task": "trigger_scraper_for_misses", "status": "ok", "triggered": 0, "errors": 0}
@@ -857,9 +1851,9 @@ async def _trigger_scraper_for_misses_task(db: AsyncSession) -> Dict[str, Any]:
             text("""
                 UPDATE search_misses
                 SET triggered_scrape = TRUE
-                WHERE id = ANY(:ids::uuid[])
+                WHERE id = ANY(:ids)
             """),
-            {"ids": triggered_ids},
+            {"ids": [uuid.UUID(x) for x in triggered_ids]},
         )
         await db.commit()
 
@@ -868,6 +1862,140 @@ async def _trigger_scraper_for_misses_task(db: AsyncSession) -> Dict[str, Any]:
         "status": "ok",
         "triggered": triggered,
         "errors": errors,
+    }
+
+
+async def _trigger_scraper_for_registry_gaps_task(db: AsyncSession) -> Dict[str, Any]:
+    """Queue brand discovery for all known manufacturers under-covered in parts_catalog.
+
+    Pool includes:
+    - active car_brands
+    - active truck_brands
+    - active manufacturers already present in parts_catalog
+
+    We queue only a bounded batch per run for speed + operational safety.
+    """
+    from catalog_scraper import run_brand_discovery
+
+    target = max(1, int(os.getenv("DISCOVERY_TARGET", "120")))
+    per_run = min(50, max(1, int(os.getenv("DISCOVERY_PER_RUN", "20"))))
+    truck_delay_days = max(0, int(os.getenv("DISCOVERY_TRUCK_DELAY_DAYS", "30")))
+
+    include_trucks = False
+    trucks_deferred_reason = "deploy_timestamp_missing"
+    deployed_at_iso = (os.getenv("DEPLOYED_AT_ISO", "") or "").strip()
+    trucks_unlock_at = None
+    if deployed_at_iso:
+        try:
+            _deploy_ts = datetime.fromisoformat(deployed_at_iso.replace("Z", "+00:00"))
+            if _deploy_ts.tzinfo is None:
+                _deploy_ts = _deploy_ts.replace(tzinfo=timezone.utc)
+            trucks_unlock_at = _deploy_ts + timedelta(days=truck_delay_days)
+            include_trucks = datetime.now(timezone.utc) >= trucks_unlock_at
+            trucks_deferred_reason = "within_truck_delay_window" if not include_trucks else "delay_window_completed"
+        except Exception:
+            include_trucks = False
+            trucks_deferred_reason = "invalid_deploy_timestamp"
+
+    rows = (await db.execute(
+        text(
+            """
+            WITH manufacturer_pool AS (
+                SELECT name
+                FROM car_brands
+                WHERE is_active = TRUE
+
+                UNION
+
+                SELECT name
+                FROM truck_brands
+                                WHERE is_active = TRUE
+                                    AND :include_trucks = TRUE
+
+                UNION
+
+                SELECT DISTINCT TRIM(manufacturer) AS name
+                FROM parts_catalog
+                WHERE is_active = TRUE
+                  AND manufacturer IS NOT NULL
+                  AND TRIM(manufacturer) <> ''
+            ),
+            part_counts AS (
+                SELECT LOWER(TRIM(manufacturer)) AS mkey, COUNT(*) AS cnt
+                FROM parts_catalog
+                WHERE is_active = TRUE
+                  AND manufacturer IS NOT NULL
+                GROUP BY LOWER(TRIM(manufacturer))
+            )
+                        SELECT mp.name, COALESCE(pc.cnt, 0) AS part_count
+                        FROM manufacturer_pool mp
+            LEFT JOIN part_counts pc
+                            ON LOWER(TRIM(mp.name)) = pc.mkey
+            WHERE COALESCE(pc.cnt, 0) < :target
+                            AND mp.name IS NOT NULL
+                            AND TRIM(mp.name) <> ''
+                        ORDER BY COALESCE(pc.cnt, 0) ASC, mp.name ASC
+            LIMIT :lim
+            """
+        ),
+        {
+            "target": target,
+            "lim": per_run,
+            "include_trucks": include_trucks,
+        },
+    )).fetchall()
+
+    if not rows:
+        return {
+            "task": "trigger_scraper_for_registry_gaps",
+            "status": "ok",
+            "triggered": 0,
+            "target": target,
+            "per_run": per_run,
+            "brands": [],
+            "include_trucks": include_trucks,
+            "trucks_deferred": not include_trucks,
+            "trucks_deferred_reason": trucks_deferred_reason,
+            "truck_delay_days": truck_delay_days,
+            "deployed_at_iso": deployed_at_iso or None,
+            "trucks_unlock_at": trucks_unlock_at.isoformat() if trucks_unlock_at else None,
+            "reason": "no_undercovered_brands",
+        }
+
+    brands = [r[0] for r in rows if r[0]]
+    if not brands:
+        return {
+            "task": "trigger_scraper_for_registry_gaps",
+            "status": "ok",
+            "triggered": 0,
+            "target": target,
+            "per_run": per_run,
+            "brands": [],
+            "include_trucks": include_trucks,
+            "trucks_deferred": not include_trucks,
+            "trucks_deferred_reason": trucks_deferred_reason,
+            "truck_delay_days": truck_delay_days,
+            "deployed_at_iso": deployed_at_iso or None,
+            "trucks_unlock_at": trucks_unlock_at.isoformat() if trucks_unlock_at else None,
+            "reason": "no_valid_brand_names",
+        }
+
+    asyncio.create_task(run_brand_discovery(brands=brands, target=target, per_run=per_run))
+
+    return {
+        "task": "trigger_scraper_for_registry_gaps",
+        "status": "ok",
+        "triggered": len(brands),
+        "target": target,
+        "per_run": per_run,
+        "include_trucks": include_trucks,
+        "trucks_deferred": not include_trucks,
+        "trucks_deferred_reason": trucks_deferred_reason,
+        "truck_delay_days": truck_delay_days,
+        "deployed_at_iso": deployed_at_iso or None,
+        "trucks_unlock_at": trucks_unlock_at.isoformat() if trucks_unlock_at else None,
+        "brands": brands,
+        "brand_counts": [{"name": r[0], "part_count": int(r[1] or 0)} for r in rows],
     }
 
 
@@ -927,9 +2055,10 @@ async def _generate_image_embeddings_task(db: AsyncSession) -> Dict[str, Any]:
 
 async def dedup_catalog_parts(db: AsyncSession) -> Dict[str, Any]:
     """
-    Remove duplicate rows in parts_catalog:
-      1. Same SKU → null out the older duplicate's SKU (keep newest).
-      2. Same (name, manufacturer_id) → flag older rows with needs_oem_lookup=True for manual review.
+        Remove duplicate rows in parts_catalog:
+            1. Same SKU → null out the older duplicate's SKU (keep newest).
+            2. Same (name, manufacturer key) → flag older rows with needs_oem_lookup=True for manual review.
+                 Manufacturer key prefers manufacturer_id when the column exists, else falls back to manufacturer text.
     Both steps are idempotent.
     """
     t0 = time.monotonic()
@@ -954,17 +2083,33 @@ async def dedup_catalog_parts(db: AsyncSession) -> Dict[str, Any]:
         """))
         nulled_skus = len(r1.fetchall())
 
-        # Step 2 — duplicate (name, manufacturer_id): flag older rows for review
-        r2 = await db.execute(text("""
+        has_manufacturer_id = bool((await db.execute(text("""
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_name = 'parts_catalog'
+                  AND column_name = 'manufacturer_id'
+            )
+        """))).scalar())
+
+        # Step 2 — duplicate (name, manufacturer key): flag older rows for review
+        if has_manufacturer_id:
+            manufacturer_partition = "manufacturer_id"
+            manufacturer_filter = "manufacturer_id IS NOT NULL"
+        else:
+            manufacturer_partition = "lower(COALESCE(manufacturer, ''))"
+            manufacturer_filter = "manufacturer IS NOT NULL"
+
+        r2 = await db.execute(text(f"""
             WITH dupes AS (
                 SELECT id FROM (
                     SELECT id,
                            ROW_NUMBER() OVER (
-                               PARTITION BY lower(name), manufacturer_id
+                               PARTITION BY lower(name), {manufacturer_partition}
                                ORDER BY created_at DESC
                            ) AS rn
                     FROM parts_catalog
-                    WHERE name IS NOT NULL AND manufacturer_id IS NOT NULL
+                    WHERE name IS NOT NULL AND {manufacturer_filter}
                 ) ranked
                 WHERE rn > 1
             )
@@ -1302,9 +2447,16 @@ TASK_REGISTRY: Dict[str, Any] = {
     "fix_base_prices":           fix_base_prices,
     "flag_fake_skus":            flag_fake_skus,
     "fill_car_brands":           fill_car_brands,
+    "normalize_imported_manufacturers": normalize_imported_manufacturers,
+    "sync_models_from_catalog": sync_models_from_catalog,
+    "sync_models_from_catalog_file": sync_models_from_catalog_file,
+    "backfill_catalog_fitment_from_xls": backfill_catalog_fitment_from_xls,
+    "merge_catalog_fitment_from_part_vehicle_fitment": merge_catalog_fitment_from_part_vehicle_fitment,
+    "sync_manufacturer_registries": sync_manufacturer_registries,
     "refresh_min_max_prices":    refresh_min_max_prices,
     "seed_system_settings":      seed_system_settings,
     "enrich_pending_parts":      _enrich_pending_parts_task,
+    "trigger_scraper_for_registry_gaps": _trigger_scraper_for_registry_gaps_task,
     "trigger_scraper_for_misses": _trigger_scraper_for_misses_task,
     "generate_image_embeddings": _generate_image_embeddings_task,
     # on-demand heavy tasks — NOT included in run_all_tasks
@@ -1348,10 +2500,21 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
             job_id = await job_registry_start(db, "run_all_tasks", ttl_seconds=3600)
         except Exception as exc:
             logger.warning("run_all_tasks job_registry_start failed: %s", exc)
+            try:
+                await db.rollback()
+            except Exception:
+                pass
 
         ordered_tasks = [
             "seed_system_settings",
             "fill_car_brands",
+            "normalize_imported_manufacturers",
+            "sync_models_from_catalog",
+            "sync_models_from_catalog_file",
+            "backfill_catalog_fitment_from_xls",
+            "merge_catalog_fitment_from_part_vehicle_fitment",
+            "sync_manufacturer_registries",
+            "trigger_scraper_for_registry_gaps",
             "clean_part_names",
             "normalize_part_types",
             "normalize_categories",

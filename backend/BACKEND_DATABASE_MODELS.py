@@ -230,8 +230,8 @@ class User(PiiBase):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email = Column(String(255), unique=True, nullable=False, index=True)
-    phone = Column(String(20), unique=True, nullable=False)           # encrypted
-    password_hash = Column(String(255), nullable=False)
+    phone = Column(String(20), unique=True, nullable=True)            # encrypted; nullable for OAuth users
+    password_hash = Column(String(255), nullable=True)               # nullable for OAuth-only accounts
     full_name = Column(String(255), nullable=False)
     role = Column(String(50), nullable=False, default="customer")     # customer / admin
     is_active = Column(Boolean, default=True, nullable=False)
@@ -240,6 +240,8 @@ class User(PiiBase):
     is_super_admin = Column(Boolean, default=False, nullable=False)
     failed_login_count = Column(Integer, default=0, nullable=False)
     locked_until = Column(DateTime, nullable=True)
+    oauth_provider = Column(String(32), nullable=True)               # 'google' | 'facebook' | None
+    oauth_id = Column(String(255), nullable=True, index=True)        # provider's user ID
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -388,7 +390,6 @@ class ApprovalQueue(PiiBase):
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
-        index=True,
     )
     resolved_by = Column(
         UUID(as_uuid=True),
@@ -520,7 +521,6 @@ class StripeWebhookLog(PiiBase):
     event_type = Column(
         String(100),
         nullable=False,
-        index=True,
         comment="Stripe event type (e.g., charge.succeeded, payment_intent.succeeded)",
     )
     processed = Column(
@@ -630,8 +630,40 @@ class UserVehicle(PiiBase):
     user = relationship("User", back_populates="user_vehicles")
 
 
+class AftermarketBrand(Base):
+    __tablename__ = "aftermarket_brands"
+    __table_args__ = (
+        CheckConstraint(
+            "tier IN ('OE_equivalent','economy','generic')",
+            name="ck_aftermarket_brands_tier",
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String(100), unique=True, nullable=False, index=True)
+    tier = Column(String(20), nullable=False, default="generic", server_default="generic")
+    categories = Column(JSONB, nullable=True)
+    country = Column(String(50), nullable=True)
+    website = Column(String(255), nullable=True)
+    logo_url = Column(String(255), nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    parts = relationship("PartsCatalog", back_populates="aftermarket_brand")
+
+
 class PartsCatalog(Base):
     __tablename__ = "parts_catalog"
+    __table_args__ = (
+        CheckConstraint(
+            "aftermarket_tier IS NULL OR aftermarket_tier IN ('OE_equivalent','economy','generic')",
+            name="ck_parts_catalog_aftermarket_tier",
+        ),
+        Index("idx_parts_catalog_aftermarket_brand", "aftermarket_brand_id"),
+        Index("idx_parts_catalog_part_condition_tier", "part_condition", "aftermarket_tier"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     sku = Column(String(100), unique=True, nullable=False, index=True)
@@ -655,6 +687,12 @@ class PartsCatalog(Base):
     min_price_ils = Column(Numeric(10, 2), nullable=True)          # cheapest supplier incl. VAT
     max_price_ils = Column(Numeric(10, 2), nullable=True)          # most expensive supplier incl. VAT
     part_condition = Column(String(20), nullable=False, default="New")  # New/Used/Remanufactured
+    aftermarket_tier = Column(String(20), nullable=True)
+    aftermarket_brand_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("aftermarket_brands.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     superseded_by_sku = Column(String(100), nullable=True)         # replacement SKU if discontinued
     customs_tariff_code = Column(String(20), nullable=True)        # for Israeli customs
     is_safety_critical = Column(Boolean, nullable=False, default=False)  # brakes/steering/airbags
@@ -673,6 +711,7 @@ class PartsCatalog(Base):
     cross_references = relationship("PartCrossReference", back_populates="part", cascade="all, delete-orphan")
     aliases = relationship("PartAlias", back_populates="part", cascade="all, delete-orphan")
     variants = relationship("PartVariant", back_populates="catalog_part", cascade="all, delete-orphan")
+    aftermarket_brand = relationship("AftermarketBrand", back_populates="parts")
 
 
 class PartImage(Base):
@@ -905,15 +944,21 @@ class Payment(PiiBase):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     order_id = Column(UUID(as_uuid=True), ForeignKey("orders.id"), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
     payment_intent_id = Column(String(255), unique=True, nullable=True)  # Stripe
+    provider = Column(String(50), nullable=True)
+    provider_transaction_id = Column(String(255), nullable=True)
+    amount_ils = Column(Numeric(12, 2), nullable=False)
     amount = Column(Numeric(10, 2), nullable=False)
     currency = Column(String(3), default="ILS")
     status = Column(String(50), default="pending")
     # statuses: pending, succeeded, failed, refunded, partially_refunded
     payment_method = Column(String(50), nullable=True)
     stripe_customer_id = Column(String(255), nullable=True)
+    last_four = Column(String(4), nullable=True)
     last_4_digits = Column(String(4), nullable=True)
     card_brand = Column(String(50), nullable=True)
+    error_message = Column(Text, nullable=True)
     paid_at = Column(DateTime, nullable=True)
     refunded_at = Column(DateTime, nullable=True)
     refund_amount = Column(Numeric(10, 2), nullable=True)
@@ -1290,7 +1335,7 @@ class JobRegistry(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     job_id = Column(String(255), unique=True, nullable=False, comment="Unique job ID (e.g., 'sync_prices-2026-03-21T10:00:00')")
-    job_name = Column(String(255), nullable=False, index=True, comment="Job name (e.g., 'sync_prices', 'run_scraper_cycle')")
+    job_name = Column(String(255), nullable=False, comment="Job name (e.g., 'sync_prices', 'run_scraper_cycle')")
     worker_host = Column(String(255), nullable=True, comment="Hostname/K8s pod where job runs")
     status = Column(String(50), nullable=False, default="running", comment="running | completed | failed")
     started_at = Column(DateTime, nullable=False, default=datetime.utcnow, comment="When job started")

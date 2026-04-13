@@ -156,6 +156,48 @@ BRANDS = [
     ("Lucid",       "לוסיד",     "Lucid Motors",  "USA",     "America", True,  True,  "https://www.lucidmotors.com"),
 ]
 
+# Canonical logo URLs used by backend APIs (frontend may use local icon fallbacks).
+LOGO_URLS: dict[str, str] = {
+    "Toyota": "https://upload.wikimedia.org/wikipedia/commons/9/9d/Toyota_carlogo.svg",
+    "Honda": "https://upload.wikimedia.org/wikipedia/commons/7/7b/Honda-logo.svg",
+    "Hyundai": "https://upload.wikimedia.org/wikipedia/commons/4/44/Hyundai_Motor_Company_logo.svg",
+    "Kia": "https://upload.wikimedia.org/wikipedia/commons/0/09/Kia_logo3.svg",
+    "Mazda": "https://upload.wikimedia.org/wikipedia/commons/1/18/Mazda_logo_with_emblem.svg",
+    "Mitsubishi": "https://upload.wikimedia.org/wikipedia/commons/5/5a/Mitsubishi_logo.svg",
+    "Nissan": "https://upload.wikimedia.org/wikipedia/commons/7/75/Nissan_2020_logo.svg",
+    "Suzuki": "https://upload.wikimedia.org/wikipedia/commons/1/12/Suzuki_logo_2.svg",
+    "Smart": "https://upload.wikimedia.org/wikipedia/commons/a/ae/Smart_logo.svg",
+    "Mercedes-Benz": "https://upload.wikimedia.org/wikipedia/commons/9/90/Mercedes-Logo.svg",
+    "Renault": "https://upload.wikimedia.org/wikipedia/commons/4/49/Renault_2021.svg",
+    "Chevrolet": "https://upload.wikimedia.org/wikipedia/commons/6/6e/Chevrolet-logo.png",
+    "Peugeot": "https://upload.wikimedia.org/wikipedia/commons/f/f5/Peugeot_2021_Logo.svg",
+    "Citroën": "https://upload.wikimedia.org/wikipedia/commons/7/79/Citro%C3%ABn_2016_logo.svg",
+    "Citroen": "https://upload.wikimedia.org/wikipedia/commons/7/79/Citro%C3%ABn_2016_logo.svg",
+    "Porsche": "https://upload.wikimedia.org/wikipedia/en/8/8c/Porsche_logo.svg",
+    "Genesis": "https://cdn.worldvectorlogo.com/logos/genesis-2.svg",
+    "JAECOO": "https://cdn.worldvectorlogo.com/logos/chery-3.svg",
+    "ORA": "https://upload.wikimedia.org/wikipedia/commons/4/4e/GWM_logo.svg",
+    "Volkswagen": "https://upload.wikimedia.org/wikipedia/commons/6/6d/Volkswagen_logo_2019.svg",
+    "Audi": "https://upload.wikimedia.org/wikipedia/commons/9/92/Audi-Logo_2016.svg",
+    "BMW": "https://upload.wikimedia.org/wikipedia/commons/4/44/BMW.svg",
+}
+
+TRUCK_BRANDS = [
+    ("MAN", "MAN", "Volkswagen Group", "Germany", "Europe", "https://upload.wikimedia.org/wikipedia/commons/7/72/MAN_logo.svg"),
+    ("Hino", "הינו", "Toyota Group", "Japan", "Asia", "https://upload.wikimedia.org/wikipedia/commons/a/a6/Hino_logo.svg"),
+    ("Scania", "סקניה", "Traton", "Sweden", "Europe", "https://upload.wikimedia.org/wikipedia/commons/0/0e/Scania_logo.svg"),
+    ("DAF", "DAF", "PACCAR", "Netherlands", "Europe", "https://upload.wikimedia.org/wikipedia/commons/6/65/DAF_logo.svg"),
+    ("Iveco", "איווקו", "Iveco Group", "Italy", "Europe", "https://upload.wikimedia.org/wikipedia/commons/7/74/Iveco_logo.svg"),
+    ("Kenworth", "Kenworth", "PACCAR", "USA", "America", "https://upload.wikimedia.org/wikipedia/commons/e/e0/Kenworth_logo.svg"),
+    ("Peterbilt", "Peterbilt", "PACCAR", "USA", "America", "https://upload.wikimedia.org/wikipedia/commons/8/85/Peterbilt_logo.svg"),
+    ("Freightliner", "Freightliner", "Daimler Truck", "USA", "America", "https://upload.wikimedia.org/wikipedia/commons/1/1d/Freightliner_logo.svg"),
+    ("Mack", "Mack", "Volvo Group", "USA", "America", "https://upload.wikimedia.org/wikipedia/commons/8/8b/Mack_Trucks_logo.svg"),
+    ("Western Star", "Western Star", "Daimler Truck", "USA", "America", "https://upload.wikimedia.org/wikipedia/commons/2/2c/Western_Star_Trucks_logo.svg"),
+    ("Volvo Trucks", "וולוו משאיות", "Volvo Group", "Sweden", "Europe", "https://upload.wikimedia.org/wikipedia/commons/2/2b/Volvo-Wordmark.svg"),
+    ("Renault Trucks", "רנו משאיות", "Volvo Group", "France", "Europe", "https://upload.wikimedia.org/wikipedia/commons/4/49/Renault_2021.svg"),
+    ("Isuzu Trucks", "איסוזו משאיות", "Isuzu", "Japan", "Asia", "https://upload.wikimedia.org/wikipedia/commons/5/57/Isuzu_logo.svg"),
+]
+
 # Alternate spellings / short names used in parts_catalog imports
 # agent uses these to resolve "Mercedes" → "Mercedes-Benz" etc.
 ALIASES: dict = {
@@ -192,6 +234,26 @@ ALIASES: dict = {
     "MG":             ["Morris Garages", "MG Motor"],
 }
 
+# Keep these rows as metadata references only; they should not appear in
+# end-user manufacturer dropdowns.
+NON_DISPLAY_SEED_BRANDS = {
+    "Stellantis",
+    "General Motors",
+    "Volkswagen Group",
+    "BMW Group",
+    "Toyota Group",
+    "Honda Group",
+    "Hyundai Motor Group",
+    "Geely Group",
+    "Tata Motors",
+    "SAIC",
+    "GAC",
+    "GEN",
+    "Renault Samsung",
+    "Citroën",
+    "JAECOO",
+}
+
 async def seed():
     engine = create_async_engine(DATABASE_URL, echo=False)
     async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -224,17 +286,37 @@ async def seed():
         await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_car_brands_name ON car_brands(name)"))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_car_brands_group ON car_brands(group_name)"))
 
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS truck_brands (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                name VARCHAR(100) UNIQUE NOT NULL,
+                name_he VARCHAR(100),
+                group_name VARCHAR(100),
+                country VARCHAR(100),
+                region VARCHAR(50),
+                is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                logo_url VARCHAR(500),
+                website VARCHAR(500),
+                notes TEXT,
+                aliases TEXT[] DEFAULT '{}',
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        """))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_truck_brands_name ON truck_brands(name)"))
+
     inserted = 0
     updated = 0
 
     async with async_session() as session:
         for (name, name_he, group_name, country, region, is_luxury, is_electric, website) in BRANDS:
             aliases_list = ALIASES.get(name, [])
+            is_active = name not in NON_DISPLAY_SEED_BRANDS
             await session.execute(text("""
                 INSERT INTO car_brands (id, name, name_he, group_name, country, region,
-                    is_luxury, is_electric_focused, website, aliases, is_active, created_at, updated_at)
+                    is_luxury, is_electric_focused, website, logo_url, aliases, is_active, created_at, updated_at)
                 VALUES (gen_random_uuid(), :name, :name_he, :group_name, :country, :region,
-                    :is_luxury, :is_electric, :website, :aliases, true, NOW(), NOW())
+                    :is_luxury, :is_electric, :website, :logo_url, :aliases, :is_active, NOW(), NOW())
                 ON CONFLICT (name) DO UPDATE SET
                     name_he = EXCLUDED.name_he,
                     group_name = EXCLUDED.group_name,
@@ -243,15 +325,46 @@ async def seed():
                     is_luxury = EXCLUDED.is_luxury,
                     is_electric_focused = EXCLUDED.is_electric_focused,
                     website = EXCLUDED.website,
+                    logo_url = COALESCE(car_brands.logo_url, EXCLUDED.logo_url),
                     aliases = EXCLUDED.aliases,
+                    is_active = EXCLUDED.is_active,
                     updated_at = NOW()
             """), {
                 "name": name, "name_he": name_he, "group_name": group_name,
                 "country": country, "region": region, "is_luxury": is_luxury,
                 "is_electric": is_electric, "website": website,
+                "logo_url": LOGO_URLS.get(name),
                 "aliases": aliases_list,
+                "is_active": is_active,
             })
             inserted += 1
+
+        for (name, name_he, group_name, country, region, logo_url) in TRUCK_BRANDS:
+            await session.execute(text("""
+                INSERT INTO truck_brands (
+                    id, name, name_he, group_name, country, region,
+                    is_active, logo_url, aliases, created_at, updated_at
+                )
+                VALUES (
+                    gen_random_uuid(), :name, :name_he, :group_name, :country, :region,
+                    true, :logo_url, '{}'::text[], NOW(), NOW()
+                )
+                ON CONFLICT (name) DO UPDATE SET
+                    name_he = EXCLUDED.name_he,
+                    group_name = EXCLUDED.group_name,
+                    country = EXCLUDED.country,
+                    region = EXCLUDED.region,
+                    logo_url = COALESCE(truck_brands.logo_url, EXCLUDED.logo_url),
+                    is_active = TRUE,
+                    updated_at = NOW()
+            """), {
+                "name": name,
+                "name_he": name_he,
+                "group_name": group_name,
+                "country": country,
+                "region": region,
+                "logo_url": logo_url,
+            })
 
         await session.commit()
 
