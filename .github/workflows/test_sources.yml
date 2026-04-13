@@ -1,0 +1,20 @@
+name: Test Source Accessibility
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - name: Install deps
+        run: |
+          pip install playwright beautifulsoup4 lxml
+          playwright install chromium --with-deps
+      - name: Test all sources
+        run: python scripts/test_sources_gh.py

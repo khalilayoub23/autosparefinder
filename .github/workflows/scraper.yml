@@ -1,0 +1,29 @@
+name: Aftermarket Scraper
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install playwright httpx asyncpg beautifulsoup4 lxml
+          playwright install chromium --with-deps
+
+      - name: Run aftermarket scraper
+        env:
+          CATALOG_DB_URL: ${{ secrets.CATALOG_DB_URL }}
+        run: python scripts/scraper_gh_actions.py
