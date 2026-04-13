@@ -13,7 +13,7 @@ import sqlalchemy as sa
 
 
 revision = "0030_reconcile_returns_schema"
-down_revision = "0029"
+down_revision = "0029b"
 branch_labels = None
 depends_on = None
 
