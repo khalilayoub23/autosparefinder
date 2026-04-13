@@ -8,6 +8,13 @@ import toast from 'react-hot-toast'
 import { useCartStore } from '../stores/cartStore'
 import InvoiceActions from '../components/InvoiceActions'
 
+function safeFormatDate(value) {
+  if (!value) return ''
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return ''
+  return format(d, 'dd/MM/yyyy HH:mm', { locale: he })
+}
+
 function buildTrackingUrl(trackingNumber, storedUrl) {
   if (!trackingNumber) return null
   const n = trackingNumber.trim()
@@ -199,7 +206,7 @@ function OrderCard({ order, onReturn, onDelete, selected, onSelect }) {
           <div>
             <p className="font-semibold text-gray-900">{order.order_number}</p>
             <p className="text-xs text-gray-400">
-              {order.created_at ? format(new Date(order.created_at), 'dd/MM/yyyy HH:mm', { locale: he }) : ''}
+              {safeFormatDate(order.created_at)}
             </p>
           </div>
         </div>
@@ -720,7 +727,7 @@ export default function Orders() {
                     {r.description && <p className="text-xs text-gray-400 mt-0.5">{r.description}</p>}
                     {r.date && (
                       <p className="text-xs text-gray-400 mt-0.5">
-                        {format(new Date(r.date), 'dd/MM/yyyy HH:mm', { locale: he })}
+                        {safeFormatDate(r.date)}
                       </p>
                     )}
                   </div>
@@ -783,7 +790,7 @@ export default function Orders() {
                           )}
                           {r.requested_at && (
                             <p className="text-xs text-gray-400 mt-0.5">
-                              {format(new Date(r.requested_at), 'dd/MM/yyyy HH:mm', { locale: he })}
+                              {safeFormatDate(r.requested_at)}
                             </p>
                           )}
                         </div>
