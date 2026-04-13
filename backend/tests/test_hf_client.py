@@ -304,27 +304,25 @@ async def test_cache_disabled_when_ttl_zero(monkeypatch):
 async def test_hf_embed_caches_vector():
     import hf_client
     fake_vector = [0.1, 0.2, 0.3]
-    encode_calls = 0
-
-    def fake_encode(text):
-        nonlocal encode_calls
-        encode_calls += 1
-        import numpy as np
-        return np.array(fake_vector)
-
     cache_store = {}
+    cache_get_calls = 0
 
     async def fake_cache_get(key):
+        nonlocal cache_get_calls
+        cache_get_calls += 1
+        if cache_get_calls == 1:
+            return None
         return cache_store.get(key)
 
     async def fake_cache_set(key, value, ttl):
         cache_store[key] = value
 
-    fake_model = MagicMock()
-    fake_model.encode = fake_encode
+    fake_resp = MagicMock()
+    fake_resp.status_code = 200
+    fake_resp.raise_for_status = MagicMock()
+    fake_resp.json.return_value = [fake_vector]
 
-    with patch("hf_client._is_model_cached", return_value=True), \
-         patch("hf_client._get_embed_model", return_value=fake_model), \
+    with patch.object(hf_client._get_http(), "post", new=AsyncMock(return_value=fake_resp)) as post_mock, \
          patch("hf_client._cache_get", side_effect=fake_cache_get), \
          patch("hf_client._cache_set", side_effect=fake_cache_set):
         v1 = await hf_client.hf_embed("hello")
@@ -332,7 +330,7 @@ async def test_hf_embed_caches_vector():
 
     assert v1 == fake_vector
     assert v2 == fake_vector
-    assert encode_calls == 1, f"encode() called {encode_calls} times — expected 1 (cached on second call)"
+    assert post_mock.await_count == 1, f"HTTP POST called {post_mock.await_count} times — expected 1 (cached on second call)"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -342,9 +340,11 @@ async def test_hf_embed_caches_vector():
 @pytest.mark.asyncio
 async def test_hf_embed_returns_empty_when_not_cached():
     import hf_client
-    with patch("hf_client._is_model_cached", return_value=False):
+    connect_error = hf_client.httpx.ConnectError("connection failed", request=MagicMock())
+    with patch("hf_client._cache_get", new=AsyncMock(return_value=None)), \
+         patch.object(hf_client._get_http(), "post", new=AsyncMock(side_effect=connect_error)):
         result = await hf_client.hf_embed("test")
-    assert result == [], "Expected [] when model weights not on disk"
+    assert result == [], "Expected [] when HF Inference API call fails"
 
 
 # ══════════════════════════════════════════════════════════════════════════════

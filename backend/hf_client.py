@@ -33,6 +33,16 @@ HF_CLIP_MODEL   = os.getenv("HF_CLIP_MODEL",   "openai/clip-vit-large-patch14") 
 # For mixed He+En query normalization (transliteration, spelling fixes, synonym expansion)
 HF_LANG_MODEL   = os.getenv("HF_LANG_MODEL",   "Helsinki-NLP/opus-mt-tc-big-he-en")   # He→En for mixed queries
 
+CEREBRAS_API_KEY    = os.getenv("CEREBRAS_API_KEY", "")
+CEREBRAS_TEXT_MODEL = os.getenv("CEREBRAS_TEXT_MODEL", "qwen-3-235b-a22b-instruct-2507")
+CEREBRAS_BASE       = "https://api.cerebras.ai/v1"
+GEMINI_API_KEY      = os.getenv("GEMINI_API_KEY", "")
+GEMINI_VIS_MODEL    = os.getenv("GEMINI_VIS_MODEL", "gemini-1.5-flash-8b")
+GEMINI_BASE         = "https://generativelanguage.googleapis.com/v1beta/models"
+GROQ_API_KEY        = os.getenv("GROQ_API_KEY", "")
+GROQ_AUDIO_MODEL    = os.getenv("GROQ_AUDIO_MODEL", "whisper-large-v3-turbo")
+GROQ_BASE           = "https://api.groq.com/openai/v1"
+
 ROUTER_BASE  = "https://router.huggingface.co/v1"
 INFER_BASE   = "https://router.huggingface.co/hf-inference/models"
 
@@ -160,7 +170,10 @@ async def _post_with_retry(
 
 async def hf_text(prompt: str, system: str = "", timeout: float = 90.0) -> str:
     """Chat completion via HF Router. Cached in Redis for _TEXT_CACHE_TTL seconds."""
-    cache_key = _cache_key("txt", HF_TEXT_MODEL, system, prompt)
+    if not CEREBRAS_API_KEY:
+        raise RuntimeError("CEREBRAS_API_KEY not set in .env")
+
+    cache_key = _cache_key("txt", CEREBRAS_TEXT_MODEL, system, prompt)
     cached = await _cache_get(cache_key)
     if cached is not None:
         logger.debug("hf_client [text] cache hit")
@@ -172,14 +185,21 @@ async def hf_text(prompt: str, system: str = "", timeout: float = 90.0) -> str:
     messages.append({"role": "user", "content": prompt})
 
     payload = _json.dumps({
-        "model": HF_TEXT_MODEL,
+        "model": CEREBRAS_TEXT_MODEL,
         "messages": messages,
         "max_tokens": 1000,
         "stream": False,
     }, ensure_ascii=False).encode()
 
     resp = await _post_with_retry(
-        f"{ROUTER_BASE}/chat/completions", _headers(), payload, timeout, "text"
+        f"{CEREBRAS_BASE}/chat/completions",
+        {
+            "Authorization": f"Bearer {CEREBRAS_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        payload,
+        timeout,
+        "text",
     )
     resp.raise_for_status()
     result: str = resp.json()["choices"][0]["message"]["content"]
@@ -261,30 +281,45 @@ async def hf_vision(
     mime: str = "image/jpeg",
     timeout: float = 60.0,
 ) -> str:
+    if not GEMINI_API_KEY:
+        raise RuntimeError("GEMINI_API_KEY not set in .env")
+
     payload = _json.dumps({
-        "model": HF_VISION_MODEL,
-        "messages": [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": prompt},
-                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{image_b64}"}},
+        "contents": [{
+            "parts": [
+                {"text": prompt},
+                {"inline_data": {"mime_type": mime, "data": image_b64}},
             ],
         }],
-        "max_tokens": 500,
     }, ensure_ascii=False).encode()
 
     resp = await _post_with_retry(
-        f"{ROUTER_BASE}/chat/completions", _headers(), payload, timeout, "vision"
+        f"{GEMINI_BASE}/{GEMINI_VIS_MODEL}:generateContent?key={GEMINI_API_KEY}",
+        {"Content-Type": "application/json"},
+        payload,
+        timeout,
+        "vision",
     )
     resp.raise_for_status()
-    return resp.json()["choices"][0]["message"]["content"]
+    return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
 
 
 async def hf_audio(audio_bytes: bytes, timeout: float = 60.0) -> str:
+    if not GROQ_API_KEY:
+        raise RuntimeError("GROQ_API_KEY not set in .env")
+
+    req = httpx.Request(
+        "POST",
+        f"{GROQ_BASE}/audio/transcriptions",
+        headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+        data={"model": GROQ_AUDIO_MODEL},
+        files={"file": ("audio.webm", audio_bytes, "audio/webm")},
+    )
+
     resp = await _post_with_retry(
-        f"{INFER_BASE}/{HF_AUDIO_MODEL}",
-        _headers("audio/webm"),
-        audio_bytes,
+        f"{GROQ_BASE}/audio/transcriptions",
+        dict(req.headers),
+        req.read(),
         timeout,
         "audio",
     )
