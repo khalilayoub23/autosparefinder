@@ -365,7 +365,9 @@ async def test_hf_vision_payload():
     async def fake_post(url, *, headers, content, timeout):
         captured["url"] = url
         captured["body"] = json.loads(content)
-        return _text_resp("car part detected")
+        return _make_response(200, {
+            "candidates": [{"content": {"parts": [{"text": "car part detected"}]}}]
+        })
 
     with patch("hf_client.GEMINI_API_KEY", "test-key"), \
          patch.object(hf_client._get_http(), "post", side_effect=fake_post):
@@ -373,9 +375,9 @@ async def test_hf_vision_payload():
 
     assert result == "car part detected"
     body = captured["body"]
-    assert body["messages"][0]["content"][0]["text"] == "what is this?"
-    assert "base64imgdata==" in body["messages"][0]["content"][1]["image_url"]["url"]
-    assert "image/png" in body["messages"][0]["content"][1]["image_url"]["url"]
+    assert body["contents"][0]["parts"][0]["text"] == "what is this?"
+    assert body["contents"][0]["parts"][1]["inline_data"]["data"] == "base64imgdata=="
+    assert body["contents"][0]["parts"][1]["inline_data"]["mime_type"] == "image/png"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -388,7 +390,7 @@ async def test_hf_audio_content_type():
     captured_headers = {}
 
     async def fake_post(url, *, headers, content, timeout):
-        captured_headers.update(headers)
+        captured_headers.update({k.title(): v for k, v in headers.items()})
         return _make_response(200, {"text": "transcribed audio"})
 
     with patch("hf_client.GROQ_API_KEY", "test-key"), \
@@ -396,7 +398,7 @@ async def test_hf_audio_content_type():
         result = await hf_client.hf_audio(b"fake audio bytes")
 
     assert result == "transcribed audio"
-    assert captured_headers.get("Content-Type") == "audio/webm"
+    assert str(captured_headers.get("Content-Type", "")).startswith("multipart/form-data")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
