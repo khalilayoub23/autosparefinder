@@ -48,7 +48,7 @@ class OrderItemCreate(BaseModel):
 
 
 class OrderCreate(BaseModel):
-    items: List[OrderItemCreate]
+    items: List[OrderItemCreate] = Field(..., min_items=1)
     shipping_address: Dict[str, str]
 
 
@@ -145,7 +145,7 @@ class ResolveApprovalBody(BaseModel):
 
 class CartAddRequest(BaseModel):
     part_id: str
-    quantity: int = 1
+    quantity: int = Field(default=1, ge=1, le=100)
 
 
 class WishlistAddRequest(BaseModel):

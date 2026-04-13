@@ -35,6 +35,9 @@ router = APIRouter()
 async def create_order(data: OrderCreate, current_user: User = Depends(get_current_verified_user), cat_db: AsyncSession = Depends(get_db), db: AsyncSession = Depends(get_pii_db)):
     from BACKEND_AI_AGENTS import get_supplier_shipping as _get_ship2
 
+    if not data.items:
+        raise HTTPException(status_code=400, detail="לא ניתן ליצור הזמנה ללא פריטים")
+
     subtotal = 0.0
     items_data = []
     # USD_TO_ILS is imported from BACKEND_DATABASE_MODELS (single source of truth)
@@ -76,6 +79,14 @@ async def create_order(data: OrderCreate, current_user: User = Depends(get_curre
     vat_total = round(subtotal * 0.18, 2)
     shipping = round(sum(supplier_delivery_fees.values()), 2)
     total = round(subtotal + vat_total + shipping, 2)
+
+    # Guardrail: never create non-payable (zero/negative) orders.
+    if total <= 0:
+        raise HTTPException(status_code=400, detail="לא ניתן ליצור הזמנה בסכום 0")
+
+    if not items_data:
+        raise HTTPException(status_code=400, detail="לא ניתן ליצור הזמנה ללא פריטים")
+
     order_number = f"AUTO-2026-{str(uuid.uuid4())[:8].upper()}"
 
     order = Order(
@@ -152,7 +163,7 @@ async def get_orders(current_user: User = Depends(get_current_user), limit: int 
 
 
 @router.get("/api/v1/orders/{order_id}")
-async def get_order(order_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
+async def get_order(order_id: uuid.UUID, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(Order).where(and_(Order.id == order_id, Order.user_id == current_user.id)))
     order = result.scalar_one_or_none()
     if not order:
@@ -187,7 +198,7 @@ async def get_order(order_id: str, current_user: User = Depends(get_current_user
 
 
 @router.get("/api/v1/orders/{order_id}/track")
-async def track_order(order_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
+async def track_order(order_id: uuid.UUID, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(Order).where(and_(Order.id == order_id, Order.user_id == current_user.id)))
     order = result.scalar_one_or_none()
     if not order:
@@ -202,7 +213,7 @@ async def track_order(order_id: str, current_user: User = Depends(get_current_us
 
 
 @router.put("/api/v1/orders/{order_id}/cancel")
-async def cancel_order(order_id: str, data: OrderCancelRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
+async def cancel_order(order_id: uuid.UUID, data: OrderCancelRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     import stripe as stripe_sdk
 
     result = await db.execute(select(Order).where(and_(Order.id == order_id, Order.user_id == current_user.id)))
@@ -297,7 +308,7 @@ async def cancel_order(order_id: str, data: OrderCancelRequest, current_user: Us
             )
         )
 
-        from BACKEND_API_ROUTES import publish_notification
+        from BACKEND_AUTH_SECURITY import publish_notification
 
         asyncio.create_task(
             _guarded_task(
@@ -323,7 +334,7 @@ async def cancel_order(order_id: str, data: OrderCancelRequest, current_user: Us
 
 @router.post("/api/v1/orders/{order_id}/return")
 async def create_order_return(
-    order_id: str,
+    order_id: uuid.UUID,
     data: ReturnRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_pii_db),
@@ -350,7 +361,7 @@ async def create_order_return(
 
 
 @router.delete("/api/v1/orders/{order_id}")
-async def delete_order(order_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
+async def delete_order(order_id: uuid.UUID, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     result = await db.execute(select(Order).where(and_(Order.id == order_id, Order.user_id == current_user.id)))
     order = result.scalar_one_or_none()
     if not order:
@@ -378,7 +389,7 @@ async def delete_order(order_id: str, current_user: User = Depends(get_current_u
 
 @router.get("/api/v1/orders/{order_id}/invoice")
 async def get_order_invoice(
-    order_id: str,
+    order_id: uuid.UUID,
     inline: bool = False,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_pii_db),

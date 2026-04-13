@@ -1,7 +1,10 @@
 import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
 import { chatApi } from '../api/chat'
 
-export const useChatStore = create((set, get) => ({
+export const useChatStore = create(
+  persist(
+    (set, get) => ({
   conversations: [],
   currentConversationId: null,
   messages: [],
@@ -118,4 +121,12 @@ export const useChatStore = create((set, get) => ({
       messages: s.currentConversationId === id ? [] : s.messages,
     }))
   },
-}))
+}),
+  {
+    name: 'chat-session',
+    partialize: (state) => ({
+      currentConversationId: state.currentConversationId,
+      lastReadAt: state.lastReadAt,
+    }),
+  }
+))

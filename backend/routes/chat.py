@@ -54,6 +54,8 @@ async def send_message(data: ChatMessageRequest, request: Request, current_user:
         )
         db.add(conversation)
         await db.flush()
+    else:
+        conversation.last_message_at = datetime.utcnow()
 
     # ── 2. Save user message immediately ─────────────────────────────────────
     user_msg = Message(
@@ -75,9 +77,28 @@ async def send_message(data: ChatMessageRequest, request: Request, current_user:
     async def _run_agent_bg():
         async with pii_session_factory() as bg_db:
             try:
-                await process_agent_response_for_message(user_id, message, conv_id, bg_db)
+                await process_agent_response_for_message(
+                    user_id,
+                    message,
+                    conv_id,
+                    bg_db,
+                    source="web",
+                )
             except Exception as exc:
                 print(f"[BG AGENT FATAL] conv={conv_id}: {exc}")
+                # Save a visible error message so the user isn't left with a stuck spinner
+                try:
+                    async with pii_session_factory() as err_db:
+                        err_db.add(Message(
+                            conversation_id=conv_id,
+                            role="assistant",
+                            agent_name="service_agent",
+                            content="מצטער, נתקלתי בבעיה טכנית. אנא נסה שוב בעוד מספר שניות.",
+                            content_type="text",
+                        ))
+                        await err_db.commit()
+                except Exception:
+                    pass
 
     asyncio.create_task(_guarded_task(_run_agent_bg()))
 
@@ -138,7 +159,9 @@ async def upload_image(file: UploadFile = File(...), current_user: User = Depend
     from hf_client import hf_vision
 
     if redis and request:
-        await check_rate_limit(redis, f"upload_image:{current_user.id}", 10, 60)
+        allowed = await check_rate_limit(redis, f"upload_image:{current_user.id}", 10, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail="יותר מדי בקשות — נסה שוב בעוד דקה")
     file_id = str(uuid.uuid4())
     identified_part = ""
     identified_part_en = ""
@@ -207,7 +230,9 @@ async def upload_audio(
     from hf_client import hf_audio
 
     if redis and request:
-        await check_rate_limit(redis, f"upload_audio:{current_user.id}", 10, 60)
+        allowed = await check_rate_limit(redis, f"upload_audio:{current_user.id}", 10, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail="יותר מדי בקשות — נסה שוב בעוד דקה")
     if not os.getenv("HF_TOKEN", ""):
         raise HTTPException(status_code=503, detail="שירות התמלול אינו זמין כרגע")
 
@@ -249,6 +274,7 @@ async def upload_audio(
             message=transcription,
             conversation_id=conversation_id,
             db=db,
+            source="web",
         )
         agent_response    = result.get("response", "")
         conversation_id_out = result.get("conversation_id")

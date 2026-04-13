@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../stores/authStore'
 import { Eye, EyeOff, Wrench, Loader2, CheckCircle2 } from 'lucide-react'
 import toast from 'react-hot-toast'
+import SocialLoginButtons from '../components/SocialLoginButtons'
 
 export default function Register() {
   const navigate = useNavigate()
@@ -32,7 +33,9 @@ export default function Register() {
       await register({ full_name: form.full_name, email: form.email, phone: form.phone, password: form.password })
       setDone(true)
     } catch (err) {
-      const msg = err.response?.data?.error || err.response?.data?.detail || 'שגיאה בהרשמה'
+      const detail = err.response?.data?.detail
+      const detailMsg = typeof detail === 'string' ? detail : detail?.message
+      const msg = err.response?.data?.error || detailMsg || 'שגיאה בהרשמה'
       toast.error(msg)
     }
   }
@@ -62,6 +65,8 @@ export default function Register() {
         </div>
 
         <div className="card p-8 shadow-md">
+          <h2 className="text-xl font-bold text-gray-900 mb-6 text-center">הצטרף אלינו</h2>
+
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">שם מלא</label>
@@ -94,6 +99,19 @@ export default function Register() {
               {isLoading ? 'יוצר חשבון...' : 'הירשם'}
             </button>
           </form>
+
+          {/* Divider */}
+          <div className="relative my-5">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-gray-200" />
+            </div>
+            <div className="relative flex justify-center text-sm">
+              <span className="bg-white px-3 text-gray-400 font-medium">OR</span>
+            </div>
+          </div>
+
+          {/* Social sign-up — below form */}
+          <SocialLoginButtons redirectTo="/" />
           <p className="text-center text-sm text-gray-500 mt-6">
             יש לך חשבון? <Link to="/login" className="text-brand-600 font-semibold hover:text-brand-700">כנס</Link>
           </p>

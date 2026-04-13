@@ -16,14 +16,13 @@ depends_on = None
 
 def upgrade() -> None:
     # Drop FK constraints (columns remain as plain UUIDs — cross-DB refs no longer enforced)
-    op.drop_constraint("user_profiles_default_vehicle_id_fkey",
-                       "user_profiles", type_="foreignkey")
-    op.drop_constraint("user_vehicles_vehicle_id_fkey",
-                       "user_vehicles", type_="foreignkey")
+    # Use IF EXISTS — the table may already have been manually dropped (idempotent)
+    op.execute(sa.text("ALTER TABLE user_profiles DROP CONSTRAINT IF EXISTS user_profiles_default_vehicle_id_fkey"))
+    op.execute(sa.text("ALTER TABLE user_vehicles DROP CONSTRAINT IF EXISTS user_vehicles_vehicle_id_fkey"))
     # Drop indexes then the table
-    op.drop_index("ix_vehicles_manufacturer",        table_name="vehicles")
-    op.drop_index("idx_vehicles_manufacturer_model", table_name="vehicles")
-    op.drop_table("vehicles")
+    op.execute(sa.text("DROP INDEX IF EXISTS ix_vehicles_manufacturer"))
+    op.execute(sa.text("DROP INDEX IF EXISTS idx_vehicles_manufacturer_model"))
+    op.execute(sa.text("DROP TABLE IF EXISTS vehicles"))
 
 
 def downgrade() -> None:

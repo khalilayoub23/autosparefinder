@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, text, desc
+from sqlalchemy import select, and_, text, desc, func
 from datetime import datetime
 import asyncio
 import os
@@ -35,6 +35,48 @@ from routes.utils import _guarded_task, _get_frontend_url, trigger_supplier_fulf
 router = APIRouter()
 
 
+def _dedupe_orders_from_rows(rows) -> list:
+    """Deduplicate orders while preserving input order."""
+    orders = []
+    seen = set()
+    for _, ord in rows:
+        oid = str(ord.id)
+        if oid not in seen:
+            seen.add(oid)
+            orders.append(ord)
+    return orders
+
+
+def _build_paid_verify_response(orders: list) -> dict:
+    """Build verify-session success payload from one or more orders."""
+    if len(orders) > 1:
+        return {
+            "status": "paid",
+            "is_multi": True,
+            "orders": [
+                {
+                    "order_id": str(o.id),
+                    "order_number": o.order_number,
+                    "order_status": o.status,
+                    "amount": float(o.total_amount),
+                }
+                for o in orders
+            ],
+            "order_number": orders[0].order_number,
+            "order_id": str(orders[0].id),
+            "amount": sum(float(o.total_amount) for o in orders),
+        }
+
+    order = orders[0]
+    return {
+        "status": "paid",
+        "order_status": order.status,
+        "order_number": order.order_number,
+        "order_id": str(order.id),
+        "amount": float(order.total_amount),
+    }
+
+
 @router.post("/api/v1/payments/create-checkout")
 async def create_checkout_session(
     order_id: str,
@@ -64,6 +106,14 @@ async def create_checkout_session(
     if order.status not in ("pending_payment", "confirmed"):
         raise HTTPException(status_code=400, detail=f"Order is already {order.status}")
 
+    # Reject invalid payable orders early.
+    if float(order.total_amount or 0) <= 0:
+        raise HTTPException(status_code=400, detail="לא ניתן לפתוח תשלום להזמנה בסכום 0")
+
+    order_items_check = await db.execute(select(func.count(OrderItem.id)).where(OrderItem.order_id == order.id))
+    if int(order_items_check.scalar() or 0) == 0:
+        raise HTTPException(status_code=400, detail="לא ניתן לפתוח תשלום להזמנה ללא פריטים")
+
     # ── Live price validation ──────────────────────────────────────────────
     from decimal import Decimal
     _rate = USD_TO_ILS
@@ -83,41 +133,51 @@ async def create_checkout_session(
     _max_shipping = 0.0
     _new_items_total = Decimal("0")
 
-    async with async_session_factory() as _cat:
-        for _item in _order_items:
-            if not _item.part_id:
+    try:
+        async with async_session_factory() as _cat:
+            for _item in _order_items:
+                if not _item.part_id:
+                    _new_items_total += Decimal(str(float(_item.total_price)))
+                    continue
+                _sp_row = (await _cat.execute(
+                    text("""
+                        SELECT
+                            COALESCE(price_ils, price_usd * :rate) AS cost_ils,
+                            COALESCE(shipping_cost_ils, shipping_cost_usd * :rate) AS ship_ils
+                        FROM supplier_parts
+                        WHERE part_id = :part_id AND is_available = TRUE
+                        ORDER BY COALESCE(price_ils, price_usd * :rate) ASC
+                        LIMIT 1
+                    """),
+                    {"part_id": str(_item.part_id), "rate": _rate},
+                )).fetchone()
+
+                if _sp_row is None:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "detail": "part_unavailable",
+                            "message": "אחד או יותר מהחלקים אינם זמינים כרגע. אנא צור קשר עם שירות הלקוחות.",
+                        },
+                    )
+
+                if _sp_row[0] is not None:
+                    _live_unit = round(float(_sp_row[0]) * 1.45 * 1.18, 2)
+                    _live_ship = float(_sp_row[1]) if _sp_row[1] is not None else 91.0
+                    _max_shipping = max(_max_shipping, _live_ship)
+                    if abs(_live_unit - round(float(_item.unit_price), 2)) > 0.01:
+                        _price_changed = True
+                        _item.unit_price = _live_unit
+                        _item.total_price = round(_live_unit * _item.quantity, 2)
                 _new_items_total += Decimal(str(float(_item.total_price)))
-                continue
-            _sp_row = (await _cat.execute(
-                text("""
-                    SELECT
-                        COALESCE(price_ils, price_usd * :rate) AS cost_ils,
-                        COALESCE(shipping_cost_ils, shipping_cost_usd * :rate) AS ship_ils
-                    FROM supplier_parts
-                    WHERE part_id = :part_id AND is_available = TRUE
-                    ORDER BY COALESCE(price_ils, price_usd * :rate) ASC
-                    LIMIT 1
-                """),
-                {"part_id": str(_item.part_id), "rate": _rate},
-            )).fetchone()
-
-            if _sp_row:
-                _live_unit = round(float(_sp_row[0]) * 1.45 * 1.18, 2)
-                _live_ship = float(_sp_row[1]) if _sp_row[1] is not None else 91.0
-                _max_shipping = max(_max_shipping, _live_ship)
-            else:
-                raise HTTPException(
-                    status_code=409,
-                    detail={
-                        "detail": "part_unavailable",
-                        "message": "אחד או יותר מהחלקים אינם זמינים כרגע. אנא צור קשר עם שירות הלקוחות.",
-                    },
-                )
-
-            if abs(_live_unit - round(float(_item.unit_price), 2)) > 0.01:
-                _price_changed = True
-                _item.unit_price = _live_unit
-                _item.total_price = round(_live_unit * _item.quantity, 2)
+    except HTTPException:
+        raise
+    except Exception as _e:
+        print(f"[Payment] Live price check error (using stored prices): {_e}")
+        _new_items_total = Decimal("0")
+        _price_changed = False
+        _max_shipping = 0.0
+        for _item in _order_items:
             _new_items_total += Decimal(str(float(_item.total_price)))
 
     if _max_shipping > 0 and abs(_max_shipping - round(float(order.shipping_cost), 2)) > 0.01:
@@ -150,7 +210,11 @@ async def create_checkout_session(
         if not existing_pay.scalar_one_or_none():
             db.add(Payment(
                 order_id=order.id,
+                user_id=current_user.id,
                 payment_intent_id=sim_session_id,
+                provider="simulated",
+                provider_transaction_id=sim_session_id,
+                amount_ils=order.total_amount,
                 amount=order.total_amount,
                 currency="ILS",
                 status="paid",
@@ -188,6 +252,13 @@ async def create_checkout_session(
     # Build Stripe line items
     line_items = []
     for item in order_items:
+        if int(item.quantity or 0) <= 0:
+            raise HTTPException(status_code=400, detail="כמות פריט לא תקינה בהזמנה")
+
+        unit_amount_agorot = int(round(float(item.total_price) / item.quantity * 100))
+        if unit_amount_agorot <= 0:
+            raise HTTPException(status_code=400, detail="מחיר פריט לא תקין בהזמנה")
+
         line_items.append({
             "price_data": {
                 "currency": "ils",
@@ -195,7 +266,7 @@ async def create_checkout_session(
                     "name": item.part_name,
                     "description": f"{item.manufacturer} | אחריות {item.warranty_months} חודשים",
                 },
-                "unit_amount": int(float(item.total_price) / item.quantity * 100),  # agorot per unit
+                "unit_amount": unit_amount_agorot,  # agorot per unit
             },
             "quantity": item.quantity,
         })
@@ -212,33 +283,44 @@ async def create_checkout_session(
         })
 
     # Create Stripe Checkout Session (async)
-    session = await asyncio.get_running_loop().run_in_executor(
-        None,
-        lambda: stripe_sdk.checkout.Session.create(
-            payment_method_types=["card"],
-            line_items=line_items,
-            mode="payment",
-            success_url=f"{frontend_url}/payment/success?session_id={{CHECKOUT_SESSION_ID}}",
-            cancel_url=f"{frontend_url}/cart",
-            customer_email=current_user.email,
-            metadata={
-                "order_id": str(order.id),
-                "order_number": order.order_number,
-                "user_id": str(current_user.id),
-            },
-            locale="auto",
-            idempotency_key=f"order:{order.id}",  # Gap 6: Idempotency
+    try:
+        session = await asyncio.get_running_loop().run_in_executor(
+            None,
+            lambda: stripe_sdk.checkout.Session.create(
+                payment_method_types=["card"],
+                line_items=line_items,
+                mode="payment",
+                success_url=f"{frontend_url}/payment/success?session_id={{CHECKOUT_SESSION_ID}}",
+                cancel_url=f"{frontend_url}/cart",
+                customer_email=current_user.email,
+                metadata={
+                    "order_id": str(order.id),
+                    "order_number": order.order_number,
+                    "user_id": str(current_user.id),
+                },
+                locale="auto",
+                idempotency_key=f"order:{order.id}",  # Gap 6: Idempotency
+            )
         )
-    )
+    except Exception as stripe_err:
+        raise HTTPException(status_code=503, detail=f"שגיאת שירות תשלום: {stripe_err}")
 
-    # Save pending payment record
-    db.add(Payment(
-        order_id=order.id,
-        payment_intent_id=session.id,
-        amount=order.total_amount,
-        currency="ILS",
-        status="pending",
-    ))
+    # Save pending payment record (guard against duplicate on retry)
+    existing_pay = await db.execute(
+        select(Payment).where(Payment.payment_intent_id == session.id)
+    )
+    if not existing_pay.scalar_one_or_none():
+        db.add(Payment(
+            order_id=order.id,
+            user_id=current_user.id,
+            payment_intent_id=session.id,
+            provider="stripe",
+            provider_transaction_id=session.id,
+            amount_ils=order.total_amount,
+            amount=order.total_amount,
+            currency="ILS",
+            status="pending",
+        ))
     await db.commit()
 
     return {
@@ -285,6 +367,15 @@ async def create_multi_checkout_session(
     non_pending = [o.order_number for o in orders if o.status != "pending_payment"]
     if non_pending:
         raise HTTPException(status_code=400, detail=f"הזמנות אלו אינן ממתינות לתשלום: {', '.join(non_pending)}")
+
+    invalid_amount_orders = [o.order_number for o in orders if float(o.total_amount or 0) <= 0]
+    if invalid_amount_orders:
+        raise HTTPException(status_code=400, detail=f"הזמנות בסכום 0 לא ניתנות לתשלום: {', '.join(invalid_amount_orders)}")
+
+    for o in orders:
+        cnt_res = await db.execute(select(func.count(OrderItem.id)).where(OrderItem.order_id == o.id))
+        if int(cnt_res.scalar() or 0) == 0:
+            raise HTTPException(status_code=400, detail=f"הזמנה ללא פריטים אינה ניתנת לתשלום: {o.order_number}")
 
     # ── Live price validation ──────────────────────────────────────────────
     from decimal import Decimal
@@ -369,6 +460,13 @@ async def create_multi_checkout_session(
     for order in orders:
         items_res = await db.execute(select(OrderItem).where(OrderItem.order_id == order.id))
         for item in items_res.scalars().all():
+            if int(item.quantity or 0) <= 0:
+                raise HTTPException(status_code=400, detail=f"כמות פריט לא תקינה בהזמנה: {order.order_number}")
+
+            unit_amount_agorot = int(round(float(item.total_price) / item.quantity * 100))
+            if unit_amount_agorot <= 0:
+                raise HTTPException(status_code=400, detail=f"מחיר פריט לא תקין בהזמנה: {order.order_number}")
+
             line_items.append({
                 "price_data": {
                     "currency": "ils",
@@ -376,7 +474,7 @@ async def create_multi_checkout_session(
                         "name": f"[{order.order_number}] {item.part_name}",
                         "description": f"{item.manufacturer} | אחריות {item.warranty_months} חודשים",
                     },
-                    "unit_amount": int(float(item.total_price) / item.quantity * 100),
+                    "unit_amount": unit_amount_agorot,
                 },
                 "quantity": item.quantity,
             })
@@ -390,35 +488,52 @@ async def create_multi_checkout_session(
                 "quantity": 1,
             })
 
-    frontend_url = _get_frontend_url(request)
-    session = await asyncio.get_running_loop().run_in_executor(
-        None,
-        lambda: stripe_sdk.checkout.Session.create(
-            payment_method_types=["card"],
-            line_items=line_items,
-            mode="payment",
-            success_url=f"{frontend_url}/payment/success?session_id={{CHECKOUT_SESSION_ID}}",
-            cancel_url=f"{frontend_url}/orders",
-            customer_email=current_user.email,
-            metadata={
-                "order_ids": ",".join(str(o.id) for o in orders),
-                "order_count": str(len(orders)),
-                "user_id": str(current_user.id),
-            },
-            locale="auto",
-            idempotency_key=f"orders:{':'.join(str(o.id) for o in orders)}",  # Gap 6: Idempotency
-        )
-    )
+    if not line_items:
+        raise HTTPException(status_code=400, detail="לא נמצאו פריטים תקינים לתשלום")
 
-    # Create a pending Payment record per order
+    frontend_url = _get_frontend_url(request)
+    try:
+        session = await asyncio.get_running_loop().run_in_executor(
+            None,
+            lambda: stripe_sdk.checkout.Session.create(
+                payment_method_types=["card"],
+                line_items=line_items,
+                mode="payment",
+                success_url=f"{frontend_url}/payment/success?session_id={{CHECKOUT_SESSION_ID}}",
+                cancel_url=f"{frontend_url}/orders",
+                customer_email=current_user.email,
+                metadata={
+                    "order_ids": ",".join(str(o.id) for o in orders),
+                    "order_count": str(len(orders)),
+                    "user_id": str(current_user.id),
+                },
+                locale="auto",
+                idempotency_key=f"orders:{':'.join(str(o.id) for o in orders)}",  # Gap 6: Idempotency
+            )
+        )
+    except Exception as stripe_err:
+        raise HTTPException(status_code=503, detail=f"שגיאת שירות תשלום: {stripe_err}")
+
+    # Create a pending Payment record per order.
+    # Use "<session_id>:<order_id>" to keep payment_intent_id unique per row
+    # (the UNIQUE constraint is per-column; one Stripe session covers all orders).
     for order in orders:
-        db.add(Payment(
-            order_id=order.id,
-            payment_intent_id=session.id,
-            amount=order.total_amount,
-            currency="ILS",
-            status="pending",
-        ))
+        composite_id = f"{session.id}:{str(order.id)}"
+        existing_pay = await db.execute(
+            select(Payment).where(Payment.payment_intent_id == composite_id)
+        )
+        if not existing_pay.scalar_one_or_none():
+            db.add(Payment(
+                order_id=order.id,
+                user_id=current_user.id,
+                payment_intent_id=composite_id,
+                provider="stripe",
+                provider_transaction_id=session.id,
+                amount_ils=order.total_amount,
+                amount=order.total_amount,
+                currency="ILS",
+                status="pending",
+            ))
     await db.commit()
 
     return {
@@ -438,6 +553,58 @@ async def verify_checkout_session(
 ):
     """Called after Stripe redirects back — verifies payment and marks order(s) paid."""
     import stripe as stripe_sdk
+
+    async def _fetch_session_rows_for_user(session_key: str):
+        rows_res = await db.execute(
+            select(Payment, Order)
+            .join(Order, Payment.order_id == Order.id)
+            .where(
+                and_(
+                    Order.user_id == current_user.id,
+                    Payment.payment_intent_id.like(f"{session_key}:%"),
+                )
+            )
+        )
+        rows = rows_res.all()
+        if rows:
+            return rows
+
+        rows_res = await db.execute(
+            select(Payment, Order)
+            .join(Order, Payment.order_id == Order.id)
+            .where(
+                and_(
+                    Order.user_id == current_user.id,
+                    Payment.payment_intent_id == session_key,
+                )
+            )
+        )
+        return rows_res.all()
+
+    def _session_metadata_dict(session_obj) -> dict:
+        meta = getattr(session_obj, "metadata", None)
+        if isinstance(meta, dict):
+            return meta
+        if meta is not None:
+            try:
+                return dict(meta)
+            except Exception:
+                return {}
+        return {}
+
+    async def _fulfill_paid_orders_bg(order_ids: list):
+        """Run supplier fulfillment in a detached session so verify returns fast."""
+        if not order_ids:
+            return
+        async with pii_session_factory() as bg_db:
+            try:
+                res = await bg_db.execute(select(Order).where(Order.id.in_(order_ids)))
+                bg_orders = res.scalars().all()
+                if bg_orders:
+                    await trigger_supplier_fulfillment(bg_orders, bg_db)
+                    await bg_db.commit()
+            except Exception as e:
+                print(f"[Payments] fulfillment warning (verify bg): {e}")
 
     # ── Simulated payment (session_id starts with SIM-) ───────────────────────
     if session_id.startswith("SIM-"):
@@ -482,13 +649,28 @@ async def verify_checkout_session(
 
     stripe_sdk.api_key = stripe_key
 
-    session = await asyncio.get_running_loop().run_in_executor(
-        None,
-        lambda: stripe_sdk.checkout.Session.retrieve(session_id)
-    )
+    try:
+        session = await asyncio.get_running_loop().run_in_executor(
+            None,
+            lambda: stripe_sdk.checkout.Session.retrieve(session_id)
+        )
+    except Exception as stripe_err:
+        # Stripe may reject old/foreign session IDs (or transiently fail).
+        # If we already have local paid records for this session, treat it as
+        # verified to avoid false-negative payment failures on the success page.
+        pay_rows = await _fetch_session_rows_for_user(session_id)
+
+        if pay_rows:
+            return _build_paid_verify_response(_dedupe_orders_from_rows(pay_rows))
+
+        raise HTTPException(
+            status_code=400,
+            detail="לא ניתן לאמת את סשן התשלום מול Stripe. עבור להזמנות שלך לבדיקה.",
+        ) from stripe_err
 
     # ── MULTI-ORDER SESSION ────────────────────────────────────────────────────
-    order_ids_str = session.metadata.get("order_ids")
+    metadata = _session_metadata_dict(session)
+    order_ids_str = (metadata.get("order_ids") or "").strip()
     if order_ids_str:
         order_id_list = [oid.strip() for oid in order_ids_str.split(",") if oid.strip()]
         orders_res = await db.execute(
@@ -499,24 +681,29 @@ async def verify_checkout_session(
             raise HTTPException(status_code=404, detail="Orders not found")
 
         if session.payment_status == "paid":
+            newly_paid_order_ids = []
             for ord in multi_orders:
                 if ord.status == "pending_payment":
                     ord.status = "paid"
-            # Update all payment records tied to this session
-            pays_res = await db.execute(select(Payment).where(Payment.payment_intent_id == session_id))
+                    newly_paid_order_ids.append(ord.id)
+            # Update all payment records tied to this session.
+            # Multi-checkout stores them as "<session_id>:<order_id>" so use LIKE.
+            pays_res = await db.execute(select(Payment).where(Payment.payment_intent_id.like(f"{session_id}:%")))
             for pay in pays_res.scalars().all():
                 pay.status = "paid"
                 pay.paid_at = datetime.utcnow()
                 pay.payment_method = session.payment_method_types[0] if session.payment_method_types else "card"
-            # Create invoices
+            # Create invoices idempotently (verify endpoint can be called multiple times).
             for ord in multi_orders:
-                inv_num = f"INV-{datetime.utcnow().strftime('%Y%m')}-{str(ord.id)[:8].upper()}"
-                db.add(Invoice(
-                    invoice_number=inv_num,
-                    order_id=ord.id,
-                    user_id=current_user.id,
-                    business_number=os.getenv("COMPANY_NUMBER", "060633880"),
-                ))
+                inv_exists = await db.execute(select(Invoice).where(Invoice.order_id == ord.id))
+                if not inv_exists.scalar_one_or_none():
+                    inv_num = f"INV-{datetime.utcnow().strftime('%Y%m')}-{str(ord.id)[:8].upper()}"
+                    db.add(Invoice(
+                        invoice_number=inv_num,
+                        order_id=ord.id,
+                        user_id=current_user.id,
+                        business_number=os.getenv("COMPANY_NUMBER", "060633880"),
+                    ))
             paid_nums = ", ".join(o.order_number for o in multi_orders)
             _multi_msg = f"{len(multi_orders)} הזמנות אושרו: {paid_nums}"
             db.add(Notification(
@@ -526,9 +713,12 @@ async def verify_checkout_session(
                 type="payment_success",
             ))
             asyncio.create_task(_guarded_task(publish_notification(str(current_user.id), {"type": "payment_success", "title": "תשלום התקבל ✅", "message": _multi_msg})))
-            # ── Dropshipping: notify admin(s) per supplier & advance → processing
-            await trigger_supplier_fulfillment(list(multi_orders), db)
             await db.commit()
+
+            # Run supplier automation after response-critical payment confirmation
+            # to keep the success page fast.
+            if newly_paid_order_ids:
+                asyncio.create_task(_guarded_task(_fulfill_paid_orders_bg(newly_paid_order_ids)))
 
         return {
             "status": session.payment_status,
@@ -541,8 +731,12 @@ async def verify_checkout_session(
         }
 
     # ── SINGLE-ORDER SESSION ───────────────────────────────────────────────────
-    order_id = session.metadata.get("order_id")
+    order_id = metadata.get("order_id")
     if not order_id:
+        # Some gateways/sessions return sparse metadata; fall back to local rows.
+        pay_rows = await _fetch_session_rows_for_user(session_id)
+        if pay_rows:
+            return _build_paid_verify_response(_dedupe_orders_from_rows(pay_rows))
         raise HTTPException(status_code=400, detail="Invalid session metadata")
 
     result = await db.execute(
@@ -554,19 +748,22 @@ async def verify_checkout_session(
 
     if session.payment_status == "paid" and order.status == "pending_payment":
         order.status = "paid"
+        paid_now_order_id = order.id
         pay_result = await db.execute(select(Payment).where(Payment.payment_intent_id == session_id))
         payment = pay_result.scalar_one_or_none()
         if payment:
             payment.status = "paid"
             payment.paid_at = datetime.utcnow()
             payment.payment_method = session.payment_method_types[0] if session.payment_method_types else "card"
-        invoice_number = f"INV-{datetime.utcnow().strftime('%Y%m')}-{str(order.id)[:8].upper()}"
-        db.add(Invoice(
-            invoice_number=invoice_number,
-            order_id=order.id,
-            user_id=current_user.id,
-            business_number=os.getenv("COMPANY_NUMBER", "060633880"),
-        ))
+        inv_exists = await db.execute(select(Invoice).where(Invoice.order_id == order.id))
+        if not inv_exists.scalar_one_or_none():
+            invoice_number = f"INV-{datetime.utcnow().strftime('%Y%m')}-{str(order.id)[:8].upper()}"
+            db.add(Invoice(
+                invoice_number=invoice_number,
+                order_id=order.id,
+                user_id=current_user.id,
+                business_number=os.getenv("COMPANY_NUMBER", "060633880"),
+            ))
         _single_pay_msg = f"הזמנה {order.order_number} אושרה."
         db.add(Notification(
             user_id=current_user.id,
@@ -575,9 +772,10 @@ async def verify_checkout_session(
             type="payment_success",
         ))
         asyncio.create_task(_guarded_task(publish_notification(str(current_user.id), {"type": "payment_success", "title": "תשלום התקבל ✅", "message": _single_pay_msg})))
-        # ── Dropshipping: notify admin(s) per supplier & advance → processing ─
-        await trigger_supplier_fulfillment([order], db)
         await db.commit()
+
+        # Fire-and-forget supplier automation so verify-session returns immediately.
+        asyncio.create_task(_guarded_task(_fulfill_paid_orders_bg([paid_now_order_id])))
 
     return {
         "status": session.payment_status,

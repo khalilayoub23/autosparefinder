@@ -1,22 +1,5 @@
 # AutoSpareFinder — Bug & Breaking Points Fix Tracker
-> Last scan: 2026-03-27 | Total issues found: 42 | Fixed: 42 | In Progress: 0 | Open: 0
-
----
-
-## ROUTES EXTRACTION VERIFICATION — 2026-03-27
-
-1. Route files in backend/routes/:
-	- Confirmed present: auth.py, chat.py, files.py, invoices.py, marketing.py, notifications.py, orders.py, parts.py, payments.py, profile.py, returns.py, reviews.py, schemas.py, utils.py, vehicles.py
-2. Routers registered in BACKEND_API_ROUTES.py:
-	- All routers found in include_router statements
-3. Baseline pytest run (backend/tests/):
-	- 85 failed / 126 passed / 51 skipped
-	- Note: improvement due to new Codespace environment
-	- Note: test_M_identify_vehicle_opens_pii_session is a pre-existing failure, not refactor-related
-4. Import check for backend.BACKEND_API_ROUTES:
-	- FAILED: SyntaxError: invalid syntax at 'from routes.profile import router as profile_router'
-
-See terminal output above for details. Blockers must be resolved before further refactor steps.
+> Last scan: 2026-03-28 | Total issues found: 49 | Fixed: 49 | In Progress: 0 | Open: 0
 
 ---
 
@@ -184,6 +167,7 @@ See terminal output above for details. Blockers must be resolved before further 
 | 8 | Orders + Shared Schemas | `backend/routes/orders.py`, `backend/routes/schemas.py` | 2459 | 734 | `pytest tests/test_security.py`: 35 passed, 49 skipped, 0 broken; full `pytest -q` still blocked by pre-existing `pytest_asyncio` missing in `tests/test_system.py` | R-1 resolved (parts/utils circular removed); checkout now uses lazy import from `routes.orders` and must move with checkout in Step 15 |
 | 9 | Payments + Shared fulfillment/frontend helpers | `backend/routes/payments.py` | 1037 | 1069 | Exact baseline re-run: `pytest tests/ -q --tb=no --ignore=tests/test_system.py` -> 91 failed / 120 passed (after one temporary regression in clamd source-string test was fixed) | Avoided new circular import by not importing fulfillment from monolith; `trigger_supplier_fulfillment` + `_get_frontend_url` now centralized in `routes/utils.py` |
 | 10 | Invoices | `backend/routes/invoices.py` | 32 | 52 | Exact baseline re-run: `pytest tests/ -q --tb=no --ignore=tests/test_system.py` -> 91 failed / 120 passed (no new regressions) | No new circular dependency; endpoints were self-contained and required no shared schema/utils extraction |
+
 | 11 | Returns | `backend/routes/returns.py` | 412 | 414 | Exact baseline re-run: `pytest -q --tb=no --ignore=tests/test_system.py` -> 91 failed / 120 passed (no new regressions) | No new circular dependency; all endpoints and logic moved verbatim, with import hygiene and type annotation fixes. |
 | 12 | Files | `backend/routes/files.py` | 49 | 67 | Exact baseline re-run: `pytest -q --tb=no --ignore=tests/test_system.py` -> 91 failed / 120 passed (no new regressions) | No new circular dependency; _scan_bytes_for_virus already in utils, FileModel import alias resolved. |
 | 13 | Profile | `backend/routes/profile.py` | 143 | 180 | Exact baseline re-run: `pytest -q --tb=no --ignore=tests/test_system.py` -> 91 failed / 120 passed (no new regressions) | No new circular dependency; all endpoints and logic moved verbatim, with import hygiene and type annotation fixes. |
@@ -227,15 +211,81 @@ Execution policy:
 | 8 | Orders + Schemas consolidation | `backend/routes/orders.py`, `backend/routes/schemas.py` | ✅ Completed |
 | 9 | Payments | `backend/routes/payments.py` | ✅ Completed |
 | 10 | Invoices | `backend/routes/invoices.py` | ✅ Completed |
+| 11 | Returns | `backend/routes/returns.py` | ✅ Completed |
 
 ### Pending Steps (Approved Extraction Order)
 
 | Step | Domain | Files planned | Status |
 |------|--------|---------------|--------|
-| 16 | System/Health/Utility leftovers | `backend/routes/system.py` | ✅ Completed — extracted health, settings, version, metrics endpoints; ClamAV uses _clamd_ping from routes.utils; lazy import for agent status |
-| 17 | Cart + Wishlist + Checkout | `backend/routes/cart.py` | ❌ Pending |
-| 18 | Admin (all admin + social) | `backend/routes/admin.py` | ❌ Pending |
+| 12 | Profile | `backend/routes/profile.py` | ❌ Pending |
+| 13 | Marketing + Social | `backend/routes/marketing.py`, `backend/routes/social.py` | ❌ Pending |
+| 14 | Admin (users/settings/approvals) | `backend/routes/admin.py` | ❌ Pending |
+| 15 | Wishlist | `backend/routes/wishlist.py` | ❌ Pending |
+| 16 | Cart + Checkout | `backend/routes/cart.py` | ❌ Pending |
+| 17 | System/Health/Utility leftovers | `backend/routes/system.py` | ❌ Pending |
 
 ### Required Note
 
 checkout lazy-imports create_order from routes.orders — must move with checkout to routes/cart.py in Step 15
+
+---
+
+## Session — 2026-03-28 (Post-Refactor Audit)
+
+Full audit of all extracted `routes/*.py` modules, `social/` module, background loops, and remaining
+`BACKEND_API_ROUTES.py` code. 7 new issues found and all fixed in this session.
+
+| # | Severity | Status | Description | File(s) | Fix |
+|---|----------|--------|-------------|---------|-----|
+| N-1 | HIGH | ✅ | `_clamd` not imported in `BACKEND_API_ROUTES.py` → `NameError` in `_health_monitor_loop` every ClamAV probe | `backend/BACKEND_API_ROUTES.py` | Added `import clamd as _clamd` next to existing `import httpx as _httpx` |
+| N-2 | HIGH | ✅ | `routes/orders.py` circular import — `from BACKEND_API_ROUTES import publish_notification` inside `cancel_order()` body; wrong module, creates hidden circular dep | `backend/routes/orders.py:300` | Changed to `from BACKEND_AUTH_SECURITY import publish_notification` |
+| N-3 | HIGH | ✅ | Rate limiting disabled for `upload_image` and `upload_audio` — `check_rate_limit()` return value not checked, 429 never raised | `backend/routes/chat.py:141,210` | Assigned result to `allowed`; added `if not allowed: raise HTTPException(429, ...)` |
+| N-4 | MEDIUM | ✅ | `_vip_detection_loop` bypasses `_guarded_task` semaphore — `asyncio.create_task(publish_notification(...))` called directly, unlimited concurrency during bulk VIP promotions | `backend/BACKEND_API_ROUTES.py:473` | Wrapped in `asyncio.create_task(_guarded_task(publish_notification(...)))` |
+| N-5 | MEDIUM | ✅ | `POST /api/v1/support/report` (public endpoint) has no rate limiting → unlimited TechAgent calls possible | `backend/routes/support.py` | Added `redis=Depends(get_redis)` + IP-based rate limit `rate:bug_report:{ip}` 10/min |
+| N-6 | MEDIUM | ✅ | `PUT /api/v1/admin/supplier-orders/{id}/done` sends `tracking_number`, `tracking_url`, `carrier` as query params → appear in server logs / browser history | `backend/routes/admin.py:145` | Moved all three to JSON request body (read via `request.json()`) |
+| N-7 | LOW | ✅ | `CartAddRequest.quantity` has no minimum → `quantity=0` or negative accepted, silently corrupting cart totals | `backend/routes/schemas.py:146` | Changed to `Field(default=1, ge=1, le=100)` |
+
+### Test results after N-1 to N-7
+
+```
+pytest tests/ -q --tb=no --ignore=tests/test_system.py
+23 failed, 207 passed, 32 skipped
+```
+
+---
+
+## Deferred Cleanup Backlog (2026-04-01)
+
+Scope: keep current search/data fix work focused; defer unrelated files below to a dedicated cleanup pass.
+
+### A) Accidental terminal artifact files (safe delete later)
+
+- [ ] Remove [": print(dict(r))"](:%20print(dict(r)))
+- [ ] Remove ["= await c.fetch('SELECT name, name_he FROM car_brands LIMIT 5')"](=%20await%20c.fetch('SELECT%20name,%20name_he%20FROM%20car_brands%20LIMIT%205'))
+- [ ] Remove ["=(await c.execute(q,{\"t\":table})).fetchall()"](=(await%20c.execute(q,%7B%22t%22:table%7D)).fetchall())
+- [ ] Remove ["_db import parse_manufacturer_fields"](_db%20import%20parse_manufacturer_fields)
+- [ ] Remove ["a.text(\"\"\""](a.text(%22%22%22))
+- [ ] Remove ["actionError:\";"](actionError:%22;)
+- [ ] Remove ["aux | grep -E 'import_parts_db.py|python .*import_parts_db.py' | grep -v grep || true"](aux%20%7C%20grep%20-E%20'import_parts_db.py%7Cpython%20.*import_parts_db.py'%20%7C%20grep%20-v%20grep%20%7C%7C%20true)
+- [ ] Remove [e](e)
+- [ ] Remove ["et -e"](et%20-e)
+- [ ] Remove ["leep 6"](leep%206)
+- [ ] Remove [ult.stdout)](ult.stdout))
+- [ ] Remove ["upplier_parts sp JOIN suppliers s ON s.id=sp.supplier_id LIMIT 9"](upplier_parts%20sp%20JOIN%20suppliers%20s%20ON%20s.id=sp.supplier_id%20LIMIT%209)
+- [ ] Remove [yncio](yncio)
+- [ ] Remove ["yncio, asyncpg"](yncio,%20asyncpg)
+
+### B) Unrelated feature/UI changes to review later (do not edit in current pass)
+
+- [ ] Review auth + social login additions in [frontend/src/components/SocialLoginButtons.jsx](frontend/src/components/SocialLoginButtons.jsx), [frontend/src/stores/authStore.js](frontend/src/stores/authStore.js), [backend/routes/auth.py](backend/routes/auth.py)
+- [ ] Review cart/admin/payment UX/logic deltas in [frontend/src/pages/Cart.jsx](frontend/src/pages/Cart.jsx), [frontend/src/pages/Admin.jsx](frontend/src/pages/Admin.jsx), [backend/routes/payments.py](backend/routes/payments.py)
+- [ ] Review 2FA/branding/env changes in [backend/BACKEND_AUTH_SECURITY.py](backend/BACKEND_AUTH_SECURITY.py), [backend/.env.example](backend/.env.example), [frontend/.env.example](frontend/.env.example)
+- [ ] Review route/model migration changes in [backend/BACKEND_DATABASE_MODELS.py](backend/BACKEND_DATABASE_MODELS.py), [backend/alembic_pii/versions/0027_add_oauth_columns.py](backend/alembic_pii/versions/0027_add_oauth_columns.py)
+
+### C) Search-fix validation follow-up (current track)
+
+- [ ] Verify grouped search tabs/filters in [frontend/src/pages/Parts.jsx](frontend/src/pages/Parts.jsx)
+- [ ] Confirm API query params alignment in [frontend/src/api/parts.js](frontend/src/api/parts.js) and [backend/routes/parts.py](backend/routes/parts.py)
+
+All 23 failures are pre-existing (integration tests requiring a live DB + SQL injection tests).
+Zero regressions introduced.

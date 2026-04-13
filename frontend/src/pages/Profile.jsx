@@ -76,7 +76,10 @@ export default function Profile() {
       }})
       await fetchMe()
       toast.success('הפרופיל עודכן')
-    } catch (err) { toast.error(err.response?.data?.detail || 'שגיאה בשמירה') }
+    } catch (err) {
+      const detail = err.response?.data?.detail
+      toast.error(typeof detail === 'string' ? detail : detail?.message || 'שגיאה בשמירה')
+    }
     finally { setSaving(false) }
   }
 

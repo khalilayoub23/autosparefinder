@@ -1,30 +1,34 @@
-"""Returns — all /api/v1/returns* endpoints extracted from BACKEND_API_ROUTES.py."""
+"""Returns — all /api/v1/returns/* and /api/v1/admin/returns endpoints extracted from BACKEND_API_ROUTES.py."""
 
-import os
-import uuid
-from datetime import datetime, timedelta
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import and_, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, and_, func
+from datetime import datetime, timedelta
+import uuid
+import os
+import asyncio
 
 from BACKEND_DATABASE_MODELS import (
-    get_pii_db, Order, OrderItem, Return, ApprovalQueue, Notification, User
+    get_pii_db,
+    User,
+    Order,
+    OrderItem,
+    Return,
+    Notification,
+    ApprovalQueue,
 )
-from BACKEND_AUTH_SECURITY import (
-    get_current_user, get_current_admin_user, publish_notification
-)
+from BACKEND_AUTH_SECURITY import get_current_user, get_current_admin_user, publish_notification
 from routes.schemas import ReturnRequest
-from invoice_generator import generate_credit_note_pdf
-import asyncio
 from routes.utils import _guarded_task
 
 router = APIRouter()
 
+# Policy constants — per Refund Policy v1.0 (Feb 2026)
 _FULL_REFUND_REASONS = {"defective", "wrong_part", "damaged_in_transit"}
 _RETURN_WINDOW_DAYS = int(os.getenv("RETURN_WINDOW_DAYS", "14"))
+
 
 @router.post("/api/v1/returns", status_code=status.HTTP_201_CREATED)
 async def create_return(data: ReturnRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
@@ -216,6 +220,8 @@ async def get_return_invoice(
     db: AsyncSession = Depends(get_pii_db),
 ):
     """Generate and stream a Hebrew PDF credit note for an approved return."""
+    from invoice_generator import generate_credit_note_pdf
+
     ret_res = await db.execute(
         select(Return).where(and_(Return.id == return_id, Return.user_id == current_user.id))
     )
@@ -254,6 +260,8 @@ async def get_return_invoice(
 
 @router.post("/api/v1/returns/{return_id}/approve")
 async def approve_return(return_id: str, refund_percentage: int = None, current_user: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_pii_db)):
+    result = await db.execute(select(Return).where(Return.id == return_id))
+    ret = result.scalar_one_or_none()
     if not ret:
         raise HTTPException(status_code=404, detail="Return not found")
     if ret.status not in ["pending"]:
@@ -396,3 +404,4 @@ async def admin_get_returns(
         }
         for r in returns
     ]}
+

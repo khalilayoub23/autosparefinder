@@ -7,7 +7,7 @@ import ConsentModal from './ConsentModal'
 import {
   MessageSquare, Search, ShoppingCart, Package, User,
   Settings, LogOut, Menu, X, Bell, Car, ChevronDown,
-  LayoutDashboard, Wrench,
+  LayoutDashboard, Wrench, Bot,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -17,6 +17,8 @@ const NAV_ITEMS = [
   { path: '/orders',  icon: Package,       label: 'הזמנות'       },
   { path: '/profile', icon: User,          label: 'פרופיל'       },
 ]
+
+const TOP_NAV_ITEMS = NAV_ITEMS.filter((item) => item.path !== '/profile')
 
 export default function Layout({ children }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -28,7 +30,7 @@ export default function Layout({ children }) {
   const { totals } = useCartStore()
   const location = useLocation()
   const navigate = useNavigate()
-  const cartTotals = totals()
+  const cartTotals = (() => { try { return totals() } catch { return { subtotal: 0, vat: 0, shipping: 0, total: 0, count: 0 } } })()
 
   // Refresh user on mount to ensure is_admin and other fields are current
   useEffect(() => { fetchMe() }, [])
@@ -75,7 +77,7 @@ export default function Layout({ children }) {
 
           {/* Desktop nav */}
           <nav className="hidden md:flex items-center gap-1">
-            {NAV_ITEMS.map(({ path, icon: Icon, label }) => (
+            {TOP_NAV_ITEMS.map(({ path, icon: Icon, label }) => (
               <Link
                 key={path}
                 to={path}
@@ -101,6 +103,17 @@ export default function Layout({ children }) {
                 >
                   <LayoutDashboard className="w-4 h-4" />
                   ניהול
+                </Link>
+                <Link
+                  to="/agents"
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors
+                    ${location.pathname === '/agents'
+                      ? 'bg-brand-50 text-brand-700'
+                      : 'text-gray-600 hover:bg-gray-100'
+                    }`}
+                >
+                  <Bot className="w-4 h-4" />
+                  סוכני AI
                 </Link>
               </>
             )}
@@ -193,11 +206,6 @@ export default function Layout({ children }) {
                   <Link to="/profile" className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-50 text-sm text-gray-700">
                     <User className="w-4 h-4" /> הפרופיל שלי
                   </Link>
-                  {user?.is_admin && (
-                    <Link to="/admin" className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-50 text-sm text-gray-700">
-                      <LayoutDashboard className="w-4 h-4" /> לוח ניהול
-                    </Link>
-                  )}
                   <button
                     onClick={handleLogout}
                     className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-red-50 text-sm text-red-600"

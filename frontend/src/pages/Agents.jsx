@@ -66,7 +66,10 @@ function AgentCard({ agent, onTest }) {
               <Icon className={`w-6 h-6 ${colors.text}`} />
             </div>
             <div>
-              <h3 className="font-bold text-gray-900 text-sm">{agent.name_he}</h3>
+              <div className="flex items-baseline gap-2">
+                <h3 className="font-bold text-gray-900 text-base">{agent.persona}</h3>
+                <span className="text-xs text-gray-500 font-medium">{agent.name_he}</span>
+              </div>
               <p className="text-xs text-gray-400 font-mono">{agent.name}</p>
             </div>
           </div>

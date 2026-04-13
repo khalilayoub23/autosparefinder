@@ -52,6 +52,7 @@ CRITICAL BUSINESS RULES (enforced in prompts & code):
 
 import json
 import os
+import re
 import random
 import string
 import asyncio
@@ -65,12 +66,12 @@ import httpx
 from dotenv import load_dotenv
 from sqlalchemy import and_, or_, select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
-from hf_client import hf_embed, hf_text
+from hf_client import hf_embed, hf_text, hf_text_fast
 
 from BACKEND_DATABASE_MODELS import (
     AgentAction, ApprovalQueue, CatalogVersion, Conversation, Message, Notification, Order, OrderItem,
     PartsCatalog, Supplier, SupplierPart, SystemLog, SystemSetting,
-    User, Vehicle, CarBrand, PriceHistory, get_db, async_session_factory,
+    User, Vehicle, CarBrand, TruckBrand, PriceHistory, get_db, async_session_factory,
 )
 from BACKEND_AUTH_SECURITY import publish_notification
 from resilience import retry_with_backoff
@@ -78,6 +79,101 @@ from resilience import retry_with_backoff
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+
+# Cap fire-and-forget asyncio.create_task() fan-out (mirrors routes/utils._TASK_SEMAPHORE).
+_TASK_SEMAPHORE = asyncio.Semaphore(50)
+
+_PLATE_PATTERN = re.compile(
+    r"(?<!\d)(\d{7,8}|\d{2}[-\s]\d{3}[-\s]\d{2}|\d{3}[-\s]\d{2}[-\s]\d{3})(?!\d)"
+)
+
+_PART_SIGNAL_KEYWORDS = (
+    "מצמד", "ברקס", "בלמים", "בלמ", "רפידות", "דיסק", "פילטר", "מסנן", "מצבר", "אלטרנטור",
+    "משאבה", "פנס", "מראה", "מדחס", "טורבו", "רצועה", "שרשרת", "חיישן",
+    "קלאץ", "clutch", "brake", "filter", "battery", "alternator", "turbo",
+    "oem", "vin", "חלק", "מספר שלדה",
+)
+
+_SMALLTALK_OR_NOISE = {
+    "היי", "הי", "שלום", "מה קורה", "מוכן", "ok", "okay", "test", "בדיקה",
+    "yo", "hi", "hello", "hey", "vhhh",
+}
+
+_CONFIRM_YES = {
+    "כן", "כן.", "כן!", "כן תודה", "נכון", "מדויק", "אישור", "מאשר",
+    "yes", "y", "ok", "okay", "correct",
+}
+
+_CONFIRM_NO = {
+    "לא", "לא.", "לא!", "לא נכון", "טעות", "לא מדויק", "לא זה", "לא הרכב",
+    "no", "n", "wrong", "incorrect",
+}
+
+_QUICK_PART_CHOICES = {
+    "1": "מצבר",
+    "2": "רפידות בלם",
+    "3": "מצמד",
+}
+
+
+async def _guarded_task(coro) -> None:
+    """Acquire the shared semaphore before running a fire-and-forget coroutine."""
+    async with _TASK_SEMAPHORE:
+        await coro
+
+
+def _extract_license_plate(text: str) -> Optional[str]:
+    """Extract Israeli-style license plate and normalize to digits only."""
+    if not text:
+        return None
+
+    for match in _PLATE_PATTERN.finditer(text):
+        digits = re.sub(r"\D", "", match.group(1))
+        if len(digits) in (7, 8):
+            return digits
+    return None
+
+
+def _has_part_signal(text: str) -> bool:
+    msg = (text or "").lower()
+    return any(k in msg for k in _PART_SIGNAL_KEYWORDS)
+
+
+def _is_smalltalk_or_noise(text: str) -> bool:
+    msg = re.sub(r"\s+", " ", (text or "").strip().lower())
+    if not msg:
+        return True
+    if msg in _SMALLTALK_OR_NOISE:
+        return True
+    compact = re.sub(r"[^a-zA-Z\u0590-\u05FF0-9]", "", msg)
+    if len(compact) <= 3:
+        return True
+    if re.fullmatch(r"[a-z]{1,6}", msg):
+        return True
+    return False
+
+
+def _is_confirm_yes(text: str) -> bool:
+    msg = re.sub(r"\s+", " ", (text or "").strip().lower())
+    return msg in _CONFIRM_YES
+
+
+def _is_confirm_no(text: str) -> bool:
+    msg = re.sub(r"\s+", " ", (text or "").strip().lower())
+    return msg in _CONFIRM_NO
+
+
+def _vehicle_summary_he(vehicle_profile: Dict[str, Any]) -> str:
+    manufacturer = vehicle_profile.get("manufacturer") or "לא ידוע"
+    model = vehicle_profile.get("model") or "לא ידוע"
+    year = vehicle_profile.get("year") or "לא ידוע"
+    engine = vehicle_profile.get("engine_type") or vehicle_profile.get("fuel_type") or "לא ידוע"
+    return f"{manufacturer} {model}, שנת {year}, מנוע {engine}"
+
+
+def _quick_part_from_message(text: str) -> Optional[str]:
+    msg = (text or "").strip()
+    return _QUICK_PART_CHOICES.get(msg)
 
 # ==============================================================================
 # SEARCH MISS LOGGING
@@ -140,6 +236,31 @@ CLAUDE_SONNET_46 = HF_DEFAULT_MODEL
 # Defaults — override via .env: AGENTS_DEFAULT_MODEL
 FREE_MODEL    = os.getenv("AGENTS_DEFAULT_MODEL", HF_DEFAULT_MODEL)
 PREMIUM_MODEL = FREE_MODEL  # one model only
+TELEGRAM_AI_MODEL = os.getenv("TELEGRAM_AI_MODEL", FREE_MODEL)
+WHATSAPP_AI_MODEL = os.getenv("WHATSAPP_AI_MODEL", FREE_MODEL)
+WEB_AI_MODEL = os.getenv("WEB_AI_MODEL", FREE_MODEL)
+
+
+def _normalize_source(source: Optional[str]) -> str:
+    raw = (source or "").strip().lower()
+    if raw in {"telegram", "tg"}:
+        return "telegram"
+    if raw in {"whatsapp", "wa"}:
+        return "whatsapp"
+    if raw in {"web", "chat", "api", "browser"}:
+        return "web"
+    return "default"
+
+
+def _channel_model_for_source(source: Optional[str], fallback_model: str) -> str:
+    source_key = _normalize_source(source)
+    if source_key == "telegram":
+        return TELEGRAM_AI_MODEL or fallback_model
+    if source_key == "whatsapp":
+        return WHATSAPP_AI_MODEL or fallback_model
+    if source_key == "web":
+        return WEB_AI_MODEL or fallback_model
+    return fallback_model
 
 # Business constants
 PROFIT_MARGIN = 1.45       # 45% markup on cost
@@ -153,6 +274,12 @@ SUPPLIER_SHIPPING_RATES: dict = {
     "AutoParts Pro IL": 29.0,     # Israel domestic delivery
     "Global Parts Hub": 91.0,     # Germany / Europe
     "EastAuto Supply":  149.0,    # China / Far East
+    "PartsPro USA":     110.0,    # USA → Israel (UPS/FedEx)
+    "AutoZone Direct":  120.0,    # USA → Israel (retail shipping)
+    "Hyundai Mobis":    95.0,     # South Korea → Israel (OEM direct)
+    "Kia Parts Direct": 95.0,     # South Korea → Israel (OEM direct)
+    "Bosch Direct":     80.0,     # Germany (manufacturer direct)
+    "Toyota Genuine":   99.0,     # Japan → Israel (OEM direct)
 }
 
 def get_supplier_shipping(supplier_name: str) -> float:
@@ -169,35 +296,152 @@ class BaseAgent:
 
     name: str = "base_agent"
     model: str = FREE_MODEL
-    system_prompt: str = "You are a helpful assistant for Auto Spare."
+    system_prompt: str = "אתה נציג שירות של Auto Spare. ענה תמיד בעברית בלבד ללא מילים באנגלית. אם הלקוח כותב ערבית — ענה בערבית בלבד."
     max_tokens: int = 1500
     temperature: float = 0.7
 
     def __init__(self):
-        if not os.getenv("HF_TOKEN", ""):
-            print(f"[WARN] {self.name}: HF_TOKEN not set. AI responses will be mocked.")
+        if not os.getenv("CEREBRAS_API_KEY", ""):
+            print(f"[WARN] {self.name}: CEREBRAS_API_KEY not set. AI responses will be mocked.")
+
+    @staticmethod
+    def _detect_language(msg: str) -> str:
+        if any("\u0600" <= ch <= "\u06FF" for ch in msg):
+            return "ar"
+        if any("\u0590" <= ch <= "\u05FF" for ch in msg):
+            return "he"
+        return "en"
+
+    def _offline_router_json(self, user_msg: str) -> str:
+        msg = (user_msg or "").lower()
+        lang = self._detect_language(user_msg or "")
+
+        if any(k in msg for k in ["2fa", "otp", "סיסמה", "התחברות", "login", "password", "אימות"]):
+            agent = "security_agent"
+            intent = "account_security_help"
+        elif any(k in msg for k in ["הזמנה", "משלוח", "tracking", "סטטוס", "cancel", "ביטול", "return", "החזר מוצר"]):
+            agent = "orders_agent"
+            intent = "order_status_or_returns"
+        elif any(k in msg for k in ["חשבונית", "מע\"מ", "vat", "invoice", "refund", "זיכוי", "חיוב"]):
+            agent = "finance_agent"
+            intent = "billing_or_invoice"
+        elif any(k in msg for k in ["קופון", "הנחה", "מבצע", "coupon", "discount", "newsletter"]):
+            agent = "marketing_agent"
+            intent = "promotion_query"
+        elif any(k in msg for k in ["vin", "מספר שלדה", "מספר רישוי", "oem", "תמונה", "audio", "תאימות"]):
+            agent = "parts_finder_agent"
+            intent = "vehicle_or_fitment_lookup"
+        elif _has_part_signal(msg):
+            agent = "sales_agent"
+            intent = "part_price_or_availability"
+        else:
+            agent = "service_agent"
+            intent = "general_query"
+
+        return json.dumps(
+            {
+                "agent": agent,
+                "confidence": 0.55,
+                "language": lang,
+                "intent": intent,
+                "extracted_data": {},
+            },
+            ensure_ascii=False,
+        )
+
+    def _offline_reply(self, messages: List[Dict[str, str]]) -> str:
+        import re
+
+        user_msg = ""
+        for m in reversed(messages):
+            if m.get("role") == "user":
+                user_msg = (m.get("content") or "").strip()
+                break
+
+        if self.name == "router_agent":
+            return self._offline_router_json(user_msg)
+
+        if self.name == "security_agent":
+            return (
+                "אני כאן לעזור בנושא התחברות ואבטחה. "
+                "כתוב מה הבעיה: התחברות, קוד 2FA, סיסמה, או חשבון נעול."
+            )
+
+        if self.name == "orders_agent":
+            return (
+                "כדי לעזור במצב הזמנה, שלח מספר הזמנה או מספר טלפון שמופיע בהזמנה."
+            )
+
+        if self.name == "finance_agent":
+            return (
+                "כדי לטפל בחשבונית/חיוב, שלח מספר הזמנה וציין בדיוק אם צריך חשבונית, זיכוי או בירור חיוב."
+            )
+
+        if self.name == "marketing_agent":
+            return "אפשר לעזור בקופונים, מבצעים והטבות. כתוב מה בדיוק תרצה לבדוק."
+
+        if self.name == "service_agent":
+            return "אני כאן לעזור. כתוב בקצרה מה הבעיה ואכוון אותך צעד-צעד."
+
+        lang = self._detect_language(user_msg)
+        if lang == "ar":
+            return "أنا هنا للمساعدة. اكتب لي نوع القطعة المطلوبة مع السيارة/السنة (مثال: Berlingo 2013 1.6 ديزل + فلتر زيت)، وسأكمل معك خطوة بخطوة."
+
+        msg = user_msg.lower()
+        has_year = re.search(r"\b(19|20)\d{2}\b", msg) is not None
+        has_engine = re.search(r"\b\d\.\d\b", msg) is not None
+        part_keywords = [
+            "מצמד", "ברקס", "רפידות", "דיסק", "פילטר", "מסנן", "מצבר", "אלטרנטור",
+            "משאבה", "פנס", "מראה", "מדחס", "טורבו", "רצועה", "שרשרת", "חיישן",
+            "קלאץ", "clutch", "brake", "filter", "battery", "alternator", "turbo",
+        ]
+        has_part = any(k in msg for k in part_keywords)
+
+        if has_year and has_engine and not has_part:
+            return "מעולה, קיבלתי את פרטי הרכב. חסר רק שם החלק שאתה צריך (למשל: מצמד / פילטר שמן / רפידות בלם), ואז אתקדם איתך מיד."
+
+        if has_part:
+            return "מעולה, קיבלתי. כדי לדייק התאמה ומחיר, שלח גם: דגם רכב + שנה + נפח מנוע + אם יש מספר OEM/שלדה."
+
+        return (
+            "אני כאן לעזור. כדי להתקדם מהר, כתוב לי בשורה אחת: "
+            "דגם רכב + שנה + מנוע + החלק המדויק שאתה צריך "
+            "(לדוגמה: Berlingo 2013 1.6 דיזל + מצמד)."
+        )
 
     async def think(
         self,
         messages: List[Dict[str, str]],
         tools: Optional[List[Dict]] = None,
         system_override: Optional[str] = None,
+        source: Optional[str] = None,
     ) -> str:
         """Send messages to GitHub Models API and return response text."""
-        if not os.getenv("HF_TOKEN", ""):
-            return f"[Mock] {self.name} received your message. Please set HF_TOKEN in .env for real AI responses."
+        if not os.getenv("CEREBRAS_API_KEY", ""):
+            return self._offline_reply(messages)
 
         try:
+            selected_model = _channel_model_for_source(source, getattr(self, "model", FREE_MODEL))
             prompt = "\n".join(
                 f"{m.get('role', 'user')}: {m.get('content', '')}"
                 for m in messages
             ).strip()
             if not prompt:
                 prompt = "Please continue."
-            return await hf_text(prompt, system=(system_override or self.system_prompt))
+            _fast_agents = {"router_agent", "orders_agent", "security_agent", "tech_agent", "supplier_manager_agent", "social_media_manager_agent"}
+            if self.name in _fast_agents:
+                return await hf_text_fast(
+                    prompt,
+                    system=(system_override or self.system_prompt),
+                )
+            return await hf_text(
+                prompt,
+                system=(system_override or self.system_prompt),
+            )
         except Exception as e:
-            print(f"[ERROR] {self.name} API call failed: {e}")
-            return f"אני מצטער, נתקלתי בבעיה טכנית. אנא נסה שוב."
+            status = getattr(getattr(e, "response", None), "status_code", None)
+            print(f"[ERROR] {self.name} API call failed: status={status} error={e}")
+            return self._offline_reply(messages)
 
     def calculate_customer_price(
         self,
@@ -344,7 +588,11 @@ IMPORTANT: Default to "he" (Hebrew) if the message contains only numbers, order 
 
     async def route(self, message: str, context: Dict = None) -> Dict[str, Any]:
         """Route message to the appropriate agent."""
-        response = await self.think([{"role": "user", "content": message}])
+        route_source = (context or {}).get("source") if isinstance(context, dict) else None
+        response = await self.think(
+            [{"role": "user", "content": message}],
+            source=route_source,
+        )
         try:
             # Extract JSON from response
             start = response.find("{")
@@ -373,6 +621,13 @@ class PartsFinderAgent(BaseAgent):
     model = PREMIUM_MODEL       # premium: complex Hebrew part-matching & pricing
     system_prompt = """You are Nir, the Parts Finder Agent for Auto Spare, an Israeli auto parts platform.
 
+CRITICAL CONVERSATION RULES:
+1. NEVER address the agent by name — always address the CUSTOMER directly
+2. When confirming vehicle details, address the customer as "אתה/את" not by any name
+3. When asking for part type, use only common real car parts as examples: פנס קדמי, רפידות בלם, מצמד, מסנן שמן, פילטר אוויר, בולם זעזועים, מצבר
+4. NEVER use technical jargon like "מסוף", "זיז כפתור", "מנוע וין"
+5. Keep responses short — maximum 4 lines
+
 CRITICAL RULES:
 1. NEVER mention supplier names (RockAuto, FCP Euro, Autodoc, AliExpress) to customers
 2. ALWAYS show manufacturer of the part (Bosch, Brembo, Toyota OEM, etc.)
@@ -381,6 +636,13 @@ CRITICAL RULES:
 5. LANGUAGE: ALWAYS respond in Hebrew (עברית). If the customer writes in Arabic, respond in Arabic. Never respond in any other language — if the message is just a part number or vehicle code, respond in Hebrew.
 6. Always include warranty period and delivery estimate
 7. DROPSHIPPING: This is a 100% dropshipping system — no physical warehouse. Say "זמין להזמנה" (available to order), NEVER "יש במלאי" (in stock). Parts ship from our supplier after customer payment.
+
+VEHICLE LOOKUP — CRITICAL:
+- NEVER ask the customer for a VIN number. The system automatically identifies the vehicle from the license plate via the Israeli Transport Ministry API (data.gov.il).
+- When a license plate is provided (e.g. 12-345-67 or 1234567), the system ALREADY calls the API and injects the vehicle data into your context as [VEHICLE FROM PLATE ...].
+- Use that injected data directly. Do NOT ask the customer to provide VIN or any other identifier.
+- Confirm the vehicle to the customer (יצרן, דגם, שנה) and immediately search for the requested part.
+- NEVER make the customer do work you can do. You have the tools — use them.
 
 PART CATEGORIES IN DB (use these exact 14 values for category filters):
 - בלמים          → brake discs, pads, calipers, cylinders
@@ -468,56 +730,64 @@ CROSS-REFERENCE: Alternative/equivalent part numbers are stored in the part_cros
             }
 
     async def normalize_manufacturer(self, raw_name: str, db: AsyncSession) -> str:
-        """Normalize a raw manufacturer string to the canonical car_brands.name.
-        Checks: exact name, Hebrew name, aliases array.
+        """Normalize a raw manufacturer string to the canonical car_brands or truck_brands name.
+        Checks: exact name, Hebrew name, aliases array — in both tables.
         Falls back to original string if no match.
         """
         if not raw_name or not raw_name.strip():
             return raw_name
         cleaned = raw_name.strip()
-        # Always use catalog DB — CarBrand lives in autospare, not pii
+        # Always use catalog DB — CarBrand/TruckBrand live in autospare, not pii
         async with async_session_factory() as cat_db:
-            # 1. Exact match on name or name_he
-            result = await cat_db.execute(
-                select(CarBrand.name).where(CarBrand.is_active == True).where(
-                    or_(CarBrand.name.ilike(cleaned), CarBrand.name_he.ilike(cleaned))
-                ).limit(1)
-            )
-            row = result.scalar_one_or_none()
-            if row:
-                return row
-            # 2. Check aliases array (text[] in DB — use ANY operator)
-            result2 = await cat_db.execute(
-                select(CarBrand.name).where(CarBrand.is_active == True).where(
-                    text("(:val)::text = ANY(car_brands.aliases)")
-                ).params(val=cleaned).limit(1)
-            )
-            row2 = result2.scalar_one_or_none()
-            if row2:
-                return row2
-            # 3. Case-insensitive alias check via unnest
-            result3 = await cat_db.execute(
-                select(CarBrand.name).where(CarBrand.is_active == True).where(
-                    or_(
-                        CarBrand.name.ilike(f"{cleaned}%"),
-                        CarBrand.name.ilike(f"%{cleaned}%"),
-                    )
-                ).order_by(CarBrand.name).limit(1)
-            )
-            row3 = result3.scalar_one_or_none()
-            return row3 if row3 else cleaned
+            for Model, aliases_col in (
+                (CarBrand, "car_brands.aliases"),
+                (TruckBrand, "truck_brands.aliases"),
+            ):
+                # 1. Exact match on name or name_he
+                result = await cat_db.execute(
+                    select(Model.name).where(Model.is_active == True).where(
+                        or_(Model.name.ilike(cleaned), Model.name_he.ilike(cleaned))
+                    ).limit(1)
+                )
+                row = result.scalar_one_or_none()
+                if row:
+                    return row
+                # 2. Check aliases array (text[] in DB — use ANY operator)
+                result2 = await cat_db.execute(
+                    select(Model.name).where(Model.is_active == True).where(
+                        text(f"(:val)::text = ANY({aliases_col})")
+                    ).params(val=cleaned).limit(1)
+                )
+                row2 = result2.scalar_one_or_none()
+                if row2:
+                    return row2
+                # 3. Prefix / substring match
+                result3 = await cat_db.execute(
+                    select(Model.name).where(Model.is_active == True).where(
+                        or_(
+                            Model.name.ilike(f"{cleaned}%"),
+                            Model.name.ilike(f"%{cleaned}%"),
+                        )
+                    ).order_by(Model.name).limit(1)
+                )
+                row3 = result3.scalar_one_or_none()
+                if row3:
+                    return row3
+            return cleaned
 
     async def list_known_brands(self, db: AsyncSession) -> List[Dict]:
-        """Return all active brands from the car_brands registry."""
-        # Always use catalog DB — CarBrand lives in autospare, not pii
+        """Return all active brands from car_brands (passenger) and truck_brands registries."""
+        # Always use catalog DB — CarBrand/TruckBrand live in autospare, not pii
         async with async_session_factory() as cat_db:
-            result = await cat_db.execute(
-                select(CarBrand)
-                .where(CarBrand.is_active == True)
-                .order_by(CarBrand.name)
+            car_result = await cat_db.execute(
+                select(CarBrand).where(CarBrand.is_active == True).order_by(CarBrand.name)
             )
-            brands = result.scalars().all()
-            return [
+            truck_result = await cat_db.execute(
+                select(TruckBrand).where(TruckBrand.is_active == True).order_by(TruckBrand.name)
+            )
+            car_brands = car_result.scalars().all()
+            truck_brands = truck_result.scalars().all()
+            output: List[Dict] = [
                 {
                     "name": b.name,
                     "name_he": b.name_he,
@@ -526,9 +796,24 @@ CROSS-REFERENCE: Alternative/equivalent part numbers are stored in the part_cros
                     "region": b.region,
                     "is_luxury": b.is_luxury,
                     "is_electric": b.is_electric_focused,
+                    "vehicle_type": "car",
                 }
-                for b in brands
+                for b in car_brands
             ]
+            output += [
+                {
+                    "name": b.name,
+                    "name_he": b.name_he,
+                    "group": b.group_name,
+                    "country": b.country,
+                    "region": b.region,
+                    "is_luxury": False,
+                    "is_electric": False,
+                    "vehicle_type": "truck",
+                }
+                for b in truck_brands
+            ]
+            return output
 
     @staticmethod
     def _vehicle_response(vehicle: "Vehicle", extra: dict | None = None) -> Dict:
@@ -561,14 +846,14 @@ CROSS-REFERENCE: Alternative/equivalent part numbers are stored in the part_cros
 
     async def identify_vehicle(self, license_plate: str, db: AsyncSession) -> Dict:
         """Identify vehicle from license plate via Israeli Transport Ministry API (data.gov.il).
-        Uses async_session_factory — Vehicle is now a Base model in the catalog DB.
+        Vehicle is Base (catalog DB) — uses async_session_factory.
         The `db` parameter is kept for API compatibility but is not used.
         """
         clean_plate = license_plate.replace("-", "").replace(" ", "")
 
-        async with async_session_factory() as pii_db:
+        async with async_session_factory() as catalog_db:
             # Check DB cache (90-day TTL)
-            result = await pii_db.execute(
+            result = await catalog_db.execute(
                 select(Vehicle).where(Vehicle.license_plate == clean_plate)
             )
             vehicle = result.scalar_one_or_none()
@@ -609,10 +894,10 @@ CROSS-REFERENCE: Alternative/equivalent part numbers are stored in the part_cros
                     gov_api_data    = gov_cache,
                     cached_at       = datetime.utcnow(),
                 )
-                pii_db.add(vehicle)
+                catalog_db.add(vehicle)
 
-            await pii_db.commit()
-            await pii_db.refresh(vehicle)
+            await catalog_db.commit()
+            await catalog_db.refresh(vehicle)
             return self._vehicle_response(vehicle)
 
     # data.gov.il resource IDs (Ministry of Transport – private & commercial vehicles)
@@ -773,6 +1058,7 @@ CROSS-REFERENCE: Alternative/equivalent part numbers are stored in the part_cros
             return []
 
         # ── pgvector: embed the query and find nearest neighbours ────────────
+        # Gemini text-embedding-004 produces 768-dimensional vectors.
         # vec_score: {id_str → cosine_similarity}  (empty if unavailable)
         # Runs only when Meilisearch returned results.
         # if Meilisearch already short-circuited or fell back to ILIKE.
@@ -864,8 +1150,8 @@ CROSS-REFERENCE: Alternative/equivalent part numbers are stored in the part_cros
             if any(tok in order_sql for tok in _unsafe_sql_tokens):
                 raise ValueError("Unsafe ORDER BY fragment detected")
 
-            uuid_array = "{" + ",".join(meili_ids) + "}"
-            params["uuid_arr"] = uuid_array
+            # Pass as Python list so asyncpg maps it correctly to PostgreSQL text[].
+            params["uuid_arr"] = meili_ids
             params["lim"] = limit
             params["off"] = offset
 
@@ -876,7 +1162,7 @@ CROSS-REFERENCE: Alternative/equivalent part numbers are stored in the part_cros
                         FROM parts_catalog pc
                         JOIN (
                             SELECT t.id::uuid AS ranked_id, t.pos
-                            FROM unnest(:uuid_arr::text[]) WITH ORDINALITY AS t(id, pos)
+                            FROM unnest(CAST(:uuid_arr AS text[])) WITH ORDINALITY AS t(id, pos)
                         ) ranked ON ranked.ranked_id = pc.id
                         WHERE {where_sql}
                         {order_sql}
@@ -1207,7 +1493,11 @@ CROSS-REFERENCE: Alternative/equivalent part numbers are stored in the part_cros
 
         patched_system = self.system_prompt + stats_context + vehicle_context + parts_context
         messages = conversation_history + [{"role": "user", "content": message}]
-        return await self.think(messages, system_override=patched_system)
+        return await self.think(
+            messages,
+            system_override=patched_system,
+            source=kwargs.get("source"),
+        )
 
 
 # ==============================================================================
@@ -1225,7 +1515,7 @@ DROPSHIPPING CONTEXT (CRITICAL):
 Auto Spare is a 100% dropshipping system. We hold NO physical inventory / warehouse stock.
 When a customer orders, we place the order with our supplier network AFTER confirmed payment.
 NEVER say "יש במלאי" (in stock). Always say "זמין להזמנה" (available to order).
-Delivery: 7-14 business days. Return policy: 14 days (sealed/unopened parts only).
+Delivery: 7-14 business days. Return policy: 14 days from delivery. Refund is issued ONLY after the supplier confirms receipt of the returned part (3-5 business days after confirmation).
 
 YOUR PROACTIVE SALES CONVERSATION FLOW — follow this EVERY time a customer asks about a part:
 
@@ -1269,7 +1559,7 @@ CRITICAL RULES:
 2. NEVER say "יש במלאי" — only "זמין להזמנה" or "זמין בהזמנה מיוחדת"
 3. ONLY use prices from the catalog data injected below — NEVER invent prices
 4. Do NOT answer about: car valuations, insurance, traffic fines, repair costs, or anything outside parts
-5. RETURN POLICY: 14 days from delivery, sealed/unopened parts only. Manufacturer defects → 100% refund. Other returns → 90% refund.
+5. RETURN POLICY: 14 days from delivery. Manufacturer defects / wrong part / damaged in transit → 100% refund (we cover return shipping). Other reasons → 90% refund (10% handling fee, customer covers return shipping). Refund is sent to the customer ONLY after the supplier confirms receipt of the returned part.
 6. LANGUAGE: Respond in Hebrew. If the customer writes in Arabic, respond in Arabic.
 """
 
@@ -1398,6 +1688,7 @@ CRITICAL RULES:
         return await self.think(
             conversation_history + [{"role": "user", "content": message}],
             system_override=system,
+            source=kwargs.get("source"),
         )
 
 
@@ -1426,9 +1717,10 @@ Order statuses (always use these exact labels in Hebrew):
 - cancelled / refunded → בוטל / הוחזר
 
 Return & Refund Policy:
-- Manufacturer defect / wrong part sent → 100% refund incl. original shipping, we cover return shipping
+- Manufacturer defect / wrong part sent / damaged in transit → 100% refund incl. original shipping, we cover return shipping
 - All other reasons → 90% refund (10% handling fee), original shipping not refunded, customer pays return shipping
 - Returns accepted within 14 days of delivery
+- Refund process: request → admin approves → customer ships item back → supplier confirms receipt → refund issued to card (3-5 business days)
 
 TRACKING RULES:
 - Use ONLY real order data injected below — never invent order numbers or statuses
@@ -1508,6 +1800,7 @@ LANGUAGE: ALWAYS respond in Hebrew. If customer writes in Arabic, respond in Ara
         return await self.think(
             conversation_history + [{"role": "user", "content": message}],
             system_override=system_with_data,
+            source=kwargs.get("source"),
         )
 
     # ------------------------------------------------------------------
@@ -1781,9 +2074,10 @@ Pricing formula (always compute this way):
   (Shipping varies by supplier origin: Israel ₪29, Europe ₪91, Asia ₪149)
 
 Refund policy:
-- Manufacturer defect / wrong item sent → 100% refund incl. original shipping, return shipping covered by us
+- Manufacturer defect / wrong item sent / damaged in transit → 100% refund incl. original shipping, return shipping covered by us
 - All other reasons → 90% refund (10% handling fee), original shipping not refunded, customer pays return
 - Returns within 14 days of delivery
+- Refund flow: approved → customer ships back → supplier confirms → refund to card (3-5 business days)
 
 Payment: Stripe (credit/debit card). NEVER ask for card details.
 CHECKOUT: When a customer asks how to pay or wants a payment link, ALWAYS say:
@@ -1793,10 +2087,14 @@ Business: מס' עוסק מורשה 060633880 | הרצל 55, עכו
 
 Always show full breakdown: מחיר נטו + מע"מ 18% + משלוח (₪29–₪149) = סה"כ
 LANGUAGE: ALWAYS respond in Hebrew. If customer writes in Arabic, respond in Arabic.
+חשוב: אל תשתמש ב-HTML, markdown, או קישורים. ענה בטקסט רגיל בלבד המתאים לשיחת טלגרם.
 """
 
     async def process(self, message: str, conversation_history: List[Dict], db: AsyncSession, **kwargs) -> str:
-        return await self.think(conversation_history + [{"role": "user", "content": message}])
+        return await self.think(
+            conversation_history + [{"role": "user", "content": message}],
+            source=kwargs.get("source"),
+        )
 
 
 # ==============================================================================
@@ -1846,7 +2144,10 @@ LANGUAGE: ALWAYS respond in Hebrew. If customer writes in Arabic, respond in Ara
 """
 
     async def process(self, message: str, conversation_history: List[Dict], db: AsyncSession, **kwargs) -> str:
-        return await self.think(conversation_history + [{"role": "user", "content": message}])
+        return await self.think(
+            conversation_history + [{"role": "user", "content": message}],
+            source=kwargs.get("source"),
+        )
 
 
 # ==============================================================================
@@ -1882,7 +2183,10 @@ LANGUAGE: ALWAYS respond in Hebrew (עברית). If the customer writes in Arabi
 """
 
     async def process(self, message: str, conversation_history: List[Dict], db: AsyncSession, **kwargs) -> str:
-        return await self.think(conversation_history + [{"role": "user", "content": message}])
+        return await self.think(
+            conversation_history + [{"role": "user", "content": message}],
+            source=kwargs.get("source"),
+        )
 
 
 # ==============================================================================
@@ -1925,7 +2229,10 @@ LANGUAGE: ALWAYS respond in Hebrew (עברית). If the customer writes in Arabi
 """
 
     async def process(self, message: str, conversation_history: List[Dict], db: AsyncSession, **kwargs) -> str:
-        return await self.think(conversation_history + [{"role": "user", "content": message}])
+        return await self.think(
+            conversation_history + [{"role": "user", "content": message}],
+            source=kwargs.get("source"),
+        )
 
 
 class TechAgent(BaseAgent):
@@ -1972,7 +2279,7 @@ HTTP Status: {report.get('http_status_code', 'unknown')}
 Error: {report.get('error_trace', 'none')}
 Platform: {report.get('platform', 'unknown')}"""
 
-        response = await hf_text(prompt, system=self.system_prompt, timeout=60.0)
+        response = await hf_text_fast(prompt, system=self.system_prompt, timeout=60.0)
         try:
             match = re.search(r"\{.*\}", response, re.DOTALL)
             return json.loads(match.group()) if match else {
@@ -2033,6 +2340,12 @@ class SupplierManagerAgent(BaseAgent):
           - AutoParts Pro IL  : ±1–2%  (stable local stock)
           - Global Parts Hub  : ±2–4%  (European market)
           - EastAuto Supply   : ±3–6%  (Chinese market, higher swing)
+          - PartsPro USA      : ±2–4%  (US market)
+          - AutoZone Direct   : ±1–3%  (US retail)
+          - Hyundai Mobis     : ±1–2%  (Korean OEM, very stable)
+          - Kia Parts Direct  : ±1–2%  (Korean OEM, very stable)
+          - Bosch Direct      : ±1–2%  (German manufacturer direct)
+          - Toyota Genuine    : ±1–2%  (Japanese OEM, very stable)
           - Prices never drop below 80% or rise above 150% of the original base
           - ~5% of on_order parts flip to in_stock each run (restocking simulation)
           - ~3% of in_stock parts flip to on_order (stock-out simulation)
@@ -2053,6 +2366,12 @@ class SupplierManagerAgent(BaseAgent):
             "AutoParts Pro IL": (0.01, 0.02),
             "Global Parts Hub": (0.02, 0.04),
             "EastAuto Supply":  (0.03, 0.06),
+            "PartsPro USA":     (0.02, 0.04),
+            "AutoZone Direct":  (0.01, 0.03),
+            "Hyundai Mobis":    (0.01, 0.02),
+            "Kia Parts Direct": (0.01, 0.02),
+            "Bosch Direct":     (0.01, 0.02),
+            "Toyota Genuine":   (0.01, 0.02),
         }
 
         # Load active suppliers
@@ -2172,10 +2491,10 @@ class SupplierManagerAgent(BaseAgent):
                         message=_alert_msg,
                         data={"drops": drops_sorted},
                     ))
-                    asyncio.create_task(publish_notification(
+                    asyncio.create_task(_guarded_task(publish_notification(
                         str(admin.id),
                         {"type": "price_drop_alert", "title": _alert_title, "message": _alert_msg},
-                    ))
+                    )))
                 await db.commit()
             except Exception as e:
                 logger.error("Price drop alert failed: %s", e)
@@ -2327,7 +2646,10 @@ If the customer writes in Arabic, respond in Arabic. Never respond in any other 
         return await self.think([{"role": "user", "content": prompt}])
 
     async def process(self, message: str, conversation_history: List[Dict], db: AsyncSession, **kwargs) -> str:
-        return await self.think(conversation_history + [{"role": "user", "content": message}])
+        return await self.think(
+            conversation_history + [{"role": "user", "content": message}],
+            source=kwargs.get("source"),
+        )
 
 
 # ==============================================================================
@@ -2368,6 +2690,7 @@ async def process_agent_response_for_message(
     message: str,
     conversation_id: str,
     db: AsyncSession,
+    source: str = "web",
 ) -> None:
     """
     Background-safe: load conversation, route to agent, call LLM, save assistant message.
@@ -2391,7 +2714,7 @@ async def process_agent_response_for_message(
 
     # Route to correct agent
     router = get_agent("router_agent")
-    route_result = await router.route(message, {"history_length": len(history)})
+    route_result = await router.route(message, {"history_length": len(history), "source": source})
     agent_name = route_result.get("agent", "service_agent")
 
     conversation.current_agent = agent_name
@@ -2399,13 +2722,16 @@ async def process_agent_response_for_message(
 
     # Call agent LLM
     agent = get_agent(agent_name)
+    model_used = _channel_model_for_source(source, getattr(agent, "model", FREE_MODEL))
     start_time = datetime.utcnow()
     try:
-        response_text = await agent.process(message, history, db, user_id=user_id)
+        response_text = await agent.process(message, history, db, user_id=user_id, source=source)
     except Exception as e:
         print(f"[BG AGENT ERROR] {agent_name}: {e}")
         response_text = "מצטער, נתקלתי בבעיה. אנא נסה שוב בעוד רגע."
         agent_name = "service_agent"
+        agent = get_agent(agent_name)
+        model_used = _channel_model_for_source(source, getattr(agent, "model", FREE_MODEL))
 
     exec_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
 
@@ -2416,7 +2742,7 @@ async def process_agent_response_for_message(
         agent_name=agent_name,
         content=response_text,
         content_type="text",
-        model_used=getattr(agent, "model", None),
+        model_used=model_used,
     )
     db.add(assistant_msg)
     await db.flush()
@@ -2434,11 +2760,93 @@ async def process_agent_response_for_message(
     print(f"[BG AGENT] conv={conversation_id} agent={agent_name} {exec_ms}ms")
 
 
+async def _infer_parts_flow_reply(
+    agent_name: str,
+    source: str,
+    history: List[Dict[str, str]],
+    user_message: str,
+    flow_intent: str,
+    flow_state: Dict[str, Any],
+) -> Tuple[str, str]:
+    """Generate a natural user-facing reply from deterministic parts-flow state."""
+    agent = get_agent(agent_name)
+    model_used = _channel_model_for_source(source, getattr(agent, "model", FREE_MODEL))
+
+    system = (
+        f"{agent.system_prompt}\n\n"
+        "[FLOW MODE]\n"
+        "You are continuing a live customer conversation inside Auto Spare.\n"
+        "Use the state below to decide the next message naturally, without robotic templates.\n"
+        "Never reveal internal flow/state/json. Never mention that you are an AI model.\n"
+        "Keep the response concise and practical.\n"
+        "If the user language is Hebrew, respond in Hebrew; if Arabic, respond in Arabic.\n"
+        "If the next step is collecting details, ask one clear question and give one compact example.\n"
+        "If search results are provided, use only those values and do not invent numbers.\n"
+        "If no results, ask for one concrete refinement (OEM or front/rear or manufacturer).\n\n"
+        f"[FLOW_INTENT]\n{flow_intent}\n\n"
+        f"[FLOW_STATE_JSON]\n{json.dumps(flow_state, ensure_ascii=False)}\n"
+    )
+
+    # Keep a short memory window so wording remains contextual but stable.
+    messages = history[-6:] + [{"role": "user", "content": user_message or "continue"}]
+
+    try:
+        reply = await agent.think(messages, system_override=system, source=source)
+        return reply, model_used
+    except Exception as e:
+        print(f"[PartsFlow] inferred reply failed ({agent_name}): {e}")
+        return agent._offline_reply(messages), model_used
+
+
+async def _format_response_for_customer(
+    raw_response: str,
+    agent_name: str,
+    source: str,
+    history: List[Dict[str, str]],
+) -> str:
+    """Use Gemini to reformat a raw agent response into warm, natural customer-facing text."""
+    fast_agents = {"router_agent", "orders_agent", "security_agent", "tech_agent",
+                   "supplier_manager_agent", "social_media_manager_agent", "parts_finder_agent"}
+    if agent_name not in fast_agents:
+        return raw_response
+
+    last_user_msg = ""
+    for m in reversed(history):
+        if m.get("role") == "user":
+            last_user_msg = m.get("content", "")
+            break
+
+    system = """אתה עוזר לנסח תשובות שירות לקוחות בעברית או ערבית.
+קיבלת תשובה גולמית מסוכן מידע.
+עליך לנסח אותה מחדש בצורה חמה, טבעית ומקצועית — כאילו אתה נציג שירות אנושי.
+חוקים:
+- שמור על כל המידע העובדתי מהתשובה הגולמית
+- אל תוסיף מידע שאינו בתשובה הגולמית
+- ענה בעברית אם הלקוח כתב עברית, ערבית אם כתב ערבית
+- תשובה קצרה ומדויקת — לא יותר מ-4 משפטים
+- אל תשתמש ב-HTML, markdown, או קישורים
+- טון חם וידידותי"""
+
+    prompt = f"""תשובה גולמית מהמערכת:
+{raw_response}
+
+הודעת הלקוח:
+{last_user_msg}
+
+נסח מחדש בצורה טבעית וחמה:"""
+
+    try:
+        return await hf_text(prompt, system=system)
+    except Exception:
+        return raw_response
+
+
 async def process_user_message(
     user_id: str,
     message: str,
     conversation_id: Optional[str],
     db: AsyncSession,
+    source: str = "web",
 ) -> Dict[str, Any]:
     """
     Main entry point: routes message, calls agent, saves to DB, returns response.
@@ -2476,6 +2884,73 @@ async def process_user_message(
         for msg in history_rows
     ]
 
+    # Context state for deterministic parts intake flow.
+    context_data = dict(conversation.context or {})
+    known_plate = str(context_data.get("license_plate") or "").strip()
+    had_plate_before = bool(known_plate)
+    intro_sent = bool(context_data.get("intro_sent"))
+    incoming_plate = _extract_license_plate(message)
+    parts_flow_active = bool(context_data.get("parts_flow_active"))
+    vehicle_profile = context_data.get("vehicle_profile") if isinstance(context_data.get("vehicle_profile"), dict) else None
+    vehicle_confirmed = bool(context_data.get("vehicle_confirmed"))
+    last_part_query = str(context_data.get("last_part_query") or "").strip()
+    try:
+        last_results_count = int(context_data.get("last_results_count") or 0)
+    except Exception:
+        last_results_count = 0
+    pre_route_result: Optional[Dict[str, Any]] = None
+
+    if incoming_plate and incoming_plate != known_plate:
+        context_data["license_plate"] = incoming_plate
+        context_data["vehicle_confirmed"] = False
+        context_data.pop("vehicle_profile", None)
+        known_plate = incoming_plate
+        vehicle_profile = None
+        vehicle_confirmed = False
+
+    if incoming_plate or _has_part_signal(message):
+        parts_flow_active = True
+    elif not parts_flow_active:
+        # Telegram and other channels can still use full router behavior.
+        # Only enable the strict plate->gov->part flow when intent is parts-related.
+        try:
+            router = get_agent("router_agent")
+            pre_route_result = await router.route(
+                message,
+                {
+                    "history_length": len(history),
+                    "source": source,
+                    "route_stage": "precheck",
+                },
+            )
+            pre_agent = pre_route_result.get("agent", "service_agent")
+            if pre_agent in ("parts_finder_agent", "sales_agent"):
+                parts_flow_active = True
+        except Exception as e:
+            print(f"[PartsFlow] pre-route failed, continuing without parts flow: {e}")
+
+    # If parts flow is already confirmed but user now asks a non-parts topic,
+    # let router hand off to system agents (security/orders/finance/etc.).
+    if parts_flow_active and vehicle_confirmed and not incoming_plate and not _has_part_signal(message):
+        try:
+            if pre_route_result is None:
+                router = get_agent("router_agent")
+                pre_route_result = await router.route(
+                    message,
+                    {
+                        "history_length": len(history),
+                        "source": source,
+                        "route_stage": "parts_exit_check",
+                    },
+                )
+            pre_agent = pre_route_result.get("agent", "service_agent")
+            if pre_agent not in ("parts_finder_agent", "sales_agent", "service_agent"):
+                parts_flow_active = False
+                context_data["parts_flow_active"] = False
+        except Exception as e:
+            print(f"[PartsFlow] exit-check failed, keeping parts flow active: {e}")
+    context_data["parts_flow_active"] = parts_flow_active
+
     # ── 3. Save user message ───────────────────────────────────────────────────
     user_msg = Message(
         conversation_id=conversation.id,
@@ -2486,27 +2961,378 @@ async def process_user_message(
     db.add(user_msg)
     await db.flush()
 
-    # ── 4. Route to correct agent ──────────────────────────────────────────────
-    router = get_agent("router_agent")
-    route_result = await router.route(message, {"history_length": len(history)})
-    agent_name = route_result.get("agent", "service_agent")
+    plate_just_captured = bool(known_plate) and not had_plate_before
+    quick_part_choice = _quick_part_from_message(message)
+    effective_message = quick_part_choice or message
 
-    # Update conversation's current agent
+    if parts_flow_active:
+        # Step 1: intro + ask for plate
+        if not known_plate:
+            start_time = datetime.utcnow()
+            if not intro_sent:
+                context_data["intro_sent"] = True
+
+            response_text, model_used = await _infer_parts_flow_reply(
+                agent_name="service_agent",
+                source=source,
+                history=history,
+                user_message=message,
+                flow_intent="collect_license_plate_first",
+                flow_state={
+                    "intro_sent": bool(context_data.get("intro_sent")),
+                    "known_plate": known_plate or None,
+                    "supported_plate_formats": ["12-345-67", "123-45-678", "1234567", "12345678"],
+                },
+            )
+
+            route_result = {
+                "agent": "service_agent",
+                "confidence": 1.0,
+                "language": "he",
+                "intent": "collect_license_plate_first",
+                "extracted_data": {},
+            }
+            agent_name = "service_agent"
+            exec_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+
+        else:
+            # Step 2: resolve vehicle details from gov.il and ask for confirmation
+            if not vehicle_profile or str(vehicle_profile.get("license_plate") or "") != known_plate:
+                start_time = datetime.utcnow()
+                pf = get_agent("parts_finder_agent")
+                try:
+                    vehicle_profile = await pf.identify_vehicle(known_plate, db)
+                    context_data["vehicle_profile"] = vehicle_profile
+                    context_data["vehicle_confirmed"] = False
+                    vehicle_confirmed = False
+                    response_text, model_used = await _infer_parts_flow_reply(
+                        agent_name="parts_finder_agent",
+                        source=source,
+                        history=history,
+                        user_message=message,
+                        flow_intent="vehicle_details_confirmation",
+                        flow_state={
+                            "license_plate": known_plate,
+                            "vehicle": {
+                                "manufacturer": vehicle_profile.get("manufacturer"),
+                                "model": vehicle_profile.get("model"),
+                                "year": vehicle_profile.get("year"),
+                                "engine_type": vehicle_profile.get("engine_type"),
+                                "fuel_type": vehicle_profile.get("fuel_type"),
+                            },
+                            "requires_yes_no_confirmation": True,
+                        },
+                    )
+                    route_result = {
+                        "agent": "parts_finder_agent",
+                        "confidence": 1.0,
+                        "language": "he",
+                        "intent": "vehicle_details_confirmation",
+                        "extracted_data": {
+                            "license_plate": known_plate,
+                            "vehicle": {
+                                "manufacturer": vehicle_profile.get("manufacturer"),
+                                "model": vehicle_profile.get("model"),
+                                "year": vehicle_profile.get("year"),
+                            },
+                        },
+                    }
+                except Exception as e:
+                    print(f"[PartsFlow] identify_vehicle failed for {known_plate}: {e}")
+                    context_data["vehicle_confirmed"] = False
+                    context_data.pop("vehicle_profile", None)
+                    vehicle_profile = None
+                    vehicle_confirmed = False
+                    response_text, model_used = await _infer_parts_flow_reply(
+                        agent_name="service_agent",
+                        source=source,
+                        history=history,
+                        user_message=message,
+                        flow_intent="vehicle_lookup_failed",
+                        flow_state={
+                            "license_plate": known_plate,
+                            "error": str(e),
+                            "next_required_step": "ask_for_new_or_correct_plate",
+                        },
+                    )
+                    route_result = {
+                        "agent": "service_agent",
+                        "confidence": 0.9,
+                        "language": "he",
+                        "intent": "vehicle_lookup_failed",
+                        "extracted_data": {"license_plate": known_plate},
+                    }
+                    agent_name = "service_agent"
+                else:
+                    agent_name = "parts_finder_agent"
+                exec_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+
+            # Step 3: user confirms vehicle details
+            elif not vehicle_confirmed:
+                start_time = datetime.utcnow()
+                if _is_confirm_yes(message):
+                    context_data["vehicle_confirmed"] = True
+                    response_text, model_used = await _infer_parts_flow_reply(
+                        agent_name="service_agent",
+                        source=source,
+                        history=history,
+                        user_message=message,
+                        flow_intent="vehicle_confirmed_ask_part",
+                        flow_state={
+                            "license_plate": known_plate,
+                            "vehicle": vehicle_profile,
+                            "vehicle_confirmed": True,
+                            "next_required_step": "ask_for_part_name",
+                        },
+                    )
+                    route_result = {
+                        "agent": "service_agent",
+                        "confidence": 1.0,
+                        "language": "he",
+                        "intent": "vehicle_confirmed_ask_part",
+                        "extracted_data": {"license_plate": known_plate},
+                    }
+                    agent_name = "service_agent"
+                elif _is_confirm_no(message):
+                    context_data.pop("license_plate", None)
+                    context_data.pop("vehicle_profile", None)
+                    context_data["vehicle_confirmed"] = False
+                    known_plate = ""
+                    response_text, model_used = await _infer_parts_flow_reply(
+                        agent_name="service_agent",
+                        source=source,
+                        history=history,
+                        user_message=message,
+                        flow_intent="vehicle_rejected_request_new_plate",
+                        flow_state={
+                            "vehicle_confirmed": False,
+                            "next_required_step": "ask_for_new_plate",
+                            "supported_plate_formats": ["12-345-67", "123-45-678", "1234567", "12345678"],
+                        },
+                    )
+                    route_result = {
+                        "agent": "service_agent",
+                        "confidence": 1.0,
+                        "language": "he",
+                        "intent": "vehicle_rejected_request_new_plate",
+                        "extracted_data": {},
+                    }
+                    agent_name = "service_agent"
+                else:
+                    response_text, model_used = await _infer_parts_flow_reply(
+                        agent_name="service_agent",
+                        source=source,
+                        history=history,
+                        user_message=message,
+                        flow_intent="await_vehicle_confirmation",
+                        flow_state={
+                            "license_plate": known_plate,
+                            "vehicle": vehicle_profile,
+                            "vehicle_summary": _vehicle_summary_he(vehicle_profile or {}),
+                            "requires_yes_no_confirmation": True,
+                        },
+                    )
+                    route_result = {
+                        "agent": "service_agent",
+                        "confidence": 0.95,
+                        "language": "he",
+                        "intent": "await_vehicle_confirmation",
+                        "extracted_data": {"license_plate": known_plate},
+                    }
+                    agent_name = "service_agent"
+                exec_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+
+            # Step 4: confirmed vehicle -> part search + price answer
+            elif not _has_part_signal(effective_message):
+                start_time = datetime.utcnow()
+                handled_no_part_prompt = False
+                followup_mode = "request_exact_part_or_oem"
+                if (message or "").strip() == "4":
+                    followup_mode = "await_free_text_part_name"
+                    handled_no_part_prompt = True
+                elif _is_confirm_yes(message) and not last_part_query:
+                    followup_mode = "show_quick_choices"
+                    handled_no_part_prompt = True
+
+                if not handled_no_part_prompt and _is_smalltalk_or_noise(message) and last_part_query:
+                    if last_results_count > 0:
+                        followup_mode = "offer_repeat_or_new_part_after_success"
+                    else:
+                        followup_mode = "request_refinement_after_no_results"
+                elif not handled_no_part_prompt and not _is_confirm_yes(message) and _is_smalltalk_or_noise(message):
+                    followup_mode = "ask_part_name_after_smalltalk"
+                elif not handled_no_part_prompt and not _is_confirm_yes(message):
+                    followup_mode = "request_exact_part_or_oem"
+
+                response_text, model_used = await _infer_parts_flow_reply(
+                    agent_name="service_agent",
+                    source=source,
+                    history=history,
+                    user_message=message,
+                    flow_intent="ask_part_after_vehicle_confirmation",
+                    flow_state={
+                        "license_plate": known_plate,
+                        "vehicle": vehicle_profile,
+                        "last_part_query": last_part_query or None,
+                        "last_results_count": last_results_count,
+                        "quick_part_choices": _QUICK_PART_CHOICES,
+                        "followup_mode": followup_mode,
+                    },
+                )
+                route_result = {
+                    "agent": "service_agent",
+                    "confidence": 0.95,
+                    "language": "he",
+                    "intent": "ask_part_after_vehicle_confirmation",
+                    "extracted_data": {"license_plate": known_plate},
+                }
+                agent_name = "service_agent"
+                exec_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+            else:
+                pf = get_agent("parts_finder_agent")
+                search_q = pf._extract_search_query(effective_message)
+                if incoming_plate:
+                    search_q = search_q.replace(incoming_plate, "").strip(" -:")
+                if len(search_q.strip()) < 2:
+                    search_q = effective_message.strip()
+
+                category_hint = pf._extract_category_hint(search_q)
+                manufacturer_hint = (vehicle_profile or {}).get("manufacturer") or None
+                start_time = datetime.utcnow()
+                results = await pf.search_parts_in_db(
+                    query=search_q,
+                    vehicle_id=None,
+                    category=category_hint,
+                    db=db,
+                    limit=5,
+                    sort_by="price_asc",
+                    vehicle_manufacturer=manufacturer_hint,
+                    user_id=str(user_id),
+                )
+
+                # Fallback 1: broaden by removing manufacturer filter.
+                if not results and manufacturer_hint:
+                    results = await pf.search_parts_in_db(
+                        query=search_q,
+                        vehicle_id=None,
+                        category=category_hint,
+                        db=db,
+                        limit=5,
+                        sort_by="price_asc",
+                        vehicle_manufacturer=None,
+                        user_id=str(user_id),
+                    )
+
+                # Fallback 2: category-only search for generic part terms.
+                if not results and category_hint:
+                    results = await pf.search_parts_in_db(
+                        query="",
+                        vehicle_id=None,
+                        category=category_hint,
+                        db=db,
+                        limit=5,
+                        sort_by="price_asc",
+                        vehicle_manufacturer=None,
+                        user_id=str(user_id),
+                    )
+
+                context_data["last_part_query"] = search_q
+                context_data["last_results_count"] = len(results)
+
+                if results:
+                    top = results[:3]
+                    top_payload: List[Dict[str, Any]] = []
+                    for i, item in enumerate(top, start=1):
+                        pr = item.get("pricing") or {}
+                        top_payload.append(
+                            {
+                                "option": i,
+                                "manufacturer": item.get("manufacturer"),
+                                "name": item.get("name"),
+                                "price_no_vat": float(pr.get("price_no_vat") or 0),
+                                "vat": float(pr.get("vat") or 0),
+                                "total": float(pr.get("total") or 0),
+                                "availability": pr.get("availability"),
+                                "estimated_delivery_days": pr.get("estimated_delivery_days") or 14,
+                            }
+                        )
+
+                    response_text, model_used = await _infer_parts_flow_reply(
+                        agent_name="parts_finder_agent",
+                        source=source,
+                        history=history,
+                        user_message=message,
+                        flow_intent="parts_price_search_results",
+                        flow_state={
+                            "license_plate": known_plate,
+                            "vehicle": vehicle_profile,
+                            "query": search_q,
+                            "results_count": len(top_payload),
+                            "top_results": top_payload,
+                            "next_required_step": "ask_user_to_choose_option_or_request_another_part",
+                        },
+                    )
+                else:
+                    response_text, model_used = await _infer_parts_flow_reply(
+                        agent_name="parts_finder_agent",
+                        source=source,
+                        history=history,
+                        user_message=message,
+                        flow_intent="parts_price_search_no_results",
+                        flow_state={
+                            "license_plate": known_plate,
+                            "vehicle": vehicle_profile,
+                            "vehicle_summary": _vehicle_summary_he(vehicle_profile or {}),
+                            "query": search_q,
+                            "results_count": 0,
+                            "next_required_step": "request_refinement_oem_or_front_rear_or_manufacturer",
+                        },
+                    )
+
+                route_result = {
+                    "agent": "parts_finder_agent",
+                    "confidence": 1.0,
+                    "language": "he",
+                    "intent": "parts_price_search",
+                    "extracted_data": {
+                        "license_plate": known_plate,
+                        "query": search_q,
+                        "results_count": len(results),
+                    },
+                }
+                agent_name = "parts_finder_agent"
+                exec_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+    else:
+        # Non-parts conversation: use router + agent processing path.
+        if pre_route_result is not None:
+            route_result = pre_route_result
+        else:
+            router = get_agent("router_agent")
+            route_result = await router.route(message, {"history_length": len(history), "source": source})
+        agent_name = route_result.get("agent", "service_agent")
+
+        agent = get_agent(agent_name)
+        model_used = _channel_model_for_source(source, agent.model)
+        start_time = datetime.utcnow()
+        try:
+            response_text = await agent.process(message, history, db, user_id=str(user_id), source=source)
+        except Exception as e:
+            print(f"[ERROR] Agent {agent_name} failed: {e}")
+            response_text = "מצטער, נתקלתי בבעיה. אנא נסה שוב בעוד רגע."
+            agent_name = "service_agent"
+            model_used = _channel_model_for_source(source, FREE_MODEL)
+        exec_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+
+    # Format response through Gemini for customer-facing channels
+    if source in ("telegram", "whatsapp"):
+        response_text = await _format_response_for_customer(
+            response_text, agent_name, source, history
+        )
+
+    # Persist state updates for this turn.
+    conversation.context = context_data
     conversation.current_agent = agent_name
     conversation.last_message_at = datetime.utcnow()
-
-    # ── 5. Process with selected agent ────────────────────────────────────────
-    agent = get_agent(agent_name)
-    start_time = datetime.utcnow()
-
-    try:
-        response_text = await agent.process(message, history, db, user_id=str(user_id))
-    except Exception as e:
-        print(f"[ERROR] Agent {agent_name} failed: {e}")
-        response_text = "מצטער, נתקלתי בבעיה. אנא נסה שוב בעוד רגע."
-        agent_name = "service_agent"
-
-    exec_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
 
     # ── 6. Save assistant message ─────────────────────────────────────────────
     assistant_msg = Message(
@@ -2515,7 +3341,7 @@ async def process_user_message(
         agent_name=agent_name,
         content=response_text,
         content_type="text",
-        model_used=agent.model,
+        model_used=model_used,
     )
     db.add(assistant_msg)
     await db.flush()  # ensure assistant_msg.id is set before AgentAction

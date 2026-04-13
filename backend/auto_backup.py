@@ -16,10 +16,12 @@ from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
-BACKUP_DIR = os.environ.get("BACKUP_DIR", "/backups")
+BACKUP_DIR = os.environ.get("BACKUP_DIR", os.path.join(os.path.dirname(__file__), "backups"))
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 PII_DATABASE_URL = os.environ.get("PII_DATABASE_URL", "")
 KEEP_LAST = 7  # Keep last 7 daily backups
+
+os.makedirs(BACKUP_DIR, exist_ok=True)
 
 
 def _pg_dump(db_url: str, out_path: str) -> bool:
@@ -161,7 +163,7 @@ async def run_backup(dry_run: bool = False) -> dict:
             results[label] = "dry_run"
             continue
         t0 = time.monotonic()
-        ok = await asyncio.get_event_loop().run_in_executor(None, _pg_dump, url, out_path)
+        ok = await asyncio.get_running_loop().run_in_executor(None, _pg_dump, url, out_path)
         elapsed = round(time.monotonic() - t0, 1)
         if ok:
             size_mb = round(os.path.getsize(out_path) / 1_048_576, 1)

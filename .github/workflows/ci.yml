@@ -1,51 +1,38 @@
 name: CI
-
 on:
   pull_request:
   push:
     branches: [ main ]
-
 jobs:
   test-and-smoke:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
-
       - name: Install backend deps
-        working-directory: ./
         run: |
           python -m venv .venv-ci
           source .venv-ci/bin/activate
           pip install --upgrade pip
-          pip install pytest pyyaml
-
+          # numpy is required by backend/tests/test_hf_client.py embedding mocks.
+          pip install httpx pytest pytest-asyncio numpy
       - name: Run pytest (smoke)
+        working-directory: ./backend
         run: |
-          source .venv-ci/bin/activate
-          pytest -q src/tests/test_config.py::test_config_values src/tests/test_deployment.py::test_docker_compose_has_required_services
-
+          source ../.venv-ci/bin/activate
+          pytest -q tests/test_hf_client.py --tb=short
       - name: Docker Compose config (validate)
         run: docker compose -f docker-compose.yml config
-
       - name: Secret-scan (basic)
         run: |
-copilot/fix-secret-scan-false-positives
           set -e
-          if git grep -nE "ghp_[A-Za-z0-9_\-]+|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}" -- './' ':(exclude)*/tests/*' ':(exclude)*/test_*' || true; then
-            echo "Potential secret pattern found in repository — please ensure no secrets are committed.";
-            git grep -nE "ghp_[A-Za-z0-9_\-]+|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}" -- './' ':(exclude)*/tests/*' ':(exclude)*/test_*' || true
-
           if git grep -nE "ghp_[A-Za-z0-9_\-]+|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}" -- './' ':(exclude)*/tests/*' ':(exclude)*/test_*'; then
             echo "Potential secret pattern found — please ensure no secrets are committed."
- main
             exit 1
           fi
-
       - name: Notify mobile repo (sync trigger)
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: |
@@ -63,3 +50,20 @@ copilot/fix-secret-scan-false-positives
               }
             }'
           echo "Mobile repo notified"
+
+  deploy:
+    needs: test-and-smoke
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd /opt/autosparefinder
+            git pull origin main
+            docker compose up -d --build frontend backend
+            docker cp /opt/autosparefinder/backend/BACKEND_AUTH_SECURITY.py autospare_backend:/app/BACKEND_AUTH_SECURITY.py
