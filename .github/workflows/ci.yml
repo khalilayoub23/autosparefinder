@@ -17,6 +17,7 @@ jobs:
           python -m venv .venv-ci
           source .venv-ci/bin/activate
           pip install --upgrade pip
+          # numpy is required by backend/tests/test_hf_client.py embedding mocks.
           pip install httpx pytest pytest-asyncio numpy
       - name: Run pytest (smoke)
         working-directory: ./backend
