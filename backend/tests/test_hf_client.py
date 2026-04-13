@@ -105,6 +105,7 @@ async def test_http_pool_reused_across_calls():
 
     with patch("hf_client._cache_get", new=AsyncMock(return_value=None)), \
          patch("hf_client._cache_set", new=AsyncMock()), \
+            patch("hf_client.CEREBRAS_API_KEY", "test-key"), \
          patch.object(hf_client._get_http(), "post", side_effect=fake_post):
         await hf_client.hf_text("q1")
         await hf_client.hf_text("q2")
@@ -136,6 +137,7 @@ async def test_retry_on_503():
     with patch("hf_client._cache_get", new=AsyncMock(return_value=None)), \
          patch("hf_client._cache_set", new=AsyncMock()), \
          patch("asyncio.sleep", new=AsyncMock()), \
+            patch("hf_client.CEREBRAS_API_KEY", "test-key"), \
          patch.object(hf_client._get_http(), "post", side_effect=fake_post):
         result = await hf_client.hf_text("test")
 
@@ -190,6 +192,7 @@ async def test_retry_respects_retry_after_header():
     with patch("hf_client._cache_get", new=AsyncMock(return_value=None)), \
          patch("hf_client._cache_set", new=AsyncMock()), \
          patch("asyncio.sleep", side_effect=fake_sleep), \
+            patch("hf_client.CEREBRAS_API_KEY", "test-key"), \
          patch.object(hf_client._get_http(), "post", side_effect=fake_post):
         result = await hf_client.hf_text("rate limited")
 
@@ -237,6 +240,7 @@ async def test_hf_text_cache_hit():
         return _text_resp()
 
     with patch("hf_client._cache_get", new=AsyncMock(return_value="cached answer")), \
+            patch("hf_client.CEREBRAS_API_KEY", "test-key"), \
          patch.object(hf_client._get_http(), "post", side_effect=fake_post):
         result = await hf_client.hf_text("anything")
 
@@ -258,6 +262,7 @@ async def test_hf_text_cache_miss_writes_to_cache():
 
     with patch("hf_client._cache_get", new=AsyncMock(return_value=None)), \
          patch("hf_client._cache_set", side_effect=fake_cache_set), \
+            patch("hf_client.CEREBRAS_API_KEY", "test-key"), \
          patch.object(hf_client._get_http(), "post",
                       new=AsyncMock(return_value=_text_resp("from hf"))):
         result = await hf_client.hf_text("my query")
@@ -289,6 +294,7 @@ async def test_cache_disabled_when_ttl_zero(monkeypatch):
 
     with patch("hf_client._cache_get", new=AsyncMock(return_value=None)), \
          patch("hf_client._cache_set", side_effect=fake_cache_set), \
+            patch("hf_client.CEREBRAS_API_KEY", "test-key"), \
          patch.object(hf_client._get_http(), "post",
                       new=AsyncMock(return_value=_text_resp("no cache"))):
         await hf_client.hf_text("anything")
@@ -361,7 +367,8 @@ async def test_hf_vision_payload():
         captured["body"] = json.loads(content)
         return _text_resp("car part detected")
 
-    with patch.object(hf_client._get_http(), "post", side_effect=fake_post):
+    with patch("hf_client.GEMINI_API_KEY", "test-key"), \
+         patch.object(hf_client._get_http(), "post", side_effect=fake_post):
         result = await hf_client.hf_vision("base64imgdata==", "what is this?", "image/png")
 
     assert result == "car part detected"
@@ -384,7 +391,8 @@ async def test_hf_audio_content_type():
         captured_headers.update(headers)
         return _make_response(200, {"text": "transcribed audio"})
 
-    with patch.object(hf_client._get_http(), "post", side_effect=fake_post):
+    with patch("hf_client.GROQ_API_KEY", "test-key"), \
+         patch.object(hf_client._get_http(), "post", side_effect=fake_post):
         result = await hf_client.hf_audio(b"fake audio bytes")
 
     assert result == "transcribed audio"
@@ -446,6 +454,7 @@ async def test_request_is_logged(caplog):
     with caplog.at_level(logging.INFO, logger="hf_client"), \
          patch("hf_client._cache_get", new=AsyncMock(return_value=None)), \
          patch("hf_client._cache_set", new=AsyncMock()), \
+            patch("hf_client.CEREBRAS_API_KEY", "test-key"), \
          patch.object(hf_client._get_http(), "post", side_effect=fake_post):
         await hf_client.hf_text("log me")
 
