@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GitHub Actions scraper runner for aftermarket/OEM enrichment.
+"""GitHub Actions scraper runner for aftermarket enrichment.
 
 Reads parts needing OEM lookup and scrapes multiple sources using Playwright.
 Writes results directly to catalog DB via CATALOG_DB_URL.
@@ -42,6 +42,8 @@ PART_HINT_MARKERS = (
     "sku",
     "article",
     "catalog",
+    "oem",
+    "cross",
 )
 
 USER_AGENTS = (
@@ -54,6 +56,10 @@ USER_AGENTS = (
 )
 
 OEM_TOKEN_RE = re.compile(r"\b[A-Z0-9][A-Z0-9\-]{4,17}\b")
+PART_NUMBER_RE = re.compile(
+    r"\b(?:SKU|Part\s*No|Part\s*Number|Article|Item\s*No)[:\s#-]*([A-Z0-9\-]{4,25})\b",
+    re.IGNORECASE,
+)
 EUR_PRICE_RE = re.compile(r"(?:€|EUR\s?)([0-9]{1,7}(?:[.,][0-9]{1,2})?)", re.IGNORECASE)
 EUR_PRICE_RE_REV = re.compile(r"([0-9]{1,7}(?:[.,][0-9]{1,2})?)\s?(?:€|EUR)", re.IGNORECASE)
 ILS_PRICE_RE = re.compile(r"(?:₪|NIS\s?|ILS\s?)([0-9]{1,7}(?:[.,][0-9]{1,2})?)", re.IGNORECASE)
@@ -72,20 +78,6 @@ class SourceConfig:
 
 SOURCES: tuple[SourceConfig, ...] = (
     SourceConfig(
-        key="autodoc.eu",
-        supplier_name="Autodoc EU",
-        website="https://www.autodoc.eu",
-        search_url="https://www.autodoc.eu/search?q={query}",
-        currency="EUR",
-    ),
-    SourceConfig(
-        key="partsouq.com",
-        supplier_name="Partsouq",
-        website="https://partsouq.com",
-        search_url="https://partsouq.com/en/search/all?q={query}",
-        currency="MIXED",
-    ),
-    SourceConfig(
         key="motorstore.co.il",
         supplier_name="Motorstore IL",
         website="https://www.motorstore.co.il",
@@ -101,12 +93,36 @@ SOURCES: tuple[SourceConfig, ...] = (
         brand_hint="Meyle",
     ),
     SourceConfig(
+        key="bilstein.com",
+        supplier_name="Bilstein",
+        website="https://bilstein.com",
+        search_url="https://bilstein.com/en/search/?q={query}",
+        currency="MIXED",
+        brand_hint="Bilstein",
+    ),
+    SourceConfig(
         key="mann-filter.com",
         supplier_name="Mann Filter",
         website="https://www.mann-filter.com",
         search_url="https://www.mann-filter.com/en/search.html?q={query}",
         currency="MIXED",
         brand_hint="Mann Filter",
+    ),
+    SourceConfig(
+        key="gates.com",
+        supplier_name="Gates",
+        website="https://www.gates.com",
+        search_url="https://www.gates.com/us/en/search.html?q={query}",
+        currency="MIXED",
+        brand_hint="Gates",
+    ),
+    SourceConfig(
+        key="brembo.com",
+        supplier_name="Brembo",
+        website="https://www.brembo.com",
+        search_url="https://www.brembo.com/en/search?q={query}",
+        currency="MIXED",
+        brand_hint="Brembo",
     ),
 )
 
@@ -160,13 +176,38 @@ def _extract_oem_numbers(text: str, seed_sku: str) -> list[str]:
     return found
 
 
+def _extract_part_number(text: str, seed_sku: str) -> str | None:
+    match = PART_NUMBER_RE.search(text)
+    if match:
+        return match.group(1).upper()
+
+    tokens = OEM_TOKEN_RE.findall(text.upper())
+    for token in tokens:
+        if token == seed_sku.upper():
+            continue
+        if any(ch.isalpha() for ch in token) and any(ch.isdigit() for ch in token):
+            return token
+    return seed_sku.upper() if seed_sku else None
+
+
+def _extract_part_name(soup: BeautifulSoup, fallback: str) -> str:
+    for selector in ("h1", "h2", "meta[property='og:title']", "title"):
+        node = soup.select_one(selector)
+        if not node:
+            continue
+        if selector.startswith("meta"):
+            value = (node.get("content") or "").strip()
+        else:
+            value = node.get_text(" ", strip=True)
+        if value:
+            return value[:255]
+    return fallback[:255] if fallback else "Unknown part"
+
+
 def _extract_brand(text: str, source: SourceConfig) -> str | None:
     if source.brand_hint:
         return source.brand_hint
-    known = (
-        "Bosch", "NGK", "Febi", "Mann", "Meyle", "Sachs", "Bilstein",
-        "Mahle", "Valeo", "Brembo", "SKF", "Denso", "Hella",
-    )
+    known = ("Meyle", "Bilstein", "Mann", "Gates", "Brembo")
     lower_text = text.lower()
     for brand in known:
         if brand.lower() in lower_text:
@@ -210,16 +251,20 @@ async def scrape_source(
     text = soup.get_text(" ", strip=True)
     eur, ils = _parse_price(text, source.currency)
     oems = _extract_oem_numbers(text, seed_sku=sku)
+    part_number = _extract_part_number(text, seed_sku=sku)
+    part_name = _extract_part_name(soup, fallback=query)
     brand = _extract_brand(text, source)
 
     has_parts = any(marker in lower_html for marker in PART_HINT_MARKERS)
-    has_result = bool(oems or eur is not None or ils is not None or has_parts)
+    has_result = bool(part_number or oems or eur is not None or ils is not None or has_parts)
 
     return {
         "url": url,
         "blocked": blocked,
         "has_result": has_result,
         "oem_numbers": oems,
+        "part_number": part_number,
+        "part_name": part_name,
         "price_eur": eur,
         "price_ils": ils,
         "brand": brand,
@@ -277,28 +322,28 @@ async def resolve_aftermarket_brand(conn: asyncpg.Connection, brand_name: str | 
     return row["id"] if row else None
 
 
-async def insert_oem_cross_refs(
+async def insert_aftermarket_cross_refs(
     conn: asyncpg.Connection,
     part_id: str,
     source_manufacturer: str,
-    oem_numbers: list[str],
+    ref_numbers: list[str],
 ) -> int:
     inserted_count = 0
-    for ref in oem_numbers:
+    for ref in ref_numbers:
         result = await conn.fetchval(
             """
             WITH ins AS (
                 INSERT INTO part_cross_reference (
                     id, part_id, ref_number, manufacturer, ref_type, is_superseded, created_at
                 )
-                SELECT gen_random_uuid(), $1::uuid, $2, $3, 'OEM', FALSE, NOW()
+                SELECT gen_random_uuid(), $1::uuid, $2, $3, 'aftermarket', FALSE, NOW()
                 WHERE NOT EXISTS (
                     SELECT 1
                     FROM part_cross_reference
                     WHERE part_id = $1::uuid
                       AND ref_number = $2
                       AND manufacturer = $3
-                      AND ref_type = 'OEM'
+                      AND ref_type = 'aftermarket'
                 )
                 RETURNING 1
             )
@@ -465,7 +510,7 @@ async def main() -> None:
                         oem_numbers = result.get("oem_numbers") or []
                         if oem_numbers:
                             source_mfr = result.get("brand") or source.brand_hint or source.supplier_name
-                            inserted = await insert_oem_cross_refs(conn, part_id, source_mfr, oem_numbers)
+                            inserted = await insert_aftermarket_cross_refs(conn, part_id, source_mfr, oem_numbers)
                             summary["oem_found"] += inserted
                             if first_oem is None:
                                 first_oem = oem_numbers[0]
@@ -478,7 +523,7 @@ async def main() -> None:
                             conn,
                             part_id=part_id,
                             supplier_id=supplier_ids[source.key],
-                            supplier_sku=sku or query,
+                            supplier_sku=(result.get("part_number") or sku or query),
                             price_eur=result.get("price_eur"),
                             price_ils=result.get("price_ils"),
                         )
@@ -489,6 +534,8 @@ async def main() -> None:
 
                         print(
                             f"{source.key} part={sku}: blocked={result.get('blocked')} "
+                            f"part_number={result.get('part_number')} "
+                            f"part_name={result.get('part_name')} "
                             f"oem={len(oem_numbers)} price_eur={result.get('price_eur')} "
                             f"price_ils={result.get('price_ils')}"
                         )
