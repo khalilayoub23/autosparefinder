@@ -286,7 +286,7 @@ async def get_target_parts(conn: asyncpg.Connection, limit: int) -> list[asyncpg
 
 
 async def ensure_supplier(conn: asyncpg.Connection, source: SourceConfig) -> str:
-    row = await conn.fetchrow("SELECT id::text AS id FROM suppliers WHERE name = $1", source.supplier_name)
+    row = await conn.fetchrow("SELECT id::text AS id FROM suppliers WHERE name = $1::text", source.supplier_name)
     if row:
         return row["id"]
 
@@ -295,7 +295,7 @@ async def ensure_supplier(conn: asyncpg.Connection, source: SourceConfig) -> str
         INSERT INTO suppliers (
             id, name, website, country, is_active, priority, created_at, updated_at
         ) VALUES (
-            gen_random_uuid(), $1, $2, 'Unknown', TRUE, 50, NOW(), NOW()
+            gen_random_uuid(), $1::text, $2::text, 'Unknown', TRUE, 50, NOW(), NOW()
         )
         ON CONFLICT (name)
         DO UPDATE SET website = EXCLUDED.website, updated_at = NOW()
@@ -314,7 +314,7 @@ async def resolve_aftermarket_brand(conn: asyncpg.Connection, brand_name: str | 
         """
         SELECT id::text AS id
         FROM aftermarket_brands
-        WHERE LOWER(name) = LOWER($1)
+        WHERE LOWER(name) = LOWER($1::text)
         LIMIT 1
         """,
         brand_name,
@@ -336,14 +336,14 @@ async def insert_aftermarket_cross_refs(
                 INSERT INTO part_cross_reference (
                     id, part_id, ref_number, manufacturer, ref_type, is_superseded, created_at
                 )
-                SELECT gen_random_uuid(), $1::uuid, $2, $3, 'aftermarket', FALSE, NOW()
+                SELECT gen_random_uuid(), $1::uuid, $2::text, $3::text, $4::text, FALSE, NOW()
                 WHERE NOT EXISTS (
                     SELECT 1
                     FROM part_cross_reference
                     WHERE part_id = $1::uuid
-                      AND ref_number = $2
-                      AND manufacturer = $3
-                      AND ref_type = 'aftermarket'
+                      AND ref_number = $2::text
+                      AND manufacturer = $3::text
+                      AND ref_type = $4::text
                 )
                 RETURNING 1
             )
@@ -352,6 +352,7 @@ async def insert_aftermarket_cross_refs(
             part_id,
             ref,
             source_manufacturer,
+            "aftermarket",
         )
         inserted_count += int(result or 0)
     return inserted_count
@@ -387,7 +388,7 @@ async def upsert_supplier_price(
             availability, is_available,
             last_checked_at, created_at, updated_at
         ) VALUES (
-            gen_random_uuid(), $1::uuid, $2::uuid, $3,
+            gen_random_uuid(), $1::uuid, $2::uuid, $3::text,
             ROUND($4::numeric, 2), ROUND($5::numeric, 2),
             'In Stock', TRUE,
             NOW(), NOW(), NOW()
@@ -422,7 +423,7 @@ async def mark_part_success(
         UPDATE parts_catalog
         SET
             needs_oem_lookup = FALSE,
-            oem_number = COALESCE(oem_number, $2),
+            oem_number = COALESCE(oem_number, $2::text),
             aftermarket_brand_id = COALESCE($3::uuid, aftermarket_brand_id),
             updated_at = NOW()
         WHERE id = $1::uuid
