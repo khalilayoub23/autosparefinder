@@ -505,12 +505,55 @@ async def _warmup_embed_model():
     return
 
 
+async def _load_runtime_ai_overrides_from_db():
+    """Load persisted runtime AI overrides from system settings."""
+    provider_settings = {
+        "runtime_hf_token": ("HF_TOKEN", "HF_TOKEN"),
+        "runtime_cerebras_api_key": ("CEREBRAS_API_KEY", "CEREBRAS_API_KEY"),
+        "runtime_gemini_api_key": ("GEMINI_API_KEY", "GEMINI_API_KEY"),
+        "runtime_groq_api_key": ("GROQ_API_KEY", "GROQ_API_KEY"),
+    }
+
+    try:
+        async with async_session_factory() as db:
+            rows = (await db.execute(
+                select(SystemSetting).where(SystemSetting.key.in_(provider_settings.keys()))
+            )).scalars().all()
+
+            loaded_providers: list[str] = []
+            by_key = {row.key: (row.value or "").strip() for row in rows}
+
+            try:
+                import hf_client
+            except Exception:
+                hf_client = None
+
+            for setting_key, (env_key, module_attr) in provider_settings.items():
+                token = (by_key.get(setting_key) or "").strip()
+                if not token:
+                    continue
+                os.environ[env_key] = token
+                if hf_client is not None:
+                    try:
+                        setattr(hf_client, module_attr, token)
+                    except Exception:
+                        pass
+                loaded_providers.append(env_key)
+
+            if loaded_providers:
+                loaded = ", ".join(loaded_providers)
+                print(f"[Startup] Loaded persisted runtime AI overrides from DB: {loaded}")
+    except Exception as e:
+        print(f"[Startup] Failed to load runtime AI overrides (non-fatal): {e}")
+
+
 @app.on_event("startup")
 async def startup():
     from catalog_scraper import start_scraper_task
     from db_update_agent import start_agent_task as start_db_agent
     print("🚀 Auto Spare API starting...")
     print(f"   Environment: {os.getenv('ENVIRONMENT', 'development')}")
+    await _load_runtime_ai_overrides_from_db()
     # Ensure the WhatsApp sentinel user exists (anonymous conversations fallback)
     async with pii_session_factory() as _db:
         await _db.execute(text("""

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import api from '../api/client'
 import {
   LayoutDashboard, Users, Package, TrendingUp, Settings,
@@ -8,10 +8,63 @@ import {
   FileSpreadsheet, Upload, X, Zap, TrendingDown, Percent,
   Trash2, Pencil, Ban, ShieldCheck, Save,
   Globe, Phone, Mail, Key, Star, MapPin, Eye, EyeOff,
-  Bot, MessageSquare, Sliders, Cpu, FlaskConical,
+  Bot, MessageSquare, Sliders, Cpu, FlaskConical, Send, Volume2, VolumeX, Database,
   RotateCcw, CheckSquare, XCircle,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
+
+const readStoredFlag = (key, fallback) => {
+  if (typeof window === 'undefined') return fallback
+  const raw = window.localStorage.getItem(key)
+  if (raw == null) return fallback
+  return raw === '1'
+}
+
+const readStoredVolume = (key, fallback) => {
+  if (typeof window === 'undefined') return fallback
+  const raw = Number(window.localStorage.getItem(key))
+  if (Number.isNaN(raw)) return fallback
+  return Math.max(0, Math.min(1, raw))
+}
+
+const DEFAULT_HANDOFF_TEAM_SETTINGS = {
+  sla_target_seconds: 300,
+  avg_handle_minutes: 6,
+  queue_eta_floor_seconds: 60,
+  escalation_after_seconds: 420,
+  ai_lock_during_handoff: true,
+  feedback_required_on_resolve: true,
+  waiting_notice_cooldown_seconds: 120,
+}
+
+const normalizeHandoffTeamSettings = (raw = {}) => {
+  const toInt = (value, fallback, min, max) => {
+    const n = Number(value)
+    if (!Number.isFinite(n)) return fallback
+    return Math.max(min, Math.min(max, Math.round(n)))
+  }
+
+  const toBool = (value, fallback) => {
+    if (typeof value === 'boolean') return value
+    if (typeof value === 'string') {
+      const v = value.trim().toLowerCase()
+      if (['1', 'true', 'yes', 'on'].includes(v)) return true
+      if (['0', 'false', 'no', 'off'].includes(v)) return false
+    }
+    if (typeof value === 'number') return value !== 0
+    return fallback
+  }
+
+  return {
+    sla_target_seconds: toInt(raw.sla_target_seconds, DEFAULT_HANDOFF_TEAM_SETTINGS.sla_target_seconds, 60, 1800),
+    avg_handle_minutes: toInt(raw.avg_handle_minutes, DEFAULT_HANDOFF_TEAM_SETTINGS.avg_handle_minutes, 1, 30),
+    queue_eta_floor_seconds: toInt(raw.queue_eta_floor_seconds, DEFAULT_HANDOFF_TEAM_SETTINGS.queue_eta_floor_seconds, 15, 600),
+    escalation_after_seconds: toInt(raw.escalation_after_seconds, DEFAULT_HANDOFF_TEAM_SETTINGS.escalation_after_seconds, 60, 3600),
+    ai_lock_during_handoff: toBool(raw.ai_lock_during_handoff, DEFAULT_HANDOFF_TEAM_SETTINGS.ai_lock_during_handoff),
+    feedback_required_on_resolve: toBool(raw.feedback_required_on_resolve, DEFAULT_HANDOFF_TEAM_SETTINGS.feedback_required_on_resolve),
+    waiting_notice_cooldown_seconds: toInt(raw.waiting_notice_cooldown_seconds, DEFAULT_HANDOFF_TEAM_SETTINGS.waiting_notice_cooldown_seconds, 30, 900),
+  }
+}
 
 const STATUS_HE = {
   pending_payment: { label: 'ממתין לתשלום', cls: 'bg-amber-100 text-amber-700' },
@@ -20,6 +73,34 @@ const STATUS_HE = {
   shipped:         { label: 'נשלח',          cls: 'bg-purple-100 text-purple-700' },
   delivered:       { label: 'נמסר',          cls: 'bg-gray-100 text-gray-700'  },
   cancelled:       { label: 'בוטל',          cls: 'bg-red-100 text-red-600'    },
+}
+
+const HANDOFF_TIMELINE_STYLE = {
+  requested: {
+    label: 'נפתחה בקשה',
+    chip: 'bg-rose-100 text-rose-700 border-rose-200',
+    dot: 'bg-rose-500',
+  },
+  accepted: {
+    label: 'טיפול אנושי',
+    chip: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+    dot: 'bg-emerald-500',
+  },
+  released: {
+    label: 'שחרור טיפול',
+    chip: 'bg-amber-100 text-amber-700 border-amber-200',
+    dot: 'bg-amber-500',
+  },
+  feedback_received: {
+    label: 'משוב לקוח',
+    chip: 'bg-violet-100 text-violet-700 border-violet-200',
+    dot: 'bg-violet-500',
+  },
+  default: {
+    label: 'אירוע',
+    chip: 'bg-gray-100 text-gray-700 border-gray-200',
+    dot: 'bg-gray-500',
+  },
 }
 
 function StatCard({ label, value, icon: Icon, color = 'brand', sub }) {
@@ -48,12 +129,34 @@ function StatCard({ label, value, icon: Icon, color = 'brand', sub }) {
 const TABS = [
   { id: 'dashboard', label: 'סקירה', icon: LayoutDashboard },
   { id: 'users',     label: 'משתמשים', icon: Users         },
+  { id: 'chats',     label: 'צ׳אטים', icon: MessageSquare  },
+  { id: 'dbdata',    label: 'נתוני DB', icon: Database     },
   { id: 'suppliers', label: 'ספקים', icon: Truck, badge: true },
   { id: 'orders',    label: 'הזמנות', icon: ShoppingBag    },
   { id: 'parts',     label: 'ייבוא חלקים', icon: FileSpreadsheet },
   { id: 'social',    label: 'רשתות חברתיות', icon: Wand2   },
-  { id: 'agents',    label: 'סוכני AI',        icon: Bot     },
   { id: 'returns',   label: 'החזרות',          icon: RotateCcw, badge: true },
+]
+
+const DB_VIEW_DATASETS = [
+  { id: 'parts_catalog', label: 'Parts Catalog', group: 'Core Parts' },
+  { id: 'part_master', label: 'Part Master', group: 'Core Parts' },
+  { id: 'part_variants', label: 'Part Variants', group: 'Core Parts' },
+  { id: 'part_cross_reference', label: 'Part Cross Reference', group: 'Core Parts' },
+  { id: 'part_aliases', label: 'Part Aliases', group: 'Core Parts' },
+  { id: 'part_images', label: 'Part Images', group: 'Core Parts' },
+  { id: 'aftermarket_brands', label: 'Aftermarket Brands', group: 'Core Parts' },
+  { id: 'car_brands', label: 'Car Brands', group: 'Core Parts' },
+  { id: 'brand_aliases', label: 'Brand Aliases', group: 'Core Parts' },
+  { id: 'catalog_versions', label: 'Catalog Versions', group: 'Pricing' },
+  { id: 'price_history', label: 'Price History', group: 'Pricing' },
+  { id: 'suppliers', label: 'Suppliers', group: 'Supplier Ops' },
+  { id: 'supplier_parts', label: 'Supplier Parts', group: 'Supplier Ops' },
+  { id: 'purchase_orders', label: 'Purchase Orders', group: 'Supplier Ops' },
+  { id: 'part_diagram_cache', label: 'Part Diagram Cache', group: 'AI Cache' },
+  { id: 'scraper_api_calls', label: 'Scraper API Calls', group: 'AI Cache' },
+  { id: 'job_registry', label: 'Job Registry', group: 'System' },
+  { id: 'system_settings', label: 'System Settings', group: 'System' },
 ]
 
 function SupplierFormFields({ f, setF, isCreate }) {
@@ -187,11 +290,40 @@ export default function Admin() {
   const [fitmentBackfillRunning, setFitmentBackfillRunning] = useState(false)
   const [fitmentBackfillResult, setFitmentBackfillResult] = useState(null)
   const [users, setUsers] = useState([])
+  const [chatConversations, setChatConversations] = useState([])
+  const [chatTotal, setChatTotal] = useState(0)
+  const [chatUsage, setChatUsage] = useState(null)
+  const [handoffQueue, setHandoffQueue] = useState([])
+  const [handoffSummary, setHandoffSummary] = useState({ pending_count: 0, urgent_count: 0, overdue_count: 0, avg_wait_seconds: 0, max_wait_seconds: 0, sla_target_seconds: 300 })
+  const [handoffTeamSettings, setHandoffTeamSettings] = useState(DEFAULT_HANDOFF_TEAM_SETTINGS)
+  const [loadingHandoffTeamSettings, setLoadingHandoffTeamSettings] = useState(false)
+  const [savingHandoffTeamSettings, setSavingHandoffTeamSettings] = useState(false)
+  const [chatFilters, setChatFilters] = useState({ channel: 'all', search: '' })
+  const [selectedChat, setSelectedChat] = useState(null)
+  const [chatMessages, setChatMessages] = useState([])
+  const [chatReply, setChatReply] = useState('')
+  const [sendingChatReply, setSendingChatReply] = useState(false)
+  const [updatingChatStatus, setUpdatingChatStatus] = useState(false)
+  const [togglingTakeover, setTogglingTakeover] = useState(false)
+  const [savingChatMeta, setSavingChatMeta] = useState(false)
+  const [deletingChat, setDeletingChat] = useState(false)
+  const [editingChatTitle, setEditingChatTitle] = useState(false)
+  const [chatTitleDraft, setChatTitleDraft] = useState('')
   const [editUser, setEditUser] = useState(null)
   const [editForm, setEditForm] = useState({ full_name: '', email: '', phone: '', role: 'customer', is_verified: false, is_active: true, is_admin: false })
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [createForm, setCreateForm] = useState({ full_name: '', email: '', phone: '', password: '', role: 'customer', is_admin: false, is_verified: true })
   const [userFilters, setUserFilters] = useState({ name: '', email: '', verified: '', role: '', status: '', date: '' })
+  const [dbViewDataset, setDbViewDataset] = useState('parts_catalog')
+  const [dbViewDatasets, setDbViewDatasets] = useState([])
+  const [dbViewSearch, setDbViewSearch] = useState('')
+  const [dbViewRows, setDbViewRows] = useState([])
+  const [dbViewColumns, setDbViewColumns] = useState([])
+  const [dbViewTotal, setDbViewTotal] = useState(0)
+  const [dbViewOffset, setDbViewOffset] = useState(0)
+  const [dbViewLimit, setDbViewLimit] = useState(50)
+  const [dbViewLoading, setDbViewLoading] = useState(false)
+  const [dbViewRowModal, setDbViewRowModal] = useState(null)
   const [orders, setOrders] = useState([])
   const [suppliers, setSuppliers] = useState([])
   const [expandedSupplier, setExpandedSupplier] = useState(null)
@@ -227,6 +359,13 @@ export default function Admin() {
   const [processingReturn, setProcessingReturn] = useState(null)
   const [rejectReason, setRejectReason] = useState('')
   const [showRejectModal, setShowRejectModal] = useState(null)
+  const [handoffAlertSoundEnabled, setHandoffAlertSoundEnabled] = useState(() => readStoredFlag('admin_handoff_sound_enabled', true))
+  const [handoffAlertUrgentOnly, setHandoffAlertUrgentOnly] = useState(() => readStoredFlag('admin_handoff_sound_urgent_only', true))
+  const [handoffAlertVolume, setHandoffAlertVolume] = useState(() => readStoredVolume('admin_handoff_sound_volume', 0.45))
+  const seenHandoffIdsRef = useRef(new Set())
+  const handoffAudioCtxRef = useRef(null)
+  const dbViewCompatNotifiedRef = useRef(false)
+  const dbViewSearchTimerRef = useRef(null)
 
   useEffect(() => {
     loadDashboard()
@@ -235,11 +374,99 @@ export default function Admin() {
   useEffect(() => {
     if (tab === 'dashboard') loadDashboard()
     if (tab === 'users') loadUsers()
+    if (tab === 'chats') { loadAdminChats(); loadChatUsage(); loadHandoffQueue(true); loadHandoffTeamSettings() }
+    if (tab === 'dbdata') loadDbView({ dataset: dbViewDataset, search: dbViewSearch, offset: 0, limit: dbViewLimit })
     if (tab === 'orders') loadOrders()
     if (tab === 'suppliers') { loadSuppliers(); loadSupplierOrders(); loadSyncStatus() }
     if (tab === 'agents') loadAgents()
     if (tab === 'returns') loadAdminReturns()
   }, [tab])
+
+  useEffect(() => {
+    if (tab !== 'dbdata') return undefined
+    if (dbViewSearchTimerRef.current) clearTimeout(dbViewSearchTimerRef.current)
+    dbViewSearchTimerRef.current = setTimeout(() => {
+      setDbViewOffset(0)
+      loadDbView({ dataset: dbViewDataset, search: dbViewSearch, offset: 0, limit: dbViewLimit })
+    }, 350)
+    return () => {
+      if (dbViewSearchTimerRef.current) clearTimeout(dbViewSearchTimerRef.current)
+    }
+  }, [tab, dbViewSearch])
+
+  useEffect(() => {
+    loadHandoffQueue(false)
+    const timer = setInterval(() => {
+      loadHandoffQueue(true)
+    }, 10000)
+    return () => clearInterval(timer)
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    window.localStorage.setItem('admin_handoff_sound_enabled', handoffAlertSoundEnabled ? '1' : '0')
+  }, [handoffAlertSoundEnabled])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    window.localStorage.setItem('admin_handoff_sound_urgent_only', handoffAlertUrgentOnly ? '1' : '0')
+  }, [handoffAlertUrgentOnly])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    window.localStorage.setItem('admin_handoff_sound_volume', String(handoffAlertVolume))
+  }, [handoffAlertVolume])
+
+  const playHandoffAlertSound = async (isUrgent = false) => {
+    if (!handoffAlertSoundEnabled) return
+    if (handoffAlertUrgentOnly && !isUrgent) return
+    if (typeof window === 'undefined') return
+
+    const Ctx = window.AudioContext || window.webkitAudioContext
+    if (!Ctx) return
+
+    if (!handoffAudioCtxRef.current) {
+      handoffAudioCtxRef.current = new Ctx()
+    }
+
+    const audioCtx = handoffAudioCtxRef.current
+    if (audioCtx.state === 'suspended') {
+      try {
+        await audioCtx.resume()
+      } catch {
+        return
+      }
+    }
+
+    const now = audioCtx.currentTime + 0.01
+    const gain = audioCtx.createGain()
+    gain.connect(audioCtx.destination)
+    const volume = Math.max(0.05, Math.min(1, handoffAlertVolume))
+
+    const makeTone = (freq, startAt, duration) => {
+      const osc = audioCtx.createOscillator()
+      osc.type = 'sine'
+      osc.frequency.setValueAtTime(freq, startAt)
+      osc.connect(gain)
+      osc.start(startAt)
+      osc.stop(startAt + duration)
+    }
+
+    gain.gain.setValueAtTime(0.0001, now)
+    gain.gain.linearRampToValueAtTime(0.12 * volume, now + 0.02)
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.2)
+    makeTone(isUrgent ? 980 : 780, now, 0.2)
+
+    gain.gain.setValueAtTime(0.0001, now + 0.24)
+    gain.gain.linearRampToValueAtTime(0.14 * volume, now + 0.28)
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.52)
+    makeTone(isUrgent ? 1120 : 860, now + 0.24, 0.28)
+  }
+
+  const testHandoffAlertSound = async () => {
+    await playHandoffAlertSound(true)
+    toast.success('נוגן צליל בדיקה')
+  }
 
   useEffect(() => {
     if (tab !== 'dashboard') return
@@ -248,6 +475,19 @@ export default function Admin() {
     }, 30000)
     return () => clearInterval(timer)
   }, [tab])
+
+  useEffect(() => {
+    if (tab !== 'chats') return
+    const timer = setInterval(() => {
+      loadAdminChats(chatFilters)
+      loadChatUsage()
+      loadHandoffQueue(false)
+      if (selectedChat?.id) {
+        loadChatMessages(selectedChat.id)
+      }
+    }, 15000)
+    return () => clearInterval(timer)
+  }, [tab, selectedChat?.id, chatFilters.channel, chatFilters.search])
 
   const loadAdminReturns = async (sf = returnsFilter) => {
     setLoading(true)
@@ -351,6 +591,321 @@ export default function Admin() {
     try { const { data } = await api.get('/admin/users'); setUsers(data.users || []) }
     catch { toast.error('שגיאה') }
     finally { setLoading(false) }
+  }
+
+  const applyDbViewResponse = (data, fallbackDataset, fallbackOffset, fallbackLimit) => {
+    setDbViewDataset(data?.dataset || fallbackDataset)
+    const datasets = Array.isArray(data?.datasets) && data.datasets.length > 0 ? data.datasets : DB_VIEW_DATASETS
+    setDbViewDatasets(datasets)
+    setDbViewColumns(Array.isArray(data?.columns) ? data.columns : [])
+    setDbViewRows(Array.isArray(data?.rows) ? data.rows : [])
+    setDbViewTotal(Number(data?.total || 0))
+    setDbViewOffset(Number(data?.offset ?? fallbackOffset ?? 0))
+    setDbViewLimit(Number(data?.limit || fallbackLimit || 50))
+  }
+
+  const loadDbView = async (opts = {}) => {
+    const dataset = (opts.dataset ?? dbViewDataset) || 'parts_catalog'
+    const search = typeof opts.search === 'string' ? opts.search : dbViewSearch
+    const offset = Number.isFinite(opts.offset) ? Math.max(0, Number(opts.offset)) : dbViewOffset
+    const limit = Number.isFinite(opts.limit) ? Math.max(10, Math.min(200, Number(opts.limit))) : dbViewLimit
+
+    setDbViewLoading(true)
+    try {
+      const { data } = await api.get('/admin/db-view', {
+        params: {
+          dataset,
+          search: (search || '').trim(),
+          offset,
+          limit,
+        },
+      })
+      dbViewCompatNotifiedRef.current = false
+      applyDbViewResponse(data, dataset, offset, limit)
+      if (typeof opts.search === 'string') {
+        setDbViewSearch(opts.search)
+      }
+    } catch (e) {
+      if (e?.response?.status === 404) {
+        setDbViewDatasets(DB_VIEW_DATASETS)
+        setDbViewDataset('parts_catalog')
+        setDbViewColumns([])
+        setDbViewRows([])
+        setDbViewTotal(0)
+        setDbViewOffset(0)
+        if (!dbViewCompatNotifiedRef.current) {
+          toast('תצוגת נתוני חלקים דורשת עדכון Backend', { id: 'db-view-compat' })
+          dbViewCompatNotifiedRef.current = true
+        }
+        return
+      }
+
+      const detail = e?.response?.data?.detail
+      const detailMsg = typeof detail === 'string' ? detail : ''
+      const message = detailMsg.toLowerCase() === 'not found'
+        ? 'שגיאה בטעינת נתוני DB'
+        : (detailMsg || 'שגיאה בטעינת נתוני DB')
+      toast.error(message)
+    } finally {
+      setDbViewLoading(false)
+    }
+  }
+
+  const formatDbCellValue = (value) => {
+    if (value === null || value === undefined || value === '') return '—'
+    if (typeof value === 'boolean') return value ? 'כן' : 'לא'
+    if (typeof value === 'object') {
+      try {
+        return JSON.stringify(value)
+      } catch {
+        return String(value)
+      }
+    }
+    return String(value)
+  }
+
+  const loadAdminChats = async (filters = chatFilters) => {
+    setLoading(true)
+    try {
+      const params = {
+        channel: filters.channel || 'all',
+        search: (filters.search || '').trim(),
+        limit: 80,
+      }
+      const { data } = await api.get('/admin/chats', { params })
+      const convs = data.conversations || []
+      setChatConversations(convs)
+      setChatTotal(data.total || convs.length)
+
+      if (!selectedChat && convs.length > 0) {
+        await loadChatMessages(convs[0].id)
+      } else if (selectedChat) {
+        const stillExists = convs.find((c) => c.id === selectedChat.id)
+        if (stillExists) {
+          await loadChatMessages(stillExists.id)
+        } else {
+          setSelectedChat(null)
+          setChatMessages([])
+          setChatReply('')
+        }
+      }
+    } catch {
+      toast.error('שגיאה בטעינת צ׳אטים')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const loadChatUsage = async () => {
+    try {
+      const { data } = await api.get('/admin/chats/usage', { params: { days: 30 } })
+      setChatUsage(data)
+    } catch {
+      setChatUsage(null)
+    }
+  }
+
+  const loadHandoffQueue = async (notify = false) => {
+    try {
+      const { data } = await api.get('/admin/chats/handoff-queue', { params: { limit: 100 } })
+      const items = data.items || []
+      const summary = data.summary || {}
+      setHandoffQueue(items)
+      setHandoffSummary({
+        pending_count: summary.pending_count || 0,
+        urgent_count: summary.urgent_count || 0,
+        overdue_count: summary.overdue_count || 0,
+        avg_wait_seconds: summary.avg_wait_seconds || 0,
+        max_wait_seconds: summary.max_wait_seconds || 0,
+        sla_target_seconds: summary.sla_target_seconds || 300,
+      })
+
+      const prevIds = seenHandoffIdsRef.current
+      const currentIds = new Set(items.map((x) => x.conversation_id))
+      if (notify) {
+        const newItems = items.filter((x) => !prevIds.has(x.conversation_id))
+        if (newItems.length > 0) {
+          const hasUrgent = newItems.some((x) => Number(x.priority || 1) >= 3)
+          await playHandoffAlertSound(hasUrgent)
+          if (newItems.length === 1) {
+            const item = newItems[0]
+            toast((t) => (
+              <div className="text-sm">
+                <p className="font-semibold text-gray-900">בקשת נציג חדשה</p>
+                <p className="text-gray-600">{item.display_name || item.display_contact || 'לקוח'} • {item.channel}</p>
+              </div>
+            ), { duration: 4500, id: `handoff-${newItems[0].conversation_id}` })
+          } else {
+            toast.success(`התקבלו ${newItems.length} בקשות חדשות לנציג אנושי`)
+          }
+        }
+      }
+      seenHandoffIdsRef.current = currentIds
+    } catch {
+      // silent: queue polling should not disrupt admin flow
+    }
+  }
+
+  const loadHandoffTeamSettings = async () => {
+    setLoadingHandoffTeamSettings(true)
+    try {
+      const { data } = await api.get('/admin/chats/handoff-settings')
+      setHandoffTeamSettings(normalizeHandoffTeamSettings(data?.settings || {}))
+    } catch {
+      setHandoffTeamSettings(DEFAULT_HANDOFF_TEAM_SETTINGS)
+    } finally {
+      setLoadingHandoffTeamSettings(false)
+    }
+  }
+
+  const updateHandoffTeamSetting = (key, value) => {
+    setHandoffTeamSettings((prev) => normalizeHandoffTeamSettings({ ...prev, [key]: value }))
+  }
+
+  const saveHandoffTeamSettings = async () => {
+    setSavingHandoffTeamSettings(true)
+    try {
+      const payload = normalizeHandoffTeamSettings(handoffTeamSettings)
+      const { data } = await api.put('/admin/chats/handoff-settings', { settings: payload })
+      setHandoffTeamSettings(normalizeHandoffTeamSettings(data?.settings || payload))
+      toast.success('הגדרות צוות הנציגים נשמרו')
+      await loadHandoffQueue(false)
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || 'שגיאה בשמירת הגדרות נציגים')
+    } finally {
+      setSavingHandoffTeamSettings(false)
+    }
+  }
+
+  const loadChatMessages = async (conversationId) => {
+    try {
+      const { data } = await api.get(`/admin/chats/${conversationId}/messages`, { params: { limit: 250 } })
+      setSelectedChat(data.conversation || null)
+      setChatMessages(data.messages || [])
+      setChatTitleDraft(data.conversation?.title || '')
+    } catch {
+      toast.error('שגיאה בטעינת הודעות')
+    }
+  }
+
+  const sendAdminChatReply = async () => {
+    if (!selectedChat?.id || !chatReply.trim()) return
+    if (!selectedChat?.admin_takeover_active) {
+      toast.error('יש להפעיל השתלטות ידנית לפני שליחת הודעה')
+      return
+    }
+    setSendingChatReply(true)
+    try {
+      await api.post(`/admin/chats/${selectedChat.id}/reply`, { message: chatReply.trim() })
+      setChatReply('')
+      toast.success('ההודעה נשלחה')
+      await loadChatMessages(selectedChat.id)
+      await loadAdminChats()
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || 'שגיאה בשליחת הודעה')
+    } finally {
+      setSendingChatReply(false)
+    }
+  }
+
+  const toggleChatActiveStatus = async () => {
+    if (!selectedChat?.id) return
+    setUpdatingChatStatus(true)
+    try {
+      const target = !selectedChat.is_active
+      await api.put(`/admin/chats/${selectedChat.id}/status`, { is_active: target })
+      setSelectedChat((prev) => prev ? { ...prev, is_active: target } : prev)
+      setChatConversations((prev) => prev.map((c) => c.id === selectedChat.id ? { ...c, is_active: target } : c))
+      toast.success(target ? 'השיחה הופעלה מחדש' : 'השיחה נסגרה')
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || 'שגיאה בעדכון סטטוס שיחה')
+    } finally {
+      setUpdatingChatStatus(false)
+    }
+  }
+
+  const setChatTakeover = async (conversationId, active, opts = {}) => {
+    if (!conversationId) return
+    const focusChat = opts.focusChat !== false
+    setTogglingTakeover(true)
+    try {
+      const { data } = await api.put(`/admin/chats/${conversationId}/takeover`, { active })
+      const nextHandoffStatus = data?.human_handoff_status || (active ? 'active' : 'resolved')
+      setSelectedChat((prev) => prev && prev.id === conversationId ? {
+        ...prev,
+        admin_takeover_active: active,
+        human_handoff_status: nextHandoffStatus,
+        human_handoff_requested: false,
+      } : prev)
+      setChatConversations((prev) => prev.map((c) => c.id === conversationId ? {
+        ...c,
+        admin_takeover_active: active,
+        human_handoff_status: nextHandoffStatus,
+        human_handoff_requested: false,
+      } : c))
+
+      if (focusChat) {
+        await loadChatMessages(conversationId)
+      }
+      await loadHandoffQueue(false)
+
+      if (active) {
+        if (data?.intro_message_sent) toast.success('השתלטות ידנית הופעלה ונשלחה הודעת פתיחה ללקוח')
+        else toast.success('השתלטות ידנית הופעלה (הודעת פתיחה לא נשלחה בערוץ)')
+      } else {
+        toast.success('השתלטות ידנית שוחררה')
+      }
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || 'שגיאה בעדכון מצב השתלטות')
+    } finally {
+      setTogglingTakeover(false)
+    }
+  }
+
+  const toggleChatTakeover = async () => {
+    if (!selectedChat?.id) return
+    const target = !selectedChat.admin_takeover_active
+    await setChatTakeover(selectedChat.id, target, { focusChat: true })
+  }
+
+  const acceptHandoffFromQueue = async (conversationId) => {
+    await setChatTakeover(conversationId, true, { focusChat: true })
+  }
+
+  const saveChatTitle = async () => {
+    if (!selectedChat?.id || !chatTitleDraft.trim()) return
+    setSavingChatMeta(true)
+    try {
+      const { data } = await api.put(`/admin/chats/${selectedChat.id}`, { title: chatTitleDraft.trim() })
+      setSelectedChat((prev) => prev ? { ...prev, title: data.title } : prev)
+      setChatConversations((prev) => prev.map((c) => c.id === selectedChat.id ? { ...c, title: data.title } : c))
+      setEditingChatTitle(false)
+      toast.success('שם השיחה עודכן')
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || 'שגיאה בעדכון שיחה')
+    } finally {
+      setSavingChatMeta(false)
+    }
+  }
+
+  const deleteSelectedChat = async () => {
+    if (!selectedChat?.id) return
+    if (!window.confirm('למחוק את השיחה הזו? פעולה זו תסתיר אותה ממסך הניהול.')) return
+    setDeletingChat(true)
+    try {
+      await api.delete(`/admin/chats/${selectedChat.id}`)
+      setChatConversations((prev) => prev.filter((c) => c.id !== selectedChat.id))
+      setSelectedChat(null)
+      setChatMessages([])
+      setChatReply('')
+      setChatTitleDraft('')
+      toast.success('השיחה נמחקה')
+      loadChatUsage()
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || 'שגיאה במחיקת שיחה')
+    } finally {
+      setDeletingChat(false)
+    }
   }
 
   const loadOrders = async (sf = statusFilter) => {
@@ -582,8 +1137,15 @@ export default function Admin() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 border-b border-gray-200 overflow-x-auto">
+      <div className="flex gap-1 border-b border-gray-200 overflow-x-auto overflow-y-hidden lg:overflow-x-visible">
         {TABS.map(({ id, label, icon: Icon, badge }) => (
+          (() => {
+            const badgeCount = id === 'chats'
+              ? (handoffSummary?.pending_count || 0)
+              : (id === 'suppliers' || id === 'returns')
+                ? supplierOrdersPending
+                : 0
+            return (
           <button
             key={id}
             onClick={() => setTab(id)}
@@ -591,12 +1153,14 @@ export default function Admin() {
               ${tab === id ? 'border-brand-600 text-brand-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
           >
             <Icon className="w-4 h-4" /> {label}
-            {badge && supplierOrdersPending > 0 && (
+            {badge && badgeCount > 0 && (
               <span className="inline-flex items-center justify-center w-5 h-5 text-[10px] font-bold bg-red-500 text-white rounded-full">
-                {supplierOrdersPending}
+                {badgeCount}
               </span>
             )}
           </button>
+            )
+          })()
         ))}
       </div>
 
@@ -830,11 +1394,10 @@ export default function Admin() {
                 <PlusCircle className="w-4 h-4" />
                 משתמש חדש
               </button>
-              <button onClick={loadUsers} className="btn-ghost text-sm flex items-center gap-1"><RefreshCw className="w-4 h-4" /></button>
             </div>
           </div>
           {loading ? <div className="flex justify-center p-8"><Loader2 className="w-6 h-6 animate-spin text-brand-600" /></div> : (
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto overflow-y-hidden">
               <table className="w-full text-sm">
                 <thead className="bg-gray-50">
                   <tr>
@@ -932,6 +1495,631 @@ export default function Admin() {
         )
       })()}
 
+      {/* DB data viewer */}
+      {tab === 'dbdata' && (() => {
+        const totalPages = Math.max(1, Math.ceil((dbViewTotal || 0) / Math.max(1, dbViewLimit || 1)))
+        const currentPage = Math.floor((dbViewOffset || 0) / Math.max(1, dbViewLimit || 1)) + 1
+        const hasPrev = dbViewOffset > 0
+        const hasNext = (dbViewOffset + dbViewRows.length) < dbViewTotal
+        const datasetOptions = dbViewDatasets.length > 0 ? dbViewDatasets : DB_VIEW_DATASETS
+        const groupedDatasetOptions = datasetOptions.reduce((acc, item) => {
+          const groupName = item.group || 'Other'
+          if (!acc[groupName]) acc[groupName] = []
+          acc[groupName].push(item)
+          return acc
+        }, {})
+        const groupOrder = ['Core Parts', 'Pricing', 'Supplier Ops', 'AI Cache', 'System', 'Other']
+        return (
+          <div className="space-y-4">
+            <div className="card p-4 flex flex-col lg:flex-row lg:items-end gap-3">
+              <div className="w-full lg:w-72">
+                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">טבלה</label>
+                <select
+                  className="input-field w-full"
+                  value={dbViewDataset}
+                  onChange={(e) => {
+                    const nextDataset = e.target.value
+                    setDbViewDataset(nextDataset)
+                    setDbViewOffset(0)
+                    loadDbView({ dataset: nextDataset, search: dbViewSearch, offset: 0, limit: dbViewLimit })
+                  }}
+                >
+                  {groupOrder
+                    .filter((groupName) => Array.isArray(groupedDatasetOptions[groupName]) && groupedDatasetOptions[groupName].length > 0)
+                    .map((groupName) => (
+                      <optgroup key={groupName} label={groupName}>
+                        {groupedDatasetOptions[groupName].map((d) => (
+                          <option key={d.id} value={d.id}>{d.label || d.id}</option>
+                        ))}
+                      </optgroup>
+                    ))}
+                </select>
+              </div>
+              <div className="w-full lg:flex-1">
+                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">חיפוש</label>
+                <input
+                  className="input-field w-full"
+                  value={dbViewSearch}
+                  onChange={(e) => setDbViewSearch(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      setDbViewOffset(0)
+                      loadDbView({ dataset: dbViewDataset, search: e.currentTarget.value, offset: 0, limit: dbViewLimit })
+                    }
+                  }}
+                  placeholder="חפש לפי שדות עיקריים..."
+                />
+              </div>
+              <div className="w-full lg:w-36">
+                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">תוצאות לעמוד</label>
+                <select
+                  className="input-field w-full"
+                  value={dbViewLimit}
+                  onChange={(e) => {
+                    const nextLimit = Number(e.target.value)
+                    setDbViewOffset(0)
+                    setDbViewLimit(nextLimit)
+                    loadDbView({ dataset: dbViewDataset, search: dbViewSearch, offset: 0, limit: nextLimit })
+                  }}
+                >
+                  <option value={25}>25</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                  <option value={200}>200</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    setDbViewOffset(0)
+                    loadDbView({ dataset: dbViewDataset, search: dbViewSearch, offset: 0, limit: dbViewLimit })
+                  }}
+                  className="btn-primary text-sm flex items-center gap-1.5"
+                  disabled={dbViewLoading}
+                >
+                  {dbViewLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                  טען נתונים
+                </button>
+              </div>
+            </div>
+
+            <div className="card overflow-hidden">
+              {dbViewLoading ? (
+                <div className="flex justify-center p-10"><Loader2 className="w-6 h-6 animate-spin text-brand-600" /></div>
+              ) : (
+                <>
+                  <div className="overflow-x-auto overflow-y-hidden">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          {dbViewColumns.map((col) => (
+                            <th key={col.key} className="px-3 py-3 text-right text-xs font-medium text-gray-500 whitespace-nowrap">{col.label || col.key}</th>
+                          ))}
+                          <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 whitespace-nowrap">JSON</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {dbViewRows.length === 0 ? (
+                          <tr>
+                            <td colSpan={Math.max(1, dbViewColumns.length + 1)} className="text-center text-gray-400 py-8 text-sm">אין נתונים להצגה</td>
+                          </tr>
+                        ) : dbViewRows.map((row, idx) => (
+                          <tr key={row.id || `${dbViewDataset}-${dbViewOffset + idx}`} className="hover:bg-gray-50">
+                            {dbViewColumns.map((col) => {
+                              const val = formatDbCellValue(row[col.key])
+                              return (
+                                <td key={`${row.id || idx}-${col.key}`} className="px-3 py-3 text-xs text-gray-700 max-w-[260px] truncate" title={val}>
+                                  {val}
+                                </td>
+                              )
+                            })}
+                            <td className="px-3 py-3">
+                              <button
+                                onClick={() => setDbViewRowModal(row)}
+                                className="btn-ghost text-xs flex items-center gap-1"
+                                title="הצג JSON מלא"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                                פתח
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="px-4 py-3 border-t border-gray-100 flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <p className="text-gray-500">סה״כ {dbViewTotal.toLocaleString('he-IL')} רשומות • עמוד {currentPage} מתוך {totalPages}</p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          const nextOffset = Math.max(0, dbViewOffset - dbViewLimit)
+                          setDbViewOffset(nextOffset)
+                          loadDbView({ dataset: dbViewDataset, search: dbViewSearch, offset: nextOffset, limit: dbViewLimit })
+                        }}
+                        disabled={!hasPrev || dbViewLoading}
+                        className="btn-secondary text-xs disabled:opacity-40"
+                      >
+                        הקודם
+                      </button>
+                      <button
+                        onClick={() => {
+                          const nextOffset = dbViewOffset + dbViewLimit
+                          setDbViewOffset(nextOffset)
+                          loadDbView({ dataset: dbViewDataset, search: dbViewSearch, offset: nextOffset, limit: dbViewLimit })
+                        }}
+                        disabled={!hasNext || dbViewLoading}
+                        className="btn-secondary text-xs disabled:opacity-40"
+                      >
+                        הבא
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* Chats management */}
+      {tab === 'chats' && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <StatCard label="סה״כ שיחות (30 יום)" value={chatUsage?.summary?.total_conversations ?? 0} icon={MessageSquare} color="blue" />
+            <StatCard label="לקוחות ייחודיים" value={chatUsage?.summary?.unique_clients ?? 0} icon={Users} color="purple" />
+            <StatCard label="סה״כ הודעות" value={chatUsage?.summary?.total_messages ?? 0} icon={BarChart2} color="teal" />
+            <StatCard label="שיחות פעילות" value={chatUsage?.summary?.active_conversations ?? 0} icon={Clock} color="orange" />
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div className="card p-4 border border-amber-200 bg-amber-50/50">
+              <h4 className="font-bold text-amber-900 text-sm">תור נציג אנושי</h4>
+              <p className="text-2xl font-bold text-amber-700 mt-1">{handoffSummary.pending_count || 0}</p>
+              <p className="text-xs text-amber-700 mt-1">בקשות פתוחות כרגע</p>
+            </div>
+            <div className="card p-4 border border-red-200 bg-red-50/40">
+              <h4 className="font-bold text-red-900 text-sm">בקשות דחופות</h4>
+              <p className="text-2xl font-bold text-red-700 mt-1">{handoffSummary.urgent_count || 0}</p>
+              <p className="text-xs text-red-700 mt-1">קדימות גבוהה</p>
+            </div>
+            <div className="card p-4 border border-sky-200 bg-sky-50/40">
+              <h4 className="font-bold text-sky-900 text-sm">זמן המתנה ממוצע</h4>
+              <p className="text-2xl font-bold text-sky-700 mt-1">{Math.round((handoffSummary.avg_wait_seconds || 0) / 60)} דק׳</p>
+              <p className="text-xs text-sky-700 mt-1">יעד SLA: {Math.round((handoffSummary.sla_target_seconds || 300) / 60)} דק׳</p>
+            </div>
+          </div>
+
+          <div className="card p-4">
+            <div className="flex items-center justify-between gap-2 mb-3">
+              <h4 className="font-bold text-gray-900 text-sm">הגדרות צוות נציגים</h4>
+              <div className="flex items-center gap-2">
+                <button onClick={loadHandoffTeamSettings} className="btn-ghost text-xs" disabled={loadingHandoffTeamSettings}>
+                  {loadingHandoffTeamSettings ? 'טוען...' : 'רענן'}
+                </button>
+                <button onClick={saveHandoffTeamSettings} className="btn-primary text-xs" disabled={savingHandoffTeamSettings}>
+                  {savingHandoffTeamSettings ? 'שומר...' : 'שמור הגדרות'}
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+              <label className="text-xs text-gray-600">
+                יעד SLA (שניות)
+                <input
+                  type="number"
+                  className="input-field mt-1"
+                  min="60"
+                  max="1800"
+                  value={handoffTeamSettings.sla_target_seconds}
+                  onChange={(e) => updateHandoffTeamSetting('sla_target_seconds', Number(e.target.value))}
+                />
+              </label>
+
+              <label className="text-xs text-gray-600">
+                זמן טיפול ממוצע (דקות)
+                <input
+                  type="number"
+                  className="input-field mt-1"
+                  min="1"
+                  max="30"
+                  value={handoffTeamSettings.avg_handle_minutes}
+                  onChange={(e) => updateHandoffTeamSetting('avg_handle_minutes', Number(e.target.value))}
+                />
+              </label>
+
+              <label className="text-xs text-gray-600">
+                הסלמה אוטומטית אחרי (שניות)
+                <input
+                  type="number"
+                  className="input-field mt-1"
+                  min="60"
+                  max="3600"
+                  value={handoffTeamSettings.escalation_after_seconds}
+                  onChange={(e) => updateHandoffTeamSetting('escalation_after_seconds', Number(e.target.value))}
+                />
+              </label>
+
+              <label className="text-xs text-gray-600">
+                רצפת ETA בתור (שניות)
+                <input
+                  type="number"
+                  className="input-field mt-1"
+                  min="15"
+                  max="600"
+                  value={handoffTeamSettings.queue_eta_floor_seconds}
+                  onChange={(e) => updateHandoffTeamSetting('queue_eta_floor_seconds', Number(e.target.value))}
+                />
+              </label>
+
+              <label className="text-xs text-gray-600 md:col-span-2 xl:col-span-1">
+                קירור תזכורת בערוצים (שניות)
+                <input
+                  type="number"
+                  className="input-field mt-1"
+                  min="30"
+                  max="900"
+                  value={handoffTeamSettings.waiting_notice_cooldown_seconds}
+                  onChange={(e) => updateHandoffTeamSetting('waiting_notice_cooldown_seconds', Number(e.target.value))}
+                />
+              </label>
+
+              <label className="text-xs text-gray-700 flex items-center gap-2 md:col-span-2 xl:col-span-1">
+                <input
+                  type="checkbox"
+                  checked={!!handoffTeamSettings.ai_lock_during_handoff}
+                  onChange={(e) => updateHandoffTeamSetting('ai_lock_during_handoff', e.target.checked)}
+                />
+                הקפאת תגובות בוט בזמן המתנה לנציג
+              </label>
+
+              <label className="text-xs text-gray-700 flex items-center gap-2 md:col-span-2 xl:col-span-1">
+                <input
+                  type="checkbox"
+                  checked={!!handoffTeamSettings.feedback_required_on_resolve}
+                  onChange={(e) => updateHandoffTeamSetting('feedback_required_on_resolve', e.target.checked)}
+                />
+                דרישת משוב לקוח בסיום טיפול ידני
+              </label>
+            </div>
+          </div>
+
+          <div className="card p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="font-bold text-gray-900 text-sm">בקשות ממתינות לנציג</h4>
+              <button onClick={() => loadHandoffQueue(false)} className="btn-ghost text-xs">רענן</button>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 mb-3">
+              <button
+                onClick={() => setHandoffAlertSoundEnabled((v) => !v)}
+                className={`text-xs px-2 py-1 rounded-lg border flex items-center gap-1 ${handoffAlertSoundEnabled ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-gray-50 text-gray-600 border-gray-200'}`}
+              >
+                {handoffAlertSoundEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
+                {handoffAlertSoundEnabled ? 'צליל פעיל' : 'צליל כבוי'}
+              </button>
+
+              <button
+                onClick={() => setHandoffAlertUrgentOnly((v) => !v)}
+                disabled={!handoffAlertSoundEnabled}
+                className={`text-xs px-2 py-1 rounded-lg border disabled:opacity-60 ${handoffAlertUrgentOnly ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-gray-50 text-gray-600 border-gray-200'}`}
+              >
+                {handoffAlertUrgentOnly ? 'צליל: דחוף בלבד' : 'צליל: כל בקשה חדשה'}
+              </button>
+
+              <label className="text-xs text-gray-600 flex items-center gap-2">
+                עוצמה
+                <input
+                  type="range"
+                  min="0.05"
+                  max="1"
+                  step="0.05"
+                  value={handoffAlertVolume}
+                  disabled={!handoffAlertSoundEnabled}
+                  onChange={(e) => setHandoffAlertVolume(Number(e.target.value))}
+                  className="accent-brand-600 disabled:opacity-60"
+                />
+              </label>
+
+              <button
+                onClick={testHandoffAlertSound}
+                disabled={!handoffAlertSoundEnabled}
+                className="btn-ghost text-xs disabled:opacity-60"
+              >
+                בדיקת צליל
+              </button>
+            </div>
+
+            {handoffQueue.length === 0 ? (
+              <p className="text-sm text-gray-400">אין כרגע בקשות ממתינות.</p>
+            ) : (
+              <div className="space-y-2">
+                {handoffQueue.slice(0, 6).map((q) => (
+                  <div key={q.conversation_id} className="rounded-xl border border-gray-200 px-3 py-2 flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-gray-900 truncate">{q.display_name || q.display_contact || 'לקוח'}</p>
+                      <p className="text-xs text-gray-500 truncate">
+                        {q.channel} • המתנה {Math.max(1, Math.round((q.wait_seconds || 0) / 60))} דק׳ • עדיפות {q.priority_label}
+                      </p>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        await loadChatMessages(q.conversation_id)
+                        await acceptHandoffFromQueue(q.conversation_id)
+                      }}
+                      className="btn-primary text-xs whitespace-nowrap"
+                    >
+                      קבל והשתלט
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="card p-4">
+              <h4 className="font-bold text-gray-900 text-sm mb-3">התפלגות ערוצים (30 יום)</h4>
+              <div className="space-y-2 text-sm">
+                <div className="flex items-center justify-between">
+                  <span className="text-sky-700">Telegram</span>
+                  <span className="font-semibold">{chatUsage?.summary?.by_channel?.telegram ?? 0}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-emerald-700">WhatsApp</span>
+                  <span className="font-semibold">{chatUsage?.summary?.by_channel?.whatsapp ?? 0}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-700">Web</span>
+                  <span className="font-semibold">{chatUsage?.summary?.by_channel?.web ?? 0}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="card p-4">
+              <h4 className="font-bold text-gray-900 text-sm mb-3">היסטוריית שימוש יומית</h4>
+              <div className="max-h-36 overflow-y-auto divide-y divide-gray-100">
+                {(chatUsage?.daily || []).length === 0 ? (
+                  <p className="text-sm text-gray-400 py-2">אין נתונים עדיין</p>
+                ) : (chatUsage.daily || []).slice(-10).reverse().map((d) => (
+                  <div key={d.date} className="py-1.5 flex items-center justify-between text-xs">
+                    <span className="text-gray-500">{d.date}</span>
+                    <span className="text-gray-700">{d.messages} הודעות</span>
+                    <span className="text-gray-400">{d.user_messages} לקוח / {d.assistant_messages} בוט</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="card p-4 flex flex-wrap items-center gap-2">
+            <select
+              className="input-field text-sm py-1.5 w-44"
+              value={chatFilters.channel}
+              onChange={(e) => {
+                const next = { ...chatFilters, channel: e.target.value }
+                setChatFilters(next)
+                loadAdminChats(next)
+              }}
+            >
+              <option value="all">כל הערוצים</option>
+              <option value="telegram">Telegram</option>
+              <option value="whatsapp">WhatsApp</option>
+              <option value="web">Web</option>
+            </select>
+            <input
+              className="input-field flex-1 min-w-[220px]"
+              placeholder="חיפוש לפי שם, אימייל, טלפון או מזהה צ׳אט"
+              value={chatFilters.search}
+              onChange={(e) => setChatFilters((f) => ({ ...f, search: e.target.value }))}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') loadAdminChats(chatFilters)
+              }}
+            />
+            <button onClick={() => loadAdminChats(chatFilters)} className="btn-secondary text-sm flex items-center gap-1">
+              <RefreshCw className="w-4 h-4" /> חפש
+            </button>
+            <button
+              onClick={() => {
+                const next = { channel: 'all', search: '' }
+                setChatFilters(next)
+                loadAdminChats(next)
+              }}
+              className="btn-ghost text-sm"
+            >
+              נקה
+            </button>
+            <span className="text-xs text-gray-400 mr-auto">תוצאות: {chatTotal}</span>
+          </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
+            <div className="xl:col-span-4 card overflow-hidden">
+              <div className="p-3 border-b border-gray-100 flex items-center justify-between">
+                <h4 className="font-bold text-gray-900 text-sm">שיחות ערוצים</h4>
+                <button onClick={() => loadAdminChats(chatFilters)} className="btn-ghost text-xs">רענן</button>
+              </div>
+              <div className="max-h-[640px] overflow-y-auto divide-y divide-gray-100">
+                {chatConversations.length === 0 ? (
+                  <p className="text-sm text-gray-400 p-4 text-center">אין שיחות להצגה</p>
+                ) : chatConversations.map((c) => {
+                  const isSelected = selectedChat?.id === c.id
+                  const chCls = c.channel === 'telegram'
+                    ? 'bg-sky-100 text-sky-700 border-sky-200'
+                    : c.channel === 'whatsapp'
+                      ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
+                      : 'bg-gray-100 text-gray-700 border-gray-200'
+                  return (
+                    <button
+                      key={c.id}
+                      onClick={() => loadChatMessages(c.id)}
+                      className={`w-full text-right p-3 transition-colors ${isSelected ? 'bg-brand-50/50 border-r-2 border-brand-500' : 'hover:bg-gray-50'}`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-sm font-semibold text-gray-900 truncate">{c.display_name || c.user?.full_name || c.external_id || 'לקוח'}</p>
+                        <div className="flex items-center gap-1.5">
+                          {c.human_handoff_status === 'requested' && <span className="text-[10px] px-1.5 py-0.5 rounded-md border bg-red-100 text-red-700 border-red-200">ממתין לנציג</span>}
+                          {c.admin_takeover_active && <span className="text-[10px] px-1.5 py-0.5 rounded-md border bg-orange-100 text-orange-700 border-orange-200">ידני</span>}
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-md border ${chCls}`}>{c.channel}</span>
+                        </div>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-0.5 truncate">{c.display_contact || c.external_id || c.user?.email || c.user?.phone || '—'}</p>
+                      <p className="text-xs text-gray-500 mt-1 line-clamp-2">{c.preview || 'ללא הודעות'}</p>
+                      <div className="mt-1.5 flex items-center justify-between text-[11px] text-gray-400">
+                        <span>{new Date(c.last_message_at).toLocaleString('he-IL')}</span>
+                        <span>{c.message_count || 0} הודעות</span>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+            <div className="xl:col-span-8 card overflow-hidden">
+              {!selectedChat ? (
+                <div className="p-10 text-center text-gray-400">
+                  <MessageSquare className="w-10 h-10 mx-auto mb-2 opacity-30" />
+                  <p>בחר שיחה כדי לצפות ולהגיב</p>
+                </div>
+              ) : (
+                <>
+                  {Array.isArray(selectedChat.human_handoff_timeline) && selectedChat.human_handoff_timeline.length > 0 && (
+                    <div className="px-4 pt-4">
+                      <div className="rounded-xl border border-indigo-200 bg-indigo-50/50 px-3 py-3">
+                        <h5 className="text-xs font-bold text-indigo-900 mb-2">ציר טיפול נציג אנושי</h5>
+                        <div className="space-y-2">
+                          {selectedChat.human_handoff_timeline.map((event, idx) => {
+                            const style = HANDOFF_TIMELINE_STYLE[event.type] || HANDOFF_TIMELINE_STYLE.default
+                            return (
+                            <div key={`${event.type}-${event.at}-${idx}`} className="flex items-start gap-2">
+                              <span className={`mt-1 w-2 h-2 rounded-full ${style.dot}`} />
+                              <div className="min-w-0 w-full">
+                                <div className="flex items-center justify-between gap-2">
+                                  <p className="text-xs font-semibold text-indigo-900">{event.title}</p>
+                                  <span className={`text-[10px] px-1.5 py-0.5 rounded-md border whitespace-nowrap ${style.chip}`}>{style.label}</span>
+                                </div>
+                                {event.detail && <p className="text-[11px] text-indigo-700">{event.detail}</p>}
+                                <p className="text-[10px] text-indigo-500">{event.at ? new Date(event.at).toLocaleString('he-IL') : ''}</p>
+                              </div>
+                            </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="p-4 border-b border-gray-100 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <h4 className="font-bold text-gray-900">{selectedChat.display_name || selectedChat.user?.full_name || selectedChat.external_id || 'לקוח'}</h4>
+                        <p className="text-xs text-gray-500 mt-0.5">{selectedChat.display_contact || selectedChat.user?.email || selectedChat.user?.phone || selectedChat.external_id || '—'}</p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`text-xs px-2 py-1 rounded-md border ${selectedChat.channel === 'telegram' ? 'bg-sky-100 text-sky-700 border-sky-200' : selectedChat.channel === 'whatsapp' ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-gray-100 text-gray-700 border-gray-200'}`}>
+                          {selectedChat.channel}
+                        </span>
+                        <span className={`text-xs px-2 py-1 rounded-md border ${selectedChat.is_active ? 'bg-green-100 text-green-700 border-green-200' : 'bg-red-100 text-red-600 border-red-200'}`}>
+                          {selectedChat.is_active ? 'פעילה' : 'סגורה'}
+                        </span>
+                        <span className={`text-xs px-2 py-1 rounded-md border ${selectedChat.admin_takeover_active ? 'bg-orange-100 text-orange-700 border-orange-200' : 'bg-gray-100 text-gray-600 border-gray-200'}`}>
+                          {selectedChat.admin_takeover_active ? 'השתלטות ידנית פעילה' : 'שליטת בוט'}
+                        </span>
+                        {selectedChat.human_handoff_status === 'requested' && (
+                          <span className="text-xs px-2 py-1 rounded-md border bg-red-100 text-red-700 border-red-200">בקשת נציג ממתינה</span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button onClick={toggleChatTakeover} disabled={togglingTakeover} className="btn-secondary text-xs disabled:opacity-60">
+                        {togglingTakeover ? 'מעדכן...' : selectedChat.admin_takeover_active ? 'שחרר לבוט' : 'השתלט על הצ׳אט'}
+                      </button>
+                      <button onClick={toggleChatActiveStatus} disabled={updatingChatStatus} className="btn-secondary text-xs disabled:opacity-60">
+                        {updatingChatStatus ? 'מעדכן...' : selectedChat.is_active ? 'סגור שיחה' : 'פתח שיחה'}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setEditingChatTitle((v) => !v)
+                          setChatTitleDraft(selectedChat.title || '')
+                        }}
+                        className="btn-secondary text-xs"
+                      >
+                        {editingChatTitle ? 'ביטול עריכה' : 'ערוך שיחה'}
+                      </button>
+                      <button onClick={deleteSelectedChat} disabled={deletingChat} className="btn-ghost text-xs text-red-600 hover:text-red-700 disabled:opacity-60">
+                        {deletingChat ? 'מוחק...' : 'מחק שיחה'}
+                      </button>
+                    </div>
+
+                    {editingChatTitle && (
+                      <div className="flex gap-2">
+                        <input
+                          className="input-field flex-1"
+                          placeholder="שם שיחה"
+                          value={chatTitleDraft}
+                          onChange={(e) => setChatTitleDraft(e.target.value)}
+                        />
+                        <button onClick={saveChatTitle} disabled={savingChatMeta || !chatTitleDraft.trim()} className="btn-primary text-xs disabled:opacity-60">
+                          {savingChatMeta ? 'שומר...' : 'שמור'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="max-h-[460px] overflow-y-auto p-4 space-y-2 bg-gray-50">
+                    {chatMessages.length === 0 ? (
+                      <p className="text-sm text-gray-400 text-center py-6">אין הודעות בשיחה</p>
+                    ) : chatMessages.map((m) => (
+                      <div
+                        key={m.id}
+                        className={`max-w-[92%] rounded-xl px-3 py-2 text-sm ${m.role === 'user' ? 'bg-white border border-gray-200 ml-auto' : 'bg-brand-50 border border-brand-100'}`}
+                      >
+                        <div className="flex items-center justify-between gap-2 mb-0.5">
+                          <span className="text-[11px] text-gray-500">{m.role === 'user' ? 'לקוח' : (m.agent_name || 'assistant')}</span>
+                          <span className="text-[10px] text-gray-400">{new Date(m.created_at).toLocaleString('he-IL')}</span>
+                        </div>
+                        <p className="whitespace-pre-wrap text-gray-800">{m.content}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="p-4 border-t border-gray-100">
+                    {selectedChat.channel === 'telegram' || selectedChat.channel === 'whatsapp' || selectedChat.channel === 'web' ? (
+                      <div className="flex gap-2">
+                        <input
+                          className="input-field flex-1"
+                          placeholder={selectedChat.admin_takeover_active ? 'כתוב תגובה ללקוח...' : 'הפעל השתלטות ידנית כדי להגיב'}
+                          value={chatReply}
+                          disabled={!selectedChat.admin_takeover_active}
+                          onChange={(e) => setChatReply(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                              e.preventDefault()
+                              sendAdminChatReply()
+                            }
+                          }}
+                        />
+                        <button
+                          onClick={sendAdminChatReply}
+                          disabled={sendingChatReply || !chatReply.trim() || !selectedChat.admin_takeover_active}
+                          className="btn-primary text-sm flex items-center gap-1 disabled:opacity-60"
+                        >
+                          {sendingChatReply ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                          שלח
+                        </button>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-gray-400">שליחה ידנית נתמכת כרגע רק ל-Telegram, WhatsApp ו-Web.</p>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Orders */}
       {tab === 'orders' && (
         <div className="card overflow-hidden">
@@ -957,7 +2145,7 @@ export default function Admin() {
             </div>
           </div>
           {loading ? <div className="flex justify-center p-8"><Loader2 className="w-6 h-6 animate-spin text-brand-600" /></div> : (
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto overflow-y-hidden">
               <table className="w-full text-sm">
                 <thead className="bg-gray-50">
                   <tr>
@@ -1510,7 +2698,7 @@ export default function Admin() {
           {/* Format guide */}
           <div className="card p-5">
             <h4 className="text-sm font-semibold text-gray-700 mb-3">מבנה קובץ Excel לדוגמה</h4>
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto overflow-y-hidden">
               <table className="w-full text-xs border-collapse">
                 <thead>
                   <tr className="bg-gray-100">
@@ -1743,7 +2931,7 @@ export default function Admin() {
             </div>
           ) : (
             <div className="card overflow-hidden">
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto overflow-y-hidden">
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50">
                     <tr>
@@ -1843,6 +3031,31 @@ export default function Admin() {
         </div>
       )}
     </div>
+
+    {/* DB Row JSON Modal */}
+    {dbViewRowModal && (
+      <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setDbViewRowModal(null)}>
+        <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[88vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center justify-between p-5 border-b border-gray-100">
+            <div>
+              <h3 className="font-bold text-gray-900">רשומת DB מלאה</h3>
+              <p className="text-xs text-gray-400 mt-0.5">{dbViewDataset}</p>
+            </div>
+            <button onClick={() => setDbViewRowModal(null)} className="p-1.5 rounded-full hover:bg-gray-100">
+              <X className="w-5 h-5 text-gray-500" />
+            </button>
+          </div>
+          <div className="p-5 overflow-auto">
+            <pre className="text-xs leading-5 text-gray-700 bg-gray-50 border border-gray-200 rounded-xl p-4" dir="ltr">
+{JSON.stringify(dbViewRowModal, null, 2)}
+            </pre>
+          </div>
+          <div className="p-5 border-t border-gray-100 flex justify-end">
+            <button onClick={() => setDbViewRowModal(null)} className="btn-secondary text-sm">סגור</button>
+          </div>
+        </div>
+      </div>
+    )}
 
     {/* Reject Return Modal */}
     {showRejectModal && (

@@ -12,14 +12,18 @@ export default function Register() {
   const [showPass, setShowPass] = useState(false)
   const [done, setDone] = useState(false)
 
+  const passwordHasMinLength = form.password.length >= 8
+  const passwordHasLetter = /[A-Za-z\u0590-\u05FF\u0600-\u06FF]/.test(form.password)
+  const passwordHasDigit = /\d/.test(form.password)
+
   const handleSubmit = async (e) => {
     e.preventDefault()
     if (form.password !== form.confirmPassword) {
       toast.error('הסיסמאות אינן תואמות')
       return
     }
-    if (form.password.length < 8) {
-      toast.error('הסיסמה חייבת להכיל לפחות 8 תווים')
+    if (!passwordHasMinLength || !passwordHasLetter || !passwordHasDigit) {
+      toast.error('הסיסמה חייבת לכלול לפחות 8 תווים, לפחות אות אחת ולפחות מספר אחד')
       return
     }
     // Accept Israeli 05XXXXXXXX or international +E.164
@@ -87,6 +91,12 @@ export default function Register() {
                 <button type="button" className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" onClick={() => setShowPass(!showPass)}>
                   {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
+              </div>
+              <p className="text-xs text-gray-500 mt-1">הסיסמה חייבת לכלול לפחות 8 תווים, לפחות אות אחת ולפחות מספר אחד.</p>
+              <div className="text-xs mt-1 space-y-1">
+                <p className={passwordHasMinLength ? 'text-green-600' : 'text-gray-400'}>• לפחות 8 תווים</p>
+                <p className={passwordHasLetter ? 'text-green-600' : 'text-gray-400'}>• לפחות אות אחת</p>
+                <p className={passwordHasDigit ? 'text-green-600' : 'text-gray-400'}>• לפחות מספר אחד</p>
               </div>
             </div>
             <div>

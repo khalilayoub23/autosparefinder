@@ -38,6 +38,39 @@ export const useChatStore = create(
     set({ currentConversationId: null, messages: [] })
   },
 
+  requestHumanSupport: async (note = '') => {
+    const state = get()
+    const { data } = await chatApi.requestHumanHandoff({
+      conversation_id: state.currentConversationId,
+      note,
+    })
+
+    const convId = data.conversation_id
+    const { data: msgData } = await chatApi.getMessages(convId)
+    set({
+      currentConversationId: convId,
+      messages: msgData.messages || [],
+      isTyping: false,
+    })
+    await get().loadConversations()
+    return data
+  },
+
+  submitHumanHandoffFeedback: async (rating, feedback = '') => {
+    const state = get()
+    if (!state.currentConversationId) throw new Error('No active conversation')
+
+    await chatApi.submitHandoffFeedback({
+      conversation_id: state.currentConversationId,
+      rating,
+      feedback,
+    })
+
+    const { data: msgData } = await chatApi.getMessages(state.currentConversationId)
+    set({ messages: msgData.messages || [], isTyping: false })
+    await get().loadConversations()
+  },
+
   sendMessage: async (text, imageFile = null) => {
     const state = get()
     // Optimistic user message
@@ -68,8 +101,26 @@ export const useChatStore = create(
             : m
         ),
         currentConversationId: data.conversation_id,
-        isTyping: true, // keep typing indicator while agent processes in background
+        isTyping: data.status === 'processing',
       }))
+
+      if (data.status === 'takeover') {
+        await get().loadConversations()
+        return
+      }
+
+      if (data.status === 'handoff_requested') {
+        const { data: msgData } = await chatApi.getMessages(data.conversation_id)
+        set({ messages: msgData.messages || [], isTyping: false })
+        await get().loadConversations()
+        return
+      }
+
+      if (data.status === 'handoff_waiting') {
+        set({ isTyping: false })
+        await get().loadConversations()
+        return
+      }
 
       // Poll for the assistant reply (agent runs as background task on server)
       const convId = data.conversation_id

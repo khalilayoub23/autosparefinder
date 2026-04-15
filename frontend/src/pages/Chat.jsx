@@ -196,7 +196,21 @@ export default function Chat() {
   const { user } = useAuthStore()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const { conversations, messages, currentConversationId, isTyping, sendMessage, loadConversations, selectConversation, newConversation, deleteConversation, agentName, lastReadAt } = useChatStore()
+  const {
+    conversations,
+    messages,
+    currentConversationId,
+    isTyping,
+    sendMessage,
+    requestHumanSupport,
+    submitHumanHandoffFeedback,
+    loadConversations,
+    selectConversation,
+    newConversation,
+    deleteConversation,
+    agentName,
+    lastReadAt,
+  } = useChatStore()
 
   // helper: is a conversation unread?
   const isUnread = (c) => {
@@ -219,9 +233,22 @@ export default function Chat() {
   }
   const [input, setInput] = useState('')
   const [imageFile, setImageFile] = useState(null)
+  const [requestingHuman, setRequestingHuman] = useState(false)
+  const [handoffFeedbackRating, setHandoffFeedbackRating] = useState(5)
+  const [handoffFeedbackText, setHandoffFeedbackText] = useState('')
+  const [submittingHandoffFeedback, setSubmittingHandoffFeedback] = useState(false)
   const bottomRef = useRef(null)
   const fileRef = useRef(null)
   const autoSentRef = useRef(false)
+  const activeConversation = conversations.find((c) => c.id === currentConversationId) || null
+  const handoffStatus = activeConversation?.human_handoff_status || 'none'
+  const humanRequested = !!activeConversation?.human_handoff_requested || handoffStatus === 'requested'
+  const humanActive = !!activeConversation?.admin_takeover_active || handoffStatus === 'active'
+  const awaitingFeedback = handoffStatus === 'awaiting_feedback' && !activeConversation?.human_handoff_feedback_submitted
+  const queuePosition = Number(activeConversation?.human_handoff_queue_position || 0)
+  const queueSize = Number(activeConversation?.human_handoff_queue_size || 0)
+  const etaMinutes = Number(activeConversation?.human_handoff_eta_minutes || 0)
+  const escalated = !!activeConversation?.human_handoff_escalated
 
   useEffect(() => {
     loadConversations()
@@ -231,6 +258,15 @@ export default function Chat() {
     }
   }, [])
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, isTyping])
+
+  useEffect(() => {
+    if (!currentConversationId) return undefined
+    if (!humanRequested && !humanActive && !awaitingFeedback) return undefined
+    const timer = setInterval(() => {
+      loadConversations()
+    }, 10000)
+    return () => clearInterval(timer)
+  }, [currentConversationId, humanRequested, humanActive, awaitingFeedback, loadConversations])
 
   // Auto-send when navigated here with ?msg= (e.g. from Parts no-results AI button)
   useEffect(() => {
@@ -268,6 +304,33 @@ export default function Chat() {
     const hebrewWords = agentText.match(/[\u05D0-\u05EA][\u05D0-\u05EA\s]{2,25}/g)
     const searchTerm = hebrewWords ? hebrewWords[0].trim() : ''
     navigate(`/parts${searchTerm ? `?search=${encodeURIComponent(searchTerm)}` : ''}`)
+  }
+
+  const handleRequestHuman = async () => {
+    setRequestingHuman(true)
+    try {
+      await requestHumanSupport(input.trim())
+      setInput('')
+      toast.success('הבקשה לנציג אנושי נשלחה בהצלחה')
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || 'לא הצלחנו לשלוח בקשה לנציג אנושי')
+    } finally {
+      setRequestingHuman(false)
+    }
+  }
+
+  const handleSubmitHandoffFeedback = async () => {
+    if (!currentConversationId) return
+    setSubmittingHandoffFeedback(true)
+    try {
+      await submitHumanHandoffFeedback(handoffFeedbackRating, handoffFeedbackText.trim())
+      setHandoffFeedbackText('')
+      toast.success('תודה על המשוב שלך')
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || 'לא הצלחנו לשלוח את המשוב')
+    } finally {
+      setSubmittingHandoffFeedback(false)
+    }
   }
 
   return (
@@ -338,10 +401,59 @@ export default function Chat() {
               <p className="text-xs text-gray-400">{AGENT_LABELS[agentName]?.label || 'מנהל'} • מוכן לעזור</p>
             </div>
           </div>
-          <button onClick={newConversation} className="btn-ghost text-sm flex items-center gap-1">
-            <PlusCircle className="w-4 h-4" /> שיחה חדשה
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleRequestHuman}
+              disabled={requestingHuman || humanRequested || humanActive}
+              className="btn-secondary text-sm px-3 py-1.5 disabled:opacity-60"
+            >
+              {requestingHuman ? 'שולח בקשה...' : humanActive ? 'נציג אנושי בשיחה' : humanRequested ? 'בקשה לנציג נשלחה' : 'דבר עם נציג אנושי'}
+            </button>
+            <button onClick={newConversation} className="btn-ghost text-sm flex items-center gap-1">
+              <PlusCircle className="w-4 h-4" /> שיחה חדשה
+            </button>
+          </div>
         </div>
+
+        {(humanRequested || humanActive) && (
+          <div className={`mx-4 mt-3 rounded-xl border px-3 py-2 text-xs ${humanActive ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-amber-50 border-amber-200 text-amber-700'}`}>
+            {humanActive
+              ? 'נציג/ה אנושי/ת מטפל/ת בשיחה כרגע. אפשר להמשיך לכתוב כרגיל.'
+              : `בקשה לנציג אנושי התקבלה. ${queuePosition > 0 ? `מיקום בתור: ${queuePosition}${queueSize > 0 ? ` מתוך ${queueSize}` : ''}. ` : ''}${etaMinutes > 0 ? `זמן משוער: כ-${etaMinutes} דק׳.` : ''}${escalated ? ' הטיפול קיבל קדימות גבוהה יותר.' : ''}`}
+          </div>
+        )}
+
+        {awaitingFeedback && (
+          <div className="mx-4 mt-3 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-3 text-xs text-indigo-800">
+            <p className="font-semibold text-sm mb-2">איך היה הטיפול של הנציג/ה?</p>
+            <div className="flex items-center gap-1 mb-2">
+              {[1, 2, 3, 4, 5].map((score) => (
+                <button
+                  key={score}
+                  onClick={() => setHandoffFeedbackRating(score)}
+                  className={`px-2 py-1 rounded-md border text-xs ${handoffFeedbackRating >= score ? 'bg-yellow-100 border-yellow-300 text-yellow-700' : 'bg-white border-gray-200 text-gray-500'}`}
+                >
+                  {score}
+                </button>
+              ))}
+            </div>
+            <textarea
+              className="input-field w-full text-xs min-h-[72px]"
+              placeholder="מה עבד טוב? מה אפשר לשפר?"
+              value={handoffFeedbackText}
+              onChange={(e) => setHandoffFeedbackText(e.target.value)}
+            />
+            <div className="mt-2 flex justify-end">
+              <button
+                onClick={handleSubmitHandoffFeedback}
+                disabled={submittingHandoffFeedback}
+                className="btn-primary text-xs disabled:opacity-60"
+              >
+                {submittingHandoffFeedback ? 'שולח...' : 'שלח משוב'}
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto p-4">

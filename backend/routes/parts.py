@@ -433,12 +433,6 @@ async def _build_vehicle_fitment_clause(
 
     vehicle_fitment_checks: List[str] = []
 
-    # --- GIN pre-filter: uses the idx_pc_compat_vehicles_gin index to shrink
-    # the candidate set before the per-element EXISTS scan.
-    # We build a @> containment probe for the primary manufacturer name so
-    # Postgres can bitmap-AND the GIN result with the rest of the WHERE clause.
-    gin_prefilter: Optional[str] = None
-
     if vehicle_manufacturer:
         raw_vmfr = vehicle_manufacturer
         cleaned_vmfr = re.sub(r"\s+", " ", re.sub(r"[^\w\u0590-\u05FF]+", " ", (raw_vmfr or "").lower())).strip()
@@ -466,17 +460,16 @@ async def _build_vehicle_fitment_clause(
 
         clean_variants = [x for x in variants if x and str(x).strip()]
 
-        # Build the GIN @> pre-filter using the first (canonical) variant.
-        # This lets the GIN index eliminate rows that have no entry at all for
-        # this manufacturer before we run the slower per-element scan below.
-        gin_key = f"{prefix}_gin_mfr"
-        params[gin_key] = f'[{{"manufacturer": "{clean_variants[0].replace(chr(34), chr(39))}"}}]'
-        gin_prefilter = f"pc.compatible_vehicles @> CAST(:{gin_key} AS jsonb)"
-
         vmfr_clauses = []
+        cv_mfr_expr = "LOWER(TRIM(COALESCE(cv_fit->>'make', cv_fit->>'manufacturer', '')))"
         for idx, variant in enumerate(clean_variants):
             key = f"{prefix}_mfr_{idx}"
-            vmfr_clauses.append(f"LOWER(TRIM(COALESCE(cv_fit->>'manufacturer', ''))) = LOWER(TRIM(:{key}))")
+            # Support values like "Peugeot" vs "Peugeot France" and aliases.
+            vmfr_clauses.append(
+                f"({cv_mfr_expr} = LOWER(TRIM(:{key}))"
+                f" OR {cv_mfr_expr} LIKE CONCAT('%', LOWER(TRIM(:{key})), '%')"
+                f" OR LOWER(TRIM(:{key})) LIKE CONCAT('%', {cv_mfr_expr}, '%'))"
+            )
             params[key] = str(variant).strip()
         if vmfr_clauses:
             vehicle_fitment_checks.append(f"({' OR '.join(vmfr_clauses)})")
@@ -522,10 +515,6 @@ async def _build_vehicle_fitment_clause(
         f"     WHERE {' AND '.join(vehicle_fitment_checks)}"
         " ))"
     )
-
-    # Combine GIN pre-filter (index hit) with exact EXISTS scan (correctness).
-    if gin_prefilter:
-        return f"({gin_prefilter} AND {exists_clause})"
     return exists_clause
 
 
@@ -1278,6 +1267,79 @@ async def get_manufacturers(db: AsyncSession = Depends(get_db)):
         if not v:
             return ""
         return re.sub(r"\s+", " ", re.sub(r"[^\w\u0590-\u05FF]+", " ", v.lower())).strip()
+
+    # Preferred source: manufacturers that are actually searchable via
+    # compatible_vehicles JSON in /parts/search.
+    try:
+        fitment_rows = (await db.execute(text("""
+            SELECT
+                TRIM(COALESCE(elem->>'make', elem->>'manufacturer', '')) AS manufacturer,
+                COUNT(DISTINCT pc.id) AS cnt
+            FROM parts_catalog pc
+            CROSS JOIN LATERAL jsonb_array_elements(pc.compatible_vehicles) AS elem
+            WHERE pc.is_active = TRUE
+              AND pc.compatible_vehicles IS NOT NULL
+              AND jsonb_typeof(pc.compatible_vehicles) = 'array'
+              AND COALESCE(TRIM(COALESCE(elem->>'make', elem->>'manufacturer', '')), '') <> ''
+            GROUP BY 1
+            ORDER BY cnt DESC, manufacturer ASC
+        """))).fetchall()
+    except Exception:
+        fitment_rows = []
+
+    if fitment_rows:
+        try:
+            brand_rows = (await db.execute(text("""
+                SELECT name, name_he, aliases, logo_url
+                FROM car_brands
+                WHERE is_active = TRUE
+            """))).fetchall()
+        except Exception:
+            brand_rows = []
+
+        manufacturers: List[str] = []
+        counts: Dict[str, int] = {}
+        logos: Dict[str, str] = {}
+        seen_norm = set()
+
+        for raw_name, raw_count in fitment_rows:
+            base_name = str(raw_name or "").strip()
+            if not base_name:
+                continue
+            display_name = base_name.title() if base_name.isascii() and base_name.islower() else base_name
+            norm_name = _norm(display_name)
+            if not norm_name or norm_name in seen_norm:
+                continue
+
+            seen_norm.add(norm_name)
+            manufacturers.append(display_name)
+            counts[display_name] = int(raw_count or 0)
+
+            matched_logo = None
+            for b_name, b_name_he, b_aliases, b_logo in brand_rows:
+                variants = [b_name, b_name_he, *((b_aliases or []))]
+                if any(
+                    _norm(v) and (
+                        _norm(v) == norm_name
+                        or _norm(v) in norm_name
+                        or norm_name in _norm(v)
+                    )
+                    for v in variants
+                    if v
+                ):
+                    matched_logo = b_logo
+                    break
+
+            if matched_logo:
+                logos[display_name] = matched_logo
+
+        if manufacturers:
+            return {
+                "manufacturers": manufacturers,
+                "counts": counts,
+                "logos": logos,
+                "total": len(manufacturers),
+            }
 
     parts_brand_blocklist = {
         "bosch", "brembo", "champion", "fram", "mann", "ngk", "valeo", "denso",

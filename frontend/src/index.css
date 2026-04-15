@@ -5,11 +5,14 @@
 @layer base {
   * {
     direction: rtl;
+    scrollbar-width: thin;
+    scrollbar-color: #d1d5db #f3f4f6;
   }
   body {
     @apply bg-gray-50 text-gray-900 font-sans antialiased;
   }
   ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-button { width: 0; height: 0; display: none; }
   ::-webkit-scrollbar-track { @apply bg-gray-100; }
   ::-webkit-scrollbar-thumb { @apply bg-gray-300 rounded-full; }
 }

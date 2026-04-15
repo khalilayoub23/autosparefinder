@@ -169,6 +169,15 @@ def _extract_oem_numbers(text: str, seed_sku: str) -> list[str]:
             continue
         if normalized in seen:
             continue
+        # Skip UUIDs (8-4-4-4-12 hex pattern)
+        if re.match(r'^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}', normalized):
+            continue
+        # Skip internal website tokens
+        if normalized in {"IABV2SETTINGS", "YEAR", "HTTPS", "HTTP"}:
+            continue
+        # Require at least one letter AND one digit
+        if not (any(c.isalpha() for c in normalized) and any(c.isdigit() for c in normalized)):
+            continue
         seen.add(normalized)
         found.append(normalized)
         if len(found) >= 12:
@@ -250,6 +259,10 @@ async def scrape_source(
     soup = BeautifulSoup(html, "lxml")
     text = soup.get_text(" ", strip=True)
     eur, ils = _parse_price(text, source.currency)
+    if source.key == "motorstore.co.il":
+        ils_match = re.search(r'(\d{2,6}(?:\.\d{1,2})?)\s*₪', text)
+        if ils_match:
+            ils = float(ils_match.group(1))
     oems = _extract_oem_numbers(text, seed_sku=sku)
     part_number = _extract_part_number(text, seed_sku=sku)
     part_name = _extract_part_name(soup, fallback=query)
@@ -277,7 +290,10 @@ async def get_target_parts(conn: asyncpg.Connection, limit: int) -> list[asyncpg
         """
         SELECT id, sku, name, manufacturer, oem_number
         FROM parts_catalog
-        WHERE needs_oem_lookup = TRUE OR oem_number IS NULL
+                WHERE (needs_oem_lookup = TRUE OR oem_number IS NULL)
+                    AND sku ~ '^[A-Za-z0-9\\-\\.]+$'
+                    AND length(sku) >= 4
+                    AND length(sku) <= 30
         ORDER BY updated_at NULLS FIRST
         LIMIT $1
         """,

@@ -47,7 +47,7 @@ async def send_telegram_message(chat_id: Union[int, str], text: str) -> dict:
     """Send a plain text message to a specific Telegram chat."""
     result = await _telegram_api_post(
         "sendMessage",
-        {"chat_id": str(chat_id), "text": text},
+        {"chat_id": str(chat_id), "text": text, "parse_mode": "HTML"},
     )
     if result.get("ok"):
         message = result.get("result", {})

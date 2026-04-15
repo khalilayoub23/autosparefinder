@@ -25,11 +25,14 @@ export default function Layout({ children }) {
   const [unreadCount, setUnreadCount] = useState(0)
   const [notifications, setNotifications] = useState([])
   const [showNotifs, setShowNotifs] = useState(false)
+  const [expandedNotifId, setExpandedNotifId] = useState(null)
+  const [selectedNotif, setSelectedNotif] = useState(null)
   const notifsRef = useRef(null)
   const { user, logout, fetchMe } = useAuthStore()
   const { totals } = useCartStore()
   const location = useLocation()
   const navigate = useNavigate()
+  const isAdminRoute = location.pathname === '/admin'
   const cartTotals = (() => { try { return totals() } catch { return { subtotal: 0, vat: 0, shipping: 0, total: 0, count: 0 } } })()
 
   // Refresh user on mount to ensure is_admin and other fields are current
@@ -56,6 +59,16 @@ export default function Layout({ children }) {
     logout()
     toast.success('התנתקת בהצלחה')
     navigate('/login')
+  }
+
+  const navigateFromNotification = (n) => {
+    const d = n?.data || {}
+    if (n?.type === 'order_update' || d.order_id) navigate('/orders')
+    else if (n?.type === 'payment') navigate('/orders')
+    else if (n?.type === 'threshold_alert' || n?.type === 'system_alert') navigate('/agents')
+    else if (n?.type === 'message') navigate('/')
+    else if (n?.type === 'marketing') navigate('/parts')
+    else navigate('/')
   }
 
   return (
@@ -145,7 +158,7 @@ export default function Layout({ children }) {
                 )}
               </button>
               {showNotifs && (
-                <div className="absolute left-0 top-full mt-1 w-80 bg-white rounded-xl border border-gray-200 shadow-xl z-50">
+                <div className="absolute left-0 top-full mt-1 w-96 max-w-[90vw] bg-white rounded-xl border border-gray-200 shadow-xl z-50">
                   <div className="flex items-center justify-between p-4 border-b border-gray-100">
                     <span className="font-bold text-gray-900 text-sm">התראות</span>
                     {unreadCount > 0 && (
@@ -165,18 +178,39 @@ export default function Layout({ children }) {
                         key={n.id}
                         className={`p-4 hover:bg-gray-50 cursor-pointer ${!n.read_at ? 'bg-blue-50/40' : ''}`}
                         onClick={() => {
-                          if (!n.read_at) api.put(`/notifications/${n.id}/read`).then(() => { setUnreadCount((c) => Math.max(0, c - 1)); fetchNotifications() }).catch(() =>{})
-                          setShowNotifs(false)
-                          // Deep-link based on notification type
-                          const d = n.data || {}
-                          if (n.type === 'order_update' || d.order_id) navigate('/orders')
-                          else if (n.type === 'payment')  navigate('/orders')
-                          else if (n.type === 'message')  navigate('/')
-                          else if (n.type === 'marketing') navigate('/parts')
+                          if (!n.read_at) {
+                            api.put(`/notifications/${n.id}/read`)
+                              .then(() => {
+                                setUnreadCount((c) => Math.max(0, c - 1))
+                                fetchNotifications()
+                              })
+                              .catch(() => {})
+                          }
+                          setSelectedNotif(n)
                         }}
                       >
                         <p className={`text-sm ${!n.read_at ? 'font-semibold text-gray-900' : 'text-gray-700'}`}>{n.title}</p>
-                        {n.message && <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{n.message}</p>}
+                        {n.message && (
+                          <div className="mt-0.5">
+                            <p
+                              className={`text-xs text-gray-500 whitespace-pre-wrap break-words ${expandedNotifId === n.id ? '' : 'line-clamp-2'}`}
+                            >
+                              {n.message}
+                            </p>
+                            {n.message.length > 120 && (
+                              <button
+                                type="button"
+                                className="mt-1 text-[11px] text-brand-600 hover:text-brand-700"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setExpandedNotifId((prev) => (prev === n.id ? null : n.id))
+                                }}
+                              >
+                                {expandedNotifId === n.id ? 'הצג פחות' : 'הצג עוד'}
+                              </button>
+                            )}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -217,15 +251,17 @@ export default function Layout({ children }) {
             </div>
 
             {/* Mobile menu btn */}
-            <button className="md:hidden btn-ghost p-2" onClick={() => setSidebarOpen(!sidebarOpen)}>
-              {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-            </button>
+            {!isAdminRoute && (
+              <button className="md:hidden btn-ghost p-2" onClick={() => setSidebarOpen(!sidebarOpen)}>
+                {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+              </button>
+            )}
           </div>
         </div>
       </header>
 
       {/* Mobile sidebar */}
-      {sidebarOpen && (
+      {sidebarOpen && !isAdminRoute && (
         <div className="fixed inset-0 z-30 md:hidden" onClick={() => setSidebarOpen(false)}>
           <div className="absolute inset-0 bg-black/40" />
           <nav
@@ -268,6 +304,50 @@ export default function Layout({ children }) {
           </div>
         </div>
       </footer>
+
+      {selectedNotif && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl border border-gray-200">
+            <div className="flex items-center justify-between p-4 border-b border-gray-100">
+              <h3 className="text-sm font-bold text-gray-900">פרטי התראה</h3>
+              <button
+                type="button"
+                className="text-gray-400 hover:text-gray-600"
+                onClick={() => setSelectedNotif(null)}
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 space-y-2">
+              <p className="text-sm font-semibold text-gray-900 whitespace-pre-wrap break-words">{selectedNotif.title}</p>
+              {!!selectedNotif.message && (
+                <p className="text-sm text-gray-600 whitespace-pre-wrap break-words">{selectedNotif.message}</p>
+              )}
+            </div>
+            <div className="p-4 border-t border-gray-100 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                className="btn-ghost px-4 py-2"
+                onClick={() => setSelectedNotif(null)}
+              >
+                סגור
+              </button>
+              <button
+                type="button"
+                className="btn-primary px-4 py-2"
+                onClick={() => {
+                  const n = selectedNotif
+                  setSelectedNotif(null)
+                  setShowNotifs(false)
+                  navigateFromNotification(n)
+                }}
+              >
+                פתח עמוד קשור
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
     </>
   )

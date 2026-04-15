@@ -6,35 +6,212 @@ Endpoints:
     POST /api/v1/webhooks/telegram  (no JWT auth — Telegram calls this directly)
 """
 import os
+import json
 from datetime import datetime
 from uuid import UUID as _UUID
 import httpx
+import re
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from BACKEND_DATABASE_MODELS import get_pii_db, User, Conversation, Message
+from BACKEND_DATABASE_MODELS import (
+    get_pii_db, async_session_factory,
+    User, Conversation, Message, SystemSetting,
+)
 from BACKEND_AI_AGENTS import process_user_message
 
 router = APIRouter()
 
 WHATSAPP_ANON_USER_ID = _UUID("00000000-0000-0000-0000-000000000001")
 
+_HUMAN_HANDOFF_TERMS = [
+    "human",
+    "real person",
+    "live agent",
+    "representative",
+    "support agent",
+    "customer service",
+    "נציג",
+    "נציגה",
+    "בן אדם",
+    "אדם אמיתי",
+    "مندوب",
+    "موظف",
+    "شخص حقيقي",
+    "بشر",
+]
+
+_URGENT_HANDOFF_TERMS = [
+    "urgent",
+    "asap",
+    "now",
+    "מיד",
+    "דחוף",
+    "עכשיו",
+    "عاجل",
+    "الآن",
+]
+
+_HANDOFF_SETTINGS_KEY = "support_handoff_settings"
+_DEFAULT_HANDOFF_SETTINGS = {
+    "ai_lock_during_handoff": True,
+    "waiting_notice_cooldown_seconds": 120,
+}
+
+
+def _normalize_handoff_settings(raw: dict | None) -> dict:
+    settings = dict(_DEFAULT_HANDOFF_SETTINGS)
+    if not isinstance(raw, dict):
+        return settings
+
+    if isinstance(raw.get("ai_lock_during_handoff"), bool):
+        settings["ai_lock_during_handoff"] = raw["ai_lock_during_handoff"]
+    elif isinstance(raw.get("ai_lock_during_handoff"), str):
+        val = raw.get("ai_lock_during_handoff", "").strip().lower()
+        if val in {"1", "true", "yes", "on"}:
+            settings["ai_lock_during_handoff"] = True
+        elif val in {"0", "false", "no", "off"}:
+            settings["ai_lock_during_handoff"] = False
+
+    try:
+        cooldown = int(raw.get("waiting_notice_cooldown_seconds"))
+        settings["waiting_notice_cooldown_seconds"] = max(30, min(900, cooldown))
+    except Exception:
+        pass
+    return settings
+
+
+async def _load_handoff_settings() -> dict:
+    settings = dict(_DEFAULT_HANDOFF_SETTINGS)
+    try:
+        async with async_session_factory() as cfg_db:
+            row = (
+                await cfg_db.execute(
+                    select(SystemSetting).where(SystemSetting.key == _HANDOFF_SETTINGS_KEY)
+                )
+            ).scalar_one_or_none()
+            if row and row.value:
+                parsed = row.value
+                if isinstance(parsed, str):
+                    parsed = json.loads(parsed)
+                settings = _normalize_handoff_settings(parsed)
+    except Exception:
+        settings = dict(_DEFAULT_HANDOFF_SETTINGS)
+    return settings
+
+
+def _takeover_active(conversation: Conversation) -> bool:
+    ctx = conversation.context if isinstance(conversation.context, dict) else {}
+    return bool(ctx.get("admin_takeover_active"))
+
+
+def _handoff_lock_active(conversation: Conversation, settings: dict) -> bool:
+    if not bool(settings.get("ai_lock_during_handoff", True)):
+        return False
+    if _takeover_active(conversation):
+        return True
+    ctx = conversation.context if isinstance(conversation.context, dict) else {}
+    status = str(ctx.get("human_handoff_status") or "none")
+    if status not in {"requested", "active"}:
+        return False
+    return bool(ctx.get("human_handoff_lock_active", True))
+
+
+def _wants_human_handoff(message: str) -> bool:
+    text = (message or "").strip().lower()
+    if not text:
+        return False
+    compact = re.sub(r"\s+", " ", text)
+    return any(term in compact for term in _HUMAN_HANDOFF_TERMS)
+
+
+def _handoff_priority(message: str) -> int:
+    text = (message or "").strip().lower()
+    if any(term in text for term in _URGENT_HANDOFF_TERMS):
+        return 3
+    if any(term in text for term in ("refund", "charge", "cancel", "תקלה", "חיוב", "ביטול", "استرجاع", "إلغاء")):
+        return 2
+    return 1
+
+
+def _handoff_ack_message(message: str) -> str:
+    text = (message or "")
+    has_arabic = bool(re.search(r"[\u0600-\u06FF]", text))
+    if has_arabic:
+        return (
+            "تم استلام طلبك للتحدث مع ممثل خدمة بشري.\n"
+            "سيتم تحويل المحادثة إلى ممثل حقيقي بأسرع وقت.\n"
+            "يمكنك الاستمرار في الكتابة هنا، ولن نفوّت رسائلك."
+        )
+    return (
+        "קיבלנו את הבקשה שלך לנציג אנושי.\n"
+        "השיחה תועבר לנציג/ה אמיתי/ת בהקדם האפשרי.\n"
+        "אפשר להמשיך לכתוב כאן, ולא נפספס את ההודעות שלך."
+    )
+
+
+def _handoff_waiting_message(message: str) -> str:
+    text = (message or "")
+    has_arabic = bool(re.search(r"[\u0600-\u06FF]", text))
+    if has_arabic:
+        return (
+            "طلبك للمحادثة مع ممثل بشري ما زال قيد المعالجة.\n"
+            "الفريق يرى رسائلك الآن وسيعود إليك ممثل حقيقي بأقرب وقت."
+        )
+    return (
+        "הפנייה שלך לנציג/ה אנושי/ת עדיין בטיפול.\n"
+        "צוות השירות רואה את ההודעות שלך בזמן אמת ויחזור אליך בהקדם."
+    )
+
+
+def _handoff_waiting_notice_due(conversation: Conversation, cooldown_seconds: int) -> bool:
+    ctx = conversation.context if isinstance(conversation.context, dict) else {}
+    raw = str(ctx.get("human_handoff_last_waiting_notice_at") or "").strip()
+    if not raw:
+        return True
+    try:
+        elapsed = (datetime.utcnow() - datetime.fromisoformat(raw)).total_seconds()
+        return elapsed >= max(30, cooldown_seconds)
+    except Exception:
+        return True
+
+
+def _mark_handoff_waiting_notice(conversation: Conversation) -> None:
+    ctx = dict(conversation.context or {})
+    ctx["human_handoff_last_waiting_notice_at"] = datetime.utcnow().isoformat()
+    conversation.context = ctx
+
+
+def _apply_handoff_request(conversation: Conversation, reason: str, message: str) -> None:
+    now = datetime.utcnow()
+    ctx = dict(conversation.context or {})
+    existing_priority = int(ctx.get("human_handoff_priority") or 1)
+    incoming_priority = _handoff_priority(message)
+
+    ctx["human_handoff_requested"] = True
+    ctx["human_handoff_status"] = "requested"
+    ctx["human_handoff_requested_at"] = str(ctx.get("human_handoff_requested_at") or "").strip() or now.isoformat()
+    ctx["human_handoff_reason"] = (reason or "intent").strip()
+    ctx["human_handoff_priority"] = max(existing_priority, incoming_priority)
+    ctx["human_handoff_latest_user_text"] = (message or "").strip()[:500]
+    ctx["human_handoff_lock_active"] = True
+    ctx["human_handoff_feedback_required"] = False
+    ctx["human_handoff_feedback_submitted"] = False
+    ctx["human_handoff_feedback_rating"] = None
+    ctx["human_handoff_feedback_text"] = None
+    ctx["human_handoff_feedback_at"] = None
+    ctx["human_handoff_resolved_at"] = None
+    ctx["human_handoff_last_waiting_notice_at"] = None
+    conversation.context = ctx
+
 
 def _sanitize_for_telegram(text: str) -> str:
     import re
     # Remove HTML tags
     text = re.sub(r'<[^>]+>', '', text)
-    # Replace internal URLs with friendly Hebrew text
-    text = text.replace('/api/v1/customers/cart', 'העגלה שלך באתר')
-    text = text.replace('/api/v1/customers/', 'האזור האישי שלך באתר')
-    text = re.sub(r'/api/v1/[^\s\n]+', 'האתר שלנו', text)
-    text = text.replace('/parts', 'חיפוש חלקים באתר')
-    text = text.replace('/orders', 'ההזמנות שלך באתר')
-    text = text.replace('/wishlist', 'רשימת המשאלות שלך באתר')
-    text = text.replace('/profile', 'הפרופיל שלך באתר')
-    text = text.replace('/reviews', 'הביקורות שלך באתר')
+    # Keep real backend links intact; do not rewrite API paths into simulated text.
     # Remove technical error messages
     text = re.sub(r'HTTP\s+\d+[^\n]*', '', text)
     text = re.sub(r'Ctrl\s*\+[^\n]*', '', text)
@@ -43,8 +220,50 @@ def _sanitize_for_telegram(text: str) -> str:
     # Remove markdown that doesn't render in Telegram
     text = re.sub(r'\*\*([^*]+)\*\*', r'\1', text)
     text = re.sub(r'#+\s+', '', text)
+    # If response accidentally mixes Hebrew and Arabic, keep one dominant script.
+    hebrew_count = len(re.findall(r'[\u0590-\u05FF]', text))
+    arabic_count = len(re.findall(r'[\u0600-\u06FF]', text))
+    if hebrew_count and arabic_count:
+        dominant = "he" if hebrew_count >= arabic_count else "ar"
+        cleaned_lines = []
+        for line in text.splitlines():
+            kept_tokens = []
+            for token in line.split():
+                has_he = bool(re.search(r'[\u0590-\u05FF]', token))
+                has_ar = bool(re.search(r'[\u0600-\u06FF]', token))
+                has_digits = bool(re.search(r'\d', token))
+                # Drop corrupted mixed-script tokens like עבריתعربي.
+                if has_he and has_ar:
+                    continue
+                if dominant == "he" and has_ar and not has_digits:
+                    continue
+                if dominant == "ar" and has_he and not has_digits:
+                    continue
+                kept_tokens.append(token)
+            cleaned_lines.append(" ".join(kept_tokens))
+        text = "\n".join(cleaned_lines)
+    # Escape stray angle brackets so parse_mode=HTML will not treat them as tags
+    text = text.replace("<", "&lt;").replace(">", "&gt;")
     # Clean up extra blank lines
     text = re.sub(r'\n{3,}', '\n\n', text).strip()
+    # Remove CJK (Chinese/Japanese/Korean) characters that leak from Qwen model
+    import unicodedata
+    def remove_cjk(text):
+        result = []
+        for char in text:
+            cat = unicodedata.category(char)
+            block = ord(char)
+            # Allow: Hebrew, Arabic, Latin, digits, punctuation, emoji ranges
+            is_cjk = (
+                0x4E00 <= block <= 0x9FFF or   # CJK Unified
+                0x3000 <= block <= 0x303F or   # CJK Symbols
+                0xFF00 <= block <= 0xFFEF or   # Halfwidth/Fullwidth
+                0x3040 <= block <= 0x30FF      # Hiragana/Katakana
+            )
+            if not is_cjk:
+                result.append(char)
+        return ''.join(result)
+    text = remove_cjk(text)
     return text
 
 
@@ -123,6 +342,59 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_pii_
     db.add(user_msg)
     await db.flush()
 
+    handoff_settings = await _load_handoff_settings()
+
+    if _takeover_active(conversation):
+        # Conversation is in admin manual takeover mode: store inbound and skip bot response.
+        await db.commit()
+        return Response(content="<Response/>", media_type="application/xml")
+
+    if _handoff_lock_active(conversation, handoff_settings):
+        cooldown = int(handoff_settings.get("waiting_notice_cooldown_seconds") or 120)
+        if _handoff_waiting_notice_due(conversation, cooldown):
+            waiting_text = _handoff_waiting_message(body)
+            send_result = await provider.send_message(sender_phone, waiting_text)
+            if not send_result.get("ok"):
+                safe_tail = phone_e164[-4:] if len(phone_e164) >= 4 else phone_e164
+                print(f"[WhatsApp] Handoff waiting-notice send failed to ****{safe_tail}: {send_result.get('error')}")
+
+            db.add(Message(
+                conversation_id=conversation.id,
+                role="assistant",
+                agent_name="human_handoff_waiting",
+                content=waiting_text,
+                content_type="text",
+                model_used="handoff_policy",
+                tokens_used=0,
+                created_at=datetime.utcnow(),
+            ))
+            _mark_handoff_waiting_notice(conversation)
+            conversation.last_message_at = datetime.utcnow()
+        await db.commit()
+        return Response(content="<Response/>", media_type="application/xml")
+
+    if _wants_human_handoff(body):
+        _apply_handoff_request(conversation, reason="intent", message=body)
+        ack_text = _handoff_ack_message(body)
+        send_result = await provider.send_message(sender_phone, ack_text)
+        if not send_result.get("ok"):
+            safe_tail = phone_e164[-4:] if len(phone_e164) >= 4 else phone_e164
+            print(f"[WhatsApp] Handoff ack send failed to ****{safe_tail}: {send_result.get('error')}")
+
+        db.add(Message(
+            conversation_id=conversation.id,
+            role="assistant",
+            agent_name="human_handoff",
+            content=ack_text,
+            content_type="text",
+            model_used="handoff_policy",
+            tokens_used=0,
+            created_at=datetime.utcnow(),
+        ))
+        conversation.last_message_at = datetime.utcnow()
+        await db.commit()
+        return Response(content="<Response/>", media_type="application/xml")
+
     # ── 7. Route through Avi ──────────────────────────────────────────────────
     try:
         agent_result = await process_user_message(
@@ -191,6 +463,7 @@ async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_pii_
                 return {"ok": True, "ignored": True, "reason": "duplicate_update"}
         except Exception as exc:
             print(f"[Telegram] Dedup check skipped: {exc}")
+            return {"ok": True, "ignored": True, "reason": "redis_unavailable"}
 
     message = update.get("message") or update.get("edited_message")
     if not isinstance(message, dict):
@@ -271,13 +544,41 @@ async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_pii_
         conversation = conv_result.scalar_one_or_none()
 
         # ── Welcome message for new conversations or /start ──────────────────
-        is_new_conversation = conversation is None or not history_rows if 'history_rows' in dir() else True
-        if text.strip() in ("/start", "/התחל", "start", "hello", "hi", "היי", "הי", "هلا", "مرحبا", "שלום") and not conversation:
+        is_new_conversation = conversation is None
+        if text.strip() in ("/start", "/התחל", "start", "hello", "hi", "היי", "הי", "هلا", "مرحبا", "שלום") and (
+            is_new_conversation or text.strip() in ("/start", "/התחל", "start")
+        ):
             female_names = ["ענת", "דנה", "מאיה", "שירה"]
             male_names = ["יוסי", "מוחמד", "ליאור", "כרם"]
             import random
             all_names = female_names + male_names
-            worker = random.choice(all_names)
+            worker = None
+            if conversation and isinstance(conversation.context, dict):
+                worker = conversation.context.get("agent_name")
+            if not worker:
+                worker = random.choice(all_names)
+
+            if not conversation:
+                conversation = Conversation(
+                    user_id=WHATSAPP_ANON_USER_ID,
+                    title=f"Telegram {tg_name}",
+                    is_active=True,
+                    started_at=datetime.utcnow(),
+                    last_message_at=datetime.utcnow(),
+                    context={
+                        "telegram_chat_id": str(chat_id),
+                        "telegram_user_id": tg_user_id,
+                        "telegram_username": tg_username or None,
+                        "agent_name": worker,
+                    },
+                )
+                db.add(conversation)
+                await db.flush()
+                await db.commit()
+            elif isinstance(conversation.context, dict) and not conversation.context.get("agent_name"):
+                conversation.context["agent_name"] = worker
+                await db.commit()
+
             is_female = worker in female_names
             role = "נציגת" if is_female else "נציג"
             if any(c in text for c in "ابتةثجحخدذرزسشصضطظعغفقكلمنهوي"):
@@ -307,6 +608,77 @@ async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_pii_
             conversation.last_message_at = datetime.utcnow()
 
         conv_id = str(conversation.id)
+
+        handoff_settings = await _load_handoff_settings()
+
+        if _takeover_active(conversation):
+            db.add(Message(
+                conversation_id=conversation.id,
+                role="user",
+                content=text,
+                content_type="text",
+            ))
+            await db.commit()
+            return {
+                "ok": True,
+                "conversation_id": conv_id,
+                "takeover": True,
+                "delivered": False,
+            }
+
+        if _handoff_lock_active(conversation, handoff_settings):
+            cooldown = int(handoff_settings.get("waiting_notice_cooldown_seconds") or 120)
+            if _handoff_waiting_notice_due(conversation, cooldown):
+                waiting_text = _sanitize_for_telegram(_handoff_waiting_message(text))
+                send_result = await send_telegram_message(chat_id, waiting_text)
+                if not send_result.get("ok"):
+                    print(f"[Telegram] Handoff waiting-notice send failed for chat {chat_id}: {send_result.get('error')}")
+
+                db.add(Message(
+                    conversation_id=conversation.id,
+                    role="assistant",
+                    agent_name="human_handoff_waiting",
+                    content=waiting_text,
+                    content_type="text",
+                    model_used="handoff_policy",
+                    tokens_used=0,
+                    created_at=datetime.utcnow(),
+                ))
+                _mark_handoff_waiting_notice(conversation)
+                conversation.last_message_at = datetime.utcnow()
+            await db.commit()
+            return {
+                "ok": True,
+                "conversation_id": conv_id,
+                "handoff_waiting": True,
+            }
+
+        if _wants_human_handoff(text):
+            _apply_handoff_request(conversation, reason="intent", message=text)
+            ack_text = _sanitize_for_telegram(_handoff_ack_message(text))
+            send_result = await send_telegram_message(chat_id, ack_text)
+            if not send_result.get("ok"):
+                print(f"[Telegram] Handoff ack send failed for chat {chat_id}: {send_result.get('error')}")
+
+            db.add(Message(
+                conversation_id=conversation.id,
+                role="assistant",
+                agent_name="human_handoff",
+                content=ack_text,
+                content_type="text",
+                model_used="handoff_policy",
+                tokens_used=0,
+                created_at=datetime.utcnow(),
+            ))
+            conversation.last_message_at = datetime.utcnow()
+            await db.commit()
+            return {
+                "ok": True,
+                "conversation_id": conv_id,
+                "handoff_requested": True,
+                "delivered": bool(send_result.get("ok")),
+            }
+
         agent_result = await process_user_message(
             user_id=str(conversation.user_id),
             message=text,

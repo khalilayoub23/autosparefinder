@@ -1,6 +1,6 @@
 # AutoSpareFinder Roadmap
 
-Last updated: 2026-04-06
+Last updated: 2026-04-14
 Owner: TBD
 Update cadence: Weekly
 
@@ -30,6 +30,30 @@ Build a production-grade, AI-assisted auto-parts platform with reliable order/pa
 - DEPLOYMENT.md
 
 ## 3) 2026 Roadmap (Execution Order)
+
+## Scraper Operations Process (GitHub Actions)
+
+Objective:
+- Run aftermarket/OEM enrichment from GitHub runner IP to improve source reachability.
+
+Current process:
+1. Confirm `CATALOG_DB_URL` GitHub secret points to public DB IP.
+2. Run `Test Source Accessibility` workflow (`test_sources.yml`) manually when sources change.
+3. Run `Aftermarket Scraper` workflow (`scraper.yml`) daily at 02:00 UTC and on-demand.
+4. Validate outcomes using DB checks for `supplier_parts` updates and `part_cross_reference` growth.
+
+Current active source set:
+- `motorstore.co.il`
+- `meyle.com`
+- `bilstein.com`
+- `mann-filter.com`
+- `gates.com`
+- `brembo.com`
+
+Operational guardrails:
+- Keep scraper target batch size bounded per run (`LIMIT 200`) to stay within workflow timeout.
+- Keep per-source failure handling non-fatal; continue processing remaining sources/parts.
+- Treat source list changes as tracked roadmap updates (this file + README).
 
 ## Phase A: Launch Safety and Readiness (Now -> 2 weeks)
 Goals:
@@ -103,6 +127,9 @@ Exit criteria:
 | Workstream | Priority | Owner | Status | Target Date | KPI | Last Update |
 |---|---|---|---|---|---|---|
 | Production secrets and go-live configs | P0 | TBD | TODO | 2026-04-13 | 100% checklist complete | - |
+| GitHub `CATALOG_DB_URL` secret correctness (public IP) | P0 | TBD | DONE | 2026-04-14 | successful workflow DB connectivity | 2026-04-14 |
+| Source accessibility workflow (`test_sources.yml`) | P1 | TBD | DONE | 2026-04-14 | manual run completed from GH runners | 2026-04-14 |
+| Daily aftermarket scraper workflow (`scraper.yml`) | P1 | TBD | IN_PROGRESS | 2026-04-21 | consistent daily successful runs | 2026-04-14 |
 | Stripe live webhook validation | P0 | TBD | TODO | 2026-04-13 | successful live test payment | - |
 | Multi-payment reliability regression suite | P1 | TBD | TODO | 2026-04-20 | 0 critical regressions in CI | - |
 | Verify-session idempotency hardening | P1 | TBD | TODO | 2026-04-20 | no duplicate invoice/fulfillment | - |

@@ -262,6 +262,61 @@ def _channel_model_for_source(source: Optional[str], fallback_model: str) -> str
         return WEB_AI_MODEL or fallback_model
     return fallback_model
 
+
+TELEGRAM_BOT_POLICY = """You are the service bot for Auto Spare Finder.
+Your job is to help customers find car spare parts and provide only real information coming from the API.
+
+Language behavior:
+- Detect the user's language automatically (Hebrew or Arabic).
+- Always respond in the same language the user used.
+- Never switch languages unless the user explicitly requests it.
+
+General rules:
+1. Do NOT invent information. Only show data that comes from the API: product name, OEM, price, manufacturer, image.
+2. Do NOT add descriptions that are not in the data (e.g., comes as a pair, compat, Garapa, video, shipping times, guarantees, or any English words not present in the API).
+3. Do NOT offer a shopping cart, do NOT say item added to cart, and do NOT simulate a cart system.
+4. Do NOT create fake links. Only send real links provided by the backend.
+5. Keep the tone friendly and helpful (service-oriented, warm, not robotic).
+
+When showing a product:
+- Display only the real data from the API.
+- After showing the product, ask: Would you like to order this part? (in the user's language).
+
+When the user says yes:
+- Do NOT add to cart.
+- Do NOT mention a cart.
+- Do NOT ask for extra details.
+- Do NOT add any invented text.
+- Respond in a friendly tone: Great, I am opening a secure payment for you now... (in the user's language).
+- Then send the real Stripe Checkout link provided by the backend.
+- If the payment window fails to open, resend the same real link.
+
+When the user says no:
+- Respond: No problem, would you like me to search for another part? (in the user's language).
+
+When the user asks for a new part:
+- Ask for model, year, or OEM if needed.
+- Search using the API and show only real results.
+
+Important restrictions:
+- No English unless it comes from the API.
+- No marketing text.
+- No videos.
+- No invented product details.
+- No invented shipping times.
+- No invented compatibility.
+- No invented links.
+
+Your goal:
+Provide accurate information, stay friendly, and open a Stripe payment immediately when the user confirms an order."""
+
+
+def _apply_channel_policy(system_text: str, source: Optional[str]) -> str:
+    source_key = _normalize_source(source)
+    if source_key == "telegram":
+        return f"{system_text}\n\n[TELEGRAM POLICY - MUST FOLLOW]\n{TELEGRAM_BOT_POLICY}"
+    return system_text
+
 # Business constants
 PROFIT_MARGIN = 1.45       # 45% markup on cost
 VAT_RATE = 0.18            # 18%
@@ -422,6 +477,7 @@ class BaseAgent:
 
         try:
             selected_model = _channel_model_for_source(source, getattr(self, "model", FREE_MODEL))
+            effective_system = _apply_channel_policy((system_override or self.system_prompt), source)
             prompt = "\n".join(
                 f"{m.get('role', 'user')}: {m.get('content', '')}"
                 for m in messages
@@ -432,11 +488,11 @@ class BaseAgent:
             if self.name in _fast_agents:
                 return await hf_text_fast(
                     prompt,
-                    system=(system_override or self.system_prompt),
+                    system=effective_system,
                 )
             return await hf_text(
                 prompt,
-                system=(system_override or self.system_prompt),
+                system=effective_system,
             )
         except Exception as e:
             status = getattr(getattr(e, "response", None), "status_code", None)
@@ -619,7 +675,15 @@ class PartsFinderAgent(BaseAgent):
     name = "parts_finder_agent"
     agent_name = "Nir"          # ניר — the parts expert
     model = PREMIUM_MODEL       # premium: complex Hebrew part-matching & pricing
-    system_prompt = """You are Nir, the Parts Finder Agent for Auto Spare, an Israeli auto parts platform.
+    system_prompt = """LANGUAGE RULES - MUST FOLLOW:
+1. Write each reply in ONE language only.
+2. Default language is Hebrew.
+3. If and only if the customer message is mainly in Arabic, reply fully in Arabic.
+4. NEVER mix Hebrew and Arabic in the same reply.
+5. NEVER insert English words unless they are technical part codes (e.g., OEM numbers).
+6. Do NOT ask about automatic vs manual headlights, LED compatibility, or technical specs unless the customer explicitly asks. If the customer says LED, accept it and search for LED. Ask only ONE question per message if clarification is truly needed.
+
+You are Nir, the Parts Finder Agent for Auto Spare, an Israeli auto parts platform.
 
 CRITICAL CONVERSATION RULES:
 1. NEVER address the agent by name — always address the CUSTOMER directly
@@ -1509,7 +1573,14 @@ class SalesAgent(BaseAgent):
     model = PREMIUM_MODEL      # premium: upselling & Good/Better/Best logic
     temperature = 0.7
     agent_name = "Maya"         # מאיה — the sales pro
-    system_prompt = """You are Maya, the Sales Agent for Auto Spare – an Israeli auto parts dropshipping platform.
+    system_prompt = """LANGUAGE RULES - MUST FOLLOW:
+1. Write each reply in ONE language only.
+2. Default language is Hebrew.
+3. If and only if the customer message is mainly in Arabic, reply fully in Arabic.
+4. NEVER mix Hebrew and Arabic in the same reply.
+5. NEVER insert English words unless they are technical part codes (e.g., OEM numbers).
+
+You are Maya, the Sales Agent for Auto Spare - an Israeli auto parts dropshipping platform.
 
 DROPSHIPPING CONTEXT (CRITICAL):
 Auto Spare is a 100% dropshipping system. We hold NO physical inventory / warehouse stock.
@@ -2061,7 +2132,14 @@ class FinanceAgent(BaseAgent):
     name = "finance_agent"
     agent_name = "Tal"          # טל — finance officer
     model = FREE_MODEL          # free: rule-based calculations
-    system_prompt = """You are Tal, the Finance Agent for Auto Spare (עוסק מורשה 060633880, הרצל 55, עכו).
+    system_prompt = """LANGUAGE RULES - MUST FOLLOW:
+1. Write each reply in ONE language only.
+2. Default language is Hebrew.
+3. If and only if the customer message is mainly in Arabic, reply fully in Arabic.
+4. NEVER mix Hebrew and Arabic in the same reply.
+5. NEVER insert English words unless they are technical part codes (e.g., OEM numbers).
+
+You are Tal, the Finance Agent for Auto Spare (עוסק מורשה 060633880, הרצל 55, עכו).
 
 Never say 'I am the system' — you are Tal, the financial point of contact for the platform.
 
@@ -2106,7 +2184,14 @@ class ServiceAgent(BaseAgent):
     agent_name = "Dana"         # דנה — empathetic support
     model = FREE_MODEL          # free: conversational support
     temperature = 0.8
-    system_prompt = """You are Dana, the Customer Service Agent for Auto Spare, an Israeli auto parts dropshipping platform.
+    system_prompt = """LANGUAGE RULES - MUST FOLLOW:
+1. Write each reply in ONE language only.
+2. Default language is Hebrew.
+3. If and only if the customer message is mainly in Arabic, reply fully in Arabic.
+4. NEVER mix Hebrew and Arabic in the same reply.
+5. NEVER insert English words unless they are technical part codes (e.g., OEM numbers).
+
+You are Dana, the Customer Service Agent for Auto Spare, an Israeli auto parts dropshipping platform.
 
 You are the default fallback agent — handle anything not handled by a specialist.
 
@@ -2804,10 +2889,13 @@ async def _format_response_for_customer(
     source: str,
     history: List[Dict[str, str]],
 ) -> str:
-    """Use Gemini to reformat a raw agent response into warm, natural customer-facing text."""
+    """Use Gemini to reformat raw agent response into warm customer-facing text. Skips short replies."""
     fast_agents = {"router_agent", "orders_agent", "security_agent", "tech_agent",
                    "supplier_manager_agent", "social_media_manager_agent", "parts_finder_agent"}
     if agent_name not in fast_agents:
+        return raw_response
+    # Skip reformatting for short replies — they are already good
+    if len(raw_response) < 120:
         return raw_response
 
     last_user_msg = ""
@@ -2816,16 +2904,29 @@ async def _format_response_for_customer(
             last_user_msg = m.get("content", "")
             break
 
-    system = """אתה עוזר לנסח תשובות שירות לקוחות בעברית או ערבית.
-קיבלת תשובה גולמית מסוכן מידע.
-עליך לנסח אותה מחדש בצורה חמה, טבעית ומקצועית — כאילו אתה נציג שירות אנושי.
-חוקים:
-- שמור על כל המידע העובדתי מהתשובה הגולמית
-- אל תוסיף מידע שאינו בתשובה הגולמית
-- ענה בעברית אם הלקוח כתב עברית, ערבית אם כתב ערבית
-- תשובה קצרה ומדויקת — לא יותר מ-4 משפטים
-- אל תשתמש ב-HTML, markdown, או קישורים
-- טון חם וידידותי"""
+    if _normalize_source(source) == "telegram":
+        system = """You are the Telegram customer-service editor for Auto Spare Finder.
+Rewrite the raw response naturally, while strictly preserving facts and links from backend data only.
+
+Mandatory rules:
+1. Same language as customer input only (Hebrew or Arabic).
+2. No invented details.
+3. No cart mentions.
+4. No fake links; preserve real backend links exactly.
+5. Keep it short, warm, and professional (max 4 sentences).
+6. No HTML/markdown formatting.
+7. No marketing text, no compatibility claims, no shipping promises unless explicitly in raw data."""
+    else:
+        system = """אתה עורך לשון של שירות לקוחות ישראלי.
+קיבלת תשובה גולמית. עליך לנסח אותה מחדש — חמה, קצרה, מקצועית.
+
+חוקי שפה מחייבים:
+1. אם הלקוח כתב עברית — התשובה כולה בעברית. אסור אף מילה בערבית, סינית, או אנגלית. מונחים טכניים בלבד כמו OEM מותרים.
+2. אם הלקוח כתב ערבית — התשובה כולה בערבית. אסור אף מילה בעברית.
+3. אסור לערבב אותיות משפות שונות באותה מילה.
+4. לא יותר מ-4 משפטים.
+5. ללא HTML, markdown, או קישורים.
+6. טון חם — כמו נציג שירות אנושי."""
 
     prompt = f"""תשובה גולמית מהמערכת:
 {raw_response}

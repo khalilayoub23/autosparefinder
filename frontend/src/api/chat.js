@@ -2,6 +2,8 @@ import api from './client'
 
 export const chatApi = {
   sendMessage: (data) => api.post('/chat/message', data),
+  requestHumanHandoff: (data) => api.post('/chat/handoff/request', data),
+  submitHandoffFeedback: (data) => api.post('/chat/handoff/feedback', data),
   getConversations: () => api.get('/chat/conversations'),
   getConversation: (id) => api.get(`/chat/conversations/${id}`),
   getMessages: (id) => api.get(`/chat/conversations/${id}/messages`),
