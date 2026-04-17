@@ -902,11 +902,23 @@ async def test_G_supplier_part_crud():
     sp_id = _uuid.uuid4()
     try:
         async with fac() as db:
+            brand_row = (await db.execute(
+                select(CarBrand.id, CarBrand.name)
+                .where(CarBrand.id.is_not(None))
+                .limit(1)
+            )).first()
+            if not brand_row:
+                pytest.skip("No CarBrand rows available for manufacturer_id FK")
+
             # PartsCatalog row is required to satisfy the FK on supplier_parts.part_id
             part = PartsCatalog(
                 id=catalog_id,
                 sku=f"TEST-{catalog_id.hex[:8]}",
                 name="Test Brake Pad",
+                manufacturer=brand_row[1] or "Test Manufacturer",
+                manufacturer_id=brand_row[0],
+                category="בלמים",
+                part_type="Aftermarket",
             )
             db.add(part)
             sup = Supplier(id=sup_id, name=f"TestSup_{sup_id.hex[:6]}",

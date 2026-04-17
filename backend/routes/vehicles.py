@@ -11,7 +11,7 @@ Endpoints:
   POST   /api/v1/vehicles/my-vehicles/set-primary
   GET    /api/v1/vehicles/{vehicle_id}/compatible-parts
 """
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request, Query
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
@@ -238,5 +238,63 @@ async def set_primary_vehicle(vehicle_id: str, current_user: User = Depends(get_
 # ==============================================================================
 
 @router.get("/api/v1/vehicles/{vehicle_id}/compatible-parts")
-async def get_compatible_parts(vehicle_id: str, category: Optional[str] = None, db: AsyncSession = Depends(get_db)):
-    return {"parts": [], "message": "Compatibility filter coming soon"}
+async def get_compatible_parts(
+    vehicle_id: str,
+    q: str = Query(default="", max_length=200),
+    category: Optional[str] = None,
+    per_type: Optional[int] = None,
+    sort_by: str = "price_ils",
+    db: AsyncSession = Depends(get_db),
+    request: Request = None,
+    redis=Depends(get_redis),
+):
+    if redis and request:
+        ip = request.client.host if request.client else "unknown"
+        allowed = await check_rate_limit(redis, f"rate:compatible_parts:{ip}", 30, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail="יותר מדי בקשות — נסה שוב בעוד דקה")
+
+    vehicle = (await db.execute(select(Vehicle).where(Vehicle.id == vehicle_id))).scalar_one_or_none()
+    if not vehicle:
+        raise HTTPException(status_code=404, detail="Vehicle not found")
+
+    # Reuse the strict-fit search path so all vehicle-bound results come from one rule set.
+    from routes.parts import search_parts
+
+    search_payload = await search_parts(
+        query=q,
+        vehicle_id=vehicle_id,
+        category=category,
+        per_type=per_type,
+        sort_by=sort_by,
+        db=db,
+        request=request,
+        redis=redis,
+    )
+
+    all_parts = search_payload.get("all_parts") or []
+    has_verified_results = len(all_parts) > 0
+
+    return {
+        "vehicle": {
+            "id": str(vehicle.id),
+            "manufacturer": vehicle.manufacturer,
+            "model": vehicle.model,
+            "year": vehicle.year,
+        },
+        "query": q,
+        "category": category,
+        "results_per_type": search_payload.get("results_per_type"),
+        "fitment_verified": has_verified_results,
+        "fitment_source": "strict_vehicle_search",
+        "vehicle_match_basis": "vehicle_id -> manufacturer/model/year + structured/json fitment",
+        "message": "Exact fitment verified" if has_verified_results else "No verified fitment data",
+        # Backward-compatible flat list for existing consumers.
+        "parts": all_parts,
+        # Grouped payload for new consumers.
+        "grouped_results": {
+            "original": search_payload.get("original"),
+            "oem": search_payload.get("oem"),
+            "aftermarket": search_payload.get("aftermarket"),
+        },
+    }

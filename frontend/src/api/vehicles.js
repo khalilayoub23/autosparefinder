@@ -12,6 +12,11 @@ export const vehiclesApi = {
   updateVehicle: (id, data) => api.put(`/vehicles/my-vehicles/${id}`, null, { params: data }),
   deleteVehicle: (id) => api.delete(`/vehicles/my-vehicles/${id}`),
   setPrimary: (id) => api.post('/vehicles/my-vehicles/set-primary', null, { params: { vehicle_id: id } }),
-  compatibleParts: (id, category) =>
-    api.get(`/vehicles/${id}/compatible-parts`, { params: { category } }),
+  compatibleParts: (id, categoryOrParams = null) => {
+    const params =
+      categoryOrParams && typeof categoryOrParams === 'object'
+        ? categoryOrParams
+        : { category: categoryOrParams }
+    return api.get(`/vehicles/${id}/compatible-parts`, { params })
+  },
 }

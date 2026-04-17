@@ -23,8 +23,6 @@
 #   HuggingFace API    — Kimi-K2 / multilingual embed / whisper (HF_TOKEN)
 # ============================================================
 
-version: "3.9"
-
 services:
 
   # ── Databases ────────────────────────────────────────────────────────────────
@@ -131,6 +129,24 @@ services:
       CEREBRAS_API_KEY: ${CEREBRAS_API_KEY}
       CEREBRAS_TEXT_MODEL: ${CEREBRAS_TEXT_MODEL:-llama3.1-8b}
       HF_TEXT_MODEL: ${HF_TEXT_MODEL}
+      HF_VISION_MODEL: ${HF_VISION_MODEL:-Qwen/Qwen3-VL-8B-Instruct}
+      EXTERNAL_FITMENT_PROVIDER_URLS: ${EXTERNAL_FITMENT_PROVIDER_URLS:-https://www.autodoc.eu/api/v1/part/applicability,https://www.buycarparts.co.uk/api/v1/part/applicability}
+      EXTERNAL_ENABLE_NHTSA: ${EXTERNAL_ENABLE_NHTSA:-true}
+      NHTSA_API_BASE: ${NHTSA_API_BASE:-https://vpic.nhtsa.dot.gov/api}
+      EXTERNAL_ENABLE_EBAY: ${EXTERNAL_ENABLE_EBAY:-true}
+      EBAY_BROWSE_API_BASE: ${EBAY_BROWSE_API_BASE:-https://api.ebay.com/buy/browse/v1}
+      EBAY_MARKETPLACE_ID: ${EBAY_MARKETPLACE_ID:-EBAY_US}
+      EBAY_BEARER_TOKEN: ${EBAY_BEARER_TOKEN:-}
+      EBAY_CLIENT_ID: ${EBAY_CLIENT_ID:-}
+      EBAY_CLIENT_SECRET: ${EBAY_CLIENT_SECRET:-}
+      EBAY_SCOPE: ${EBAY_SCOPE:-https://api.ebay.com/oauth/api_scope/buy.browse}
+      EBAY_IDENTITY_BASE: ${EBAY_IDENTITY_BASE:-https://api.ebay.com/identity/v1}
+      EXTERNAL_ENABLE_ROCKAUTO: ${EXTERNAL_ENABLE_ROCKAUTO:-true}
+      ROCKAUTO_CROSSREF_ENDPOINT_TEMPLATE: ${ROCKAUTO_CROSSREF_ENDPOINT_TEMPLATE:-}
+      ROCKAUTO_ITEMS_PATH: ${ROCKAUTO_ITEMS_PATH:-items}
+      EXTERNAL_ENABLE_OEM_EPC: ${EXTERNAL_ENABLE_OEM_EPC:-true}
+      OEM_EPC_ENDPOINT_TEMPLATES: ${OEM_EPC_ENDPOINT_TEMPLATES:-}
+      OEM_EPC_ITEMS_PATH: ${OEM_EPC_ITEMS_PATH:-items}
       AGENTS_DEFAULT_MODEL: ${AGENTS_DEFAULT_MODEL}
       WEB_AI_MODEL: ${WEB_AI_MODEL}
       WHATSAPP_AI_MODEL: ${WHATSAPP_AI_MODEL}

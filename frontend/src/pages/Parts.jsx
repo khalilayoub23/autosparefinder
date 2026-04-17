@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useDeferredValue } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { partsApi } from '../api/parts'
+import { vehiclesApi } from '../api/vehicles'
 import { cartApi } from '../api/orders'
 import { useCartStore } from '../stores/cartStore'
 import { useVehicleStore } from '../stores/vehicleStore'
@@ -1188,6 +1189,7 @@ export default function Parts() {
   const [categoryCounts, setCategoryCounts] = useState({})
   const [parts, setParts] = useState([])          // flat list for photo/legacy search
   const [searchResults, setSearchResults] = useState(null) // grouped: {original,oem,aftermarket}
+  const [fitmentStatus, setFitmentStatus] = useState(null)
   const [isLoading, setIsLoading] = useState(false)
   const [searched, setSearched] = useState(false)
   const [page, setPage] = useState(0)
@@ -1819,6 +1821,48 @@ export default function Parts() {
     effectiveManualYear,
     category,
   })
+  const filterStatsCards = [
+    {
+      id: 'manufacturers',
+      label: 'יצרנים',
+      value: brands.length.toLocaleString(),
+      hint: manualManufacturer || 'כל היצרנים',
+      icon: Car,
+      tone: 'bg-blue-50 text-blue-700 border-blue-200',
+    },
+    {
+      id: 'models',
+      label: 'דגמים',
+      value: manualManufacturer ? modelOptions.length.toLocaleString() : '-',
+      hint: effectiveManualModel || 'בחר דגם',
+      icon: Search,
+      tone: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    },
+    {
+      id: 'submodels',
+      label: 'תתי-דגם',
+      value: effectiveManualModel ? subModelOptions.length.toLocaleString() : '-',
+      hint: effectiveManualSubModel || 'בחר גרסה',
+      icon: Tag,
+      tone: 'bg-violet-50 text-violet-700 border-violet-200',
+    },
+    {
+      id: 'years',
+      label: 'שנות ייצור',
+      value: effectiveManualModel ? yearOptions.length.toLocaleString() : '-',
+      hint: effectiveManualYear || 'בחר שנה',
+      icon: Hash,
+      tone: 'bg-amber-50 text-amber-700 border-amber-200',
+    },
+    {
+      id: 'part_types',
+      label: 'סוגי חלקים',
+      value: partFamilies.length.toLocaleString(),
+      hint: selectedPartFamilyLabel,
+      icon: Package,
+      tone: 'bg-rose-50 text-rose-700 border-rose-200',
+    },
+  ]
 
   const clearManual = () => {
     setManualManufacturer('')
@@ -1980,10 +2024,53 @@ export default function Parts() {
     setCategory(nextState.category)
   }
 
+  const runSelectedVehicleExactSearch = async (vehicleId, searchQuery, categoryValue) => {
+    const { data } = await vehiclesApi.compatibleParts(vehicleId, {
+      q: searchQuery || '',
+      category: categoryValue || null,
+      per_type: perType,
+    })
+
+    const grouped = data.grouped_results || null
+    if (grouped) {
+      setSearchResults({
+        original: grouped.original || { part: null, suppliers: [] },
+        oem: grouped.oem || { part: null, suppliers: [] },
+        aftermarket: grouped.aftermarket || { part: null, suppliers: [] },
+      })
+      const flat = Array.isArray(data.parts)
+        ? flattenGroupedResults({ all_parts: data.parts })
+        : flattenGroupedResults(grouped)
+      setParts(flat)
+      setTotalCount(flat.length)
+    } else {
+      setSearchResults(null)
+      const fallbackParts = data.parts || []
+      setParts(fallbackParts)
+      setTotalCount(data.total || fallbackParts.length)
+    }
+
+    const hasVerifiedParts = Boolean(data.fitment_verified)
+    const hasAnyParts = Array.isArray(data.parts) && data.parts.length > 0
+    setFitmentStatus({
+      verified: hasVerifiedParts,
+      message:
+        data.message ||
+        (hasAnyParts
+          ? 'Exact fitment verified'
+          : 'No verified fitment data'),
+      source: data.fitment_source || 'strict_vehicle_search',
+      confidenceBucket: data.confidence_bucket || (hasVerifiedParts ? 'verified' : 'no_data'),
+      matchBasis: data.vehicle_match_basis || null,
+    })
+  }
+
   const search = async (pageNum = 0) => {
     const q = buildManualQuery()
+    const hasManualVehicleFilter = Boolean(manualManufacturer || effectiveManualModel || effectiveManualSubModel || effectiveManualYear)
+    const selectedVehicleId = !hasManualVehicleFilter ? (selectedVehicle?.id || null) : null
 
-    if (!q && !category && !manualManufacturer) {
+    if (!q && !category && !manualManufacturer && !selectedVehicleId) {
       toast.error('הזן שם חלק, בחר קטגוריה, או בחר יצרן')
       return
     }
@@ -1991,32 +2078,38 @@ export default function Parts() {
     setIsLoading(true)
     setSearched(true)
     try {
-      const { data } = await partsApi.search(
-        q,
-        null,
-        category,
-        perType,
-        manualManufacturer || null,
-        effectiveManualModel || null,
-        effectiveManualYear ? parseInt(effectiveManualYear, 10) : null,
-        effectiveManualSubModel || null
-      )
-      // New grouped response
-      if (data.original !== undefined || data.oem !== undefined || data.aftermarket !== undefined) {
-        setSearchResults({ original: data.original, oem: data.oem, aftermarket: data.aftermarket })
-        // Also flatten for backwards compat (stats, filters)
-        const flat = flattenGroupedResults(data)
-        setParts(flat)
-        setTotalCount(flat.length)
+      if (selectedVehicleId) {
+        await runSelectedVehicleExactSearch(selectedVehicleId, q, category)
       } else {
-        // Fallback for old-style responses
-        setSearchResults(null)
-        setParts(data.parts || [])
-        setTotalCount(data.total || 0)
+        const { data } = await partsApi.search(
+          q,
+          selectedVehicleId,
+          category,
+          perType,
+          manualManufacturer || null,
+          effectiveManualModel || null,
+          effectiveManualYear ? parseInt(effectiveManualYear, 10) : null,
+          effectiveManualSubModel || null
+        )
+        // New grouped response
+        if (data.original !== undefined || data.oem !== undefined || data.aftermarket !== undefined) {
+          setSearchResults({ original: data.original, oem: data.oem, aftermarket: data.aftermarket })
+          // Also flatten for backwards compat (stats, filters)
+          const flat = flattenGroupedResults(data)
+          setParts(flat)
+          setTotalCount(flat.length)
+        } else {
+          // Fallback for old-style responses
+          setSearchResults(null)
+          setParts(data.parts || [])
+          setTotalCount(data.total || 0)
+        }
+        setFitmentStatus(null)
       }
       setPage(pageNum)
       saveRecentSearch(q)
     } catch (err) {
+      setFitmentStatus(null)
       const detail = err?.response?.data?.detail
       toast.error(typeof detail === 'string' ? detail : detail?.message || 'שגיאה בחיפוש')
     } finally {
@@ -2072,11 +2165,11 @@ export default function Parts() {
 
   const photoSearchCache = useRef({})
 
-  const runPhotoPartsSearch = async (candidates, vehicleManufacturer) => {
+  const runPhotoPartsSearch = async (candidates, vehicle = null) => {
     if (!candidates || candidates.length === 0) return
 
     // Return cached result instantly
-    const cacheKey = `${candidates[0]}__${vehicleManufacturer}`
+    const cacheKey = `${candidates[0]}__${vehicle?.id || vehicle?.manufacturer || ''}`
     if (photoSearchCache.current[cacheKey]) {
       const c = photoSearchCache.current[cacheKey]
       setQuery(c.query); setParts(c.parts); setSearchResults(c.grouped || null)
@@ -2091,8 +2184,17 @@ export default function Parts() {
 
       // Fire manufacturer-filtered searches + general searches in parallel
       const [mfrResults, genResults] = await Promise.all([
-        vehicleManufacturer
-          ? Promise.all(top.map(c => partsApi.search(c, null, category, null, vehicleManufacturer).catch(() => null)))
+        vehicle?.manufacturer
+          ? Promise.all(top.map(c => partsApi.search(
+              c,
+              vehicle?.id || null,
+              category,
+              null,
+              vehicle?.manufacturer || null,
+              vehicle?.model || null,
+              vehicle?.year || null,
+              null,
+            ).catch(() => null)))
           : Promise.resolve(top.map(() => null)),
         Promise.all(top.map(c => partsApi.search(c, null, category).catch(() => null))),
       ])
@@ -2119,7 +2221,7 @@ export default function Parts() {
       // Fallback to general results if manufacturer filter returned nothing.
       // But if a specific vehicle manufacturer is selected, do NOT show wrong-brand
       // parts — keep results empty so the "no parts for [brand]" banner is shown.
-      if (!usedMfr && !vehicleManufacturer) {
+      if (!usedMfr && !vehicle?.manufacturer) {
         for (let i = 0; i < top.length; i++) {
           const d = genResults[i]?.data
           if (!d) continue
@@ -2137,12 +2239,12 @@ export default function Parts() {
 
       photoSearchCache.current[cacheKey] = {
         query: usedQuery, parts: foundParts, grouped: foundGrouped,
-        total: foundTotal, fallbackMfr: !usedMfr && vehicleManufacturer ? vehicleManufacturer : '',
+        total: foundTotal, fallbackMfr: !usedMfr && vehicle?.manufacturer ? vehicle.manufacturer : '',
       }
 
       setQuery(usedQuery); setParts(foundParts); setSearchResults(foundGrouped)
       setTotalCount(foundTotal); setSearched(true); setPage(0)
-      setPhotoFallbackMfr(!usedMfr && vehicleManufacturer ? vehicleManufacturer : '')
+      setPhotoFallbackMfr(!usedMfr && vehicle?.manufacturer ? vehicle.manufacturer : '')
     } finally {
       setIsLoading(false)
     }
@@ -2151,7 +2253,7 @@ export default function Parts() {
   // Re-run parts search when vehicle selection changes (if photo search is active)
   useEffect(() => {
     if (photoCandidates.length > 0) {
-      runPhotoPartsSearch(photoCandidates, selectedVehicle?.manufacturer || '')
+      runPhotoPartsSearch(photoCandidates, selectedVehicle || null)
     }
   }, [selectedVehicle])
 
@@ -2186,7 +2288,7 @@ export default function Parts() {
         })
 
         setPhotoCandidates(candidates)
-        await runPhotoPartsSearch(candidates, selectedVehicle?.manufacturer || '')
+        await runPhotoPartsSearch(candidates, selectedVehicle || null)
       }
     } catch (err) {
       const detail = err?.response?.data?.detail
@@ -2255,7 +2357,7 @@ export default function Parts() {
     return cleaned || transcript // fallback to original if stripping leaves nothing
   }
 
-  const runVoicePartsSearch = async (q, vehicleManufacturer) => {
+  const runVoicePartsSearch = async (q, vehicle = null) => {
     if (!q) return
     const { sort_by, sort_dir } = getSortParams(sortBy)
 
@@ -2263,7 +2365,7 @@ export default function Parts() {
     const words = q.split(/\s+/).filter(w => w.length > 1)
     const candidates = [q, ...words.filter(w => w !== q)].filter((v, i, a) => a.indexOf(v) === i)
 
-    const cacheKey = `${candidates[0]}__${vehicleManufacturer}`
+    const cacheKey = `${candidates[0]}__${vehicle?.id || vehicle?.manufacturer || ''}`
     if (voiceSearchCache.current[cacheKey]) {
       const c = voiceSearchCache.current[cacheKey]
       setQuery(c.query); setParts(c.parts); setTotalCount(c.total); setSearched(true); setPage(0)
@@ -2277,8 +2379,17 @@ export default function Parts() {
       const top = candidates.slice(0, 4)
       const [mfrResults, genResults] = await Promise.all([
         Promise.all(
-          vehicleManufacturer
-            ? top.map(c => partsApi.search(c, null, category, null, vehicleManufacturer).catch(() => null))
+          vehicle?.manufacturer
+            ? top.map(c => partsApi.search(
+                c,
+                vehicle?.id || null,
+                category,
+                null,
+                vehicle?.manufacturer || null,
+                vehicle?.model || null,
+                vehicle?.year || null,
+                null,
+              ).catch(() => null))
             : top.map(() => Promise.resolve(null))
         ),
         Promise.all(
@@ -2308,7 +2419,7 @@ export default function Parts() {
       // Fallback to general — only when no vehicle manufacturer is selected.
       // With a selected vehicle, keep results empty so the "no parts for [brand]"
       // banner shows instead of wrong-brand parts.
-      if (!usedMfr && !vehicleManufacturer) {
+      if (!usedMfr && !vehicle?.manufacturer) {
         for (let i = 0; i < top.length; i++) {
           const r = genResults[i]?.data
           if (!r) continue
@@ -2324,7 +2435,7 @@ export default function Parts() {
         }
       }
 
-      const fallbackMfr = !usedMfr && vehicleManufacturer ? vehicleManufacturer : ''
+      const fallbackMfr = !usedMfr && vehicle?.manufacturer ? vehicle.manufacturer : ''
       voiceSearchCache.current[cacheKey] = { query: usedQuery, parts: foundParts, total: foundTotal, grouped: foundGrouped, fallbackMfr }
       setQuery(usedQuery); setParts(foundParts); setTotalCount(foundTotal); setSearched(true); setPage(0)
       setSearchResults(foundGrouped)
@@ -2337,7 +2448,7 @@ export default function Parts() {
   useEffect(() => {
     if (voiceTranscript.trim()) {
       const cleaned = cleanVoiceQuery(voiceTranscript.trim(), selectedVehicle)
-      runVoicePartsSearch(cleaned, selectedVehicle?.manufacturer || '')
+      runVoicePartsSearch(cleaned, selectedVehicle || null)
     }
   }, [selectedVehicle])
 
@@ -2347,7 +2458,7 @@ export default function Parts() {
     const cleaned = cleanVoiceQuery(raw, selectedVehicle)
     voiceSearchCache.current = {}
     setVoiceFallbackMfr('')
-    runVoicePartsSearch(cleaned, selectedVehicle?.manufacturer || '')
+    runVoicePartsSearch(cleaned, selectedVehicle || null)
   }
 
   // ─── VIN mode ─────────────────────────────────────────────────────────────
@@ -2711,7 +2822,10 @@ export default function Parts() {
               <div className="w-8 h-8 rounded-lg bg-brand-100 flex items-center justify-center">
                 <SlidersHorizontal className="w-4 h-4 text-brand-600" />
               </div>
-              <h3 className="font-semibold text-gray-900">חיפוש לפי פרטי רכב</h3>
+              <div>
+                <h3 className="font-semibold text-gray-900">חיפוש לפי פרטי רכב</h3>
+                <p className="text-[11px] text-gray-400 mt-0.5">מסננים המחוברים לנתוני DB בזמן אמת</p>
+              </div>
             </div>
             {(activeFiltersCount > 0 || category) && (
               <button onClick={() => { clearManual(); handlePartFamilyChange('') }} className="flex items-center gap-1 text-xs text-gray-400 hover:text-red-500 transition-colors">
@@ -2720,11 +2834,27 @@ export default function Parts() {
             )}
           </div>
 
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-2">
+            {filterStatsCards.map((card) => {
+              const Icon = card.icon
+              return (
+                <div key={card.id} className={`rounded-xl border px-3 py-2.5 ${card.tone}`}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-medium opacity-80">{card.label}</span>
+                    <Icon className="w-3.5 h-3.5 opacity-80" />
+                  </div>
+                  <p className="text-lg font-bold leading-tight mt-1">{card.value}</p>
+                  <p className="text-[11px] mt-0.5 truncate opacity-85" title={card.hint}>{card.hint}</p>
+                </div>
+              )
+            })}
+          </div>
+
           {/* Fields: Manufacturer → Model → Sub-model → Year → Part Type */}
           <div className="grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-5 gap-3">
 
             {/* 1. Manufacturer */}
-            <div>
+            <div className="rounded-xl border border-gray-200 bg-gray-50/40 p-3">
               <label className="block text-xs text-gray-500 mb-1.5 font-medium">יצרן</label>
               <div className="relative" ref={manufacturerMenuRef}>
                 <button
@@ -2829,7 +2959,7 @@ export default function Parts() {
             </div>
 
             {/* 2. Model */}
-            <div>
+            <div className="rounded-xl border border-gray-200 bg-gray-50/40 p-3">
               <label className="block text-xs text-gray-500 mb-1.5 font-medium">דגם</label>
               <select
                 className={FILTER_SELECT_CLASS}
@@ -2849,7 +2979,7 @@ export default function Parts() {
             </div>
 
             {/* 3. Sub-model */}
-            <div className="lg:order-3">
+            <div className="lg:order-3 rounded-xl border border-gray-200 bg-gray-50/40 p-3">
               <label className="block text-xs text-gray-500 mb-1.5 font-medium">תת-דגם / גרסה</label>
               <select
                 className={FILTER_SELECT_CLASS}
@@ -2872,7 +3002,7 @@ export default function Parts() {
             </div>
 
             {/* 4. Year */}
-            <div className="lg:order-4">
+            <div className="lg:order-4 rounded-xl border border-gray-200 bg-gray-50/40 p-3">
               <label className="block text-xs text-gray-500 mb-1.5 font-medium">שנה</label>
               <select
                 className={FILTER_SELECT_CLASS}
@@ -2895,7 +3025,7 @@ export default function Parts() {
             </div>
 
             {/* 5. Part Type / Category */}
-            <div className="lg:order-5">
+            <div className="lg:order-5 rounded-xl border border-gray-200 bg-gray-50/40 p-3">
               <label className="block text-xs text-gray-500 mb-1.5 font-medium">סוג חלק</label>
               <div className="relative" ref={partTypeMenuRef}>
                 <button
@@ -3052,7 +3182,8 @@ export default function Parts() {
             </div>
           )}
           {/* Search button for Block 2 */}
-          <div className="flex justify-start pt-1">
+          <div className="flex items-center justify-between gap-3 pt-1 flex-wrap">
+            <p className="text-xs text-gray-500">המסננים שולחים חיפוש ישירות למסד הנתונים דרך API החלקים.</p>
             <button onClick={() => search(0)} disabled={isLoading} className="btn-primary flex items-center gap-2">
               {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
               חפש לפי פרטי רכב
@@ -3459,12 +3590,58 @@ export default function Parts() {
         </div>
       )}
 
+      {!isLoading && searched && selectedVehicle && fitmentStatus?.message && (
+        <div
+          className={`rounded-xl border px-4 py-3 text-sm flex items-center gap-2 ${
+            fitmentStatus.verified
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+              : 'bg-amber-50 border-amber-200 text-amber-800'
+          }`}
+        >
+          <div className="flex items-start gap-2 w-full">
+            {fitmentStatus.verified ? (
+              <CheckCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+            ) : (
+              <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+            )}
+            <div className="min-w-0">
+              <p className="font-medium">{fitmentStatus.message}</p>
+              {(fitmentStatus.source || fitmentStatus.confidenceBucket || fitmentStatus.matchBasis) && (
+                <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs opacity-90">
+                  {fitmentStatus.source && (
+                    <span className="px-2 py-0.5 rounded-full border border-current/30">
+                      Source: {fitmentStatus.source}
+                    </span>
+                  )}
+                  {fitmentStatus.confidenceBucket && (
+                    <span className="px-2 py-0.5 rounded-full border border-current/30">
+                      Confidence: {fitmentStatus.confidenceBucket}
+                    </span>
+                  )}
+                  {fitmentStatus.matchBasis && (
+                    <span className="truncate max-w-full">
+                      Basis: {fitmentStatus.matchBasis}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {!isLoading && searched && parts.length === 0 && (
         <div className="card p-8 text-center">
           <Package className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-          <h3 className="font-semibold text-gray-700 mb-2">לא נמצאו חלקים</h3>
+          <h3 className="font-semibold text-gray-700 mb-2">
+            {selectedVehicle && fitmentStatus && !fitmentStatus.verified
+              ? 'No verified fitment data'
+              : 'לא נמצאו חלקים'}
+          </h3>
           <p className="text-sm text-gray-400 mb-5">
-            {category && query
+            {selectedVehicle && fitmentStatus && !fitmentStatus.verified
+              ? `${selectedVehicle.manufacturer} ${selectedVehicle.model} ${selectedVehicle.year || ''} · ${fitmentStatus.message}`
+              : category && query
               ? `לא נמצאו תוצאות עבור "${query}" בקטגוריה "${selectedPartFamilyLabel}"`
               : category
               ? `לא נמצאו תוצאות בקטגוריה "${selectedPartFamilyLabel}"`
@@ -3507,7 +3684,15 @@ export default function Parts() {
           )}
           <div className="flex items-center justify-center gap-3 flex-wrap">
             {selectedVehicle && (
-              <button onClick={() => { setParts([]); setSearchResults(null); setSearched(true); setIsLoading(true); partsApi.search('', selectedVehicle.id, category, perType, null).then(({data}) => { setParts(data.parts || []); setTotalCount(data.total || 0); }).catch(() => {}).finally(() => setIsLoading(false)) }} className="btn-ghost text-sm">
+              <button onClick={() => {
+                setParts([])
+                setSearchResults(null)
+                setSearched(true)
+                setIsLoading(true)
+                runSelectedVehicleExactSearch(selectedVehicle.id, '', category)
+                  .catch(() => {})
+                  .finally(() => setIsLoading(false))
+              }} className="btn-ghost text-sm">
                 חפש לפי {selectedVehicle.manufacturer} {selectedVehicle.model}
               </button>
             )}

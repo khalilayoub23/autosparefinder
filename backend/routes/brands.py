@@ -6,15 +6,46 @@ Endpoints:
   GET /api/v1/brands/with-parts
   GET /api/v1/brands/{brand_name}/parts
 """
-from typing import Optional
+from typing import Dict, Optional, Set
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_, func, text
 
 from BACKEND_DATABASE_MODELS import get_db, CarBrand, TruckBrand, PartsCatalog
+from manufacturer_normalization import normalize_manufacturer_name
 
 router = APIRouter()
+
+
+def _canonical_manufacturer(value: Optional[str]) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    canonical = normalize_manufacturer_name(raw, raw) or raw
+    return canonical.strip()
+
+
+def _manufacturer_query_variants(*values: Optional[str]) -> list[str]:
+    variants: Set[str] = set()
+    for value in values:
+        raw = (value or "").strip()
+        if not raw:
+            continue
+        canonical = _canonical_manufacturer(raw)
+        variants.add(raw)
+        if canonical:
+            variants.add(canonical)
+    return sorted(variants)
+
+
+def _canonical_keys(*values: Optional[str]) -> Set[str]:
+    keys: Set[str] = set()
+    for value in values:
+        canonical = _canonical_manufacturer(value)
+        if canonical:
+            keys.add(canonical.casefold())
+    return keys
 
 
 @router.get("/api/v1/brands")
@@ -66,37 +97,49 @@ async def get_brands(
 @router.get("/api/v1/brands/with-parts")
 async def get_brands_with_parts(db: AsyncSession = Depends(get_db)):
     """Return brands that have actual parts in parts_catalog, merged with registry info."""
-    # Brands that have parts
+    # Primary lane: manufacturer_id-backed counts
     parts_result = await db.execute(
+        select(PartsCatalog.manufacturer_id, func.count().label("parts_count"))
+        .where(PartsCatalog.is_active == True)
+        .where(PartsCatalog.manufacturer_id.is_not(None))
+        .group_by(PartsCatalog.manufacturer_id)
+        .order_by(func.count().desc())
+    )
+    parts_by_brand_id: Dict[str, int] = {
+        str(brand_id): int(count or 0)
+        for brand_id, count in parts_result.fetchall()
+    }
+
+    # Fallback lane for any unexpected legacy/null-id rows
+    legacy_parts_result = await db.execute(
         select(PartsCatalog.manufacturer, func.count().label("parts_count"))
         .where(PartsCatalog.is_active == True)
+        .where(PartsCatalog.manufacturer_id.is_(None))
         .group_by(PartsCatalog.manufacturer)
         .order_by(func.count().desc())
     )
-    parts_by_mfr = {row[0]: row[1] for row in parts_result.fetchall() if row[0]}
+    parts_by_mfr: Dict[str, int] = {}
+    parts_display_name: Dict[str, str] = {}
+    for manufacturer, count in legacy_parts_result.fetchall():
+        canonical = _canonical_manufacturer(manufacturer)
+        if not canonical:
+            continue
+        key = canonical.casefold()
+        parts_by_mfr[key] = parts_by_mfr.get(key, 0) + int(count or 0)
+        parts_display_name.setdefault(key, canonical)
 
     # All known brands
     brand_result = await db.execute(select(CarBrand).where(CarBrand.is_active == True).order_by(CarBrand.name))
     all_brands = brand_result.scalars().all()
 
-    # Merge: known brands get parts count; parts-only manufacturers get minimal entry
+    # Merge: known brands get ID-backed counts; keep legacy fallback for text-only rows.
     merged = []
-    seen_names = set()
+    seen_names: Set[str] = set()
     for b in all_brands:
-        # Exact case-insensitive match on canonical name
-        count = 0
-        for mfr_name in list(parts_by_mfr.keys()):
-            if mfr_name and mfr_name.lower() == b.name.lower():
-                count += parts_by_mfr[mfr_name]
-                seen_names.add(mfr_name.lower())
-        # Also match via aliases stored in car_brands
         aliases = b.aliases or []
-        for alias in aliases:
-            for mfr_name in list(parts_by_mfr.keys()):
-                if mfr_name and mfr_name.lower() == alias.lower():
-                    count += parts_by_mfr[mfr_name]
-                    seen_names.add(mfr_name.lower())
-        seen_names.add(b.name.lower())
+        canonical_keys = _canonical_keys(b.name, b.name_he, *aliases)
+        count = parts_by_brand_id.get(str(b.id), 0)
+        seen_names.update(canonical_keys)
         merged.append({
             "name": b.name, "name_he": b.name_he,
             "group_name": b.group_name, "country": b.country,
@@ -109,18 +152,16 @@ async def get_brands_with_parts(db: AsyncSession = Depends(get_db)):
         })
 
     # Add any parts-only manufacturers not in car_brands registry
-    for mfr_name, mfr_count in parts_by_mfr.items():
-        if mfr_name and mfr_name.lower() not in seen_names:
-            # Check if it matches any brand already included
-            already = any(mfr_name.lower() in m["name"].lower() for m in merged)
-            if not already:
-                merged.append({
-                    "name": mfr_name, "name_he": None, "group_name": None,
-                    "country": None, "region": None, "is_luxury": False,
-                    "is_electric_focused": False, "website": None,
-                    "parts_count": mfr_count, "has_parts": True,
-                    "logo_url": None,
-                })
+    for mfr_key, mfr_count in parts_by_mfr.items():
+        if mfr_key in seen_names:
+            continue
+        merged.append({
+            "name": parts_display_name.get(mfr_key, mfr_key), "name_he": None, "group_name": None,
+            "country": None, "region": None, "is_luxury": False,
+            "is_electric_focused": False, "website": None,
+            "parts_count": mfr_count, "has_parts": True,
+            "logo_url": None,
+        })
 
     return {"brands": merged, "total": len(merged)}
 
@@ -136,35 +177,61 @@ async def get_parts_by_brand(
 ):
     """Return parts for a specific brand (by canonical name or alias), with pricing from supplier_parts."""
     # Resolve brand aliases
+    normalized_input = _canonical_manufacturer(brand_name)
     brand_result = await db.execute(
         select(CarBrand).where(CarBrand.is_active == True).where(
-            or_(CarBrand.name.ilike(brand_name), CarBrand.name_he.ilike(brand_name))
+            or_(
+                CarBrand.name.ilike(brand_name),
+                CarBrand.name_he.ilike(brand_name),
+                CarBrand.name.ilike(normalized_input),
+                CarBrand.name_he.ilike(normalized_input),
+            )
         ).limit(1)
     )
     brand = brand_result.scalar_one_or_none()
 
     # Build manufacturer name set to search
-    mfr_names: list[str] = [brand_name]
+    mfr_names = _manufacturer_query_variants(brand_name, normalized_input)
     if brand:
-        mfr_names = [brand.name] + (brand.aliases or [])
+        mfr_names = _manufacturer_query_variants(
+            brand_name,
+            normalized_input,
+            brand.name,
+            brand.name_he,
+            *(brand.aliases or []),
+        )
 
     # Query parts
-    stmt = (
-        select(PartsCatalog)
-        .where(PartsCatalog.is_active == True)
-        .where(or_(*[PartsCatalog.manufacturer.ilike(m) for m in mfr_names]))
-    )
+    if brand:
+        stmt = (
+            select(PartsCatalog)
+            .where(PartsCatalog.is_active == True)
+            .where(PartsCatalog.manufacturer_id == brand.id)
+        )
+    else:
+        stmt = (
+            select(PartsCatalog)
+            .where(PartsCatalog.is_active == True)
+            .where(or_(*[PartsCatalog.manufacturer.ilike(m) for m in mfr_names]))
+        )
     if category:
         stmt = stmt.where(PartsCatalog.category.ilike(f"%{category}%"))
     if part_type:
         stmt = stmt.where(PartsCatalog.part_type == part_type)
 
     # Count total
-    count_stmt = (
-        select(func.count(PartsCatalog.id))
-        .where(PartsCatalog.is_active == True)
-        .where(or_(*[PartsCatalog.manufacturer.ilike(m) for m in mfr_names]))
-    )
+    if brand:
+        count_stmt = (
+            select(func.count(PartsCatalog.id))
+            .where(PartsCatalog.is_active == True)
+            .where(PartsCatalog.manufacturer_id == brand.id)
+        )
+    else:
+        count_stmt = (
+            select(func.count(PartsCatalog.id))
+            .where(PartsCatalog.is_active == True)
+            .where(or_(*[PartsCatalog.manufacturer.ilike(m) for m in mfr_names]))
+        )
     if category:
         count_stmt = count_stmt.where(PartsCatalog.category.ilike(f"%{category}%"))
     count_result = await db.execute(count_stmt)
@@ -175,7 +242,7 @@ async def get_parts_by_brand(
     parts = result.scalars().all()
 
     if not parts:
-        return {"brand": brand.name if brand else brand_name, "brand_he": brand.name_he if brand else None,
+        return {"brand": brand.name if brand else normalized_input or brand_name, "brand_he": brand.name_he if brand else None,
                 "total": total, "offset": offset, "limit": limit, "parts": []}
 
     from BACKEND_AI_AGENTS import PartsFinderAgent, get_supplier_shipping
@@ -232,7 +299,7 @@ async def get_parts_by_brand(
         })
 
     return {
-        "brand": brand.name if brand else brand_name,
+        "brand": brand.name if brand else normalized_input or brand_name,
         "brand_he": brand.name_he if brand else None,
         "total": total,
         "offset": offset,
@@ -291,7 +358,15 @@ async def get_truck_brands_with_parts(db: AsyncSession = Depends(get_db)):
         .group_by(PartsCatalog.manufacturer)
         .order_by(func.count().desc())
     )
-    parts_by_mfr = {row[0]: row[1] for row in parts_result.fetchall() if row[0]}
+    parts_by_mfr: Dict[str, int] = {}
+    parts_display_name: Dict[str, str] = {}
+    for manufacturer, count in parts_result.fetchall():
+        canonical = _canonical_manufacturer(manufacturer)
+        if not canonical:
+            continue
+        key = canonical.casefold()
+        parts_by_mfr[key] = parts_by_mfr.get(key, 0) + int(count or 0)
+        parts_display_name.setdefault(key, canonical)
 
     brand_result = await db.execute(
         select(TruckBrand).where(TruckBrand.is_active == True).order_by(TruckBrand.name)
@@ -301,18 +376,10 @@ async def get_truck_brands_with_parts(db: AsyncSession = Depends(get_db)):
     merged = []
     seen_names: set[str] = set()
     for b in all_brands:
-        count = 0
-        for mfr_name in list(parts_by_mfr.keys()):
-            if mfr_name and mfr_name.lower() == b.name.lower():
-                count += parts_by_mfr[mfr_name]
-                seen_names.add(mfr_name.lower())
         aliases = b.aliases or []
-        for alias in aliases:
-            for mfr_name in list(parts_by_mfr.keys()):
-                if mfr_name and mfr_name.lower() == alias.lower():
-                    count += parts_by_mfr[mfr_name]
-                    seen_names.add(mfr_name.lower())
-        seen_names.add(b.name.lower())
+        canonical_keys = _canonical_keys(b.name, b.name_he, *aliases)
+        count = sum(parts_by_mfr.get(key, 0) for key in canonical_keys)
+        seen_names.update(canonical_keys)
         merged.append({
             "name": b.name, "name_he": b.name_he,
             "group_name": b.group_name, "country": b.country,
@@ -321,15 +388,14 @@ async def get_truck_brands_with_parts(db: AsyncSession = Depends(get_db)):
             "aliases": aliases, "vehicle_type": "truck",
         })
 
-    for mfr_name, mfr_count in parts_by_mfr.items():
-        if mfr_name and mfr_name.lower() not in seen_names:
-            already = any(mfr_name.lower() in m["name"].lower() for m in merged)
-            if not already:
-                merged.append({
-                    "name": mfr_name, "name_he": None, "group_name": None,
-                    "country": None, "region": None, "website": None,
-                    "parts_count": mfr_count, "has_parts": True, "vehicle_type": "truck",
-                })
+    for mfr_key, mfr_count in parts_by_mfr.items():
+        if mfr_key in seen_names:
+            continue
+        merged.append({
+            "name": parts_display_name.get(mfr_key, mfr_key), "name_he": None, "group_name": None,
+            "country": None, "region": None, "website": None,
+            "parts_count": mfr_count, "has_parts": True, "vehicle_type": "truck",
+        })
 
     return {"brands": merged, "total": len(merged)}
 
@@ -344,16 +410,28 @@ async def get_parts_by_truck_brand(
     db: AsyncSession = Depends(get_db),
 ):
     """Return parts for a specific truck brand (by canonical name or alias)."""
+    normalized_input = _canonical_manufacturer(brand_name)
     brand_result = await db.execute(
         select(TruckBrand).where(TruckBrand.is_active == True).where(
-            or_(TruckBrand.name.ilike(brand_name), TruckBrand.name_he.ilike(brand_name))
+            or_(
+                TruckBrand.name.ilike(brand_name),
+                TruckBrand.name_he.ilike(brand_name),
+                TruckBrand.name.ilike(normalized_input),
+                TruckBrand.name_he.ilike(normalized_input),
+            )
         ).limit(1)
     )
     brand = brand_result.scalar_one_or_none()
 
-    mfr_names: list[str] = [brand_name]
+    mfr_names = _manufacturer_query_variants(brand_name, normalized_input)
     if brand:
-        mfr_names = [brand.name] + (brand.aliases or [])
+        mfr_names = _manufacturer_query_variants(
+            brand_name,
+            normalized_input,
+            brand.name,
+            brand.name_he,
+            *(brand.aliases or []),
+        )
 
     stmt = (
         select(PartsCatalog)
@@ -381,7 +459,7 @@ async def get_parts_by_truck_brand(
 
     if not parts:
         return {
-            "brand": brand.name if brand else brand_name,
+            "brand": brand.name if brand else normalized_input or brand_name,
             "brand_he": brand.name_he if brand else None,
             "vehicle_type": "truck",
             "total": total, "offset": offset, "limit": limit, "parts": [],
@@ -439,7 +517,7 @@ async def get_parts_by_truck_brand(
         })
 
     return {
-        "brand": brand.name if brand else brand_name,
+        "brand": brand.name if brand else normalized_input or brand_name,
         "brand_he": brand.name_he if brand else None,
         "vehicle_type": "truck",
         "total": total,

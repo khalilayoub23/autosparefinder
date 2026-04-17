@@ -54,6 +54,10 @@ from dotenv import load_dotenv
 from sqlalchemy import select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from external_fitment_providers import (
+    build_external_provider_attempts,
+    classify_external_payload,
+)
 
 from resilience import (
     retry_with_backoff,
@@ -1234,24 +1238,92 @@ async def _sync_vehicle_fitment(
     part_id: str,
     oem_number: str,
     manufacturer: str,
-) -> None:
+    provider_attempts: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
     """
     Fetch vehicle fitment data from autodoc and insert into
     part_vehicle_fitment.  Skips rows already present.  Runs at most
     once per week per part.
     """
     if not oem_number:
-        return
+        return {
+            "selected_provider": None,
+            "provider_attempts": [],
+            "items_count": 0,
+            "upserted_rows": 0,
+            "reason": "missing_oem_number",
+        }
+
+    def _build_fitment_provider_attempts(part_number: str, brand: str) -> List[Dict[str, Any]]:
+        return build_external_provider_attempts(part_number=str(part_number or ""), brand=str(brand or ""))
+
+    attempts = provider_attempts or _build_fitment_provider_attempts(oem_number, manufacturer)
+    provider_trace: List[Dict[str, Any]] = []
+    selected_provider: Optional[str] = None
+    items: List[Dict[str, Any]] = []
+
     try:
-        url = (
-            f"https://www.autodoc.eu/api/v1/part/applicability"
-            f"?partNumber={oem_number}&brand={manufacturer}&lang=en&perPage=20"
-        )
-        resp = await _get(url, headers={"Accept": "application/json"}, timeout=10)
-        items: List[Dict] = []
-        if resp and resp.status_code == 200:
-            data = resp.json()
-            items = data.get("items") or data.get("cars") or data.get("results") or []
+        for attempt in attempts:
+            source_kind = str(attempt.get("source_kind") or "autodoc_like")
+            supports_fitment = bool(attempt.get("supports_fitment", True))
+            skip_reason = str(attempt.get("skip_reason") or "").strip()
+
+            if skip_reason or not str(attempt.get("url") or "").strip():
+                provider_trace.append(
+                    {
+                        "provider": attempt.get("provider"),
+                        "source_kind": source_kind,
+                        "supports_fitment": supports_fitment,
+                        "use_proxy": bool(attempt.get("use_proxy", True)),
+                        "status_code": None,
+                        "payload_kind": "skipped",
+                        "items_count": 0,
+                        "fitment_usable": False,
+                        "skip_reason": skip_reason or "empty_url",
+                    }
+                )
+                continue
+
+            request_headers = {"Accept": "application/json"}
+            for h_key, h_value in (attempt.get("headers") or {}).items():
+                if h_key and h_value is not None:
+                    request_headers[str(h_key)] = str(h_value)
+
+            resp = await _get(
+                str(attempt.get("url") or ""),
+                headers=request_headers,
+                timeout=10,
+                use_proxy=bool(attempt.get("use_proxy", True)),
+            )
+            status_code = None if resp is None else int(resp.status_code)
+            payload_meta = classify_external_payload(
+                resp,
+                source_kind=source_kind,
+                default_brand=manufacturer,
+                supports_fitment=supports_fitment,
+            )
+            candidate_items: List[Dict[str, Any]] = payload_meta.get("fitment_items", []) or []
+
+            provider_trace.append(
+                {
+                    "provider": attempt.get("provider"),
+                    "source_kind": source_kind,
+                    "supports_fitment": supports_fitment,
+                    "use_proxy": bool(attempt.get("use_proxy", True)),
+                    "status_code": status_code,
+                    "payload_kind": payload_meta.get("payload_kind"),
+                    "items_count": int(payload_meta.get("items_count") or 0),
+                    "fitment_usable": bool(payload_meta.get("fitment_usable", False)),
+                    "content_type": payload_meta.get("content_type"),
+                }
+            )
+
+            if candidate_items:
+                items = candidate_items
+                selected_provider = str(attempt.get("provider") or "") or None
+                break
+
+        upserted_rows = 0
         for item in items[:20]:
             mfr_name = item.get("make") or item.get("brand") or item.get("manufacturer") or ""
             model     = item.get("model") or item.get("modelName") or ""
@@ -1339,9 +1411,23 @@ async def _sync_vehicle_fitment(
                     "shnat_yitzur": year_from_int,
                 },
             )
+            upserted_rows += 1
         await db.commit()
+        return {
+            "selected_provider": selected_provider,
+            "provider_attempts": provider_trace,
+            "items_count": len(items),
+            "upserted_rows": upserted_rows,
+        }
     except Exception as exc:
         print(f"[Scraper] _sync_vehicle_fitment error for part {part_id}: {exc}")
+        return {
+            "selected_provider": selected_provider,
+            "provider_attempts": provider_trace,
+            "items_count": len(items),
+            "upserted_rows": 0,
+            "error": str(exc),
+        }
 
 
 async def get_fitment_by_gov_codes(

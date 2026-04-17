@@ -18,6 +18,7 @@ previous circular import to BACKEND_API_ROUTES is resolved.
 """
 import copy
 import json
+import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File, Form
 from typing import Optional, List, Dict, Any, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,12 +32,13 @@ from difflib import SequenceMatcher
 
 from BACKEND_DATABASE_MODELS import (
     get_db, PartsCatalog, Vehicle, SupplierPart, Supplier,
-    CarBrand, User,
+    CarBrand, User, async_session_factory,
 )
 from BACKEND_AUTH_SECURITY import (
     get_redis, check_rate_limit, get_current_user,
 )
 from BACKEND_AI_AGENTS import get_agent, get_supplier_shipping as _get_ship
+from resilience import retry_with_backoff
 from routes.utils import _mask_supplier
 from manufacturer_normalization import (
     canonicalize_vehicle_model_for_manufacturer,
@@ -65,12 +67,101 @@ SEARCH_RESPONSE_CACHE: Dict[Tuple, Tuple[float, Dict[str, Any]]] = {}
 GOV_IL_LICENSE_RESOURCE_ID = "053cea08-09bc-40ec-8f7a-156f0677aff3"
 GOV_IL_DATASTORE_URL = "https://data.gov.il/api/3/action/datastore_search"
 
+_EXTERNAL_API_MAX_CONCURRENCY = int(os.getenv("EXTERNAL_API_MAX_CONCURRENCY", "8"))
+_EXTERNAL_API_SEMAPHORE = asyncio.Semaphore(max(1, _EXTERNAL_API_MAX_CONCURRENCY))
 
-def _search_cache_key(query: str, vehicle_manufacturer: Optional[str], vehicle_model: Optional[str],
+PLATE_LOOKUP_CACHE_TTL_S = float(os.getenv("PLATE_LOOKUP_CACHE_TTL_S", "180"))
+VIN_LOOKUP_CACHE_TTL_S = float(os.getenv("VIN_LOOKUP_CACHE_TTL_S", "300"))
+PLATE_LOOKUP_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+VIN_LOOKUP_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+PLATE_CALL_LOCKS: Dict[str, asyncio.Lock] = {}
+VIN_CALL_LOCKS: Dict[str, asyncio.Lock] = {}
+
+
+class _SimpleCircuitBreaker:
+    def __init__(self, failure_threshold: int, recovery_seconds: float) -> None:
+        self.failure_threshold = max(1, int(failure_threshold))
+        self.recovery_seconds = max(1.0, float(recovery_seconds))
+        self._failures = 0
+        self._open_until = 0.0
+
+    def allow_request(self) -> bool:
+        return time.monotonic() >= self._open_until
+
+    def record_success(self) -> None:
+        self._failures = 0
+        self._open_until = 0.0
+
+    def record_failure(self) -> None:
+        now = time.monotonic()
+        if now < self._open_until:
+            return
+        self._failures += 1
+        if self._failures >= self.failure_threshold:
+            self._open_until = now + self.recovery_seconds
+            self._failures = 0
+
+
+_GOV_CIRCUIT = _SimpleCircuitBreaker(
+    failure_threshold=int(os.getenv("GOV_API_CIRCUIT_FAILURE_THRESHOLD", "4")),
+    recovery_seconds=float(os.getenv("GOV_API_CIRCUIT_RECOVERY_SECONDS", "30")),
+)
+_NHTSA_CIRCUIT = _SimpleCircuitBreaker(
+    failure_threshold=int(os.getenv("NHTSA_API_CIRCUIT_FAILURE_THRESHOLD", "4")),
+    recovery_seconds=float(os.getenv("NHTSA_API_CIRCUIT_RECOVERY_SECONDS", "30")),
+)
+
+
+def _get_cache_payload(cache_store: Dict[str, Tuple[float, Dict[str, Any]]], key: str) -> Optional[Dict[str, Any]]:
+    cached = cache_store.get(key)
+    if not cached:
+        return None
+    expires_at, payload = cached
+    if expires_at <= time.monotonic():
+        cache_store.pop(key, None)
+        return None
+    return copy.deepcopy(payload)
+
+
+def _store_cache_payload(cache_store: Dict[str, Tuple[float, Dict[str, Any]]], key: str, payload: Dict[str, Any], ttl_seconds: float) -> None:
+    if len(cache_store) >= 1024:
+        expired = [k for k, (exp, _v) in cache_store.items() if exp <= time.monotonic()]
+        for k in expired:
+            cache_store.pop(k, None)
+        if len(cache_store) >= 1024:
+            oldest_key = min(cache_store, key=lambda x: cache_store[x][0])
+            cache_store.pop(oldest_key, None)
+    cache_store[key] = (time.monotonic() + max(1.0, ttl_seconds), copy.deepcopy(payload))
+
+
+def _get_call_lock(lock_store: Dict[str, asyncio.Lock], key: str) -> asyncio.Lock:
+    lock = lock_store.get(key)
+    if lock is None:
+        if len(lock_store) >= 2048:
+            stale_keys = [k for k, lk in lock_store.items() if not lk.locked()]
+            for k in stale_keys[:512]:
+                lock_store.pop(k, None)
+        lock = asyncio.Lock()
+        lock_store[key] = lock
+    return lock
+
+
+@retry_with_backoff(max_retries=2, base_delay=0.4, max_delay=3.0, retry_on=(429, 500, 502, 503, 504))
+async def _external_get_json(url: str, *, params: Optional[Dict[str, Any]] = None, timeout: float = 10.0) -> Dict[str, Any]:
+    async with _EXTERNAL_API_SEMAPHORE:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(url, params=params)
+            response.raise_for_status()
+            return response.json()
+
+
+def _search_cache_key(query: str, vehicle_id: Optional[str], vehicle_manufacturer: Optional[str], vehicle_model: Optional[str],
                       vehicle_submodel: Optional[str], vehicle_year: Optional[int],
-                      category: Optional[str], per_type: int, sort_by: str) -> Tuple:
+                      category: Optional[str], per_type: int, sort_by: str,
+                      cross_ref_enabled: bool = False) -> Tuple:
     return (
         (query or '').strip().lower(),
+    str(vehicle_id or '').strip().lower(),
         (vehicle_manufacturer or '').strip().lower(),
         (vehicle_model or '').strip().lower(),
         (vehicle_submodel or '').strip().lower(),
@@ -78,6 +169,7 @@ def _search_cache_key(query: str, vehicle_manufacturer: Optional[str], vehicle_m
         (category or '').strip().lower(),
         per_type,
         sort_by,
+        bool(cross_ref_enabled),
     )
 
 
@@ -117,34 +209,66 @@ async def _lookup_vehicle_by_license_plate(license_plate: str) -> Dict[str, Any]
     if not clean_plate:
         raise HTTPException(status_code=400, detail="invalid_license_plate")
 
-    params = {
-        "resource_id": GOV_IL_LICENSE_RESOURCE_ID,
-        "filters": json.dumps({"mispar_rechev": clean_plate}),
-        "limit": 1,
-    }
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(GOV_IL_DATASTORE_URL, params=params)
-            response.raise_for_status()
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail="mot_api_timeout")
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"mot_api_error: {exc}")
+    cached_payload = _get_cache_payload(PLATE_LOOKUP_CACHE, clean_plate)
+    if cached_payload is not None:
+        return cached_payload
 
-    records = response.json().get("result", {}).get("records", [])
-    if not records:
-        raise HTTPException(status_code=404, detail="license_plate_not_found")
+    plate_lock = _get_call_lock(PLATE_CALL_LOCKS, clean_plate)
+    async with plate_lock:
+        cached_payload = _get_cache_payload(PLATE_LOOKUP_CACHE, clean_plate)
+        if cached_payload is not None:
+            return cached_payload
 
-    record = records[0]
-    return {
-        "license_plate": clean_plate,
-        "tozeret_cd": _to_int_or_none(record.get("tozeret_cd")),
-        "degem_cd": _to_int_or_none(record.get("degem_cd")),
-        "shnat_yitzur": _to_int_or_none(record.get("shnat_yitzur")),
-        "manufacturer": record.get("tozeret_nm") or record.get("manufacturer") or record.get("tozeret_cd"),
-        "model": record.get("kinuy_mishari") or record.get("degem_nm"),
-        "engine": record.get("nefah_manoa") or record.get("degem_manoa"),
-    }
+        if not _GOV_CIRCUIT.allow_request():
+            raise HTTPException(status_code=503, detail="mot_api_temporarily_unavailable")
+
+        params = {
+            "resource_id": GOV_IL_LICENSE_RESOURCE_ID,
+            "filters": json.dumps({"mispar_rechev": clean_plate}),
+            "limit": 1,
+        }
+        try:
+            payload = await _external_get_json(GOV_IL_DATASTORE_URL, params=params, timeout=10.0)
+            _GOV_CIRCUIT.record_success()
+        except httpx.TimeoutException:
+            _GOV_CIRCUIT.record_failure()
+            raise HTTPException(status_code=504, detail="mot_api_timeout")
+        except httpx.HTTPStatusError as exc:
+            _GOV_CIRCUIT.record_failure()
+            status_code = int(getattr(exc.response, "status_code", 502) or 502)
+            if status_code == 404:
+                raise HTTPException(status_code=404, detail="license_plate_not_found")
+            raise HTTPException(status_code=502, detail=f"mot_api_http_{status_code}")
+        except Exception as exc:
+            _GOV_CIRCUIT.record_failure()
+            raise HTTPException(status_code=502, detail=f"mot_api_error: {exc}")
+
+        records = payload.get("result", {}).get("records", [])
+        if not records:
+            raise HTTPException(status_code=404, detail="license_plate_not_found")
+
+        record = records[0]
+        raw_manufacturer = record.get("tozeret_nm") or record.get("manufacturer") or record.get("tozeret_cd")
+        manufacturer = normalize_manufacturer_name(raw_manufacturer, raw_manufacturer) or raw_manufacturer
+
+        raw_model = record.get("kinuy_mishari") or record.get("degem_nm")
+        model_base, parsed_submodel = _split_vehicle_model_variant(manufacturer, raw_model)
+        trim_submodel = normalize_vehicle_submodel_name(str(record.get("ramat_gimur") or ""))
+        resolved_submodel = parsed_submodel or trim_submodel or None
+
+        result = {
+            "license_plate": clean_plate,
+            "tozeret_cd": _to_int_or_none(record.get("tozeret_cd")),
+            "degem_cd": _to_int_or_none(record.get("degem_cd")),
+            "shnat_yitzur": _to_int_or_none(record.get("shnat_yitzur")),
+            "manufacturer": manufacturer,
+            "model": model_base or canonicalize_vehicle_model_for_manufacturer(manufacturer, raw_model) or normalize_vehicle_model_name(raw_model),
+            "submodel": resolved_submodel,
+            "engine": record.get("nefah_manoa") or record.get("degem_manoa"),
+        }
+
+        _store_cache_payload(PLATE_LOOKUP_CACHE, clean_plate, result, PLATE_LOOKUP_CACHE_TTL_S)
+        return result
 
 
 CANONICAL_FILTER_CATEGORIES: List[str] = [
@@ -499,6 +623,11 @@ async def _build_vehicle_fitment_clause(
             "     AND cv_fit->>'year_to' ~ '^[0-9]+$'"
             f"     AND (cv_fit->>'year_from')::int <= :{int_key}"
             f"     AND (cv_fit->>'year_to')::int >= :{int_key}"
+            " )"
+            " OR ("
+            "     COALESCE(cv_fit->>'model_year', '') = ''"
+            "     AND COALESCE(cv_fit->>'year_from', '') = ''"
+            "     AND COALESCE(cv_fit->>'year_to', '') = ''"
             " ))"
         )
         params[str_key] = f"%{vehicle_year}%"
@@ -518,6 +647,211 @@ async def _build_vehicle_fitment_clause(
     return exists_clause
 
 
+async def _build_fast_vehicle_fitment_json_clause(
+    db: AsyncSession,
+    params: Dict[str, Any],
+    vehicle_manufacturer: Optional[str] = None,
+    vehicle_model: Optional[str] = None,
+    vehicle_submodel: Optional[str] = None,
+    vehicle_year: Optional[int] = None,
+    prefix: str = "fitfast",
+) -> Optional[str]:
+    if not (vehicle_manufacturer and vehicle_model):
+        return None
+
+    mfr_variants: List[str] = [vehicle_manufacturer]
+    normalized_mfr = normalize_manufacturer_name(vehicle_manufacturer, vehicle_manufacturer)
+    if normalized_mfr and normalized_mfr not in mfr_variants:
+        mfr_variants.append(normalized_mfr)
+
+    try:
+        brand_row = (await db.execute(text("""
+            SELECT name, name_he, aliases FROM car_brands
+            WHERE name ILIKE :vmfr_lookup
+               OR name_he ILIKE :vmfr_lookup
+               OR :vmfr_lookup ILIKE CONCAT('%', name_he, '%')
+               OR EXISTS (
+                   SELECT 1 FROM unnest(aliases) a
+                   WHERE :vmfr_lookup ILIKE CONCAT('%', a, '%')
+                      OR a ILIKE :vmfr_lookup
+               )
+            LIMIT 1
+        """), {"vmfr_lookup": vehicle_manufacturer})).fetchone()
+        if brand_row:
+            mfr_variants = list(dict.fromkeys([*mfr_variants, brand_row[0], brand_row[1], *(brand_row[2] or [])]))
+    except Exception:
+        pass
+
+    canonical_model = canonicalize_vehicle_model_for_manufacturer(vehicle_manufacturer, vehicle_model) or normalize_vehicle_model_name(vehicle_model)
+    model_variants: List[str] = [vehicle_model]
+    if canonical_model and canonical_model not in model_variants:
+        model_variants.append(canonical_model)
+    if vehicle_submodel:
+        submodel_clean = normalize_vehicle_submodel_name(vehicle_submodel)
+        if submodel_clean:
+            for base_model in list(model_variants):
+                combined = " ".join([base_model, submodel_clean]).strip()
+                if combined and combined not in model_variants:
+                    model_variants.append(combined)
+
+    clean_mfr = [str(v).strip() for v in mfr_variants if v and str(v).strip()][:6]
+    clean_models = [str(v).strip() for v in model_variants if v and str(v).strip()][:6]
+    if not clean_mfr or not clean_models:
+        return None
+
+    clauses: List[str] = []
+    idx = 0
+    for mfr in clean_mfr:
+        for mdl in clean_models:
+            for mkey in ("make", "manufacturer"):
+                payload = [{mkey: mfr, "model": mdl}]
+                key = f"{prefix}_{idx}"
+                params[key] = json.dumps(payload, ensure_ascii=False)
+                clauses.append(f"pc.compatible_vehicles @> CAST(:{key} AS jsonb)")
+                idx += 1
+
+                if vehicle_year:
+                    payload_year_str = [{mkey: mfr, "model": mdl, "model_year": str(int(vehicle_year))}]
+                    key = f"{prefix}_{idx}"
+                    params[key] = json.dumps(payload_year_str, ensure_ascii=False)
+                    clauses.append(f"pc.compatible_vehicles @> CAST(:{key} AS jsonb)")
+                    idx += 1
+
+                    payload_year_int = [{mkey: mfr, "model": mdl, "model_year": int(vehicle_year)}]
+                    key = f"{prefix}_{idx}"
+                    params[key] = json.dumps(payload_year_int, ensure_ascii=False)
+                    clauses.append(f"pc.compatible_vehicles @> CAST(:{key} AS jsonb)")
+                    idx += 1
+
+            if idx >= 36:
+                break
+        if idx >= 36:
+            break
+
+    if not clauses:
+        return None
+
+    return (
+        "(pc.compatible_vehicles IS NOT NULL"
+        " AND jsonb_typeof(pc.compatible_vehicles) = 'array'"
+        f" AND ({' OR '.join(clauses)}))"
+    )
+
+
+async def _resolve_vehicle_search_context(
+    db: AsyncSession,
+    vehicle_id: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    if not vehicle_id:
+        return None
+
+    vehicle = (await db.execute(select(Vehicle).where(Vehicle.id == vehicle_id))).scalar_one_or_none()
+    if not vehicle:
+        return None
+
+    gov = vehicle.gov_api_data if isinstance(vehicle.gov_api_data, dict) else {}
+    manufacturer = normalize_manufacturer_name(vehicle.manufacturer, vehicle.manufacturer) or vehicle.manufacturer
+    model = canonicalize_vehicle_model_for_manufacturer(manufacturer, vehicle.model) or normalize_vehicle_model_name(vehicle.model)
+    submodel = normalize_vehicle_submodel_name(str(gov.get("sub_model") or "")) or ""
+    year = vehicle.year if isinstance(vehicle.year, int) and vehicle.year > 0 else None
+
+    return {
+        "manufacturer": manufacturer,
+        "model": model,
+        "submodel": submodel or None,
+        "year": year,
+    }
+
+
+async def _build_strict_vehicle_match_clause(
+    db: AsyncSession,
+    params: Dict[str, Any],
+    vehicle_manufacturer: Optional[str] = None,
+    vehicle_model: Optional[str] = None,
+    vehicle_submodel: Optional[str] = None,
+    vehicle_year: Optional[int] = None,
+    prefix: str = "strictfit",
+    include_json: bool = True,
+) -> Optional[str]:
+    if not (vehicle_manufacturer and vehicle_model and vehicle_year):
+        return None
+
+    json_clause = None
+    if include_json:
+        json_clause = await _build_vehicle_fitment_clause(
+            db,
+            params,
+            vehicle_manufacturer=vehicle_manufacturer,
+            vehicle_model=vehicle_model,
+            vehicle_submodel=vehicle_submodel,
+            vehicle_year=vehicle_year,
+            prefix=f"{prefix}_json",
+        )
+
+    variants: List[str] = [vehicle_manufacturer]
+    try:
+        brand_row = (await db.execute(text("""
+            SELECT name, name_he, aliases FROM car_brands
+            WHERE name ILIKE :vmfr_lookup
+               OR name_he ILIKE :vmfr_lookup
+               OR :vmfr_lookup ILIKE CONCAT('%', name_he, '%')
+               OR EXISTS (
+                   SELECT 1 FROM unnest(aliases) a
+                   WHERE :vmfr_lookup ILIKE CONCAT('%', a, '%')
+                      OR a ILIKE :vmfr_lookup
+               )
+            LIMIT 1
+        """), {"vmfr_lookup": vehicle_manufacturer})).fetchone()
+        if brand_row:
+            variants = list(dict.fromkeys([*variants, brand_row[0], brand_row[1], *(brand_row[2] or [])]))
+    except Exception:
+        pass
+
+    clean_variants = [str(v).strip() for v in variants if v and str(v).strip()]
+    normalized_model = canonicalize_vehicle_model_for_manufacturer(vehicle_manufacturer, vehicle_model) or normalize_vehicle_model_name(vehicle_model)
+    model_variants = [normalized_model]
+    if vehicle_submodel:
+        combined = " ".join([normalized_model, vehicle_submodel]).strip()
+        if combined and combined not in model_variants:
+            model_variants.append(combined)
+
+    pvf_mfr_clauses = []
+    for idx, variant in enumerate(clean_variants):
+        key = f"{prefix}_mfr_{idx}"
+        params[key] = variant
+        pvf_mfr_clauses.append(
+            f"(LOWER(TRIM(pvf.manufacturer)) = LOWER(TRIM(:{key}))"
+            f" OR LOWER(TRIM(pvf.manufacturer)) LIKE CONCAT('%', LOWER(TRIM(:{key})), '%')"
+            f" OR LOWER(TRIM(:{key})) LIKE CONCAT('%', LOWER(TRIM(pvf.manufacturer)), '%'))"
+        )
+
+    pvf_model_clauses = []
+    for idx, variant in enumerate(model_variants):
+        key = f"{prefix}_model_{idx}"
+        params[key] = variant
+        pvf_model_clauses.append(
+            f"(LOWER(TRIM(pvf.model)) = LOWER(TRIM(:{key}))"
+            f" OR LOWER(TRIM(pvf.model)) LIKE CONCAT(LOWER(TRIM(:{key})), ' %')"
+            f" OR LOWER(TRIM(:{key})) LIKE CONCAT(LOWER(TRIM(pvf.model)), ' %'))"
+        )
+
+    params[f"{prefix}_year"] = int(vehicle_year)
+    pvf_clause = (
+        "EXISTS ("
+        " SELECT 1 FROM part_vehicle_fitment pvf"
+        " WHERE pvf.part_id = pc.id"
+        f"   AND ({' OR '.join(pvf_mfr_clauses)})"
+        f"   AND ({' OR '.join(pvf_model_clauses)})"
+        f"   AND pvf.year_from <= :{prefix}_year"
+        f"   AND COALESCE(pvf.year_to, pvf.year_from) >= :{prefix}_year"
+        ")"
+    )
+
+    if json_clause:
+        return f"(({json_clause}) OR ({pvf_clause}))"
+    return pvf_clause
+
+
 # ==============================================================================
 # GET /api/v1/parts/search
 # ==============================================================================
@@ -533,6 +867,7 @@ async def search_parts(
     vehicle_model: Optional[str] = None,
     vehicle_submodel: Optional[str] = None,
     vehicle_year: Optional[int] = None,
+    enable_cross_refs: Optional[bool] = Query(None),
     db: AsyncSession = Depends(get_db),
     request: Request = None,
     redis=Depends(get_redis),
@@ -560,10 +895,13 @@ async def search_parts(
         if not allowed:
             raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
 
+    cross_refs_default = os.getenv("ENABLE_CROSS_REFERENCE_EXPANSION", "1").strip().lower() in ("1", "true", "yes", "on")
+    cross_refs_enabled = cross_refs_default if enable_cross_refs is None else bool(enable_cross_refs)
+
     # ── In-memory response cache (survives repeated searches with same params) ─
-    _s_cache_key = _search_cache_key(query, vehicle_manufacturer, vehicle_model,
+    _s_cache_key = _search_cache_key(query, vehicle_id, vehicle_manufacturer, vehicle_model,
                                      vehicle_submodel, vehicle_year, category,
-                                     per_type or 4, sort_by)
+                                     per_type or 4, sort_by, cross_refs_enabled)
     _cached_search = _get_cached_search_response(_s_cache_key)
     if _cached_search is not None:
         return _cached_search
@@ -607,13 +945,16 @@ async def search_parts(
 
     # ── Short-circuit when Meilisearch found zero hits ────────────────────────
     if meili_ids is not None and len(meili_ids) == 0:
-        return {
-            "original":         {"part": None, "suppliers": []},
-            "oem":              {"part": None, "suppliers": []},
-            "aftermarket":      {"part": None, "suppliers": []},
-            "results_per_type": per_type,
-            "query":            query,
-        }
+        if cross_refs_enabled:
+            meili_ids = None
+        else:
+            return {
+                "original":         {"part": None, "suppliers": []},
+                "oem":              {"part": None, "suppliers": []},
+                "aftermarket":      {"part": None, "suppliers": []},
+                "results_per_type": per_type,
+                "query":            query,
+            }
 
     # ── pgvector: embed the query and find nearest neighbours ────────────────
     # Runs only when Meilisearch returned results (meili_ids is a non-empty list).
@@ -652,15 +993,31 @@ async def search_parts(
         meili_ids = sorted(_combined, key=_combined.__getitem__, reverse=True)
 
     # ── Build shared WHERE conditions ────────────────────────────────────────
-    conditions: List[str] = ["pc.is_active = TRUE"]
+    conditions_base: List[str] = ["pc.is_active = TRUE"]
+    query_condition_sql = ""
     params: Dict[str, Any] = {}
+
+    vehicle_context = await _resolve_vehicle_search_context(db, vehicle_id)
+    strict_vehicle_context = bool(vehicle_context)
+    strict_vehicle_clause_added: Optional[str] = None
+    strict_vehicle_json_fast_clause: Optional[str] = None
+    strict_vehicle_json_fallback_clause: Optional[str] = None
+    manual_strict_clause_added: Optional[str] = None
+    manual_json_fast_clause: Optional[str] = None
+    manual_json_fallback_clause: Optional[str] = None
+    if vehicle_context:
+        vehicle_manufacturer = vehicle_context["manufacturer"]
+        vehicle_model = vehicle_context["model"]
+        vehicle_submodel = vehicle_context["submodel"]
+        vehicle_year = vehicle_context["year"]
 
     # Text filter: if Meilisearch is live use id-array join (no ILIKE needed);
     # if it's unavailable fall back to the original ILIKE clause.
     if query and meili_ids is None:
-        conditions.append(
+        query_condition_sql = (
             "(pc.name ILIKE :q OR pc.name_he ILIKE :q OR pc.sku ILIKE :q OR pc.manufacturer ILIKE :q "
-            "OR pc.category ILIKE :q OR pc.oem_number ILIKE :q)"
+            "OR pc.category ILIKE :q OR pc.oem_number ILIKE :q "
+            "OR EXISTS (SELECT 1 FROM part_cross_reference pcrq WHERE pcrq.part_id = pc.id AND COALESCE(pcrq.ref_number, '') ILIKE :q))"
         )
         params["q"]       = f"%{query}%"
         params["q_exact"] = query
@@ -669,7 +1026,7 @@ async def search_parts(
     if category:
         family_clause = build_part_type_sql_clause(category, params)
         if family_clause:
-            conditions.append(family_clause)
+            conditions_base.append(family_clause)
         else:
             canonical_cat = _normalize_filter_category(category)
             keyword_terms = FILTER_CATEGORY_KEYWORDS.get(canonical_cat, [])
@@ -681,33 +1038,99 @@ async def search_parts(
                 )
                 params[key] = f"%{term}%"
             keyword_sql = f" OR ({' OR '.join(keyword_clauses)})" if keyword_clauses else ""
-            conditions.append(f"(pc.category ILIKE :cat OR EXISTS (SELECT 1 FROM supplier_parts sp2 WHERE sp2.part_id = pc.id AND sp2.part_type ILIKE :cat){keyword_sql})")
+            conditions_base.append(f"(pc.category ILIKE :cat OR EXISTS (SELECT 1 FROM supplier_parts sp2 WHERE sp2.part_id = pc.id AND sp2.part_type ILIKE :cat){keyword_sql})")
             params["cat"] = f"%{category}%"
 
     selected_part_family = resolve_part_type_family(category) if category else None
 
-    if vehicle_id:
-        conditions.append(
-            "(pc.compatible_vehicles::text ILIKE :vid "
-            "OR EXISTS (SELECT 1 FROM part_vehicle_fitment pvf "
-            "           WHERE pvf.part_id = pc.id AND pvf.vehicle_id = :vid_exact))"
+    if strict_vehicle_context:
+        strict_vehicle_clause = await _build_strict_vehicle_match_clause(
+            db,
+            params,
+            vehicle_manufacturer=vehicle_manufacturer,
+            vehicle_model=vehicle_model,
+            vehicle_submodel=vehicle_submodel,
+            vehicle_year=vehicle_year,
+            include_json=False,
         )
-        params["vid"] = f"%{vehicle_id}%"
-        params["vid_exact"] = vehicle_id
+        if strict_vehicle_clause:
+            conditions_base.append(strict_vehicle_clause)
+            strict_vehicle_clause_added = strict_vehicle_clause
+            strict_vehicle_json_fast_clause = await _build_fast_vehicle_fitment_json_clause(
+                db,
+                params,
+                vehicle_manufacturer=vehicle_manufacturer,
+                vehicle_model=vehicle_model,
+                vehicle_submodel=vehicle_submodel,
+                vehicle_year=vehicle_year,
+                prefix="strictfit_json_fast",
+            )
+            strict_vehicle_json_fallback_clause = await _build_vehicle_fitment_clause(
+                db,
+                params,
+                vehicle_manufacturer=vehicle_manufacturer,
+                vehicle_model=vehicle_model,
+                vehicle_submodel=vehicle_submodel,
+                vehicle_year=vehicle_year,
+                prefix="strictfit_json_fallback",
+            )
+        else:
+            conditions_base.append("1 = 0")
+    else:
+        # Manual selection path should also be strict when full vehicle context
+        # is provided (manufacturer + model + year), even without vehicle_id.
+        if vehicle_manufacturer and vehicle_model and vehicle_year:
+            strict_manual_clause = await _build_strict_vehicle_match_clause(
+                db,
+                params,
+                vehicle_manufacturer=vehicle_manufacturer,
+                vehicle_model=vehicle_model,
+                vehicle_submodel=vehicle_submodel,
+                vehicle_year=vehicle_year,
+                prefix="manualfit",
+                include_json=False,
+            )
+            if strict_manual_clause:
+                conditions_base.append(strict_manual_clause)
+                manual_strict_clause_added = strict_manual_clause
+                manual_json_fast_clause = await _build_fast_vehicle_fitment_json_clause(
+                    db,
+                    params,
+                    vehicle_manufacturer=vehicle_manufacturer,
+                    vehicle_model=vehicle_model,
+                    vehicle_submodel=vehicle_submodel,
+                    vehicle_year=vehicle_year,
+                    prefix="manualfit_json_fast",
+                )
+                manual_json_fallback_clause = await _build_vehicle_fitment_clause(
+                    db,
+                    params,
+                    vehicle_manufacturer=vehicle_manufacturer,
+                    vehicle_model=vehicle_model,
+                    vehicle_submodel=vehicle_submodel,
+                    vehicle_year=vehicle_year,
+                    prefix="manualfit_json_fallback",
+                )
+            else:
+                conditions_base.append("1 = 0")
+        else:
+            # Partial manual filters still use the JSON-fitment lane.
+            vehicle_fitment_clause = await _build_vehicle_fitment_clause(
+                db,
+                params,
+                vehicle_manufacturer=vehicle_manufacturer,
+                vehicle_model=vehicle_model,
+                vehicle_submodel=vehicle_submodel,
+                vehicle_year=vehicle_year,
+            )
+            if vehicle_fitment_clause:
+                conditions_base.append(vehicle_fitment_clause)
 
-    # Exact fitment path: once any vehicle hierarchy filter is selected, require
-    # a single compatible_vehicles entry to satisfy all selected vehicle fields.
-    vehicle_fitment_clause = await _build_vehicle_fitment_clause(
-        db,
-        params,
-        vehicle_manufacturer=vehicle_manufacturer,
-        vehicle_model=vehicle_model,
-        vehicle_submodel=vehicle_submodel,
-        vehicle_year=vehicle_year,
-    )
-    if vehicle_fitment_clause:
-        conditions.append(vehicle_fitment_clause)
+    conditions = [*conditions_base]
+    if query_condition_sql:
+        conditions.append(query_condition_sql)
 
+    where_sql_base = " AND ".join(conditions_base)
     where_sql = " AND ".join(conditions)
 
     # ── ILIKE relevance score (only used when Meilisearch is unavailable) ─────
@@ -731,11 +1154,20 @@ async def search_parts(
         score_col = ""
 
     # ── Helper: fetch all matching parts per type + supplier list ──────────────
-    async def _fetch_type(part_type_values: list, include_general: bool = False) -> List[Dict[str, Any]]:
+    async def _fetch_type(
+        part_type_values: list,
+        include_general: bool = False,
+        where_sql_override: Optional[str] = None,
+        where_sql_base_override: Optional[str] = None,
+        db_session: Optional[AsyncSession] = None,
+    ) -> List[Dict[str, Any]]:
+        query_db = db_session or db
+        where_sql_effective = where_sql_override or where_sql
+        where_sql_base_effective = where_sql_base_override or where_sql_base
         candidate_limit = max(int(per_type or 4) * 6, 24)
         type_params = {**params, "pt": part_type_values, "lim": per_type, "candidate_lim": candidate_limit}
         _unsafe_sql_tokens = (";", "--", "/*", "*/")
-        if any(tok in where_sql for tok in _unsafe_sql_tokens):
+        if any(tok in where_sql_effective for tok in _unsafe_sql_tokens):
             raise HTTPException(status_code=400, detail="unsafe_query_rejected")
 
         if meili_ids:
@@ -746,7 +1178,7 @@ async def search_parts(
             if include_general:
                 pt_condition = "(pc.part_type = ANY(:pt) OR pc.part_type IS NULL OR pc.part_type = '' OR pc.part_type ILIKE 'unknown' OR pc.part_type ILIKE 'general' OR pc.part_type ILIKE 'כללי')"
 
-            part_rows = (await db.execute(
+            part_rows = (await query_db.execute(
                 text(f"""
                     SELECT
                         pc.id, pc.sku, pc.name, pc.name_he, pc.manufacturer,
@@ -760,12 +1192,10 @@ async def search_parts(
                         SELECT t.id::uuid AS ranked_id, t.pos
                         FROM unnest(CAST(:uuid_arr AS text[])) WITH ORDINALITY AS t(id, pos)
                     ) ranked ON ranked.ranked_id = pc.id
-                    WHERE {where_sql} AND {pt_condition}
+                    WHERE {where_sql_effective} AND {pt_condition}
                     ORDER BY ranked.pos ASC,
-                    (
-                        SELECT COUNT(*) FROM supplier_parts sp
-                        WHERE sp.part_id = pc.id AND sp.is_available = TRUE
-                    ) DESC
+                             pc.base_price ASC NULLS LAST,
+                             pc.updated_at DESC
                     LIMIT :candidate_lim
                 """),
                 {**type_params, "uuid_arr": meili_ids},
@@ -778,7 +1208,15 @@ async def search_parts(
             if include_general:
                 pt_condition = "(pc.part_type = ANY(:pt) OR pc.part_type IS NULL OR pc.part_type = '' OR pc.part_type ILIKE 'unknown' OR pc.part_type ILIKE 'general' OR pc.part_type ILIKE 'כללי')"
 
-            part_rows = (await db.execute(
+            # Empty-text vehicle/category queries are latency-sensitive and can
+            # match a very large set. Avoid global price sorting in that mode,
+            # because it forces scanning/sorting the full match set before LIMIT.
+            if query:
+                order_by_sql = f"{relevance_sql}\n                    pc.base_price ASC NULLS LAST"
+            else:
+                order_by_sql = "pc.id ASC"
+
+            part_rows = (await query_db.execute(
                 text(f"""
                     SELECT
                         pc.id, pc.sku, pc.name, pc.name_he, pc.manufacturer,
@@ -788,13 +1226,8 @@ async def search_parts(
                         pc.is_safety_critical, pc.part_condition,
                         pc.created_at, pc.updated_at{score_col}
                     FROM parts_catalog pc
-                    WHERE {where_sql} AND {pt_condition}
-                    ORDER BY {relevance_sql}
-                    (
-                        SELECT COUNT(*) FROM supplier_parts sp
-                        WHERE sp.part_id = pc.id AND sp.is_available = TRUE
-                    ) DESC,
-                    pc.base_price ASC NULLS LAST
+                    WHERE {where_sql_effective} AND {pt_condition}
+                    ORDER BY {order_by_sql}
                     LIMIT :candidate_lim
                 """),
                 type_params,
@@ -818,6 +1251,60 @@ async def search_parts(
                 if candidate_family and candidate_family.id == selected_part_family.id:
                     matching_rows.append(candidate_row)
 
+        if cross_refs_enabled and matching_rows:
+            xref_seed_ids = [str(row[0]) for row in matching_rows[: max(int(per_type or 4) * 2, 8)]]
+            xref_limit = max(int(per_type or 4) * 2, 6)
+            xref_pt_condition = "pc.part_type = ANY(:pt)"
+            if include_general:
+                xref_pt_condition = "(pc.part_type = ANY(:pt) OR pc.part_type IS NULL OR pc.part_type = '' OR pc.part_type ILIKE 'unknown' OR pc.part_type ILIKE 'general' OR pc.part_type ILIKE 'כללי')"
+
+            if xref_seed_ids and where_sql_base_effective:
+                xref_rows = (await query_db.execute(
+                    text(f"""
+                        SELECT DISTINCT ON (pc.id)
+                            pc.id, pc.sku, pc.name, pc.name_he, pc.manufacturer,
+                            pc.category, pc.part_type, pc.base_price,
+                            pc.min_price_ils, pc.max_price_ils, pc.description,
+                            pc.oem_number, pc.barcode, pc.weight_kg,
+                            pc.is_safety_critical, pc.part_condition,
+                            pc.created_at, pc.updated_at
+                        FROM part_cross_reference pcr
+                        JOIN parts_catalog src ON src.id = pcr.part_id
+                        JOIN parts_catalog pc ON pc.id <> src.id
+                        WHERE pcr.part_id = ANY(CAST(:xref_seed_ids AS uuid[]))
+                          AND COALESCE(pcr.is_superseded, FALSE) = FALSE
+                          AND COALESCE(pcr.ref_number, '') <> ''
+                          AND (
+                               regexp_replace(UPPER(COALESCE(pc.oem_number, '')), '[^A-Z0-9]', '', 'g') = regexp_replace(UPPER(COALESCE(pcr.ref_number, '')), '[^A-Z0-9]', '', 'g')
+                            OR regexp_replace(UPPER(COALESCE(pc.sku, '')), '[^A-Z0-9]', '', 'g') = regexp_replace(UPPER(COALESCE(pcr.ref_number, '')), '[^A-Z0-9]', '', 'g')
+                          )
+                                                    AND {where_sql_base_effective}
+                          AND {xref_pt_condition}
+                        ORDER BY pc.id, pc.updated_at DESC
+                        LIMIT :xref_lim
+                    """),
+                    {**type_params, "xref_seed_ids": xref_seed_ids, "xref_lim": xref_limit},
+                )).fetchall()
+
+                if xref_rows:
+                    existing_ids = {str(row[0]) for row in matching_rows}
+                    for xrow in xref_rows:
+                        xrow_id = str(xrow[0])
+                        if xrow_id in existing_ids:
+                            continue
+                        if selected_part_family:
+                            xrow_family = classify_part_type_family(
+                                xrow[5],
+                                xrow[6],
+                                xrow[2],
+                                xrow[3],
+                                xrow[10],
+                            )
+                            if not (xrow_family and xrow_family.id == selected_part_family.id):
+                                continue
+                        matching_rows.append(xrow)
+                        existing_ids.add(xrow_id)
+
         # Backwards compat: also keep the first-match logic for TypeSection display
         part_row = matching_rows[0] if matching_rows else None
 
@@ -827,7 +1314,7 @@ async def search_parts(
         part_id_str = str(part_row[0])
 
         # All available supplier offers for this part, sorted cheapest first
-        sup_rows = (await db.execute(
+        sup_rows = (await query_db.execute(
             text("""
                 SELECT
                     sp.id            AS sp_id,
@@ -906,7 +1393,7 @@ async def search_parts(
         if len(matching_rows) > 1:
             extra_ids = [str(row[0]) for row in matching_rows[1:]]
             try:
-                batch_rows = (await db.execute(
+                batch_rows = (await query_db.execute(
                     text("""
                         SELECT DISTINCT ON (sp.part_id)
                             sp.part_id::text,
@@ -988,11 +1475,81 @@ async def search_parts(
 
         return results
 
-    # ── Run all 3 type queries sequentially (shared AsyncSession is not
-    # ── safe for concurrent use — concurrent gather causes InvalidRequestError)
-    original_res    = await _fetch_type(["Original"])
-    oem_res         = await _fetch_type(["OEM"])
-    aftermarket_res = await _fetch_type(["Aftermarket", "Refurbished"], include_general=True)
+    async def _fetch_three_buckets(
+        where_sql_override: Optional[str] = None,
+        where_sql_base_override: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+        async with async_session_factory() as db_original, async_session_factory() as db_oem, async_session_factory() as db_after:
+            original_task = _fetch_type(
+                ["Original"],
+                where_sql_override=where_sql_override,
+                where_sql_base_override=where_sql_base_override,
+                db_session=db_original,
+            )
+            oem_task = _fetch_type(
+                ["OEM"],
+                where_sql_override=where_sql_override,
+                where_sql_base_override=where_sql_base_override,
+                db_session=db_oem,
+            )
+            aftermarket_task = _fetch_type(
+                ["Aftermarket", "Refurbished"],
+                include_general=True,
+                where_sql_override=where_sql_override,
+                where_sql_base_override=where_sql_base_override,
+                db_session=db_after,
+            )
+            original_bucket, oem_bucket, aftermarket_bucket = await asyncio.gather(
+                original_task, oem_task, aftermarket_task
+            )
+            return original_bucket, oem_bucket, aftermarket_bucket
+
+    original_res, oem_res, aftermarket_res = await _fetch_three_buckets()
+
+    # Fallback for strict vehicle searches (vehicle_id/manual full-context):
+    # if structured (PVF) path returns nothing, retry JSON-compatible_vehicles.
+    should_try_json_fallback = (
+        not original_res and not oem_res and not aftermarket_res and (
+            (strict_vehicle_context and strict_vehicle_clause_added)
+            or (not strict_vehicle_context and manual_strict_clause_added)
+        )
+    )
+    if should_try_json_fallback:
+        strict_clause_added = strict_vehicle_clause_added if strict_vehicle_context else manual_strict_clause_added
+        json_fast_clause = strict_vehicle_json_fast_clause if strict_vehicle_context else manual_json_fast_clause
+        json_fallback_clause = strict_vehicle_json_fallback_clause if strict_vehicle_context else manual_json_fallback_clause
+
+        base_without_strict: List[str] = []
+        removed_strict = False
+        for clause in conditions_base:
+            if not removed_strict and clause == strict_clause_added:
+                removed_strict = True
+                continue
+            base_without_strict.append(clause)
+
+        if json_fast_clause:
+            json_fast_base_conditions = [*base_without_strict, json_fast_clause]
+            json_fast_where_base = " AND ".join(json_fast_base_conditions)
+            json_fast_conditions = [*json_fast_base_conditions]
+            if query_condition_sql:
+                json_fast_conditions.append(query_condition_sql)
+            json_fast_where = " AND ".join(json_fast_conditions)
+            original_res, oem_res, aftermarket_res = await _fetch_three_buckets(
+                where_sql_override=json_fast_where,
+                where_sql_base_override=json_fast_where_base,
+            )
+
+        if json_fallback_clause and not original_res and not oem_res and not aftermarket_res:
+            json_base_conditions = [*base_without_strict, json_fallback_clause]
+            json_where_base = " AND ".join(json_base_conditions)
+            json_conditions = [*json_base_conditions]
+            if query_condition_sql:
+                json_conditions.append(query_condition_sql)
+            json_where = " AND ".join(json_conditions)
+            original_res, oem_res, aftermarket_res = await _fetch_three_buckets(
+                where_sql_override=json_where,
+                where_sql_base_override=json_where_base,
+            )
 
     # Primary bucket (first/best per type) — kept for the 3-column TypeSection widget
     def _primary(res: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -1045,18 +1602,46 @@ async def get_categories(
 
     conditions: List[str] = ["pc.is_active = TRUE"]
     params: Dict[str, Any] = {}
+    used_strict_lane = False
 
-    vehicle_fitment_clause = await _build_vehicle_fitment_clause(
-        db,
-        params,
-        vehicle_manufacturer=vehicle_manufacturer,
-        vehicle_model=vehicle_model,
-        vehicle_submodel=vehicle_submodel,
-        vehicle_year=vehicle_year,
-        prefix="catfit",
-    )
-    if vehicle_fitment_clause:
-        conditions.append(vehicle_fitment_clause)
+    if vehicle_manufacturer and vehicle_model and vehicle_year:
+        strict_category_clause = await _build_strict_vehicle_match_clause(
+            db,
+            params,
+            vehicle_manufacturer=vehicle_manufacturer,
+            vehicle_model=vehicle_model,
+            vehicle_submodel=vehicle_submodel,
+            vehicle_year=vehicle_year,
+            prefix="catstrict",
+            include_json=False,
+        )
+        if strict_category_clause:
+            conditions.append(strict_category_clause)
+            used_strict_lane = True
+        else:
+            vehicle_fitment_clause = await _build_vehicle_fitment_clause(
+                db,
+                params,
+                vehicle_manufacturer=vehicle_manufacturer,
+                vehicle_model=vehicle_model,
+                vehicle_submodel=vehicle_submodel,
+                vehicle_year=vehicle_year,
+                prefix="catfit",
+            )
+            if vehicle_fitment_clause:
+                conditions.append(vehicle_fitment_clause)
+    else:
+        vehicle_fitment_clause = await _build_vehicle_fitment_clause(
+            db,
+            params,
+            vehicle_manufacturer=vehicle_manufacturer,
+            vehicle_model=vehicle_model,
+            vehicle_submodel=vehicle_submodel,
+            vehicle_year=vehicle_year,
+            prefix="catfit",
+        )
+        if vehicle_fitment_clause:
+            conditions.append(vehicle_fitment_clause)
 
     where_sql = " AND ".join(conditions)
     rows = (
@@ -1076,6 +1661,39 @@ async def get_categories(
             params,
         )
     ).fetchall()
+
+    if used_strict_lane and not rows:
+        fallback_params: Dict[str, Any] = {}
+        fallback_conditions: List[str] = ["pc.is_active = TRUE"]
+        fallback_fitment_clause = await _build_vehicle_fitment_clause(
+            db,
+            fallback_params,
+            vehicle_manufacturer=vehicle_manufacturer,
+            vehicle_model=vehicle_model,
+            vehicle_submodel=vehicle_submodel,
+            vehicle_year=vehicle_year,
+            prefix="catfit_fallback",
+        )
+        if fallback_fitment_clause:
+            fallback_conditions.append(fallback_fitment_clause)
+            fallback_where_sql = " AND ".join(fallback_conditions)
+            rows = (
+                await db.execute(
+                    text(
+                        f"""
+                        SELECT
+                            pc.category,
+                            pc.part_type,
+                            pc.name,
+                            pc.name_he,
+                            pc.description
+                        FROM parts_catalog pc
+                        WHERE {fallback_where_sql}
+                        """
+                    ),
+                    fallback_params,
+                )
+            ).fetchall()
 
     family_counts: Dict[str, int] = {family.id: 0 for family in iter_part_type_families()}
     flat_counts: Dict[str, int] = {family.label: 0 for family in iter_part_type_families()}
@@ -1161,9 +1779,35 @@ async def search_parts_by_vehicle(vehicle_id: str, category: Optional[str] = Non
     vehicle = result.scalar_one_or_none()
     if not vehicle:
         raise HTTPException(status_code=404, detail="Vehicle not found")
-    agent = get_agent("parts_finder_agent")
-    parts = await agent.search_parts_in_db("", vehicle_id, category, db)
-    return {"vehicle": {"manufacturer": vehicle.manufacturer, "model": vehicle.model, "year": vehicle.year}, "parts": parts}
+
+    gov = vehicle.gov_api_data if isinstance(vehicle.gov_api_data, dict) else {}
+    submodel = normalize_vehicle_submodel_name(str(gov.get("sub_model") or gov.get("trim") or "")) or getattr(vehicle, "submodel", None)
+
+    grouped = await search_parts(
+        query="",
+        vehicle_id=vehicle_id,
+        category=category,
+        per_type=4,
+        sort_by="price_ils",
+        vehicle_manufacturer=vehicle.manufacturer,
+        vehicle_model=vehicle.model,
+        vehicle_submodel=submodel,
+        vehicle_year=vehicle.year,
+        db=db,
+        request=request,
+        redis=redis,
+    )
+
+    return {
+        "vehicle": {
+            "manufacturer": vehicle.manufacturer,
+            "model": vehicle.model,
+            "submodel": submodel,
+            "year": vehicle.year,
+        },
+        "parts": grouped.get("all_parts", []),
+        **grouped,
+    }
 
 
 # ==============================================================================
@@ -1173,6 +1817,10 @@ async def search_parts_by_vehicle(vehicle_id: str, category: Optional[str] = Non
 @router.get("/api/parts/by-license-plate/{license_plate}")
 async def get_parts_by_license_plate(
     license_plate: str,
+    part_type: Optional[str] = None,
+    category: Optional[str] = None,
+    query: Optional[str] = "",
+    per_type: int = 4,
     db: AsyncSession = Depends(get_db),
     request: Request = None,
     redis=Depends(get_redis),
@@ -1188,59 +1836,35 @@ async def get_parts_by_license_plate(
     if not vehicle["tozeret_cd"] or not vehicle["degem_cd"] or not vehicle["shnat_yitzur"]:
         raise HTTPException(status_code=422, detail="missing_vehicle_codes")
 
-    from catalog_scraper import get_fitment_by_gov_codes
+    effective_category = (category or part_type or "").strip() or None
 
-    parts_rows = await get_fitment_by_gov_codes(
-        tozeret_cd=int(vehicle["tozeret_cd"]),
-        degem_cd=int(vehicle["degem_cd"]),
-        shnat_yitzur=int(vehicle["shnat_yitzur"]),
+    grouped = await search_parts(
+        query=(query or "").strip(),
+        vehicle_id=None,
+        category=effective_category,
+        per_type=per_type,
+        sort_by="price_ils",
+        vehicle_manufacturer=vehicle.get("manufacturer"),
+        vehicle_model=vehicle.get("model"),
+        vehicle_submodel=vehicle.get("submodel"),
+        vehicle_year=vehicle.get("shnat_yitzur"),
         db=db,
+        request=request,
+        redis=None,
     )
 
-    grouped_parts: Dict[str, List[Dict[str, Any]]] = {
-        "OEM": [],
-        "OE_equivalent": [],
-        "economy": [],
-    }
-
-    for row in parts_rows:
-        part_payload = {
-            "id": str(row.get("id")) if row.get("id") is not None else None,
-            "name": row.get("name"),
-            "part_condition": row.get("part_condition"),
-            "oem_number": row.get("oem_number"),
-            "online_price_ils": float(row["online_price_ils"]) if row.get("online_price_ils") is not None else None,
-            "brand_name": row.get("brand_name"),
-            "brand_tier": row.get("brand_tier"),
-            "brand_logo": row.get("brand_logo"),
-        }
-
-        part_condition = str(row.get("part_condition") or "").strip().lower()
-        brand_tier = str(row.get("brand_tier") or "").strip().lower()
-        if part_condition == "oem":
-            grouped_parts["OEM"].append(part_payload)
-        elif brand_tier == "oe_equivalent":
-            grouped_parts["OE_equivalent"].append(part_payload)
-        else:
-            grouped_parts["economy"].append(part_payload)
-
-    vehicle_payload = {
-        "manufacturer": vehicle.get("manufacturer"),
-        "model": vehicle.get("model"),
-        "year": vehicle.get("shnat_yitzur"),
-        "engine": vehicle.get("engine"),
-    }
-
-    if parts_rows:
-        top_row = parts_rows[0]
-        vehicle_payload["manufacturer"] = vehicle_payload["manufacturer"] or top_row.get("manufacturer")
-        vehicle_payload["model"] = vehicle_payload["model"] or top_row.get("model")
-        vehicle_payload["year"] = vehicle_payload["year"] or top_row.get("year")
-        vehicle_payload["engine"] = vehicle_payload["engine"] or top_row.get("engine")
-
     return {
-        "vehicle": vehicle_payload,
-        "parts": grouped_parts,
+        "vehicle": {
+            "manufacturer": vehicle.get("manufacturer"),
+            "model": vehicle.get("model"),
+            "submodel": vehicle.get("submodel"),
+            "year": vehicle.get("shnat_yitzur"),
+            "engine": vehicle.get("engine"),
+        },
+        "query": (query or "").strip(),
+        "part_type": effective_category,
+        "parts": grouped.get("all_parts", []),
+        **grouped,
     }
 
 
@@ -1297,16 +1921,21 @@ async def get_manufacturers(db: AsyncSession = Depends(get_db)):
         except Exception:
             brand_rows = []
 
+        canonical_fitment_counts: Dict[str, int] = {}
+        for raw_name, raw_count in fitment_rows:
+            base_name = str(raw_name or "").strip()
+            if not base_name:
+                continue
+            canonical_name = normalize_manufacturer_name(base_name, base_name) or base_name
+            display_name = canonical_name.title() if canonical_name.isascii() and canonical_name.islower() else canonical_name
+            canonical_fitment_counts[display_name] = canonical_fitment_counts.get(display_name, 0) + int(raw_count or 0)
+
         manufacturers: List[str] = []
         counts: Dict[str, int] = {}
         logos: Dict[str, str] = {}
         seen_norm = set()
 
-        for raw_name, raw_count in fitment_rows:
-            base_name = str(raw_name or "").strip()
-            if not base_name:
-                continue
-            display_name = base_name.title() if base_name.isascii() and base_name.islower() else base_name
+        for display_name, raw_count in sorted(canonical_fitment_counts.items(), key=lambda item: (-item[1], item[0])):
             norm_name = _norm(display_name)
             if not norm_name or norm_name in seen_norm:
                 continue
@@ -1425,7 +2054,8 @@ async def get_manufacturers(db: AsyncSession = Depends(get_db)):
         raw = (row[0] or "").strip()
         if not raw:
             continue
-        n = _norm(raw)
+        canonical_raw = normalize_manufacturer_name(raw, raw) or raw
+        n = _norm(canonical_raw)
         if not n:
             continue
         if "חלפים" in n and "מרצדס" not in n:
@@ -1437,7 +2067,7 @@ async def get_manufacturers(db: AsyncSession = Depends(get_db)):
         if n in seen:
             continue
         seen.add(n)
-        manufacturers.append(raw)
+        manufacturers.append(canonical_raw)
 
     manufacturers.sort(key=lambda x: x.lower())
     counts = {m: 0 for m in manufacturers}
@@ -1542,27 +2172,23 @@ async def get_models(manufacturer: Optional[str] = None, db: AsyncSession = Depe
 
     if manufacturer:
         variants = await _resolve_variants(manufacturer)
-        clauses = []
-        compat_clauses = []
-        params_mfr: Dict[str, Any] = {}
-        for idx, v in enumerate(variants):
-            k = f"m_{idx}"
-            clauses.append(f"manufacturer ILIKE :{k}")
-            compat_clauses.append(
-                f"LOWER(TRIM(COALESCE(elem->>'make', elem->>'manufacturer', ''))) = LOWER(TRIM(:{k}))"
-            )
-            params_mfr[k] = f"%{v}%"
-        where_mfr = " OR ".join(clauses) if clauses else "manufacturer ILIKE :m_0"
-        where_compat_mfr = " OR ".join(compat_clauses) if compat_clauses else "LOWER(TRIM(COALESCE(elem->>'make', elem->>'manufacturer', ''))) = LOWER(TRIM(:m_0))"
-        if not clauses:
-            params_mfr["m_0"] = f"%{manufacturer}%"
+        normalized_variants = sorted(
+            {
+                str(v).strip().casefold()
+                for v in variants
+                if v is not None and str(v).strip()
+            }
+        )
+        if not normalized_variants:
+            normalized_variants = [str(manufacturer).strip().casefold()]
+        params_mfr: Dict[str, Any] = {"mfr_variants": normalized_variants}
 
         # 0) Preferred curated source: XLS hierarchy table.
         try:
-            x_rows = (await db.execute(text(f"""
+            x_rows = (await db.execute(text("""
                 SELECT DISTINCT model
                 FROM vehicle_hierarchy_xls
-                WHERE ({where_mfr})
+                WHERE LOWER(TRIM(manufacturer)) = ANY(CAST(:mfr_variants AS text[]))
                 ORDER BY model
             """), params_mfr)).fetchall()
             x_models = _dedupe_clean(x_rows, manufacturer)
@@ -1574,12 +2200,12 @@ async def get_models(manufacturer: Optional[str] = None, db: AsyncSession = Depe
             pass
 
         # 1) Preferred source: vehicles table (real manufacturer->model hierarchy)
-        v_rows = (await db.execute(text(f"""
+        v_rows = (await db.execute(text("""
             SELECT DISTINCT model
             FROM vehicles
             WHERE model IS NOT NULL
               AND model <> ''
-              AND ({where_mfr})
+              AND LOWER(TRIM(manufacturer)) = ANY(CAST(:mfr_variants AS text[]))
             ORDER BY model
         """), params_mfr)).fetchall()
         models = _dedupe_clean(v_rows, manufacturer)
@@ -1589,13 +2215,13 @@ async def get_models(manufacturer: Optional[str] = None, db: AsyncSession = Depe
             return response
 
         # 2) Fallback: compatible_vehicles extracted from parts_catalog
-        p_rows = (await db.execute(text(f"""
+        p_rows = (await db.execute(text("""
             SELECT DISTINCT COALESCE(elem->>'model', elem->>'model_year') AS model
             FROM parts_catalog,
                  jsonb_array_elements(compatible_vehicles) AS elem
             WHERE compatible_vehicles IS NOT NULL
               AND jsonb_typeof(compatible_vehicles) = 'array'
-                            AND ({where_compat_mfr})
+              AND LOWER(TRIM(COALESCE(elem->>'make', elem->>'manufacturer', ''))) = ANY(CAST(:mfr_variants AS text[]))
               AND COALESCE(elem->>'model', elem->>'model_year') IS NOT NULL
               AND COALESCE(elem->>'model', elem->>'model_year') <> ''
             ORDER BY model
@@ -1698,8 +2324,35 @@ async def get_submodels(
     except Exception:
         pass
 
-    # Preferred fallback: imported structured compatibility data from parts_catalog.
+    # Fast fallback: vehicles hierarchy usually has enough structured variants.
     try:
+        v_rows = (await db.execute(text("""
+            SELECT DISTINCT model, gov_api_data
+            FROM vehicles
+            WHERE LOWER(TRIM(manufacturer)) = LOWER(TRIM(:mfr))
+              AND (
+                    LOWER(TRIM(model)) = LOWER(TRIM(:model))
+                    OR LOWER(TRIM(model)) LIKE LOWER(TRIM(:model)) || ' %'
+              )
+              AND model IS NOT NULL
+              AND model <> ''
+            ORDER BY model
+        """), {"mfr": canon, "model": base_model})).fetchall()
+        submodel_values.update(_derived_submodel(row[0], row[1]) for row in v_rows)
+    except Exception:
+        pass
+
+    if submodel_values:
+        submodels = sorted(s for s in submodel_values if s)
+        response = {"submodels": submodels, "total": len(submodels)}
+        _store_cached_hierarchy_response(SUBMODELS_RESPONSE_CACHE, submodels_cache_key, response)
+        return response
+
+    # Last fallback: scan compatible_vehicles, but prefilter with GIN @>.
+    try:
+        _safe_canon = canon.replace("'", "''")
+        _gin_mfr = f'[{{"manufacturer": "{_safe_canon}"}}]'
+        _gin_make = f'[{{"make": "{_safe_canon}"}}]'
         p_rows = (await db.execute(text("""
             SELECT DISTINCT elem->>'sub_model' AS sub_model
             FROM parts_catalog,
@@ -1707,29 +2360,23 @@ async def get_submodels(
             WHERE is_active = TRUE
               AND compatible_vehicles IS NOT NULL
               AND jsonb_typeof(compatible_vehicles) = 'array'
+              AND (
+                    compatible_vehicles @> CAST(:gin_mfr AS jsonb)
+                    OR compatible_vehicles @> CAST(:gin_make AS jsonb)
+              )
               AND LOWER(TRIM(COALESCE(elem->>'make', elem->>'manufacturer', ''))) = LOWER(TRIM(:mfr))
-              AND LOWER(TRIM(COALESCE(elem->>'model', ''))) = LOWER(TRIM(:model))
+              AND (
+                    LOWER(TRIM(COALESCE(elem->>'model', ''))) = LOWER(TRIM(:model))
+                    OR LOWER(TRIM(COALESCE(elem->>'model_year', ''))) LIKE LOWER(TRIM(:model)) || ' %'
+              )
               AND COALESCE(TRIM(elem->>'sub_model'), '') <> ''
             ORDER BY sub_model
-        """), {"mfr": canon, "model": base_model})).fetchall()
+        """), {"mfr": canon, "model": base_model, "gin_mfr": _gin_mfr, "gin_make": _gin_make})).fetchall()
         submodel_values.update(
             normalize_vehicle_submodel_name(r[0])
             for r in p_rows
             if r and r[0]
         )
-    except Exception:
-        pass
-
-    try:
-        v_rows = (await db.execute(text("""
-            SELECT DISTINCT model, gov_api_data
-            FROM vehicles
-            WHERE LOWER(TRIM(manufacturer)) = LOWER(TRIM(:mfr))
-              AND model IS NOT NULL
-              AND model <> ''
-            ORDER BY model
-        """), {"mfr": canon})).fetchall()
-        submodel_values.update(_derived_submodel(row[0], row[1]) for row in v_rows)
     except Exception:
         pass
 
@@ -1813,9 +2460,13 @@ async def get_years(
         SELECT model, year, gov_api_data
         FROM vehicles
         WHERE LOWER(TRIM(manufacturer)) = LOWER(TRIM(:mfr))
+            AND (
+                LOWER(TRIM(model)) = LOWER(TRIM(:model))
+                OR LOWER(TRIM(model)) LIKE LOWER(TRIM(:model)) || ' %'
+            )
           AND model IS NOT NULL
           AND model <> ''
-    """), {"mfr": canon})).fetchall()
+        """), {"mfr": canon, "model": base_model})).fetchall()
     for m, y, gov in v_rows:
         model_clean, derived_submodel = _split_vehicle_model_variant(canon, m)
         if not model_clean:
@@ -1897,6 +2548,80 @@ async def get_years(
     return response
 
 
+async def _decode_vin_with_resilience(vin_clean: str) -> Dict[str, Any]:
+    cached_payload = _get_cache_payload(VIN_LOOKUP_CACHE, vin_clean)
+    if cached_payload is not None:
+        return cached_payload
+
+    vin_lock = _get_call_lock(VIN_CALL_LOCKS, vin_clean)
+    async with vin_lock:
+        cached_payload = _get_cache_payload(VIN_LOOKUP_CACHE, vin_clean)
+        if cached_payload is not None:
+            return cached_payload
+
+        if not _NHTSA_CIRCUIT.allow_request():
+            raise HTTPException(status_code=503, detail="vin_api_temporarily_unavailable")
+
+        nhtsa_url = f"https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValuesExtended/{vin_clean}?format=json"
+        try:
+            data = await _external_get_json(nhtsa_url, timeout=10.0)
+            _NHTSA_CIRCUIT.record_success()
+        except httpx.TimeoutException:
+            _NHTSA_CIRCUIT.record_failure()
+            raise HTTPException(status_code=504, detail="vin_api_timeout")
+        except httpx.HTTPStatusError as exc:
+            _NHTSA_CIRCUIT.record_failure()
+            status_code = int(getattr(exc.response, "status_code", 502) or 502)
+            raise HTTPException(status_code=502, detail=f"vin_api_http_{status_code}")
+        except Exception as exc:
+            _NHTSA_CIRCUIT.record_failure()
+            raise HTTPException(status_code=502, detail=f"vin_api_error: {exc}")
+
+        results = data.get("Results", [{}])[0]
+
+        def nhtsa(key: str) -> Optional[str]:
+            return (results.get(key) or "").strip() or None
+
+        manufacturer = nhtsa("Make") or nhtsa("Manufacturer") or ""
+        raw_model = nhtsa("Model") or ""
+        raw_submodel = " ".join(
+            x for x in [nhtsa("Trim"), nhtsa("Series"), nhtsa("Series2")]
+            if x
+        ).strip()
+        canonical_manufacturer = normalize_manufacturer_name(manufacturer, manufacturer) or manufacturer
+        model_base, parsed_submodel = _split_vehicle_model_variant(canonical_manufacturer, raw_model)
+        normalized_submodel = normalize_vehicle_submodel_name(raw_submodel) or parsed_submodel
+        model = model_base or canonicalize_vehicle_model_for_manufacturer(canonical_manufacturer, raw_model) or normalize_vehicle_model_name(raw_model)
+
+        year_str = nhtsa("ModelYear") or ""
+        engine_cc = nhtsa("DisplacementCC")
+        fuel_type = nhtsa("FuelTypePrimary")
+        transmission = nhtsa("TransmissionStyle")
+        drive_type = nhtsa("DriveType")
+        body_class = nhtsa("BodyClass")
+        doors = nhtsa("Doors")
+        plant_country = nhtsa("PlantCountry")
+        year_int = int(year_str) if year_str and year_str.isdigit() else 0
+
+        vehicle_info = {
+            "vin": vin_clean,
+            "manufacturer": manufacturer,
+            "model": model,
+            "submodel": normalized_submodel,
+            "year": year_int,
+            "engine_cc": engine_cc,
+            "fuel_type": fuel_type,
+            "transmission": transmission,
+            "drive_type": drive_type,
+            "body_class": body_class,
+            "doors": doors,
+            "country_of_origin": plant_country,
+        }
+
+        _store_cache_payload(VIN_LOOKUP_CACHE, vin_clean, vehicle_info, VIN_LOOKUP_CACHE_TTL_S)
+        return vehicle_info
+
+
 # ==============================================================================
 # GET /api/v1/parts/search-by-vin
 # ==============================================================================
@@ -1904,9 +2629,12 @@ async def get_years(
 @router.get("/api/v1/parts/search-by-vin")
 async def search_parts_by_vin(
     vin: str,
+    query: Optional[str] = Query(None),
     part_query: Optional[str] = "",
+    part_type: Optional[str] = None,
     category: Optional[str] = None,
     limit: int = 50,
+    per_type: Optional[int] = Query(None),
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
     request: Request = None,
@@ -1920,48 +2648,18 @@ async def search_parts_by_vin(
     if len(vin_clean) != 17:
         raise HTTPException(status_code=400, detail="VIN must be exactly 17 characters")
 
-    nhtsa_url = f"https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValuesExtended/{vin_clean}?format=json"
-    vehicle_info = {}
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(nhtsa_url)
-            resp.raise_for_status()
-            data = resp.json()
-            results = data.get("Results", [{}])[0]
-            def nhtsa(key): return (results.get(key) or "").strip() or None
-            manufacturer = nhtsa("Make") or nhtsa("Manufacturer") or ""
-            model        = nhtsa("Model") or ""
-            year_str     = nhtsa("ModelYear") or ""
-            engine_cc    = nhtsa("DisplacementCC")
-            fuel_type    = nhtsa("FuelTypePrimary")
-            transmission = nhtsa("TransmissionStyle")
-            drive_type   = nhtsa("DriveType")
-            body_class   = nhtsa("BodyClass")
-            doors        = nhtsa("Doors")
-            plant_country = nhtsa("PlantCountry")
-            year_int     = int(year_str) if year_str and year_str.isdigit() else 0
-            engine_type  = f"{fuel_type or 'Unknown'} {engine_cc}cc" if engine_cc else fuel_type
-            vehicle_info = {
-                "vin": vin_clean,
-                "manufacturer": manufacturer,
-                "model": model,
-                "year": year_int,
-                "engine_cc": engine_cc,
-                "fuel_type": fuel_type,
-                "transmission": transmission,
-                "drive_type": drive_type,
-                "body_class": body_class,
-                "doors": doors,
-                "country_of_origin": plant_country,
-            }
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"[VIN] NHTSA error: {e}")
-        raise HTTPException(status_code=502, detail="שגיאה בפענוח ה-VIN – נסה שוב")
+    vehicle_info = await _decode_vin_with_resilience(vin_clean)
+    engine_type = (
+        f"{vehicle_info.get('fuel_type') or 'Unknown'} {vehicle_info.get('engine_cc')}cc"
+        if vehicle_info.get("engine_cc")
+        else vehicle_info.get("fuel_type")
+    )
 
     if not vehicle_info.get("manufacturer"):
         raise HTTPException(status_code=404, detail=f"לא נמצא מידע עבור VIN: {vin_clean}")
+
+    if not vehicle_info.get("model") or not vehicle_info.get("year"):
+        raise HTTPException(status_code=422, detail="VIN decode missing required vehicle context")
 
     # ── Cache VIN in vehicles table (catalog DB) ─────────────────────────────
     cached_vehicle_id: Optional[str] = None
@@ -1990,26 +2688,34 @@ async def search_parts_by_vin(
         print(f"[VIN] vehicle cache error (non-fatal): {e}")
         await db.rollback()
 
-    # ── Search parts ──────────────────────────────────────────────────────────
-    agent = get_agent("parts_finder_agent")
-    search_q = (part_query or "").strip()
-    parts_list = await agent.search_parts_in_db(
-        search_q,
-        cached_vehicle_id,
-        category,
-        db,
-        limit=limit,
-        offset=offset,
+    # ── Search parts (grouped original/oem/aftermarket) ─────────────────────
+    search_q = (query if query is not None else part_query or "").strip()
+    effective_category = (category or part_type or "").strip() or None
+    effective_per_type = per_type if per_type is not None else limit
+    grouped = await search_parts(
+        query=search_q,
+        vehicle_id=cached_vehicle_id,
+        category=effective_category,
+        per_type=effective_per_type,
+        sort_by="price_ils",
         vehicle_manufacturer=vehicle_info["manufacturer"],
+        vehicle_model=vehicle_info.get("model"),
+        vehicle_submodel=vehicle_info.get("submodel"),
+        vehicle_year=vehicle_info.get("year"),
+        db=db,
+        request=request,
+        redis=None,
     )
 
     return {
         "vehicle": vehicle_info,
-        "parts": parts_list,
-        # len(parts_list) reflects actual search results (Meilisearch / ILIKE)
-        "total": len(parts_list),
+        "query": search_q,
+        "part_type": effective_category,
+        "parts": grouped.get("all_parts", []),
+        "total": len(grouped.get("all_parts", [])),
         "offset": offset,
-        "limit": limit,
+        "limit": effective_per_type,
+        **grouped,
     }
 
 

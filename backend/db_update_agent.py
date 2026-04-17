@@ -344,6 +344,7 @@ def _clean_vehicle_model(value: Optional[str]) -> str:
 
 async def ensure_part_vehicle_fitment_table(db: AsyncSession) -> None:
     """Create the scraped fitment table on demand when runtime code still relies on it."""
+    await db.execute(text("CREATE EXTENSION IF NOT EXISTS pgcrypto"))
     await db.execute(text("""
         CREATE TABLE IF NOT EXISTS part_vehicle_fitment (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -358,9 +359,28 @@ async def ensure_part_vehicle_fitment_table(db: AsyncSession) -> None:
             created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
         )
     """))
+    await db.execute(text("ALTER TABLE part_vehicle_fitment ADD COLUMN IF NOT EXISTS tozeret_cd INTEGER NULL"))
+    await db.execute(text("ALTER TABLE part_vehicle_fitment ADD COLUMN IF NOT EXISTS degem_cd INTEGER NULL"))
+    await db.execute(text("ALTER TABLE part_vehicle_fitment ADD COLUMN IF NOT EXISTS shnat_yitzur INTEGER NULL"))
+    await db.execute(text("ALTER TABLE part_vehicle_fitment ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()"))
+
+    # Collapse duplicate keys before creating the unique index used by ON CONFLICT inserts.
+    await db.execute(text("""
+        DELETE FROM part_vehicle_fitment a
+        USING part_vehicle_fitment b
+        WHERE a.ctid < b.ctid
+          AND a.part_id = b.part_id
+          AND a.manufacturer = b.manufacturer
+          AND a.model = b.model
+          AND a.year_from = b.year_from
+    """))
+
     await db.execute(text("CREATE INDEX IF NOT EXISTS idx_fitment_part_id ON part_vehicle_fitment (part_id)"))
     await db.execute(text("CREATE INDEX IF NOT EXISTS idx_fitment_mfr_model ON part_vehicle_fitment (manufacturer, model)"))
     await db.execute(text("CREATE INDEX IF NOT EXISTS idx_fitment_years ON part_vehicle_fitment (year_from, year_to)"))
+    await db.execute(text("CREATE INDEX IF NOT EXISTS idx_pvf_tozeret_degem ON part_vehicle_fitment (tozeret_cd, degem_cd, shnat_yitzur)"))
+    await db.execute(text("CREATE INDEX IF NOT EXISTS idx_pvf_manufacturer_model ON part_vehicle_fitment (manufacturer, model, year_from, year_to)"))
+    await db.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uix_pvf_part_mfr_model_year_from ON part_vehicle_fitment (part_id, manufacturer, model, year_from)"))
     await db.commit()
 
 

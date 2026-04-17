@@ -596,6 +596,7 @@ class Vehicle(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     license_plate = Column(String(20), unique=True, nullable=True)   # encrypted
     manufacturer = Column(String(100), nullable=False, index=True)
+    manufacturer_id = Column(UUID(as_uuid=True), ForeignKey("car_brands.id", ondelete="SET NULL"), nullable=False, index=True)
     model = Column(String(100), nullable=False)
     year = Column(Integer, nullable=False)
     vin = Column(String(17), nullable=True)                           # encrypted
@@ -670,6 +671,7 @@ class PartsCatalog(Base):
     name = Column(String(255), nullable=False, index=True)
     category = Column(String(100), index=True)                       # בלמים, מנוע...
     manufacturer = Column(String(100), index=True)                   # Bosch, Brembo...
+    manufacturer_id = Column(UUID(as_uuid=True), ForeignKey("car_brands.id", ondelete="SET NULL"), nullable=False, index=True)
     part_type = Column(String(50))                                   # OEM, Original, Aftermarket
     description = Column(Text)
     specifications = Column(JSONB, default=dict)
@@ -769,6 +771,7 @@ class PartVariant(Base):
                              ForeignKey("parts_catalog.id", ondelete="CASCADE"), nullable=False)
     quality_level   = Column(String(20), nullable=False)
     manufacturer    = Column(String(100), nullable=True)
+    manufacturer_id = Column(UUID(as_uuid=True), ForeignKey("car_brands.id", ondelete="SET NULL"), nullable=False, index=True)
     sku             = Column(String(100), nullable=True)
     created_at      = Column(DateTime, default=datetime.utcnow)
 
@@ -822,6 +825,7 @@ class Supplier(Base):
     # Manufacturer-as-supplier: when the brand sells direct (e.g. Hyundai Mobis, Bosch Direct)
     is_manufacturer = Column(Boolean, nullable=False, default=False)
     manufacturer_name = Column(String(255), nullable=True, index=True)  # matches parts_catalog.manufacturer
+    manufacturer_id = Column(UUID(as_uuid=True), ForeignKey("car_brands.id", ondelete="SET NULL"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -1361,6 +1365,8 @@ class PartCrossReference(Base):
     part_id = Column(UUID(as_uuid=True), ForeignKey("parts_catalog.id", ondelete="CASCADE"), nullable=False, index=True)
     ref_number = Column(String(100), nullable=False, index=True)
     manufacturer = Column(String(100), nullable=False)
+    manufacturer_id = Column(UUID(as_uuid=True), ForeignKey("car_brands.id", ondelete="SET NULL"), nullable=True, index=True)
+    aftermarket_brand_id = Column(UUID(as_uuid=True), ForeignKey("aftermarket_brands.id", ondelete="SET NULL"), nullable=True, index=True)
     ref_type = Column(String(20), nullable=False)                    # OEM_ORIGINAL / OEM_EQUIVALENT / AFTERMARKET
     is_superseded = Column(Boolean, nullable=False, default=False)
     superseded_by = Column(String(100), nullable=True)

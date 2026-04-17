@@ -75,6 +75,11 @@ from BACKEND_DATABASE_MODELS import (
 )
 from BACKEND_AUTH_SECURITY import publish_notification
 from resilience import retry_with_backoff
+from manufacturer_normalization import (
+    canonicalize_vehicle_model_for_manufacturer,
+    normalize_manufacturer_name,
+    normalize_vehicle_model_name,
+)
 
 load_dotenv()
 
@@ -984,7 +989,8 @@ CROSS-REFERENCE: Alternative/equivalent part numbers are stored in the part_cros
             try: return float(r.get(key) or 0)
             except: return 0.0
 
-        manufacturer = s("tozeret_nm") or s("tozeret_cd") or "Unknown"
+        raw_manufacturer = s("tozeret_nm") or s("tozeret_cd") or "Unknown"
+        manufacturer = normalize_manufacturer_name(raw_manufacturer, raw_manufacturer) or raw_manufacturer
         model        = s("kinuy_mishari") or s("degem_nm") or "Unknown"
         year         = i("shnat_yitzur")
         fuel_type    = s("sug_delek_nm")
@@ -1167,6 +1173,20 @@ CROSS-REFERENCE: Alternative/equivalent part numbers are stored in the part_cros
             conditions = ["pc.is_active = TRUE"]
             params: Dict[str, Any] = {}
 
+            vehicle_context = None
+            if vehicle_id:
+                async with async_session_factory() as _vdb:
+                    vehicle_row = (await _vdb.execute(
+                        select(Vehicle).where(Vehicle.id == vehicle_id)
+                    )).scalar_one_or_none()
+                if vehicle_row:
+                    vehicle_context = {
+                        "manufacturer": normalize_manufacturer_name(vehicle_row.manufacturer, vehicle_row.manufacturer) or vehicle_row.manufacturer,
+                        "model": canonicalize_vehicle_model_for_manufacturer(vehicle_row.manufacturer, vehicle_row.model) or normalize_vehicle_model_name(vehicle_row.model),
+                        "year": vehicle_row.year if isinstance(vehicle_row.year, int) and vehicle_row.year > 0 else None,
+                    }
+                    vehicle_manufacturer = vehicle_context["manufacturer"]
+
             if category:
                 conditions.append("pc.category ILIKE :cat")
                 params["cat"] = f"%{category}%"
@@ -1178,14 +1198,24 @@ CROSS-REFERENCE: Alternative/equivalent part numbers are stored in the part_cros
                     conditions.append(f"pc.manufacturer ILIKE :mfr{i}")
                     params[f"mfr{i}"] = f"%{t}%"
 
-            if vehicle_id:
+            if vehicle_context and vehicle_context.get("manufacturer") and vehicle_context.get("model") and vehicle_context.get("year"):
+                params["fit_mfr"] = vehicle_context["manufacturer"]
+                params["fit_model"] = vehicle_context["model"]
+                params["fit_year"] = int(vehicle_context["year"])
                 conditions.append(
-                    "(pc.compatible_vehicles::text ILIKE :vid "
-                    "OR EXISTS (SELECT 1 FROM part_vehicle_fitment pvf "
-                    "           WHERE pvf.part_id = pc.id AND pvf.vehicle_id = :vid_exact))"
+                    "EXISTS (SELECT 1 FROM part_vehicle_fitment pvf "
+                    "        WHERE pvf.part_id = pc.id "
+                    "          AND (LOWER(TRIM(pvf.manufacturer)) = LOWER(TRIM(:fit_mfr)) "
+                    "               OR LOWER(TRIM(pvf.manufacturer)) LIKE CONCAT('%', LOWER(TRIM(:fit_mfr)), '%') "
+                    "               OR LOWER(TRIM(:fit_mfr)) LIKE CONCAT('%', LOWER(TRIM(pvf.manufacturer)), '%')) "
+                    "          AND (LOWER(TRIM(pvf.model)) = LOWER(TRIM(:fit_model)) "
+                    "               OR LOWER(TRIM(pvf.model)) LIKE CONCAT(LOWER(TRIM(:fit_model)), ' %') "
+                    "               OR LOWER(TRIM(:fit_model)) LIKE CONCAT(LOWER(TRIM(pvf.model)), ' %')) "
+                    "          AND pvf.year_from <= :fit_year "
+                    "          AND COALESCE(pvf.year_to, pvf.year_from) >= :fit_year)"
                 )
-                params["vid"] = f"%{vehicle_id}%"
-                params["vid_exact"] = vehicle_id
+            elif vehicle_id:
+                conditions.append("1 = 0")
 
             where_sql = " AND ".join(conditions)
             _dir_sql = "ASC" if sort_dir == "asc" else "DESC"
@@ -1242,6 +1272,20 @@ CROSS-REFERENCE: Alternative/equivalent part numbers are stored in the part_cros
             # ── ILIKE fallback path (original logic, unchanged) ───────────────
             stmt = select(PartsCatalog).where(PartsCatalog.is_active == True)
 
+            vehicle_context = None
+            if vehicle_id:
+                async with async_session_factory() as _vdb:
+                    vehicle_row = (await _vdb.execute(
+                        select(Vehicle).where(Vehicle.id == vehicle_id)
+                    )).scalar_one_or_none()
+                if vehicle_row:
+                    vehicle_context = {
+                        "manufacturer": normalize_manufacturer_name(vehicle_row.manufacturer, vehicle_row.manufacturer) or vehicle_row.manufacturer,
+                        "model": canonicalize_vehicle_model_for_manufacturer(vehicle_row.manufacturer, vehicle_row.model) or normalize_vehicle_model_name(vehicle_row.model),
+                        "year": vehicle_row.year if isinstance(vehicle_row.year, int) and vehicle_row.year > 0 else None,
+                    }
+                    vehicle_manufacturer = vehicle_context["manufacturer"]
+
             if vehicle_manufacturer:
                 normalized_mfr = await self.normalize_manufacturer(vehicle_manufacturer, db)
                 # Also try splitting compound Hebrew names like "סיטרואן ספרד" → try each word
@@ -1271,6 +1315,25 @@ CROSS-REFERENCE: Alternative/equivalent part numbers are stored in the part_cros
 
             if category:
                 stmt = stmt.where(PartsCatalog.category.ilike(category))
+
+            if vehicle_context and vehicle_context.get("manufacturer") and vehicle_context.get("model") and vehicle_context.get("year"):
+                fit_mfr = vehicle_context["manufacturer"]
+                fit_model = vehicle_context["model"]
+                fit_year = int(vehicle_context["year"])
+                stmt = stmt.where(text(
+                    "EXISTS (SELECT 1 FROM part_vehicle_fitment pvf "
+                    "        WHERE pvf.part_id = parts_catalog.id "
+                    "          AND (LOWER(TRIM(pvf.manufacturer)) = LOWER(TRIM(:fit_mfr)) "
+                    "               OR LOWER(TRIM(pvf.manufacturer)) LIKE CONCAT('%', LOWER(TRIM(:fit_mfr)), '%') "
+                    "               OR LOWER(TRIM(:fit_mfr)) LIKE CONCAT('%', LOWER(TRIM(pvf.manufacturer)), '%')) "
+                    "          AND (LOWER(TRIM(pvf.model)) = LOWER(TRIM(:fit_model)) "
+                    "               OR LOWER(TRIM(pvf.model)) LIKE CONCAT(LOWER(TRIM(:fit_model)), ' %') "
+                    "               OR LOWER(TRIM(:fit_model)) LIKE CONCAT(LOWER(TRIM(pvf.model)), ' %')) "
+                    "          AND pvf.year_from <= :fit_year "
+                    "          AND COALESCE(pvf.year_to, pvf.year_from) >= :fit_year)"
+                )).params(fit_mfr=fit_mfr, fit_model=fit_model, fit_year=fit_year)
+            elif vehicle_id:
+                stmt = stmt.where(text("1 = 0"))
 
             _dir = lambda col: col.asc() if sort_dir == "asc" else col.desc()
             if sort_by in ("price_asc", "price_desc"):
@@ -1469,7 +1532,7 @@ CROSS-REFERENCE: Alternative/equivalent part numbers are stored in the part_cros
 
                 results = await self.search_parts_in_db(
                     query=search_q,
-                    vehicle_id=None,
+                    vehicle_id=identified_vehicle.get("id") if identified_vehicle else None,
                     category=category_hint,
                     db=db,
                     limit=6,
@@ -1508,15 +1571,19 @@ CROSS-REFERENCE: Alternative/equivalent part numbers are stored in the part_cros
                         )
                     parts_context = "\n".join(lines)
                 else:
-                    # Try broader search without category filter
-                    broader = await self.search_parts_in_db(
-                        query=search_q,
-                        vehicle_id=None,
-                        category=None,
-                        db=db,
-                        limit=4,
-                        sort_by="price_asc",
-                    )
+                    # For a resolved plate/vehicle, do not fall back to broad
+                    # non-fitment results. It is safer to show no match than a
+                    # potentially incompatible part.
+                    broader = []
+                    if not identified_vehicle:
+                        broader = await self.search_parts_in_db(
+                            query=search_q,
+                            vehicle_id=None,
+                            category=None,
+                            db=db,
+                            limit=4,
+                            sort_by="price_asc",
+                        )
                     if broader:
                         lines = [
                             f"\n[DB SEARCH — חיפוש רחב: '{search_q}' | {len(broader)} תוצאות]\n"

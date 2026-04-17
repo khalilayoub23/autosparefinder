@@ -12,7 +12,7 @@
 #  6. Cleans up test database
 #  7. Alerts admin if any step fails
 
-set -e  # Exit on error
+set -euo pipefail  # Exit on error, unset vars, and pipeline failures
 
 BACKUP_FILE="${1:-}"
 TEST_DB_NAME="autospare_restore_test_$(date +%s)"
