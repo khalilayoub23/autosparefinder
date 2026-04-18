@@ -7,12 +7,15 @@ from datetime import datetime
 import asyncio
 import os
 import uuid
+import re
+from urllib.parse import urlparse
 
 from BACKEND_DATABASE_MODELS import (
     get_pii_db,
     Order,
     OrderItem,
     Payment,
+    SupplierPayment,
     Invoice,
     Return,
     Notification,
@@ -30,28 +33,184 @@ from BACKEND_AUTH_SECURITY import (
     publish_notification,
 )
 from routes.schemas import MultiCheckoutRequest
-from routes.utils import _guarded_task, _get_frontend_url, trigger_supplier_fulfillment
+from routes.stripe_config import resolve_stripe_secret_key, is_valid_stripe_secret_key
+from routes.utils import (
+    _guarded_task,
+    _get_frontend_url,
+    trigger_supplier_fulfillment,
+    trigger_supplier_refund,
+)
 
 router = APIRouter()
 
 
-def _dedupe_orders_from_rows(rows) -> list:
-    """Deduplicate orders while preserving input order."""
-    orders = []
-    seen = set()
-    for _, ord in rows:
-        oid = str(ord.id)
-        if oid not in seen:
-            seen.add(oid)
-            orders.append(ord)
-    return orders
+def _is_truthy_env(value: str | None) -> bool:
+    return (value or "").strip().lower() in ("1", "true", "yes", "on")
 
 
-def _build_paid_verify_response(orders: list) -> dict:
-    """Build verify-session success payload from one or more orders."""
-    if len(orders) > 1:
+def _allow_simulated_payments() -> bool:
+    return _is_truthy_env(os.getenv("ALLOW_SIMULATED_PAYMENTS", "0"))
+
+
+def _is_production_environment() -> bool:
+    env = (os.getenv("ENVIRONMENT", "development") or "").strip().lower()
+    return env in {"prod", "production"}
+
+
+def _first_header_value(raw_value: str | None) -> str:
+    if not raw_value:
+        return ""
+    return str(raw_value).split(",", 1)[0].strip()
+
+
+def _extract_hostname(raw_value: str | None) -> str:
+    value = (raw_value or "").strip()
+    if not value:
+        return ""
+
+    # Host headers often come as "host:port" without URL scheme.
+    if "://" not in value:
+        value = f"http://{value}"
+
+    try:
+        return (urlparse(value).hostname or "").strip().lower()
+    except Exception:
+        return ""
+
+
+def _is_private_ipv4(hostname: str) -> bool:
+    if not re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", hostname):
+        return False
+
+    try:
+        octets = [int(x) for x in hostname.split(".")]
+    except Exception:
+        return False
+
+    if any(o < 0 or o > 255 for o in octets):
+        return False
+
+    if octets[0] == 10:
+        return True
+    if octets[0] == 127:
+        return True
+    if octets[0] == 192 and octets[1] == 168:
+        return True
+    if octets[0] == 172 and 16 <= octets[1] <= 31:
+        return True
+    return False
+
+
+def _is_public_request_host(hostname: str) -> bool:
+    host = (hostname or "").strip().lower()
+    if not host:
+        return False
+
+    if host in {
+        "localhost",
+        "backend",
+        "frontend",
+        "nginx",
+        "redis",
+        "meilisearch",
+        "postgres_pii",
+        "postgres_catalog",
+        "host.docker.internal",
+    }:
+        return False
+
+    if host.endswith(".internal") or host.endswith(".local"):
+        return False
+
+    if _is_private_ipv4(host):
+        return False
+
+    return True
+
+
+def _request_candidate_hosts(request: Request) -> list[str]:
+    candidates: list[str] = []
+
+    origin = _first_header_value(request.headers.get("origin"))
+    referer = _first_header_value(request.headers.get("referer"))
+    fwd_host = _first_header_value(request.headers.get("x-forwarded-host"))
+    host = _first_header_value(request.headers.get("host"))
+
+    for raw in (origin, referer, fwd_host, host):
+        parsed = _extract_hostname(raw)
+        if parsed and parsed not in candidates:
+            candidates.append(parsed)
+
+    return candidates
+
+
+def _allow_simulated_payments_for_request(request: Request) -> bool:
+    if not _allow_simulated_payments():
+        return False
+
+    if _is_truthy_env(os.getenv("ALLOW_SIMULATED_PAYMENTS_PUBLIC", "0")):
+        return True
+
+    # In production, never allow silent simulation unless explicitly overridden.
+    if _is_production_environment():
+        return False
+
+    return not any(_is_public_request_host(host) for host in _request_candidate_hosts(request))
+
+
+def _is_valid_stripe_secret_key(raw_key: str | None) -> bool:
+    return is_valid_stripe_secret_key(raw_key)
+
+
+def _build_tracking_url_from_number(tracking_number: str | None, tracking_url: str | None = None) -> str:
+    if tracking_url and str(tracking_url).strip():
+        return str(tracking_url).strip()
+
+    n = (tracking_number or "").strip()
+    if not n:
+        return ""
+    if re.fullmatch(r"1Z[A-Z0-9]{16}", n, re.IGNORECASE):
+        return f"https://www.ups.com/track?tracknum={n}&requester=ST/trackdetails"
+    if re.fullmatch(r"\d{12}", n):
+        return f"https://www.fedex.com/fedextrack/?trknbr={n}"
+    if re.fullmatch(r"\d{10}", n):
+        return f"https://www.dhl.com/en/express/tracking.html?AWB={n}"
+    return f"https://parcelsapp.com/en/tracking/{n}"
+
+
+def _build_verify_response_from_local_rows(rows) -> dict:
+    """Build verify-session payload from local Payment/Order rows."""
+    if not rows:
         return {
-            "status": "paid",
+            "status": "unpaid",
+            "order_status": "pending_payment",
+            "order_number": None,
+            "order_id": None,
+            "amount": 0.0,
+        }
+
+    deduped_orders = []
+    seen_orders = set()
+    payment_statuses = []
+
+    for pay, ord in rows:
+        payment_statuses.append((pay.status or "").lower())
+        oid = str(ord.id)
+        if oid not in seen_orders:
+            seen_orders.add(oid)
+            deduped_orders.append(ord)
+
+    # Local fallback must not report paid unless all local records are paid/refunded.
+    if payment_statuses and all(s in {"paid", "refunded"} for s in payment_statuses):
+        derived_status = "paid"
+    elif payment_statuses and any(s == "pending" for s in payment_statuses):
+        derived_status = "pending"
+    else:
+        derived_status = "unpaid"
+
+    if len(deduped_orders) > 1:
+        return {
+            "status": derived_status,
             "is_multi": True,
             "orders": [
                 {
@@ -60,16 +219,16 @@ def _build_paid_verify_response(orders: list) -> dict:
                     "order_status": o.status,
                     "amount": float(o.total_amount),
                 }
-                for o in orders
+                for o in deduped_orders
             ],
-            "order_number": orders[0].order_number,
-            "order_id": str(orders[0].id),
-            "amount": sum(float(o.total_amount) for o in orders),
+            "order_number": deduped_orders[0].order_number,
+            "order_id": str(deduped_orders[0].id),
+            "amount": sum(float(o.total_amount) for o in deduped_orders),
         }
 
-    order = orders[0]
+    order = deduped_orders[0]
     return {
-        "status": "paid",
+        "status": derived_status,
         "order_status": order.status,
         "order_number": order.order_number,
         "order_id": str(order.id),
@@ -93,8 +252,9 @@ async def create_checkout_session(
         if not allowed:
             raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
 
-    stripe_key = os.getenv("STRIPE_SECRET_KEY", "")
-    stripe_configured = bool(stripe_key and not stripe_key.startswith("sk_test_xxxxx"))
+    stripe_key, _ = resolve_stripe_secret_key()
+    stripe_configured = _is_valid_stripe_secret_key(stripe_key)
+    allow_simulation = _allow_simulated_payments_for_request(request)
 
     # Load order
     result = await db.execute(
@@ -199,8 +359,14 @@ async def create_checkout_session(
 
     frontend_url = _get_frontend_url(request)
 
-    # ── Simulated payment (no Stripe key) ─────────────────────────────────
-    if not stripe_configured:
+    if not stripe_configured and not allow_simulation:
+        raise HTTPException(
+            status_code=503,
+            detail="שירות התשלומים אינו מוגדר כראוי. יש להגדיר מפתח Stripe תקין.",
+        )
+
+    # ── Simulated payment (explicitly enabled) ─────────────────────────────
+    if not stripe_configured and allow_simulation:
         sim_session_id = f"SIM-{str(uuid.uuid4())[:12].upper()}"
         # Mark order as confirmed immediately
         order.status = "confirmed"
@@ -239,6 +405,7 @@ async def create_checkout_session(
             "session_id": sim_session_id,
             "amount": float(order.total_amount),
             "currency": "ILS",
+            "mode": "simulated",
         }
     # ── Real Stripe Checkout ───────────────────────────────────────────────
     stripe_sdk.api_key = stripe_key
@@ -303,7 +470,8 @@ async def create_checkout_session(
             )
         )
     except Exception as stripe_err:
-        raise HTTPException(status_code=503, detail=f"שגיאת שירות תשלום: {stripe_err}")
+        print(f"[Payments] create-checkout Stripe error: {stripe_err}")
+        raise HTTPException(status_code=503, detail="שירות התשלומים אינו זמין כרגע. נסה שוב מאוחר יותר.")
 
     # Save pending payment record (guard against duplicate on retry)
     existing_pay = await db.execute(
@@ -347,10 +515,11 @@ async def create_multi_checkout_session(
         if not allowed:
             raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
 
-    stripe_key = os.getenv("STRIPE_SECRET_KEY", "")
-    if not stripe_key or stripe_key.startswith("sk_test_xxxxx"):
-        raise HTTPException(status_code=503, detail="Stripe not configured. Add STRIPE_SECRET_KEY to .env")
-    stripe_sdk.api_key = stripe_key
+    stripe_key, _ = resolve_stripe_secret_key()
+    stripe_configured = _is_valid_stripe_secret_key(stripe_key)
+    allow_simulation = _allow_simulated_payments_for_request(request)
+    if stripe_configured:
+        stripe_sdk.api_key = stripe_key
 
     if not payload.order_ids:
         raise HTTPException(status_code=400, detail="No order IDs provided")
@@ -492,6 +661,61 @@ async def create_multi_checkout_session(
         raise HTTPException(status_code=400, detail="לא נמצאו פריטים תקינים לתשלום")
 
     frontend_url = _get_frontend_url(request)
+
+    if not stripe_configured and not allow_simulation:
+        raise HTTPException(
+            status_code=503,
+            detail="שירות התשלומים אינו מוגדר כראוי. יש להגדיר מפתח Stripe תקין.",
+        )
+
+    # ── Simulated multi-order payment (explicitly enabled) ─────────────────
+    if not stripe_configured and allow_simulation:
+        sim_session_id = f"SIM-{str(uuid.uuid4())[:12].upper()}"
+        for order in orders:
+            order.status = "confirmed"
+            composite_id = f"{sim_session_id}:{str(order.id)}"
+            existing_pay = await db.execute(
+                select(Payment).where(Payment.payment_intent_id == composite_id)
+            )
+            if not existing_pay.scalar_one_or_none():
+                db.add(Payment(
+                    order_id=order.id,
+                    user_id=current_user.id,
+                    payment_intent_id=composite_id,
+                    provider="simulated",
+                    provider_transaction_id=sim_session_id,
+                    amount_ils=order.total_amount,
+                    amount=order.total_amount,
+                    currency="ILS",
+                    status="paid",
+                ))
+
+        await db.commit()
+
+        order_ids = [o.id for o in orders]
+
+        async def _fulfill_bg_multi():
+            async with pii_session_factory() as bg_db:
+                try:
+                    res = await bg_db.execute(select(Order).where(Order.id.in_(order_ids)))
+                    bg_orders = res.scalars().all()
+                    if bg_orders:
+                        await trigger_supplier_fulfillment(bg_orders, bg_db)
+                        await bg_db.commit()
+                except Exception as _e:
+                    print(f"[Fulfillment BG multi] error: {_e}")
+
+        asyncio.create_task(_guarded_task(_fulfill_bg_multi()))
+
+        return {
+            "checkout_url": f"{frontend_url}/payment/success?session_id={sim_session_id}&simulated=1",
+            "session_id": sim_session_id,
+            "order_count": len(orders),
+            "total_amount": sum(float(o.total_amount) for o in orders),
+            "currency": "ILS",
+            "mode": "simulated",
+        }
+
     try:
         session = await asyncio.get_running_loop().run_in_executor(
             None,
@@ -512,7 +736,8 @@ async def create_multi_checkout_session(
             )
         )
     except Exception as stripe_err:
-        raise HTTPException(status_code=503, detail=f"שגיאת שירות תשלום: {stripe_err}")
+        print(f"[Payments] create-multi-checkout Stripe error: {stripe_err}")
+        raise HTTPException(status_code=503, detail="שירות התשלומים אינו זמין כרגע. נסה שוב מאוחר יותר.")
 
     # Create a pending Payment record per order.
     # Use "<session_id>:<order_id>" to keep payment_intent_id unique per row
@@ -547,6 +772,7 @@ async def create_multi_checkout_session(
 
 @router.get("/api/v1/payments/verify-session")
 async def verify_checkout_session(
+    request: Request,
     session_id: str,
     current_user=Depends(get_current_verified_user),
     db: AsyncSession = Depends(get_pii_db),
@@ -608,43 +834,78 @@ async def verify_checkout_session(
 
     # ── Simulated payment (session_id starts with SIM-) ───────────────────────
     if session_id.startswith("SIM-"):
+        if not _allow_simulated_payments_for_request(request):
+            raise HTTPException(status_code=404, detail="Simulated sessions are disabled")
         # Find the payment record linked to this simulated session
         pay_res = await db.execute(select(Payment).where(Payment.payment_intent_id == session_id))
         pay = pay_res.scalar_one_or_none()
-        if not pay:
-            raise HTTPException(status_code=404, detail="תשלום סימולציה לא נמצא")
-        ord_res = await db.execute(
-            select(Order).where(and_(Order.id == pay.order_id, Order.user_id == current_user.id))
-        )
-        order = ord_res.scalar_one_or_none()
-        if not order:
-            raise HTTPException(status_code=404, detail="הזמנה לא נמצאה")
-        # Ensure order is marked confirmed and payment paid
-        order.status = "confirmed"
-        pay.status = "paid"
-        pay.paid_at = datetime.utcnow()
-        pay.payment_method = "simulated"
-        # Create invoice if not already exists
-        inv_check = await db.execute(select(Invoice).where(Invoice.order_id == order.id))
-        if not inv_check.scalar_one_or_none():
-            inv_num = f"INV-{datetime.utcnow().strftime('%Y%m')}-{str(order.id)[:8].upper()}"
-            db.add(Invoice(
-                invoice_number=inv_num,
-                order_id=order.id,
-                user_id=current_user.id,
-                business_number=os.getenv("COMPANY_NUMBER", "060633880"),
-            ))
-        await db.commit()
-        return {
-            "status": "paid",
-            "order_id": str(order.id),
-            "order_number": order.order_number,
-            "amount": float(order.total_amount),
-            "currency": "ILS",
-        }
+        if pay:
+            ord_res = await db.execute(
+                select(Order).where(and_(Order.id == pay.order_id, Order.user_id == current_user.id))
+            )
+            order = ord_res.scalar_one_or_none()
+            if not order:
+                raise HTTPException(status_code=404, detail="הזמנה לא נמצאה")
+            # Ensure order is marked confirmed and payment paid
+            order.status = "confirmed"
+            pay.status = "paid"
+            pay.paid_at = datetime.utcnow()
+            pay.payment_method = "simulated"
+            # Create invoice if not already exists
+            inv_check = await db.execute(select(Invoice).where(Invoice.order_id == order.id))
+            if not inv_check.scalar_one_or_none():
+                inv_num = f"INV-{datetime.utcnow().strftime('%Y%m')}-{str(order.id)[:8].upper()}"
+                db.add(Invoice(
+                    invoice_number=inv_num,
+                    order_id=order.id,
+                    user_id=current_user.id,
+                    business_number=os.getenv("COMPANY_NUMBER", "060633880"),
+                ))
+            await db.commit()
+            return {
+                "status": "paid",
+                "order_id": str(order.id),
+                "order_number": order.order_number,
+                "amount": float(order.total_amount),
+                "currency": "ILS",
+            }
 
-    stripe_key = os.getenv("STRIPE_SECRET_KEY", "")
-    if not stripe_key or stripe_key.startswith("sk_test_xxxxx"):
+        # Multi simulated checkout stores records as "SIM-...:<order_id>"
+        sim_rows = await db.execute(
+            select(Payment, Order)
+            .join(Order, Payment.order_id == Order.id)
+            .where(
+                and_(
+                    Order.user_id == current_user.id,
+                    Payment.payment_intent_id.like(f"{session_id}:%"),
+                )
+            )
+        )
+        pay_rows = sim_rows.all()
+        if not pay_rows:
+            raise HTTPException(status_code=404, detail="תשלום סימולציה לא נמצא")
+
+        for payment, order in pay_rows:
+            if order.status == "pending_payment":
+                order.status = "confirmed"
+            payment.status = "paid"
+            payment.paid_at = datetime.utcnow()
+            payment.payment_method = "simulated"
+            inv_check = await db.execute(select(Invoice).where(Invoice.order_id == order.id))
+            if not inv_check.scalar_one_or_none():
+                inv_num = f"INV-{datetime.utcnow().strftime('%Y%m')}-{str(order.id)[:8].upper()}"
+                db.add(Invoice(
+                    invoice_number=inv_num,
+                    order_id=order.id,
+                    user_id=current_user.id,
+                    business_number=os.getenv("COMPANY_NUMBER", "060633880"),
+                ))
+
+        await db.commit()
+        return _build_verify_response_from_local_rows(pay_rows)
+
+    stripe_key, _ = resolve_stripe_secret_key()
+    if not _is_valid_stripe_secret_key(stripe_key):
         raise HTTPException(status_code=503, detail="Stripe not configured")
 
     stripe_sdk.api_key = stripe_key
@@ -661,7 +922,7 @@ async def verify_checkout_session(
         pay_rows = await _fetch_session_rows_for_user(session_id)
 
         if pay_rows:
-            return _build_paid_verify_response(_dedupe_orders_from_rows(pay_rows))
+            return _build_verify_response_from_local_rows(pay_rows)
 
         raise HTTPException(
             status_code=400,
@@ -736,7 +997,7 @@ async def verify_checkout_session(
         # Some gateways/sessions return sparse metadata; fall back to local rows.
         pay_rows = await _fetch_session_rows_for_user(session_id)
         if pay_rows:
-            return _build_paid_verify_response(_dedupe_orders_from_rows(pay_rows))
+            return _build_verify_response_from_local_rows(pay_rows)
         raise HTTPException(status_code=400, detail="Invalid session metadata")
 
     result = await db.execute(
@@ -912,6 +1173,225 @@ async def get_payment(payment_id: str, current_user=Depends(get_current_user), d
     return {"id": str(payment.id), "amount": float(payment.amount), "status": payment.status, "payment_method": payment.payment_method, "created_at": payment.created_at}
 
 
+@router.get("/api/v1/payments/suppliers/list")
+async def list_supplier_payments(
+    current_user=Depends(get_current_user),
+    limit: int = 100,
+    db: AsyncSession = Depends(get_pii_db),
+):
+    """Customer view: supplier payment lifecycle for this user's paid orders."""
+    rows_res = await db.execute(
+        select(SupplierPayment, Order)
+        .join(Order, SupplierPayment.order_id == Order.id)
+        .where(
+            and_(
+                Order.user_id == current_user.id,
+                Order.deleted_at.is_(None),
+            )
+        )
+        .order_by(desc(SupplierPayment.created_at))
+        .limit(limit)
+    )
+    rows = rows_res.all()
+
+    # Keep only latest per (order, supplier) to avoid legacy duplicates in UI.
+    unique: dict[str, dict] = {}
+    suppressed = 0
+    for supplier_payment, order in rows:
+        supplier_key = str(supplier_payment.supplier_id) if supplier_payment.supplier_id else supplier_payment.supplier_name
+        dedupe_key = f"{order.id}:{supplier_key}"
+        if dedupe_key in unique:
+            suppressed += 1
+            continue
+        unique[dedupe_key] = {
+            "id": str(supplier_payment.id),
+            "order_id": str(order.id),
+            "order_number": order.order_number,
+            "order_status": order.status,
+            "supplier_name": supplier_payment.supplier_name,
+            "amount_ils": float(supplier_payment.amount_ils),
+            "currency": supplier_payment.currency,
+            "status": supplier_payment.status,
+            "provider": supplier_payment.provider,
+            "spend_provider": (supplier_payment.metadata_json or {}).get("spend_provider") or supplier_payment.provider,
+            "provider_payment_id": supplier_payment.provider_payment_id,
+            "provider_reference": supplier_payment.provider_reference,
+            "issuing_authorization_id": (supplier_payment.metadata_json or {}).get("issuing_authorization_id"),
+            "issuing_authorization_status": (supplier_payment.metadata_json or {}).get("issuing_authorization_status"),
+            "issuing_card_id": (supplier_payment.metadata_json or {}).get("issuing_card_id"),
+            "supplier_purchase_status": (supplier_payment.metadata_json or {}).get("supplier_purchase_status"),
+            "supplier_purchase_carrier": (supplier_payment.metadata_json or {}).get("supplier_purchase_carrier"),
+            "tracking_number": supplier_payment.tracking_number or order.tracking_number,
+            "tracking_url": supplier_payment.tracking_url or order.tracking_url,
+            "failure_reason": supplier_payment.failure_reason,
+            "paid_at": supplier_payment.paid_at,
+            "supplier_refund_status": (supplier_payment.metadata_json or {}).get("supplier_refund_status"),
+            "supplier_refund_amount_ils": (supplier_payment.metadata_json or {}).get("supplier_refund_amount_ils"),
+            "supplier_refund_id": (supplier_payment.metadata_json or {}).get("supplier_refund_id"),
+            "supplier_refunded_at": (supplier_payment.metadata_json or {}).get("supplier_refunded_at"),
+            "created_at": supplier_payment.created_at,
+        }
+
+    return {
+        "supplier_payments": list(unique.values()),
+        "duplicate_rows_suppressed": suppressed,
+    }
+
+
+@router.post("/api/v1/payments/suppliers/{supplier_payment_id}/retry")
+async def retry_supplier_payment(
+    supplier_payment_id: str,
+    current_user=Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_pii_db),
+):
+    """Admin: retry supplier charge for a failed/pending supplier payment."""
+    row_res = await db.execute(
+        select(SupplierPayment, Order)
+        .join(Order, SupplierPayment.order_id == Order.id)
+        .where(SupplierPayment.id == supplier_payment_id)
+    )
+    row = row_res.first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Supplier payment not found")
+
+    supplier_payment, order = row
+    if supplier_payment.status in ("paid", "tracking_received"):
+        return {
+            "message": "Supplier payment already completed",
+            "status": supplier_payment.status,
+            "supplier_payment_id": str(supplier_payment.id),
+        }
+
+    await trigger_supplier_fulfillment([order], db)
+    await db.commit()
+    await db.refresh(supplier_payment)
+
+    return {
+        "message": "Supplier payment retry executed",
+        "supplier_payment_id": str(supplier_payment.id),
+        "status": supplier_payment.status,
+        "failure_reason": supplier_payment.failure_reason,
+        "provider_payment_id": supplier_payment.provider_payment_id,
+    }
+
+
+@router.post("/api/v1/payments/suppliers/{supplier_payment_id}/refund-retry")
+async def retry_supplier_refund(
+    supplier_payment_id: str,
+    request: Request,
+    current_user=Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_pii_db),
+):
+    """Admin: retry supplier refund for a refunded/cancelled customer order."""
+    row_res = await db.execute(
+        select(SupplierPayment, Order)
+        .join(Order, SupplierPayment.order_id == Order.id)
+        .where(SupplierPayment.id == supplier_payment_id)
+    )
+    row = row_res.first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Supplier payment not found")
+
+    supplier_payment, order = row
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    reason = str(body.get("reason") or "retry_supplier_refund").strip()
+    requested_amount = body.get("amount_ils")
+    try:
+        requested_amount_ils = float(requested_amount) if requested_amount is not None else None
+    except Exception:
+        raise HTTPException(status_code=422, detail="amount_ils must be a number")
+
+    summary = await trigger_supplier_refund(
+        order=order,
+        db=db,
+        reason=reason,
+        customer_refund_amount_ils=requested_amount_ils,
+    )
+    await db.commit()
+
+    return {
+        "message": "Supplier refund retry executed",
+        "supplier_payment_id": str(supplier_payment.id),
+        "order_id": str(order.id),
+        "order_number": order.order_number,
+        "summary": summary,
+    }
+
+
+@router.put("/api/v1/payments/suppliers/{supplier_payment_id}/tracking")
+async def update_supplier_tracking(
+    supplier_payment_id: str,
+    request: Request,
+    current_user=Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_pii_db),
+):
+    """Admin: update supplier-provided tracking details and move order to supplier_ordered."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    tracking_number = str(body.get("tracking_number") or "").strip()
+    tracking_url_raw = str(body.get("tracking_url") or "").strip()
+    if not tracking_number:
+        raise HTTPException(status_code=422, detail="tracking_number is required")
+
+    row_res = await db.execute(
+        select(SupplierPayment, Order)
+        .join(Order, SupplierPayment.order_id == Order.id)
+        .where(SupplierPayment.id == supplier_payment_id)
+    )
+    row = row_res.first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Supplier payment not found")
+
+    supplier_payment, order = row
+    tracking_url = _build_tracking_url_from_number(tracking_number, tracking_url_raw)
+
+    supplier_payment.tracking_number = tracking_number
+    supplier_payment.tracking_url = tracking_url
+    supplier_payment.status = "tracking_received"
+
+    order.tracking_number = tracking_number
+    order.tracking_url = tracking_url
+    order.status = "supplier_ordered"
+
+    title = "📦 מספר מעקב עודכן להזמנה"
+    msg = (
+        f"הספק עדכן מספר מעקב להזמנה {order.order_number}.\n"
+        f"מספר מעקב: {tracking_number}\n"
+        + (f"קישור מעקב: {tracking_url}" if tracking_url else "")
+    )
+    db.add(Notification(
+        user_id=order.user_id,
+        title=title,
+        message=msg,
+        type="order_update",
+        data={
+            "order_id": str(order.id),
+            "order_number": order.order_number,
+            "supplier_payment_id": str(supplier_payment.id),
+            "tracking_number": tracking_number,
+            "tracking_url": tracking_url,
+        },
+    ))
+    asyncio.create_task(_guarded_task(publish_notification(str(order.user_id), {"type": "order_update", "title": title, "message": msg})))
+
+    await db.commit()
+    return {
+        "message": "Tracking updated",
+        "supplier_payment_id": str(supplier_payment.id),
+        "order_id": str(order.id),
+        "order_number": order.order_number,
+        "tracking_number": tracking_number,
+        "tracking_url": tracking_url,
+    }
+
+
 @router.post("/api/v1/payments/webhook")
 async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_pii_db)):
     """Stripe webhook for async payment confirmation (backup to verify-session)."""
@@ -920,7 +1400,8 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_pii_db
     payload = await request.body()
     sig_header = request.headers.get("stripe-signature", "")
     webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET", "")
-    stripe_sdk.api_key = os.getenv("STRIPE_SECRET_KEY", "")
+    stripe_key, _ = resolve_stripe_secret_key()
+    stripe_sdk.api_key = stripe_key
 
     # Reject webhook silently (return 400) when secret is not configured — never
     # fall through to forged-event handling.
@@ -1054,8 +1535,8 @@ async def refund_payment(
     if payment.status not in ("paid", "succeeded"):
         raise HTTPException(status_code=400, detail=f"Payment status '{payment.status}' cannot be refunded")
 
-    stripe_key = os.getenv("STRIPE_SECRET_KEY", "")
-    if not stripe_key or stripe_key.startswith("sk_test_xxxxx"):
+    stripe_key, _ = resolve_stripe_secret_key()
+    if not _is_valid_stripe_secret_key(stripe_key):
         raise HTTPException(status_code=503, detail="Stripe not configured")
 
     stripe_sdk.api_key = stripe_key
@@ -1088,7 +1569,15 @@ async def refund_payment(
         # Get order for notification + Invoice
         order_res = await db.execute(select(Order).where(Order.id == payment.order_id))
         order = order_res.scalar_one_or_none()
+        supplier_refund_summary = None
         if order:
+            supplier_refund_summary = await trigger_supplier_refund(
+                order=order,
+                db=db,
+                reason=reason,
+                customer_refund_amount_ils=refund_ils,
+            )
+
             _refund_msg = f"החזר כספי של ₪{refund_ils:.2f} בוצע עבור הזמנה {order.order_number}."
             db.add(Notification(
                 user_id=order.user_id,
@@ -1111,7 +1600,12 @@ async def refund_payment(
                 ))
 
         await db.commit()
-        return {"message": "Refund processed", "refund_id": stripe_refund.id, "amount": refund_ils}
+        return {
+            "message": "Refund processed",
+            "refund_id": stripe_refund.id,
+            "amount": refund_ils,
+            "supplier_refund": supplier_refund_summary,
+        }
 
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -1119,6 +1613,39 @@ async def refund_payment(
 
 @router.get("/api/v1/payments/history")
 async def get_payment_history(current_user=Depends(get_current_user), limit: int = 50, db: AsyncSession = Depends(get_pii_db)):
-    result = await db.execute(select(Payment).join(Order).where(Order.user_id == current_user.id).order_by(Payment.created_at.desc()).limit(limit))
-    payments = result.scalars().all()
-    return {"payments": [{"id": str(p.id), "amount": float(p.amount), "status": p.status, "created_at": p.created_at} for p in payments]}
+    result = await db.execute(
+        select(Payment, Order)
+        .join(Order, Payment.order_id == Order.id)
+        .where(
+            and_(
+                Order.user_id == current_user.id,
+                Order.deleted_at.is_(None),
+            )
+        )
+        .order_by(desc(Payment.created_at))
+        .limit(max(limit * 3, 100))
+    )
+    rows = result.all()
+
+    seen_keys = set()
+    items = []
+    for payment, order in rows:
+        key = payment.provider_transaction_id or payment.payment_intent_id or f"{order.id}:{payment.status}:{payment.amount}"
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        items.append({
+            "id": str(payment.id),
+            "order_id": str(order.id),
+            "order_number": order.order_number,
+            "amount": float(payment.amount),
+            "status": payment.status,
+            "payment_method": payment.payment_method,
+            "provider": payment.provider,
+            "provider_transaction_id": payment.provider_transaction_id,
+            "created_at": payment.created_at,
+        })
+        if len(items) >= limit:
+            break
+
+    return {"payments": items}

@@ -37,6 +37,8 @@ function normalizeErrorPayload(error) {
   }
 
   if (data.error && typeof data.error === 'object' && !Array.isArray(data.error)) {
+    // Preserve machine-readable error codes/details for UI flows (price_updated, part_unavailable, etc.)
+    data.error_obj = data.error
     data.error = data.error.message || data.error.detail || 'אירעה שגיאה'
   }
 

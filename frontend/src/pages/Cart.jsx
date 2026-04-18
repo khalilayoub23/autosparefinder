@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useCartStore } from '../stores/cartStore'
 import { useAuthStore } from '../stores/authStore'
 import { cartApi, ordersApi, paymentsApi } from '../api/orders'
@@ -20,6 +20,7 @@ export default function Cart() {
   const [orderNumber, setOrderNumber] = useState(null)
   const [pendingCheckoutTotal, setPendingCheckoutTotal] = useState(null)
   const [selectedSupplierPartIds, setSelectedSupplierPartIds] = useState([])
+  const createOrderLockRef = useRef(false)
   const t = totals()
 
   useEffect(() => {
@@ -69,10 +70,15 @@ export default function Cart() {
   const parseApiErrorMessage = (err, fallback) => {
     const data = err?.response?.data
     const detail = data?.detail
+    const errorObj = data?.error_obj
     if (typeof detail === 'string') return detail
     if (detail && typeof detail === 'object') {
       if (typeof detail.message === 'string') return detail.message
       if (typeof detail.detail === 'string' && !['price_updated', 'part_unavailable'].includes(detail.detail)) return detail.detail
+    }
+    if (errorObj && typeof errorObj === 'object') {
+      if (typeof errorObj.message === 'string') return errorObj.message
+      if (typeof errorObj.detail === 'string' && !['price_updated', 'part_unavailable'].includes(errorObj.detail)) return errorObj.detail
     }
     if (typeof data?.error === 'string') return data.error
     if (typeof data?.message === 'string') return data.message
@@ -179,10 +185,13 @@ export default function Cart() {
   }
 
   const handleCreateOrder = async () => {
+    if (createOrderLockRef.current) return
     if (!address.street || !address.city) { toast.error('יש למלא כתובת מלאה'); return }
     if (selectedItems.length === 0) { toast.error('יש לבחור לפחות חלק אחד לתשלום'); return }
 
+    createOrderLockRef.current = true
     setIsOrdering(true)
+    let redirecting = false
     try {
       let activeOrderId = orderId
 
@@ -233,12 +242,13 @@ export default function Cart() {
       const { data: checkout } = await paymentsApi.createCheckout(activeOrderId)
       setPendingCheckoutTotal(null)
       if (checkout.checkout_url) {
+        redirecting = true
         window.location.href = checkout.checkout_url
       } else {
         throw new Error('לא התקבל קישור לתשלום')
       }
     } catch (err) {
-        const detailObj = err.response?.data?.detail_obj
+        const detailObj = err.response?.data?.detail_obj || err.response?.data?.error_obj
         if (detailObj?.detail === 'price_updated') {
           const nextTotal = Number(detailObj.new_total)
           if (Number.isFinite(nextTotal)) {
@@ -253,7 +263,11 @@ export default function Cart() {
         resetPendingCheckout()
         toast.error(parseApiErrorMessage(err, 'שגיאה ביצירת הזמנה'))
       }
-      setIsOrdering(false)
+    } finally {
+      if (!redirecting) {
+        setIsOrdering(false)
+        createOrderLockRef.current = false
+      }
     }
   }
 

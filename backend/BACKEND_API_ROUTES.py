@@ -58,6 +58,7 @@ BLOCKED_SETTINGS = {
 }
 
 from routes.utils import _guarded_task, trigger_supplier_fulfillment  # shared background-loop utilities
+from routes.stripe_config import resolve_stripe_secret_key, is_valid_stripe_secret_key
 
 
 def _is_blocked_setting_key(key: str) -> bool:
@@ -799,8 +800,8 @@ async def _health_monitor_loop():
                 continue
         states["clamav"] = "ok" if _clam_ok else "error"
 
-        _stripe_key = os.getenv("STRIPE_SECRET_KEY", "")
-        states["stripe"] = "ok" if (_stripe_key and not _stripe_key.startswith("sk_test_xxxxx")) else "error"
+        _stripe_key, _ = resolve_stripe_secret_key()
+        states["stripe"] = "ok" if is_valid_stripe_secret_key(_stripe_key) else "error"
 
         return states
 

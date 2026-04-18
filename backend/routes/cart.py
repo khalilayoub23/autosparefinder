@@ -12,6 +12,8 @@ Endpoints:
   DELETE /api/v1/customers/wishlist/{part_id}
 """
 import uuid
+import json
+import hashlib
 from datetime import datetime
 from typing import Any
 
@@ -24,6 +26,7 @@ from BACKEND_DATABASE_MODELS import (
     User, USD_TO_ILS,
 )
 from BACKEND_AUTH_SECURITY import get_current_user, get_current_verified_user
+from BACKEND_AUTH_SECURITY import get_redis
 from routes.schemas import (
     CartAddRequest,
     WishlistAddRequest,
@@ -33,6 +36,38 @@ from routes.schemas import (
 from routes.utils import _mask_supplier
 
 router = APIRouter()
+
+
+def _normalize_checkout_address(address: dict[str, Any]) -> dict[str, str]:
+    normalized: dict[str, str] = {}
+    for key, value in (address or {}).items():
+        if value is None:
+            continue
+        k = str(key).strip().lower()
+        if not k:
+            continue
+        if isinstance(value, str):
+            v = " ".join(value.strip().lower().split())
+        else:
+            v = str(value).strip().lower()
+        normalized[k] = v
+    return normalized
+
+
+def _build_checkout_fingerprint(user_id: Any, order_payload: OrderCreate) -> str:
+    items_signature: list[tuple[str, int]] = []
+    for item in order_payload.items:
+        if not item.supplier_part_id:
+            continue
+        items_signature.append((str(item.supplier_part_id), int(item.quantity or 0)))
+    items_signature.sort(key=lambda row: (row[0], row[1]))
+
+    payload = {
+        "user_id": str(user_id),
+        "shipping_address": _normalize_checkout_address(order_payload.shipping_address),
+        "items": items_signature,
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
 # ── Private helpers ───────────────────────────────────────────────────────────
@@ -248,6 +283,7 @@ async def checkout(
     current_user: User = Depends(get_current_verified_user),
     db: AsyncSession = Depends(get_pii_db),
     cat_db: AsyncSession = Depends(get_db),
+    redis=Depends(get_redis),
 ):
     """
     Convert the user's server-side cart into an Order, then empty the cart.
@@ -255,7 +291,7 @@ async def checkout(
     Supports partial checkout via optional selected_supplier_part_ids.
     """
     from BACKEND_DATABASE_MODELS import Cart, CartItem as CartItemModel
-    from routes.orders import create_order
+    from routes.orders import create_order, _find_recent_duplicate_pending_order
 
     if not isinstance(payload, dict):
         raise HTTPException(status_code=422, detail="Invalid checkout payload")
@@ -318,26 +354,65 @@ async def checkout(
         shipping_address=shipping_address,
     )
 
-    # Delegate to the existing create_order function — no logic duplication
-    order_result = await create_order(
-        data=order_payload,
-        current_user=current_user,
-        cat_db=cat_db,
-        db=db,
-    )
+    redis_lock_key = None
+    redis_lock_token = None
+    redis_lock_acquired = False
 
-    # Clear only checked-out items on success.
-    # If no explicit selection was sent, this removes all items (legacy behavior).
-    for ci in selected_cart_items:
-        await db.delete(ci)
-    await db.flush()
+    if redis is not None:
+        redis_lock_key = f"checkout:dedupe:{_build_checkout_fingerprint(current_user.id, order_payload)}"
+        redis_lock_token = str(uuid.uuid4())
+        try:
+            redis_lock_acquired = bool(
+                await redis.set(redis_lock_key, redis_lock_token, nx=True, ex=120)
+            )
+        except Exception:
+            redis_lock_acquired = False
 
-    await db.execute(
-        text("UPDATE carts SET updated_at = now() WHERE id = :cid"),
-        {"cid": str(cart.id)},
-    )
+        if not redis_lock_acquired:
+            duplicate_order = await _find_recent_duplicate_pending_order(order_payload, current_user, db)
+            if duplicate_order:
+                return {
+                    "order_id": str(duplicate_order.id),
+                    "order_number": duplicate_order.order_number,
+                    "status": duplicate_order.status,
+                    "subtotal": float(duplicate_order.subtotal),
+                    "vat": float(duplicate_order.vat_amount),
+                    "shipping": float(duplicate_order.shipping_cost),
+                    "total": float(duplicate_order.total_amount),
+                    "deduplicated": True,
+                }
+            raise HTTPException(status_code=409, detail="Checkout already in progress. Please wait and retry.")
 
-    return order_result
+    try:
+        # Delegate to the existing create_order function — no logic duplication
+        order_result = await create_order(
+            data=order_payload,
+            current_user=current_user,
+            cat_db=cat_db,
+            db=db,
+            redis=redis,
+        )
+
+        # Clear only checked-out items on success.
+        # If no explicit selection was sent, this removes all items (legacy behavior).
+        for ci in selected_cart_items:
+            await db.delete(ci)
+        await db.flush()
+
+        await db.execute(
+            text("UPDATE carts SET updated_at = now() WHERE id = :cid"),
+            {"cid": str(cart.id)},
+        )
+
+        return order_result
+    finally:
+        if redis is not None and redis_lock_key and redis_lock_token and redis_lock_acquired:
+            try:
+                current_lock_value = await redis.get(redis_lock_key)
+                if current_lock_value == redis_lock_token:
+                    await redis.delete(redis_lock_key)
+            except Exception:
+                pass
 
 
 # ── Wishlist endpoints ────────────────────────────────────────────────────────

@@ -29,11 +29,24 @@ export default function Layout({ children }) {
   const [selectedNotif, setSelectedNotif] = useState(null)
   const notifsRef = useRef(null)
   const { user, logout, fetchMe } = useAuthStore()
-  const { totals } = useCartStore()
+  const { totals, setItems } = useCartStore()
   const location = useLocation()
   const navigate = useNavigate()
   const isAdminRoute = location.pathname === '/admin'
   const cartTotals = (() => { try { return totals() } catch { return { subtotal: 0, vat: 0, shipping: 0, total: 0, count: 0 } } })()
+  const cartBadgeLabel = cartTotals.count > 99 ? '99+' : String(cartTotals.count)
+
+  const mapServerCartItems = (serverItems = []) =>
+    serverItems.map((item) => ({
+      partId: item.partId,
+      supplierPartId: item.supplierPartId || item.supplier_part_id || item.id,
+      serverCartItemId: item.id,
+      name: item.name,
+      manufacturer: item.supplierName || 'Supplier',
+      price: Number(item.price || 0),
+      vat: 0,
+      quantity: Number(item.quantity || 1),
+    }))
 
   // Refresh user on mount to ensure is_admin and other fields are current
   useEffect(() => { fetchMe() }, [])
@@ -54,6 +67,22 @@ export default function Layout({ children }) {
     document.addEventListener('mousedown', handleClick)
     return () => { clearInterval(id); document.removeEventListener('mousedown', handleClick) }
   }, [])
+
+  useEffect(() => {
+    if (!user) {
+      setItems([])
+      return
+    }
+
+    const syncCartBadge = () =>
+      api.get('/customers/cart')
+        .then(({ data }) => setItems(mapServerCartItems(data.items || [])))
+        .catch(() => {})
+
+    syncCartBadge()
+    const id = setInterval(syncCartBadge, 30000)
+    return () => clearInterval(id)
+  }, [user?.id])
 
   const handleLogout = () => {
     logout()
@@ -138,8 +167,8 @@ export default function Layout({ children }) {
             <Link to="/cart" className="relative btn-ghost p-2">
               <ShoppingCart className="w-5 h-5" />
               {cartTotals.count > 0 && (
-                <span className="absolute -top-1 -left-1 w-5 h-5 bg-brand-600 text-white text-xs rounded-full flex items-center justify-center font-bold">
-                  {cartTotals.count}
+                <span className="absolute -top-1 -left-1 min-w-[1.25rem] h-5 px-1 bg-brand-600 text-white text-[10px] rounded-full flex items-center justify-center font-bold leading-none">
+                  {cartBadgeLabel}
                 </span>
               )}
             </Link>

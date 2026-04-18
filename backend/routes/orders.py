@@ -4,7 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
-from datetime import datetime
+from datetime import datetime, timedelta
+import json
+import hashlib
 import uuid
 import os
 import asyncio
@@ -24,127 +26,329 @@ from BACKEND_DATABASE_MODELS import (
     Supplier as SupplierModel,
     USD_TO_ILS,
 )
-from BACKEND_AUTH_SECURITY import get_current_user, get_current_verified_user
+from BACKEND_AUTH_SECURITY import get_current_user, get_current_verified_user, get_redis
 from routes.schemas import OrderCreate, OrderCancelRequest, ReturnRequest
-from routes.utils import _mask_supplier, _guarded_task
+from routes.stripe_config import resolve_stripe_secret_key, is_valid_stripe_secret_key
+from routes.utils import _mask_supplier, _guarded_task, trigger_supplier_refund
 
 router = APIRouter()
 
 
+def _normalize_shipping_address(address: dict | None) -> dict[str, str]:
+    if not isinstance(address, dict):
+        return {}
+
+    normalized: dict[str, str] = {}
+    for raw_key, raw_value in address.items():
+        if raw_value is None:
+            continue
+        key = str(raw_key).strip().lower()
+        if not key:
+            continue
+        if isinstance(raw_value, str):
+            value = " ".join(raw_value.strip().lower().split())
+        else:
+            value = str(raw_value).strip().lower()
+        normalized[key] = value
+    return normalized
+
+
+def _build_items_signature(items) -> dict[str, int]:
+    signature: dict[str, int] = {}
+    for item in items:
+        supplier_part_id = getattr(item, "supplier_part_id", None)
+        quantity = int(getattr(item, "quantity", 0) or 0)
+        if not supplier_part_id or quantity <= 0:
+            continue
+        key = str(supplier_part_id)
+        signature[key] = signature.get(key, 0) + quantity
+    return signature
+
+
+async def _find_recent_duplicate_pending_order(
+    data: OrderCreate,
+    current_user: User,
+    db: AsyncSession,
+) -> Order | None:
+    requested_items = _build_items_signature(data.items)
+    if not requested_items:
+        return None
+
+    requested_address = _normalize_shipping_address(data.shipping_address)
+    cutoff = datetime.utcnow() - timedelta(seconds=120)
+
+    candidates_res = await db.execute(
+        select(Order)
+        .where(
+            and_(
+                Order.user_id == current_user.id,
+                Order.status == "pending_payment",
+                Order.deleted_at.is_(None),
+                Order.created_at >= cutoff,
+            )
+        )
+        .order_by(Order.created_at.desc())
+        .limit(5)
+    )
+    candidates = candidates_res.scalars().all()
+
+    for candidate in candidates:
+        if _normalize_shipping_address(candidate.shipping_address) != requested_address:
+            continue
+
+        sig_res = await db.execute(
+            select(OrderItem.supplier_part_id, OrderItem.quantity).where(OrderItem.order_id == candidate.id)
+        )
+        candidate_signature: dict[str, int] = {}
+        for supplier_part_id, quantity in sig_res.all():
+            if not supplier_part_id:
+                continue
+            key = str(supplier_part_id)
+            candidate_signature[key] = candidate_signature.get(key, 0) + int(quantity or 0)
+
+        if candidate_signature == requested_items:
+            return candidate
+
+    return None
+
+
+def _build_order_fingerprint(data: OrderCreate, user_id: uuid.UUID) -> str:
+    payload = {
+        "user_id": str(user_id),
+        "shipping_address": _normalize_shipping_address(data.shipping_address),
+        "items": sorted(_build_items_signature(data.items).items(), key=lambda row: row[0]),
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def _build_existing_order_fingerprint(order: Order, item_signature: dict[str, int]) -> str:
+    payload = {
+        "user_id": str(order.user_id),
+        "shipping_address": _normalize_shipping_address(order.shipping_address),
+        "items": sorted(item_signature.items(), key=lambda row: row[0]),
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
 @router.post("/api/v1/orders", status_code=status.HTTP_201_CREATED)
-async def create_order(data: OrderCreate, current_user: User = Depends(get_current_verified_user), cat_db: AsyncSession = Depends(get_db), db: AsyncSession = Depends(get_pii_db)):
+async def create_order(
+    data: OrderCreate,
+    current_user: User = Depends(get_current_verified_user),
+    cat_db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_pii_db),
+    redis=Depends(get_redis),
+):
     from BACKEND_AI_AGENTS import get_supplier_shipping as _get_ship2
 
     if not data.items:
         raise HTTPException(status_code=400, detail="לא ניתן ליצור הזמנה ללא פריטים")
 
-    subtotal = 0.0
-    items_data = []
-    # USD_TO_ILS is imported from BACKEND_DATABASE_MODELS (single source of truth)
-    # Track unique suppliers in this order -> charge delivery fee once per supplier origin
-    supplier_delivery_fees: dict[str, float] = {}
+    lock_key = None
+    lock_token = None
+    lock_acquired = False
 
-    for item in data.items:
-        res = await cat_db.execute(
-            select(SupplierPart, PartsCatalog, SupplierModel)
-            .join(PartsCatalog, SupplierPart.part_id == PartsCatalog.id)
-            .join(SupplierModel, SupplierPart.supplier_id == SupplierModel.id)
-            .where(SupplierPart.id == item.supplier_part_id)
-        )
-        row = res.first()
-        if not row:
-            raise HTTPException(status_code=404, detail=f"חלק {item.supplier_part_id} לא נמצא. נסה לרענן את הדף ולהוסיף את החלק מחדש לסל.")
-        sp, part, supplier_rec = row
-        cost_ils = float(sp.price_ils or 0) or (float(sp.price_usd or 0) * USD_TO_ILS)
-        ship_ils = float(sp.shipping_cost_ils or 0)
-        total_cost_ils = cost_ils + ship_ils
-        delivery_fee = _get_ship2(supplier_rec.name or "")
-        supplier_delivery_fees[str(supplier_rec.id)] = delivery_fee
-        unit_price = round(total_cost_ils * 1.45, 2)
-        vat = round(unit_price * 0.18, 2)
-        subtotal += unit_price * item.quantity
-        items_data.append(
-            {
-                "part_id": item.part_id or str(part.id),
-                "supplier_part_id": item.supplier_part_id,
-                "quantity": item.quantity,
-                "unit_price": unit_price,
-                "vat": vat,
-                "part": part,
-                "sp": sp,
-                "supplier_name": _mask_supplier(supplier_rec.name),
-            }
-        )
-
-    vat_total = round(subtotal * 0.18, 2)
-    shipping = round(sum(supplier_delivery_fees.values()), 2)
-    total = round(subtotal + vat_total + shipping, 2)
-
-    # Guardrail: never create non-payable (zero/negative) orders.
-    if total <= 0:
-        raise HTTPException(status_code=400, detail="לא ניתן ליצור הזמנה בסכום 0")
-
-    if not items_data:
-        raise HTTPException(status_code=400, detail="לא ניתן ליצור הזמנה ללא פריטים")
-
-    order_number = f"AUTO-2026-{str(uuid.uuid4())[:8].upper()}"
-
-    order = Order(
-        order_number=order_number,
-        user_id=current_user.id,
-        status="pending_payment",
-        subtotal=subtotal,
-        vat_amount=vat_total,
-        shipping_cost=shipping,
-        total_amount=total,
-        shipping_address=data.shipping_address,
-    )
-    db.add(order)
-    await db.flush()
-
-    for d in items_data:
+    if redis is not None and hasattr(redis, "set") and hasattr(redis, "get"):
+        lock_key = f"order:create:{_build_order_fingerprint(data, current_user.id)}"
+        lock_token = str(uuid.uuid4())
         try:
-            _part_id = uuid.UUID(str(d["part_id"])) if d["part_id"] else None
-            _sp_id = uuid.UUID(str(d["supplier_part_id"]))
-        except (ValueError, AttributeError):
-            _part_id = None
-            _sp_id = None
+            lock_acquired = bool(await redis.set(lock_key, lock_token, nx=True, ex=120))
+        except Exception:
+            lock_acquired = False
 
-        db.add(
-            OrderItem(
-                order_id=order.id,
-                part_id=_part_id,
-                supplier_part_id=_sp_id,
-                part_name=d["part"].name,
-                part_sku=d["part"].sku,
-                manufacturer=d["part"].manufacturer,
-                part_type=d["part"].part_type,
-                supplier_name=d["supplier_name"],
-                quantity=d["quantity"],
-                unit_price=d["unit_price"],
-                vat_amount=d["vat"],
-                total_price=(d["unit_price"] + d["vat"]) * d["quantity"],
-                warranty_months=d["sp"].warranty_months,
+        if not lock_acquired:
+            duplicate_order = await _find_recent_duplicate_pending_order(data, current_user, db)
+            if duplicate_order:
+                return {
+                    "order_id": str(duplicate_order.id),
+                    "order_number": duplicate_order.order_number,
+                    "status": duplicate_order.status,
+                    "subtotal": float(duplicate_order.subtotal),
+                    "vat": float(duplicate_order.vat_amount),
+                    "shipping": float(duplicate_order.shipping_cost),
+                    "total": float(duplicate_order.total_amount),
+                    "deduplicated": True,
+                }
+            raise HTTPException(status_code=409, detail="Order creation already in progress. Please retry.")
+
+    try:
+        duplicate_order = await _find_recent_duplicate_pending_order(data, current_user, db)
+        if duplicate_order:
+            return {
+                "order_id": str(duplicate_order.id),
+                "order_number": duplicate_order.order_number,
+                "status": duplicate_order.status,
+                "subtotal": float(duplicate_order.subtotal),
+                "vat": float(duplicate_order.vat_amount),
+                "shipping": float(duplicate_order.shipping_cost),
+                "total": float(duplicate_order.total_amount),
+                "deduplicated": True,
+            }
+
+        subtotal = 0.0
+        items_data = []
+        # USD_TO_ILS is imported from BACKEND_DATABASE_MODELS (single source of truth)
+        # Track unique suppliers in this order -> charge delivery fee once per supplier origin
+        supplier_delivery_fees: dict[str, float] = {}
+
+        for item in data.items:
+            res = await cat_db.execute(
+                select(SupplierPart, PartsCatalog, SupplierModel)
+                .join(PartsCatalog, SupplierPart.part_id == PartsCatalog.id)
+                .join(SupplierModel, SupplierPart.supplier_id == SupplierModel.id)
+                .where(SupplierPart.id == item.supplier_part_id)
             )
-        )
+            row = res.first()
+            if not row:
+                raise HTTPException(status_code=404, detail=f"חלק {item.supplier_part_id} לא נמצא. נסה לרענן את הדף ולהוסיף את החלק מחדש לסל.")
+            sp, part, supplier_rec = row
+            cost_ils = float(sp.price_ils or 0) or (float(sp.price_usd or 0) * USD_TO_ILS)
+            ship_ils = float(sp.shipping_cost_ils or 0)
+            total_cost_ils = cost_ils + ship_ils
+            delivery_fee = _get_ship2(supplier_rec.name or "")
+            supplier_delivery_fees[str(supplier_rec.id)] = delivery_fee
+            unit_price = round(total_cost_ils * 1.45, 2)
+            vat = round(unit_price * 0.18, 2)
+            subtotal += unit_price * item.quantity
+            items_data.append(
+                {
+                    "part_id": item.part_id or str(part.id),
+                    "supplier_part_id": item.supplier_part_id,
+                    "quantity": item.quantity,
+                    "unit_price": unit_price,
+                    "vat": vat,
+                    "part": part,
+                    "sp": sp,
+                    "supplier_name": _mask_supplier(supplier_rec.name),
+                }
+            )
 
-    await db.commit()
-    await db.refresh(order)
-    return {
-        "order_id": str(order.id),
-        "order_number": order.order_number,
-        "status": order.status,
-        "subtotal": float(order.subtotal),
-        "vat": float(order.vat_amount),
-        "shipping": float(order.shipping_cost),
-        "total": float(order.total_amount),
-    }
+        vat_total = round(subtotal * 0.18, 2)
+        shipping = round(sum(supplier_delivery_fees.values()), 2)
+        total = round(subtotal + vat_total + shipping, 2)
+
+        # Guardrail: never create non-payable (zero/negative) orders.
+        if total <= 0:
+            raise HTTPException(status_code=400, detail="לא ניתן ליצור הזמנה בסכום 0")
+
+        if not items_data:
+            raise HTTPException(status_code=400, detail="לא ניתן ליצור הזמנה ללא פריטים")
+
+        order_number = f"AUTO-2026-{str(uuid.uuid4())[:8].upper()}"
+
+        order = Order(
+            order_number=order_number,
+            user_id=current_user.id,
+            status="pending_payment",
+            subtotal=subtotal,
+            vat_amount=vat_total,
+            shipping_cost=shipping,
+            total_amount=total,
+            shipping_address=data.shipping_address,
+        )
+        db.add(order)
+        await db.flush()
+
+        for d in items_data:
+            try:
+                _part_id = uuid.UUID(str(d["part_id"])) if d["part_id"] else None
+                _sp_id = uuid.UUID(str(d["supplier_part_id"]))
+            except (ValueError, AttributeError):
+                _part_id = None
+                _sp_id = None
+
+            db.add(
+                OrderItem(
+                    order_id=order.id,
+                    part_id=_part_id,
+                    supplier_part_id=_sp_id,
+                    part_name=d["part"].name,
+                    part_sku=d["part"].sku,
+                    manufacturer=d["part"].manufacturer,
+                    part_type=d["part"].part_type,
+                    supplier_name=d["supplier_name"],
+                    quantity=d["quantity"],
+                    unit_price=d["unit_price"],
+                    vat_amount=d["vat"],
+                    total_price=(d["unit_price"] + d["vat"]) * d["quantity"],
+                    warranty_months=d["sp"].warranty_months,
+                )
+            )
+
+        await db.commit()
+        await db.refresh(order)
+        return {
+            "order_id": str(order.id),
+            "order_number": order.order_number,
+            "status": order.status,
+            "subtotal": float(order.subtotal),
+            "vat": float(order.vat_amount),
+            "shipping": float(order.shipping_cost),
+            "total": float(order.total_amount),
+        }
+    finally:
+        if redis is not None and hasattr(redis, "get") and hasattr(redis, "delete") and lock_key and lock_token and lock_acquired:
+            try:
+                current_value = await redis.get(lock_key)
+                if current_value == lock_token:
+                    await redis.delete(lock_key)
+            except Exception:
+                pass
 
 
 @router.get("/api/v1/orders")
 async def get_orders(current_user: User = Depends(get_current_user), limit: int = 50, db: AsyncSession = Depends(get_pii_db)):
-    result = await db.execute(select(Order).where(Order.user_id == current_user.id).order_by(Order.created_at.desc()).limit(limit))
+    result = await db.execute(
+        select(Order)
+        .where(
+            and_(
+                Order.user_id == current_user.id,
+                Order.deleted_at.is_(None),
+            )
+        )
+        .order_by(Order.created_at.desc())
+        .limit(limit)
+    )
     orders = result.scalars().all()
+
+    # Safety net: suppress accidental duplicate pending-payment orders that were
+    # created within a short window with identical address + item signature.
+    if orders:
+        pending_orders = [o for o in orders if o.status == "pending_payment"]
+        pending_ids = [o.id for o in pending_orders]
+        items_by_order: dict[str, dict[str, int]] = {}
+        if pending_ids:
+            rows = await db.execute(
+                select(OrderItem.order_id, OrderItem.supplier_part_id, OrderItem.quantity)
+                .where(OrderItem.order_id.in_(pending_ids))
+            )
+            for order_id, supplier_part_id, quantity in rows.all():
+                if not supplier_part_id:
+                    continue
+                oid = str(order_id)
+                sig = items_by_order.setdefault(oid, {})
+                sid = str(supplier_part_id)
+                sig[sid] = sig.get(sid, 0) + int(quantity or 0)
+
+        seen_pending_fingerprints: set[str] = set()
+        filtered_orders: list[Order] = []
+        cutoff = datetime.utcnow() - timedelta(minutes=10)
+        for order in orders:
+            if (
+                order.status == "pending_payment"
+                and order.created_at
+                and order.created_at >= cutoff
+            ):
+                fp = _build_existing_order_fingerprint(
+                    order,
+                    items_by_order.get(str(order.id), {}),
+                )
+                if fp in seen_pending_fingerprints:
+                    continue
+                seen_pending_fingerprints.add(fp)
+            filtered_orders.append(order)
+
+        orders = filtered_orders
+
     return {
         "orders": [
             {
@@ -229,14 +433,15 @@ async def cancel_order(order_id: uuid.UUID, data: OrderCancelRequest, current_us
 
     refund_id = None
     refund_amount = None
+    supplier_refund_summary = None
 
     if was_paid:
         pay_res = await db.execute(select(Payment).where(and_(Payment.order_id == order.id, Payment.status == "paid")))
         payment = pay_res.scalar_one_or_none()
 
         if payment and payment.payment_intent_id:
-            stripe_key = os.getenv("STRIPE_SECRET_KEY", "")
-            if stripe_key and not stripe_key.startswith("sk_test_xxxxx"):
+            stripe_key, _ = resolve_stripe_secret_key()
+            if is_valid_stripe_secret_key(stripe_key):
                 stripe_sdk.api_key = stripe_key
                 try:
                     session_obj = await asyncio.get_running_loop().run_in_executor(
@@ -323,12 +528,21 @@ async def cancel_order(order_id: uuid.UUID, data: OrderCancelRequest, current_us
             )
         )
 
+        if refund_id and order:
+            supplier_refund_summary = await trigger_supplier_refund(
+                order=order,
+                db=db,
+                reason=data.reason or "ביטול על ידי לקוח",
+                customer_refund_amount_ils=refund_amount or float(order.total_amount or 0),
+            )
+
     await db.commit()
     return {
         "message": "Order cancelled",
         "refund_initiated": was_paid,
         "refund_id": refund_id,
         "refund_amount": refund_amount,
+        "supplier_refund": supplier_refund_summary,
     }
 
 

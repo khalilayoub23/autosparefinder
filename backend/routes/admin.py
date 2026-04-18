@@ -212,11 +212,11 @@ async def mark_supplier_order_done(
                 ))
                 asyncio.create_task(_guarded_task(publish_notification(str(order.user_id), {"type": "order_update", "title": _track_title, "message": _track_msg})))
             else:
-                # No tracking yet — still advance status so customer sees progress
-                if order.status in ("processing", "paid"):
-                    order.status = "supplier_ordered"
+                # No tracking yet — keep processing until a real tracking number exists.
+                if order.status in ("paid", "confirmed"):
+                    order.status = "processing"
                 _notrack_title = "🛒 ההזמנה הועברה לספק"
-                _notrack_msg = f"הזמנה {order.order_number} הוזמנה מהספק ובדרך אליך. מספר מעקב יעודכן בהקדם."
+                _notrack_msg = f"הזמנה {order.order_number} שולמה לספק ונמצאת בעיבוד. מספר מעקב יעודכן ברגע שיתקבל."
                 db.add(Notification(
                     user_id=order.user_id,
                     type="order_update",

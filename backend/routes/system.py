@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, text
 
+from routes.stripe_config import resolve_stripe_secret_key, is_valid_stripe_secret_key
 from BACKEND_DATABASE_MODELS import (
     get_db, async_session_factory, pii_session_factory,
     SystemSetting,
@@ -96,8 +97,8 @@ async def health_check():
         results["clamav"] = {"status": "error", "error": str(_e)}
 
     # ── Stripe ────────────────────────────────────────────────────────────────
-    _stripe_key = os.getenv("STRIPE_SECRET_KEY", "")
-    if _stripe_key and not _stripe_key.startswith("sk_test_xxxxx"):
+    _stripe_key, _ = resolve_stripe_secret_key()
+    if is_valid_stripe_secret_key(_stripe_key):
         results["stripe"] = {"status": "ok"}
     else:
         results["stripe"] = {"status": "error", "error": "key not configured"}

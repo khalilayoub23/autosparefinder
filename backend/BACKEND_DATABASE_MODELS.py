@@ -912,6 +912,7 @@ class Order(PiiBase):
     user = relationship("User", back_populates="orders")
     items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
     payment = relationship("Payment", back_populates="order", uselist=False)
+    supplier_payments = relationship("SupplierPayment", back_populates="order", cascade="all, delete-orphan")
     invoice = relationship("Invoice", back_populates="order", uselist=False)
     returns = relationship("Return", back_populates="order")
     # purchase_orders are in autospare catalog DB — no cross-DB relationship
@@ -972,6 +973,40 @@ class Payment(PiiBase):
 
     # Relationships
     order = relationship("Order", back_populates="payment")
+
+
+class SupplierPayment(PiiBase):
+    __tablename__ = "supplier_payments"
+    __table_args__ = (
+        UniqueConstraint("order_id", "supplier_id", name="uq_supplier_payments_order_supplier"),
+        Index("ix_supplier_payments_order_id", "order_id"),
+        Index("ix_supplier_payments_user_id", "user_id"),
+        Index("ix_supplier_payments_status", "status"),
+        Index("ix_supplier_payments_paid_at", "paid_at"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    order_id = Column(UUID(as_uuid=True), ForeignKey("orders.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    supplier_id = Column(UUID(as_uuid=True), nullable=True, index=True)  # cross-DB ref -> autospare.suppliers
+    supplier_name = Column(String(255), nullable=False)
+    amount_ils = Column(Numeric(12, 2), nullable=False)
+    currency = Column(String(3), nullable=False, default="ILS", server_default="ILS")
+    status = Column(String(30), nullable=False, default="pending", index=True)
+    # statuses: pending, paid, failed, tracking_received, cancelled
+    provider = Column(String(50), nullable=False, default="stripe")
+    provider_payment_id = Column(String(255), nullable=True)
+    provider_reference = Column(String(255), nullable=True)
+    payment_method = Column(String(50), nullable=True)
+    tracking_number = Column(String(100), nullable=True)
+    tracking_url = Column(String(500), nullable=True)
+    failure_reason = Column(Text, nullable=True)
+    metadata_json = Column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    paid_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    order = relationship("Order", back_populates="supplier_payments")
 
 
 class Invoice(PiiBase):

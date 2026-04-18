@@ -15,6 +15,18 @@ function safeFormatDate(value) {
   return format(d, 'dd/MM/yyyy HH:mm', { locale: he })
 }
 
+function dedupeOrders(rawOrders = []) {
+  const seen = new Set()
+  const out = []
+  for (const order of rawOrders) {
+    const id = String(order?.id || '')
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    out.push(order)
+  }
+  return out
+}
+
 function buildTrackingUrl(trackingNumber, storedUrl) {
   if (!trackingNumber) return null
   const n = trackingNumber.trim()
@@ -113,10 +125,15 @@ function OrderCard({ order, onReturn, onDelete, selected, onSelect }) {
   const parseApiErrorMessage = (err, fallback) => {
     const data = err?.response?.data
     const detail = data?.detail
+    const errorObj = data?.error_obj
     if (typeof detail === 'string') return detail
     if (detail && typeof detail === 'object') {
       if (typeof detail.message === 'string') return detail.message
       if (typeof detail.detail === 'string' && !['price_updated', 'part_unavailable'].includes(detail.detail)) return detail.detail
+    }
+    if (errorObj && typeof errorObj === 'object') {
+      if (typeof errorObj.message === 'string') return errorObj.message
+      if (typeof errorObj.detail === 'string' && !['price_updated', 'part_unavailable'].includes(errorObj.detail)) return errorObj.detail
     }
     if (typeof data?.error === 'string') return data.error
     if (typeof data?.message === 'string') return data.message
@@ -130,7 +147,7 @@ function OrderCard({ order, onReturn, onDelete, selected, onSelect }) {
       const { data } = await paymentsApi.createCheckout(order.id)
       window.location.href = data.checkout_url
     } catch (err) {
-      const detailObj = err.response?.data?.detail_obj
+      const detailObj = err.response?.data?.detail_obj || err.response?.data?.error_obj
       if (detailObj?.detail === 'price_updated') {
         const nextTotal = Number(detailObj.new_total)
         const amountLabel = Number.isFinite(nextTotal) ? nextTotal.toFixed(2) : '---'
@@ -364,6 +381,14 @@ const RETURN_STATUS_MAP = {
   cancelled: { label: 'בוטל',          color: 'bg-gray-100   text-gray-500'   },
 }
 
+const SUPPLIER_PAYMENT_STATUS_MAP = {
+  pending:          { label: 'ממתין לתשלום ספק', color: 'bg-yellow-100 text-yellow-700' },
+  paid:             { label: 'שולם לספק', color: 'bg-blue-100 text-blue-700' },
+  failed:           { label: 'נכשל', color: 'bg-red-100 text-red-700' },
+  tracking_received:{ label: 'מעקב התקבל', color: 'bg-green-100 text-green-700' },
+  cancelled:        { label: 'הוחזר לספק', color: 'bg-gray-100 text-gray-700' },
+}
+
 // Policy §3 — reasons that qualify for 100% refund (seller pays return shipping)
 const FULL_REFUND_REASONS = new Set(['defective', 'wrong_part', 'damaged_in_transit'])
 
@@ -456,6 +481,7 @@ export default function Orders() {
   const [returns, setReturns] = useState([])
   const [cancellingReturn, setCancellingReturn] = useState(null)
   const [refunds, setRefunds] = useState([])
+  const [supplierPayments, setSupplierPayments] = useState([])
   const [selectedIds, setSelectedIds] = useState(new Set())
   const [bulkPaying, setBulkPaying] = useState(false)
   const [searchParams, setSearchParams] = useSearchParams()
@@ -469,10 +495,11 @@ export default function Orders() {
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    ordersApi.getAll().then(({ data }) => setOrders(data.orders || [])).catch(() => toast.error('שגיאה בטעינת הזמנות')).finally(() => setIsLoading(false))
+    ordersApi.getAll().then(({ data }) => setOrders(dedupeOrders(data.orders || []))).catch(() => toast.error('שגיאה בטעינת הזמנות')).finally(() => setIsLoading(false))
     const loadReturns = () => returnsApi.getAll().then(({ data }) => setReturns(data.returns || [])).catch(() => {})
     loadReturns()
     paymentsApi.getRefunds().then(({ data }) => setRefunds(data.refunds || [])).catch(() => {})
+    paymentsApi.getSupplierPayments().then(({ data }) => setSupplierPayments(data.supplier_payments || [])).catch(() => {})
   }, [])
 
   const refreshReturns = () =>
@@ -524,13 +551,35 @@ export default function Orders() {
         const { data } = await paymentsApi.createMultiCheckout(ids)
         window.location.href = data.checkout_url
       }
-    } catch (err) { const d = err.response?.data?.detail; toast.error(typeof d === 'string' ? d : 'שגיאה בתשלום') }
+    } catch (err) {
+      const detailObj = err.response?.data?.detail_obj || err.response?.data?.error_obj
+      if (detailObj?.detail === 'price_updated') {
+        const updatedCount = Array.isArray(detailObj.updated_orders) ? detailObj.updated_orders.length : 0
+        const countLabel = updatedCount > 0 ? `ב-${updatedCount} הזמנות` : 'בהזמנות'
+        toast(`המחיר עודכן ${countLabel}. לחץ שלם שוב לאישור.`, { icon: '💰', duration: 6000 })
+      } else if (detailObj?.detail === 'part_unavailable') {
+        toast.error(typeof detailObj?.message === 'string' ? detailObj.message : 'אחד החלקים אינו זמין כרגע')
+      } else {
+        const d = err.response?.data?.detail
+        const e = err.response?.data?.error
+        if (typeof d === 'string') toast.error(d)
+        else if (typeof e === 'string') toast.error(e)
+        else toast.error('שגיאה בתשלום')
+      }
+    }
     finally { setBulkPaying(false) }
   }
 
   const handleOrderDelete = (orderId, newStatus = null) => {
     if (newStatus) {
       setOrders((prev) => prev.map((o) => o.id === orderId ? { ...o, status: newStatus } : o))
+      if (newStatus !== 'pending_payment') {
+        setSelectedIds((prev) => {
+          const next = new Set(prev)
+          next.delete(orderId)
+          return next
+        })
+      }
     } else {
       setOrders((prev) => prev.filter((o) => o.id !== orderId))
       setSelectedIds((prev) => { const next = new Set(prev); next.delete(orderId); return next })
@@ -548,6 +597,7 @@ export default function Orders() {
         {[
           { id: 'all',     label: `כל ההזמנות (${orders.length})` },
           { id: 'unpaid',  label: `ממתינות לתשלום`, count: pendingOrders.length },
+          { id: 'supplier_payments', label: 'תשלומי ספקים', count: supplierPayments.length },
           { id: 'refunds', label: `החזרות כספיות`, count: refunds.length },
           { id: 'returns', label: `החזרת מוצרים (${returns.length})` },
         ].map((t) => (
@@ -703,6 +753,101 @@ export default function Orders() {
               </div>
             </>
           )}
+        </div>
+      )}
+
+      {!isLoading && tab === 'supplier_payments' && (
+        <div className="space-y-3">
+          {supplierPayments.length === 0 ? (
+            <div className="card p-12 text-center">
+              <Truck className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+              <h3 className="font-semibold text-gray-700 mb-1">אין עדיין תשלומי ספקים</h3>
+              <p className="text-sm text-gray-400">תשלומי ספקים יוצגו לאחר אישור תשלום לקוח</p>
+            </div>
+          ) : supplierPayments.map((sp) => {
+            const st = SUPPLIER_PAYMENT_STATUS_MAP[sp.status] || { label: sp.status, color: 'bg-gray-100 text-gray-600' }
+            const trackingUrl = buildTrackingUrl(sp.tracking_number, sp.tracking_url)
+            return (
+              <div key={sp.id} className="card p-4 space-y-2">
+                <div className="flex justify-between items-start gap-4">
+                  <div>
+                    <p className="font-semibold text-gray-900 text-sm">{sp.order_number} · {sp.supplier_name}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">סטטוס הזמנה: {STATUS_MAP[sp.order_status]?.label || sp.order_status}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">סכום ששולם לספק: ₪{Number(sp.amount_ils || 0).toFixed(2)}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      מסלול תשלום ספק: {
+                        sp.spend_provider === 'issuing' || sp.provider === 'stripe_issuing'
+                          ? 'Issuing Virtual Card'
+                          : sp.provider === 'stripe'
+                            ? 'Stripe Payments'
+                            : (sp.provider || 'unknown')
+                      }
+                    </p>
+                    {sp.provider_payment_id && (
+                      <p className="text-xs text-gray-400 mt-0.5">Stripe ID: {sp.provider_payment_id}</p>
+                    )}
+                    {sp.issuing_authorization_id && (
+                      <p className="text-xs text-gray-400 mt-0.5">Issuing auth: {sp.issuing_authorization_id}</p>
+                    )}
+                    {sp.issuing_card_id && (
+                      <p className="text-xs text-gray-400 mt-0.5">Virtual card: {sp.issuing_card_id}</p>
+                    )}
+                    {sp.supplier_purchase_status && (
+                      <p className="text-xs text-cyan-700 mt-0.5">
+                        סטטוס הזמנת ספק: {
+                          sp.supplier_purchase_status === 'ordered' ? 'בוצע ונוצר מעקב' :
+                          sp.supplier_purchase_status === 'submitted' ? 'נשלח לסוכן הזמנות' :
+                          sp.supplier_purchase_status === 'agent_failed' ? 'נכשל אצל סוכן ההזמנות' :
+                          sp.supplier_purchase_status
+                        }
+                        {sp.supplier_purchase_carrier ? ` · ${sp.supplier_purchase_carrier}` : ''}
+                      </p>
+                    )}
+                    {sp.paid_at && (
+                      <p className="text-xs text-gray-400 mt-0.5">שולם בתאריך: {safeFormatDate(sp.paid_at)}</p>
+                    )}
+                    {sp.supplier_refund_status && (
+                      <p className="text-xs text-amber-700 mt-1">
+                        החזר ספק: {
+                          sp.supplier_refund_status === 'succeeded' ? 'בוצע' :
+                          sp.supplier_refund_status === 'simulated' ? 'סימולציה' :
+                          sp.supplier_refund_status === 'failed' ? 'נכשל' : sp.supplier_refund_status
+                        }
+                        {sp.supplier_refund_amount_ils ? ` · ₪${Number(sp.supplier_refund_amount_ils).toFixed(2)}` : ''}
+                      </p>
+                    )}
+                    {sp.supplier_refund_id && (
+                      <p className="text-xs text-gray-400 mt-0.5">Supplier refund ID: {sp.supplier_refund_id}</p>
+                    )}
+                    {sp.supplier_refunded_at && (
+                      <p className="text-xs text-gray-400 mt-0.5">הוחזר לספק בתאריך: {safeFormatDate(sp.supplier_refunded_at)}</p>
+                    )}
+                    {sp.failure_reason && (
+                      <p className="text-xs text-red-500 mt-1">שגיאה: {sp.failure_reason}</p>
+                    )}
+                  </div>
+                  <span className={`badge text-xs ${st.color}`}>{st.label}</span>
+                </div>
+
+                {sp.tracking_number && (
+                  <div className="flex items-center gap-2 text-xs text-cyan-700 pt-1 border-t border-gray-100">
+                    <Truck className="w-3.5 h-3.5" />
+                    <span>מעקב: <strong>{sp.tracking_number}</strong></span>
+                    {trackingUrl && (
+                      <a
+                        href={trackingUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 underline hover:text-cyan-900 font-medium"
+                      >
+                        <ExternalLink className="w-3 h-3" /> עקוב אחר המשלוח
+                      </a>
+                    )}
+                  </div>
+                )}
+              </div>
+            )
+          })}
         </div>
       )}
 

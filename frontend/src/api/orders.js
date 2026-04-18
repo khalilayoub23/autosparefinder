@@ -30,6 +30,7 @@ export const paymentsApi = {
   confirm: (payment_intent_id) => api.post('/payments/confirm', null, { params: { payment_intent_id } }),
   history: () => api.get('/payments/history'),
   getRefunds: () => api.get('/payments/refunds/list'),
+  getSupplierPayments: () => api.get('/payments/suppliers/list'),
 }
 
 export const returnsApi = {

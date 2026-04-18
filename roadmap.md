@@ -1,6 +1,6 @@
 # AutoSpareFinder Roadmap
 
-Last updated: 2026-04-16
+Last updated: 2026-04-17
 Owner: TBD
 Update cadence: Weekly
 
@@ -92,6 +92,33 @@ Deliverables:
 Exit criteria:
 - Payment-related incidents trend to near-zero.
 - No duplicate fulfillment or duplicate invoices in repeated verify calls.
+
+### Phase B1: Supplier Payment Cycle Hardening (Completed 2026-04-17)
+Objective:
+- Enforce real Stripe-backed customer and supplier payment flow in production mode.
+- Remove false-positive supplier/order progression when payment or tracking is not real.
+
+Execution summary:
+- Added explicit simulation gate (`ALLOW_SIMULATED_PAYMENTS`) so fake checkout is disabled by default.
+- Added `supplier_payments` lifecycle model with audit fields for provider IDs, status, failures, and tracking.
+- Reworked post-customer-payment fulfillment to:
+  - charge suppliers via Stripe test payment method in sandbox,
+  - create/refresh auditable supplier payment rows,
+  - keep order in `processing` until tracking is actually available,
+  - update to `supplier_ordered` only after tracking is received.
+- Added customer API + Orders UI tab for supplier payments visibility.
+- Added admin APIs for retrying supplier payments and attaching tracking.
+- Added duplicate suppression in orders/payment listings for payment-tab stability.
+- Added helper tests and a fake-supplier seeding script for sandbox full-cycle validation.
+- Extended refund cycle parity:
+  - customer refund (admin/manual or cancellation) now triggers supplier-side refund orchestration,
+  - supplier refund attempts are persisted in `supplier_payments.metadata_json` with refund status, refund ID, amount, and timestamps,
+  - supplier payment UI now displays supplier refund lifecycle state for end-to-end visibility.
+
+Measured outcomes:
+- Customer payment flows now fail fast if Stripe is not configured (instead of marking false paid states).
+- Supplier payouts are traceable end-to-end via dedicated records and Stripe IDs.
+- Payment tab now includes a dedicated supplier-payments view and duplicate suppression.
 
 ## Phase C: Catalog and Fitment Quality (6 -> 10 weeks)
 Goals:
