@@ -24,8 +24,8 @@ from BACKEND_DATABASE_MODELS import (
     PartsCatalog,
     SupplierPart,
     Supplier as SupplierModel,
-    USD_TO_ILS,
 )
+from currency_rate import get_usd_to_ils_rate
 from BACKEND_AUTH_SECURITY import get_current_user, get_current_verified_user, get_redis
 from routes.schemas import OrderCreate, OrderCancelRequest, ReturnRequest
 from routes.stripe_config import resolve_stripe_secret_key, is_valid_stripe_secret_key
@@ -186,7 +186,7 @@ async def create_order(
 
         subtotal = 0.0
         items_data = []
-        # USD_TO_ILS is imported from BACKEND_DATABASE_MODELS (single source of truth)
+        usd_to_ils_rate = await get_usd_to_ils_rate(cat_db)
         # Track unique suppliers in this order -> charge delivery fee once per supplier origin
         supplier_delivery_fees: dict[str, float] = {}
 
@@ -201,7 +201,7 @@ async def create_order(
             if not row:
                 raise HTTPException(status_code=404, detail=f"חלק {item.supplier_part_id} לא נמצא. נסה לרענן את הדף ולהוסיף את החלק מחדש לסל.")
             sp, part, supplier_rec = row
-            cost_ils = float(sp.price_ils or 0) or (float(sp.price_usd or 0) * USD_TO_ILS)
+            cost_ils = float(sp.price_ils or 0) or (float(sp.price_usd or 0) * usd_to_ils_rate)
             ship_ils = float(sp.shipping_cost_ils or 0)
             total_cost_ils = cost_ils + ship_ils
             delivery_fee = _get_ship2(supplier_rec.name or "")

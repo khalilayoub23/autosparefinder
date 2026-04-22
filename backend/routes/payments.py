@@ -2,9 +2,10 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, text, desc, func
+from sqlalchemy import select, and_, or_, text, desc, func
 from datetime import datetime
 import asyncio
+import json
 import os
 import uuid
 import re
@@ -20,10 +21,10 @@ from BACKEND_DATABASE_MODELS import (
     Return,
     Notification,
     StripeWebhookLog,
-    USD_TO_ILS,
     async_session_factory,
     pii_session_factory,
 )
+from currency_rate import get_usd_to_ils_rate
 from BACKEND_AUTH_SECURITY import (
     get_current_user,
     get_current_verified_user,
@@ -178,6 +179,58 @@ def _build_tracking_url_from_number(tracking_number: str | None, tracking_url: s
     return f"https://parcelsapp.com/en/tracking/{n}"
 
 
+def _dedupe_orders_from_rows(rows) -> list:
+    """Return unique Order objects from (Payment, Order) rows while preserving order."""
+    deduped_orders = []
+    seen_orders = set()
+    for _pay, ord_obj in rows or []:
+        oid = str(ord_obj.id)
+        if oid in seen_orders:
+            continue
+        seen_orders.add(oid)
+        deduped_orders.append(ord_obj)
+    return deduped_orders
+
+
+def _build_paid_verify_response(orders: list) -> dict:
+    """Build verify-session payload for already-paid order list."""
+    if not orders:
+        return {
+            "status": "unpaid",
+            "order_status": "pending_payment",
+            "order_number": None,
+            "order_id": None,
+            "amount": 0.0,
+        }
+
+    if len(orders) > 1:
+        return {
+            "status": "paid",
+            "is_multi": True,
+            "orders": [
+                {
+                    "order_id": str(o.id),
+                    "order_number": o.order_number,
+                    "order_status": o.status,
+                    "amount": float(o.total_amount),
+                }
+                for o in orders
+            ],
+            "order_number": orders[0].order_number,
+            "order_id": str(orders[0].id),
+            "amount": sum(float(o.total_amount) for o in orders),
+        }
+
+    order = orders[0]
+    return {
+        "status": "paid",
+        "order_status": order.status,
+        "order_number": order.order_number,
+        "order_id": str(order.id),
+        "amount": float(order.total_amount),
+    }
+
+
 def _build_verify_response_from_local_rows(rows) -> dict:
     """Build verify-session payload from local Payment/Order rows."""
     if not rows:
@@ -189,16 +242,11 @@ def _build_verify_response_from_local_rows(rows) -> dict:
             "amount": 0.0,
         }
 
-    deduped_orders = []
-    seen_orders = set()
+    deduped_orders = _dedupe_orders_from_rows(rows)
     payment_statuses = []
 
     for pay, ord in rows:
         payment_statuses.append((pay.status or "").lower())
-        oid = str(ord.id)
-        if oid not in seen_orders:
-            seen_orders.add(oid)
-            deduped_orders.append(ord)
 
     # Local fallback must not report paid unless all local records are paid/refunded.
     if payment_statuses and all(s in {"paid", "refunded"} for s in payment_statuses):
@@ -233,6 +281,132 @@ def _build_verify_response_from_local_rows(rows) -> dict:
         "order_number": order.order_number,
         "order_id": str(order.id),
         "amount": float(order.total_amount),
+    }
+
+
+def _extract_checkout_session_id(payment: Payment) -> str:
+    """Return Checkout Session ID (cs_...) from stored payment identifiers."""
+    for raw in (payment.payment_intent_id, payment.provider_transaction_id):
+        token = str(raw or "").strip()
+        if token.startswith("cs_"):
+            return token.split(":", 1)[0]
+    return ""
+
+
+async def _reconcile_pending_checkout_sessions_for_user(user_id, db: AsyncSession) -> dict:
+    """Self-heal pending Stripe checkout sessions when webhooks are delayed/missing."""
+    import stripe as stripe_sdk
+
+    stripe_key, _ = resolve_stripe_secret_key()
+    if not _is_valid_stripe_secret_key(stripe_key):
+        return {"checked_sessions": 0, "paid_sessions": 0, "fulfilled_orders": 0}
+
+    stripe_sdk.api_key = stripe_key
+
+    rows_res = await db.execute(
+        select(Payment, Order)
+        .join(Order, Payment.order_id == Order.id)
+        .where(
+            and_(
+                Order.user_id == user_id,
+                Order.deleted_at.is_(None),
+                Payment.provider == "stripe",
+                Payment.status == "pending",
+                or_(
+                    Payment.payment_intent_id.like("cs_%"),
+                    Payment.provider_transaction_id.like("cs_%"),
+                ),
+            )
+        )
+    )
+    rows = rows_res.all()
+    if not rows:
+        return {"checked_sessions": 0, "paid_sessions": 0, "fulfilled_orders": 0}
+
+    session_ids = sorted({
+        sid
+        for payment, _order in rows
+        for sid in [_extract_checkout_session_id(payment)]
+        if sid
+    })
+    if not session_ids:
+        return {"checked_sessions": 0, "paid_sessions": 0, "fulfilled_orders": 0}
+
+    changed = False
+    paid_sessions = 0
+    orders_to_fulfill_ids: set = set()
+
+    for session_id in session_ids:
+        try:
+            session = await asyncio.get_running_loop().run_in_executor(
+                None,
+                lambda sid=session_id: stripe_sdk.checkout.Session.retrieve(sid),
+            )
+        except Exception:
+            continue
+
+        if getattr(session, "payment_status", "") != "paid":
+            continue
+
+        paid_sessions += 1
+        pay_method = "card"
+        pay_method_types = getattr(session, "payment_method_types", None)
+        if isinstance(pay_method_types, (list, tuple)) and pay_method_types:
+            pay_method = str(pay_method_types[0] or "card")
+
+        rel_res = await db.execute(
+            select(Payment, Order)
+            .join(Order, Payment.order_id == Order.id)
+            .where(
+                and_(
+                    Order.user_id == user_id,
+                    or_(
+                        Payment.payment_intent_id == session_id,
+                        Payment.payment_intent_id.like(f"{session_id}:%"),
+                        Payment.provider_transaction_id == session_id,
+                    ),
+                )
+            )
+        )
+        rel_rows = rel_res.all()
+
+        for payment, order in rel_rows:
+            if payment.status != "paid":
+                payment.status = "paid"
+                payment.paid_at = datetime.utcnow()
+                payment.payment_method = pay_method
+                changed = True
+
+            if order.status == "pending_payment":
+                order.status = "paid"
+                orders_to_fulfill_ids.add(order.id)
+                changed = True
+
+            inv_exists = await db.execute(select(Invoice).where(Invoice.order_id == order.id))
+            if not inv_exists.scalar_one_or_none():
+                db.add(Invoice(
+                    invoice_number=f"INV-{datetime.utcnow().strftime('%Y%m')}-{str(order.id)[:8].upper()}",
+                    order_id=order.id,
+                    user_id=order.user_id,
+                    business_number=os.getenv("COMPANY_NUMBER", "060633880"),
+                    issued_at=datetime.utcnow(),
+                ))
+                changed = True
+
+    if orders_to_fulfill_ids:
+        ord_res = await db.execute(select(Order).where(Order.id.in_(list(orders_to_fulfill_ids))))
+        paid_orders = ord_res.scalars().all()
+        if paid_orders:
+            await trigger_supplier_fulfillment(paid_orders, db)
+            changed = True
+
+    if changed:
+        await db.commit()
+
+    return {
+        "checked_sessions": len(session_ids),
+        "paid_sessions": paid_sessions,
+        "fulfilled_orders": len(orders_to_fulfill_ids),
     }
 
 
@@ -276,16 +450,8 @@ async def create_checkout_session(
 
     # ── Live price validation ──────────────────────────────────────────────
     from decimal import Decimal
-    _rate = USD_TO_ILS
-    try:
-        async with async_session_factory() as _cat:
-            _ss = (await _cat.execute(
-                text("SELECT value FROM system_settings WHERE key = 'ils_per_usd' LIMIT 1")
-            )).fetchone()
-            if _ss:
-                _rate = float(_ss[0])
-    except Exception:
-        pass
+    async with async_session_factory() as _cat:
+        _rate = await get_usd_to_ils_rate(_cat)
 
     _items_res = await db.execute(select(OrderItem).where(OrderItem.order_id == order.id))
     _order_items = _items_res.scalars().all()
@@ -548,16 +714,8 @@ async def create_multi_checkout_session(
 
     # ── Live price validation ──────────────────────────────────────────────
     from decimal import Decimal
-    _rate = USD_TO_ILS
-    try:
-        async with async_session_factory() as _cat:
-            _ss = (await _cat.execute(
-                text("SELECT value FROM system_settings WHERE key = 'ils_per_usd' LIMIT 1")
-            )).fetchone()
-            if _ss:
-                _rate = float(_ss[0])
-    except Exception:
-        pass
+    async with async_session_factory() as _cat:
+        _rate = await get_usd_to_ils_rate(_cat)
 
     _updated_orders: list[str] = []
     async with async_session_factory() as _cat:
@@ -1180,6 +1338,11 @@ async def list_supplier_payments(
     db: AsyncSession = Depends(get_pii_db),
 ):
     """Customer view: supplier payment lifecycle for this user's paid orders."""
+    try:
+        await _reconcile_pending_checkout_sessions_for_user(current_user.id, db)
+    except Exception as e:
+        print(f"[Payments] supplier list reconcile warning: {e}")
+
     rows_res = await db.execute(
         select(SupplierPayment, Order)
         .join(Order, SupplierPayment.order_id == Order.id)
@@ -1210,6 +1373,8 @@ async def list_supplier_payments(
             "order_status": order.status,
             "supplier_name": supplier_payment.supplier_name,
             "amount_ils": float(supplier_payment.amount_ils),
+            "customer_amount_ils": float(order.total_amount or 0),
+            "supplier_customer_delta_ils": round(float(order.total_amount or 0) - float(supplier_payment.amount_ils or 0), 2),
             "currency": supplier_payment.currency,
             "status": supplier_payment.status,
             "provider": supplier_payment.provider,
@@ -1416,10 +1581,21 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_pii_db
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    try:
+        # Use the verified raw payload as canonical JSON for robust access.
+        event_payload = json.loads(payload.decode("utf-8"))
+    except Exception:
+        if isinstance(event, dict):
+            event_payload = event
+        elif hasattr(event, "to_dict"):
+            event_payload = event.to_dict()
+        else:
+            event_payload = {}
+
     # ── Gap 6: Idempotency check (webhook deduplication) ────────────────────────────────
     # Check if we've already processed this exact event
-    event_id = event.get("id", "")
-    event_type = event.get("type", "")
+    event_id = str(event_payload.get("id", "") or "")
+    event_type = str(event_payload.get("type", "") or "")
     
     existing_log = None
     if event_id:
@@ -1442,7 +1618,7 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_pii_db
             existing_log = StripeWebhookLog(
                 event_id=event_id,
                 event_type=event_type,
-                payload=event,
+                payload=event_payload,
                 processed=False,
             )
             db.add(existing_log)
@@ -1451,13 +1627,19 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_pii_db
     # ── Process the webhook event ──────────────────────────────────────────────────────
     processing_error = None
     try:
-        if event.type == "checkout.session.completed":
-            session = event.data.object
-            if session.payment_status == "paid":
+        if event_type == "checkout.session.completed":
+            session = (event_payload.get("data") or {}).get("object") or {}
+            if str(session.get("payment_status") or "") == "paid":
                 orders_to_fulfill = []
+                metadata = session.get("metadata") or {}
+                session_id = str(session.get("id") or "")
+                payment_method_types = session.get("payment_method_types") or []
+                payment_method = "card"
+                if isinstance(payment_method_types, list) and payment_method_types:
+                    payment_method = str(payment_method_types[0] or "card")
 
                 # Single-order
-                order_id = session.metadata.get("order_id")
+                order_id = metadata.get("order_id")
                 if order_id:
                     res = await db.execute(select(Order).where(Order.id == order_id))
                     order = res.scalar_one_or_none()
@@ -1466,7 +1648,7 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_pii_db
                         orders_to_fulfill.append(order)
 
                 # Multi-order
-                order_ids_str = session.metadata.get("order_ids", "")
+                order_ids_str = metadata.get("order_ids", "")
                 if order_ids_str:
                     oid_list = [x.strip() for x in order_ids_str.split(",") if x.strip()]
                     res = await db.execute(select(Order).where(Order.id.in_(oid_list)))
@@ -1474,6 +1656,23 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_pii_db
                         if ord.status == "pending_payment":
                             ord.status = "paid"
                             orders_to_fulfill.append(ord)
+
+                # Mark related payment records as paid for this checkout session.
+                if session_id:
+                    pays_res = await db.execute(
+                        select(Payment).where(
+                            or_(
+                                Payment.payment_intent_id == session_id,
+                                Payment.provider_transaction_id == session_id,
+                                Payment.payment_intent_id.like(f"{session_id}:%"),
+                            )
+                        )
+                    )
+                    for pay in pays_res.scalars().all():
+                        if pay.status != "paid":
+                            pay.status = "paid"
+                            pay.paid_at = datetime.utcnow()
+                            pay.payment_method = payment_method
 
                 if orders_to_fulfill:
                     await trigger_supplier_fulfillment(orders_to_fulfill, db)
@@ -1613,6 +1812,11 @@ async def refund_payment(
 
 @router.get("/api/v1/payments/history")
 async def get_payment_history(current_user=Depends(get_current_user), limit: int = 50, db: AsyncSession = Depends(get_pii_db)):
+    try:
+        await _reconcile_pending_checkout_sessions_for_user(current_user.id, db)
+    except Exception as e:
+        print(f"[Payments] history reconcile warning: {e}")
+
     result = await db.execute(
         select(Payment, Order)
         .join(Order, Payment.order_id == Order.id)

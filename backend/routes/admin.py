@@ -50,6 +50,7 @@ from BACKEND_AUTH_SECURITY import (
     get_current_admin_user, get_current_super_admin,
     hash_password, publish_notification,
 )
+from currency_rate import get_usd_to_ils_rate
 from routes.utils import _guarded_task
 from routes.schemas import (
     SuperAdminSettingCreateBody,
@@ -3938,8 +3939,10 @@ async def scraper_run_one_part(
     from catalog_scraper import (
         scrape_autodoc, scrape_ebay_motors, scrape_aliexpress,
         db_update_supplier_part, db_log, SUPPLIER_TOOL_MAP, FALLBACK_TOOLS,
-        ILS_PER_USD, SCRAPE_REQUEST_DELAY,
+        SCRAPE_REQUEST_DELAY,
     )
+
+    usd_to_ils_rate = await get_usd_to_ils_rate(db)
 
     rows = (await db.execute(
         _text("""
@@ -3984,7 +3987,7 @@ async def scraper_run_one_part(
                 db,
                 supplier_part_id=str(row.sp_id),
                 price_ils=new_ils,
-                price_usd=round(new_ils / ILS_PER_USD, 2),
+                price_usd=round(new_ils / usd_to_ils_rate, 2),
             )
             results.append({"supplier": row.supplier_name, "old_price": old, "new_price": new_ils, "action": "updated"})
         else:

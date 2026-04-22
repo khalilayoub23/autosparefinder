@@ -1,0 +1,11 @@
+{
+  "recommendations": [
+    "github.copilot",
+    "github.copilot-chat",
+    "ms-python.python",
+    "ms-python.vscode-pylance"
+  ],
+  "unwantedRecommendations": [
+    "mechatroner.rainbow-csv"
+  ]
+}

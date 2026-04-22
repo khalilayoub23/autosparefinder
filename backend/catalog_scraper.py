@@ -66,6 +66,7 @@ from resilience import (
     job_registry_start,
     job_registry_finish,
 )
+from currency_rate import upsert_usd_to_ils_rate
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -114,6 +115,7 @@ if not DISCOVERY_OFFICIAL_SUFFIXES:
 
 # Exchange rate (ILS / USD).  Updated once per run from a free API if available.
 ILS_PER_USD: float = float(os.getenv("USD_TO_ILS", "3.72"))
+FX_REFRESH_INTERVAL_H = float(os.getenv("FX_REFRESH_INTERVAL_H", "24"))
 
 # ── HTTP helpers ───────────────────────────────────────────────────────────────
 _USER_AGENTS = [
@@ -649,6 +651,28 @@ async def fetch_ils_exchange_rate() -> float:
     # Fallback to env or default
     ILS_PER_USD = float(os.getenv("USD_TO_ILS", "3.72"))
     return ILS_PER_USD
+
+
+async def refresh_and_persist_ils_exchange_rate() -> Dict[str, Any]:
+    """Fetch latest USD/ILS rate and persist it to system_settings."""
+    rate = await fetch_ils_exchange_rate()
+    persisted_rate = rate
+    error = None
+    try:
+        async with scraper_session_factory() as db:
+            persisted_rate = await upsert_usd_to_ils_rate(db, rate)
+            await db.commit()
+            await db_log(db, "INFO", f"FX rate updated: USD/ILS={persisted_rate:.6f}")
+    except Exception as exc:
+        error = str(exc)
+        print(f"[Scraper] FX persist error: {exc}")
+
+    return {
+        "rate": persisted_rate,
+        "fetched_rate": rate,
+        "error": error,
+        "updated_at": datetime.utcnow().isoformat(),
+    }
 
 
 
@@ -2936,7 +2960,7 @@ async def run_brand_discovery(
 # MAIN SCRAPER RUN  —  called by the background loop
 # ==============================================================================
 
-async def run_scraper_cycle(*, batch_size: int = SCRAPE_BATCH_SIZE) -> Dict[str, Any]:
+async def run_scraper_cycle(*, batch_size: int = SCRAPE_BATCH_SIZE, refresh_fx: bool = True) -> Dict[str, Any]:
     """
     One full scraper cycle:
     1. Fetch exchange rate
@@ -2954,12 +2978,15 @@ async def run_scraper_cycle(*, batch_size: int = SCRAPE_BATCH_SIZE) -> Dict[str,
         return {"status": "skipped", "reason": "scraper_cycle already running on another worker"}
 
     started_at = datetime.utcnow()
-    await fetch_ils_exchange_rate()
+    fx_report = None
+    if refresh_fx:
+        fx_report = await refresh_and_persist_ils_exchange_rate()
 
     report: Dict[str, Any] = {
         "started_at": started_at.isoformat(),
         "batch_size": batch_size,
         "ils_per_usd": ILS_PER_USD,
+        "fx_refresh": fx_report,
         "parts_checked": 0,
         "prices_updated": 0,
         "availability_changes": 0,
@@ -3109,6 +3136,7 @@ async def run_scraper_cycle(*, batch_size: int = SCRAPE_BATCH_SIZE) -> Dict[str,
 _scraper_task: Optional[asyncio.Task] = None
 _last_run_report: Optional[Dict] = None
 _last_discovery_report: Optional[Dict] = None
+_last_fx_report: Optional[Dict] = None
 
 
 async def scraper_background_loop():
@@ -3118,8 +3146,9 @@ async def scraper_background_loop():
     the interval before the first run.
     """
     from resilience import log_job_failure
-    global _last_run_report
+    global _last_run_report, _last_fx_report
     interval_s = SCRAPE_INTERVAL_H * 3600
+    fx_interval_s = FX_REFRESH_INTERVAL_H * 3600
 
     # ── Calculate first-run delay ───────────────────────────────────────────
     first_wait = 60  # default: 1 min after startup
@@ -3153,12 +3182,33 @@ async def scraper_background_loop():
     # Track when the last discovery run was
     last_discovery_at: Optional[datetime] = None
     discovery_interval_s = DISCOVERY_INTERVAL_H * 3600
+    last_fx_refresh_at: Optional[datetime] = None
 
     while True:
         try:
+            now = datetime.utcnow()
+
+            # Job 0 — FX refresh (every FX_REFRESH_INTERVAL_H hours)
+            run_fx_refresh = (
+                last_fx_refresh_at is None
+                or (now - last_fx_refresh_at).total_seconds() >= fx_interval_s
+            )
+            if run_fx_refresh:
+                try:
+                    _last_fx_report = await refresh_and_persist_ils_exchange_rate()
+                except Exception as exc:
+                    error_msg = str(exc)[:500]
+                    _last_fx_report = {
+                        "rate": ILS_PER_USD,
+                        "error": error_msg,
+                        "updated_at": datetime.utcnow().isoformat(),
+                    }
+                    print(f"[Scraper] FX refresh error: {error_msg}")
+                last_fx_refresh_at = datetime.utcnow()
+                await asyncio.sleep(5)
+
             # Job 2 — Brand Discovery (every DISCOVERY_INTERVAL_H hours)
             global _last_discovery_report
-            now = datetime.utcnow()
             run_discovery = (
                 last_discovery_at is None
                 or (now - last_discovery_at).total_seconds() >= discovery_interval_s
@@ -3188,7 +3238,7 @@ async def scraper_background_loop():
 
             # Job 1 — Price Sync (every SCRAPE_INTERVAL_H hours)
             try:
-                _last_run_report = await run_scraper_cycle()
+                _last_run_report = await run_scraper_cycle(refresh_fx=False)
             except Exception as exc:
                 error_msg = str(exc)[:500]
                 print(f"[Scraper] Scraper cycle error: {error_msg}")
@@ -3230,6 +3280,7 @@ def get_scraper_status() -> Dict[str, Any]:
         # Price-sync config
         "price_sync_enabled":      SCRAPE_ENABLED,
         "price_sync_interval_h":   SCRAPE_INTERVAL_H,
+        "fx_refresh_interval_h":   FX_REFRESH_INTERVAL_H,
         "batch_size":              SCRAPE_BATCH_SIZE,
         "request_delay_s":         SCRAPE_REQUEST_DELAY,
         "ils_per_usd":             ILS_PER_USD,
@@ -3248,6 +3299,7 @@ def get_scraper_status() -> Dict[str, Any]:
         "proxy_configured":        bool(SCRAPER_PROXY),
         # Runtime state
         "task_running":            _scraper_task is not None and not _scraper_task.done(),
+        "last_fx_refresh":         _last_fx_report,
         "last_price_sync":         _last_run_report,
         "last_discovery":          _last_discovery_report,
     }

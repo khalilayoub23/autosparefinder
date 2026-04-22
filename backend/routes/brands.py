@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_, func, text
 
 from BACKEND_DATABASE_MODELS import get_db, CarBrand, TruckBrand, PartsCatalog
+from currency_rate import get_usd_to_ils_rate
 from manufacturer_normalization import normalize_manufacturer_name
 
 router = APIRouter()
@@ -247,6 +248,7 @@ async def get_parts_by_brand(
 
     from BACKEND_AI_AGENTS import PartsFinderAgent, get_supplier_shipping
     agent = PartsFinderAgent()
+    usd_to_ils_rate = await get_usd_to_ils_rate(db)
 
     # Batch fetch best supplier_part for all parts in one query (no N+1)
     part_ids = [part.id for part in parts]
@@ -278,8 +280,11 @@ async def get_parts_by_brand(
             if cost_ils > 0:
                 pricing = agent.calculate_customer_price_from_ils(cost_ils, ship_ils, customer_shipping=delivery_fee)
             else:
-                pricing = agent.calculate_customer_price(
-                    float(sp_row.price_usd), float(sp_row.shipping_cost_usd or 0), customer_shipping=delivery_fee
+                usd_total = float(sp_row.price_usd or 0) + float(sp_row.shipping_cost_usd or 0)
+                pricing = agent.calculate_customer_price_from_ils(
+                    usd_total * usd_to_ils_rate,
+                    0.0,
+                    customer_shipping=delivery_fee,
                 )
             pricing["availability"] = "in_stock" if sp_row.is_available else "on_order"
             pricing["warranty_months"] = sp_row.warranty_months
@@ -467,6 +472,7 @@ async def get_parts_by_truck_brand(
 
     from BACKEND_AI_AGENTS import PartsFinderAgent, get_supplier_shipping
     agent = PartsFinderAgent()
+    usd_to_ils_rate = await get_usd_to_ils_rate(db)
 
     part_ids = [part.id for part in parts]
     sp_batch = await db.execute(
@@ -496,8 +502,11 @@ async def get_parts_by_truck_brand(
             if cost_ils > 0:
                 pricing = agent.calculate_customer_price_from_ils(cost_ils, ship_ils, customer_shipping=delivery_fee)
             else:
-                pricing = agent.calculate_customer_price(
-                    float(sp_row.price_usd), float(sp_row.shipping_cost_usd or 0), customer_shipping=delivery_fee
+                usd_total = float(sp_row.price_usd or 0) + float(sp_row.shipping_cost_usd or 0)
+                pricing = agent.calculate_customer_price_from_ils(
+                    usd_total * usd_to_ils_rate,
+                    0.0,
+                    customer_shipping=delivery_fee,
                 )
             pricing["availability"] = "in_stock" if sp_row.is_available else "on_order"
             pricing["warranty_months"] = sp_row.warranty_months

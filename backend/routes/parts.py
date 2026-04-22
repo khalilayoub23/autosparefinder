@@ -37,6 +37,7 @@ from BACKEND_DATABASE_MODELS import (
 from BACKEND_AUTH_SECURITY import (
     get_redis, check_rate_limit, get_current_user,
 )
+from currency_rate import get_usd_to_ils_rate
 from BACKEND_AI_AGENTS import get_agent, get_supplier_shipping as _get_ship
 from resilience import retry_with_backoff
 from routes.utils import _mask_supplier
@@ -1162,6 +1163,7 @@ async def search_parts(
         db_session: Optional[AsyncSession] = None,
     ) -> List[Dict[str, Any]]:
         query_db = db_session or db
+        usd_to_ils_rate = await get_usd_to_ils_rate(query_db)
         where_sql_effective = where_sql_override or where_sql
         where_sql_base_effective = where_sql_base_override or where_sql_base
         candidate_limit = max(int(per_type or 4) * 6, 24)
@@ -1337,10 +1339,10 @@ async def search_parts(
                 FROM supplier_parts sp
                 JOIN suppliers s ON s.id = sp.supplier_id
                 WHERE sp.part_id = :part_id AND sp.is_available = TRUE
-                ORDER BY COALESCE(sp.price_ils, sp.price_usd * 3.72) ASC
+                ORDER BY COALESCE(sp.price_ils, sp.price_usd * :usd_to_ils_rate) ASC
                 LIMIT :lim
             """),
-            {"part_id": part_id_str, "lim": per_type},
+            {"part_id": part_id_str, "lim": per_type, "usd_to_ils_rate": usd_to_ils_rate},
         )).fetchall()
 
         part_dict = {
@@ -1366,7 +1368,7 @@ async def search_parts(
 
         suppliers_list = []
         for sp in sup_rows:
-            price_ils = float(sp[5]) if sp[5] else (float(sp[4]) * 3.72 if sp[4] else None)
+            price_ils = float(sp[5]) if sp[5] else (float(sp[4]) * usd_to_ils_rate if sp[4] else None)
             suppliers_list.append({
                 "supplier_part_id":      str(sp[0]),
                 "supplier_name":         _mask_supplier(sp[1]),
@@ -1419,9 +1421,9 @@ async def search_parts(
                         WHERE sp.part_id = ANY(CAST(:extra_ids AS uuid[]))
                           AND sp.is_available = TRUE
                         ORDER BY sp.part_id,
-                                 COALESCE(sp.price_ils, sp.price_usd * 3.72) ASC
+                                                                 COALESCE(sp.price_ils, sp.price_usd * :usd_to_ils_rate) ASC
                     """),
-                    {"extra_ids": extra_ids},
+                                        {"extra_ids": extra_ids, "usd_to_ils_rate": usd_to_ils_rate},
                 )).fetchall()
             except Exception:
                 batch_rows = []
@@ -1451,7 +1453,7 @@ async def search_parts(
                 bsp = best_sup_map.get(extra_id)
                 extra_suppliers: List[Dict[str, Any]] = []
                 if bsp:
-                    b_price_ils = float(bsp[6]) if bsp[6] else (float(bsp[5]) * 3.72 if bsp[5] else None)
+                    b_price_ils = float(bsp[6]) if bsp[6] else (float(bsp[5]) * usd_to_ils_rate if bsp[5] else None)
                     extra_suppliers = [{
                         "supplier_part_id":        bsp[1],
                         "supplier_name":           _mask_supplier(bsp[2]),
@@ -2762,6 +2764,7 @@ async def compare_parts(part_id: str, db: AsyncSession = Depends(get_db), reques
         rows = result2.all()
 
     agent = get_agent("parts_finder_agent")
+    usd_to_ils_rate = await get_usd_to_ils_rate(db)
     comparisons = []
     for sp, supplier in rows:
         cost_ils = float(sp.price_ils or 0)
@@ -2770,9 +2773,10 @@ async def compare_parts(part_id: str, db: AsyncSession = Depends(get_db), reques
         if cost_ils > 0:
             pricing = agent.calculate_customer_price_from_ils(cost_ils, ship_ils, customer_shipping=delivery_fee)
         else:
-            pricing = agent.calculate_customer_price(
-                float(sp.price_usd),
-                float(sp.shipping_cost_usd or 0),
+            usd_total = float(sp.price_usd or 0) + float(sp.shipping_cost_usd or 0)
+            pricing = agent.calculate_customer_price_from_ils(
+                usd_total * usd_to_ils_rate,
+                0.0,
                 customer_shipping=delivery_fee,
             )
         comparisons.append({

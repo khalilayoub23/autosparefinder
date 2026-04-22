@@ -1572,6 +1572,7 @@ async def seed_initial_data(db: AsyncSession):
     settings = [
         {"key": "maintenance_mode", "value": "false", "value_type": "boolean", "is_public": True, "description": "Site maintenance mode"},
         {"key": "max_upload_size_mb", "value": "25", "value_type": "integer", "is_public": True, "description": "Max file upload size"},
+        {"key": "ils_per_usd", "value": "3.65", "value_type": "float", "is_public": True, "description": "USD to ILS rate (canonical)"},
         {"key": "currency_exchange_rate_usd_to_ils", "value": "3.65", "value_type": "float", "is_public": True, "description": "USD to ILS rate"},
         {"key": "profit_margin_percentage", "value": "45", "value_type": "integer", "is_public": False, "description": "Profit margin %"},
         {"key": "vat_percentage", "value": "18", "value_type": "integer", "is_public": True, "description": "VAT %"},

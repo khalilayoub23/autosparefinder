@@ -774,6 +774,12 @@ export default function Orders() {
                     <p className="font-semibold text-gray-900 text-sm">{sp.order_number} · {sp.supplier_name}</p>
                     <p className="text-xs text-gray-500 mt-0.5">סטטוס הזמנה: {STATUS_MAP[sp.order_status]?.label || sp.order_status}</p>
                     <p className="text-xs text-gray-500 mt-0.5">סכום ששולם לספק: ₪{Number(sp.amount_ils || 0).toFixed(2)}</p>
+                    {sp.customer_amount_ils != null && (
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        סכום שחויב מהלקוח: ₪{Number(sp.customer_amount_ils || 0).toFixed(2)}
+                        {` · פער: ₪${Number(sp.supplier_customer_delta_ils || 0).toFixed(2)}`}
+                      </p>
+                    )}
                     <p className="text-xs text-gray-500 mt-0.5">
                       מסלול תשלום ספק: {
                         sp.spend_provider === 'issuing' || sp.provider === 'stripe_issuing'

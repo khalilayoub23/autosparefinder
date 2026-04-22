@@ -11,6 +11,10 @@ STRIPE_SECRET_ENV_CANDIDATES = (
     "STRIPE_SECRET",
 )
 
+STRIPE_ISSUING_WEBHOOK_SECRET_ENV_CANDIDATES = (
+    "STRIPE_ISSUING_WEBHOOK_SECRET",
+)
+
 
 def normalize_stripe_secret_key(raw_key: str | None) -> str:
     """Normalize key text from env vars (strip whitespace and optional quotes)."""
@@ -53,3 +57,12 @@ def is_valid_stripe_secret_key(raw_key: str | None) -> bool:
 
     # Accept secret keys (sk_*) and restricted keys (rk_*).
     return bool(re.fullmatch(r"(?:sk|rk)_(?:test|live)_[A-Za-z0-9_-]{16,}", key))
+
+
+def resolve_stripe_issuing_webhook_secret() -> tuple[str, str | None]:
+    """Return first configured issuing webhook secret and its source env var name."""
+    for env_name in STRIPE_ISSUING_WEBHOOK_SECRET_ENV_CANDIDATES:
+        secret = normalize_stripe_secret_key(os.getenv(env_name))
+        if secret:
+            return secret, env_name
+    return "", None

@@ -44,6 +44,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from currency_rate import get_usd_to_ils_rate
 from resilience import job_registry_start, job_registry_finish
 from manufacturer_normalization import PARTS_BRANDS, canonicalize_vehicle_model_for_manufacturer
 from manufacturer_normalization import normalize_vehicle_model_name, normalize_vehicle_submodel_name
@@ -306,16 +307,7 @@ _agent_running: bool = False
 
 async def _get_ils_rate(db: AsyncSession) -> float:
     """Read current ILS/USD rate from system_settings (or fall back to default)."""
-    try:
-        result = await db.execute(
-            text("SELECT value FROM system_settings WHERE key = 'ils_per_usd' LIMIT 1")
-        )
-        row = result.fetchone()
-        if row:
-            return float(row[0])
-    except Exception:
-        pass
-    return ILS_PER_USD
+    return await get_usd_to_ils_rate(db, fallback=ILS_PER_USD)
 
 
 def _is_fake_sku(sku: str) -> bool:
@@ -1600,6 +1592,21 @@ async def merge_catalog_fitment_from_part_vehicle_fitment(db: AsyncSession) -> D
     t0 = time.monotonic()
     await ensure_part_vehicle_fitment_table(db)
 
+    def _normalize_fitment_json_list(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Deduplicate and sort fitment dicts so writes remain stable across runs."""
+        unique: List[Dict[str, Any]] = []
+        seen = set()
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            key = json.dumps(item, sort_keys=True, ensure_ascii=False)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(item)
+        unique.sort(key=lambda row: json.dumps(row, sort_keys=True, ensure_ascii=False))
+        return unique
+
     rows = (await db.execute(text("""
         SELECT
             pc.id,
@@ -1666,19 +1673,13 @@ async def merge_catalog_fitment_from_part_vehicle_fitment(db: AsyncSession) -> D
             item for item in part_existing.get(part_id, [])
             if not (isinstance(item, dict) and item.get("source") == "part_vehicle_fitment")
         ]
-        merged: List[Dict[str, Any]] = []
-        seen_json = set()
+        merged = _normalize_fitment_json_list(preserved + entries)
 
-        for item in preserved + entries:
-            if not isinstance(item, dict):
-                continue
-            key = json.dumps(item, sort_keys=True, ensure_ascii=False)
-            if key in seen_json:
-                continue
-            seen_json.add(key)
-            merged.append(item)
-
-        existing_json = json.dumps(part_existing.get(part_id, []), sort_keys=True, ensure_ascii=False)
+        existing_json = json.dumps(
+            _normalize_fitment_json_list(list(part_existing.get(part_id, []))),
+            sort_keys=True,
+            ensure_ascii=False,
+        )
         merged_json = json.dumps(merged, sort_keys=True, ensure_ascii=False)
         if existing_json == merged_json:
             continue

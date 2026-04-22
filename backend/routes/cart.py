@@ -23,8 +23,9 @@ from sqlalchemy import select, and_, text
 
 from BACKEND_DATABASE_MODELS import (
     get_db, get_pii_db,
-    User, USD_TO_ILS,
+    User,
 )
+from currency_rate import get_usd_to_ils_rate
 from BACKEND_AUTH_SECURITY import get_current_user, get_current_verified_user
 from BACKEND_AUTH_SECURITY import get_redis
 from routes.schemas import (
@@ -204,7 +205,8 @@ async def add_cart_item(
     if not sp:
         raise HTTPException(status_code=404, detail="Part not available from any supplier")
 
-    unit_price = float(sp.price_ils or 0) or (float(sp.price_usd or 0) * USD_TO_ILS)
+    usd_to_ils_rate = await get_usd_to_ils_rate(cat_db)
+    unit_price = float(sp.price_ils or 0) or (float(sp.price_usd or 0) * usd_to_ils_rate)
     cart = await _get_or_create_cart(current_user.id, db)
 
     # Compatible upsert: update existing row if found, otherwise insert.

@@ -25,6 +25,7 @@ from BACKEND_DATABASE_MODELS import (
     async_session_factory,
 )
 from BACKEND_AUTH_SECURITY import publish_notification
+from currency_rate import get_usd_to_ils_rate
 from routes.stripe_config import resolve_stripe_secret_key, is_valid_stripe_secret_key
 
 # Cap fire-and-forget asyncio.create_task() fan-out.
@@ -161,8 +162,24 @@ def _resolve_supplier_spend_provider(supplier_credentials: dict | None) -> str:
     from_supplier = ""
     if isinstance(supplier_credentials, dict):
         from_supplier = str(supplier_credentials.get("supplier_spend_provider") or "").strip()
-    default_provider = os.getenv("SUPPLIER_SPEND_PROVIDER", "payments")
+    default_provider = os.getenv("SUPPLIER_SPEND_PROVIDER", "issuing")
     return _normalize_supplier_spend_provider(from_supplier or default_provider)
+
+
+def _list_test_virtual_issuing_card_ids(stripe_key: str, limit: int = 25) -> list[str]:
+    """Return active virtual issuing card ids from Stripe test mode."""
+    import stripe as stripe_sdk
+
+    if not str(stripe_key or "").startswith("sk_test_"):
+        return []
+
+    stripe_sdk.api_key = stripe_key
+    cards = stripe_sdk.issuing.Card.list(limit=limit).data
+    ids: list[str] = []
+    for card in cards:
+        if getattr(card, "status", None) == "active" and getattr(card, "type", None) == "virtual":
+            ids.append(str(card.id))
+    return ids
 
 
 def _convert_ils_to_minor_units(amount_ils: float, currency: str, ils_per_usd: float) -> tuple[int, str, float]:
@@ -227,6 +244,79 @@ def _create_test_issuing_authorization_https(
         except Exception:
             body = str(http_err)
         raise RuntimeError(f"Issuing authorization failed: {body[:500]}") from http_err
+
+
+def _extract_issuing_decline_reason(auth: dict) -> str:
+    history = auth.get("request_history") or []
+    if not history:
+        return ""
+    first = history[0] if isinstance(history[0], dict) else {}
+    return str(first.get("reason") or "").strip().lower()
+
+
+def _compute_test_topup_amount_minor(amount_minor: int, buffer_minor: int, max_minor: int) -> int:
+    amount = max(int(amount_minor or 0), 0)
+    buffer_value = max(int(buffer_minor or 0), 0)
+    max_value = max(int(max_minor or 0), 0)
+    if amount <= 0:
+        raise ValueError("Topup amount requires positive authorization amount")
+    if max_value <= 0:
+        raise ValueError("Topup max amount must be positive")
+    candidate = amount + buffer_value
+    if candidate <= 0:
+        candidate = amount
+    return min(candidate, max_value)
+
+
+def _build_topup_source_candidates(configured_source: str | None) -> list[str]:
+    candidates: list[str] = []
+    for source in [configured_source, "btok_us_verified", "tok_visa_debit"]:
+        value = str(source or "").strip()
+        if value and value not in candidates:
+            candidates.append(value)
+    return candidates
+
+
+def _create_test_topup_https(
+    stripe_key: str,
+    amount_minor: int,
+    currency: str,
+    source_token: str,
+    description: str,
+) -> dict:
+    import json
+    import urllib.parse
+    import urllib.request
+    import urllib.error
+
+    form_data = {
+        "amount": str(amount_minor),
+        "currency": currency,
+        "source": source_token,
+        "description": description,
+    }
+
+    payload = urllib.parse.urlencode(form_data).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.stripe.com/v1/topups",
+        data=payload,
+        method="POST",
+    )
+    basic = base64.b64encode(f"{stripe_key}:".encode("utf-8")).decode("ascii")
+    req.add_header("Authorization", f"Basic {basic}")
+    req.add_header("Content-Type", "application/x-www-form-urlencoded")
+
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = resp.read().decode("utf-8")
+            return json.loads(body)
+    except urllib.error.HTTPError as http_err:
+        body = ""
+        try:
+            body = http_err.read().decode("utf-8")
+        except Exception:
+            body = str(http_err)
+        raise RuntimeError(f"Stripe topup failed: {body[:500]}") from http_err
 
 
 def _build_agent_supplier_payload(by_supplier: dict[str, dict], supplier_keys: set[str]) -> dict:
@@ -318,6 +408,15 @@ async def trigger_supplier_fulfillment(paid_orders: list, db: AsyncSession) -> N
     default_issuing_card_id = (os.getenv("SUPPLIER_ISSUING_CARD_ID", "") or "").strip()
     default_issuing_currency = (os.getenv("SUPPLIER_ISSUING_CURRENCY", "usd") or "usd").strip().lower()
     default_ils_per_usd = float(os.getenv("SUPPLIER_ISSUING_ILS_PER_USD", "3.65") or "3.65")
+    try:
+        async with async_session_factory() as _cat_rate_db:
+            default_ils_per_usd = await get_usd_to_ils_rate(_cat_rate_db, fallback=default_ils_per_usd)
+    except Exception:
+        pass
+    default_auto_topup_on_insufficient = _env_flag("SUPPLIER_ISSUING_AUTO_TOPUP_ON_INSUFFICIENT_FUNDS", "1")
+    default_auto_topup_source = (os.getenv("SUPPLIER_ISSUING_AUTO_TOPUP_SOURCE", "btok_us_verified") or "btok_us_verified").strip()
+    default_auto_topup_buffer_minor = int(os.getenv("SUPPLIER_ISSUING_TOPUP_BUFFER_MINOR", "5000") or "5000")
+    default_auto_topup_max_minor = int(os.getenv("SUPPLIER_ISSUING_TOPUP_MAX_MINOR", "500000") or "500000")
     allow_simulated_supplier_payments = _env_flag("ALLOW_SIMULATED_SUPPLIER_PAYMENTS", "0")
 
     for order in paid_orders:
@@ -349,17 +448,43 @@ async def trigger_supplier_fulfillment(paid_orders: list, db: AsyncSession) -> N
         if supplier_part_ids:
             async with async_session_factory() as cat_db:
                 supplier_rows = await cat_db.execute(
-                    select(SupplierPart.id, Supplier.id, Supplier.name, Supplier.country, Supplier.website, Supplier.credentials)
+                    select(
+                        SupplierPart.id,
+                        Supplier.id,
+                        Supplier.name,
+                        Supplier.country,
+                        Supplier.website,
+                        Supplier.credentials,
+                        SupplierPart.price_ils,
+                        SupplierPart.price_usd,
+                        SupplierPart.shipping_cost_ils,
+                        SupplierPart.shipping_cost_usd,
+                    )
                     .join(Supplier, SupplierPart.supplier_id == Supplier.id)
                     .where(SupplierPart.id.in_(supplier_part_ids))
                 )
-                for supplier_part_id, supplier_id, supplier_name, supplier_country, supplier_website, supplier_credentials in supplier_rows.all():
+                for (
+                    supplier_part_id,
+                    supplier_id,
+                    supplier_name,
+                    supplier_country,
+                    supplier_website,
+                    supplier_credentials,
+                    supplier_price_ils,
+                    supplier_price_usd,
+                    supplier_shipping_ils,
+                    supplier_shipping_usd,
+                ) in supplier_rows.all():
                     supplier_meta[str(supplier_part_id)] = {
                         "supplier_id": supplier_id,
                         "supplier_name": supplier_name or "Unknown supplier",
                         "supplier_country": supplier_country or "il",
                         "supplier_website": supplier_website or "",
                         "credentials": supplier_credentials or {},
+                        "supplier_price_ils": supplier_price_ils,
+                        "supplier_price_usd": supplier_price_usd,
+                        "supplier_shipping_ils": supplier_shipping_ils,
+                        "supplier_shipping_usd": supplier_shipping_usd,
                     }
 
         by_supplier: dict[str, dict] = {}
@@ -378,11 +503,46 @@ async def trigger_supplier_fulfillment(paid_orders: list, db: AsyncSession) -> N
                     "credentials": supplier_credentials,
                     "items": [],
                     "total_ils": 0.0,
+                    "shipping_ils": 0.0,
                 }
 
-            item_cost = float(oi.total_price or (oi.unit_price * oi.quantity))
+            qty = max(int(oi.quantity or 1), 1)
+
+            supplier_unit_ils = 0.0
+            if meta:
+                raw_price_ils = meta.get("supplier_price_ils")
+                raw_price_usd = meta.get("supplier_price_usd")
+                if raw_price_ils is not None and float(raw_price_ils or 0) > 0:
+                    supplier_unit_ils = float(raw_price_ils)
+                elif raw_price_usd is not None and float(raw_price_usd or 0) > 0:
+                    supplier_unit_ils = float(raw_price_usd) * float(default_ils_per_usd)
+
+            if supplier_unit_ils <= 0:
+                fallback_total = float(oi.total_price or (oi.unit_price * qty) or 0)
+                supplier_unit_ils = fallback_total / qty if qty else fallback_total
+
+            item_cost = supplier_unit_ils * qty
+
+            supplier_shipping_ils = 0.0
+            if meta:
+                raw_shipping_ils = meta.get("supplier_shipping_ils")
+                raw_shipping_usd = meta.get("supplier_shipping_usd")
+                if raw_shipping_ils is not None and float(raw_shipping_ils or 0) > 0:
+                    supplier_shipping_ils = float(raw_shipping_ils)
+                elif raw_shipping_usd is not None and float(raw_shipping_usd or 0) > 0:
+                    supplier_shipping_ils = float(raw_shipping_usd) * float(default_ils_per_usd)
+
             by_supplier[supplier_id]["items"].append(oi)
             by_supplier[supplier_id]["total_ils"] += item_cost
+            by_supplier[supplier_id]["shipping_ils"] = max(
+                float(by_supplier[supplier_id].get("shipping_ils") or 0.0),
+                supplier_shipping_ils,
+            )
+
+        for bucket in by_supplier.values():
+            bucket["items_cost_ils"] = round(float(bucket.get("total_ils") or 0.0), 2)
+            bucket["shipping_ils"] = round(float(bucket.get("shipping_ils") or 0.0), 2)
+            bucket["total_ils"] = round(bucket["items_cost_ils"] + bucket["shipping_ils"], 2)
 
         supplier_paid_count = 0
         supplier_payments_by_key: dict[str, SupplierPayment] = {}
@@ -451,17 +611,16 @@ async def trigger_supplier_fulfillment(paid_orders: list, db: AsyncSession) -> N
 
             try:
                 if spend_provider == "issuing":
-                    issuing_card_id = str(
+                    configured_issuing_card_id = str(
                         supplier_credentials.get("stripe_issuing_card_id")
                         or default_issuing_card_id
                     ).strip()
-                    if not issuing_card_id:
-                        raise ValueError("Missing stripe_issuing_card_id for supplier")
 
                     if not stripe_configured and not allow_simulated_supplier_payments:
                         raise ValueError("Stripe supplier payout is not configured")
 
                     if not stripe_configured and allow_simulated_supplier_payments:
+                        issuing_card_id = configured_issuing_card_id or default_issuing_card_id
                         fake_provider_id = f"SIM-IAUTH-{str(uuid.uuid4())[:12].upper()}"
                         supplier_payment.status = "paid"
                         supplier_payment.provider = "simulated"
@@ -480,6 +639,21 @@ async def trigger_supplier_fulfillment(paid_orders: list, db: AsyncSession) -> N
                         if not stripe_key.startswith("sk_test_"):
                             raise ValueError("Automated Issuing authorization is supported in sandbox mode only")
 
+                        candidate_card_ids: list[str] = []
+                        if configured_issuing_card_id:
+                            candidate_card_ids.append(configured_issuing_card_id)
+
+                        discovered_card_ids = await asyncio.get_running_loop().run_in_executor(
+                            None,
+                            lambda: _list_test_virtual_issuing_card_ids(stripe_key),
+                        )
+                        for discovered_card_id in discovered_card_ids:
+                            if discovered_card_id and discovered_card_id not in candidate_card_ids:
+                                candidate_card_ids.append(discovered_card_id)
+
+                        if not candidate_card_ids:
+                            raise ValueError("Missing stripe_issuing_card_id for supplier and no active virtual card found")
+
                         issuing_currency = str(
                             supplier_credentials.get("stripe_issuing_currency")
                             or default_issuing_currency
@@ -493,17 +667,132 @@ async def trigger_supplier_fulfillment(paid_orders: list, db: AsyncSession) -> N
                             issuing_currency,
                             ils_per_usd,
                         )
-                        auth = await asyncio.get_running_loop().run_in_executor(
-                            None,
-                            lambda: _create_test_issuing_authorization_https(
-                                stripe_key=stripe_key,
-                                card_id=issuing_card_id,
-                                amount_minor=amount_minor,
-                                currency=normalized_currency,
-                                supplier_name=supplier_name,
-                                order_number=order_db.order_number,
-                            ),
+
+                        auto_topup_on_insufficient = bool(
+                            supplier_credentials.get("stripe_issuing_auto_topup_on_insufficient_funds", default_auto_topup_on_insufficient)
                         )
+                        auto_topup_source = str(
+                            supplier_credentials.get("stripe_issuing_auto_topup_source")
+                            or default_auto_topup_source
+                        ).strip()
+                        topup_source_candidates = _build_topup_source_candidates(auto_topup_source)
+                        auto_topup_buffer_minor = int(
+                            supplier_credentials.get("stripe_issuing_topup_buffer_minor")
+                            or default_auto_topup_buffer_minor
+                        )
+                        auto_topup_max_minor = int(
+                            supplier_credentials.get("stripe_issuing_topup_max_minor")
+                            or default_auto_topup_max_minor
+                        )
+
+                        auth = None
+                        issuing_card_id = ""
+                        last_reject_detail = ""
+                        topup_obj: dict | None = None
+                        topup_attempted = False
+                        for candidate_card_id in candidate_card_ids:
+                            candidate_auth = await asyncio.get_running_loop().run_in_executor(
+                                None,
+                                lambda cid=candidate_card_id: _create_test_issuing_authorization_https(
+                                    stripe_key=stripe_key,
+                                    card_id=cid,
+                                    amount_minor=amount_minor,
+                                    currency=normalized_currency,
+                                    supplier_name=supplier_name,
+                                    order_number=order_db.order_number,
+                                ),
+                            )
+                            candidate_status = str(candidate_auth.get("status") or "")
+                            candidate_approved = bool(candidate_auth.get("approved"))
+                            candidate_reason = _extract_issuing_decline_reason(candidate_auth)
+
+                            if candidate_approved:
+                                auth = candidate_auth
+                                issuing_card_id = candidate_card_id
+                                break
+
+                            if (
+                                not topup_attempted
+                                and auto_topup_on_insufficient
+                                and candidate_reason == "insufficient_funds"
+                                and normalized_currency == "usd"
+                                and topup_source_candidates
+                            ):
+                                topup_attempted = True
+                                topup_amount_minor = _compute_test_topup_amount_minor(
+                                    amount_minor=amount_minor,
+                                    buffer_minor=auto_topup_buffer_minor,
+                                    max_minor=auto_topup_max_minor,
+                                )
+                                topup_error: Exception | None = None
+                                selected_topup_source = ""
+                                for source_candidate in topup_source_candidates:
+                                    try:
+                                        topup_obj = await asyncio.get_running_loop().run_in_executor(
+                                            None,
+                                            lambda src=source_candidate: _create_test_topup_https(
+                                                stripe_key=stripe_key,
+                                                amount_minor=topup_amount_minor,
+                                                currency="usd",
+                                                source_token=src,
+                                                description=f"Auto topup for supplier payout {order_db.order_number}",
+                                            ),
+                                        )
+                                        selected_topup_source = source_candidate
+                                        break
+                                    except Exception as source_err:
+                                        topup_error = source_err
+
+                                if not topup_obj:
+                                    if topup_error:
+                                        raise topup_error
+                                    raise ValueError("Stripe topup failed without a detailed error")
+
+                                retry_auth = await asyncio.get_running_loop().run_in_executor(
+                                    None,
+                                    lambda cid=candidate_card_id: _create_test_issuing_authorization_https(
+                                        stripe_key=stripe_key,
+                                        card_id=cid,
+                                        amount_minor=amount_minor,
+                                        currency=normalized_currency,
+                                        supplier_name=supplier_name,
+                                        order_number=order_db.order_number,
+                                    ),
+                                )
+                                if bool(retry_auth.get("approved")):
+                                    auth = retry_auth
+                                    issuing_card_id = candidate_card_id
+                                    if selected_topup_source:
+                                        retry_auth["_auto_topup_source"] = selected_topup_source
+                                    break
+                                candidate_auth = retry_auth
+                                candidate_status = str(candidate_auth.get("status") or "")
+                                candidate_reason = _extract_issuing_decline_reason(candidate_auth)
+
+                            last_reject_detail = (
+                                f"card={candidate_card_id}, status={candidate_status}, "
+                                f"reason={candidate_reason or 'unknown'}, auth_id={candidate_auth.get('id')}"
+                            )
+
+                        if not auth:
+                            topup_detail = ""
+                            if topup_obj:
+                                metadata = dict(supplier_payment.metadata_json or {})
+                                metadata.update({
+                                    "issuing_auto_topup_id": topup_obj.get("id"),
+                                    "issuing_auto_topup_status": topup_obj.get("status"),
+                                    "issuing_auto_topup_amount": topup_obj.get("amount"),
+                                    "issuing_auto_topup_currency": topup_obj.get("currency"),
+                                })
+                                supplier_payment.metadata_json = metadata
+                                topup_detail = (
+                                    f", topup_id={topup_obj.get('id')}, "
+                                    f"topup_status={topup_obj.get('status')}"
+                                )
+                            raise ValueError(
+                                "Issuing authorization was not approved on available virtual cards"
+                                + (f" ({last_reject_detail}{topup_detail})" if (last_reject_detail or topup_detail) else "")
+                            )
 
                         balance_tx = (auth.get("balance_transactions") or [])
                         balance_tx_id = balance_tx[0].get("id") if balance_tx else None
@@ -520,12 +809,21 @@ async def trigger_supplier_fulfillment(paid_orders: list, db: AsyncSession) -> N
                         metadata.update({
                             "issuing_authorization_id": auth.get("id"),
                             "issuing_authorization_status": auth.get("status"),
+                            "issuing_authorization_decline_reason": _extract_issuing_decline_reason(auth),
                             "issuing_card_id": issuing_card_id,
                             "issuing_currency": normalized_currency,
                             "issuing_amount_minor": amount_minor,
                             "issuing_amount_major": amount_major,
                             "issuing_ils_per_usd": ils_per_usd,
                         })
+                        if topup_obj:
+                            metadata.update({
+                                "issuing_auto_topup_id": topup_obj.get("id"),
+                                "issuing_auto_topup_status": topup_obj.get("status"),
+                                "issuing_auto_topup_amount": topup_obj.get("amount"),
+                                "issuing_auto_topup_currency": topup_obj.get("currency"),
+                                "issuing_auto_topup_source": auth.get("_auto_topup_source") if isinstance(auth, dict) else None,
+                            })
                         supplier_payment.metadata_json = metadata
                 else:
                     if not stripe_configured and not allow_simulated_supplier_payments:

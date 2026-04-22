@@ -328,6 +328,7 @@ VAT_RATE = 0.18            # 18%
 SHIPPING_ILS = 91.0        # default customer delivery fee (₪)
 # Import the single source of truth for USD→ILS rate from BACKEND_DATABASE_MODELS
 from BACKEND_DATABASE_MODELS import USD_TO_ILS
+from currency_rate import get_usd_to_ils_rate
 
 # Customer-facing delivery fee per supplier (varies by origin country)
 SUPPLIER_SHIPPING_RATES: dict = {
@@ -509,10 +510,12 @@ class BaseAgent:
         supplier_price_usd: float,
         shipping_cost_usd: float = 0.0,
         customer_shipping: Optional[float] = None,
+        usd_to_ils_rate: Optional[float] = None,
     ) -> Dict[str, float]:
         """Calculate final customer price from supplier cost (USD).
         customer_shipping overrides the default SHIPPING_ILS delivery fee."""
-        cost_ils = (supplier_price_usd + shipping_cost_usd) * USD_TO_ILS
+        applied_rate = float(usd_to_ils_rate or USD_TO_ILS)
+        cost_ils = (supplier_price_usd + shipping_cost_usd) * applied_rate
         price_no_vat = round(cost_ils * PROFIT_MARGIN, 2)
         vat = round(price_no_vat * VAT_RATE, 2)
         delivery = customer_shipping if customer_shipping is not None else SHIPPING_ILS
@@ -1377,10 +1380,13 @@ CROSS-REFERENCE: Alternative/equivalent part numbers are stored in the part_cros
 
         # Single query: DISTINCT ON (part_id) — best supplier per part, in_stock first
         async with async_session_factory() as cat_db:
+            usd_to_ils_rate = await get_usd_to_ils_rate(cat_db)
             sp_batch_result = await cat_db.execute(
                 text("""
                     SELECT DISTINCT ON (sp.part_id)
-                        sp.id AS sp_id, sp.part_id, sp.price_usd, sp.shipping_cost_usd,
+                        sp.id AS sp_id, sp.part_id,
+                        sp.price_usd, sp.price_ils,
+                        sp.shipping_cost_usd, sp.shipping_cost_ils,
                         sp.is_available, sp.warranty_months, sp.estimated_delivery_days,
                         s.name AS supplier_name, s.country AS supplier_country,
                         ROW_NUMBER() OVER (
@@ -1408,10 +1414,21 @@ CROSS-REFERENCE: Alternative/equivalent part numbers are stored in the part_cros
             suppliers = []
             for sp_row in rows:
                 availability = "in_stock" if sp_row.is_available else "on_order"
-                pricing = self.calculate_customer_price(
-                    float(sp_row.price_usd),
-                    float(sp_row.shipping_cost_usd or 0),
-                )
+                supplier_price_ils = float(sp_row.price_ils or 0)
+                supplier_ship_ils = float(sp_row.shipping_cost_ils or 0)
+                if supplier_price_ils > 0:
+                    pricing = self.calculate_customer_price_from_ils(
+                        supplier_price_ils,
+                        supplier_ship_ils,
+                    )
+                else:
+                    supplier_total_ils = (
+                        float(sp_row.price_usd or 0) + float(sp_row.shipping_cost_usd or 0)
+                    ) * usd_to_ils_rate
+                    pricing = self.calculate_customer_price_from_ils(
+                        supplier_total_ils,
+                        0.0,
+                    )
                 pricing["availability"] = availability
                 pricing["warranty_months"] = sp_row.warranty_months
                 pricing["estimated_delivery_days"] = sp_row.estimated_delivery_days
@@ -2513,6 +2530,7 @@ class SupplierManagerAgent(BaseAgent):
         now = datetime.utcnow()
         # Deterministic-ish daily seed so the same day gives consistent movement
         day_seed = int(now.strftime("%Y%m%d"))
+        ils_per_usd_rate = await get_usd_to_ils_rate(db, fallback=USD_TO_ILS)
 
         VOLATILITY = {
             "AutoParts Pro IL": (0.01, 0.02),
@@ -2576,17 +2594,17 @@ class SupplierManagerAgent(BaseAgent):
                         # Guard: never outside 80%–150% of current price
                         new_ils = max(round(cur_ils * 0.80, 2), min(new_ils, round(cur_ils * 1.50, 2)))
                         sp.price_ils = new_ils
-                        sp.price_usd = round(new_ils / USD_TO_ILS, 2)
+                        sp.price_usd = round(new_ils / ils_per_usd_rate, 2)
                         report["parts_updated"] += 1
                         db.add(PriceHistory(
                             supplier_part_id=sp.id,
                             old_price_ils=cur_ils,
                             new_price_ils=new_ils,
-                            old_price_usd=round(cur_ils / USD_TO_ILS, 2),
-                            new_price_usd=round(new_ils / USD_TO_ILS, 2),
+                            old_price_usd=round(cur_ils / ils_per_usd_rate, 2),
+                            new_price_usd=round(new_ils / ils_per_usd_rate, 2),
                             change_pct=round((new_ils - cur_ils) / cur_ils * 100, 4),
                             source="boaz_sync",
-                            ils_per_usd_rate=USD_TO_ILS,
+                            ils_per_usd_rate=ils_per_usd_rate,
                         ))
                         # Drop > 10% detection
                         if new_ils < cur_ils * 0.90:

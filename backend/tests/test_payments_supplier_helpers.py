@@ -7,7 +7,11 @@ from routes.payments import _allow_simulated_payments, _build_tracking_url_from_
 from routes.utils import (
     trigger_supplier_refund,
     _normalize_supplier_spend_provider,
+    _resolve_supplier_spend_provider,
     _convert_ils_to_minor_units,
+    _extract_issuing_decline_reason,
+    _compute_test_topup_amount_minor,
+    _build_topup_source_candidates,
 )
 
 
@@ -49,6 +53,22 @@ def test_normalize_supplier_spend_provider_accepts_issuing():
     assert _normalize_supplier_spend_provider("issuing") == "issuing"
 
 
+def test_resolve_supplier_spend_provider_prefers_supplier_credentials(monkeypatch):
+    monkeypatch.setenv("SUPPLIER_SPEND_PROVIDER", "payments")
+    creds = {"supplier_spend_provider": "issuing"}
+    assert _resolve_supplier_spend_provider(creds) == "issuing"
+
+
+def test_resolve_supplier_spend_provider_defaults_to_issuing(monkeypatch):
+    monkeypatch.delenv("SUPPLIER_SPEND_PROVIDER", raising=False)
+    assert _resolve_supplier_spend_provider(None) == "issuing"
+
+
+def test_resolve_supplier_spend_provider_uses_env_when_set(monkeypatch):
+    monkeypatch.setenv("SUPPLIER_SPEND_PROVIDER", "payments")
+    assert _resolve_supplier_spend_provider(None) == "payments"
+
+
 def test_convert_ils_to_minor_units_ils():
     minor, ccy, major = _convert_ils_to_minor_units(1152.61, "ils", 3.65)
     assert minor == 115261
@@ -61,6 +81,39 @@ def test_convert_ils_to_minor_units_usd():
     assert minor == 10000
     assert ccy == "usd"
     assert major == 100.0
+
+
+def test_extract_issuing_decline_reason_from_request_history():
+    auth = {
+        "request_history": [
+            {"reason": "insufficient_funds"}
+        ]
+    }
+    assert _extract_issuing_decline_reason(auth) == "insufficient_funds"
+
+
+def test_extract_issuing_decline_reason_empty_when_missing():
+    assert _extract_issuing_decline_reason({}) == ""
+
+
+def test_compute_test_topup_amount_minor_applies_buffer_with_cap():
+    assert _compute_test_topup_amount_minor(10000, 5000, 12000) == 12000
+
+
+def test_compute_test_topup_amount_minor_without_cap_hit():
+    assert _compute_test_topup_amount_minor(10000, 5000, 50000) == 15000
+
+
+def test_build_topup_source_candidates_uses_default_fallback():
+    assert _build_topup_source_candidates(None) == ["btok_us_verified", "tok_visa_debit"]
+
+
+def test_build_topup_source_candidates_deduplicates():
+    assert _build_topup_source_candidates("btok_us_verified") == ["btok_us_verified", "tok_visa_debit"]
+
+
+def test_build_topup_source_candidates_prefers_configured_then_fallback():
+    assert _build_topup_source_candidates("tok_custom") == ["tok_custom", "btok_us_verified", "tok_visa_debit"]
 
 
 def test_build_tracking_url_prefers_explicit_url():

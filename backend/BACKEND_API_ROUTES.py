@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse, Response
 from typing import List, Optional, Dict, Any, Literal
 from datetime import datetime, date, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, func, text
+from sqlalchemy import select, and_, or_, func, text
 import logging
 import uuid
 from uuid import UUID as _UUID
@@ -30,7 +30,7 @@ from BACKEND_DATABASE_MODELS import (
     get_db, get_pii_db, async_session_factory, pii_session_factory, User, Vehicle, PartsCatalog, Order, OrderItem, Payment,
     Invoice, Return, Conversation, Message, File as FileModel,
     Notification, UserProfile, SystemSetting, SupplierPart, Supplier,
-    CarBrand, SystemLog, USD_TO_ILS, ApprovalQueue, SocialPost, JobFailure, AuditLog, BugReport,
+    CarBrand, SystemLog, USD_TO_ILS, ApprovalQueue, SocialPost, JobFailure, AuditLog, BugReport, SupplierPayment,
 )
 from BACKEND_AUTH_SECURITY import (
     get_current_user, get_current_active_user, get_current_verified_user,
@@ -619,7 +619,7 @@ async def _stuck_orders_monitor_loop():
     Background loop: runs every 30 minutes.
 
     Pass 1 — Stuck fulfillment:
-      Finds orders in 'paid' or 'processing' for > STUCK_ORDER_HOURS hours
+            Finds orders in 'confirmed', 'paid' or 'processing' for > STUCK_ORDER_HOURS hours
       (payment confirmed but supplier order never placed) and re-triggers the
       OrdersAgent to place the supplier order.
 
@@ -633,14 +633,26 @@ async def _stuck_orders_monitor_loop():
     await asyncio.sleep(5)  # let DB pool warm up on startup
     while True:
         now = datetime.utcnow()
-        # ── Pass 1: stuck fulfillment (paid/processing > 4 h) ────────────────
+        # ── Pass 1: stuck fulfillment (confirmed/paid/processing > 4 h) ───────
         try:
             cutoff = now - timedelta(hours=STUCK_ORDER_HOURS)
             async with pii_session_factory() as db:
+                issuing_retry_order_ids = (
+                    select(SupplierPayment.order_id)
+                    .where(
+                        SupplierPayment.status == "failed",
+                        SupplierPayment.provider == "stripe_issuing",
+                        SupplierPayment.failure_reason.ilike("%insufficient_funds%"),
+                    )
+                    .distinct()
+                )
                 result = await db.execute(
                     select(Order).where(
-                        Order.status.in_(["paid", "processing"]),
-                        Order.updated_at <= cutoff,
+                        Order.status.in_(["confirmed", "paid", "processing"]),
+                        or_(
+                            Order.updated_at <= cutoff,
+                            Order.id.in_(issuing_retry_order_ids),
+                        ),
                     )
                 )
                 stuck = result.scalars().all()
@@ -1496,6 +1508,10 @@ from routes.brands import router as brands_router
 app.include_router(brands_router, tags=["Brands"])
 from routes.webhooks import router as webhooks_router
 app.include_router(webhooks_router, tags=["Webhooks"])
+from routes.stripe_issuing import router as stripe_issuing_router
+app.include_router(stripe_issuing_router, prefix="/api")
+from routes.suppliers import router as suppliers_router
+app.include_router(suppliers_router)
 from routes.support import router as support_router
 app.include_router(support_router, tags=["Support"])
 from routes.admin import router as admin_router
