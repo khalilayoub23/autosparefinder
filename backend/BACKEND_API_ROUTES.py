@@ -40,9 +40,9 @@ from BACKEND_AUTH_SECURITY import (
     create_2fa_code, verify_2fa_code, get_redis, hash_password, publish_notification,
     check_rate_limit
 )
-from BACKEND_AI_AGENTS import OrdersAgent, OrdersAgent as _OrdersAgent, SalesAgent as _SalesAgent
+from BACKEND_AI_AGENTS import OrdersAgent, OrdersAgent as _OrdersAgent, SalesAgent as _SalesAgent, SocialMediaManagerAgent
 from auto_backup import _backup_loop
-from social.whatsapp_provider import get_whatsapp_provider
+from social.whatsapp_provider import send_message as _wa_send
 import httpx as _httpx
 import clamd as _clamd
 
@@ -371,14 +371,11 @@ async def _notify_search_miss_loop() -> None:
                     await pii_db.commit()
 
                 async with async_session_factory() as cat_db:
-                    await cat_db.execute(
-                        text("""
-                            UPDATE search_misses
-                            SET notified = TRUE
-                            WHERE id = ANY(:ids::uuid[])
-                        """),
-                        {"ids": notified_ids},
-                    )
+                    for _sid in notified_ids:
+                        await cat_db.execute(
+                            text("UPDATE search_misses SET notified = TRUE WHERE id = :sid"),
+                            {"sid": _sid},
+                        )
                     await cat_db.commit()
 
                 print(f"[search_miss_notify] notified {len(notified_ids)} users")
@@ -457,14 +454,15 @@ async def _vip_detection_loop() -> None:
                 if rows:
                     # ── 3. Promote + notify ────────────────────────────────────────────
                     new_vip_ids = [str(r.user_id) for r in rows]
-                    await pii_db.execute(text("""
-                        UPDATE user_profiles
-                        SET is_vip     = TRUE,
-                            vip_since  = NOW(),
-                            updated_at = NOW()
-                        WHERE user_id = ANY(:ids::uuid[])
-                          AND is_vip  = FALSE
-                    """), {"ids": new_vip_ids})
+                    for _vid in new_vip_ids:
+                        await pii_db.execute(text("""
+                            UPDATE user_profiles
+                            SET is_vip     = TRUE,
+                                vip_since  = NOW(),
+                                updated_at = NOW()
+                            WHERE user_id = :vid
+                              AND is_vip  = FALSE
+                        """), {"vid": _vid})
 
                     for row in rows:
                         _vip_title = "🏆 ברוך הבא למועדון הVIP של Auto Spare!"
@@ -586,6 +584,7 @@ async def startup():
     asyncio.create_task(_backup_loop())                    # ← pg_dump autospare + autospare_pii (every 24 h)
     start_scraper_task()           # ← catalog scraper background loop
     start_db_agent(get_db, 6.0)   # ← DB cleaning / normalisation agent (every 6h)
+    asyncio.create_task(_noa_marketing_loop())         # ← NOA social media agent (every 24h)
     print("✅ All systems ready — price-sync + catalog-scraper + db-agent schedulers started")
 
 
@@ -612,6 +611,79 @@ PAYMENT_REMINDER_AFTER_H    = int(os.getenv("PAYMENT_REMINDER_AFTER_H", "1"))
 
 # How often the health monitor probes all services (default: every 5 min)
 HEALTH_MONITOR_INTERVAL_S = int(os.getenv("HEALTH_MONITOR_INTERVAL_S", "300"))
+
+async def _noa_marketing_loop():
+    """Background loop: NOA social media agent runs every 24 hours."""
+    import random
+    from agents.memory import AgentMemory, ensure_memory_table
+    from BACKEND_DATABASE_MODELS import async_session_factory
+    NOA_INTERVAL_H = int(os.getenv("NOA_MARKETING_INTERVAL_H", "24"))
+    # Wait 30 min after startup before first run — prevents Gemini quota exhaustion at boot
+    await asyncio.sleep(1800)
+    TELEGRAM_OWNER_ID = os.getenv("TELEGRAM_OWNER_CHAT_ID", "")
+    TELEGRAM_ADMIN_TOKEN = os.getenv("TELEGRAM_ADMIN_BOT_TOKEN", "")
+
+    # פוסטים אפשריים לכל יום
+    POST_TYPES = ["daily", "tip", "promo", "brand"]
+
+    while True:
+        try:
+            async with async_session_factory() as db:
+                await ensure_memory_table(db)
+                mem = AgentMemory(db, agent_name="noa")
+                brand_guide = await mem.get_brand_guide()
+
+                # בחר סוג פוסט אקראי
+                post_type = random.choice(POST_TYPES)
+
+                # צור תוכן דרך NOA
+                noa = SocialMediaManagerAgent()
+                caption = await noa.generate_post(
+                    topic=f"{post_type} post about auto parts",
+                    platform="TikTok",
+                    tone="engaging",
+                )
+                caption = noa._sanitize_caption(caption)
+
+                # שמור בזיכרון
+                await mem.append_event("post_history", {
+                    "caption": caption,
+                    "post_type": post_type,
+                    "platform": "tiktok",
+                    "status": "awaiting_approval",
+                })
+
+                # שלח לאישורך בטלגרם
+                if TELEGRAM_OWNER_ID and TELEGRAM_ADMIN_TOKEN:
+                    msg = (
+                        f"🎯 <b>NOA — פוסט TikTok מוכן</b>\n\n"
+                        f"📝 {caption}\n\n"
+                        f"🏷️ {' '.join(brand_guide.get('hashtags', []))}"
+                    )
+                    async with __import__("httpx").AsyncClient(timeout=10.0) as _c:
+                        await _c.post(
+                            f"https://api.telegram.org/bot{TELEGRAM_ADMIN_TOKEN}/sendMessage",
+                            json={
+                                "chat_id": TELEGRAM_OWNER_ID,
+                                "text": msg,
+                                "parse_mode": "HTML",
+                                "reply_markup": {
+                                    "inline_keyboard": [[
+                                        {"text": "✅ אשר פרסום", "callback_data": "approve_post"},
+                                        {"text": "✏️ ערוך", "callback_data": "edit_post"},
+                                        {"text": "❌ דחה", "callback_data": "reject_post"},
+                                    ]]
+                                }
+                            }
+                        )
+
+                logger.info("noa_marketing_loop: post generated type=%s", post_type)
+
+        except Exception as exc:
+            logger.error("noa_marketing_loop error: %s", exc)
+
+        await asyncio.sleep(NOA_INTERVAL_H * 3600)
+
 
 
 async def _stuck_orders_monitor_loop():
@@ -820,7 +892,7 @@ async def _health_monitor_loop():
     while True:
         try:
             current_states = await _probe()
-            provider = get_whatsapp_provider()
+            # provider replaced by _wa_send
 
             for svc, state in current_states.items():
                 prev = _prev_states.get(svc)
@@ -868,7 +940,7 @@ async def _health_monitor_loop():
                                 "message": _msg,
                             })))
                             if admin.phone and str(admin.id) != str(WHATSAPP_ANON_USER_ID):
-                                wa_result = await provider.send_message(to=admin.phone, body=f"{_title}\n{_msg}")
+                                wa_result = await _wa_send(to=admin.phone, text=f"{_title}\n{_msg}")
                                 if not wa_result.get("ok"):
                                     print(f"[HealthMonitor] WhatsApp failed for admin {admin.id}: {wa_result.get('error')}")
                         await db.commit()
@@ -1106,7 +1178,7 @@ async def _abandoned_cart_loop():
                 print(f"[AbandonedCart] No abandoned carts found (idle > {ABANDONED_CART_IDLE_HOURS}h).")
             else:
                 print(f"[AbandonedCart] Found {len(abandoned_carts)} abandoned cart(s) — processing...")
-                provider  = get_whatsapp_provider()
+                # provider replaced by _wa_send
                 maya      = _SalesAgent()
                 sent_count = 0
                 skip_count = 0
@@ -1168,7 +1240,7 @@ async def _abandoned_cart_loop():
                             )
 
                         # Send WhatsApp
-                        wa_result = await provider.send_message(to=user.phone, body=wa_message)
+                        wa_result = await _wa_send(to=user.phone, text=wa_message)
                         if not wa_result.get("ok"):
                             print(f"[AbandonedCart] WhatsApp failed for user {user.id}: {wa_result.get('error')}")
                             skip_count += 1
@@ -1280,7 +1352,7 @@ async def _pending_payment_reminder_loop():
             print("[PaymentReminder] No remindable pending_payment orders found.")
         else:
             print(f"[PaymentReminder] Found {len(pending_orders)} order(s) — sending reminders...")
-            provider   = get_whatsapp_provider()
+            # provider replaced by _wa_send
             lior       = _OrdersAgent()
             sent_count = 0
             skip_count = 0
@@ -1315,7 +1387,7 @@ async def _pending_payment_reminder_loop():
                         )
 
                     # Send WhatsApp
-                    wa_result = await provider.send_message(to=user.phone, body=wa_message)
+                    wa_result = await _wa_send(to=user.phone, text=wa_message)
                     if not wa_result.get("ok"):
                         print(f"[PaymentReminder] WhatsApp failed for user {user.id}: {wa_result.get('error')}")
                         skip_count += 1

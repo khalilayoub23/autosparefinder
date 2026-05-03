@@ -55,6 +55,17 @@ async def send_telegram_message(chat_id: Union[int, str], text: str) -> dict:
     return {"ok": False, "error": result.get("description", "Unknown Telegram API error")}
 
 
+async def send_telegram_chat_action(chat_id: Union[int, str], action: str = "typing") -> dict:
+    """Send Telegram chat action (e.g. typing/upload_photo) for UX feedback."""
+    result = await _telegram_api_post(
+        "sendChatAction",
+        {"chat_id": str(chat_id), "action": action},
+    )
+    if result.get("ok"):
+        return {"ok": True}
+    return {"ok": False, "error": result.get("description", "Unknown Telegram API error")}
+
+
 async def set_telegram_webhook(webhook_url: str, secret_token: Optional[str] = None) -> dict:
     """Configure Telegram webhook URL for this bot token."""
     payload = {

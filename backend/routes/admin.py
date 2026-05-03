@@ -90,6 +90,25 @@ def _is_blocked_setting_key(key: str) -> bool:
     return key.strip().lower() in BLOCKED_SETTINGS
 
 
+def _review_social_post_policy(content: str, platforms: list[str]) -> Dict[str, Any]:
+    from BACKEND_AI_AGENTS import get_agent
+
+    agent = get_agent("social_media_manager_agent")
+    return agent.review_post_policy(content=content, platforms=platforms or [])
+
+
+def _raise_social_policy_block(review: Dict[str, Any]) -> None:
+    raise HTTPException(
+        status_code=422,
+        detail={
+            "message": "Post blocked by social policy gate",
+            "reasons": review.get("reasons", []),
+            "suggested_content": review.get("suggested_content", ""),
+            "platforms": review.get("platforms", []),
+        },
+    )
+
+
 async def _write_audit_log(
     db: AsyncSession,
     current_user: User,
@@ -2798,6 +2817,22 @@ async def resolve_approval(
             detail=f"Already resolved — current status: '{aq.status}'",
         )
 
+    post_for_approval: Optional[SocialPost] = None
+    if aq.entity_type == "social_post" and body.decision == "approved":
+        sp_result = await db.execute(
+            select(SocialPost).where(SocialPost.id == aq.entity_id)
+        )
+        post_for_approval = sp_result.scalar_one_or_none()
+        if not post_for_approval:
+            raise HTTPException(status_code=404, detail="Social post not found")
+
+        review = _review_social_post_policy(
+            post_for_approval.content,
+            post_for_approval.platforms or [],
+        )
+        if not review.get("ok", False):
+            _raise_social_policy_block(review)
+
     aq.status = body.decision
     aq.resolved_by = current_user.id
     aq.resolved_at = datetime.utcnow()
@@ -2805,16 +2840,11 @@ async def resolve_approval(
     await pii_db.commit()
 
     # ── Side-effect: sync social_posts.status when a social_post is approved ──
-    if aq.entity_type == "social_post" and body.decision == "approved":
-        sp_result = await db.execute(
-            select(SocialPost).where(SocialPost.id == aq.entity_id)
-        )
-        post = sp_result.scalar_one_or_none()
-        if post and post.status == "pending_approval":
-            post.status = "approved"
-            post.approved_by = current_user.id
-            post.updated_at = datetime.utcnow()
-            await db.commit()
+    if post_for_approval and post_for_approval.status == "pending_approval":
+        post_for_approval.status = "approved"
+        post_for_approval.approved_by = current_user.id
+        post_for_approval.updated_at = datetime.utcnow()
+        await db.commit()
 
     return {
         "message":     body.decision,
@@ -2919,6 +2949,10 @@ async def create_social_post(
     db: AsyncSession = Depends(get_db),
     pii_db: AsyncSession = Depends(get_pii_db),
 ):
+    review = _review_social_post_policy(data.content, data.platforms)
+    if not review.get("ok", False):
+        _raise_social_policy_block(review)
+
     post = SocialPost(
         content=data.content,
         platforms=data.platforms,
@@ -2995,6 +3029,12 @@ async def update_social_post(
     if post.status == "published":
         raise HTTPException(status_code=400, detail="Cannot edit a published post")
 
+    updated_content = data.content if data.content is not None else post.content
+    updated_platforms = data.platforms if data.platforms is not None else (post.platforms or [])
+    review = _review_social_post_policy(updated_content, updated_platforms)
+    if not review.get("ok", False):
+        _raise_social_policy_block(review)
+
     if data.content is not None:
         post.content = data.content
     if data.platforms is not None:
@@ -3045,6 +3085,10 @@ async def publish_social_post(
             status_code=400,
             detail=f"Post must be 'approved' before publishing (current status: '{post.status}')",
         )
+
+    review = _review_social_post_policy(post.content, post.platforms or [])
+    if not review.get("ok", False):
+        _raise_social_policy_block(review)
 
     tg_result = await publish_to_telegram(post.content)
     if not tg_result["ok"]:

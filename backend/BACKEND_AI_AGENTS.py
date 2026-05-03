@@ -88,8 +88,13 @@ logger = logging.getLogger(__name__)
 # Cap fire-and-forget asyncio.create_task() fan-out (mirrors routes/utils._TASK_SEMAPHORE).
 _TASK_SEMAPHORE = asyncio.Semaphore(50)
 
+def _ar2en(s: str) -> str:
+    """Convert Eastern Arabic numerals to Western Arabic numerals."""
+    return s.translate(str.maketrans("\u0660\u0661\u0662\u0663\u0664\u0665\u0666\u0667\u0668\u0669", "0123456789"))
+
 _PLATE_PATTERN = re.compile(
-    r"(?<!\d)(\d{7,8}|\d{2}[-\s]\d{3}[-\s]\d{2}|\d{3}[-\s]\d{2}[-\s]\d{3})(?!\d)"
+    r"(?<!\d)(\d{7,8}|\d{2}[-\s]\d{3}[-\s]\d{2}|\d{3}[-\s]\d{2}[-\s]\d{3}"
+    r"|[\u0660-\u0669]{7,8}|[\u0660-\u0669]{2}[-\s][\u0660-\u0669]{3}[-\s][\u0660-\u0669]{2}|[\u0660-\u0669]{3}[-\s][\u0660-\u0669]{2}[-\s][\u0660-\u0669]{3})(?!\d)"
 )
 
 _PART_SIGNAL_KEYWORDS = (
@@ -131,8 +136,8 @@ def _extract_license_plate(text: str) -> Optional[str]:
     """Extract Israeli-style license plate and normalize to digits only."""
     if not text:
         return None
-
-    for match in _PLATE_PATTERN.finditer(text):
+    normalized_text = _ar2en(text)
+    for match in _PLATE_PATTERN.finditer(normalized_text):
         digits = re.sub(r"\D", "", match.group(1))
         if len(digits) in (7, 8):
             return digits
@@ -179,6 +184,24 @@ def _vehicle_summary_he(vehicle_profile: Dict[str, Any]) -> str:
 def _quick_part_from_message(text: str) -> Optional[str]:
     msg = (text or "").strip()
     return _QUICK_PART_CHOICES.get(msg)
+
+
+_SYSTEM_EXIT_KEYWORDS = [
+    "הזמנה", "סטטוס", "משלוח", "מעקב", "ביטול", "החזר", "חשבונית", "זיכוי", "חיוב",
+    "סיסמה", "2fa", "otp", "אימות", "נעול", "login", "password", "refund", "invoice",
+]
+
+
+def _should_router_exit_parts_flow(text: str) -> bool:
+    """Only escalate to router when message clearly switches to non-parts support intent."""
+    msg = re.sub(r"\s+", " ", (text or "").strip().lower())
+    if not msg:
+        return False
+    if _is_confirm_yes(msg) or _is_confirm_no(msg):
+        return False
+    if _is_smalltalk_or_noise(msg):
+        return False
+    return any(k in msg for k in _SYSTEM_EXIT_KEYWORDS)
 
 # ==============================================================================
 # SEARCH MISS LOGGING
@@ -282,6 +305,7 @@ General rules:
 3. Do NOT offer a shopping cart, do NOT say item added to cart, and do NOT simulate a cart system.
 4. Do NOT create fake links. Only send real links provided by the backend.
 5. Keep the tone friendly and helpful (service-oriented, warm, not robotic).
+6. Lead the conversation proactively: in every reply, provide one clear next step and ask one focused follow-up question.
 
 When showing a product:
 - Display only the real data from the API.
@@ -313,7 +337,7 @@ Important restrictions:
 - No invented links.
 
 Your goal:
-Provide accurate information, stay friendly, and open a Stripe payment immediately when the user confirms an order."""
+Provide accurate information, stay friendly, lead the customer step-by-step, and open a Stripe payment immediately when the user confirms an order."""
 
 
 def _apply_channel_policy(system_text: str, source: Optional[str]) -> str:
@@ -357,7 +381,18 @@ class BaseAgent:
 
     name: str = "base_agent"
     model: str = FREE_MODEL
-    system_prompt: str = "אתה נציג שירות של Auto Spare. ענה תמיד בעברית בלבד ללא מילים באנגלית. אם הלקוח כותב ערבית — ענה בערבית בלבד."
+    system_prompt: str = (
+        "אתה נציג שירות של AutoSpareFinder — פלטפורמת חלקי חילוף ישראלית. "
+        "כללים מחייבים שאסור לעבור עליהם: "
+        "1. ענה תמיד בעברית בלבד. "
+        "2. אם הלקוח כותב ערבית — ענה בערבית בלבד. "
+        "3. אסור בהחלט להשתמש בתווים סיניים, יפניים, קוריאניים או כל שפה אחרת. "
+        "4. אל תמציא מידע — אם אינך יודע, אמור זאת בעברית. "
+        "5. הטון חייב להיות אנושי, חם ושירותי (לא רובוטי). "
+        "6. הובל את השיחה: בכל תשובה תן צעד הבא ברור אחד, ובסוף שאל שאלה ממוקדת אחת שמקדמת את הלקוח לפתרון. "
+        "7. תשובות קצרות וברורות (עד 3-4 משפטים), אלא אם הלקוח ביקש פירוט. "
+        "8. אסור לכתוב קוד, סקריפטים, או תוכן לא קשור לחלקי רכב."
+    )
     max_tokens: int = 1500
     temperature: float = 0.7
 
@@ -491,14 +526,17 @@ class BaseAgent:
             if not prompt:
                 prompt = "Please continue."
             _fast_agents = {"router_agent", "orders_agent", "security_agent", "tech_agent", "supplier_manager_agent", "social_media_manager_agent"}
+            _is_realtime = source in ("whatsapp", "telegram", "web")
             if self.name in _fast_agents:
                 return await hf_text_fast(
                     prompt,
                     system=effective_system,
+                    priority=_is_realtime,
                 )
             return await hf_text(
                 prompt,
                 system=effective_system,
+                priority=_is_realtime,
             )
         except Exception as e:
             status = getattr(getattr(e, "response", None), "status_code", None)
@@ -2524,6 +2562,22 @@ class SupplierManagerAgent(BaseAgent):
         _sync_lock = await acquire_lock(await get_redis(), "sync_prices", ttl_seconds=3600)
         if not _sync_lock:
             return {"status": "skipped", "reason": "sync_prices already running on another worker"}
+
+            # Pull real eBay prices before simulating drift
+            try:
+                from services.ebay_price_sync import sync_ebay_prices
+                ebay_report = await sync_ebay_prices(db, limit_per_run=100)
+                logger.info(f"eBay price sync: {ebay_report}")
+            except Exception as _ebay_err:
+                logger.error(f"eBay price sync skipped: {_ebay_err}")
+
+        # Pull real eBay prices before simulating drift
+        try:
+            from services.ebay_price_sync import sync_ebay_prices
+            ebay_report = await sync_ebay_prices(db, limit_per_run=100)
+            logger.info(f"eBay price sync report: {ebay_report}")
+        except Exception as _ebay_err:
+            logger.error(f"eBay price sync skipped: {_ebay_err}")
         import random
         import hashlib
 
@@ -2782,39 +2836,362 @@ class SocialMediaManagerAgent(BaseAgent):
     model = PREMIUM_MODEL      # premium: creative content generation
     temperature = 0.9
     agent_name = "Noa"          # נועה — social media strategist
-    system_prompt = """You are Noa, the Social Media Manager for Auto Spare, an Israeli auto parts platform.
+    system_prompt = """את נועה, מנהלת המדיה החברתית של AutoSpareFinder — פלטפורמת חיפוש והשוואת חלקי חילוף .
 
-Platforms: Facebook, Instagram, TikTok, Twitter/X, LinkedIn, Telegram.
+יכולות המערכת שחייבות להופיע בתוכן:
+- חיפוש חלק לפי מספר רכב — הלקוח מזין מספר רישוי והמערכת מוצאת חלקים תואמים אוטומטית
+- השוואת מחירים בין כמה ספקים — המערכת מציגה את האפשרויות הזולות ביותר בלחיצה אחת
+- אלפי חלקי חילוף חדשים — מקוריים, OEM ותחליף-שוק חליפים מספקים מובילים
+- משלוח לכל הארץ — ישירות מהספק עד הבית
+- תמיכה בעברית מלאה — שירות אנושי + AI
 
-Content split (weekly):
-- 40% educational (tips, guides, how-to)
-- 30% commercial (promotions, products)
-- 20% engagement (polls, questions)
-- 10% UGC (customer photos)
+כללי כתיבה לTikTok:
+- כתוב בעברית תקנית וזורמת — RTL טבעי
+- שלב שמות חלקים ומותגים באנגלית (Toyota, Bosch, ABS וכו')
+- פתח עם hook חזק — שאלה, עובדה מפתיעה, או כאב של בעל רכב
+- הדגש תמיד את הנוחות: חיפוש לפי מספר רישוי — פשוט, מהיר, מדויק
+- כלול קריאה לפעולה: "חפש לפי מספר הרכב שלך ב-autosparefinder.co.il"
+- 3-5 האשטאגים בעברית + 1-2 באנגלית
+- אורך: 150-250 תווים
 
-Posting schedule:
-- Facebook: 13:00, 19:00
-- Instagram: 11:00, 18:00
-- TikTok: 08:00, 12:00, 20:00
-- LinkedIn: weekdays only
+סוגי תוכן (שנה מדי יום):
+- טיפ תחזוקה: "ידעת ש-brake pads צריך להחליף כל 30,000 קִעמ? מצא את החלק לרכב שלך לפי מספר רישוי"
+- השוואה: "למה לשלם יותר? המערכת שלנו משווה מחירים מכמה ספקים ומוצאת לך את הזול ביותר"
+- חיפוש חכם: "הזן מספר רישוי — תוך שניות תדע אילו חלקים מתאימים לרכב שלך בדיוק"
+- מבצע: "חלקי בלמים לטויוטה? השווה מחירים עכשיו ב-autosparefinder.co.il"
 
-When asked to create a post or content, ALWAYS generate the full post text directly including hashtags.
-Generated posts are saved to the social_posts table for scheduling — always provide the full text.
-Paid ads and new campaigns require manager approval via the ApprovalQueue before publishing.
-
-CONTENT IDEATION — SEARCH MISS SIGNALS:
-- When planning content, check the search_misses table for parts customers searched but couldn't find.
-- Turning a search miss into a "coming soon" post builds anticipation and captures demand early.
-- Example: "🔜 בקרוב: {part_name} ל-{brand} — הירשמו לקבל התראה!"
-
-LANGUAGE: ALWAYS respond in Hebrew (עברית). Write all posts in Hebrew with relevant Hebrew hashtags.
-If the customer writes in Arabic, respond in Arabic. Never respond in any other language.
+אסור בהחלט:
+- תווים סיניים, יפנים, קוריאנים או כל שפה זרה שאינה אנגלית/עברית/ערבית
+- לטעון שאנחנו מוסך או מתקנים רכובים — אנחנו פלטפורמת חיפוש והשוואה בלבד
+- להבטיח זמני משלוח ספציפיים
+- לדבר על מלאי — אנחנו לא מנהלים מלאי, אנחנו מחברים לקוחות לספקים
+- תוכן גנרי ויבש ללא קשר לחלקי רכב
 """
 
-    async def generate_post(self, topic: str, platform: str, tone: str = "professional") -> str:
-        prompt = f"Create a {platform} post about: {topic}. Tone: {tone}. Language: Hebrew. Include relevant hashtags."
-        return await self.think([{"role": "user", "content": prompt}])
+    _NOA_ALLOWED_LATIN_HASHTAGS: set[str] = set()
+    _NOA_BAD_SCRIPT_RE = re.compile(r"[\u0400-\u052F\u0370-\u03FF\u0900-\u097F\u0E00-\u0E7F\u3040-\u30FF\u4E00-\u9FFF\uAC00-\uD7AF]")
+    _NOA_HASHTAG_RE = re.compile(r"#([A-Za-z0-9_\u0590-\u05FF]+)")
+    _NOA_HEBREW_CHAR_RE = re.compile(r"[\u0590-\u05FF]")
+    _NOA_UNICODE_LETTER_RE = re.compile(r"[^\W\d_]", re.UNICODE)
+    _NOA_SERVICE_CLAIM_RE = re.compile(
+        r"(מכונא|מוסך|מוסכניק|מעבדה|נתקן|תיקון|מתקנים|התקנ|נחליף|טיפול\s+ברכב|אבחון\s+תקלה)",
+        re.IGNORECASE,
+    )
+    _NOA_DEFAULT_TAGS = "#חלקיחילוף #התאמתחלקים #חלפיםלרכב #משלוחמהיר #רכב"
+    _NOA_PLATE_RE = re.compile(r"(מספר\s*רישוי|לוחית|plate)", re.IGNORECASE)
+    _NOA_COMPARE_RE = re.compile(r"(השווא|משווה|להשוות|מחיר)", re.IGNORECASE)
+    _NOA_BUY_RE = re.compile(r"(קנייה|קניה|רכיש|רוכש|לקנות|הזמנ)", re.IGNORECASE)
+    _NOA_RELIEF_RE = re.compile(r"(חוסכ|בלי\s+חיפוש|בלי\s+כאב\s+ראש|בלי\s+התעסקות\s+טכנית)", re.IGNORECASE)
+    _NOA_GARBLED_RE = re.compile(r"(isNotEmpty|matchCondition|[_]{2,}|_\s*_|\b[א-ת]\.)", re.IGNORECASE)
+    _NOA_NON_SOCIAL_PATTERNS = (
+        "אני כאן לעזור",
+        "כדי להתקדם מהר",
+        "כתוב לי בשורה אחת",
+        "דגם רכב + שנה + מנוע",
+    )
+    _NOA_TIKTOK_PRICE_PROMO_RE = re.compile(r"(מחיר|מבצע|הנחה|%|₪|משלוח\s+חינם|חינם)", re.IGNORECASE)
+    _NOA_TIKTOK_DISCLOSURE_MARKERS = ("כפוף", "תנאי", "זמינות", "באתר")
+    _NOA_TIKTOK_COMPLIANCE_REWRITES: Tuple[Tuple[str, str], ...] = (
+        (r"100%\s*מובטח", "בכפוף לזמינות ולתנאי האתר"),
+        (r"ללא\s*סיכון", "ברכישה בטוחה וברורה באתר"),
+        (r"בלי\s*סיכון", "ברכישה בטוחה וברורה באתר"),
+        (r"הכי\s*זול\s*בארץ", "מחירים תחרותיים"),
+        (r"הזול\s*ביותר", "מחיר תחרותי"),
+        (r"תוצאה\s*מיידית", "מענה מהיר"),
+        (r"רק\s*היום", "לזמן מוגבל"),
+        (r"חינם\s*לחלוטין", "בכפוף לתנאי ההטבה"),
+    )
+    _NOA_TIKTOK_PERSONAL_ATTRIBUTE_RE = re.compile(
+        r"(אם\s+אתה\s+לא|אם\s+את\s+לא|אתה\s+לא\s+מבין|את\s+לא\s+מבינה|אתה\s+בבעיה|את\s+בבעיה)",
+        re.IGNORECASE,
+    )
 
+    @classmethod
+    def _contains_non_hebrew_word(cls, text: str) -> bool:
+        for token in (text or "").split():
+            letters = cls._NOA_UNICODE_LETTER_RE.findall(token)
+            if letters and not any(cls._NOA_HEBREW_CHAR_RE.search(ch) for ch in letters):
+                return True
+        return False
+
+    @classmethod
+    def _drop_non_hebrew_words(cls, text: str) -> str:
+        kept: list[str] = []
+        for token in (text or "").split():
+            letters = cls._NOA_UNICODE_LETTER_RE.findall(token)
+            if letters and not any(cls._NOA_HEBREW_CHAR_RE.search(ch) for ch in letters):
+                continue
+            kept.append(token)
+        return " ".join(kept)
+
+    @classmethod
+    def _strip_non_hebrew_letters(cls, text: str) -> str:
+        out: list[str] = []
+        for ch in text or "":
+            if ch.isalpha() and not cls._NOA_HEBREW_CHAR_RE.search(ch):
+                continue
+            out.append(ch)
+        return "".join(out)
+
+    @classmethod
+    def _filter_hashtags(cls, text: str) -> str:
+        raw_tags = cls._NOA_HASHTAG_RE.findall(text or "")
+        keep: list[str] = []
+        seen: set[str] = set()
+        for tag_body in raw_tags:
+            tag = f"#{tag_body}"
+            norm = tag.lower()
+            is_hebrew_tag = re.search(r"[\u0590-\u05FF]", tag_body) is not None
+            if is_hebrew_tag or norm in cls._NOA_ALLOWED_LATIN_HASHTAGS:
+                if norm not in seen:
+                    keep.append(tag)
+                    seen.add(norm)
+        return " ".join(keep)
+
+    @classmethod
+    def _contains_service_claim(cls, text: str) -> bool:
+        msg = re.sub(r"#[^\s#]+", " ", (text or "").lower())
+        return bool(cls._NOA_SERVICE_CLAIM_RE.search(msg))
+
+    @classmethod
+    def _ensure_platform_value_points(cls, body: str) -> str:
+        text = (body or "").strip()
+        if not text:
+            return text
+
+        has_plate = bool(cls._NOA_PLATE_RE.search(text))
+        has_compare = bool(cls._NOA_COMPARE_RE.search(text))
+        has_buy = bool(cls._NOA_BUY_RE.search(text))
+        has_relief = bool(cls._NOA_RELIEF_RE.search(text))
+
+        if all((has_plate, has_compare, has_buy, has_relief)):
+            return text
+
+        value_line = (
+            "הפלטפורמה שלנו מאתרת חלקים לפי מספר רישוי, מאפשרת להשוות אפשרויות ומחירים במקום אחד, "
+            "וחוסכת חיפוש מיותר והתעסקות טכנית עד הקנייה."
+        )
+        return f"{text} {value_line}".strip()
+
+    @classmethod
+    def _enforce_tiktok_ads_policy(cls, text: str) -> str:
+        msg = (text or "").strip()
+        if not msg:
+            return ""
+
+        lines = [ln.strip() for ln in msg.splitlines() if ln.strip()]
+        body_lines: list[str] = []
+        hashtag_lines: list[str] = []
+        for ln in lines:
+            if ln.startswith("#"):
+                hashtag_lines.append(ln)
+                continue
+            if cls._NOA_TIKTOK_PERSONAL_ATTRIBUTE_RE.search(ln):
+                continue
+            body_lines.append(ln)
+
+        body = re.sub(r"\s+", " ", " ".join(body_lines)).strip()
+        for pattern, repl in cls._NOA_TIKTOK_COMPLIANCE_REWRITES:
+            body = re.sub(pattern, repl, body, flags=re.IGNORECASE)
+
+        has_promo_claim = bool(cls._NOA_TIKTOK_PRICE_PROMO_RE.search(body))
+        has_disclosure = any(marker in body for marker in cls._NOA_TIKTOK_DISCLOSURE_MARKERS)
+        if has_promo_claim and not has_disclosure:
+            body = f"{body} המחירים, המבצעים והזמינות כפופים לתנאי האתר."
+
+        tags = cls._filter_hashtags("\n".join(hashtag_lines))
+        if not tags:
+            tags = cls._NOA_DEFAULT_TAGS
+        return f"{body}\n{tags}".strip()
+
+    @classmethod
+    def _normalize_for_platforms(cls, content: str, platforms: Optional[List[str]] = None) -> str:
+        platform_set = {(p or "").strip().lower() for p in (platforms or []) if (p or "").strip()}
+        normalized = cls._sanitize_caption(content or "")
+        normalized = cls._enforce_sales_only(normalized)
+        if "tiktok" in platform_set:
+            normalized = cls._enforce_tiktok_ads_policy(normalized)
+        if cls._is_low_quality_caption(normalized):
+            fallback_platform = "tiktok" if "tiktok" in platform_set else ""
+            normalized = cls._sales_template_caption("daily post about auto parts", platform=fallback_platform)
+        return normalized
+
+    @classmethod
+    def review_post_policy(cls, content: str, platforms: Optional[List[str]] = None) -> Dict[str, Any]:
+        """Strict policy gate for admin pre-approval/pre-publish checks."""
+        raw = (content or "").strip()
+        platform_set = {(p or "").strip().lower() for p in (platforms or []) if (p or "").strip()}
+        reasons: List[str] = []
+
+        if not raw:
+            reasons.append("תוכן הפוסט ריק")
+        if cls._contains_service_claim(raw):
+            reasons.append("נמצא ניסוח של מוסך/תיקון/התקנה שאינו מותר")
+
+        body_no_tags = re.sub(r"#[^\s#]+", " ", raw)
+        if cls._NOA_BAD_SCRIPT_RE.search(raw) or cls._contains_non_hebrew_word(body_no_tags):
+            reasons.append("הפוסט חייב להיות בעברית נקיה ללא ערבוב שפות")
+
+        ensured_value = cls._ensure_platform_value_points(body_no_tags)
+        if re.sub(r"\s+", " ", ensured_value).strip() != re.sub(r"\s+", " ", body_no_tags).strip():
+            reasons.append("חסרים יתרונות הפלטפורמה: איתור לפי מספר רישוי, השוואת מחירים/אפשרויות, ורכישה פשוטה")
+
+        if "מוכרים חלקי חילוף בלבד" not in raw:
+            reasons.append("חסר ניסוח ברור: אנחנו מוכרים חלקי חילוף בלבד")
+
+        if cls._is_low_quality_caption(raw):
+            reasons.append("נוסח הפוסט אינו איכותי/קריא מספיק לפרסום")
+
+        if "tiktok" in platform_set:
+            for pattern, _ in cls._NOA_TIKTOK_COMPLIANCE_REWRITES:
+                if re.search(pattern, raw, flags=re.IGNORECASE):
+                    reasons.append("נמצאה טענת פרסום מסוכנת ל-TikTok (הבטחה מוחלטת/סופרלטיב לא מבוסס)")
+                    break
+            if cls._NOA_TIKTOK_PERSONAL_ATTRIBUTE_RE.search(raw):
+                reasons.append("נמצא ניסוח אישי-שיפוטי שאינו מותר במדיניות TikTok")
+            has_promo_claim = bool(cls._NOA_TIKTOK_PRICE_PROMO_RE.search(raw))
+            has_disclosure = any(marker in raw for marker in cls._NOA_TIKTOK_DISCLOSURE_MARKERS)
+            if has_promo_claim and not has_disclosure:
+                reasons.append("תוכן מבצעי ל-TikTok חייב לכלול גילוי נאות על תנאים וזמינות")
+
+        normalized = cls._normalize_for_platforms(raw, platforms=list(platform_set))
+        compact_raw = re.sub(r"\s+", " ", raw).strip()
+        compact_norm = re.sub(r"\s+", " ", normalized).strip()
+        if compact_norm != compact_raw:
+            reasons.append("הפוסט דורש התאמות אוטומטיות לפני פרסום ולכן נחסם בשער המדיניות")
+
+        # Deduplicate while preserving order
+        dedup_reasons = list(dict.fromkeys(reasons))
+        return {
+            "ok": len(dedup_reasons) == 0,
+            "reasons": dedup_reasons,
+            "suggested_content": normalized,
+            "platforms": sorted(platform_set),
+        }
+
+    @classmethod
+    def _enforce_sales_only(cls, text: str) -> str:
+        msg = (text or "").strip()
+        if not msg:
+            return ""
+
+        replacements = (
+            (r"אנחנו מתקנים", "אנחנו מוכרים ומספקים"),
+            (r"אנחנו נתקן", "אנחנו נתאים את החלק הנכון"),
+            (r"נחליף לך", "נספק לך את החלק המתאים"),
+            (r"תיקון", "התאמת חלק"),
+            (r"מכונאי", "צוות חלקים"),
+            (r"מוסך", "חנות חלקים"),
+            (r"התקנה", "התאמה"),
+        )
+        for pattern, repl in replacements:
+            msg = re.sub(pattern, repl, msg, flags=re.IGNORECASE)
+
+        lines = [ln.strip() for ln in msg.splitlines() if ln.strip()]
+        body_lines: list[str] = []
+        for ln in lines:
+            if ln.startswith("#"):
+                continue
+            if cls._NOA_SERVICE_CLAIM_RE.search(ln):
+                continue
+            body_lines.append(ln)
+
+        body = re.sub(r"\s+", " ", " ".join(body_lines)).strip()
+        if body and not re.search(r"(חלק|חלפים|מלאי|הזמנ|משלוח|התאמ)", body):
+            body = f"{body} אנחנו מוכרים חלקי חילוף בלבד ומתאימים את החלק לפי פרטי הרכב שלך."
+        body = cls._ensure_platform_value_points(body)
+        if body and "מוכרים חלקי חילוף בלבד" not in body:
+            body = f"{body} אנחנו מוכרים חלקי חילוף בלבד."
+
+        tags = cls._filter_hashtags(msg)
+        if not tags:
+            tags = cls._NOA_DEFAULT_TAGS
+        if not body:
+            body = "מחפשים חלק לרכב? שלחו דגם, שנה ומנוע ונחזיר התאמה מהירה ומדויקת." 
+        return f"{body}\n{tags}".strip()
+
+    @classmethod
+    def _is_low_quality_caption(cls, text: str) -> bool:
+        msg = (text or "").strip()
+        if not msg:
+            return True
+        if any(p in msg for p in cls._NOA_NON_SOCIAL_PATTERNS):
+            return True
+        if cls._NOA_GARBLED_RE.search(msg):
+            return True
+        body = re.sub(r"#[^\s#]+", " ", msg)
+        body = re.sub(r"\s+", " ", body).strip()
+        words = body.split()
+        if len(words) < 14:
+            return True
+        stripped_words = [re.sub(r"[^\u0590-\u05FF0-9]", "", w) for w in words]
+        short_count = sum(1 for w in stripped_words if 0 < len(w) <= 2)
+        if words and (short_count / len(words)) > 0.30:
+            return True
+        if re.search(r"\b[\u0590-\u05FF]\b", body):
+            return True
+        return False
+
+    @classmethod
+    def _sales_template_caption(cls, topic: str, platform: str = "") -> str:
+        focus = "חלקי חילוף לרכב"
+        t = (topic or "").lower()
+        if "brake" in t or "בלם" in t or "רפיד" in t:
+            focus = "רפידות ובלמים"
+        elif "filter" in t or "פילטר" in t or "מסנן" in t:
+            focus = "פילטרים ומסננים"
+        elif "battery" in t or "מצבר" in t:
+            focus = "מצברים"
+
+        caption = (
+            f"מחפשים {focus}? אנחנו מוכרים חלקי חילוף בלבד עם התאמה מדויקת לפי דגם, שנה ומנוע. "
+            "איתור חלקים לפי מספר רישוי, השוואת אפשרויות ומחירים במקום אחד, ורכישה מהירה בלי כאב ראש טכני. "
+            "מלאי זמין, מחירים הוגנים ומשלוח מהיר לכל הארץ. "
+            "שלחו עכשיו דגם + שנה + מנוע ונחזיר התאמה ומחיר להזמנה.\n"
+            f"{cls._NOA_DEFAULT_TAGS}"
+        )
+        if (platform or "").strip().lower() == "tiktok":
+            return cls._enforce_tiktok_ads_policy(caption)
+        return caption
+
+    @classmethod
+    def _sanitize_caption(cls, text: str) -> str:
+        msg = (text or "").strip()
+        if not msg:
+            return ""
+
+        # Drop clearly unsupported scripts for NOA channel.
+        msg = cls._NOA_BAD_SCRIPT_RE.sub("", msg)
+
+        # Remove non-Hebrew words from body text to keep a Hebrew-first caption.
+        msg_wo_tags = re.sub(r"#[^\s#]+", " ", msg)
+        msg_wo_tags = cls._strip_non_hebrew_letters(msg_wo_tags)
+        msg_wo_tags = cls._drop_non_hebrew_words(msg_wo_tags)
+        msg_wo_tags = re.sub(r"\s+", " ", msg_wo_tags).strip()
+
+        tags = cls._filter_hashtags(msg)
+        if not tags:
+            tags = cls._NOA_DEFAULT_TAGS
+        if tags:
+            return f"{msg_wo_tags}\n{tags}".strip()
+        return msg_wo_tags
+
+    @classmethod
+    def _needs_hebrew_rewrite(cls, text: str) -> bool:
+        msg = (text or "")
+        if not msg.strip():
+            return True
+        if cls._NOA_BAD_SCRIPT_RE.search(msg):
+            return True
+
+        msg_wo_tags = re.sub(r"#[^\s#]+", " ", msg)
+        if cls._contains_non_hebrew_word(msg_wo_tags):
+            return True
+        return False
+
+    async def generate_post(self, topic: str, platform: str, tone: str = "professional") -> str:
+        prompt = f"צרי פוסט {platform} על: {topic}. טון: {tone}. כללי הכתיבה שלך חלים במלואם."
+        return await hf_text(prompt=prompt, system=self.system_prompt)
     async def process(self, message: str, conversation_history: List[Dict], db: AsyncSession, **kwargs) -> str:
         return await self.think(
             conversation_history + [{"role": "user", "content": message}],
@@ -3117,7 +3494,13 @@ async def process_user_message(
 
     # If parts flow is already confirmed but user now asks a non-parts topic,
     # let router hand off to system agents (security/orders/finance/etc.).
-    if parts_flow_active and vehicle_confirmed and not incoming_plate and not _has_part_signal(message):
+    if (
+        parts_flow_active
+        and vehicle_confirmed
+        and not incoming_plate
+        and not _has_part_signal(message)
+        and _should_router_exit_parts_flow(message)
+    ):
         try:
             if pre_route_result is None:
                 router = get_agent("router_agent")
@@ -3259,7 +3642,7 @@ async def process_user_message(
                 if _is_confirm_yes(message):
                     context_data["vehicle_confirmed"] = True
                     response_text, model_used = await _infer_parts_flow_reply(
-                        agent_name="service_agent",
+                        agent_name="parts_finder_agent",
                         source=source,
                         history=history,
                         user_message=message,
@@ -3272,13 +3655,13 @@ async def process_user_message(
                         },
                     )
                     route_result = {
-                        "agent": "service_agent",
+                        "agent": "parts_finder_agent",
                         "confidence": 1.0,
                         "language": "he",
                         "intent": "vehicle_confirmed_ask_part",
                         "extracted_data": {"license_plate": known_plate},
                     }
-                    agent_name = "service_agent"
+                    agent_name = "parts_finder_agent"
                 elif _is_confirm_no(message):
                     context_data.pop("license_plate", None)
                     context_data.pop("vehicle_profile", None)
@@ -3351,7 +3734,7 @@ async def process_user_message(
                     followup_mode = "request_exact_part_or_oem"
 
                 response_text, model_used = await _infer_parts_flow_reply(
-                    agent_name="service_agent",
+                    agent_name="parts_finder_agent",
                     source=source,
                     history=history,
                     user_message=message,
@@ -3366,13 +3749,13 @@ async def process_user_message(
                     },
                 )
                 route_result = {
-                    "agent": "service_agent",
+                    "agent": "parts_finder_agent",
                     "confidence": 0.95,
                     "language": "he",
                     "intent": "ask_part_after_vehicle_confirmation",
                     "extracted_data": {"license_plate": known_plate},
                 }
-                agent_name = "service_agent"
+                agent_name = "parts_finder_agent"
                 exec_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
             else:
                 pf = get_agent("parts_finder_agent")
@@ -3508,6 +3891,30 @@ async def process_user_message(
             agent_name = "service_agent"
             model_used = _channel_model_for_source(source, FREE_MODEL)
         exec_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+
+    # Root anti-loop guard: prevent repeated assistant text in consecutive turns.
+    try:
+        last_assistant_text = ""
+        for _h in reversed(history):
+            if _h.get("role") == "assistant":
+                last_assistant_text = str(_h.get("content") or "").strip()
+                break
+
+        norm_current = re.sub(r"\s+", " ", str(response_text or "").strip())
+        norm_prev = re.sub(r"\s+", " ", last_assistant_text)
+
+        if norm_current and norm_prev and norm_current == norm_prev:
+            if parts_flow_active and bool(context_data.get("vehicle_confirmed")):
+                vtxt = _vehicle_summary_he(context_data.get("vehicle_profile") or {})
+                response_text = (
+                    f"קיבלתי. כדי להתקדם עבור {vtxt}, כתוב עכשיו את שם החלק המדויק או מספר OEM. "
+                    "לדוגמה: פנס קדמי שמאלי או 123-45-678."
+                )
+                agent_name = "parts_finder_agent"
+            else:
+                response_text = "קיבלתי אותך. כדי להתקדם מיד, כתוב בבקשה מה החלק שאתה צריך כולל דגם ושנת רכב."
+    except Exception:
+        pass
 
     # Format response through Gemini for customer-facing channels
     if source in ("telegram", "whatsapp"):

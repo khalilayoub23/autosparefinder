@@ -15,6 +15,7 @@ import hashlib
 import json as _json
 import logging
 import os
+import re as _re
 import time
 from pathlib import Path
 from typing import Any
@@ -37,11 +38,27 @@ CEREBRAS_API_KEY    = os.getenv("CEREBRAS_API_KEY", "")
 CEREBRAS_TEXT_MODEL = os.getenv("CEREBRAS_TEXT_MODEL", "qwen-3-235b-a22b-instruct-2507")
 CEREBRAS_BASE       = "https://api.cerebras.ai/v1"
 GEMINI_API_KEY      = os.getenv("GEMINI_API_KEY", "")
+WHATSAPP_GEMINI_KEY = os.getenv("WHATSAPP_GEMINI_API_KEY", GEMINI_API_KEY)  # dedicated key for webhook
 GEMINI_VIS_MODEL    = os.getenv("GEMINI_VIS_MODEL", "gemini-1.5-flash-8b")
 GEMINI_BASE         = "https://generativelanguage.googleapis.com/v1beta/models"
 GROQ_API_KEY        = os.getenv("GROQ_API_KEY", "")
 GROQ_AUDIO_MODEL    = os.getenv("GROQ_AUDIO_MODEL", "whisper-large-v3-turbo")
 GROQ_BASE           = "https://api.groq.com/openai/v1"
+
+# ── Gemini circuit breaker ─────────────────────────────────────────────────────
+# Trips for 1 hour on quota/daily-limit 429; avoids hammering an exhausted key.
+import time as _time
+_GEMINI_CB_COOLDOWN   = 3600   # seconds
+_gemini_cb_open_until: float = 0.0  # epoch; 0 = closed (Gemini usable)
+
+def _gemini_cb_is_open() -> bool:
+    return _time.time() < _gemini_cb_open_until
+
+def _gemini_cb_trip() -> None:
+    global _gemini_cb_open_until
+    _gemini_cb_open_until = _time.time() + _GEMINI_CB_COOLDOWN
+    logger.warning("Gemini circuit breaker TRIPPED — skipping Gemini for 1 hour")
+
 
 ROUTER_BASE  = "https://router.huggingface.co/v1"
 INFER_BASE   = "https://router.huggingface.co/hf-inference/models"
@@ -52,6 +69,31 @@ _EMBED_CACHE_TTL = int(os.getenv("HF_EMBED_CACHE_TTL", "86400"))  # 24 hours
 
 # Retry: max attempts for 503/429.  Back-off: 2^attempt seconds (1 → 2 → 4 → …).
 _MAX_RETRIES = int(os.getenv("HF_MAX_RETRIES", "3"))
+_BASE_BACKOFF_SECONDS = float(os.getenv("HF_BASE_BACKOFF_SECONDS", "0.8"))
+_MAX_BACKOFF_SECONDS = float(os.getenv("HF_MAX_BACKOFF_SECONDS", "6"))
+_RETRY_AFTER_CAP_SECONDS = float(os.getenv("HF_RETRY_AFTER_CAP_SECONDS", "8"))
+
+
+# Background job concurrency limiter — limits Rex/scraper to 1 concurrent AI call.
+# Webhook calls bypass this with hf_text(priority=True) to ensure fast response.
+_BG_SEMAPHORE = asyncio.Semaphore(1)
+
+
+def _bounded_backoff(attempt: int) -> float:
+    return min(_BASE_BACKOFF_SECONDS * (2 ** attempt), _MAX_BACKOFF_SECONDS)
+
+
+def _parse_retry_after_seconds(value: str | None, fallback: float) -> float:
+    """Parse Retry-After header; if invalid/non-numeric use fallback backoff."""
+    if not value:
+        return fallback
+    try:
+        seconds = float(value)
+        if seconds >= 0:
+            return seconds
+    except (TypeError, ValueError):
+        pass
+    return fallback
 
 # ── Shared httpx client ───────────────────────────────────────────────────────
 # One TCP connection pool for all HF calls — reused across requests.
@@ -109,6 +151,44 @@ async def _cache_set(key: str, value: str, ttl: int) -> None:
         pass
 
 
+def _clean_response(text: str) -> str:
+    """
+    Clean AI response:
+    - Remove CJK (Chinese/Japanese/Korean) characters
+    - Remove other non-relevant unicode blocks
+    - Fix spacing issues from mixed RTL/LTR text
+    - Allow: Hebrew, Arabic, Latin, numbers, punctuation, emojis
+    """
+    # Remove CJK ideographs (base + extensions).
+    # Use \UXXXXXXXX for supplementary planes to avoid corrupting other scripts.
+    text = _re.sub(
+        r'['
+        r'\u3400-\u4DBF'
+        r'\u4E00-\u9FFF'
+        r'\U00020000-\U0002A6DF'
+        r'\U0002A700-\U0002B73F'
+        r'\U0002B740-\U0002B81F'
+        r'\U0002B820-\U0002CEAF'
+        r'\U0002CEB0-\U0002EBEF'
+        r'\U00030000-\U0003134F'
+        r']',
+        '',
+        text,
+    )
+    # Remove Japanese kana
+    text = _re.sub(r'[\u3040-\u30ff]', '', text)
+    # Remove Korean hangul
+    text = _re.sub(r'[\uac00-\ud7af]', '', text)
+    # Remove Thai, Devanagari
+    text = _re.sub(r'[\u0e00-\u0e7f\u0900-\u097f]', '', text)
+    # Clean multiple spaces
+    text = _re.sub(r' {2,}', ' ', text)
+    # Clean lines that became empty after cleaning
+    lines = [l.strip() for l in text.splitlines()]
+    text = '\n'.join(l for l in lines if l)
+    return text.strip()
+
+
 # ── Retry wrapper ─────────────────────────────────────────────────────────────
 async def _post_with_retry(
     url: str,
@@ -117,7 +197,7 @@ async def _post_with_retry(
     timeout: float,
     label: str,
 ) -> httpx.Response:
-    """POST with exponential back-off on 503 (cold-start) and 429 (rate-limit)."""
+    """POST with bounded back-off on 503 (cold-start) and 429 (rate-limit)."""
     client = _get_http()
     attempt = 0
     t0 = time.monotonic()
@@ -130,8 +210,8 @@ async def _post_with_retry(
                 logger.error("hf_client [%s] network error after %d attempts: %s",
                              label, attempt + 1, exc)
                 raise
-            wait = 2 ** attempt
-            logger.warning("hf_client [%s] network error (attempt %d/%d), retry in %ds: %s",
+            wait = _bounded_backoff(attempt)
+            logger.warning("hf_client [%s] network error (attempt %d/%d), retry in %.1fs: %s",
                            label, attempt + 1, _MAX_RETRIES, wait, exc)
             await asyncio.sleep(wait)
             attempt += 1
@@ -141,13 +221,14 @@ async def _post_with_retry(
 
         if resp.status_code in (429, 503) and attempt < _MAX_RETRIES:
             # 503 = model still loading  |  429 = rate limit
-            wait = 2 ** attempt
-            retry_after = int(resp.headers.get("retry-after", wait))
+            wait = _bounded_backoff(attempt)
+            retry_after = _parse_retry_after_seconds(resp.headers.get("retry-after"), wait)
+            bounded_wait = max(0.2, min(retry_after, _RETRY_AFTER_CAP_SECONDS))
             logger.warning(
-                "hf_client [%s] HTTP %d (attempt %d/%d) — waiting %ds",
-                label, resp.status_code, attempt + 1, _MAX_RETRIES, retry_after,
+                "hf_client [%s] HTTP %d (attempt %d/%d) — waiting %.1fs",
+                label, resp.status_code, attempt + 1, _MAX_RETRIES, bounded_wait,
             )
-            await asyncio.sleep(retry_after)
+            await asyncio.sleep(bounded_wait)
             attempt += 1
             continue
 
@@ -168,8 +249,10 @@ async def _post_with_retry(
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-async def hf_text(prompt: str, system: str = "", timeout: float = 90.0) -> str:
-    """Chat completion via HF Router. Cached in Redis for _TEXT_CACHE_TTL seconds."""
+async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority: bool = False) -> str:
+    """Chat completion via HF Router. Cached in Redis for _TEXT_CACHE_TTL seconds.
+    priority=True bypasses the background-job semaphore (use for webhook/realtime calls).
+    """
     if not CEREBRAS_API_KEY:
         raise RuntimeError("CEREBRAS_API_KEY not set in .env")
 
@@ -177,7 +260,10 @@ async def hf_text(prompt: str, system: str = "", timeout: float = 90.0) -> str:
     cached = await _cache_get(cache_key)
     if cached is not None:
         logger.debug("hf_client [text] cache hit")
-        return cached
+        cleaned_cached = _clean_response(cached)
+        if cleaned_cached != cached:
+            await _cache_set(cache_key, cleaned_cached, _TEXT_CACHE_TTL)
+        return cleaned_cached
 
     messages: list[dict[str, str]] = []
     if system:
@@ -191,25 +277,50 @@ async def hf_text(prompt: str, system: str = "", timeout: float = 90.0) -> str:
         "stream": False,
     }, ensure_ascii=False).encode()
 
-    resp = await _post_with_retry(
-        f"{CEREBRAS_BASE}/chat/completions",
-        {
-            "Authorization": f"Bearer {CEREBRAS_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        payload,
-        timeout,
-        "text",
-    )
+    _acquire = not priority
+    if _acquire:
+        await _BG_SEMAPHORE.acquire()
+    try:
+        resp = await _post_with_retry(
+            f"{CEREBRAS_BASE}/chat/completions",
+            {
+                "Authorization": f"Bearer {CEREBRAS_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            payload,
+            timeout,
+            "text",
+        )
+    finally:
+        if _acquire:
+            _BG_SEMAPHORE.release()
+    if resp.status_code == 429:
+        if GEMINI_API_KEY and not _gemini_cb_is_open():
+            logger.warning("hf_text: Cerebras 429 — falling back to Gemini")
+            try:
+                result = await gemini_text(prompt=prompt, system=system, timeout=timeout)
+                return result
+            except Exception as gemini_err:
+                err_str = str(gemini_err)
+                logger.warning(f"hf_text: Gemini also failed ({gemini_err}) — falling back to GROQ")
+                # Trip circuit breaker on quota exhaustion (429)
+                if "429" in err_str or "quota" in err_str.lower() or "limit" in err_str.lower():
+                    _gemini_cb_trip()
+        elif _gemini_cb_is_open():
+            logger.debug("hf_text: Gemini circuit breaker open — skipping directly to GROQ")
+        if GROQ_API_KEY:
+            logger.warning("hf_text: falling back to GROQ llama-3.3-70b-versatile")
+            return await groq_text(prompt=prompt, system=system, timeout=timeout)
     resp.raise_for_status()
     result: str = resp.json()["choices"][0]["message"]["content"]
+    result = _clean_response(result)
     await _cache_set(cache_key, result, _TEXT_CACHE_TTL)
     return result
 
 
-async def hf_text_fast(prompt: str, system: str = "", timeout: float = 90.0) -> str:
+async def hf_text_fast(prompt: str, system: str = "", timeout: float = 90.0, priority: bool = False) -> str:
     """Compatibility wrapper used by agents code-paths."""
-    return await hf_text(prompt=prompt, system=system, timeout=timeout)
+    return await hf_text(prompt=prompt, system=system, timeout=timeout, priority=priority)
 
 
 # ── Local embedding model ─────────────────────────────────────────────────────
@@ -301,7 +412,117 @@ async def hf_vision(
         "vision",
     )
     resp.raise_for_status()
-    return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+    result = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+    return _clean_response(result)
+
+
+async def gemini_text(
+    prompt: str,
+    system: str = "",
+    timeout: float = 60.0,
+    model: str = "gemini-2.0-flash",
+) -> str:
+    """
+    Creative text generation via Gemini Flash.
+    Optimized for Hebrew marketing content — faster and more creative than Qwen.
+    Used by NOA for daily social media posts.
+    """
+    if not GEMINI_API_KEY:
+        raise RuntimeError("GEMINI_API_KEY not set in .env")
+
+    cache_key = _cache_key("gem", model, system, prompt)
+    cached = await _cache_get(cache_key)
+    if cached is not None:
+        logger.debug("gemini_text cache hit")
+        return cached
+
+    parts = []
+    if system:
+        parts.append({"text": f"[System]: {system}\n\n[User]: {prompt}"})
+    else:
+        parts.append({"text": prompt})
+
+    payload = _json.dumps({
+        "contents": [{"parts": parts}],
+        "generationConfig": {
+            "temperature": 0.9,
+            "maxOutputTokens": 1000,
+        },
+    }, ensure_ascii=False).encode()
+
+    resp = await _post_with_retry(
+        f"{GEMINI_BASE}/{model}:generateContent?key={GEMINI_API_KEY}",
+        {"Content-Type": "application/json"},
+        payload,
+        timeout,
+        "gemini_text",
+    )
+    resp.raise_for_status()
+    result = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+    result = _clean_response(result)
+    await _cache_set(cache_key, result, _TEXT_CACHE_TTL)
+    return result
+
+
+async def whatsapp_gemini_text(prompt: str, system: str = "", timeout: float = 60.0) -> str:
+    """Gemini call using the dedicated WHATSAPP_GEMINI_API_KEY — isolated from background job quota."""
+    model = "gemini-2.0-flash"
+    if not WHATSAPP_GEMINI_KEY:
+        raise RuntimeError("WHATSAPP_GEMINI_API_KEY not set")
+    cache_key = _cache_key("wagem", model, system, prompt)
+    cached = await _cache_get(cache_key)
+    if cached is not None:
+        return cached
+    parts = []
+    if system:
+        parts.append({"text": f"[System]: {system}\n\n[User]: {prompt}"})
+    else:
+        parts.append({"text": prompt})
+    payload = _json.dumps({
+        "contents": [{"parts": parts}],
+        "generationConfig": {"temperature": 0.7, "maxOutputTokens": 1500},
+    }, ensure_ascii=False).encode()
+    resp = await _post_with_retry(
+        f"{GEMINI_BASE}/{model}:generateContent?key={WHATSAPP_GEMINI_KEY}",
+        {"Content-Type": "application/json"},
+        payload,
+        timeout,
+        "whatsapp_gemini",
+    )
+    resp.raise_for_status()
+    result = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+    result = _clean_response(result)
+    await _cache_set(cache_key, result, _TEXT_CACHE_TTL)
+    return result
+
+
+async def groq_text(prompt: str, system: str = "", timeout: float = 60.0, model: str = "") -> str:
+    """Chat completion via GROQ API. Used as fallback when Cerebras+Gemini are both 429."""
+    if not GROQ_API_KEY:
+        raise RuntimeError("GROQ_API_KEY not set in .env")
+    messages: list[dict[str, str]] = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+    _model = model or os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    payload = _json.dumps({
+        "model": _model,
+        "messages": messages,
+        "max_tokens": 1000,
+    }, ensure_ascii=False).encode()
+    resp = await _post_with_retry(
+        f"{GROQ_BASE}/chat/completions",
+        {
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        payload,
+        timeout,
+        "groq_text",
+    )
+    resp.raise_for_status()
+    result: str = resp.json()["choices"][0]["message"]["content"]
+    return _clean_response(result)
 
 
 async def hf_audio(audio_bytes: bytes, timeout: float = 60.0) -> str:
@@ -324,7 +545,8 @@ async def hf_audio(audio_bytes: bytes, timeout: float = 60.0) -> str:
         "audio",
     )
     resp.raise_for_status()
-    return resp.json().get("text", "")
+    result = resp.json().get("text", "")
+    return _clean_response(result)
 
 
 def _is_mostly_hebrew(text: str) -> bool:
@@ -350,7 +572,10 @@ async def hf_normalize_query(query: str, timeout: float = 10.0) -> str:
     cache_key = _cache_key("lang", HF_LANG_MODEL, query)
     cached = await _cache_get(cache_key)
     if cached:
-        return cached
+        cleaned_cached = _clean_response(cached)
+        if cleaned_cached != cached:
+            await _cache_set(cache_key, cleaned_cached, _TEXT_CACHE_TTL)
+        return cleaned_cached
 
     try:
         payload = _json.dumps(
@@ -376,7 +601,7 @@ async def hf_normalize_query(query: str, timeout: float = 10.0) -> str:
                 # Keep English words from original query + translated Hebrew
                 en_words_orig = [w for w in query.split() if all(c.isascii() for c in w) and len(w) > 1]
                 merged = " ".join(dict.fromkeys(en_words_orig + translated.split()))
-                result = merged.strip() or query
+                result = _clean_response(merged.strip() or query)
                 await _cache_set(cache_key, result, _TEXT_CACHE_TTL)
                 logger.debug("hf_client [lang] '%s' → '%s'", query, result)
                 return result

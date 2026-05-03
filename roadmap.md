@@ -1,8 +1,13 @@
 # AutoSpareFinder Roadmap
 
-Last updated: 2026-04-17
-Owner: TBD
+Last updated: 2026-04-25
+Owner: Auto Spare Admin <admin@autosparefinder.co.il>
 Update cadence: Weekly
+
+## Recent Changes (2026-04-25)
+- Public domain updated from `autosparefinder.com` to `autosparefinder.co.il` and related environment variables adjusted.
+- Backend environment (`.env`) updated and `backend` service rebuilt/restarted to apply changes.
+- Stripe webhook endpoint in production is `https://<your-production-domain>/api/v1/payments/webhook` (ensure `STRIPE_WEBHOOK_SECRET` is configured).
 
 ## 1) Mission
 Build a production-grade, AI-assisted auto-parts platform with reliable order/payment flow, strong security, and scalable catalog quality.

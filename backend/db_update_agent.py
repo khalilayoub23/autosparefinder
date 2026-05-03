@@ -1868,14 +1868,11 @@ async def _trigger_scraper_for_misses_task(db: AsyncSession) -> Dict[str, Any]:
             errors += 1
 
     if triggered_ids:
-        await db.execute(
-            text("""
-                UPDATE search_misses
-                SET triggered_scrape = TRUE
-                WHERE id = ANY(:ids)
-            """),
-            {"ids": [uuid.UUID(x) for x in triggered_ids]},
-        )
+        for _tid in triggered_ids:
+            await db.execute(
+                text("UPDATE search_misses SET triggered_scrape = TRUE WHERE id = :tid"),
+                {"tid": _tid},
+            )
         await db.commit()
 
     return {
