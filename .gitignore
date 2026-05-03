@@ -71,3 +71,4 @@ backend/hf_test_fix_tmp.py
 backend/alembic/__pycache__/
 
 .venv-ci/
+whatsapp-bridge/auth_info/

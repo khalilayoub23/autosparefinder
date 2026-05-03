@@ -6,7 +6,7 @@ import {
   ToggleLeft, ToggleRight, Truck, PlusCircle, Wand2, ChevronDown,
   ShoppingCart, CheckCircle, Clock, ExternalLink, AlertCircle,
   FileSpreadsheet, Upload, X, Zap, TrendingDown, Percent,
-  Trash2, Pencil, Ban, ShieldCheck, Save,
+  Trash2, Pencil, Ban, ShieldCheck, Save, Copy, Printer,
   Globe, Phone, Mail, Key, Star, MapPin, Eye, EyeOff,
   Bot, MessageSquare, Sliders, Cpu, FlaskConical, Send, Volume2, VolumeX, Database,
   RotateCcw, CheckSquare, XCircle,
@@ -906,6 +906,99 @@ export default function Admin() {
     } finally {
       setDeletingChat(false)
     }
+  }
+
+  const buildChatTranscript = () => {
+    if (!selectedChat) return ''
+    const title = selectedChat.title || selectedChat.display_name || selectedChat.external_id || 'Chat'
+    const contact = selectedChat.display_contact || selectedChat.user?.email || selectedChat.user?.phone || '—'
+    const header = [
+      `שיחה: ${title}`,
+      `ערוץ: ${selectedChat.channel || '—'}`,
+      `איש קשר: ${contact}`,
+      `יוצא בתאריך: ${new Date().toLocaleString('he-IL')}`,
+      '----------------------------------------',
+    ]
+
+    const body = (chatMessages || []).map((m) => {
+      const who = m.role === 'user' ? 'לקוח' : (m.agent_name || 'assistant')
+      const at = m.created_at ? new Date(m.created_at).toLocaleString('he-IL') : ''
+      return `[${at}] ${who}:\n${m.content || ''}`
+    })
+
+    return [...header, ...body].join('\n\n')
+  }
+
+  const copyChatTranscript = async () => {
+    if (!selectedChat || chatMessages.length === 0) {
+      toast.error('אין הודעות להעתקה')
+      return
+    }
+    const transcript = buildChatTranscript()
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(transcript)
+      } else {
+        const ta = document.createElement('textarea')
+        ta.value = transcript
+        ta.setAttribute('readonly', 'true')
+        ta.style.position = 'fixed'
+        ta.style.opacity = '0'
+        document.body.appendChild(ta)
+        ta.select()
+        document.execCommand('copy')
+        document.body.removeChild(ta)
+      }
+      toast.success('השיחה הועתקה ללוח')
+    } catch {
+      toast.error('לא ניתן להעתיק את השיחה')
+    }
+  }
+
+  const printChatTranscript = () => {
+    if (!selectedChat || chatMessages.length === 0) {
+      toast.error('אין הודעות להדפסה')
+      return
+    }
+    const transcript = buildChatTranscript()
+    const title = selectedChat.title || selectedChat.display_name || selectedChat.external_id || 'Chat'
+    const win = window.open('', '_blank', 'noopener,noreferrer,width=960,height=720')
+    if (!win) {
+      toast.error('הדפדפן חסם חלון הדפסה')
+      return
+    }
+
+    win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>body{font-family:Arial,sans-serif;padding:24px;direction:rtl}pre{white-space:pre-wrap;line-height:1.5;font-size:14px}</style></head><body><pre id="chat-print"></pre></body></html>`)
+    win.document.close()
+    const pre = win.document.getElementById('chat-print')
+    if (pre) pre.textContent = transcript
+    win.focus()
+    win.print()
+  }
+
+  const saveChatTranscript = () => {
+    if (!selectedChat || chatMessages.length === 0) {
+      toast.error('אין הודעות לשמירה')
+      return
+    }
+
+    const transcript = buildChatTranscript()
+    const baseName = String(selectedChat.title || selectedChat.display_name || selectedChat.external_id || 'chat')
+      .replace(/[^\w\u0590-\u05FF\u0600-\u06FF-]+/g, '_')
+      .slice(0, 40)
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')
+    const fileName = `chat-${baseName || 'export'}-${stamp}.txt`
+
+    const blob = new Blob([transcript], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = fileName
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    toast.success('השיחה נשמרה לקובץ')
   }
 
   const loadOrders = async (sf = statusFilter) => {
@@ -2037,6 +2130,18 @@ export default function Admin() {
                       </button>
                       <button onClick={toggleChatActiveStatus} disabled={updatingChatStatus} className="btn-secondary text-xs disabled:opacity-60">
                         {updatingChatStatus ? 'מעדכן...' : selectedChat.is_active ? 'סגור שיחה' : 'פתח שיחה'}
+                      </button>
+                      <button onClick={copyChatTranscript} disabled={chatMessages.length === 0} className="btn-secondary text-xs disabled:opacity-60 flex items-center gap-1">
+                        <Copy className="w-3.5 h-3.5" />
+                        העתק
+                      </button>
+                      <button onClick={printChatTranscript} disabled={chatMessages.length === 0} className="btn-secondary text-xs disabled:opacity-60 flex items-center gap-1">
+                        <Printer className="w-3.5 h-3.5" />
+                        הדפס
+                      </button>
+                      <button onClick={saveChatTranscript} disabled={chatMessages.length === 0} className="btn-secondary text-xs disabled:opacity-60 flex items-center gap-1">
+                        <Save className="w-3.5 h-3.5" />
+                        שמור
                       </button>
                       <button
                         onClick={() => {

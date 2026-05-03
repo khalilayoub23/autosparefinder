@@ -8,7 +8,7 @@ Endpoints:
 import os
 import json
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from uuid import UUID as _UUID
 import httpx
 import re
@@ -368,9 +368,10 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_pii_
     if not sender_phone or not body:
         return Response(content="<Response/>", media_type="text/xml")
 
-    # Send typing indicator immediately so user sees activity
+    # Send real typing indicator via Baileys (composing presence)
     try:
-        await wa_send(sender_phone, "...", reply_jid=reply_jid)
+        from social.whatsapp_provider import send_typing as wa_typing
+        await wa_typing(sender_phone, reply_jid=reply_jid)
     except Exception:
         pass
 
@@ -396,16 +397,42 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_pii_
             user_id=conversation_user_id,
             title=f"WhatsApp {profile_name or phone_e164}",
             is_active=True,
-            started_at=datetime.utcnow(),
-            last_message_at=datetime.utcnow(),
+            started_at=datetime.now(tz=timezone(timedelta(hours=3))).replace(tzinfo=None),
+            last_message_at=datetime.now(tz=timezone(timedelta(hours=3))).replace(tzinfo=None),
             context={"whatsapp_phone": phone_e164, "profile_name": profile_name},
         )
         db.add(conversation)
         await db.flush()
+        await db.commit()
+        await db.refresh(conversation)
     else:
-        conversation.last_message_at = datetime.utcnow()
+        is_new_conversation = False
+        conversation.last_message_at = datetime.now(tz=timezone(timedelta(hours=3))).replace(tzinfo=None)
 
     conv_id = str(conversation.id)
+
+    async def _persist_assistant_after_send(
+        send_result: dict,
+        text: str,
+        agent_name: str = "",
+        model_used: str = "",
+    ) -> None:
+        if not send_result.get("ok"):
+            return
+        _msg_kwargs: Dict[str, Any] = {
+            "conversation_id": conversation.id,
+            "role": "assistant",
+            "content": text,
+            "content_type": "text",
+            "created_at": datetime.now(tz=timezone(timedelta(hours=3))).replace(tzinfo=None),
+        }
+        if agent_name:
+            _msg_kwargs["agent_name"] = agent_name
+        if model_used:
+            _msg_kwargs["model_used"] = model_used
+            _msg_kwargs["tokens_used"] = 0
+        db.add(Message(**_msg_kwargs))
+        conversation.last_message_at = datetime.now(tz=timezone(timedelta(hours=3))).replace(tzinfo=None)
 
     # ── 6. Persist user message ───────────────────────────────────────────────
 
@@ -428,17 +455,41 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_pii_
             worker = random.choice(hebrew_female_names + hebrew_male_names)
         conversation.context = {**conversation.context, "agent_name": worker}
 
-    if is_new_conversation or body in ("/start", "/התחל", "start", "hello", "hi", "היי", "הי", "هلا", "مرحبا", "שלום"):
+    is_greeting_only = body.strip() in ("/start", "/התחל", "start", "hello", "hi", "היי", "הי", "هلا", "مرحبا", "שלום", "")
+    if is_new_conversation:
         is_female = worker in (hebrew_female_names + arabic_female_names)
         if is_arabic_speaker:
             role_ar = "ممثلة" if is_female else "ممثل"
-            welcome = f"أهلاً وسهلاً! 👋\nأنا {worker}، {role_ar} خدمة العملاء في AutoSpareFinder.\nكيف أستطيع مساعدتك اليوم؟\nهل تبحث عن قطعة غيار، أو تريد متابعة طلب، أو لديك استفسار؟ 😊"
+            if is_greeting_only:
+                welcome = f"أهلاً وسهلاً! 👋\nأنا {worker}، {role_ar} خدمة العملاء في AutoSpareFinder.\nكيف أستطيع مساعدتك اليوم؟\nهل تبحث عن قطعة غيار، أو تريد متابعة طلب، أو لديك استفسار؟ 😊"
+                await db.commit()
+                await wa_send(sender_phone, welcome, reply_jid=reply_jid)
+                return Response(content="<Response/>", media_type="application/xml")
+            else:
+                welcome = f"أهلاً وسهلاً! 👋 أنا {worker}، {role_ar} خدمة العملاء في AutoSpareFinder.\nبكل سرور سأساعدك — دعنا نجد ما تحتاجه! 🔍"
+                await wa_send(sender_phone, welcome, reply_jid=reply_jid)
         else:
             role_he = "נציגת" if is_female else "נציג"
-            welcome = f"שלום וברוכים הבאים! 👋\nאני {worker}, {role_he} השירות של AutoSpareFinder.\nאיך אוכל לעזור לך היום?\nמחפש חלק לרכב, רוצה לעקוב אחר הזמנה, או שיש לך שאלה? 😊"
+            if is_greeting_only:
+                welcome = f"שלום וברוכים הבאים! 👋\nאני {worker}, {role_he} השירות של AutoSpareFinder.\nאיך אוכל לעזור לך היום?\nמחפש חלק לרכב, רוצה לעקוב אחר הזמנה, או שיש לך שאלה? 😊"
+                await db.commit()
+                await wa_send(sender_phone, welcome, reply_jid=reply_jid)
+                return Response(content="<Response/>", media_type="application/xml")
+            else:
+                welcome = f"היי! 👋 אני {worker}, {role_he} השירות של AutoSpareFinder.\nבשמחה אעזור לך — בוא נמצא מה שאתה מחפש! 🔍"
+                await wa_send(sender_phone, welcome, reply_jid=reply_jid)
+        # Commit agent_name to DB before continuing so next message sees it
+        from sqlalchemy import update as _update
+        await db.execute(
+            _update(Conversation)
+            .where(Conversation.id == conversation.id)
+            .values(context=conversation.context)
+        )
         await db.commit()
-        await wa_send(sender_phone, welcome, reply_jid=reply_jid)
-        return Response(content="<Response/>", media_type="application/xml")
+        # Do NOT return — continue processing the actual request
+    elif body in ("/start", "/התחל", "start", "hello", "hi", "היי", "הי", "هلا", "مرحبا", "שלום"):
+        # Returning user sent a greeting — just acknowledge, don't restart conversation
+        pass
 
     user_msg = Message(
         conversation_id=conversation.id,
@@ -465,18 +516,12 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_pii_
                 safe_tail = phone_e164[-4:] if len(phone_e164) >= 4 else phone_e164
                 print(f"[WhatsApp] Handoff waiting-notice send failed to ****{safe_tail}: {send_result.get('error')}")
 
-            db.add(Message(
-                conversation_id=conversation.id,
-                role="assistant",
+            await _persist_assistant_after_send(
+                send_result=send_result,
+                text=waiting_text,
                 agent_name="human_handoff_waiting",
-                content=waiting_text,
-                content_type="text",
                 model_used="handoff_policy",
-                tokens_used=0,
-                created_at=datetime.utcnow(),
-            ))
-            _mark_handoff_waiting_notice(conversation)
-            conversation.last_message_at = datetime.utcnow()
+            )
         await db.commit()
         return Response(content="<Response/>", media_type="application/xml")
 
@@ -488,17 +533,12 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_pii_
             safe_tail = phone_e164[-4:] if len(phone_e164) >= 4 else phone_e164
             print(f"[WhatsApp] Handoff ack send failed to ****{safe_tail}: {send_result.get('error')}")
 
-        db.add(Message(
-            conversation_id=conversation.id,
-            role="assistant",
+        await _persist_assistant_after_send(
+            send_result=send_result,
+            text=ack_text,
             agent_name="human_handoff",
-            content=ack_text,
-            content_type="text",
             model_used="handoff_policy",
-            tokens_used=0,
-            created_at=datetime.utcnow(),
-        ))
-        conversation.last_message_at = datetime.utcnow()
+        )
         await db.commit()
         return Response(content="<Response/>", media_type="application/xml")
 
@@ -527,14 +567,7 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_pii_
         safe_tail = safe_phone[-4:] if len(safe_phone) >= 4 else safe_phone
         print(f"[WhatsApp] Send failed to ****{safe_tail}: {send_result['error']}")
 
-    # ── 9. Persist assistant message ──────────────────────────────────────────
-    assistant_msg = Message(
-        conversation_id=conversation.id,
-        role="assistant",
-        content=reply_text,
-        content_type="text",
-    )
-    db.add(assistant_msg)
+    # Assistant AI reply is already persisted inside process_user_message.
     await db.commit()
 
     # Empty TwiML — reply sent proactively via API, not TwiML verb
@@ -701,8 +734,8 @@ async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_pii_
                         user_id=WHATSAPP_ANON_USER_ID,
                         title=f"Telegram {tg_name}",
                         is_active=True,
-                        started_at=datetime.utcnow(),
-                        last_message_at=datetime.utcnow(),
+                        started_at=datetime.now(tz=timezone(timedelta(hours=3))).replace(tzinfo=None),
+                        last_message_at=datetime.now(tz=timezone(timedelta(hours=3))).replace(tzinfo=None),
                         context={
                             "telegram_chat_id": str(chat_id),
                             "telegram_user_id": tg_user_id,
@@ -732,8 +765,8 @@ async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_pii_
                     user_id=WHATSAPP_ANON_USER_ID,
                     title=f"Telegram {tg_name}",
                     is_active=True,
-                    started_at=datetime.utcnow(),
-                    last_message_at=datetime.utcnow(),
+                    started_at=datetime.now(tz=timezone(timedelta(hours=3))).replace(tzinfo=None),
+                    last_message_at=datetime.now(tz=timezone(timedelta(hours=3))).replace(tzinfo=None),
                     context={
                         "telegram_chat_id": str(chat_id),
                         "telegram_user_id": tg_user_id,
@@ -743,7 +776,7 @@ async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_pii_
                 db.add(conversation)
                 await db.flush()
             else:
-                conversation.last_message_at = datetime.utcnow()
+                conversation.last_message_at = datetime.now(tz=timezone(timedelta(hours=3))).replace(tzinfo=None)
 
             conv_id = str(conversation.id)
 
@@ -780,10 +813,10 @@ async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_pii_
                         content_type="text",
                         model_used="handoff_policy",
                         tokens_used=0,
-                        created_at=datetime.utcnow(),
+                        created_at=datetime.now(tz=timezone(timedelta(hours=3))).replace(tzinfo=None),
                     ))
                     _mark_handoff_waiting_notice(conversation)
-                    conversation.last_message_at = datetime.utcnow()
+                    conversation.last_message_at = datetime.now(tz=timezone(timedelta(hours=3))).replace(tzinfo=None)
                 await db.commit()
                 return {
                     "ok": True,
@@ -806,9 +839,9 @@ async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_pii_
                     content_type="text",
                     model_used="handoff_policy",
                     tokens_used=0,
-                    created_at=datetime.utcnow(),
+                    created_at=datetime.now(tz=timezone(timedelta(hours=3))).replace(tzinfo=None),
                 ))
-                conversation.last_message_at = datetime.utcnow()
+                conversation.last_message_at = datetime.now(tz=timezone(timedelta(hours=3))).replace(tzinfo=None)
                 await db.commit()
                 return {
                     "ok": True,

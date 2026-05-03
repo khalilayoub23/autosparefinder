@@ -329,6 +329,55 @@ app.include_router(notifications_router)
 _SEARCH_MISS_NOTIFY_INTERVAL = 3600  # seconds — 60 minutes
 
 
+async def _scrape_search_misses_loop() -> None:
+    """
+    Every 6 hours: search eBay for unscraped search misses.
+    Sets triggered_scrape=TRUE so _notify_search_miss_loop
+    can then inform the customer.
+    """
+    await asyncio.sleep(180)  # brief startup delay
+    while True:
+        try:
+            from services.supplier_aggregator import search_all_suppliers
+
+            async with async_session_factory() as db:
+                result = await db.execute(
+                    text("""
+                        SELECT id, query, vehicle_manufacturer
+                        FROM search_misses
+                        WHERE triggered_scrape = FALSE
+                        AND notified = FALSE
+                        AND miss_count >= 1
+                        ORDER BY miss_count DESC
+                        LIMIT 20
+                    """)
+                )
+                misses = result.fetchall()
+
+            if misses:
+                print(f"[scrape_misses] Processing {len(misses)} search misses")
+                for miss in misses:
+                    try:
+                        results = await search_all_suppliers(miss.query, limit_per_supplier=5)
+                        if results:
+                            print(f"[scrape_misses] Found {len(results)} results for: {miss.query}")
+                            async with async_session_factory() as db:
+                                await db.execute(
+                                    text("UPDATE search_misses SET triggered_scrape = TRUE WHERE id = :id"),
+                                    {"id": str(miss.id)}
+                                )
+                                await db.commit()
+                        else:
+                            print(f"[scrape_misses] No results for: {miss.query}")
+                    except Exception as miss_err:
+                        print(f"[scrape_misses] Error for miss {miss.id}: {miss_err}")
+
+        except Exception as e:
+            print(f"[scrape_misses] loop error: {e}")
+
+        await asyncio.sleep(21600)  # run every 6 hours
+
+
 async def _notify_search_miss_loop() -> None:
     """Background loop: notify users when a previously-missed search now has results.
     Runs every 60 minutes. Writes Notifications to autospare_pii.
@@ -577,6 +626,7 @@ async def startup():
     asyncio.create_task(_price_sync_loop())
     asyncio.create_task(_stuck_orders_monitor_loop())   # ← periodic stuck-order monitor (every 30 min)
     asyncio.create_task(_notify_search_miss_loop())     # ← search-miss user notifications (every 60 min)
+    asyncio.create_task(_scrape_search_misses_loop())   # ← nightly eBay search for unresolved search misses
     asyncio.create_task(_abandoned_cart_loop())         # ← abandoned-cart WhatsApp re-engagement (every 60 min)
     asyncio.create_task(_pending_payment_reminder_loop())  # ← pending-payment WhatsApp reminder (every 30 min)
     asyncio.create_task(_health_monitor_loop())            # ← service health monitoring + admin alerting (every 5 min)

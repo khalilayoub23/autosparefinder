@@ -214,8 +214,47 @@ async def _log_search_miss(
     user_id: Optional[str] = None,
 ) -> None:
     """Fire-and-forget: upsert a search_misses row for a zero-result query."""
-    if not query or not query.strip():
+    # Filter out chat messages — only log genuine part search queries
+    if not query or len(query.strip()) < 5:
         return
+
+    _CHAT_PREFIXES = (
+        'שלום', 'היי', 'הי ', 'בוקר', 'ערב טוב', 'לילה טוב',
+        'תודה', 'כן,', 'לא,', 'טוב,', 'טוב ', 'למה', 'איך',
+        'מתי', 'לקוח בשם', 'השאיר', 'ביקשתי', 'אמרת', 'מה ר',
+        'בסדר', 'אוקי', 'ok', 'OK',
+    )
+    _PART_KEYWORDS = (
+        'מסנן', 'בלם', 'מצבר', 'מנוע', 'גיר', 'מתלה', 'פנס',
+        'מגב', 'צמיג', 'מראה', 'חיישן', 'אטם', 'רצועה', 'משאבה',
+        'רדיאטור', 'מצמד', 'בולם', 'רפידות', 'דיסק', 'חלק',
+        'חלקים', 'פילטר', 'filter', 'brake', 'sensor', 'pump',
+        'belt', 'battery', 'starter', 'alternator', 'clutch',
+    )
+
+    q = query.strip()
+
+    # Skip if starts with chat prefix
+    if any(q.startswith(p) for p in _CHAT_PREFIXES):
+        return
+
+    # Skip if no part-related keyword found
+    q_lower = q.lower()
+    if not any(kw in q_lower for kw in _PART_KEYWORDS):
+        # Allow if query contains a vehicle manufacturer name (vehicle+part search)
+        _VEHICLE_BRANDS = (
+            'toyota', 'honda', 'nissan', 'mazda', 'hyundai', 'kia',
+            'mercedes', 'bmw', 'audi', 'volkswagen', 'vw', 'ford',
+            'opel', 'citroen', 'peugeot', 'renault', 'fiat', 'seat',
+            'skoda', 'volvo', 'mitsubishi', 'suzuki', 'subaru',
+            'טויוטה', 'הונדה', 'ניסאן', 'מזדה', 'יונדאי', 'קיה',
+            'מרצדס', 'ב.מ.וו', 'אאודי', 'פולקסווגן', 'פורד',
+            'אופל', 'סיטרואן', 'פיז\'ו', 'רנו', 'פיאט', 'סקודה',
+            'וולבו', 'מיצובישי', 'סוזוקי', 'בירלינגו', 'קורולה',
+        )
+        if not any(brand in q_lower for brand in _VEHICLE_BRANDS):
+            return
+
     normalized = query.lower().strip()
     try:
         async with async_session_factory() as db:
@@ -291,61 +330,62 @@ def _channel_model_for_source(source: Optional[str], fallback_model: str) -> str
     return fallback_model
 
 
-TELEGRAM_BOT_POLICY = """You are the service bot for Auto Spare Finder.
-Your job is to help customers find car spare parts and provide only real information coming from the API.
+TELEGRAM_BOT_POLICY = """
+You are a professional, warm, sales-driven customer service agent for AutoSpareFinder — an Israeli auto parts platform.
+Your goal is to CLOSE DEALS, not just answer questions.
 
-Language behavior:
-- Detect the user's language automatically (Hebrew or Arabic).
-- Always respond in the same language the user used.
-- Never switch languages unless the user explicitly requests it.
+CORE BEHAVIOR — APPLIES TO ALL CHANNELS (WhatsApp, Telegram, Web):
+1. LEAD the conversation — never wait for the customer to figure out next steps.
+2. After every response, add ONE clear call-to-action or question.
+3. Always acknowledge the customer's request before asking for more info.
+4. Maximum 4 sentences per message on WhatsApp/Telegram. Web can be longer.
+5. Use natural, human tone — never robotic or bureaucratic.
+6. Never repeat information already given in the same conversation.
 
-General rules:
-1. Do NOT invent information. Only show data that comes from the API: product name, OEM, price, manufacturer, image.
-2. Do NOT add descriptions that are not in the data (e.g., comes as a pair, compat, Garapa, video, shipping times, guarantees, or any English words not present in the API).
-3. Do NOT offer a shopping cart, do NOT say item added to cart, and do NOT simulate a cart system.
-4. Do NOT create fake links. Only send real links provided by the backend.
-5. Keep the tone friendly and helpful (service-oriented, warm, not robotic).
-6. Lead the conversation proactively: in every reply, provide one clear next step and ask one focused follow-up question.
+SALES FLOW — FOLLOW THIS STRICTLY:
+Step 1 → Customer sends request → Greet + confirm you understood + ask for missing info (ONE question only)
+Step 2 → You have vehicle + part info → Search DB → Show results immediately
+Step 3 → Show results in clean format → Ask "Would you like to order this?" 
+Step 4 → Customer says yes → Generate Stripe link → Send it directly
+Step 5 → Customer says no → Suggest alternative or ask what else they need
 
-When showing a product:
-- Display only the real data from the API.
-- After showing the product, ask: Would you like to order this part? (in the user's language).
+RESPONSE FORMAT FOR PARTS (WhatsApp/Telegram):
+✅ *Part Name* — Manufacturer
+   💰 Price: ₪XXX (incl. VAT)
+   🚚 Delivery: X–Y days
+   📦 Status: Available to order
+   
+   Want to order this? Reply *YES* and I'll send you a secure payment link.
 
-When the user says yes:
-- Do NOT add to cart.
-- Do NOT mention a cart.
-- Do NOT ask for extra details.
-- Do NOT add any invented text.
-- Respond in a friendly tone: Great, I am opening a secure payment for you now... (in the user's language).
-- Then send the real Stripe Checkout link provided by the backend.
-- If the payment window fails to open, resend the same real link.
+LANGUAGE RULES:
+- Detect language from customer's first message
+- Hebrew customer → reply in Hebrew throughout
+- Arabic customer → reply in Arabic throughout  
+- English customer → reply in English throughout
+- NEVER mix languages in a single message
+- Technical codes (OEM numbers) may remain in original format
 
-When the user says no:
-- Respond: No problem, would you like me to search for another part? (in the user's language).
+CLOSING RULES:
+- When customer confirms purchase → immediately generate Stripe checkout link → send it
+- Never say "go to cart" or "visit the website" for WhatsApp/Telegram customers
+- Never invent links — only use real links from the backend
+- If payment link generation fails → apologize and offer to call them back
 
-When the user asks for a new part:
-- Ask for model, year, or OEM if needed.
-- Search using the API and show only real results.
-
-Important restrictions:
-- No English unless it comes from the API.
-- No marketing text.
-- No videos.
-- No invented product details.
-- No invented shipping times.
-- No invented compatibility.
-- No invented links.
-
-Your goal:
-Provide accurate information, stay friendly, lead the customer step-by-step, and open a Stripe payment immediately when the user confirms an order."""
+PROHIBITED:
+- Never mention supplier names (RockAuto, FCP Euro, Autodoc, AliExpress)
+- Never say "in stock" — always say "available to order"
+- Never invent prices, compatibility, or shipping times
+- Never ask more than ONE question per message
+- Never send walls of text — keep it short and scannable
+- Never use markdown headers (##, **bold**) on WhatsApp
+"""
 
 
 def _apply_channel_policy(system_text: str, source: Optional[str]) -> str:
     source_key = _normalize_source(source)
-    if source_key == "telegram":
-        return f"{system_text}\n\n[TELEGRAM POLICY - MUST FOLLOW]\n{TELEGRAM_BOT_POLICY}"
+    if source_key in ("telegram", "whatsapp", "web"):
+        return f"{system_text}\n\n[CHANNEL POLICY - MUST FOLLOW]\n{TELEGRAM_BOT_POLICY}\n[CHANNEL: {source_key.upper()}]"
     return system_text
-
 # Business constants
 PROFIT_MARGIN = 1.45       # 45% markup on cost
 VAT_RATE = 0.18            # 18%
@@ -721,73 +761,57 @@ class PartsFinderAgent(BaseAgent):
     name = "parts_finder_agent"
     agent_name = "Nir"          # ניר — the parts expert
     model = PREMIUM_MODEL       # premium: complex Hebrew part-matching & pricing
-    system_prompt = """LANGUAGE RULES - MUST FOLLOW:
-1. Write each reply in ONE language only.
-2. Default language is Hebrew.
-3. If and only if the customer message is mainly in Arabic, reply fully in Arabic.
-4. NEVER mix Hebrew and Arabic in the same reply.
-5. NEVER insert English words unless they are technical part codes (e.g., OEM numbers).
-6. Do NOT ask about automatic vs manual headlights, LED compatibility, or technical specs unless the customer explicitly asks. If the customer says LED, accept it and search for LED. Ask only ONE question per message if clarification is truly needed.
+    system_prompt = """You are Nir, a sharp and friendly parts specialist at AutoSpareFinder.
+Your personality: confident, efficient, warm. You find the right part fast and guide the customer to purchase.
 
-You are Nir, the Parts Finder Agent for Auto Spare, an Israeli auto parts platform.
+LANGUAGE: Match the customer's language exactly. Hebrew → Hebrew. Arabic → Arabic. English → English. Never mix.
 
-CRITICAL CONVERSATION RULES:
-1. NEVER address the agent by name — always address the CUSTOMER directly
-2. When confirming vehicle details, address the customer as "אתה/את" not by any name
-3. When asking for part type, use only common real car parts as examples: פנס קדמי, רפידות בלם, מצמד, מסנן שמן, פילטר אוויר, בולם זעזועים, מצבר
-4. NEVER use technical jargon like "מסוף", "זיז כפתור", "מנוע וין"
-5. Keep responses short — maximum 4 lines
+YOUR JOB IN ORDER:
+1. Understand what part the customer needs
+2. Identify the vehicle (license plate preferred, but manufacturer+model+year is enough)
+3. Search the database immediately — do not ask unnecessary questions
+4. Present results clearly and ask for order confirmation
+5. When customer confirms → provide Stripe payment link immediately
 
-CRITICAL RULES:
-1. NEVER mention supplier names (RockAuto, FCP Euro, Autodoc, AliExpress) to customers
-2. ALWAYS show manufacturer of the part (Bosch, Brembo, Toyota OEM, etc.)
-3. ALWAYS show price breakdown: net price + VAT (18%) + shipping (₪29–₪149 לפי ספק — הצג הטווח אם לא ידוע מחיר מדויק)
-4. Results must be sorted by MANUFACTURER, not by supplier
-5. LANGUAGE: ALWAYS respond in Hebrew (עברית). If the customer writes in Arabic, respond in Arabic. Never respond in any other language — if the message is just a part number or vehicle code, respond in Hebrew.
-6. Always include warranty period and delivery estimate
-7. DROPSHIPPING: This is a 100% dropshipping system — no physical warehouse. Say "זמין להזמנה" (available to order), NEVER "יש במלאי" (in stock). Parts ship from our supplier after customer payment.
+VEHICLE IDENTIFICATION:
+- License plate (Israeli format: 12-345-67 or 1234567 or 12345678) → system auto-looks up from gov.il API
+- If no plate → manufacturer + model + year is sufficient to search
+- NEVER ask for VIN — system handles this automatically
+- Confirm vehicle details with customer before searching
 
-VEHICLE LOOKUP — CRITICAL:
-- NEVER ask the customer for a VIN number. The system automatically identifies the vehicle from the license plate via the Israeli Transport Ministry API (data.gov.il).
-- When a license plate is provided (e.g. 12-345-67 or 1234567), the system ALREADY calls the API and injects the vehicle data into your context as [VEHICLE FROM PLATE ...].
-- Use that injected data directly. Do NOT ask the customer to provide VIN or any other identifier.
-- Confirm the vehicle to the customer (יצרן, דגם, שנה) and immediately search for the requested part.
-- NEVER make the customer do work you can do. You have the tools — use them.
+PART SEARCH RULES:
+- Search immediately when you have: vehicle + part name/type
+- Show maximum 3 results sorted by price
+- Always show: manufacturer, price with VAT, delivery estimate, warranty
+- Say "available to order" — never "in stock"
+- Never mention supplier names
 
-PART CATEGORIES IN DB (use these exact 14 values for category filters):
-- בלמים          → brake discs, pads, calipers, cylinders
-- גלגלים וצמיגים → wheels, tyres, rims
-- דלק            → fuel pumps, injectors, carburettors
-- היגוי          → steering arms, rack, pump, tie-rods
-- חשמל רכב       → sensors, starters, alternators, ECU, relays
-- כללי           → uncategorised parts
-- מגבים          → wipers, washer jets, washer reservoir
-- מיזוג          → AC compressors, evaporators, heaters
-- מנוע           → engine internals, pistons, timing, turbo, oil/air/fuel filters
-- מתלה           → suspension, shocks, springs
-- פחיין ומרכב    → bumpers, doors, fenders, hoods, mirrors, body panels
-- ריפוד ופנים    → seats, trim, carpets, airbags, dashboards
-- שרשראות ורצועות → timing belts/chains, drive belts, pulleys, tensioners
-- תאורה          → headlights, tail-lights, bulbs, LEDs
+PRICE FORMAT:
+✅ *[Part Name]* — [Manufacturer]
+   💰 ₪[price incl. VAT]
+   🚚 [X–Y] days delivery
+   🛡️ [X] months warranty
 
-VEHICLE BRANDS WITH STOCK: Do NOT use a hard-coded list. Call get_db_stats() to get the current list of manufacturers with stock from the live database. The brand list changes as new suppliers are added.
+UPSELL: After showing a part, suggest ONE complementary part naturally.
+Example: "Also, since you're replacing brake discs — do you need brake pads too? It's better to replace them together."
 
-PART TYPES: Original | OEM | Aftermarket
+CLOSING: After presenting results, always end with:
+"Would you like to order [part name]? Reply YES and I'll send you a secure Stripe payment link right away."
 
-Price format example:
-✅ [Original] Renault
-   קטגוריה: בלמים
-   מחיר: 520 ₪ + 88 ₪ מע"מ = 608 ₪
-   משלוח: ₪29–₪149 (לפי ספק)
-   סה"כ: 699 ₪
-   אחריות: 24 חודשים
-   זמן אספקה: 10-14 ימים
+PART CATEGORIES (use for DB search):
+בלמים | גלגלים וצמיגים | דלק | היגוי | חשמל רכב | כללי | מגבים | מיזוג | מנוע | מתלה | פחיין ומרכב | ריפוד ופנים | שרשראות ורצועות | תאורה
 
-You have access to database search functions. When identifying a vehicle by license plate,
-use the Israeli Transport Ministry API format. You LEARN from the live database — use
-get_db_stats() to verify what categories and manufacturers currently hold stock.
+DROPSHIPPING RULES:
+- No warehouse — parts ship from supplier after payment
+- Delivery: 10–14 business days standard
+- Return policy: 14 days from delivery
 
-CROSS-REFERENCE: Alternative/equivalent part numbers are stored in the part_cross_reference table. When a customer provides an OEM number, always check cross-references and offer equivalent parts from other manufacturers if available.
+NEVER:
+- Ask more than one question per message
+- Mention RockAuto, FCP Euro, Autodoc, AliExpress
+- Say "in stock" or "במלאי"
+- Invent prices, compatibility, or links
+- Send messages longer than 5 lines on WhatsApp/Telegram
 """
 
     # Real part categories as classified in the DB (matches fix_db_quality.py rules)
@@ -1729,17 +1753,22 @@ STEP 3 — UPSELL SMART:
   Example: "יש לך כבר רפידות? החלפה ביחד חוסכת עבודה ומבטיחה בלימה מיטבית!"
 
 STEP 4 — CLOSE THE DEAL:
-  End every response with a clear call to action directing to the cart.
-  The checkout flow is:
-    1. Customer clicks "הוסף לעגלה" on a part
-    2. They go to the cart page: /api/v1/customers/cart
-    3. From /api/v1/customers/cart they click 'לתשלום' → Stripe payment page opens automatically.
-  ALWAYS end with this line (or similar):
-    "להשלמת ההזמנה — עבור לעגלה שלך: /api/v1/customers/cart ולחץ 'לתשלום'."
-  When the customer asks for a payment link, ALWAYS answer:
-    "כן! כנס לעגלה שלך: /api/v1/customers/cart ולחץ על 'לתשלום' — התשלום מתבצע דרך Stripe בצורה מאובטחת."
-  Do NOT say you can't provide links — /api/v1/customers/cart is always valid. Never invent external URLs.
-  WISHLIST: If a customer asks to save a part for later, direct them to /wishlist — "שמור את החלק ברשימת המשאלות שלך: /wishlist"
+  End every response with a clear call to action.
+  The checkout flow depends on the channel:
+
+  IF source is "whatsapp" or "telegram":
+    - The customer cannot click cart links. You MUST use the tool add_to_cart_and_checkout
+      to add the part to their cart and get a direct Stripe payment link.
+    - Send the Stripe link directly in the message:
+      "להשלמת ההזמנה לחץ כאן לתשלום מאובטח: {checkout_url}"
+    - If checkout_url is not yet available, end with:
+      "רוצה להזמין? כתוב 'כן' ואשלח לך לינק תשלום ישיר."
+
+  IF source is "web":
+    - Direct to cart: /api/v1/customers/cart
+    - ALWAYS end with: "להשלמת ההזמנה — עבור לעגלה שלך: /api/v1/customers/cart ולחץ 'לתשלום'."
+
+  WISHLIST: If a customer asks to save a part for later, direct them to /wishlist
 
 CUSTOMER TYPE AWARENESS:
   Check the customer_type field injected in the context (if available):
@@ -2306,48 +2335,42 @@ class ServiceAgent(BaseAgent):
     agent_name = "Dana"         # דנה — empathetic support
     model = FREE_MODEL          # free: conversational support
     temperature = 0.8
-    system_prompt = """LANGUAGE RULES - MUST FOLLOW:
-1. Write each reply in ONE language only.
-2. Default language is Hebrew.
-3. If and only if the customer message is mainly in Arabic, reply fully in Arabic.
-4. NEVER mix Hebrew and Arabic in the same reply.
-5. NEVER insert English words unless they are technical part codes (e.g., OEM numbers).
+    system_prompt = """You are Dana, a warm and efficient customer service agent at AutoSpareFinder.
+Your personality: empathetic, solution-focused, proactive. You resolve issues fast and keep customers happy.
 
-You are Dana, the Customer Service Agent for Auto Spare, an Israeli auto parts dropshipping platform.
+LANGUAGE: Match the customer's language. Hebrew → Hebrew. Arabic → Arabic. English → English.
 
-You are the default fallback agent — handle anything not handled by a specialist.
+YOUR APPROACH (always in this order):
+1. Acknowledge — show you understood the issue
+2. Diagnose — ask ONE clarifying question if needed
+3. Solve — give ONE specific actionable answer
+4. Close — confirm the issue is resolved or offer next step
 
-Platform features customers can use:
-- חיפוש חלקים at /parts — search by license plate, VIN, make/model/year/category, image upload (JPG/PNG/WEBP), audio description (MP3/WAV)
-- הזמנות at /orders — view order status and tracking
-- פרופיל at /profile — address, password, notification settings
-- סל קניות at /api/v1/customers/cart — shopping cart and Stripe checkout
-- רשימת משאלות at /wishlist — save parts for later
-- ביקורות at /reviews — customer product reviews
-- צ'אט AI — this chat (you)
+WHAT YOU HANDLE:
+- General questions about the platform
+- Order status and tracking issues
+- Complaints and escalations
+- Post-purchase problems (wrong/defective parts, delivery issues)
+- Technical errors on the website
 
-You handle:
-- General platform questions and how-to
-- Technical problems (search not working, page errors, etc.)
-- Complaints and escalations — empathy first, then solve
-- Post-purchase issues (defective/wrong parts, delivery problems)
+COMMON FIXES:
+- Page not loading → "Try refreshing (F5) or clearing your browser cache"
+- Can't upload image → "Supported formats: JPG, PNG, WEBP up to 25MB"
+- Payment failed → "Please try again or use a different card. If problem persists, I can help manually"
+- Wrong part received → "I'm sorry about that. Please send a photo and I'll arrange a replacement immediately"
 
-Approach:
-1. Listen — let the customer express themselves fully
-2. Diagnose — ask one clarifying question if needed
-3. Solve — give one specific, actionable answer
-4. Confirm — check if the issue is resolved
+ESCALATION: If you cannot resolve after 2 attempts → offer human agent or callback
 
-Tone: Empathetic, patient, professional.
-Hebrew: "אני פה בשבילך", "בואו נפתור את זה ביחד"
+TONE EXAMPLES:
+- Hebrew: "אני פה בשבילך, בואו נפתור את זה עכשיו."
+- Arabic: "أنا هنا لمساعدتك، دعنا نحل هذا معاً."
+- English: "I'm here to help. Let's sort this out right now."
 
-COMMON TECHNICAL ERRORS:
-- HTTP 429: "חרגת מהמגבלה. נסה שוב בעוד מספר שניות."
-- HTTP 415 (image upload): "הקובץ אינו נתמך. נסה JPG, PNG, או WEBP עד 25MB."
-- HTTP 415 (audio upload): "הקובץ אינו נתמך. נסה MP3 או WAV עד 25MB."
-- Page not loading: "נסה לרענן את הדף (F5) או לנקות את המטמון."
-
-LANGUAGE: ALWAYS respond in Hebrew. If customer writes in Arabic, respond in Arabic.
+NEVER:
+- Send long paragraphs — keep it short and clear
+- Ask more than one question per message
+- Repeat information already given
+- Use robotic or formal language
 """
 
     async def process(self, message: str, conversation_history: List[Dict], db: AsyncSession, **kwargs) -> str:
@@ -2562,14 +2585,6 @@ class SupplierManagerAgent(BaseAgent):
         _sync_lock = await acquire_lock(await get_redis(), "sync_prices", ttl_seconds=3600)
         if not _sync_lock:
             return {"status": "skipped", "reason": "sync_prices already running on another worker"}
-
-            # Pull real eBay prices before simulating drift
-            try:
-                from services.ebay_price_sync import sync_ebay_prices
-                ebay_report = await sync_ebay_prices(db, limit_per_run=100)
-                logger.info(f"eBay price sync: {ebay_report}")
-            except Exception as _ebay_err:
-                logger.error(f"eBay price sync skipped: {_ebay_err}")
 
         # Pull real eBay prices before simulating drift
         try:
@@ -3404,6 +3419,36 @@ Mandatory rules:
         return raw_response
 
 
+_WHATSAPP_ANON_USER_ID = "00000000-0000-0000-0000-000000000001"
+
+
+async def create_checkout_link(
+    part_id: str,
+    quantity: int,
+    user_id: str,
+    shipping_address: dict,
+) -> str:
+    """
+    Generate a Stripe checkout URL for WhatsApp/Telegram users without JWT auth.
+    Returns the checkout URL string, or an error string starting with "ERROR:".
+    Callable for registered and anonymous guest users.
+    """
+    # Allow anonymous users — treat them as guest, use anon user_id directly
+    if str(user_id) == _WHATSAPP_ANON_USER_ID:
+        pass
+    from routes.payments import create_whatsapp_checkout
+    result = await create_whatsapp_checkout(
+        user_id=user_id,
+        part_id=part_id,
+        quantity=quantity,
+        shipping_address=shipping_address,
+    )
+    if result.get("ok"):
+        return result["checkout_url"]
+    return f"ERROR: {result.get('error', 'Unknown error')}"
+
+
+
 async def process_user_message(
     user_id: str,
     message: str,
@@ -3534,35 +3579,152 @@ async def process_user_message(
     quick_part_choice = _quick_part_from_message(message)
     effective_message = quick_part_choice or message
 
-    if parts_flow_active:
-        # Step 1: intro + ask for plate
-        if not known_plate:
-            start_time = datetime.utcnow()
-            if not intro_sent:
-                context_data["intro_sent"] = True
+    _msg_lang = ""
+    if any("\u0600" <= ch <= "\u06FF" for ch in (message or "")):
+        _msg_lang = "ar"
+    elif any("\u0590" <= ch <= "\u05FF" for ch in (message or "")):
+        _msg_lang = "he"
+    elif any(ch.isalpha() for ch in (message or "")):
+        _msg_lang = "en"
+    if _msg_lang:
+        context_data["preferred_lang"] = _msg_lang
+    _lang = str(context_data.get("preferred_lang") or _msg_lang or "he")
 
-            response_text, model_used = await _infer_parts_flow_reply(
-                agent_name="service_agent",
-                source=source,
-                history=history,
-                user_message=message,
-                flow_intent="collect_license_plate_first",
-                flow_state={
-                    "intro_sent": bool(context_data.get("intro_sent")),
-                    "known_plate": known_plate or None,
-                    "supported_plate_formats": ["12-345-67", "123-45-678", "1234567", "12345678"],
-                },
+    if parts_flow_active:
+        # ── Checkout intent: user replies 1/2/3 after seeing WhatsApp/Telegram results ──
+        _pending_checkout = context_data.get("pending_checkout_parts") or []
+        _checkout_choice = None
+        _checkout_msg = (message or "").strip()
+        if _pending_checkout and source in ("whatsapp", "telegram") and vehicle_confirmed:
+            if _checkout_msg in ("1", "2", "3"):
+                _checkout_choice = int(_checkout_msg)
+
+        if _checkout_choice is not None:
+            _chosen = next(
+                (p for p in _pending_checkout if p["idx"] == _checkout_choice), None
             )
 
-            route_result = {
-                "agent": "service_agent",
-                "confidence": 1.0,
-                "language": "he",
-                "intent": "collect_license_plate_first",
-                "extracted_data": {},
-            }
-            agent_name = "service_agent"
-            exec_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+            if _chosen and _chosen.get("part_id"):
+                # Load shipping address from user profile
+                _ship_addr: dict = {"city": "ישראל", "address_line1": "לא צוינה"}
+                if str(user_id) != _WHATSAPP_ANON_USER_ID:
+                    try:
+                        from BACKEND_DATABASE_MODELS import pii_session_factory as _pii_sf2, UserProfile
+                        async with _pii_sf2() as _pdb:
+                            import uuid as _uuid2
+                            _prof_res = await _pdb.execute(
+                                select(UserProfile).where(UserProfile.user_id == _uuid2.UUID(str(user_id)))
+                            )
+                            _prof = _prof_res.scalar_one_or_none()
+                            if _prof and _prof.city:
+                                _ship_addr = {
+                                    "address_line1": _prof.address_line1 or "",
+                                    "city": _prof.city or "ישראל",
+                                    "postal_code": _prof.postal_code or "",
+                                }
+                    except Exception:
+                        pass
+
+                start_time = datetime.utcnow()
+                _checkout_url = await create_checkout_link(
+                    part_id=_chosen["part_id"],
+                    quantity=1,
+                    user_id=str(user_id),
+                    shipping_address=_ship_addr,
+                )
+
+                if _lang == "ar":
+                    _ok_prefix = "ممتاز! إليك رابط الدفع الآمن: "
+                    _register_msg = "للطلب عبر واتساب، سجّل أولاً في: autosparefinder.co.il"
+                elif _lang == "en":
+                    _ok_prefix = "Great! Here's your secure payment link: "
+                    _register_msg = "To order via WhatsApp, please register first at: autosparefinder.co.il"
+                else:
+                    _ok_prefix = "מעולה! הנה קישור התשלום המאובטח שלך: "
+                    _register_msg = "להזמנה דרך וואטסאפ, הירשם תחילה ב: autosparefinder.co.il"
+
+                if _checkout_url.startswith("ERROR:"):
+                    _err_l = _checkout_url.lower()
+                    if "not registered" in _err_l:
+                        response_text = _register_msg
+                    else:
+                        response_text = _register_msg
+                else:
+                    context_data.pop("pending_checkout_parts", None)
+                    response_text = _ok_prefix + _checkout_url
+
+                route_result = {
+                    "agent": "parts_finder_agent",
+                    "confidence": 1.0,
+                    "language": "he",
+                    "intent": "whatsapp_checkout",
+                    "extracted_data": {"part_id": _chosen["part_id"]},
+                }
+                agent_name = "parts_finder_agent"
+                model_used = _channel_model_for_source(source, FREE_MODEL)
+                exec_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+            else:
+                # No valid part in context — fall through to normal flow
+                _checkout_choice = None
+
+        # ── Step 1: intro + ask for plate ────────────────────────────────────────
+        if _checkout_choice is not None:
+            pass  # checkout URL already built above, skip normal flow
+        elif not known_plate:
+            # Check if customer already provided manufacturer + model + year
+            _known_manufacturer = str(context_data.get("vehicle_manufacturer") or "").strip()
+            _known_model = str(context_data.get("vehicle_model") or "").strip()
+            _known_year = str(context_data.get("vehicle_year") or "").strip()
+
+            # Try to extract from current message if not in context
+            if not _known_manufacturer or not _known_year:
+                import re as _re
+                _year_match = _re.search(r'\b(19|20)\d{2}\b', message)
+                if _year_match:
+                    _known_year = _year_match.group(0)
+                    context_data["vehicle_year"] = _known_year
+
+            _has_vehicle_info = bool(_known_manufacturer and _known_year) or bool(_known_model and _known_year)
+
+            if _has_vehicle_info:
+                # Build synthetic vehicle profile from what we know
+                vehicle_profile = {
+                    "manufacturer": _known_manufacturer or "",
+                    "model": _known_model or "",
+                    "year": _known_year or "",
+                    "engine_type": "",
+                    "license_plate": None,
+                    "source": "customer_provided",
+                }
+                context_data["vehicle_profile"] = vehicle_profile
+                context_data["vehicle_confirmed"] = True
+                context_data["vehicle_manufacturer"] = _known_manufacturer
+            else:
+                start_time = datetime.utcnow()
+                if not intro_sent:
+                    context_data["intro_sent"] = True
+                response_text, model_used = await _infer_parts_flow_reply(
+                    agent_name="service_agent",
+                    source=source,
+                    history=history,
+                    user_message=message,
+                    flow_intent="collect_license_plate_or_vehicle_info",
+                    flow_state={
+                        "intro_sent": bool(context_data.get("intro_sent")),
+                        "known_plate": known_plate or None,
+                        "supported_plate_formats": ["12-345-67", "123-45-678", "1234567", "12345678"],
+                        "alternative": "or provide manufacturer + model + year",
+                    },
+                )
+                route_result = {
+                    "agent": "service_agent",
+                    "confidence": 1.0,
+                    "language": "he",
+                    "intent": "collect_license_plate_or_vehicle_info",
+                    "extracted_data": {},
+                }
+                agent_name = "service_agent"
+                exec_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
 
         else:
             # Step 2: resolve vehicle details from gov.il and ask for confirmation
@@ -3810,38 +3972,45 @@ async def process_user_message(
 
                 if results:
                     top = results[:3]
-                    top_payload: List[Dict[str, Any]] = []
+                    _formatted_lines: List[str] = []
+                    _pending_parts_payload: List[Dict[str, Any]] = []
                     for i, item in enumerate(top, start=1):
                         pr = item.get("pricing") or {}
-                        top_payload.append(
+                        _name = str(item.get("name") or "Part")
+                        _manufacturer = str(item.get("manufacturer") or "Unknown")
+                        _price_total = float(pr.get("total") or 0)
+                        _delivery_days = int(pr.get("estimated_delivery_days") or 14)
+                        _delivery_min = max(1, _delivery_days - 2)
+                        _warranty_months = int(item.get("warranty_months") or 12)
+                        _formatted_lines.extend(
+                            [
+                                f"*[{i}]. {_name}* — {_manufacturer}",
+                                f"💰 ₪{_price_total:,.0f} (incl. VAT)",
+                                f"🚚 {_delivery_min}–{_delivery_days} days | 🛡️ {_warranty_months} months warranty",
+                                "",
+                            ]
+                        )
+                        _pending_parts_payload.append(
                             {
-                                "option": i,
-                                "manufacturer": item.get("manufacturer"),
-                                "name": item.get("name"),
-                                "price_no_vat": float(pr.get("price_no_vat") or 0),
-                                "vat": float(pr.get("vat") or 0),
-                                "total": float(pr.get("total") or 0),
-                                "availability": pr.get("availability"),
-                                "estimated_delivery_days": pr.get("estimated_delivery_days") or 14,
+                                "idx": i,
+                                "part_id": str(item.get("id") or ""),
+                                "supplier_part_id": str(item.get("supplier_part_id") or ""),
                             }
                         )
 
-                    response_text, model_used = await _infer_parts_flow_reply(
-                        agent_name="parts_finder_agent",
-                        source=source,
-                        history=history,
-                        user_message=message,
-                        flow_intent="parts_price_search_results",
-                        flow_state={
-                            "license_plate": known_plate,
-                            "vehicle": vehicle_profile,
-                            "query": search_q,
-                            "results_count": len(top_payload),
-                            "top_results": top_payload,
-                            "next_required_step": "ask_user_to_choose_option_or_request_another_part",
-                        },
-                    )
+                    context_data["pending_checkout_parts"] = _pending_parts_payload
+
+                    if _lang == "ar":
+                        _cta = "أي قطعة تريد طلبها؟ أرسل 1 أو 2 أو 3."
+                    elif _lang == "en":
+                        _cta = "Which part would you like to order? Reply 1, 2, or 3."
+                    else:
+                        _cta = "איזה חלק תרצה להזמין? שלח 1, 2 או 3."
+
+                    response_text = "\n".join(_formatted_lines + [_cta]).strip()
+                    model_used = _channel_model_for_source(source, FREE_MODEL)
                 else:
+                    context_data.pop("pending_checkout_parts", None)
                     response_text, model_used = await _infer_parts_flow_reply(
                         agent_name="parts_finder_agent",
                         source=source,
@@ -3917,7 +4086,17 @@ async def process_user_message(
         pass
 
     # Format response through Gemini for customer-facing channels
-    if source in ("telegram", "whatsapp"):
+    # Skip reformatting when response contains a structured numbered list or payment link
+    _skip_format = (
+        bool(context_data.get("pending_checkout_parts"))
+        or response_text.startswith("*[1].")
+        or response_text.startswith("מעולה! הנה קישור")
+        or response_text.startswith("ממתاز! إليك")
+        or response_text.startswith("ممتاز! إليك")
+        or response_text.startswith("Great! Here's your")
+        or "autosparefinder.co.il" in response_text
+    )
+    if source in ("telegram", "whatsapp") and not _skip_format and agent_name not in ("parts_finder_agent",):
         response_text = await _format_response_for_customer(
             response_text, agent_name, source, history
         )

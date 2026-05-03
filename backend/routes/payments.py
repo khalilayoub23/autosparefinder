@@ -1853,3 +1853,177 @@ async def get_payment_history(current_user=Depends(get_current_user), limit: int
             break
 
     return {"payments": items}
+
+
+async def create_whatsapp_checkout(
+    user_id: str,
+    part_id: str,
+    quantity: int,
+    shipping_address: dict,
+) -> dict:
+    """
+    Internal checkout for WhatsApp/Telegram — no JWT required.
+    Opens its own catalog and PII DB sessions.
+    Returns {"ok": True, "checkout_url": str, "order_id": str, "total": float}
+         or {"ok": False, "error": str}
+    """
+    import stripe as stripe_sdk
+    from BACKEND_DATABASE_MODELS import (
+        async_session_factory, pii_session_factory as _pii_sf,
+        SupplierPart, PartsCatalog, Supplier,
+    )
+    from currency_rate import get_usd_to_ils_rate
+
+    stripe_key, _ = resolve_stripe_secret_key()
+    if not _is_valid_stripe_secret_key(stripe_key):
+        return {"ok": False, "error": "Stripe not configured"}
+
+    try:
+        part_uuid = uuid.UUID(str(part_id))
+        # anon UUID is valid and supported for guest checkout
+        user_uuid = uuid.UUID(str(user_id))
+    except ValueError as e:
+        return {"ok": False, "error": f"Invalid UUID: {e}"}
+
+    # ── 1. Resolve cheapest supplier part + part metadata (catalog DB) ────────
+    try:
+        async with async_session_factory() as db_cat:
+            sp_res = await db_cat.execute(
+                select(SupplierPart, PartsCatalog, Supplier)
+                .join(PartsCatalog, SupplierPart.part_id == PartsCatalog.id)
+                .join(Supplier, SupplierPart.supplier_id == Supplier.id)
+                .where(SupplierPart.part_id == part_uuid)
+                .where(SupplierPart.is_available == True)
+                .order_by(SupplierPart.price_ils.asc().nullslast())
+                .limit(1)
+            )
+            row = sp_res.first()
+            if not row:
+                return {"ok": False, "error": "Part not available from any supplier"}
+            sp, part, supplier_rec = row
+            rate = await get_usd_to_ils_rate(db_cat)
+    except Exception as e:
+        return {"ok": False, "error": f"Catalog lookup failed: {e}"}
+
+    # ── 2. Price calculation (mirrors create_order logic) ─────────────────────
+    cost_ils = float(sp.price_ils or 0) or (float(sp.price_usd or 0) * rate)
+    if cost_ils <= 0:
+        return {"ok": False, "error": "Part has no valid price"}
+
+    ship_ils = float(sp.shipping_cost_ils or 0) or (
+        float(sp.shipping_cost_usd or 0) * rate if sp.shipping_cost_usd else 91.0
+    )
+    if ship_ils <= 0:
+        ship_ils = 91.0
+
+    unit_price = round(cost_ils * 1.45, 2)           # 45% markup (ex-VAT)
+    vat_per_unit = round(unit_price * 0.18, 2)        # 18% VAT
+    subtotal = round(unit_price * quantity, 2)
+    vat_total = round(subtotal * 0.18, 2)
+    shipping = round(ship_ils, 2)
+    total = round(subtotal + vat_total + shipping, 2)
+
+    # ── 3. Create Order + OrderItem (PII DB) ───────────────────────────────────
+    try:
+        async with _pii_sf() as db_pii:
+            order_number = f"WA-{str(uuid.uuid4())[:8].upper()}"
+            order = Order(
+                order_number=order_number,
+                user_id=user_uuid,
+                status="pending_payment",
+                subtotal=subtotal,
+                vat_amount=vat_total,
+                shipping_cost=shipping,
+                total_amount=total,
+                shipping_address=shipping_address,
+            )
+            db_pii.add(order)
+            await db_pii.flush()
+
+            db_pii.add(OrderItem(
+                order_id=order.id,
+                part_id=part_uuid,
+                supplier_part_id=sp.id,
+                part_name=part.name,
+                part_sku=part.sku or "",
+                manufacturer=part.manufacturer or "",
+                part_type=part.part_type or sp.part_type or "Aftermarket",
+                supplier_name="*****",
+                quantity=quantity,
+                unit_price=unit_price,
+                vat_amount=vat_per_unit,
+                total_price=round((unit_price + vat_per_unit) * quantity, 2),
+                warranty_months=sp.warranty_months or 12,
+            ))
+            await db_pii.flush()
+
+            # ── 4. Create Stripe checkout session ─────────────────────────────
+            stripe_sdk.api_key = stripe_key
+            frontend_url = os.getenv("FRONTEND_URL", "https://autosparefinder.co.il")
+
+            try:
+                session = await asyncio.get_running_loop().run_in_executor(
+                    None,
+                    lambda: stripe_sdk.checkout.Session.create(
+                        payment_method_types=["card"],
+                        line_items=[
+                            {
+                                "price_data": {
+                                    "currency": "ils",
+                                    "product_data": {
+                                        "name": part.name,
+                                        "description": (
+                                            f"{part.manufacturer or ''} | "
+                                            f"אחריות {sp.warranty_months or 12} חודשים"
+                                        ),
+                                    },
+                                    "unit_amount": int(round((unit_price + vat_per_unit) * quantity * 100)),
+                                },
+                                "quantity": 1,
+                            },
+                            {
+                                "price_data": {
+                                    "currency": "ils",
+                                    "product_data": {"name": "משלוח"},
+                                    "unit_amount": int(shipping * 100),
+                                },
+                                "quantity": 1,
+                            },
+                        ],
+                        mode="payment",
+                        success_url=f"{frontend_url}/payment/success?session_id={{CHECKOUT_SESSION_ID}}",
+                        cancel_url=f"{frontend_url}/cart",
+                        metadata={
+                            "order_id": str(order.id),
+                            "order_number": order_number,
+                            "user_id": str(user_id),
+                            "source": "whatsapp",
+                        },
+                        idempotency_key=f"wa-order:{order.id}",
+                    )
+                )
+            except Exception as stripe_err:
+                return {"ok": False, "error": f"Stripe error: {stripe_err}"}
+
+            # ── 5. Save pending Payment record ────────────────────────────────
+            db_pii.add(Payment(
+                order_id=order.id,
+                user_id=user_uuid,
+                payment_intent_id=session.id,
+                provider="stripe",
+                provider_transaction_id=session.id,
+                amount_ils=total,
+                amount=total,
+                currency="ILS",
+                status="pending",
+            ))
+            await db_pii.commit()
+
+            return {
+                "ok": True,
+                "checkout_url": session.url,
+                "order_id": str(order.id),
+                "total": total,
+            }
+    except Exception as e:
+        return {"ok": False, "error": f"Order creation failed: {e}"}
