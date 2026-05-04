@@ -107,6 +107,28 @@ CANONICAL_CAR_BY_ALIAS = {
 }
 
 
+# OEM number prefixes used by Israeli importers → canonical manufacturer
+# These prefixes appear at the start of oem_number in parts_catalog
+OEM_PREFIX_TO_MANUFACTURER: dict[str, str] = {
+    "NI": "Nissan",
+    "NF": "Nissan",
+    "NV": "Nissan",
+    "CH": "Chery",
+    "XP": "Xpeng",
+    "HO": "Honda",
+    "JM": "JAC",
+    "PO": "Polaris",
+    "MR": "Mitsubishi",
+    "MN": "Mitsubishi",
+    "MD": "Mitsubishi",
+    "MB": "Mitsubishi",
+    "RE": "Renault",
+    "YQ": "Citroen",
+    "FQ": "Jaecoo",
+    "IL": "Hyundai",
+}
+
+
 VEHICLE_MODEL_BY_MANUFACTURER_ALIAS = {
     ("citroen", "partner"): "BERLINGO",
     ("peugeot", "berlingo"): "PARTNER",
@@ -231,6 +253,24 @@ def normalize_manufacturer_name(raw: Optional[str], fallback: Optional[str] = No
         return canonical
 
     return raw_clean or fb
+
+
+def normalize_oem_manufacturer(oem_number: str, current_manufacturer: str) -> str:
+    """
+    Given an OEM number and its current manufacturer label,
+    return the correct canonical manufacturer based on known prefixes.
+    Returns current_manufacturer unchanged if no prefix match found.
+    """
+    if not oem_number:
+        return current_manufacturer
+
+    prefix = oem_number[:2].upper()
+    correct = OEM_PREFIX_TO_MANUFACTURER.get(prefix)
+
+    if correct and correct != current_manufacturer:
+        return correct
+
+    return current_manufacturer
 
 
 def normalize_vehicle_model_name(raw: Optional[str]) -> str:

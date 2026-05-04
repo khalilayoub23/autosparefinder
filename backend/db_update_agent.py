@@ -861,12 +861,35 @@ async def normalize_imported_manufacturers(db: AsyncSession) -> Dict[str, Any]:
                 )
                 vehicles_updated += res.rowcount or 0
 
+        # Fix manufacturers based on OEM number prefix
+        from manufacturer_normalization import normalize_oem_manufacturer, OEM_PREFIX_TO_MANUFACTURER
+        oem_prefix_updated = 0
+        for prefix, correct_mfr in OEM_PREFIX_TO_MANUFACTURER.items():
+            res = await db.execute(
+                text("""
+                    UPDATE parts_catalog
+                    SET manufacturer = :correct,
+                        updated_at = NOW()
+                    WHERE oem_number LIKE :prefix
+                    AND manufacturer != :correct
+                    AND is_active = true
+                """),
+                {"correct": correct_mfr, "prefix": f"{prefix}%"},
+            )
+            if res.rowcount:
+                logger.info(
+                    "normalize_oem_prefix: %s prefix=%s updated=%d",
+                    correct_mfr, prefix, res.rowcount
+                )
+                oem_prefix_updated += res.rowcount
+
         await db.commit()
         return {
             "task": "normalize_imported_manufacturers",
             "status": "ok",
             "catalog_updated": catalog_updated,
             "vehicles_updated": vehicles_updated,
+            "oem_prefix_updated": oem_prefix_updated,
             "elapsed_s": round(time.monotonic() - t0, 2),
         }
     except Exception as exc:
