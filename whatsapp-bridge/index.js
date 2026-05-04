@@ -43,6 +43,24 @@ app.post('/send', async (req, res) => {
 
 app.get('/health', (_, res) => res.json({ ok: true, connected: waSocket !== null }))
 
+app.post('/typing', async (req, res) => {
+  const { to, reply_jid } = req.body
+  if (!waSocket || (!to && !reply_jid)) {
+    return res.status(400).json({ ok: false })
+  }
+  try {
+    const jid = reply_jid || (() => {
+      const digits = to.replace(/\D/g, '')
+      return (digits.startsWith('0') ? '972' + digits.slice(1) : digits) + '@s.whatsapp.net'
+    })()
+    await waSocket.sendPresenceUpdate('composing', jid)
+    setTimeout(() => waSocket.sendPresenceUpdate('paused', jid).catch(() => {}), 25000)
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message })
+  }
+})
+
 app.listen(BRIDGE_PORT, () => {
   console.log('[Bridge] Listening on port ' + BRIDGE_PORT)
 })

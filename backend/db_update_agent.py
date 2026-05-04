@@ -2503,7 +2503,7 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
     """
     from BACKEND_AUTH_SECURITY import get_redis
     from distributed_lock import acquire_lock
-    _agent_lock = await acquire_lock(await get_redis(), "db_update_agent", ttl_seconds=3600)
+    _agent_lock = await acquire_lock(await get_redis(), "db_update_agent", ttl_seconds=21600)
     if not _agent_lock:
         return {"status": "skipped", "reason": "db_update_agent already running on another worker",
                 "tasks_ok": 0, "tasks_error": 0}
@@ -2515,7 +2515,7 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
     job_id: Optional[str] = None
     try:
         try:
-            job_id = await job_registry_start(db, "run_all_tasks", ttl_seconds=3600)
+            job_id = await job_registry_start(db, "run_all_tasks", ttl_seconds=21600)
         except Exception as exc:
             logger.warning("run_all_tasks job_registry_start failed: %s", exc)
             try:
