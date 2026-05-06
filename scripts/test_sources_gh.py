@@ -4,7 +4,10 @@ from playwright.async_api import async_playwright
 SOURCES = [
     ("autodoc.eu", "https://www.autodoc.eu/search?q=NGK+BKR6E"),
     ("partsouq.com", "https://partsouq.com/en/search/all?q=BKR6E"),
-    ("7zap.com", "https://www.7zap.com/en/catalog/cars/"),
+    ("7zap.com cars",     "https://7zap.com/en/catalog/cars/"),
+    ("7zap toyota",       "https://7zap.com/en/catalog/toyota/"),
+    ("7zap bmw",          "https://7zap.com/en/catalog/bmw/"),
+    ("7zap nissan",       "https://7zap.com/en/catalog/nissan/"),
     ("epc-data toyota", "https://toyota.epc-data.com/"),
     ("epc-data honda", "https://honda.epc-data.com/"),
     ("epc-data hyundai", "https://hyundai.epc-data.com/"),
