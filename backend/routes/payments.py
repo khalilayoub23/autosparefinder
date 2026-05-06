@@ -41,6 +41,7 @@ from routes.utils import (
     trigger_supplier_fulfillment,
     trigger_supplier_refund,
 )
+from BACKEND_AI_AGENTS import get_supplier_shipping, get_supplier_vat_rate
 
 router = APIRouter()
 
@@ -469,10 +470,16 @@ async def create_checkout_session(
                     text("""
                         SELECT
                             COALESCE(price_ils, price_usd * :rate) AS cost_ils,
-                            COALESCE(shipping_cost_ils, shipping_cost_usd * :rate) AS ship_ils
+                            COALESCE(shipping_cost_ils, shipping_cost_usd * :rate) AS ship_ils,
+                            s.name AS supplier_name,
+                            s.country AS supplier_country
                         FROM supplier_parts
+                        JOIN suppliers s ON s.id = supplier_parts.supplier_id
                         WHERE part_id = :part_id AND is_available = TRUE
-                        ORDER BY COALESCE(price_ils, price_usd * :rate) ASC
+                        ORDER BY
+                            COALESCE(price_ils, price_usd * :rate) ASC,
+                            is_available DESC,
+                            s.priority ASC
                         LIMIT 1
                     """),
                     {"part_id": str(_item.part_id), "rate": _rate},
@@ -488,8 +495,12 @@ async def create_checkout_session(
                     )
 
                 if _sp_row[0] is not None:
-                    _live_unit = round(float(_sp_row[0]) * 1.45 * 1.18, 2)
-                    _live_ship = float(_sp_row[1]) if _sp_row[1] is not None else 91.0
+                    _vat_rate = get_supplier_vat_rate(_sp_row[2], _sp_row[3])
+                    _live_unit = round(float(_sp_row[0]) * 1.45 * (1.0 + _vat_rate), 2)
+                    _live_ship = float(_sp_row[1]) if (_sp_row[1] is not None and float(_sp_row[1] or 0) > 0) else get_supplier_shipping(
+                        _sp_row[2],
+                        _sp_row[3],
+                    )
                     _max_shipping = max(_max_shipping, _live_ship)
                     if abs(_live_unit - round(float(_item.unit_price), 2)) > 0.01:
                         _price_changed = True
@@ -734,18 +745,28 @@ async def create_multi_checkout_session(
                     text("""
                         SELECT
                             COALESCE(price_ils, price_usd * :rate) AS cost_ils,
-                            COALESCE(shipping_cost_ils, shipping_cost_usd * :rate) AS ship_ils
+                            COALESCE(shipping_cost_ils, shipping_cost_usd * :rate) AS ship_ils,
+                            s.name AS supplier_name,
+                            s.country AS supplier_country
                         FROM supplier_parts
+                        JOIN suppliers s ON s.id = supplier_parts.supplier_id
                         WHERE part_id = :part_id AND is_available = TRUE
-                        ORDER BY COALESCE(price_ils, price_usd * :rate) ASC
+                        ORDER BY
+                            COALESCE(price_ils, price_usd * :rate) ASC,
+                            is_available DESC,
+                            s.priority ASC
                         LIMIT 1
                     """),
                     {"part_id": str(_item.part_id), "rate": _rate},
                 )).fetchone()
 
                 if _sp_row:
-                    _live_unit = round(float(_sp_row[0]) * 1.45 * 1.18, 2)
-                    _live_ship = float(_sp_row[1]) if _sp_row[1] is not None else 91.0
+                    _vat_rate = get_supplier_vat_rate(_sp_row[2], _sp_row[3])
+                    _live_unit = round(float(_sp_row[0]) * 1.45 * (1.0 + _vat_rate), 2)
+                    _live_ship = float(_sp_row[1]) if (_sp_row[1] is not None and float(_sp_row[1] or 0) > 0) else get_supplier_shipping(
+                        _sp_row[2],
+                        _sp_row[3],
+                    )
                     _max_shipping = max(_max_shipping, _live_ship)
                 else:
                     raise HTTPException(
@@ -1910,16 +1931,17 @@ async def create_whatsapp_checkout(
     if cost_ils <= 0:
         return {"ok": False, "error": "Part has no valid price"}
 
+    supplier_vat_rate = get_supplier_vat_rate(supplier_rec.name or "", supplier_rec.country or "")
     ship_ils = float(sp.shipping_cost_ils or 0) or (
-        float(sp.shipping_cost_usd or 0) * rate if sp.shipping_cost_usd else 91.0
+        float(sp.shipping_cost_usd or 0) * rate if sp.shipping_cost_usd else get_supplier_shipping(supplier_rec.name or "", supplier_rec.country or "")
     )
     if ship_ils <= 0:
-        ship_ils = 91.0
+        ship_ils = get_supplier_shipping(supplier_rec.name or "", supplier_rec.country or "")
 
     unit_price = round(cost_ils * 1.45, 2)           # 45% markup (ex-VAT)
-    vat_per_unit = round(unit_price * 0.18, 2)        # 18% VAT
+    vat_per_unit = round(unit_price * supplier_vat_rate, 2)
     subtotal = round(unit_price * quantity, 2)
-    vat_total = round(subtotal * 0.18, 2)
+    vat_total = round(subtotal * supplier_vat_rate, 2)
     shipping = round(ship_ils, 2)
     total = round(subtotal + vat_total + shipping, 2)
 

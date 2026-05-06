@@ -2769,15 +2769,25 @@ async def compare_parts(part_id: str, db: AsyncSession = Depends(get_db), reques
     for sp, supplier in rows:
         cost_ils = float(sp.price_ils or 0)
         ship_ils = float(sp.shipping_cost_ils or 0)
-        delivery_fee = _get_ship(supplier.name or "")
+        delivery_fee = _get_ship(supplier.name or "", supplier.country or "")
         if cost_ils > 0:
-            pricing = agent.calculate_customer_price_from_ils(cost_ils, ship_ils, customer_shipping=delivery_fee)
+            pricing = agent.calculate_customer_price_from_ils(
+                cost_ils,
+                ship_ils,
+                customer_shipping=delivery_fee,
+                supplier_name=supplier.name,
+                supplier_country=supplier.country,
+                local_vat_only=True,
+            )
         else:
             usd_total = float(sp.price_usd or 0) + float(sp.shipping_cost_usd or 0)
             pricing = agent.calculate_customer_price_from_ils(
                 usd_total * usd_to_ils_rate,
                 0.0,
                 customer_shipping=delivery_fee,
+                supplier_name=supplier.name,
+                supplier_country=supplier.country,
+                local_vat_only=True,
             )
         comparisons.append({
             "supplier_part_id": str(sp.id),

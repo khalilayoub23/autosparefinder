@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../stores/authStore'
-import { Eye, EyeOff, Wrench, Loader2, CheckCircle2 } from 'lucide-react'
+import { Eye, EyeOff, Loader2, CheckCircle2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import SocialLoginButtons from '../components/SocialLoginButtons'
+import AuthBrandHeader from '../components/auth/AuthBrandHeader'
 
 export default function Register() {
   const navigate = useNavigate()
@@ -30,7 +31,7 @@ export default function Register() {
     const isIsraeli = /^05\d{8}$/.test(form.phone)
     const isIntl = /^\+\d{7,15}$/.test(form.phone)
     if (!isIsraeli && !isIntl) {
-      toast.error('מספר טלפון לא תקין (ישראלי: 05XXXXXXXX או בינלאומי: +XXXXXXXXXXX)')
+      toast.error('מספר טלפון לא תקין (ישראלי: 05XXXXXXXX או בינלאומי: XXXXXXXXXXX)')
       return
     }
     try {
@@ -46,10 +47,10 @@ export default function Register() {
 
   if (done) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-brand-50 to-orange-50 p-4">
-        <div className="card p-10 max-w-md w-full text-center shadow-md">
+      <div className="auth-page min-h-screen flex items-center justify-center p-4">
+        <div className="card p-10 max-w-md w-full text-center shadow-electric">
           <CheckCircle2 className="w-16 h-16 text-green-500 mx-auto mb-4" />
-          <h2 className="text-2xl font-bold text-gray-900 mb-2">נרשמת בהצלחה!</h2>
+          <h2 className="text-2xl font-bold text-brand-navy mb-2">נרשמת בהצלחה!</h2>
           <p className="text-gray-500 mb-6">קוד אימות נשלח לטלפון שלך. אמת את מספר הטלפון כדי להשלים את ההרשמה.</p>
           <button onClick={() => navigate('/login')} className="btn-primary w-full">המשך להתחברות</button>
         </div>
@@ -58,18 +59,15 @@ export default function Register() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-brand-50 to-orange-50 p-4">
+    <div className="auth-page min-h-screen flex items-center justify-center p-4">
       <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-brand-600 rounded-2xl mb-4 shadow-lg">
-            <Wrench className="w-9 h-9 text-white" />
-          </div>
-          <h1 className="text-3xl font-bold text-gray-900">הצטרף ל-<span className="text-brand-600">Auto Spare</span></h1>
-          <p className="text-gray-500 mt-1">צור חשבון חינמי עכשיו</p>
-        </div>
+        <AuthBrandHeader
+          title={<span className="text-brand-navy">פתיחת חשבון חדש</span>}
+          subtitle="צור חשבון מהיר וקבל גישה לכל כלי החיפוש"
+        />
 
-        <div className="card p-8 shadow-md">
-          <h2 className="text-xl font-bold text-gray-900 mb-6 text-center">הצטרף אלינו</h2>
+        <div className="auth-panel">
+          <h2 className="text-xl font-bold text-brand-navy mb-6 text-center">הצטרף אלינו</h2>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
@@ -82,7 +80,7 @@ export default function Register() {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">טלפון (לאימות דו-שלבי)</label>
-              <input type="tel" dir="ltr" className="input-field" placeholder="0501234567 או +18777804236" maxLength={16} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} required />
+              <input type="tel" dir="ltr" className="input-field" placeholder="0501234567 או 18777804236" maxLength={16} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} required />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">סיסמה</label>

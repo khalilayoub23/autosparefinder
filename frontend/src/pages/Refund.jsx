@@ -1,35 +1,31 @@
 import { Link } from 'react-router-dom'
 import { RotateCcw } from 'lucide-react'
+import PhoneDisplay from '../components/PhoneDisplay'
+import LegalPageShell from '../components/LegalPageShell'
 
 export default function Refund() {
   return (
-    <div className="min-h-screen bg-gray-50" dir="rtl">
-      {/* Header */}
-      <div className="bg-orange-600 text-white py-10 px-4">
-        <div className="max-w-3xl mx-auto flex items-center gap-3">
-          <RotateCcw className="w-8 h-8 flex-shrink-0" />
-          <div>
-            <h1 className="text-2xl font-bold">מדיניות ביטולים, החזרות וזיכויים</h1>
-            <p className="text-orange-100 text-sm mt-1">תאריך עדכון אחרון: 28 בפברואר 2026 · גרסה: 1.0</p>
-            <p className="text-orange-200 text-xs mt-0.5">בהתאם לחוק הגנת הצרכן, התשמ&quot;א-1981 · עוסק מורשה: 060633880</p>
-          </div>
-        </div>
-      </div>
-
-      <div className="max-w-3xl mx-auto px-4 py-10 space-y-6">
+    <LegalPageShell
+      title="מדיניות ביטולים, החזרות וזיכויים"
+      subtitle="תאריך עדכון אחרון: 28 בפברואר 2026 · גרסה: 1.0"
+      note={'בהתאם לחוק הגנת הצרכן, התשמ"א-1981'}
+      icon={RotateCcw}
+    >
 
         {/* Business Info */}
-        <section className="bg-orange-50 border border-orange-200 rounded-xl p-5 text-sm text-gray-700 space-y-1">
-          <p><strong>עוסק מורשה:</strong> 060633880</p>
+        <section className="bg-brand-50 border border-brand-200 rounded-xl p-5 text-sm text-gray-700 space-y-1">
+          <p><strong>עוסק מורשה:</strong> פרטי רישום זמינים על גבי חשבונית מס/קבלה.</p>
           <p><strong>כתובת:</strong> הרצל 55, עכו</p>
-          <p><strong>דוא&quot;ל שירות:</strong> <a href="mailto:support@autospare.com" className="text-orange-600 underline">support@autospare.com</a></p>
-          <p><strong>טלפון:</strong> 04-1234567 · א׳-ה׳ 9:00-18:00</p>
+            <p><strong>אתר:</strong> <a href="https://www.autosparefinder.co.il" className="text-brand-600 underline" target="_blank" rel="noreferrer">www.autosparefinder.co.il</a></p>
+          <p><strong>דוא&quot;ל שירות:</strong> <a href="mailto:support@autosparefinder.co.il" className="text-brand-600 underline">support@autosparefinder.co.il</a></p>
+          <p><strong>טלפון:</strong> <PhoneDisplay value="972-53-242-6920" /> · א׳-ה׳ 9:00-18:00</p>
+            <p className="text-xs text-gray-600">החזרים כספיים מחושבים לפי סכום העסקה ששולם בפועל. בעסקאות מקומיות החייבות במע"מ בישראל, ההחזר יכלול מע"מ בשיעור 18% רק אם נגבה בפועל; בעסקאות מול ספק מחו"ל שאינן חייבות במע"מ בישראל, ההחזר לא יכלול מע"מ ישראלי (ייתכנו חיובי מכס/מסי יבוא לפי הדין).</p>
         </section>
 
         {/* TOC */}
         <section className="bg-white rounded-xl p-6 shadow-sm">
-          <h2 className="text-base font-bold text-gray-900 mb-3">תוכן עניינים</h2>
-          <ol className="list-decimal list-inside space-y-1 text-sm text-orange-600">
+          <h2 className="text-base font-bold text-brand-navy mb-3">תוכן עניינים</h2>
+          <ol className="list-decimal list-inside space-y-1 text-sm text-brand-600">
             {['ביטול לפני משלוח','ביטול אחרי משלוח (החזרת מוצר)','סוגי החזרים וסכומים',
               'אופן הגשת בקשה','תהליך טיפול','זמני זיכוי','מוצרים שאינם ניתנים להחזרה',
               'פגמי ייצור ונזק בשילוח','יצירת קשר'].map((t,i) => (
@@ -40,7 +36,7 @@ export default function Refund() {
 
         {/* Quick Summary */}
         <section className="bg-white rounded-xl p-6 shadow-sm">
-          <h2 className="text-base font-bold text-gray-900 mb-4 border-b border-orange-100 pb-2">סיכום מהיר</h2>
+          <h2 className="text-base font-bold text-brand-navy mb-4 border-b border-brand-100 pb-2">סיכום מהיר</h2>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             {[
               ['ביטול לפני משלוח','החזר מלא 100%','green'],
@@ -72,7 +68,7 @@ export default function Refund() {
             <div>
               <h3 className="font-semibold text-gray-800 mb-1">כיצד לבטל?</h3>
               <ol className="list-decimal list-inside space-y-1 text-sm">
-                <li>כנס ל<Link to="/orders" className="text-orange-600 underline">עמוד ההזמנות</Link></li>
+                <li>כנס ל<Link to="/orders" className="text-brand-600 underline">עמוד ההזמנות</Link></li>
                 <li>לחץ על ההזמנה הרצויה</li>
                 <li>לחץ &quot;בטל הזמנה&quot;</li>
                 <li>אשר את הביטול</li>
@@ -100,7 +96,7 @@ export default function Refund() {
             <div>
               <h3 className="font-semibold text-gray-800 mb-2">כיצד לפתוח בקשת החזרה?</h3>
               <ol className="list-decimal list-inside space-y-1">
-                <li>כנס ל<Link to="/orders" className="text-orange-600 underline">עמוד ההזמנות</Link></li>
+                <li>כנס ל<Link to="/orders" className="text-brand-600 underline">עמוד ההזמנות</Link></li>
                 <li>בחר את ההזמנה → לחץ &quot;החזרה&quot;</li>
                 <li>בחר סיבת החזרה</li>
                 <li>הוסף תיאור (אופציונלי)</li>
@@ -115,7 +111,7 @@ export default function Refund() {
             <div className="overflow-x-auto">
               <table className="w-full text-xs text-right border-collapse">
                 <thead>
-                  <tr className="bg-orange-50 text-orange-700">
+                  <tr className="bg-brand-50 text-brand-700">
                     <th className="p-2 border border-gray-200">סיבת החזרה</th>
                     <th className="p-2 border border-gray-200">% החזר</th>
                     <th className="p-2 border border-gray-200">משלוח מקורי</th>
@@ -182,7 +178,7 @@ export default function Refund() {
             </div>
             <div>
               <h3 className="font-semibold text-gray-800 mb-2">ערוץ חלופי — דוא&quot;ל:</h3>
-              <p>שלח ל-<a href="mailto:support@autospare.com" className="text-orange-600 underline">support@autospare.com</a> עם:</p>
+              <p>שלח ל-<a href="mailto:support@autosparefinder.co.il" className="text-brand-600 underline">support@autosparefinder.co.il</a> עם:</p>
               <ul className="space-y-1 mt-1">
                 <li>• מספר הזמנה</li>
                 <li>• סיבת ההחזרה</li>
@@ -203,7 +199,7 @@ export default function Refund() {
                 ['✅ תוך 7-14 ימי עסקים מאיסוף','העברת הזיכוי חזרה לכרטיס האשראי'],
               ].map(([time, action], i) => (
                 <div key={i} className="flex gap-3 bg-gray-50 rounded-lg p-3 items-start">
-                  <span className="text-orange-600 font-bold text-xs whitespace-nowrap min-w-fit">{time}</span>
+                  <span className="text-brand-600 font-bold text-xs whitespace-nowrap min-w-fit">{time}</span>
                   <span className="text-xs text-gray-600">{action}</span>
                 </div>
               ))}
@@ -236,7 +232,7 @@ export default function Refund() {
             <div className="overflow-x-auto">
               <table className="w-full text-xs text-right border-collapse">
                 <thead>
-                  <tr className="bg-orange-50 text-orange-700">
+                  <tr className="bg-brand-50 text-brand-700">
                     <th className="p-2 border border-gray-200">סוג ביטול/החזרה</th>
                     <th className="p-2 border border-gray-200">זמן זיכוי</th>
                   </tr>
@@ -249,7 +245,7 @@ export default function Refund() {
                   ].map(([type, time], i) => (
                     <tr key={i} className={i%2===1?'bg-gray-50':''}>
                       <td className="p-2 border border-gray-200">{type}</td>
-                      <td className="p-2 border border-gray-200 font-medium text-orange-700">{time}</td>
+                      <td className="p-2 border border-gray-200 font-medium text-brand-700">{time}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -318,15 +314,15 @@ export default function Refund() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="bg-gray-50 rounded-lg p-4">
                 <p className="font-semibold text-gray-800 mb-2">פתיחת בקשת החזרה</p>
-                <Link to="/orders" className="inline-block bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold px-4 py-2 rounded-lg transition-colors">
+                <Link to="/orders" className="inline-block bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold px-4 py-2 rounded-lg transition-colors">
                   עמוד ההזמנות שלי ←
                 </Link>
               </div>
               <div className="bg-gray-50 rounded-lg p-4">
                 <p className="font-semibold text-gray-800 mb-2">שאלות ועזרה</p>
                 <ul className="space-y-1 text-xs">
-                  <li>📧 <a href="mailto:support@autospare.com" className="text-orange-600 underline">support@autospare.com</a></li>
-                  <li>📱 04-1234567</li>
+                  <li>📧 <a href="mailto:support@autosparefinder.co.il" className="text-brand-600 underline">support@autosparefinder.co.il</a></li>
+                  <li>📱 <PhoneDisplay value="972-53-242-6920" /></li>
                   <li className="text-gray-500">א׳-ה׳ 9:00-18:00</li>
                 </ul>
               </div>
@@ -342,9 +338,9 @@ export default function Refund() {
         <section className="bg-white rounded-xl p-5 shadow-sm">
           <p className="text-sm text-gray-600 mb-3 font-semibold">מסמכים קשורים:</p>
           <div className="flex flex-wrap gap-3 text-sm">
-            <Link to="/terms" className="text-orange-600 underline hover:text-orange-700">תקנון שימוש</Link>
+            <Link to="/terms" className="text-brand-600 underline hover:text-brand-700">תקנון שימוש</Link>
             <span className="text-gray-300">|</span>
-            <Link to="/privacy" className="text-orange-600 underline hover:text-orange-700">מדיניות פרטיות</Link>
+            <Link to="/privacy" className="text-brand-600 underline hover:text-brand-700">מדיניות פרטיות</Link>
           </div>
         </section>
 
@@ -352,15 +348,14 @@ export default function Refund() {
           תאריך עדכון אחרון: 28 בפברואר 2026 · גרסה: 1.0<br />
           © 2026 Auto Spare. כל הזכויות שמורות.
         </p>
-      </div>
-    </div>
+    </LegalPageShell>
   )
 }
 
 function S({ id, title, children }) {
   return (
     <section id={id} className="bg-white rounded-xl p-6 shadow-sm scroll-mt-4">
-      <h2 className="text-base font-bold text-gray-900 mb-3 border-b border-orange-100 pb-2">
+      <h2 className="text-base font-bold text-brand-navy mb-3 border-b border-brand-100 pb-2">
         {title}
       </h2>
       {children}

@@ -50,19 +50,27 @@ async def telegram_admin_webhook(request: Request):
                 from agents.memory import AgentMemory
                 from BACKEND_DATABASE_MODELS import async_session_factory
                 async with async_session_factory() as db:
-                    mem = AgentMemory(db, agent_name="noa")
-                    pending = await mem.get("pending_post")
-                    if pending:
-                        from social.tiktok_publisher import post_text_content
-                        result = await post_text_content(
-                            caption=pending["caption"],
-                            hashtags=pending.get("hashtags", []),
-                        )
-                        pending["status"] = "published" if result["ok"] else "failed"
-                        await mem.set("pending_post", pending)
-                        reply = "✅ פורסם בהצלחה ב-TikTok!" if result["ok"] else f"❌ שגיאה: {result.get('error')}"
-                    else:
-                        reply = "⚠️ לא נמצא פוסט ממתין"
+                      mem = AgentMemory(db, agent_name="noa")
+                      pending = await mem.get("pending_post")
+                      if not pending:
+                          history = await mem.get("post_history") or []
+                          for event in reversed(history):
+                              if isinstance(event, dict) and str(event.get("status") or "").lower() in ("awaiting_approval", "pending"):
+                                  pending = event
+                                  break
+
+                      if pending:
+                          from social.tiktok_publisher import post_text_content
+                          hashtags = pending.get("hashtags") or []
+                          result = await post_text_content(
+                              caption=pending.get("caption", ""),
+                              hashtags=hashtags,
+                          )
+                          pending["status"] = "published" if result.get("ok") else "failed"
+                          await mem.set("pending_post", pending)
+                          reply = "✅ Published successfully to TikTok" if result.get("ok") else f"❌ Publish error: {result.get('error')}"
+                      else:
+                          reply = "⚠️ No pending NOA post was found for approval"
 
                 # עדכן את ההודעה
                 await client.post(
@@ -71,7 +79,6 @@ async def telegram_admin_webhook(request: Request):
                         "chat_id": chat_id,
                         "message_id": message_id,
                         "text": reply,
-                        "parse_mode": "HTML",
                     }
                 )
 
@@ -82,7 +89,6 @@ async def telegram_admin_webhook(request: Request):
                         "chat_id": chat_id,
                         "message_id": message_id,
                         "text": "✏️ שלח את הטקסט המתוקן כהודעה חדשה — אשמור אותו ואשאל אם לפרסם.",
-                        "parse_mode": "HTML",
                     }
                 )
 
@@ -93,7 +99,6 @@ async def telegram_admin_webhook(request: Request):
                         "chat_id": chat_id,
                         "message_id": message_id,
                         "text": "❌ הפוסט נדחה.",
-                        "parse_mode": "HTML",
                     }
                 )
 

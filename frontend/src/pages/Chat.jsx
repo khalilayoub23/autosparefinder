@@ -12,10 +12,10 @@ import toast from 'react-hot-toast'
 import { chatApi } from '../api/chat'
 
 const AGENT_LABELS = {
-  router_agent:          { label: 'מנהל',         color: 'bg-purple-100 text-purple-700' },
+  router_agent:          { label: 'מנהל',         color: 'bg-brand-100 text-brand-700' },
   parts_finder_agent:    { label: 'חיפוש חלקים',  color: 'bg-blue-100 text-blue-700'   },
   sales_agent:           { label: 'מכירות',        color: 'bg-green-100 text-green-700' },
-  orders_agent:          { label: 'הזמנות',        color: 'bg-orange-100 text-orange-700'},
+  orders_agent:          { label: 'הזמנות',        color: 'bg-brand-100 text-brand-700'},
   finance_agent:         { label: 'כספים',         color: 'bg-yellow-100 text-yellow-700'},
   service_agent:         { label: 'שירות לקוחות',  color: 'bg-cyan-100 text-cyan-700'   },
   security_agent:        { label: 'אבטחה',         color: 'bg-red-100 text-red-700'      },
@@ -51,7 +51,7 @@ function InlineMarkdown({ text }) {
           </a>
         )
         const bold = tok.match(/^\*\*(.+?)\*\*$/)
-        if (bold) return <strong key={i} className="font-semibold text-gray-900">{bold[1]}</strong>
+        if (bold) return <strong key={i} className="font-semibold text-brand-navy">{bold[1]}</strong>
         const price = tok.match(/^(₪[\d,]+(?:\.\d+)?)$/)
         if (price) return (
           <span key={i} className="font-semibold text-green-700 bg-green-50 rounded px-0.5">{tok}</span>
@@ -354,19 +354,19 @@ export default function Chat() {
               key={c.id}
               onClick={() => selectConversation(c.id)}
               className={`group flex items-start justify-between p-3 rounded-xl cursor-pointer mb-1 transition-colors ${
-                currentConversationId === c.id ? 'bg-brand-50 border border-brand-200' : unread ? 'bg-orange-50 border border-orange-200' : 'hover:bg-gray-50 border border-transparent'
+                currentConversationId === c.id ? 'bg-brand-50 border border-brand-200' : unread ? 'bg-brand-50 border border-brand-200' : 'hover:bg-gray-50 border border-transparent'
               }`}
             >
               <div className="flex items-start gap-2 min-w-0 flex-1">
                 <div className="relative flex-shrink-0 mt-0.5">
                   <MessageSquare className={`w-4 h-4 ${
-                    currentConversationId === c.id ? 'text-brand-600' : unread ? 'text-orange-500' : 'text-gray-400'
+                    currentConversationId === c.id ? 'text-brand-600' : unread ? 'text-brand-500' : 'text-gray-400'
                   }`} />
-                  {unread && <span className="absolute -top-1 -right-1 w-2 h-2 bg-orange-500 rounded-full" />}
+                  {unread && <span className="absolute -top-1 -right-1 w-2 h-2 bg-brand-500 rounded-full" />}
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className={`text-sm truncate ${
-                    currentConversationId === c.id ? 'font-semibold text-brand-700' : unread ? 'font-semibold text-gray-900' : 'font-medium text-gray-700'
+                    currentConversationId === c.id ? 'font-semibold text-brand-700' : unread ? 'font-semibold text-brand-navy' : 'font-medium text-gray-700'
                   }`}>
                     {c.title || 'שיחה חדשה'}
                   </p>
@@ -397,7 +397,7 @@ export default function Chat() {
               <Bot className="w-5 h-5 text-brand-600" />
             </div>
             <div>
-              <h2 className="font-semibold text-gray-900 text-sm">עוזר AI</h2>
+              <h2 className="font-semibold text-brand-navy text-sm">עוזר AI</h2>
               <p className="text-xs text-gray-400">{AGENT_LABELS[agentName]?.label || 'מנהל'} • מוכן לעזור</p>
             </div>
           </div>
@@ -462,7 +462,7 @@ export default function Chat() {
               <div className="w-16 h-16 bg-brand-50 rounded-2xl flex items-center justify-center mb-4">
                 <Bot className="w-9 h-9 text-brand-500" />
               </div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-1">שלום, {user?.full_name?.split(' ')[0]}!</h3>
+              <h3 className="text-lg font-semibold text-brand-navy mb-1">שלום, {user?.full_name?.split(' ')[0]}!</h3>
               <p className="text-gray-500 text-sm mb-6">אני יכול לעזור לך למצוא חלקי רכב, לבדוק הזמנות ועוד.</p>
               <div className="flex flex-wrap gap-2 justify-center max-w-lg">
                 {QUICK_MSGS.map((q) => (

@@ -11,7 +11,7 @@ function Section({ title, icon: Icon, children }) {
     <div className="card p-6">
       <div className="flex items-center gap-2 mb-5">
         <Icon className="w-5 h-5 text-brand-600" />
-        <h2 className="font-bold text-gray-900">{title}</h2>
+        <h2 className="font-bold text-brand-navy">{title}</h2>
       </div>
       {children}
     </div>
@@ -158,7 +158,7 @@ export default function Profile() {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">טלפון</label>
-              <input className="input-field" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} dir="ltr" placeholder="+972501234567" />
+              <input className="input-field" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} dir="ltr" placeholder="972501234567" />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">עיר</label>
@@ -233,7 +233,7 @@ export default function Profile() {
             <div key={v.id} className="flex items-center justify-between p-3 rounded-xl border border-gray-200 bg-gray-50">
               <div className="flex items-center gap-2">
                 <Car className="w-4 h-4 text-brand-500" />
-                <span className="text-sm font-medium text-gray-900">{v.nickname || `${v.manufacturer} ${v.model}`}</span>
+                <span className="text-sm font-medium text-brand-navy">{v.nickname || `${v.manufacturer} ${v.model}`}</span>
                 <span className="text-xs text-gray-400">{v.year}</span>
                 {v.is_primary && <span className="badge bg-brand-50 text-brand-600 text-xs">ראשי</span>}
               </div>
@@ -286,7 +286,7 @@ export default function Profile() {
           {NOTIF_KEYS.map(({ key, label, desc }) => (
             <div key={key} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
               <div>
-                <p className="text-sm font-medium text-gray-900">{label}</p>
+                <p className="text-sm font-medium text-brand-navy">{label}</p>
                 <p className="text-xs text-gray-400">{desc}</p>
               </div>
               <button
@@ -315,7 +315,7 @@ export default function Profile() {
           >
             <div className="flex items-center gap-2">
               <ShieldCheck className="w-4 h-4 text-brand-500" />
-              <span className="text-sm font-medium text-gray-900">מדיניות הפרטיות</span>
+              <span className="text-sm font-medium text-brand-navy">מדיניות הפרטיות</span>
             </div>
             <ExternalLink className="w-3.5 h-3.5 text-gray-400" />
           </a>
@@ -327,7 +327,7 @@ export default function Profile() {
           >
             <div className="flex items-center gap-2">
               <FileText className="w-4 h-4 text-brand-500" />
-              <span className="text-sm font-medium text-gray-900">תנאי השימוש</span>
+              <span className="text-sm font-medium text-brand-navy">תנאי השימוש</span>
             </div>
             <ExternalLink className="w-3.5 h-3.5 text-gray-400" />
           </a>
@@ -339,7 +339,7 @@ export default function Profile() {
           >
             <div className="flex items-center gap-2">
               <FileText className="w-4 h-4 text-brand-500" />
-              <span className="text-sm font-medium text-gray-900">מדיניות ביטולים והחזרות</span>
+              <span className="text-sm font-medium text-brand-navy">מדיניות ביטולים והחזרות</span>
             </div>
             <ExternalLink className="w-3.5 h-3.5 text-gray-400" />
           </a>
@@ -350,7 +350,7 @@ export default function Profile() {
               <li>היסטריית הזמנות (7 שנים לפי חוק)</li>
               <li>פרטי רכב (לצורך חיפוש חלפים בלבד)</li>
             </ul>
-            <p className="mt-2">לבקשת מחיקת נתונים או עיין בהם, פנה/י ל: <a href="mailto:privacy@autospare.co.il" className="text-brand-600 hover:underline">privacy@autospare.co.il</a></p>
+            <p className="mt-2">לבקשת מחיקת נתונים או עיין בהם, פנה/י ל: <a href="mailto:info@autosparefinder.co.il" className="text-brand-600 hover:underline">info@autosparefinder.co.il</a></p>
           </div>
         </div>
       </Section>

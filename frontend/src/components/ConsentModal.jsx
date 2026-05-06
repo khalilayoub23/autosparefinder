@@ -38,12 +38,12 @@ export default function ConsentModal() {
     >
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
         {/* Header */}
-        <div className="bg-gradient-to-l from-orange-600 to-orange-500 px-6 py-5">
+        <div className="bg-gradient-to-l from-brand-700 to-brand-600 px-6 py-5">
           <div className="flex items-center gap-3">
             <ShieldCheck className="text-white w-8 h-8 flex-shrink-0" />
             <div>
               <h2 className="text-white text-xl font-bold">ברוכים הבאים ל-AutoSpareFinder</h2>
-              <p className="text-orange-100 text-sm mt-0.5">אנא קראו ואשרו לפני שממשיכים</p>
+              <p className="text-brand-100 text-sm mt-0.5">אנא קראו ואשרו לפני שממשיכים</p>
             </div>
           </div>
         </div>
@@ -67,8 +67,8 @@ export default function ConsentModal() {
               <div
                 className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors
                   ${privacyChecked
-                    ? 'bg-orange-500 border-orange-500'
-                    : 'border-gray-300 group-hover:border-orange-400'}`}
+                    ? 'bg-brand-600 border-brand-500'
+                    : 'border-gray-300 group-hover:border-brand-400'}`}
               >
                 {privacyChecked && <CheckCircle2 className="text-white w-3.5 h-3.5" strokeWidth={3} />}
               </div>
@@ -79,7 +79,7 @@ export default function ConsentModal() {
                 to="/privacy"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-orange-600 font-semibold underline hover:text-orange-700"
+                className="text-brand-600 font-semibold underline hover:text-brand-700"
                 onClick={e => e.stopPropagation()}
               >
                 למדיניות הפרטיות
@@ -99,8 +99,8 @@ export default function ConsentModal() {
               <div
                 className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors
                   ${termsChecked
-                    ? 'bg-orange-500 border-orange-500'
-                    : 'border-gray-300 group-hover:border-orange-400'}`}
+                    ? 'bg-brand-600 border-brand-500'
+                    : 'border-gray-300 group-hover:border-brand-400'}`}
               >
                 {termsChecked && <CheckCircle2 className="text-white w-3.5 h-3.5" strokeWidth={3} />}
               </div>
@@ -111,7 +111,7 @@ export default function ConsentModal() {
                 to="/terms"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-orange-600 font-semibold underline hover:text-orange-700"
+                className="text-brand-600 font-semibold underline hover:text-brand-700"
                 onClick={e => e.stopPropagation()}
               >
                 לתנאי השימוש
@@ -134,7 +134,7 @@ export default function ConsentModal() {
             disabled={!canSubmit || loading}
             className={`w-full py-3 rounded-xl font-bold text-base transition-all
               ${canSubmit && !loading
-                ? 'bg-orange-500 hover:bg-orange-600 text-white shadow-md hover:shadow-lg active:scale-95'
+                ? 'bg-brand-600 hover:bg-brand-700 text-white shadow-md hover:shadow-lg active:scale-95'
                 : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
           >
             {loading ? (

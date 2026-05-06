@@ -1224,3 +1224,10 @@ Before marking any item DONE:
 2. Record measurable outcome (not only implementation).
 3. Update FIXES_TRACKER.md or PRE_LAUNCH_CHECKLIST.md when relevant.
 4. Add one-line summary to the weekly log.
+
+## May 5, 2026: Phase C1 - Pre-Launch Polish & Hardening (Completed)
+- **Security:** Implemented advanced JWT middleware (auth), security headers, and CORS configurations.
+- **Frontend:** Transitioned frontend Dockerfile to a multi-stage build, serving a React-router fallback logic via Nginx.
+- **Docker Orchestration:** Updated docker-compose configuration with log rotations (`max-size: 10m`, `max-file: 3`) and `unless-stopped` rules.
+- **Resilience:** Rebuilt backend to use a Python-scripted HTTP health check for Docker, eliminating reliance on curl. Tested `/api/health` successfully.
+- **Automated Backups:** Integrated `prodrigestivill/postgres-backup-local` for both the `autospare_pii` and `autospare` catalog databases over an internal Docker network, validating successful compressed `.sql.gz` dump creation.

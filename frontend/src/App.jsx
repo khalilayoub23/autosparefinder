@@ -28,7 +28,7 @@ class ErrorBoundary extends Component {
           <h2>משהו השתבש</h2>
           <p style={{ color: '#666', fontSize: '0.9rem' }}>{this.state.error?.message}</p>
           <button
-            style={{ marginTop: '1rem', padding: '0.5rem 1.5rem', background: '#ea580c', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer' }}
+            style={{ marginTop: '1rem', padding: '0.5rem 1.5rem', background: '#00A3FF', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer' }}
             onClick={() => { localStorage.removeItem('cart-store'); window.location.reload() }}
           >
             נקה מטמון וטען מחדש
@@ -43,112 +43,130 @@ class ErrorBoundary extends Component {
 export default function App() {
   return (
     <ErrorBoundary>
-    <BrowserRouter>
-      <Toaster
-        position="top-center"
-        toastOptions={{
-          duration: 3500,
-          style: { fontFamily: 'Inter, sans-serif', direction: 'rtl', textAlign: 'right' },
-          success: { iconTheme: { primary: '#ea580c', secondary: '#fff' } },
-        }}
-      />
-
-      <Routes>
-        {/* Public routes */}
-        <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Register />} />
-        <Route path="/reset-password" element={<ResetPassword />} />
-        <Route path="/privacy" element={<Privacy />} />
-        <Route path="/terms" element={<Terms />} />
-        <Route path="/refund" element={<Refund />} />
-
-        {/* Protected routes wrapped with Layout */}
-        <Route
-          path="/"
-          element={
-            <ProtectedRoute>
-              <Layout>
-                <Chat />
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/parts"
-          element={
-            <ProtectedRoute>
-              <Layout>
-                <Parts />
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/orders"
-          element={
-            <ProtectedRoute>
-              <Layout>
-                <Orders />
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/cart"
-          element={
-            <ProtectedRoute>
-              <Layout>
-                <Cart />
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/profile"
-          element={
-            <ProtectedRoute>
-              <Layout>
-                <Profile />
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/admin"
-          element={
-            <ProtectedRoute adminOnly>
-              <Layout>
-                <Admin />
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/agents"
-          element={
-            <ProtectedRoute adminOnly>
-              <Layout>
-                <Agents />
-              </Layout>
-            </ProtectedRoute>
-          }
+      <BrowserRouter>
+        <Toaster
+          position="top-center"
+          toastOptions={{
+            duration: 3500,
+            style: { fontFamily: 'Rubik, Heebo, sans-serif', direction: 'rtl', textAlign: 'right' },
+            success: { iconTheme: { primary: '#00A3FF', secondary: '#fff' } },
+          }}
         />
 
-        <Route
-          path="/payment/success"
-          element={
-            <ProtectedRoute>
-              <Layout>
-                <PaymentSuccess />
-              </Layout>
-            </ProtectedRoute>
-          }
-        />
+        <Routes>
+          {/* Public routes */}
+          <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
+          <Route path="/privacy" element={<Privacy />} />
+          <Route path="/terms" element={<Terms />} />
+          <Route path="/refund" element={<Refund />} />
 
-        {/* Catch-all */}
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </BrowserRouter>
+          {/* Main app routes with top layout */}
+          <Route
+            path="/"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <Chat />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/parts"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <Parts />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/orders"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <Orders />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/cart"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <Cart />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/profile"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <Profile />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/agents"
+            element={
+              <ProtectedRoute adminOnly>
+                <Layout>
+                  <Agents />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/payment/success"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <PaymentSuccess />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+
+          {/* Admin tabbed module restored in top layout */}
+          <Route
+            path="/admin"
+            element={
+              <ProtectedRoute adminOnly>
+                <Layout>
+                  <Admin />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+
+          {/* Legacy deep links redirected to tabbed admin module */}
+          <Route
+            path="/admin/orders"
+            element={
+              <ProtectedRoute adminOnly>
+                <Navigate to="/admin" replace />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/inventory"
+            element={
+              <ProtectedRoute adminOnly>
+                <Navigate to="/admin" replace />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </BrowserRouter>
     </ErrorBoundary>
   )
 }

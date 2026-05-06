@@ -113,6 +113,33 @@ DISCOVERY_OFFICIAL_SUFFIXES = [
 if not DISCOVERY_OFFICIAL_SUFFIXES:
     DISCOVERY_OFFICIAL_SUFFIXES = ["com"]
 
+# ── Category-driven discovery (ensures core part types exist per brand) ────────
+DISCOVERY_CATEGORIES = [
+    # Hebrew name → Autodoc search terms (English)
+    ("מצבר",              ["car battery", "starter battery", "AGM battery"]),
+    ("בלמים",             ["brake disc", "brake pad", "brake caliper"]),
+    ("מסנן שמן",          ["oil filter", "engine oil filter"]),
+    ("מסנן אוויר",        ["air filter", "engine air filter"]),
+    ("מסנן דלק",          ["fuel filter"]),
+    ("פנס קדמי",          ["headlight", "front headlamp", "headlight assembly"]),
+    ("פנס אחורי",         ["rear light", "tail light", "rear lamp"]),
+    ("בולם זעזועים",      ["shock absorber", "strut", "damper"]),
+    ("רפידות בלם",        ["brake pad", "brake shoe"]),
+    ("מצמד",              ["clutch kit", "clutch disc", "clutch plate"]),
+    ("רצועת תזמון",       ["timing belt", "timing belt kit"]),
+    ("תרמוסטט",          ["thermostat", "engine thermostat"]),
+    ("משאבת מים",         ["water pump", "coolant pump"]),
+    ("אלטרנטור",          ["alternator", "generator"]),
+    ("מצת",               ["spark plug", "ignition plug"]),
+    ("פגוש קדמי",         ["front bumper", "bumper cover"]),
+    ("מראה צד",           ["wing mirror", "door mirror", "side mirror"]),
+    ("זרוע היגוי",        ["tie rod", "steering arm", "track rod"]),
+]
+
+CATEGORY_DISCOVERY_ENABLED = os.getenv("CATEGORY_DISCOVERY_ENABLED", "true").lower() == "true"
+CATEGORY_DISCOVERY_INTERVAL_H = float(os.getenv("CATEGORY_DISCOVERY_INTERVAL_H", "12"))
+CATEGORY_MIN_PARTS_PER_BRAND_CATEGORY = int(os.getenv("CATEGORY_MIN_PARTS_PER_BRAND_CATEGORY", "3"))
+
 # Exchange rate (ILS / USD).  Updated once per run from a free API if available.
 ILS_PER_USD: float = float(os.getenv("USD_TO_ILS", "3.72"))
 FX_REFRESH_INTERVAL_H = float(os.getenv("FX_REFRESH_INTERVAL_H", "24"))
@@ -2957,6 +2984,207 @@ async def run_brand_discovery(
 
 
 # ==============================================================================
+
+async def _search_autodoc_category_query(
+    query: str,
+    manufacturer: str,
+    category_he: str,
+    *,
+    max_parts: int = 20,
+) -> List[Dict[str, Any]]:
+    """Search Autodoc API by free-text query and normalize items for category discovery."""
+    search_url = f"https://www.autodoc.eu/api/v1/part/search?search={quote_plus(query)}&lang=en&perPage=20&page=1"
+    resp = await _get(
+        search_url,
+        headers={"Accept": "application/json", "X-Requested-With": "XMLHttpRequest"},
+    )
+    if not resp or resp.status_code != 200:
+        return []
+
+    try:
+        data = resp.json()
+        items = data.get("items") or data.get("results") or data.get("parts") or []
+    except Exception:
+        return []
+
+    results: List[Dict[str, Any]] = []
+    for item in items[:max_parts]:
+        pnum = (item.get("partNumber") or item.get("number") or item.get("oem") or "").strip()
+        pname = (item.get("name") or item.get("title") or "").strip()
+        pbrand = (item.get("brand") or item.get("manufacturer") or manufacturer).strip()
+        if not pnum or not pname:
+            continue
+
+        price_raw = item.get("price") or item.get("priceEUR") or item.get("priceUSD") or 0
+        try:
+            price_usd = float(str(price_raw).replace(",", ".").replace("€", "").replace("$", "").strip() or 0)
+        except Exception:
+            price_usd = 0.0
+
+        clean_pnum = pnum.upper().replace(" ", "")
+        results.append(
+            {
+                "source": "autodoc",
+                "manufacturer": manufacturer,
+                "part_brand": pbrand,
+                "part_number": clean_pnum,
+                "name": pname,
+                "category": category_he,
+                "part_type": classify_part_type(pbrand, pname, "autodoc"),
+                "price_usd": price_usd,
+                "price_ils": round(price_usd * ILS_PER_USD, 2),
+                "in_stock": bool(item.get("inStock") or item.get("availability") == "in_stock"),
+                "url": f"https://www.autodoc.eu/search?query={quote_plus(clean_pnum)}",
+            }
+        )
+    return results
+
+
+async def _run_category_discovery() -> Dict[str, Any]:
+    """Ensure each active manufacturer has a minimum amount of core categories."""
+    if not CATEGORY_DISCOVERY_ENABLED:
+        return {"status": "disabled", "message": "CATEGORY_DISCOVERY_ENABLED=false"}
+
+    from BACKEND_AUTH_SECURITY import get_redis
+    from distributed_lock import acquire_lock
+
+    lock_ttl = max(3600, int(CATEGORY_DISCOVERY_INTERVAL_H * 3600))
+    _cat_lock = await acquire_lock(await get_redis(), "category_discovery", ttl_seconds=lock_ttl)
+    if not _cat_lock:
+        return {"status": "skipped", "reason": "category_discovery already running on another worker"}
+
+    report: Dict[str, Any] = {
+        "job": "category_discovery",
+        "started_at": datetime.utcnow().isoformat(),
+        "total_inserted": 0,
+        "errors": 0,
+        "manufacturers": {},
+    }
+
+    try:
+        async with scraper_session_factory() as db:
+            rows = (await db.execute(
+                text(
+                    """
+                    SELECT DISTINCT manufacturer
+                    FROM parts_catalog
+                    WHERE is_active = TRUE
+                      AND manufacturer IS NOT NULL
+                      AND btrim(manufacturer) <> ''
+                    ORDER BY manufacturer
+                    """
+                )
+            )).fetchall()
+            manufacturers = [str(r[0]).strip() for r in rows if r and r[0]]
+
+            for manufacturer in manufacturers:
+                m_report: Dict[str, int] = {}
+                existing_rows = (await db.execute(
+                    text("SELECT sku FROM parts_catalog WHERE manufacturer = :m"),
+                    {"m": manufacturer},
+                )).fetchall()
+                existing_skus = {
+                    str(r[0]).upper().replace(" ", "")
+                    for r in existing_rows
+                    if r and r[0]
+                }
+
+                for category_he, search_terms in DISCOVERY_CATEGORIES:
+                    inserted_for_category = 0
+                    try:
+                        current_count = int((await db.execute(
+                            text(
+                                """
+                                SELECT COUNT(*)
+                                FROM parts_catalog
+                                WHERE is_active = TRUE
+                                  AND manufacturer = :m
+                                  AND category = :c
+                                """
+                            ),
+                            {"m": manufacturer, "c": category_he},
+                        )).scalar() or 0)
+
+                        need = max(0, CATEGORY_MIN_PARTS_PER_BRAND_CATEGORY - current_count)
+                        if need > 0:
+                            for search_term in search_terms:
+                                if inserted_for_category >= need:
+                                    break
+
+                                await asyncio.sleep(SCRAPE_REQUEST_DELAY + random.uniform(0, 0.6))
+                                query = f"{search_term} {manufacturer}".strip()
+                                candidates = await _search_autodoc_category_query(
+                                    query,
+                                    manufacturer,
+                                    category_he,
+                                    max_parts=20,
+                                )
+
+                                for part in candidates:
+                                    sku_clean = (part.get("part_number") or "").upper().replace(" ", "")
+                                    if not sku_clean or sku_clean in existing_skus:
+                                        continue
+
+                                    source_name = (part.get("source") or "").lower()
+                                    part_type_name = (part.get("part_type") or "").lower()
+                                    part_brand_name = part.get("part_brand") or part.get("manufacturer") or ""
+
+                                    is_oem_source = source_name in _OEM_DISCOVERY_SOURCES
+                                    apply_aftermarket = source_name == "autodoc" and "aftermarket" in part_type_name
+                                    resolved_aftermarket_brand_id: Optional[uuid.UUID] = None
+                                    resolved_aftermarket_tier: Optional[str] = None
+
+                                    if apply_aftermarket:
+                                        resolved_aftermarket_brand_id, resolved_aftermarket_tier = await resolve_aftermarket_brand(
+                                            part_brand_name,
+                                            db=db,
+                                        )
+
+                                    _, created = await db_upsert_part(
+                                        db,
+                                        sku=sku_clean,
+                                        name=part.get("name") or sku_clean,
+                                        manufacturer=manufacturer,
+                                        category=category_he,
+                                        part_type=part.get("part_type") or "Aftermarket",
+                                        base_price=float(part.get("price_usd") or 0),
+                                        description=(
+                                            f"{category_he} discovered for {manufacturer}. "
+                                            f"Query: {query}. Source: autodoc."
+                                        ),
+                                        aftermarket_brand_id=resolved_aftermarket_brand_id,
+                                        aftermarket_tier=resolved_aftermarket_tier,
+                                        apply_aftermarket=apply_aftermarket,
+                                        is_oem_source=is_oem_source,
+                                        oem_number=sku_clean if is_oem_source else None,
+                                    )
+                                    if created:
+                                        inserted_for_category += 1
+                                        report["total_inserted"] += 1
+                                        existing_skus.add(sku_clean)
+
+                                    if inserted_for_category >= need:
+                                        break
+                    except Exception as exc:
+                        report["errors"] += 1
+                        print(f"[CategoryDiscovery] {manufacturer} / {category_he}: error: {exc}")
+
+                    print(
+                        f"[CategoryDiscovery] {manufacturer} / {category_he}: "
+                        f"found {inserted_for_category} parts"
+                    )
+                    m_report[category_he] = inserted_for_category
+
+                report["manufacturers"][manufacturer] = m_report
+
+        report["status"] = "completed"
+        report["finished_at"] = datetime.utcnow().isoformat()
+        return report
+    finally:
+        try:
+            await _cat_lock.release()
+        except Exception:
+            pass
 # MAIN SCRAPER RUN  —  called by the background loop
 # ==============================================================================
 
@@ -3147,52 +3375,36 @@ async def scraper_background_loop():
     """
     from resilience import log_job_failure
     global _last_run_report, _last_fx_report
-    interval_s = SCRAPE_INTERVAL_H * 3600
-    fx_interval_s = FX_REFRESH_INTERVAL_H * 3600
+    # Calculate seconds until next fixed run time (00:00 or 12:00 UTC)
+    def _seconds_until_next_run() -> float:
+        now = datetime.utcnow()
+        # Next run is either 00:00 or 12:00 UTC today/tomorrow
+        candidates = []
+        for hour in (0, 12):
+            candidate = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+            if candidate <= now:
+                candidate += timedelta(days=1)
+            candidates.append(candidate)
+        next_run = min(candidates)
+        return (next_run - now).total_seconds()
 
-    # ── Calculate first-run delay ───────────────────────────────────────────
-    first_wait = 60  # default: 1 min after startup
-    try:
-        async with scraper_session_factory() as db:
-            last = (await db.execute(
-                text("""
-                    SELECT created_at FROM system_logs
-                    WHERE logger_name = 'catalog_scraper'
-                    ORDER BY created_at DESC LIMIT 1
-                """)
-            )).fetchone()
-            if last and last[0]:
-                elapsed = (datetime.utcnow() - last[0]).total_seconds()
-                remaining = interval_s - elapsed
-                if remaining > 60:
-                    first_wait = remaining
-                    print(f"[Scraper] Recent run found — next run in "
-                          f"{remaining/3600:.1f}h")
-                else:
-                    first_wait = 60
-    except Exception as e:
-        print(f"[Scraper] Could not read last run time: {e}")
-
+    first_wait = _seconds_until_next_run()
     print(f"[Scraper] Background loop started. "
-          f"First run in {first_wait/60:.1f} min. "
-          f"Interval: every {SCRAPE_INTERVAL_H}h.")
+          f"First run at next 00:00 or 12:00 UTC "
+          f"(in {first_wait/3600:.1f}h).")
 
     await asyncio.sleep(first_wait)
-
-    # Track when the last discovery run was
-    last_discovery_at: Optional[datetime] = None
-    discovery_interval_s = DISCOVERY_INTERVAL_H * 3600
-    last_fx_refresh_at: Optional[datetime] = None
 
     while True:
         try:
             now = datetime.utcnow()
+            is_midnight_run = now.hour == 0  # 00:00 UTC
+            is_noon_run = now.hour == 12     # 12:00 UTC
+
+            # Job 0 — FX refresh: both runs
+            run_fx_refresh = True
 
             # Job 0 — FX refresh (every FX_REFRESH_INTERVAL_H hours)
-            run_fx_refresh = (
-                last_fx_refresh_at is None
-                or (now - last_fx_refresh_at).total_seconds() >= fx_interval_s
-            )
             if run_fx_refresh:
                 try:
                     _last_fx_report = await refresh_and_persist_ils_exchange_rate()
@@ -3204,16 +3416,12 @@ async def scraper_background_loop():
                         "updated_at": datetime.utcnow().isoformat(),
                     }
                     print(f"[Scraper] FX refresh error: {error_msg}")
-                last_fx_refresh_at = datetime.utcnow()
                 await asyncio.sleep(5)
 
             # Job 2 — Brand Discovery (every DISCOVERY_INTERVAL_H hours)
             global _last_discovery_report
-            run_discovery = (
-                last_discovery_at is None
-                or (now - last_discovery_at).total_seconds() >= discovery_interval_s
-            )
-            if run_discovery and DISCOVERY_ENABLED:
+            run_discovery = is_noon_run and DISCOVERY_ENABLED
+            if run_discovery:
                 try:
                     _last_discovery_report = await run_brand_discovery()
                 except Exception as exc:
@@ -3233,8 +3441,17 @@ async def scraper_background_loop():
                     except Exception as dlq_err:
                         print(f"[Scraper] Failed to log brand_discovery to DLQ: {dlq_err}")
                 
-                last_discovery_at = datetime.utcnow()
                 await asyncio.sleep(30)
+
+            # Job 2b — Category Discovery (every CATEGORY_DISCOVERY_INTERVAL_H hours)
+            run_category_discovery = is_midnight_run and CATEGORY_DISCOVERY_ENABLED
+            if run_category_discovery:
+                try:
+                    await _run_category_discovery()
+                except Exception as exc:
+                    print(f"[Scraper] Category discovery error: {str(exc)[:500]}")
+
+                await asyncio.sleep(10)
 
             # Job 1 — Price Sync (every SCRAPE_INTERVAL_H hours)
             try:
@@ -3259,7 +3476,10 @@ async def scraper_background_loop():
         except Exception as exc:
             print(f"[Rex] ❌ Unhandled error in cycle: {exc}")
         
-        await asyncio.sleep(interval_s)
+        sleep_s = _seconds_until_next_run()
+        print(f"[Rex] ✅ Cycle done. Next run in {sleep_s/3600:.1f}h "
+              f"at next 00:00 or 12:00 UTC.")
+        await asyncio.sleep(sleep_s)
 
 
 def start_scraper_task() -> asyncio.Task:
@@ -3295,6 +3515,9 @@ def get_scraper_status() -> Dict[str, Any]:
         "discovery_official_max_domains": DISCOVERY_OFFICIAL_MAX_DOMAINS,
         "discovery_official_max_urls": DISCOVERY_OFFICIAL_MAX_URLS,
         "discovery_official_suffixes": DISCOVERY_OFFICIAL_SUFFIXES,
+        "category_discovery_enabled": CATEGORY_DISCOVERY_ENABLED,
+        "category_discovery_interval_h": CATEGORY_DISCOVERY_INTERVAL_H,
+        "category_min_parts_per_brand_category": CATEGORY_MIN_PARTS_PER_BRAND_CATEGORY,
         # Proxy / production
         "proxy_configured":        bool(SCRAPER_PROXY),
         # Runtime state

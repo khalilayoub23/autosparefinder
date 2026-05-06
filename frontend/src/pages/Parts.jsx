@@ -28,8 +28,8 @@ const PART_FAMILY_TRIGGER_IMAGE_WIDTH = 44
 const PART_FAMILY_TRIGGER_IMAGE_HEIGHT = 28
 const PART_FAMILY_CHIP_IMAGE_WIDTH = 34
 const PART_FAMILY_CHIP_IMAGE_HEIGHT = 24
-const FILTER_SELECT_CLASS = 'w-full h-11 border border-gray-200 rounded-lg bg-white text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-2.5 transition-colors disabled:bg-gray-50 disabled:text-gray-400'
-const FILTER_MENU_TRIGGER_CLASS = 'w-full h-11 border border-gray-200 rounded-lg bg-white text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-2.5 transition-colors flex items-center justify-between'
+const FILTER_SELECT_CLASS = 'w-full h-11 border border-gray-200 rounded-lg bg-white text-brand-navy text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-2.5 transition-colors disabled:bg-gray-50 disabled:text-gray-400'
+const FILTER_MENU_TRIGGER_CLASS = 'w-full h-11 border border-gray-200 rounded-lg bg-white text-brand-navy text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-2.5 transition-colors flex items-center justify-between'
 
 // ── Country flag helper ───────────────────────────────────────────────────────
 const COUNTRY_ISO = {
@@ -316,7 +316,7 @@ function PhotoEditorModal({ src, onApply, onClose }) {
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
           <div className="flex items-center gap-2">
             <Camera className="w-5 h-5 text-brand-600" />
-            <h3 className="font-bold text-gray-900">ערוך תמונה לחיפוש מדויק</h3>
+            <h3 className="font-bold text-brand-navy">ערוך תמונה לחיפוש מדויק</h3>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100">
             <X className="w-5 h-5 text-gray-500" />
@@ -425,7 +425,7 @@ function PriceTag({ price, vat, shipping, total }) {
       <div className="flex justify-between text-gray-600"><span>מחיר נטו</span><span className="font-medium">₪{price?.toFixed(0)}</span></div>
       <div className="flex justify-between text-gray-500"><span>מע״מ 18%</span><span>₪{vat?.toFixed(0)}</span></div>
       <div className="flex justify-between text-gray-500"><span>משלוח</span><span>₪{shipping?.toFixed(0)}</span></div>
-      <div className="flex justify-between font-bold text-gray-900 border-t border-gray-200 pt-1 mt-1">
+      <div className="flex justify-between font-bold text-brand-navy border-t border-gray-200 pt-1 mt-1">
         <span>סה״כ לתשלום</span>
         <span className="text-brand-600 text-base">₪{total?.toFixed(0)}</span>
       </div>
@@ -439,8 +439,8 @@ const PART_TYPE_COLOR = {
   'מקורי':       'bg-blue-50 text-blue-700 border-blue-200',
   'Aftermarket': 'bg-amber-50 text-amber-700 border-amber-200',
   'חליפי':       'bg-amber-50 text-amber-700 border-amber-200',
-  'Refurbished': 'bg-purple-50 text-purple-700 border-purple-200',
-  'משופץ':       'bg-purple-50 text-purple-700 border-purple-200',
+  'Refurbished': 'bg-brand-50 text-brand-700 border-brand-200',
+  'משופץ':       'bg-brand-50 text-brand-700 border-brand-200',
   'unknown':     'bg-gray-50 text-gray-500 border-gray-200',
 }
 
@@ -459,7 +459,7 @@ const PART_TYPE_LABEL = {
 // Using hex color for border avoids Tailwind JIT purge / specificity issues with dynamic class names
 const CATEGORY_ACCENT = {
   'בלמים':           { color: '#f87171', bg: 'bg-red-50',     text: 'text-red-700',     icon: '🛑' },
-  'מנוע':            { color: '#fb923c', bg: 'bg-orange-50',  text: 'text-orange-700',  icon: '⚙️' },
+  'מנוע':            { color: '#fb923c', bg: 'bg-brand-50',  text: 'text-brand-700',  icon: '⚙️' },
   'מתלה':            { color: '#facc15', bg: 'bg-yellow-50',  text: 'text-yellow-700',  icon: '🔧' },
   'היגוי':           { color: '#a3e635', bg: 'bg-lime-50',    text: 'text-lime-700',    icon: '🎯' },
   'תאורה':           { color: '#38bdf8', bg: 'bg-sky-50',     text: 'text-sky-700',     icon: '💡' },
@@ -675,7 +675,7 @@ function TypeSection({ typeKey, data, onAddToCart }) {
 
       {/* Part info */}
       <div className={`${accent.bg} px-4 pt-3 pb-2 border-l-4`} style={{ borderLeftColor: accent.color }}>
-        <h3 className="font-semibold text-gray-900 text-sm leading-snug line-clamp-2">
+        <h3 className="font-semibold text-brand-navy text-sm leading-snug line-clamp-2">
           {part.name_he || part.name}
         </h3>
         <p className={`text-xs mt-0.5 font-medium ${accent.text}`}>
@@ -805,7 +805,7 @@ function PartCard({ part, onAddToCart }) {
       <div className={`${accent.bg} px-4 pt-3 pb-2`}>
         <div className="flex justify-between items-start gap-2">
           <div className="flex-1 min-w-0">
-            <h3 className="font-semibold text-gray-900 leading-snug line-clamp-2 min-h-[2.75rem] text-sm">{part.name}</h3>
+            <h3 className="font-semibold text-brand-navy leading-snug line-clamp-2 min-h-[2.75rem] text-sm">{part.name}</h3>
             <p className={`text-xs mt-0.5 font-medium ${accent.text}`}>
               <span className="mr-1">{accent.icon}</span>
               {part.category}
@@ -914,7 +914,7 @@ function VehicleConfirmModal({ vehicles, selectedVehicle, onConfirm, onClose }) 
                 <Car className="w-6 h-6 text-brand-600" />
               </div>
               <div className="text-right">
-                <p className="font-bold text-gray-900 text-sm">{sv.manufacturer} {sv.model} {sv.year}</p>
+                <p className="font-bold text-brand-navy text-sm">{sv.manufacturer} {sv.model} {sv.year}</p>
                 {details && <p className="text-xs text-gray-500 mt-0.5">{details}</p>}
               </div>
             </div>
@@ -1002,7 +1002,7 @@ function VehicleConfirmModal({ vehicles, selectedVehicle, onConfirm, onClose }) 
                 <Car className={`w-5 h-5 ${chosen === v.id ? 'text-brand-600' : 'text-gray-500'}`} />
               </div>
               <div className="flex-1 min-w-0 text-right">
-                <p className="font-semibold text-gray-900 text-sm">{v.manufacturer} {v.model}</p>
+                <p className="font-semibold text-brand-navy text-sm">{v.manufacturer} {v.model}</p>
                 <p className="text-xs text-gray-400 mt-0.5">{v.year}{v.fuel_type ? ` · ${v.fuel_type}` : ''}{v.color ? ` · ${v.color}` : ''}</p>
               </div>
               {chosen === v.id && <CheckCircle className="w-5 h-5 text-brand-600 flex-shrink-0" />}
@@ -1146,7 +1146,7 @@ function VinScannerModal({ onResult, onClose }) {
         {detected ? (
           <div className="p-4 space-y-3">
             <p className="text-xs text-gray-500 text-center">VIN זוהה:</p>
-            <p className="font-mono font-bold text-center text-gray-900 tracking-widest text-sm bg-green-50 border border-green-200 rounded-xl py-2 px-3">{detected}</p>
+            <p className="font-mono font-bold text-center text-brand-navy tracking-widest text-sm bg-green-50 border border-green-200 rounded-xl py-2 px-3">{detected}</p>
             <div className="flex gap-2">
               <button onClick={() => setDetected('')} className="flex-1 py-2 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50">נסה שוב</button>
               <button onClick={handleConfirm} className="flex-1 py-2 rounded-xl bg-brand-600 text-white text-sm font-semibold hover:bg-brand-700">אשר</button>
@@ -2580,7 +2580,7 @@ export default function Parts() {
           <div className="w-8 h-8 rounded-lg bg-brand-100 flex items-center justify-center flex-shrink-0">
             <Search className="w-4 h-4 text-brand-600" />
           </div>
-          <h3 className="font-semibold text-gray-900">חיפוש חופשי</h3>
+          <h3 className="font-semibold text-brand-navy">חיפוש חופשי</h3>
           {activeFiltersCount > 0 && (
             <span className="text-xs bg-brand-100 text-brand-700 px-2 py-0.5 rounded-full font-medium mr-auto">
               {activeFiltersCount} פילטרים פעילים
@@ -2672,7 +2672,7 @@ export default function Parts() {
             <div className="w-8 h-8 rounded-lg bg-green-100 flex items-center justify-center flex-shrink-0">
               <Car className="w-4 h-4 text-green-600" />
             </div>
-            <h3 className="font-semibold text-gray-900">חיפוש לפי רכב (לוחית / VIN)</h3>
+            <h3 className="font-semibold text-brand-navy">חיפוש לפי רכב (לוחית / VIN)</h3>
           </div>
 
           {/* ── Search inputs row: plate + VIN ── */}
@@ -2684,7 +2684,7 @@ export default function Parts() {
               <div className="flex gap-1.5">
                 <div className="relative flex rounded-lg overflow-hidden border border-gray-200 focus-within:border-brand-400 focus-within:ring-1 focus-within:ring-brand-300 transition-colors flex-1 min-w-0">
                   <input
-                    className="w-full bg-white text-gray-900 font-mono font-semibold text-sm tracking-[0.15em] text-center uppercase placeholder:text-gray-400 placeholder:font-normal placeholder:text-xs placeholder:tracking-normal focus:outline-none px-2 py-2"
+                    className="w-full bg-white text-brand-navy font-mono font-semibold text-sm tracking-[0.15em] text-center uppercase placeholder:text-gray-400 placeholder:font-normal placeholder:text-xs placeholder:tracking-normal focus:outline-none px-2 py-2"
                     placeholder="123-45-678"
                     dir="ltr"
                     value={newPlate}
@@ -2709,7 +2709,7 @@ export default function Parts() {
                 VIN
                 {vinInput.length > 0 && (
                   <span className={`mr-auto text-[10px] font-semibold ${
-                    vinInput.replace(/\s/g, '').length === 17 ? 'text-green-600' : 'text-orange-400'
+                    vinInput.replace(/\s/g, '').length === 17 ? 'text-green-600' : 'text-brand-400'
                   }`}>
                     {vinInput.replace(/\s/g, '').length}/17
                   </span>
@@ -2718,7 +2718,7 @@ export default function Parts() {
               <div className="flex gap-1.5">
                 <div className="relative flex-1 min-w-0">
                   <input
-                    className="w-full border border-gray-200 rounded-lg bg-white text-gray-900 font-mono text-xs tracking-wider uppercase focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-2 py-2 pl-7"
+                    className="w-full border border-gray-200 rounded-lg bg-white text-brand-navy font-mono text-xs tracking-wider uppercase focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-2 py-2 pl-7"
                     placeholder="1HGCM82633..."
                     dir="ltr"
                     maxLength={17}
@@ -2823,7 +2823,7 @@ export default function Parts() {
                 <SlidersHorizontal className="w-4 h-4 text-brand-600" />
               </div>
               <div>
-                <h3 className="font-semibold text-gray-900">חיפוש לפי פרטי רכב</h3>
+                <h3 className="font-semibold text-brand-navy">חיפוש לפי פרטי רכב</h3>
                 <p className="text-[11px] text-gray-400 mt-0.5">מסננים המחוברים לנתוני DB בזמן אמת</p>
               </div>
             </div>
@@ -2885,7 +2885,7 @@ export default function Parts() {
                   <div className="absolute z-30 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg">
                     <div className="p-2 border-b border-gray-100">
                       <input
-                        className="w-full border border-gray-200 rounded-md bg-white text-gray-900 text-xs focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-2 py-1.5"
+                        className="w-full border border-gray-200 rounded-md bg-white text-brand-navy text-xs focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-2 py-1.5"
                         value={manufacturerSearch}
                         onChange={(e) => setManufacturerSearch(e.target.value)}
                         placeholder="חפש יצרן..."
@@ -3076,7 +3076,7 @@ export default function Parts() {
                               <button
                                 type="button"
                                 key={family.id}
-                                className={`w-full flex items-center justify-between px-2 py-2 rounded-md text-sm ${category === family.id ? 'bg-brand-50 text-brand-700' : 'hover:bg-gray-50 text-gray-900'} ${categoryCounts[family.id] === 0 ? 'opacity-60' : ''}`}
+                                className={`w-full flex items-center justify-between px-2 py-2 rounded-md text-sm ${category === family.id ? 'bg-brand-50 text-brand-700' : 'hover:bg-gray-50 text-brand-navy'} ${categoryCounts[family.id] === 0 ? 'opacity-60' : ''}`}
                                 onClick={() => { handlePartFamilyChange(family.id); setPartTypeMenuOpen(false) }}
                               >
                                 <span className="flex items-center gap-3 min-w-0">
@@ -3101,7 +3101,7 @@ export default function Parts() {
                         <button
                           type="button"
                           key={family.id}
-                          className={`w-full flex items-center justify-between px-2 py-2 rounded-md text-sm ${category === family.id ? 'bg-brand-50 text-brand-700' : 'hover:bg-gray-50 text-gray-900'} ${categoryCounts[family.id] === 0 ? 'opacity-60' : ''}`}
+                          className={`w-full flex items-center justify-between px-2 py-2 rounded-md text-sm ${category === family.id ? 'bg-brand-50 text-brand-700' : 'hover:bg-gray-50 text-brand-navy'} ${categoryCounts[family.id] === 0 ? 'opacity-60' : ''}`}
                           onClick={() => { handlePartFamilyChange(family.id); setPartTypeMenuOpen(false) }}
                         >
                           <span className="flex items-center gap-3 min-w-0">
@@ -3195,10 +3195,10 @@ export default function Parts() {
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm" style={{order: 3}}>
           {/* Header */}
           <div className="flex items-center gap-2 px-4 pt-4">
-            <div className="w-8 h-8 rounded-lg bg-purple-100 flex items-center justify-center flex-shrink-0">
-              <Camera className="w-4 h-4 text-purple-600" />
+            <div className="w-8 h-8 rounded-lg bg-brand-100 flex items-center justify-center flex-shrink-0">
+              <Camera className="w-4 h-4 text-brand-600" />
             </div>
-            <h3 className="font-semibold text-gray-900">חיפוש בתמונה / קול</h3>
+            <h3 className="font-semibold text-brand-navy">חיפוש בתמונה / קול</h3>
           </div>
           {/* Sub-tab bar */}
           <div className="flex border-b border-gray-100 p-1.5 gap-1 mt-3">
@@ -3330,7 +3330,7 @@ export default function Parts() {
         <div className="card p-4 space-y-4">
           <div className="flex items-center gap-2 mb-1">
             <Camera className="w-5 h-5 text-brand-600" />
-            <h3 className="font-semibold text-gray-900">זיהוי חלק מתמונה</h3>
+            <h3 className="font-semibold text-brand-navy">זיהוי חלק מתמונה</h3>
           </div>
           <p className="text-sm text-gray-500">צלם או העלה תמונה של החלק — ה-AI יזהה אותו ויחפש במאגר</p>
 
@@ -3463,7 +3463,7 @@ export default function Parts() {
         <div className="card p-4 space-y-4">
           <div className="flex items-center gap-2 mb-1">
             <Mic className="w-5 h-5 text-brand-600" />
-            <h3 className="font-semibold text-gray-900">חיפוש קולי</h3>
+            <h3 className="font-semibold text-brand-navy">חיפוש קולי</h3>
           </div>
           <p className="text-sm text-gray-500">לחץ על המיקרופון ואמור שם החלק שאתה מחפש</p>
 
@@ -3771,7 +3771,7 @@ export default function Parts() {
               )}
               {[['Original','מקורי','bg-blue-600 text-white border-blue-600','bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'],
                 ['Aftermarket','חליפי','bg-amber-600 text-white border-amber-600','bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'],
-                ['Refurbished','משופץ','bg-purple-600 text-white border-purple-600','bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100'],
+                ['Refurbished','משופץ','bg-brand-600 text-white border-brand-600','bg-brand-50 text-brand-700 border-brand-200 hover:bg-brand-100'],
               ].filter(([k]) => typeCounts[k] > 0).map(([key, label, activeClass, inactiveClass]) => (
                 <button
                   key={key}

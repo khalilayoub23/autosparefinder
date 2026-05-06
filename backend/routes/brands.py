@@ -276,15 +276,25 @@ async def get_parts_by_brand(
             # Prefer stored ILS price (avoids exchange-rate round-trips)
             cost_ils = float(sp_row.price_ils or 0)
             ship_ils = float(sp_row.shipping_cost_ils or 0)
-            delivery_fee = get_supplier_shipping(sp_row.supplier_name or "")
+            delivery_fee = get_supplier_shipping(sp_row.supplier_name or "", sp_row.supplier_country or "")
             if cost_ils > 0:
-                pricing = agent.calculate_customer_price_from_ils(cost_ils, ship_ils, customer_shipping=delivery_fee)
+                pricing = agent.calculate_customer_price_from_ils(
+                    cost_ils,
+                    ship_ils,
+                    customer_shipping=delivery_fee,
+                    supplier_name=sp_row.supplier_name,
+                    supplier_country=sp_row.supplier_country,
+                    local_vat_only=True,
+                )
             else:
                 usd_total = float(sp_row.price_usd or 0) + float(sp_row.shipping_cost_usd or 0)
                 pricing = agent.calculate_customer_price_from_ils(
                     usd_total * usd_to_ils_rate,
                     0.0,
                     customer_shipping=delivery_fee,
+                    supplier_name=sp_row.supplier_name,
+                    supplier_country=sp_row.supplier_country,
+                    local_vat_only=True,
                 )
             pricing["availability"] = "in_stock" if sp_row.is_available else "on_order"
             pricing["warranty_months"] = sp_row.warranty_months
@@ -498,15 +508,25 @@ async def get_parts_by_truck_brand(
         if sp_row:
             cost_ils = float(sp_row.price_ils or 0)
             ship_ils = float(sp_row.shipping_cost_ils or 0)
-            delivery_fee = get_supplier_shipping(sp_row.supplier_name or "")
+            delivery_fee = get_supplier_shipping(sp_row.supplier_name or "", sp_row.supplier_country or "")
             if cost_ils > 0:
-                pricing = agent.calculate_customer_price_from_ils(cost_ils, ship_ils, customer_shipping=delivery_fee)
+                pricing = agent.calculate_customer_price_from_ils(
+                    cost_ils,
+                    ship_ils,
+                    customer_shipping=delivery_fee,
+                    supplier_name=sp_row.supplier_name,
+                    supplier_country=sp_row.supplier_country,
+                    local_vat_only=True,
+                )
             else:
                 usd_total = float(sp_row.price_usd or 0) + float(sp_row.shipping_cost_usd or 0)
                 pricing = agent.calculate_customer_price_from_ils(
                     usd_total * usd_to_ils_rate,
                     0.0,
                     customer_shipping=delivery_fee,
+                    supplier_name=sp_row.supplier_name,
+                    supplier_country=sp_row.supplier_country,
+                    local_vat_only=True,
                 )
             pricing["availability"] = "in_stock" if sp_row.is_available else "on_order"
             pricing["warranty_months"] = sp_row.warranty_months

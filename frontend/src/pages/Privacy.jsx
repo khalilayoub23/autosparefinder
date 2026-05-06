@@ -1,27 +1,21 @@
 import { Link } from 'react-router-dom'
 import { ShieldCheck } from 'lucide-react'
+import PhoneDisplay from '../components/PhoneDisplay'
+import LegalPageShell from '../components/LegalPageShell'
 
 export default function Privacy() {
   return (
-    <div className="min-h-screen bg-gray-50" dir="rtl">
-      {/* Header */}
-      <div className="bg-orange-600 text-white py-10 px-4">
-        <div className="max-w-3xl mx-auto flex items-center gap-3">
-          <ShieldCheck className="w-8 h-8 flex-shrink-0" />
-          <div>
-            <h1 className="text-2xl font-bold">מדיניות פרטיות - Auto Spare</h1>
-            <p className="text-orange-100 text-sm mt-1">תאריך עדכון אחרון: 28 בפברואר 2026 · גרסה: 1.0</p>
-            <p className="text-orange-200 text-xs mt-0.5">תואמת: תיקון 13 לחוק הגנת הפרטיות, התשמ&quot;א-1981 · עוסק מורשה: 060633880</p>
-          </div>
-        </div>
-      </div>
-
-      <div className="max-w-3xl mx-auto px-4 py-10 space-y-6">
+    <LegalPageShell
+      title="מדיניות פרטיות - Auto Spare"
+      subtitle="תאריך עדכון אחרון: 28 בפברואר 2026 · גרסה: 1.0"
+      note={'תואמת: תיקון 13 לחוק הגנת הפרטיות, התשמ"א-1981'}
+      icon={ShieldCheck}
+    >
 
         {/* TOC */}
         <section className="bg-white rounded-xl p-6 shadow-sm">
-          <h2 className="text-base font-bold text-gray-900 mb-3">תוכן עניינים</h2>
-          <ol className="list-decimal list-inside space-y-1 text-sm text-orange-600 columns-2">
+          <h2 className="text-base font-bold text-brand-navy mb-3">תוכן עניינים</h2>
+          <ol className="list-decimal list-inside space-y-1 text-sm text-brand-600 columns-2">
             {['מבוא','מידע שאנו אוספים','כיצד אנו משתמשים במידע',
               'שיתוף עם צדדים שלישיים','אבטחת מידע','תקופות שמירה',
               'זכויותיך','קטינים','עוגיות וטכנולוגיות מעקב',
@@ -196,7 +190,7 @@ export default function Privacy() {
             <div className="overflow-x-auto">
               <table className="w-full text-xs text-right border-collapse">
                 <thead>
-                  <tr className="bg-orange-50 text-orange-700">
+                  <tr className="bg-brand-50 text-brand-700">
                     <th className="p-2 border border-gray-200">סוג מידע</th>
                     <th className="p-2 border border-gray-200">תקופה</th>
                     <th className="p-2 border border-gray-200">סיבה</th>
@@ -236,7 +230,7 @@ export default function Privacy() {
           <div className="space-y-3 text-sm text-gray-700">
             <p className="text-xs text-gray-500">בהתאם לחוק הגנת הפרטיות (תיקון 13):</p>
             {[
-              ['7.1 זכות עיון 👁️', 'לראות איזה מידע יש עליך. פנה דרך ״הגדרות → המידע שלי״ או privacy@autospare.com. מענה תוך 21 ימים (חינם פעם בשנה).'],
+              ['7.1 זכות עיון 👁️', 'לראות איזה מידע יש עליך. פנה דרך ״הגדרות → המידע שלי״ או support@autosparefinder.co.il. מענה תוך 21 ימים (חינם פעם בשנה).'],
               ['7.2 זכות לתיקון ✏️', 'לתקן מידע שגוי דרך ״הגדרות → ערוך פרופיל״. מענה תוך 7 ימים.'],
               ['7.3 זכות למחיקה 🗑️', 'למחוק את המידע שלך דרך ״הגדרות → מחק חשבון״. לא ניתן למחוק חשבוניות (7 שנים — חובה חוקית). שאר המידע יימחק תוך 30 יום.'],
               ['7.4 זכות להגבלת שימוש 🚫', 'להגביל שיווק דרך ״הגדרות → העדפות תקשורת״.'],
@@ -291,7 +285,7 @@ export default function Privacy() {
                 ['תוך שבוע','חקירה מלאה + תיקון הפרצה + דו&quot;ח מפורט'],
               ].map(([t, d], i) => (
                 <div key={i} className="flex gap-3 bg-gray-50 rounded-lg p-3">
-                  <span className="text-orange-600 font-bold text-xs whitespace-nowrap">{t}</span>
+                  <span className="text-brand-600 font-bold text-xs whitespace-nowrap">{t}</span>
                   <span className="text-xs text-gray-600">{d}</span>
                 </div>
               ))}
@@ -316,8 +310,9 @@ export default function Privacy() {
             <div>
               <h3 className="font-semibold text-gray-800 mb-1">ממונה על הגנת הפרטיות</h3>
               <ul className="space-y-1">
-                <li>📧 <a href="mailto:privacy@autospare.com" className="text-orange-600 underline">privacy@autospare.com</a></li>
-                <li>📱 04-1234567</li>
+                <li>📧 <a href="mailto:support@autosparefinder.co.il" className="text-brand-600 underline">support@autosparefinder.co.il</a></li>
+                <li>📱 <PhoneDisplay value="972-53-242-6920" /></li>
+                  <li>🌐 <a href="https://www.autosparefinder.co.il" className="text-brand-600 underline" target="_blank" rel="noreferrer">www.autosparefinder.co.il</a></li>
                 <li>🏢 הרצל 55, עכו</li>
                 <li className="text-gray-500">שעות מענה: א׳-ה׳ 9:00-17:00</li>
               </ul>
@@ -335,7 +330,7 @@ export default function Privacy() {
 
         {/* Consent */}
         <section className="bg-green-50 border border-green-200 rounded-xl p-6 shadow-sm">
-          <h2 className="text-base font-bold text-gray-900 mb-3">✅ הסכמה</h2>
+          <h2 className="text-base font-bold text-brand-navy mb-3">✅ הסכמה</h2>
           <p className="text-sm text-gray-600 mb-3">על ידי שימוש באתר, אתה מאשר:</p>
           <ul className="space-y-1 text-sm text-gray-700">
             <li>✅ קראתי והבנתי את מדיניות הפרטיות</li>
@@ -351,15 +346,14 @@ export default function Privacy() {
           תואמת: תיקון 13 לחוק הגנת הפרטיות<br />
           © 2026 Auto Spare. כל הזכויות שמורות.
         </p>
-      </div>
-    </div>
+    </LegalPageShell>
   )
 }
 
 function S({ id, title, children }) {
   return (
     <section id={id} className="bg-white rounded-xl p-6 shadow-sm scroll-mt-4">
-      <h2 className="text-base font-bold text-gray-900 mb-3 border-b border-orange-100 pb-2">
+      <h2 className="text-base font-bold text-brand-navy mb-3 border-b border-brand-100 pb-2">
         {title}
       </h2>
       {children}

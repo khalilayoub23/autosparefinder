@@ -275,7 +275,7 @@ export default function Cart() {
     return (
       <div className="max-w-lg mx-auto mt-16 card p-10 text-center">
         <CheckCircle2 className="w-16 h-16 text-green-500 mx-auto mb-4" />
-        <h2 className="text-2xl font-bold text-gray-900 mb-2">הזמנה בוצעה!</h2>
+        <h2 className="text-2xl font-bold text-brand-navy mb-2">הזמנה בוצעה!</h2>
         <p className="text-gray-500 mb-1">מספר הזמנה: <strong>{orderNumber}</strong></p>
         <p className="text-sm text-gray-400 mb-6">קבלה נשלחה לאימייל {user?.email}</p>
         <div className="flex gap-3 justify-center">
@@ -334,7 +334,7 @@ export default function Cart() {
                   aria-label={`select-${item.supplierPartId}`}
                 />
                 <div className="flex-1 min-w-0">
-                  <p className="font-medium text-gray-900 truncate">{item.name}</p>
+                  <p className="font-medium text-brand-navy truncate">{item.name}</p>
                   <p className="text-xs text-gray-500">{item.manufacturer}</p>
                   <p className="text-brand-600 font-semibold mt-1">₪{(item.price * item.quantity).toFixed(2)}</p>
                   {item.isEstimated && (
@@ -350,7 +350,7 @@ export default function Cart() {
                   <button onClick={() => handleUpdateQty(item, item.quantity - 1)} className="w-7 h-7 rounded-full border border-gray-300 flex items-center justify-center hover:bg-gray-100">
                     <Minus className="w-3 h-3" />
                   </button>
-                  <span className="w-6 text-center font-medium text-gray-900">{item.quantity}</span>
+                  <span className="w-6 text-center font-medium text-brand-navy">{item.quantity}</span>
                   <button onClick={() => handleUpdateQty(item, item.quantity + 1)} className="w-7 h-7 rounded-full border border-gray-300 flex items-center justify-center hover:bg-gray-100">
                     <Plus className="w-3 h-3" />
                   </button>
@@ -366,7 +366,7 @@ export default function Cart() {
             <div className="flex justify-between text-gray-600"><span>סכום ביניים (נבחר)</span><span>₪{selectedSubtotal.toFixed(2)}</span></div>
             <div className="flex justify-between text-gray-600"><span>מע״מ 18% (נבחר)</span><span>₪{selectedVat.toFixed(2)}</span></div>
             <div className="flex justify-between text-gray-600"><span>משלוח (נבחר)</span><span>₪{selectedShipping.toFixed(2)}</span></div>
-            <div className="flex justify-between text-base font-bold text-gray-900 border-t border-gray-200 pt-2">
+            <div className="flex justify-between text-base font-bold text-brand-navy border-t border-gray-200 pt-2">
               <span>סה״כ לתשלום</span><span className="text-brand-600">₪{selectedTotal.toFixed(2)}</span>
             </div>
             {selectedItems.length !== items.length && (
@@ -381,7 +381,7 @@ export default function Cart() {
             const maxDays = Math.max(...items.map((i) => i.deliveryDays ?? 14))
             const hasLongDelivery = items.some((i) => (i.deliveryDays ?? 0) > 18)
             return (
-              <div className={`text-xs rounded-xl px-4 py-3 flex items-center gap-2 ${hasLongDelivery ? 'bg-orange-50 text-orange-700 border border-orange-200' : 'bg-blue-50 text-blue-700 border border-blue-100'}`}>
+              <div className={`text-xs rounded-xl px-4 py-3 flex items-center gap-2 ${hasLongDelivery ? 'bg-brand-50 text-brand-700 border border-brand-200' : 'bg-blue-50 text-blue-700 border border-blue-100'}`}>
                 <span>🚚</span>
                 <span>
                   {hasLongDelivery
@@ -401,7 +401,7 @@ export default function Cart() {
 
       {step === 'address' && (
         <div className="card p-6 space-y-4">
-          <h3 className="font-bold text-gray-900">כתובת משלוח</h3>
+          <h3 className="font-bold text-brand-navy">כתובת משלוח</h3>
 
           {/* Profile address card */}
           {profileAddress && !useOtherAddress && (
@@ -410,7 +410,7 @@ export default function Cart() {
                 <div className="flex items-start gap-3">
                   <MapPin className="w-5 h-5 text-blue-500 mt-0.5 shrink-0" />
                   <div>
-                    <p className="font-medium text-gray-900">{profileAddress.street}</p>
+                    <p className="font-medium text-brand-navy">{profileAddress.street}</p>
                     <p className="text-sm text-gray-600">{profileAddress.city}{profileAddress.postal_code ? `, ${profileAddress.postal_code}` : ''}</p>
                   </div>
                 </div>
@@ -461,7 +461,7 @@ export default function Cart() {
 
       {step === 'payment' && (
         <div className="card p-6 space-y-4">
-          <h3 className="font-bold text-gray-900">תשלום</h3>
+          <h3 className="font-bold text-brand-navy">תשלום</h3>
           <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-700">
             <CreditCard className="w-5 h-5 mb-2" />
             <p className="font-medium">תשלום מאובטח</p>
@@ -470,7 +470,7 @@ export default function Cart() {
           <div className="text-sm text-gray-600 space-y-1">
             <div className="flex justify-between"><span>פריטים שנבחרו</span><span>{selectedCount}</span></div>
             <div className="flex justify-between"><span>כתובת</span><span>{address.street}, {address.city}</span></div>
-            <div className="flex justify-between font-bold text-gray-900"><span>סה״כ</span><span className="text-brand-600">₪{payableTotal.toFixed(2)}</span></div>
+            <div className="flex justify-between font-bold text-brand-navy"><span>סה״כ</span><span className="text-brand-600">₪{payableTotal.toFixed(2)}</span></div>
             {typeof pendingCheckoutTotal === 'number' && Math.abs(pendingCheckoutTotal - selectedTotal) > 0.01 && (
               <p className="text-xs text-amber-700">הסכום עודכן לפי מחיר ספק עדכני.</p>
             )}

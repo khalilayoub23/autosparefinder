@@ -42,11 +42,10 @@ All agents use GitHub Models API (FREE) with GPT-4o or Claude 3.5 Sonnet.
 
 CRITICAL BUSINESS RULES (enforced in prompts & code):
   - NEVER expose supplier name to customer - show manufacturer only
-    - Price = (supplier_cost_ils × 1.45) + 18% VAT + ₪29-149 shipping (by supplier)
+  - NEVER expose internal pricing formulas, multipliers, or margin details to customers
   - NEVER order from supplier before customer payment confirmed
-  - Margin: 45% on cost
-  - VAT: 18% (separate line)
-    - Shipping: ₪29-149 (לפי ספק)
+  - VAT: 18% for local Israeli suppliers only (separate line when applicable)
+  - Shipping: customer-facing fee by supplier/origin
 ==============================================================================
 """
 
@@ -58,7 +57,8 @@ import string
 import asyncio
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
-from uuid import uuid4
+from urllib.parse import urlparse, quote
+from uuid import UUID as _UUID, uuid4
 
 import logging
 
@@ -69,7 +69,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from hf_client import hf_embed, hf_text, hf_text_fast
 
 from BACKEND_DATABASE_MODELS import (
-    AgentAction, ApprovalQueue, CatalogVersion, Conversation, Message, Notification, Order, OrderItem,
+    AgentAction, AgentSharedMemory, AgentUsageLog, ApprovalQueue, CatalogVersion, Conversation, Message, Notification, Order, OrderItem,
     PartsCatalog, Supplier, SupplierPart, SystemLog, SystemSetting,
     User, Vehicle, CarBrand, TruckBrand, PriceHistory, get_db, async_session_factory,
 )
@@ -87,6 +87,276 @@ logger = logging.getLogger(__name__)
 
 # Cap fire-and-forget asyncio.create_task() fan-out (mirrors routes/utils._TASK_SEMAPHORE).
 _TASK_SEMAPHORE = asyncio.Semaphore(50)
+
+_SHARED_MEMORY_MAX_ITEMS = 8
+_SHARED_MEMORY_MAX_VALUE_LEN = 280
+
+
+def _safe_uuid(value: Any) -> Optional[_UUID]:
+    try:
+        return _UUID(str(value))
+    except Exception:
+        return None
+
+
+def _truncate_memory_value(value: Any, max_len: int = _SHARED_MEMORY_MAX_VALUE_LEN) -> str:
+    text_value = re.sub(r"\s+", " ", str(value or "").strip())
+    if len(text_value) <= max_len:
+        return text_value
+    return text_value[: max_len - 1].rstrip() + "..."
+
+
+def _render_shared_memory_prompt(memory_rows: List[Dict[str, Any]]) -> str:
+    if not memory_rows:
+        return ""
+
+    lines: List[str] = []
+    for row in memory_rows[:_SHARED_MEMORY_MAX_ITEMS]:
+        key = str(row.get("memory_key") or "context").replace("_", " ")
+        value = _truncate_memory_value(row.get("memory_value"))
+        if key and value:
+            lines.append(f"- {key}: {value}")
+
+    if not lines:
+        return ""
+
+    return "Known customer context from shared memory:\n" + "\n".join(lines)
+
+
+def _inject_shared_memory_context(history: List[Dict[str, str]], shared_memory_prompt: str) -> List[Dict[str, str]]:
+    if not shared_memory_prompt:
+        return history
+
+    return [{
+        "role": "system",
+        "content": (
+            "[SHARED MEMORY]\n"
+            f"{shared_memory_prompt}\n"
+            "Use this context when relevant, but do not mention shared memory explicitly."
+        ),
+    }] + history[-20:]
+
+
+def _build_vehicle_memory_summary(vehicle_profile: Dict[str, Any]) -> str:
+    return ", ".join(
+        part
+        for part in [
+            str(vehicle_profile.get("manufacturer") or "").strip(),
+            str(vehicle_profile.get("model") or "").strip(),
+            str(vehicle_profile.get("year") or "").strip(),
+            str(vehicle_profile.get("engine_type") or "").strip(),
+        ]
+        if part
+    )
+
+
+def _extract_shared_memory_updates(
+    context_data: Dict[str, Any],
+    agent_name: str,
+) -> List[Dict[str, Any]]:
+    updates: List[Dict[str, Any]] = []
+
+    preferred_lang = str(context_data.get("preferred_lang") or "").strip()
+    if preferred_lang:
+        updates.append({
+            "scope": "user",
+            "memory_key": "preferred_language",
+            "memory_value": preferred_lang,
+            "importance": 3,
+            "agent_name": agent_name,
+        })
+
+    license_plate = str(context_data.get("license_plate") or "").strip()
+    if license_plate:
+        updates.append({
+            "scope": "conversation",
+            "memory_key": "license_plate",
+            "memory_value": license_plate,
+            "importance": 4,
+            "agent_name": agent_name,
+        })
+
+    last_part_query = str(context_data.get("last_part_query") or "").strip()
+    if last_part_query:
+        updates.append({
+            "scope": "conversation",
+            "memory_key": "last_part_query",
+            "memory_value": last_part_query,
+            "importance": 2,
+            "agent_name": agent_name,
+        })
+
+    vehicle_profile = context_data.get("vehicle_profile")
+    if isinstance(vehicle_profile, dict):
+        summary = _build_vehicle_memory_summary(vehicle_profile)
+        if summary:
+            updates.append({
+                "scope": "conversation",
+                "memory_key": "vehicle_profile_summary",
+                "memory_value": summary,
+                "importance": 4,
+                "agent_name": agent_name,
+            })
+
+    return updates
+
+
+async def _load_shared_memory(
+    db: AsyncSession,
+    user_id: str,
+    conversation_id: Optional[str],
+    agent_name: Optional[str],
+    limit: int = _SHARED_MEMORY_MAX_ITEMS,
+) -> List[Dict[str, Any]]:
+    user_uuid = _safe_uuid(user_id)
+    if not user_uuid:
+        return []
+
+    conv_uuid = _safe_uuid(conversation_id) if conversation_id else None
+
+    if conv_uuid:
+        scope_filter = or_(
+            and_(AgentSharedMemory.scope == "conversation", AgentSharedMemory.conversation_id == conv_uuid),
+            AgentSharedMemory.scope == "user",
+        )
+    else:
+        scope_filter = AgentSharedMemory.scope == "user"
+
+    stmt = (
+        select(AgentSharedMemory)
+        .where(AgentSharedMemory.user_id == user_uuid)
+        .where(scope_filter)
+        .order_by(AgentSharedMemory.importance.desc(), AgentSharedMemory.updated_at.desc())
+        .limit(max(1, min(limit, 20)))
+    )
+
+    if agent_name:
+        stmt = stmt.where(or_(AgentSharedMemory.agent_name.is_(None), AgentSharedMemory.agent_name == agent_name))
+
+    rows = (await db.execute(stmt)).scalars().all()
+    now = datetime.utcnow()
+    for row in rows:
+        row.last_used_at = now
+
+    return [
+        {
+            "id": str(row.id),
+            "scope": row.scope,
+            "memory_key": row.memory_key,
+            "memory_value": row.memory_value,
+            "importance": int(row.importance or 1),
+            "agent_name": row.agent_name,
+            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        }
+        for row in rows
+    ]
+
+
+async def _save_shared_memory_updates(
+    db: AsyncSession,
+    user_id: str,
+    conversation_id: Optional[str],
+    updates: List[Dict[str, Any]],
+) -> List[str]:
+    user_uuid = _safe_uuid(user_id)
+    conv_uuid = _safe_uuid(conversation_id) if conversation_id else None
+    if not user_uuid:
+        return []
+
+    touched_keys: List[str] = []
+    now = datetime.utcnow()
+
+    for item in updates:
+        key = str(item.get("memory_key") or "").strip()
+        value = _truncate_memory_value(item.get("memory_value"))
+        scope = str(item.get("scope") or "conversation").strip().lower()
+        importance = int(item.get("importance") or 1)
+        owner_agent = str(item.get("agent_name") or "").strip() or None
+
+        if not key or not value:
+            continue
+        if scope not in ("conversation", "user"):
+            scope = "conversation"
+
+        target_conv_uuid = conv_uuid if scope == "conversation" else None
+
+        stmt = select(AgentSharedMemory).where(
+            AgentSharedMemory.user_id == user_uuid,
+            AgentSharedMemory.scope == scope,
+            AgentSharedMemory.memory_key == key,
+        )
+        if target_conv_uuid is None:
+            stmt = stmt.where(AgentSharedMemory.conversation_id.is_(None))
+        else:
+            stmt = stmt.where(AgentSharedMemory.conversation_id == target_conv_uuid)
+
+        row = (await db.execute(stmt)).scalar_one_or_none()
+        if row:
+            row.memory_value = value
+            row.importance = importance
+            row.agent_name = owner_agent
+            row.updated_at = now
+            row.last_used_at = now
+        else:
+            db.add(AgentSharedMemory(
+                user_id=user_uuid,
+                conversation_id=target_conv_uuid,
+                agent_name=owner_agent,
+                scope=scope,
+                memory_key=key,
+                memory_value=value,
+                importance=importance,
+                last_used_at=now,
+                updated_at=now,
+            ))
+
+        touched_keys.append(key)
+
+    old_rows = (await db.execute(
+        select(AgentSharedMemory)
+        .where(AgentSharedMemory.user_id == user_uuid)
+        .order_by(AgentSharedMemory.updated_at.desc())
+        .offset(300)
+    )).scalars().all()
+    for row in old_rows:
+        await db.delete(row)
+
+    return sorted(set(touched_keys))
+
+
+async def _log_agent_usage_event(
+    db: AsyncSession,
+    user_id: str,
+    conversation_id: Optional[str],
+    message_id: Optional[str],
+    agent_name: str,
+    source: str,
+    model_used: str,
+    route_result: Dict[str, Any],
+    execution_time_ms: Optional[int],
+    memory_keys: Optional[List[str]] = None,
+    success: bool = True,
+    error_message: Optional[str] = None,
+) -> None:
+    user_uuid = _safe_uuid(user_id)
+    if not user_uuid:
+        return
+
+    db.add(AgentUsageLog(
+        user_id=user_uuid,
+        conversation_id=_safe_uuid(conversation_id) if conversation_id else None,
+        message_id=_safe_uuid(message_id) if message_id else None,
+        agent_name=agent_name,
+        source=_normalize_source(source),
+        intent=str((route_result or {}).get("intent") or "").strip() or None,
+        model_used=model_used or None,
+        execution_time_ms=execution_time_ms,
+        success=bool(success),
+        error_message=(error_message or None),
+        route_data=route_result or {},
+        memory_keys=(memory_keys or []),
+    ))
+
 
 def _ar2en(s: str) -> str:
     """Convert Eastern Arabic numerals to Western Arabic numerals."""
@@ -389,7 +659,7 @@ def _apply_channel_policy(system_text: str, source: Optional[str]) -> str:
 # Business constants
 PROFIT_MARGIN = 1.45       # 45% markup on cost
 VAT_RATE = 0.18            # 18%
-SHIPPING_ILS = 91.0        # default customer delivery fee (₪)
+SHIPPING_ILS = float(os.getenv("DEFAULT_CUSTOMER_SHIPPING_ILS", "59"))  # dynamic fallback
 # Import the single source of truth for USD→ILS rate from BACKEND_DATABASE_MODELS
 from BACKEND_DATABASE_MODELS import USD_TO_ILS
 from currency_rate import get_usd_to_ils_rate
@@ -407,9 +677,139 @@ SUPPLIER_SHIPPING_RATES: dict = {
     "Toyota Genuine":   99.0,     # Japan → Israel (OEM direct)
 }
 
-def get_supplier_shipping(supplier_name: str) -> float:
-    """Return the customer-facing delivery fee for a given supplier."""
-    return SUPPLIER_SHIPPING_RATES.get(supplier_name, SHIPPING_ILS)
+_LOCAL_SUPPLIER_NAMES = {"autoparts pro il"}
+_LOCAL_COUNTRY_KEYS = {"il", "israel", "ישראל"}
+_COUNTRY_SHIPPING_RATES: Dict[str, float] = {
+    "il": 29.0,
+    "israel": 29.0,
+    "de": 91.0,
+    "germany": 91.0,
+    "eu": 91.0,
+    "cn": 149.0,
+    "china": 149.0,
+    "us": 110.0,
+    "usa": 110.0,
+    "kr": 95.0,
+    "korea": 95.0,
+    "jp": 99.0,
+    "japan": 99.0,
+}
+
+def _normalize_home_url(raw_url: str, fallback: str = "https://autosparefinder.co.il/") -> str:
+    value = (raw_url or "").strip()
+    if not value:
+        return fallback
+    if "://" not in value:
+        value = f"https://{value.lstrip('/')}"
+    parsed = urlparse(value)
+    host = (parsed.netloc or parsed.path).strip().lower()
+    if not host:
+        return fallback
+    scheme = parsed.scheme if parsed.scheme in ("http", "https") else "https"
+    return f"{scheme}://{host}/"
+
+
+def _normalize_whatsapp_url(
+    raw_value: str,
+    default_digits: str = "972532426920",
+    welcome_text: str = "שלום, הגעתי מאתר Auto Spare ורוצה עזרה בחלק לרכב.",
+) -> str:
+    value = (raw_value or "").strip()
+    if not value:
+        value = default_digits
+
+    if "wa.me/" in value:
+        tail = value.split("wa.me/", 1)[1]
+        base_part, _, query_part = tail.partition("?")
+        digits = re.sub(r"\D", "", base_part)
+        existing_query = query_part.strip()
+    else:
+        digits = re.sub(r"\D", "", value)
+        existing_query = ""
+
+    if not digits:
+        digits = default_digits
+
+    if digits.startswith("05") and len(digits) == 10:
+        digits = "972" + digits[1:]
+    elif digits.startswith("0") and len(digits) >= 9:
+        digits = "972" + digits[1:]
+    elif digits.startswith("5") and len(digits) == 9:
+        digits = "972" + digits
+
+    if not digits.startswith("972"):
+        digits = default_digits
+
+    qs = existing_query or f"text={quote(welcome_text)}"
+    base = f"https://api.whatsapp.com/send/?phone={digits}"
+    return f"{base}&{qs}" if qs else base
+
+
+NOA_WEBSITE_URL = _normalize_home_url(
+    os.getenv("NOA_WEBSITE_URL")
+    or os.getenv("FRONTEND_PUBLIC_URL")
+    or os.getenv("FRONTEND_URL")
+    or "https://autosparefinder.co.il"
+)
+NOA_TELEGRAM_URL = (os.getenv("NOA_TELEGRAM_URL") or "https://t.me/Noa_autosparefinder_bot").strip()
+NOA_WHATSAPP_URL = _normalize_whatsapp_url(os.getenv("NOA_WHATSAPP_URL") or "0532426920")
+NOA_FACEBOOK_URL = (os.getenv("NOA_FACEBOOK_URL") or "https://www.facebook.com/profile.php?id=61572103516423").strip()
+NOA_INSTAGRAM_URL = (os.getenv("NOA_INSTAGRAM_URL") or "https://instagram.com/autosparefinder").strip()
+
+
+def is_local_supplier(supplier_name: Optional[str] = None, supplier_country: Optional[str] = None) -> bool:
+    country_key = (supplier_country or "").strip().lower()
+    if country_key:
+        return country_key in _LOCAL_COUNTRY_KEYS
+
+    supplier_key = (supplier_name or "").strip().lower()
+    return supplier_key in _LOCAL_SUPPLIER_NAMES
+
+
+def get_supplier_vat_rate(supplier_name: Optional[str] = None, supplier_country: Optional[str] = None) -> float:
+    """VAT applies only to local suppliers."""
+    return VAT_RATE if is_local_supplier(supplier_name, supplier_country) else 0.0
+
+
+def get_supplier_shipping(supplier_name: str, supplier_country: Optional[str] = None) -> float:
+    """Return customer-facing delivery fee by seller profile (name first, then country)."""
+    supplier_key = (supplier_name or "").strip()
+    if supplier_key in SUPPLIER_SHIPPING_RATES:
+        return SUPPLIER_SHIPPING_RATES[supplier_key]
+
+    country_key = (supplier_country or "").strip().lower()
+    if country_key in _COUNTRY_SHIPPING_RATES:
+        return _COUNTRY_SHIPPING_RATES[country_key]
+
+    return SHIPPING_ILS
+
+
+_INTERNAL_MARGIN_DISCLOSURE_RE = re.compile(
+    r"(supplier\s*cost\s*[x×*]\s*1\.45|עלות\s*ספק\s*[x×*]\s*1\.45|\b1\.45\b|45\s*%\s*(margin|markup|מרווח|רווח)|margin\s*[:=]\s*45)",
+    re.IGNORECASE,
+)
+
+
+def _sanitize_internal_pricing_disclosure(text: str) -> str:
+    """Prevent accidental leakage of internal margin/multiplier details in customer-visible messages."""
+    msg = (text or "").strip()
+    if not msg:
+        return ""
+
+    if not _INTERNAL_MARGIN_DISCLOSURE_RE.search(msg):
+        return msg
+
+    kept_lines = [ln for ln in msg.splitlines() if not _INTERNAL_MARGIN_DISCLOSURE_RE.search(ln)]
+    cleaned = "\n".join([ln for ln in kept_lines if ln.strip()]).strip()
+    if cleaned:
+        return cleaned
+
+    lang = BaseAgent._detect_language(msg)
+    if lang == "ar":
+        return "السعر النهائي يتم احتسابه حسب سياسة الضريبة والشحن الخاصة بالمورّد. يمكنني إرسال تفصيل سعر مناسب للعميل."
+    if lang == "en":
+        return "Final price is calculated using VAT policy and supplier shipping. I can share a customer-friendly breakdown."
+    return "המחיר הסופי מחושב לפי מדיניות מע\"מ ומשלוח של הספק. אפשר לקבל פירוט מחיר ידידותי ללקוח."
 
 
 # ==============================================================================
@@ -589,13 +989,21 @@ class BaseAgent:
         shipping_cost_usd: float = 0.0,
         customer_shipping: Optional[float] = None,
         usd_to_ils_rate: Optional[float] = None,
+        supplier_name: Optional[str] = None,
+        supplier_country: Optional[str] = None,
+        local_vat_only: bool = False,
     ) -> Dict[str, float]:
         """Calculate final customer price from supplier cost (USD).
         customer_shipping overrides the default SHIPPING_ILS delivery fee."""
         applied_rate = float(usd_to_ils_rate or USD_TO_ILS)
         cost_ils = (supplier_price_usd + shipping_cost_usd) * applied_rate
         price_no_vat = round(cost_ils * PROFIT_MARGIN, 2)
-        vat = round(price_no_vat * VAT_RATE, 2)
+        applied_vat_rate = (
+            get_supplier_vat_rate(supplier_name=supplier_name, supplier_country=supplier_country)
+            if local_vat_only
+            else VAT_RATE
+        )
+        vat = round(price_no_vat * applied_vat_rate, 2)
         delivery = customer_shipping if customer_shipping is not None else SHIPPING_ILS
         total = round(price_no_vat + vat + delivery, 2)
         profit = round(price_no_vat - cost_ils, 2)
@@ -613,12 +1021,20 @@ class BaseAgent:
         cost_ils: float,
         shipping_cost_ils: float = 0.0,
         customer_shipping: Optional[float] = None,
+        supplier_name: Optional[str] = None,
+        supplier_country: Optional[str] = None,
+        local_vat_only: bool = False,
     ) -> Dict[str, float]:
         """Calculate final customer price when supplier cost is already in ILS.
         customer_shipping overrides the default SHIPPING_ILS delivery fee."""
         total_cost_ils = cost_ils + shipping_cost_ils
         price_no_vat = round(total_cost_ils * PROFIT_MARGIN, 2)
-        vat = round(price_no_vat * VAT_RATE, 2)
+        applied_vat_rate = (
+            get_supplier_vat_rate(supplier_name=supplier_name, supplier_country=supplier_country)
+            if local_vat_only
+            else VAT_RATE
+        )
+        vat = round(price_no_vat * applied_vat_rate, 2)
         delivery = customer_shipping if customer_shipping is not None else SHIPPING_ILS
         total = round(price_no_vat + vat + delivery, 2)
         profit = round(price_no_vat - total_cost_ils, 2)
@@ -731,9 +1147,19 @@ IMPORTANT: Default to "he" (Hebrew) if the message contains only numbers, order 
     async def route(self, message: str, context: Dict = None) -> Dict[str, Any]:
         """Route message to the appropriate agent."""
         route_source = (context or {}).get("source") if isinstance(context, dict) else None
+        shared_memory_prompt = (context or {}).get("shared_memory_prompt") if isinstance(context, dict) else None
+        system_override = self.system_prompt
+        if shared_memory_prompt:
+            system_override = (
+                f"{self.system_prompt}\n\n"
+                "[SHARED MEMORY]\n"
+                f"{shared_memory_prompt}\n"
+                "Use this context when relevant, but do not mention shared memory explicitly."
+            )
         response = await self.think(
             [{"role": "user", "content": message}],
             source=route_source,
+            system_override=system_override,
         )
         try:
             # Extract JSON from response
@@ -1478,10 +1904,15 @@ NEVER:
                 availability = "in_stock" if sp_row.is_available else "on_order"
                 supplier_price_ils = float(sp_row.price_ils or 0)
                 supplier_ship_ils = float(sp_row.shipping_cost_ils or 0)
+                delivery_fee = get_supplier_shipping(sp_row.supplier_name or "", sp_row.supplier_country or "")
                 if supplier_price_ils > 0:
                     pricing = self.calculate_customer_price_from_ils(
                         supplier_price_ils,
                         supplier_ship_ils,
+                        customer_shipping=delivery_fee,
+                        supplier_name=sp_row.supplier_name,
+                        supplier_country=sp_row.supplier_country,
+                        local_vat_only=True,
                     )
                 else:
                     supplier_total_ils = (
@@ -1490,6 +1921,10 @@ NEVER:
                     pricing = self.calculate_customer_price_from_ils(
                         supplier_total_ils,
                         0.0,
+                        customer_shipping=delivery_fee,
+                        supplier_name=sp_row.supplier_name,
+                        supplier_country=sp_row.supplier_country,
+                        local_vat_only=True,
                     )
                 pricing["availability"] = availability
                 pricing["warranty_months"] = sp_row.warranty_months
@@ -2296,11 +2731,11 @@ Never say 'I am the system' — you are Tal, the financial point of contact for 
 
 You handle: payments, invoices, receipts, refund calculations, VAT breakdowns.
 
-Pricing formula (always compute this way):
-  Supplier cost × 1.45 (45% margin) = Price before VAT
-  Price before VAT × 1.18 (18% VAT) = Price incl. VAT
-  Price incl. VAT + ₪29–₪149 shipping (לפי ספק) = Total customer price
-  (Shipping varies by supplier origin: Israel ₪29, Europe ₪91, Asia ₪149)
+Pricing policy (customer-safe wording):
+  Final price includes VAT policy and shipping by supplier/origin.
+  For local Israeli suppliers: VAT may apply.
+  For international suppliers: VAT may be zero.
+  Never expose internal cost formulas, multipliers, or margin details.
 
 Refund policy:
 - Manufacturer defect / wrong item sent / damaged in transit → 100% refund incl. original shipping, return shipping covered by us
@@ -2883,7 +3318,7 @@ class SocialMediaManagerAgent(BaseAgent):
 - תוכן גנרי ויבש ללא קשר לחלקי רכב
 """
 
-    _NOA_ALLOWED_LATIN_HASHTAGS: set[str] = set()
+    _NOA_ALLOWED_LATIN_HASHTAGS: set[str] = {"autosparefinder", "tiktok", "instagram", "facebook", "whatsapp"}
     _NOA_BAD_SCRIPT_RE = re.compile(r"[\u0400-\u052F\u0370-\u03FF\u0900-\u097F\u0E00-\u0E7F\u3040-\u30FF\u4E00-\u9FFF\uAC00-\uD7AF]")
     _NOA_HASHTAG_RE = re.compile(r"#([A-Za-z0-9_\u0590-\u05FF]+)")
     _NOA_HEBREW_CHAR_RE = re.compile(r"[\u0590-\u05FF]")
@@ -2893,6 +3328,7 @@ class SocialMediaManagerAgent(BaseAgent):
         re.IGNORECASE,
     )
     _NOA_DEFAULT_TAGS = "#חלקיחילוף #התאמתחלקים #חלפיםלרכב #משלוחמהיר #רכב"
+    _NOA_RICH_TAGS = "#חלקיחילוף #התאמתחלקים #חלפיםלרכב #משלוחמהיר #AutoSpareFinder #TikTok"
     _NOA_PLATE_RE = re.compile(r"(מספר\s*רישוי|לוחית|plate)", re.IGNORECASE)
     _NOA_COMPARE_RE = re.compile(r"(השווא|משווה|להשוות|מחיר)", re.IGNORECASE)
     _NOA_BUY_RE = re.compile(r"(קנייה|קניה|רכיש|רוכש|לקנות|הזמנ)", re.IGNORECASE)
@@ -3149,21 +3585,12 @@ class SocialMediaManagerAgent(BaseAgent):
 
     @classmethod
     def _sales_template_caption(cls, topic: str, platform: str = "") -> str:
-        focus = "חלקי חילוף לרכב"
-        t = (topic or "").lower()
-        if "brake" in t or "בלם" in t or "רפיד" in t:
-            focus = "רפידות ובלמים"
-        elif "filter" in t or "פילטר" in t or "מסנן" in t:
-            focus = "פילטרים ומסננים"
-        elif "battery" in t or "מצבר" in t:
-            focus = "מצברים"
-
         caption = (
-            f"מחפשים {focus}? אנחנו מוכרים חלקי חילוף בלבד עם התאמה מדויקת לפי דגם, שנה ומנוע. "
-            "איתור חלקים לפי מספר רישוי, השוואת אפשרויות ומחירים במקום אחד, ורכישה מהירה בלי כאב ראש טכני. "
-            "מלאי זמין, מחירים הוגנים ומשלוח מהיר לכל הארץ. "
-            "שלחו עכשיו דגם + שנה + מנוע ונחזיר התאמה ומחיר להזמנה.\n"
-            f"{cls._NOA_DEFAULT_TAGS}"
+            "מחפשים חלקי חילוף לרכב?\n"
+            "הפלטפורמה החכמה שלנו מאתרת חלקים לפי מספר רישוי, או לפי דגם, שנה ומנוע, או לפי תמונה של הרכיב בעזרת AI.\n"
+            "בנוסף, הפלטפורמה מאפשרת להשוות אפשרויות ומחירים במקום אחד, וחוסכת חיפוש מיותר והתעסקות טכנית עד הרכישה.\n"
+            "אנחנו משווקים חלקי חילוף בעזרת AI בלבד. המחירים, המבצעים והזמינות כפופים לתנאי האתר.\n"
+            "#חלקיחילוף #התאמתחלקים #חלפיםלרכב #משלוחמהיר #AutoSpareFinder #TikTok"
         )
         if (platform or "").strip().lower() == "tiktok":
             return cls._enforce_tiktok_ads_policy(caption)
@@ -3204,14 +3631,106 @@ class SocialMediaManagerAgent(BaseAgent):
             return True
         return False
 
+    @classmethod
+    def _normalize_noa_symbols(cls, text: str) -> str:
+        import unicodedata
+        msg = unicodedata.normalize("NFKC", (text or ""))
+        msg = re.sub(r"[`*_~]+", "", msg)
+        msg = "".join(ch for ch in msg if ch == "\n" or unicodedata.category(ch)[0] != "C")
+        msg = re.sub(r"[ \t\r\f\v]+", " ", msg)
+        msg = re.sub(r"\n{3,}", "\n\n", msg).strip()
+        return msg
+
+    @classmethod
+    def _short_noa_link(cls, url: str) -> str:
+        raw = (url or "").strip()
+        if not raw:
+            return ""
+        if "://" not in raw:
+            raw = f"https://{raw.lstrip('/')}"
+        parsed = urlparse(raw)
+        host = (parsed.netloc or parsed.path).strip().lower()
+        path = (parsed.path or "").rstrip("/")
+        if host.startswith("www."):
+            host = host[4:]
+        short = f"https://{host}{path}"
+        if raw.endswith("/") and not path:
+            short += "/"
+        if parsed.query:
+            short = f"{short}?{parsed.query}"
+        return short
+
+    @classmethod
+    def _noa_links_footer(cls) -> str:
+        lines = [
+            f"✈️ {cls._short_noa_link(NOA_TELEGRAM_URL)}",
+            f"💬 {cls._short_noa_link(NOA_WHATSAPP_URL)}",
+            f"📘 {cls._short_noa_link(NOA_FACEBOOK_URL)}",
+            f"📸 {cls._short_noa_link(NOA_INSTAGRAM_URL)}",
+            f"🌐 {NOA_WEBSITE_URL}",
+            "Auto Spare | חלקי חילוף לרכב",
+            "Auto Spare - חלקי רכב בעזרת בינה מלאכותית",
+        ]
+        return "\n".join([ln for ln in lines if ln.strip()]).strip()
+    @classmethod
+    def _force_noa_hashtags(cls, text: str, tags: Optional[str] = None) -> str:
+        msg = (text or "").strip()
+        if not msg:
+            return msg
+        chosen_tags = (tags or cls._NOA_RICH_TAGS).strip()
+        body_lines = [ln for ln in msg.splitlines() if not ln.strip().startswith("#")]
+        body = "\n".join([ln.rstrip() for ln in body_lines if ln.strip()]).strip()
+        if not body:
+            return chosen_tags
+        return f"{body}\n{chosen_tags}".strip()
+
+    @classmethod
+    def _append_noa_links(cls, text: str) -> str:
+        msg = (text or "").strip()
+        footer = cls._noa_links_footer()
+        if not msg:
+            return footer
+        if not footer:
+            return msg
+        msg_l = msg.lower()
+        has_footer = (
+            "✈️" in msg and "t.me/" in msg_l
+            and "💬" in msg and ("wa.me/" in msg_l or "api.whatsapp.com/send" in msg_l)
+            and "📘" in msg and "facebook.com/" in msg_l
+            and "📸" in msg and "instagram.com/" in msg_l
+            and "🌐" in msg and "autosparefinder.co.il" in msg_l
+        )
+        if has_footer:
+            return msg
+        return f"{msg}\n\n{footer}".strip()
+
+    @classmethod
+    def _finalize_noa_post(cls, text: str, platforms: Optional[List[str]] = None) -> str:
+        platform_set = {(p or "").strip().lower() for p in (platforms or []) if (p or "").strip()}
+
+        if "tiktok" in platform_set:
+            normalized = cls._sales_template_caption("daily post about auto parts", platform="tiktok")
+        else:
+            normalized = cls._normalize_for_platforms(text or "", platforms=list(platform_set))
+            if cls._needs_hebrew_rewrite(normalized) or cls._is_low_quality_caption(normalized):
+                normalized = cls._sales_template_caption("daily post about auto parts", platform="")
+
+        normalized = cls._normalize_noa_symbols(normalized)
+        if "tiktok" in platform_set:
+            normalized = cls._force_noa_hashtags(normalized, tags=cls._NOA_RICH_TAGS)
+        return cls._append_noa_links(normalized)
+
     async def generate_post(self, topic: str, platform: str, tone: str = "professional") -> str:
         prompt = f"צרי פוסט {platform} על: {topic}. טון: {tone}. כללי הכתיבה שלך חלים במלואם."
-        return await hf_text(prompt=prompt, system=self.system_prompt)
+        raw = await hf_text(prompt=prompt, system=self.system_prompt)
+        return self._finalize_noa_post(raw, platforms=[platform] if platform else [])
+
     async def process(self, message: str, conversation_history: List[Dict], db: AsyncSession, **kwargs) -> str:
-        return await self.think(
+        raw = await self.think(
             conversation_history + [{"role": "user", "content": message}],
             source=kwargs.get("source"),
         )
+        return self._finalize_noa_post(raw)
 
 
 # ==============================================================================
@@ -3274,9 +3793,25 @@ async def process_agent_response_for_message(
     )
     history = [{"role": m.role, "content": m.content} for m in hist_res.scalars().all()]
 
+    shared_memory_rows = await _load_shared_memory(
+        db=db,
+        user_id=user_id,
+        conversation_id=str(conversation.id),
+        agent_name=None,
+    )
+    shared_memory_prompt = _render_shared_memory_prompt(shared_memory_rows)
+    history_for_agents = _inject_shared_memory_context(history, shared_memory_prompt)
+
     # Route to correct agent
     router = get_agent("router_agent")
-    route_result = await router.route(message, {"history_length": len(history), "source": source})
+    route_result = await router.route(
+        message,
+        {
+            "history_length": len(history),
+            "source": source,
+            "shared_memory_prompt": shared_memory_prompt,
+        },
+    )
     agent_name = route_result.get("agent", "service_agent")
 
     conversation.current_agent = agent_name
@@ -3286,16 +3821,27 @@ async def process_agent_response_for_message(
     agent = get_agent(agent_name)
     model_used = _channel_model_for_source(source, getattr(agent, "model", FREE_MODEL))
     start_time = datetime.utcnow()
+    agent_error: Optional[str] = None
     try:
-        response_text = await agent.process(message, history, db, user_id=user_id, source=source)
+        response_text = await agent.process(
+            message,
+            history_for_agents,
+            db,
+            user_id=user_id,
+            source=source,
+            conversation_id=str(conversation.id),
+            shared_memory_prompt=shared_memory_prompt,
+        )
     except Exception as e:
         print(f"[BG AGENT ERROR] {agent_name}: {e}")
+        agent_error = str(e)
         response_text = "מצטער, נתקלתי בבעיה. אנא נסה שוב בעוד רגע."
         agent_name = "service_agent"
         agent = get_agent(agent_name)
         model_used = _channel_model_for_source(source, getattr(agent, "model", FREE_MODEL))
 
     exec_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+    response_text = _sanitize_internal_pricing_disclosure(response_text)
 
     # Save assistant message
     assistant_msg = Message(
@@ -3315,9 +3861,34 @@ async def process_agent_response_for_message(
         agent_name=agent_name,
         action_type="respond",
         action_data={"route_result": route_result},
-        success=True,
+        success=agent_error is None,
+        error_message=agent_error,
         execution_time_ms=exec_ms,
     ))
+
+    memory_updates = _extract_shared_memory_updates(conversation.context or {}, agent_name)
+    memory_keys = await _save_shared_memory_updates(
+        db=db,
+        user_id=user_id,
+        conversation_id=str(conversation.id),
+        updates=memory_updates,
+    )
+    memory_keys_used = [item.get("memory_key") for item in shared_memory_rows if item.get("memory_key")]
+    await _log_agent_usage_event(
+        db=db,
+        user_id=user_id,
+        conversation_id=str(conversation.id),
+        message_id=str(assistant_msg.id),
+        agent_name=agent_name,
+        source=source,
+        model_used=model_used,
+        route_result=route_result,
+        execution_time_ms=exec_ms,
+        memory_keys=sorted(set(memory_keys_used + memory_keys)),
+        success=agent_error is None,
+        error_message=agent_error,
+    )
+
     await db.commit()
     print(f"[BG AGENT] conv={conversation_id} agent={agent_name} {exec_ms}ms")
 
@@ -3329,15 +3900,25 @@ async def _infer_parts_flow_reply(
     user_message: str,
     flow_intent: str,
     flow_state: Dict[str, Any],
+    shared_memory_prompt: Optional[str] = None,
 ) -> Tuple[str, str]:
     """Generate a natural user-facing reply from deterministic parts-flow state."""
     agent = get_agent(agent_name)
     model_used = _channel_model_for_source(source, getattr(agent, "model", FREE_MODEL))
 
+    memory_section = ""
+    if shared_memory_prompt:
+        memory_section = (
+            "[SHARED MEMORY]\n"
+            f"{shared_memory_prompt}\n"
+            "Use this context when relevant, but do not mention shared memory explicitly.\\n\\n"
+        )
+
     system = (
         f"{agent.system_prompt}\n\n"
+        f"{memory_section}"
         "[FLOW MODE]\n"
-        "You are continuing a live customer conversation inside Auto Spare.\n"
+        "You are continuing a live customer conversation inside Auto Spare.\\n"
         "Use the state below to decide the next message naturally, without robotic templates.\n"
         "Never reveal internal flow/state/json. Never mention that you are an AI model.\n"
         "Keep the response concise and practical.\n"
@@ -3492,6 +4073,15 @@ async def process_user_message(
         for msg in history_rows
     ]
 
+    shared_memory_rows = await _load_shared_memory(
+        db=db,
+        user_id=str(user_id),
+        conversation_id=str(conversation.id),
+        agent_name=None,
+    )
+    shared_memory_prompt = _render_shared_memory_prompt(shared_memory_rows)
+    history_for_agents = _inject_shared_memory_context(history, shared_memory_prompt)
+
     # Context state for deterministic parts intake flow.
     context_data = dict(conversation.context or {})
     known_plate = str(context_data.get("license_plate") or "").strip()
@@ -3507,6 +4097,7 @@ async def process_user_message(
     except Exception:
         last_results_count = 0
     pre_route_result: Optional[Dict[str, Any]] = None
+    agent_error: Optional[str] = None
 
     if incoming_plate and incoming_plate != known_plate:
         context_data["license_plate"] = incoming_plate
@@ -3526,10 +4117,11 @@ async def process_user_message(
             pre_route_result = await router.route(
                 message,
                 {
-                    "history_length": len(history),
-                    "source": source,
-                    "route_stage": "precheck",
-                },
+                      "history_length": len(history),
+                      "source": source,
+                      "route_stage": "precheck",
+                      "shared_memory_prompt": shared_memory_prompt,
+                  },
             )
             pre_agent = pre_route_result.get("agent", "service_agent")
             if pre_agent in ("parts_finder_agent", "sales_agent"):
@@ -3555,6 +4147,7 @@ async def process_user_message(
                         "history_length": len(history),
                         "source": source,
                         "route_stage": "parts_exit_check",
+                        "shared_memory_prompt": shared_memory_prompt,
                     },
                 )
             pre_agent = pre_route_result.get("agent", "service_agent")
@@ -3715,7 +4308,8 @@ async def process_user_message(
                         "supported_plate_formats": ["12-345-67", "123-45-678", "1234567", "12345678"],
                         "alternative": "or provide manufacturer + model + year",
                     },
-                )
+                
+                    shared_memory_prompt=shared_memory_prompt,)
                 route_result = {
                     "agent": "service_agent",
                     "confidence": 1.0,
@@ -3753,7 +4347,8 @@ async def process_user_message(
                             },
                             "requires_yes_no_confirmation": True,
                         },
-                    )
+                    
+                        shared_memory_prompt=shared_memory_prompt,)
                     route_result = {
                         "agent": "parts_finder_agent",
                         "confidence": 1.0,
@@ -3785,7 +4380,8 @@ async def process_user_message(
                             "error": str(e),
                             "next_required_step": "ask_for_new_or_correct_plate",
                         },
-                    )
+                    
+                        shared_memory_prompt=shared_memory_prompt,)
                     route_result = {
                         "agent": "service_agent",
                         "confidence": 0.9,
@@ -3815,7 +4411,8 @@ async def process_user_message(
                             "vehicle_confirmed": True,
                             "next_required_step": "ask_for_part_name",
                         },
-                    )
+                    
+                        shared_memory_prompt=shared_memory_prompt,)
                     route_result = {
                         "agent": "parts_finder_agent",
                         "confidence": 1.0,
@@ -3840,7 +4437,8 @@ async def process_user_message(
                             "next_required_step": "ask_for_new_plate",
                             "supported_plate_formats": ["12-345-67", "123-45-678", "1234567", "12345678"],
                         },
-                    )
+                    
+                        shared_memory_prompt=shared_memory_prompt,)
                     route_result = {
                         "agent": "service_agent",
                         "confidence": 1.0,
@@ -3862,7 +4460,8 @@ async def process_user_message(
                             "vehicle_summary": _vehicle_summary_he(vehicle_profile or {}),
                             "requires_yes_no_confirmation": True,
                         },
-                    )
+                    
+                        shared_memory_prompt=shared_memory_prompt,)
                     route_result = {
                         "agent": "service_agent",
                         "confidence": 0.95,
@@ -3909,7 +4508,8 @@ async def process_user_message(
                         "quick_part_choices": _QUICK_PART_CHOICES,
                         "followup_mode": followup_mode,
                     },
-                )
+                
+                    shared_memory_prompt=shared_memory_prompt,)
                 route_result = {
                     "agent": "parts_finder_agent",
                     "confidence": 0.95,
@@ -4025,7 +4625,8 @@ async def process_user_message(
                             "results_count": 0,
                             "next_required_step": "request_refinement_oem_or_front_rear_or_manufacturer",
                         },
-                    )
+                    
+                        shared_memory_prompt=shared_memory_prompt,)
 
                 route_result = {
                     "agent": "parts_finder_agent",
@@ -4046,16 +4647,25 @@ async def process_user_message(
             route_result = pre_route_result
         else:
             router = get_agent("router_agent")
-            route_result = await router.route(message, {"history_length": len(history), "source": source})
+            route_result = await router.route(message, {"history_length": len(history), "source": source, "shared_memory_prompt": shared_memory_prompt})
         agent_name = route_result.get("agent", "service_agent")
 
         agent = get_agent(agent_name)
         model_used = _channel_model_for_source(source, agent.model)
         start_time = datetime.utcnow()
         try:
-            response_text = await agent.process(message, history, db, user_id=str(user_id), source=source)
+            response_text = await agent.process(
+                message,
+                history_for_agents,
+                db,
+                user_id=str(user_id),
+                source=source,
+                conversation_id=str(conversation.id),
+                shared_memory_prompt=shared_memory_prompt,
+            )
         except Exception as e:
             print(f"[ERROR] Agent {agent_name} failed: {e}")
+            agent_error = str(e)
             response_text = "מצטער, נתקלתי בבעיה. אנא נסה שוב בעוד רגע."
             agent_name = "service_agent"
             model_used = _channel_model_for_source(source, FREE_MODEL)
@@ -4101,6 +4711,8 @@ async def process_user_message(
             response_text, agent_name, source, history
         )
 
+    response_text = _sanitize_internal_pricing_disclosure(response_text)
+
     # Persist state updates for this turn.
     conversation.context = context_data
     conversation.current_agent = agent_name
@@ -4124,10 +4736,35 @@ async def process_user_message(
         agent_name=agent_name,
         action_type="respond",
         action_data={"route_result": route_result},
-        success=True,
+        success=agent_error is None,
+        error_message=agent_error,
         execution_time_ms=exec_ms,
     )
     db.add(action)
+
+    memory_updates = _extract_shared_memory_updates(context_data, agent_name)
+    memory_keys_updated = await _save_shared_memory_updates(
+        db=db,
+        user_id=str(user_id),
+        conversation_id=str(conversation.id),
+        updates=memory_updates,
+    )
+    memory_keys_used = [item.get("memory_key") for item in shared_memory_rows if item.get("memory_key")]
+
+    await _log_agent_usage_event(
+        db=db,
+        user_id=str(user_id),
+        conversation_id=str(conversation.id),
+        message_id=str(assistant_msg.id),
+        agent_name=agent_name,
+        source=source,
+        model_used=model_used,
+        route_result=route_result,
+        execution_time_ms=exec_ms,
+        memory_keys=sorted(set(memory_keys_used + memory_keys_updated)),
+        success=agent_error is None,
+        error_message=agent_error,
+    )
 
     await db.commit()
     await db.refresh(assistant_msg)
@@ -4139,4 +4776,5 @@ async def process_user_message(
         "response": response_text,
         "created_at": assistant_msg.created_at.isoformat(),
         "routing": route_result,
+        "shared_memory_keys": sorted(set(memory_keys_used + memory_keys_updated)),
     }

@@ -357,3 +357,116 @@ Scope: keep current search/data fix work focused; defer unrelated files below to
 
 All 23 failures are pre-existing (integration tests requiring a live DB + SQL injection tests).
 Zero regressions introduced.
+
+---
+## Session — 2026-05-05 (REX Audit & Data Quality)
+> Status: In Progress
+
+| Item | Status | Summary |
+|---|---|---|
+| REX scheduling — runs at wrong time | ✅ | Currently runs ~08:31 UTC — peak hours. Change to 00:00 and 12:00 UTC fixed times |
+| autodoc HTTP 403 | ❌ | Blocked by Cloudflare — remove from discovery sources |
+| eBay HTTP 403 | ❌ | API keys exist but still blocked — needs investigation |
+| ~270K parts missing prices | ❌ | supplier_parts has 304K rows but parts_catalog has 570K — gap of ~266K |
+| HealthMonitor datetime bug | ❌ | `unsupported operand type(s) for -: datetime and dict` |
+| Parts categories not verified | ❌ | 570K parts — unclear if in correct categories |
+| DB data quality cleanup | ❌ | Duplicates, missing fields, unverified fitment data |
+| Accessible scraping sources | ⚠️ | Only: motorstore.co.il, meyle.com, mann-filter.com, gates.com, brembo.com |
+| alvadi.com | ⚠️ | Cloudflare Turnstile — fully blocked, no partnership possible |
+| ALVADI contact | ⚠️ | support@alvadi.com rejected, phone appears inactive |
+
+### Architecture Notes
+- No Celery/Beat container — REX runs as background asyncio loop inside backend
+- Server: Hetzner 94.130.150.23
+- DB catalog: 570,240 parts | 304,646 supplier_parts
+- vehicle_market_il: 36,831 Israeli vehicles
+
+### Next Fix Priority
+1. Fix REX schedule → 00:00 and 12:00 UTC
+2. Fix HealthMonitor datetime bug
+3. Investigate eBay 403
+4. Fix missing prices for ~266K parts
+5. Verify/fix categories
+6. DB quality cleanup
+
+---
+## Session — 2026-05-06 (DB Cleanup & Categories)
+> Status: In Progress
+
+### DB Issues Found
+| Issue | Details | Priority |
+|-------|---------|----------|
+| קטגוריות חסרות | 300,102 חלקים ללא קטגוריה, 270,138 עם "כללי" | 🔴 גבוה |
+| Renault overflow | 230,269 חלקים — 161K ללא OEM, ספק ישראלי שגלש | 🔴 גבוה |
+| part_type כפול | חליפיחליפי, מקורימקורי, משופץמשופץ | 🟡 בינוני |
+| needs_oem_lookup שגוי | חלקים עם oem_number שעדיין מסומנים TRUE | 🟡 בינוני |
+| oem_number חסר | 268K חלקים ללא OEM — חלקם ניתן למלא מ-cross_reference | 🟡 בינוני |
+| brand_aliases ריק | טבלה ריקה לחלוטין | 🟢 נמוך |
+
+### Category System — 28 Categories (Final, No Duplicates)
+Cleanup agent auto-classifies all parts — no manual work.
+
+| # | קטגוריה | תת-קטגוריות בלעדיות | מילות מפתח עברית | מילות מפתח אנגלית |
+|---|---------|---------------------|-----------------|-------------------|
+| 1 | בלמים | רפידות, דיסקים, קליפרים, תופים, צינורות בלמים, בוסטר | בלם, רפידה, דיסק, קליפר, תוף, בוסטר | brake, caliper, rotor, pad, drum, booster |
+| 2 | מתלה | בולמים, קפיצים, זרועות, מסבי גלגל, מייצב, בושינגים | בולם, קפיץ, זרוע, מסב, מייצב, מתלה, שטרוט | suspension, shock, strut, spring, arm, bushing, bearing, anti-roll |
+| 3 | היגוי | גיר הגה, מוטות היגוי, מפרקי כדור, משאבת הגה | הגה, גיר הגה, מוט הגה, פולסה | steering, rack, tie rod, ball joint, power steering pump |
+| 4 | מנוע | בלוק, בוכנות, שסתומים, גל ארכובה, גל זיזים | מנוע, בוכנה, שסתום, גל ארכובה, גל זיזים | engine, piston, valve, crankshaft, camshaft, block |
+| 5 | קירור | רדיאטור, משאבת מים, תרמוסטט, מאוורר, צינורות קירור, נוזל קירור | רדיאטור, קירור, תרמוסטט, משאבת מים, מאוורר | radiator, water pump, thermostat, cooling fan, coolant hose |
+| 6 | מערכת דלק | משאבת דלק, מזרקים, מיכל דלק, ריילי, שנורקל | משאבת דלק, מזרק, מיכל דלק, ריילי | fuel pump, injector, fuel tank, fuel rail |
+| 7 | צריכת אוויר | מסנן אוויר, צינור אוויר, גוף מיתון, MAF | מסנן אוויר, צינור אוויר, גוף מיתון | air filter, air intake, MAF, throttle body |
+| 8 | טורבו | טורבו, אינטרקולר, סופרשארז׳ר, צינורות טורבו | טורבו, אינטרקולר, סופרשארג'ר | turbocharger, supercharger, intercooler, boost pipe |
+| 9 | פליטה | צינורות פליטה, מפלט, DPF, SCR, קטליזטור, EGR | פליטה, מפלט, קטליזטור, DPF, EGR | exhaust, muffler, catalytic converter, DPF, EGR |
+| 10 | שידור | תיבת הילוכים, ציר הנעה, מחצית ציר, דיפרנציאל | תיבת הילוכים, גיר, ציר, דיפרנציאל | transmission, gearbox, driveshaft, differential, CV joint |
+| 11 | מצמד | ערכת מצמד, גלגל תנופה, מסב שחרור, מזלג | מצמד, גלגל תנופה, מסב שחרור | clutch kit, flywheel, release bearing, clutch fork |
+| 12 | מיתוג | רצועת תזמון, שרשרת תזמון, גלגלות, מותחן | רצועה, שרשרת תזמון, גלגלת, מותחן | timing belt, timing chain, tensioner, idler pulley |
+| 13 | הצתה | מצתים, סלילי הצתה, מפלג, כבלי מצתים | מצת, סליל הצתה, מפלג | spark plug, ignition coil, distributor, plug wire |
+| 14 | סינון | מסנן שמן, מסנן דלק, מסנן מזגן | מסנן שמן, מסנן דלק, מסנן מזגן | oil filter, fuel filter, cabin air filter, pollen filter |
+| 15 | חשמל ואלקטרוניקה | אלטרנטור, מצת הנעה, ECU, ממסרים, פיוזים, צמת | אלטרנטור, מצת הנעה, ECU, מחשב, ממסר, פיוז, צמת | alternator, starter motor, ECU, relay, fuse, wiring harness |
+| 16 | חיישנים | חיישן O2, ABS, MAP, טמפרטורה, לחץ, מהירות | חיישן, סנסור | sensor, O2 sensor, ABS sensor, MAP, speed sensor, temperature sensor |
+| 17 | מצבר | סוללה, ניהול מצבר, כבלי מצבר | מצבר, סוללה, בטריה | battery, battery management, terminal |
+| 18 | תאורה | פנסים קדמיים, פנסים אחוריים, נורות, אינדיקטורים, ערפל | פנס, נורה, תאורה, אינדיקטור | headlight, tail light, bulb, indicator, fog light |
+| 19 | מזגן וחימום | קומפרסור, קונדנסר, אידיידור, תנור, מפוח | מזגן, קומפרסור, קונדנסר, אידיידור, תנור, מפוח | AC compressor, condenser, evaporator, heater core, blower |
+| 20 | גוף ופחים | פגושים, כנפות, דלתות, מכסה מנוע, גריל, סף, קישוטים | פגוש, כנף, דלת, מכסה, גריל, סף, קישוט | bumper, fender, door, hood, grille, sill, trim |
+| 21 | זיגוג ומגבים | שמשות, מגבים, מווסתי חלון, מנועי מגב, משאבת שמשות | שמשה, מגב, חלון, זכוכית, מווסת | windscreen, wiper blade, window regulator, washer pump |
+| 22 | פנים הרכב | דשבורד, מושבים, שטיחים, קונסולה, ידיות, כיסויים | דשבורד, מושב, שטיח, קונסולה, ידית | dashboard, seat, carpet, console, door handle, interior |
+| 23 | גלגלים וצמיגים | חישוקים, צמיגים, TPMS, אומי גלגל | גלגל, חישוק, ג׳נט, צמיג | wheel, rim, tyre, tire, TPMS, lug nut |
+| 24 | אטמים וגיממות | אטמי ראש, גיממות, O-rings, אוילים | אטם, גיממה, אוילים | gasket, seal, o-ring, head gasket |
+| 25 | מערכת בטיחות | כריות אוויר, חגורות, חיישני התנגשות | איירבג, כרית אוויר, חגורה | airbag, seatbelt, crash sensor |
+| 26 | מערכת היברידית וחשמלי | סוללת טרקציה, מנוע חשמלי, ממיר, PDU, כבלי טעינה | היברידי, חשמלי, סוללה גדולה, PDU | hybrid battery, electric motor, inverter, PDU, charging cable |
+| 27 | שמנים ונוזלים | שמן מנוע, גריז, נוזל בלמים, ATF | שמן, גריז, נוזל בלמים | engine oil, grease, brake fluid, ATF, power steering fluid |
+| 28 | כלי עבודה ואביזרים | ציוד מוסך, טיפוח, אביזרי חוץ/פנים | כלי, ציוד, אביזר, טיפוח | tools, accessories, car care, detailing |
+
+כללים:
+* הסוכן מסווג אוטומטית לפי מילות מפתח עברית ואנגלית
+* אין קטגוריה כללי או אחר — כל חלק מקבל קטגוריה ספציפית
+* אין כפילויות — כל מונח שייך לקטגוריה אחת בלבד
+* חלק שלא מזוהה — הסוכן מנסה שוב בcycle הבא
+### Cleanup Agent Tasks (db_cleanup_agent.py)
+| Task | Description | Batch | Sleep |
+|------|-------------|-------|-------|
+| fix_part_types | תיקון כפולות: חליפיחליפי→חליפי | 100 | 2s |
+| fill_oem_from_xref | מילוי OEM מ-cross_reference | 50 | 3s |
+| categorize_by_name | סיווג לפי מילות מפתח בשם | 100 | 2s |
+| fix_oem_lookup_flag | עדכון needs_oem_lookup=FALSE | 500 | 1s |
+| fix_manufacturer_overflow | זיהוי חלקים שגלשו ליצרן שגוי | 50 | 5s |
+
+### Renault Overflow Investigation
+- manufacturer_id: d193f27e = Renault (legitimate)
+- 161,466 חלקים עם part_condition='New' וללא OEM — ספק ישראלי
+- 68,851 עם prefix 'RE' מזויף ב-OEM number
+- part_type: Original, ללא, חליפי, משומש, משופץ — נראה לגיטימי
+- צריך לבדוק ב-supplier_parts מי הספק שייבא אותם
+
+### Next Steps (In Order)
+1. ✅ רשום תוכנית ב-FIXES_TRACKER
+2. ❌ בדוק supplier_parts לזיהוי מקור Renault overflow
+3. ❌ צור db_cleanup_agent.py עם 5 tasks
+4. ❌ הוסף 39 קטגוריות לDB כ-reference table
+5. ❌ חבר cleanup agent ל-backend startup
+6. ❌ בדוק ותקן Chevrolet overflow
+
+### Architecture Decision
+- Cleanup agent: רץ תמיד ברקע — batches קטנים + sleep
+- REX: רץ רק 00:00 ו-12:00 UTC — price sync + discovery
+- GitHub Actions: פעיל — ממשיך לרוץ לבדיקת מקורות חדשים

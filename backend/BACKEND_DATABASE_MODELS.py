@@ -1206,6 +1206,52 @@ class AgentRating(PiiBase):
     user = relationship("User", back_populates="agent_ratings")
 
 
+class AgentSharedMemory(PiiBase):
+    __tablename__ = "agent_shared_memory"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=True, index=True)
+    agent_name = Column(String(50), nullable=True)
+    scope = Column(String(20), nullable=False, default="conversation")  # conversation | user
+    memory_key = Column(String(120), nullable=False)
+    memory_value = Column(Text, nullable=False)
+    importance = Column(Integer, nullable=False, default=1)
+    metadata_json = Column(JSONB, nullable=True)
+    last_used_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("idx_agent_shared_memory_user_scope_key", "user_id", "scope", "memory_key"),
+        Index("idx_agent_shared_memory_conversation", "conversation_id", "updated_at"),
+    )
+
+
+class AgentUsageLog(PiiBase):
+    __tablename__ = "agent_usage_logs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=True, index=True)
+    message_id = Column(UUID(as_uuid=True), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True, index=True)
+    agent_name = Column(String(50), nullable=False, index=True)
+    source = Column(String(30), nullable=True)
+    intent = Column(String(120), nullable=True)
+    model_used = Column(String(120), nullable=True)
+    execution_time_ms = Column(Integer, nullable=True)
+    success = Column(Boolean, nullable=False, default=True)
+    error_message = Column(Text, nullable=True)
+    route_data = Column(JSONB, nullable=True)
+    memory_keys = Column(ARRAY(String(120)), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    __table_args__ = (
+        Index("idx_agent_usage_logs_agent_created", "agent_name", "created_at"),
+        Index("idx_agent_usage_logs_source_created", "source", "created_at"),
+    )
+
+
 # ==============================================================================
 # 6. FILES & MEDIA TABLES (2)
 # ==============================================================================

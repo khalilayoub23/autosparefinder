@@ -39,7 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import String, and_, func, or_, select, text
 
 from BACKEND_DATABASE_MODELS import (
-    AuditLog, ApprovalQueue, AftermarketBrand, BrandAlias, CarBrand,
+    AgentSharedMemory, AgentUsageLog, AuditLog, ApprovalQueue, AftermarketBrand, BrandAlias, CarBrand,
     CatalogVersion, JobRegistry, Notification, Order, PartsCatalog, PartAlias,
     PartCrossReference, PartDiagramCache, PartImage, PartMaster, PartVariant,
     Payment, PriceHistory, PurchaseOrder, Return, ScraperApiCall, SocialPost,
@@ -3533,6 +3533,142 @@ async def list_agents(
     }
 
 
+@router.get("/api/v1/admin/agents/usage")
+async def get_agents_usage_dashboard(
+    days: int = Query(14, ge=1, le=90),
+    limit: int = Query(120, ge=1, le=500),
+    memory_limit: int = Query(80, ge=1, le=400),
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_pii_db),
+):
+    from datetime import timedelta
+
+    cutoff = datetime.utcnow() - timedelta(days=days)
+
+    usage_rows = (
+        await db.execute(
+            select(AgentUsageLog)
+            .where(AgentUsageLog.created_at >= cutoff)
+            .order_by(AgentUsageLog.created_at.desc())
+            .limit(limit)
+        )
+    ).scalars().all()
+
+    memory_rows = (
+        await db.execute(
+            select(AgentSharedMemory)
+            .order_by(AgentSharedMemory.updated_at.desc())
+            .limit(memory_limit)
+        )
+    ).scalars().all()
+
+    by_agent: Dict[str, Dict[str, Any]] = {}
+    total_runs = len(usage_rows)
+    success_runs = 0
+    total_exec_ms = 0
+    exec_samples = 0
+
+    for row in usage_rows:
+        agent_key = row.agent_name or "unknown"
+        if row.success:
+            success_runs += 1
+        if row.execution_time_ms is not None:
+            total_exec_ms += int(row.execution_time_ms)
+            exec_samples += 1
+
+        item = by_agent.setdefault(
+            agent_key,
+            {
+                "agent_name": agent_key,
+                "runs": 0,
+                "success": 0,
+                "errors": 0,
+                "avg_execution_ms": 0,
+                "_exec_sum": 0,
+                "_exec_count": 0,
+                "last_used_at": None,
+            },
+        )
+        item["runs"] += 1
+        if row.success:
+            item["success"] += 1
+        else:
+            item["errors"] += 1
+        if row.execution_time_ms is not None:
+            item["_exec_sum"] += int(row.execution_time_ms)
+            item["_exec_count"] += 1
+        if row.created_at and (item["last_used_at"] is None or row.created_at > item["last_used_at"]):
+            item["last_used_at"] = row.created_at
+
+    by_agent_out = []
+    for agent_data in by_agent.values():
+        avg_ms = int(agent_data["_exec_sum"] / agent_data["_exec_count"]) if agent_data["_exec_count"] else 0
+        by_agent_out.append(
+            {
+                "agent_name": agent_data["agent_name"],
+                "runs": agent_data["runs"],
+                "success": agent_data["success"],
+                "errors": agent_data["errors"],
+                "avg_execution_ms": avg_ms,
+                "last_used_at": agent_data["last_used_at"].isoformat() if agent_data["last_used_at"] else None,
+            }
+        )
+
+    by_agent_out.sort(key=lambda x: x["runs"], reverse=True)
+
+    recent = [
+        {
+            "id": str(row.id),
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+            "agent_name": row.agent_name,
+            "source": row.source,
+            "intent": row.intent,
+            "model_used": row.model_used,
+            "execution_time_ms": row.execution_time_ms,
+            "success": bool(row.success),
+            "error_message": row.error_message,
+            "memory_keys": row.memory_keys or [],
+            "conversation_id": str(row.conversation_id) if row.conversation_id else None,
+            "message_id": str(row.message_id) if row.message_id else None,
+        }
+        for row in usage_rows
+    ]
+
+    shared_memory = [
+        {
+            "id": str(row.id),
+            "user_id": str(row.user_id),
+            "conversation_id": str(row.conversation_id) if row.conversation_id else None,
+            "scope": row.scope,
+            "agent_name": row.agent_name,
+            "memory_key": row.memory_key,
+            "memory_value": row.memory_value,
+            "importance": int(row.importance or 1),
+            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+            "last_used_at": row.last_used_at.isoformat() if row.last_used_at else None,
+        }
+        for row in memory_rows
+    ]
+
+    success_rate_pct = round((success_runs / total_runs) * 100, 1) if total_runs else 0.0
+    avg_execution_ms = int(total_exec_ms / exec_samples) if exec_samples else 0
+
+    return {
+        "range_days": days,
+        "summary": {
+            "total_runs": total_runs,
+            "success_runs": success_runs,
+            "success_rate_pct": success_rate_pct,
+            "avg_execution_ms": avg_execution_ms,
+            "active_agents": len(by_agent_out),
+            "shared_memory_items": len(shared_memory),
+        },
+        "by_agent": by_agent_out,
+        "recent": recent,
+        "shared_memory": shared_memory,
+    }
+
+
 @router.get("/api/v1/admin/agents/runtime/token")
 async def get_agents_runtime_token_status(
     provider: str = Query("huggingface"),
@@ -3613,14 +3749,50 @@ async def test_agent(
         raise HTTPException(status_code=400, detail="message is required")
 
     agent = get_agent(agent_name)
+    started = datetime.utcnow()
     try:
         response = await agent.process(
             message=message,
             conversation_history=[],
             db=db,
+            user_id=str(current_user.id),
+            source="admin",
+            shared_memory_prompt="",
         )
+        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        db.add(AgentUsageLog(
+            user_id=current_user.id,
+            conversation_id=None,
+            message_id=None,
+            agent_name=agent_name,
+            source="admin",
+            intent="manual_test",
+            model_used=getattr(agent, "model", None),
+            execution_time_ms=elapsed_ms,
+            success=True,
+            error_message=None,
+            route_data={"mode": "admin_test"},
+            memory_keys=[],
+        ))
+        await db.commit()
         return {"agent": agent_name, "response": response, "status": "ok"}
     except Exception as e:
+        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        db.add(AgentUsageLog(
+            user_id=current_user.id,
+            conversation_id=None,
+            message_id=None,
+            agent_name=agent_name,
+            source="admin",
+            intent="manual_test",
+            model_used=getattr(agent, "model", None),
+            execution_time_ms=elapsed_ms,
+            success=False,
+            error_message=str(e),
+            route_data={"mode": "admin_test"},
+            memory_keys=[],
+        ))
+        await db.commit()
         return {"agent": agent_name, "response": str(e), "status": "error"}
 
 

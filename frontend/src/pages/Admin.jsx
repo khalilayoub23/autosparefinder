@@ -12,6 +12,7 @@ import {
   RotateCcw, CheckSquare, XCircle,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
+import PhoneDisplay from '../components/PhoneDisplay'
 
 const readStoredFlag = (key, fallback) => {
   if (typeof window === 'undefined') return fallback
@@ -70,7 +71,7 @@ const STATUS_HE = {
   pending_payment: { label: 'ממתין לתשלום', cls: 'bg-amber-100 text-amber-700' },
   paid:            { label: 'שולם',          cls: 'bg-green-100 text-green-700' },
   processing:      { label: 'בטיפול',        cls: 'bg-blue-100 text-blue-700'  },
-  shipped:         { label: 'נשלח',          cls: 'bg-purple-100 text-purple-700' },
+  shipped:         { label: 'נשלח',          cls: 'bg-brand-100 text-brand-700' },
   delivered:       { label: 'נמסר',          cls: 'bg-gray-100 text-gray-700'  },
   cancelled:       { label: 'בוטל',          cls: 'bg-red-100 text-red-600'    },
 }
@@ -103,24 +104,16 @@ const HANDOFF_TIMELINE_STYLE = {
   },
 }
 
-function StatCard({ label, value, icon: Icon, color = 'brand', sub }) {
-  const colors = {
-    brand: 'bg-brand-50 text-brand-600',
-    green: 'bg-green-50 text-green-600',
-    blue: 'bg-blue-50 text-blue-600',
-    purple: 'bg-purple-50 text-purple-600',
-    orange: 'bg-orange-50 text-orange-600',
-    teal: 'bg-teal-50 text-teal-600',
-  }
+function StatCard({ label, value, icon: Icon, color: _color = 'brand', sub }) {
   return (
     <div className="card p-5 flex items-center gap-4">
-      <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${colors[color] || colors.brand}`}>
-        <Icon className="w-6 h-6" />
+      <div className="w-12 h-12 rounded-xl border border-cyan-300 bg-cyan-50 text-[#1B2228] flex items-center justify-center shrink-0 shadow-[0_0_0_1px_rgba(0,204,255,0.08)]">
+        <Icon className="w-5 h-5" />
       </div>
       <div>
-        <p className="text-sm text-gray-500">{label}</p>
-        <p className="text-2xl font-bold text-gray-900">{value ?? <span className="skeleton w-16 h-6 inline-block" />}</p>
-        {sub && <p className="text-xs text-gray-400 mt-0.5">{sub}</p>}
+        <p className="text-sm text-slate-500">{label}</p>
+        <p className="text-2xl font-black text-[#1B2228]">{value ?? <span className="skeleton w-16 h-6 inline-block" />}</p>
+        {sub && <p className="text-xs text-slate-500 mt-0.5">{sub}</p>}
       </div>
     </div>
   )
@@ -203,7 +196,7 @@ function SupplierFormFields({ f, setF, isCreate }) {
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">טלפון קשר</label>
-            <input className="input-field w-full" type="tel" value={f.contact_phone} onChange={(e) => setF('contact_phone', e.target.value)} placeholder="+972-X-XXXXXXX" dir="ltr" />
+            <input className="input-field w-full" type="tel" value={f.contact_phone} onChange={(e) => setF('contact_phone', e.target.value)} placeholder="972-5X-XXXXXXX" dir="ltr" />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">אתר אינטרנט</label>
@@ -731,7 +724,7 @@ export default function Admin() {
             const item = newItems[0]
             toast((t) => (
               <div className="text-sm">
-                <p className="font-semibold text-gray-900">בקשת נציג חדשה</p>
+                <p className="font-semibold text-brand-navy">בקשת נציג חדשה</p>
                 <p className="text-gray-600">{item.display_name || item.display_contact || 'לקוח'} • {item.channel}</p>
               </div>
             ), { duration: 4500, id: `handoff-${newItems[0].conversation_id}` })
@@ -1226,7 +1219,7 @@ export default function Admin() {
     <div className="space-y-6">
       <div>
         <h1 className="section-title">לוח ניהול</h1>
-        <p className="text-gray-500 mt-1">Auto Spare · עוסק מורשה 060633880</p>
+        <p className="text-gray-500 mt-1">Auto Spare</p>
       </div>
 
       {/* Tabs */}
@@ -1297,33 +1290,33 @@ export default function Admin() {
           {/* Revenue breakdown row — formula: Gross − Refunds = Net = ExVAT + VAT = Cost + Profit + VAT */}
           {stats && (
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-              <div className="card p-4 border-l-4 border-green-400">
+              <div className="card p-4">
                 <p className="text-xs text-gray-500 mb-1">הכנסות ברוטו</p>
-                <p className="text-xl font-bold text-green-600">₪{Number(stats.gross_revenue || 0).toLocaleString('he-IL', {minimumFractionDigits: 2})}</p>
+                <p className="text-xl font-black text-[#1B2228]">₪{Number(stats.gross_revenue || 0).toLocaleString('he-IL', {minimumFractionDigits: 2})}</p>
               </div>
-              <div className="card p-4 border-l-4 border-red-300">
+              <div className="card p-4">
                 <p className="text-xs text-gray-500 mb-1">החזרות כספיות</p>
-                <p className="text-xl font-bold text-red-500">{stats.refunds_total > 0 ? `-₪${Number(stats.refunds_total).toLocaleString('he-IL', {minimumFractionDigits: 2})}` : '₪0'}</p>
+                <p className="text-xl font-black text-[#1B2228]">{stats.refunds_total > 0 ? `-₪${Number(stats.refunds_total).toLocaleString('he-IL', {minimumFractionDigits: 2})}` : '₪0'}</p>
               </div>
-              <div className="card p-4 border-l-4 border-brand-500">
+              <div className="card p-4">
                 <p className="text-xs text-gray-500 mb-1">הכנסות נטו (כולל מע״מ)</p>
-                <p className="text-xl font-bold text-brand-600">₪{Number(stats.total_revenue || 0).toLocaleString('he-IL', {minimumFractionDigits: 2})}</p>
+                <p className="text-xl font-black text-[#1B2228]">₪{Number(stats.total_revenue || 0).toLocaleString('he-IL', {minimumFractionDigits: 2})}</p>
               </div>
-              <div className="card p-4 border-l-4 border-yellow-400">
+              <div className="card p-4">
                 <p className="text-xs text-gray-500 mb-1">מע״מ 18%</p>
-                <p className="text-xl font-bold text-yellow-600">₪{Number(stats.vat_total || 0).toLocaleString('he-IL', {minimumFractionDigits: 2})}</p>
+                <p className="text-xl font-black text-[#1B2228]">₪{Number(stats.vat_total || 0).toLocaleString('he-IL', {minimumFractionDigits: 2})}</p>
                 <p className="text-xs text-gray-400 mt-1">הכנסות נטו − ₪{Number(stats.net_revenue_ex_vat || 0).toLocaleString('he-IL', {minimumFractionDigits: 0})}</p>
               </div>
-              <div className="card p-4 border-l-4 border-teal-400">
-                <p className="text-xs text-gray-500 mb-1">רווח גולמי (מרווח 45%)</p>
-                <p className="text-xl font-bold text-teal-600">₪{Number(stats.profit_total || 0).toLocaleString('he-IL', {minimumFractionDigits: 2})}</p>
-                <p className="text-xs text-gray-400 mt-1">= {stats.margin_pct}% מעל עלות הספק</p>
+              <div className="card p-4">
+                <p className="text-xs text-gray-500 mb-1">רווח גולמי</p>
+                <p className="text-xl font-black text-[#1B2228]">₪{Number(stats.profit_total || 0).toLocaleString('he-IL', {minimumFractionDigits: 2})}</p>
+                <p className="text-xs text-gray-400 mt-1">הכנסות לפני מע״מ פחות עלות ספק</p>
               </div>
             </div>
           )}
           <div className="card p-6">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-bold text-gray-900 flex items-center gap-2"><BarChart2 className="w-5 h-5 text-brand-600" /> הכנסות יומיות</h3>
+              <h3 className="font-bold text-brand-navy flex items-center gap-2"><BarChart2 className="w-5 h-5 text-brand-600" /> הכנסות יומיות</h3>
               <button onClick={loadDashboard} className="btn-ghost text-sm flex items-center gap-1">
                 <RefreshCw className="w-4 h-4" /> רענן
               </button>
@@ -1348,14 +1341,14 @@ export default function Admin() {
                             flex: '1 1 0',
                             minWidth: '10px',
                             height: `${pct}%`,
-                            backgroundColor: '#fb923c',
+                            backgroundColor: '#38bdf8',
                             borderRadius: '3px 3px 0 0',
                             cursor: 'pointer',
                             transition: 'background-color 0.15s',
                             position: 'relative',
                           }}
-                          onMouseEnter={e => e.currentTarget.style.backgroundColor = '#ea580c'}
-                          onMouseLeave={e => e.currentTarget.style.backgroundColor = '#fb923c'}
+                          onMouseEnter={e => e.currentTarget.style.backgroundColor = '#00ccff'}
+                          onMouseLeave={e => e.currentTarget.style.backgroundColor = '#38bdf8'}
                         />
                       )
                     })}
@@ -1379,20 +1372,20 @@ export default function Admin() {
           {/* Orders by status */}
           {stats?.orders_by_status && Object.keys(stats.orders_by_status).length > 0 && (() => {
             const STATUS_LABELS = {
-              pending_payment: { label: 'ממתין תשלום', color: 'bg-yellow-400' },
-              paid:            { label: 'שולם',           color: 'bg-blue-400' },
-              processing:      { label: 'בעיבוד',          color: 'bg-purple-400' },
-              supplier_ordered:{ label: 'הוזמן לספק',    color: 'bg-indigo-400' },
+              pending_payment: { label: 'ממתין תשלום', color: 'bg-slate-400' },
+              paid:            { label: 'שולם',           color: 'bg-cyan-300' },
+              processing:      { label: 'בעיבוד',          color: 'bg-cyan-500' },
+              supplier_ordered:{ label: 'הוזמן לספק',    color: 'bg-slate-500' },
               shipped:         { label: 'נשלח',           color: 'bg-cyan-400' },
-              delivered:       { label: 'סופק',           color: 'bg-green-500' },
-              cancelled:       { label: 'בוטל',           color: 'bg-gray-300' },
-              refunded:        { label: 'הוחזר',           color: 'bg-red-400' },
+              delivered:       { label: 'סופק',           color: 'bg-cyan-200' },
+              cancelled:       { label: 'בוטל',           color: 'bg-slate-300' },
+              refunded:        { label: 'הוחזר',           color: 'bg-slate-600' },
             }
             const entries = Object.entries(stats.orders_by_status).sort((a, b) => b[1] - a[1])
             const total = entries.reduce((s, [, c]) => s + c, 0)
             return (
               <div className="card p-6">
-                <h3 className="font-bold text-gray-900 flex items-center gap-2 mb-4">
+                <h3 className="font-bold text-brand-navy flex items-center gap-2 mb-4">
                   <ShoppingBag className="w-5 h-5 text-brand-600" /> סטטוס הזמנות
                 </h3>
                 {/* Stacked bar */}
@@ -1411,7 +1404,7 @@ export default function Admin() {
                     <div key={status} className="flex items-center gap-2">
                       <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${STATUS_LABELS[status]?.color || 'bg-gray-300'}`} />
                       <span className="text-xs text-gray-600 truncate">{STATUS_LABELS[status]?.label || status}</span>
-                      <span className="text-xs font-bold text-gray-800 mr-auto">{count}</span>
+                      <span className="text-xs font-black text-[#1B2228] mr-auto">{count}</span>
                     </div>
                   ))}
                 </div>
@@ -1422,7 +1415,7 @@ export default function Admin() {
           {/* Category distribution */}
           {categoryStats.length > 0 && (
             <div className="card p-6">
-              <h3 className="font-bold text-gray-900 flex items-center gap-2 mb-4">
+              <h3 className="font-bold text-brand-navy flex items-center gap-2 mb-4">
                 <Package className="w-5 h-5 text-brand-600" /> התפלגות קטגוריות ({categoryStats.length})
               </h3>
               <div className="space-y-2">
@@ -1474,7 +1467,7 @@ export default function Admin() {
         return (
         <div className="card overflow-hidden">
           <div className="p-4 border-b border-gray-100 flex items-center justify-between">
-            <h3 className="font-bold text-gray-900">
+            <h3 className="font-bold text-brand-navy">
               משתמשים{anyFilter ? ` (${filteredUsers.length}/${users.length})` : ` (${users.length})`}
             </h3>
             <div className="flex items-center gap-2">
@@ -1542,7 +1535,7 @@ export default function Admin() {
                     <tr><td colSpan={7} className="text-center text-gray-400 py-8 text-sm">לא נמצאו משתמשים</td></tr>
                   ) : filteredUsers.map((u) => (
                     <tr key={u.id} className="hover:bg-gray-50">
-                      <td className="px-4 py-3 font-medium text-gray-900">{u.full_name || '—'}</td>
+                      <td className="px-4 py-3 font-medium text-brand-navy">{u.full_name || '—'}</td>
                       <td className="px-4 py-3 text-gray-600" dir="ltr">{u.email}</td>
                       <td className="px-4 py-3">
                         <span className={`badge ${u.is_verified ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{u.is_verified ? '✓' : '–'}</span>
@@ -1551,7 +1544,7 @@ export default function Admin() {
                         <button
                           onClick={() => toggleAdminRole(u)}
                           title={u.is_admin ? 'הסר הרשאת אדמין' : 'הפוך לאדמין'}
-                          className={`badge cursor-pointer hover:opacity-80 transition-opacity ${u.is_admin ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-600'}`}
+                          className={`badge cursor-pointer hover:opacity-80 transition-opacity ${u.is_admin ? 'bg-brand-100 text-brand-700' : 'bg-gray-100 text-gray-600'}`}
                         >
                           {u.is_admin ? '👑 אדמין' : 'משתמש'}
                         </button>
@@ -1572,7 +1565,7 @@ export default function Admin() {
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           <button onClick={() => openEditUser(u)} title="עדכן פרטים" className="p-1.5 rounded hover:bg-blue-50 text-blue-500 hover:text-blue-700 transition-colors"><Pencil className="w-4 h-4" /></button>
-                          <button onClick={() => toggleUser(u.id, u.is_active !== false)} title={u.is_active !== false ? 'חסום משתמש' : 'בטל חסימה'} className={`p-1.5 rounded transition-colors ${u.is_active !== false ? 'hover:bg-orange-50 text-orange-400 hover:text-orange-600' : 'hover:bg-green-50 text-green-500 hover:text-green-700'}`}>
+                          <button onClick={() => toggleUser(u.id, u.is_active !== false)} title={u.is_active !== false ? 'חסום משתמש' : 'בטל חסימה'} className={`p-1.5 rounded transition-colors ${u.is_active !== false ? 'hover:bg-brand-50 text-brand-400 hover:text-brand-600' : 'hover:bg-green-50 text-green-500 hover:text-green-700'}`}>
                             {u.is_active !== false ? <Ban className="w-4 h-4" /> : <ShieldCheck className="w-4 h-4" />}
                           </button>
                           <button onClick={() => deleteUser(u.id, u.full_name || u.email)} title="מחק משתמש" className="p-1.5 rounded hover:bg-red-50 text-red-400 hover:text-red-600 transition-colors"><Trash2 className="w-4 h-4" /></button>
@@ -1786,7 +1779,7 @@ export default function Admin() {
 
           <div className="card p-4">
             <div className="flex items-center justify-between gap-2 mb-3">
-              <h4 className="font-bold text-gray-900 text-sm">הגדרות צוות נציגים</h4>
+              <h4 className="font-bold text-brand-navy text-sm">הגדרות צוות נציגים</h4>
               <div className="flex items-center gap-2">
                 <button onClick={loadHandoffTeamSettings} className="btn-ghost text-xs" disabled={loadingHandoffTeamSettings}>
                   {loadingHandoffTeamSettings ? 'טוען...' : 'רענן'}
@@ -1880,7 +1873,7 @@ export default function Admin() {
 
           <div className="card p-4">
             <div className="flex items-center justify-between mb-3">
-              <h4 className="font-bold text-gray-900 text-sm">בקשות ממתינות לנציג</h4>
+              <h4 className="font-bold text-brand-navy text-sm">בקשות ממתינות לנציג</h4>
               <button onClick={() => loadHandoffQueue(false)} className="btn-ghost text-xs">רענן</button>
             </div>
 
@@ -1931,7 +1924,7 @@ export default function Admin() {
                 {handoffQueue.slice(0, 6).map((q) => (
                   <div key={q.conversation_id} className="rounded-xl border border-gray-200 px-3 py-2 flex items-center justify-between gap-2">
                     <div className="min-w-0">
-                      <p className="text-sm font-semibold text-gray-900 truncate">{q.display_name || q.display_contact || 'לקוח'}</p>
+                      <p className="text-sm font-semibold text-brand-navy truncate">{q.display_name || q.display_contact || 'לקוח'}</p>
                       <p className="text-xs text-gray-500 truncate">
                         {q.channel} • המתנה {Math.max(1, Math.round((q.wait_seconds || 0) / 60))} דק׳ • עדיפות {q.priority_label}
                       </p>
@@ -1953,7 +1946,7 @@ export default function Admin() {
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div className="card p-4">
-              <h4 className="font-bold text-gray-900 text-sm mb-3">התפלגות ערוצים (30 יום)</h4>
+              <h4 className="font-bold text-brand-navy text-sm mb-3">התפלגות ערוצים (30 יום)</h4>
               <div className="space-y-2 text-sm">
                 <div className="flex items-center justify-between">
                   <span className="text-sky-700">Telegram</span>
@@ -1971,7 +1964,7 @@ export default function Admin() {
             </div>
 
             <div className="card p-4">
-              <h4 className="font-bold text-gray-900 text-sm mb-3">היסטוריית שימוש יומית</h4>
+              <h4 className="font-bold text-brand-navy text-sm mb-3">היסטוריית שימוש יומית</h4>
               <div className="max-h-36 overflow-y-auto divide-y divide-gray-100">
                 {(chatUsage?.daily || []).length === 0 ? (
                   <p className="text-sm text-gray-400 py-2">אין נתונים עדיין</p>
@@ -2029,7 +2022,7 @@ export default function Admin() {
           <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
             <div className="xl:col-span-4 card overflow-hidden">
               <div className="p-3 border-b border-gray-100 flex items-center justify-between">
-                <h4 className="font-bold text-gray-900 text-sm">שיחות ערוצים</h4>
+                <h4 className="font-bold text-brand-navy text-sm">שיחות ערוצים</h4>
                 <button onClick={() => loadAdminChats(chatFilters)} className="btn-ghost text-xs">רענן</button>
               </div>
               <div className="max-h-[640px] overflow-y-auto divide-y divide-gray-100">
@@ -2049,10 +2042,10 @@ export default function Admin() {
                       className={`w-full text-right p-3 transition-colors ${isSelected ? 'bg-brand-50/50 border-r-2 border-brand-500' : 'hover:bg-gray-50'}`}
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <p className="text-sm font-semibold text-gray-900 truncate">{c.display_name || c.user?.full_name || c.external_id || 'לקוח'}</p>
+                        <p className="text-sm font-semibold text-brand-navy truncate">{c.display_name || c.user?.full_name || c.external_id || 'לקוח'}</p>
                         <div className="flex items-center gap-1.5">
                           {c.human_handoff_status === 'requested' && <span className="text-[10px] px-1.5 py-0.5 rounded-md border bg-red-100 text-red-700 border-red-200">ממתין לנציג</span>}
-                          {c.admin_takeover_active && <span className="text-[10px] px-1.5 py-0.5 rounded-md border bg-orange-100 text-orange-700 border-orange-200">ידני</span>}
+                          {c.admin_takeover_active && <span className="text-[10px] px-1.5 py-0.5 rounded-md border bg-brand-100 text-brand-700 border-brand-200">ידני</span>}
                           <span className={`text-[10px] px-1.5 py-0.5 rounded-md border ${chCls}`}>{c.channel}</span>
                         </div>
                       </div>
@@ -2105,7 +2098,7 @@ export default function Admin() {
                   <div className="p-4 border-b border-gray-100 space-y-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
-                        <h4 className="font-bold text-gray-900">{selectedChat.display_name || selectedChat.user?.full_name || selectedChat.external_id || 'לקוח'}</h4>
+                        <h4 className="font-bold text-brand-navy">{selectedChat.display_name || selectedChat.user?.full_name || selectedChat.external_id || 'לקוח'}</h4>
                         <p className="text-xs text-gray-500 mt-0.5">{selectedChat.display_contact || selectedChat.user?.email || selectedChat.user?.phone || selectedChat.external_id || '—'}</p>
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
@@ -2115,7 +2108,7 @@ export default function Admin() {
                         <span className={`text-xs px-2 py-1 rounded-md border ${selectedChat.is_active ? 'bg-green-100 text-green-700 border-green-200' : 'bg-red-100 text-red-600 border-red-200'}`}>
                           {selectedChat.is_active ? 'פעילה' : 'סגורה'}
                         </span>
-                        <span className={`text-xs px-2 py-1 rounded-md border ${selectedChat.admin_takeover_active ? 'bg-orange-100 text-orange-700 border-orange-200' : 'bg-gray-100 text-gray-600 border-gray-200'}`}>
+                        <span className={`text-xs px-2 py-1 rounded-md border ${selectedChat.admin_takeover_active ? 'bg-brand-100 text-brand-700 border-brand-200' : 'bg-gray-100 text-gray-600 border-gray-200'}`}>
                           {selectedChat.admin_takeover_active ? 'השתלטות ידנית פעילה' : 'שליטת בוט'}
                         </span>
                         {selectedChat.human_handoff_status === 'requested' && (
@@ -2229,7 +2222,7 @@ export default function Admin() {
       {tab === 'orders' && (
         <div className="card overflow-hidden">
           <div className="p-4 border-b border-gray-100 flex flex-wrap items-center justify-between gap-3">
-            <h3 className="font-bold text-gray-900">כל ההזמנות ({orders.length})</h3>
+            <h3 className="font-bold text-brand-navy">כל ההזמנות ({orders.length})</h3>
             <div className="flex items-center gap-2 flex-wrap">
               <select
                 className="input-field text-sm py-1.5 w-44"
@@ -2267,7 +2260,7 @@ export default function Admin() {
                     const st = STATUS_HE[o.status] || { label: o.status, cls: 'bg-gray-100 text-gray-700' }
                     return (
                       <tr key={o.id} className="hover:bg-gray-50">
-                        <td className="px-3 py-3 font-medium text-gray-900 font-mono text-xs" dir="ltr">{o.order_number}</td>
+                        <td className="px-3 py-3 font-medium text-brand-navy font-mono text-xs" dir="ltr">{o.order_number}</td>
                         <td className="px-3 py-3">
                           <div className="text-xs">
                             <p className="font-medium text-gray-800">{o.user_name}</p>
@@ -2316,7 +2309,7 @@ export default function Admin() {
                   <Zap className="w-4 h-4 text-brand-600" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-gray-900">ספקים ({suppliers.length})</h3>
+                  <h3 className="font-bold text-brand-navy">ספקים ({suppliers.length})</h3>
                   {syncStatus && (
                     <p className="text-xs text-gray-400 mt-0.5 leading-tight">
                       {syncStatus.last_sync
@@ -2398,7 +2391,7 @@ export default function Admin() {
                             </div>
                             <div>
                               <div className="flex items-center gap-2">
-                                <p className="font-medium text-gray-900">{s.name}</p>
+                                <p className="font-medium text-brand-navy">{s.name}</p>
                                 <ChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
                                 {!s.is_active && <span className="badge bg-red-100 text-red-600 text-[10px]">בוטל</span>}
                                 {s.supports_express && <span className="badge bg-blue-100 text-blue-600 text-[10px]">אקספרס</span>}
@@ -2446,7 +2439,7 @@ export default function Admin() {
                               <div className="space-y-2">
                                 <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">פרטי קשר</p>
                                 {s.contact_email && <div className="flex items-center gap-2 text-gray-700"><Mail className="w-3.5 h-3.5 text-gray-400" />{s.contact_email}</div>}
-                                {s.contact_phone && <div className="flex items-center gap-2 text-gray-700"><Phone className="w-3.5 h-3.5 text-gray-400" />{s.contact_phone}</div>}
+                                {s.contact_phone && <div className="flex items-center gap-2 text-gray-700"><Phone className="w-3.5 h-3.5 text-gray-400" /><PhoneDisplay value={s.contact_phone} /></div>}
                                 {s.website && <div className="flex items-center gap-2"><Globe className="w-3.5 h-3.5 text-gray-400" /><a href={s.website} target="_blank" rel="noreferrer" className="text-brand-600 hover:underline text-xs" dir="ltr">{s.website}</a></div>}
                                 {!s.contact_email && !s.contact_phone && !s.website && <p className="text-gray-400 text-xs">לא הוזן פרטי קשר</p>}
                               </div>
@@ -2483,7 +2476,7 @@ export default function Admin() {
           {/* Supplier purchase tasks */}
           <div className="card overflow-hidden">
             <div className="p-4 border-b border-gray-100 flex items-center justify-between">
-              <h3 className="font-bold text-gray-900 flex items-center gap-2">
+              <h3 className="font-bold text-brand-navy flex items-center gap-2">
                 <ShoppingCart className="w-5 h-5 text-brand-600" />
                 יומן הזמנות ספקים (סוכן אוטומטי)
                 {supplierOrdersPending > 0 && (
@@ -2552,7 +2545,7 @@ export default function Admin() {
                         </div>
                         <div className="flex-1">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <p className="font-semibold text-gray-900 text-sm">{so.title}</p>
+                            <p className="font-semibold text-brand-navy text-sm">{so.title}</p>
                             {d.supplier_name && (() => {
                               let sup = suppliers.find((s) => s.name?.toLowerCase() === d.supplier_name?.toLowerCase())
                               if (!sup) {
@@ -2652,7 +2645,7 @@ export default function Admin() {
       {tab === 'parts' && (
         <div className="space-y-4">
           <div className="card p-6">
-            <h3 className="font-bold text-gray-900 mb-1 flex items-center gap-2">
+            <h3 className="font-bold text-brand-navy mb-1 flex items-center gap-2">
               <FileSpreadsheet className="w-5 h-5 text-brand-600" />
               ייבוא קטלוג חלקים מ-Excel
             </h3>
@@ -2760,7 +2753,7 @@ export default function Admin() {
           </div>
 
           <div className="card p-6">
-            <h3 className="font-bold text-gray-900 mb-1 flex items-center gap-2">
+            <h3 className="font-bold text-brand-navy mb-1 flex items-center gap-2">
               <CheckSquare className="w-5 h-5 text-brand-600" />
               התאמת תאימות מדויקת מהרשומות ב-Excel
             </h3>
@@ -2829,7 +2822,7 @@ export default function Admin() {
       {tab === 'social' && (
         <div className="space-y-4">
           <div className="card p-6">
-            <h3 className="font-bold text-gray-900 mb-4">יצירת תוכן AI לרשתות חברתיות</h3>
+            <h3 className="font-bold text-brand-navy mb-4">יצירת תוכן AI לרשתות חברתיות</h3>
             <div className="space-y-4">
               <div className="flex gap-3">
                 <input className="input-field flex-1" placeholder="נושא הפוסט... (מבצע על בלמים, טיפ לחורף...)" value={genTopic} onChange={(e) => setGenTopic(e.target.value)} />
@@ -2847,7 +2840,7 @@ export default function Admin() {
               {socialContent && (
                 <div className="space-y-3">
                   <div className="bg-gray-50 border border-gray-200 rounded-xl p-4">
-                    <p className="text-xs text-orange-600 font-medium mb-2">⚠ ממתין לאישורך לפני פרסום</p>
+                    <p className="text-xs text-brand-600 font-medium mb-2">⚠ ממתין לאישורך לפני פרסום</p>
                     <textarea
                       className="w-full bg-transparent text-sm text-gray-800 resize-none outline-none leading-relaxed"
                       rows={6}
@@ -2877,7 +2870,7 @@ export default function Admin() {
             <div className="flex items-center gap-3">
               <div className="p-2 rounded-xl bg-brand-50"><Bot className="w-5 h-5 text-brand-600" /></div>
               <div>
-                <h3 className="font-bold text-gray-900">סוכני AI ({agents.length})</h3>
+                <h3 className="font-bold text-brand-navy">סוכני AI ({agents.length})</h3>
                 {agentsAiStatus && (
                   <p className="text-xs text-gray-400 mt-0.5">
                     {agentsAiStatus.github_token_set
@@ -2889,7 +2882,7 @@ export default function Admin() {
             </div>
             <div className="flex gap-2">
               <div className="hidden sm:flex gap-2">
-                {[{k:'customer',label:'לקוח',cls:'bg-blue-50 text-blue-600 border-blue-200'},{k:'admin',label:'ניהול',cls:'bg-purple-50 text-purple-600 border-purple-200'},{k:'internal',label:'פנימי',cls:'bg-gray-50 text-gray-600 border-gray-200'}].map(t => (
+                {[{k:'customer',label:'לקוח',cls:'bg-blue-50 text-blue-600 border-blue-200'},{k:'admin',label:'ניהול',cls:'bg-brand-50 text-brand-600 border-brand-200'},{k:'internal',label:'פנימי',cls:'bg-gray-50 text-gray-600 border-gray-200'}].map(t => (
                   <span key={t.k} className={`text-xs px-2 py-1 rounded-lg border ${t.cls}`}>{t.label}</span>
                 ))}
               </div>
@@ -2909,7 +2902,7 @@ export default function Admin() {
               />
             </div>
             {testResult && (
-              <div className={`mt-3 p-3 rounded-xl text-sm ${testResult.status === 'ok' ? 'bg-green-50 border border-green-200 text-green-800' : 'bg-red-50 border border-red-200 text-red-700'}`}>
+              <div className={`mt-3 p-3 rounded-xl text-sm ${testResult.status === 'ok' ? 'bg-cyan-50 border border-cyan-200 text-slate-700' : 'bg-slate-100 border border-slate-300 text-slate-700'}`}>
                 <p className="text-xs font-semibold mb-1 opacity-60">תגובת הסוכן ({testResult.agent})</p>
                 <p className="whitespace-pre-wrap">{testResult.response}</p>
               </div>
@@ -2918,28 +2911,28 @@ export default function Admin() {
 
           {/* Agent cards grid */}
           {(() => {
-            const COLOR_BORDER = { gray:'border-l-gray-400', blue:'border-l-blue-400', green:'border-l-green-400', orange:'border-l-orange-400', yellow:'border-l-yellow-400', pink:'border-l-pink-400', red:'border-l-red-400', purple:'border-l-purple-400', indigo:'border-l-indigo-400', teal:'border-l-teal-400' }
-            const COLOR_ICON = { gray:'bg-gray-100 text-gray-500', blue:'bg-blue-100 text-blue-600', green:'bg-green-100 text-green-600', orange:'bg-orange-100 text-orange-600', yellow:'bg-yellow-100 text-yellow-600', pink:'bg-pink-100 text-pink-600', red:'bg-red-100 text-red-600', purple:'bg-purple-100 text-purple-600', indigo:'bg-indigo-100 text-indigo-600', teal:'bg-teal-100 text-teal-600' }
-            const TYPE_BADGE = { customer:'bg-blue-50 text-blue-700 border-blue-200', admin:'bg-purple-50 text-purple-700 border-purple-200', internal:'bg-gray-50 text-gray-600 border-gray-200' }
+            const COLOR_BORDER = { gray:'border-t-2 border-t-cyan-400', blue:'border-t-2 border-t-cyan-400', green:'border-t-2 border-t-cyan-400', orange:'border-t-2 border-t-cyan-400', yellow:'border-t-2 border-t-cyan-400', pink:'border-t-2 border-t-cyan-400', red:'border-t-2 border-t-cyan-400', purple:'border-t-2 border-t-cyan-400', indigo:'border-t-2 border-t-cyan-400', teal:'border-t-2 border-t-cyan-400' }
+            const COLOR_ICON = { gray:'bg-cyan-50 text-[#1B2228] border border-cyan-200', blue:'bg-cyan-50 text-[#1B2228] border border-cyan-200', green:'bg-cyan-50 text-[#1B2228] border border-cyan-200', orange:'bg-cyan-50 text-[#1B2228] border border-cyan-200', yellow:'bg-cyan-50 text-[#1B2228] border border-cyan-200', pink:'bg-cyan-50 text-[#1B2228] border border-cyan-200', red:'bg-cyan-50 text-[#1B2228] border border-cyan-200', purple:'bg-cyan-50 text-[#1B2228] border border-cyan-200', indigo:'bg-cyan-50 text-[#1B2228] border border-cyan-200', teal:'bg-cyan-50 text-[#1B2228] border border-cyan-200' }
+            const TYPE_BADGE = { customer:'bg-cyan-50 text-slate-700 border-cyan-200', admin:'bg-slate-100 text-slate-700 border-slate-300', internal:'bg-slate-100 text-slate-600 border-slate-300' }
             const TYPE_HE = { customer:'לקוח', admin:'ניהול', internal:'פנימי' }
             return (
               <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
                 {agents.map((a) => (
-                  <div key={a.name} className={`card p-4 border-l-4 ${COLOR_BORDER[a.color] || 'border-l-gray-300'} flex flex-col gap-3`}>
+                  <div key={a.name} className={`card p-4 ${COLOR_BORDER[a.color] || 'border-t-2 border-t-cyan-400'} flex flex-col gap-3`}>
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex items-center gap-2.5">
-                        <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${COLOR_ICON[a.color] || 'bg-gray-100 text-gray-500'}`}>
+                        <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${COLOR_ICON[a.color] || 'bg-cyan-50 text-[#1B2228] border border-cyan-200'}`}>
                           <Bot className="w-4.5 h-4.5" />
                         </div>
                         <div>
                           <div className="flex items-center gap-1.5">
-                            <p className="font-bold text-gray-900 text-sm">{a.persona}</p>
+                            <p className="font-bold text-brand-navy text-sm">{a.persona}</p>
                             <span className={`text-xs px-1.5 py-0.5 rounded-md border ${TYPE_BADGE[a.type] || TYPE_BADGE.internal}`}>{TYPE_HE[a.type] || a.type}</span>
                           </div>
                           <p className="text-xs text-gray-500 mt-0.5">{a.name_he}</p>
                         </div>
                       </div>
-                      {a.enabled === false && <span className="text-xs bg-red-100 text-red-600 px-1.5 py-0.5 rounded-md border border-red-200">מושבת</span>}
+                      {a.enabled === false && <span className="text-xs bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded-md border border-slate-300">מושבת</span>}
                     </div>
                     <p className="text-xs text-gray-500 leading-relaxed">{a.description_he || a.description}</p>
                     <div className="flex items-center gap-2 text-xs text-gray-400">
@@ -2981,8 +2974,8 @@ export default function Admin() {
                         }}
                         className={`px-2 py-1.5 rounded-lg border text-xs transition-colors ${
                           a.enabled !== false
-                            ? 'bg-green-50 border-green-200 text-green-700 hover:bg-green-100'
-                            : 'bg-red-50 border-red-200 text-red-600 hover:bg-red-100'
+                            ? 'bg-cyan-50 border-cyan-200 text-slate-700 hover:bg-cyan-100'
+                            : 'bg-slate-100 border-slate-300 text-slate-700 hover:bg-slate-200'
                         }`}
                         title={a.enabled !== false ? 'השבת סוכן' : 'הפעל סוכן'}
                       >
@@ -3002,9 +2995,9 @@ export default function Admin() {
         <div className="space-y-4">
           <div className="card p-4 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <div className="p-2 rounded-xl bg-orange-50"><RotateCcw className="w-5 h-5 text-orange-600" /></div>
+              <div className="p-2 rounded-xl bg-brand-50"><RotateCcw className="w-5 h-5 text-brand-600" /></div>
               <div>
-                <h3 className="font-bold text-gray-900">בקשות החזרה ({adminReturns.length})</h3>
+                <h3 className="font-bold text-brand-navy">בקשות החזרה ({adminReturns.length})</h3>
                 <p className="text-xs text-gray-400 mt-0.5">אשר או דחה בקשות החזרה מלקוחות</p>
               </div>
             </div>
@@ -3058,7 +3051,7 @@ export default function Admin() {
                       const handlingFee = ((r.original_amount || 0) * (100 - suggestedPct) / 100)
                       return (
                         <tr key={r.id} className="hover:bg-gray-50">
-                          <td className="px-3 py-3 font-mono text-xs font-medium text-gray-900">{r.return_number}</td>
+                          <td className="px-3 py-3 font-mono text-xs font-medium text-brand-navy">{r.return_number}</td>
                           <td className="px-3 py-3">
                             <div className="text-xs">
                               <p className="font-medium text-gray-800">{r.user_name || '—'}</p>
@@ -3083,7 +3076,7 @@ export default function Admin() {
                               {r.status === 'pending' && (
                                 <>
                                   <p className="text-green-600">↩ זיכוי: ₪{suggestedRefund.toFixed(2)} ({suggestedPct}%)</p>
-                                  {handlingFee > 0 && <p className="text-orange-500">דמי טיפול: ₪{handlingFee.toFixed(2)}</p>}
+                                  {handlingFee > 0 && <p className="text-brand-500">דמי טיפול: ₪{handlingFee.toFixed(2)}</p>}
                                 </>
                               )}
                               {r.refund_amount != null && r.status !== 'pending' && (
@@ -3143,7 +3136,7 @@ export default function Admin() {
         <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[88vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center justify-between p-5 border-b border-gray-100">
             <div>
-              <h3 className="font-bold text-gray-900">רשומת DB מלאה</h3>
+              <h3 className="font-bold text-brand-navy">רשומת DB מלאה</h3>
               <p className="text-xs text-gray-400 mt-0.5">{dbViewDataset}</p>
             </div>
             <button onClick={() => setDbViewRowModal(null)} className="p-1.5 rounded-full hover:bg-gray-100">
@@ -3167,7 +3160,7 @@ export default function Admin() {
       <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setShowRejectModal(null)}>
         <div className="bg-white rounded-2xl shadow-xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center justify-between p-6 border-b border-gray-100">
-            <h3 className="font-bold text-gray-900 flex items-center gap-2"><XCircle className="w-5 h-5 text-red-500" /> דחיית בקשת החזרה</h3>
+            <h3 className="font-bold text-brand-navy flex items-center gap-2"><XCircle className="w-5 h-5 text-red-500" /> דחיית בקשת החזרה</h3>
             <button onClick={() => setShowRejectModal(null)} className="p-1.5 rounded-full hover:bg-gray-100"><X className="w-5 h-5 text-gray-500" /></button>
           </div>
           <div className="p-6">
@@ -3201,7 +3194,7 @@ export default function Admin() {
         <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center justify-between p-6 border-b border-gray-100">
             <div>
-              <h3 className="font-bold text-lg text-gray-900">עריכת סוכן</h3>
+              <h3 className="font-bold text-lg text-brand-navy">עריכת סוכן</h3>
               <p className="text-xs text-gray-400 mt-0.5">{editAgent.name}</p>
             </div>
             <button onClick={() => setEditAgent(null)} className="p-1.5 rounded-full hover:bg-gray-100"><X className="w-5 h-5 text-gray-500" /></button>
@@ -3269,7 +3262,7 @@ export default function Admin() {
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setShowCreateSupplier(false)}>
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between p-6 border-b border-gray-100">
-              <h3 className="font-bold text-lg text-gray-900">ספק חדש</h3>
+              <h3 className="font-bold text-lg text-brand-navy">ספק חדש</h3>
               <button onClick={() => setShowCreateSupplier(false)} className="p-1.5 rounded-full hover:bg-gray-100"><X className="w-5 h-5 text-gray-500" /></button>
             </div>
             <div className="overflow-y-auto p-6 space-y-5">
@@ -3293,7 +3286,7 @@ export default function Admin() {
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between p-6 border-b border-gray-100">
               <div>
-                <h3 className="font-bold text-lg text-gray-900">עריכת ספק</h3>
+                <h3 className="font-bold text-lg text-brand-navy">עריכת ספק</h3>
                 <p className="text-xs text-gray-400 mt-0.5">{editSupplier.name}</p>
               </div>
               <button onClick={() => setEditSupplier(null)} className="p-1.5 rounded-full hover:bg-gray-100"><X className="w-5 h-5 text-gray-500" /></button>
@@ -3315,7 +3308,7 @@ export default function Admin() {
       <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setShowCreateModal(false)}>
         <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center justify-between p-6 border-b border-gray-100">
-            <h3 className="font-bold text-lg text-gray-900">יצירת משתמש חדש</h3>
+            <h3 className="font-bold text-lg text-brand-navy">יצירת משתמש חדש</h3>
             <button onClick={() => setShowCreateModal(false)} className="p-1.5 rounded-full hover:bg-gray-100"><X className="w-5 h-5 text-gray-500" /></button>
           </div>
           <div className="overflow-y-auto p-6 space-y-4">
@@ -3345,7 +3338,7 @@ export default function Admin() {
               </div>
             </div>
             <div className="flex gap-3 pt-1">
-              {[{ key: 'is_admin', label: 'אדמין', on: 'bg-purple-100 text-purple-700', off: 'bg-gray-100 text-gray-500' },
+              {[{ key: 'is_admin', label: 'אדמין', on: 'bg-brand-100 text-brand-700', off: 'bg-gray-100 text-gray-500' },
                 { key: 'is_verified', label: 'מאומת', on: 'bg-blue-100 text-blue-700', off: 'bg-gray-100 text-gray-500' },
               ].map(({ key, label, on, off }) => (
                 <button
@@ -3378,7 +3371,7 @@ export default function Admin() {
           {/* Header */}
           <div className="flex items-center justify-between p-6 border-b border-gray-100">
             <div>
-              <h3 className="font-bold text-lg text-gray-900">עדכון פרטי משתמש</h3>
+              <h3 className="font-bold text-lg text-brand-navy">עדכון פרטי משתמש</h3>
               <p className="text-xs text-gray-400 mt-0.5">נרשם: {editUser.created_at ? new Date(editUser.created_at).toLocaleDateString('he-IL') : '—'}</p>
             </div>
             <button onClick={() => setEditUser(null)} className="p-1.5 rounded-full hover:bg-gray-100"><X className="w-5 h-5 text-gray-500" /></button>
@@ -3428,7 +3421,7 @@ export default function Admin() {
               <div className="grid grid-cols-3 gap-3">
                 {[{ key: 'is_active', label: 'פעיל', on: 'bg-green-100 text-green-700', off: 'bg-red-100 text-red-600' },
                   { key: 'is_verified', label: 'מאומת', on: 'bg-blue-100 text-blue-700', off: 'bg-gray-100 text-gray-500' },
-                  { key: 'is_admin', label: 'אדמין', on: 'bg-purple-100 text-purple-700', off: 'bg-gray-100 text-gray-500' },
+                  { key: 'is_admin', label: 'אדמין', on: 'bg-brand-100 text-brand-700', off: 'bg-gray-100 text-gray-500' },
                 ].map(({ key, label, on, off }) => (
                   <button
                     key={key}

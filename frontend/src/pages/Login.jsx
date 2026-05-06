@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../stores/authStore'
-import { Eye, EyeOff, Wrench, Loader2 } from 'lucide-react'
+import { Eye, EyeOff, Loader2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import SocialLoginButtons from '../components/SocialLoginButtons'
+import AuthBrandHeader from '../components/auth/AuthBrandHeader'
 
 export default function Login() {
   const navigate = useNavigate()
@@ -75,20 +76,17 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-brand-50 to-orange-50 p-4">
+    <div className="auth-page min-h-screen flex items-center justify-center p-4">
       <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-brand-600 rounded-2xl mb-4 shadow-lg">
-            <Wrench className="w-9 h-9 text-white" />
-          </div>
-          <h1 className="text-3xl font-bold text-gray-900">Auto <span className="text-brand-600">Spare</span></h1>
-          <p className="text-gray-500 mt-1">חלקי חילוף בעזרת בינה מלאכותית</p>
-        </div>
+        <AuthBrandHeader
+          title={<span className="text-brand-navy">AutoSpare Finder</span>}
+          subtitle="חלקי חילוף לרכב עם התאמה חכמה"
+        />
 
-        <div className="card p-8 shadow-md">
+        <div className="auth-panel">
           {step === 'login' ? (
             <>
-              <h2 className="text-xl font-bold text-gray-900 mb-6 text-center">ברוך הבא</h2>
+              <h2 className="text-xl font-bold text-brand-navy mb-6 text-center">ברוך הבא</h2>
 
               {/* Email / password form */}
               <form onSubmit={handleLogin} className="space-y-4" autoComplete="on">
@@ -172,7 +170,7 @@ export default function Login() {
             <>
               <div className="text-center mb-6">
                 <div className="text-4xl mb-3">📱</div>
-                <h2 className="text-xl font-bold text-gray-900">אימות דו-שלבי</h2>
+                <h2 className="text-xl font-bold text-brand-navy">אימות דו-שלבי</h2>
                 <p className="text-sm text-gray-500 mt-1">הזן את הקוד שנשלח לטלפון שלך</p>
               </div>
               <form onSubmit={handle2FA} className="space-y-4">
@@ -211,4 +209,3 @@ export default function Login() {
     </div>
   )
 }
-

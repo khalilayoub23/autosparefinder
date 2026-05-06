@@ -138,7 +138,7 @@ async def create_order(
     db: AsyncSession = Depends(get_pii_db),
     redis=Depends(get_redis),
 ):
-    from BACKEND_AI_AGENTS import get_supplier_shipping as _get_ship2
+    from BACKEND_AI_AGENTS import get_supplier_shipping as _get_ship2, get_supplier_vat_rate as _get_vat_rate2
 
     if not data.items:
         raise HTTPException(status_code=400, detail="לא ניתן ליצור הזמנה ללא פריטים")
@@ -185,6 +185,7 @@ async def create_order(
             }
 
         subtotal = 0.0
+        vat_total = 0.0
         items_data = []
         usd_to_ils_rate = await get_usd_to_ils_rate(cat_db)
         # Track unique suppliers in this order -> charge delivery fee once per supplier origin
@@ -204,11 +205,13 @@ async def create_order(
             cost_ils = float(sp.price_ils or 0) or (float(sp.price_usd or 0) * usd_to_ils_rate)
             ship_ils = float(sp.shipping_cost_ils or 0)
             total_cost_ils = cost_ils + ship_ils
-            delivery_fee = _get_ship2(supplier_rec.name or "")
+            delivery_fee = _get_ship2(supplier_rec.name or "", supplier_rec.country or "")
+            supplier_vat_rate = _get_vat_rate2(supplier_rec.name or "", supplier_rec.country or "")
             supplier_delivery_fees[str(supplier_rec.id)] = delivery_fee
             unit_price = round(total_cost_ils * 1.45, 2)
-            vat = round(unit_price * 0.18, 2)
+            vat = round(unit_price * supplier_vat_rate, 2)
             subtotal += unit_price * item.quantity
+            vat_total += vat * item.quantity
             items_data.append(
                 {
                     "part_id": item.part_id or str(part.id),
@@ -222,7 +225,7 @@ async def create_order(
                 }
             )
 
-        vat_total = round(subtotal * 0.18, 2)
+        vat_total = round(vat_total, 2)
         shipping = round(sum(supplier_delivery_fees.values()), 2)
         total = round(subtotal + vat_total + shipping, 2)
 

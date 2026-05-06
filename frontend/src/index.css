@@ -6,57 +6,162 @@
   * {
     direction: rtl;
     scrollbar-width: thin;
-    scrollbar-color: #d1d5db #f3f4f6;
+    scrollbar-color: #8ba1b4 #e2e8f0;
   }
+
+  :root {
+    --theme-surface-0: #f1f5f9;
+    --theme-surface-1: #ffffff;
+    --theme-surface-2: #f8fafc;
+    --theme-border: #cbd5e1;
+    --theme-border-soft: #dbe3ee;
+    --theme-muted-500: #64748b;
+    --theme-muted-600: #475569;
+    --theme-muted-700: #334155;
+    --theme-navy: #1b2228;
+    --theme-neon: #00ccff;
+    --theme-row-hover: #f0f9ff;
+  }
+
   body {
-    @apply bg-gray-50 text-gray-900 font-sans antialiased;
+    @apply text-slate-900 font-sans antialiased;
+    background:
+      radial-gradient(980px 380px at 8% -4%, rgba(0, 204, 255, 0.16), transparent 64%),
+      radial-gradient(920px 400px at 92% -10%, rgba(148, 163, 184, 0.2), transparent 62%),
+      linear-gradient(180deg, #f8fafc 0%, #f1f5f9 54%, #eef2f7 100%);
   }
+
   ::-webkit-scrollbar { width: 6px; }
   ::-webkit-scrollbar-button { width: 0; height: 0; display: none; }
-  ::-webkit-scrollbar-track { @apply bg-gray-100; }
-  ::-webkit-scrollbar-thumb { @apply bg-gray-300 rounded-full; }
+  ::-webkit-scrollbar-track { @apply bg-slate-200; }
+  ::-webkit-scrollbar-thumb { @apply bg-slate-400 rounded-full; }
 }
 
 @layer components {
   .btn-primary {
-    @apply bg-brand-600 hover:bg-brand-700 text-white font-semibold py-2.5 px-5 rounded-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2;
+    @apply bg-gradient-to-r from-brand-700 to-brand-600 hover:from-brand-800 hover:to-brand-700 text-white font-semibold py-2.5 px-5 rounded-brand transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-brand-300 focus:ring-offset-2 shadow-electric;
   }
+
   .btn-secondary {
-    @apply bg-white hover:bg-gray-50 text-gray-700 font-semibold py-2.5 px-5 rounded-lg border border-gray-300 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-gray-300;
+    @apply bg-white hover:bg-slate-50 text-slate-700 font-semibold py-2.5 px-5 rounded-brand border border-slate-300 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-slate-300;
   }
+
   .btn-ghost {
-    @apply hover:bg-gray-100 text-gray-600 font-medium py-2 px-4 rounded-lg transition-all duration-200;
+    @apply hover:bg-slate-100 text-slate-700 font-medium py-2 px-4 rounded-lg transition-all duration-200;
   }
+
   .input-field {
-    @apply w-full bg-white border border-gray-300 rounded-lg px-4 py-2.5 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent transition-all duration-200;
+    @apply w-full bg-white border border-slate-300 rounded-brand px-4 py-2.5 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-300 focus:border-transparent transition-all duration-200;
   }
+
   .card {
-    @apply bg-white rounded-xl border border-gray-200 shadow-sm;
+    @apply rounded-brand border shadow-sm transition-all duration-200;
+    border-color: var(--theme-border);
+    border-top: 2px solid var(--theme-neon);
+    background: linear-gradient(180deg, #ffffff 0%, #f1f5f9 100%);
   }
+
+  .card:hover {
+    box-shadow: 0 12px 30px rgba(0, 204, 255, 0.18);
+  }
+
   .badge {
     @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
   }
+
   .section-title {
-    @apply text-2xl font-bold text-gray-900;
+    color: var(--theme-navy);
+    @apply text-2xl font-black;
+  }
+
+  .auth-page {
+    background:
+      radial-gradient(760px 320px at 8% 0%, rgba(0, 204, 255, 0.12), transparent 64%),
+      radial-gradient(840px 340px at 92% 0%, rgba(148, 163, 184, 0.22), transparent 62%),
+      linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+  }
+
+  .auth-panel {
+    @apply card p-8;
   }
 }
 
-/* Chat bubble styles */
+@layer utilities {
+  .bg-white {
+    background-color: var(--theme-surface-1) !important;
+  }
+
+  .bg-white\/90 {
+    background-color: rgba(255, 255, 255, 0.9) !important;
+  }
+
+  .bg-white\/95 {
+    background-color: rgba(255, 255, 255, 0.95) !important;
+  }
+
+  .bg-gray-50 {
+    background-color: var(--theme-surface-0) !important;
+  }
+
+  .bg-gray-100 {
+    background-color: var(--theme-surface-2) !important;
+  }
+
+  .border-gray-200 {
+    border-color: var(--theme-border) !important;
+  }
+
+  .border-gray-100 {
+    border-color: var(--theme-border-soft) !important;
+  }
+
+  .text-gray-500 {
+    color: var(--theme-muted-500) !important;
+  }
+
+  .text-gray-600 {
+    color: var(--theme-muted-600) !important;
+  }
+
+  .text-gray-700 {
+    color: var(--theme-muted-700) !important;
+  }
+
+  .hover\:bg-gray-50:hover {
+    background-color: var(--theme-row-hover) !important;
+  }
+}
+
 .chat-bubble-user {
   @apply bg-brand-600 text-white rounded-2xl rounded-tl-sm px-4 py-3 max-w-xs lg:max-w-md ml-auto;
 }
+
 .chat-bubble-agent {
-  @apply bg-white border border-gray-200 text-gray-800 rounded-2xl rounded-tr-sm px-4 py-3 max-w-xs lg:max-w-2xl shadow-sm;
+  @apply bg-white border border-slate-300 text-slate-700 rounded-2xl rounded-tr-sm px-4 py-3 max-w-xs lg:max-w-2xl shadow-sm;
 }
 
-/* Skeleton loader */
 @keyframes skeleton {
   0% { background-position: -200% 0; }
   100% { background-position: 200% 0; }
 }
+
 .skeleton {
-  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
   background-size: 200% 100%;
   animation: skeleton 1.5s infinite;
   @apply rounded;
+}
+
+.phone-display {
+  direction: ltr;
+  unicode-bidi: isolate;
+  display: inline-block;
+  white-space: nowrap;
+}
+
+.brand-logo-fused {
+  display: block;
+  background: transparent !important;
+  mix-blend-mode: normal;
+  filter: saturate(1.04) contrast(1.03);
 }

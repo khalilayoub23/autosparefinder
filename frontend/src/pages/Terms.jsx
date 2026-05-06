@@ -1,34 +1,27 @@
 import { Link } from 'react-router-dom'
 import { FileText } from 'lucide-react'
+import PhoneDisplay from '../components/PhoneDisplay'
+import LegalPageShell from '../components/LegalPageShell'
 
 export default function Terms() {
   return (
-    <div className="min-h-screen bg-gray-50" dir="rtl">
-      {/* Header */}
-      <div className="bg-orange-600 text-white py-10 px-4">
-        <div className="max-w-3xl mx-auto flex items-center gap-3">
-          <FileText className="w-8 h-8 flex-shrink-0" />
-          <div>
-            <h1 className="text-2xl font-bold">תקנון שימוש - Auto Spare</h1>
-            <p className="text-orange-100 text-sm mt-1">תאריך עדכון אחרון: 28 בפברואר 2026 · גרסה: 1.0</p>
-          </div>
-        </div>
-      </div>
-
-      <div className="max-w-3xl mx-auto px-4 py-10 space-y-6">
+    <LegalPageShell
+      title="תקנון שימוש - Auto Spare"
+      subtitle="תאריך עדכון אחרון: 28 בפברואר 2026 · גרסה: 1.0"
+      icon={FileText}
+    >
 
         {/* Business Info */}
-        <section className="bg-orange-50 border border-orange-200 rounded-xl p-5 text-sm text-gray-700 space-y-1">
-          <p><strong>עוסק מורשה:</strong> 060633880</p>
+        <section className="bg-brand-50 border border-brand-200 rounded-xl p-5 text-sm text-gray-700 space-y-1">
           <p><strong>כתובת:</strong> הרצל 55, עכו</p>
-          <p><strong>אתר:</strong> autospare.com</p>
-          <p><strong>דוא&quot;ל:</strong> <a href="mailto:support@autospare.com" className="text-orange-600 underline">support@autospare.com</a></p>
+          <p><strong>אתר:</strong> www.autosparefinder.co.il</p>
+          <p><strong>דוא&quot;ל:</strong> <a href="mailto:support@autosparefinder.co.il" className="text-brand-600 underline">support@autosparefinder.co.il</a></p>
         </section>
 
         {/* TOC */}
         <section className="bg-white rounded-xl p-6 shadow-sm">
-          <h2 className="text-base font-bold text-gray-900 mb-3">תוכן עניינים</h2>
-          <ol className="list-decimal list-inside space-y-1 text-sm text-orange-600">
+          <h2 className="text-base font-bold text-brand-navy mb-3">תוכן עניינים</h2>
+          <ol className="list-decimal list-inside space-y-1 text-sm text-brand-600">
             {['הגדרות','כללי','הרשמה וחשבון משתמש','שימוש באתר','מחירים ותשלומים',
               'הזמנות ואספקה','אחריות והחזרות','קניין רוחני','הגבלת אחריות',
               'פרטיות ואבטחת מידע','שינויים בתקנון','דין וסמכות שיפוט'].map((t,i) => (
@@ -39,8 +32,8 @@ export default function Terms() {
 
         <S id="s1" title="1. הגדרות">
           <ul className="space-y-2 text-gray-700 text-sm">
-            <li><strong>&quot;החברה&quot; / &quot;אנו&quot;</strong> — Auto Spare, עוסק מורשה 060633880</li>
-            <li><strong>&quot;האתר&quot;</strong> — autospare.com וכל תת-דומיינים</li>
+            <li><strong>&quot;החברה&quot; / &quot;אנו&quot;</strong> — Auto Spare</li>
+            <li><strong>&quot;האתר&quot;</strong> — www.autosparefinder.co.il וכל תת-דומיינים</li>
             <li><strong>&quot;המשתמש&quot; / &quot;הלקוח&quot; / &quot;אתה&quot;</strong> — כל אדם המשתמש באתר</li>
             <li><strong>&quot;המוצרים&quot;</strong> — חלקי חילוף ואביזרים לרכב</li>
             <li><strong>&quot;השירות&quot;</strong> — כלל השירותים המוצעים באתר</li>
@@ -146,9 +139,10 @@ export default function Terms() {
             <div>
               <h3 className="font-semibold text-gray-800 mb-1">5.1 מחירים</h3>
               <p className="mb-2">כל המחירים באתר הם ב-<strong>שקלים חדשים (₪)</strong>.</p>
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs space-y-1 text-amber-800">
-                <p>⚠️ <strong>המחיר המוצג אינו כולל מע&quot;מ (18%) ודמי משלוח.</strong></p>
-                <p>מע&quot;מ ודמי משלוח יתווספו בעמוד התשלום.</p>
+              <div className="bg-red-100 border-2 border-red-500 rounded-lg p-3 text-sm space-y-1 text-red-900 shadow-sm">
+                <p>⚠️ <strong>המחיר המוצג אינו כולל מע&quot;מ ודמי משלוח.</strong></p>
+                <p>בעסקאות מקומיות החייבות במע&quot;מ בישראל, יתווסף מע&quot;מ בשיעור 18% בעמוד התשלום לפני אישור ההזמנה.</p>
+                <p>בעסקאות מול ספק מחו&quot;ל שאינן חייבות במע&quot;מ בישראל, לא ייגבה מע&quot;מ ישראלי; ייתכנו חיובי מכס או מסי יבוא לפי הדין.</p>
               </div>
               <div className="bg-gray-100 rounded-lg p-3 font-mono text-xs mt-2 space-y-1">
                 <p>מחיר מוצר באתר:  ₪500</p>
@@ -203,7 +197,7 @@ export default function Terms() {
               <div className="overflow-x-auto">
                 <table className="w-full text-sm text-right border-collapse">
                   <thead>
-                    <tr className="bg-orange-50 text-orange-700">
+                    <tr className="bg-brand-50 text-brand-700">
                       <th className="p-2 border border-gray-200">מקור</th>
                       <th className="p-2 border border-gray-200">זמן משוער</th>
                     </tr>
@@ -251,7 +245,7 @@ export default function Terms() {
               </ul>
               <p className="mt-2 text-xs">
                 לפירוט מלא ראה{' '}
-                <Link to="/refund" className="text-orange-600 underline font-semibold">מדיניות ביטולים והחזרות</Link>.
+                <Link to="/refund" className="text-brand-600 underline font-semibold">מדיניות ביטולים והחזרות</Link>.
               </p>
             </div>
           </div>
@@ -276,7 +270,7 @@ export default function Terms() {
 
         <S id="s10" title="10. פרטיות ואבטחת מידע">
           <div className="space-y-2 text-sm text-gray-700">
-            <p>השימוש באתר כפוף גם ל<Link to="/privacy" className="text-orange-600 underline font-semibold">מדיניות הפרטיות</Link> שלנו.</p>
+            <p>השימוש באתר כפוף גם ל<Link to="/privacy" className="text-brand-600 underline font-semibold">מדיניות הפרטיות</Link> שלנו.</p>
             <ul className="space-y-1">
               <li>🔒 <strong>הצפנה מלאה</strong> (SSL/TLS 256-bit)</li>
               <li>🔒 <strong>2FA חובה</strong> לכל החשבונות</li>
@@ -302,19 +296,19 @@ export default function Terms() {
 
         {/* Contact */}
         <section className="bg-white rounded-xl p-6 shadow-sm">
-          <h2 className="text-base font-bold text-gray-900 mb-3 border-b border-orange-100 pb-2">יצירת קשר</h2>
+          <h2 className="text-base font-bold text-brand-navy mb-3 border-b border-brand-100 pb-2">יצירת קשר</h2>
           <div className="text-sm text-gray-700 space-y-1">
-            <p>📧 <strong>דוא&quot;ל:</strong> <a href="mailto:legal@autospare.com" className="text-orange-600 underline">legal@autospare.com</a></p>
-            <p>📱 <strong>טלפון:</strong> 04-1234567</p>
+            <p>📧 <strong>דוא&quot;ל:</strong> <a href="mailto:support@autosparefinder.co.il" className="text-brand-600 underline">support@autosparefinder.co.il</a></p>
+            <p>📱 <strong>טלפון:</strong> <PhoneDisplay value="972-53-242-6920" /></p>
             <p>🏢 <strong>כתובת:</strong> הרצל 55, עכו</p>
-            <p>🌐 <strong>אתר:</strong> autospare.com</p>
+            <p>🌐 <strong>אתר:</strong> www.autosparefinder.co.il</p>
             <p className="text-gray-500">שעות פעילות: א׳-ה׳ 9:00-18:00</p>
           </div>
         </section>
 
         {/* Confirmation */}
         <section className="bg-green-50 border border-green-200 rounded-xl p-6 shadow-sm">
-          <h2 className="text-base font-bold text-gray-900 mb-3">✅ אישור והסכמה</h2>
+          <h2 className="text-base font-bold text-brand-navy mb-3">✅ אישור והסכמה</h2>
           <p className="text-sm text-gray-600 mb-3">על ידי שימוש באתר, אתה מאשר ומסכים:</p>
           <ul className="space-y-1 text-sm text-gray-700">
             <li>✅ קראתי והבנתי את תנאי התקנון</li>
@@ -329,15 +323,14 @@ export default function Terms() {
           תאריך עדכון אחרון: 28 בפברואר 2026 · גרסה: 1.0<br />
           © 2026 Auto Spare. כל הזכויות שמורות.
         </p>
-      </div>
-    </div>
+    </LegalPageShell>
   )
 }
 
 function S({ id, title, children }) {
   return (
     <section id={id} className="bg-white rounded-xl p-6 shadow-sm scroll-mt-4">
-      <h2 className="text-base font-bold text-gray-900 mb-3 border-b border-orange-100 pb-2">
+      <h2 className="text-base font-bold text-brand-navy mb-3 border-b border-brand-100 pb-2">
         {title}
       </h2>
       {children}

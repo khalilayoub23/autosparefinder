@@ -4,10 +4,11 @@ import { useAuthStore } from '../stores/authStore'
 import { useCartStore } from '../stores/cartStore'
 import api from '../api/client'
 import ConsentModal from './ConsentModal'
+import BrandLogo from './BrandLogo'
 import {
   MessageSquare, Search, ShoppingCart, Package, User,
   Settings, LogOut, Menu, X, Bell, Car, ChevronDown,
-  LayoutDashboard, Wrench, Bot,
+  LayoutDashboard, Bot,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -105,17 +106,14 @@ export default function Layout({ children }) {
       {/* Consent modal — shown on first login until user accepts privacy policy + terms */}
       {user && !user.terms_accepted_at && <ConsentModal />}
 
-      <div className="min-h-screen flex flex-col bg-gray-50">
+      <div className="min-h-screen flex flex-col bg-brand-surface">
       {/* Top navbar */}
-      <header className="fixed top-0 right-0 left-0 z-40 bg-white border-b border-gray-200 shadow-sm">
-        <div className="flex items-center justify-between h-16 px-4 max-w-7xl mx-auto">
-          {/* Logo */}
-          <Link to="/" className="flex items-center gap-2">
-            <div className="w-9 h-9 bg-brand-600 rounded-xl flex items-center justify-center">
-              <Wrench className="w-5 h-5 text-white" />
-            </div>
-            <span className="text-xl font-bold text-gray-900">Auto <span className="text-brand-600">Spare</span></span>
-          </Link>
+      <header className="fixed top-0 right-0 left-0 z-40 bg-[#1B2228] border-b border-slate-600 shadow-[0_10px_28px_rgba(0,0,0,0.35)]">
+        <div className="flex items-center justify-between h-24 px-4 max-w-7xl mx-auto">
+          {/* Logo - Root fix 1:1 image implementation with breakpoint support */}
+          <Link to="/" className="flex items-center">
+              <BrandLogo size="appHeader" alt="AutoSpare logo" blend />
+            </Link>
 
           {/* Desktop nav */}
           <nav className="hidden md:flex items-center gap-1">
@@ -125,8 +123,8 @@ export default function Layout({ children }) {
                 to={path}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors
                   ${location.pathname === path
-                    ? 'bg-brand-50 text-brand-700'
-                    : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+                    ? 'bg-[#00CCFF]/18 text-white border border-[#00CCFF]/60'
+                    : 'text-slate-100 hover:bg-white/10 hover:text-white'
                   }`}
               >
                 <Icon className="w-4 h-4" />
@@ -138,9 +136,9 @@ export default function Layout({ children }) {
                 <Link
                   to="/admin"
                   className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors
-                    ${location.pathname === '/admin'
-                      ? 'bg-purple-50 text-purple-700'
-                      : 'text-gray-600 hover:bg-gray-100'
+                    ${(location.pathname === '/admin' || location.pathname.startsWith('/admin/'))
+                      ? 'bg-[#00CCFF]/18 text-white border border-[#00CCFF]/60'
+                      : 'text-slate-100 hover:bg-white/10'
                     }`}
                 >
                   <LayoutDashboard className="w-4 h-4" />
@@ -150,8 +148,8 @@ export default function Layout({ children }) {
                   to="/agents"
                   className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors
                     ${location.pathname === '/agents'
-                      ? 'bg-brand-50 text-brand-700'
-                      : 'text-gray-600 hover:bg-gray-100'
+                      ? 'bg-[#00CCFF]/18 text-white border border-[#00CCFF]/60'
+                      : 'text-slate-100 hover:bg-white/10'
                     }`}
                 >
                   <Bot className="w-4 h-4" />
@@ -164,10 +162,10 @@ export default function Layout({ children }) {
           {/* Right actions */}
           <div className="flex items-center gap-2">
             {/* Cart */}
-            <Link to="/cart" className="relative btn-ghost p-2">
+            <Link to="/cart" className="relative p-2 rounded-lg text-slate-100 hover:bg-white/10 transition-colors">
               <ShoppingCart className="w-5 h-5" />
               {cartTotals.count > 0 && (
-                <span className="absolute -top-1 -left-1 min-w-[1.25rem] h-5 px-1 bg-brand-600 text-white text-[10px] rounded-full flex items-center justify-center font-bold leading-none">
+                <span className="absolute -top-1 -left-1 min-w-[1.25rem] h-5 px-1 bg-[#00CCFF] text-[#1B2228] text-[10px] rounded-full flex items-center justify-center font-black leading-none">
                   {cartBadgeLabel}
                 </span>
               )}
@@ -176,7 +174,7 @@ export default function Layout({ children }) {
             {/* Notifications bell */}
             <div className="relative" ref={notifsRef}>
               <button
-                className="relative btn-ghost p-2"
+                className="relative p-2 rounded-lg text-slate-100 hover:bg-white/10 transition-colors"
                 onClick={() => { setShowNotifs(!showNotifs); if (!showNotifs) fetchNotifications() }}
               >
                 <Bell className="w-5 h-5" />
@@ -189,7 +187,7 @@ export default function Layout({ children }) {
               {showNotifs && (
                 <div className="absolute left-0 top-full mt-1 w-96 max-w-[90vw] bg-white rounded-xl border border-gray-200 shadow-xl z-50">
                   <div className="flex items-center justify-between p-4 border-b border-gray-100">
-                    <span className="font-bold text-gray-900 text-sm">התראות</span>
+                    <span className="font-bold text-brand-navy text-sm">התראות</span>
                     {unreadCount > 0 && (
                       <button
                         onClick={() => api.put('/notifications/read-all').then(() => { setUnreadCount(0); fetchNotifications() }).catch(() => {})}
@@ -205,7 +203,7 @@ export default function Layout({ children }) {
                     ) : notifications.map((n) => (
                       <div
                         key={n.id}
-                        className={`p-4 hover:bg-gray-50 cursor-pointer ${!n.read_at ? 'bg-blue-50/40' : ''}`}
+                        className={`p-4 hover:bg-gray-50 cursor-pointer ${!n.read_at ? 'bg-brand-50/70' : ''}`}
                         onClick={() => {
                           if (!n.read_at) {
                             api.put(`/notifications/${n.id}/read`)
@@ -218,7 +216,7 @@ export default function Layout({ children }) {
                           setSelectedNotif(n)
                         }}
                       >
-                        <p className={`text-sm ${!n.read_at ? 'font-semibold text-gray-900' : 'text-gray-700'}`}>{n.title}</p>
+                        <p className={`text-sm ${!n.read_at ? 'font-semibold text-brand-navy' : 'text-gray-700'}`}>{n.title}</p>
                         {n.message && (
                           <div className="mt-0.5">
                             <p
@@ -249,20 +247,20 @@ export default function Layout({ children }) {
 
             {/* User menu */}
             <div className="relative group">
-              <button className="flex items-center gap-2 btn-ghost px-3 py-2">
-                <div className="w-7 h-7 bg-brand-100 rounded-full flex items-center justify-center">
-                  <span className="text-brand-700 font-bold text-xs">
+              <button className="flex items-center gap-2 px-3 py-2 rounded-lg text-slate-100 hover:bg-white/10 transition-colors">
+                <div className="w-7 h-7 bg-white/10 border border-[#00CCFF]/50 rounded-full flex items-center justify-center">
+                  <span className="text-[#9AEFFF] font-black text-xs">
                     {user?.full_name?.charAt(0) || 'U'}
                   </span>
                 </div>
-                <span className="hidden md:block text-sm font-medium text-gray-700 max-w-24 truncate">
+                <span className="hidden md:block text-sm font-medium text-slate-100 max-w-24 truncate">
                   {user?.full_name}
                 </span>
-                <ChevronDown className="w-4 h-4 text-gray-400" />
+                <ChevronDown className="w-4 h-4 text-slate-300" />
               </button>
               <div className="absolute left-0 top-full mt-1 w-48 bg-white rounded-xl border border-gray-200 shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-150 z-50">
                 <div className="p-3 border-b border-gray-100">
-                  <p className="text-sm font-semibold text-gray-900 truncate">{user?.full_name}</p>
+                  <p className="text-sm font-semibold text-brand-navy truncate">{user?.full_name}</p>
                   <p className="text-xs text-gray-500 truncate">{user?.email}</p>
                 </div>
                 <div className="p-1">
@@ -281,7 +279,7 @@ export default function Layout({ children }) {
 
             {/* Mobile menu btn */}
             {!isAdminRoute && (
-              <button className="md:hidden btn-ghost p-2" onClick={() => setSidebarOpen(!sidebarOpen)}>
+              <button className="md:hidden p-2 rounded-lg text-slate-100 hover:bg-white/10 transition-colors" onClick={() => setSidebarOpen(!sidebarOpen)}>
                 {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
               </button>
             )}
@@ -294,7 +292,7 @@ export default function Layout({ children }) {
         <div className="fixed inset-0 z-30 md:hidden" onClick={() => setSidebarOpen(false)}>
           <div className="absolute inset-0 bg-black/40" />
           <nav
-            className="absolute top-16 right-0 bottom-0 w-72 bg-white border-l border-gray-200 p-4 overflow-y-auto"
+            className="absolute top-24 right-0 bottom-0 w-72 bg-white border-l border-gray-200 p-4 overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             {NAV_ITEMS.map(({ path, icon: Icon, label }) => (
@@ -303,7 +301,7 @@ export default function Layout({ children }) {
                 to={path}
                 onClick={() => setSidebarOpen(false)}
                 className={`flex items-center gap-3 px-4 py-3 rounded-xl mb-1 text-sm font-medium
-                  ${location.pathname === path ? 'bg-brand-50 text-brand-700' : 'text-gray-700 hover:bg-gray-50'}`}
+                  ${location.pathname === path ? 'bg-[#00CCFF]/20 text-[#1B2228] border border-[#00CCFF]/50' : 'text-gray-700 hover:bg-gray-50'}`}
               >
                 <Icon className="w-5 h-5" /> {label}
               </Link>
@@ -316,16 +314,16 @@ export default function Layout({ children }) {
       )}
 
       {/* Page content */}
-      <main className="flex-1 pt-16">
+      <main className="flex-1 pt-24">
         <div className="max-w-7xl mx-auto px-4 py-6">
           {children}
         </div>
       </main>
 
       {/* Footer */}
-      <footer className="bg-white border-t border-gray-200 py-4 mt-auto">
+      <footer className="bg-white border-t border-brand-100 py-4 mt-auto">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-gray-500" dir="rtl">
-          <span>© {new Date().getFullYear()} AutoSpare — עוסק מורשה 060633880</span>
+          <span>© {new Date().getFullYear()} AutoSpare</span>
           <div className="flex items-center gap-4">
             <Link to="/privacy" className="hover:text-brand-600 transition-colors">מדיניות פרטיות</Link>
             <Link to="/terms" className="hover:text-brand-600 transition-colors">תנאי שימוש</Link>
@@ -338,7 +336,7 @@ export default function Layout({ children }) {
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl border border-gray-200">
             <div className="flex items-center justify-between p-4 border-b border-gray-100">
-              <h3 className="text-sm font-bold text-gray-900">פרטי התראה</h3>
+              <h3 className="text-sm font-bold text-brand-navy">פרטי התראה</h3>
               <button
                 type="button"
                 className="text-gray-400 hover:text-gray-600"
@@ -348,7 +346,7 @@ export default function Layout({ children }) {
               </button>
             </div>
             <div className="p-4 space-y-2">
-              <p className="text-sm font-semibold text-gray-900 whitespace-pre-wrap break-words">{selectedNotif.title}</p>
+              <p className="text-sm font-semibold text-brand-navy whitespace-pre-wrap break-words">{selectedNotif.title}</p>
               {!!selectedNotif.message && (
                 <p className="text-sm text-gray-600 whitespace-pre-wrap break-words">{selectedNotif.message}</p>
               )}

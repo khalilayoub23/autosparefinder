@@ -48,10 +48,10 @@ const STATUS_MAP = {
   confirmed:         { label: 'אושר',          icon: CheckCircle, color: 'bg-blue-100 text-blue-700'    },
   processing:        { label: 'בעיבוד',        icon: Clock,       color: 'bg-indigo-100 text-indigo-700'},
   supplier_ordered:  { label: 'הוזמן מספק',    icon: Truck,       color: 'bg-cyan-100 text-cyan-700'   },
-  shipped:           { label: 'נשלח',          icon: Truck,       color: 'bg-purple-100 text-purple-700'},
+  shipped:           { label: 'נשלח',          icon: Truck,       color: 'bg-brand-100 text-brand-700'},
   delivered:         { label: 'נמסר',          icon: CheckCircle, color: 'bg-green-100 text-green-700' },
   cancelled:         { label: 'בוטל',          icon: XCircle,     color: 'bg-red-100 text-red-700'     },
-  refunded:          { label: 'הוחזר',         icon: XCircle,     color: 'bg-orange-100 text-orange-700'},
+  refunded:          { label: 'הוחזר',         icon: XCircle,     color: 'bg-brand-100 text-brand-700'},
 }
 
 function StatusBadge({ status }) {
@@ -221,7 +221,7 @@ function OrderCard({ order, onReturn, onDelete, selected, onSelect }) {
             <Package className="w-5 h-5 text-brand-600" />
           </div>
           <div>
-            <p className="font-semibold text-gray-900">{order.order_number}</p>
+            <p className="font-semibold text-brand-navy">{order.order_number}</p>
             <p className="text-xs text-gray-400">
               {safeFormatDate(order.created_at)}
             </p>
@@ -230,7 +230,7 @@ function OrderCard({ order, onReturn, onDelete, selected, onSelect }) {
         {/* Right: amount + pay shortcut + status + chevron */}
         <div className="flex items-center gap-2 sm:gap-3">
           <div className="text-left hidden sm:block">
-            <p className="font-bold text-gray-900">₪{Number(order.total).toFixed(2)}</p>
+            <p className="font-bold text-brand-navy">₪{Number(order.total).toFixed(2)}</p>
           </div>
           {order.status === 'pending_payment' && (
             <button
@@ -276,7 +276,7 @@ function OrderCard({ order, onReturn, onDelete, selected, onSelect }) {
             {detail.items?.map((item, i) => (
               <div key={i} className="flex justify-between text-sm">
                 <span className="text-gray-700">{item.part_name} <span className="text-gray-400">×{item.quantity}</span></span>
-                <span className="font-medium text-gray-900">₪{Number(item.total).toFixed(2)}</span>
+                <span className="font-medium text-brand-navy">₪{Number(item.total).toFixed(2)}</span>
               </div>
             ))}
           </div>
@@ -286,7 +286,7 @@ function OrderCard({ order, onReturn, onDelete, selected, onSelect }) {
             <div className="flex justify-between text-gray-600"><span>סכום ביניים</span><span>₪{Number(detail.subtotal).toFixed(2)}</span></div>
             <div className="flex justify-between text-gray-600"><span>מע״מ 18%</span><span>₪{Number(detail.vat).toFixed(2)}</span></div>
             <div className="flex justify-between text-gray-600"><span>משלוח</span><span>₪{Number(detail.shipping).toFixed(2)}</span></div>
-            <div className="flex justify-between font-bold text-gray-900 text-base pt-1 border-t border-gray-200"><span>סה״כ</span><span className="text-brand-600">₪{Number(detail.total).toFixed(2)}</span></div>
+            <div className="flex justify-between font-bold text-brand-navy text-base pt-1 border-t border-gray-200"><span>סה״כ</span><span className="text-brand-600">₪{Number(detail.total).toFixed(2)}</span></div>
           </div>
 
           {/* Tracking */}
@@ -348,7 +348,7 @@ function OrderCard({ order, onReturn, onDelete, selected, onSelect }) {
               </button>
             )}
             {['pending_payment', 'paid', 'processing', 'supplier_ordered'].includes(detail.status) && (
-              <button onClick={handleCancel} disabled={cancelling} className="btn-secondary text-sm flex items-center gap-1 text-orange-600 hover:bg-orange-50 border-orange-200">
+              <button onClick={handleCancel} disabled={cancelling} className="btn-secondary text-sm flex items-center gap-1 text-brand-600 hover:bg-brand-50 border-brand-200">
                 {cancelling ? <Loader2 className="w-4 h-4 animate-spin" /> : <Ban className="w-4 h-4" />} בטל הזמנה
               </button>
             )}
@@ -419,7 +419,7 @@ function ReturnModal({ orderId, orderAmount, onClose, onCreated }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
       <div className="card p-6 max-w-md w-full">
-        <h3 className="font-bold text-gray-900 mb-1">בקשת החזרה</h3>
+        <h3 className="font-bold text-brand-navy mb-1">בקשת החזרה</h3>
         <p className="text-sm text-gray-500 mb-4">ניתן להחזיר תוך 14 יום מקבלת המשלוח · נחזור תוך 24 שעות</p>
         <form onSubmit={submit} className="space-y-4">
           <div>
@@ -771,7 +771,7 @@ export default function Orders() {
               <div key={sp.id} className="card p-4 space-y-2">
                 <div className="flex justify-between items-start gap-4">
                   <div>
-                    <p className="font-semibold text-gray-900 text-sm">{sp.order_number} · {sp.supplier_name}</p>
+                    <p className="font-semibold text-brand-navy text-sm">{sp.order_number} · {sp.supplier_name}</p>
                     <p className="text-xs text-gray-500 mt-0.5">סטטוס הזמנה: {STATUS_MAP[sp.order_status]?.label || sp.order_status}</p>
                     <p className="text-xs text-gray-500 mt-0.5">סכום ששולם לספק: ₪{Number(sp.amount_ils || 0).toFixed(2)}</p>
                     {sp.customer_amount_ils != null && (
@@ -873,7 +873,7 @@ export default function Orders() {
                     <Banknote className="w-5 h-5 text-green-600" />
                   </div>
                   <div>
-                    <p className="font-semibold text-gray-900 text-sm">{r.return_number}</p>
+                    <p className="font-semibold text-brand-navy text-sm">{r.return_number}</p>
                     <p className="text-xs text-gray-500 mt-0.5">הזמנה: {r.order_number}</p>
                     {r.description && <p className="text-xs text-gray-400 mt-0.5">{r.description}</p>}
                     {r.date && (
@@ -929,11 +929,11 @@ export default function Orders() {
                     {/* Header row */}
                     <div className="flex justify-between items-start gap-3">
                       <div className="flex items-start gap-3">
-                        <div className="w-9 h-9 rounded-xl bg-orange-50 flex items-center justify-center flex-shrink-0">
-                          <RotateCcw className="w-5 h-5 text-orange-500" />
+                        <div className="w-9 h-9 rounded-xl bg-brand-50 flex items-center justify-center flex-shrink-0">
+                          <RotateCcw className="w-5 h-5 text-brand-500" />
                         </div>
                         <div>
-                          <p className="font-semibold text-gray-900 text-sm">{r.return_number}</p>
+                          <p className="font-semibold text-brand-navy text-sm">{r.return_number}</p>
                           {r.order_id && (
                             <p className="text-xs text-gray-500 mt-0.5">
                               הזמנה: <span className="text-brand-600 font-medium">{r.order_number || r.order_id?.slice(0, 8)}</span>

@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="AutoSpare Spare Finder logo">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0b1f3a"/>
+      <stop offset="100%" stop-color="#1f3f6b"/>
+    </linearGradient>
+    <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#dce7f5"/>
+      <stop offset="100%" stop-color="#9cb4d3"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#1ca7ff"/>
+      <stop offset="100%" stop-color="#37c3ff"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="36" fill="url(#bg)"/>
+
+  <circle cx="256" cy="190" r="132" fill="none" stroke="url(#ring)" stroke-width="18"/>
+  <circle cx="256" cy="190" r="103" fill="none" stroke="#263b57" stroke-width="20"/>
+  <circle cx="256" cy="190" r="74" fill="none" stroke="url(#accent)" stroke-width="20"/>
+
+  <rect x="113" y="171" width="286" height="34" rx="17" fill="#f0f6ff"/>
+  <rect x="132" y="154" width="122" height="42" rx="18" fill="#f0f6ff"/>
+  <circle cx="177" cy="214" r="24" fill="#f0f6ff"/>
+  <circle cx="338" cy="214" r="24" fill="#f0f6ff"/>
+  <circle cx="177" cy="214" r="11" fill="#1f3f6b"/>
+  <circle cx="338" cy="214" r="11" fill="#1f3f6b"/>
+
+  <circle cx="355" cy="240" r="33" fill="none" stroke="url(#ring)" stroke-width="12"/>
+  <rect x="375" y="259" width="48" height="13" rx="6.5" transform="rotate(36 375 259)" fill="url(#ring)"/>
+
+  <text x="256" y="354" text-anchor="middle" font-size="78" font-family="Segoe UI, Arial, sans-serif" font-weight="800" fill="#f7fbff">AutoSpare</text>
+  <rect x="121" y="377" width="270" height="40" rx="8" fill="url(#accent)"/>
+  <text x="256" y="405" text-anchor="middle" font-size="34" letter-spacing="5" font-family="Segoe UI, Arial, sans-serif" font-weight="700" fill="#f7fbff">SPARE FINDER</text>
+</svg>

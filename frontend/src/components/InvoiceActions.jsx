@@ -132,18 +132,18 @@ export default function InvoiceActions({ orderId, orderNumber, returnId, returnN
       onMouseDown={(e) => e.stopPropagation()}
     >
       <div className="bg-white rounded-xl shadow-2xl border border-gray-100 overflow-hidden">
-        <div className="flex items-center gap-2 px-4 py-2.5 bg-orange-50 border-b border-orange-100">
-          <FileText className="w-4 h-4 text-orange-600" />
-          <span className="text-xs font-semibold text-orange-700 tracking-wide">{isReturn ? 'הודעת זיכוי' : 'חשבונית מס / קבלה'}</span>
+        <div className="flex items-center gap-2 px-4 py-2.5 bg-brand-50 border-b border-brand-100">
+          <FileText className="w-4 h-4 text-brand-600" />
+          <span className="text-xs font-semibold text-brand-700 tracking-wide">{isReturn ? 'הודעת זיכוי' : 'חשבונית מס / קבלה'}</span>
         </div>
         {actions.map((a) => (
           <button
             key={a.key}
             onClick={a.onClick}
             disabled={isLoading}
-            className="w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-orange-50 hover:text-orange-700 transition-colors disabled:opacity-50"
+            className="w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-brand-50 hover:text-brand-700 transition-colors disabled:opacity-50"
           >
-            {loading === a.key ? <Loader2 className="w-4 h-4 animate-spin text-orange-500" /> : a.icon}
+            {loading === a.key ? <Loader2 className="w-4 h-4 animate-spin text-brand-500" /> : a.icon}
             {a.label}
           </button>
         ))}
@@ -159,7 +159,7 @@ export default function InvoiceActions({ orderId, orderNumber, returnId, returnN
         ref={btnRef}
         onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }}
         disabled={isLoading}
-        className={`btn-secondary text-sm flex items-center gap-1 text-orange-600 hover:bg-orange-50 border-orange-200 disabled:opacity-50 ${buttonClassName}`}
+        className={`btn-secondary text-sm flex items-center gap-1 text-brand-600 hover:bg-brand-50 border-brand-200 disabled:opacity-50 ${buttonClassName}`}
       >
         {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
         חשבונית
@@ -181,14 +181,14 @@ export default function InvoiceActions({ orderId, orderNumber, returnId, returnN
           >
             <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
               <div className="flex items-center gap-2">
-                <FileText className="w-4 h-4 text-orange-600" />
+                <FileText className="w-4 h-4 text-brand-600" />
                 <span className="font-semibold text-gray-800">חשבונית — {orderNumber}</span>
               </div>
               <div className="flex items-center gap-2">
                 <button onClick={handlePrint} disabled={isLoading} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-gray-200 hover:bg-gray-50 text-gray-700 transition-colors disabled:opacity-50">
                   {loading === 'print' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Printer className="w-3.5 h-3.5" />} הדפס
                 </button>
-                <button onClick={handleDownload} disabled={isLoading} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg bg-orange-600 hover:bg-orange-700 text-white transition-colors disabled:opacity-50">
+                <button onClick={handleDownload} disabled={isLoading} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg bg-brand-700 hover:bg-brand-800 text-white transition-colors disabled:opacity-50">
                   {loading === 'download' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />} הורד
                 </button>
                 <button onClick={handleShare} disabled={isLoading} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-gray-200 hover:bg-gray-50 text-gray-700 transition-colors disabled:opacity-50">

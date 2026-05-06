@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { authApi } from '../api/auth'
-import { Wrench, Loader2, CheckCircle2, KeyRound, Mail } from 'lucide-react'
+import { Loader2, CheckCircle2, KeyRound, Mail } from 'lucide-react'
 import toast from 'react-hot-toast'
+import AuthBrandHeader from '../components/auth/AuthBrandHeader'
 
 export default function ResetPassword() {
   const navigate = useNavigate()
@@ -48,17 +49,14 @@ export default function ResetPassword() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-brand-50 to-orange-50 p-4">
+    <div className="auth-page min-h-screen flex items-center justify-center p-4">
       <div className="w-full max-w-md">
-        {/* Logo */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-brand-600 rounded-2xl mb-4 shadow-lg">
-            <Wrench className="w-9 h-9 text-white" />
-          </div>
-          <h1 className="text-3xl font-bold text-gray-900">Auto <span className="text-brand-600">Spare</span></h1>
-        </div>
+        <AuthBrandHeader
+          title={<span className="text-brand-navy">איפוס סיסמה</span>}
+          subtitle="התחברות מאובטחת עם שחזור סיסמה מהיר"
+        />
 
-        <div className="card p-8 shadow-md">
+        <div className="auth-panel">
           {step === 'request' && (
             <>
               <div className="flex items-center gap-3 mb-6">
@@ -66,7 +64,7 @@ export default function ResetPassword() {
                   <KeyRound className="w-5 h-5 text-brand-600" />
                 </div>
                 <div>
-                  <h2 className="text-xl font-bold text-gray-900">שכחת סיסמה?</h2>
+                  <h2 className="text-xl font-bold text-brand-navy">שכחת סיסמה?</h2>
                   <p className="text-sm text-gray-500">נשלח לך קישור לאיפוס</p>
                 </div>
               </div>
@@ -98,7 +96,7 @@ export default function ResetPassword() {
           {step === 'sent' && (
             <div className="text-center py-4">
               <Mail className="w-14 h-14 text-brand-600 mx-auto mb-4" />
-              <h2 className="text-xl font-bold text-gray-900 mb-2">בדוק את האימייל שלך</h2>
+              <h2 className="text-xl font-bold text-brand-navy mb-2">בדוק את האימייל שלך</h2>
               <p className="text-gray-500 text-sm mb-6">
                 אם הכתובת קיימת במערכת, תקבל קישור לאיפוס הסיסמה תוך מספר דקות.
               </p>
@@ -118,7 +116,7 @@ export default function ResetPassword() {
                   <KeyRound className="w-5 h-5 text-brand-600" />
                 </div>
                 <div>
-                  <h2 className="text-xl font-bold text-gray-900">איפוס סיסמה</h2>
+                  <h2 className="text-xl font-bold text-brand-navy">איפוס סיסמה</h2>
                   <p className="text-sm text-gray-500">הזן את הקוד מהאימייל וסיסמה חדשה</p>
                 </div>
               </div>
@@ -174,7 +172,7 @@ export default function ResetPassword() {
           {step === 'done' && (
             <div className="text-center py-4">
               <CheckCircle2 className="w-14 h-14 text-green-500 mx-auto mb-4" />
-              <h2 className="text-xl font-bold text-gray-900 mb-2">הסיסמה שונתה בהצלחה!</h2>
+              <h2 className="text-xl font-bold text-brand-navy mb-2">הסיסמה שונתה בהצלחה!</h2>
               <p className="text-gray-500 text-sm mb-6">כעת תוכל להתחבר עם הסיסמה החדשה שלך.</p>
               <button onClick={() => navigate('/login')} className="btn-primary w-full">
                 לדף ההתחברות

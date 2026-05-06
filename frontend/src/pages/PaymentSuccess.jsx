@@ -79,7 +79,7 @@ export default function PaymentSuccess() {
     return (
       <div className="max-w-lg mx-auto mt-16 card p-10 text-center">
         <XCircle className="w-16 h-16 text-red-500 mx-auto mb-4" />
-        <h2 className="text-2xl font-bold text-gray-900 mb-2">אימות התשלום נכשל</h2>
+        <h2 className="text-2xl font-bold text-brand-navy mb-2">אימות התשלום נכשל</h2>
         <p className="text-gray-500 mb-6">{errorMsg}</p>
         <div className="flex gap-3 justify-center">
           <Link to="/orders" className="btn-primary">ההזמנות שלי</Link>
@@ -94,7 +94,7 @@ export default function PaymentSuccess() {
   return (
     <div className="max-w-lg mx-auto mt-16 card p-10 text-center">
       <CheckCircle2 className="w-16 h-16 text-green-500 mx-auto mb-4" />
-      <h2 className="text-2xl font-bold text-gray-900 mb-2">
+      <h2 className="text-2xl font-bold text-brand-navy mb-2">
         {isMulti ? `תשלום עבור ${orderData.orders.length} הזמנות בוצע!` : 'ההזמנה בוצעה בהצלחה!'}
       </h2>
 
