@@ -41,16 +41,19 @@ jobs:
               raise SystemExit("CATALOG_DB_URL must be a full postgres URL")
 
           ssh_host = ((os.environ.get("SSH_HOST_SECRET") or "").strip() or (os.environ.get("VPS_HOST_SECRET") or "").strip() or (parsed.hostname or "").strip())
+          ssh_host = ssh_host.splitlines()[0].strip() if ssh_host else ""
           if not ssh_host:
               raise SystemExit("Missing SSH host: set SSH_HOST or VPS_HOST secret, or use a URL with hostname")
 
           tunnel_target_host = (os.environ.get("DB_TUNNEL_TARGET_HOST_SECRET") or "").strip() or "127.0.0.1"
+          tunnel_target_host = tunnel_target_host.splitlines()[0].strip()
           tunnel_target_port = (os.environ.get("DB_TUNNEL_TARGET_PORT_SECRET") or "").strip() or str(parsed.port or 5432)
+          tunnel_target_port = tunnel_target_port.splitlines()[0].strip()
 
           with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as fh:
-              fh.write(f"SSH_TUNNEL_HOST={ssh_host}\\n")
-              fh.write(f"DB_TUNNEL_TARGET_HOST={tunnel_target_host}\\n")
-              fh.write(f"DB_TUNNEL_TARGET_PORT={tunnel_target_port}\\n")
+              fh.write(f"SSH_TUNNEL_HOST={ssh_host}\n")
+              fh.write(f"DB_TUNNEL_TARGET_HOST={tunnel_target_host}\n")
+              fh.write(f"DB_TUNNEL_TARGET_PORT={tunnel_target_port}\n")
           PY
 
       - name: Resolve SSH private key secret
@@ -147,7 +150,7 @@ jobs:
           )
 
           with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as fh:
-              fh.write(f"TUNNELED_CATALOG_DB_URL={tunneled}\\n")
+              fh.write(f"TUNNELED_CATALOG_DB_URL={tunneled}\n")
           PY
 
       - name: Preflight catalog DB connection
