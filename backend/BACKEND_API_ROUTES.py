@@ -642,6 +642,7 @@ async def _load_runtime_ai_overrides_from_db():
 async def startup():
     from catalog_scraper import start_scraper_task
     from db_update_agent import start_agent_task as start_db_agent
+    from db_cleanup_agent import run_cleanup_loop
     print("🚀 Auto Spare API starting...")
     print(f"   Environment: {os.getenv('ENVIRONMENT', 'development')}")
     await _load_runtime_ai_overrides_from_db()
@@ -677,6 +678,7 @@ async def startup():
     asyncio.create_task(_backup_loop())                    # ← pg_dump autospare + autospare_pii (every 24 h)
     start_scraper_task()           # ← catalog scraper background loop
     start_db_agent(get_db, 6.0)   # ← DB cleaning / normalisation agent (every 6h)
+    asyncio.create_task(run_cleanup_loop())     # ← micro-batch cleanup loop (continuous)
     asyncio.create_task(_noa_marketing_loop())         # ← NOA social media agent (every 24h)
     print("✅ All systems ready — price-sync + catalog-scraper + db-agent schedulers started")
 
@@ -1777,10 +1779,14 @@ async def get_dashboard_inventory(
     if category and category != 'הכל':
         query = query.where(PartsCatalog.category == category)
     if search:
-        query = query.where(or_(
-            PartsCatalog.part_name.ilike(f"%{search}%"),
-            PartsCatalog.manufacturer_part_number.ilike(f"%{search}%")
-        ))
+        pattern = f"%{search.strip()}%"
+        search_filters = []
+        for attr in ("name", "name_he", "sku", "oem_number", "manufacturer"):
+            column = getattr(PartsCatalog, attr, None)
+            if column is not None:
+                search_filters.append(column.ilike(pattern))
+        if search_filters:
+            query = query.where(or_(*search_filters))
     query = query.limit(50)
     results = (await cat_db.execute(query)).scalars().all()
     return results

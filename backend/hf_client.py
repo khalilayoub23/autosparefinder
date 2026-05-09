@@ -39,10 +39,11 @@ CEREBRAS_TEXT_MODEL = os.getenv("CEREBRAS_TEXT_MODEL", "qwen-3-235b-a22b-instruc
 CEREBRAS_BASE       = "https://api.cerebras.ai/v1"
 GEMINI_API_KEY      = os.getenv("GEMINI_API_KEY", "")
 WHATSAPP_GEMINI_KEY = os.getenv("WHATSAPP_GEMINI_API_KEY", GEMINI_API_KEY)  # dedicated key for webhook
-GEMINI_VIS_MODEL    = os.getenv("GEMINI_VIS_MODEL", "gemini-1.5-flash-8b")
+GEMINI_VIS_MODEL    = os.getenv("GEMINI_VIS_MODEL", "gemini-2.0-flash")
 GEMINI_BASE         = "https://generativelanguage.googleapis.com/v1beta/models"
 GROQ_API_KEY        = os.getenv("GROQ_API_KEY", "")
 GROQ_AUDIO_MODEL    = os.getenv("GROQ_AUDIO_MODEL", "whisper-large-v3-turbo")
+GROQ_VIS_MODEL      = os.getenv("GROQ_VIS_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
 GROQ_BASE           = "https://api.groq.com/openai/v1"
 
 # ── Gemini circuit breaker ─────────────────────────────────────────────────────
@@ -386,34 +387,100 @@ async def hf_embed(text: str, timeout: float = 10.0) -> list[float]:
         logger.warning("hf_client [embed] failed: %s", exc)
         return []
 
+async def groq_vision(
+    image_b64: str,
+    prompt: str,
+    mime: str = "image/jpeg",
+    timeout: float = 60.0,
+) -> str:
+    if not GROQ_API_KEY:
+        raise RuntimeError("GROQ_API_KEY not set in .env")
+
+    data_url = f"data:{mime};base64,{image_b64}"
+    payload = _json.dumps({
+        "model": GROQ_VIS_MODEL,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": data_url}},
+            ],
+        }],
+        "max_tokens": 1000,
+    }, ensure_ascii=False).encode()
+
+    resp = await _post_with_retry(
+        f"{GROQ_BASE}/chat/completions",
+        {
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        payload,
+        timeout,
+        "groq_vision",
+    )
+    resp.raise_for_status()
+    result: str = resp.json()["choices"][0]["message"]["content"]
+    return _clean_response(result)
+
+
 async def hf_vision(
     image_b64: str,
     prompt: str,
     mime: str = "image/jpeg",
     timeout: float = 60.0,
 ) -> str:
-    if not GEMINI_API_KEY:
-        raise RuntimeError("GEMINI_API_KEY not set in .env")
+    if not image_b64:
+        raise RuntimeError("hf_vision requires non-empty image base64 payload")
 
-    payload = _json.dumps({
-        "contents": [{
-            "parts": [
-                {"text": prompt},
-                {"inline_data": {"mime_type": mime, "data": image_b64}},
-            ],
-        }],
-    }, ensure_ascii=False).encode()
+    if GEMINI_API_KEY and not _gemini_cb_is_open():
+        payload = _json.dumps({
+            "contents": [{
+                "parts": [
+                    {"text": prompt},
+                    {"inline_data": {"mime_type": mime, "data": image_b64}},
+                ],
+            }],
+        }, ensure_ascii=False).encode()
 
-    resp = await _post_with_retry(
-        f"{GEMINI_BASE}/{GEMINI_VIS_MODEL}:generateContent?key={GEMINI_API_KEY}",
-        {"Content-Type": "application/json"},
-        payload,
-        timeout,
-        "vision",
-    )
-    resp.raise_for_status()
-    result = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-    return _clean_response(result)
+        resp = await _post_with_retry(
+            f"{GEMINI_BASE}/{GEMINI_VIS_MODEL}:generateContent?key={GEMINI_API_KEY}",
+            {"Content-Type": "application/json"},
+            payload,
+            timeout,
+            "vision",
+        )
+
+        try:
+            resp.raise_for_status()
+            result = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+            return _clean_response(result)
+        except Exception as gemini_err:
+            err_str = str(gemini_err)
+            logger.warning("hf_vision: Gemini failed (%s) — trying GROQ vision fallback", gemini_err)
+            if "429" in err_str or "quota" in err_str.lower() or "limit" in err_str.lower():
+                _gemini_cb_trip()
+            if GROQ_API_KEY:
+                return await groq_vision(
+                    image_b64=image_b64,
+                    prompt=prompt,
+                    mime=mime,
+                    timeout=timeout,
+                )
+            raise
+
+    if _gemini_cb_is_open():
+        logger.debug("hf_vision: Gemini circuit breaker open — using GROQ vision fallback")
+
+    if GROQ_API_KEY:
+        return await groq_vision(
+            image_b64=image_b64,
+            prompt=prompt,
+            mime=mime,
+            timeout=timeout,
+        )
+
+    raise RuntimeError("No vision provider available (Gemini unavailable and GROQ_API_KEY missing)")
 
 
 async def gemini_text(

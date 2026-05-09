@@ -18,10 +18,10 @@ from BACKEND_DATABASE_MODELS import (
     User, Conversation, Message, AgentRating, SystemSetting,
 )
 from BACKEND_AUTH_SECURITY import (
-    get_current_user, get_current_verified_user, get_redis, check_rate_limit,
+    get_current_user, get_current_verified_user, get_current_admin_user, get_redis, check_rate_limit,
     decode_access_token,
 )
-from BACKEND_AI_AGENTS import process_user_message, process_agent_response_for_message
+from BACKEND_AI_AGENTS import process_user_message, process_agent_response_for_message, get_checkout_link_metrics_snapshot
 from jose import JWTError
 from routes.utils import _scan_bytes_for_virus, _guarded_task
 
@@ -334,6 +334,14 @@ class HumanHandoffFeedbackRequest(BaseModel):
     feedback: Optional[str] = Field(default="", max_length=1000)
 
 
+class CheckoutSmokeRequest(BaseModel):
+    source: str = Field(default="web", pattern="^(web|whatsapp|telegram)$")
+    part_id: str
+    choice: int = Field(default=1, ge=1, le=3)
+    conversation_id: Optional[str] = None
+    preferred_lang: str = Field(default="en", pattern="^(he|en|ar)$")
+
+
 @router.post("/api/v1/chat/message")
 async def send_message(data: ChatMessageRequest, request: Request, current_user: User = Depends(get_current_verified_user), db: AsyncSession = Depends(get_pii_db), redis=Depends(get_redis)):
     ip = request.client.host if request.client else "unknown"
@@ -462,6 +470,98 @@ async def send_message(data: ChatMessageRequest, request: Request, current_user:
         "user_message_id": msg_id,
         "created_at": user_msg.created_at.isoformat(),
     }
+
+
+@router.post("/api/v1/chat/admin/checkout-smoke")
+async def admin_checkout_smoke(
+    body: CheckoutSmokeRequest,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_pii_db),
+):
+    source = (body.source or "web").strip().lower()
+    if source not in {"web", "whatsapp", "telegram"}:
+        raise HTTPException(status_code=400, detail="Invalid source")
+
+    part_id = str(body.part_id or "").strip()
+    try:
+        uuid.UUID(part_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="part_id must be a valid UUID")
+
+    conversation = None
+    if body.conversation_id:
+        result = await db.execute(
+            select(Conversation).where(
+                and_(Conversation.id == body.conversation_id, Conversation.user_id == current_user.id)
+            )
+        )
+        conversation = result.scalar_one_or_none()
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+
+    if not conversation:
+        conversation = Conversation(
+            user_id=current_user.id,
+            title=f"checkout smoke {source}",
+            is_active=True,
+            started_at=datetime.utcnow(),
+            last_message_at=datetime.utcnow(),
+        )
+        db.add(conversation)
+        await db.flush()
+
+    context_data = dict(conversation.context or {})
+    context_data["parts_flow_active"] = True
+    context_data["vehicle_confirmed"] = True
+    context_data["preferred_lang"] = body.preferred_lang
+    if not isinstance(context_data.get("vehicle_profile"), dict):
+        context_data["vehicle_profile"] = {
+            "manufacturer": "Smoke",
+            "model": "Checkout",
+            "year": "2024",
+            "engine_type": "N/A",
+            "license_plate": "0000000",
+            "source": "smoke_test",
+        }
+    context_data["pending_checkout_parts"] = [
+        {"idx": int(body.choice), "part_id": part_id, "supplier_part_id": ""}
+    ]
+
+    conversation.context = context_data
+    conversation.last_message_at = datetime.utcnow()
+    await db.commit()
+
+    result = await process_user_message(
+        user_id=str(current_user.id),
+        message=str(body.choice),
+        conversation_id=str(conversation.id),
+        db=db,
+        source=source,
+    )
+
+    response_text = str(result.get("response") or "")
+    checkout_url = ""
+    match = re.search(r"https?://\S+", response_text)
+    if match:
+        checkout_url = match.group(0).rstrip(").,;]")
+
+    metrics = get_checkout_link_metrics_snapshot()
+
+    return {
+        "ok": True,
+        "source": source,
+        "conversation_id": result.get("conversation_id") or str(conversation.id),
+        "response": response_text,
+        "contains_checkout_url": bool(checkout_url),
+        "checkout_url": checkout_url or None,
+        "metrics": metrics.get(source),
+        "all_metrics": metrics,
+    }
+
+
+@router.get("/api/v1/chat/admin/checkout-metrics")
+async def admin_checkout_metrics(current_user: User = Depends(get_current_admin_user)):
+    return {"metrics": get_checkout_link_metrics_snapshot()}
 
 
 @router.post("/api/v1/chat/handoff/request")
@@ -665,7 +765,20 @@ async def get_messages(conversation_id: str, current_user: User = Depends(get_cu
         raise HTTPException(status_code=404, detail="Conversation not found")
     result = await db.execute(select(Message).where(Message.conversation_id == conversation_id).order_by(Message.created_at.asc()).limit(limit))
     msgs = result.scalars().all()
-    return {"messages": [{"id": str(m.id), "role": m.role, "agent_name": m.agent_name, "content": m.content, "content_type": m.content_type, "created_at": m.created_at} for m in msgs]}
+    return {
+        "messages": [
+            {
+                "id": str(m.id),
+                "role": m.role,
+                "agent_name": m.agent_name,
+                "content": m.content,
+                "content_type": m.content_type,
+                "created_at": m.created_at,
+                "image_data_url": (m.analysis or {}).get("image_data_url") if (m.content_type == "image" and isinstance(m.analysis, dict)) else None,
+            }
+            for m in msgs
+        ]
+    }
 
 
 @router.delete("/api/v1/chat/conversations/{conversation_id}")

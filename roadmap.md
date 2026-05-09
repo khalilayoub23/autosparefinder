@@ -1,8 +1,30 @@
 # AutoSpareFinder Roadmap
 
-Last updated: 2026-04-25
+Last updated: 2026-05-09
 Owner: Auto Spare Admin <admin@autosparefinder.co.il>
 Update cadence: Weekly
+
+## Recent Changes (2026-05-09)
+- Root-fix conversational quality pass completed in backend/BACKEND_AI_AGENTS.py to reduce scripted replies:
+  - Added contextual recovery reply helper that mirrors user details and language (Hebrew/Arabic/English).
+  - Reworked anti-loop duplicate-response fallback to use adaptive prompts instead of fixed generic lines.
+  - Softened strict channel policy/script instructions that were forcing repetitive phrasing.
+- NOA marketing behavior shifted from deterministic template fallback to adaptive campaign planning:
+  - Added low-quality caption repair path instead of forced one-template caption.
+  - Added campaign plan generator with structured budget estimate, channel mix, and explicit confirmation prompt.
+- Campaign budget governance added in admin API (backend/routes/admin.py):
+  - New endpoint: POST /api/v1/admin/social/campaigns/generate
+  - New endpoint: POST /api/v1/admin/social/campaigns/{post_id}/confirm-budget
+  - Publish gate now blocks campaign posts until budget is explicitly confirmed.
+  - Social publish flow now supports Telegram + TikTok automated dispatch and returns per-platform publish results.
+
+## Recent Changes (2026-05-07)
+- Root-fix deep end-to-end cycle rerun across web, WhatsApp, and Telegram text/image/audio modes with model-backed processing.
+- Root fix applied in backend hf_client: corrected default GEMINI_VIS_MODEL and added Groq vision fallback (GROQ_VIS_MODEL default: meta-llama/llama-4-scout-17b-16e-instruct).
+- Web channel upload-image and upload-audio routes passed authenticated runtime checks; image mode now returns structured part identification under fallback, and audio mode returns transcription plus assistant response.
+- WhatsApp outbound and inbound text/image/audio modes passed transport and persistence checks; image mode now continues via Groq fallback when Gemini returns 429.
+- Telegram secured webhook text/photo/audio modes passed with real Bot API file_ids; photo mode now succeeds through fallback instead of failing on Gemini 429.
+- Operational note: Gemini vision quota saturation still occurs, but fallback keeps image flows functional. Monitor Groq vision usage and configure WHATSAPP_GEMINI_API_KEY when available.
 
 ## Recent Changes (2026-04-25)
 - Public domain updated from `autosparefinder.com` to `autosparefinder.co.il` and related environment variables adjusted.
@@ -1231,3 +1253,32 @@ Before marking any item DONE:
 - **Docker Orchestration:** Updated docker-compose configuration with log rotations (`max-size: 10m`, `max-file: 3`) and `unless-stopped` rules.
 - **Resilience:** Rebuilt backend to use a Python-scripted HTTP health check for Docker, eliminating reliance on curl. Tested `/api/health` successfully.
 - **Automated Backups:** Integrated `prodrigestivill/postgres-backup-local` for both the `autospare_pii` and `autospare` catalog databases over an internal Docker network, validating successful compressed `.sql.gz` dump creation.
+
+## May 9, 2026: Live Smoke Validation (Campaign + Cross-Channel)
+- **Campaign governance smoke (live API):**
+  - Generated campaign posts via `POST /api/v1/admin/social/campaigns/generate`.
+  - Verified approval workflow with `POST /api/v1/admin/approvals/{approval_id}/resolve`.
+  - Verified budget gate enforcement on approved campaign without budget confirmation:
+    - `POST /api/v1/admin/social/publish/e679b403-5202-4e1e-a83a-312bd1574be9` -> `409 Campaign budget confirmation is required before publishing`.
+  - Verified successful publish after budget confirmation and approval:
+    - `POST /api/v1/admin/social/publish/f8a8caa2-49de-4b58-b278-d4c99d95d5eb` -> `200`, `published_platforms=["telegram"]`, `message_id=562`.
+- **Cross-channel humanization smoke (live API + conversation logs):**
+  - **Web** (`/api/v1/chat/message`, conversation `40df7c8b-9c3b-420c-ad21-6efb11cbf880`): assistant replied in conversational Hebrew with follow-up guidance.
+  - **WhatsApp** (`/api/v1/webhooks/whatsapp`, conversation `72f5b761-9f9e-4426-a54b-4759e447651e`): assistant replied in sales-style Hebrew and asked for license plate to continue matching.
+  - **Telegram** (`/api/v1/webhooks/telegram`, conversation `9587c0a1-c751-4be9-86ff-66c19d966313`): assistant replied in conversational Hebrew with practical next-step questions.
+- **Notes:**
+  - Policy gate blocked low-quality/generated captions until content passed policy checks; this validation behavior is active in production runtime.
+  - One WhatsApp test prompt intentionally triggered human-handoff intent (`human_handoff_status=requested`), confirming handoff routing still works.
+
+## May 9, 2026: Follow-up Hardening (Requested Actions Completed)
+- Rotated `admin.test@autosparefinder.com` password and verified login with the new credential.
+- Cleaned smoke artifacts from live validation:
+  - Removed campaign posts: `2fe3645d-4b88-4cdd-a482-3458bc9e7460`, `2ed6f3fc-7bf3-4b4b-9680-f4238baffeb4`, `f8a8caa2-49de-4b58-b278-d4c99d95d5eb`, `e679b403-5202-4e1e-a83a-312bd1574be9`.
+  - Removed related approval records and soft-deleted smoke chat conversations/messages.
+- Tuned social policy gate behavior to reduce false `422` blocks:
+  - Hard compliance issues still block (service claims, unsupported scripts, TikTok compliance violations).
+  - Readability/structure issues are now advisories with auto-suggested content (non-blocking).
+- Live regression validation after patch + redeploy:
+  - `PUT /api/v1/admin/social/posts/{post_id}` with previously over-blocked style content -> `200`.
+  - `POST /api/v1/admin/approvals/{approval_id}/resolve` -> `200`.
+  - Budget governance still enforced: `POST /api/v1/admin/social/publish/{post_id}` before confirmation -> `409`.

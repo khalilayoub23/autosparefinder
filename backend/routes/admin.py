@@ -27,11 +27,13 @@ Endpoints:
   PUT    /api/v1/admin/orders/{order_id}/status
 """
 import asyncio
+import base64
+import binascii
 import json
 import os
 import uuid
 from datetime import datetime, date
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID as _UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
@@ -51,7 +53,7 @@ from BACKEND_AUTH_SECURITY import (
     hash_password, publish_notification,
 )
 from currency_rate import get_usd_to_ils_rate
-from routes.utils import _guarded_task
+from routes.utils import _guarded_task, _scan_bytes_for_virus
 from routes.schemas import (
     SuperAdminSettingCreateBody,
     SuperAdminSettingUpdateBody,
@@ -63,6 +65,8 @@ from routes.schemas import (
     ResolveApprovalBody,
     CreateSocialPostRequest,
     UpdateSocialPostRequest,
+    GenerateCampaignRequest,
+    ConfirmCampaignBudgetRequest,
 )
 
 router = APIRouter()
@@ -107,6 +111,32 @@ def _raise_social_policy_block(review: Dict[str, Any]) -> None:
             "platforms": review.get("platforms", []),
         },
     )
+
+
+def _social_meta(post: SocialPost) -> Dict[str, Any]:
+    if isinstance(post.external_post_ids, dict):
+        return dict(post.external_post_ids)
+    return {}
+
+
+def _merge_social_meta(post: SocialPost, patch: Dict[str, Any]) -> Dict[str, Any]:
+    meta = _social_meta(post)
+    meta.update(patch or {})
+    post.external_post_ids = meta
+    return meta
+
+
+def _is_campaign_post(post: SocialPost) -> bool:
+    return bool(_social_meta(post).get("__campaign__", False))
+
+
+def _campaign_budget_is_confirmed(post: SocialPost) -> bool:
+    meta = _social_meta(post)
+    if not bool(meta.get("__campaign__", False)):
+        return True
+    if not bool(meta.get("budget_confirmation_required", False)):
+        return True
+    return bool(meta.get("budget_confirmed", False))
 
 
 async def _write_audit_log(
@@ -1249,6 +1279,77 @@ def _safe_channel_text(msg: str) -> str:
     return (msg or "").replace("<", "&lt;").replace(">", "&gt;").strip()
 
 
+_ALLOWED_ADMIN_IMAGE_MIMES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+_ADMIN_INLINE_IMAGE_MAX_BYTES = max(256_000, int(os.getenv("ADMIN_CHAT_IMAGE_MAX_BYTES", "3145728")))
+
+
+def _parse_admin_inline_image(body: Dict[str, Any]) -> tuple[bytes, str, str, str] | None:
+    raw_b64 = str(body.get("image_base64") or "").strip()
+    if not raw_b64:
+        return None
+
+    mime_type = str(body.get("image_mime") or "").strip().lower()
+    if raw_b64.startswith("data:"):
+        header, _, payload = raw_b64.partition(",")
+        if payload:
+            raw_b64 = payload.strip()
+        if not mime_type:
+            mime_type = header[5:].split(";", 1)[0].strip().lower()
+
+    if not mime_type:
+        mime_type = "image/jpeg"
+    if mime_type not in _ALLOWED_ADMIN_IMAGE_MIMES:
+        raise HTTPException(status_code=415, detail=f"Unsupported image type: {mime_type}")
+
+    try:
+        image_bytes = base64.b64decode(raw_b64, validate=True)
+    except (ValueError, binascii.Error):
+        raise HTTPException(status_code=400, detail="Invalid image payload")
+
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="Image payload is empty")
+
+    if len(image_bytes) > _ADMIN_INLINE_IMAGE_MAX_BYTES:
+        max_mb = _ADMIN_INLINE_IMAGE_MAX_BYTES / (1024 * 1024)
+        raise HTTPException(status_code=413, detail=f"Image too large (max {max_mb:.1f} MB)")
+
+    scan_status, virus_name = _scan_bytes_for_virus(image_bytes)
+    if scan_status == "infected":
+        raise HTTPException(status_code=400, detail=f"File rejected: malware detected ({virus_name})")
+
+    image_name = str(body.get("image_name") or "chat-image").strip()[:120] or "chat-image"
+    canonical_b64 = base64.b64encode(image_bytes).decode("ascii")
+    image_data_url = f"data:{mime_type};base64,{canonical_b64}"
+    return image_bytes, mime_type, image_name, image_data_url
+
+
+def _telegram_targets_from_context(context: Dict[str, Any]) -> list[str]:
+    chat_id = str(context.get("telegram_chat_id") or "").strip()
+    user_id = str(context.get("telegram_user_id") or "").strip()
+    username = str(context.get("telegram_username") or "").strip().lstrip("@")
+
+    def _is_int_like(value: str) -> bool:
+        v = value[1:] if value.startswith("-") else value
+        return bool(v) and v.isdigit()
+
+    targets: list[str] = []
+
+    def _push(value: str) -> None:
+        if value and value not in targets:
+            targets.append(value)
+
+    if _is_int_like(chat_id):
+        _push(chat_id)
+    if _is_int_like(user_id):
+        _push(user_id)
+    _push(chat_id)
+    _push(user_id)
+    if username:
+        _push(f"@{username}")
+
+    return targets
+
+
 def _is_internal_bot_user(user: User) -> bool:
     email = (user.email or "").strip().lower()
     return email.endswith("@autospare.internal")
@@ -1466,29 +1567,7 @@ def _build_takeover_intro(user: User) -> str:
 
 async def _send_channel_message(channel_name: str, context: Dict[str, Any], text: str) -> Dict[str, Any]:
     if channel_name == "telegram":
-        chat_id = str(context.get("telegram_chat_id") or "").strip()
-        user_id = str(context.get("telegram_user_id") or "").strip()
-        username = str(context.get("telegram_username") or "").strip().lstrip("@")
-
-        def _is_int_like(value: str) -> bool:
-            v = value[1:] if value.startswith("-") else value
-            return bool(v) and v.isdigit()
-
-        targets: list[str] = []
-
-        def _push(value: str) -> None:
-            if value and value not in targets:
-                targets.append(value)
-
-        if _is_int_like(chat_id):
-            _push(chat_id)
-        if _is_int_like(user_id):
-            _push(user_id)
-        _push(chat_id)
-        _push(user_id)
-        if username:
-            _push(f"@{username}")
-
+        targets = _telegram_targets_from_context(context)
         if not targets:
             return {"ok": False, "error": "telegram_chat_id/telegram_user_id missing in conversation context"}
 
@@ -1515,9 +1594,56 @@ async def _send_channel_message(channel_name: str, context: Dict[str, Any], text
         phone = str(context.get("whatsapp_phone") or "").strip()
         if not phone:
             return {"ok": False, "error": "whatsapp_phone missing in conversation context"}
+        reply_jid = str(context.get("whatsapp_reply_jid") or "").strip()
         from social.whatsapp_provider import get_whatsapp_provider
         provider = get_whatsapp_provider()
-        return await provider.send_message(phone, text)
+        return await provider.send_message(phone, text, reply_jid=reply_jid)
+
+    if channel_name == "web":
+        return {"ok": True, "channel": "web", "mode": "db_only"}
+
+    return {"ok": False, "error": "Unsupported channel"}
+
+
+async def _send_channel_image(
+    channel_name: str,
+    context: Dict[str, Any],
+    image_bytes: bytes,
+    mime_type: str,
+    caption: str = "",
+) -> Dict[str, Any]:
+    if channel_name == "telegram":
+        targets = _telegram_targets_from_context(context)
+        if not targets:
+            return {"ok": False, "error": "telegram_chat_id/telegram_user_id missing in conversation context"}
+
+        from social.telegram_publisher import send_telegram_photo
+        safe_caption = _safe_channel_text(caption)
+        last_error = "Unknown Telegram API error"
+        for target in targets:
+            result = await send_telegram_photo(target, image_bytes, mime_type=mime_type, caption=safe_caption)
+            if result.get("ok"):
+                return {
+                    "ok": True,
+                    "message_id": result.get("message_id"),
+                    "telegram_target": target,
+                }
+            last_error = str(result.get("error") or last_error)
+
+        return {
+            "ok": False,
+            "error": last_error,
+            "telegram_targets_tried": targets,
+        }
+
+    if channel_name == "whatsapp":
+        phone = str(context.get("whatsapp_phone") or "").strip()
+        if not phone:
+            return {"ok": False, "error": "whatsapp_phone missing in conversation context"}
+        reply_jid = str(context.get("whatsapp_reply_jid") or "").strip()
+        from social.whatsapp_provider import get_whatsapp_provider
+        provider = get_whatsapp_provider()
+        return await provider.send_image(phone, image_bytes, mime_type=mime_type, caption=caption, reply_jid=reply_jid)
 
     if channel_name == "web":
         return {"ok": True, "channel": "web", "mode": "db_only"}
@@ -1963,6 +2089,7 @@ async def admin_get_chat_messages(
                 "model_used": m.model_used,
                 "tokens_used": m.tokens_used,
                 "created_at": m.created_at,
+                "image_data_url": (m.analysis or {}).get("image_data_url") if (m.content_type == "image" and isinstance(m.analysis, dict)) else None,
             }
             for m in msgs
         ],
@@ -2152,9 +2279,7 @@ async def admin_reply_chat(
     current_user: User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_pii_db),
 ):
-    message = (body.get("message") or "").strip()
-    if not message:
-        raise HTTPException(status_code=400, detail="message is required")
+    message = str(body.get("message") or "").strip()
 
     conv = (await db.execute(
         select(Conversation).where(and_(Conversation.id == conversation_id, Conversation.deleted_at.is_(None)))
@@ -2171,19 +2296,52 @@ async def admin_reply_chat(
     if channel_name not in {"telegram", "whatsapp", "web"}:
         raise HTTPException(status_code=400, detail="Manual outbound is supported for telegram/whatsapp/web only")
 
-    outbound_result = await _send_channel_message(channel_name, context, message)
+    image_payload = _parse_admin_inline_image(body)
+    if not message and not image_payload:
+        raise HTTPException(status_code=400, detail="message or image is required")
 
-    if not outbound_result.get("ok"):
-        err = outbound_result.get("error") or "Failed to send message"
-        raise HTTPException(status_code=502, detail=err)
+    outbound_result: Dict[str, Any]
+    content_type = "text"
+    persisted_content = message
+    model_used = "admin_manual_reply"
+    analysis_payload: Dict[str, Any] | None = None
+
+    if image_payload:
+        image_bytes, image_mime, image_name, image_data_url = image_payload
+        outbound_result = await _send_channel_image(
+            channel_name,
+            context,
+            image_bytes=image_bytes,
+            mime_type=image_mime,
+            caption=message,
+        )
+        if not outbound_result.get("ok"):
+            err = outbound_result.get("error") or "Failed to send image"
+            raise HTTPException(status_code=502, detail=err)
+
+        content_type = "image"
+        persisted_content = message or "תמונה"
+        model_used = "admin_manual_image_reply"
+        analysis_payload = {
+            "image_data_url": image_data_url,
+            "image_mime": image_mime,
+            "image_name": image_name,
+            "image_bytes": len(image_bytes),
+        }
+    else:
+        outbound_result = await _send_channel_message(channel_name, context, message)
+        if not outbound_result.get("ok"):
+            err = outbound_result.get("error") or "Failed to send message"
+            raise HTTPException(status_code=502, detail=err)
 
     db.add(Message(
         conversation_id=conv.id,
         role="assistant",
         agent_name="admin_manual",
-        content=message,
-        content_type="text",
-        model_used="admin_manual_reply",
+        content=persisted_content,
+        content_type=content_type,
+        analysis=analysis_payload,
+        model_used=model_used,
         tokens_used=0,
         created_at=datetime.utcnow(),
     ))
@@ -2194,6 +2352,8 @@ async def admin_reply_chat(
         "ok": True,
         "conversation_id": str(conv.id),
         "channel": channel_name,
+        "content_type": content_type,
+        "image_attached": bool(image_payload),
         "delivery": outbound_result,
     }
 
@@ -3068,6 +3228,147 @@ async def delete_social_post(
     return {"message": "Post deleted", "post_id": post_id}
 
 
+@router.post("/api/v1/admin/social/campaigns/generate", status_code=201)
+async def generate_social_campaign(
+    data: GenerateCampaignRequest,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+    pii_db: AsyncSession = Depends(get_pii_db),
+):
+    from BACKEND_AI_AGENTS import get_agent
+
+    agent = get_agent("social_media_manager_agent")
+    platforms = agent._normalize_campaign_platforms(data.platforms)
+    campaign_plan = await agent.generate_campaign_plan(
+        topic=data.topic,
+        platforms=platforms,
+        tone=data.tone,
+        duration_days=data.duration_days,
+        proposed_budget_ils=data.proposed_budget_ils,
+    )
+
+    primary_platform = platforms[0] if platforms else "facebook"
+    content = await agent.generate_post(data.topic, primary_platform, data.tone)
+
+    review = _review_social_post_policy(content, platforms)
+    if not review.get("ok", False):
+        content = review.get("suggested_content") or content
+
+    post = SocialPost(
+        content=content,
+        platforms=platforms,
+        scheduled_at=data.schedule_time,
+        status="pending_approval",
+        created_by=current_user.id,
+    )
+    db.add(post)
+    await db.flush()
+
+    _merge_social_meta(post, {
+        "__campaign__": True,
+        "campaign_plan": campaign_plan,
+        "budget_confirmation_required": True,
+        "budget_confirmed": False,
+        "approved_budget_ils": None,
+        "budget_confirmation_note": None,
+    })
+
+    pii_db.add(ApprovalQueue(
+        entity_type="social_post",
+        entity_id=post.id,
+        action="review_social_campaign",
+        payload={
+            "content": content,
+            "platforms": platforms,
+            "scheduled_at": data.schedule_time.isoformat() if data.schedule_time else None,
+            "campaign_plan": campaign_plan,
+            "budget_confirmation_required": True,
+            "created_by": str(current_user.id),
+        },
+        status="pending",
+        requested_by=current_user.id,
+    ))
+
+    await db.commit()
+    await pii_db.commit()
+
+    return {
+        "post_id": str(post.id),
+        "status": post.status,
+        "content": content,
+        "platforms": platforms,
+        "campaign_plan": campaign_plan,
+        "budget_confirmation_required": True,
+    }
+
+
+@router.post("/api/v1/admin/social/campaigns/{post_id}/confirm-budget")
+async def confirm_social_campaign_budget(
+    post_id: str,
+    data: ConfirmCampaignBudgetRequest,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(SocialPost).where(SocialPost.id == post_id))
+    post = result.scalar_one_or_none()
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+    if not _is_campaign_post(post):
+        raise HTTPException(status_code=400, detail="Post is not a campaign post")
+
+    meta = _social_meta(post)
+    campaign_plan = meta.get("campaign_plan") if isinstance(meta.get("campaign_plan"), dict) else {}
+
+    if not data.approved:
+        meta.update({
+            "budget_confirmed": False,
+            "approved_budget_ils": None,
+            "budget_confirmation_note": data.note,
+            "budget_confirmed_by": None,
+            "budget_confirmed_at": None,
+        })
+        post.external_post_ids = meta
+        post.updated_at = datetime.utcnow()
+        await db.commit()
+        return {
+            "post_id": post_id,
+            "budget_confirmed": False,
+            "message": "Campaign budget remains unconfirmed",
+        }
+
+    approved_budget = data.approved_budget_ils
+    if approved_budget is None:
+        try:
+            approved_budget = float(campaign_plan.get("total_budget_ils_estimate"))
+        except Exception:
+            approved_budget = None
+    if approved_budget is None or float(approved_budget) <= 0:
+        raise HTTPException(status_code=422, detail="Approved budget must be greater than zero")
+
+    if isinstance(campaign_plan, dict):
+        campaign_plan["total_budget_ils_estimate"] = round(float(approved_budget), 2)
+
+    meta.update({
+        "campaign_plan": campaign_plan,
+        "budget_confirmation_required": True,
+        "budget_confirmed": True,
+        "approved_budget_ils": round(float(approved_budget), 2),
+        "budget_confirmation_note": data.note,
+        "budget_confirmed_by": str(current_user.id),
+        "budget_confirmed_at": datetime.utcnow().isoformat(),
+    })
+    post.external_post_ids = meta
+    post.updated_at = datetime.utcnow()
+    await db.commit()
+
+    return {
+        "post_id": post_id,
+        "budget_confirmed": True,
+        "approved_budget_ils": round(float(approved_budget), 2),
+        "message": "Campaign budget confirmed",
+    }
+
+
 @router.post("/api/v1/admin/social/publish/{post_id}")
 async def publish_social_post(
     post_id: str,
@@ -3075,6 +3376,7 @@ async def publish_social_post(
     db: AsyncSession = Depends(get_db),
 ):
     from social.telegram_publisher import publish_to_telegram
+    from social.tiktok_publisher import post_text_content
 
     result = await db.execute(select(SocialPost).where(SocialPost.id == post_id))
     post = result.scalar_one_or_none()
@@ -3086,28 +3388,75 @@ async def publish_social_post(
             detail=f"Post must be 'approved' before publishing (current status: '{post.status}')",
         )
 
-    review = _review_social_post_policy(post.content, post.platforms or [])
+    if not _campaign_budget_is_confirmed(post):
+        raise HTTPException(
+            status_code=409,
+            detail="Campaign budget confirmation is required before publishing",
+        )
+
+    platforms = [str(p or "").strip().lower() for p in (post.platforms or []) if str(p or "").strip()]
+    if not platforms:
+        platforms = ["telegram"]
+
+    review = _review_social_post_policy(post.content, platforms)
     if not review.get("ok", False):
         _raise_social_policy_block(review)
 
-    tg_result = await publish_to_telegram(post.content)
-    if not tg_result["ok"]:
+    platform_results: Dict[str, Any] = {}
+    published_ids: Dict[str, Any] = {}
+
+    for platform in platforms:
+        if platform == "telegram":
+            tg_result = await publish_to_telegram(post.content)
+            platform_results[platform] = tg_result
+            if tg_result.get("ok"):
+                published_ids[platform] = tg_result.get("message_id")
+            continue
+
+        if platform == "tiktok":
+            hashtags = re.findall(r"#([A-Za-z0-9_\u0590-\u05FF]+)", post.content or "")
+            caption = re.sub(r"#[^\s#]+", " ", post.content or "")
+            caption = re.sub(r"\s+", " ", caption).strip()
+            tt_result = await post_text_content(caption=caption, hashtags=hashtags)
+            platform_results[platform] = tt_result
+            if tt_result.get("ok"):
+                published_ids[platform] = tt_result.get("post_id") or tt_result.get("publish_id")
+            continue
+
+        platform_results[platform] = {
+            "ok": False,
+            "manual_required": True,
+            "error": "publisher_not_configured",
+        }
+
+    if not published_ids:
         raise HTTPException(
             status_code=502,
-            detail=f"Telegram publish failed: {tg_result['error']}",
+            detail={
+                "message": "Publishing failed on all automated platforms",
+                "platform_results": platform_results,
+            },
         )
+
+    meta = _social_meta(post)
+    meta.update(published_ids)
+    meta.update({
+        "published_platforms": sorted(published_ids.keys()),
+        "platform_results": platform_results,
+    })
 
     post.status = "published"
     post.published_at = datetime.utcnow()
-    post.external_post_ids = {"telegram": tg_result["message_id"]}
+    post.external_post_ids = meta
     post.updated_at = datetime.utcnow()
     await db.commit()
 
     return {
-        "message":             "Post published",
-        "post_id":             post_id,
-        "telegram_message_id": tg_result["message_id"],
-        "published_at":        post.published_at,
+        "message": "Post published",
+        "post_id": post_id,
+        "published_platforms": sorted(published_ids.keys()),
+        "platform_results": platform_results,
+        "published_at": post.published_at,
     }
 
 

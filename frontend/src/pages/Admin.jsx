@@ -5,13 +5,14 @@ import {
   DollarSign, ShoppingBag, BarChart2, Loader2, RefreshCw,
   ToggleLeft, ToggleRight, Truck, PlusCircle, Wand2, ChevronDown,
   ShoppingCart, CheckCircle, Clock, ExternalLink, AlertCircle,
-  FileSpreadsheet, Upload, X, Zap, TrendingDown, Percent,
+  FileSpreadsheet, Upload, X, Image, Smile, Zap, TrendingDown, Percent,
   Trash2, Pencil, Ban, ShieldCheck, Save, Copy, Printer,
   Globe, Phone, Mail, Key, Star, MapPin, Eye, EyeOff,
   Bot, MessageSquare, Sliders, Cpu, FlaskConical, Send, Volume2, VolumeX, Database,
   RotateCcw, CheckSquare, XCircle,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
+import { FaTelegramPlane, FaWhatsapp } from 'react-icons/fa'
 import PhoneDisplay from '../components/PhoneDisplay'
 
 const readStoredFlag = (key, fallback) => {
@@ -102,6 +103,46 @@ const HANDOFF_TIMELINE_STYLE = {
     chip: 'bg-gray-100 text-gray-700 border-gray-200',
     dot: 'bg-gray-500',
   },
+}
+
+const CHAT_QUICK_EMOJIS = [
+  '😀', '😁', '😄', '😅', '😂', '🤣',
+  '🙂', '😉', '😍', '🥰', '😎', '🤝',
+  '🙏', '👏', '👍', '💪', '❤️', '🔥',
+  '✅', '❗', '📦', '🚚', '📞', '🕒',
+  '🛠️', '🚗', '💬', '🎉',
+]
+
+function ChannelLogo({ channel, size = 'sm' }) {
+  const sizeMap = {
+    sm: { icon: 'w-3 h-3', wrap: 'w-5 h-5' },
+    md: { icon: 'w-4 h-4', wrap: 'w-8 h-8' },
+    lg: { icon: 'w-5 h-5', wrap: 'w-10 h-10' },
+  }
+  const { icon: iconCls, wrap: wrapCls } = sizeMap[size] || sizeMap.sm
+  const baseCls = `inline-flex items-center justify-center rounded-full border shadow-sm ${wrapCls}`
+
+  if (channel === 'telegram') {
+    return (
+      <span title="Telegram" className={`${baseCls} border-sky-200 bg-sky-100 text-sky-700`}>
+        <FaTelegramPlane className={iconCls} />
+      </span>
+    )
+  }
+
+  if (channel === 'whatsapp') {
+    return (
+      <span title="WhatsApp" className={`${baseCls} border-emerald-200 bg-emerald-100 text-emerald-700`}>
+        <FaWhatsapp className={iconCls} />
+      </span>
+    )
+  }
+
+  return (
+    <span title="Web" className={`${baseCls} border-gray-200 bg-gray-100 text-gray-700`}>
+      <Globe className={iconCls} />
+    </span>
+  )
 }
 
 function StatCard({ label, value, icon: Icon, color: _color = 'brand', sub }) {
@@ -295,6 +336,9 @@ export default function Admin() {
   const [selectedChat, setSelectedChat] = useState(null)
   const [chatMessages, setChatMessages] = useState([])
   const [chatReply, setChatReply] = useState('')
+  const [showChatEmojiPicker, setShowChatEmojiPicker] = useState(false)
+  const [chatReplyImage, setChatReplyImage] = useState(null)
+  const [chatReplyImagePreview, setChatReplyImagePreview] = useState('')
   const [sendingChatReply, setSendingChatReply] = useState(false)
   const [updatingChatStatus, setUpdatingChatStatus] = useState(false)
   const [togglingTakeover, setTogglingTakeover] = useState(false)
@@ -359,6 +403,8 @@ export default function Admin() {
   const handoffAudioCtxRef = useRef(null)
   const dbViewCompatNotifiedRef = useRef(false)
   const dbViewSearchTimerRef = useRef(null)
+  const chatReplyFileRef = useRef(null)
+  const chatReplyInputRef = useRef(null)
 
   useEffect(() => {
     loadDashboard()
@@ -657,6 +703,58 @@ export default function Admin() {
     return String(value)
   }
 
+  const clearChatReplyImage = () => {
+    setChatReplyImage(null)
+    setChatReplyImagePreview((prev) => {
+      if (prev && typeof URL !== 'undefined') URL.revokeObjectURL(prev)
+      return ''
+    })
+    if (chatReplyFileRef.current) chatReplyFileRef.current.value = ''
+  }
+
+  const toBase64Payload = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const raw = String(reader.result || '')
+      const b64 = raw.includes(',') ? raw.split(',').pop() : raw
+      if (!b64) {
+        reject(new Error('Invalid image payload'))
+        return
+      }
+      resolve(b64)
+    }
+    reader.onerror = () => reject(reader.error || new Error('Failed to read image'))
+    reader.readAsDataURL(file)
+  })
+
+  const onChatReplyImageChange = (event) => {
+    const file = event?.target?.files?.[0]
+    if (!file) return
+    if (!String(file.type || '').startsWith('image/')) {
+      toast.error('אפשר לצרף רק תמונה')
+      if (chatReplyFileRef.current) chatReplyFileRef.current.value = ''
+      return
+    }
+    const maxBytes = 3 * 1024 * 1024
+    if (file.size > maxBytes) {
+      toast.error('התמונה גדולה מדי (מקסימום 3MB)')
+      if (chatReplyFileRef.current) chatReplyFileRef.current.value = ''
+      return
+    }
+
+    setChatReplyImage(file)
+    setChatReplyImagePreview((prev) => {
+      if (prev && typeof URL !== 'undefined') URL.revokeObjectURL(prev)
+      return URL.createObjectURL(file)
+    })
+  }
+
+  const appendEmojiToReply = (emoji) => {
+    setChatReply((prev) => `${prev}${emoji}`)
+    setShowChatEmojiPicker(false)
+    chatReplyInputRef.current?.focus()
+  }
+
   const loadAdminChats = async (filters = chatFilters) => {
     setLoading(true)
     try {
@@ -680,6 +778,8 @@ export default function Admin() {
           setSelectedChat(null)
           setChatMessages([])
           setChatReply('')
+          setShowChatEmojiPicker(false)
+          clearChatReplyImage()
         }
       }
     } catch {
@@ -776,22 +876,35 @@ export default function Admin() {
       setSelectedChat(data.conversation || null)
       setChatMessages(data.messages || [])
       setChatTitleDraft(data.conversation?.title || '')
+      setChatReply('')
+      setShowChatEmojiPicker(false)
+      clearChatReplyImage()
     } catch {
       toast.error('שגיאה בטעינת הודעות')
     }
   }
 
   const sendAdminChatReply = async () => {
-    if (!selectedChat?.id || !chatReply.trim()) return
+    const trimmed = chatReply.trim()
+    if (!selectedChat?.id || (!trimmed && !chatReplyImage)) return
     if (!selectedChat?.admin_takeover_active) {
       toast.error('יש להפעיל השתלטות ידנית לפני שליחת הודעה')
       return
     }
     setSendingChatReply(true)
     try {
-      await api.post(`/admin/chats/${selectedChat.id}/reply`, { message: chatReply.trim() })
+      const payload = { message: trimmed }
+      if (chatReplyImage) {
+        payload.image_base64 = await toBase64Payload(chatReplyImage)
+        payload.image_mime = chatReplyImage.type || 'image/jpeg'
+        payload.image_name = chatReplyImage.name || 'chat-image'
+      }
+
+      await api.post(`/admin/chats/${selectedChat.id}/reply`, payload)
       setChatReply('')
-      toast.success('ההודעה נשלחה')
+      setShowChatEmojiPicker(false)
+      clearChatReplyImage()
+      toast.success(chatReplyImage ? 'ההודעה והתמונה נשלחו' : 'ההודעה נשלחה')
       await loadChatMessages(selectedChat.id)
       await loadAdminChats()
     } catch (e) {
@@ -891,6 +1004,8 @@ export default function Admin() {
       setSelectedChat(null)
       setChatMessages([])
       setChatReply('')
+      setShowChatEmojiPicker(false)
+      clearChatReplyImage()
       setChatTitleDraft('')
       toast.success('השיחה נמחקה')
       loadChatUsage()
@@ -1113,18 +1228,26 @@ export default function Admin() {
       const { data } = await api.post('/admin/users', createForm)
       setUsers((us) => [data.user, ...us])
       setShowCreateModal(false)
+      const isRepresentative = ['support', 'service', 'customer_support'].includes(String(createForm.role || '').toLowerCase())
       setCreateForm({ full_name: '', email: '', phone: '', password: '', role: 'customer', is_admin: false, is_verified: true })
-      toast.success('המשתמש נוצר בהצלחה')
+      toast.success(isRepresentative ? 'נציג חדש נוצר בהצלחה' : 'המשתמש נוצר בהצלחה')
     } catch (e) { toast.error(e?.response?.data?.detail || 'שגיאה ביצירת משתמש') }
-  }
+    }
 
-  const deleteUser = async (userId, userName) => {
-    if (!window.confirm(`למחוק את המשתמש "${userName}"?\nפעולה זו אינה הפיכה.`)) return
+    const openRepresentativeCreateModal = () => {
+      setCreateForm({ full_name: '', email: '', phone: '', password: '', role: 'support', is_admin: false, is_verified: true })
+      setShowCreateModal(true)
+    }
+
+    const deleteUser = async (userId, userName) => {
+    if (!window.confirm('למחוק את המשתמש "' + userName + '"?\nפעולה זו אינה הפיכה.')) return
     try {
-      await api.delete(`/admin/users/${userId}`)
+      await api.delete('/admin/users/' + userId)
       setUsers((us) => us.filter((x) => x.id !== userId))
       toast.success('המשתמש נמחק')
-    } catch (e) { toast.error(e?.response?.data?.detail || 'שגיאה במחיקה') }
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || 'שגיאה במחיקה')
+    }
   }
 
   const toggleAdminRole = async (u) => {
@@ -1759,7 +1882,47 @@ export default function Admin() {
             <StatCard label="שיחות פעילות" value={chatUsage?.summary?.active_conversations ?? 0} icon={Clock} color="orange" />
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div className="card p-4 flex flex-wrap items-center gap-2">
+            <select
+              className="input-field text-sm py-1.5 w-44"
+              value={chatFilters.channel}
+              onChange={(e) => {
+                const next = { ...chatFilters, channel: e.target.value }
+                setChatFilters(next)
+                loadAdminChats(next)
+              }}
+            >
+              <option value="all">כל הערוצים</option>
+              <option value="telegram">Telegram</option>
+              <option value="whatsapp">WhatsApp</option>
+              <option value="web">Web</option>
+            </select>
+            <input
+              className="input-field flex-1 min-w-[220px]"
+              placeholder="חיפוש לפי שם, אימייל, טלפון או מזהה צ׳אט"
+              value={chatFilters.search}
+              onChange={(e) => setChatFilters((f) => ({ ...f, search: e.target.value }))}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') loadAdminChats(chatFilters)
+              }}
+            />
+            <button onClick={() => loadAdminChats(chatFilters)} className="btn-secondary text-sm flex items-center gap-1">
+              <RefreshCw className="w-4 h-4" /> חפש
+            </button>
+            <button
+              onClick={() => {
+                const next = { channel: 'all', search: '' }
+                setChatFilters(next)
+                loadAdminChats(next)
+              }}
+              className="btn-ghost text-sm"
+            >
+              נקה
+            </button>
+            <span className="text-xs text-gray-400 mr-auto">תוצאות: {chatTotal}</span>
+          </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             <div className="card p-4 border border-amber-200 bg-amber-50/50">
               <h4 className="font-bold text-amber-900 text-sm">תור נציג אנושי</h4>
               <p className="text-2xl font-bold text-amber-700 mt-1">{handoffSummary.pending_count || 0}</p>
@@ -1778,19 +1941,28 @@ export default function Admin() {
           </div>
 
           <div className="card p-4">
-            <div className="flex items-center justify-between gap-2 mb-3">
-              <h4 className="font-bold text-brand-navy text-sm">הגדרות צוות נציגים</h4>
-              <div className="flex items-center gap-2">
-                <button onClick={loadHandoffTeamSettings} className="btn-ghost text-xs" disabled={loadingHandoffTeamSettings}>
-                  {loadingHandoffTeamSettings ? 'טוען...' : 'רענן'}
+            <div className="relative mb-3">
+                <button
+                  onClick={openRepresentativeCreateModal}
+                  className="mb-2 inline-flex items-center gap-2 rounded-xl border border-cyan-300 bg-gradient-to-r from-cyan-500 to-brand-600 px-3.5 py-2 text-xs font-bold text-white shadow-[0_10px_24px_rgba(8,145,178,0.28)] transition hover:from-cyan-600 hover:to-brand-700 hover:shadow-[0_14px_30px_rgba(8,145,178,0.34)] md:absolute md:right-0 md:top-0 md:mb-0"
+                >
+                  <PlusCircle className="w-4 h-4" />
+                  צור נציג חדש
                 </button>
-                <button onClick={saveHandoffTeamSettings} className="btn-primary text-xs" disabled={savingHandoffTeamSettings}>
-                  {savingHandoffTeamSettings ? 'שומר...' : 'שמור הגדרות'}
-                </button>
+                <div className="flex items-center justify-between gap-2 md:pr-44">
+                  <h4 className="font-bold text-brand-navy text-sm">הגדרות צוות נציגים</h4>
+                  <div className="flex items-center gap-2">
+                    <button onClick={loadHandoffTeamSettings} className="btn-ghost text-xs" disabled={loadingHandoffTeamSettings}>
+                      {loadingHandoffTeamSettings ? 'טוען...' : 'רענן'}
+                    </button>
+                    <button onClick={saveHandoffTeamSettings} className="btn-primary text-xs" disabled={savingHandoffTeamSettings}>
+                      {savingHandoffTeamSettings ? 'שומר...' : 'שמור הגדרות'}
+                    </button>
+                  </div>
+                </div>
               </div>
-            </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
               <label className="text-xs text-gray-600">
                 יעד SLA (שניות)
                 <input
@@ -1978,48 +2150,7 @@ export default function Admin() {
               </div>
             </div>
           </div>
-
-          <div className="card p-4 flex flex-wrap items-center gap-2">
-            <select
-              className="input-field text-sm py-1.5 w-44"
-              value={chatFilters.channel}
-              onChange={(e) => {
-                const next = { ...chatFilters, channel: e.target.value }
-                setChatFilters(next)
-                loadAdminChats(next)
-              }}
-            >
-              <option value="all">כל הערוצים</option>
-              <option value="telegram">Telegram</option>
-              <option value="whatsapp">WhatsApp</option>
-              <option value="web">Web</option>
-            </select>
-            <input
-              className="input-field flex-1 min-w-[220px]"
-              placeholder="חיפוש לפי שם, אימייל, טלפון או מזהה צ׳אט"
-              value={chatFilters.search}
-              onChange={(e) => setChatFilters((f) => ({ ...f, search: e.target.value }))}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') loadAdminChats(chatFilters)
-              }}
-            />
-            <button onClick={() => loadAdminChats(chatFilters)} className="btn-secondary text-sm flex items-center gap-1">
-              <RefreshCw className="w-4 h-4" /> חפש
-            </button>
-            <button
-              onClick={() => {
-                const next = { channel: 'all', search: '' }
-                setChatFilters(next)
-                loadAdminChats(next)
-              }}
-              className="btn-ghost text-sm"
-            >
-              נקה
-            </button>
-            <span className="text-xs text-gray-400 mr-auto">תוצאות: {chatTotal}</span>
-          </div>
-
-          <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
+            <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
             <div className="xl:col-span-4 card overflow-hidden">
               <div className="p-3 border-b border-gray-100 flex items-center justify-between">
                 <h4 className="font-bold text-brand-navy text-sm">שיחות ערוצים</h4>
@@ -2030,11 +2161,6 @@ export default function Admin() {
                   <p className="text-sm text-gray-400 p-4 text-center">אין שיחות להצגה</p>
                 ) : chatConversations.map((c) => {
                   const isSelected = selectedChat?.id === c.id
-                  const chCls = c.channel === 'telegram'
-                    ? 'bg-sky-100 text-sky-700 border-sky-200'
-                    : c.channel === 'whatsapp'
-                      ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
-                      : 'bg-gray-100 text-gray-700 border-gray-200'
                   return (
                     <button
                       key={c.id}
@@ -2046,7 +2172,7 @@ export default function Admin() {
                         <div className="flex items-center gap-1.5">
                           {c.human_handoff_status === 'requested' && <span className="text-[10px] px-1.5 py-0.5 rounded-md border bg-red-100 text-red-700 border-red-200">ממתין לנציג</span>}
                           {c.admin_takeover_active && <span className="text-[10px] px-1.5 py-0.5 rounded-md border bg-brand-100 text-brand-700 border-brand-200">ידני</span>}
-                          <span className={`text-[10px] px-1.5 py-0.5 rounded-md border ${chCls}`}>{c.channel}</span>
+                          <ChannelLogo channel={c.channel} size="lg" />
                         </div>
                       </div>
                       <p className="text-xs text-gray-500 mt-0.5 truncate">{c.display_contact || c.external_id || c.user?.email || c.user?.phone || '—'}</p>
@@ -2149,76 +2275,135 @@ export default function Admin() {
                         {deletingChat ? 'מוחק...' : 'מחק שיחה'}
                       </button>
                     </div>
-
-                    {editingChatTitle && (
-                      <div className="flex gap-2">
-                        <input
-                          className="input-field flex-1"
-                          placeholder="שם שיחה"
-                          value={chatTitleDraft}
-                          onChange={(e) => setChatTitleDraft(e.target.value)}
-                        />
-                        <button onClick={saveChatTitle} disabled={savingChatMeta || !chatTitleDraft.trim()} className="btn-primary text-xs disabled:opacity-60">
-                          {savingChatMeta ? 'שומר...' : 'שמור'}
-                        </button>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="max-h-[460px] overflow-y-auto p-4 space-y-2 bg-gray-50">
-                    {chatMessages.length === 0 ? (
-                      <p className="text-sm text-gray-400 text-center py-6">אין הודעות בשיחה</p>
-                    ) : chatMessages.map((m) => (
-                      <div
-                        key={m.id}
-                        className={`max-w-[92%] rounded-xl px-3 py-2 text-sm ${m.role === 'user' ? 'bg-white border border-gray-200 ml-auto' : 'bg-brand-50 border border-brand-100'}`}
-                      >
-                        <div className="flex items-center justify-between gap-2 mb-0.5">
-                          <span className="text-[11px] text-gray-500">{m.role === 'user' ? 'לקוח' : (m.agent_name || 'assistant')}</span>
-                          <span className="text-[10px] text-gray-400">{new Date(m.created_at).toLocaleString('he-IL')}</span>
+                      {editingChatTitle && (
+                        <div className="flex gap-2">
+                          <input
+                            className="input-field flex-1"
+                            placeholder="שם שיחה"
+                            value={chatTitleDraft}
+                            onChange={(e) => setChatTitleDraft(e.target.value)}
+                          />
+                          <button onClick={saveChatTitle} disabled={savingChatMeta || !chatTitleDraft.trim()} className="btn-primary text-xs disabled:opacity-60">
+                            {savingChatMeta ? 'שומר...' : 'שמור'}
+                          </button>
                         </div>
-                        <p className="whitespace-pre-wrap text-gray-800">{m.content}</p>
-                      </div>
-                    ))}
-                  </div>
+                      )}
+                    </div>
 
-                  <div className="p-4 border-t border-gray-100">
-                    {selectedChat.channel === 'telegram' || selectedChat.channel === 'whatsapp' || selectedChat.channel === 'web' ? (
-                      <div className="flex gap-2">
-                        <input
-                          className="input-field flex-1"
-                          placeholder={selectedChat.admin_takeover_active ? 'כתוב תגובה ללקוח...' : 'הפעל השתלטות ידנית כדי להגיב'}
-                          value={chatReply}
-                          disabled={!selectedChat.admin_takeover_active}
-                          onChange={(e) => setChatReply(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' && !e.shiftKey) {
-                              e.preventDefault()
-                              sendAdminChatReply()
-                            }
-                          }}
-                        />
-                        <button
-                          onClick={sendAdminChatReply}
-                          disabled={sendingChatReply || !chatReply.trim() || !selectedChat.admin_takeover_active}
-                          className="btn-primary text-sm flex items-center gap-1 disabled:opacity-60"
+                    <div className="max-h-[460px] overflow-y-auto p-4 space-y-2 bg-gray-50">
+                      {chatMessages.length === 0 ? (
+                        <p className="text-sm text-gray-400 text-center py-6">אין הודעות בשיחה</p>
+                      ) : chatMessages.map((m) => (
+                        <div
+                          key={m.id}
+                          className={`max-w-[92%] rounded-xl px-3 py-2 text-sm ${m.role === 'user' ? 'bg-white border border-gray-200 ml-auto' : 'bg-brand-50 border border-brand-100'}`}
                         >
-                          {sendingChatReply ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                          שלח
-                        </button>
-                      </div>
-                    ) : (
-                      <p className="text-xs text-gray-400">שליחה ידנית נתמכת כרגע רק ל-Telegram, WhatsApp ו-Web.</p>
-                    )}
-                  </div>
-                </>
-              )}
+                          <div className="flex items-center justify-between gap-2 mb-0.5">
+                            <span className="text-[11px] text-gray-500">{m.role === 'user' ? 'לקוח' : (m.agent_name || 'assistant')}</span>
+                            <span className="text-[10px] text-gray-400">{new Date(m.created_at).toLocaleString('he-IL')}</span>
+                          </div>
+                          {m.content_type === 'image' && m.image_data_url && (
+                            <img
+                              src={m.image_data_url}
+                              alt="attachment"
+                              className="rounded-lg mb-2 max-h-64 w-auto object-contain border border-gray-200"
+                            />
+                          )}
+                          {m.content && <p className="whitespace-pre-wrap text-gray-800">{m.content}</p>}
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="p-4 border-t border-gray-100">
+                      {selectedChat.channel === 'telegram' || selectedChat.channel === 'whatsapp' || selectedChat.channel === 'web' ? (
+                        <div className="space-y-2">
+                          {chatReplyImagePreview && (
+                            <div className="flex items-center justify-between gap-2 rounded-lg border border-gray-200 bg-gray-50 px-2 py-1.5">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <img src={chatReplyImagePreview} alt="preview" className="h-10 w-10 rounded-md object-cover border border-gray-200" />
+                                <p className="text-xs text-gray-600 truncate">{chatReplyImage?.name || 'תמונה מצורפת'}</p>
+                              </div>
+                              <button onClick={clearChatReplyImage} className="btn-ghost text-xs text-red-600 hover:text-red-700">הסר</button>
+                            </div>
+                          )}
+
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => setShowChatEmojiPicker((v) => !v)}
+                              disabled={!selectedChat.admin_takeover_active || sendingChatReply}
+                              className="btn-ghost rounded-lg border border-gray-200 bg-white p-2.5 text-gray-500 hover:border-brand-200 hover:text-brand-600 disabled:opacity-50"
+                              title="אימוג׳ים"
+                            >
+                              <Smile className="w-5 h-5" />
+                            </button>
+                            <button
+                              onClick={() => chatReplyFileRef.current?.click()}
+                              disabled={!selectedChat.admin_takeover_active || sendingChatReply}
+                              className="btn-ghost rounded-lg border border-gray-200 bg-white p-2.5 text-gray-500 hover:border-brand-200 hover:text-brand-600 disabled:opacity-50"
+                              title="צרף תמונה"
+                            >
+                              <Image className="w-5 h-5" />
+                            </button>
+                            <input
+                              ref={chatReplyFileRef}
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={onChatReplyImageChange}
+                            />
+
+                            <input
+                              ref={chatReplyInputRef}
+                              className="input-field flex-1"
+                              placeholder={selectedChat.admin_takeover_active ? 'כתוב תגובה או צרף תמונה...' : 'הפעל השתלטות ידנית כדי להגיב'}
+                              value={chatReply}
+                              disabled={!selectedChat.admin_takeover_active}
+                              onChange={(e) => setChatReply(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' && !e.shiftKey) {
+                                  e.preventDefault()
+                                  sendAdminChatReply()
+                                }
+                              }}
+                            />
+                            <button
+                              onClick={sendAdminChatReply}
+                              disabled={sendingChatReply || (!chatReply.trim() && !chatReplyImage) || !selectedChat.admin_takeover_active}
+                              className="btn-primary text-sm flex items-center gap-1 disabled:opacity-60"
+                            >
+                              {sendingChatReply ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                              שלח
+                            </button>
+                          </div>
+
+                          {showChatEmojiPicker && (
+                            <div className="rounded-lg border border-gray-200 bg-white px-2 py-2">
+                              <div className="flex flex-wrap gap-1">
+                                {CHAT_QUICK_EMOJIS.map((emoji) => (
+                                  <button
+                                    key={emoji}
+                                    onClick={() => appendEmojiToReply(emoji)}
+                                    className="px-2 py-1 rounded-md hover:bg-gray-100 text-2xl leading-none"
+                                    title={`הוסף ${emoji}`}
+                                  >
+                                    {emoji}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-gray-400">שליחה ידנית נתמכת כרגע רק ל-Telegram, WhatsApp ו-Web.</p>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
           </div>
-        </div>
-      )}
-
-      {/* Orders */}
+        )}
+        {/* Orders */}
       {tab === 'orders' && (
         <div className="card overflow-hidden">
           <div className="p-4 border-b border-gray-100 flex flex-wrap items-center justify-between gap-3">
@@ -3308,7 +3493,7 @@ export default function Admin() {
       <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setShowCreateModal(false)}>
         <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center justify-between p-6 border-b border-gray-100">
-            <h3 className="font-bold text-lg text-brand-navy">יצירת משתמש חדש</h3>
+            <h3 className="font-bold text-lg text-brand-navy">{['support', 'service', 'customer_support'].includes(String(createForm.role || '').toLowerCase()) ? 'יצירת נציג חדש' : 'יצירת משתמש חדש'}</h3>
             <button onClick={() => setShowCreateModal(false)} className="p-1.5 rounded-full hover:bg-gray-100"><X className="w-5 h-5 text-gray-500" /></button>
           </div>
           <div className="overflow-y-auto p-6 space-y-4">
@@ -3333,6 +3518,7 @@ export default function Admin() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">תפקיד</label>
                 <select className="input-field w-full" value={createForm.role} onChange={(e) => { const r = e.target.value; setCreateForm((f) => ({ ...f, role: r, is_admin: r === 'admin' })) }}>
                   <option value="customer">לקוח</option>
+                  <option value="support">נציג שירות</option>
                   <option value="admin">מנהל</option>
                 </select>
               </div>
@@ -3356,7 +3542,7 @@ export default function Admin() {
           <div className="flex gap-3 p-6 border-t border-gray-100">
             <button onClick={submitCreateUser} className="btn-primary flex-1 flex items-center justify-center gap-2">
               <PlusCircle className="w-4 h-4" />
-              צור משתמש
+              {['support', 'service', 'customer_support'].includes(String(createForm.role || '').toLowerCase()) ? 'צור נציג' : 'צור משתמש'}
             </button>
             <button onClick={() => setShowCreateModal(false)} className="btn-secondary flex-1">ביטול</button>
           </div>

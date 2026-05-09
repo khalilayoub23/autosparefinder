@@ -56,6 +56,7 @@ import random
 import string
 import asyncio
 from datetime import datetime, timedelta
+from threading import Lock
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse, quote
 from uuid import UUID as _UUID, uuid4
@@ -606,26 +607,23 @@ Your goal is to CLOSE DEALS, not just answer questions.
 
 CORE BEHAVIOR — APPLIES TO ALL CHANNELS (WhatsApp, Telegram, Web):
 1. LEAD the conversation — never wait for the customer to figure out next steps.
-2. After every response, add ONE clear call-to-action or question.
+2. Usually end with ONE clear next action or question when it helps move the user forward.
 3. Always acknowledge the customer's request before asking for more info.
 4. Maximum 4 sentences per message on WhatsApp/Telegram. Web can be longer.
 5. Use natural, human tone — never robotic or bureaucratic.
 6. Never repeat information already given in the same conversation.
 
-SALES FLOW — FOLLOW THIS STRICTLY:
-Step 1 → Customer sends request → Greet + confirm you understood + ask for missing info (ONE question only)
-Step 2 → You have vehicle + part info → Search DB → Show results immediately
-Step 3 → Show results in clean format → Ask "Would you like to order this?" 
-Step 4 → Customer says yes → Generate Stripe link → Send it directly
-Step 5 → Customer says no → Suggest alternative or ask what else they need
+SALES FLOW — USE AS GUIDANCE (not a rigid script):
+  Step 1 → Confirm understanding in natural language and request missing critical detail only if needed
+  Step 2 → Once vehicle + part info exists, show the best result clearly and briefly
+  Step 3 → Offer one conversion step (order / refinement / alternative) based on user intent
+  Step 4 → If customer confirms purchase, send checkout link directly
+  Step 5 → If customer declines, propose the most relevant alternative
 
-RESPONSE FORMAT FOR PARTS (WhatsApp/Telegram):
-✅ *Part Name* — Manufacturer
-   💰 Price: ₪XXX (incl. VAT)
-   🚚 Delivery: X–Y days
-   📦 Status: Available to order
-   
-   Want to order this? Reply *YES* and I'll send you a secure payment link.
+  RESPONSE STYLE FOR PARTS (WhatsApp/Telegram):
+  - Keep it short and scannable, but not templated.
+  - Mirror one concrete customer detail (part name, model, plate, or concern).
+  - Use plain text, no markdown-heavy formatting.
 
 LANGUAGE RULES:
 - Detect language from customer's first message
@@ -812,6 +810,81 @@ def _sanitize_internal_pricing_disclosure(text: str) -> str:
     return "המחיר הסופי מחושב לפי מדיניות מע\"מ ומשלוח של הספק. אפשר לקבל פירוט מחיר ידידותי ללקוח."
 
 
+
+
+def _detect_reply_language(user_message: str, preferred_lang: Optional[str] = None) -> str:
+    hint = (preferred_lang or "").strip().lower()
+    if hint in {"he", "ar", "en"}:
+        return hint
+    if any("\u0600" <= ch <= "\u06FF" for ch in (user_message or "")):
+        return "ar"
+    if any("\u0590" <= ch <= "\u05FF" for ch in (user_message or "")):
+        return "he"
+    return "en"
+
+
+def _clip_user_focus(text: str, max_words: int = 6) -> str:
+    tokens = re.findall(r"[A-Za-z0-9\u0590-\u05FF\u0600-\u06FF\-]+", (text or ""))
+    if not tokens:
+        return ""
+    return " ".join(tokens[:max_words]).strip()
+
+
+def _human_recovery_reply(
+    user_message: str,
+    preferred_lang: Optional[str] = None,
+    vehicle_summary: Optional[str] = None,
+    force_part_prompt: bool = False,
+) -> str:
+    msg = (user_message or "").strip()
+    lang = _detect_reply_language(msg, preferred_lang=preferred_lang)
+    has_part = _has_part_signal(msg)
+    has_plate = bool(_extract_license_plate(msg))
+    focus = _clip_user_focus(msg)
+    is_noise = _is_smalltalk_or_noise(msg)
+
+    if lang == "ar":
+        if force_part_prompt:
+            if vehicle_summary:
+                return f"ممتاز، نكمل مع سيارة {vehicle_summary}. ما اسم القطعة المطلوبة الآن؟ وإذا عندك رقم OEM أرسله."
+            return "ممتاز، نكمل بسرعة. ما اسم القطعة المطلوبة الآن؟ وإذا عندك رقم OEM أرسله."
+        if has_plate and not has_part:
+            return "وصلني رقم اللوحة. ما اسم القطعة التي تريد أن أفحصها الآن؟"
+        if has_part and not has_plate:
+            item = focus or "هذه القطعة"
+            return f"ممتاز، فهمت أنك تريد {item}. أرسل رقم اللوحة أو الموديل والسنة حتى أطابق بدقة."
+        if is_noise:
+            return "أنا معك خطوة بخطوة. اكتب اسم القطعة مع موديل السيارة والسنة، وأكمل معك مباشرة."
+        return "حتى أساعدك بسرعة، اكتب اسم القطعة مع موديل السيارة وسنتها. مثال: فلتر زيت لكورولا 2018."
+
+    if lang == "en":
+        if force_part_prompt:
+            if vehicle_summary:
+                return f"Great, let's continue with {vehicle_summary}. Which exact part do you want now? If you have an OEM number, send it too."
+            return "Great, let's continue. Which exact part do you need now? If you have an OEM number, send it too."
+        if has_plate and not has_part:
+            return "Got the plate number. Which exact part should I check now?"
+        if has_part and not has_plate:
+            item = focus or "that part"
+            return f"Got it, you need {item}. Please share a plate number or model + year so I can match it accurately."
+        if is_noise:
+            return "I'm with you. Send the part name + car model + year, and I'll move this forward right away."
+        return "To move fast, send the exact part name with your car model and year. Example: brake pads Mazda 3 2017."
+
+    if force_part_prompt:
+        if vehicle_summary:
+            return f"מעולה, ממשיכים עם {vehicle_summary}. איזה חלק מדויק תרצה עכשיו? אם יש מספר OEM, אפשר לשלוח אותו."
+        return "מעולה, ממשיכים. איזה חלק מדויק תרצה עכשיו? אם יש מספר OEM, אפשר לשלוח אותו."
+    if has_plate and not has_part:
+        return "קיבלתי את מספר הרישוי. איזה חלק תרצה שאבדוק עבורך עכשיו?"
+    if has_part and not has_plate:
+        item = focus or "את החלק הזה"
+        return f"מעולה, הבנתי שאתה מחפש {item}. כדי לדייק התאמה, שלח מספר רישוי או דגם + שנה."
+    if is_noise:
+        return "אני איתך. כתוב לי שם חלק + דגם רכב + שנה, ואני אכוון מיד."
+    return "כדי להתקדם מהר, כתוב שם חלק מדויק יחד עם דגם ושנת הרכב. לדוגמה: רפידות בלם מאזדה 3 2017."
+
+
 # ==============================================================================
 # BASE AGENT
 # ==============================================================================
@@ -917,7 +990,7 @@ class BaseAgent:
             return "אפשר לעזור בקופונים, מבצעים והטבות. כתוב מה בדיוק תרצה לבדוק."
 
         if self.name == "service_agent":
-            return "אני כאן לעזור. כתוב בקצרה מה הבעיה ואכוון אותך צעד-צעד."
+            return _human_recovery_reply(user_msg)
 
         lang = self._detect_language(user_msg)
         if lang == "ar":
@@ -939,11 +1012,7 @@ class BaseAgent:
         if has_part:
             return "מעולה, קיבלתי. כדי לדייק התאמה ומחיר, שלח גם: דגם רכב + שנה + נפח מנוע + אם יש מספר OEM/שלדה."
 
-        return (
-            "אני כאן לעזור. כדי להתקדם מהר, כתוב לי בשורה אחת: "
-            "דגם רכב + שנה + מנוע + החלק המדויק שאתה צריך "
-            "(לדוגמה: Berlingo 2013 1.6 דיזל + מצמד)."
-        )
+        return _human_recovery_reply(user_msg, preferred_lang=lang)
 
     async def think(
         self,
@@ -1054,31 +1123,32 @@ class BaseAgent:
         "בלמ": "בלמים", "רפידות": "בלמים", "דיסק": "בלמים", "צלחות": "בלמים",
         "קליפר": "בלמים", "רכב בלם": "בלמים",
         "מנוע": "מנוע", "פיסטון": "מנוע", "גל ארכובה": "מנוע", "גל זיזים": "מנוע",
-        "טורבו": "מנוע", "מצמד": "מנוע", "ראש מנוע": "מנוע",
-        "מתלה": "מתלים והגה", "זרוע": "מתלים והגה", "קפיץ": "מתלים והגה",
-        "בולם": "מתלים והגה", "הגה": "מתלים והגה", "טרפז": "מתלים והגה",
-        "פנס": "תאורה", "פנסים": "תאורה", "נורה": "תאורה",
-        "LED": "תאורה", "בוקר": "גוף ואקסטריור", "פגוש": "גוף ואקסטריור",
-        "כנף": "גוף ואקסטריור", "דלת": "גוף ואקסטריור", "מכסה מנוע": "גוף ואקסטריור",
-        "מראה": "גוף ואקסטריור",
-        "חיישן": "חשמל", "מחוון": "חשמל", "מצתר": "חשמל", "ECU": "חשמל",
-        "ממסר": "חשמל", "אלטרנטור": "חשמל", "מצבר": "חשמל",
-        "מסנן": "מסננים ושמנים", "פילטר": "מסננים ושמנים", "שמן": "מסננים ושמנים",
-        "מיזוג": "מיזוג ומערכת חימום", "AC": "מיזוג ומערכת חימום",
-        "קומפרסור": "מיזוג ומערכת חימום", "אוורור": "מיזוג ומערכת חימום",
-        "תיבת הילוכים": "תיבת הילוכים", "גיר": "תיבת הילוכים",
+        "ראש מנוע": "מנוע", "טורבו": "טורבו", "מצמד": "מצמד",
+        "מתלה": "מתלה", "זרוע": "מתלה", "קפיץ": "מתלה", "בולם": "מתלה",
+        "הגה": "היגוי", "טרפז": "היגוי",
+        "פנס": "תאורה", "פנסים": "תאורה", "נורה": "תאורה", "LED": "תאורה",
+        "בוקר": "גוף הרכב", "פגוש": "גוף הרכב", "כנף": "גוף הרכב", "דלת": "גוף הרכב",
+        "מכסה מנוע": "גוף הרכב", "מראה": "גוף הרכב",
+        "חיישן": "חיישנים", "מחוון": "חיישנים",
+        "מצתר": "חשמל ואלקטרוניקה", "ECU": "חשמל ואלקטרוניקה",
+        "ממסר": "חשמל ואלקטרוניקה", "אלטרנטור": "חשמל ואלקטרוניקה",
+        "מצבר": "מצבר",
+        "מסנן": "סינון", "פילטר": "סינון", "שמן": "שמנים ונוזלים",
+        "מיזוג": "מזגן וחימום", "AC": "מזגן וחימום",
+        "קומפרסור": "מזגן וחימום", "אוורור": "מזגן וחימום",
+        "תיבת הילוכים": "תיבת הילוכים וציר", "גיר": "תיבת הילוכים וציר",
         "דלק": "מערכת דלק", "משאבת דלק": "מערכת דלק", "אינג'קטור": "מערכת דלק",
         "קירור": "קירור", "ראדיאטור": "קירור", "טרמוסטט": "קירור",
         "משאבת מים": "קירור", "מאוורר": "קירור",
-        "כיסא": "פנים הרכב", "שטיח": "פנים הרכב",
-        "פנים": "פנים הרכב", "דשבורד": "פנים הרכב", "כרית אויר": "פנים הרכב",
+        "כיסא": "פנים הרכב", "שטיח": "פנים הרכב", "פנים": "פנים הרכב", "דשבורד": "פנים הרכב",
+        "כרית אויר": "מערכת בטיחות",
         "גלגל": "גלגלים וצמיגים", "צמיג": "גלגלים וצמיגים", "ג'אנט": "גלגלים וצמיגים",
-        "קטליזטור": "מערכת פליטה", "מאיין": "מערכת פליטה",
-        "אטם": "אטמים וחומרים", "גאסקט": "אטמים וחומרים",
-        "רצועה": "שרשראות ורצועות", "שרשרת": "שרשראות ורצועות",
-        "סרן": "סרן והינע", "כרדן": "סרן והינע", "ג'וינט": "סרן והינע",
-        "מגב": "מגבים",
-        "ג'ק": "כלים וציוד", "כלי עבודה": "כלים וציוד",
+        "קטליזטור": "פליטה", "מאיין": "פליטה",
+        "אטם": "אטמים וצינורות", "גאסקט": "אטמים וצינורות",
+        "רצועה": "רצועות תזמון", "שרשרת": "רצועות תזמון",
+        "סרן": "תיבת הילוכים וציר", "כרדן": "תיבת הילוכים וציר", "ג'וינט": "תיבת הילוכים וציר",
+        "מגב": "שמשות ומגבים",
+        "ג'ק": "כלי עבודה ואביזרים", "כלי עבודה": "כלי עבודה ואביזרים",
     }
 
     def _extract_category_hint(self, message: str) -> Optional[str]:
@@ -2775,11 +2845,11 @@ Your personality: empathetic, solution-focused, proactive. You resolve issues fa
 
 LANGUAGE: Match the customer's language. Hebrew → Hebrew. Arabic → Arabic. English → English.
 
-YOUR APPROACH (always in this order):
-1. Acknowledge — show you understood the issue
-2. Diagnose — ask ONE clarifying question if needed
-3. Solve — give ONE specific actionable answer
-4. Close — confirm the issue is resolved or offer next step
+DEFAULT APPROACH (adapt to context, do not sound scripted):
+  1. Acknowledge what the customer actually said in their own words
+  2. Diagnose only when needed, with ONE short clarifying question
+  3. Solve with one concrete next action
+  4. Close with a practical next step
 
 WHAT YOU HANDLE:
 - General questions about the platform
@@ -3460,62 +3530,70 @@ class SocialMediaManagerAgent(BaseAgent):
         platform_set = {(p or "").strip().lower() for p in (platforms or []) if (p or "").strip()}
         normalized = cls._sanitize_caption(content or "")
         normalized = cls._enforce_sales_only(normalized)
+        if cls._is_low_quality_caption(normalized):
+            normalized = cls._repair_low_quality_caption(normalized, platforms=list(platform_set))
         if "tiktok" in platform_set:
             normalized = cls._enforce_tiktok_ads_policy(normalized)
-        if cls._is_low_quality_caption(normalized):
-            fallback_platform = "tiktok" if "tiktok" in platform_set else ""
-            normalized = cls._sales_template_caption("daily post about auto parts", platform=fallback_platform)
         return normalized
 
     @classmethod
     def review_post_policy(cls, content: str, platforms: Optional[List[str]] = None) -> Dict[str, Any]:
-        """Strict policy gate for admin pre-approval/pre-publish checks."""
+        """Policy gate for admin pre-approval/pre-publish checks.
+
+        Blocks only hard compliance violations. Style/readability issues are
+        returned as advisories with a suggested auto-fixed caption.
+        """
         raw = (content or "").strip()
         platform_set = {(p or "").strip().lower() for p in (platforms or []) if (p or "").strip()}
-        reasons: List[str] = []
+        blocking_reasons: List[str] = []
+        advisories: List[str] = []
 
         if not raw:
-            reasons.append("תוכן הפוסט ריק")
+            blocking_reasons.append("תוכן הפוסט ריק")
         if cls._contains_service_claim(raw):
-            reasons.append("נמצא ניסוח של מוסך/תיקון/התקנה שאינו מותר")
+            blocking_reasons.append("נמצא ניסוח של מוסך/תיקון/התקנה שאינו מותר")
 
         body_no_tags = re.sub(r"#[^\s#]+", " ", raw)
-        if cls._NOA_BAD_SCRIPT_RE.search(raw) or cls._contains_non_hebrew_word(body_no_tags):
-            reasons.append("הפוסט חייב להיות בעברית נקיה ללא ערבוב שפות")
+        if cls._NOA_BAD_SCRIPT_RE.search(raw):
+            blocking_reasons.append("הפוסט מכיל תווים/כתב לא נתמך")
+        elif cls._contains_non_hebrew_word(body_no_tags):
+            advisories.append("מומלץ לצמצם ערבוב שפות ולשמור על עברית נקיה")
 
         ensured_value = cls._ensure_platform_value_points(body_no_tags)
         if re.sub(r"\s+", " ", ensured_value).strip() != re.sub(r"\s+", " ", body_no_tags).strip():
-            reasons.append("חסרים יתרונות הפלטפורמה: איתור לפי מספר רישוי, השוואת מחירים/אפשרויות, ורכישה פשוטה")
+            advisories.append("מומלץ להדגיש יתרונות פלטפורמה: איתור לפי מספר רישוי, השוואת מחירים/אפשרויות ורכישה פשוטה")
 
         if "מוכרים חלקי חילוף בלבד" not in raw:
-            reasons.append("חסר ניסוח ברור: אנחנו מוכרים חלקי חילוף בלבד")
+            advisories.append("מומלץ להוסיף ניסוח ברור: אנחנו מוכרים חלקי חילוף בלבד")
 
         if cls._is_low_quality_caption(raw):
-            reasons.append("נוסח הפוסט אינו איכותי/קריא מספיק לפרסום")
+            advisories.append("מומלץ לשפר את הנוסח כדי לחזק קריאות ואמון")
 
         if "tiktok" in platform_set:
             for pattern, _ in cls._NOA_TIKTOK_COMPLIANCE_REWRITES:
                 if re.search(pattern, raw, flags=re.IGNORECASE):
-                    reasons.append("נמצאה טענת פרסום מסוכנת ל-TikTok (הבטחה מוחלטת/סופרלטיב לא מבוסס)")
+                    blocking_reasons.append("נמצאה טענת פרסום מסוכנת ל-TikTok (הבטחה מוחלטת/סופרלטיב לא מבוסס)")
                     break
             if cls._NOA_TIKTOK_PERSONAL_ATTRIBUTE_RE.search(raw):
-                reasons.append("נמצא ניסוח אישי-שיפוטי שאינו מותר במדיניות TikTok")
+                blocking_reasons.append("נמצא ניסוח אישי-שיפוטי שאינו מותר במדיניות TikTok")
             has_promo_claim = bool(cls._NOA_TIKTOK_PRICE_PROMO_RE.search(raw))
             has_disclosure = any(marker in raw for marker in cls._NOA_TIKTOK_DISCLOSURE_MARKERS)
             if has_promo_claim and not has_disclosure:
-                reasons.append("תוכן מבצעי ל-TikTok חייב לכלול גילוי נאות על תנאים וזמינות")
+                blocking_reasons.append("תוכן מבצעי ל-TikTok חייב לכלול גילוי נאות על תנאים וזמינות")
 
         normalized = cls._normalize_for_platforms(raw, platforms=list(platform_set))
         compact_raw = re.sub(r"\s+", " ", raw).strip()
         compact_norm = re.sub(r"\s+", " ", normalized).strip()
         if compact_norm != compact_raw:
-            reasons.append("הפוסט דורש התאמות אוטומטיות לפני פרסום ולכן נחסם בשער המדיניות")
+            advisories.append("בוצעו התאמות ניסוח אוטומטיות לשיפור תאימות הפוסט")
 
         # Deduplicate while preserving order
-        dedup_reasons = list(dict.fromkeys(reasons))
+        dedup_blocking = list(dict.fromkeys(blocking_reasons))
+        dedup_advisories = list(dict.fromkeys(advisories))
         return {
-            "ok": len(dedup_reasons) == 0,
-            "reasons": dedup_reasons,
+            "ok": len(dedup_blocking) == 0,
+            "reasons": dedup_blocking,
+            "advisories": dedup_advisories,
             "suggested_content": normalized,
             "platforms": sorted(platform_set),
         }
@@ -3582,6 +3660,307 @@ class SocialMediaManagerAgent(BaseAgent):
         if re.search(r"\b[\u0590-\u05FF]\b", body):
             return True
         return False
+
+    @classmethod
+    def _repair_low_quality_caption(cls, text: str, platforms: Optional[List[str]] = None) -> str:
+        platform_set = {(p or "").strip().lower() for p in (platforms or []) if (p or "").strip()}
+        normalized = cls._sanitize_caption(text or "")
+        body = re.sub(r"#[^\s#]+", " ", normalized)
+        body = re.sub(r"\s+", " ", body).strip()
+        if len(body.split()) < 8:
+            body = (
+                "מחפשים חלק לרכב בלי לרוץ בין מוסכים? מזינים מספר רישוי ומקבלים התאמה מהירה "
+                "והשוואת מחירים במקום אחד."
+            )
+        body = cls._ensure_platform_value_points(body)
+        if "מוכרים חלקי חילוף בלבד" not in body:
+            body = f"{body} אנחנו מוכרים חלקי חילוף בלבד."
+
+        tags = cls._NOA_RICH_TAGS if "tiktok" in platform_set else cls._NOA_DEFAULT_TAGS
+        repaired = f"{body}\n{tags}".strip()
+        if "tiktok" in platform_set:
+            return cls._enforce_tiktok_ads_policy(repaired)
+        return repaired
+
+    @classmethod
+    def _normalize_campaign_platforms(cls, platforms: Optional[List[str]]) -> List[str]:
+        aliases = {
+            "fb": "facebook",
+            "ig": "instagram",
+            "tt": "tiktok",
+            "tik tok": "tiktok",
+            "tg": "telegram",
+            "wa": "whatsapp",
+        }
+        normalized: List[str] = []
+        for raw in platforms or []:
+            key = re.sub(r"\s+", " ", str(raw or "").strip().lower())
+            if not key:
+                continue
+            key = aliases.get(key, aliases.get(key.replace(" ", ""), key.replace(" ", "")))
+            if key not in normalized:
+                normalized.append(key)
+        if not normalized:
+            return ["facebook", "instagram", "tiktok"]
+        return normalized
+
+    @classmethod
+    def _extract_json_payload(cls, raw: str) -> Dict[str, Any]:
+        cleaned = (raw or "").strip()
+        if not cleaned:
+            return {}
+
+        tick = chr(96) * 3
+        if cleaned.startswith(tick):
+            cleaned = cleaned[len(tick):].strip()
+            if cleaned.lower().startswith("json"):
+                cleaned = cleaned[4:].strip()
+        if cleaned.endswith(tick):
+            cleaned = cleaned[:-len(tick)].strip()
+
+        try:
+            parsed = json.loads(cleaned)
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            pass
+
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start >= 0 and end > start:
+            try:
+                parsed = json.loads(cleaned[start:end + 1])
+                return parsed if isinstance(parsed, dict) else {}
+            except Exception:
+                return {}
+        return {}
+
+    @classmethod
+    def _fallback_campaign_plan(
+        cls,
+        topic: str,
+        platforms: List[str],
+        tone: str,
+        duration_days: int,
+        proposed_budget_ils: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        duration = max(1, min(int(duration_days or 7), 30))
+        default_daily = {
+            "facebook": 120.0,
+            "instagram": 140.0,
+            "tiktok": 150.0,
+            "telegram": 60.0,
+            "whatsapp": 50.0,
+        }
+        platform_mix: List[Dict[str, Any]] = []
+        total_budget = 0.0
+        for platform in platforms:
+            daily_budget = float(default_daily.get(platform, 90.0))
+            total_budget += daily_budget * duration
+            platform_mix.append({
+                "platform": platform,
+                "goal": "חשיפה והמרה",
+                "daily_budget_ils": round(daily_budget, 2),
+                "creative_angle": "כאב אמיתי של נהג + פתרון מהיר דרך AutoSpareFinder",
+            })
+
+        if proposed_budget_ils is not None:
+            try:
+                if float(proposed_budget_ils) > 0:
+                    total_budget = float(proposed_budget_ils)
+            except Exception:
+                pass
+
+        return {
+            "summary": f"קמפיין של {duration} ימים לנושא: {topic}",
+            "objective": "לייצר לידים איכותיים והזמנות לחלקי חילוף",
+            "primary_audience": "בעלי רכבים בישראל שמחפשים התאמה מהירה וחסכון במחיר",
+            "platform_mix": platform_mix,
+            "total_budget_ils_estimate": round(max(50.0, total_budget), 2),
+            "schedule": [
+                "יום 1-2: בדיקת מסרים וקריאייטיב",
+                "יום 3-5: מיקוד בערוצים עם עלות לליד טובה",
+                "יום 6+: אופטימיזציה לפי המרות בפועל",
+            ],
+            "creative_variants": [
+                f"תקועים בלי {topic} מתאים? שולחים מספר רישוי ומקבלים התאמה מדויקת והשוואת מחירים במקום אחד.",
+                f"לפני שאתם משלמים יותר על {topic}, בדקו התאמה והשוואת מחירים אצלנו תוך דקות.",
+            ],
+            "kpis": ["עלות לליד", "CTR", "שיעור המרה להזמנה"],
+            "confirmation_question": "לאשר את הקמפיין ואת התקציב כדי להתחיל פרסום?",
+            "requires_budget_confirmation": True,
+            "budget_confirmed": False,
+            "topic": topic,
+            "platforms": platforms,
+            "tone": tone,
+            "duration_days": duration,
+        }
+
+    @classmethod
+    def _sanitize_campaign_plan(
+        cls,
+        plan: Dict[str, Any],
+        topic: str,
+        platforms: List[str],
+        tone: str,
+        duration_days: int,
+        proposed_budget_ils: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        fallback = cls._fallback_campaign_plan(
+            topic=topic,
+            platforms=platforms,
+            tone=tone,
+            duration_days=duration_days,
+            proposed_budget_ils=proposed_budget_ils,
+        )
+        if not isinstance(plan, dict):
+            return fallback
+
+        merged = dict(fallback)
+        for key in ("summary", "objective", "primary_audience", "confirmation_question"):
+            value = plan.get(key)
+            if isinstance(value, str) and value.strip():
+                merged[key] = value.strip()
+
+        raw_mix = plan.get("platform_mix")
+        if isinstance(raw_mix, list):
+            clean_mix: List[Dict[str, Any]] = []
+            for item in raw_mix:
+                if not isinstance(item, dict):
+                    continue
+                platform = str(item.get("platform") or "").strip().lower().replace(" ", "")
+                if platform not in platforms:
+                    continue
+                try:
+                    daily_budget = float(item.get("daily_budget_ils"))
+                except Exception:
+                    continue
+                if daily_budget <= 0:
+                    continue
+                goal = str(item.get("goal") or "חשיפה והמרה").strip()
+                angle = str(item.get("creative_angle") or "מסר שירותי חד וברור").strip()
+                clean_mix.append({
+                    "platform": platform,
+                    "goal": goal,
+                    "daily_budget_ils": round(daily_budget, 2),
+                    "creative_angle": angle,
+                })
+            if clean_mix:
+                merged["platform_mix"] = clean_mix
+
+        for key in ("schedule", "creative_variants", "kpis"):
+            value = plan.get(key)
+            if isinstance(value, list):
+                cleaned_values = [str(v).strip() for v in value if str(v).strip()]
+                if cleaned_values:
+                    merged[key] = cleaned_values[:6]
+
+        budget_value = None
+        if proposed_budget_ils is not None:
+            try:
+                budget_value = float(proposed_budget_ils)
+            except Exception:
+                budget_value = None
+        if budget_value is None:
+            try:
+                budget_value = float(plan.get("total_budget_ils_estimate"))
+            except Exception:
+                budget_value = float(merged.get("total_budget_ils_estimate") or 0)
+        merged["total_budget_ils_estimate"] = round(max(50.0, budget_value), 2)
+        merged["requires_budget_confirmation"] = True
+        merged["budget_confirmed"] = False
+        merged["topic"] = topic
+        merged["platforms"] = platforms
+        merged["tone"] = tone
+        merged["duration_days"] = max(1, min(int(duration_days or 7), 30))
+        return merged
+
+    @classmethod
+    def _campaign_plan_to_text(cls, plan: Dict[str, Any]) -> str:
+        summary = str(plan.get("summary") or "תוכנית קמפיין מוצעת").strip()
+        objective = str(plan.get("objective") or "").strip()
+        audience = str(plan.get("primary_audience") or "").strip()
+        budget = float(plan.get("total_budget_ils_estimate") or 0.0)
+        platform_mix = plan.get("platform_mix") if isinstance(plan.get("platform_mix"), list) else []
+        variants = plan.get("creative_variants") if isinstance(plan.get("creative_variants"), list) else []
+        confirm_q = str(plan.get("confirmation_question") or "לאשר תקציב וקמפיין?").strip()
+
+        lines = [
+            f"תוכנית קמפיין: {summary}",
+            f"מטרה: {objective}" if objective else "",
+            f"קהל יעד: {audience}" if audience else "",
+            f"תקציב כולל משוער: {budget:.0f} ש\"ח",
+            "חלוקת ערוצים:",
+        ]
+
+        for item in platform_mix:
+            if not isinstance(item, dict):
+                continue
+            platform = str(item.get("platform") or "").strip()
+            goal = str(item.get("goal") or "").strip()
+            daily = item.get("daily_budget_ils")
+            try:
+                daily_txt = f"{float(daily):.0f} ש\"ח/יום"
+            except Exception:
+                daily_txt = "תקציב יומי לפי בדיקה"
+            lines.append(f"- {platform}: {goal} | {daily_txt}")
+
+        if variants:
+            lines.append("זוויות קריאייטיב מוצעות:")
+            for idx, variant in enumerate(variants[:3], start=1):
+                lines.append(f"{idx}. {str(variant).strip()}")
+
+        lines.append("אישור לפני הוצאה תקציבית:")
+        lines.append(confirm_q)
+        return "\n".join([ln for ln in lines if ln]).strip()
+
+    async def generate_campaign_plan(
+        self,
+        topic: str,
+        platforms: Optional[List[str]] = None,
+        tone: str = "professional",
+        duration_days: int = 7,
+        proposed_budget_ils: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        normalized_platforms = self._normalize_campaign_platforms(platforms)
+        duration = max(1, min(int(duration_days or 7), 30))
+        budget_hint = "לא סופק"
+        if proposed_budget_ils is not None:
+            try:
+                budget_hint = str(float(proposed_budget_ils))
+            except Exception:
+                budget_hint = "לא סופק"
+
+        prompt = (
+            "בני תוכנית קמפיין שיווקי ל-AutoSpareFinder בעברית טבעית.\n"
+            f"נושא: {topic}\n"
+            f"פלטפורמות: {', '.join(normalized_platforms)}\n"
+            f"טון: {tone}\n"
+            f"משך: {duration} ימים\n"
+            f"תקציב מוצע: {budget_hint}\n"
+            "החזר JSON בלבד עם השדות: summary, objective, primary_audience, platform_mix, total_budget_ils_estimate, schedule, creative_variants, kpis, confirmation_question.\n"
+            "platform_mix חייב להיות רשימת אובייקטים עם: platform, goal, daily_budget_ils, creative_angle.\n"
+            "ללא markdown וללא טקסט מחוץ ל-JSON."
+        )
+
+        try:
+            raw = await hf_text(prompt=prompt, system=self.system_prompt)
+            parsed = self._extract_json_payload(raw)
+            return self._sanitize_campaign_plan(
+                parsed,
+                topic=topic,
+                platforms=normalized_platforms,
+                tone=tone,
+                duration_days=duration,
+                proposed_budget_ils=proposed_budget_ils,
+            )
+        except Exception:
+            return self._fallback_campaign_plan(
+                topic=topic,
+                platforms=normalized_platforms,
+                tone=tone,
+                duration_days=duration,
+                proposed_budget_ils=proposed_budget_ils,
+            )
 
     @classmethod
     def _sales_template_caption(cls, topic: str, platform: str = "") -> str:
@@ -3708,24 +4087,37 @@ class SocialMediaManagerAgent(BaseAgent):
     def _finalize_noa_post(cls, text: str, platforms: Optional[List[str]] = None) -> str:
         platform_set = {(p or "").strip().lower() for p in (platforms or []) if (p or "").strip()}
 
-        if "tiktok" in platform_set:
-            normalized = cls._sales_template_caption("daily post about auto parts", platform="tiktok")
-        else:
-            normalized = cls._normalize_for_platforms(text or "", platforms=list(platform_set))
-            if cls._needs_hebrew_rewrite(normalized) or cls._is_low_quality_caption(normalized):
-                normalized = cls._sales_template_caption("daily post about auto parts", platform="")
+        normalized = cls._normalize_for_platforms(text or "", platforms=list(platform_set))
+        if cls._needs_hebrew_rewrite(normalized) or cls._is_low_quality_caption(normalized):
+            normalized = cls._repair_low_quality_caption(normalized, platforms=list(platform_set))
 
         normalized = cls._normalize_noa_symbols(normalized)
         if "tiktok" in platform_set:
             normalized = cls._force_noa_hashtags(normalized, tags=cls._NOA_RICH_TAGS)
+            normalized = cls._enforce_tiktok_ads_policy(normalized)
         return cls._append_noa_links(normalized)
 
     async def generate_post(self, topic: str, platform: str, tone: str = "professional") -> str:
-        prompt = f"צרי פוסט {platform} על: {topic}. טון: {tone}. כללי הכתיבה שלך חלים במלואם."
+        prompt = (
+            f"כתבי פוסט {platform} בנושא {topic} בטון {tone}. "
+            "הפוסט חייב להישמע אנושי ולא תבניתי: לפתוח בכאב אמיתי של נהג, "
+            "לתת פתרון ברור דרך הפלטפורמה, ולסיים בשאלה אחת מקדמת."
+        )
         raw = await hf_text(prompt=prompt, system=self.system_prompt)
         return self._finalize_noa_post(raw, platforms=[platform] if platform else [])
 
     async def process(self, message: str, conversation_history: List[Dict], db: AsyncSession, **kwargs) -> str:
+        msg_l = (message or "").strip().lower()
+        if any(k in msg_l for k in (
+            "קמפיין", "campaign", "תקציב", "budget", "פייסבוק", "אינסטגרם", "טיקטוק", "facebook", "instagram", "tiktok"
+        )):
+            plan = await self.generate_campaign_plan(
+                topic=message,
+                platforms=["facebook", "instagram", "tiktok"],
+                tone="professional",
+            )
+            return self._campaign_plan_to_text(plan)
+
         raw = await self.think(
             conversation_history + [{"role": "user", "content": message}],
             source=kwargs.get("source"),
@@ -3925,7 +4317,9 @@ async def _infer_parts_flow_reply(
         "If the user language is Hebrew, respond in Hebrew; if Arabic, respond in Arabic.\n"
         "If the next step is collecting details, ask one clear question and give one compact example.\n"
         "If search results are provided, use only those values and do not invent numbers.\n"
-        "If no results, ask for one concrete refinement (OEM or front/rear or manufacturer).\n\n"
+        "If no results, ask for one concrete refinement (OEM or front/rear or manufacturer).\n"
+        "Mirror one concrete detail from the user's latest message when possible.\n"
+        "Avoid generic openers like 'I am here to help' unless the user explicitly asks for support availability.\n\n"
         f"[FLOW_INTENT]\n{flow_intent}\n\n"
         f"[FLOW_STATE_JSON]\n{json.dumps(flow_state, ensure_ascii=False)}\n"
     )
@@ -4002,15 +4396,97 @@ Mandatory rules:
 
 _WHATSAPP_ANON_USER_ID = "00000000-0000-0000-0000-000000000001"
 
+_CHECKOUT_METRICS_SOURCES = ("whatsapp", "telegram", "web")
+_checkout_metrics_lock = Lock()
+_checkout_metrics: Dict[str, Dict[str, Any]] = {
+    src: {
+        "attempts": 0,
+        "successes": 0,
+        "failures": 0,
+        "last_error": None,
+        "updated_at": None,
+    }
+    for src in _CHECKOUT_METRICS_SOURCES
+}
+
+
+def _normalize_checkout_metric_source(source: Optional[str]) -> str:
+    source_key = _normalize_source(source)
+    if source_key not in _CHECKOUT_METRICS_SOURCES:
+        return "web"
+    return source_key
+
+
+def _record_checkout_link_metric(source: Optional[str], success: bool, error_message: Optional[str] = None) -> None:
+    source_key = _normalize_checkout_metric_source(source)
+    with _checkout_metrics_lock:
+        bucket = _checkout_metrics.setdefault(
+            source_key,
+            {"attempts": 0, "successes": 0, "failures": 0, "last_error": None, "updated_at": None},
+        )
+        bucket["attempts"] = int(bucket.get("attempts") or 0) + 1
+        if success:
+            bucket["successes"] = int(bucket.get("successes") or 0) + 1
+            bucket["last_error"] = None
+        else:
+            bucket["failures"] = int(bucket.get("failures") or 0) + 1
+            bucket["last_error"] = str(error_message or "unknown_error")[:240]
+        bucket["updated_at"] = datetime.utcnow().isoformat()
+
+        attempts = int(bucket.get("attempts") or 0)
+        successes = int(bucket.get("successes") or 0)
+        failures = int(bucket.get("failures") or 0)
+        last_error = bucket.get("last_error")
+
+    success_rate = (float(successes) / float(attempts) * 100.0) if attempts else 0.0
+    if success:
+        logger.info(
+            "[CheckoutMetrics] source=%s status=success attempts=%d successes=%d failures=%d success_rate_pct=%.2f",
+            source_key,
+            attempts,
+            successes,
+            failures,
+            success_rate,
+        )
+    else:
+        logger.warning(
+            "[CheckoutMetrics] source=%s status=failure attempts=%d successes=%d failures=%d success_rate_pct=%.2f error=%s",
+            source_key,
+            attempts,
+            successes,
+            failures,
+            success_rate,
+            last_error,
+        )
+
+
+def get_checkout_link_metrics_snapshot() -> Dict[str, Dict[str, Any]]:
+    with _checkout_metrics_lock:
+        snapshot: Dict[str, Dict[str, Any]] = {}
+        for src, row in _checkout_metrics.items():
+            attempts = int(row.get("attempts") or 0)
+            successes = int(row.get("successes") or 0)
+            failures = int(row.get("failures") or 0)
+            snapshot[src] = {
+                "attempts": attempts,
+                "successes": successes,
+                "failures": failures,
+                "success_rate_pct": round((float(successes) / float(attempts) * 100.0), 2) if attempts else 0.0,
+                "last_error": row.get("last_error"),
+                "updated_at": row.get("updated_at"),
+            }
+    return snapshot
+
 
 async def create_checkout_link(
     part_id: str,
     quantity: int,
     user_id: str,
     shipping_address: dict,
+    source: str = "whatsapp",
 ) -> str:
     """
-    Generate a Stripe checkout URL for WhatsApp/Telegram users without JWT auth.
+    Generate a Stripe checkout URL for chatbot channels without JWT auth.
     Returns the checkout URL string, or an error string starting with "ERROR:".
     Callable for registered and anonymous guest users.
     """
@@ -4023,6 +4499,7 @@ async def create_checkout_link(
         part_id=part_id,
         quantity=quantity,
         shipping_address=shipping_address,
+        source=source,
     )
     if result.get("ok"):
         return result["checkout_url"]
@@ -4188,7 +4665,7 @@ async def process_user_message(
         _pending_checkout = context_data.get("pending_checkout_parts") or []
         _checkout_choice = None
         _checkout_msg = (message or "").strip()
-        if _pending_checkout and source in ("whatsapp", "telegram") and vehicle_confirmed:
+        if _pending_checkout and source in ("whatsapp", "telegram", "web") and vehicle_confirmed:
             if _checkout_msg in ("1", "2", "3"):
                 _checkout_choice = int(_checkout_msg)
 
@@ -4224,24 +4701,34 @@ async def process_user_message(
                     quantity=1,
                     user_id=str(user_id),
                     shipping_address=_ship_addr,
+                    source=source,
+                )
+                _checkout_success = not _checkout_url.startswith("ERROR:")
+                _record_checkout_link_metric(
+                    source=source,
+                    success=_checkout_success,
+                    error_message=None if _checkout_success else _checkout_url,
                 )
 
                 if _lang == "ar":
                     _ok_prefix = "ممتاز! إليك رابط الدفع الآمن: "
                     _register_msg = "للطلب عبر واتساب، سجّل أولاً في: autosparefinder.co.il"
+                    _error_msg = "تعذر إنشاء رابط الدفع الآن. حاول مرة أخرى خلال دقيقة."
                 elif _lang == "en":
                     _ok_prefix = "Great! Here's your secure payment link: "
                     _register_msg = "To order via WhatsApp, please register first at: autosparefinder.co.il"
+                    _error_msg = "I couldn't create a payment link right now. Please try again in a minute."
                 else:
                     _ok_prefix = "מעולה! הנה קישור התשלום המאובטח שלך: "
                     _register_msg = "להזמנה דרך וואטסאפ, הירשם תחילה ב: autosparefinder.co.il"
+                    _error_msg = "לא הצלחתי ליצור קישור תשלום כרגע. נסה שוב בעוד דקה."
 
                 if _checkout_url.startswith("ERROR:"):
                     _err_l = _checkout_url.lower()
-                    if "not registered" in _err_l:
+                    if "not registered" in _err_l and source in ("whatsapp", "telegram"):
                         response_text = _register_msg
                     else:
-                        response_text = _register_msg
+                        response_text = _error_msg
                 else:
                     context_data.pop("pending_checkout_parts", None)
                     response_text = _ok_prefix + _checkout_url
@@ -4250,7 +4737,7 @@ async def process_user_message(
                     "agent": "parts_finder_agent",
                     "confidence": 1.0,
                     "language": "he",
-                    "intent": "whatsapp_checkout",
+                    "intent": f"{source}_checkout",
                     "extracted_data": {"part_id": _chosen["part_id"]},
                 }
                 agent_name = "parts_finder_agent"
@@ -4683,15 +5170,18 @@ async def process_user_message(
         norm_prev = re.sub(r"\s+", " ", last_assistant_text)
 
         if norm_current and norm_prev and norm_current == norm_prev:
+            preferred_lang = str(context_data.get("preferred_lang") or "").strip().lower() or None
             if parts_flow_active and bool(context_data.get("vehicle_confirmed")):
                 vtxt = _vehicle_summary_he(context_data.get("vehicle_profile") or {})
-                response_text = (
-                    f"קיבלתי. כדי להתקדם עבור {vtxt}, כתוב עכשיו את שם החלק המדויק או מספר OEM. "
-                    "לדוגמה: פנס קדמי שמאלי או 123-45-678."
+                response_text = _human_recovery_reply(
+                    message,
+                    preferred_lang=preferred_lang,
+                    vehicle_summary=vtxt,
+                    force_part_prompt=True,
                 )
                 agent_name = "parts_finder_agent"
             else:
-                response_text = "קיבלתי אותך. כדי להתקדם מיד, כתוב בבקשה מה החלק שאתה צריך כולל דגם ושנת רכב."
+                response_text = _human_recovery_reply(message, preferred_lang=preferred_lang)
     except Exception:
         pass
 

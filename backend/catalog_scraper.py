@@ -67,6 +67,7 @@ from resilience import (
     job_registry_finish,
 )
 from currency_rate import upsert_usd_to_ils_rate
+from categories import guess_category_by_text
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -2622,28 +2623,8 @@ async def _discover_via_ebay(brand: str, max_parts: int = 150) -> List[Dict]:
     return results
 
 
-_CATEGORY_HINT_MAP = [
-    ("Filters",      ["filter", "oil filter", "air filter", "cabin filter", "fuel filter"]),
-    ("Brakes",       ["brake", "pad", "rotor", "disc", "caliper", "abs"]),
-    ("Suspension",   ["shock", "strut", "spring", "arm", "bushing", "ball joint", "sway"]),
-    ("Steering",     ["tie rod", "rack", "steering", "power steering"]),
-    ("Engine",       ["gasket", "timing", "belt", "chain", "piston", "valve", "head"]),
-    ("Electrical",   ["sensor", "alternator", "starter", "coil", "relay", "switch", "ecu"]),
-    ("Transmission", ["clutch", "transmission", "gearbox", "flywheel", "cv axle"]),
-    ("Cooling",      ["thermostat", "water pump", "radiator", "coolant", "fan"]),
-    ("Exhaust",      ["exhaust", "muffler", "catalytic", "egr", "manifold"]),
-    ("Body",         ["bumper", "fender", "mirror", "headlight", "tail light"]),
-    ("HVAC",         ["ac", "compressor", "condenser", "evaporator", "hvac"]),
-    ("Fuel System",  ["fuel pump", "injector", "fuel rail", "tank"]),
-]
-
-
 def _guess_category_from_text(text: str) -> str:
-    t = text.lower()
-    for cat, kws in _CATEGORY_HINT_MAP:
-        if any(kw in t for kw in kws):
-            return cat
-    return "General"
+    return guess_category_by_text(text) or "כלי עבודה ואביזרים"
 
 
 async def run_brand_discovery(
@@ -3188,6 +3169,123 @@ async def _run_category_discovery() -> Dict[str, Any]:
 # MAIN SCRAPER RUN  —  called by the background loop
 # ==============================================================================
 
+async def resolve_inactive_parts_with_oem_lookup(*, batch_limit: int = 200) -> Dict[str, Any]:
+    """Noon-only recovery pass for inactive parts waiting on OEM lookup."""
+    report: Dict[str, Any] = {
+        "processed": 0,
+        "oem_filled": 0,
+        "reactivated": 0,
+        "no_ref_found": 0,
+        "errors": 0,
+    }
+
+    async with scraper_session_factory() as db:
+        rows = (await db.execute(text("""
+            SELECT id,
+                   COALESCE(name, '') AS name
+            FROM parts_catalog
+            WHERE is_active = FALSE
+              AND needs_oem_lookup = TRUE
+            ORDER BY updated_at NULLS FIRST, created_at NULLS FIRST, id
+            LIMIT :lim
+        """), {"lim": batch_limit})).mappings().all()
+
+        report["processed"] = len(rows)
+        if not rows:
+            msg = "[Rex] resolve_inactive_parts_with_oem_lookup: nothing to process"
+            print(msg)
+            logger.info(msg)
+            return report
+
+        for row in rows:
+            part_id = row["id"]
+            part_name = str(row["name"] or "").strip()
+            try:
+                ref_row = None
+                if part_name:
+                    ref_row = (await db.execute(text("""
+                        SELECT pcr.ref_number,
+                               UPPER(COALESCE(pcr.ref_type, '')) AS ref_type
+                        FROM parts_catalog pc
+                        JOIN part_cross_reference pcr ON pcr.part_id = pc.id
+                        WHERE pc.name = :name
+                          AND pcr.ref_number IS NOT NULL
+                          AND btrim(pcr.ref_number) <> ''
+                        ORDER BY CASE
+                                     WHEN UPPER(COALESCE(pcr.ref_type, '')) = 'OEM' THEN 0
+                                     ELSE 1
+                                 END,
+                                 pcr.created_at DESC
+                        LIMIT 1
+                    """), {"name": part_name})).mappings().first()
+
+                if ref_row and str(ref_row["ref_type"] or "").upper() == "OEM":
+                    ref_number = str(ref_row["ref_number"] or "").strip()
+                    if ref_number:
+                        updated = (await db.execute(text("""
+                            UPDATE parts_catalog
+                            SET oem_number = COALESCE(oem_number, :oem),
+                                needs_oem_lookup = FALSE,
+                                updated_at = NOW()
+                            WHERE id = :pid
+                            RETURNING id
+                        """), {"oem": ref_number[:100], "pid": part_id})).fetchone()
+                        if updated:
+                            report["oem_filled"] += 1
+                    else:
+                        report["no_ref_found"] += 1
+                else:
+                    report["no_ref_found"] += 1
+
+                has_price = (await db.execute(text("""
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM supplier_parts sp
+                        WHERE sp.part_id = :pid
+                          AND (
+                               (sp.price_ils IS NOT NULL AND sp.price_ils > 0)
+                            OR (sp.price_usd IS NOT NULL AND sp.price_usd > 0)
+                          )
+                    )
+                """), {"pid": part_id})).scalar()
+
+                if has_price:
+                    reactivated = (await db.execute(text("""
+                        UPDATE parts_catalog
+                        SET is_active = TRUE,
+                            updated_at = NOW()
+                        WHERE id = :pid
+                          AND is_active = FALSE
+                        RETURNING id
+                    """), {"pid": part_id})).fetchone()
+                    if reactivated:
+                        report["reactivated"] += 1
+
+            except Exception as exc:
+                report["errors"] += 1
+                logger.warning(
+                    "[Rex] resolve_inactive_parts_with_oem_lookup error part_id=%s: %s",
+                    part_id,
+                    exc,
+                )
+
+        await db.commit()
+
+        msg = (
+            "[Rex] resolve_inactive_parts_with_oem_lookup: "
+            f"processed={report['processed']} "
+            f"oem_filled={report['oem_filled']} "
+            f"reactivated={report['reactivated']} "
+            f"no_ref_found={report['no_ref_found']} "
+            f"errors={report['errors']}"
+        )
+        print(msg)
+        logger.info(msg)
+        await db_log(db, "INFO", msg)
+
+    return report
+
+
 async def run_scraper_cycle(*, batch_size: int = SCRAPE_BATCH_SIZE, refresh_fx: bool = True) -> Dict[str, Any]:
     """
     One full scraper cycle:
@@ -3442,6 +3540,15 @@ async def scraper_background_loop():
                         print(f"[Scraper] Failed to log brand_discovery to DLQ: {dlq_err}")
                 
                 await asyncio.sleep(30)
+            # Job 2c — Noon recovery for inactive OEM-lookup backlog
+            if is_noon_run:
+                try:
+                    await resolve_inactive_parts_with_oem_lookup()
+                except Exception as exc:
+                    print(f"[Scraper] resolve_inactive_parts_with_oem_lookup error: {str(exc)[:500]}")
+
+                await asyncio.sleep(5)
+
 
             # Job 2b — Category Discovery (every CATEGORY_DISCOVERY_INTERVAL_H hours)
             run_category_discovery = is_midnight_run and CATEGORY_DISCOVERY_ENABLED

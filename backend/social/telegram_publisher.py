@@ -43,11 +43,70 @@ async def _telegram_api_post(method: str, payload: dict) -> dict:
     return data
 
 
+async def _telegram_api_post_multipart(method: str, data: dict, files: dict) -> dict:
+    token = _bot_token()
+    if not token:
+        return {
+            "ok": False,
+            "description": "TELEGRAM_BOT_TOKEN not configured",
+            "status_code": 500,
+        }
+
+    url = _API_BASE.format(token=token, method=method)
+    try:
+        async with httpx.AsyncClient(timeout=25.0) as client:
+            resp = await client.post(url, data=data, files=files)
+        parsed = resp.json()
+    except httpx.HTTPError as exc:
+        return {"ok": False, "description": str(exc), "status_code": 502}
+    except ValueError:
+        return {
+            "ok": False,
+            "description": "Telegram API returned non-JSON response",
+            "status_code": resp.status_code,
+        }
+
+    if "ok" not in parsed:
+        parsed["ok"] = resp.status_code < 400
+    parsed.setdefault("status_code", resp.status_code)
+    return parsed
+
+
 async def send_telegram_message(chat_id: Union[int, str], text: str) -> dict:
     """Send a plain text message to a specific Telegram chat."""
     result = await _telegram_api_post(
         "sendMessage",
         {"chat_id": str(chat_id), "text": text, "parse_mode": "HTML"},
+    )
+    if result.get("ok"):
+        message = result.get("result", {})
+        return {"ok": True, "message_id": message.get("message_id")}
+    return {"ok": False, "error": result.get("description", "Unknown Telegram API error")}
+
+
+async def send_telegram_photo(
+    chat_id: Union[int, str],
+    image_bytes: bytes,
+    mime_type: str = "image/jpeg",
+    caption: str = "",
+) -> dict:
+    filename = "chat_image.jpg"
+    if mime_type == "image/png":
+        filename = "chat_image.png"
+    elif mime_type == "image/webp":
+        filename = "chat_image.webp"
+    elif mime_type == "image/gif":
+        filename = "chat_image.gif"
+
+    payload = {
+        "chat_id": str(chat_id),
+        "caption": caption or "",
+        "parse_mode": "HTML",
+    }
+    result = await _telegram_api_post_multipart(
+        "sendPhoto",
+        data=payload,
+        files={"photo": (filename, image_bytes, mime_type)},
     )
     if result.get("ok"):
         message = result.get("result", {})

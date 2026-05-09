@@ -1881,9 +1881,10 @@ async def create_whatsapp_checkout(
     part_id: str,
     quantity: int,
     shipping_address: dict,
+    source: str = "whatsapp",
 ) -> dict:
     """
-    Internal checkout for WhatsApp/Telegram — no JWT required.
+    Internal checkout for chatbot channels (WhatsApp/Telegram/Web) — no JWT required.
     Opens its own catalog and PII DB sessions.
     Returns {"ok": True, "checkout_url": str, "order_id": str, "total": float}
          or {"ok": False, "error": str}
@@ -1898,6 +1899,11 @@ async def create_whatsapp_checkout(
     stripe_key, _ = resolve_stripe_secret_key()
     if not _is_valid_stripe_secret_key(stripe_key):
         return {"ok": False, "error": "Stripe not configured"}
+
+    source_key = str(source or "whatsapp").strip().lower()
+    if source_key not in {"whatsapp", "telegram", "web"}:
+        source_key = "whatsapp"
+    order_prefix = {"whatsapp": "WA", "telegram": "TG", "web": "WEB"}[source_key]
 
     try:
         part_uuid = uuid.UUID(str(part_id))
@@ -1948,7 +1954,7 @@ async def create_whatsapp_checkout(
     # ── 3. Create Order + OrderItem (PII DB) ───────────────────────────────────
     try:
         async with _pii_sf() as db_pii:
-            order_number = f"WA-{str(uuid.uuid4())[:8].upper()}"
+            order_number = f"{order_prefix}-{str(uuid.uuid4())[:8].upper()}"
             order = Order(
                 order_number=order_number,
                 user_id=user_uuid,
@@ -2019,9 +2025,9 @@ async def create_whatsapp_checkout(
                             "order_id": str(order.id),
                             "order_number": order_number,
                             "user_id": str(user_id),
-                            "source": "whatsapp",
+                            "source": source_key,
                         },
-                        idempotency_key=f"wa-order:{order.id}",
+                        idempotency_key=f"{source_key}-order:{order.id}",
                     )
                 )
             except Exception as stripe_err:

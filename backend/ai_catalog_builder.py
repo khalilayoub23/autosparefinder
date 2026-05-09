@@ -21,6 +21,7 @@ import asyncpg
 from sqlalchemy.ext.asyncio import AsyncSession
 from dotenv import load_dotenv
 from hf_client import hf_text
+from categories import CATEGORY_MAP
 
 load_dotenv()
 
@@ -54,12 +55,9 @@ THIN_BRANDS = [
 # Keep for backward compat
 MISSING_BRANDS = NEW_BRANDS
 
-# Hebrew part categories (matching existing DB categories)
-CATEGORIES = [
-    "מנוע", "בלמים", "מתלה", "היגוי", "דלק", "חשמל רכב",
-    "תאורה", "מיזוג", "פחיין ומרכב", "שרשראות ורצועות",
-    "ריפוד ופנים", "גלגלים וצמיגים", "מגבים", "כללי",
-]
+# Shared category list from the single source of truth.
+CATEGORIES = list(CATEGORY_MAP.keys())
+DEFAULT_CATEGORY = "כלי עבודה ואביזרים"
 
 CATALOG_UPSERT = """
 INSERT INTO parts_catalog
@@ -191,11 +189,11 @@ async def insert_parts(conn, supplier_id, brand: str, parts: list,
             name_he  = str(part.get("name_he") or part.get("name") or "חלק חלוף").strip()
             name_en  = str(part.get("name_en", "")).strip()
             cat_num  = str(part.get("catalog_num") or part.get("part_number") or f"R{i+1}").strip()
-            category = str(part.get("category") or "כללי").strip()
+            category = str(part.get("category") or DEFAULT_CATEGORY).strip()
             price    = float(part.get("price_ils") or 100)
             in_stock = bool(part.get("in_stock", True))
             if category not in CATEGORIES:
-                category = "כללי"
+                category = DEFAULT_CATEGORY
             sku = make_sku(brand, cat_num, i)
             if sku in existing_skus:
                 continue

@@ -10,8 +10,11 @@ import json
 import asyncio
 from datetime import datetime, timezone, timedelta
 from uuid import UUID as _UUID
+from typing import Dict, Any
 import httpx
 import re
+import base64
+import binascii
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -358,37 +361,38 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_pii_
     """Inbound WhatsApp messages from Baileys bridge."""
     from social.whatsapp_provider import parse_incoming, send_message as wa_send
 
-    # —— Parse incoming JSON from Baileys bridge ——————————————————————
     try:
         raw_data = await request.json()
     except Exception:
         return Response(content="<Response/>", media_type="text/xml")
 
-    parsed       = parse_incoming(raw_data)
+    parsed = parse_incoming(raw_data)
     sender_phone = parsed.get("from", "")
-    body         = parsed.get("body", "").strip()
+    body = parsed.get("body", "").strip()
     profile_name = parsed.get("profile_name", "")
-    reply_jid    = raw_data.get("reply_jid", "")
+    reply_jid = raw_data.get("reply_jid", "")
 
-    if not sender_phone or not body:
+    media_kind = str(parsed.get("media_kind") or "").strip().lower()
+    media_b64 = str(parsed.get("media_base64") or "").strip()
+    media_mime = str(parsed.get("media_mime") or "").strip().lower()
+    media_caption = str(parsed.get("media_caption") or "").strip()
+    media_too_large = bool(parsed.get("media_too_large"))
+
+    if not sender_phone or (not body and not media_kind):
         return Response(content="<Response/>", media_type="text/xml")
 
-    # Send real typing indicator via Baileys (composing presence)
     try:
         from social.whatsapp_provider import send_typing as wa_typing
         await wa_typing(sender_phone, reply_jid=reply_jid)
     except Exception:
         pass
 
-    # Normalise: strip "whatsapp:" prefix for DB lookup / agent routing
     phone_e164 = sender_phone.replace("whatsapp:", "").strip()
 
-    # ── 4. Resolve user_id ────────────────────────────────────────────────────
     user_result = await db.execute(select(User).where(User.phone == phone_e164))
     user = user_result.scalar_one_or_none()
     conversation_user_id = user.id if user else WHATSAPP_ANON_USER_ID
 
-    # ── 5. Find or create Conversation keyed on whatsapp_phone ───────────────
     conv_result = await db.execute(
         select(Conversation).where(
             Conversation.context["whatsapp_phone"].astext == phone_e164
@@ -404,7 +408,11 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_pii_
             is_active=True,
             started_at=datetime.now(tz=timezone(timedelta(hours=3))).replace(tzinfo=None),
             last_message_at=datetime.now(tz=timezone(timedelta(hours=3))).replace(tzinfo=None),
-            context={"whatsapp_phone": phone_e164, "profile_name": profile_name},
+            context={
+                "whatsapp_phone": phone_e164,
+                "profile_name": profile_name,
+                "whatsapp_reply_jid": reply_jid or None,
+            },
         )
         db.add(conversation)
         await db.flush()
@@ -413,6 +421,13 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_pii_
     else:
         is_new_conversation = False
         conversation.last_message_at = datetime.now(tz=timezone(timedelta(hours=3))).replace(tzinfo=None)
+        ctx = conversation.context if isinstance(conversation.context, dict) else {}
+        ctx["whatsapp_phone"] = phone_e164
+        if profile_name:
+            ctx["profile_name"] = profile_name
+        if reply_jid:
+            ctx["whatsapp_reply_jid"] = reply_jid
+        conversation.context = ctx
 
     conv_id = str(conversation.id)
 
@@ -439,14 +454,148 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_pii_
         db.add(Message(**_msg_kwargs))
         conversation.last_message_at = datetime.now(tz=timezone(timedelta(hours=3))).replace(tzinfo=None)
 
-    # ── 6. Persist user message ───────────────────────────────────────────────
+    media_bytes = None
+    user_content_type = "text"
+    user_analysis = None
 
-    # ── 5b. Agent name + welcome for new conversations ────────────────────────────────
+    if media_kind:
+        if media_too_large and not media_b64:
+            too_large_text = "הקובץ גדול מדי לעיבוד. נסה לשלוח קובץ קצר יותר או תמונה דחוסה יותר."
+            send_result = await wa_send(sender_phone, too_large_text, reply_jid=reply_jid)
+            await _persist_assistant_after_send(
+                send_result=send_result,
+                text=too_large_text,
+                agent_name="media_guard",
+                model_used="media_guard",
+            )
+            await db.commit()
+            return Response(content="<Response/>", media_type="application/xml")
+
+        if media_b64:
+            raw_media = media_b64
+            if raw_media.startswith("data:"):
+                _, _, payload = raw_media.partition(",")
+                raw_media = payload.strip()
+            try:
+                media_bytes = base64.b64decode(raw_media, validate=True)
+            except (ValueError, binascii.Error):
+                invalid_text = "לא הצלחתי לקרוא את קובץ המדיה. נסה לשלוח שוב."
+                send_result = await wa_send(sender_phone, invalid_text, reply_jid=reply_jid)
+                await _persist_assistant_after_send(
+                    send_result=send_result,
+                    text=invalid_text,
+                    agent_name="media_guard",
+                    model_used="media_guard",
+                )
+                await db.commit()
+                return Response(content="<Response/>", media_type="application/xml")
+
+            if not media_bytes:
+                empty_text = "הקובץ שנשלח ריק. נסה לשלוח שוב."
+                send_result = await wa_send(sender_phone, empty_text, reply_jid=reply_jid)
+                await _persist_assistant_after_send(
+                    send_result=send_result,
+                    text=empty_text,
+                    agent_name="media_guard",
+                    model_used="media_guard",
+                )
+                await db.commit()
+                return Response(content="<Response/>", media_type="application/xml")
+
+        if media_kind == "image":
+            user_content_type = "image"
+            preview_mime = media_mime or "image/jpeg"
+            if media_bytes:
+                preview_limit = max(65536, int(os.getenv("WHATSAPP_IMAGE_PREVIEW_MAX_BYTES", "1048576")))
+                if len(media_bytes) <= preview_limit:
+                    canonical_b64 = base64.b64encode(media_bytes).decode("ascii")
+                    user_analysis = {
+                        "image_data_url": f"data:{preview_mime};base64,{canonical_b64}",
+                        "media_kind": "image",
+                        "media_mime": preview_mime,
+                        "media_bytes": len(media_bytes),
+                    }
+                else:
+                    user_analysis = {
+                        "media_kind": "image",
+                        "media_mime": preview_mime,
+                        "media_bytes": len(media_bytes),
+                    }
+        elif media_kind in {"audio", "voice"}:
+            user_content_type = "audio"
+            if media_bytes:
+                user_analysis = {
+                    "media_kind": "audio",
+                    "media_mime": media_mime or "audio/ogg; codecs=opus",
+                    "media_bytes": len(media_bytes),
+                }
+
+        if not body:
+            try:
+                if media_kind == "image":
+                    if not media_bytes:
+                        raise RuntimeError("missing image bytes")
+                    from hf_client import hf_vision
+                    vision_prompt = media_caption or "זהה את החלק בתמונה והצע חלפים מתאימים"
+                    inferred = await hf_vision(
+                        base64.b64encode(media_bytes).decode("ascii"),
+                        vision_prompt,
+                        mime=media_mime or "image/jpeg",
+                    )
+                    body = (inferred or "").strip()
+                    if not body:
+                        fail_text = "קיבלתי את התמונה אבל לא הצלחתי לזהות ממנה פרטים. נסה תמונה ברורה יותר."
+                        send_result = await wa_send(sender_phone, fail_text, reply_jid=reply_jid)
+                        await _persist_assistant_after_send(
+                            send_result=send_result,
+                            text=fail_text,
+                            agent_name="vision_fallback",
+                            model_used="vision",
+                        )
+                        await db.commit()
+                        return Response(content="<Response/>", media_type="application/xml")
+                elif media_kind in {"audio", "voice"}:
+                    if not media_bytes:
+                        raise RuntimeError("missing audio bytes")
+                    from hf_client import hf_audio
+                    transcript = await hf_audio(media_bytes)
+                    body = (transcript or "").strip()
+                    if not body:
+                        fail_text = "קיבלתי את ההקלטה אבל לא הצלחתי לתמלל אותה. נסה הקלטה קצרה וברורה יותר."
+                        send_result = await wa_send(sender_phone, fail_text, reply_jid=reply_jid)
+                        await _persist_assistant_after_send(
+                            send_result=send_result,
+                            text=fail_text,
+                            agent_name="audio_fallback",
+                            model_used="audio",
+                        )
+                        await db.commit()
+                        return Response(content="<Response/>", media_type="application/xml")
+                else:
+                    body = media_caption or "נשלח קובץ מדיה"
+            except Exception as exc:
+                safe_tail = phone_e164[-4:] if len(phone_e164) >= 4 else phone_e164
+                print(f"[WhatsApp] Media processing failed for ****{safe_tail}: {exc}")
+                fail_text = "אירעה שגיאה בעיבוד המדיה. נסה לשלוח שוב או כתוב את הבקשה בטקסט."
+                send_result = await wa_send(sender_phone, fail_text, reply_jid=reply_jid)
+                await _persist_assistant_after_send(
+                    send_result=send_result,
+                    text=fail_text,
+                    agent_name="media_fallback",
+                    model_used="media",
+                )
+                await db.commit()
+                return Response(content="<Response/>", media_type="application/xml")
+
+    body = body.strip() if body else ""
+    if not body:
+        body = media_caption or "נשלח קובץ מדיה"
+
     import random
     hebrew_female_names = ["ענת", "דנא", "מאיה", "שירה"]
-    hebrew_male_names   = ["יוסי", "ליאור", "כרם", "עמית"]
+    hebrew_male_names = ["יוסי", "ליאור", "כרם", "עמית"]
     arabic_female_names = ["لينا", "سارة", "نور", "رنا"]
-    arabic_male_names   = ["كرم", "محمد", "أحمد", "خالد"]
+    arabic_male_names = ["كرم", "محمد", "أحمد", "خالد"]
 
     is_arabic_speaker = any(c in body for c in "ابتةثجحخدذرزسشصضطظعغفقكلمنهوي")
 
@@ -466,24 +615,39 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_pii_
         if is_arabic_speaker:
             role_ar = "ممثلة" if is_female else "ممثل"
             if is_greeting_only:
-                welcome = f"أهلاً وسهلاً! 👋\nأنا {worker}، {role_ar} خدمة العملاء في AutoSpareFinder.\nكيف أستطيع مساعدتك اليوم؟\nهل تبحث عن قطعة غيار، أو تريد متابعة طلب، أو لديك استفسار؟ 😊"
+                welcome = (
+                    f"أهلاً وسهلاً! 👋\n"
+                    f"أنا {worker}، {role_ar} خدمة العملاء في AutoSpareFinder.\n"
+                    "كيف أستطيع مساعدتك اليوم؟\n"
+                    "هل تبحث عن قطعة غيار، أو تريد متابعة طلب، أو لديك استفسار؟ 😊"
+                )
                 await db.commit()
                 await wa_send(sender_phone, welcome, reply_jid=reply_jid)
                 return Response(content="<Response/>", media_type="application/xml")
             else:
-                welcome = f"أهلاً وسهلاً! 👋 أنا {worker}، {role_ar} خدمة العملاء في AutoSpareFinder.\nبكل سرور سأساعدك — دعنا نجد ما تحتاجه! 🔍"
+                welcome = (
+                    f"أهلاً وسهلاً! 👋 أنا {worker}، {role_ar} خدمة العملاء في AutoSpareFinder.\n"
+                    "بكل سرور سأساعدك — دعنا نجد ما تحتاجه! 🔍"
+                )
                 await wa_send(sender_phone, welcome, reply_jid=reply_jid)
         else:
             role_he = "נציגת" if is_female else "נציג"
             if is_greeting_only:
-                welcome = f"שלום וברוכים הבאים! 👋\nאני {worker}, {role_he} השירות של AutoSpareFinder.\nאיך אוכל לעזור לך היום?\nמחפש חלק לרכב, רוצה לעקוב אחר הזמנה, או שיש לך שאלה? 😊"
+                welcome = (
+                    f"שלום וברוכים הבאים! 👋\n"
+                    f"אני {worker}, {role_he} השירות של AutoSpareFinder.\n"
+                    "איך אוכל לעזור לך היום?\n"
+                    "מחפש חלק לרכב, רוצה לעקוב אחר הזמנה, או שיש לך שאלה? 😊"
+                )
                 await db.commit()
                 await wa_send(sender_phone, welcome, reply_jid=reply_jid)
                 return Response(content="<Response/>", media_type="application/xml")
             else:
-                welcome = f"היי! 👋 אני {worker}, {role_he} השירות של AutoSpareFinder.\nבשמחה אעזור לך — בוא נמצא מה שאתה מחפש! 🔍"
+                welcome = (
+                    f"היי! 👋 אני {worker}, {role_he} השירות של AutoSpareFinder.\n"
+                    "בשמחה אעזור לך — בוא נמצא מה שאתה מחפש! 🔍"
+                )
                 await wa_send(sender_phone, welcome, reply_jid=reply_jid)
-        # Commit agent_name to DB before continuing so next message sees it
         from sqlalchemy import update as _update
         await db.execute(
             _update(Conversation)
@@ -491,16 +655,15 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_pii_
             .values(context=conversation.context)
         )
         await db.commit()
-        # Do NOT return — continue processing the actual request
     elif body in ("/start", "/התחל", "start", "hello", "hi", "היי", "הי", "هلا", "مرحبا", "שלום"):
-        # Returning user sent a greeting — just acknowledge, don't restart conversation
         pass
 
     user_msg = Message(
         conversation_id=conversation.id,
         role="user",
         content=body,
-        content_type="text",
+        content_type=user_content_type,
+        analysis=user_analysis,
     )
     db.add(user_msg)
     await db.flush()
@@ -508,7 +671,6 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_pii_
     handoff_settings = await _load_handoff_settings()
 
     if _takeover_active(conversation):
-        # Conversation is in admin manual takeover mode: store inbound and skip bot response.
         await db.commit()
         return Response(content="<Response/>", media_type="application/xml")
 
@@ -547,7 +709,6 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_pii_
         await db.commit()
         return Response(content="<Response/>", media_type="application/xml")
 
-    # ── 7. Route through Avi ──────────────────────────────────────────────────
     try:
         agent_result = await process_user_message(
             user_id=str(conversation_user_id),
@@ -565,19 +726,15 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_pii_
         print(f"[WhatsApp] Agent error for ****{safe_tail}: {exc}")
         reply_text = "מצטערים, נתקלנו בבעיה. אנא נסה שוב."
 
-    # ── 8. Send reply via WhatsApp API ────────────────────────────────────────
     send_result = await wa_send(sender_phone, reply_text, reply_jid=reply_jid)
     if not send_result["ok"]:
         safe_phone = (sender_phone or "")
         safe_tail = safe_phone[-4:] if len(safe_phone) >= 4 else safe_phone
         print(f"[WhatsApp] Send failed to ****{safe_tail}: {send_result['error']}")
 
-    # Assistant AI reply is already persisted inside process_user_message.
     await db.commit()
 
-    # Empty TwiML — reply sent proactively via API, not TwiML verb
     return Response(content="<Response/>", media_type="application/xml")
-
 
 @router.post("/api/v1/webhooks/telegram")
 async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_pii_db)):

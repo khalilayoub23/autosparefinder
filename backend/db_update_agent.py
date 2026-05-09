@@ -8,7 +8,7 @@ Tasks
 -----
 1.  clean_part_names          – strip trailing car-model suffixes from part names
 2.  normalize_part_types      – unify to "Original" / "OEM" / "Aftermarket"
-3.  normalize_categories      – map variants to 14 canonical Hebrew categories
+3.  normalize_categories      – map variants to shared canonical Hebrew categories
 4.  normalize_availability    – unify to "in_stock" / "out_of_stock" / "on_order"
 5.  fix_base_prices           – ensure base_price = supplier min + 18 % VAT markup
 6.  flag_fake_skus            – set needs_oem_lookup=True for auto-generated SKUs
@@ -49,6 +49,7 @@ from resilience import job_registry_start, job_registry_finish
 from manufacturer_normalization import PARTS_BRANDS, canonicalize_vehicle_model_for_manufacturer
 from manufacturer_normalization import normalize_vehicle_model_name, normalize_vehicle_submodel_name
 from manufacturer_normalization import normalize_manufacturer_name
+from categories import CATEGORY_MAP as SHARED_CATEGORY_MAP
 
 logger = logging.getLogger("db_update_agent")
 
@@ -59,23 +60,9 @@ logger = logging.getLogger("db_update_agent")
 VAT = 0.18          # Israeli VAT rate
 ILS_PER_USD = 3.72  # fallback – overridden at runtime from system_settings
 
-# 14 canonical Hebrew category names
-CANONICAL_CATEGORIES: List[str] = [
-    "בלמים",
-    "גלגלים וצמיגים",
-    "דלק",
-    "היגוי",
-    "חשמל רכב",
-    "כללי",
-    "מגבים",
-    "מיזוג",
-    "מנוע",
-    "מתלה",
-    "פחיין ומרכב",
-    "ריפוד ופנים",
-    "שרשראות ורצועות",
-    "תאורה",
-]
+# Canonical categories come from the shared taxonomy module.
+CANONICAL_CATEGORIES: List[str] = list(SHARED_CATEGORY_MAP.keys()) + ["כללי"]
+
 
 # Mapping of synonyms → canonical category
 CATEGORY_MAP: Dict[str, str] = {
@@ -185,6 +172,17 @@ CATEGORY_MAP: Dict[str, str] = {
     "motorcycle accessories": "כללי",
     "motorcycle clothing": "כללי",
     "motorcycle helmets": "כללי",
+}
+
+# Legacy category aliases remapped to the shared 28-category taxonomy
+CATEGORY_NAME_REMAP: Dict[str, str] = {
+    "דלק": "מערכת דלק",
+    "חשמל רכב": "חשמל ואלקטרוניקה",
+    "מגבים": "שמשות ומגבים",
+    "מיזוג": "מזגן וחימום",
+    "פחיין ומרכב": "גוף הרכב",
+    "ריפוד ופנים": "פנים הרכב",
+    "שרשראות ורצועות": "רצועות תזמון",
 }
 
 # Normalisation map for part_type
@@ -322,7 +320,12 @@ def _normalize_category(raw: str) -> Optional[str]:
     raw_stripped = raw.strip()
     if raw_stripped in CANONICAL_CATEGORIES:
         return None  # already canonical
-    return CATEGORY_MAP.get(raw_stripped.lower())
+    if raw_stripped in CATEGORY_NAME_REMAP:
+        return CATEGORY_NAME_REMAP[raw_stripped]
+    mapped = CATEGORY_MAP.get(raw_stripped.lower())
+    if not mapped:
+        return None
+    return CATEGORY_NAME_REMAP.get(mapped, mapped)
 
 
 def _normalize_availability(raw: str) -> Optional[str]:
@@ -500,7 +503,7 @@ async def normalize_part_types(db: AsyncSession) -> Dict[str, Any]:
 
 async def normalize_categories(db: AsyncSession) -> Dict[str, Any]:
     """
-    Map non-canonical category values to the 14 canonical Hebrew categories.
+    Map non-canonical category values to the shared canonical Hebrew categories.
     Unrecognised categories are set to "כללי" (general).
     """
     t0 = time.monotonic()
@@ -2200,12 +2203,50 @@ _MANUFACTURER_SUPPLIERS = [
     ("Toyota Genuine",   "JP",  1.05, 99.0, 27.0, 10, "on_order", False),
 ]
 _CATEGORY_FALLBACK_ILS: Dict[str, float] = {
-    "גוף ואקסטריור": 1206, "כללי": 1320, "מתלים והגה": 1178, "מנוע": 1522,
-    "חשמל": 862, "בלמים": 648, "מערכת דלק": 909, "מסננים ושמנים": 958,
-    "אטמים וחומרים": 302, "תאורה": 1560, "מיזוג ומערכת חימום": 997,
-    "גלגלים וצמיגים": 889, "פנים הרכב": 1224, "תיבת הילוכים": 2398,
-    "קירור": 1027, "מערכת פליטה": 2365, "סרן והינע": 891,
-    "מגבים": 446, "שרשראות ורצועות": 429, "כלים וציוד": 350,
+    # Shared 28-category taxonomy
+    "בלמים": 648,
+    "מתלה": 1178,
+    "היגוי": 1178,
+    "מנוע": 1522,
+    "קירור": 1027,
+    "מערכת דלק": 909,
+    "מערכת אוויר": 958,
+    "טורבו": 1522,
+    "פליטה": 2365,
+    "תיבת הילוכים וציר": 2398,
+    "מצמד": 2398,
+    "רצועות תזמון": 429,
+    "הצתה": 862,
+    "סינון": 958,
+    "חשמל ואלקטרוניקה": 862,
+    "חיישנים": 862,
+    "מצבר": 862,
+    "תאורה": 1560,
+    "מזגן וחימום": 997,
+    "גוף הרכב": 1206,
+    "שמשות ומגבים": 446,
+    "פנים הרכב": 1224,
+    "גלגלים וצמיגים": 889,
+    "אטמים וצינורות": 302,
+    "מערכת בטיחות": 1224,
+    "מערכת היברידית וחשמלי": 2398,
+    "שמנים ונוזלים": 958,
+    "כלי עבודה ואביזרים": 350,
+    "כללי": 1320,
+
+    # Legacy names kept for backwards compatibility
+    "גוף ואקסטריור": 1206,
+    "מתלים והגה": 1178,
+    "חשמל": 862,
+    "מסננים ושמנים": 958,
+    "אטמים וחומרים": 302,
+    "מיזוג ומערכת חימום": 997,
+    "תיבת הילוכים": 2398,
+    "מערכת פליטה": 2365,
+    "סרן והינע": 891,
+    "מגבים": 446,
+    "שרשראות ורצועות": 429,
+    "כלים וציוד": 350,
 }
 _WARRANTY_MAP = {"Original": 24, "OEM": 24, "Aftermarket": 12, "Refurbished": 6}
 _BATCH = 5_000

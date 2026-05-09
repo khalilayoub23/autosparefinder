@@ -4,7 +4,7 @@ import { useAuthStore } from '../stores/authStore'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Send, PlusCircle, Trash2, MessageSquare, Bot,
-  User, Image, Loader2, Star, ChevronRight, Search, ShoppingCart,
+  User, Image, Mic, Loader2, Star, ChevronRight, Search, ShoppingCart,
 } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import { he } from 'date-fns/locale'
@@ -141,9 +141,16 @@ function Message({ msg, onRate, onCatalogSearch }) {
           </div>
         )}
         <div className={isUser ? 'chat-bubble-user' : 'chat-bubble-agent'}>
+          {msg.content_type === 'image' && msg.image_data_url && (
+            <img
+              src={msg.image_data_url}
+              alt="chat attachment"
+              className="rounded-lg mb-2 max-h-64 w-auto object-contain border border-gray-200"
+            />
+          )}
           {isUser
-            ? <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</p>
-            : <MessageContent content={msg.content} />
+            ? (msg.content ? <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</p> : null)
+            : (msg.content ? <MessageContent content={msg.content} /> : null)
           }
         </div>
 
@@ -202,7 +209,8 @@ export default function Chat() {
     currentConversationId,
     isTyping,
     sendMessage,
-    requestHumanSupport,
+      sendVoiceClip,
+      requestHumanSupport,
     submitHumanHandoffFeedback,
     loadConversations,
     selectConversation,
@@ -233,12 +241,14 @@ export default function Chat() {
   }
   const [input, setInput] = useState('')
   const [imageFile, setImageFile] = useState(null)
+    const [audioFile, setAudioFile] = useState(null)
   const [requestingHuman, setRequestingHuman] = useState(false)
   const [handoffFeedbackRating, setHandoffFeedbackRating] = useState(5)
   const [handoffFeedbackText, setHandoffFeedbackText] = useState('')
   const [submittingHandoffFeedback, setSubmittingHandoffFeedback] = useState(false)
   const bottomRef = useRef(null)
   const fileRef = useRef(null)
+    const audioFileRef = useRef(null)
   const autoSentRef = useRef(false)
   const activeConversation = conversations.find((c) => c.id === currentConversationId) || null
   const handoffStatus = activeConversation?.human_handoff_status || 'none'
@@ -281,17 +291,30 @@ export default function Chat() {
   }, [])
 
   const handleSend = async (text = input) => {
-    if (!text.trim() && !imageFile) return
-    setInput('')
-    setImageFile(null)
-    try {
-      await sendMessage(text, imageFile)
-    } catch {
-      toast.error('שגיאה בשליחת ההודעה')
-    }
-  }
+      const trimmed = (text || '').trim()
+      const pendingImage = imageFile
+      const pendingAudio = audioFile
+      if (!trimmed && !pendingImage && !pendingAudio) return
 
-  const handleRate = async (score) => {
+      setInput('')
+      setImageFile(null)
+      setAudioFile(null)
+
+      try {
+        if (pendingAudio) {
+          await sendVoiceClip(pendingAudio, trimmed)
+          if (trimmed) {
+            await sendMessage(trimmed)
+          }
+          return
+        }
+        await sendMessage(trimmed, pendingImage)
+      } catch {
+        toast.error('שגיאה בשליחת ההודעה')
+      }
+    }
+
+    const handleRate = async (score) => {
     if (!currentConversationId || !agentName) return
     try {
       await chatApi.rateAgent(currentConversationId, agentName, score)
@@ -478,21 +501,53 @@ export default function Chat() {
           <div ref={bottomRef} />
         </div>
 
-        {/* Image preview */}
-        {imageFile && (
-          <div className="px-4 py-2 border-t border-gray-100 flex items-center gap-2">
-            <img src={URL.createObjectURL(imageFile)} className="h-14 w-14 object-cover rounded-lg" alt="" />
-            <button onClick={() => setImageFile(null)} className="text-xs text-red-500 hover:text-red-700">הסר</button>
-          </div>
-        )}
+        {/* Media preview */}
+          {(imageFile || audioFile) && (
+            <div className="px-4 py-2 border-t border-gray-100 flex items-center gap-2">
+              {imageFile && <img src={URL.createObjectURL(imageFile)} className="h-14 w-14 object-cover rounded-lg" alt="" />}
+              {audioFile && (
+                <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-700">
+                  קליפ קולי: {audioFile.name}
+                </div>
+              )}
+              <button
+                onClick={() => { setImageFile(null); setAudioFile(null) }}
+                className="text-xs text-red-500 hover:text-red-700"
+              >
+                הסר
+              </button>
+            </div>
+          )}
 
-        {/* Input */}
+          {/* Input */}
         <div className="p-4 border-t border-gray-100">
           <div className="flex items-end gap-2">
             <button onClick={() => fileRef.current?.click()} className="btn-ghost p-2.5 flex-shrink-0 text-gray-400 hover:text-brand-600">
               <Image className="w-5 h-5" />
             </button>
-            <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => setImageFile(e.target.files[0])} />
+            <input
+                ref={fileRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  setImageFile(e.target.files?.[0] || null)
+                  setAudioFile(null)
+                }}
+              />
+              <button onClick={() => audioFileRef.current?.click()} className="btn-ghost p-2.5 flex-shrink-0 text-gray-400 hover:text-brand-600" title="שלח הקלטה">
+                <Mic className="w-5 h-5" />
+              </button>
+              <input
+                ref={audioFileRef}
+                type="file"
+                accept="audio/*,.ogg,.oga,.mp3,.wav,.m4a,.webm"
+                className="hidden"
+                onChange={(e) => {
+                  setAudioFile(e.target.files?.[0] || null)
+                  setImageFile(null)
+                }}
+              />
             <textarea
               className="flex-1 input-field resize-none min-h-[44px] max-h-32 py-2.5"
               placeholder="שלח הודעה... (מספר לוחית, שאלה על חלק, הזמנה...)"
@@ -509,7 +564,7 @@ export default function Chat() {
             />
             <button
               onClick={() => handleSend()}
-              disabled={!input.trim() && !imageFile || isTyping}
+              disabled={(!input.trim() && !imageFile && !audioFile) || isTyping}
               className="btn-primary p-2.5 flex-shrink-0"
             >
               {isTyping ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}

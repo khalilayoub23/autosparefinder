@@ -15,4 +15,13 @@ export const chatApi = {
     fd.append('file', file)
     return api.post('/chat/upload-image', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
   },
+  uploadAudio: (file, conversationId = null) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    const config = {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      params: conversationId ? { conversation_id: conversationId } : undefined,
+    }
+    return api.post('/chat/upload-audio', fd, config)
+  },
 }

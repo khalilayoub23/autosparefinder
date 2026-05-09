@@ -18,6 +18,51 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Resolve DB tunnel host
+        env:
+          CATALOG_DB_URL: ${{ secrets.CATALOG_DB_URL }}
+        run: |
+          python - <<'PY'
+          import os
+          from urllib.parse import urlsplit
+
+          db_url = os.environ.get("CATALOG_DB_URL", "").strip()
+          parsed = urlsplit(db_url)
+          if not parsed.hostname:
+              raise SystemExit("CATALOG_DB_URL must include a hostname")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as fh:
+              fh.write(f"SSH_TUNNEL_HOST={parsed.hostname}\n")
+          PY
+
+      - name: Start SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Trust SSH host key
+        env:
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          ssh-keyscan -p "${SSH_PORT:-22}" -H "$SSH_TUNNEL_HOST" >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Open SSH tunnel to catalog DB
+        env:
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+        run: |
+          ssh -f -N \
+            -L 55432:127.0.0.1:5432 \
+            -p "${SSH_PORT:-22}" \
+            -o ExitOnForwardFailure=yes \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=3 \
+            "$SSH_USER@$SSH_TUNNEL_HOST"
+
+          ss -ltn | grep '127.0.0.1:55432'
+
       - name: Install dependencies
         run: |
           pip install playwright httpx asyncpg beautifulsoup4 lxml
@@ -26,4 +71,28 @@ jobs:
       - name: Run aftermarket scraper
         env:
           CATALOG_DB_URL: ${{ secrets.CATALOG_DB_URL }}
-        run: python scripts/scraper_gh_actions.py
+        run: |
+          export CATALOG_DB_URL="$(python - <<'PY'
+          import os
+          from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+          db_url = os.environ.get("CATALOG_DB_URL", "").strip()
+          parsed = urlsplit(db_url)
+          if not parsed.scheme or not parsed.netloc:
+              raise SystemExit("CATALOG_DB_URL must be a full postgres URL")
+
+          userinfo = ""
+          if "@" in parsed.netloc:
+              userinfo = parsed.netloc.rsplit("@", 1)[0] + "@"
+
+          params = [(k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True) if k.lower() != "sslmode"]
+          params.append(("sslmode", "disable"))
+
+          tunneled = urlunsplit(
+              (parsed.scheme, f"{userinfo}127.0.0.1:55432", parsed.path, urlencode(params), parsed.fragment)
+          )
+          print(tunneled)
+          PY
+          )"
+
+          python scripts/scraper_gh_actions.py

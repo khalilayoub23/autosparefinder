@@ -71,6 +71,47 @@ export const useChatStore = create(
     await get().loadConversations()
   },
 
+  sendVoiceClip: async (audioFile, note = '') => {
+    const state = get()
+    if (!audioFile) return
+
+    const tempId = `temp-audio-${Date.now()}`
+    const userMsg = {
+      id: tempId,
+      role: 'user',
+      content: note?.trim() || 'הודעה קולית',
+      content_type: 'audio',
+      created_at: new Date().toISOString(),
+    }
+    set({ messages: [...state.messages, userMsg], isTyping: true })
+
+    try {
+      const { data } = await chatApi.uploadAudio(audioFile, state.currentConversationId)
+      const convId = data.conversation_id || state.currentConversationId
+
+      if (!convId) {
+        set({ isTyping: false })
+        await get().loadConversations()
+        return data
+      }
+
+      const { data: msgData } = await chatApi.getMessages(convId)
+      set({
+        currentConversationId: convId,
+        messages: msgData.messages || [],
+        isTyping: false,
+      })
+      await get().loadConversations()
+      return data
+    } catch (err) {
+      set((s) => ({
+        messages: s.messages.filter((m) => m.id !== tempId),
+        isTyping: false,
+      }))
+      throw err
+    }
+  },
+
   sendMessage: async (text, imageFile = null) => {
     const state = get()
     // Optimistic user message

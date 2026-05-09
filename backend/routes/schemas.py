@@ -118,6 +118,21 @@ class UpdateSocialPostRequest(BaseModel):
     schedule_time: Optional[datetime] = None
 
 
+class GenerateCampaignRequest(BaseModel):
+    topic: str = Field(..., max_length=500)
+    platforms: List[str] = Field(default_factory=lambda: ["facebook", "instagram", "tiktok"])
+    tone: str = Field(default="professional", max_length=80)
+    duration_days: int = Field(default=7, ge=1, le=30)
+    proposed_budget_ils: Optional[float] = Field(default=None, gt=0)
+    schedule_time: Optional[datetime] = None
+
+
+class ConfirmCampaignBudgetRequest(BaseModel):
+    approved: bool = False
+    approved_budget_ils: Optional[float] = Field(default=None, gt=0)
+    note: Optional[str] = Field(default=None, max_length=500)
+
+
 class UserUpdateBody(BaseModel):
     full_name: Optional[str] = None
     email: Optional[str] = None

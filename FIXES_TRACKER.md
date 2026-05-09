@@ -414,12 +414,12 @@ Cleanup agent auto-classifies all parts — no manual work.
 | 4 | מנוע | בלוק, בוכנות, שסתומים, גל ארכובה, גל זיזים | מנוע, בוכנה, שסתום, גל ארכובה, גל זיזים | engine, piston, valve, crankshaft, camshaft, block |
 | 5 | קירור | רדיאטור, משאבת מים, תרמוסטט, מאוורר, צינורות קירור, נוזל קירור | רדיאטור, קירור, תרמוסטט, משאבת מים, מאוורר | radiator, water pump, thermostat, cooling fan, coolant hose |
 | 6 | מערכת דלק | משאבת דלק, מזרקים, מיכל דלק, ריילי, שנורקל | משאבת דלק, מזרק, מיכל דלק, ריילי | fuel pump, injector, fuel tank, fuel rail |
-| 7 | צריכת אוויר | מסנן אוויר, צינור אוויר, גוף מיתון, MAF | מסנן אוויר, צינור אוויר, גוף מיתון | air filter, air intake, MAF, throttle body |
+| 7 | מערכת אוויר | מסנן אוויר, צינור אוויר, גוף מיתון, MAF | מסנן אוויר, צינור אוויר, גוף מיתון | air filter, air intake, MAF, throttle body |
 | 8 | טורבו | טורבו, אינטרקולר, סופרשארז׳ר, צינורות טורבו | טורבו, אינטרקולר, סופרשארג'ר | turbocharger, supercharger, intercooler, boost pipe |
 | 9 | פליטה | צינורות פליטה, מפלט, DPF, SCR, קטליזטור, EGR | פליטה, מפלט, קטליזטור, DPF, EGR | exhaust, muffler, catalytic converter, DPF, EGR |
-| 10 | שידור | תיבת הילוכים, ציר הנעה, מחצית ציר, דיפרנציאל | תיבת הילוכים, גיר, ציר, דיפרנציאל | transmission, gearbox, driveshaft, differential, CV joint |
+| 10 | תיבת הילוכים וציר | תיבת הילוכים, ציר הנעה, מחצית ציר, דיפרנציאל | תיבת הילוכים, גיר, ציר, דיפרנציאל | transmission, gearbox, driveshaft, differential, CV joint |
 | 11 | מצמד | ערכת מצמד, גלגל תנופה, מסב שחרור, מזלג | מצמד, גלגל תנופה, מסב שחרור | clutch kit, flywheel, release bearing, clutch fork |
-| 12 | מיתוג | רצועת תזמון, שרשרת תזמון, גלגלות, מותחן | רצועה, שרשרת תזמון, גלגלת, מותחן | timing belt, timing chain, tensioner, idler pulley |
+| 12 | רצועות תזמון | רצועת תזמון, שרשרת תזמון, גלגלות, מותחן | רצועה, שרשרת תזמון, גלגלת, מותחן | timing belt, timing chain, tensioner, idler pulley |
 | 13 | הצתה | מצתים, סלילי הצתה, מפלג, כבלי מצתים | מצת, סליל הצתה, מפלג | spark plug, ignition coil, distributor, plug wire |
 | 14 | סינון | מסנן שמן, מסנן דלק, מסנן מזגן | מסנן שמן, מסנן דלק, מסנן מזגן | oil filter, fuel filter, cabin air filter, pollen filter |
 | 15 | חשמל ואלקטרוניקה | אלטרנטור, מצת הנעה, ECU, ממסרים, פיוזים, צמת | אלטרנטור, מצת הנעה, ECU, מחשב, ממסר, פיוז, צמת | alternator, starter motor, ECU, relay, fuse, wiring harness |
@@ -427,11 +427,11 @@ Cleanup agent auto-classifies all parts — no manual work.
 | 17 | מצבר | סוללה, ניהול מצבר, כבלי מצבר | מצבר, סוללה, בטריה | battery, battery management, terminal |
 | 18 | תאורה | פנסים קדמיים, פנסים אחוריים, נורות, אינדיקטורים, ערפל | פנס, נורה, תאורה, אינדיקטור | headlight, tail light, bulb, indicator, fog light |
 | 19 | מזגן וחימום | קומפרסור, קונדנסר, אידיידור, תנור, מפוח | מזגן, קומפרסור, קונדנסר, אידיידור, תנור, מפוח | AC compressor, condenser, evaporator, heater core, blower |
-| 20 | גוף ופחים | פגושים, כנפות, דלתות, מכסה מנוע, גריל, סף, קישוטים | פגוש, כנף, דלת, מכסה, גריל, סף, קישוט | bumper, fender, door, hood, grille, sill, trim |
-| 21 | זיגוג ומגבים | שמשות, מגבים, מווסתי חלון, מנועי מגב, משאבת שמשות | שמשה, מגב, חלון, זכוכית, מווסת | windscreen, wiper blade, window regulator, washer pump |
+| 20 | גוף הרכב | פגושים, כנפות, דלתות, מכסה מנוע, גריל, סף, קישוטים | פגוש, כנף, דלת, מכסה, גריל, סף, קישוט | bumper, fender, door, hood, grille, sill, trim |
+| 21 | שמשות ומגבים | שמשות, מגבים, מווסתי חלון, מנועי מגב, משאבת שמשות | שמשה, מגב, חלון, זכוכית, מווסת | windscreen, wiper blade, window regulator, washer pump |
 | 22 | פנים הרכב | דשבורד, מושבים, שטיחים, קונסולה, ידיות, כיסויים | דשבורד, מושב, שטיח, קונסולה, ידית | dashboard, seat, carpet, console, door handle, interior |
 | 23 | גלגלים וצמיגים | חישוקים, צמיגים, TPMS, אומי גלגל | גלגל, חישוק, ג׳נט, צמיג | wheel, rim, tyre, tire, TPMS, lug nut |
-| 24 | אטמים וגיממות | אטמי ראש, גיממות, O-rings, אוילים | אטם, גיממה, אוילים | gasket, seal, o-ring, head gasket |
+| 24 | אטמים וצינורות | אטמי ראש, גיממות, O-rings, אוילים | אטם, גיממה, אוילים | gasket, seal, o-ring, head gasket |
 | 25 | מערכת בטיחות | כריות אוויר, חגורות, חיישני התנגשות | איירבג, כרית אוויר, חגורה | airbag, seatbelt, crash sensor |
 | 26 | מערכת היברידית וחשמלי | סוללת טרקציה, מנוע חשמלי, ממיר, PDU, כבלי טעינה | היברידי, חשמלי, סוללה גדולה, PDU | hybrid battery, electric motor, inverter, PDU, charging cable |
 | 27 | שמנים ונוזלים | שמן מנוע, גריז, נוזל בלמים, ATF | שמן, גריז, נוזל בלמים | engine oil, grease, brake fluid, ATF, power steering fluid |
@@ -460,11 +460,19 @@ Cleanup agent auto-classifies all parts — no manual work.
 
 ### Next Steps (In Order)
 1. ✅ רשום תוכנית ב-FIXES_TRACKER
-2. ❌ בדוק supplier_parts לזיהוי מקור Renault overflow
-3. ❌ צור db_cleanup_agent.py עם 5 tasks
-4. ❌ הוסף 39 קטגוריות לDB כ-reference table
-5. ❌ חבר cleanup agent ל-backend startup
+2. 🔄 בדוק supplier_parts לזיהוי מקור Renault overflow
+3. ✅ נוצר db_cleanup_agent.py עם 5 tasks
+4. ✅ 28 קטגוריות ב-categories.py — מקור אחד לכל המערכת
+5. ✅ חובר ל-BACKEND_API_ROUTES.py
 6. ❌ בדוק ותקן Chevrolet overflow
+
+### Noon Recovery Tasks
+| Task | Status | Notes |
+|------|--------|-------|
+| resolve_inactive_parts | ✅ | משימה מתוזמנת ב-12:00 UTC לטיפול ב-RENA-* ו-needs_oem_lookup |
+| bad import 2026-03-30 | ✅ | 268,288 חלקים מ-13 יצרנים סומנו is_active=FALSE + needs_oem_lookup=TRUE |
+| resolve_inactive_parts | ✅ | משימה מתוזמנת בחצות — רצה ידנית: 200 processed, 0 reactivated — ממתין למקור נתונים |
+| task3 is_active filter | ✅ | סוכן הקטלוג מתעלם מחלקים לא פעילים — index ירד ל-251K |
 
 ### Architecture Decision
 - Cleanup agent: רץ תמיד ברקע — batches קטנים + sleep
