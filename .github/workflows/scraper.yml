@@ -9,29 +9,47 @@ jobs:
   scrape:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: read
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Resolve DB tunnel host
+      - name: Resolve tunnel parameters
         env:
           CATALOG_DB_URL: ${{ secrets.CATALOG_DB_URL }}
+          SSH_HOST_SECRET: ${{ secrets.SSH_HOST }}
+          DB_TUNNEL_TARGET_HOST_SECRET: ${{ secrets.DB_TUNNEL_TARGET_HOST }}
+          DB_TUNNEL_TARGET_PORT_SECRET: ${{ secrets.DB_TUNNEL_TARGET_PORT }}
         run: |
           python - <<'PY'
           import os
           from urllib.parse import urlsplit
 
           db_url = os.environ.get("CATALOG_DB_URL", "").strip()
+          if not db_url:
+              raise SystemExit("CATALOG_DB_URL secret is required")
+
           parsed = urlsplit(db_url)
-          if not parsed.hostname:
-              raise SystemExit("CATALOG_DB_URL must include a hostname")
+          if not parsed.scheme or not parsed.netloc:
+              raise SystemExit("CATALOG_DB_URL must be a full postgres URL")
+
+          ssh_host = (os.environ.get("SSH_HOST_SECRET") or "").strip() or (parsed.hostname or "").strip()
+          if not ssh_host:
+              raise SystemExit("Missing SSH host: set SSH_HOST secret or use a URL with hostname")
+
+          tunnel_target_host = (os.environ.get("DB_TUNNEL_TARGET_HOST_SECRET") or "").strip() or "127.0.0.1"
+          tunnel_target_port = (os.environ.get("DB_TUNNEL_TARGET_PORT_SECRET") or "").strip() or str(parsed.port or 5432)
+
           with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as fh:
-              fh.write(f"SSH_TUNNEL_HOST={parsed.hostname}\n")
+              fh.write(f"SSH_TUNNEL_HOST={ssh_host}\\n")
+              fh.write(f"DB_TUNNEL_TARGET_HOST={tunnel_target_host}\\n")
+              fh.write(f"DB_TUNNEL_TARGET_PORT={tunnel_target_port}\\n")
           PY
 
       - name: Start SSH agent
@@ -54,7 +72,7 @@ jobs:
           SSH_PORT: ${{ secrets.SSH_PORT }}
         run: |
           ssh -f -N \
-            -L 55432:127.0.0.1:5432 \
+            -L 55432:${DB_TUNNEL_TARGET_HOST}:${DB_TUNNEL_TARGET_PORT} \
             -p "${SSH_PORT:-22}" \
             -o ExitOnForwardFailure=yes \
             -o ServerAliveInterval=30 \
@@ -68,11 +86,11 @@ jobs:
           pip install playwright httpx asyncpg beautifulsoup4 lxml
           playwright install chromium --with-deps
 
-      - name: Run aftermarket scraper
+      - name: Build tunneled DB URL
         env:
           CATALOG_DB_URL: ${{ secrets.CATALOG_DB_URL }}
         run: |
-          export CATALOG_DB_URL="$(python - <<'PY'
+          python - <<'PY'
           import os
           from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -91,8 +109,30 @@ jobs:
           tunneled = urlunsplit(
               (parsed.scheme, f"{userinfo}127.0.0.1:55432", parsed.path, urlencode(params), parsed.fragment)
           )
-          print(tunneled)
-          PY
-          )"
 
-          python scripts/scraper_gh_actions.py
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as fh:
+              fh.write(f"TUNNELED_CATALOG_DB_URL={tunneled}\\n")
+          PY
+
+      - name: Preflight catalog DB connection
+        env:
+          CATALOG_DB_URL: ${{ env.TUNNELED_CATALOG_DB_URL }}
+        run: |
+          python - <<'PY'
+          import asyncio
+          import os
+          import asyncpg
+
+          async def main() -> None:
+              conn = await asyncpg.connect(os.environ["CATALOG_DB_URL"], timeout=20)
+              row = await conn.fetchrow("SELECT inet_server_addr()::text AS host, inet_server_port() AS port, now() AS ts")
+              print(f"preflight_ok host={row['host']} port={row['port']} ts={row['ts']}")
+              await conn.close()
+
+          asyncio.run(main())
+          PY
+
+      - name: Run aftermarket scraper
+        env:
+          CATALOG_DB_URL: ${{ env.TUNNELED_CATALOG_DB_URL }}
+        run: python scripts/scraper_gh_actions.py
