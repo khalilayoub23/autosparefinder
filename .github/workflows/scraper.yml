@@ -24,6 +24,7 @@ jobs:
         env:
           CATALOG_DB_URL: ${{ secrets.CATALOG_DB_URL }}
           SSH_HOST_SECRET: ${{ secrets.SSH_HOST }}
+          VPS_HOST_SECRET: ${{ secrets.VPS_HOST }}
           DB_TUNNEL_TARGET_HOST_SECRET: ${{ secrets.DB_TUNNEL_TARGET_HOST }}
           DB_TUNNEL_TARGET_PORT_SECRET: ${{ secrets.DB_TUNNEL_TARGET_PORT }}
         run: |
@@ -39,9 +40,9 @@ jobs:
           if not parsed.scheme or not parsed.netloc:
               raise SystemExit("CATALOG_DB_URL must be a full postgres URL")
 
-          ssh_host = (os.environ.get("SSH_HOST_SECRET") or "").strip() or (parsed.hostname or "").strip()
+          ssh_host = ((os.environ.get("SSH_HOST_SECRET") or "").strip() or (os.environ.get("VPS_HOST_SECRET") or "").strip() or (parsed.hostname or "").strip())
           if not ssh_host:
-              raise SystemExit("Missing SSH host: set SSH_HOST secret or use a URL with hostname")
+              raise SystemExit("Missing SSH host: set SSH_HOST or VPS_HOST secret, or use a URL with hostname")
 
           tunnel_target_host = (os.environ.get("DB_TUNNEL_TARGET_HOST_SECRET") or "").strip() or "127.0.0.1"
           tunnel_target_port = (os.environ.get("DB_TUNNEL_TARGET_PORT_SECRET") or "").strip() or str(parsed.port or 5432)
@@ -57,12 +58,14 @@ jobs:
           SSH_PRIVATE_KEY_PRIMARY: ${{ secrets.SSH_PRIVATE_KEY }}
           SSH_PRIVATE_KEY_ALT1: ${{ secrets.SSH_KEY }}
           SSH_PRIVATE_KEY_ALT2: ${{ secrets.HETZNER_SSH_PRIVATE_KEY }}
+          SSH_PRIVATE_KEY_ALT3: ${{ secrets.VPS_SSH_KEY }}
         run: |
           key="${SSH_PRIVATE_KEY_PRIMARY:-}"
           if [ -z "$key" ]; then key="${SSH_PRIVATE_KEY_ALT1:-}"; fi
           if [ -z "$key" ]; then key="${SSH_PRIVATE_KEY_ALT2:-}"; fi
+          if [ -z "$key" ]; then key="${SSH_PRIVATE_KEY_ALT3:-}"; fi
           if [ -z "$key" ]; then
-            echo "::error::Missing SSH private key secret. Set one of: SSH_PRIVATE_KEY, SSH_KEY, HETZNER_SSH_PRIVATE_KEY"
+            echo "::error::Missing SSH private key secret. Set one of: SSH_PRIVATE_KEY, SSH_KEY, HETZNER_SSH_PRIVATE_KEY, VPS_SSH_KEY"
             exit 1
           fi
 
@@ -79,25 +82,38 @@ jobs:
 
       - name: Trust SSH host key
         env:
-          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_PORT_PRIMARY: ${{ secrets.SSH_PORT }}
+          SSH_PORT_ALT1: ${{ secrets.VPS_SSH_PORT }}
         run: |
+          ssh_port="${SSH_PORT_PRIMARY:-${SSH_PORT_ALT1:-22}}"
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-          ssh-keyscan -p "${SSH_PORT:-22}" -H "$SSH_TUNNEL_HOST" >> ~/.ssh/known_hosts
+          ssh-keyscan -p "$ssh_port" -H "$SSH_TUNNEL_HOST" >> ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
       - name: Open SSH tunnel to catalog DB
         env:
-          SSH_USER: ${{ secrets.SSH_USER }}
-          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER_PRIMARY: ${{ secrets.SSH_USER }}
+          SSH_USER_ALT1: ${{ secrets.VPS_USER }}
+          SSH_PORT_PRIMARY: ${{ secrets.SSH_PORT }}
+          SSH_PORT_ALT1: ${{ secrets.VPS_SSH_PORT }}
         run: |
+          ssh_user="${SSH_USER_PRIMARY:-}"
+          if [ -z "$ssh_user" ]; then ssh_user="${SSH_USER_ALT1:-}"; fi
+          if [ -z "$ssh_user" ]; then
+            echo "::error::Missing SSH user secret. Set one of: SSH_USER, VPS_USER"
+            exit 1
+          fi
+
+          ssh_port="${SSH_PORT_PRIMARY:-${SSH_PORT_ALT1:-22}}"
+
           ssh -f -N \
             -L 55432:${DB_TUNNEL_TARGET_HOST}:${DB_TUNNEL_TARGET_PORT} \
-            -p "${SSH_PORT:-22}" \
+            -p "$ssh_port" \
             -o ExitOnForwardFailure=yes \
             -o ServerAliveInterval=30 \
             -o ServerAliveCountMax=3 \
-            "$SSH_USER@$SSH_TUNNEL_HOST"
+            "$ssh_user@$SSH_TUNNEL_HOST"
 
           ss -ltn | grep '127.0.0.1:55432'
 
