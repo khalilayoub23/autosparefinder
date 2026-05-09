@@ -52,10 +52,30 @@ jobs:
               fh.write(f"DB_TUNNEL_TARGET_PORT={tunnel_target_port}\\n")
           PY
 
+      - name: Resolve SSH private key secret
+        env:
+          SSH_PRIVATE_KEY_PRIMARY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_PRIVATE_KEY_ALT1: ${{ secrets.SSH_KEY }}
+          SSH_PRIVATE_KEY_ALT2: ${{ secrets.HETZNER_SSH_PRIVATE_KEY }}
+        run: |
+          key="${SSH_PRIVATE_KEY_PRIMARY:-}"
+          if [ -z "$key" ]; then key="${SSH_PRIVATE_KEY_ALT1:-}"; fi
+          if [ -z "$key" ]; then key="${SSH_PRIVATE_KEY_ALT2:-}"; fi
+          if [ -z "$key" ]; then
+            echo "::error::Missing SSH private key secret. Set one of: SSH_PRIVATE_KEY, SSH_KEY, HETZNER_SSH_PRIVATE_KEY"
+            exit 1
+          fi
+
+          {
+            echo "SCRAPER_SSH_PRIVATE_KEY<<EOF"
+            echo "$key"
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+
       - name: Start SSH agent
         uses: webfactory/ssh-agent@v0.9.0
         with:
-          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+          ssh-private-key: ${{ env.SCRAPER_SSH_PRIVATE_KEY }}
 
       - name: Trust SSH host key
         env:
