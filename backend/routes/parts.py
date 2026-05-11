@@ -50,6 +50,7 @@ from manufacturer_normalization import (
 from part_type_taxonomy import (
     build_part_type_sql_clause,
     classify_part_type_family,
+    classify_part_subcategory,
     get_part_type_groups,
     iter_part_type_families,
     resolve_part_type_family,
@@ -1598,13 +1599,19 @@ async def get_categories(
 
     if not any([vehicle_manufacturer, vehicle_model, vehicle_submodel, vehicle_year]):
         family_counts: Dict[str, int] = {family.id: 0 for family in iter_part_type_families()}
+        subcategory_counts: Dict[str, int] = {}
         flat_counts: Dict[str, int] = {family.label: 0 for family in iter_part_type_families()}
         fallback_counts: Dict[str, int] = {c: 0 for c in CANONICAL_FILTER_CATEGORIES}
-        families = [family.serialize(count=0) for family in iter_part_type_families()]
+        families = []
+        for family in iter_part_type_families():
+            family_payload = family.serialize(count=0)
+            family_payload["subcategories"] = [subcategory.serialize() for subcategory in family.subcategories]
+            families.append(family_payload)
         response = {
             "categories": [family["id"] for family in families],
             "counts": {**fallback_counts, **flat_counts},
             "family_counts": family_counts,
+            "subcategory_counts": subcategory_counts,
             "families": families,
             "groups": get_part_type_groups(family_counts),
             "total": len(families),
@@ -1708,6 +1715,7 @@ async def get_categories(
             ).fetchall()
 
     family_counts: Dict[str, int] = {family.id: 0 for family in iter_part_type_families()}
+    subcategory_counts: Dict[str, int] = {}
     flat_counts: Dict[str, int] = {family.label: 0 for family in iter_part_type_families()}
     fallback_counts: Dict[str, int] = {c: 0 for c in CANONICAL_FILTER_CATEGORIES}
 
@@ -1716,6 +1724,10 @@ async def get_categories(
         if family:
             family_counts[family.id] = family_counts.get(family.id, 0) + 1
             flat_counts[family.label] = flat_counts.get(family.label, 0) + 1
+            subcategory_match = classify_part_subcategory(raw_category, raw_part_type, name, name_he, description)
+            if subcategory_match:
+                _, subcategory = subcategory_match
+                subcategory_counts[subcategory.id] = subcategory_counts.get(subcategory.id, 0) + 1
             continue
         canonical = _normalize_filter_category(raw_category)
         if canonical:
@@ -1731,6 +1743,11 @@ async def get_categories(
             family["label"],
         ),
     )
+    for family in families:
+        family["subcategories"] = [
+            {**subcategory.serialize(count=subcategory_counts.get(subcategory.id, 0)), "group_id": family["group_id"]}
+            for subcategory in next(item for item in iter_part_type_families() if item.id == family["id"]).subcategories
+        ]
     counts: Dict[str, int] = {**fallback_counts}
     counts.update(flat_counts)
     categories = [family["id"] for family in families]
@@ -1738,6 +1755,7 @@ async def get_categories(
         "categories": categories,
         "counts": counts,
         "family_counts": family_counts,
+        "subcategory_counts": subcategory_counts,
         "families": families,
         "groups": groups,
         "total": len(families),

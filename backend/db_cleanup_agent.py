@@ -25,6 +25,7 @@ logger = logging.getLogger("db_cleanup_agent")
 _uncategorized_index: dict[str, str] = {}  # part_id -> text_blob
 _index_built: bool = False
 _unclassifiable: set[str] = set()  # parts with no keyword match - skip on rebuild
+_reorg_cursor_after_id: str | None = None  # rolling full-catalog recategorization cursor
 
 
 def reset_unclassifiable_cache() -> None:
@@ -239,6 +240,95 @@ async def task3_categorize_by_keywords() -> int:
         return categorized
 
 
+async def task6_reorganize_categories_rollup(batch_size: int = 500) -> int:
+    global _reorg_cursor_after_id
+
+    async with scraper_session_factory() as db:
+        try:
+            query_params = {"lim": int(max(50, batch_size))}
+            if _reorg_cursor_after_id is None:
+                query_text = """
+                        SELECT
+                            id::text,
+                            COALESCE(name, '') || ' ' || COALESCE(name_he, '') || ' ' || COALESCE(description, '') AS blob,
+                            COALESCE(category, '') AS current_category
+                        FROM parts_catalog
+                        WHERE is_active = TRUE
+                        ORDER BY id::text
+                        LIMIT :lim
+                        """
+            else:
+                query_text = """
+                        SELECT
+                            id::text,
+                            COALESCE(name, '') || ' ' || COALESCE(name_he, '') || ' ' || COALESCE(description, '') AS blob,
+                            COALESCE(category, '') AS current_category
+                        FROM parts_catalog
+                        WHERE is_active = TRUE
+                          AND id::text > :after_id
+                        ORDER BY id::text
+                        LIMIT :lim
+                        """
+                query_params["after_id"] = _reorg_cursor_after_id
+
+            rows = (
+                await db.execute(
+                    text(query_text),
+                    query_params,
+                )
+            ).fetchall()
+
+            if not rows:
+                _reorg_cursor_after_id = None
+                return 0
+
+            payload: List[Dict[str, str]] = []
+            scanned = 0
+            for part_id, blob, current_category in rows:
+                scanned += 1
+                guessed = _guess_category(blob)
+                if not guessed:
+                    continue
+                current_clean = (current_category or '').strip()
+                if current_clean == guessed:
+                    continue
+                payload.append({"id": str(part_id), "category": guessed})
+
+            _reorg_cursor_after_id = str(rows[-1][0])
+
+            updated = 0
+            if payload:
+                result = await db.execute(
+                    text(
+                        """
+                        WITH payload AS (
+                            SELECT x.id::uuid AS id, x.category::text AS category
+                            FROM jsonb_to_recordset(CAST(:rows_json AS jsonb))
+                            AS x(id text, category text)
+                        )
+                        UPDATE parts_catalog pc
+                        SET category = payload.category,
+                            updated_at = NOW()
+                        FROM payload
+                        WHERE pc.id = payload.id
+                        RETURNING pc.id
+                        """
+                    ),
+                    {"rows_json": json.dumps(payload, ensure_ascii=False)},
+                )
+                updated = len(result.fetchall())
+                await db.commit()
+
+            print(
+                f"[Cleanup] task6: scanned={scanned} updated={updated} cursor_after={_reorg_cursor_after_id or 'RESET'}"
+            )
+            return updated
+        except Exception as exc:
+            await db.rollback()
+            logger.error("task6_reorganize_categories_rollup failed: %s", exc)
+            return 0
+
+
 
 async def task4_fix_oem_lookup_flag() -> int:
     flagged = 0
@@ -360,6 +450,8 @@ async def run_cleanup_loop() -> None:
             await asyncio.sleep(3)
             t3 = await task3_categorize_by_keywords()
             await asyncio.sleep(2)
+            t6 = await task6_reorganize_categories_rollup()
+            await asyncio.sleep(2)
             t4 = await task4_fix_oem_lookup_flag()
             if t4 == 500:
                 task4_full_batch_cycles += 1
@@ -387,7 +479,7 @@ async def run_cleanup_loop() -> None:
             if cycle % 10 == 0:
                 print(
                     f"[Cleanup] Cycle {cycle} done: "
-                    f"types={t1} oem={t2} categorized={t3} "
+                    f"types={t1} oem={t2} categorized={t3} recategorized={t6} "
                     f"flags={t4} overflow={t5}"
                 )
 

@@ -1,128 +1,60 @@
 from __future__ import annotations
 
 import re
+from typing import Dict, List, Tuple
 
-CATEGORY_MAP = {
-    'בלמים': {
-        'he': ['בלם', 'בלמים', 'רפידה', 'רפידות', 'דיסק', 'דיסקים', 'קליפר', 'קליפרים', 'תוף', 'תופים', 'בוסטר', 'צלחת', 'צלחות', 'רפידת', 'צלחתבילום', 'סט נעלי בילום', 'סטנעליבילום'],
-        'en': ['brake', 'caliper', 'rotor', 'pad', 'drum', 'booster', 'discs']
-    },
-    'מתלה': {
-        'he': ['בולם', 'בולמים', 'קפיץ', 'קפיצים', 'זרוע', 'זרועות', 'מסב', 'מסבים', 'מיסב', 'מיסבכדורי', 'מייצב', 'מתלה', 'שטרוט', 'בושינג', 'בושינגים', 'בוקסה', 'תותב', 'נאבה', 'תפוח', 'משולש', 'משולשים', 'משולש תחתון', 'משולש קדמי שמאל', 'משולש קדמי ימין', 'משולש קדמי תחתון ימין', 'יד סרן', 'מפרק ימין לסרן קדמי', 'מפרקימיןלסרןקדמי', 'מפרק שמאל לסרן קדמי', 'מפרקשמאללסרןקדמי', 'סרן אחורי מכלל', 'סרןאחורימכלל', 'מוט קישור'],
-        'en': ['suspension', 'shock', 'strut', 'spring', 'arm', 'bushing', 'bearing', 'anti-roll', 'hub', 'wishbone']
-
-    },
-    'היגוי': {
-        'he': ['הגה', 'גיר הגה', 'מוט הגה', 'פולסה'],
-        'en': ['steering', 'rack', 'tie rod', 'ball joint', 'power steering']
-    },
-    'מנוע': {
-        'he': ['מנוע', 'בוכנה', 'בוכנות', 'שסתום', 'שסתומים', 'גל ארכובה', 'גל זיזים', 'סטרינגים', 'סט רינגים', 'משאבת וואקום', "מש' ואקום", 'משואקום', 'קרטר', 'פיסטון', 'טלטלים', 'סט צילנדרים', 'סט צילינדרים'],
-        'en': ['engine', 'piston', 'valve', 'crankshaft', 'camshaft', 'block']
-    },
-    'קירור': {
-        'he': ['רדיאטור', 'קירור', 'תרמוסטט', 'טרמוסטט', 'ביתטרמוסטט', 'מיכלעיבוי', 'מצנןמים', 'משאבת מים', 'מאוורר', 'מאווררים', 'נוזל קירור', 'מש מים', 'פלאנש מים', 'פקק רדיאטור'],
-        'en': ['radiator', 'water pump', 'thermostat', 'cooling fan', 'coolant', 'expansion tank']
-
-    },
-    'מערכת דלק': {
-        'he': ['משאבת דלק', 'מזרק', 'מזרקים', 'מיכל דלק', 'מצוףדלק', 'משדלק', 'ריילי', 'שנורקל', "מש' דלק", 'משאבת הזרקה', 'משאבתהזרקה', 'מסילת הזרקה', 'מסילתהזרקה', 'פיית תדלוק', 'פייתתדלוק', 'מצערת דלק', 'מצערתדלק', 'מרסס דלק'],
-        'en': ['fuel pump', 'injector', 'fuel tank', 'fuel rail']
-    },
-    'מערכת אוויר': {
-        'he': ['מסנן אוויר', 'צינור אוויר', 'גוף מיתון', 'סעפתיניקה', 'כונס אוויר', 'כונסאוויר', 'מפזר אוויר', 'פילטר אוויר'],
-        'en': ['air filter', 'air intake', 'maf', 'throttle body']
-    },
-    'טורבו': {
-        'he': ['טורבו', 'אינטרקולר', 'סופרשארג׳ר'],
-        'en': ['turbo', 'turbocharger', 'supercharger', 'intercooler', 'boost']
-    },
-    'פליטה': {
-        'he': ['פליטה', 'מפלט', 'דודאגזוז', 'קטליזטור', 'EGR', 'מסנן חלקיקים', 'מסנןחלקיקים', 'אגזוז'],
-        'en': ['exhaust', 'muffler', 'catalytic', 'dpf', 'egr', 'scr']
-    },
-    'תיבת הילוכים וציר': {
-        'he': ['תיבת הילוכים', 'גיר', 'ציר', 'דיפרנציאל', 'כבל הילוכים', 'כבלהילוכים', 'משלב', 'תומך מכלול תושבת תיב', 'גג"ש', 'גגש'],
-        'en': ['transmission', 'gearbox', 'driveshaft', 'differential', 'cv joint']
-    },
-    'מצמד': {
-        'he': ['מצמד', 'גלגל תנופה', 'מסב שחרור', 'מזלג'],
-        'en': ['clutch', 'flywheel', 'release bearing']
-    },
-    'רצועות תזמון': {
-        'he': ['רצועה', 'רצועות', 'שרשרת תזמון', 'גלגלת', 'גלגלות', 'מותחן', 'שרשרת תיזמון', 'שרשרתתיזמון', 'סט טיימינג', 'סטטיימינג'],
-        'en': ['timing belt', 'timing chain', 'tensioner', 'pulley']
-    },
-    'הצתה': {
-        'he': ['מצת', 'מצתים', 'סליל הצתה', 'מפלג', 'כהל הצתה', 'כהלהצתה'],
-        'en': ['spark plug', 'ignition coil', 'distributor', 'plug wire']
-    },
-    'סינון': {
-        'he': ['מסנן', 'פילטר', 'מסנן שמן', 'מסנן דלק', 'מסנן מזגן', 'מסנן אוויר'],
-        'en': ['filter', 'oil filter', 'fuel filter', 'cabin filter', 'pollen filter', 'air filter']
-    },
-    'חשמל ואלקטרוניקה': {
-        'he': ['אלטרנטור', 'מצת הנעה', 'צופר', 'מתגהתנעה', 'מתגאורות', 'יחידתבקרה', 'יח בקרה mcb', 'קופסאתנתיכים', 'מצלמת רוורס', 'שלט', 'שלט מפתח', 'אנטנה', 'צמה לתא נוסעים', 'מתנע', 'ECU', 'מחשב', 'ממסר', 'פיוז', 'צמת', 'רילה', 'יח בקרה', "יח' בקרה", 'יחבקרה', 'מצלמת סטייה מנתיב', 'מצלמתסטייהמנתיב', 'מיקרופון', 'צמה', 'נתיך', 'שקעUSB', 'שקעusb', 'שקע BSU', 'שקעbsu', 'מסך בקרה', 'מסךבקרה', 'מסך מולטימדיה', 'מסךמולטימדיה', 'שעון דלק', 'שעוןספידומטר', 'שעון ספידומטר', 'נגד מהירות', 'נגדמהירות', 'מחולל זרם', 'מחוללזרם', 'מודול', 'זמזם', 'יציאה כבלAUX USB', 'יציאהכבלauxusb'],
-        'en': ['alternator', 'starter motor', 'ecu', 'relay', 'fuse', 'wiring']
-    },
-    'חיישנים': {
-        'he': ['חיישן', 'חיישנים', 'סנסור', 'סנסורים'],
-        'en': ['sensor', 'o2 sensor', 'abs sensor', 'map sensor', 'speed sensor']
-    },
-    'מצבר': {
-        'he': ['מצבר', 'מצברים', 'סוללה', 'בטריה'],
-        'en': ['battery', 'battery management']
-    },
-    'תאורה': {
-        'he': ['פנס', 'פנסים', 'נורה', 'נורות', 'תאורה', 'אינדיקטור', 'מחזיר אור אחורי שמאל', 'מחזיראוראחורישמאל', 'מחזיר אור אחורי ימין', 'מחזיראוראחורי ימין'],
-        'en': ['headlight', 'tail light', 'bulb', 'indicator', 'fog light']
-    },
-    'מזגן וחימום': {
-        'he': ['מזגן', 'קומפרסור', 'קונדנסר', 'אידיידור', 'תנור', 'מפוח', 'פתחאיוורור', 'תריסאיוורור'],
-        'en': ['ac', 'air conditioning', 'compressor', 'condenser', 'evaporator', 'heater', 'blower']
-    },
-    'גוף הרכב': {
-        'he': ['פגוש', 'פגושים', 'כנף', 'כנפיים', 'דלת', 'דלתות', 'מכסה', 'גריל', 'סף', 'קישוט', 'קישוטים', 'ידית', 'מראה', 'מראהשמאל', 'מראהימין', 'מראהחיצוניתשמאל', 'מראהחיצוניתימנית', 'מגןחום', 'מגןקדמי', 'מגןאחורי', 'פחחזית', 'פחאחורי', 'פחדופןפנימי', 'פסהדבקה', 'סמל', 'פח חזית', 'פח אחורי', 'פח דופן פנימי', 'פח שלדה', 'פס הדבקה', 'מדבקה', 'תפס', 'מהדק', 'פין', 'כיסוי', 'פרופיל גומי', 'גומי מסילה', 'גומי משקוף', 'גומי גשם', 'בורג', 'אום', 'אומים', 'שייבה', 'שייבה מרווח', 'שייבות מרווח', 'שיבה מרווח', 'קורתשלדה', 'קורתרוחבקדמית', 'קורתרוחבאחורית', 'סטמנעולים', 'מפתחגולם', 'ספרות', 'גגון', 'מנעול תא מטען', 'מנעולתאמטען', 'מוט נעילה', 'מוטנעילה', 'מסגרת צד', 'מסגרתצד', 'דופן אחורית חיצונית שמאל', 'דופןאחוריתחיצוניתשמאל', 'פח דופן', 'עמוד אמצעי ימין', 'מחזיר אור אחורי שמאל', 'מחזיראוראחורישמאל', 'מחזיר אור אחורי ימין', 'מחזיראוראחורי ימין', 'סט מנעולים', 'ספוילר אחורי', 'ספוילראחורי', 'בטנה קדמית ימין', 'בטנהקדמיתימין', 'בטנה קדמית שמאל', 'בטנהקדמיתשמאל', 'סורג חזית', 'סורגחזית', 'סורג חזית עליון', 'סורגחזיתעליון', 'עמוד קדמי שמאל', 'עמודקדמישמאל', 'עמוד אמצעי שמאל', 'עמודאמצעישמאל', 'גג פח', 'גגפח', 'גג פח מכלל', 'גגפחמכלל', 'פקק למרכב', 'פקקלמרכב', 'ניקל מרזב', 'ניקלמרזב', 'פח ניצב', 'פחניצב', "ביטנה קד' ימין", "ביטנה קד' שמאל", 'סט ברגים', 'ברגים', 'מסמרה'],
-        'en': ['bumper', 'fender', 'door', 'hood', 'grille', 'sill', 'trim']
-    },
-    'שמשות ומגבים': {
-        'he': ['שמשה', 'שמשות', 'מגב', 'מגבים', 'חלון', 'חלונות', 'זכוכית', 'מווסת'],
-        'en': ['windscreen', 'windshield', 'wiper', 'window', 'glass', 'regulator']
-    },
-    'פנים הרכב': {
-        'he': ['דשבורד', 'מושב', 'מושבים', 'שטיח', 'שטיחים', 'קונסולה', 'ידית', 'לוחשעונים', 'לוחשעוניםמכלל', 'ריפודגג', 'תאחפצים', 'רמקול', 'תא חפצים', 'תא כפפות', 'תאכפפות', 'מדף אחורי', 'משענת יד', 'משענת ראש', 'מאפרה', 'דוושה', 'דוושת גז', 'דוושתגז', 'גומיה לדוושה', 'גומיהלדוושה', "מדף אח'", 'מדףאח', 'כסא קדמי שמאל מכלל', 'כסאקדמישמאלמכלל', 'מבודד רעשים ימין', 'מבודדרעשיםימין', 'מבודד רעשים שמאל', 'מבודדרעשיםשמאל'],
-        'en': ['dashboard', 'seat', 'carpet', 'console', 'door handle', 'interior']
-    },
-    'גלגלים וצמיגים': {
-        'he': ['גלגל', 'גלגלים', 'חישוק', 'חישוקים', 'ג׳נט', 'גנט', 'צמיג', 'צמיגים', "ג'נט מגנזיום", 'ג׳אנט מגנזיום', 'גנט מגנזיום', 'גנטאלומיניום', 'טסה לגנט', 'טסהלגנט', "ג'ק", 'גק', "ג'נט אלומיניום", "כפה לג'נט", 'כפהלגנט', 'נבה'],
-        'en': ['wheel', 'rim', 'tyre', 'tire', 'tpms', 'lug nut']
-    },
-    'אטמים וצינורות': {
-        'he': ['אטם', 'אטמים', 'גיממה', 'אוילים', 'צינור', 'צינורות', 'מחזיר שמן', 'טבעת', 'טבעתאטימה', 'טבעתאטימהמגומי', 'טבעתאבטחה', 'טבעת לתה', 'טבעתלתה', 'ניפל'],
-        'en': ['gasket', 'seal', 'o-ring', 'head gasket', 'hose', 'pipe', 'oil seal']
-
-    },
-    'מערכת בטיחות': {
-        'he': ['איירבג', 'כרית אוויר', 'חגורה', 'חגורות'],
-        'en': ['airbag', 'seatbelt', 'crash sensor']
-    },
-    'מערכת היברידית וחשמלי': {
-        'he': ['היברידי', 'חשמלי', 'סוללה גדולה', 'PDU'],
-        'en': ['hybrid', 'electric motor', 'inverter', 'pdu', 'ev', 'charging cable']
-    },
-    'שמנים ונוזלים': {
-        'he': ['שמן', 'שמנים', 'גריז', 'נוזל בלמים'],
-        'en': ['engine oil', 'grease', 'brake fluid', 'atf', 'lubricant']
-    },
-    'כלי עבודה ואביזרים': {
-        'he': ['כלי', 'כלים', 'ציוד', 'אביזר', 'אביזרים', 'טיפוח', 'ג׳ק', 'מנשא לאופניים'],
-        'en': ['tools', 'accessories', 'car care', 'detailing']
-    },
-}
+from part_type_taxonomy import iter_part_subcategories, iter_part_type_families
 
 
 def _is_hebrew_word(value: str) -> bool:
     return any('\u0590' <= c <= '\u05ff' for c in value)
+
+
+def _normalize_phrase(value: str) -> str:
+    cleaned = re.sub(r"[^\w\u0590-\u05FF]+", " ", (value or "").casefold())
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def _split_lang_terms(terms: List[str]) -> Tuple[List[str], List[str]]:
+    he_terms: List[str] = []
+    en_terms: List[str] = []
+    for term in terms:
+        norm = _normalize_phrase(term)
+        if not norm:
+            continue
+        if _is_hebrew_word(norm):
+            he_terms.append(norm)
+        else:
+            en_terms.append(norm)
+    return sorted(set(he_terms)), sorted(set(en_terms))
+
+
+def _collect_keyword_terms() -> Tuple[List[Tuple[str, List[str]]], Dict[str, Dict[str, List[str]]]]:
+    ordered: List[Tuple[str, List[str]]] = []
+    category_map: Dict[str, Dict[str, List[str]]] = {}
+
+    for family, subcategory in iter_part_subcategories():
+        terms = list(subcategory.match_terms) + list(family.keywords)
+        he_terms, en_terms = _split_lang_terms(terms)
+        merged = he_terms + en_terms
+        if not merged:
+            continue
+        ordered.append((subcategory.label, merged))
+        category_map[subcategory.label] = {"he": he_terms, "en": en_terms}
+
+    for family in iter_part_type_families():
+        terms = list(family.match_terms)
+        he_terms, en_terms = _split_lang_terms(terms)
+        merged = he_terms + en_terms
+        if not merged:
+            continue
+        ordered.append((family.label, merged))
+        category_map[family.label] = {"he": he_terms, "en": en_terms}
+
+    return ordered, category_map
+
+
+ORDERED_CATEGORY_TERMS, CATEGORY_MAP = _collect_keyword_terms()
 
 
 def guess_category_by_text(text: str) -> str | None:
@@ -130,23 +62,17 @@ def guess_category_by_text(text: str) -> str | None:
         return None
 
     blob_raw = text.strip().casefold()
-    # Normalize punctuation/spacing so variants like ג'נט, ג׳נט, and g nt align.
     blob_norm = re.sub(r"[^\w\u0590-\u05FF]+", " ", blob_raw)
     blob_norm = re.sub(r"\s+", " ", blob_norm).strip()
     blob_compact = blob_norm.replace(" ", "")
 
-    for category, langs in CATEGORY_MAP.items():
-        keywords = langs.get('he', []) + langs.get('en', [])
+    for category, keywords in ORDERED_CATEGORY_TERMS:
         for keyword in keywords:
-            kw = str(keyword).strip().casefold()
-            if not kw:
+            kw_norm = _normalize_phrase(keyword)
+            if not kw_norm:
                 continue
-
-            kw_norm = re.sub(r"[^\w\u0590-\u05FF]+", " ", kw)
-            kw_norm = re.sub(r"\s+", " ", kw_norm).strip()
             kw_compact = kw_norm.replace(" ", "")
 
-            # Phrase keywords require all token stems to be present.
             tokens = [t for t in kw_norm.split() if t]
             if len(tokens) > 1:
                 stems = []

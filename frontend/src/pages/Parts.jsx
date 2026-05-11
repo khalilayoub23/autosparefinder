@@ -638,8 +638,32 @@ function findPartFamilyByValue(families, value) {
   }) || null
 }
 
+function findPartCategoryNodeByValue(families, value) {
+  const normalized = normalizeCategoryToken(value)
+  if (!normalized) return null
+
+  for (const family of families) {
+    const familyAliases = [family.id, family.label, ...(family.aliases || []), ...(family.legacy_categories || [])]
+    if (familyAliases.some((alias) => normalizeCategoryToken(alias) === normalized)) {
+      return { family, subcategory: null, label: family.label, count: family.count ?? 0 }
+    }
+    for (const subcategory of family.subcategories || []) {
+      const subAliases = [subcategory.id, subcategory.label, ...(subcategory.aliases || [])]
+      if (subAliases.some((alias) => normalizeCategoryToken(alias) === normalized)) {
+        return {
+          family,
+          subcategory,
+          label: subcategory.label,
+          count: subcategory.count ?? 0,
+        }
+      }
+    }
+  }
+  return null
+}
+
 function categoryLabelForValue(families, value) {
-  return findPartFamilyByValue(families, value)?.label || value || ''
+  return findPartCategoryNodeByValue(families, value)?.label || value || ''
 }
 
 function partFamilyHierarchyLabel(family) {
@@ -1241,6 +1265,7 @@ export default function Parts() {
   const [category, setCategory] = useState('')
   const [categories, setCategories] = useState([])
   const [categoryCounts, setCategoryCounts] = useState({})
+  const [subcategoryCounts, setSubcategoryCounts] = useState({})
   const [parts, setParts] = useState([])          // flat list for photo/legacy search
   const [searchResults, setSearchResults] = useState(null) // grouped: {original,oem,aftermarket}
   const [fitmentStatus, setFitmentStatus] = useState(null)
@@ -1411,6 +1436,7 @@ export default function Parts() {
       setPartFamilyGroups(cached.groups)
       setCategories(cached.categories)
       setCategoryCounts(cached.familyCounts)
+      setSubcategoryCounts(cached.subcategoryCounts || {})
       setCategory((current) => findPartFamilyByValue(cached.families, current)?.id || current)
       return
     }
@@ -1433,12 +1459,14 @@ export default function Parts() {
         groups: data.groups || [],
         categories: (data.categories || []).slice(),
         familyCounts: data.family_counts || {},
+        subcategoryCounts: data.subcategory_counts || {},
       }
       categoryMetaCacheRef.current.set(cacheKey, nextPayload)
       setPartFamilies(nextPayload.families)
       setPartFamilyGroups(nextPayload.groups)
       setCategories(nextPayload.categories)
       setCategoryCounts(nextPayload.familyCounts)
+      setSubcategoryCounts(nextPayload.subcategoryCounts)
       setCategory((current) => findPartFamilyByValue(families, current)?.id || current)
     } catch {
       if (requestId !== categoryMetaRequestIdRef.current) return
@@ -1446,6 +1474,7 @@ export default function Parts() {
       setPartFamilyGroups([])
       setCategories([])
       setCategoryCounts({})
+      setSubcategoryCounts({})
     }
   }, [deferredManualManufacturer, deferredEffectiveManualModel, deferredEffectiveManualSubModel, deferredEffectiveManualYear])
 
@@ -1836,8 +1865,12 @@ export default function Parts() {
     .slice()
     .sort((a, b) => a.name.localeCompare(b.name))
 
-  const selectedPartFamily = findPartFamilyByValue(partFamilies, category)
-  const selectedPartFamilyLabel = categoryLabelForValue(partFamilies, category)
+  const selectedCategoryNode = findPartCategoryNodeByValue(partFamilies, category)
+  const selectedPartFamily = selectedCategoryNode?.family || null
+  const selectedPartFamilyLabel = selectedCategoryNode?.label || categoryLabelForValue(partFamilies, category)
+  const selectedPartCount = selectedCategoryNode?.subcategory
+    ? (subcategoryCounts[selectedCategoryNode.subcategory.id] || 0)
+    : (selectedPartFamily ? (categoryCounts[selectedPartFamily.id] || 0) : 0)
   const filteredPartFamilies = []
   const partFamiliesByGroup = new Map()
   const derivedPartFamilyGroupsMap = new Map()
@@ -1845,7 +1878,14 @@ export default function Parts() {
 
   partFamilies.forEach((family) => {
     if (normalizedPartFamilySearch) {
-      const searchableTokens = [family.label, family.group, family.id, ...(family.aliases || []), ...(family.legacy_categories || [])]
+      const searchableTokens = [
+        family.label,
+        family.group,
+        family.id,
+        ...(family.aliases || []),
+        ...(family.legacy_categories || []),
+        ...(family.subcategories || []).flatMap((subcategory) => [subcategory.label, subcategory.id, ...(subcategory.aliases || [])]),
+      ]
       const matchesSearch = searchableTokens.some((token) => String(token || '').toLowerCase().includes(normalizedPartFamilySearch))
       if (!matchesSearch) return
     }
@@ -3211,8 +3251,8 @@ export default function Parts() {
                     <span className="truncate">{partFamilyHierarchyLabel(selectedPartFamily)}</span>
                   </span>
                   <span className="flex items-center gap-2 pl-2 flex-shrink-0">
-                    {selectedPartFamily && categoryCounts[selectedPartFamily.id] ? (
-                      <span className="text-xs text-gray-500">{categoryCounts[selectedPartFamily.id].toLocaleString()}</span>
+                    {selectedPartCount ? (
+                      <span className="text-xs text-gray-500">{selectedPartCount.toLocaleString()}</span>
                     ) : null}
                     <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${partTypeMenuOpen ? 'rotate-180' : ''}`} />
                   </span>
@@ -3237,26 +3277,46 @@ export default function Parts() {
                               {group.label}
                             </div>
                             {familiesInGroup.map((family) => (
-                              <button
-                                type="button"
-                                key={family.id}
-                                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm ${category === family.id ? 'bg-brand-50 text-brand-700' : 'hover:bg-gray-50 text-brand-navy'} ${categoryCounts[family.id] === 0 ? 'opacity-60' : ''}`}
-                                onClick={() => { handlePartFamilyChange(family.id); setPartTypeMenuOpen(false) }}
-                              >
-                                <span className="flex items-center gap-3 min-w-0">
-                                  <img
-                                    src={partFamilyImageSrc(family)}
-                                    alt=""
-                                    aria-hidden="true"
-                                    className="rounded-lg object-cover border border-gray-200 bg-white shadow-sm flex-shrink-0"
-                                    style={{ width: PART_FAMILY_MENU_IMAGE_WIDTH, height: PART_FAMILY_MENU_IMAGE_HEIGHT }}
-                                  />
-                                  <span className="truncate">{family.label}</span>
-                                </span>
-                                <span className="ml-2 text-xs text-gray-500">
-                                  {(categoryCounts[family.id] || 0).toLocaleString()}
-                                </span>
-                              </button>
+                              <div key={family.id} className={`rounded-xl border ${category === family.id ? 'border-brand-200 bg-brand-50/60' : 'border-transparent'}`}>
+                                <button
+                                  type="button"
+                                  className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm ${category === family.id ? 'bg-brand-50 text-brand-700' : 'hover:bg-gray-50 text-brand-navy'} ${categoryCounts[family.id] === 0 ? 'opacity-60' : ''}`}
+                                  onClick={() => { handlePartFamilyChange(family.id); setPartTypeMenuOpen(false) }}
+                                >
+                                  <span className="flex items-center gap-3 min-w-0">
+                                    <img
+                                      src={partFamilyImageSrc(family)}
+                                      alt=""
+                                      aria-hidden="true"
+                                      className="rounded-lg object-cover border border-gray-200 bg-white shadow-sm flex-shrink-0"
+                                      style={{ width: PART_FAMILY_MENU_IMAGE_WIDTH, height: PART_FAMILY_MENU_IMAGE_HEIGHT }}
+                                    />
+                                    <span className="truncate">{family.label}</span>
+                                  </span>
+                                  <span className="ml-2 text-xs text-gray-500">
+                                    {(categoryCounts[family.id] || 0).toLocaleString()}
+                                  </span>
+                                </button>
+                                {Array.isArray(family.subcategories) && family.subcategories.length > 0 && (
+                                  <div className="grid grid-cols-2 gap-2 px-3 pb-3 pt-2">
+                                    {family.subcategories.slice(0, 8).map((subcategory) => {
+                                      const selected = category === subcategory.id
+                                      const subCount = subcategoryCounts[subcategory.id] || 0
+                                      return (
+                                        <button
+                                          type="button"
+                                          key={subcategory.id}
+                                          className={`rounded-lg border px-2 py-2 text-[11px] text-right leading-tight transition-colors ${selected ? 'border-brand-300 bg-white text-brand-700' : 'border-slate-200 bg-white/80 hover:bg-white text-slate-700'} ${subCount === 0 ? 'opacity-70' : ''}`}
+                                          onClick={() => { handlePartFamilyChange(subcategory.id); setPartTypeMenuOpen(false) }}
+                                        >
+                                          <div className="font-medium">{subcategory.label}</div>
+                                          <div className="mt-1 text-[10px] text-slate-400">{subCount.toLocaleString()} תוצאות</div>
+                                        </button>
+                                      )
+                                    })}
+                                  </div>
+                                )}
+                              </div>
                             ))}
                           </div>
                         )
@@ -3467,30 +3527,54 @@ export default function Parts() {
                   </div>
                   <div className="space-y-2">
                     {familiesInGroup.map((family) => (
-                      <button
-                        type="button"
-                        key={family.id}
-                        className={`flex w-full items-center justify-between rounded-[22px] border px-3.5 py-3 text-right transition-colors ${category === family.id ? 'border-brand-300 bg-brand-50 text-brand-700' : 'border-slate-200 bg-white text-brand-navy'} ${categoryCounts[family.id] === 0 ? 'opacity-60' : ''}`}
-                        onClick={() => {
-                          handlePartFamilyChange(family.id)
-                          setPartTypeMenuOpen(false)
-                          setPartFamilySearch('')
-                        }}
-                      >
-                        <span className="flex min-w-0 items-center gap-3">
-                          <img
-                            src={partFamilyImageSrc(family)}
-                            alt=""
-                            aria-hidden="true"
-                            className="h-[42px] w-[42px] flex-shrink-0 rounded-2xl border border-slate-200 bg-white object-cover shadow-sm"
-                          />
-                          <span className="min-w-0">
-                            <span className="block truncate text-sm font-semibold">{family.label}</span>
-                            <span className="mt-0.5 block text-xs text-slate-500">{(categoryCounts[family.id] || 0).toLocaleString()} תוצאות</span>
+                      <div key={family.id} className={`rounded-[22px] border ${category === family.id ? 'border-brand-300 bg-brand-50/40' : 'border-slate-200 bg-white'}`}>
+                        <button
+                          type="button"
+                          className={`flex w-full items-center justify-between rounded-[22px] px-3.5 py-3 text-right transition-colors ${category === family.id ? 'text-brand-700' : 'text-brand-navy'}`}
+                          onClick={() => {
+                            handlePartFamilyChange(family.id)
+                            setPartTypeMenuOpen(false)
+                            setPartFamilySearch('')
+                          }}
+                        >
+                          <span className="flex min-w-0 items-center gap-3">
+                            <img
+                              src={partFamilyImageSrc(family)}
+                              alt=""
+                              aria-hidden="true"
+                              className="h-[42px] w-[42px] flex-shrink-0 rounded-2xl border border-slate-200 bg-white object-cover shadow-sm"
+                            />
+                            <span className="min-w-0">
+                              <span className="block truncate text-sm font-semibold">{family.label}</span>
+                              <span className="mt-0.5 block text-xs text-slate-500">{(categoryCounts[family.id] || 0).toLocaleString()} תוצאות</span>
+                            </span>
                           </span>
-                        </span>
-                        {category === family.id ? <Check className="h-4 w-4 flex-shrink-0 text-brand-600" /> : <ChevronRight className="h-4 w-4 flex-shrink-0 text-slate-300" />}
-                      </button>
+                          {category === family.id ? <Check className="h-4 w-4 flex-shrink-0 text-brand-600" /> : <ChevronRight className="h-4 w-4 flex-shrink-0 text-slate-300" />}
+                        </button>
+                        {Array.isArray(family.subcategories) && family.subcategories.length > 0 && (
+                          <div className="grid grid-cols-2 gap-2 px-3 pb-3">
+                            {family.subcategories.slice(0, 8).map((subcategory) => {
+                              const selected = category === subcategory.id
+                              const subCount = subcategoryCounts[subcategory.id] || 0
+                              return (
+                                <button
+                                  type="button"
+                                  key={subcategory.id}
+                                  className={`rounded-xl border px-2 py-2 text-[11px] text-right leading-tight transition-colors ${selected ? 'border-brand-300 bg-white text-brand-700' : 'border-slate-200 bg-white/80 hover:bg-white text-slate-700'} ${subCount === 0 ? 'opacity-70' : ''}`}
+                                  onClick={() => {
+                                    handlePartFamilyChange(subcategory.id)
+                                    setPartTypeMenuOpen(false)
+                                    setPartFamilySearch('')
+                                  }}
+                                >
+                                  <div className="font-medium">{subcategory.label}</div>
+                                  <div className="mt-1 text-[10px] text-slate-400">{subCount.toLocaleString()} תוצאות</div>
+                                </button>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
                     ))}
                   </div>
                 </div>
@@ -4028,24 +4112,27 @@ export default function Parts() {
                     <X className="w-3 h-3" /> הסר פילטר: {selectedPartFamilyLabel}
                   </button>
                 )}
-                {suggestedPartFamilies.map((familyId) => (
-                  <button
-                    key={familyId}
-                    onClick={() => { handlePartFamilyChange(familyId) }}
-                    className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded-full bg-brand-50 text-brand-700 border border-brand-200 hover:bg-brand-100 transition-colors"
-                  >
-                    {findPartFamilyByValue(partFamilies, familyId) ? (
-                      <img
-                        src={partFamilyImageSrc(findPartFamilyByValue(partFamilies, familyId))}
-                        alt=""
-                        aria-hidden="true"
-                        className="object-cover flex-shrink-0 rounded-full"
-                        style={{ width: MANUFACTURER_CHIP_LOGO_SIZE, height: MANUFACTURER_CHIP_LOGO_SIZE }}
-                      />
-                    ) : null}
-                    {categoryLabelForValue(partFamilies, familyId)}{categoryCounts[familyId] ? ` (${categoryCounts[familyId].toLocaleString()})` : ''}
-                  </button>
-                ))}
+                {suggestedPartFamilies.map((familyId) => {
+                  const node = findPartCategoryNodeByValue(partFamilies, familyId)
+                  return (
+                    <button
+                      key={familyId}
+                      onClick={() => { handlePartFamilyChange(familyId) }}
+                      className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded-full bg-brand-50 text-brand-700 border border-brand-200 hover:bg-brand-100 transition-colors"
+                    >
+                      {node?.family ? (
+                        <img
+                          src={partFamilyImageSrc(node.family)}
+                          alt=""
+                          aria-hidden="true"
+                          className="object-cover flex-shrink-0 rounded-full"
+                          style={{ width: MANUFACTURER_CHIP_LOGO_SIZE, height: MANUFACTURER_CHIP_LOGO_SIZE }}
+                        />
+                      ) : null}
+                      {categoryLabelForValue(partFamilies, familyId)}{(categoryCounts[familyId] || subcategoryCounts[familyId]) ? ` (${(categoryCounts[familyId] || subcategoryCounts[familyId]).toLocaleString()})` : ''}
+                    </button>
+                  )
+                })}
               </div>
             </div>
           )}
