@@ -2,12 +2,12 @@ from __future__ import annotations
 
 CATEGORY_MAP = {
     'בלמים': {
-        'he': ['בלם', 'בלמים', 'רפידה', 'רפידות', 'דיסק', 'דיסקים', 'קליפר', 'קליפרים', 'תוף', 'תופים', 'בוסטר'],
-        'en': ['brake', 'caliper', 'rotor', 'pad', 'drum', 'booster']
+        'he': ['בלם', 'בלמים', 'רפידה', 'רפידות', 'דיסק', 'דיסקים', 'קליפר', 'קליפרים', 'תוף', 'תופים', 'בוסטר', 'צלחת', 'צלחות', 'רפידת'],
+        'en': ['brake', 'caliper', 'rotor', 'pad', 'drum', 'booster', 'discs']
     },
     'מתלה': {
-        'he': ['בולם', 'בולמים', 'קפיץ', 'קפיצים', 'זרוע', 'זרועות', 'מסב', 'מסבים', 'מייצב', 'מתלה', 'שטרוט', 'בושינג', 'בושינגים'],
-        'en': ['suspension', 'shock', 'strut', 'spring', 'arm', 'bushing', 'bearing', 'anti-roll']
+        'he': ['בולם', 'בולמים', 'קפיץ', 'קפיצים', 'זרוע', 'זרועות', 'מסב', 'מסבים', 'מייצב', 'מתלה', 'שטרוט', 'בושינג', 'בושינגים', 'נאבה', 'תפוח', 'משולש', 'משולשים', 'מוט קישור'],
+        'en': ['suspension', 'shock', 'strut', 'spring', 'arm', 'bushing', 'bearing', 'anti-roll', 'hub', 'wishbone']
     },
     'היגוי': {
         'he': ['הגה', 'גיר הגה', 'מוט הגה', 'פולסה'],
@@ -18,8 +18,8 @@ CATEGORY_MAP = {
         'en': ['engine', 'piston', 'valve', 'crankshaft', 'camshaft', 'block']
     },
     'קירור': {
-        'he': ['רדיאטור', 'קירור', 'תרמוסטט', 'משאבת מים', 'מאוורר', 'מאווררים', 'נוזל קירור'],
-        'en': ['radiator', 'water pump', 'thermostat', 'cooling fan', 'coolant']
+        'he': ['רדיאטור', 'קירור', 'תרמוסטט', 'משאבת מים', 'מאוורר', 'מאווררים', 'נוזל קירור', 'מיכל עיבוי', 'פקק רדיאטור'],
+        'en': ['radiator', 'water pump', 'thermostat', 'cooling fan', 'coolant', 'expansion tank']
     },
     'מערכת דלק': {
         'he': ['משאבת דלק', 'מזרק', 'מזרקים', 'מיכל דלק', 'ריילי', 'שנורקל'],
@@ -54,8 +54,8 @@ CATEGORY_MAP = {
         'en': ['spark plug', 'ignition coil', 'distributor', 'plug wire']
     },
     'סינון': {
-        'he': ['מסנן שמן', 'מסנן דלק', 'מסנן מזגן'],
-        'en': ['oil filter', 'fuel filter', 'cabin filter', 'pollen filter']
+        'he': ['מסנן', 'פילטר', 'מסנן שמן', 'מסנן דלק', 'מסנן מזגן', 'מסנן אוויר'],
+        'en': ['filter', 'oil filter', 'fuel filter', 'cabin filter', 'pollen filter', 'air filter']
     },
     'חשמל ואלקטרוניקה': {
         'he': ['אלטרנטור', 'מצת הנעה', 'ECU', 'מחשב', 'ממסר', 'פיוז', 'צמת'],
@@ -94,8 +94,8 @@ CATEGORY_MAP = {
         'en': ['wheel', 'rim', 'tyre', 'tire', 'tpms', 'lug nut']
     },
     'אטמים וצינורות': {
-        'he': ['אטם', 'אטמים', 'גיממה', 'אוילים'],
-        'en': ['gasket', 'seal', 'o-ring', 'head gasket']
+        'he': ['אטם', 'אטמים', 'גיממה', 'אוילים', 'צינור', 'צינורות', 'מחזיר שמן'],
+        'en': ['gasket', 'seal', 'o-ring', 'head gasket', 'hose', 'pipe', 'oil seal']
     },
     'מערכת בטיחות': {
         'he': ['איירבג', 'כרית אוויר', 'חגורה', 'חגורות'],

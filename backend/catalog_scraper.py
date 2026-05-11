@@ -146,6 +146,9 @@ ILS_PER_USD: float = float(os.getenv("USD_TO_ILS", "3.72"))
 FX_REFRESH_INTERVAL_H = float(os.getenv("FX_REFRESH_INTERVAL_H", "24"))
 
 # ── HTTP helpers ───────────────────────────────────────────────────────────────
+_BLOCKED_SOURCES: Dict[str, datetime] = {}
+_SOURCE_COOLDOWN_MINUTES = int(os.getenv("SCRAPER_SOURCE_COOLDOWN_MINUTES", "60"))
+
 _USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
@@ -251,12 +254,19 @@ async def _get(
      • Full browser Sec-Fetch-* headers (Cloudflare bypass)
      • Optional residential proxy via SCRAPER_PROXY env var
      • Exponential back-off on 429 / 5xx (via @retry_with_backoff decorator)
+     • Source-level cooldown for 403 Forbidden blocks.
     Works on any real VPS IP without proxy.  For Codespaces/dev containers
     set SCRAPER_PROXY to a residential proxy.
     """
+    domain = get_supplier_domain_from_url(url)
+    if domain:
+        blocked_until = _BLOCKED_SOURCES.get(domain)
+        if blocked_until and datetime.utcnow() < blocked_until:
+            logger.warning(f"[Rex] Source {domain} is in cooldown until {blocked_until.isoformat()}")
+            return None
+
     merged_headers = {**_base_headers(referer=referer), **(headers or {})}
     proxy = SCRAPER_PROXY if (use_proxy and SCRAPER_PROXY) else None
-    jitter = random.uniform(0.2, 0.8)
     
     try:
         async with httpx.AsyncClient(
@@ -266,6 +276,11 @@ async def _get(
             proxy=proxy,
         ) as client:
             resp = await client.get(url, params=params)
+
+            if resp.status_code == 403 and domain:
+                _BLOCKED_SOURCES[domain] = datetime.utcnow() + timedelta(minutes=_SOURCE_COOLDOWN_MINUTES)
+                logger.error(f"[Rex] 403 Forbidden from {domain}. Entering cooldown for {_SOURCE_COOLDOWN_MINUTES}m")
+
             return resp
     except (httpx.TimeoutException, httpx.NetworkError, httpx.ConnectError) as exc:
         print(f"[Rex] GET failed: {url[:80]} — {exc}")
