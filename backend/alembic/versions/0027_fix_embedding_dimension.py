@@ -28,15 +28,14 @@ def upgrade() -> None:
     op.execute("ALTER TABLE parts_catalog DROP COLUMN IF EXISTS embedding")
     op.execute(
         "ALTER TABLE parts_catalog "
-        "ADD COLUMN embedding vector(3072)"
+        "ADD COLUMN embedding vector(1536)"
     )
 
-    # 3. Rebuild IVFFlat index for cosine similarity
+    # 3. Rebuild HNSW index for cosine similarity
     op.execute("""
         CREATE INDEX idx_parts_catalog_embedding
         ON parts_catalog
-        USING ivfflat (embedding vector_cosine_ops)
-        WITH (lists = 100)
+        USING hnsw (embedding vector_cosine_ops)
         WHERE embedding IS NOT NULL
     """)
 
@@ -46,12 +45,11 @@ def downgrade() -> None:
     op.execute("ALTER TABLE parts_catalog DROP COLUMN IF EXISTS embedding")
     op.execute(
         "ALTER TABLE parts_catalog "
-        "ADD COLUMN embedding vector(3072)"
+        "ADD COLUMN embedding vector(1536)"
     )
     op.execute("""
         CREATE INDEX idx_parts_catalog_embedding
         ON parts_catalog
-        USING ivfflat (embedding vector_cosine_ops)
-        WITH (lists = 100)
+        USING hnsw (embedding vector_cosine_ops)
         WHERE embedding IS NOT NULL
     """)

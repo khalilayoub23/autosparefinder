@@ -1177,7 +1177,7 @@ async def _health_monitor_loop():
             try:
                 from db_update_agent import _last_report
                 last_heartbeat = _extract_dt(_last_report)
-                if last_heartbeat:
+                if last_heartbeat and isinstance(last_heartbeat, datetime):
                     silence_mins = (datetime.utcnow() - last_heartbeat).total_seconds() / 60
 
                     if silence_mins > 120:  # 2 hours

@@ -191,6 +191,7 @@ PART_TYPE_MAP: Dict[str, str] = {
     "oem_original": "Original",
     "genuine": "Original",
     "מקורי": "Original",
+    "מקורימקורי": "Original",
     "oem": "OEM",
     "oem_equivalent": "OEM",
     "oe": "OEM",
@@ -199,6 +200,8 @@ PART_TYPE_MAP: Dict[str, str] = {
     "generic": "Aftermarket",
     "third party": "Aftermarket",
     "תחליפי": "Aftermarket",
+    "חליפיחליפי": "Aftermarket",
+    "תחליפיתחליפי": "Aftermarket",
     "שוק משני": "Aftermarket",
 }
 
@@ -685,6 +688,51 @@ async def fix_base_prices(db: AsyncSession) -> Dict[str, Any]:
 # =========================================================================
 # Task 6 – Flag fake SKUs
 # =========================================================================
+
+async def fix_manufacturer_overflow(db: AsyncSession) -> Dict[str, Any]:
+    """
+    Identify Renault/Chevrolet parts with suspicious OEM prefixes
+    and mark them for legitimate OEM lookup.
+    """
+    t0 = time.monotonic()
+    rows_flagged = 0
+    try:
+        # Renault: should start with digits. 'RE' prefix or non-digit start is suspicious.
+        # Chevrolet: often has 'CH' prefix in bad imports.
+        result = await db.execute(text("""
+            UPDATE parts_catalog
+            SET needs_oem_lookup = TRUE,
+                updated_at = NOW()
+            WHERE (
+                (
+                  (manufacturer ILIKE '%renault%' OR manufacturer ILIKE '%רנו%')
+                  AND (oem_number ~* '^RE' OR oem_number !~ '^[0-9]')
+                )
+                OR
+                (
+                  (manufacturer ILIKE '%chevrolet%' OR manufacturer ILIKE '%שברולט%')
+                  AND oem_number ~* '^CH'
+                )
+              )
+              AND (needs_oem_lookup IS False OR needs_oem_lookup IS NULL)
+              AND is_active = TRUE
+            RETURNING id
+        """))
+        rows_flagged = len(result.fetchall())
+        await db.commit()
+        logger.info("fix_manufacturer_overflow: flagged=%d", rows_flagged)
+    except Exception as exc:
+        await db.rollback()
+        logger.error("fix_manufacturer_overflow failed: %s", exc)
+        return {"task": "fix_manufacturer_overflow", "status": "error", "error": str(exc)}
+
+    return {
+        "task": "fix_manufacturer_overflow",
+        "status": "ok",
+        "rows_flagged": rows_flagged,
+        "elapsed_s": round(time.monotonic() - t0, 2),
+    }
+
 
 async def flag_fake_skus(db: AsyncSession) -> Dict[str, Any]:
     """
@@ -2527,6 +2575,7 @@ TASK_REGISTRY: Dict[str, Any] = {
     "dedup_catalog_parts":       dedup_catalog_parts,
     "normalize_availability":    normalize_availability,
     "fix_base_prices":           fix_base_prices,
+    "fix_manufacturer_overflow": fix_manufacturer_overflow,
     "flag_fake_skus":            flag_fake_skus,
     "fill_car_brands":           fill_car_brands,
     "normalize_imported_manufacturers": normalize_imported_manufacturers,
@@ -2602,6 +2651,7 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
             "normalize_categories",
             "dedup_catalog_parts",
             "normalize_availability",
+            "fix_manufacturer_overflow",
             "flag_fake_skus",
             "fix_base_prices",
             "refresh_min_max_prices",
