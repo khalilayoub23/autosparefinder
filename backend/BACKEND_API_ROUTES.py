@@ -53,6 +53,22 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
+SEARCH_WARMUP_ENABLED = os.getenv("SEARCH_WARMUP_ENABLED", "1").strip().lower() in ("1", "true", "yes", "on")
+SEARCH_WARMUP_DELAY_S = float(os.getenv("SEARCH_WARMUP_DELAY_S", "0"))
+SEARCH_WARMUP_QUERY_TIMEOUT_S = float(os.getenv("SEARCH_WARMUP_QUERY_TIMEOUT_S", "20"))
+SEARCH_WARMUP_CASES: List[Dict[str, Any]] = [
+    {"query": "engine", "category": "מנוע"},
+    {"query": "filter", "category": "סינון"},
+    {"query": "mirror"},
+    {"query": "battery"},
+    {
+        "query": "",
+        "vehicle_manufacturer": "Toyota",
+        "vehicle_model": "Corolla",
+        "vehicle_year": 2018,
+    },
+]
+
 BLOCKED_SETTINGS = {
     "jwt_secret", "jwt_refresh_secret", "stripe_secret_key",
     "stripe_webhook_secret", "hf_token", "database_url",
@@ -158,6 +174,44 @@ app.add_middleware(SecurityHeadersAndAuthMiddleware)
 
 
 # SSL is terminated by Cloudflare — no HTTPSRedirectMiddleware needed
+
+
+async def _warm_search_paths() -> None:
+    if not SEARCH_WARMUP_ENABLED:
+        print("[SearchWarmup] disabled (SEARCH_WARMUP_ENABLED=false)")
+        return
+
+    await asyncio.sleep(max(0.0, SEARCH_WARMUP_DELAY_S))
+
+    try:
+        from routes.parts import search_parts
+
+        async with async_session_factory() as db:
+            for case in SEARCH_WARMUP_CASES:
+                try:
+                    await asyncio.wait_for(
+                        search_parts(
+                            query=case.get("query", ""),
+                            vehicle_id=case.get("vehicle_id"),
+                            category=case.get("category"),
+                            per_type=4,
+                            sort_by="price_ils",
+                            vehicle_manufacturer=case.get("vehicle_manufacturer"),
+                            vehicle_model=case.get("vehicle_model"),
+                            vehicle_submodel=case.get("vehicle_submodel"),
+                            vehicle_year=case.get("vehicle_year"),
+                            enable_cross_refs=case.get("enable_cross_refs"),
+                            db=db,
+                            request=None,
+                            redis=None,
+                        ),
+                        timeout=SEARCH_WARMUP_QUERY_TIMEOUT_S,
+                    )
+                except Exception as exc:
+                    logger.warning("[SearchWarmup] failed for %s: %s", case, exc)
+        print(f"[SearchWarmup] primed {len(SEARCH_WARMUP_CASES)} search shapes")
+    except Exception as exc:
+        logger.warning("[SearchWarmup] startup warmup failed: %s", exc)
 
 # _cart_to_response helper → routes/cart.py
 # POST   /api/v1/chat/message                         → routes/chat.py
@@ -680,6 +734,7 @@ async def startup():
     start_db_agent(get_db, 6.0)   # ← DB cleaning / normalisation agent (every 6h)
     asyncio.create_task(run_cleanup_loop())     # ← micro-batch cleanup loop (continuous)
     asyncio.create_task(_noa_marketing_loop())         # ← NOA social media agent (every 24h)
+    await _warm_search_paths()
     print("✅ All systems ready — price-sync + catalog-scraper + db-agent schedulers started")
 
 
