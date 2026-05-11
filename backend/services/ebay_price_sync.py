@@ -76,6 +76,32 @@ async def sync_ebay_prices(db: AsyncSession, limit_per_run: int = int(os.getenv(
 
 
                 await db.execute(text("""
+                    WITH matched_row AS (
+                        SELECT sp.id
+                        FROM supplier_parts sp
+                        WHERE sp.supplier_id = CAST(:supplier_id AS uuid)
+                          AND (
+                            sp.part_id = CAST(:part_id AS uuid)
+                            OR sp.supplier_sku = :supplier_sku
+                          )
+                        ORDER BY CASE WHEN sp.part_id = CAST(:part_id AS uuid) THEN 0 ELSE 1 END
+                        LIMIT 1
+                    ),
+                    updated_row AS (
+                        UPDATE supplier_parts sp
+                        SET
+                            price_usd = :price_usd,
+                            shipping_cost_usd = :shipping_cost_usd,
+                            supplier_sku = :supplier_sku,
+                            supplier_url = :supplier_url,
+                            is_available = true,
+                            availability = 'in_stock',
+                            last_checked_at = NOW(),
+                            updated_at = NOW()
+                        FROM matched_row mr
+                        WHERE sp.id = mr.id
+                        RETURNING sp.id
+                    )
                     INSERT INTO supplier_parts (
                         id,
                         supplier_id,
@@ -89,7 +115,8 @@ async def sync_ebay_prices(db: AsyncSession, limit_per_run: int = int(os.getenv(
                         last_checked_at,
                         created_at,
                         updated_at
-                    ) VALUES (
+                    )
+                    SELECT
                         gen_random_uuid(),
                         CAST(:supplier_id AS uuid),
                         CAST(:part_id AS uuid),
@@ -102,17 +129,7 @@ async def sync_ebay_prices(db: AsyncSession, limit_per_run: int = int(os.getenv(
                         NOW(),
                         NOW(),
                         NOW()
-                    )
-                    ON CONFLICT (part_id, supplier_id)
-                    DO UPDATE SET
-                        price_usd = EXCLUDED.price_usd,
-                        shipping_cost_usd = EXCLUDED.shipping_cost_usd,
-                        supplier_sku = EXCLUDED.supplier_sku,
-                        supplier_url = EXCLUDED.supplier_url,
-                        is_available = true,
-                        availability = 'in_stock',
-                        last_checked_at = NOW(),
-                        updated_at = NOW()
+                    WHERE NOT EXISTS (SELECT 1 FROM updated_row)
                 """), {
                     "supplier_id": ebay_supplier_id,
                     "part_id": str(part.id),
