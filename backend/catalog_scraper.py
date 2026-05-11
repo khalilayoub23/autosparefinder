@@ -3039,7 +3039,7 @@ async def _discover_via_ebay(brand: str, max_parts: int = 150) -> List[Dict]:
 
 
 def _guess_category_from_text(text: str) -> str:
-    return guess_category_by_text(text) or "כלי עבודה ואביזרים"
+    return guess_category_by_text(text) or "accessories"
 
 
 async def run_brand_discovery(

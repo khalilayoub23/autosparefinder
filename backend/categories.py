@@ -30,6 +30,7 @@ def _split_lang_terms(terms: List[str]) -> Tuple[List[str], List[str]]:
 
 
 def _collect_keyword_terms() -> Tuple[List[Tuple[str, List[str]]], Dict[str, Dict[str, List[str]]]]:
+    # Ordered entries are (canonical family id, searchable terms).
     ordered: List[Tuple[str, List[str]]] = []
     category_map: Dict[str, Dict[str, List[str]]] = {}
 
@@ -39,7 +40,7 @@ def _collect_keyword_terms() -> Tuple[List[Tuple[str, List[str]]], Dict[str, Dic
         merged = he_terms + en_terms
         if not merged:
             continue
-        ordered.append((subcategory.label, merged))
+        ordered.append((family.id, merged))
         category_map[subcategory.label] = {"he": he_terms, "en": en_terms}
 
     for family in iter_part_type_families():
@@ -48,7 +49,7 @@ def _collect_keyword_terms() -> Tuple[List[Tuple[str, List[str]]], Dict[str, Dic
         merged = he_terms + en_terms
         if not merged:
             continue
-        ordered.append((family.label, merged))
+        ordered.append((family.id, merged))
         category_map[family.label] = {"he": he_terms, "en": en_terms}
 
     return ordered, category_map
