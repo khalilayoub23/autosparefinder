@@ -55,12 +55,13 @@ logger = logging.getLogger(__name__)
 
 SEARCH_WARMUP_ENABLED = os.getenv("SEARCH_WARMUP_ENABLED", "1").strip().lower() in ("1", "true", "yes", "on")
 SEARCH_WARMUP_DELAY_S = float(os.getenv("SEARCH_WARMUP_DELAY_S", "0"))
-SEARCH_WARMUP_QUERY_TIMEOUT_S = float(os.getenv("SEARCH_WARMUP_QUERY_TIMEOUT_S", "20"))
+SEARCH_WARMUP_QUERY_TIMEOUT_S = float(os.getenv("SEARCH_WARMUP_QUERY_TIMEOUT_S", "3"))
 SEARCH_WARMUP_CASES: List[Dict[str, Any]] = [
-    {"query": "engine", "category": "מנוע"},
+    {"query": "engine", "category": "מנוע", "timeout_s": 12},
     {"query": "filter", "category": "סינון"},
     {"query": "mirror"},
     {"query": "battery"},
+    {"query": "bosch"},
     {
         "query": "",
         "vehicle_manufacturer": "Toyota",
@@ -205,7 +206,7 @@ async def _warm_search_paths() -> None:
                             request=None,
                             redis=None,
                         ),
-                        timeout=SEARCH_WARMUP_QUERY_TIMEOUT_S,
+                        timeout=float(case.get("timeout_s", SEARCH_WARMUP_QUERY_TIMEOUT_S)),
                     )
                 except Exception as exc:
                     logger.warning("[SearchWarmup] failed for %s: %s", case, exc)

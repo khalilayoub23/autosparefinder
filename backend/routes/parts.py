@@ -69,6 +69,7 @@ SEARCH_ENABLE_HF_QUERY_NORMALIZATION = os.getenv("SEARCH_ENABLE_HF_QUERY_NORMALI
 SEARCH_HF_QUERY_NORMALIZATION_TIMEOUT_S = float(os.getenv("SEARCH_HF_QUERY_NORMALIZATION_TIMEOUT_S", "0.35"))
 SEARCH_ENABLE_VECTOR_RERANK = os.getenv("SEARCH_ENABLE_VECTOR_RERANK", "0").strip().lower() in ("1", "true", "yes", "on")
 SEARCH_VECTOR_RERANK_MIN_QUERY_LEN = int(os.getenv("SEARCH_VECTOR_RERANK_MIN_QUERY_LEN", "4"))
+SEARCH_MEILI_TIMEOUT_S = float(os.getenv("SEARCH_MEILI_TIMEOUT_S", "0.35"))
 GOV_IL_LICENSE_RESOURCE_ID = "053cea08-09bc-40ec-8f7a-156f0677aff3"
 GOV_IL_DATASTORE_URL = "https://data.gov.il/api/3/action/datastore_search"
 
@@ -942,7 +943,7 @@ async def search_parts(
     _meili_url = os.getenv("MEILI_URL", "")
     if query and _meili_url:
         try:
-            async with httpx.AsyncClient(timeout=2.0) as _mc:
+            async with httpx.AsyncClient(timeout=SEARCH_MEILI_TIMEOUT_S) as _mc:
                 _resp = await _mc.post(
                     f"{_meili_url}/indexes/parts/search",
                     headers={"Authorization": f"Bearer {os.getenv('MEILI_MASTER_KEY', '')}"},
