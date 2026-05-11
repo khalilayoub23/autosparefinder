@@ -65,6 +65,10 @@ SUBMODELS_RESPONSE_CACHE: Dict[Tuple[str, str], Tuple[float, Dict[str, Any]]] = 
 YEARS_RESPONSE_CACHE: Dict[Tuple[str, str, str], Tuple[float, Dict[str, Any]]] = {}
 SEARCH_RESPONSE_TTL_S = 120.0
 SEARCH_RESPONSE_CACHE: Dict[Tuple, Tuple[float, Dict[str, Any]]] = {}
+SEARCH_ENABLE_HF_QUERY_NORMALIZATION = os.getenv("SEARCH_ENABLE_HF_QUERY_NORMALIZATION", "0").strip().lower() in ("1", "true", "yes", "on")
+SEARCH_HF_QUERY_NORMALIZATION_TIMEOUT_S = float(os.getenv("SEARCH_HF_QUERY_NORMALIZATION_TIMEOUT_S", "0.35"))
+SEARCH_ENABLE_VECTOR_RERANK = os.getenv("SEARCH_ENABLE_VECTOR_RERANK", "0").strip().lower() in ("1", "true", "yes", "on")
+SEARCH_VECTOR_RERANK_MIN_QUERY_LEN = int(os.getenv("SEARCH_VECTOR_RERANK_MIN_QUERY_LEN", "4"))
 GOV_IL_LICENSE_RESOURCE_ID = "053cea08-09bc-40ec-8f7a-156f0677aff3"
 GOV_IL_DATASTORE_URL = "https://data.gov.il/api/3/action/datastore_search"
 
@@ -907,11 +911,16 @@ async def search_parts(
     if _cached_search is not None:
         return _cached_search
 
-    # ── Normalize mixed-language query (He→En for catalog matching) ──────────
-    if query:
+    # Keep the request path local-first by default. Remote HF normalization is
+    # opt-in for Hebrew/mixed-script queries because provider retries create large
+    # first-hit tail latency when rate-limited.
+    if query and SEARCH_ENABLE_HF_QUERY_NORMALIZATION and any('֐' <= ch <= '׿' for ch in query):
         try:
             from hf_client import hf_normalize_query
-            query = await hf_normalize_query(query)
+            query = await asyncio.wait_for(
+                hf_normalize_query(query),
+                timeout=SEARCH_HF_QUERY_NORMALIZATION_TIMEOUT_S,
+            )
         except Exception:
             pass  # degrade silently — use raw query
     # ── Resolve results_per_type ─────────────────────────────────────────────
@@ -961,7 +970,7 @@ async def search_parts(
     # Runs only when Meilisearch returned results (meili_ids is a non-empty list).
     # vec_score: {id_str → cosine_similarity}  (empty dict if unavailable)
     _route_vec_score: Dict[str, float] = {}
-    if meili_ids and query:
+    if meili_ids and query and SEARCH_ENABLE_VECTOR_RERANK and len(query.strip()) >= SEARCH_VECTOR_RERANK_MIN_QUERY_LEN:
         from hf_client import hf_embed
         try:
             _qvec = await hf_embed(query, timeout=3.0)
