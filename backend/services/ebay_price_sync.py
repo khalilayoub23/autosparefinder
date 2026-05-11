@@ -1,3 +1,5 @@
+import os
+import asyncio
 import logging
 from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 ebay = EbaySupplier()
 
-async def sync_ebay_prices(db: AsyncSession, limit_per_run: int = 100) -> dict:
+async def sync_ebay_prices(db: AsyncSession, limit_per_run: int = int(os.getenv("EBAY_PRICE_SYNC_LIMIT", "500"))) -> dict:
     report = {
         "parts_checked": 0,
         "parts_updated": 0,
@@ -58,6 +60,7 @@ async def sync_ebay_prices(db: AsyncSession, limit_per_run: int = 100) -> dict:
             report["parts_checked"] += 1
             try:
                 results = await ebay.search_by_oem(str(part.oem_number), limit=3)
+                await asyncio.sleep(0.2)  # ~5 req/s max — well within eBay Browse API rate limits
 
                 if not results:
                     report["parts_not_found"] += 1
@@ -125,6 +128,10 @@ async def sync_ebay_prices(db: AsyncSession, limit_per_run: int = 100) -> dict:
             except Exception as e:
                 logger.error(f"eBay sync error for part {part.oem_number}: {e}")
                 report["errors"].append(str(e))
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
 
         await db.commit()
         logger.info(f"eBay price sync complete: {report}")

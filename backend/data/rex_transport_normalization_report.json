@@ -1,0 +1,22 @@
+{
+  "generated_at": "2026-05-11T06:07:15.806914+00:00",
+  "resource_ids": [
+    "142afde2-6228-49f9-8a29-9b6c3a0cbe40",
+    "5e87a7a1-2f6f-41c1-8aec-7216d52a6cf6"
+  ],
+  "normalization_rules": {
+    "capitalization": "case-insensitive canonical key generation",
+    "spacing": "collapse consecutive whitespace, trim edges",
+    "punctuation": "strip non-alnum punctuation before key generation",
+    "transliteration": "dataset-driven alias grouping by normalized token",
+    "abbreviation": "generic legal/entity suffix stripping (company/co/ltd/inc/llc/motors/group/etc)"
+  },
+  "alias_groups": [],
+  "quality_issues": {
+    "missing_manufacturer_records": 0,
+    "missing_model_records": 0,
+    "missing_year_records": 0,
+    "duplicate_or_alias_manufacturer_groups": 0,
+    "blank_or_corrupted_manufacturer_tokens": 0
+  }
+}

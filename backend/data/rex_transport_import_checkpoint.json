@@ -1,0 +1,10 @@
+{
+  "generated_at": "2026-05-11T06:07:15.806914+00:00",
+  "resource_ids": [
+    "142afde2-6228-49f9-8a29-9b6c3a0cbe40",
+    "5e87a7a1-2f6f-41c1-8aec-7216d52a6cf6"
+  ],
+  "next_queue_id": 1,
+  "last_completed_queue_id": 0,
+  "status": "initialized"
+}

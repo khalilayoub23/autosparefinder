@@ -115,6 +115,7 @@ services:
       EBAY_BEARER_TOKEN: ${EBAY_BEARER_TOKEN:-}
       EBAY_CLIENT_ID: ${EBAY_CLIENT_ID:-}
       EBAY_CLIENT_SECRET: ${EBAY_CLIENT_SECRET:-}
+      EBAY_PRICE_SYNC_LIMIT: ${EBAY_PRICE_SYNC_LIMIT:-4400}
       EBAY_APP_ID: ${EBAY_APP_ID:-}
       EBAY_CERT_ID: ${EBAY_CERT_ID:-}
       EBAY_SCOPE: ${EBAY_SCOPE:-https://api.ebay.com/oauth/api_scope/buy.browse}

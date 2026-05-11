@@ -1,0 +1,82 @@
+{
+  "started_at": "2026-05-11T06:01:10.307974+00:00",
+  "elapsed_s": 913.028,
+  "rss_before_mb": 577.18,
+  "rss_after_mb": 578.72,
+  "rss_delta_mb": 1.54,
+  "pipeline_report": {
+    "generated_at": "2026-05-11T05:45:57.279983+00:00",
+    "resource_count": 2,
+    "resource_ids": [
+      "142afde2-6228-49f9-8a29-9b6c3a0cbe40",
+      "5e87a7a1-2f6f-41c1-8aec-7216d52a6cf6"
+    ],
+    "records_fetched": 198000,
+    "source_total": 198000,
+    "distinct_manufacturers_raw": 322,
+    "distinct_manufacturers_canonical": 322,
+    "tier1_count": 55,
+    "tier2_count": 65,
+    "tier3_count": 202,
+    "artifacts": [
+      "/opt/autosparefinder/backend/data/rex_transport_dataset_profile.json",
+      "/opt/autosparefinder/backend/data/rex_transport_manufacturer_frequency.json",
+      "/opt/autosparefinder/backend/data/rex_transport_normalization_report.json",
+      "/opt/autosparefinder/backend/data/rex_transport_canonical_manufacturer_registry.json",
+      "/opt/autosparefinder/backend/data/rex_transport_priority_tiers.json",
+      "/opt/autosparefinder/backend/data/rex_transport_import_queue.json",
+      "/opt/autosparefinder/backend/data/rex_transport_import_checkpoint.json"
+    ]
+  },
+  "artifacts": {
+    "rex_transport_dataset_profile.json": {
+      "exists": true,
+      "bytes": 1174,
+      "sha256_raw": "e7cd7bb8faa0759b97bab50ee910ec841ffb96a6208569b6f3e83239f9e6259d",
+      "sha256_stable": "8c281d0aaada5a63f30823e5b78e9169acb110552883c40e1a00f003cbcebd39",
+      "path": "/opt/autosparefinder/backend/data/rex_transport_dataset_profile.json"
+    },
+    "rex_transport_manufacturer_frequency.json": {
+      "exists": true,
+      "bytes": 22629,
+      "sha256_raw": "c5eb870efe4f551ae480125dcbc0390d27d2c4bc6914e9a7808fd8d0fc382f06",
+      "sha256_stable": "ff9c70c87f94e859df9670b13bb582e0d1fda91839a95ebaed3e26a546bfd269",
+      "path": "/opt/autosparefinder/backend/data/rex_transport_manufacturer_frequency.json"
+    },
+    "rex_transport_normalization_report.json": {
+      "exists": true,
+      "bytes": 827,
+      "sha256_raw": "2686bd41092d0606a81d281dcf5b6084e421c5929535488bf28a16a4d0087a91",
+      "sha256_stable": "d1396aa6e6f22c89e1bd00456f22f6c5e0e0a5c537de113cbf5f4dde869c582f",
+      "path": "/opt/autosparefinder/backend/data/rex_transport_normalization_report.json"
+    },
+    "rex_transport_canonical_manufacturer_registry.json": {
+      "exists": true,
+      "bytes": 54384,
+      "sha256_raw": "9bc0552a8ea2fe58c598483a40253c63dd369374d3e0ee0f0f52308aeff9e1ac",
+      "sha256_stable": "4a510206a71e61e3d176a8456740e187dbab2d6f1157e137806da3d24d2cfb06",
+      "path": "/opt/autosparefinder/backend/data/rex_transport_canonical_manufacturer_registry.json"
+    },
+    "rex_transport_priority_tiers.json": {
+      "exists": true,
+      "bytes": 66126,
+      "sha256_raw": "5ff338a5c63a3493e1aeda70a1fbaa92f2936756f654682fd6b25f5440b0d1ef",
+      "sha256_stable": "3fb2de72cd5fa7983129aa40fd944570a0b6c77e7e071276f0b8242ab3d29692",
+      "path": "/opt/autosparefinder/backend/data/rex_transport_priority_tiers.json"
+    },
+    "rex_transport_import_queue.json": {
+      "exists": true,
+      "bytes": 87774,
+      "sha256_raw": "dc52e892eef2e5714806cbfe1c606ea7592e98382eb504f17f0c882d7d61dac9",
+      "sha256_stable": "dc6031231fda7587a5f141b068f2e381e9cffe0f4362607fc12b7f9d7b79222c",
+      "path": "/opt/autosparefinder/backend/data/rex_transport_import_queue.json"
+    },
+    "rex_transport_import_checkpoint.json": {
+      "exists": true,
+      "bytes": 249,
+      "sha256_raw": "7a3fccdb54e1bcbe34d5c0af2aff9c9450b38fd46e6edce322903ebff232694d",
+      "sha256_stable": "0832565cb7186fc5fd23b3b4b6f05abc86db15fa159c85fe10c29994b3181ef4",
+      "path": "/opt/autosparefinder/backend/data/rex_transport_import_checkpoint.json"
+    }
+  }
+}

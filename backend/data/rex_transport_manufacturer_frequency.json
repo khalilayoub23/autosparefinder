@@ -1,0 +1,1290 @@
+[
+  {
+    "manufacturer": "מרצדס בנץ גרמנ",
+    "count": 17140
+  },
+  {
+    "manufacturer": "ב מ וו גרמניה",
+    "count": 11066
+  },
+  {
+    "manufacturer": "סקודה צ'כיה",
+    "count": 8092
+  },
+  {
+    "manufacturer": "פולקסווגן גרמנ",
+    "count": 7942
+  },
+  {
+    "manufacturer": "אאודי",
+    "count": 6792
+  },
+  {
+    "manufacturer": "ב מ וו ארהב\"",
+    "count": 4830
+  },
+  {
+    "manufacturer": "מרצדס בנץ ארהב",
+    "count": 4640
+  },
+  {
+    "manufacturer": "רובר אנגליה",
+    "count": 4496
+  },
+  {
+    "manufacturer": "טויוטה יפן",
+    "count": 4246
+  },
+  {
+    "manufacturer": "סובארו יפן",
+    "count": 4146
+  },
+  {
+    "manufacturer": "יונדאי קוריאה",
+    "count": 4026
+  },
+  {
+    "manufacturer": "פיג'ו צרפת",
+    "count": 3788
+  },
+  {
+    "manufacturer": "פורשה גרמניה",
+    "count": 3530
+  },
+  {
+    "manufacturer": "קיה קוריאה",
+    "count": 3364
+  },
+  {
+    "manufacturer": "סיאט ספרד",
+    "count": 3188
+  },
+  {
+    "manufacturer": "טויוטה ארהב\"",
+    "count": 3160
+  },
+  {
+    "manufacturer": "סיטרואן צרפת",
+    "count": 2910
+  },
+  {
+    "manufacturer": "קרייזלר ארהב\"",
+    "count": 2694
+  },
+  {
+    "manufacturer": "מיצובישי יפן",
+    "count": 2510
+  },
+  {
+    "manufacturer": "טסלה סין",
+    "count": 2428
+  },
+  {
+    "manufacturer": "וולבו בלגיה",
+    "count": 2340
+  },
+  {
+    "manufacturer": "מזדה יפן",
+    "count": 2252
+  },
+  {
+    "manufacturer": "שברולט ארהב\"",
+    "count": 2212
+  },
+  {
+    "manufacturer": "ב מ וו בריטניה",
+    "count": 2082
+  },
+  {
+    "manufacturer": "ג'יפ ארהב\"",
+    "count": 2006
+  },
+  {
+    "manufacturer": "וולבו שוודיה",
+    "count": 1978
+  },
+  {
+    "manufacturer": "פורד ארהב\"",
+    "count": 1958
+  },
+  {
+    "manufacturer": "לקסוס יפן",
+    "count": 1866
+  },
+  {
+    "manufacturer": "מרצדס בנץ הונג",
+    "count": 1776
+  },
+  {
+    "manufacturer": "מרצדס בנץ ספרד",
+    "count": 1772
+  },
+  {
+    "manufacturer": "טויוטה טורקיה",
+    "count": 1720
+  },
+  {
+    "manufacturer": "אלפא רומיאו",
+    "count": 1640
+  },
+  {
+    "manufacturer": "שברולט ד.קוריא",
+    "count": 1598
+  },
+  {
+    "manufacturer": "סיטרואן ספרד",
+    "count": 1570
+  },
+  {
+    "manufacturer": "יגואר",
+    "count": 1530
+  },
+  {
+    "manufacturer": "לנדרובר אנגליה",
+    "count": 1508
+  },
+  {
+    "manufacturer": "פולקסווגן פולי",
+    "count": 1472
+  },
+  {
+    "manufacturer": "ניסאן יפן",
+    "count": 1426
+  },
+  {
+    "manufacturer": "רנו ספרד",
+    "count": 1410
+  },
+  {
+    "manufacturer": "הונדה-יפן",
+    "count": 1392
+  },
+  {
+    "manufacturer": "רנו צרפת",
+    "count": 1350
+  },
+  {
+    "manufacturer": "אאודי הונגריה",
+    "count": 1338
+  },
+  {
+    "manufacturer": "ניסאן אנגליה",
+    "count": 1312
+  },
+  {
+    "manufacturer": "רנו טורקיה",
+    "count": 1286
+  },
+  {
+    "manufacturer": "פיאט איטליה",
+    "count": 1272
+  },
+  {
+    "manufacturer": "דימלרקריזלר-גר",
+    "count": 1238
+  },
+  {
+    "manufacturer": "אאודי סלובקיה",
+    "count": 1184
+  },
+  {
+    "manufacturer": "קיה סלובקיה",
+    "count": 1172
+  },
+  {
+    "manufacturer": "אופל-גרמניה",
+    "count": 1150
+  },
+  {
+    "manufacturer": "סוזוקי-יפן",
+    "count": 1104
+  },
+  {
+    "manufacturer": "טויוטה צרפת",
+    "count": 1100
+  },
+  {
+    "manufacturer": "פיאט פולין",
+    "count": 1050
+  },
+  {
+    "manufacturer": "פולקסווגן-ספרד",
+    "count": 1018
+  },
+  {
+    "manufacturer": "קאדילאק ארהב\"",
+    "count": 1018
+  },
+  {
+    "manufacturer": "דאציה רומניה",
+    "count": 976
+  },
+  {
+    "manufacturer": "לנדרובר סלובקי",
+    "count": 966
+  },
+  {
+    "manufacturer": "אופל-ספרד",
+    "count": 786
+  },
+  {
+    "manufacturer": "איסוזו תאילנד",
+    "count": 778
+  },
+  {
+    "manufacturer": "מרצדס-בנץ אוסט",
+    "count": 760
+  },
+  {
+    "manufacturer": "הונדה בריטניה",
+    "count": 752
+  },
+  {
+    "manufacturer": "מיצובישי תאילנ",
+    "count": 752
+  },
+  {
+    "manufacturer": "טסלה גרמניה",
+    "count": 748
+  },
+  {
+    "manufacturer": "פורד גרמניה",
+    "count": 746
+  },
+  {
+    "manufacturer": "טויוטה אנגליה",
+    "count": 722
+  },
+  {
+    "manufacturer": "טסלה ארה''ב",
+    "count": 704
+  },
+  {
+    "manufacturer": "פיאט תורכיה",
+    "count": 684
+  },
+  {
+    "manufacturer": "ב מ וו הולנד",
+    "count": 672
+  },
+  {
+    "manufacturer": "יונדאי צ'כיה",
+    "count": 648
+  },
+  {
+    "manufacturer": "אודי מכסיקו",
+    "count": 640
+  },
+  {
+    "manufacturer": "סוזוקי הונגריה",
+    "count": 640
+  },
+  {
+    "manufacturer": "פולקסווגן מכסי",
+    "count": 606
+  },
+  {
+    "manufacturer": "יונדאי טורקיה",
+    "count": 600
+  },
+  {
+    "manufacturer": "פורד תורכיה",
+    "count": 576
+  },
+  {
+    "manufacturer": "פיג'ו ספרד",
+    "count": 574
+  },
+  {
+    "manufacturer": "אאודי בלגיה",
+    "count": 560
+  },
+  {
+    "manufacturer": "מזארטי איטליה",
+    "count": 552
+  },
+  {
+    "manufacturer": "אאודי ספרד",
+    "count": 542
+  },
+  {
+    "manufacturer": "ב מ וו אוסטריה",
+    "count": 542
+  },
+  {
+    "manufacturer": "סאנגיונג ד.קור",
+    "count": 538
+  },
+  {
+    "manufacturer": "פורשה סלובקיה",
+    "count": 518
+  },
+  {
+    "manufacturer": "סמארט צרפת",
+    "count": 480
+  },
+  {
+    "manufacturer": "דייהטסו-יפן",
+    "count": 478
+  },
+  {
+    "manufacturer": "מ.ג סין",
+    "count": 456
+  },
+  {
+    "manufacturer": "פולקסווגן סלוב",
+    "count": 454
+  },
+  {
+    "manufacturer": "ניסאן ספרד",
+    "count": 454
+  },
+  {
+    "manufacturer": "דימלרקריזלר-ספ",
+    "count": 436
+  },
+  {
+    "manufacturer": "פורד-בלגיה",
+    "count": 420
+  },
+  {
+    "manufacturer": "קרייזלר קנדה",
+    "count": 418
+  },
+  {
+    "manufacturer": "ב מ וו מקסיקו",
+    "count": 412
+  },
+  {
+    "manufacturer": "פורד ספרד",
+    "count": 388
+  },
+  {
+    "manufacturer": "מזדה תאילנד",
+    "count": 380
+  },
+  {
+    "manufacturer": "טויוטה תאילנד",
+    "count": 374
+  },
+  {
+    "manufacturer": "מקסוס סין",
+    "count": 372
+  },
+  {
+    "manufacturer": "שברולט מקסיקו",
+    "count": 370
+  },
+  {
+    "manufacturer": "אופל פולין",
+    "count": 370
+  },
+  {
+    "manufacturer": "פורד מקסיקו",
+    "count": 360
+  },
+  {
+    "manufacturer": "ג'י.אמ.סי ארהב",
+    "count": 352
+  },
+  {
+    "manufacturer": "צ'רי סין",
+    "count": 346
+  },
+  {
+    "manufacturer": "פולקסווגן ארהב",
+    "count": 336
+  },
+  {
+    "manufacturer": "פורד קנדה",
+    "count": 330
+  },
+  {
+    "manufacturer": "הונדה-ארהב\"",
+    "count": 328
+  },
+  {
+    "manufacturer": "בנטלי בריטניה",
+    "count": 324
+  },
+  {
+    "manufacturer": "אופל-בלגיה",
+    "count": 312
+  },
+  {
+    "manufacturer": "סיאט צ'כיה",
+    "count": 312
+  },
+  {
+    "manufacturer": "דייהו קוריאה ד",
+    "count": 310
+  },
+  {
+    "manufacturer": "וולבו סין",
+    "count": 308
+  },
+  {
+    "manufacturer": "פרארי",
+    "count": 304
+  },
+  {
+    "manufacturer": "טויוטה צ'כיה",
+    "count": 290
+  },
+  {
+    "manufacturer": "פיג'ו סלובקיה",
+    "count": 268
+  },
+  {
+    "manufacturer": "אופל צרפת",
+    "count": 264
+  },
+  {
+    "manufacturer": "בי ווי די",
+    "count": 264
+  },
+  {
+    "manufacturer": "די.אס צרפת",
+    "count": 260
+  },
+  {
+    "manufacturer": "גיפ-ישראל",
+    "count": 254
+  },
+  {
+    "manufacturer": "איסוזו יפן",
+    "count": 242
+  },
+  {
+    "manufacturer": "ניסאן ארהב\"",
+    "count": 240
+  },
+  {
+    "manufacturer": "שברולט קנדה",
+    "count": 226
+  },
+  {
+    "manufacturer": "ג'יפ איטליה",
+    "count": 218
+  },
+  {
+    "manufacturer": "רנו ד.קוריאה",
+    "count": 212
+  },
+  {
+    "manufacturer": "פולקסווגן פורט",
+    "count": 210
+  },
+  {
+    "manufacturer": "ניסאן מקסיקו",
+    "count": 210
+  },
+  {
+    "manufacturer": "אקספנג סין",
+    "count": 206
+  },
+  {
+    "manufacturer": "דודג' קנדה",
+    "count": 206
+  },
+  {
+    "manufacturer": "סיטרואן סלובק",
+    "count": 204
+  },
+  {
+    "manufacturer": "הונדה טורקיה",
+    "count": 200
+  },
+  {
+    "manufacturer": "אסטון מרטין",
+    "count": 200
+  },
+  {
+    "manufacturer": "סאאב שודיה",
+    "count": 196
+  },
+  {
+    "manufacturer": "סיטרואן פורטוג",
+    "count": 190
+  },
+  {
+    "manufacturer": "אופל אנגליה",
+    "count": 188
+  },
+  {
+    "manufacturer": "יונדאי הודו",
+    "count": 176
+  },
+  {
+    "manufacturer": "דאציה מרוקו",
+    "count": 170
+  },
+  {
+    "manufacturer": "פיגו איטליה",
+    "count": 160
+  },
+  {
+    "manufacturer": "מרצדס בנץ ד.אפ",
+    "count": 160
+  },
+  {
+    "manufacturer": "סיאט גרמניה",
+    "count": 160
+  },
+  {
+    "manufacturer": "וולבו הולנד",
+    "count": 158
+  },
+  {
+    "manufacturer": "סיאט סלובקיה",
+    "count": 158
+  },
+  {
+    "manufacturer": "ניאו רכב סין",
+    "count": 156
+  },
+  {
+    "manufacturer": "אופל ד.קוריאה",
+    "count": 152
+  },
+  {
+    "manufacturer": "ביואיק ארהב",
+    "count": 152
+  },
+  {
+    "manufacturer": "טויוטה קנדה",
+    "count": 148
+  },
+  {
+    "manufacturer": "סקודה סלובקיה",
+    "count": 140
+  },
+  {
+    "manufacturer": "דימלרקריזלר-אר",
+    "count": 138
+  },
+  {
+    "manufacturer": "פיג'ו צ'כיה",
+    "count": 134
+  },
+  {
+    "manufacturer": "קופרה ספרד",
+    "count": 134
+  },
+  {
+    "manufacturer": "סיטרואן אנגליה",
+    "count": 132
+  },
+  {
+    "manufacturer": "סיטרואן צ'כיה",
+    "count": 126
+  },
+  {
+    "manufacturer": "ב מ וו סין",
+    "count": 126
+  },
+  {
+    "manufacturer": "גרייט וול סין",
+    "count": 122
+  },
+  {
+    "manufacturer": "קיי גי מוביליט",
+    "count": 120
+  },
+  {
+    "manufacturer": "גילי סין",
+    "count": 110
+  },
+  {
+    "manufacturer": "ג'אקו סין",
+    "count": 106
+  },
+  {
+    "manufacturer": "אף אי דאבל יו",
+    "count": 104
+  },
+  {
+    "manufacturer": "לנצ'יה",
+    "count": 102
+  },
+  {
+    "manufacturer": "פיאט סרביה",
+    "count": 102
+  },
+  {
+    "manufacturer": "סמארט סין",
+    "count": 100
+  },
+  {
+    "manufacturer": "זיקר",
+    "count": 98
+  },
+  {
+    "manufacturer": "מרצדס בנץ פינל",
+    "count": 98
+  },
+  {
+    "manufacturer": "די אס גרמניה",
+    "count": 98
+  },
+  {
+    "manufacturer": "טויוטה ספרד",
+    "count": 96
+  },
+  {
+    "manufacturer": "טויוטה מקסיקו",
+    "count": 92
+  },
+  {
+    "manufacturer": "וולבו ארהב\"",
+    "count": 90
+  },
+  {
+    "manufacturer": "קרייזלר מכסיקו",
+    "count": 90
+  },
+  {
+    "manufacturer": "קרייזלר-אוסטרי",
+    "count": 88
+  },
+  {
+    "manufacturer": "קאדילאק מכסיקו",
+    "count": 88
+  },
+  {
+    "manufacturer": "מרוטי-סוזוקי",
+    "count": 86
+  },
+  {
+    "manufacturer": "ניסאן הודו",
+    "count": 86
+  },
+  {
+    "manufacturer": "ליפמוטור סין",
+    "count": 86
+  },
+  {
+    "manufacturer": "פורד בריטניה",
+    "count": 84
+  },
+  {
+    "manufacturer": "למבורגיני",
+    "count": 82
+  },
+  {
+    "manufacturer": "פורד רומניה",
+    "count": 78
+  },
+  {
+    "manufacturer": "אורה סין",
+    "count": 78
+  },
+  {
+    "manufacturer": "טלקו הודו",
+    "count": 72
+  },
+  {
+    "manufacturer": "פורד ד אפריקה",
+    "count": 72
+  },
+  {
+    "manufacturer": "ג'יפ פולין",
+    "count": 72
+  },
+  {
+    "manufacturer": "רולס-רויס",
+    "count": 66
+  },
+  {
+    "manufacturer": "סקיוול סין",
+    "count": 66
+  },
+  {
+    "manufacturer": "פיאג'ו איטליה",
+    "count": 64
+  },
+  {
+    "manufacturer": "לינק אנד קו",
+    "count": 64
+  },
+  {
+    "manufacturer": "מיצובישי הולנד",
+    "count": 56
+  },
+  {
+    "manufacturer": "וואי סין",
+    "count": 56
+  },
+  {
+    "manufacturer": "פיאט צרפת",
+    "count": 54
+  },
+  {
+    "manufacturer": "רנו סלובניה",
+    "count": 54
+  },
+  {
+    "manufacturer": "סובארו ארהב\"",
+    "count": 52
+  },
+  {
+    "manufacturer": "פולקסווגן בלגי",
+    "count": 50
+  },
+  {
+    "manufacturer": "טויוטה אוסטריה",
+    "count": 50
+  },
+  {
+    "manufacturer": "טויוטה בלגיה",
+    "count": 48
+  },
+  {
+    "manufacturer": "סיאט פורטוגל",
+    "count": 48
+  },
+  {
+    "manufacturer": "ביואיק קנדה",
+    "count": 48
+  },
+  {
+    "manufacturer": "סיאט בלגיה",
+    "count": 46
+  },
+  {
+    "manufacturer": "לנציה פולין",
+    "count": 46
+  },
+  {
+    "manufacturer": "פיאט קרייזלר",
+    "count": 46
+  },
+  {
+    "manufacturer": "פיאט ספרד",
+    "count": 44
+  },
+  {
+    "manufacturer": "ניסאן צרפת",
+    "count": 44
+  },
+  {
+    "manufacturer": "מרצדס בנץ מקסי",
+    "count": 44
+  },
+  {
+    "manufacturer": "ניאו סין",
+    "count": 44
+  },
+  {
+    "manufacturer": "טויוטה דרום אפ",
+    "count": 42
+  },
+  {
+    "manufacturer": "איי אם סין",
+    "count": 42
+  },
+  {
+    "manufacturer": "מאן פולין",
+    "count": 40
+  },
+  {
+    "manufacturer": "סמארט סלובניה",
+    "count": 40
+  },
+  {
+    "manufacturer": "סרס סין",
+    "count": 40
+  },
+  {
+    "manufacturer": "סיטרואן תורכיה",
+    "count": 38
+  },
+  {
+    "manufacturer": "פולסטאר סין",
+    "count": 38
+  },
+  {
+    "manufacturer": "אלפין צרפת",
+    "count": 38
+  },
+  {
+    "manufacturer": "פיאט תאילנד",
+    "count": 36
+  },
+  {
+    "manufacturer": "וויה סין",
+    "count": 36
+  },
+  {
+    "manufacturer": "לקסוס קנדה",
+    "count": 36
+  },
+  {
+    "manufacturer": "פיג'ו אוסטריה",
+    "count": 36
+  },
+  {
+    "manufacturer": "איווייס סין",
+    "count": 36
+  },
+  {
+    "manufacturer": "אופל פורטוגל",
+    "count": 34
+  },
+  {
+    "manufacturer": "רנו רומניה",
+    "count": 34
+  },
+  {
+    "manufacturer": "פוטון סין",
+    "count": 34
+  },
+  {
+    "manufacturer": "הונדה מקסיקו",
+    "count": 34
+  },
+  {
+    "manufacturer": "פיג'ו פורטוגל",
+    "count": 32
+  },
+  {
+    "manufacturer": "מרצדס-בנץ צרפת",
+    "count": 32
+  },
+  {
+    "manufacturer": "גיי.איי.סי סין",
+    "count": 32
+  },
+  {
+    "manufacturer": "קארמה ארה''ב",
+    "count": 32
+  },
+  {
+    "manufacturer": "פיג'ו תורכיה",
+    "count": 30
+  },
+  {
+    "manufacturer": "דיפאל סין",
+    "count": 30
+  },
+  {
+    "manufacturer": "ג'אק סין",
+    "count": 28
+  },
+  {
+    "manufacturer": "פאריזון סין",
+    "count": 28
+  },
+  {
+    "manufacturer": "הונדה-קנדה",
+    "count": 28
+  },
+  {
+    "manufacturer": "סמארט ג'.מ.ב.ה",
+    "count": 28
+  },
+  {
+    "manufacturer": "יגואר אוסטריה",
+    "count": 28
+  },
+  {
+    "manufacturer": "פיגו מרוקו",
+    "count": 28
+  },
+  {
+    "manufacturer": "קיה מכסיקו",
+    "count": 26
+  },
+  {
+    "manufacturer": "סוזוקי תאילנד",
+    "count": 26
+  },
+  {
+    "manufacturer": "ואז",
+    "count": 26
+  },
+  {
+    "manufacturer": "רנו-בלגיה",
+    "count": 26
+  },
+  {
+    "manufacturer": "אוואטר סין",
+    "count": 26
+  },
+  {
+    "manufacturer": "ביואיק_מקסיקו",
+    "count": 24
+  },
+  {
+    "manufacturer": "די.אף.אס.קיי",
+    "count": 24
+  },
+  {
+    "manufacturer": "סנטרו סין",
+    "count": 24
+  },
+  {
+    "manufacturer": "פולקסווגן ד.אפ",
+    "count": 24
+  },
+  {
+    "manufacturer": "מזדה צרפת",
+    "count": 24
+  },
+  {
+    "manufacturer": "אומודה סין",
+    "count": 24
+  },
+  {
+    "manufacturer": "פורד תאילנד",
+    "count": 22
+  },
+  {
+    "manufacturer": "פיאט פורטוגל",
+    "count": 22
+  },
+  {
+    "manufacturer": "לקסוס ארהב",
+    "count": 22
+  },
+  {
+    "manufacturer": "פולקסווגן סין",
+    "count": 22
+  },
+  {
+    "manufacturer": "דונגפנג סין",
+    "count": 22
+  },
+  {
+    "manufacturer": "איסוזו ארהב\"",
+    "count": 20
+  },
+  {
+    "manufacturer": "סוזוקי-מרוטי",
+    "count": 20
+  },
+  {
+    "manufacturer": "ג'יפ מכסיקו",
+    "count": 20
+  },
+  {
+    "manufacturer": "סוזוקי אנגליה",
+    "count": 20
+  },
+  {
+    "manufacturer": "אל אי וי סי",
+    "count": 18
+  },
+  {
+    "manufacturer": "פיג'ו פולין",
+    "count": 18
+  },
+  {
+    "manufacturer": "יונדאי ארהב\"",
+    "count": 18
+  },
+  {
+    "manufacturer": "פיג'ו אנגליה",
+    "count": 18
+  },
+  {
+    "manufacturer": "דאציה סין",
+    "count": 18
+  },
+  {
+    "manufacturer": "פורתינג סין",
+    "count": 18
+  },
+  {
+    "manufacturer": "אופל סלובקיה",
+    "count": 18
+  },
+  {
+    "manufacturer": "אס דאבל יו אמ",
+    "count": 16
+  },
+  {
+    "manufacturer": "פיאט/מדייר סוז",
+    "count": 16
+  },
+  {
+    "manufacturer": "גי.אי.סי סין",
+    "count": 16
+  },
+  {
+    "manufacturer": "מזדה מקסיקו",
+    "count": 16
+  },
+  {
+    "manufacturer": "האמר ג.מ. דרום",
+    "count": 14
+  },
+  {
+    "manufacturer": "מיצובישי פורט'",
+    "count": 14
+  },
+  {
+    "manufacturer": "אמ.סי.סי.",
+    "count": 14
+  },
+  {
+    "manufacturer": "הונדה הודו",
+    "count": 14
+  },
+  {
+    "manufacturer": "הונדה תאילנד",
+    "count": 14
+  },
+  {
+    "manufacturer": "קיה ארהב\"",
+    "count": 14
+  },
+  {
+    "manufacturer": "דאבל יו אם איי",
+    "count": 14
+  },
+  {
+    "manufacturer": "גיאיוואן סין",
+    "count": 14
+  },
+  {
+    "manufacturer": "רנו אנגליה",
+    "count": 12
+  },
+  {
+    "manufacturer": "לוטוס",
+    "count": 12
+  },
+  {
+    "manufacturer": "איויאיסי סין",
+    "count": 12
+  },
+  {
+    "manufacturer": "נטע סין",
+    "count": 12
+  },
+  {
+    "manufacturer": "ארקפוקס סין",
+    "count": 12
+  },
+  {
+    "manufacturer": "קופרה סין",
+    "count": 12
+  },
+  {
+    "manufacturer": "מזדה ארהב\"",
+    "count": 10
+  },
+  {
+    "manufacturer": "הונדה סין",
+    "count": 10
+  },
+  {
+    "manufacturer": "לינקולן",
+    "count": 10
+  },
+  {
+    "manufacturer": "פיאט יפן",
+    "count": 10
+  },
+  {
+    "manufacturer": "ג'.מ ארהב\"",
+    "count": 10
+  },
+  {
+    "manufacturer": "מיני אנגליה",
+    "count": 10
+  },
+  {
+    "manufacturer": "יודו סין",
+    "count": 10
+  },
+  {
+    "manufacturer": "צ'אנג יאנג סין",
+    "count": 8
+  },
+  {
+    "manufacturer": "אל.טי.איי.",
+    "count": 8
+  },
+  {
+    "manufacturer": "איווקו איטליה",
+    "count": 8
+  },
+  {
+    "manufacturer": "יונדאי סלובקיה",
+    "count": 8
+  },
+  {
+    "manufacturer": "פונטיאק",
+    "count": 8
+  },
+  {
+    "manufacturer": "סאאב אוסטריה",
+    "count": 8
+  },
+  {
+    "manufacturer": "גופל",
+    "count": 8
+  },
+  {
+    "manufacturer": "אינאוס צרפת",
+    "count": 8
+  },
+  {
+    "manufacturer": "ריהיי סין",
+    "count": 8
+  },
+  {
+    "manufacturer": "אקסלנטיקס סין",
+    "count": 8
+  },
+  {
+    "manufacturer": "דונגפנג",
+    "count": 6
+  },
+  {
+    "manufacturer": "דודג' ארהב\"",
+    "count": 6
+  },
+  {
+    "manufacturer": "מובימטיק",
+    "count": 6
+  },
+  {
+    "manufacturer": "בורג הולנד",
+    "count": 6
+  },
+  {
+    "manufacturer": "לינקסיס סין",
+    "count": 6
+  },
+  {
+    "manufacturer": "מודרן סין",
+    "count": 6
+  },
+  {
+    "manufacturer": "גמס",
+    "count": 6
+  },
+  {
+    "manufacturer": "סיטרואן יפן",
+    "count": 6
+  },
+  {
+    "manufacturer": "סאאב פינלנד",
+    "count": 6
+  },
+  {
+    "manufacturer": "ג'יי.אמ.סי מקס",
+    "count": 6
+  },
+  {
+    "manufacturer": "סוזוקי הודו",
+    "count": 6
+  },
+  {
+    "manufacturer": "קופרה צ'כיה",
+    "count": 6
+  },
+  {
+    "manufacturer": "באייק סין",
+    "count": 6
+  },
+  {
+    "manufacturer": "האמר-ארהב\"",
+    "count": 4
+  },
+  {
+    "manufacturer": "ט אי סי",
+    "count": 4
+  },
+  {
+    "manufacturer": "מ א ן גרמניה",
+    "count": 4
+  },
+  {
+    "manufacturer": "פיאט-ברזיל",
+    "count": 4
+  },
+  {
+    "manufacturer": "פיאט אנגליה",
+    "count": 4
+  },
+  {
+    "manufacturer": "דאיון סין",
+    "count": 4
+  },
+  {
+    "manufacturer": "פורד איטליה",
+    "count": 4
+  },
+  {
+    "manufacturer": "טויוטה ב מ וו",
+    "count": 4
+  },
+  {
+    "manufacturer": "בואו סין",
+    "count": 4
+  },
+  {
+    "manufacturer": "די אס איטליה",
+    "count": 4
+  },
+  {
+    "manufacturer": "איון סין",
+    "count": 4
+  },
+  {
+    "manufacturer": "פולקסוגן טורק",
+    "count": 4
+  },
+  {
+    "manufacturer": "דימלרקריזלר-אס",
+    "count": 2
+  },
+  {
+    "manufacturer": "פולקסווגן ארגנ",
+    "count": 2
+  },
+  {
+    "manufacturer": "רנו מרוקו",
+    "count": 2
+  },
+  {
+    "manufacturer": "קוואן סין",
+    "count": 2
+  },
+  {
+    "manufacturer": "איווקו ספרד",
+    "count": 2
+  },
+  {
+    "manufacturer": "דה טומאסו",
+    "count": 2
+  },
+  {
+    "manufacturer": "מורגן",
+    "count": 2
+  },
+  {
+    "manufacturer": "פיג'ו יפן",
+    "count": 2
+  },
+  {
+    "manufacturer": "מקלארין",
+    "count": 2
+  },
+  {
+    "manufacturer": "אקס אי וי סין",
+    "count": 2
+  },
+  {
+    "manufacturer": "מיני הולנד",
+    "count": 2
+  },
+  {
+    "manufacturer": "ב מ וו ד. אפר",
+    "count": 2
+  }
+]

@@ -1,0 +1,41 @@
+{
+  "generated_at": "2026-05-11T05:30:56.005027+00:00",
+  "resource_ids": [
+    "142afde2-6228-49f9-8a29-9b6c3a0cbe40",
+    "5e87a7a1-2f6f-41c1-8aec-7216d52a6cf6"
+  ],
+  "source_api": "https://data.gov.il/api/3/action/datastore_search",
+  "source_profiles": [
+    {
+      "resource_id": "142afde2-6228-49f9-8a29-9b6c3a0cbe40",
+      "source_total_records": 99000,
+      "fetched_records": 99000,
+      "field_count": 95
+    },
+    {
+      "resource_id": "5e87a7a1-2f6f-41c1-8aec-7216d52a6cf6",
+      "source_total_records": 99000,
+      "fetched_records": 99000,
+      "field_count": 12
+    }
+  ],
+  "summary": {
+    "fetched_records": 198000,
+    "source_total_records": 198000,
+    "field_count": 97,
+    "distinct_manufacturers_raw": 322,
+    "distinct_manufacturers_canonical": 322,
+    "distinct_models": 11893,
+    "distinct_years": 31,
+    "distinct_engine_variants": 563,
+    "distinct_fuel_types": 7,
+    "distinct_trim_values": 6380
+  },
+  "quality_issues": {
+    "missing_manufacturer_records": 0,
+    "missing_model_records": 0,
+    "missing_year_records": 0,
+    "duplicate_or_alias_manufacturer_groups": 0,
+    "blank_or_corrupted_manufacturer_tokens": 0
+  }
+}

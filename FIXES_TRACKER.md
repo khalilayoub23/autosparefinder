@@ -393,6 +393,10 @@ Zero regressions introduced.
 ## Session — 2026-05-06 (DB Cleanup & Categories)
 > Status: In Progress
 
+| Topic | Status | Notes |
+|-------|--------|-------|
+| Transport Office Pipeline | ✅ | מתוזמן אוטומטית בחצות — DAILY בצמיחה, WEEKLY בסטגנציה |
+
 ### DB Issues Found
 | Issue | Details | Priority |
 |-------|---------|----------|
@@ -478,3 +482,47 @@ Cleanup agent auto-classifies all parts — no manual work.
 - Cleanup agent: רץ תמיד ברקע — batches קטנים + sleep
 - REX: רץ רק 00:00 ו-12:00 UTC — price sync + discovery
 - GitHub Actions: פעיל — ממשיך לרוץ לבדיקת מקורות חדשים
+
+## Session 2026-05-10 (eBay OAuth2 Investigation)
+
+| Issue | Status | Details |
+|-------|--------|---------|
+| eBay OAuth2 Authentication | ⏳ BLOCKED | **Problem**: Credentials provided (EBAY_APP_ID=[REDACTED], EBAY_CERT_ID=[REDACTED]) are from **Legacy eBay Trading API**, not OAuth2 REST API. eBay rejects these with HTTP 401 "invalid_client: client authentication failed" when used against the OAuth2 token endpoint (https://api.ebay.com/identity/v1/oauth2/token). **Required**: Generate separate OAuth2 credentials from eBay Developer Portal or use eBay's User Token flow. **Mitigation**: Set EXTERNAL_ENABLE_EBAY=false to disable failed auth attempts; code still supports EBAY_BEARER_TOKEN if valid token obtained. |
+
+### Action Items for eBay OAuth2 Setup
+1. **Option A - OAuth2 Client Credentials** (preferred):
+   - Log into eBay Developer Portal (developer.ebay.com/my/keys)
+   - Go to your app "khalilay-autospar" in Production environment
+   - Look for "OAuth2" or "REST API Credentials" section (separate from App ID/Cert ID)
+   - Generate/retrieve OAuth2 Client ID and Client Secret
+   - Set in .env: EBAY_CLIENT_ID=<oauth2_client_id>, EBAY_CLIENT_SECRET=<oauth2_client_secret>
+   - The OAuth2 flow will work with Basic auth encoding (client_id:client_secret Base64 → Authorization: Basic header)
+
+2. **Option B - User Token** (alternative):
+   - In eBay Developer Portal, click "User Tokens" link on your app
+   - Generate a User Token or Bearer Token for the Buy API Browse scope
+   - Set in .env: EBAY_BEARER_TOKEN=<user_token_value>
+   - Set EXTERNAL_ENABLE_EBAY=true (code will use bearer token directly without OAuth2 flow)
+
+3. **Verification**: After obtaining correct credentials, test with:
+   ```bash
+   docker compose exec backend python3 -c "
+   import asyncio, httpx, base64, os
+   async def test():
+       # For OAuth2 option:
+       creds = base64.b64encode(f\"{os.getenv('EBAY_CLIENT_ID')}:{os.getenv('EBAY_CLIENT_SECRET')}\".encode()).decode()
+       async with httpx.AsyncClient() as c:
+           r = await c.post('https://api.ebay.com/identity/v1/oauth2/token',
+               headers={'Authorization': f'Basic {creds}', 'Content-Type': 'application/x-www-form-urlencoded'},
+               data={'grant_type': 'client_credentials', 'scope': 'https://api.ebay.com/oauth/api_scope'})
+           print('Status:', r.status_code)
+           if r.status_code == 200: print('✓ SUCCESS')
+   asyncio.run(test())
+   "
+   ```
+
+### Current State
+- EXTERNAL_ENABLE_EBAY=false (disabled to prevent failed auth)
+- Legacy credentials stored in EBAY_APP_ID/EBAY_CERT_ID (not usable for OAuth2)
+- OAuth2 CLIENT_ID/CLIENT_SECRET set to legacy values (temporary, non-functional)
+- eBay Browse API category_ids=6030 (auto parts) configured and ready once auth is resolved

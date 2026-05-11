@@ -371,6 +371,320 @@ def _extract_oem_numbers_from_autodoc_item(item: Dict[str, Any], manufacturer: s
     return found
 
 
+_SUPPLIER_MIN_INTERVAL_SECONDS = 2.0
+_SUPPLIER_LAST_REQUEST_AT: Dict[str, float] = {}
+_SUPPLIER_INTERVAL_LOCKS: Dict[str, asyncio.Lock] = {}
+
+
+async def _enforce_supplier_interval(
+    supplier_key: str,
+    interval_seconds: float = _SUPPLIER_MIN_INTERVAL_SECONDS,
+) -> None:
+    lock = _SUPPLIER_INTERVAL_LOCKS.setdefault(supplier_key, asyncio.Lock())
+    async with lock:
+        loop = asyncio.get_running_loop()
+        now = loop.time()
+        last = _SUPPLIER_LAST_REQUEST_AT.get(supplier_key, 0.0)
+        wait_for = interval_seconds - (now - last)
+        if wait_for > 0:
+            await asyncio.sleep(wait_for)
+        _SUPPLIER_LAST_REQUEST_AT[supplier_key] = loop.time()
+
+
+def _parse_price_number(raw_value: str) -> Optional[float]:
+    token = re.sub(r"[^\d,.-]", "", (raw_value or "").strip())
+    if not token:
+        return None
+
+    if "," in token and "." in token:
+        if token.rfind(",") > token.rfind("."):
+            token = token.replace(".", "").replace(",", ".")
+        else:
+            token = token.replace(",", "")
+    elif "," in token:
+        parts = token.split(",")
+        if len(parts[-1]) in (1, 2):
+            token = ("".join(parts[:-1]) + "." + parts[-1]) if len(parts) > 1 else token.replace(",", ".")
+        else:
+            token = "".join(parts)
+
+    try:
+        value = float(token)
+    except Exception:
+        return None
+    return value if value > 0 else None
+
+
+def _extract_currency_amount(text: str, currency: str) -> Optional[float]:
+    currency_u = (currency or "").upper()
+    patterns = {
+        "ILS": [
+            r"₪\s*([\d.,]+)",
+            r"([\d.,]+)\s*₪",
+            r"ILS\s*([\d.,]+)",
+            r"([\d.,]+)\s*ILS",
+        ],
+        "EUR": [
+            r"€\s*([\d.,]+)",
+            r"([\d.,]+)\s*€",
+            r"EUR\s*([\d.,]+)",
+            r"([\d.,]+)\s*EUR",
+        ],
+        "USD": [
+            r"\$\s*([\d.,]+)",
+            r"([\d.,]+)\s*\$",
+            r"USD\s*([\d.,]+)",
+            r"([\d.,]+)\s*USD",
+        ],
+    }
+    for pattern in patterns.get(currency_u, []):
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if not match:
+            continue
+        parsed = _parse_price_number(match.group(1))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _extract_identifier(text: str, patterns: List[str], default_value: str) -> str:
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            raw = (match.group(1) or "").strip()
+            normalized = re.sub(r"\s+", "", raw)
+            if normalized:
+                return normalized.upper()
+    return (default_value or "").strip().upper()
+
+
+def _extract_listing_name(block: Any, fallback_name: str) -> str:
+    title_el = block.select_one(
+        "h1, h2, h3, h4, .product-name, .product-title, .title, a[title], a"
+    )
+    if title_el is not None:
+        title_attr = title_el.get("title") if hasattr(title_el, "get") else None
+        name = title_attr or title_el.get_text(" ", strip=True)
+    else:
+        name = block.get_text(" ", strip=True)
+    name = re.sub(r"\s+", " ", name or "").strip()
+    return (name[:160] if name else fallback_name)
+
+
+async def _playwright_fetch_page(url: str, timeout_ms: int = 20000) -> Tuple[str, str]:
+    try:
+        from playwright.async_api import async_playwright
+    except Exception as exc:
+        logger.warning("Playwright import failed for %s: %s", url, exc)
+        return "", ""
+
+    browser = None
+    context = None
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-dev-shm-usage"],
+            )
+            context = await browser.new_context(user_agent=_rand_ua())
+            page = await context.new_page()
+            page.set_default_timeout(timeout_ms)
+            await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+            await page.wait_for_timeout(800)
+            html = await page.content()
+            try:
+                text = await page.inner_text("body")
+            except Exception:
+                text = await page.evaluate("() => document.body ? document.body.innerText : ''")
+            return html or "", text or ""
+    except Exception as exc:
+        logger.warning("Playwright fetch failed for %s: %s", url, exc)
+        return "", ""
+    finally:
+        try:
+            if context is not None:
+                await context.close()
+        except Exception:
+            pass
+        try:
+            if browser is not None:
+                await browser.close()
+        except Exception:
+            pass
+
+
+async def _scrape_supplier_catalog(
+    *,
+    tool_name: str,
+    supplier_key: str,
+    url: str,
+    part_number: str,
+    manufacturer: str,
+    currency: str,
+    number_key: str,
+    number_patterns: List[str],
+) -> Dict[str, Any]:
+    await _enforce_supplier_interval(supplier_key, interval_seconds=2.0)
+
+    try:
+        html, page_text = await _playwright_fetch_page(url, timeout_ms=20000)
+        if not html and not page_text:
+            return {"tool": tool_name, "results": []}
+
+        soup = BeautifulSoup(html, "html.parser") if html else BeautifulSoup("", "html.parser")
+        blocks = soup.select(
+            "article, .product, .product-item, .search-result, .result-item, "
+            ".product-card, .card, li, tr"
+        )
+        if not blocks and soup.body is not None:
+            blocks = [soup.body]
+
+        normalized_part = re.sub(r"[^a-z0-9]", "", (part_number or "").lower())
+        fallback_name = f"{manufacturer} {part_number}".strip() or part_number
+        results: List[Dict[str, Any]] = []
+        seen: set = set()
+
+        for block in blocks[:60]:
+            snippet = block.get_text(" ", strip=True)
+            if len(snippet) < 8:
+                continue
+
+            if normalized_part:
+                normalized_snippet = re.sub(r"[^a-z0-9]", "", snippet.lower())
+                if normalized_part not in normalized_snippet and len(results) >= 5:
+                    continue
+
+            amount = _extract_currency_amount(snippet, currency)
+            if amount is None:
+                continue
+
+            if currency.upper() == "USD":
+                price_ils = round(amount * ILS_PER_USD, 2)
+                extra_price_key = "price_usd"
+            elif currency.upper() == "EUR":
+                price_ils = round(amount * ILS_PER_USD * 1.05, 2)
+                extra_price_key = "price_eur"
+            else:
+                price_ils = round(amount, 2)
+                extra_price_key = None
+
+            part_name = _extract_listing_name(block, fallback_name)
+            part_code = _extract_identifier(snippet, number_patterns, part_number)
+            dedupe_key = (part_name.lower(), part_code, price_ils)
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+
+            entry: Dict[str, Any] = {
+                "source": supplier_key,
+                "part_number": part_number,
+                "name": part_name,
+                "brand": manufacturer or supplier_key,
+                "price_ils": price_ils,
+                "currency": "ILS",
+                "url": url,
+                number_key: part_code,
+            }
+            if extra_price_key:
+                entry[extra_price_key] = round(amount, 2)
+            results.append(entry)
+            if len(results) >= 8:
+                break
+
+        if not results and page_text:
+            amount = _extract_currency_amount(page_text, currency)
+            if amount is not None:
+                if currency.upper() == "USD":
+                    price_ils = round(amount * ILS_PER_USD, 2)
+                    fallback_entry: Dict[str, Any] = {"price_usd": round(amount, 2)}
+                elif currency.upper() == "EUR":
+                    price_ils = round(amount * ILS_PER_USD * 1.05, 2)
+                    fallback_entry = {"price_eur": round(amount, 2)}
+                else:
+                    price_ils = round(amount, 2)
+                    fallback_entry = {}
+                fallback_entry.update({
+                    "source": supplier_key,
+                    "part_number": part_number,
+                    "name": fallback_name,
+                    "brand": manufacturer or supplier_key,
+                    "price_ils": price_ils,
+                    "currency": "ILS",
+                    "url": url,
+                    number_key: (part_number or "").strip().upper(),
+                })
+                results.append(fallback_entry)
+
+        return {"tool": tool_name, "results": results}
+    except Exception as exc:
+        logger.warning("%s failed for %s: %s", tool_name, part_number, exc)
+        return {"tool": tool_name, "results": []}
+
+
+async def scrape_motorstore(part_number: str, manufacturer: str = "") -> Dict[str, Any]:
+    url = f"https://www.motorstore.co.il/search?q={quote_plus(part_number)}"
+    return await _scrape_supplier_catalog(
+        tool_name="scrape_motorstore",
+        supplier_key="motorstore.co.il",
+        url=url,
+        part_number=part_number,
+        manufacturer=manufacturer,
+        currency="ILS",
+        number_key="sku",
+        number_patterns=[
+            r"(?:sku|part\s*number|catalog(?:ue)?\s*number)\s*[:#-]?\s*([A-Z0-9._\-/]{4,})",
+        ],
+    )
+
+
+async def scrape_meyle(part_number: str, manufacturer: str = "") -> Dict[str, Any]:
+    url = f"https://www.meyle.com/en/search/?q={quote_plus(part_number)}"
+    return await _scrape_supplier_catalog(
+        tool_name="scrape_meyle",
+        supplier_key="meyle.com",
+        url=url,
+        part_number=part_number,
+        manufacturer=manufacturer,
+        currency="EUR",
+        number_key="meyle_number",
+        number_patterns=[
+            r"(?:meyle\s*(?:number|no\.?|nr\.?|part\s*number)|part\s*number)\s*[:#-]?\s*([A-Z0-9._\-/]{4,})",
+        ],
+    )
+
+
+async def scrape_gates(part_number: str, manufacturer: str = "") -> Dict[str, Any]:
+    url = f"https://www.gates.com/us/en/search.html?q={quote_plus(part_number)}"
+    return await _scrape_supplier_catalog(
+        tool_name="scrape_gates",
+        supplier_key="gates.com",
+        url=url,
+        part_number=part_number,
+        manufacturer=manufacturer,
+        currency="USD",
+        number_key="gates_number",
+        number_patterns=[
+            r"(?:gates\s*(?:number|no\.?|part\s*number)|part\s*number)\s*[:#-]?\s*([A-Z0-9._\-/]{4,})",
+        ],
+    )
+
+
+async def scrape_brembo(part_number: str, manufacturer: str = "") -> Dict[str, Any]:
+    url = f"https://www.brembo.com/en/search?q={quote_plus(part_number)}"
+    return await _scrape_supplier_catalog(
+        tool_name="scrape_brembo",
+        supplier_key="brembo.com",
+        url=url,
+        part_number=part_number,
+        manufacturer=manufacturer,
+        currency="EUR",
+        number_key="brembo_number",
+        number_patterns=[
+            r"(?:brembo\s*(?:number|code|no\.?|part\s*number)|part\s*number)\s*[:#-]?\s*([A-Z0-9._\-/]{4,})",
+        ],
+    )
+
+
 async def scrape_autodoc(
     part_number: str,
     manufacturer: str = "",
@@ -672,6 +986,85 @@ async def scrape_rockauto(
                 break
 
     return {"tool": "scrape_rockauto", "part_number": part_number, "results": results}
+
+
+async def scrape_rockauto_by_oem(
+    part_number: str,
+    manufacturer: str = "",
+    *,
+    rate_limit_per_minute: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Search RockAuto by OEM number using rockauto-api package."""
+    import redis.asyncio as _aioredis
+
+    try:
+        redis_client = _aioredis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"), decode_responses=True)
+        limit = rate_limit_per_minute or 30
+        if not await check_supplier_rate_limit(redis_client, "rockauto.com", limit_per_minute=limit):
+            logger.warning("RockAuto OEM rate limit exceeded, skipping scrape")
+            return {"tool": "scrape_rockauto_by_oem", "part_number": part_number, "results": [], "skipped": True, "reason": "rate_limit"}
+    except Exception as exc:
+        logger.warning(f"Rate limit check failed for RockAuto OEM: {exc}")
+
+    await asyncio.sleep(SCRAPE_REQUEST_DELAY + random.uniform(0, 0.5))
+
+    try:
+        from rockauto_api import RockAutoClient
+    except Exception as exc:
+        logger.warning("rockauto_api import failed: %s", exc)
+        return {"tool": "scrape_rockauto_by_oem", "part_number": part_number, "results": []}
+
+    client = RockAutoClient(enable_caching=False)
+    try:
+        search_result = await client.search_parts_by_number(
+            part_number,
+            manufacturer=(manufacturer or None),
+        )
+    except Exception as exc:
+        logger.warning("RockAuto OEM search failed for %s: %s", part_number, exc)
+        return {"tool": "scrape_rockauto_by_oem", "part_number": part_number, "results": []}
+    finally:
+        try:
+            await client.close()
+        except Exception:
+            pass
+
+    results: List[Dict[str, Any]] = []
+    for part in list(getattr(search_result, "parts", []) or [])[:10]:
+        price_raw = str(getattr(part, "price", "") or "")
+        price_match = re.search(r"([\d,]+(?:\.\d+)?)", price_raw)
+        if not price_match:
+            continue
+
+        try:
+            price_usd = float(price_match.group(1).replace(",", ""))
+        except Exception:
+            continue
+
+        if price_usd <= 0:
+            continue
+
+        pn = str(getattr(part, "part_number", "") or "").strip() or part_number
+        brand_name = str(getattr(part, "brand", "") or "").strip() or manufacturer
+        name = str(getattr(part, "name", "") or "").strip() or f"{brand_name} {pn}".strip()
+
+        results.append({
+            "source": "rockauto_api",
+            "part_number": part_number,
+            "name": name,
+            "brand": brand_name,
+            "price_usd": round(price_usd, 2),
+            "price_ils": round(price_usd * ILS_PER_USD, 2),
+            "availability": str(getattr(part, "availability", "") or "unknown"),
+            "url": str(getattr(part, "url", "") or "https://www.rockauto.com/en/partsearch/?partnum=" + quote_plus(part_number)),
+            "rockauto_part_number": pn,
+        })
+
+    return {
+        "tool": "scrape_rockauto_by_oem",
+        "part_number": part_number,
+        "results": results,
+    }
 
 
 async def fetch_ils_exchange_rate() -> float:
@@ -1118,7 +1511,7 @@ async def _write_price_history(
 # ==============================================================================
 SUPPLIER_TOOL_MAP = {
     "AutoParts Pro IL": scrape_autodoc,      # Israeli → autodoc.co.il
-    "Global Parts Hub": scrape_rockauto,     # European → RockAuto (USD)
+    "Global Parts Hub": scrape_rockauto_by_oem,
     "EastAuto Supply":  scrape_aliexpress,   # Chinese → AliExpress
     "PartsPro USA":     scrape_rockauto,     # USA → RockAuto (USD)
     "AutoZone Direct":  scrape_ebay_motors,  # USA → eBay Motors
@@ -1126,6 +1519,11 @@ SUPPLIER_TOOL_MAP = {
     "Kia Parts Direct": scrape_google_shopping,  # Korean OEM → Google Shopping
     "Bosch Direct":     scrape_autodoc,          # Bosch → autodoc
     "Toyota Genuine":   scrape_google_shopping,  # Toyota OEM → Google Shopping
+    "Motorstore IL":    scrape_motorstore,
+    "Meyle":            scrape_meyle,
+    "Gates":            scrape_gates,
+    "Brembo":           scrape_brembo,
+    "RockAuto":         scrape_rockauto_by_oem,
 }
 
 # Fallback priority: if primary returns nothing, try these in order
@@ -1654,6 +2052,8 @@ async def _scrape_one_part(
     try:
         if primary_fn is scrape_aliexpress:
             data = await primary_fn(f"{manufacturer} {cat_num} auto part")
+        elif primary_fn in (scrape_motorstore, scrape_meyle, scrape_gates, scrape_brembo):
+            data = await primary_fn(cat_num, manufacturer)
         else:
             data = await primary_fn(cat_num, manufacturer, rate_limit_per_minute=rate_limit_per_minute)
         ms = int((datetime.utcnow() - t_start).total_seconds() * 1000)
@@ -3301,6 +3701,100 @@ async def resolve_inactive_parts_with_oem_lookup(*, batch_limit: int = 200) -> D
     return report
 
 
+
+async def _should_run_transport_pipeline(db: AsyncSession) -> tuple[bool, str]:
+    """Evaluate DB activity and decide whether to run Transport Office Pipeline."""
+    last_run_row = (await db.execute(text("""
+        SELECT created_at
+        FROM system_logs
+        WHERE logger_name = 'transport_office_pipeline'
+        ORDER BY created_at DESC
+        LIMIT 1
+    """))).first()
+    last_run = last_run_row[0] if last_run_row else None
+
+    new_records_7d = int((await db.execute(text("""
+        SELECT COUNT(*)
+        FROM parts_catalog
+        WHERE created_at >= NOW() - INTERVAL '7 days'
+          AND is_active = TRUE
+    """))).scalar() or 0)
+
+    manufacturer_changes_7d = int((await db.execute(text("""
+        SELECT COUNT(DISTINCT manufacturer)
+        FROM parts_catalog
+        WHERE updated_at >= NOW() - INTERVAL '7 days'
+    """))).scalar() or 0)
+
+    if new_records_7d < 1000 and manufacturer_changes_7d < 5:
+        mode = "WEEKLY"
+        cooldown_hours = 168
+    else:
+        mode = "DAILY"
+        cooldown_hours = 24
+
+    if last_run is None:
+        return True, f"mode={mode} new_7d={new_records_7d} mfr_changes={manufacturer_changes_7d}"
+
+    now = datetime.now(last_run.tzinfo) if getattr(last_run, "tzinfo", None) else datetime.utcnow()
+    elapsed_seconds = (now - last_run).total_seconds()
+    if elapsed_seconds >= cooldown_hours * 3600:
+        return True, f"mode={mode} new_7d={new_records_7d} mfr_changes={manufacturer_changes_7d}"
+
+    return False, f"cooldown not elapsed mode={mode} last_run={last_run}"
+
+
+async def run_transport_pipeline_if_due() -> None:
+    """Run Transport Office Pipeline based on scheduling logic."""
+    async with scraper_session_factory() as db:
+        should_run, reason = await _should_run_transport_pipeline(db)
+
+        decision = "RUN" if should_run else "SKIP"
+        print(f"[Rex] Transport pipeline: {decision} — {reason}")
+        logger.info("[Rex] Transport pipeline decision: %s — %s", decision, reason)
+
+        if not should_run:
+            return
+
+        try:
+            import importlib.util
+            import sys
+
+            spec = importlib.util.spec_from_file_location(
+                "transport_pipeline",
+                "/app/run_rex_transport_office_pipeline.py",
+            )
+            if spec is None or spec.loader is None:
+                raise RuntimeError("failed to load transport pipeline module")
+
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules["transport_pipeline"] = mod
+            spec.loader.exec_module(mod)
+
+            if hasattr(mod, "run_rex_transport_office_pipeline"):
+                await mod.run_rex_transport_office_pipeline(page_limit=500)
+            else:
+                old_argv = sys.argv[:]
+                try:
+                    sys.argv = ["run_rex_transport_office_pipeline.py", "--page-limit", "500"]
+                    await asyncio.to_thread(mod.main)
+                finally:
+                    sys.argv = old_argv
+
+            await db.execute(text("""
+                INSERT INTO system_logs
+                (id, logger_name, level, message, created_at)
+                VALUES (gen_random_uuid(), 'transport_office_pipeline',
+                        'INFO', 'Pipeline completed successfully', NOW())
+            """))
+            await db.commit()
+            print("[Rex] Transport pipeline completed successfully")
+
+        except Exception as exc:
+            logger.error("[Rex] Transport pipeline failed: %s", exc)
+            print(f"[Rex] Transport pipeline failed: {exc}")
+
+
 async def run_scraper_cycle(*, batch_size: int = SCRAPE_BATCH_SIZE, refresh_fx: bool = True) -> Dict[str, Any]:
     """
     One full scraper cycle:
@@ -3572,8 +4066,16 @@ async def scraper_background_loop():
                     await _run_category_discovery()
                 except Exception as exc:
                     print(f"[Scraper] Category discovery error: {str(exc)[:500]}")
-
                 await asyncio.sleep(10)
+
+            # Job 2d — Transport Office Pipeline scheduling (midnight only)
+            if is_midnight_run:
+                try:
+                    await run_transport_pipeline_if_due()
+                except Exception as exc:
+                    print(f"[Scraper] Transport pipeline scheduler error: {str(exc)[:500]}")
+
+                await asyncio.sleep(5)
 
             # Job 1 — Price Sync (every SCRAPE_INTERVAL_H hours)
             try:

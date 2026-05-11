@@ -1,0 +1,2275 @@
+{
+  "total_canonical_manufacturers": 322,
+  "total_records": 198000,
+  "tiers": {
+    "tier1_dominant": [
+      {
+        "canonical_name": "מרצדס בנץ גרמנ",
+        "canonical_key": "מרצדס בנץ גרמנ",
+        "total_records": 17140,
+        "aliases": [],
+        "fleet_share_pct": 8.6566
+      },
+      {
+        "canonical_name": "ב מ וו גרמניה",
+        "canonical_key": "ב מ וו גרמניה",
+        "total_records": 11066,
+        "aliases": [],
+        "fleet_share_pct": 5.5889
+      },
+      {
+        "canonical_name": "סקודה צ'כיה",
+        "canonical_key": "סקודה צ כיה",
+        "total_records": 8092,
+        "aliases": [],
+        "fleet_share_pct": 4.0869
+      },
+      {
+        "canonical_name": "פולקסווגן גרמנ",
+        "canonical_key": "פולקסווגן גרמנ",
+        "total_records": 7942,
+        "aliases": [],
+        "fleet_share_pct": 4.0111
+      },
+      {
+        "canonical_name": "אאודי",
+        "canonical_key": "אאודי",
+        "total_records": 6792,
+        "aliases": [],
+        "fleet_share_pct": 3.4303
+      },
+      {
+        "canonical_name": "ב מ וו ארהב\"",
+        "canonical_key": "ב מ וו ארהב",
+        "total_records": 4830,
+        "aliases": [],
+        "fleet_share_pct": 2.4394
+      },
+      {
+        "canonical_name": "מרצדס בנץ ארהב",
+        "canonical_key": "מרצדס בנץ ארהב",
+        "total_records": 4640,
+        "aliases": [],
+        "fleet_share_pct": 2.3434
+      },
+      {
+        "canonical_name": "רובר אנגליה",
+        "canonical_key": "רובר אנגליה",
+        "total_records": 4496,
+        "aliases": [],
+        "fleet_share_pct": 2.2707
+      },
+      {
+        "canonical_name": "טויוטה יפן",
+        "canonical_key": "טויוטה יפן",
+        "total_records": 4246,
+        "aliases": [],
+        "fleet_share_pct": 2.1444
+      },
+      {
+        "canonical_name": "סובארו יפן",
+        "canonical_key": "סובארו יפן",
+        "total_records": 4146,
+        "aliases": [],
+        "fleet_share_pct": 2.0939
+      },
+      {
+        "canonical_name": "יונדאי קוריאה",
+        "canonical_key": "יונדאי קוריאה",
+        "total_records": 4026,
+        "aliases": [],
+        "fleet_share_pct": 2.0333
+      },
+      {
+        "canonical_name": "פיג'ו צרפת",
+        "canonical_key": "פיג ו צרפת",
+        "total_records": 3788,
+        "aliases": [],
+        "fleet_share_pct": 1.9131
+      },
+      {
+        "canonical_name": "פורשה גרמניה",
+        "canonical_key": "פורשה גרמניה",
+        "total_records": 3530,
+        "aliases": [],
+        "fleet_share_pct": 1.7828
+      },
+      {
+        "canonical_name": "קיה קוריאה",
+        "canonical_key": "קיה קוריאה",
+        "total_records": 3364,
+        "aliases": [],
+        "fleet_share_pct": 1.699
+      },
+      {
+        "canonical_name": "סיאט ספרד",
+        "canonical_key": "סיאט ספרד",
+        "total_records": 3188,
+        "aliases": [],
+        "fleet_share_pct": 1.6101
+      },
+      {
+        "canonical_name": "טויוטה ארהב\"",
+        "canonical_key": "טויוטה ארהב",
+        "total_records": 3160,
+        "aliases": [],
+        "fleet_share_pct": 1.596
+      },
+      {
+        "canonical_name": "סיטרואן צרפת",
+        "canonical_key": "סיטרואן צרפת",
+        "total_records": 2910,
+        "aliases": [],
+        "fleet_share_pct": 1.4697
+      },
+      {
+        "canonical_name": "קרייזלר ארהב\"",
+        "canonical_key": "קרייזלר ארהב",
+        "total_records": 2694,
+        "aliases": [],
+        "fleet_share_pct": 1.3606
+      },
+      {
+        "canonical_name": "מיצובישי יפן",
+        "canonical_key": "מיצובישי יפן",
+        "total_records": 2510,
+        "aliases": [],
+        "fleet_share_pct": 1.2677
+      },
+      {
+        "canonical_name": "טסלה סין",
+        "canonical_key": "טסלה סין",
+        "total_records": 2428,
+        "aliases": [],
+        "fleet_share_pct": 1.2263
+      },
+      {
+        "canonical_name": "וולבו בלגיה",
+        "canonical_key": "וולבו בלגיה",
+        "total_records": 2340,
+        "aliases": [],
+        "fleet_share_pct": 1.1818
+      },
+      {
+        "canonical_name": "מזדה יפן",
+        "canonical_key": "מזדה יפן",
+        "total_records": 2252,
+        "aliases": [],
+        "fleet_share_pct": 1.1374
+      },
+      {
+        "canonical_name": "שברולט ארהב\"",
+        "canonical_key": "שברולט ארהב",
+        "total_records": 2212,
+        "aliases": [],
+        "fleet_share_pct": 1.1172
+      },
+      {
+        "canonical_name": "ב מ וו בריטניה",
+        "canonical_key": "ב מ וו בריטניה",
+        "total_records": 2082,
+        "aliases": [],
+        "fleet_share_pct": 1.0515
+      },
+      {
+        "canonical_name": "ג'יפ ארהב\"",
+        "canonical_key": "ג יפ ארהב",
+        "total_records": 2006,
+        "aliases": [],
+        "fleet_share_pct": 1.0131
+      },
+      {
+        "canonical_name": "וולבו שוודיה",
+        "canonical_key": "וולבו שוודיה",
+        "total_records": 1978,
+        "aliases": [],
+        "fleet_share_pct": 0.999
+      },
+      {
+        "canonical_name": "פורד ארהב\"",
+        "canonical_key": "פורד ארהב",
+        "total_records": 1958,
+        "aliases": [],
+        "fleet_share_pct": 0.9889
+      },
+      {
+        "canonical_name": "לקסוס יפן",
+        "canonical_key": "לקסוס יפן",
+        "total_records": 1866,
+        "aliases": [],
+        "fleet_share_pct": 0.9424
+      },
+      {
+        "canonical_name": "מרצדס בנץ הונג",
+        "canonical_key": "מרצדס בנץ הונג",
+        "total_records": 1776,
+        "aliases": [],
+        "fleet_share_pct": 0.897
+      },
+      {
+        "canonical_name": "מרצדס בנץ ספרד",
+        "canonical_key": "מרצדס בנץ ספרד",
+        "total_records": 1772,
+        "aliases": [],
+        "fleet_share_pct": 0.8949
+      },
+      {
+        "canonical_name": "טויוטה טורקיה",
+        "canonical_key": "טויוטה טורקיה",
+        "total_records": 1720,
+        "aliases": [],
+        "fleet_share_pct": 0.8687
+      },
+      {
+        "canonical_name": "אלפא רומיאו",
+        "canonical_key": "אלפא רומיאו",
+        "total_records": 1640,
+        "aliases": [],
+        "fleet_share_pct": 0.8283
+      },
+      {
+        "canonical_name": "שברולט ד.קוריא",
+        "canonical_key": "שברולט ד קוריא",
+        "total_records": 1598,
+        "aliases": [],
+        "fleet_share_pct": 0.8071
+      },
+      {
+        "canonical_name": "סיטרואן ספרד",
+        "canonical_key": "סיטרואן ספרד",
+        "total_records": 1570,
+        "aliases": [],
+        "fleet_share_pct": 0.7929
+      },
+      {
+        "canonical_name": "יגואר",
+        "canonical_key": "יגואר",
+        "total_records": 1530,
+        "aliases": [],
+        "fleet_share_pct": 0.7727
+      },
+      {
+        "canonical_name": "לנדרובר אנגליה",
+        "canonical_key": "לנדרובר אנגליה",
+        "total_records": 1508,
+        "aliases": [],
+        "fleet_share_pct": 0.7616
+      },
+      {
+        "canonical_name": "פולקסווגן פולי",
+        "canonical_key": "פולקסווגן פולי",
+        "total_records": 1472,
+        "aliases": [],
+        "fleet_share_pct": 0.7434
+      },
+      {
+        "canonical_name": "ניסאן יפן",
+        "canonical_key": "ניסאן יפן",
+        "total_records": 1426,
+        "aliases": [],
+        "fleet_share_pct": 0.7202
+      },
+      {
+        "canonical_name": "רנו ספרד",
+        "canonical_key": "רנו ספרד",
+        "total_records": 1410,
+        "aliases": [],
+        "fleet_share_pct": 0.7121
+      },
+      {
+        "canonical_name": "הונדה-יפן",
+        "canonical_key": "הונדה יפן",
+        "total_records": 1392,
+        "aliases": [],
+        "fleet_share_pct": 0.703
+      },
+      {
+        "canonical_name": "רנו צרפת",
+        "canonical_key": "רנו צרפת",
+        "total_records": 1350,
+        "aliases": [],
+        "fleet_share_pct": 0.6818
+      },
+      {
+        "canonical_name": "אאודי הונגריה",
+        "canonical_key": "אאודי הונגריה",
+        "total_records": 1338,
+        "aliases": [],
+        "fleet_share_pct": 0.6758
+      },
+      {
+        "canonical_name": "ניסאן אנגליה",
+        "canonical_key": "ניסאן אנגליה",
+        "total_records": 1312,
+        "aliases": [],
+        "fleet_share_pct": 0.6626
+      },
+      {
+        "canonical_name": "רנו טורקיה",
+        "canonical_key": "רנו טורקיה",
+        "total_records": 1286,
+        "aliases": [],
+        "fleet_share_pct": 0.6495
+      },
+      {
+        "canonical_name": "פיאט איטליה",
+        "canonical_key": "פיאט איטליה",
+        "total_records": 1272,
+        "aliases": [],
+        "fleet_share_pct": 0.6424
+      },
+      {
+        "canonical_name": "דימלרקריזלר-גר",
+        "canonical_key": "דימלרקריזלר גר",
+        "total_records": 1238,
+        "aliases": [],
+        "fleet_share_pct": 0.6253
+      },
+      {
+        "canonical_name": "אאודי סלובקיה",
+        "canonical_key": "אאודי סלובקיה",
+        "total_records": 1184,
+        "aliases": [],
+        "fleet_share_pct": 0.598
+      },
+      {
+        "canonical_name": "קיה סלובקיה",
+        "canonical_key": "קיה סלובקיה",
+        "total_records": 1172,
+        "aliases": [],
+        "fleet_share_pct": 0.5919
+      },
+      {
+        "canonical_name": "אופל-גרמניה",
+        "canonical_key": "אופל גרמניה",
+        "total_records": 1150,
+        "aliases": [],
+        "fleet_share_pct": 0.5808
+      },
+      {
+        "canonical_name": "סוזוקי-יפן",
+        "canonical_key": "סוזוקי יפן",
+        "total_records": 1104,
+        "aliases": [],
+        "fleet_share_pct": 0.5576
+      },
+      {
+        "canonical_name": "טויוטה צרפת",
+        "canonical_key": "טויוטה צרפת",
+        "total_records": 1100,
+        "aliases": [],
+        "fleet_share_pct": 0.5556
+      },
+      {
+        "canonical_name": "פיאט פולין",
+        "canonical_key": "פיאט פולין",
+        "total_records": 1050,
+        "aliases": [],
+        "fleet_share_pct": 0.5303
+      },
+      {
+        "canonical_name": "פולקסווגן-ספרד",
+        "canonical_key": "פולקסווגן ספרד",
+        "total_records": 1018,
+        "aliases": [],
+        "fleet_share_pct": 0.5141
+      },
+      {
+        "canonical_name": "קאדילאק ארהב\"",
+        "canonical_key": "קאדילאק ארהב",
+        "total_records": 1018,
+        "aliases": [],
+        "fleet_share_pct": 0.5141
+      },
+      {
+        "canonical_name": "דאציה רומניה",
+        "canonical_key": "דאציה רומניה",
+        "total_records": 976,
+        "aliases": [],
+        "fleet_share_pct": 0.4929
+      }
+    ],
+    "tier2_mid_volume": [
+      {
+        "canonical_name": "לנדרובר סלובקי",
+        "canonical_key": "לנדרובר סלובקי",
+        "total_records": 966,
+        "aliases": [],
+        "fleet_share_pct": 0.4879
+      },
+      {
+        "canonical_name": "אופל-ספרד",
+        "canonical_key": "אופל ספרד",
+        "total_records": 786,
+        "aliases": [],
+        "fleet_share_pct": 0.397
+      },
+      {
+        "canonical_name": "איסוזו תאילנד",
+        "canonical_key": "איסוזו תאילנד",
+        "total_records": 778,
+        "aliases": [],
+        "fleet_share_pct": 0.3929
+      },
+      {
+        "canonical_name": "מרצדס-בנץ אוסט",
+        "canonical_key": "מרצדס בנץ אוסט",
+        "total_records": 760,
+        "aliases": [],
+        "fleet_share_pct": 0.3838
+      },
+      {
+        "canonical_name": "הונדה בריטניה",
+        "canonical_key": "הונדה בריטניה",
+        "total_records": 752,
+        "aliases": [],
+        "fleet_share_pct": 0.3798
+      },
+      {
+        "canonical_name": "מיצובישי תאילנ",
+        "canonical_key": "מיצובישי תאילנ",
+        "total_records": 752,
+        "aliases": [],
+        "fleet_share_pct": 0.3798
+      },
+      {
+        "canonical_name": "טסלה גרמניה",
+        "canonical_key": "טסלה גרמניה",
+        "total_records": 748,
+        "aliases": [],
+        "fleet_share_pct": 0.3778
+      },
+      {
+        "canonical_name": "פורד גרמניה",
+        "canonical_key": "פורד גרמניה",
+        "total_records": 746,
+        "aliases": [],
+        "fleet_share_pct": 0.3768
+      },
+      {
+        "canonical_name": "טויוטה אנגליה",
+        "canonical_key": "טויוטה אנגליה",
+        "total_records": 722,
+        "aliases": [],
+        "fleet_share_pct": 0.3646
+      },
+      {
+        "canonical_name": "טסלה ארה''ב",
+        "canonical_key": "טסלה ארה ב",
+        "total_records": 704,
+        "aliases": [],
+        "fleet_share_pct": 0.3556
+      },
+      {
+        "canonical_name": "פיאט תורכיה",
+        "canonical_key": "פיאט תורכיה",
+        "total_records": 684,
+        "aliases": [],
+        "fleet_share_pct": 0.3455
+      },
+      {
+        "canonical_name": "ב מ וו הולנד",
+        "canonical_key": "ב מ וו הולנד",
+        "total_records": 672,
+        "aliases": [],
+        "fleet_share_pct": 0.3394
+      },
+      {
+        "canonical_name": "יונדאי צ'כיה",
+        "canonical_key": "יונדאי צ כיה",
+        "total_records": 648,
+        "aliases": [],
+        "fleet_share_pct": 0.3273
+      },
+      {
+        "canonical_name": "אודי מכסיקו",
+        "canonical_key": "אודי מכסיקו",
+        "total_records": 640,
+        "aliases": [],
+        "fleet_share_pct": 0.3232
+      },
+      {
+        "canonical_name": "סוזוקי הונגריה",
+        "canonical_key": "סוזוקי הונגריה",
+        "total_records": 640,
+        "aliases": [],
+        "fleet_share_pct": 0.3232
+      },
+      {
+        "canonical_name": "פולקסווגן מכסי",
+        "canonical_key": "פולקסווגן מכסי",
+        "total_records": 606,
+        "aliases": [],
+        "fleet_share_pct": 0.3061
+      },
+      {
+        "canonical_name": "יונדאי טורקיה",
+        "canonical_key": "יונדאי טורקיה",
+        "total_records": 600,
+        "aliases": [],
+        "fleet_share_pct": 0.303
+      },
+      {
+        "canonical_name": "פורד תורכיה",
+        "canonical_key": "פורד תורכיה",
+        "total_records": 576,
+        "aliases": [],
+        "fleet_share_pct": 0.2909
+      },
+      {
+        "canonical_name": "פיג'ו ספרד",
+        "canonical_key": "פיג ו ספרד",
+        "total_records": 574,
+        "aliases": [],
+        "fleet_share_pct": 0.2899
+      },
+      {
+        "canonical_name": "אאודי בלגיה",
+        "canonical_key": "אאודי בלגיה",
+        "total_records": 560,
+        "aliases": [],
+        "fleet_share_pct": 0.2828
+      },
+      {
+        "canonical_name": "מזארטי איטליה",
+        "canonical_key": "מזארטי איטליה",
+        "total_records": 552,
+        "aliases": [],
+        "fleet_share_pct": 0.2788
+      },
+      {
+        "canonical_name": "אאודי ספרד",
+        "canonical_key": "אאודי ספרד",
+        "total_records": 542,
+        "aliases": [],
+        "fleet_share_pct": 0.2737
+      },
+      {
+        "canonical_name": "ב מ וו אוסטריה",
+        "canonical_key": "ב מ וו אוסטריה",
+        "total_records": 542,
+        "aliases": [],
+        "fleet_share_pct": 0.2737
+      },
+      {
+        "canonical_name": "סאנגיונג ד.קור",
+        "canonical_key": "סאנגיונג ד קור",
+        "total_records": 538,
+        "aliases": [],
+        "fleet_share_pct": 0.2717
+      },
+      {
+        "canonical_name": "פורשה סלובקיה",
+        "canonical_key": "פורשה סלובקיה",
+        "total_records": 518,
+        "aliases": [],
+        "fleet_share_pct": 0.2616
+      },
+      {
+        "canonical_name": "סמארט צרפת",
+        "canonical_key": "סמארט צרפת",
+        "total_records": 480,
+        "aliases": [],
+        "fleet_share_pct": 0.2424
+      },
+      {
+        "canonical_name": "דייהטסו-יפן",
+        "canonical_key": "דייהטסו יפן",
+        "total_records": 478,
+        "aliases": [],
+        "fleet_share_pct": 0.2414
+      },
+      {
+        "canonical_name": "מ.ג סין",
+        "canonical_key": "מ ג סין",
+        "total_records": 456,
+        "aliases": [],
+        "fleet_share_pct": 0.2303
+      },
+      {
+        "canonical_name": "ניסאן ספרד",
+        "canonical_key": "ניסאן ספרד",
+        "total_records": 454,
+        "aliases": [],
+        "fleet_share_pct": 0.2293
+      },
+      {
+        "canonical_name": "פולקסווגן סלוב",
+        "canonical_key": "פולקסווגן סלוב",
+        "total_records": 454,
+        "aliases": [],
+        "fleet_share_pct": 0.2293
+      },
+      {
+        "canonical_name": "דימלרקריזלר-ספ",
+        "canonical_key": "דימלרקריזלר ספ",
+        "total_records": 436,
+        "aliases": [],
+        "fleet_share_pct": 0.2202
+      },
+      {
+        "canonical_name": "פורד-בלגיה",
+        "canonical_key": "פורד בלגיה",
+        "total_records": 420,
+        "aliases": [],
+        "fleet_share_pct": 0.2121
+      },
+      {
+        "canonical_name": "קרייזלר קנדה",
+        "canonical_key": "קרייזלר קנדה",
+        "total_records": 418,
+        "aliases": [],
+        "fleet_share_pct": 0.2111
+      },
+      {
+        "canonical_name": "ב מ וו מקסיקו",
+        "canonical_key": "ב מ וו מקסיקו",
+        "total_records": 412,
+        "aliases": [],
+        "fleet_share_pct": 0.2081
+      },
+      {
+        "canonical_name": "פורד ספרד",
+        "canonical_key": "פורד ספרד",
+        "total_records": 388,
+        "aliases": [],
+        "fleet_share_pct": 0.196
+      },
+      {
+        "canonical_name": "מזדה תאילנד",
+        "canonical_key": "מזדה תאילנד",
+        "total_records": 380,
+        "aliases": [],
+        "fleet_share_pct": 0.1919
+      },
+      {
+        "canonical_name": "טויוטה תאילנד",
+        "canonical_key": "טויוטה תאילנד",
+        "total_records": 374,
+        "aliases": [],
+        "fleet_share_pct": 0.1889
+      },
+      {
+        "canonical_name": "מקסוס סין",
+        "canonical_key": "מקסוס סין",
+        "total_records": 372,
+        "aliases": [],
+        "fleet_share_pct": 0.1879
+      },
+      {
+        "canonical_name": "אופל פולין",
+        "canonical_key": "אופל פולין",
+        "total_records": 370,
+        "aliases": [],
+        "fleet_share_pct": 0.1869
+      },
+      {
+        "canonical_name": "שברולט מקסיקו",
+        "canonical_key": "שברולט מקסיקו",
+        "total_records": 370,
+        "aliases": [],
+        "fleet_share_pct": 0.1869
+      },
+      {
+        "canonical_name": "פורד מקסיקו",
+        "canonical_key": "פורד מקסיקו",
+        "total_records": 360,
+        "aliases": [],
+        "fleet_share_pct": 0.1818
+      },
+      {
+        "canonical_name": "ג'י.אמ.סי ארהב",
+        "canonical_key": "ג י אמ סי ארהב",
+        "total_records": 352,
+        "aliases": [],
+        "fleet_share_pct": 0.1778
+      },
+      {
+        "canonical_name": "צ'רי סין",
+        "canonical_key": "צ רי סין",
+        "total_records": 346,
+        "aliases": [],
+        "fleet_share_pct": 0.1747
+      },
+      {
+        "canonical_name": "פולקסווגן ארהב",
+        "canonical_key": "פולקסווגן ארהב",
+        "total_records": 336,
+        "aliases": [],
+        "fleet_share_pct": 0.1697
+      },
+      {
+        "canonical_name": "פורד קנדה",
+        "canonical_key": "פורד קנדה",
+        "total_records": 330,
+        "aliases": [],
+        "fleet_share_pct": 0.1667
+      },
+      {
+        "canonical_name": "הונדה-ארהב\"",
+        "canonical_key": "הונדה ארהב",
+        "total_records": 328,
+        "aliases": [],
+        "fleet_share_pct": 0.1657
+      },
+      {
+        "canonical_name": "בנטלי בריטניה",
+        "canonical_key": "בנטלי בריטניה",
+        "total_records": 324,
+        "aliases": [],
+        "fleet_share_pct": 0.1636
+      },
+      {
+        "canonical_name": "אופל-בלגיה",
+        "canonical_key": "אופל בלגיה",
+        "total_records": 312,
+        "aliases": [],
+        "fleet_share_pct": 0.1576
+      },
+      {
+        "canonical_name": "סיאט צ'כיה",
+        "canonical_key": "סיאט צ כיה",
+        "total_records": 312,
+        "aliases": [],
+        "fleet_share_pct": 0.1576
+      },
+      {
+        "canonical_name": "דייהו קוריאה ד",
+        "canonical_key": "דייהו קוריאה ד",
+        "total_records": 310,
+        "aliases": [],
+        "fleet_share_pct": 0.1566
+      },
+      {
+        "canonical_name": "וולבו סין",
+        "canonical_key": "וולבו סין",
+        "total_records": 308,
+        "aliases": [],
+        "fleet_share_pct": 0.1556
+      },
+      {
+        "canonical_name": "פרארי",
+        "canonical_key": "פרארי",
+        "total_records": 304,
+        "aliases": [],
+        "fleet_share_pct": 0.1535
+      },
+      {
+        "canonical_name": "טויוטה צ'כיה",
+        "canonical_key": "טויוטה צ כיה",
+        "total_records": 290,
+        "aliases": [],
+        "fleet_share_pct": 0.1465
+      },
+      {
+        "canonical_name": "פיג'ו סלובקיה",
+        "canonical_key": "פיג ו סלובקיה",
+        "total_records": 268,
+        "aliases": [],
+        "fleet_share_pct": 0.1354
+      },
+      {
+        "canonical_name": "אופל צרפת",
+        "canonical_key": "אופל צרפת",
+        "total_records": 264,
+        "aliases": [],
+        "fleet_share_pct": 0.1333
+      },
+      {
+        "canonical_name": "בי ווי די",
+        "canonical_key": "בי ווי די",
+        "total_records": 264,
+        "aliases": [],
+        "fleet_share_pct": 0.1333
+      },
+      {
+        "canonical_name": "די.אס צרפת",
+        "canonical_key": "די אס צרפת",
+        "total_records": 260,
+        "aliases": [],
+        "fleet_share_pct": 0.1313
+      },
+      {
+        "canonical_name": "גיפ-ישראל",
+        "canonical_key": "גיפ ישראל",
+        "total_records": 254,
+        "aliases": [],
+        "fleet_share_pct": 0.1283
+      },
+      {
+        "canonical_name": "איסוזו יפן",
+        "canonical_key": "איסוזו יפן",
+        "total_records": 242,
+        "aliases": [],
+        "fleet_share_pct": 0.1222
+      },
+      {
+        "canonical_name": "ניסאן ארהב\"",
+        "canonical_key": "ניסאן ארהב",
+        "total_records": 240,
+        "aliases": [],
+        "fleet_share_pct": 0.1212
+      },
+      {
+        "canonical_name": "שברולט קנדה",
+        "canonical_key": "שברולט קנדה",
+        "total_records": 226,
+        "aliases": [],
+        "fleet_share_pct": 0.1141
+      },
+      {
+        "canonical_name": "ג'יפ איטליה",
+        "canonical_key": "ג יפ איטליה",
+        "total_records": 218,
+        "aliases": [],
+        "fleet_share_pct": 0.1101
+      },
+      {
+        "canonical_name": "רנו ד.קוריאה",
+        "canonical_key": "רנו ד קוריאה",
+        "total_records": 212,
+        "aliases": [],
+        "fleet_share_pct": 0.1071
+      },
+      {
+        "canonical_name": "ניסאן מקסיקו",
+        "canonical_key": "ניסאן מקסיקו",
+        "total_records": 210,
+        "aliases": [],
+        "fleet_share_pct": 0.1061
+      },
+      {
+        "canonical_name": "פולקסווגן פורט",
+        "canonical_key": "פולקסווגן פורט",
+        "total_records": 210,
+        "aliases": [],
+        "fleet_share_pct": 0.1061
+      }
+    ],
+    "tier3_long_tail": [
+      {
+        "canonical_name": "אקספנג סין",
+        "canonical_key": "אקספנג סין",
+        "total_records": 206,
+        "aliases": [],
+        "fleet_share_pct": 0.104
+      },
+      {
+        "canonical_name": "דודג' קנדה",
+        "canonical_key": "דודג קנדה",
+        "total_records": 206,
+        "aliases": [],
+        "fleet_share_pct": 0.104
+      },
+      {
+        "canonical_name": "סיטרואן סלובק",
+        "canonical_key": "סיטרואן סלובק",
+        "total_records": 204,
+        "aliases": [],
+        "fleet_share_pct": 0.103
+      },
+      {
+        "canonical_name": "אסטון מרטין",
+        "canonical_key": "אסטון מרטין",
+        "total_records": 200,
+        "aliases": [],
+        "fleet_share_pct": 0.101
+      },
+      {
+        "canonical_name": "הונדה טורקיה",
+        "canonical_key": "הונדה טורקיה",
+        "total_records": 200,
+        "aliases": [],
+        "fleet_share_pct": 0.101
+      },
+      {
+        "canonical_name": "סאאב שודיה",
+        "canonical_key": "סאאב שודיה",
+        "total_records": 196,
+        "aliases": [],
+        "fleet_share_pct": 0.099
+      },
+      {
+        "canonical_name": "סיטרואן פורטוג",
+        "canonical_key": "סיטרואן פורטוג",
+        "total_records": 190,
+        "aliases": [],
+        "fleet_share_pct": 0.096
+      },
+      {
+        "canonical_name": "אופל אנגליה",
+        "canonical_key": "אופל אנגליה",
+        "total_records": 188,
+        "aliases": [],
+        "fleet_share_pct": 0.0949
+      },
+      {
+        "canonical_name": "יונדאי הודו",
+        "canonical_key": "יונדאי הודו",
+        "total_records": 176,
+        "aliases": [],
+        "fleet_share_pct": 0.0889
+      },
+      {
+        "canonical_name": "דאציה מרוקו",
+        "canonical_key": "דאציה מרוקו",
+        "total_records": 170,
+        "aliases": [],
+        "fleet_share_pct": 0.0859
+      },
+      {
+        "canonical_name": "מרצדס בנץ ד.אפ",
+        "canonical_key": "מרצדס בנץ ד אפ",
+        "total_records": 160,
+        "aliases": [],
+        "fleet_share_pct": 0.0808
+      },
+      {
+        "canonical_name": "סיאט גרמניה",
+        "canonical_key": "סיאט גרמניה",
+        "total_records": 160,
+        "aliases": [],
+        "fleet_share_pct": 0.0808
+      },
+      {
+        "canonical_name": "פיגו איטליה",
+        "canonical_key": "פיגו איטליה",
+        "total_records": 160,
+        "aliases": [],
+        "fleet_share_pct": 0.0808
+      },
+      {
+        "canonical_name": "וולבו הולנד",
+        "canonical_key": "וולבו הולנד",
+        "total_records": 158,
+        "aliases": [],
+        "fleet_share_pct": 0.0798
+      },
+      {
+        "canonical_name": "סיאט סלובקיה",
+        "canonical_key": "סיאט סלובקיה",
+        "total_records": 158,
+        "aliases": [],
+        "fleet_share_pct": 0.0798
+      },
+      {
+        "canonical_name": "ניאו רכב סין",
+        "canonical_key": "ניאו רכב סין",
+        "total_records": 156,
+        "aliases": [],
+        "fleet_share_pct": 0.0788
+      },
+      {
+        "canonical_name": "אופל ד.קוריאה",
+        "canonical_key": "אופל ד קוריאה",
+        "total_records": 152,
+        "aliases": [],
+        "fleet_share_pct": 0.0768
+      },
+      {
+        "canonical_name": "ביואיק ארהב",
+        "canonical_key": "ביואיק ארהב",
+        "total_records": 152,
+        "aliases": [],
+        "fleet_share_pct": 0.0768
+      },
+      {
+        "canonical_name": "טויוטה קנדה",
+        "canonical_key": "טויוטה קנדה",
+        "total_records": 148,
+        "aliases": [],
+        "fleet_share_pct": 0.0747
+      },
+      {
+        "canonical_name": "סקודה סלובקיה",
+        "canonical_key": "סקודה סלובקיה",
+        "total_records": 140,
+        "aliases": [],
+        "fleet_share_pct": 0.0707
+      },
+      {
+        "canonical_name": "דימלרקריזלר-אר",
+        "canonical_key": "דימלרקריזלר אר",
+        "total_records": 138,
+        "aliases": [],
+        "fleet_share_pct": 0.0697
+      },
+      {
+        "canonical_name": "פיג'ו צ'כיה",
+        "canonical_key": "פיג ו צ כיה",
+        "total_records": 134,
+        "aliases": [],
+        "fleet_share_pct": 0.0677
+      },
+      {
+        "canonical_name": "קופרה ספרד",
+        "canonical_key": "קופרה ספרד",
+        "total_records": 134,
+        "aliases": [],
+        "fleet_share_pct": 0.0677
+      },
+      {
+        "canonical_name": "סיטרואן אנגליה",
+        "canonical_key": "סיטרואן אנגליה",
+        "total_records": 132,
+        "aliases": [],
+        "fleet_share_pct": 0.0667
+      },
+      {
+        "canonical_name": "ב מ וו סין",
+        "canonical_key": "ב מ וו סין",
+        "total_records": 126,
+        "aliases": [],
+        "fleet_share_pct": 0.0636
+      },
+      {
+        "canonical_name": "סיטרואן צ'כיה",
+        "canonical_key": "סיטרואן צ כיה",
+        "total_records": 126,
+        "aliases": [],
+        "fleet_share_pct": 0.0636
+      },
+      {
+        "canonical_name": "גרייט וול סין",
+        "canonical_key": "גרייט וול סין",
+        "total_records": 122,
+        "aliases": [],
+        "fleet_share_pct": 0.0616
+      },
+      {
+        "canonical_name": "קיי גי מוביליט",
+        "canonical_key": "קיי גי מוביליט",
+        "total_records": 120,
+        "aliases": [],
+        "fleet_share_pct": 0.0606
+      },
+      {
+        "canonical_name": "גילי סין",
+        "canonical_key": "גילי סין",
+        "total_records": 110,
+        "aliases": [],
+        "fleet_share_pct": 0.0556
+      },
+      {
+        "canonical_name": "ג'אקו סין",
+        "canonical_key": "ג אקו סין",
+        "total_records": 106,
+        "aliases": [],
+        "fleet_share_pct": 0.0535
+      },
+      {
+        "canonical_name": "אף אי דאבל יו",
+        "canonical_key": "אף אי דאבל יו",
+        "total_records": 104,
+        "aliases": [],
+        "fleet_share_pct": 0.0525
+      },
+      {
+        "canonical_name": "לנצ'יה",
+        "canonical_key": "לנצ יה",
+        "total_records": 102,
+        "aliases": [],
+        "fleet_share_pct": 0.0515
+      },
+      {
+        "canonical_name": "פיאט סרביה",
+        "canonical_key": "פיאט סרביה",
+        "total_records": 102,
+        "aliases": [],
+        "fleet_share_pct": 0.0515
+      },
+      {
+        "canonical_name": "סמארט סין",
+        "canonical_key": "סמארט סין",
+        "total_records": 100,
+        "aliases": [],
+        "fleet_share_pct": 0.0505
+      },
+      {
+        "canonical_name": "די אס גרמניה",
+        "canonical_key": "די אס גרמניה",
+        "total_records": 98,
+        "aliases": [],
+        "fleet_share_pct": 0.0495
+      },
+      {
+        "canonical_name": "זיקר",
+        "canonical_key": "זיקר",
+        "total_records": 98,
+        "aliases": [],
+        "fleet_share_pct": 0.0495
+      },
+      {
+        "canonical_name": "מרצדס בנץ פינל",
+        "canonical_key": "מרצדס בנץ פינל",
+        "total_records": 98,
+        "aliases": [],
+        "fleet_share_pct": 0.0495
+      },
+      {
+        "canonical_name": "טויוטה ספרד",
+        "canonical_key": "טויוטה ספרד",
+        "total_records": 96,
+        "aliases": [],
+        "fleet_share_pct": 0.0485
+      },
+      {
+        "canonical_name": "טויוטה מקסיקו",
+        "canonical_key": "טויוטה מקסיקו",
+        "total_records": 92,
+        "aliases": [],
+        "fleet_share_pct": 0.0465
+      },
+      {
+        "canonical_name": "וולבו ארהב\"",
+        "canonical_key": "וולבו ארהב",
+        "total_records": 90,
+        "aliases": [],
+        "fleet_share_pct": 0.0455
+      },
+      {
+        "canonical_name": "קרייזלר מכסיקו",
+        "canonical_key": "קרייזלר מכסיקו",
+        "total_records": 90,
+        "aliases": [],
+        "fleet_share_pct": 0.0455
+      },
+      {
+        "canonical_name": "קאדילאק מכסיקו",
+        "canonical_key": "קאדילאק מכסיקו",
+        "total_records": 88,
+        "aliases": [],
+        "fleet_share_pct": 0.0444
+      },
+      {
+        "canonical_name": "קרייזלר-אוסטרי",
+        "canonical_key": "קרייזלר אוסטרי",
+        "total_records": 88,
+        "aliases": [],
+        "fleet_share_pct": 0.0444
+      },
+      {
+        "canonical_name": "ליפמוטור סין",
+        "canonical_key": "ליפמוטור סין",
+        "total_records": 86,
+        "aliases": [],
+        "fleet_share_pct": 0.0434
+      },
+      {
+        "canonical_name": "מרוטי-סוזוקי",
+        "canonical_key": "מרוטי סוזוקי",
+        "total_records": 86,
+        "aliases": [],
+        "fleet_share_pct": 0.0434
+      },
+      {
+        "canonical_name": "ניסאן הודו",
+        "canonical_key": "ניסאן הודו",
+        "total_records": 86,
+        "aliases": [],
+        "fleet_share_pct": 0.0434
+      },
+      {
+        "canonical_name": "פורד בריטניה",
+        "canonical_key": "פורד בריטניה",
+        "total_records": 84,
+        "aliases": [],
+        "fleet_share_pct": 0.0424
+      },
+      {
+        "canonical_name": "למבורגיני",
+        "canonical_key": "למבורגיני",
+        "total_records": 82,
+        "aliases": [],
+        "fleet_share_pct": 0.0414
+      },
+      {
+        "canonical_name": "אורה סין",
+        "canonical_key": "אורה סין",
+        "total_records": 78,
+        "aliases": [],
+        "fleet_share_pct": 0.0394
+      },
+      {
+        "canonical_name": "פורד רומניה",
+        "canonical_key": "פורד רומניה",
+        "total_records": 78,
+        "aliases": [],
+        "fleet_share_pct": 0.0394
+      },
+      {
+        "canonical_name": "ג'יפ פולין",
+        "canonical_key": "ג יפ פולין",
+        "total_records": 72,
+        "aliases": [],
+        "fleet_share_pct": 0.0364
+      },
+      {
+        "canonical_name": "טלקו הודו",
+        "canonical_key": "טלקו הודו",
+        "total_records": 72,
+        "aliases": [],
+        "fleet_share_pct": 0.0364
+      },
+      {
+        "canonical_name": "פורד ד אפריקה",
+        "canonical_key": "פורד ד אפריקה",
+        "total_records": 72,
+        "aliases": [],
+        "fleet_share_pct": 0.0364
+      },
+      {
+        "canonical_name": "סקיוול סין",
+        "canonical_key": "סקיוול סין",
+        "total_records": 66,
+        "aliases": [],
+        "fleet_share_pct": 0.0333
+      },
+      {
+        "canonical_name": "רולס-רויס",
+        "canonical_key": "רולס רויס",
+        "total_records": 66,
+        "aliases": [],
+        "fleet_share_pct": 0.0333
+      },
+      {
+        "canonical_name": "לינק אנד קו",
+        "canonical_key": "לינק אנד קו",
+        "total_records": 64,
+        "aliases": [],
+        "fleet_share_pct": 0.0323
+      },
+      {
+        "canonical_name": "פיאג'ו איטליה",
+        "canonical_key": "פיאג ו איטליה",
+        "total_records": 64,
+        "aliases": [],
+        "fleet_share_pct": 0.0323
+      },
+      {
+        "canonical_name": "וואי סין",
+        "canonical_key": "וואי סין",
+        "total_records": 56,
+        "aliases": [],
+        "fleet_share_pct": 0.0283
+      },
+      {
+        "canonical_name": "מיצובישי הולנד",
+        "canonical_key": "מיצובישי הולנד",
+        "total_records": 56,
+        "aliases": [],
+        "fleet_share_pct": 0.0283
+      },
+      {
+        "canonical_name": "פיאט צרפת",
+        "canonical_key": "פיאט צרפת",
+        "total_records": 54,
+        "aliases": [],
+        "fleet_share_pct": 0.0273
+      },
+      {
+        "canonical_name": "רנו סלובניה",
+        "canonical_key": "רנו סלובניה",
+        "total_records": 54,
+        "aliases": [],
+        "fleet_share_pct": 0.0273
+      },
+      {
+        "canonical_name": "סובארו ארהב\"",
+        "canonical_key": "סובארו ארהב",
+        "total_records": 52,
+        "aliases": [],
+        "fleet_share_pct": 0.0263
+      },
+      {
+        "canonical_name": "טויוטה אוסטריה",
+        "canonical_key": "טויוטה אוסטריה",
+        "total_records": 50,
+        "aliases": [],
+        "fleet_share_pct": 0.0253
+      },
+      {
+        "canonical_name": "פולקסווגן בלגי",
+        "canonical_key": "פולקסווגן בלגי",
+        "total_records": 50,
+        "aliases": [],
+        "fleet_share_pct": 0.0253
+      },
+      {
+        "canonical_name": "ביואיק קנדה",
+        "canonical_key": "ביואיק קנדה",
+        "total_records": 48,
+        "aliases": [],
+        "fleet_share_pct": 0.0242
+      },
+      {
+        "canonical_name": "טויוטה בלגיה",
+        "canonical_key": "טויוטה בלגיה",
+        "total_records": 48,
+        "aliases": [],
+        "fleet_share_pct": 0.0242
+      },
+      {
+        "canonical_name": "סיאט פורטוגל",
+        "canonical_key": "סיאט פורטוגל",
+        "total_records": 48,
+        "aliases": [],
+        "fleet_share_pct": 0.0242
+      },
+      {
+        "canonical_name": "לנציה פולין",
+        "canonical_key": "לנציה פולין",
+        "total_records": 46,
+        "aliases": [],
+        "fleet_share_pct": 0.0232
+      },
+      {
+        "canonical_name": "סיאט בלגיה",
+        "canonical_key": "סיאט בלגיה",
+        "total_records": 46,
+        "aliases": [],
+        "fleet_share_pct": 0.0232
+      },
+      {
+        "canonical_name": "פיאט קרייזלר",
+        "canonical_key": "פיאט קרייזלר",
+        "total_records": 46,
+        "aliases": [],
+        "fleet_share_pct": 0.0232
+      },
+      {
+        "canonical_name": "מרצדס בנץ מקסי",
+        "canonical_key": "מרצדס בנץ מקסי",
+        "total_records": 44,
+        "aliases": [],
+        "fleet_share_pct": 0.0222
+      },
+      {
+        "canonical_name": "ניאו סין",
+        "canonical_key": "ניאו סין",
+        "total_records": 44,
+        "aliases": [],
+        "fleet_share_pct": 0.0222
+      },
+      {
+        "canonical_name": "ניסאן צרפת",
+        "canonical_key": "ניסאן צרפת",
+        "total_records": 44,
+        "aliases": [],
+        "fleet_share_pct": 0.0222
+      },
+      {
+        "canonical_name": "פיאט ספרד",
+        "canonical_key": "פיאט ספרד",
+        "total_records": 44,
+        "aliases": [],
+        "fleet_share_pct": 0.0222
+      },
+      {
+        "canonical_name": "איי אם סין",
+        "canonical_key": "איי אם סין",
+        "total_records": 42,
+        "aliases": [],
+        "fleet_share_pct": 0.0212
+      },
+      {
+        "canonical_name": "טויוטה דרום אפ",
+        "canonical_key": "טויוטה דרום אפ",
+        "total_records": 42,
+        "aliases": [],
+        "fleet_share_pct": 0.0212
+      },
+      {
+        "canonical_name": "מאן פולין",
+        "canonical_key": "מאן פולין",
+        "total_records": 40,
+        "aliases": [],
+        "fleet_share_pct": 0.0202
+      },
+      {
+        "canonical_name": "סמארט סלובניה",
+        "canonical_key": "סמארט סלובניה",
+        "total_records": 40,
+        "aliases": [],
+        "fleet_share_pct": 0.0202
+      },
+      {
+        "canonical_name": "סרס סין",
+        "canonical_key": "סרס סין",
+        "total_records": 40,
+        "aliases": [],
+        "fleet_share_pct": 0.0202
+      },
+      {
+        "canonical_name": "אלפין צרפת",
+        "canonical_key": "אלפין צרפת",
+        "total_records": 38,
+        "aliases": [],
+        "fleet_share_pct": 0.0192
+      },
+      {
+        "canonical_name": "סיטרואן תורכיה",
+        "canonical_key": "סיטרואן תורכיה",
+        "total_records": 38,
+        "aliases": [],
+        "fleet_share_pct": 0.0192
+      },
+      {
+        "canonical_name": "פולסטאר סין",
+        "canonical_key": "פולסטאר סין",
+        "total_records": 38,
+        "aliases": [],
+        "fleet_share_pct": 0.0192
+      },
+      {
+        "canonical_name": "איווייס סין",
+        "canonical_key": "איווייס סין",
+        "total_records": 36,
+        "aliases": [],
+        "fleet_share_pct": 0.0182
+      },
+      {
+        "canonical_name": "וויה סין",
+        "canonical_key": "וויה סין",
+        "total_records": 36,
+        "aliases": [],
+        "fleet_share_pct": 0.0182
+      },
+      {
+        "canonical_name": "לקסוס קנדה",
+        "canonical_key": "לקסוס קנדה",
+        "total_records": 36,
+        "aliases": [],
+        "fleet_share_pct": 0.0182
+      },
+      {
+        "canonical_name": "פיאט תאילנד",
+        "canonical_key": "פיאט תאילנד",
+        "total_records": 36,
+        "aliases": [],
+        "fleet_share_pct": 0.0182
+      },
+      {
+        "canonical_name": "פיג'ו אוסטריה",
+        "canonical_key": "פיג ו אוסטריה",
+        "total_records": 36,
+        "aliases": [],
+        "fleet_share_pct": 0.0182
+      },
+      {
+        "canonical_name": "אופל פורטוגל",
+        "canonical_key": "אופל פורטוגל",
+        "total_records": 34,
+        "aliases": [],
+        "fleet_share_pct": 0.0172
+      },
+      {
+        "canonical_name": "הונדה מקסיקו",
+        "canonical_key": "הונדה מקסיקו",
+        "total_records": 34,
+        "aliases": [],
+        "fleet_share_pct": 0.0172
+      },
+      {
+        "canonical_name": "פוטון סין",
+        "canonical_key": "פוטון סין",
+        "total_records": 34,
+        "aliases": [],
+        "fleet_share_pct": 0.0172
+      },
+      {
+        "canonical_name": "רנו רומניה",
+        "canonical_key": "רנו רומניה",
+        "total_records": 34,
+        "aliases": [],
+        "fleet_share_pct": 0.0172
+      },
+      {
+        "canonical_name": "גיי.איי.סי סין",
+        "canonical_key": "גיי איי סי סין",
+        "total_records": 32,
+        "aliases": [],
+        "fleet_share_pct": 0.0162
+      },
+      {
+        "canonical_name": "מרצדס-בנץ צרפת",
+        "canonical_key": "מרצדס בנץ צרפת",
+        "total_records": 32,
+        "aliases": [],
+        "fleet_share_pct": 0.0162
+      },
+      {
+        "canonical_name": "פיג'ו פורטוגל",
+        "canonical_key": "פיג ו פורטוגל",
+        "total_records": 32,
+        "aliases": [],
+        "fleet_share_pct": 0.0162
+      },
+      {
+        "canonical_name": "קארמה ארה''ב",
+        "canonical_key": "קארמה ארה ב",
+        "total_records": 32,
+        "aliases": [],
+        "fleet_share_pct": 0.0162
+      },
+      {
+        "canonical_name": "דיפאל סין",
+        "canonical_key": "דיפאל סין",
+        "total_records": 30,
+        "aliases": [],
+        "fleet_share_pct": 0.0152
+      },
+      {
+        "canonical_name": "פיג'ו תורכיה",
+        "canonical_key": "פיג ו תורכיה",
+        "total_records": 30,
+        "aliases": [],
+        "fleet_share_pct": 0.0152
+      },
+      {
+        "canonical_name": "ג'אק סין",
+        "canonical_key": "ג אק סין",
+        "total_records": 28,
+        "aliases": [],
+        "fleet_share_pct": 0.0141
+      },
+      {
+        "canonical_name": "הונדה-קנדה",
+        "canonical_key": "הונדה קנדה",
+        "total_records": 28,
+        "aliases": [],
+        "fleet_share_pct": 0.0141
+      },
+      {
+        "canonical_name": "יגואר אוסטריה",
+        "canonical_key": "יגואר אוסטריה",
+        "total_records": 28,
+        "aliases": [],
+        "fleet_share_pct": 0.0141
+      },
+      {
+        "canonical_name": "סמארט ג'.מ.ב.ה",
+        "canonical_key": "סמארט ג מ ב ה",
+        "total_records": 28,
+        "aliases": [],
+        "fleet_share_pct": 0.0141
+      },
+      {
+        "canonical_name": "פאריזון סין",
+        "canonical_key": "פאריזון סין",
+        "total_records": 28,
+        "aliases": [],
+        "fleet_share_pct": 0.0141
+      },
+      {
+        "canonical_name": "פיגו מרוקו",
+        "canonical_key": "פיגו מרוקו",
+        "total_records": 28,
+        "aliases": [],
+        "fleet_share_pct": 0.0141
+      },
+      {
+        "canonical_name": "אוואטר סין",
+        "canonical_key": "אוואטר סין",
+        "total_records": 26,
+        "aliases": [],
+        "fleet_share_pct": 0.0131
+      },
+      {
+        "canonical_name": "ואז",
+        "canonical_key": "ואז",
+        "total_records": 26,
+        "aliases": [],
+        "fleet_share_pct": 0.0131
+      },
+      {
+        "canonical_name": "סוזוקי תאילנד",
+        "canonical_key": "סוזוקי תאילנד",
+        "total_records": 26,
+        "aliases": [],
+        "fleet_share_pct": 0.0131
+      },
+      {
+        "canonical_name": "קיה מכסיקו",
+        "canonical_key": "קיה מכסיקו",
+        "total_records": 26,
+        "aliases": [],
+        "fleet_share_pct": 0.0131
+      },
+      {
+        "canonical_name": "רנו-בלגיה",
+        "canonical_key": "רנו בלגיה",
+        "total_records": 26,
+        "aliases": [],
+        "fleet_share_pct": 0.0131
+      },
+      {
+        "canonical_name": "אומודה סין",
+        "canonical_key": "אומודה סין",
+        "total_records": 24,
+        "aliases": [],
+        "fleet_share_pct": 0.0121
+      },
+      {
+        "canonical_name": "ביואיק_מקסיקו",
+        "canonical_key": "ביואיק מקסיקו",
+        "total_records": 24,
+        "aliases": [],
+        "fleet_share_pct": 0.0121
+      },
+      {
+        "canonical_name": "די.אף.אס.קיי",
+        "canonical_key": "די אף אס קיי",
+        "total_records": 24,
+        "aliases": [],
+        "fleet_share_pct": 0.0121
+      },
+      {
+        "canonical_name": "מזדה צרפת",
+        "canonical_key": "מזדה צרפת",
+        "total_records": 24,
+        "aliases": [],
+        "fleet_share_pct": 0.0121
+      },
+      {
+        "canonical_name": "סנטרו סין",
+        "canonical_key": "סנטרו סין",
+        "total_records": 24,
+        "aliases": [],
+        "fleet_share_pct": 0.0121
+      },
+      {
+        "canonical_name": "פולקסווגן ד.אפ",
+        "canonical_key": "פולקסווגן ד אפ",
+        "total_records": 24,
+        "aliases": [],
+        "fleet_share_pct": 0.0121
+      },
+      {
+        "canonical_name": "דונגפנג סין",
+        "canonical_key": "דונגפנג סין",
+        "total_records": 22,
+        "aliases": [],
+        "fleet_share_pct": 0.0111
+      },
+      {
+        "canonical_name": "לקסוס ארהב",
+        "canonical_key": "לקסוס ארהב",
+        "total_records": 22,
+        "aliases": [],
+        "fleet_share_pct": 0.0111
+      },
+      {
+        "canonical_name": "פולקסווגן סין",
+        "canonical_key": "פולקסווגן סין",
+        "total_records": 22,
+        "aliases": [],
+        "fleet_share_pct": 0.0111
+      },
+      {
+        "canonical_name": "פורד תאילנד",
+        "canonical_key": "פורד תאילנד",
+        "total_records": 22,
+        "aliases": [],
+        "fleet_share_pct": 0.0111
+      },
+      {
+        "canonical_name": "פיאט פורטוגל",
+        "canonical_key": "פיאט פורטוגל",
+        "total_records": 22,
+        "aliases": [],
+        "fleet_share_pct": 0.0111
+      },
+      {
+        "canonical_name": "איסוזו ארהב\"",
+        "canonical_key": "איסוזו ארהב",
+        "total_records": 20,
+        "aliases": [],
+        "fleet_share_pct": 0.0101
+      },
+      {
+        "canonical_name": "ג'יפ מכסיקו",
+        "canonical_key": "ג יפ מכסיקו",
+        "total_records": 20,
+        "aliases": [],
+        "fleet_share_pct": 0.0101
+      },
+      {
+        "canonical_name": "סוזוקי אנגליה",
+        "canonical_key": "סוזוקי אנגליה",
+        "total_records": 20,
+        "aliases": [],
+        "fleet_share_pct": 0.0101
+      },
+      {
+        "canonical_name": "סוזוקי-מרוטי",
+        "canonical_key": "סוזוקי מרוטי",
+        "total_records": 20,
+        "aliases": [],
+        "fleet_share_pct": 0.0101
+      },
+      {
+        "canonical_name": "אופל סלובקיה",
+        "canonical_key": "אופל סלובקיה",
+        "total_records": 18,
+        "aliases": [],
+        "fleet_share_pct": 0.0091
+      },
+      {
+        "canonical_name": "אל אי וי סי",
+        "canonical_key": "אל אי וי סי",
+        "total_records": 18,
+        "aliases": [],
+        "fleet_share_pct": 0.0091
+      },
+      {
+        "canonical_name": "דאציה סין",
+        "canonical_key": "דאציה סין",
+        "total_records": 18,
+        "aliases": [],
+        "fleet_share_pct": 0.0091
+      },
+      {
+        "canonical_name": "יונדאי ארהב\"",
+        "canonical_key": "יונדאי ארהב",
+        "total_records": 18,
+        "aliases": [],
+        "fleet_share_pct": 0.0091
+      },
+      {
+        "canonical_name": "פורתינג סין",
+        "canonical_key": "פורתינג סין",
+        "total_records": 18,
+        "aliases": [],
+        "fleet_share_pct": 0.0091
+      },
+      {
+        "canonical_name": "פיג'ו אנגליה",
+        "canonical_key": "פיג ו אנגליה",
+        "total_records": 18,
+        "aliases": [],
+        "fleet_share_pct": 0.0091
+      },
+      {
+        "canonical_name": "פיג'ו פולין",
+        "canonical_key": "פיג ו פולין",
+        "total_records": 18,
+        "aliases": [],
+        "fleet_share_pct": 0.0091
+      },
+      {
+        "canonical_name": "אס דאבל יו אמ",
+        "canonical_key": "אס דאבל יו אמ",
+        "total_records": 16,
+        "aliases": [],
+        "fleet_share_pct": 0.0081
+      },
+      {
+        "canonical_name": "גי.אי.סי סין",
+        "canonical_key": "גי אי סי סין",
+        "total_records": 16,
+        "aliases": [],
+        "fleet_share_pct": 0.0081
+      },
+      {
+        "canonical_name": "מזדה מקסיקו",
+        "canonical_key": "מזדה מקסיקו",
+        "total_records": 16,
+        "aliases": [],
+        "fleet_share_pct": 0.0081
+      },
+      {
+        "canonical_name": "פיאט/מדייר סוז",
+        "canonical_key": "פיאט מדייר סוז",
+        "total_records": 16,
+        "aliases": [],
+        "fleet_share_pct": 0.0081
+      },
+      {
+        "canonical_name": "אמ.סי.סי.",
+        "canonical_key": "אמ סי סי",
+        "total_records": 14,
+        "aliases": [],
+        "fleet_share_pct": 0.0071
+      },
+      {
+        "canonical_name": "גיאיוואן סין",
+        "canonical_key": "גיאיוואן סין",
+        "total_records": 14,
+        "aliases": [],
+        "fleet_share_pct": 0.0071
+      },
+      {
+        "canonical_name": "דאבל יו אם איי",
+        "canonical_key": "דאבל יו אם איי",
+        "total_records": 14,
+        "aliases": [],
+        "fleet_share_pct": 0.0071
+      },
+      {
+        "canonical_name": "האמר ג.מ. דרום",
+        "canonical_key": "האמר ג מ דרום",
+        "total_records": 14,
+        "aliases": [],
+        "fleet_share_pct": 0.0071
+      },
+      {
+        "canonical_name": "הונדה הודו",
+        "canonical_key": "הונדה הודו",
+        "total_records": 14,
+        "aliases": [],
+        "fleet_share_pct": 0.0071
+      },
+      {
+        "canonical_name": "הונדה תאילנד",
+        "canonical_key": "הונדה תאילנד",
+        "total_records": 14,
+        "aliases": [],
+        "fleet_share_pct": 0.0071
+      },
+      {
+        "canonical_name": "מיצובישי פורט'",
+        "canonical_key": "מיצובישי פורט",
+        "total_records": 14,
+        "aliases": [],
+        "fleet_share_pct": 0.0071
+      },
+      {
+        "canonical_name": "קיה ארהב\"",
+        "canonical_key": "קיה ארהב",
+        "total_records": 14,
+        "aliases": [],
+        "fleet_share_pct": 0.0071
+      },
+      {
+        "canonical_name": "איויאיסי סין",
+        "canonical_key": "איויאיסי סין",
+        "total_records": 12,
+        "aliases": [],
+        "fleet_share_pct": 0.0061
+      },
+      {
+        "canonical_name": "ארקפוקס סין",
+        "canonical_key": "ארקפוקס סין",
+        "total_records": 12,
+        "aliases": [],
+        "fleet_share_pct": 0.0061
+      },
+      {
+        "canonical_name": "לוטוס",
+        "canonical_key": "לוטוס",
+        "total_records": 12,
+        "aliases": [],
+        "fleet_share_pct": 0.0061
+      },
+      {
+        "canonical_name": "נטע סין",
+        "canonical_key": "נטע סין",
+        "total_records": 12,
+        "aliases": [],
+        "fleet_share_pct": 0.0061
+      },
+      {
+        "canonical_name": "קופרה סין",
+        "canonical_key": "קופרה סין",
+        "total_records": 12,
+        "aliases": [],
+        "fleet_share_pct": 0.0061
+      },
+      {
+        "canonical_name": "רנו אנגליה",
+        "canonical_key": "רנו אנגליה",
+        "total_records": 12,
+        "aliases": [],
+        "fleet_share_pct": 0.0061
+      },
+      {
+        "canonical_name": "ג'.מ ארהב\"",
+        "canonical_key": "ג מ ארהב",
+        "total_records": 10,
+        "aliases": [],
+        "fleet_share_pct": 0.0051
+      },
+      {
+        "canonical_name": "הונדה סין",
+        "canonical_key": "הונדה סין",
+        "total_records": 10,
+        "aliases": [],
+        "fleet_share_pct": 0.0051
+      },
+      {
+        "canonical_name": "יודו סין",
+        "canonical_key": "יודו סין",
+        "total_records": 10,
+        "aliases": [],
+        "fleet_share_pct": 0.0051
+      },
+      {
+        "canonical_name": "לינקולן",
+        "canonical_key": "לינקולן",
+        "total_records": 10,
+        "aliases": [],
+        "fleet_share_pct": 0.0051
+      },
+      {
+        "canonical_name": "מזדה ארהב\"",
+        "canonical_key": "מזדה ארהב",
+        "total_records": 10,
+        "aliases": [],
+        "fleet_share_pct": 0.0051
+      },
+      {
+        "canonical_name": "מיני אנגליה",
+        "canonical_key": "מיני אנגליה",
+        "total_records": 10,
+        "aliases": [],
+        "fleet_share_pct": 0.0051
+      },
+      {
+        "canonical_name": "פיאט יפן",
+        "canonical_key": "פיאט יפן",
+        "total_records": 10,
+        "aliases": [],
+        "fleet_share_pct": 0.0051
+      },
+      {
+        "canonical_name": "איווקו איטליה",
+        "canonical_key": "איווקו איטליה",
+        "total_records": 8,
+        "aliases": [],
+        "fleet_share_pct": 0.004
+      },
+      {
+        "canonical_name": "אינאוס צרפת",
+        "canonical_key": "אינאוס צרפת",
+        "total_records": 8,
+        "aliases": [],
+        "fleet_share_pct": 0.004
+      },
+      {
+        "canonical_name": "אל.טי.איי.",
+        "canonical_key": "אל טי איי",
+        "total_records": 8,
+        "aliases": [],
+        "fleet_share_pct": 0.004
+      },
+      {
+        "canonical_name": "אקסלנטיקס סין",
+        "canonical_key": "אקסלנטיקס סין",
+        "total_records": 8,
+        "aliases": [],
+        "fleet_share_pct": 0.004
+      },
+      {
+        "canonical_name": "גופל",
+        "canonical_key": "גופל",
+        "total_records": 8,
+        "aliases": [],
+        "fleet_share_pct": 0.004
+      },
+      {
+        "canonical_name": "יונדאי סלובקיה",
+        "canonical_key": "יונדאי סלובקיה",
+        "total_records": 8,
+        "aliases": [],
+        "fleet_share_pct": 0.004
+      },
+      {
+        "canonical_name": "סאאב אוסטריה",
+        "canonical_key": "סאאב אוסטריה",
+        "total_records": 8,
+        "aliases": [],
+        "fleet_share_pct": 0.004
+      },
+      {
+        "canonical_name": "פונטיאק",
+        "canonical_key": "פונטיאק",
+        "total_records": 8,
+        "aliases": [],
+        "fleet_share_pct": 0.004
+      },
+      {
+        "canonical_name": "צ'אנג יאנג סין",
+        "canonical_key": "צ אנג יאנג סין",
+        "total_records": 8,
+        "aliases": [],
+        "fleet_share_pct": 0.004
+      },
+      {
+        "canonical_name": "ריהיי סין",
+        "canonical_key": "ריהיי סין",
+        "total_records": 8,
+        "aliases": [],
+        "fleet_share_pct": 0.004
+      },
+      {
+        "canonical_name": "באייק סין",
+        "canonical_key": "באייק סין",
+        "total_records": 6,
+        "aliases": [],
+        "fleet_share_pct": 0.003
+      },
+      {
+        "canonical_name": "בורג הולנד",
+        "canonical_key": "בורג הולנד",
+        "total_records": 6,
+        "aliases": [],
+        "fleet_share_pct": 0.003
+      },
+      {
+        "canonical_name": "ג'יי.אמ.סי מקס",
+        "canonical_key": "ג יי אמ סי מקס",
+        "total_records": 6,
+        "aliases": [],
+        "fleet_share_pct": 0.003
+      },
+      {
+        "canonical_name": "גמס",
+        "canonical_key": "גמס",
+        "total_records": 6,
+        "aliases": [],
+        "fleet_share_pct": 0.003
+      },
+      {
+        "canonical_name": "דודג' ארהב\"",
+        "canonical_key": "דודג ארהב",
+        "total_records": 6,
+        "aliases": [],
+        "fleet_share_pct": 0.003
+      },
+      {
+        "canonical_name": "דונגפנג",
+        "canonical_key": "דונגפנג",
+        "total_records": 6,
+        "aliases": [],
+        "fleet_share_pct": 0.003
+      },
+      {
+        "canonical_name": "לינקסיס סין",
+        "canonical_key": "לינקסיס סין",
+        "total_records": 6,
+        "aliases": [],
+        "fleet_share_pct": 0.003
+      },
+      {
+        "canonical_name": "מובימטיק",
+        "canonical_key": "מובימטיק",
+        "total_records": 6,
+        "aliases": [],
+        "fleet_share_pct": 0.003
+      },
+      {
+        "canonical_name": "מודרן סין",
+        "canonical_key": "מודרן סין",
+        "total_records": 6,
+        "aliases": [],
+        "fleet_share_pct": 0.003
+      },
+      {
+        "canonical_name": "סאאב פינלנד",
+        "canonical_key": "סאאב פינלנד",
+        "total_records": 6,
+        "aliases": [],
+        "fleet_share_pct": 0.003
+      },
+      {
+        "canonical_name": "סוזוקי הודו",
+        "canonical_key": "סוזוקי הודו",
+        "total_records": 6,
+        "aliases": [],
+        "fleet_share_pct": 0.003
+      },
+      {
+        "canonical_name": "סיטרואן יפן",
+        "canonical_key": "סיטרואן יפן",
+        "total_records": 6,
+        "aliases": [],
+        "fleet_share_pct": 0.003
+      },
+      {
+        "canonical_name": "קופרה צ'כיה",
+        "canonical_key": "קופרה צ כיה",
+        "total_records": 6,
+        "aliases": [],
+        "fleet_share_pct": 0.003
+      },
+      {
+        "canonical_name": "איון סין",
+        "canonical_key": "איון סין",
+        "total_records": 4,
+        "aliases": [],
+        "fleet_share_pct": 0.002
+      },
+      {
+        "canonical_name": "בואו סין",
+        "canonical_key": "בואו סין",
+        "total_records": 4,
+        "aliases": [],
+        "fleet_share_pct": 0.002
+      },
+      {
+        "canonical_name": "דאיון סין",
+        "canonical_key": "דאיון סין",
+        "total_records": 4,
+        "aliases": [],
+        "fleet_share_pct": 0.002
+      },
+      {
+        "canonical_name": "די אס איטליה",
+        "canonical_key": "די אס איטליה",
+        "total_records": 4,
+        "aliases": [],
+        "fleet_share_pct": 0.002
+      },
+      {
+        "canonical_name": "האמר-ארהב\"",
+        "canonical_key": "האמר ארהב",
+        "total_records": 4,
+        "aliases": [],
+        "fleet_share_pct": 0.002
+      },
+      {
+        "canonical_name": "ט אי סי",
+        "canonical_key": "ט אי סי",
+        "total_records": 4,
+        "aliases": [],
+        "fleet_share_pct": 0.002
+      },
+      {
+        "canonical_name": "טויוטה ב מ וו",
+        "canonical_key": "טויוטה ב מ וו",
+        "total_records": 4,
+        "aliases": [],
+        "fleet_share_pct": 0.002
+      },
+      {
+        "canonical_name": "מ א ן גרמניה",
+        "canonical_key": "מ א ן גרמניה",
+        "total_records": 4,
+        "aliases": [],
+        "fleet_share_pct": 0.002
+      },
+      {
+        "canonical_name": "פולקסוגן טורק",
+        "canonical_key": "פולקסוגן טורק",
+        "total_records": 4,
+        "aliases": [],
+        "fleet_share_pct": 0.002
+      },
+      {
+        "canonical_name": "פורד איטליה",
+        "canonical_key": "פורד איטליה",
+        "total_records": 4,
+        "aliases": [],
+        "fleet_share_pct": 0.002
+      },
+      {
+        "canonical_name": "פיאט אנגליה",
+        "canonical_key": "פיאט אנגליה",
+        "total_records": 4,
+        "aliases": [],
+        "fleet_share_pct": 0.002
+      },
+      {
+        "canonical_name": "פיאט-ברזיל",
+        "canonical_key": "פיאט ברזיל",
+        "total_records": 4,
+        "aliases": [],
+        "fleet_share_pct": 0.002
+      },
+      {
+        "canonical_name": "איווקו ספרד",
+        "canonical_key": "איווקו ספרד",
+        "total_records": 2,
+        "aliases": [],
+        "fleet_share_pct": 0.001
+      },
+      {
+        "canonical_name": "אקס אי וי סין",
+        "canonical_key": "אקס אי וי סין",
+        "total_records": 2,
+        "aliases": [],
+        "fleet_share_pct": 0.001
+      },
+      {
+        "canonical_name": "ב מ וו ד. אפר",
+        "canonical_key": "ב מ וו ד אפר",
+        "total_records": 2,
+        "aliases": [],
+        "fleet_share_pct": 0.001
+      },
+      {
+        "canonical_name": "דה טומאסו",
+        "canonical_key": "דה טומאסו",
+        "total_records": 2,
+        "aliases": [],
+        "fleet_share_pct": 0.001
+      },
+      {
+        "canonical_name": "דימלרקריזלר-אס",
+        "canonical_key": "דימלרקריזלר אס",
+        "total_records": 2,
+        "aliases": [],
+        "fleet_share_pct": 0.001
+      },
+      {
+        "canonical_name": "מורגן",
+        "canonical_key": "מורגן",
+        "total_records": 2,
+        "aliases": [],
+        "fleet_share_pct": 0.001
+      },
+      {
+        "canonical_name": "מיני הולנד",
+        "canonical_key": "מיני הולנד",
+        "total_records": 2,
+        "aliases": [],
+        "fleet_share_pct": 0.001
+      },
+      {
+        "canonical_name": "מקלארין",
+        "canonical_key": "מקלארין",
+        "total_records": 2,
+        "aliases": [],
+        "fleet_share_pct": 0.001
+      },
+      {
+        "canonical_name": "פולקסווגן ארגנ",
+        "canonical_key": "פולקסווגן ארגנ",
+        "total_records": 2,
+        "aliases": [],
+        "fleet_share_pct": 0.001
+      },
+      {
+        "canonical_name": "פיג'ו יפן",
+        "canonical_key": "פיג ו יפן",
+        "total_records": 2,
+        "aliases": [],
+        "fleet_share_pct": 0.001
+      },
+      {
+        "canonical_name": "קוואן סין",
+        "canonical_key": "קוואן סין",
+        "total_records": 2,
+        "aliases": [],
+        "fleet_share_pct": 0.001
+      },
+      {
+        "canonical_name": "רנו מרוקו",
+        "canonical_key": "רנו מרוקו",
+        "total_records": 2,
+        "aliases": [],
+        "fleet_share_pct": 0.001
+      }
+    ]
+  },
+  "batching_strategy": {
+    "default_manufacturers_per_batch": 5,
+    "default_records_window_per_batch": 5000,
+    "checkpoint_file": "backend/data/rex_transport_import_checkpoint.json",
+    "queue_file": "backend/data/rex_transport_import_queue.json",
+    "resumable": true,
+    "idempotent_required": true,
+    "promotion_requires_validation": true
+  }
+}

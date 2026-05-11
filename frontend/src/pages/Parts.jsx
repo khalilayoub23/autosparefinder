@@ -28,8 +28,8 @@ const PART_FAMILY_TRIGGER_IMAGE_WIDTH = 44
 const PART_FAMILY_TRIGGER_IMAGE_HEIGHT = 28
 const PART_FAMILY_CHIP_IMAGE_WIDTH = 34
 const PART_FAMILY_CHIP_IMAGE_HEIGHT = 24
-const FILTER_SELECT_CLASS = 'w-full h-11 border border-gray-200 rounded-lg bg-white text-brand-navy text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-2.5 transition-colors disabled:bg-gray-50 disabled:text-gray-400'
-const FILTER_MENU_TRIGGER_CLASS = 'w-full h-11 border border-gray-200 rounded-lg bg-white text-brand-navy text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-2.5 transition-colors flex items-center justify-between'
+const FILTER_SELECT_CLASS = 'w-full h-12 sm:h-11 border border-gray-200 rounded-xl bg-white text-brand-navy text-[15px] sm:text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-3 transition-colors disabled:bg-gray-50 disabled:text-gray-400'
+const FILTER_MENU_TRIGGER_CLASS = 'w-full h-12 sm:h-11 border border-gray-200 rounded-xl bg-white text-brand-navy text-[15px] sm:text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-3 transition-colors flex items-center justify-between'
 
 // ── Country flag helper ───────────────────────────────────────────────────────
 const COUNTRY_ISO = {
@@ -647,6 +647,39 @@ function partFamilyHierarchyLabel(family) {
   return family.group ? `${family.group} / ${family.label}` : family.label
 }
 
+
+function MobileBottomSheet({ open, onClose, title, subtitle, children, footer = null }) {
+  if (!open) return null
+
+  return (
+    <div className="fixed inset-0 z-40 sm:hidden" aria-modal="true" role="dialog">
+      <button
+        type="button"
+        aria-label="סגור"
+        className="absolute inset-0 bg-slate-950/45 backdrop-blur-[2px]"
+        onClick={onClose}
+      />
+      <div className="absolute inset-x-0 bottom-0 max-h-[82vh] overflow-hidden rounded-t-[28px] border-t border-slate-200 bg-white shadow-[0_-24px_80px_-32px_rgba(15,23,42,0.55)]">
+        <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-3.5">
+          <div className="min-w-0 text-right">
+            <h3 className="text-base font-bold text-brand-navy">{title}</h3>
+            {subtitle ? <p className="mt-0.5 text-xs text-slate-500">{subtitle}</p> : null}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-500"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="max-h-[calc(82vh-7.5rem)] overflow-y-auto px-4 py-4">{children}</div>
+        {footer ? <div className="border-t border-slate-100 px-4 py-3">{footer}</div> : null}
+      </div>
+    </div>
+  )
+}
+
 function TypeSection({ typeKey, data, onAddToCart }) {
   const meta = TYPE_META[typeKey] || TYPE_META.aftermarket
   if (!data?.part) {
@@ -797,86 +830,107 @@ function PartCard({ part, onAddToCart }) {
   const accent = CATEGORY_ACCENT[part.category] || CATEGORY_ACCENT['כללי']
 
   return (
-    <div
-      className="card overflow-hidden hover:shadow-lg transition-all duration-200 border border-gray-100 border-l-4 flex flex-col h-full"
-      style={{ borderLeftColor: accent.color }}
-    >
-      {/* Coloured category header strip */}
-      <div className={`${accent.bg} px-4 pt-3 pb-2`}>
-        <div className="flex justify-between items-start gap-2">
-          <div className="flex-1 min-w-0">
-            <h3 className="font-semibold text-brand-navy leading-snug line-clamp-2 min-h-[2.75rem] text-sm">{part.name}</h3>
-            <p className={`text-xs mt-0.5 font-medium ${accent.text}`}>
-              <span className="mr-1">{accent.icon}</span>
-              {part.category}
-            </p>
-          </div>
-          <span className={`shrink-0 text-xs px-2 py-0.5 rounded-full border font-medium ${typeColor}`}>{typeLabel}</span>
-        </div>
-        <p className="text-xs text-gray-500 mt-1">{part.manufacturer}</p>
-      </div>
-
-      {/* Body */}
-      <div className="px-4 pt-2 pb-1 flex flex-col flex-1">
-        <p className="text-xs text-gray-400 mb-2 min-h-[1rem]">{part.sku ? `SKU: ${part.sku}` : '\u00a0'}</p>
-
-        {/* Supplier / pricing options */}
-        {suppliers.length === 0 ? (
-          <div className={`flex-1 flex flex-col items-center justify-center ${accent.bg} rounded-lg px-3 py-4 text-center gap-1`}>
-            <Tag className={`w-4 h-4 ${accent.text} opacity-60`} />
-            <span className={`text-xs font-medium ${accent.text}`}>מחיר על פניה</span>
-            <span className="text-xs text-gray-400">צור קשר לקבלת הצעת מחיר</span>
-          </div>
-        ) : (
-          <div className="space-y-2 flex-1">
-            {suppliers.map((s, i) => (
-              <div
-                key={i}
-                className={`rounded-xl border px-3 py-2.5 flex flex-col gap-2 ${
-                  i === 0 ? 'border-l-2 border-t border-r border-b border-gray-100 bg-white shadow-sm' : 'border-gray-100 bg-gray-50'
-                }`}
-                style={i === 0 ? { borderLeftColor: accent.color } : undefined}
-              >
-                {/* Row 1: availability + warranty */}
-                <div className="flex items-center justify-between gap-1">
-                  <AvailabilityBadge availability={s.availability} deliveryDays={s.estimated_delivery_days} />
-                  <div className="flex items-center gap-2 text-xs text-gray-500">
-                    {s.warranty_months && (
-                      <span className="flex items-center gap-1">
-                        <Shield className="w-3 h-3" />
-                        {s.warranty_months} חודשים
-                      </span>
-                    )}
-                    {i === 0 && !s.is_base_price_fallback && <span className="text-xs font-medium text-green-600">✓ מומלץ</span>}
-                    {s.is_base_price_fallback && <span className="text-xs text-amber-500 bg-amber-50 px-1.5 py-0.5 rounded-full border border-amber-200">~ מחיר משוער</span>}
-                  </div>
-                </div>
-                {/* Row 2: total price large + breakdown */}
-                <div>
-                  <div className={`text-2xl font-bold text-left mb-1 ${accent.text}`}>₪{s.total?.toFixed(0)}</div>
-                  <div className="grid grid-cols-3 gap-1 text-center text-xs text-gray-500 bg-gray-50 rounded-lg py-1.5">
-                    <div><div className="font-semibold text-gray-700">₪{s.price_no_vat?.toFixed(0)}</div>נטו</div>
-                    <div className="border-x border-gray-200"><div className="font-semibold text-gray-700">₪{s.vat?.toFixed(0)}</div>מע״מ</div>
-                    <div><div className="font-semibold text-gray-700">₪{s.shipping?.toFixed(0)}</div>משלוח</div>
-                  </div>
-                </div>
-                {/* Row 3: add to cart */}
-                <button
-                  onClick={() => handleAddToCart(s.supplier_part_id, s)}
-                  className={`w-full text-sm flex items-center justify-center gap-2 py-2 rounded-lg font-medium transition-colors ${
-                    i === 0
-                      ? 'bg-brand-600 hover:bg-brand-700 text-white'
-                      : 'bg-white hover:bg-brand-50 text-brand-700 border border-brand-200'
-                  }`}
-                >
-                  <ShoppingCart className="w-4 h-4" /> הוסף לסל
-                </button>
+    <article className="group relative flex h-full flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_18px_50px_-30px_rgba(15,23,42,0.28)] transition-all duration-200 hover:-translate-y-1 hover:shadow-[0_24px_70px_-30px_rgba(15,23,42,0.35)]">
+      <div className={`absolute inset-x-0 top-0 h-24 ${accent.bg} opacity-80`} />
+      <div className="relative flex flex-1 flex-col">
+        <div className="border-b border-white/80 px-4 pt-4 pb-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${typeColor}`}>{typeLabel}</span>
+                <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold ${accent.bg} ${accent.text}`}>
+                  <span>{accent.icon}</span>
+                  {part.category}
+                </span>
               </div>
-            ))}
+              <h3 className="min-h-[3rem] text-base font-black leading-6 text-brand-navy line-clamp-2">{part.name}</h3>
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+                <span className="inline-flex items-center rounded-full border border-slate-200 bg-white/90 px-2.5 py-1 font-medium text-slate-600">{part.manufacturer || 'יצרן לא זמין'}</span>
+                {part.sku ? <span className="inline-flex items-center rounded-full border border-slate-200 bg-white/90 px-2.5 py-1 font-medium text-slate-600">SKU: {part.sku}</span> : null}
+              </div>
+            </div>
+            <div className="hidden h-11 w-11 flex-shrink-0 items-center justify-center rounded-2xl bg-white/90 text-xl shadow-sm sm:flex">{accent.icon}</div>
           </div>
-        )}
+        </div>
+
+        <div className="flex flex-1 flex-col gap-3 px-4 py-4">
+          {suppliers.length === 0 ? (
+            <div className={`flex flex-1 flex-col items-center justify-center gap-2 rounded-[24px] border border-dashed border-slate-200 ${accent.bg} px-4 py-6 text-center`}>
+              <Tag className={`h-5 w-5 ${accent.text} opacity-70`} />
+              <span className={`text-sm font-semibold ${accent.text}`}>מחיר על פניה</span>
+              <span className="max-w-[16rem] text-xs leading-5 text-slate-500">צור קשר כדי לקבל התאמה והצעת מחיר לחלק הזה.</span>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {suppliers.map((s, i) => (
+                <div
+                  key={i}
+                  className={`rounded-[24px] border px-3.5 py-3.5 ${
+                    i === 0
+                      ? 'border-slate-200 bg-gradient-to-b from-white to-slate-50 shadow-sm'
+                      : 'border-slate-200/90 bg-slate-50/85'
+                  }`}
+                  style={i === 0 ? { boxShadow: `inset 3px 0 0 ${accent.color}` } : undefined}
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <AvailabilityBadge availability={s.availability} deliveryDays={s.estimated_delivery_days} />
+                    <div className="flex flex-wrap items-center justify-end gap-2 text-[11px] text-slate-500">
+                      {s.warranty_months ? (
+                        <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-1">
+                          <Shield className="h-3 w-3" />
+                          {s.warranty_months} חוד׳ אחריות
+                        </span>
+                      ) : null}
+                      {i === 0 && !s.is_base_price_fallback ? <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-1 font-semibold text-emerald-700">מומלץ</span> : null}
+                      {s.is_base_price_fallback ? <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-1 font-semibold text-amber-700">מחיר משוער</span> : null}
+                    </div>
+                  </div>
+
+                  <div className="mt-3 rounded-[20px] bg-white/90 p-3 shadow-[inset_0_0_0_1px_rgba(226,232,240,0.8)]">
+                    <div className="flex items-end justify-between gap-3">
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">מחיר כולל</p>
+                        <p className={`mt-1 text-3xl font-black leading-none ${accent.text}`}>₪{s.total?.toFixed(0)}</p>
+                      </div>
+                      <div className="text-right text-[11px] text-slate-500">
+                        <p>זמין להזמנה מיידית</p>
+                        <p className="mt-1 font-medium text-slate-600">{s.estimated_delivery_days ? `${s.estimated_delivery_days} ימי אספקה` : 'זמן אספקה לפי ספק'}</p>
+                      </div>
+                    </div>
+                    <div className="mt-3 grid grid-cols-3 gap-2 text-center text-[11px] text-slate-500">
+                      <div className="rounded-2xl bg-slate-50 px-2 py-2">
+                        <div className="text-sm font-bold text-slate-700">₪{s.price_no_vat?.toFixed(0)}</div>
+                        נטו
+                      </div>
+                      <div className="rounded-2xl bg-slate-50 px-2 py-2">
+                        <div className="text-sm font-bold text-slate-700">₪{s.vat?.toFixed(0)}</div>
+                        מע״מ
+                      </div>
+                      <div className="rounded-2xl bg-slate-50 px-2 py-2">
+                        <div className="text-sm font-bold text-slate-700">₪{s.shipping?.toFixed(0)}</div>
+                        משלוח
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => handleAddToCart(s.supplier_part_id, s)}
+                    className={`mt-3 flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl text-sm font-bold transition-colors ${
+                      i === 0
+                        ? 'bg-brand-600 text-white hover:bg-brand-700'
+                        : 'border border-brand-200 bg-white text-brand-700 hover:bg-brand-50'
+                    }`}
+                  >
+                    <ShoppingCart className="h-4 w-4" />
+                    הוסף לסל
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
-    </div>
+    </article>
   )
 }
 
@@ -1213,6 +1267,7 @@ export default function Parts() {
   const [partFamilies, setPartFamilies] = useState([])
   const [partFamilyGroups, setPartFamilyGroups] = useState([])
   const [partTypeMenuOpen, setPartTypeMenuOpen] = useState(false)
+  const [partFamilySearch, setPartFamilySearch] = useState('')
 
   const [manualManufacturer, setManualManufacturer] = useState('')
   const [manualModel, setManualModel] = useState('')
@@ -1741,6 +1796,19 @@ export default function Parts() {
     return () => document.removeEventListener('mousedown', handler)
   }, [])
 
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || window.innerWidth >= 640) return undefined
+    if (!manufacturerMenuOpen && !partTypeMenuOpen) return undefined
+
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+
+    return () => {
+      document.body.style.overflow = previousOverflow
+    }
+  }, [manufacturerMenuOpen, partTypeMenuOpen])
+
   const switchMode = (mode) => {
     setSearchMode(mode)
     setParts([])
@@ -1773,8 +1841,14 @@ export default function Parts() {
   const filteredPartFamilies = []
   const partFamiliesByGroup = new Map()
   const derivedPartFamilyGroupsMap = new Map()
+  const normalizedPartFamilySearch = partFamilySearch.trim().toLowerCase()
 
   partFamilies.forEach((family) => {
+    if (normalizedPartFamilySearch) {
+      const searchableTokens = [family.label, family.group, family.id, ...(family.aliases || []), ...(family.legacy_categories || [])]
+      const matchesSearch = searchableTokens.some((token) => String(token || '').toLowerCase().includes(normalizedPartFamilySearch))
+      if (!matchesSearch) return
+    }
     const currentGroup = derivedPartFamilyGroupsMap.get(family.group_id)
     if (currentGroup) {
       currentGroup.count += categoryCounts[family.id] || 0
@@ -1813,6 +1887,9 @@ export default function Parts() {
     .slice(0, 8)
 
   const activeFiltersCount = [manualManufacturer, effectiveManualModel, effectiveManualSubModel, effectiveManualYear].filter(Boolean).length
+  const vehicleSearchSummary = [manualManufacturer, effectiveManualModel, effectiveManualSubModel, effectiveManualYear, selectedPartFamilyLabel]
+    .filter(Boolean)
+    .join(' • ')
   const hasVisibleResults = parts.length > 0
   const activeVehicleFilterOrder = buildActiveVehicleFilterOrder({
     manualManufacturer,
@@ -1828,7 +1905,7 @@ export default function Parts() {
       value: brands.length.toLocaleString(),
       hint: manualManufacturer || 'כל היצרנים',
       icon: Car,
-      tone: 'bg-blue-50 text-blue-700 border-blue-200',
+      tone: 'from-blue-50 to-cyan-50 border-blue-200 text-blue-700',
     },
     {
       id: 'models',
@@ -1836,7 +1913,7 @@ export default function Parts() {
       value: manualManufacturer ? modelOptions.length.toLocaleString() : '-',
       hint: effectiveManualModel || 'בחר דגם',
       icon: Search,
-      tone: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+      tone: 'from-emerald-50 to-teal-50 border-emerald-200 text-emerald-700',
     },
     {
       id: 'submodels',
@@ -1844,7 +1921,7 @@ export default function Parts() {
       value: effectiveManualModel ? subModelOptions.length.toLocaleString() : '-',
       hint: effectiveManualSubModel || 'בחר גרסה',
       icon: Tag,
-      tone: 'bg-violet-50 text-violet-700 border-violet-200',
+      tone: 'from-violet-50 to-purple-50 border-violet-200 text-violet-700',
     },
     {
       id: 'years',
@@ -1852,7 +1929,7 @@ export default function Parts() {
       value: effectiveManualModel ? yearOptions.length.toLocaleString() : '-',
       hint: effectiveManualYear || 'בחר שנה',
       icon: Hash,
-      tone: 'bg-amber-50 text-amber-700 border-amber-200',
+      tone: 'from-amber-50 to-orange-50 border-amber-200 text-amber-700',
     },
     {
       id: 'part_types',
@@ -1860,7 +1937,7 @@ export default function Parts() {
       value: partFamilies.length.toLocaleString(),
       hint: selectedPartFamilyLabel,
       icon: Package,
-      tone: 'bg-rose-50 text-rose-700 border-rose-200',
+      tone: 'from-rose-50 to-pink-50 border-rose-200 text-rose-700',
     },
   ]
 
@@ -2468,6 +2545,49 @@ export default function Parts() {
   const [vinPartQuery, setVinPartQuery] = useState('')
   const [showVinScanner, setShowVinScanner] = useState(false)
 
+  const activeSearchPanel = searchMode === 'voice' ? 'photo' : searchMode
+  const searchModeCards = [
+    {
+      id: 'manual',
+      title: 'חיפוש חופשי',
+      subtitle: 'שם חלק / מקט / מילות מפתח',
+      icon: Search,
+      badge: query?.trim() ? 'פעיל' : null,
+      metric: query?.trim() ? `שאילתה: ${query.trim().slice(0, 24)}` : 'חיפוש טקסט בזמן אמת',
+      tone: 'from-sky-50 to-blue-50 border-sky-200',
+      iconTone: 'bg-sky-600',
+    },
+    {
+      id: 'vehicle',
+      title: 'חיפוש לפי פרטי רכב',
+      subtitle: 'יצרן, דגם, שנה וסוג חלק',
+      icon: SlidersHorizontal,
+      badge: activeFiltersCount > 0 || category ? `${activeFiltersCount + (category ? 1 : 0)} מסננים` : null,
+      metric: `${brands.length.toLocaleString()} יצרנים • ${partFamilies.length.toLocaleString()} משפחות חלקים`,
+      tone: 'from-emerald-50 to-teal-50 border-emerald-200',
+      iconTone: 'bg-emerald-600',
+    },
+    {
+      id: 'vin',
+      title: 'VIN / לוחית',
+      subtitle: 'זיהוי רכב ואז חיפוש מדויק',
+      icon: Hash,
+      badge: vinVehicle ? 'רכב מזוהה' : null,
+      metric: vinInput ? `VIN: ${vinInput.replace(/\s/g, '').length}/17` : 'פענוח רכב לפי VIN/לוחית',
+      tone: 'from-amber-50 to-orange-50 border-amber-200',
+      iconTone: 'bg-amber-600',
+    },
+    {
+      id: 'photo',
+      title: 'תמונה / קול',
+      subtitle: 'זיהוי חלק חכם עם AI',
+      icon: Camera,
+      badge: photoPreview || isListening ? 'פעיל' : null,
+      metric: isListening ? 'האזנה פעילה' : (photoPreview ? 'תמונה נטענה לזיהוי' : 'ניתוח תמונה וקול'),
+      tone: 'from-violet-50 to-fuchsia-50 border-violet-200',
+      iconTone: 'bg-violet-600',
+    },
+  ]
   const handleVinSearch = async (partQuery = vinPartQuery, pageNum = 0, explicitVin) => {
     const vin = (explicitVin || vinInput).replace(/\s/g, '').toUpperCase()
     if (vin.length !== 17) { toast.error('VIN חייב להיות בן 17 תווים'); return }
@@ -2514,7 +2634,7 @@ export default function Parts() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-24 sm:pb-0">
       {showVinScanner && (
         <VinScannerModal
           onResult={(vin) => {
@@ -2542,21 +2662,21 @@ export default function Parts() {
       )}
 
       {/* Page hero */}
-      <div className="rounded-2xl bg-gradient-to-br from-brand-600 to-brand-800 px-6 py-5 text-white shadow-lg">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-xl bg-white/20 flex items-center justify-center flex-shrink-0">
+      <div className="rounded-[28px] bg-gradient-to-br from-brand-700 via-brand-600 to-sky-700 px-4 py-5 sm:px-6 sm:py-6 text-white shadow-lg shadow-brand-900/10">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3 sm:gap-4">
+            <div className="w-12 h-12 rounded-2xl bg-white/20 ring-1 ring-white/20 flex items-center justify-center flex-shrink-0">
               <Search className="w-5 h-5 text-white" />
             </div>
             <div className="lg:order-1">
-              <h1 className="text-xl font-bold leading-tight">חיפוש חלקי חילוף</h1>
-              <p className="text-white/65 text-xs mt-0.5">חפש לפי רכב · תמונה · קול · VIN</p>
+              <h1 className="text-xl sm:text-2xl font-black tracking-tight leading-tight">חיפוש חלקי חילוף</h1>
+              <p className="text-white/75 text-xs sm:text-sm mt-1">חפש לפי רכב · תמונה · קול · VIN</p>
             </div>
           </div>
           {selectedVehicle && (
             <button
               onClick={() => setShowVehiclePicker(true)}
-              className="flex items-center gap-2 bg-white/15 hover:bg-white/25 transition-colors rounded-xl px-3 py-2 text-right flex-shrink-0"
+              className="flex items-center justify-between gap-2 bg-white/15 hover:bg-white/25 transition-colors rounded-2xl px-3 py-2.5 text-right w-full sm:w-auto flex-shrink-0 backdrop-blur-sm"
             >
               <div className="text-right">
                 <p className="text-xs text-white/70 leading-none mb-0.5">הרכב שלי</p>
@@ -2571,11 +2691,42 @@ export default function Parts() {
 
       </div>
 
+      {/* Search mode cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 lg:gap-4">
+        {searchModeCards.map((card) => {
+          const Icon = card.icon
+          const active = activeSearchPanel === card.id
+          return (
+            <button
+              key={card.id}
+              type="button"
+              onClick={() => switchMode(card.id)}
+              className={`text-right rounded-[24px] border bg-gradient-to-br p-4 min-h-[132px] transition-all ${active ? `${card.tone} shadow-sm ring-1 ring-brand-300 -translate-y-0.5` : 'border-gray-200 from-white to-gray-50 hover:border-brand-300 hover:shadow-sm hover:-translate-y-0.5'}`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className={`text-sm font-bold ${active ? 'text-brand-800' : 'text-brand-navy'}`}>{card.title}</p>
+                  <p className="text-xs text-gray-500 mt-1">{card.subtitle}</p>
+                </div>
+                <span className={`inline-flex h-9 w-9 items-center justify-center rounded-xl ${active ? `${card.iconTone} text-white` : 'bg-gray-100 text-gray-500'}`}>
+                  <Icon className="w-4 h-4" />
+                </span>
+              </div>
+              <p className="mt-3 text-[11px] sm:text-xs text-gray-600 truncate" title={card.metric}>{card.metric}</p>
+              <div className="mt-2.5 flex items-center justify-between">
+                <span className={`text-[11px] font-semibold ${active ? 'text-brand-700' : 'text-gray-500'}`}>{active ? 'פעיל עכשיו' : 'לחץ למעבר'}</span>
+                {card.badge ? <span className="text-[11px] rounded-full bg-white/90 border border-brand-200 px-2 py-0.5 text-brand-700 font-medium">{card.badge}</span> : null}
+              </div>
+            </button>
+          )
+        })}
+      </div>
+
       {/* ── 4 search blocks — visual order controlled by CSS flex order ── */}
       <div className="flex flex-col gap-6">
 
       {/* ── BLOCK 1: Free text search ── */}
-      <div className="card p-4" style={{order: 1}}>
+      <div className={`card p-4 ${activeSearchPanel !== 'manual' ? 'hidden' : ''}`} style={{order: 1}}>
         <div className="flex items-center gap-2 mb-3">
           <div className="w-8 h-8 rounded-lg bg-brand-100 flex items-center justify-center flex-shrink-0">
             <Search className="w-4 h-4 text-brand-600" />
@@ -2587,11 +2738,11 @@ export default function Parts() {
             </span>
           )}
         </div>
-        <div className="flex flex-col sm:flex-row gap-3">
+        <div className="flex flex-col sm:flex-row gap-3 sm:items-stretch">
           <div className="relative flex-1" ref={suggestRef}>
             <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
             <input
-              className="input-field pr-10"
+              className="input-field pr-10 h-12 sm:h-11 text-[15px] sm:text-sm rounded-xl"
               placeholder="שם החלק לחיפוש... (רפידות בלם, פילטר שמן, מצמד...)"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -2648,7 +2799,7 @@ export default function Parts() {
               </ul>
             )}
           </div>
-          <button onClick={() => search(0)} disabled={isLoading} className="btn-primary flex items-center gap-2 whitespace-nowrap">
+          <button onClick={() => search(0)} disabled={isLoading} className="btn-primary flex items-center justify-center gap-2 whitespace-nowrap w-full sm:w-auto min-h-12 sm:min-h-11 rounded-xl">
             {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
             חפש
           </button>
@@ -2666,7 +2817,7 @@ export default function Parts() {
       </div>
 
       {/* ── BLOCK 4: Search by plate / VIN ── */}
-      <div className="card p-4 space-y-4" style={{order: 4}}>
+      <div className={`card p-4 space-y-4 ${activeSearchPanel !== 'vin' ? 'hidden' : ''}`} style={{order: 4}}>
           {/* Header */}
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-lg bg-green-100 flex items-center justify-center flex-shrink-0">
@@ -2676,15 +2827,15 @@ export default function Parts() {
           </div>
 
           {/* ── Search inputs row: plate + VIN ── */}
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
 
             {/* Israeli license plate input */}
             <div className="lg:order-2">
               <label className="block text-[11px] text-gray-500 mb-1 font-medium">מספר רכב</label>
-              <div className="flex gap-1.5">
+              <div className="flex gap-2 flex-col xs:flex-row">
                 <div className="relative flex rounded-lg overflow-hidden border border-gray-200 focus-within:border-brand-400 focus-within:ring-1 focus-within:ring-brand-300 transition-colors flex-1 min-w-0">
                   <input
-                    className="w-full bg-white text-brand-navy font-mono font-semibold text-sm tracking-[0.15em] text-center uppercase placeholder:text-gray-400 placeholder:font-normal placeholder:text-xs placeholder:tracking-normal focus:outline-none px-2 py-2"
+                    className="w-full min-h-12 bg-white text-brand-navy font-mono font-semibold text-sm tracking-[0.15em] text-center uppercase placeholder:text-gray-400 placeholder:font-normal placeholder:text-xs placeholder:tracking-normal focus:outline-none px-3 py-3"
                     placeholder="123-45-678"
                     dir="ltr"
                     value={newPlate}
@@ -2695,7 +2846,7 @@ export default function Parts() {
                 <button
                   onClick={addVehicle}
                   disabled={addingVehicle}
-                  className="bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white px-3 py-2 rounded-lg font-semibold text-xs flex items-center gap-1 transition-colors whitespace-nowrap flex-shrink-0"
+                  className="bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white px-4 py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap flex-shrink-0 min-h-12 xs:min-w-[92px]"
                 >
                   {addingVehicle ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Car className="w-3.5 h-3.5" />}
                   הוסף
@@ -2715,10 +2866,10 @@ export default function Parts() {
                   </span>
                 )}
               </label>
-              <div className="flex gap-1.5">
+              <div className="flex gap-2 flex-col xs:flex-row">
                 <div className="relative flex-1 min-w-0">
                   <input
-                    className="w-full border border-gray-200 rounded-lg bg-white text-brand-navy font-mono text-xs tracking-wider uppercase focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-2 py-2 pl-7"
+                    className="w-full min-h-12 border border-gray-200 rounded-xl bg-white text-brand-navy font-mono text-sm tracking-wider uppercase focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-3 py-3 pl-8"
                     placeholder="1HGCM82633..."
                     dir="ltr"
                     maxLength={17}
@@ -2730,7 +2881,7 @@ export default function Parts() {
                     type="button"
                     title="סרוק ברקוד VIN"
                     onClick={() => setShowVinScanner(true)}
-                    className="absolute left-1.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-brand-600 transition-colors"
+                    className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-brand-600 transition-colors p-0.5"
                   >
                     <ScanLine className="w-3.5 h-3.5" />
                   </button>
@@ -2738,7 +2889,7 @@ export default function Parts() {
                 <button
                   onClick={() => handleVinSearch()}
                   disabled={vinLoading}
-                  className="bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white px-3 py-2 rounded-lg font-semibold text-xs flex items-center gap-1 transition-colors whitespace-nowrap flex-shrink-0"
+                  className="bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white px-4 py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap flex-shrink-0 min-h-12 xs:min-w-[92px]"
                 >
                   {vinLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
                   זהה
@@ -2775,7 +2926,7 @@ export default function Parts() {
               {/* Part search after VIN decode */}
               <div className="pt-2 flex gap-2">
                 <input
-                  className="flex-1 border border-gray-200 rounded-lg text-sm px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-400"
+                  className="flex-1 min-h-11 border border-gray-200 rounded-xl text-[15px] sm:text-sm px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-400"
                   placeholder="שם חלק לחיפוש (רפידות, פילטר...)"
                   value={vinPartQuery}
                   onChange={(e) => setVinPartQuery(e.target.value)}
@@ -2784,7 +2935,7 @@ export default function Parts() {
                 <button
                   onClick={() => handleVinSearch(vinPartQuery)}
                   disabled={vinLoading}
-                  className="bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white px-4 py-1.5 rounded-lg text-sm font-semibold flex items-center gap-1 whitespace-nowrap"
+                  className="bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-1 whitespace-nowrap min-h-11"
                 >
                   {vinLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
                   חפש חלק
@@ -2815,9 +2966,9 @@ export default function Parts() {
         </div>
 
       {/* ── BLOCK 2: Car details (filters) ── */}
-      <div className="card p-4 space-y-4" style={{order: 2}}>
+      <div className={`card p-4 pb-24 sm:pb-4 space-y-4 ${activeSearchPanel !== 'vehicle' ? 'hidden' : ''}`} style={{order: 2}}>
           {/* Header */}
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-2">
               <div className="w-8 h-8 rounded-lg bg-brand-100 flex items-center justify-center">
                 <SlidersHorizontal className="w-4 h-4 text-brand-600" />
@@ -2834,33 +2985,43 @@ export default function Parts() {
             )}
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-2">
+          <div className="rounded-2xl border border-emerald-200 bg-gradient-to-r from-emerald-50 to-teal-50 px-3.5 py-3 text-xs sm:text-sm text-emerald-800 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+            <span className="font-semibold">המסננים מחוברים לנתוני API חיים ומעדכנים יצרנים, דגמים, שנים וקטגוריות בזמן אמת.</span>
+            <span className="text-emerald-700/80">Manufacturers → Models → Years → Categories</span>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-2.5 lg:gap-3">
             {filterStatsCards.map((card) => {
               const Icon = card.icon
               return (
-                <div key={card.id} className={`rounded-xl border px-3 py-2.5 ${card.tone}`}>
+                <div key={card.id} className={`rounded-2xl border bg-gradient-to-br px-3 py-3 shadow-sm ${card.tone}`}>
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-medium opacity-80">{card.label}</span>
-                    <Icon className="w-3.5 h-3.5 opacity-80" />
+                    <span className="text-xs font-semibold opacity-90">{card.label}</span>
+                    <span className="inline-flex h-6 w-6 items-center justify-center rounded-lg bg-white/90">
+                      <Icon className="w-3.5 h-3.5" />
+                    </span>
                   </div>
-                  <p className="text-lg font-bold leading-tight mt-1">{card.value}</p>
-                  <p className="text-[11px] mt-0.5 truncate opacity-85" title={card.hint}>{card.hint}</p>
+                  <p className="text-xl sm:text-2xl font-extrabold leading-tight mt-1.5">{card.value}</p>
+                  <p className="text-[11px] mt-0.5 truncate opacity-90" title={card.hint}>{card.hint}</p>
                 </div>
               )
             })}
           </div>
 
           {/* Fields: Manufacturer → Model → Sub-model → Year → Part Type */}
-          <div className="grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-5 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
 
             {/* 1. Manufacturer */}
-            <div className="rounded-xl border border-gray-200 bg-gray-50/40 p-3">
+            <div className="rounded-2xl border border-gray-200 bg-gray-50/50 p-3.5">
               <label className="block text-xs text-gray-500 mb-1.5 font-medium">יצרן</label>
               <div className="relative" ref={manufacturerMenuRef}>
                 <button
                   type="button"
                   className={FILTER_MENU_TRIGGER_CLASS}
-                  onClick={() => setManufacturerMenuOpen((v) => !v)}
+                  onClick={() => {
+                    setPartTypeMenuOpen(false)
+                    setManufacturerMenuOpen((v) => !v)
+                  }}
                 >
                   <span className="truncate inline-flex items-center gap-2">
                     {manualManufacturer ? (
@@ -2882,10 +3043,10 @@ export default function Parts() {
                 </button>
 
                 {manufacturerMenuOpen && (
-                  <div className="absolute z-30 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg">
+                  <div className="absolute z-30 mt-1 hidden w-full rounded-lg border border-gray-200 bg-white shadow-lg sm:block">
                     <div className="p-2 border-b border-gray-100">
                       <input
-                        className="w-full border border-gray-200 rounded-md bg-white text-brand-navy text-xs focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-2 py-1.5"
+                        className="w-full border border-gray-200 rounded-xl bg-white text-brand-navy text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-3 py-2.5"
                         value={manufacturerSearch}
                         onChange={(e) => setManufacturerSearch(e.target.value)}
                         placeholder="חפש יצרן..."
@@ -2906,7 +3067,7 @@ export default function Parts() {
                     <div className="max-h-64 overflow-y-auto p-1">
                       <button
                         type="button"
-                        className="w-full text-right px-2 py-1.5 rounded-md hover:bg-gray-50 text-sm"
+                        className="w-full text-right px-3 py-2.5 rounded-xl hover:bg-gray-50 text-sm"
                         onClick={() => { handleManualManufacturerChange(''); setManufacturerMenuOpen(false) }}
                       >
                         כל היצרנים
@@ -2915,7 +3076,7 @@ export default function Parts() {
                         <button
                           type="button"
                           key={b.name}
-                          className="w-full flex items-center justify-between px-2 py-1.5 rounded-md hover:bg-gray-50 text-sm"
+                          className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl hover:bg-gray-50 text-sm"
                           onClick={() => { handleManualManufacturerChange(b.name); setManufacturerMenuOpen(false) }}
                         >
                           <span className="flex items-center gap-2.5 min-w-0">
@@ -2959,7 +3120,7 @@ export default function Parts() {
             </div>
 
             {/* 2. Model */}
-            <div className="rounded-xl border border-gray-200 bg-gray-50/40 p-3">
+            <div className="rounded-2xl border border-gray-200 bg-gray-50/50 p-3.5">
               <label className="block text-xs text-gray-500 mb-1.5 font-medium">דגם</label>
               <select
                 className={FILTER_SELECT_CLASS}
@@ -3031,7 +3192,10 @@ export default function Parts() {
                 <button
                   type="button"
                   className={FILTER_MENU_TRIGGER_CLASS}
-                  onClick={() => setPartTypeMenuOpen((value) => !value)}
+                  onClick={() => {
+                    setManufacturerMenuOpen(false)
+                    setPartTypeMenuOpen((value) => !value)
+                  }}
                 >
                   <span className="truncate inline-flex items-center gap-2 min-w-0 flex-1">
                     {selectedPartFamily ? (
@@ -3055,11 +3219,11 @@ export default function Parts() {
                 </button>
 
                 {partTypeMenuOpen && (
-                  <div className="absolute z-30 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg">
+                  <div className="absolute z-30 mt-1 hidden w-full rounded-lg border border-gray-200 bg-white shadow-lg sm:block">
                     <div className="max-h-72 overflow-y-auto p-1">
                       <button
                         type="button"
-                        className="w-full text-right px-2 py-1.5 rounded-md hover:bg-gray-50 text-sm"
+                        className="w-full text-right px-3 py-2.5 rounded-xl hover:bg-gray-50 text-sm"
                         onClick={() => { handlePartFamilyChange(''); setPartTypeMenuOpen(false) }}
                       >
                         כל סוגי החלקים
@@ -3076,7 +3240,7 @@ export default function Parts() {
                               <button
                                 type="button"
                                 key={family.id}
-                                className={`w-full flex items-center justify-between px-2 py-2 rounded-md text-sm ${category === family.id ? 'bg-brand-50 text-brand-700' : 'hover:bg-gray-50 text-brand-navy'} ${categoryCounts[family.id] === 0 ? 'opacity-60' : ''}`}
+                                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm ${category === family.id ? 'bg-brand-50 text-brand-700' : 'hover:bg-gray-50 text-brand-navy'} ${categoryCounts[family.id] === 0 ? 'opacity-60' : ''}`}
                                 onClick={() => { handlePartFamilyChange(family.id); setPartTypeMenuOpen(false) }}
                               >
                                 <span className="flex items-center gap-3 min-w-0">
@@ -3101,7 +3265,7 @@ export default function Parts() {
                         <button
                           type="button"
                           key={family.id}
-                          className={`w-full flex items-center justify-between px-2 py-2 rounded-md text-sm ${category === family.id ? 'bg-brand-50 text-brand-700' : 'hover:bg-gray-50 text-brand-navy'} ${categoryCounts[family.id] === 0 ? 'opacity-60' : ''}`}
+                          className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm ${category === family.id ? 'bg-brand-50 text-brand-700' : 'hover:bg-gray-50 text-brand-navy'} ${categoryCounts[family.id] === 0 ? 'opacity-60' : ''}`}
                           onClick={() => { handlePartFamilyChange(family.id); setPartTypeMenuOpen(false) }}
                         >
                           <span className="flex items-center gap-3 min-w-0">
@@ -3128,7 +3292,7 @@ export default function Parts() {
 
           {/* Active filter chips */}
           {(activeFiltersCount > 0 || category) && (
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2.5">
               {activeVehicleFilterOrder.includes('manufacturer') && (
                 <span className="inline-flex items-center gap-1 bg-brand-100 text-brand-700 text-xs px-2.5 py-1 rounded-full font-medium">
                   <img
@@ -3182,7 +3346,7 @@ export default function Parts() {
             </div>
           )}
           {/* Search button for Block 2 */}
-          <div className="flex items-center justify-between gap-3 pt-1 flex-wrap">
+          <div className="hidden sm:flex items-center justify-between gap-3 pt-1 flex-wrap">
             <p className="text-xs text-gray-500">המסננים שולחים חיפוש ישירות למסד הנתונים דרך API החלקים.</p>
             <button onClick={() => search(0)} disabled={isLoading} className="btn-primary flex items-center gap-2">
               {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
@@ -3191,8 +3355,211 @@ export default function Parts() {
           </div>
         </div>
 
+      <MobileBottomSheet
+        open={manufacturerMenuOpen}
+        onClose={() => {
+          setManufacturerMenuOpen(false)
+          setManufacturerSearch('')
+          setBrandCountInfoOpenFor('')
+        }}
+        title="בחירת יצרן"
+        subtitle="בחר יצרן מהרשימה או חפש לפי שם המותג"
+        footer={
+          <button
+            type="button"
+            onClick={() => {
+              handleManualManufacturerChange('')
+              setManufacturerMenuOpen(false)
+              setManufacturerSearch('')
+              setBrandCountInfoOpenFor('')
+            }}
+            className="flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 text-sm font-semibold text-slate-700"
+          >
+            <RotateCcw className="h-4 w-4" />
+            כל היצרנים
+          </button>
+        }
+      >
+        <div className="space-y-3">
+          <input
+            className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-[15px] text-brand-navy outline-none focus:border-brand-300 focus:ring-2 focus:ring-brand-200"
+            value={manufacturerSearch}
+            onChange={(e) => setManufacturerSearch(e.target.value)}
+            placeholder="חפש יצרן..."
+          />
+          <div className="space-y-2">
+            {filteredBrands.map((b) => (
+              <button
+                type="button"
+                key={b.name}
+                className={`flex w-full items-center justify-between rounded-[22px] border px-3.5 py-3 text-right transition-colors ${manualManufacturer === b.name ? 'border-brand-300 bg-brand-50 text-brand-700' : 'border-slate-200 bg-white text-brand-navy'}`}
+                onClick={() => {
+                  handleManualManufacturerChange(b.name)
+                  setManufacturerMenuOpen(false)
+                  setManufacturerSearch('')
+                  setBrandCountInfoOpenFor('')
+                }}
+              >
+                <span className="flex min-w-0 items-center gap-3">
+                  <span className="inline-flex items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-slate-50" style={{ width: 42, height: 42 }}>
+                    <img
+                      src={logoForManufacturer(b.name, brandLogos) || fallbackLogoDataUri(b.name)}
+                      alt=""
+                      aria-hidden="true"
+                      className="h-full w-full object-contain"
+                      onError={(e) => {
+                        e.currentTarget.onerror = null
+                        e.currentTarget.src = fallbackLogoDataUri(b.name)
+                      }}
+                    />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-semibold">{b.name}</span>
+                    {brandCounts[b.name] ? <span className="mt-0.5 block text-xs text-slate-500">{brandCounts[b.name].toLocaleString()} רכבים</span> : null}
+                  </span>
+                </span>
+                {manualManufacturer === b.name ? <Check className="h-4 w-4 flex-shrink-0 text-brand-600" /> : <ChevronRight className="h-4 w-4 flex-shrink-0 text-slate-300" />}
+              </button>
+            ))}
+          </div>
+        </div>
+      </MobileBottomSheet>
+
+      <MobileBottomSheet
+        open={partTypeMenuOpen}
+        onClose={() => {
+          setPartTypeMenuOpen(false)
+          setPartFamilySearch('')
+        }}
+        title="בחירת סוג חלק"
+        subtitle="חפש משפחת חלקים או דפדף לפי קבוצות"
+        footer={
+          <button
+            type="button"
+            onClick={() => {
+              handlePartFamilyChange('')
+              setPartTypeMenuOpen(false)
+              setPartFamilySearch('')
+            }}
+            className="flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 text-sm font-semibold text-slate-700"
+          >
+            <RotateCcw className="h-4 w-4" />
+            כל סוגי החלקים
+          </button>
+        }
+      >
+        <div className="space-y-3">
+          <input
+            className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-[15px] text-brand-navy outline-none focus:border-brand-300 focus:ring-2 focus:ring-brand-200"
+            value={partFamilySearch}
+            onChange={(e) => setPartFamilySearch(e.target.value)}
+            placeholder="חפש סוג חלק..."
+          />
+          <div className="space-y-3">
+            {sortedPartFamilyGroups.length ? sortedPartFamilyGroups.map((group) => {
+              const familiesInGroup = partFamiliesByGroup.get(group.id) || []
+              if (!familiesInGroup.length) return null
+              return (
+                <div key={group.id} className="space-y-2">
+                  <div className="flex items-center justify-between px-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                    <span>{group.label}</span>
+                    <span>{(group.count || 0).toLocaleString()}</span>
+                  </div>
+                  <div className="space-y-2">
+                    {familiesInGroup.map((family) => (
+                      <button
+                        type="button"
+                        key={family.id}
+                        className={`flex w-full items-center justify-between rounded-[22px] border px-3.5 py-3 text-right transition-colors ${category === family.id ? 'border-brand-300 bg-brand-50 text-brand-700' : 'border-slate-200 bg-white text-brand-navy'} ${categoryCounts[family.id] === 0 ? 'opacity-60' : ''}`}
+                        onClick={() => {
+                          handlePartFamilyChange(family.id)
+                          setPartTypeMenuOpen(false)
+                          setPartFamilySearch('')
+                        }}
+                      >
+                        <span className="flex min-w-0 items-center gap-3">
+                          <img
+                            src={partFamilyImageSrc(family)}
+                            alt=""
+                            aria-hidden="true"
+                            className="h-[42px] w-[42px] flex-shrink-0 rounded-2xl border border-slate-200 bg-white object-cover shadow-sm"
+                          />
+                          <span className="min-w-0">
+                            <span className="block truncate text-sm font-semibold">{family.label}</span>
+                            <span className="mt-0.5 block text-xs text-slate-500">{(categoryCounts[family.id] || 0).toLocaleString()} תוצאות</span>
+                          </span>
+                        </span>
+                        {category === family.id ? <Check className="h-4 w-4 flex-shrink-0 text-brand-600" /> : <ChevronRight className="h-4 w-4 flex-shrink-0 text-slate-300" />}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )
+            }) : filteredPartFamilies.map((family) => (
+              <button
+                type="button"
+                key={family.id}
+                className={`flex w-full items-center justify-between rounded-[22px] border px-3.5 py-3 text-right transition-colors ${category === family.id ? 'border-brand-300 bg-brand-50 text-brand-700' : 'border-slate-200 bg-white text-brand-navy'} ${categoryCounts[family.id] === 0 ? 'opacity-60' : ''}`}
+                onClick={() => {
+                  handlePartFamilyChange(family.id)
+                  setPartTypeMenuOpen(false)
+                  setPartFamilySearch('')
+                }}
+              >
+                <span className="flex min-w-0 items-center gap-3">
+                  <img
+                    src={partFamilyImageSrc(family)}
+                    alt=""
+                    aria-hidden="true"
+                    className="h-[42px] w-[42px] flex-shrink-0 rounded-2xl border border-slate-200 bg-white object-cover shadow-sm"
+                  />
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-semibold">{family.label}</span>
+                    <span className="mt-0.5 block text-xs text-slate-500">{(categoryCounts[family.id] || 0).toLocaleString()} תוצאות</span>
+                  </span>
+                </span>
+                {category === family.id ? <Check className="h-4 w-4 flex-shrink-0 text-brand-600" /> : <ChevronRight className="h-4 w-4 flex-shrink-0 text-slate-300" />}
+              </button>
+            ))}
+          </div>
+        </div>
+      </MobileBottomSheet>
+
+      {activeSearchPanel === 'vehicle' && (
+        <div className="fixed inset-x-0 bottom-0 z-30 px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] sm:hidden">
+          <div className="rounded-[26px] border border-slate-200 bg-white/95 p-3 shadow-[0_-24px_60px_-32px_rgba(15,23,42,0.55)] backdrop-blur">
+            <div className="mb-2 text-right">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">חיפוש מהיר</p>
+              <p className="mt-1 truncate text-sm font-semibold text-brand-navy">{vehicleSearchSummary || 'בחר יצרן, דגם, שנה וסוג חלק'}</p>
+            </div>
+            <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  clearManual()
+                  handlePartFamilyChange('')
+                }}
+                className="flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-700"
+              >
+                <X className="h-4 w-4" />
+                נקה
+              </button>
+              <button
+                type="button"
+                onClick={() => search(0)}
+                disabled={isLoading}
+                className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-brand-600 px-3 text-sm font-bold text-white shadow-sm disabled:opacity-60"
+              >
+                {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                חפש עכשיו
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── BLOCK 3: Photo / Voice ── */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm" style={{order: 3}}>
+      <div className={`bg-white rounded-2xl border border-gray-100 shadow-sm ${activeSearchPanel !== 'photo' ? 'hidden' : ''}`} style={{order: 3}}>
           {/* Header */}
           <div className="flex items-center gap-2 px-4 pt-4">
             <div className="w-8 h-8 rounded-lg bg-brand-100 flex items-center justify-center flex-shrink-0">
@@ -3315,7 +3682,7 @@ export default function Parts() {
                   onChange={(e) => setVoiceTranscript(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleVoiceSearch()}
                 />
-                <button onClick={handleVoiceSearch} disabled={isLoading || !voiceTranscript.trim()} className="btn-primary flex items-center gap-2 whitespace-nowrap">
+                <button onClick={handleVoiceSearch} disabled={isLoading || !voiceTranscript.trim()} className="btn-primary flex items-center justify-center gap-2 whitespace-nowrap w-full sm:w-auto min-h-12 sm:min-h-11 rounded-xl">
                   {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}חפש
                 </button>
               </div>
@@ -3545,7 +3912,7 @@ export default function Parts() {
               onChange={(e) => setVoiceTranscript(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleVoiceSearch()}
             />
-            <button onClick={handleVoiceSearch} disabled={isLoading || !voiceTranscript.trim()} className="btn-primary flex items-center gap-2 whitespace-nowrap">
+            <button onClick={handleVoiceSearch} disabled={isLoading || !voiceTranscript.trim()} className="btn-primary flex items-center justify-center gap-2 whitespace-nowrap w-full sm:w-auto min-h-12 sm:min-h-11 rounded-xl">
               {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
               חפש
             </button>
@@ -3725,80 +4092,98 @@ export default function Parts() {
       )}
 
       {!photoFallbackMfr && !voiceFallbackMfr && parts.length > 0 && (
-        <>
-          {/* Results header */}
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-3 flex-wrap">
-              <p className="text-sm text-gray-500">
-                נמצאו <strong>{totalCount.toLocaleString()}</strong> חלקים
-                {totalCount > PAGE_SIZE && ` · עמוד ${page + 1}/${Math.ceil(totalCount / PAGE_SIZE)}`}
-              </p>
-              {selectedVehicle && parts.length > 0 && (() => {
-                const mfr = selectedVehicle.manufacturer?.toLowerCase() || ''
-                const matchCount = parts.filter(p => p.manufacturer?.toLowerCase().includes(mfr)).length
-                return matchCount > 0 ? (
-                  <span className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-brand-50 text-brand-700 border border-brand-200 font-medium">
-                    <Car className="w-3 h-3" />
-                    {matchCount} מתאימים ל{selectedVehicle.manufacturer}
-                  </span>
-                ) : null
-              })()}
-              {inStockCount > 0 && (
-                <button
-                  onClick={() => setFilterAvail(filterAvail === 'in_stock' ? '' : 'in_stock')}
-                  className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full border font-medium transition-all ${
-                    filterAvail === 'in_stock'
-                      ? 'bg-green-600 text-white border-green-600'
-                      : 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100'
-                  }`}
-                >
-                  <CheckCircle className="w-3 h-3" />
-                  {inStockCount} במלאי
-                </button>
-              )}
-              {onOrderCount > 0 && (
-                <button
-                  onClick={() => setFilterAvail(filterAvail === 'on_order' ? '' : 'on_order')}
-                  className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full border font-medium transition-all ${
-                    filterAvail === 'on_order'
-                      ? 'bg-amber-600 text-white border-amber-600'
-                      : 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'
-                  }`}
-                >
-                  <Truck className="w-3 h-3" />
-                  {onOrderCount} על הזמנה
-                </button>
-              )}
-              {[['Original','מקורי','bg-blue-600 text-white border-blue-600','bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'],
-                ['Aftermarket','חליפי','bg-amber-600 text-white border-amber-600','bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'],
-                ['Refurbished','משופץ','bg-brand-600 text-white border-brand-600','bg-brand-50 text-brand-700 border-brand-200 hover:bg-brand-100'],
-              ].filter(([k]) => typeCounts[k] > 0).map(([key, label, activeClass, inactiveClass]) => (
-                <button
-                  key={key}
-                  onClick={() => setFilterType(filterType === key ? '' : key)}
-                  className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full border font-medium transition-all ${
-                    filterType === key ? activeClass : inactiveClass
-                  }`}
-                >
-                  {label} ({typeCounts[key]})
-                </button>
-              ))}
+        <section className="space-y-4 rounded-[28px] border border-slate-200 bg-gradient-to-b from-white via-white to-slate-50/70 p-3 sm:p-5 shadow-[0_24px_80px_-40px_rgba(15,23,42,0.28)]">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+            <div className="min-w-0 flex-1 space-y-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-stretch">
+                <div className="min-w-[200px] rounded-[24px] bg-slate-950 px-4 py-3.5 text-white shadow-lg shadow-slate-950/10">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/55">תוצאות חיפוש</p>
+                  <p className="mt-2 text-3xl font-black leading-none">{totalCount.toLocaleString()}</p>
+                  <p className="mt-2 text-xs text-white/70">{totalCount > PAGE_SIZE ? `עמוד ${page + 1} מתוך ${Math.ceil(totalCount / PAGE_SIZE)}` : 'כל התוצאות נטענו בעמוד זה'}</p>
+                </div>
+                <div className="grid flex-1 grid-cols-2 gap-3 sm:max-w-sm">
+                  <div className="rounded-[24px] border border-emerald-200 bg-emerald-50 px-4 py-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-700/70">במלאי</p>
+                    <p className="mt-2 text-2xl font-black text-emerald-800">{inStockCount.toLocaleString()}</p>
+                    <p className="mt-1 text-xs text-emerald-700/80">זמינים להזמנה מיידית</p>
+                  </div>
+                  <div className="rounded-[24px] border border-amber-200 bg-amber-50 px-4 py-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-700/70">על הזמנה</p>
+                    <p className="mt-2 text-2xl font-black text-amber-800">{onOrderCount.toLocaleString()}</p>
+                    <p className="mt-1 text-xs text-amber-700/80">הצעות עם זמן אספקה</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2.5">
+                {selectedVehicle && parts.length > 0 && (() => {
+                  const mfr = selectedVehicle.manufacturer?.toLowerCase() || ''
+                  const matchCount = parts.filter(p => p.manufacturer?.toLowerCase().includes(mfr)).length
+                  return matchCount > 0 ? (
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-brand-200 bg-brand-50 px-3 py-1.5 text-xs font-semibold text-brand-700">
+                      <Car className="h-3.5 w-3.5" />
+                      {matchCount} מתאימים ל{selectedVehicle.manufacturer}
+                    </span>
+                  ) : null
+                })()}
+                {inStockCount > 0 && (
+                  <button
+                    onClick={() => setFilterAvail(filterAvail === 'in_stock' ? '' : 'in_stock')}
+                    className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition-all ${
+                      filterAvail === 'in_stock'
+                        ? 'border-green-600 bg-green-600 text-white'
+                        : 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100'
+                    }`}
+                  >
+                    <CheckCircle className="h-3.5 w-3.5" />
+                    {inStockCount} במלאי
+                  </button>
+                )}
+                {onOrderCount > 0 && (
+                  <button
+                    onClick={() => setFilterAvail(filterAvail === 'on_order' ? '' : 'on_order')}
+                    className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition-all ${
+                      filterAvail === 'on_order'
+                        ? 'border-amber-600 bg-amber-600 text-white'
+                        : 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100'
+                    }`}
+                  >
+                    <Truck className="h-3.5 w-3.5" />
+                    {onOrderCount} על הזמנה
+                  </button>
+                )}
+                {[['Original','מקורי','bg-blue-600 text-white border-blue-600','bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'],
+                  ['Aftermarket','חליפי','bg-amber-600 text-white border-amber-600','bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'],
+                  ['Refurbished','משופץ','bg-brand-600 text-white border-brand-600','bg-brand-50 text-brand-700 border-brand-200 hover:bg-brand-100'],
+                ].filter(([k]) => typeCounts[k] > 0).map(([key, label, activeClass, inactiveClass]) => (
+                  <button
+                    key={key}
+                    onClick={() => setFilterType(filterType === key ? '' : key)}
+                    className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition-all ${
+                      filterType === key ? activeClass : inactiveClass
+                    }`}
+                  >
+                    {label} ({typeCounts[key]})
+                  </button>
+                ))}
+              </div>
             </div>
-            <div className="flex items-center gap-2">
+
+            <div className="flex flex-wrap items-center gap-2 rounded-[24px] border border-slate-200 bg-white px-3 py-3 shadow-sm xl:justify-end">
               <button
                 title="העתק קישור לחיפוש"
                 onClick={() => {
                   const url = `${window.location.origin}/parts?search=${encodeURIComponent(query)}${category ? `&category=${encodeURIComponent(category)}` : ''}`
                   navigator.clipboard.writeText(url).then(() => toast.success('קישור הועתק! 🔗'))
                 }}
-                className="p-1.5 rounded border border-gray-200 text-gray-400 hover:text-brand-600 hover:border-brand-300 transition-colors"
+                className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 text-slate-500 transition-colors hover:border-brand-300 hover:text-brand-600"
               >
-                <Link2 className="w-4 h-4" />
+                <Link2 className="h-4 w-4" />
               </button>
               <select
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value)}
-                className="input-field text-sm py-1.5 w-auto"
+                className="min-h-11 rounded-2xl border border-slate-200 bg-slate-50 px-3 text-sm text-brand-navy outline-none focus:border-brand-300 focus:ring-2 focus:ring-brand-200"
               >
                 <option value="availability">מיין: זמינות</option>
                 <option value="price_asc">מיין: מחיר ↑</option>
@@ -3806,26 +4191,25 @@ export default function Parts() {
                 <option value="name">מיין: שם</option>
               </select>
               {searchResults && (
-                <div className="flex items-center gap-1 border border-gray-200 rounded-lg overflow-hidden text-sm" title="ספקים לסוג">
+                <div className="flex items-center overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 text-sm" title="ספקים לסוג">
                   <button
                     onClick={() => { const n = Math.max(1, perType - 1); setPerType(n); setTimeout(() => search(0), 0) }}
-                    className="px-2 py-1.5 bg-gray-50 hover:bg-gray-100 text-gray-600 font-bold leading-none"
+                    className="px-3 py-2.5 font-bold leading-none text-slate-600 hover:bg-slate-100"
                   >−</button>
-                  <span className="px-2 py-1 text-gray-700 font-medium select-none">{perType}</span>
+                  <span className="px-3 py-2 text-sm font-semibold text-slate-700">{perType}</span>
                   <button
                     onClick={() => { const n = Math.min(10, perType + 1); setPerType(n); setTimeout(() => search(0), 0) }}
-                    className="px-2 py-1.5 bg-gray-50 hover:bg-gray-100 text-gray-600 font-bold leading-none"
+                    className="px-3 py-2.5 font-bold leading-none text-slate-600 hover:bg-slate-100"
                   >+</button>
-                  <span className="pr-2 text-xs text-gray-400 hidden sm:inline">ספקים</span>
+                  <span className="hidden pr-3 text-xs text-slate-400 sm:inline">ספקים</span>
                 </div>
               )}
             </div>
           </div>
 
-          {/* ── Grouped 3-type results (new API) ─────────────────────────── */}
           {searchResults ? (() => {
             const activeKeys = ['original', 'oem', 'aftermarket'].filter(k => searchResults[k]?.part)
-            const colClass = activeKeys.length === 1 ? 'max-w-lg mx-auto' : activeKeys.length === 2 ? 'grid grid-cols-1 md:grid-cols-2 gap-6' : 'grid grid-cols-1 lg:grid-cols-3 gap-6'
+            const colClass = activeKeys.length === 1 ? 'max-w-2xl mx-auto' : activeKeys.length === 2 ? 'grid grid-cols-1 xl:grid-cols-2 gap-5' : 'grid grid-cols-1 xl:grid-cols-3 gap-5'
             return activeKeys.length > 0 ? (
               <div className={colClass}>
                 {activeKeys.map((key) => (
@@ -3833,56 +4217,56 @@ export default function Parts() {
                 ))}
               </div>
             ) : (
-              <div className="text-center py-12 text-gray-400 text-sm">לא נמצאו תוצאות</div>
+              <div className="py-12 text-center text-sm text-slate-400">לא נמצאו תוצאות</div>
             )
           })() : (
             <>
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {displayParts.map((p) => <PartCard key={p.id} part={p} onAddToCart={addItem} />)}
-            {displayParts.length === 0 && filterAvail && (
-              <div className="col-span-3 py-8 text-center text-gray-400 text-sm">
-                אין חלקים עם סטטוס "{filterAvail === 'in_stock' ? 'במלאי' : 'על הזמנה'}" בדף זה
-                <button onClick={() => setFilterAvail('')} className="mr-2 text-brand-600 underline">הצג הכל</button>
+              <div className="grid grid-cols-1 gap-4 sm:gap-5 md:grid-cols-2 xl:grid-cols-3">
+                {displayParts.map((p) => <PartCard key={p.id} part={p} onAddToCart={addItem} />)}
+                {displayParts.length === 0 && filterAvail && (
+                  <div className="col-span-3 rounded-[24px] border border-dashed border-slate-200 py-8 text-center text-sm text-slate-400">
+                    אין חלקים עם סטטוס "{filterAvail === 'in_stock' ? 'במלאי' : 'על הזמנה'}" בדף זה
+                    <button onClick={() => setFilterAvail('')} className="mr-2 font-semibold text-brand-600 underline">הצג הכל</button>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-          {totalCount > PAGE_SIZE && (
-            <div className="flex items-center justify-center gap-2 pt-2 flex-wrap">
-              <button
-                disabled={page === 0}
-                onClick={() => search(page - 1)}
-                className="btn-secondary px-4 py-2 text-sm disabled:opacity-40"
-              >
-                ← הקודם
-              </button>
-              {Array.from({ length: Math.min(5, Math.ceil(totalCount / PAGE_SIZE)) }, (_, i) => {
-                const totalPages = Math.ceil(totalCount / PAGE_SIZE)
-                const start = Math.max(0, Math.min(page - 2, totalPages - 5))
-                const pg = start + i
-                return pg < totalPages ? (
+              {totalCount > PAGE_SIZE && (
+                <div className="flex flex-wrap items-center justify-center gap-2 border-t border-slate-100 pt-4">
                   <button
-                    key={pg}
-                    onClick={() => search(pg)}
-                    className={`px-3 py-2 rounded-lg text-sm font-medium border transition-all ${
-                      pg === page ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-gray-700 border-gray-200 hover:border-brand-400'
-                    }`}
+                    disabled={page === 0}
+                    onClick={() => search(page - 1)}
+                    className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors disabled:opacity-40"
                   >
-                    {pg + 1}
+                    ← הקודם
                   </button>
-                ) : null
-              })}
-              <button
-                disabled={page >= Math.ceil(totalCount / PAGE_SIZE) - 1}
-                onClick={() => search(page + 1)}
-                className="btn-secondary px-4 py-2 text-sm disabled:opacity-40"
-              >
-                הבא →
-              </button>
-            </div>
-          )}
+                  {Array.from({ length: Math.min(5, Math.ceil(totalCount / PAGE_SIZE)) }, (_, i) => {
+                    const totalPages = Math.ceil(totalCount / PAGE_SIZE)
+                    const start = Math.max(0, Math.min(page - 2, totalPages - 5))
+                    const pg = start + i
+                    return pg < totalPages ? (
+                      <button
+                        key={pg}
+                        onClick={() => search(pg)}
+                        className={`min-w-11 rounded-2xl border px-3 py-2.5 text-sm font-bold transition-all ${
+                          pg === page ? 'border-brand-600 bg-brand-600 text-white' : 'border-slate-200 bg-white text-slate-700 hover:border-brand-300'
+                        }`}
+                      >
+                        {pg + 1}
+                      </button>
+                    ) : null
+                  })}
+                  <button
+                    disabled={page >= Math.ceil(totalCount / PAGE_SIZE) - 1}
+                    onClick={() => search(page + 1)}
+                    className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors disabled:opacity-40"
+                  >
+                    הבא →
+                  </button>
+                </div>
+              )}
             </>
           )}
-        </>
+        </section>
       )}
       </div>
     </div>
