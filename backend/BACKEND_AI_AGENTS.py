@@ -55,7 +55,7 @@ import re
 import random
 import string
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from threading import Lock
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse, quote
@@ -1502,27 +1502,67 @@ NEVER:
             raw = vehicle_data.pop("_raw", {})
             gov_cache = {**vehicle_data, "_raw_fields": list(raw.keys())}
 
+            mfr_name = vehicle_data.get("manufacturer") or (vehicle.manufacturer if vehicle else "Unknown")
+
+            # Find manufacturer_id from car_brands or truck_brands to satisfy NOT NULL constraint
+            mfr_id = None
+            for BrandModel in (CarBrand, TruckBrand):
+                mfr_res = await catalog_db.execute(
+                    select(BrandModel.id).where(
+                        or_(
+                            BrandModel.name.ilike(mfr_name),
+                            BrandModel.name_he.ilike(mfr_name),
+                            text(f"(:val)::text = ANY({BrandModel.__tablename__}.aliases)")
+                        )
+                    ).params(val=mfr_name).limit(1)
+                )
+                mfr_id = mfr_res.scalar_one_or_none()
+                if mfr_id:
+                    break
+
+            if not mfr_id:
+                # Substring fallback
+                for BrandModel in (CarBrand, TruckBrand):
+                    mfr_res = await catalog_db.execute(
+                        select(BrandModel.id).where(
+                            or_(
+                                BrandModel.name.ilike(f"%{mfr_name}%"),
+                                BrandModel.name_he.ilike(f"%{mfr_name}%")
+                            )
+                        ).limit(1)
+                    )
+                    mfr_id = mfr_res.scalar_one_or_none()
+                    if mfr_id:
+                        break
+
+            if not mfr_id:
+                # Ultimate fallback to first available brand to prevent crash in discovery flow
+                mfr_res = await catalog_db.execute(select(CarBrand.id).limit(1))
+                mfr_id = mfr_res.scalar_one_or_none()
+
             # Persist / update
             if vehicle:
-                vehicle.manufacturer    = vehicle_data.get("manufacturer") or vehicle.manufacturer
+                vehicle.manufacturer    = mfr_name
+                vehicle.manufacturer_id = mfr_id
                 vehicle.model           = vehicle_data.get("model") or vehicle.model
                 vehicle.year            = vehicle_data.get("year") or vehicle.year
                 vehicle.engine_type     = vehicle_data.get("engine_type") or vehicle.engine_type
                 vehicle.fuel_type       = vehicle_data.get("fuel_type") or vehicle.fuel_type
                 vehicle.transmission    = vehicle_data.get("transmission") or vehicle.transmission
                 vehicle.gov_api_data    = gov_cache
-                vehicle.cached_at       = datetime.utcnow()
+                vehicle.cached_at       = datetime.now(timezone.utc).replace(tzinfo=None)
             else:
                 vehicle = Vehicle(
                     license_plate   = clean_plate,
-                    manufacturer    = vehicle_data.get("manufacturer", ""),
+                    manufacturer    = mfr_name,
+                    manufacturer_id = mfr_id,
                     model           = vehicle_data.get("model", ""),
                     year            = vehicle_data.get("year", 0),
                     engine_type     = vehicle_data.get("engine_type"),
                     fuel_type       = vehicle_data.get("fuel_type"),
                     transmission    = vehicle_data.get("transmission"),
                     gov_api_data    = gov_cache,
-                    cached_at       = datetime.utcnow(),
+                    cached_at       = datetime.now(timezone.utc).replace(tzinfo=None),
                 )
                 catalog_db.add(vehicle)
 

@@ -28,7 +28,7 @@ def upgrade() -> None:
     op.execute("ALTER TABLE parts_catalog DROP COLUMN IF EXISTS embedding")
     op.execute(
         "ALTER TABLE parts_catalog "
-        "ADD COLUMN embedding vector(1536)"
+        "ADD COLUMN embedding vector(3072)"
     )
 
     # 3. Rebuild HNSW index for cosine similarity
@@ -41,15 +41,21 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # 1. Drop HNSW index
     op.execute("DROP INDEX IF EXISTS idx_parts_catalog_embedding")
+
+    # 2. Revert column to 768 dims (from 0009_add_pgvector)
     op.execute("ALTER TABLE parts_catalog DROP COLUMN IF EXISTS embedding")
     op.execute(
         "ALTER TABLE parts_catalog "
-        "ADD COLUMN embedding vector(1536)"
+        "ADD COLUMN embedding vector(768)"
     )
+
+    # 3. Restore IVFFlat index (from 0009_add_pgvector)
     op.execute("""
-        CREATE INDEX idx_parts_catalog_embedding
+        CREATE INDEX IF NOT EXISTS idx_parts_catalog_embedding
         ON parts_catalog
-        USING hnsw (embedding vector_cosine_ops)
+        USING ivfflat (embedding vector_cosine_ops)
+        WITH (lists = 100)
         WHERE embedding IS NOT NULL
     """)

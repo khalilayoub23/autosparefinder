@@ -11,7 +11,7 @@ from fastapi import FastAPI, Depends, HTTPException, status, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from typing import List, Optional, Dict, Any, Literal
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_, func, text
 import logging
@@ -1178,7 +1178,11 @@ async def _health_monitor_loop():
                 from db_update_agent import _last_report
                 last_heartbeat = _extract_dt(_last_report)
                 if last_heartbeat and isinstance(last_heartbeat, datetime):
-                    silence_mins = (datetime.utcnow() - last_heartbeat).total_seconds() / 60
+                    # Ensure both are offset-aware or both are offset-naive
+                    if last_heartbeat.tzinfo is None:
+                        last_heartbeat = last_heartbeat.replace(tzinfo=timezone.utc)
+
+                    silence_mins = (datetime.now(timezone.utc) - last_heartbeat).total_seconds() / 60
 
                     if silence_mins > 120:  # 2 hours
                         _alert_title = "⏱️  Worker db_update_agent: שקט למעל 2 שעות"
