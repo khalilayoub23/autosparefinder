@@ -1532,6 +1532,34 @@ NEVER:
             raw = vehicle_data.pop("_raw", {})
             gov_cache = {**vehicle_data, "_raw_fields": list(raw.keys())}
 
+            raw_manufacturer = str(vehicle_data.get("manufacturer") or "").strip()
+            canonical_manufacturer = normalize_manufacturer_name(raw_manufacturer, raw_manufacturer) or raw_manufacturer or "Unknown"
+            vehicle_data["manufacturer"] = canonical_manufacturer
+
+            brand_row = (
+                await catalog_db.execute(
+                    select(CarBrand)
+                    .where(func.lower(CarBrand.name) == canonical_manufacturer.casefold())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if not brand_row:
+                brand_row = CarBrand(name=canonical_manufacturer, is_active=True)
+                catalog_db.add(brand_row)
+                try:
+                    await catalog_db.flush()
+                except Exception:
+                    await catalog_db.rollback()
+                    brand_row = (
+                        await catalog_db.execute(
+                            select(CarBrand)
+                            .where(func.lower(CarBrand.name) == canonical_manufacturer.casefold())
+                            .limit(1)
+                        )
+                    ).scalar_one_or_none()
+                    if not brand_row:
+                        raise
+
             # Persist / update
             if vehicle:
                 vehicle.manufacturer    = vehicle_data.get("manufacturer") or vehicle.manufacturer
@@ -1542,10 +1570,13 @@ NEVER:
                 vehicle.transmission    = vehicle_data.get("transmission") or vehicle.transmission
                 vehicle.gov_api_data    = gov_cache
                 vehicle.cached_at       = datetime.utcnow()
+                if getattr(vehicle, "manufacturer_id", None) != brand_row.id:
+                    vehicle.manufacturer_id = brand_row.id
             else:
                 vehicle = Vehicle(
                     license_plate   = clean_plate,
-                    manufacturer    = vehicle_data.get("manufacturer", ""),
+                    manufacturer    = canonical_manufacturer,
+                    manufacturer_id = brand_row.id,
                     model           = vehicle_data.get("model", ""),
                     year            = vehicle_data.get("year", 0),
                     engine_type     = vehicle_data.get("engine_type"),

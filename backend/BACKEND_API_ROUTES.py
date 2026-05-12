@@ -11,7 +11,7 @@ from fastapi import FastAPI, Depends, HTTPException, status, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from typing import List, Optional, Dict, Any, Literal
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_, func, text
 import logging
@@ -1214,21 +1214,30 @@ async def _health_monitor_loop():
             def _extract_dt(report) -> Optional[datetime]:
                 if report is None:
                     return None
+
+                dt: Optional[datetime] = None
                 if isinstance(report, datetime):
-                    return report
-                if isinstance(report, str):
-                    try:
-                        return datetime.fromisoformat(report)
-                    except Exception:
-                        return None
-                if isinstance(report, dict):
+                    dt = report
+                elif isinstance(report, str):
+                    raw = report.strip()
+                    if raw:
+                        try:
+                            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                        except Exception:
+                            dt = None
+                elif isinstance(report, dict):
                     ts = report.get("updated_at") or report.get("completed_at") or report.get("started_at")
                     if ts:
                         try:
-                            return datetime.fromisoformat(str(ts))
+                            dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
                         except Exception:
-                            return None
-                return None
+                            dt = None
+
+                if dt is None:
+                    return None
+                if dt.tzinfo is not None:
+                    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+                return dt
 
             try:
                 from db_update_agent import _last_report
