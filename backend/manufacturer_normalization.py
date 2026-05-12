@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import re
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
+from sqlalchemy import select, or_, text
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 PARTS_BRANDS = {
     "bosch",
@@ -314,6 +317,50 @@ def normalize_vehicle_model_name(raw: Optional[str]) -> str:
         return ""
 
     return v
+
+async def resolve_brand_id(manufacturer_name: str, db: AsyncSession) -> Optional[object]:
+    """Resolve a manufacturer name to its primary ID from car_brands or truck_brands.
+    This is required to satisfy NOT NULL constraints on the vehicles table.
+    """
+    from BACKEND_DATABASE_MODELS import CarBrand, TruckBrand
+
+    if not manufacturer_name or not manufacturer_name.strip():
+        # Ultimate fallback: return ID of first brand to avoid constraint crashes
+        res = await db.execute(select(CarBrand.id).limit(1))
+        return res.scalar_one_or_none()
+
+    mfr = manufacturer_name.strip()
+
+    # 1. Exact or alias match
+    for BrandModel in (CarBrand, TruckBrand):
+        stmt = select(BrandModel.id).where(
+            or_(
+                BrandModel.name.ilike(mfr),
+                BrandModel.name_he.ilike(mfr),
+                text(f"(:val)::text = ANY({BrandModel.__tablename__}.aliases)")
+            )
+        ).params(val=mfr).limit(1)
+        res = await db.execute(stmt)
+        mfr_id = res.scalar_one_or_none()
+        if mfr_id:
+            return mfr_id
+
+    # 2. Fuzzy substring match
+    for BrandModel in (CarBrand, TruckBrand):
+        stmt = select(BrandModel.id).where(
+            or_(
+                BrandModel.name.ilike(f"%{mfr}%"),
+                BrandModel.name_he.ilike(f"%{mfr}%")
+            )
+        ).limit(1)
+        res = await db.execute(stmt)
+        mfr_id = res.scalar_one_or_none()
+        if mfr_id:
+            return mfr_id
+
+    # 3. Last resort: Return first available brand ID
+    res = await db.execute(select(CarBrand.id).limit(1))
+    return res.scalar_one_or_none()
 
 
 def canonicalize_vehicle_model_for_manufacturer(manufacturer: Optional[str], model: Optional[str]) -> str:

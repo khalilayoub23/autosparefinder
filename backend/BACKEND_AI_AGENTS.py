@@ -139,16 +139,23 @@ def _inject_shared_memory_context(history: List[Dict[str, str]], shared_memory_p
 
 
 def _build_vehicle_memory_summary(vehicle_profile: Dict[str, Any]) -> str:
-    return ", ".join(
-        part
-        for part in [
-            str(vehicle_profile.get("manufacturer") or "").strip(),
-            str(vehicle_profile.get("model") or "").strip(),
-            str(vehicle_profile.get("year") or "").strip(),
-            str(vehicle_profile.get("engine_type") or "").strip(),
-        ]
-        if part
-    )
+    parts = [
+        str(vehicle_profile.get("manufacturer") or "").strip(),
+        str(vehicle_profile.get("model") or "").strip(),
+        str(vehicle_profile.get("year") or "").strip(),
+        str(vehicle_profile.get("engine_type") or "").strip(),
+    ]
+
+    # Add human details for Detail Mirroring (trust building)
+    color = vehicle_profile.get("color")
+    if color:
+        parts.append(f"color: {color}")
+
+    test_date = vehicle_profile.get("last_test_date")
+    if test_date:
+        parts.append(f"last test: {test_date}")
+
+    return ", ".join(p for p in parts if p)
 
 
 def _extract_shared_memory_updates(
@@ -1186,9 +1193,13 @@ class RouterAgent(BaseAgent):
     agent_name = "Avi"          # אבי — the smart dispatcher
     model = FREE_MODEL          # routing is simple — free tier is fine
     temperature = 0.1  # deterministic routing
-    system_prompt = """You are Avi, the routing agent for Auto Spare, an Israeli auto parts dropshipping platform.
+    system_prompt = """You are Avi, the smart dispatcher for Auto Spare.
 
-Your ONLY job is to identify which specialized agent should handle the user's message.
+INTELLIGENCE LAYER:
+- Analyze sentiment: If the user is angry, frustrated, or uses words like "בעיה", "גרוע", "תקלה", route immediately to service_agent regardless of the technical topic.
+- Continuity: If the message is a short confirmation (yes/no/1/2/3) following a parts search, stick with the current agent.
+
+Your job is to identify which specialized agent should handle the user's message.
 
 Available agents:
 - parts_finder_agent: License plate lookup, VIN/OEM number identification, part identification from image or audio description. VIN search, barcode scans, and image uploads all route here. Do NOT use for general part price or availability questions.
@@ -1258,7 +1269,11 @@ class PartsFinderAgent(BaseAgent):
     agent_name = "Nir"          # ניר — the parts expert
     model = PREMIUM_MODEL       # premium: complex Hebrew part-matching & pricing
     system_prompt = """You are Nir, a sharp and friendly parts specialist at AutoSpareFinder.
-Your personality: confident, efficient, warm. You find the right part fast and guide the customer to purchase.
+Your personality: confident, efficient, warm.
+
+HUMAN-LIKE ABILITIES:
+- DETAIL MIRRORING: When vehicle info is found from a plate, mention a human detail like "I see it's a [Color] [Model]" or "Your last test was on [Date], everything looks good." This builds trust.
+- PROACTIVE SEARCH: If an exact part isn't found, don't just say "No." Suggest the most common alternative or ask for the OEM number which you can "cross-reference with my database."
 
 LANGUAGE: Match the customer's language exactly. Hebrew → Hebrew. Arabic → Arabic. English → English. Never mix.
 
@@ -2292,10 +2307,10 @@ STEP 2 — PRESENT RESULTS from the catalog data injected below, as tiers:
   Always show: מחיר ללא מע"מ + מע"מ 18% + משלוח ₪29–₪149 לפי ספק = סה"כ
   If only one type is available, present it and explain why it's the best choice.
 
-STEP 3 — UPSELL SMART:
-  After presenting the part, suggest a complementary part from the catalog data:
-  (brake disc → suggest brake pads, oil filter → suggest engine oil, etc.)
-  Example: "יש לך כבר רפידות? החלפה ביחד חוסכת עבודה ומבטיחה בלימה מיטבית!"
+STEP 3 — CONSULTATIVE UPSELLING:
+  Instead of just listing a part, explain the professional reasoning:
+  (brake disc → suggest brake pads) "Safety check: since you're replacing discs, I highly recommend new pads. Installing old pads on new discs can cause uneven wear and noise."
+  (oil filter → suggest engine oil) "Maintenance tip: Changing the filter without fresh oil is only half the job. Want me to add the correct synthetic oil for your engine?"
 
 STEP 4 — CLOSE THE DEAL:
   End every response with a clear call to action.
@@ -2995,10 +3010,10 @@ CUSTOMER TYPE TARGETING:
 - vip: exclusive early-access deals, higher discount tiers, personal follow-up
 - wholesale: bulk pricing emphasis, B2B campaign messaging
 
-SEARCH MISS SIGNALS:
-- Review the search_misses table (populated when customers search for unavailable parts) to identify trending demand.
-- If a category has > 5 misses in 7 days → suggest a targeted campaign once stock is added.
-- Phrase: "אנחנו עובדים להביא עוד {category} — הישארו מעודכנים!"
+SEARCH MISS SIGNALS & ADAPTIVE CONTENT:
+- Review trending demand from the search_misses context.
+- ADAPTIVE ABILITY: If you see many misses for a brand (e.g., Tesla), generate a "Coming Soon" or "Now Expanding" post for that brand specifically.
+- Use the footer links to drive these "missed" customers to sign up for stock alerts on WhatsApp.
 
 LANGUAGE: ALWAYS respond in Hebrew (עברית). If the customer writes in Arabic, respond in Arabic. Never respond in any other language.
 """
@@ -4231,7 +4246,30 @@ async def process_agent_response_for_message(
         conversation_id=str(conversation.id),
         agent_name=None,
     )
+
+    # ── Intelligence Layer: Inject trending search misses for Marketing/Social ──
+    search_miss_context = ""
+    try:
+        miss_res = await db.execute(text("""
+            SELECT category, COUNT(*) as miss_count
+            FROM search_misses
+            WHERE last_seen_at > NOW() - INTERVAL '7 days'
+            GROUP BY category
+            ORDER BY miss_count DESC
+            LIMIT 3
+        """))
+        misses = miss_res.fetchall()
+        if misses:
+            search_miss_context = "\n[TRENDING DEMAND (MISSES)]\n" + "\n".join(
+                f"- {m[0]}: {m[1]} requests" for m in misses if m[0]
+            )
+    except Exception:
+        pass
+
     shared_memory_prompt = _render_shared_memory_prompt(shared_memory_rows)
+    if search_miss_context:
+        shared_memory_prompt += search_miss_context
+
     history_for_agents = _inject_shared_memory_context(history, shared_memory_prompt)
 
     # Route to correct agent

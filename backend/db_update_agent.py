@@ -46,9 +46,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from currency_rate import get_usd_to_ils_rate
 from resilience import job_registry_start, job_registry_finish
-from manufacturer_normalization import PARTS_BRANDS, canonicalize_vehicle_model_for_manufacturer
-from manufacturer_normalization import normalize_vehicle_model_name, normalize_vehicle_submodel_name
-from manufacturer_normalization import normalize_manufacturer_name
+from manufacturer_normalization import (
+    PARTS_BRANDS,
+    canonicalize_vehicle_model_for_manufacturer,
+    normalize_vehicle_model_name,
+    normalize_vehicle_submodel_name,
+    normalize_manufacturer_name,
+    resolve_brand_id
+)
 from categories import CATEGORY_MAP as SHARED_CATEGORY_MAP
 
 logger = logging.getLogger("db_update_agent")
@@ -1058,12 +1063,13 @@ async def sync_models_from_catalog(db: AsyncSession) -> Dict[str, Any]:
             if exists:
                 continue
 
+            mfr_id = await resolve_brand_id(mfr, db)
             await db.execute(text("""
                 INSERT INTO vehicles
-                    (id, license_plate, manufacturer, model, year, vin, created_at)
+                    (id, license_plate, manufacturer, manufacturer_id, model, year, vin, created_at)
                 VALUES
-                    (gen_random_uuid(), NULL, :mfr, :model, :year, NULL, NOW())
-            """), {"mfr": mfr, "model": model, "year": year})
+                    (gen_random_uuid(), NULL, :mfr, :mfr_id, :model, :year, NULL, NOW())
+            """), {"mfr": mfr, "mfr_id": mfr_id, "model": model, "year": year})
             inserted += 1
 
     await db.commit()
@@ -1252,13 +1258,15 @@ async def sync_models_from_catalog_file(db: AsyncSession) -> Dict[str, Any]:
             if exists:
                 continue
 
+            mfr_id = await resolve_brand_id(target_mfr, db)
             await db.execute(text("""
                 INSERT INTO vehicles
-                    (id, license_plate, manufacturer, model, year, vin, gov_api_data, created_at)
+                    (id, license_plate, manufacturer, manufacturer_id, model, year, vin, gov_api_data, created_at)
                 VALUES
-                    (gen_random_uuid(), NULL, :mfr, :model, :year, NULL, CAST(:gov AS jsonb), NOW())
+                    (gen_random_uuid(), NULL, :mfr, :mfr_id, :model, :year, NULL, CAST(:gov AS jsonb), NOW())
             """), {
                 "mfr": target_mfr,
+                "mfr_id": mfr_id,
                 "model": model,
                 "year": int(year_hint or 0),
                 "gov": json.dumps({"sub_model": sub_model} if sub_model else {}, ensure_ascii=False),
