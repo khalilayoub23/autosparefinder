@@ -160,14 +160,14 @@ const NirChatOverlay = () => {
         whileHover={{ scale: 1.05 }}
         whileTap={{ scale: 0.95 }}
         onClick={() => setIsOpen(!isOpen)}
-        className={`group flex items-center gap-5 bg-[#1B2228]/90 hover:bg-[#1B2228] border border-white/10 p-2.5 pr-8 rounded-full transition-all backdrop-blur-xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] ${isOpen ? 'opacity-0 scale-0' : 'opacity-100 scale-100'}`}
+        className={`group flex items-center gap-5 bg-[#1B2228]/90 hover:bg-[#1B2228] border border-white/10 p-2.5 pl-8 rounded-full transition-all backdrop-blur-xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] ${isOpen ? 'opacity-0 scale-0' : 'opacity-100 scale-100'}`}
       >
-        <div className="w-14 h-14 bg-gradient-to-tr from-[#00CCFF] to-[#0066FF] rounded-full flex items-center justify-center shadow-[0_0_30px_rgba(0,163,255,0.4)] group-hover:scale-110 transition-transform duration-300">
-          <MessageCircle className="text-white w-7 h-7" />
-        </div>
-        <div className="text-right">
+        <div className="text-left">
           <p className="text-[10px] text-[#00CCFF] uppercase tracking-[0.2em] font-black mb-0.5">Assistant</p>
           <p className="text-lg font-black tracking-tight text-white leading-none">Talk to Nir</p>
+        </div>
+        <div className="w-14 h-14 bg-gradient-to-tr from-[#00CCFF] to-[#0066FF] rounded-full flex items-center justify-center shadow-[0_0_30px_rgba(0,163,255,0.4)] group-hover:scale-110 transition-transform duration-300">
+          <MessageCircle className="text-white w-7 h-7" />
         </div>
       </motion.button>
     </div>

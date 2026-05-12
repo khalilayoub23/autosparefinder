@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useNavigate, Link } from 'react-router-dom';
 import { Search, LogIn } from 'lucide-react';
@@ -28,6 +28,14 @@ const FloatingPart = ({ children, delay = 0, duration = 5, x = 0, y = 0, scale =
 const LandingPage = () => {
   const navigate = useNavigate();
 
+  useEffect(() => {
+    // Force LTR for landing page to match 1:1 design exactly
+    document.documentElement.dir = 'ltr';
+    return () => {
+      document.documentElement.dir = 'rtl';
+    };
+  }, []);
+
   return (
     <div className="relative min-h-screen w-full bg-[#0A0F14] overflow-hidden flex flex-col items-center justify-center text-white font-sans selection:bg-[#00CCFF] selection:text-[#0A0F14]">
       {/* Background Glows */}
@@ -35,28 +43,26 @@ const LandingPage = () => {
       <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-cyan-600/10 blur-[140px] rounded-full" />
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full h-full bg-[radial-gradient(circle_at_center,rgba(0,163,255,0.05)_0%,transparent_70%)] pointer-events-none" />
 
-      {/* Floating 3D Parts */}
+      {/* Floating 3D Parts - 1:1 Match with Real Assets */}
       <div className="absolute inset-0 z-0">
+        {/* Piston / Engine */}
         <FloatingPart x={-450} y={-220} delay={0} duration={8} scale={1.2} rotation={15}>
-          <div className="w-28 h-40 bg-gradient-to-br from-gray-300 to-gray-600 rounded-lg shadow-2xl opacity-20 border border-white/10" />
+          <img src="/part-family/real/engine.jpg" className="w-32 h-32 object-cover rounded-3xl opacity-20 grayscale brightness-150 mix-blend-screen shadow-2xl" alt="Piston" />
         </FloatingPart>
 
+        {/* Brake Rotor */}
         <FloatingPart x={500} y={-180} delay={1.5} duration={10} scale={1.4} rotation={-10}>
-          <div className="w-40 h-40 border-[16px] border-gray-400/20 rounded-full shadow-2xl opacity-20 flex items-center justify-center">
-            <div className="w-12 h-12 border-4 border-gray-400/20 rounded-full" />
-          </div>
+          <img src="/part-family/real/brakes.jpg" className="w-40 h-40 object-cover rounded-full opacity-20 grayscale brightness-150 mix-blend-screen shadow-2xl" alt="Brake Rotor" />
         </FloatingPart>
 
+        {/* Coil Spring / Suspension */}
         <FloatingPart x={-400} y={250} delay={3} duration={7} scale={1.1} rotation={45}>
-          <div className="w-16 h-48 bg-gradient-to-r from-gray-400/20 to-gray-600/20 rounded-full border-4 border-dashed border-gray-400/20 opacity-20" />
+          <img src="/part-family/real/suspension-steering.jpg" className="w-32 h-40 object-cover rounded-2xl opacity-20 grayscale brightness-150 mix-blend-screen shadow-2xl" alt="Coil Spring" />
         </FloatingPart>
 
+        {/* Wheel */}
         <FloatingPart x={420} y={300} delay={0.5} duration={9} scale={1.3} rotation={-20}>
-          <div className="w-32 h-32 rounded-full border-[12px] border-gray-500/20 opacity-20 relative">
-             {[...Array(8)].map((_, i) => (
-                <div key={i} className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full h-4 bg-gray-500/20" style={{ transform: `translate(-50%, -50%) rotate(${i * 45}deg)` }} />
-             ))}
-          </div>
+          <img src="/part-family/real/wheels-bearings.jpg" className="w-36 h-36 object-cover rounded-full opacity-20 grayscale brightness-150 mix-blend-screen shadow-2xl" alt="Wheel" />
         </FloatingPart>
 
         {[...Array(12)].map((_, i) => (
@@ -73,11 +79,8 @@ const LandingPage = () => {
         ))}
       </div>
 
-      {/* Header */}
+      {/* Header - 1:1 Match: Login Left, Logo Right */}
       <header className="absolute top-0 left-0 right-0 p-6 md:p-10 flex justify-between items-center z-20">
-        <div className="flex items-center">
-          <BrandLogo size="dashboard" className="!h-12 md:!h-16" blend />
-        </div>
         <Link
           to="/login"
           className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 transition-all text-sm font-bold tracking-wide backdrop-blur-md"
@@ -85,6 +88,9 @@ const LandingPage = () => {
           <LogIn className="w-4 h-4" />
           Login
         </Link>
+        <div className="flex items-center">
+          <BrandLogo size="dashboard" className="!h-12 md:!h-16" blend />
+        </div>
       </header>
 
       {/* Main Content */}
@@ -113,7 +119,7 @@ const LandingPage = () => {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ delay: 0.6, duration: 1 }}
-              className="text-2xl md:text-3xl text-white font-bold leading-relaxed" dir="rtl"
+              className="text-2xl md:text-3xl text-white font-bold leading-relaxed"
             >
               הדרך החכמה ביותר למצוא חלקי חילוף לרכב שלך
             </motion.p>
@@ -123,7 +129,7 @@ const LandingPage = () => {
               transition={{ delay: 0.8, duration: 1 }}
               className="text-xl md:text-2xl text-gray-500 font-medium"
             >
-              أذكى طريقة للعثور على قطع غيار لسيارتك
+              أذكى طريقة للعثור على قطع غيار لسيارتك
             </motion.p>
           </div>
         </motion.div>
@@ -139,8 +145,8 @@ const LandingPage = () => {
             onClick={() => navigate('/parts')}
             className="relative px-12 py-5 rounded-2xl bg-gradient-to-r from-[#00A3FF] to-[#0066FF] text-white font-black text-2xl shadow-2xl transition-all flex items-center gap-4 hover:translate-y-[-2px] active:translate-y-[1px]"
           >
-            <Search className="w-7 h-7" />
             Start Search
+            <Search className="w-7 h-7" />
           </button>
         </motion.div>
       </main>
