@@ -4068,7 +4068,24 @@ async def scraper_background_loop():
                     print(f"[Scraper] Category discovery error: {str(exc)[:500]}")
                 await asyncio.sleep(10)
 
-            # Job 2d — Transport Office Pipeline scheduling (midnight only)
+            # Job 2d — eBay price sync (midnight only)
+            if is_midnight_run:
+                try:
+                    from services.ebay_price_sync import sync_ebay_prices
+                    async with scraper_session_factory() as ebay_db:
+                        ebay_report = await sync_ebay_prices(
+                            ebay_db,
+                            limit_per_run=int(os.getenv("EBAY_PRICE_SYNC_LIMIT", "4400"))
+                        )
+                        print(f"[Rex] eBay sync: checked={ebay_report['parts_checked']} "
+                              f"updated={ebay_report['parts_updated']} "
+                              f"not_found={ebay_report['parts_not_found']}")
+                except Exception as exc:
+                    print(f"[Rex] eBay sync error: {exc}")
+
+                await asyncio.sleep(10)
+
+            # Job 2e — Transport Office Pipeline scheduling (midnight only)
             if is_midnight_run:
                 try:
                     await run_transport_pipeline_if_due()
