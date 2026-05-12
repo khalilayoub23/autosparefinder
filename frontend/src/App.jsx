@@ -9,6 +9,7 @@ import ResetPassword from './pages/ResetPassword'
 import Privacy from './pages/Privacy'
 import Terms from './pages/Terms'
 import Refund from './pages/Refund'
+import LandingPage from './pages/LandingPage'
 import Chat from './pages/Chat'
 import Parts from './pages/Parts'
 import Orders from './pages/Orders'
@@ -62,9 +63,12 @@ export default function App() {
           <Route path="/terms" element={<Terms />} />
           <Route path="/refund" element={<Refund />} />
 
+          {/* Public Landing Page */}
+          <Route path="/" element={<LandingPage />} />
+
           {/* Main app routes with top layout */}
           <Route
-            path="/"
+            path="/chat"
             element={
               <ProtectedRoute>
                 <Layout>
