@@ -317,12 +317,55 @@ export default function Agents() {
   const [agentSearch, setAgentSearch] = useState('')
   const [agentTypeFilter, setAgentTypeFilter] = useState('all')
   const [agentModeFilter, setAgentModeFilter] = useState('all')
+  const [loadingTaskLogs, setLoadingTaskLogs] = useState(false)
+  const [taskLogFilters, setTaskLogFilters] = useState({
+    agent: '',
+    source: 'all',
+    actionType: 'all',
+    success: 'all',
+    search: '',
+  })
+
+
+  const buildUsageParams = (filters = taskLogFilters) => {
+    const params = {
+      days: 14,
+      limit: 120,
+      memory_limit: 80,
+      action_limit: 180,
+    }
+    const agent = (filters?.agent || '').trim()
+    const source = String(filters?.source || 'all')
+    const actionType = (filters?.actionType || '').trim()
+    const success = String(filters?.success || 'all')
+    const search = (filters?.search || '').trim()
+
+    if (agent) params.task_agent_name = agent
+    if (source && source !== 'all') params.task_source = source
+    if (actionType && actionType !== 'all') params.task_action_type = actionType
+    if (success === 'success') params.task_success = true
+    if (success === 'error') params.task_success = false
+    if (search) params.task_search = search
+    return params
+  }
+
+  const loadUsageLogs = async (filters = taskLogFilters, { silent = false } = {}) => {
+    setLoadingTaskLogs(true)
+    try {
+      const { data } = await api.get('/admin/agents/usage', { params: buildUsageParams(filters) })
+      setUsage(data || null)
+    } catch (e) {
+      if (!silent) toast.error(e?.response?.data?.detail || 'שגיאה בטעינת לוגים')
+    } finally {
+      setLoadingTaskLogs(false)
+    }
+  }
 
   useEffect(() => {
     Promise.all([
       api.get('/admin/agents'),
       api.get('/admin/agents/runtime/tokens').catch(() => ({ data: null })),
-      api.get('/admin/agents/usage', { params: { days: 14, limit: 120, memory_limit: 80, action_limit: 180 } }).catch(() => ({ data: null })),
+      api.get('/admin/agents/usage', { params: buildUsageParams(taskLogFilters) }).catch(() => ({ data: null })),
     ])
       .then(([agentsRes, tokenRes, usageRes]) => {
         setData(agentsRes.data)
@@ -342,6 +385,16 @@ export default function Agents() {
       .catch(() => toast.error('שגיאה בטעינת סוכנים'))
       .finally(() => setLoading(false))
   }, [])
+
+  const applyTaskLogFilters = () => {
+    loadUsageLogs(taskLogFilters)
+  }
+
+  const clearTaskLogFilters = () => {
+    const defaults = { agent: '', source: 'all', actionType: 'all', success: 'all', search: '' }
+    setTaskLogFilters(defaults)
+    loadUsageLogs(defaults, { silent: true })
+  }
 
   const providerOptions = Object.keys(tokenStatuses).length
     ? Object.values(tokenStatuses)
@@ -386,7 +439,7 @@ export default function Agents() {
       const [freshAgents, freshTokens, usageRes] = await Promise.all([
         api.get('/admin/agents'),
         api.get('/admin/agents/runtime/tokens').catch(() => ({ data: null })),
-        api.get('/admin/agents/usage', { params: { days: 14, limit: 120, memory_limit: 80, action_limit: 180 } }).catch(() => ({ data: null })),
+        api.get('/admin/agents/usage', { params: buildUsageParams(taskLogFilters) }).catch(() => ({ data: null })),
       ])
       setData(freshAgents.data)
       setUsage(usageRes?.data || usage)
@@ -446,6 +499,8 @@ export default function Agents() {
   const usageRecent = usage?.recent || []
   const usageTaskLogs = usage?.task_logs || []
   const sharedMemoryRows = usage?.shared_memory || []
+  const taskLogSourceOptions = Array.from(new Set((usageTaskLogs || []).map((r) => r.source).filter(Boolean))).sort()
+  const taskLogActionOptions = Array.from(new Set((usageTaskLogs || []).map((r) => r.action_type).filter(Boolean))).sort()
 
   const formatUsageTs = (isoValue) => {
     if (!isoValue) return '—'
@@ -620,6 +675,57 @@ export default function Agents() {
             <h3 className="text-sm font-semibold text-brand-navy">לוג משימות סוכנים (מלא)</h3>
             <span className="text-xs text-gray-500">{usageTaskLogs.length} פעולות</span>
           </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-2 mb-3">
+            <input
+              className="input-field text-sm"
+              placeholder="Agent name"
+              value={taskLogFilters.agent}
+              onChange={(e) => setTaskLogFilters((f) => ({ ...f, agent: e.target.value }))}
+            />
+            <select
+              className="input-field text-sm"
+              value={taskLogFilters.source}
+              onChange={(e) => setTaskLogFilters((f) => ({ ...f, source: e.target.value }))}
+            >
+              <option value="all">All sources</option>
+              {taskLogSourceOptions.map((src) => (
+                <option key={src} value={src}>{src}</option>
+              ))}
+            </select>
+            <select
+              className="input-field text-sm"
+              value={taskLogFilters.actionType}
+              onChange={(e) => setTaskLogFilters((f) => ({ ...f, actionType: e.target.value }))}
+            >
+              <option value="all">All actions</option>
+              {taskLogActionOptions.map((act) => (
+                <option key={act} value={act}>{act}</option>
+              ))}
+            </select>
+            <select
+              className="input-field text-sm"
+              value={taskLogFilters.success}
+              onChange={(e) => setTaskLogFilters((f) => ({ ...f, success: e.target.value }))}
+            >
+              <option value="all">All statuses</option>
+              <option value="success">Success only</option>
+              <option value="error">Errors only</option>
+            </select>
+            <input
+              className="input-field text-sm"
+              placeholder="Search in/out/error"
+              value={taskLogFilters.search}
+              onChange={(e) => setTaskLogFilters((f) => ({ ...f, search: e.target.value }))}
+              onKeyDown={(e) => { if (e.key === 'Enter') applyTaskLogFilters() }}
+            />
+          </div>
+
+          <div className="flex items-center justify-end gap-2 mb-3">
+            <button className="btn-secondary text-xs" onClick={clearTaskLogFilters} disabled={loadingTaskLogs}>Clear</button>
+            <button className="btn-primary text-xs" onClick={applyTaskLogFilters} disabled={loadingTaskLogs}>{loadingTaskLogs ? 'Loading...' : 'Apply filters'}</button>
+          </div>
+
           <div className="space-y-2 max-h-80 overflow-auto pr-1">
             {usageTaskLogs.slice(0, 80).map((row) => (
               <div key={row.id} className="rounded-xl border border-brand-100 px-3 py-2">

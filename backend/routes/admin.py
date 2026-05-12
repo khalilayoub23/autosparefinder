@@ -3956,6 +3956,11 @@ async def get_agents_usage_dashboard(
     limit: int = Query(120, ge=1, le=500),
     memory_limit: int = Query(80, ge=1, le=400),
     action_limit: int = Query(180, ge=20, le=1000),
+    task_agent_name: Optional[str] = Query(None),
+    task_source: Optional[str] = Query(None),
+    task_action_type: Optional[str] = Query(None),
+    task_success: Optional[bool] = Query(None),
+    task_search: Optional[str] = Query(None),
     current_user: User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_pii_db),
 ):
@@ -3980,14 +3985,54 @@ async def get_agents_usage_dashboard(
         )
     ).scalars().all()
 
+    action_stmt = select(AgentAction).where(AgentAction.created_at >= cutoff)
+    if (task_agent_name or "").strip():
+        action_stmt = action_stmt.where(AgentAction.agent_name.ilike(f"%{task_agent_name.strip()}%"))
+    if (task_action_type or "").strip():
+        action_stmt = action_stmt.where(AgentAction.action_type.ilike(f"%{task_action_type.strip()}%"))
+    if task_success is not None:
+        action_stmt = action_stmt.where(AgentAction.success == bool(task_success))
+
+    _action_prefetch_limit = min(max(action_limit * 4, action_limit), 1000)
     action_rows = (
         await db.execute(
-            select(AgentAction)
-            .where(AgentAction.created_at >= cutoff)
+            action_stmt
             .order_by(AgentAction.created_at.desc())
-            .limit(action_limit)
+            .limit(_action_prefetch_limit)
         )
     ).scalars().all()
+
+    _task_source_norm = (task_source or "").strip().lower()
+    _task_search_norm = (task_search or "").strip().lower()
+    if _task_source_norm or _task_search_norm:
+        filtered_actions = []
+        for _row in action_rows:
+            _data = _row.action_data if isinstance(_row.action_data, dict) else {}
+            _source = str(_data.get("source") or "").strip().lower()
+            _route = _data.get("route_result") if isinstance(_data.get("route_result"), dict) else {}
+
+            if _task_source_norm and _source != _task_source_norm:
+                continue
+
+            if _task_search_norm:
+                _hay = " ".join(
+                    [
+                        str(_row.agent_name or ""),
+                        str(_row.action_type or ""),
+                        str(_row.error_message or ""),
+                        str(_route.get("intent") or ""),
+                        str(_data.get("message_preview") or ""),
+                        str(_data.get("response_preview") or ""),
+                    ]
+                ).lower()
+                if _task_search_norm not in _hay:
+                    continue
+
+            filtered_actions.append(_row)
+
+        action_rows = filtered_actions
+
+    action_rows = action_rows[:action_limit]
 
     by_agent: Dict[str, Dict[str, Any]] = {}
     total_runs = len(usage_rows)
@@ -4116,6 +4161,13 @@ async def get_agents_usage_dashboard(
         "by_agent": by_agent_out,
         "recent": recent,
         "task_logs": task_logs,
+        "task_log_filters": {
+            "task_agent_name": (task_agent_name or "").strip() or None,
+            "task_source": _task_source_norm or None,
+            "task_action_type": (task_action_type or "").strip() or None,
+            "task_success": task_success,
+            "task_search": _task_search_norm or None,
+        },
         "shared_memory": shared_memory,
     }
 
