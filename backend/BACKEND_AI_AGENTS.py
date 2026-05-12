@@ -107,6 +107,10 @@ def _truncate_memory_value(value: Any, max_len: int = _SHARED_MEMORY_MAX_VALUE_L
     return text_value[: max_len - 1].rstrip() + "..."
 
 
+def _compact_preview(value: Any, max_len: int = 240) -> str:
+    return _truncate_memory_value(value, max_len=max_len)
+
+
 def _render_shared_memory_prompt(memory_rows: List[Dict[str, Any]]) -> str:
     if not memory_rows:
         return ""
@@ -4387,7 +4391,12 @@ async def process_agent_response_for_message(
         message_id=assistant_msg.id,
         agent_name=agent_name,
         action_type="respond",
-        action_data={"route_result": route_result},
+        action_data={
+            "source": source,
+            "route_result": route_result,
+            "conversation_id": str(conversation.id),
+            "response_preview": _compact_preview(response_text),
+        },
         success=agent_error is None,
         error_message=agent_error,
         execution_time_ms=exec_ms,
@@ -4787,6 +4796,22 @@ async def process_user_message(
     )
     db.add(user_msg)
     await db.flush()
+
+    db.add(AgentAction(
+        message_id=user_msg.id,
+        agent_name="router_agent",
+        action_type="inbound_message",
+        action_data={
+            "source": source,
+            "conversation_id": str(conversation.id),
+            "parts_flow_active": bool(parts_flow_active),
+            "incoming_plate": bool(incoming_plate),
+            "message_preview": _compact_preview(message),
+            "message_length": len(str(message or "")),
+        },
+        success=True,
+        execution_time_ms=0,
+    ))
 
     plate_just_captured = bool(known_plate) and not had_plate_before
     quick_part_choice = _quick_part_from_message(message)
@@ -5395,6 +5420,22 @@ async def process_user_message(
 
     response_text = _sanitize_internal_pricing_disclosure(response_text)
 
+    db.add(AgentAction(
+        message_id=user_msg.id,
+        agent_name=route_result.get("agent", agent_name),
+        action_type="routing_decision",
+        action_data={
+            "source": source,
+            "conversation_id": str(conversation.id),
+            "parts_flow_active": bool(parts_flow_active),
+            "model_used": model_used,
+            "route_result": route_result,
+        },
+        success=agent_error is None,
+        error_message=agent_error,
+        execution_time_ms=exec_ms,
+    ))
+
     # Persist state updates for this turn.
     conversation.context = context_data
     conversation.current_agent = agent_name
@@ -5417,7 +5458,12 @@ async def process_user_message(
         message_id=assistant_msg.id,
         agent_name=agent_name,
         action_type="respond",
-        action_data={"route_result": route_result},
+        action_data={
+            "source": source,
+            "route_result": route_result,
+            "conversation_id": str(conversation.id),
+            "response_preview": _compact_preview(response_text),
+        },
         success=agent_error is None,
         error_message=agent_error,
         execution_time_ms=exec_ms,

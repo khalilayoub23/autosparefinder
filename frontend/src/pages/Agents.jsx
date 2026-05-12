@@ -322,7 +322,7 @@ export default function Agents() {
     Promise.all([
       api.get('/admin/agents'),
       api.get('/admin/agents/runtime/tokens').catch(() => ({ data: null })),
-      api.get('/admin/agents/usage', { params: { days: 14, limit: 120, memory_limit: 80 } }).catch(() => ({ data: null })),
+      api.get('/admin/agents/usage', { params: { days: 14, limit: 120, memory_limit: 80, action_limit: 180 } }).catch(() => ({ data: null })),
     ])
       .then(([agentsRes, tokenRes, usageRes]) => {
         setData(agentsRes.data)
@@ -386,7 +386,7 @@ export default function Agents() {
       const [freshAgents, freshTokens, usageRes] = await Promise.all([
         api.get('/admin/agents'),
         api.get('/admin/agents/runtime/tokens').catch(() => ({ data: null })),
-        api.get('/admin/agents/usage', { params: { days: 14, limit: 120, memory_limit: 80 } }).catch(() => ({ data: null })),
+        api.get('/admin/agents/usage', { params: { days: 14, limit: 120, memory_limit: 80, action_limit: 180 } }).catch(() => ({ data: null })),
       ])
       setData(freshAgents.data)
       setUsage(usageRes?.data || usage)
@@ -444,6 +444,7 @@ export default function Agents() {
   const usageSummary = usage?.summary || null
   const usageByAgent = usage?.by_agent || []
   const usageRecent = usage?.recent || []
+  const usageTaskLogs = usage?.task_logs || []
   const sharedMemoryRows = usage?.shared_memory || []
 
   const formatUsageTs = (isoValue) => {
@@ -609,6 +610,30 @@ export default function Agents() {
               </div>
             ))}
             {!usageRecent.length && <p className="text-sm text-gray-500">אין לוגים להצגה.</p>}
+          </div>
+        </div>
+      )}
+
+      {usageSummary && (
+        <div className="bg-white/90 border border-brand-200 rounded-2xl p-4 mb-6 shadow-sm shadow-brand-100/60">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-brand-navy">לוג משימות סוכנים (מלא)</h3>
+            <span className="text-xs text-gray-500">{usageTaskLogs.length} פעולות</span>
+          </div>
+          <div className="space-y-2 max-h-80 overflow-auto pr-1">
+            {usageTaskLogs.slice(0, 80).map((row) => (
+              <div key={row.id} className="rounded-xl border border-brand-100 px-3 py-2">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-medium text-gray-800 truncate">{row.agent_name || 'unknown'} • {row.action_type || 'task'}</p>
+                  <p className={`text-xs font-semibold ${row.success ? 'text-green-700' : 'text-red-600'}`}>{row.success ? 'OK' : 'ERROR'}</p>
+                </div>
+                <p className="text-xs text-gray-500 mt-0.5 truncate">{row.source || 'web'} • {row.intent || 'general'} • {row.model_used || 'n/a'} • {formatUsageTs(row.created_at)} • {row.execution_time_ms ?? 0}ms</p>
+                {row.message_preview && <p className="text-xs text-gray-700 mt-1 break-words"><span className="font-semibold">in:</span> {row.message_preview}</p>}
+                {row.response_preview && <p className="text-xs text-gray-700 mt-1 break-words"><span className="font-semibold">out:</span> {row.response_preview}</p>}
+                {!row.success && row.error_message && <p className="text-xs text-red-600 mt-1 break-words">{row.error_message}</p>}
+              </div>
+            ))}
+            {!usageTaskLogs.length && <p className="text-sm text-gray-500">אין לוג משימות להצגה.</p>}
           </div>
         </div>
       )}

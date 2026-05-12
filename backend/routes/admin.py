@@ -41,7 +41,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import String, and_, func, or_, select, text
 
 from BACKEND_DATABASE_MODELS import (
-    AgentSharedMemory, AgentUsageLog, AuditLog, ApprovalQueue, AftermarketBrand, BrandAlias, CarBrand,
+    AgentAction, AgentSharedMemory, AgentUsageLog, AuditLog, ApprovalQueue, AftermarketBrand, BrandAlias, CarBrand,
     CatalogVersion, JobRegistry, Notification, Order, PartsCatalog, PartAlias,
     PartCrossReference, PartDiagramCache, PartImage, PartMaster, PartVariant,
     Payment, PriceHistory, PurchaseOrder, Return, ScraperApiCall, SocialPost,
@@ -3239,6 +3239,7 @@ async def generate_social_campaign(
 
     agent = get_agent("social_media_manager_agent")
     platforms = agent._normalize_campaign_platforms(data.platforms)
+    started_at = datetime.utcnow()
     campaign_plan = await agent.generate_campaign_plan(
         topic=data.topic,
         platforms=platforms,
@@ -3249,6 +3250,27 @@ async def generate_social_campaign(
 
     primary_platform = platforms[0] if platforms else "facebook"
     content = await agent.generate_post(data.topic, primary_platform, data.tone)
+
+    pii_db.add(AgentUsageLog(
+        user_id=current_user.id,
+        conversation_id=None,
+        message_id=None,
+        agent_name="social_media_manager_agent",
+        source="admin_social",
+        intent="generate_campaign",
+        model_used=getattr(agent, "model", None),
+        execution_time_ms=int((datetime.utcnow() - started_at).total_seconds() * 1000),
+        success=True,
+        error_message=None,
+        route_data={
+            "topic": data.topic,
+            "platforms": platforms,
+            "tone": data.tone,
+            "duration_days": data.duration_days,
+            "proposed_budget_ils": data.proposed_budget_ils,
+        },
+        memory_keys=[],
+    ))
 
     review = _review_social_post_policy(content, platforms)
     if not review.get("ok", False):
@@ -3523,10 +3545,56 @@ async def get_social_analytics(
 
 
 @router.post("/api/v1/admin/social/generate-content")
-async def generate_social_content(topic: str, platform: str, tone: str = "professional", current_user: User = Depends(get_current_admin_user), db: AsyncSession = Depends(get_db)):
+async def generate_social_content(
+    topic: str,
+    platform: str,
+    tone: str = "professional",
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+    pii_db: AsyncSession = Depends(get_pii_db),
+):
     from BACKEND_AI_AGENTS import get_agent
+
     agent = get_agent("social_media_manager_agent")
-    content = await agent.generate_post(topic, platform, tone)
+    started_at = datetime.utcnow()
+    err_msg = None
+    content = ""
+    try:
+        content = await agent.generate_post(topic, platform, tone)
+    except Exception as exc:
+        err_msg = str(exc)
+        pii_db.add(AgentUsageLog(
+            user_id=current_user.id,
+            conversation_id=None,
+            message_id=None,
+            agent_name="social_media_manager_agent",
+            source="admin_social",
+            intent="generate_post",
+            model_used=getattr(agent, "model", None),
+            execution_time_ms=int((datetime.utcnow() - started_at).total_seconds() * 1000),
+            success=False,
+            error_message=err_msg,
+            route_data={"topic": topic, "platform": platform, "tone": tone},
+            memory_keys=[],
+        ))
+        await pii_db.commit()
+        raise
+
+    pii_db.add(AgentUsageLog(
+        user_id=current_user.id,
+        conversation_id=None,
+        message_id=None,
+        agent_name="social_media_manager_agent",
+        source="admin_social",
+        intent="generate_post",
+        model_used=getattr(agent, "model", None),
+        execution_time_ms=int((datetime.utcnow() - started_at).total_seconds() * 1000),
+        success=True,
+        error_message=None,
+        route_data={"topic": topic, "platform": platform, "tone": tone},
+        memory_keys=[],
+    ))
+    await pii_db.commit()
     return {"content": content, "status": "pending_approval"}
 
 
@@ -3887,6 +3955,7 @@ async def get_agents_usage_dashboard(
     days: int = Query(14, ge=1, le=90),
     limit: int = Query(120, ge=1, le=500),
     memory_limit: int = Query(80, ge=1, le=400),
+    action_limit: int = Query(180, ge=20, le=1000),
     current_user: User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_pii_db),
 ):
@@ -3908,6 +3977,15 @@ async def get_agents_usage_dashboard(
             select(AgentSharedMemory)
             .order_by(AgentSharedMemory.updated_at.desc())
             .limit(memory_limit)
+        )
+    ).scalars().all()
+
+    action_rows = (
+        await db.execute(
+            select(AgentAction)
+            .where(AgentAction.created_at >= cutoff)
+            .order_by(AgentAction.created_at.desc())
+            .limit(action_limit)
         )
     ).scalars().all()
 
@@ -3999,6 +4077,29 @@ async def get_agents_usage_dashboard(
         for row in memory_rows
     ]
 
+    task_logs = []
+    for row in action_rows:
+        action_data = row.action_data if isinstance(row.action_data, dict) else {}
+        route_result = action_data.get("route_result") if isinstance(action_data.get("route_result"), dict) else {}
+        task_logs.append(
+            {
+                "id": str(row.id),
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+                "message_id": str(row.message_id) if row.message_id else None,
+                "agent_name": row.agent_name,
+                "action_type": row.action_type,
+                "success": bool(row.success),
+                "execution_time_ms": row.execution_time_ms,
+                "error_message": row.error_message,
+                "source": action_data.get("source"),
+                "conversation_id": action_data.get("conversation_id"),
+                "intent": route_result.get("intent"),
+                "model_used": action_data.get("model_used"),
+                "message_preview": action_data.get("message_preview"),
+                "response_preview": action_data.get("response_preview"),
+            }
+        )
+
     success_rate_pct = round((success_runs / total_runs) * 100, 1) if total_runs else 0.0
     avg_execution_ms = int(total_exec_ms / exec_samples) if exec_samples else 0
 
@@ -4014,6 +4115,7 @@ async def get_agents_usage_dashboard(
         },
         "by_agent": by_agent_out,
         "recent": recent,
+        "task_logs": task_logs,
         "shared_memory": shared_memory,
     }
 
