@@ -19,6 +19,10 @@ const AGENT_ICON_MAP = {
   marketing_agent: BadgePercent,
   supplier_manager_agent: Truck,
   social_media_manager_agent: Clapperboard,
+  db_update_agent: Database,
+  db_cleanup_agent: Activity,
+  scraper_agent: Compass,
+  price_sync_agent: Timer,
 }
 
 const COLOR_MAP = {
@@ -75,6 +79,7 @@ function AgentCard({ agent, onSave, isSaving }) {
   const Icon = AGENT_ICON_MAP[agent.name] || Compass
   const typeInfo = TYPE_LABELS[agent.type] || TYPE_LABELS.internal
   const isInternal = agent.type === 'internal'
+  const isTestable = !!agent.is_loaded
   const personaInitial = (agent.persona || 'A').trim().charAt(0).toUpperCase()
 
   const handleTest = async () => {
@@ -254,7 +259,7 @@ function AgentCard({ agent, onSave, isSaving }) {
       </div>
 
       {/* Test Panel */}
-      {!isInternal && (
+      {!isInternal && isTestable && (
         <div className="border-t border-gray-100">
           <button
             onClick={() => setExpanded(!expanded)}

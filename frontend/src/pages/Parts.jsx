@@ -424,7 +424,7 @@ function PriceTag({ price, vat, shipping, total }) {
     <div className="bg-gray-50 rounded-lg p-3 text-sm space-y-1">
       <div className="flex justify-between text-gray-600"><span>מחיר נטו</span><span className="font-medium">₪{price?.toFixed(0)}</span></div>
       <div className="flex justify-between text-gray-500"><span>מע״מ 18%</span><span>₪{vat?.toFixed(0)}</span></div>
-      <div className="flex justify-between text-gray-500"><span>משלוח</span><span>₪{shipping?.toFixed(0)}</span></div>
+      <div className="flex justify-between text-gray-500"><span>משלוח</span><span>{_shippingDisplay(shipping, true)}</span></div>
       <div className="flex justify-between font-bold text-brand-navy border-t border-gray-200 pt-1 mt-1">
         <span>סה״כ לתשלום</span>
         <span className="text-brand-600 text-base">₪{total?.toFixed(0)}</span>
@@ -486,24 +486,134 @@ function AvailabilityBadge({ availability, deliveryDays }) {
   )
 }
 
+function _partImageCandidates(part) {
+  const urls = []
+  const pushUrl = (raw) => {
+    const url = String(raw || '').trim()
+    if (!url || urls.includes(url)) return
+    urls.push(url)
+  }
+
+  pushUrl(part?.primary_image)
+  if (Array.isArray(part?.images)) {
+    part.images.forEach(pushUrl)
+  }
+  pushUrl(part?.image_url)
+  pushUrl(part?.image)
+
+  return urls
+}
+
+function PartResultImage({ part, alt, className = '', imageClassName = 'h-40 w-full object-contain bg-white', placeholderClassName = 'h-24' }) {
+  const imageCandidates = _partImageCandidates(part)
+  const [imageIndex, setImageIndex] = useState(0)
+
+  useEffect(() => {
+    setImageIndex(0)
+  }, [part?.id, part?.primary_image, Array.isArray(part?.images) ? part.images.length : 0])
+
+  const src = imageCandidates[imageIndex]
+  if (!src) {
+    return (
+      <div className={`flex items-center justify-center ${placeholderClassName}`}>
+        <span className="inline-flex items-center gap-1 text-xs text-gray-400">
+          <Package className="h-3.5 w-3.5" />
+          ללא תמונה
+        </span>
+      </div>
+    )
+  }
+
+  return (
+    <div className={className}>
+      <img
+        src={src}
+        alt={alt || part?.name_he || part?.name || 'part'}
+        loading="lazy"
+        referrerPolicy="no-referrer"
+        className={imageClassName}
+        onError={() => {
+          setImageIndex((prev) => {
+            const next = prev + 1
+            return next < imageCandidates.length ? next : imageCandidates.length
+          })
+        }}
+      />
+    </div>
+  )
+}
+
 // Transform a new-API supplier row into the shape PartCard expects
 function _supplierForCard(sp) {
-  const costIls    = parseFloat(sp.price_ils) || 0
-  const priceNet   = Math.round(costIls * 1.30)           // 30 % retail margin
-  const vatAmount  = Math.round(priceNet * 0.18)
-  const ship       = Math.round(parseFloat(sp.shipping_cost_ils) || 91)
+  const costIls = Number(sp?.price_ils)
+  const baseCostIls = Number.isFinite(costIls) ? costIls : 0
+  const source = String(sp?.source || "").trim().toLowerCase()
+  const isEbay = source === "ebay"
+
+  const resolvedShip = Number(sp.shipping_cost_ils_resolved)
+  const rawShip = Number(sp.shipping_cost_ils)
+  const ship = Number((Number.isFinite(resolvedShip)
+      ? resolvedShip
+      : (Number.isFinite(rawShip) ? rawShip : 0)).toFixed(2))
+
+  // eBay pricing rule: customer card price = eBay ILS cost * 1.45 (45% margin).
+  const priceNet = Number(((isEbay
+      ? baseCostIls * 1.45
+      : baseCostIls * 1.30)).toFixed(2))
+    const vatAmount = isEbay ? 0 : Number((priceNet * 0.18).toFixed(2))
+
   return {
     ...sp,
+    source: source || "local",
     supplier_part_id:       sp.supplier_part_id,
     price_no_vat:           priceNet,
     vat:                    vatAmount,
     shipping:               ship,
-    subtotal:               priceNet + vatAmount,
-    total:                  priceNet + vatAmount + ship,
-    availability:           sp.availability || 'on_order',
+    subtotal:               Number((priceNet + vatAmount).toFixed(2)),
+    total:                  Number((priceNet + vatAmount + ship).toFixed(2)),
+    availability:           sp.availability || "on_order",
     estimated_delivery_days: sp.estimated_delivery_days,
     is_base_price_fallback: false,
   }
+}
+
+function _partTechnicalSpecs(part, maxItems = 4) {
+  const direct = part?.technical_specs
+  const fallback = part?.specifications?.ebay?.tech_specs
+  const source = (direct && typeof direct === 'object' && !Array.isArray(direct))
+    ? direct
+    : ((fallback && typeof fallback === 'object' && !Array.isArray(fallback)) ? fallback : {})
+  return Object.entries(source)
+    .map(([k, v]) => [String(k || '').trim(), String(v || '').trim()])
+    .filter(([k, v]) => k && v)
+    .slice(0, maxItems)
+}
+
+function _partWarranty(part, suppliers = []) {
+  const supplierMonths = (suppliers || [])
+    .map((s) => Number(s?.warranty_months))
+    .filter((v) => Number.isFinite(v) && v > 0)
+  if (supplierMonths.length > 0) {
+    return { months: Math.max(...supplierMonths), text: null, source: 'supplier' }
+  }
+
+  const wd = part?.warranty_details || {}
+  const monthsRaw = Number(wd?.months)
+  const months = Number.isFinite(monthsRaw) && monthsRaw > 0 ? monthsRaw : null
+  const text = typeof wd?.text === 'string' ? wd.text.trim() : ''
+  if (months || text) {
+    return { months, text: text || null, source: wd?.source || 'catalog' }
+  }
+  return null
+}
+
+function _shippingDisplay(value, withCurrency = true) {
+  const amount = Number(value)
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return 'Free'
+  }
+  const formatted = amount.toFixed(2)
+  return withCurrency ? `₪${formatted}` : formatted
 }
 
 // Express badge
@@ -717,6 +827,8 @@ function TypeSection({ typeKey, data, onAddToCart }) {
   }
 
   const { part, suppliers = [] } = data
+  const warrantyInfo = _partWarranty(part, suppliers)
+  const technicalSpecs = _partTechnicalSpecs(part, 4)
   const accent = CATEGORY_ACCENT[part.category] || CATEGORY_ACCENT['כללי']
 
   return (
@@ -745,6 +857,16 @@ function TypeSection({ typeKey, data, onAddToCart }) {
         </div>
       </div>
 
+      <div className="px-4 pt-3">
+        <PartResultImage
+          part={part}
+          alt={part.name_he || part.name}
+          className="overflow-hidden rounded-xl border border-gray-200 bg-white"
+          imageClassName="h-40 w-full object-contain bg-white"
+          placeholderClassName="h-24 rounded-xl border border-dashed border-gray-200 bg-white"
+        />
+      </div>
+
       {/* Superseded part warning */}
       {part.superseded_by_sku && (
         <div className="mx-4 mt-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700 flex items-center gap-2">
@@ -752,6 +874,29 @@ function TypeSection({ typeKey, data, onAddToCart }) {
           <span>חלק זה הוחלף — מספר חדש: <span className="font-mono font-bold">{part.superseded_by_sku}</span></span>
         </div>
       )}
+        {(warrantyInfo || technicalSpecs.length > 0) && (
+          <div className="mx-4 mt-2 space-y-2 rounded-lg border border-slate-200 bg-slate-50/70 p-2.5">
+            {warrantyInfo && (
+              <div className="flex items-center gap-1.5 text-xs text-slate-600">
+                <Shield className="h-3.5 w-3.5" />
+                <span>
+                  {warrantyInfo.months ? (warrantyInfo.months + ' חודשי אחריות') : 'אחריות'}
+                  {warrantyInfo.text ? (' · ' + warrantyInfo.text) : ''}
+                </span>
+              </div>
+            )}
+            {technicalSpecs.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {technicalSpecs.map(([key, value]) => (
+                  <span key={key + ":" + value} className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] text-slate-600">
+                    {key}: {value}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
 
       {/* Supplier offers */}
       <div className="px-4 pb-4 pt-2 space-y-2">
@@ -761,7 +906,11 @@ function TypeSection({ typeKey, data, onAddToCart }) {
           </div>
         ) : (
           suppliers.map((sp, i) => {
-            const s = _supplierForCard(sp)
+              const s = _supplierForCard(sp)
+              const supplierWarrantyMonths = Number(sp?.warranty_months)
+              const displayWarrantyMonths = Number.isFinite(supplierWarrantyMonths) && supplierWarrantyMonths > 0
+                ? supplierWarrantyMonths
+                : (warrantyInfo?.months || null)
             return (
               <div
                 key={sp.supplier_part_id || i}
@@ -781,20 +930,20 @@ function TypeSection({ typeKey, data, onAddToCart }) {
                     {sp.express_available && (
                       <ExpressBadge price={sp.express_price_ils} days={sp.express_delivery_days} cutoff={sp.express_cutoff_time} />
                     )}
-                    {sp.warranty_months && (
+                    {displayWarrantyMonths && (
                       <span className="flex items-center gap-1 text-xs text-gray-500">
-                        <Shield className="w-3 h-3" />{sp.warranty_months} חודשים
+                        <Shield className="w-3 h-3" />{displayWarrantyMonths} חודשים
                       </span>
                     )}
                   </div>
                 </div>
                 {/* Row 2: price breakdown */}
                 <div>
-                  <div className={`text-2xl font-bold text-left mb-1 ${accent.text}`}>₪{s.total?.toFixed(0)}</div>
+                  <div className={`text-2xl font-bold text-left mb-1 ${accent.text}`}>₪{s.total?.toFixed(2)}</div>
                   <div className="grid grid-cols-3 gap-1 text-center text-xs text-gray-500 bg-gray-50 rounded-lg py-1.5">
-                    <div><div className="font-semibold text-gray-700">₪{s.price_no_vat}</div>נטו</div>
-                    <div className="border-x border-gray-200"><div className="font-semibold text-gray-700">₪{s.vat}</div>מע״מ</div>
-                    <div><div className="font-semibold text-gray-700">₪{s.shipping}</div>משלוח</div>
+                    <div><div className="font-semibold text-gray-700">₪{s.price_no_vat?.toFixed(2)}</div>נטו</div>
+                    <div className="border-x border-gray-200"><div className="font-semibold text-gray-700">₪{s.vat?.toFixed(2)}</div>מע״מ</div>
+                    <div><div className="font-semibold text-gray-700">{_shippingDisplay(s.shipping, true)}</div>משלוח</div>
                   </div>
                 </div>
                 {/* Row 3: cart button */}
@@ -831,6 +980,9 @@ function TypeSection({ typeKey, data, onAddToCart }) {
 
 function PartCard({ part, onAddToCart }) {
   const suppliers = part.suppliers || (part.pricing ? [part.pricing] : [])
+  const normalizedSuppliers = suppliers.map((sp) => _supplierForCard(sp))
+  const warrantyInfo = _partWarranty(part, normalizedSuppliers)
+  const technicalSpecs = _partTechnicalSpecs(part, 5)
 
   const handleAddToCart = (supplierPartId, priceData) => {
     // For estimated-price parts there is no supplier row yet — use a
@@ -877,8 +1029,44 @@ function PartCard({ part, onAddToCart }) {
           </div>
         </div>
 
+        <div className="px-4 pt-3">
+          <PartResultImage
+            part={part}
+            alt={part.name}
+            className="overflow-hidden rounded-[22px] border border-slate-200 bg-white"
+            imageClassName="h-44 w-full object-contain bg-white"
+            placeholderClassName="h-24 rounded-[22px] border border-dashed border-slate-200 bg-white"
+          />
+        </div>
+
+          {(warrantyInfo || technicalSpecs.length > 0) && (
+            <div className="px-4 pt-2">
+              <div className="space-y-2 rounded-[18px] border border-slate-200 bg-slate-50/70 p-2.5">
+                {warrantyInfo && (
+                  <div className="flex items-center gap-1.5 text-xs text-slate-600">
+                    <Shield className="h-3.5 w-3.5" />
+                    <span>
+                      {warrantyInfo.months ? (warrantyInfo.months + ' חודשי אחריות') : 'אחריות'}
+                      {warrantyInfo.text ? (' · ' + warrantyInfo.text) : ''}
+                    </span>
+                  </div>
+                )}
+                {technicalSpecs.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {technicalSpecs.map(([key, value]) => (
+                      <span key={key + ":" + value} className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] text-slate-600">
+                        {key}: {value}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+
         <div className="flex flex-1 flex-col gap-3 px-4 py-4">
-          {suppliers.length === 0 ? (
+          {normalizedSuppliers.length === 0 ? (
             <div className={`flex flex-1 flex-col items-center justify-center gap-2 rounded-[24px] border border-dashed border-slate-200 ${accent.bg} px-4 py-6 text-center`}>
               <Tag className={`h-5 w-5 ${accent.text} opacity-70`} />
               <span className={`text-sm font-semibold ${accent.text}`}>מחיר על פניה</span>
@@ -886,7 +1074,7 @@ function PartCard({ part, onAddToCart }) {
             </div>
           ) : (
             <div className="space-y-3">
-              {suppliers.map((s, i) => (
+              {normalizedSuppliers.map((s, i) => (
                 <div
                   key={i}
                   className={`rounded-[24px] border px-3.5 py-3.5 ${
@@ -899,12 +1087,12 @@ function PartCard({ part, onAddToCart }) {
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <AvailabilityBadge availability={s.availability} deliveryDays={s.estimated_delivery_days} />
                     <div className="flex flex-wrap items-center justify-end gap-2 text-[11px] text-slate-500">
-                      {s.warranty_months ? (
-                        <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-1">
-                          <Shield className="h-3 w-3" />
-                          {s.warranty_months} חוד׳ אחריות
-                        </span>
-                      ) : null}
+                      {(s.warranty_months || warrantyInfo?.months) ? (
+                          <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-1">
+                            <Shield className="h-3 w-3" />
+                            {s.warranty_months || warrantyInfo?.months} חוד׳ אחריות
+                          </span>
+                        ) : null}
                       {i === 0 && !s.is_base_price_fallback ? <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-1 font-semibold text-emerald-700">מומלץ</span> : null}
                       {s.is_base_price_fallback ? <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-1 font-semibold text-amber-700">מחיר משוער</span> : null}
                     </div>
@@ -914,7 +1102,7 @@ function PartCard({ part, onAddToCart }) {
                     <div className="flex items-end justify-between gap-3">
                       <div>
                         <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">מחיר כולל</p>
-                        <p className={`mt-1 text-3xl font-black leading-none ${accent.text}`}>₪{s.total?.toFixed(0)}</p>
+                        <p className={`mt-1 text-3xl font-black leading-none ${accent.text}`}>₪{s.total?.toFixed(2)}</p>
                       </div>
                       <div className="text-right text-[11px] text-slate-500">
                         <p>זמין להזמנה מיידית</p>
@@ -923,15 +1111,15 @@ function PartCard({ part, onAddToCart }) {
                     </div>
                     <div className="mt-3 grid grid-cols-3 gap-2 text-center text-[11px] text-slate-500">
                       <div className="rounded-2xl bg-slate-50 px-2 py-2">
-                        <div className="text-sm font-bold text-slate-700">₪{s.price_no_vat?.toFixed(0)}</div>
+                        <div className="text-sm font-bold text-slate-700">₪{s.price_no_vat?.toFixed(2)}</div>
                         נטו
                       </div>
                       <div className="rounded-2xl bg-slate-50 px-2 py-2">
-                        <div className="text-sm font-bold text-slate-700">₪{s.vat?.toFixed(0)}</div>
+                        <div className="text-sm font-bold text-slate-700">₪{s.vat?.toFixed(2)}</div>
                         מע״מ
                       </div>
                       <div className="rounded-2xl bg-slate-50 px-2 py-2">
-                        <div className="text-sm font-bold text-slate-700">₪{s.shipping?.toFixed(0)}</div>
+                        <div className="text-sm font-bold text-slate-700">{_shippingDisplay(s.shipping, true)}</div>
                         משלוח
                       </div>
                     </div>

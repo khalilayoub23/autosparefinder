@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import api from '../api/client'
+import AgentTodoList from '../components/Admin/AgentTodoList'
 import {
   LayoutDashboard, Users, Package, TrendingUp, Settings,
   DollarSign, ShoppingBag, BarChart2, Loader2, RefreshCw,
@@ -163,6 +164,7 @@ function StatCard({ label, value, icon: Icon, color: _color = 'brand', sub }) {
 const TABS = [
   { id: 'dashboard', label: 'סקירה', icon: LayoutDashboard },
   { id: 'users',     label: 'משתמשים', icon: Users         },
+  { id: 'tasks',     label: 'משימות', icon: CheckCircle    },
   { id: 'chats',     label: 'צ׳אטים', icon: MessageSquare  },
   { id: 'dbdata',    label: 'נתוני DB', icon: Database     },
   { id: 'suppliers', label: 'ספקים', icon: Truck, badge: true },
@@ -323,6 +325,9 @@ export default function Admin() {
   const [importResult, setImportResult] = useState(null)
   const [fitmentBackfillRunning, setFitmentBackfillRunning] = useState(false)
   const [fitmentBackfillResult, setFitmentBackfillResult] = useState(null)
+  const [dbAgentStatus, setDbAgentStatus] = useState(null)
+  const [dbAgentTaskRunning, setDbAgentTaskRunning] = useState('')
+  const [dbAgentTaskResult, setDbAgentTaskResult] = useState(null)
   const [users, setUsers] = useState([])
   const [chatConversations, setChatConversations] = useState([])
   const [chatTotal, setChatTotal] = useState(0)
@@ -415,6 +420,7 @@ export default function Admin() {
     if (tab === 'users') loadUsers()
     if (tab === 'chats') { loadAdminChats(); loadChatUsage(); loadHandoffQueue(true); loadHandoffTeamSettings() }
     if (tab === 'dbdata') loadDbView({ dataset: dbViewDataset, search: dbViewSearch, offset: 0, limit: dbViewLimit })
+    if (tab === 'parts') loadDbAgentStatus()
     if (tab === 'orders') loadOrders()
     if (tab === 'suppliers') { loadSuppliers(); loadSupplierOrders(); loadSyncStatus() }
     if (tab === 'agents') loadAgents()
@@ -563,6 +569,33 @@ export default function Admin() {
       setFitmentBackfillRunning(false)
     }
   }
+
+  const loadDbAgentStatus = async () => {
+    try {
+      const { data } = await api.get('/admin/db-agent/status')
+      setDbAgentStatus(data)
+    } catch {
+      toast.error('שגיאה בטעינת סטטוס DB Agent')
+    }
+  }
+
+  const runDbAgentTask = async (taskName, label) => {
+    setDbAgentTaskRunning(taskName)
+    setDbAgentTaskResult(null)
+    try {
+      const { data } = await api.post(`/admin/db-agent/run/${taskName}`)
+      setDbAgentTaskResult({ ok: true, taskName, label, data })
+      toast.success(`המשימה "${label}" הושלמה`)
+      loadDbAgentStatus()
+    } catch (err) {
+      const msg = err.response?.data?.detail || `שגיאה בהרצת ${label}`
+      setDbAgentTaskResult({ ok: false, taskName, label, msg })
+      toast.error(msg)
+    } finally {
+      setDbAgentTaskRunning('')
+    }
+  }
+
 
   const handleRejectReturn = async () => {
     if (!showRejectModal) return
@@ -1872,6 +1905,12 @@ export default function Admin() {
         )
       })()}
 
+
+      {/* Agent Tasks */}
+      {tab === 'tasks' && (
+        <AgentTodoList />
+      )}
+
       {/* Chats management */}
       {tab === 'chats' && (
         <div className="space-y-4">
@@ -2973,6 +3012,94 @@ export default function Admin() {
                   </div>
                 ) : (
                   <p className="text-red-700">{fitmentBackfillResult.msg}</p>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="card p-6">
+            <h3 className="font-bold text-brand-navy mb-1 flex items-center gap-2">
+              <Database className="w-5 h-5 text-brand-600" />
+              DB Agent - ניקוי ונרמול
+            </h3>
+            <p className="text-sm text-gray-400 mb-5">
+              משימות ניקוי לפי REX. חוברו במיוחד: Task 6 + Task 7, כולל הרצת ניקוי שמות חלקים עכשיו.
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <button
+                onClick={() => runDbAgentTask('clean_part_names', 'ניקוי שמות חלקים')}
+                disabled={!!dbAgentTaskRunning}
+                className="btn-primary flex items-center justify-center gap-2"
+              >
+                {dbAgentTaskRunning === 'clean_part_names'
+                  ? <Loader2 className="w-4 h-4 animate-spin" />
+                  : <Wand2 className="w-4 h-4" />}
+                {dbAgentTaskRunning === 'clean_part_names' ? 'מנקה שמות...' : 'התחל ניקוי שמות חלקים'}
+              </button>
+
+              <button
+                onClick={() => runDbAgentTask('flag_fake_skus', 'Task 6 - סימון SKU חשודים')}
+                disabled={!!dbAgentTaskRunning}
+                className="btn-secondary border border-gray-300 rounded-xl px-4 py-2 flex items-center justify-center gap-2"
+              >
+                {dbAgentTaskRunning === 'flag_fake_skus'
+                  ? <Loader2 className="w-4 h-4 animate-spin" />
+                  : <AlertCircle className="w-4 h-4" />}
+                Task 6 - flag_fake_skus
+              </button>
+
+              <button
+                onClick={() => runDbAgentTask('fill_car_brands', 'Task 7 - השלמת מותגי רכב')}
+                disabled={!!dbAgentTaskRunning}
+                className="btn-secondary border border-gray-300 rounded-xl px-4 py-2 flex items-center justify-center gap-2"
+              >
+                {dbAgentTaskRunning === 'fill_car_brands'
+                  ? <Loader2 className="w-4 h-4 animate-spin" />
+                  : <Truck className="w-4 h-4" />}
+                Task 7 - fill_car_brands
+              </button>
+            </div>
+
+            <div className="mt-4 flex items-center gap-3 text-xs text-gray-500">
+              <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 ${dbAgentStatus?.running ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'}`}>
+                {dbAgentStatus?.running ? 'רץ כרגע' : 'מוכן להרצה'}
+              </span>
+              <span>משימות זמינות: {Array.isArray(dbAgentStatus?.available_tasks) ? dbAgentStatus.available_tasks.length : 0}</span>
+              <button
+                onClick={loadDbAgentStatus}
+                className="inline-flex items-center gap-1 hover:text-brand-600"
+              >
+                <RefreshCw className="w-3 h-3" /> רענן סטטוס
+              </button>
+            </div>
+
+            {dbAgentTaskResult && (
+              <div className={`mt-4 rounded-xl p-4 text-sm ${dbAgentTaskResult.ok ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
+                {dbAgentTaskResult.ok ? (
+                  <>
+                    <p className="text-green-700 font-semibold">✅ {dbAgentTaskResult.label} הושלמה</p>
+                    <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <div className="bg-white rounded-lg p-3 text-center">
+                        <p className="text-xs text-gray-500">Task</p>
+                        <p className="text-sm font-semibold text-gray-800">{dbAgentTaskResult.taskName || '—'}</p>
+                      </div>
+                      <div className="bg-white rounded-lg p-3 text-center">
+                        <p className="text-xs text-gray-500">Rows Checked</p>
+                        <p className="text-lg font-bold text-brand-700">{dbAgentTaskResult?.data?.rows_checked ?? '—'}</p>
+                      </div>
+                      <div className="bg-white rounded-lg p-3 text-center">
+                        <p className="text-xs text-gray-500">Rows Updated</p>
+                        <p className="text-lg font-bold text-green-700">{dbAgentTaskResult?.data?.rows_updated ?? '—'}</p>
+                      </div>
+                      <div className="bg-white rounded-lg p-3 text-center">
+                        <p className="text-xs text-gray-500">Elapsed (s)</p>
+                        <p className="text-lg font-bold text-blue-700">{dbAgentTaskResult?.data?.elapsed_s ?? '—'}</p>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-red-700">❌ {dbAgentTaskResult.msg}</p>
                 )}
               </div>
             )}

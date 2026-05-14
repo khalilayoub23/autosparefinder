@@ -246,7 +246,7 @@ async def get_parts_by_brand(
         return {"brand": brand.name if brand else normalized_input or brand_name, "brand_he": brand.name_he if brand else None,
                 "total": total, "offset": offset, "limit": limit, "parts": []}
 
-    from BACKEND_AI_AGENTS import PartsFinderAgent, get_supplier_shipping
+    from BACKEND_AI_AGENTS import PartsFinderAgent, resolve_customer_shipping_fee
     agent = PartsFinderAgent()
     usd_to_ils_rate = await get_usd_to_ils_rate(db)
 
@@ -276,7 +276,13 @@ async def get_parts_by_brand(
             # Prefer stored ILS price (avoids exchange-rate round-trips)
             cost_ils = float(sp_row.price_ils or 0)
             ship_ils = float(sp_row.shipping_cost_ils or 0)
-            delivery_fee = get_supplier_shipping(sp_row.supplier_name or "", sp_row.supplier_country or "")
+            delivery_fee = resolve_customer_shipping_fee(
+                supplier_shipping_ils=sp_row.shipping_cost_ils,
+                supplier_shipping_usd=sp_row.shipping_cost_usd,
+                usd_to_ils_rate=usd_to_ils_rate,
+                supplier_name=sp_row.supplier_name,
+                supplier_country=sp_row.supplier_country,
+            )
             if cost_ils > 0:
                 pricing = agent.calculate_customer_price_from_ils(
                     cost_ils,
@@ -480,7 +486,7 @@ async def get_parts_by_truck_brand(
             "total": total, "offset": offset, "limit": limit, "parts": [],
         }
 
-    from BACKEND_AI_AGENTS import PartsFinderAgent, get_supplier_shipping
+    from BACKEND_AI_AGENTS import PartsFinderAgent, resolve_customer_shipping_fee
     agent = PartsFinderAgent()
     usd_to_ils_rate = await get_usd_to_ils_rate(db)
 
@@ -508,7 +514,13 @@ async def get_parts_by_truck_brand(
         if sp_row:
             cost_ils = float(sp_row.price_ils or 0)
             ship_ils = float(sp_row.shipping_cost_ils or 0)
-            delivery_fee = get_supplier_shipping(sp_row.supplier_name or "", sp_row.supplier_country or "")
+            delivery_fee = resolve_customer_shipping_fee(
+                supplier_shipping_ils=sp_row.shipping_cost_ils,
+                supplier_shipping_usd=sp_row.shipping_cost_usd,
+                usd_to_ils_rate=usd_to_ils_rate,
+                supplier_name=sp_row.supplier_name,
+                supplier_country=sp_row.supplier_country,
+            )
             if cost_ils > 0:
                 pricing = agent.calculate_customer_price_from_ils(
                     cost_ils,

@@ -244,6 +244,7 @@ async def get_compatible_parts(
     category: Optional[str] = None,
     per_type: Optional[int] = None,
     sort_by: str = "price_ils",
+    include_all_per_type: bool = Query(default=True),
     db: AsyncSession = Depends(get_db),
     request: Request = None,
     redis=Depends(get_redis),
@@ -275,7 +276,7 @@ async def get_compatible_parts(
     all_parts = search_payload.get("all_parts") or []
     has_verified_results = len(all_parts) > 0
 
-    return {
+    response = {
         "vehicle": {
             "id": str(vehicle.id),
             "manufacturer": vehicle.manufacturer,
@@ -291,10 +292,20 @@ async def get_compatible_parts(
         "message": "Exact fitment verified" if has_verified_results else "No verified fitment data",
         # Backward-compatible flat list for existing consumers.
         "parts": all_parts,
-        # Grouped payload for new consumers.
+        # Primary grouped payload (single best card per type).
         "grouped_results": {
             "original": search_payload.get("original"),
             "oem": search_payload.get("oem"),
             "aftermarket": search_payload.get("aftermarket"),
         },
     }
+
+    if include_all_per_type:
+        # Expanded grouped payload with full lists for each type.
+        response["grouped_results_full"] = {
+            "original": search_payload.get("original_options") or [],
+            "oem": search_payload.get("oem_options") or [],
+            "aftermarket": search_payload.get("aftermarket_options") or [],
+        }
+
+    return response

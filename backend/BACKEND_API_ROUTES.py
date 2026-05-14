@@ -1664,9 +1664,9 @@ async def _price_sync_loop():
         print("[PriceSync] no recent sync found — running now")
 
     await asyncio.sleep(first_wait)
-
     while True:
         job_id = None
+        sleep_s = interval_s
         try:
             async with async_session_factory() as db:
                 try:
@@ -1676,17 +1676,32 @@ async def _price_sync_loop():
 
                 agent = SupplierManagerAgent()
                 report = await agent.sync_prices(db)
-                print(
-                    f"[PriceSync] ✅ done — "
-                    f"updated={report['parts_updated']:,}  "
-                    f"avail_changes={report['availability_changes']}  "
-                    f"errors={len(report['errors'])}"
-                )
-                if job_id:
-                    try:
-                        await job_registry_finish(db, job_id, status="completed")
-                    except Exception as exc:
-                        print(f"[PriceSync] job_registry_finish failed: {exc}")
+                status = str((report or {}).get("status") or "ok")
+
+                if status == "skipped":
+                    reason = str((report or {}).get("reason") or "unknown")
+                    sleep_s = min(interval_s, 900)
+                    print(f"[PriceSync] skipped — {reason}. retry_in={int(sleep_s)}s")
+                    if job_id:
+                        try:
+                            await job_registry_finish(db, job_id, status="skipped", error_message=reason)
+                        except Exception as exc:
+                            print(f"[PriceSync] job_registry_finish failed: {exc}")
+                else:
+                    updated = int((report or {}).get("parts_updated") or 0)
+                    avail_changes = int((report or {}).get("availability_changes") or 0)
+                    errors_count = len((report or {}).get("errors") or [])
+                    print(
+                        f"[PriceSync] done — "
+                        f"updated={updated:,}  "
+                        f"avail_changes={avail_changes}  "
+                        f"errors={errors_count}"
+                    )
+                    if job_id:
+                        try:
+                            await job_registry_finish(db, job_id, status="completed")
+                        except Exception as exc:
+                            print(f"[PriceSync] job_registry_finish failed: {exc}")
         except Exception as exc:
             error_msg = str(exc)[:500]
             print(f"[PriceSync] ❌ error: {error_msg}")
@@ -1709,8 +1724,7 @@ async def _price_sync_loop():
                         await job_registry_finish(db, job_id, status="dead", error_message=error_msg)
                 except Exception:
                     pass
-        
-        await asyncio.sleep(interval_s)
+        await asyncio.sleep(sleep_s)
 
 
 @app.on_event("shutdown")

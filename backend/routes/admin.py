@@ -3783,6 +3783,59 @@ AGENTS_METADATA = {
         "icon": "Share2",
         "color": "teal",
     },
+    "db_update_agent": {
+        "display_name": "DB Update Agent",
+        "persona": "Rex",
+        "name_he": "סוכן עדכון מסד נתונים",
+        "description": "Background data-quality pipeline that normalizes parts catalog, fitment and pricing metadata.",
+        "description_he": "סוכן רקע לנרמול קטלוג, התאמות רכב ושיפור איכות נתונים",
+        "capabilities": ["Catalog normalization", "Fitment merge", "Spec extraction", "Manufacturer sync", "Batch maintenance"],
+        "model": "qwen3:8b",
+        "temperature": 0.1,
+        "type": "admin",
+        "icon": "Database",
+        "color": "indigo",
+    },
+    "db_cleanup_agent": {
+        "display_name": "DB Cleanup Agent",
+        "persona": "Neta",
+        "name_he": "סוכן ניקוי מסד נתונים",
+        "description": "Background cleanup worker that removes stale/duplicate data and prepares safe maintenance passes.",
+        "description_he": "סוכן רקע לניקוי כפילויות, טיפול בנתונים ישנים והכנת תחזוקה בטוחה",
+        "capabilities": ["Duplicate cleanup", "Data hygiene", "Maintenance sweeps", "Integrity checks"],
+        "model": "qwen3:8b",
+        "temperature": 0.1,
+        "type": "admin",
+        "icon": "Activity",
+        "color": "gray",
+    },
+    "scraper_agent": {
+        "display_name": "Catalog Scraper Agent",
+        "persona": "Gal",
+        "name_he": "סוכן סריקת קטלוג",
+        "description": "Runs supplier discovery and catalog scraping jobs to fill missing brands, parts and fitment.",
+        "description_he": "סוכן סריקה לגילוי ספקים והשלמת קטלוגים, מותגים והתאמות רכב",
+        "capabilities": ["Brand discovery", "Catalog scraping", "Fitment enrichment", "Source sync orchestration"],
+        "model": "qwen3:8b",
+        "temperature": 0.2,
+        "type": "admin",
+        "icon": "Compass",
+        "color": "teal",
+    },
+    "price_sync_agent": {
+        "display_name": "Price Sync Agent",
+        "persona": "Bar",
+        "name_he": "סוכן סנכרון מחירים",
+        "description": "Synchronizes supplier prices, shipping and availability into catalog and supplier tables.",
+        "description_he": "סוכן סנכרון מחירים, משלוח וזמינות מהספקים אל טבלאות הקטלוג",
+        "capabilities": ["Price sync", "Availability sync", "Shipping sync", "Supplier reconciliation"],
+        "model": "qwen3:8b",
+        "temperature": 0.1,
+        "type": "admin",
+        "icon": "Timer",
+        "color": "orange",
+    },
+
 }
 
 RUNTIME_TOKEN_PROVIDERS = {
@@ -4814,3 +4867,422 @@ async def db_agent_run_task(
 
     result = await run_task(task_name, db)
     return result
+
+
+# ==============================================================================
+# AGENT TODO LIST MANAGEMENT — /api/v1/admin/todos
+# ==============================================================================
+
+@router.get("/api/v1/admin/todos", tags=["Admin – Todo List"])
+async def get_todos(
+    status: str = Query(None, description="Filter by status"),
+    agent: str = Query(None, description="Filter by assigned agent"),
+    category: str = Query(None, description="Filter by category"),
+    current_user=Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get all agent todos with optional filtering."""
+    from BACKEND_DATABASE_MODELS import AgentTodo
+    
+    query = select(AgentTodo).order_by(AgentTodo.priority, AgentTodo.created_at.desc())
+    
+    if status:
+        query = query.where(AgentTodo.status == status)
+    if agent:
+        query = query.where(AgentTodo.assigned_to_agent == agent)
+    if category:
+        query = query.where(AgentTodo.category == category)
+    
+    result = await db.execute(query)
+    todos = result.scalars().all()
+    
+    return [
+        {
+            "id": str(t.id),
+            "title": t.title,
+            "description": t.description,
+            "status": t.status,
+            "priority": t.priority,
+            "assigned_to_agent": t.assigned_to_agent,
+            "progress_pct": t.progress_pct,
+            "progress_notes": t.progress_notes,
+            "category": t.category,
+            "target_date": t.target_date.isoformat() if t.target_date else None,
+            "started_at": t.started_at.isoformat() if t.started_at else None,
+            "completed_at": t.completed_at.isoformat() if t.completed_at else None,
+            "tags": t.tags,
+            "artifacts": t.artifacts,
+            "metrics": t.metrics,
+            "created_at": t.created_at.isoformat(),
+            "updated_at": t.updated_at.isoformat(),
+        }
+        for t in todos
+    ]
+
+
+@router.post("/api/v1/admin/todos", tags=["Admin – Todo List"])
+async def create_todo(
+    payload: Dict[str, Any],
+    current_user=Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new agent todo."""
+    from BACKEND_DATABASE_MODELS import AgentTodo
+    
+    todo = AgentTodo(
+        title=payload.get("title"),
+        description=payload.get("description"),
+        status=payload.get("status", "not_started"),
+        priority=payload.get("priority", "medium"),
+        assigned_to_agent=payload.get("assigned_to_agent"),
+        assigned_to_user=payload.get("assigned_to_user"),
+        category=payload.get("category", "general"),
+        tags=payload.get("tags"),
+        target_date=payload.get("target_date"),
+    )
+    
+    db.add(todo)
+    await db.commit()
+    await db.refresh(todo)
+    
+    return {
+        "id": str(todo.id),
+        "title": todo.title,
+        "status": todo.status,
+        "created_at": todo.created_at.isoformat(),
+    }
+
+
+@router.put("/api/v1/admin/todos/{todo_id}", tags=["Admin – Todo List"])
+async def update_todo(
+    todo_id: str,
+    payload: Dict[str, Any],
+    current_user=Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update an agent todo."""
+    from BACKEND_DATABASE_MODELS import AgentTodo
+    
+    try:
+        todo_uuid = _UUID(todo_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid todo ID")
+    
+    result = await db.execute(select(AgentTodo).where(AgentTodo.id == todo_uuid))
+    todo = result.scalar_one_or_none()
+    
+    if not todo:
+        raise HTTPException(status_code=404, detail="Todo not found")
+    
+    # Update fields
+    for field in ["title", "description", "status", "priority", "progress_pct", "progress_notes", "category", "tags"]:
+        if field in payload:
+            setattr(todo, field, payload[field])
+    
+    # Handle status transitions
+    if "status" in payload:
+        if payload["status"] == "in_progress" and not todo.started_at:
+            todo.started_at = datetime.utcnow()
+        elif payload["status"] == "completed" and not todo.completed_at:
+            todo.completed_at = datetime.utcnow()
+            todo.progress_pct = 100
+    
+    todo.updated_at = datetime.utcnow()
+    db.add(todo)
+    await db.commit()
+    await db.refresh(todo)
+    
+    return {"status": "updated", "todo_id": str(todo.id)}
+
+
+@router.delete("/api/v1/admin/todos/{todo_id}", tags=["Admin – Todo List"])
+async def delete_todo(
+    todo_id: str,
+    current_user=Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete an agent todo."""
+    from BACKEND_DATABASE_MODELS import AgentTodo
+    
+    try:
+        todo_uuid = _UUID(todo_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid todo ID")
+    
+    result = await db.execute(select(AgentTodo).where(AgentTodo.id == todo_uuid))
+    todo = result.scalar_one_or_none()
+    
+    if not todo:
+        raise HTTPException(status_code=404, detail="Todo not found")
+    
+    await db.delete(todo)
+    await db.commit()
+    
+    return {"status": "deleted"}
+
+
+@router.get("/api/v1/admin/todos/agent/{agent_name}", tags=["Admin – Todo List"])
+async def get_agent_todos(
+    agent_name: str,
+    current_user=Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get todos for a specific agent (used by Rex, db_update_agent, etc.)."""
+    from BACKEND_DATABASE_MODELS import AgentTodo
+    
+    result = await db.execute(
+        select(AgentTodo)
+        .where(AgentTodo.assigned_to_agent == agent_name)
+        .where(AgentTodo.status.in_(["not_started", "in_progress"]))
+        .order_by(AgentTodo.priority.desc(), AgentTodo.created_at.asc())
+    )
+    todos = result.scalars().all()
+    
+    return [
+        {
+            "id": str(t.id),
+            "title": t.title,
+            "description": t.description,
+            "status": t.status,
+            "progress_pct": t.progress_pct,
+            "category": t.category,
+        }
+        for t in todos
+    ]
+
+
+# ==============================================================================
+# ALIAS REVIEW QUEUE — /api/v1/admin/alias-reviews
+# ==============================================================================
+
+@router.get("/api/v1/admin/alias-reviews", tags=["Admin – Alias Review"])
+async def get_alias_reviews(
+    status: Optional[str] = Query("pending", description="Filter by status: pending/approved/rejected or omit for all"),
+    limit: int = Query(200, ge=1, le=500),
+    current_user=Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List alias review candidates generated by the db_update_agent matcher."""
+    effective_status = status.strip() if isinstance(status, str) and status.strip() else None
+    rows = (
+        await db.execute(
+            text(
+                """
+                SELECT
+                    id,
+                    brand_id,
+                    brand_name,
+                    candidate_alias,
+                    confidence,
+                    margin,
+                    reason,
+                    source,
+                    status,
+                    reviewed_by,
+                    reviewed_at,
+                    created_at,
+                    updated_at
+                FROM brand_alias_review_queue
+                WHERE (:has_status = FALSE OR status = :status)
+                ORDER BY
+                    CASE WHEN status = 'pending' THEN 0 ELSE 1 END,
+                    confidence DESC NULLS LAST,
+                    created_at DESC
+                LIMIT :limit
+                """
+            ),
+            {
+                "status": effective_status or "",
+                "has_status": bool(effective_status),
+                "limit": limit,
+            },
+        )
+    ).fetchall()
+
+    return [
+        {
+            "id": str(r.id),
+            "brand_id": str(r.brand_id) if r.brand_id else None,
+            "brand_name": r.brand_name,
+            "candidate_alias": r.candidate_alias,
+            "confidence": float(r.confidence) if r.confidence is not None else None,
+            "margin": float(r.margin) if r.margin is not None else None,
+            "reason": r.reason,
+            "source": r.source,
+            "status": r.status,
+            "reviewed_by": r.reviewed_by,
+            "reviewed_at": r.reviewed_at.isoformat() if r.reviewed_at else None,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+        }
+        for r in rows
+    ]
+
+
+@router.post("/api/v1/admin/alias-reviews/{review_id}/approve", tags=["Admin – Alias Review"])
+async def approve_alias_review(
+    review_id: str,
+    current_user=Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Approve an alias candidate and apply it to the target brand aliases list."""
+    try:
+        review_uuid = _UUID(review_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid review ID")
+
+    review = (
+        await db.execute(
+            text(
+                """
+                SELECT id, brand_id, brand_name, candidate_alias, status
+                FROM brand_alias_review_queue
+                WHERE id = :id
+                """
+            ),
+            {"id": str(review_uuid)},
+        )
+    ).fetchone()
+
+    if not review:
+        raise HTTPException(status_code=404, detail="Review item not found")
+
+    candidate_alias = str(review.candidate_alias or "").strip()
+    if not candidate_alias:
+        raise HTTPException(status_code=422, detail="Candidate alias is empty")
+
+    brand_row = None
+    if review.brand_id:
+        brand_row = (
+            await db.execute(
+                text("SELECT id, name, aliases FROM car_brands WHERE id = :id"),
+                {"id": str(review.brand_id)},
+            )
+        ).fetchone()
+
+    if not brand_row:
+        brand_row = (
+            await db.execute(
+                text(
+                    """
+                    SELECT id, name, aliases
+                    FROM car_brands
+                    WHERE lower(name) = lower(:name)
+                    LIMIT 1
+                    """
+                ),
+                {"name": review.brand_name},
+            )
+        ).fetchone()
+
+    if not brand_row:
+        raise HTTPException(status_code=404, detail=f"Brand not found: {review.brand_name}")
+
+    owner = (
+        await db.execute(
+            text(
+                """
+                SELECT name
+                FROM car_brands
+                WHERE id <> :brand_id
+                  AND is_active = TRUE
+                  AND :alias = ANY(aliases)
+                LIMIT 1
+                """
+            ),
+            {"brand_id": str(brand_row.id), "alias": candidate_alias},
+        )
+    ).fetchone()
+    if owner:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Alias already belongs to another brand: {owner.name}",
+        )
+
+    alias_list = list(brand_row.aliases or [])
+    alias_added = False
+    if candidate_alias not in alias_list:
+        alias_list.append(candidate_alias)
+        await db.execute(
+            text("UPDATE car_brands SET aliases = :aliases WHERE id = :id"),
+            {"aliases": alias_list, "id": str(brand_row.id)},
+        )
+        alias_added = True
+
+    reviewer = (
+        getattr(current_user, "email", None)
+        or getattr(current_user, "username", None)
+        or str(current_user.id)
+    )
+    await db.execute(
+        text(
+            """
+            UPDATE brand_alias_review_queue
+            SET status = 'approved',
+                reviewed_by = :reviewer,
+                reviewed_at = NOW(),
+                updated_at = NOW(),
+                brand_id = :brand_id
+            WHERE id = :id
+            """
+        ),
+        {
+            "id": str(review_uuid),
+            "reviewer": reviewer,
+            "brand_id": str(brand_row.id),
+        },
+    )
+
+    await db.commit()
+    return {
+        "status": "approved",
+        "review_id": str(review_uuid),
+        "brand_id": str(brand_row.id),
+        "brand_name": brand_row.name,
+        "candidate_alias": candidate_alias,
+        "alias_added": alias_added,
+    }
+
+
+@router.post("/api/v1/admin/alias-reviews/{review_id}/reject", tags=["Admin – Alias Review"])
+async def reject_alias_review(
+    review_id: str,
+    current_user=Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Reject an alias candidate from the moderation queue."""
+    try:
+        review_uuid = _UUID(review_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid review ID")
+
+    found = (
+        await db.execute(
+            text("SELECT id FROM brand_alias_review_queue WHERE id = :id"),
+            {"id": str(review_uuid)},
+        )
+    ).fetchone()
+    if not found:
+        raise HTTPException(status_code=404, detail="Review item not found")
+
+    reviewer = (
+        getattr(current_user, "email", None)
+        or getattr(current_user, "username", None)
+        or str(current_user.id)
+    )
+    await db.execute(
+        text(
+            """
+            UPDATE brand_alias_review_queue
+            SET status = 'rejected',
+                reviewed_by = :reviewer,
+                reviewed_at = NOW(),
+                updated_at = NOW()
+            WHERE id = :id
+            """
+        ),
+        {"id": str(review_uuid), "reviewer": reviewer},
+    )
+    await db.commit()
+
+    return {"status": "rejected", "review_id": str(review_uuid)}

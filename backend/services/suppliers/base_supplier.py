@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 
 
 @dataclass
@@ -19,6 +19,11 @@ class PartResult:
     image_url: Optional[str]
     location: str
     estimated_delivery_days: Optional[int]
+    image_urls: Optional[list[str]] = None
+    tech_specs: Optional[dict[str, Any]] = None
+    warranty_text: Optional[str] = None
+    warranty_months: Optional[int] = None
+    ships_to_israel: Optional[bool] = None
 
 
 @dataclass

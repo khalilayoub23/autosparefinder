@@ -40,19 +40,33 @@ def _strip_punct(value: str) -> str:
     return re.sub(r"[^0-9A-Za-z\u0590-\u05FF ]+", " ", value)
 
 
+# Hebrew country/origin words that appear as suffixes in tozeret_nm / tozar
+# e.g. "טויוטה יפן" → "טויוטה", "מרצדס בנץ גרמנ" → "מרצדס בנץ"
+_HE_COUNTRY_TOKENS = re.compile(
+    r"יפן|גרמניה|גרמנ|ספרד|צרפת|קוריאה|ארהב|"
+    r"אנגליה|איטליה|שוודיה|בלגיה|הולנד|סלובקיה|הונגריה|פולין|"
+    r"תאילנד|תאילנ|הודו|סין|טורקיה|תורכיה|ברזיל|מקסיקו|"
+    r"ארצות|ממלכה|בריטניה",
+    re.UNICODE,
+)
+
 def _norm_key(value: str) -> str:
     s = _clean_space(value).lower()
     s = _strip_punct(s)
+    # Strip Hebrew country/origin suffixes before key comparison
+    s = _HE_COUNTRY_TOKENS.sub(" ", s)
     s = re.sub(r"\b(company|co|ltd|inc|llc|motors?|auto|automotive|group|corp|corporation|international)\b", " ", s)
     s = re.sub(r"\s+", " ", s).strip()
     return s
 
 
 def _extract_manufacturer(record: Dict[str, Any]) -> str:
+    # tozar = clean brand name without country suffix (e.g. "מזדה")
+    # tozeret_nm = brand+country variant (e.g. "מזדה יפן") — fallback only
     candidates = [
+        str(record.get("tozar") or "").strip(),
         str(record.get("tozeret_nm") or "").strip(),
         str(record.get("tozeret_eretz_nm") or "").strip(),
-        str(record.get("tozar") or "").strip(),
         str(record.get("tozeret_cd") or "").strip(),
     ]
     for c in candidates:
@@ -190,9 +204,12 @@ def build_reports(ds: DatasetSlice) -> Dict[str, Any]:
         if not mfr:
             missing_mfr += 1
         else:
-            mfr_counter[mfr] += 1
+            # mispar_rechavim_pailim = active vehicles on Israeli roads (resource 5e87a7a1)
+            # falls back to 1 per model-spec row when field is absent (resource 142afde2)
+            fleet_count = int(r.get("mispar_rechavim_pailim") or 0) or 1
+            mfr_counter[mfr] += fleet_count
             nk = _norm_key(mfr)
-            norm_groups[nk][mfr] += 1
+            norm_groups[nk][mfr] += fleet_count
 
         if not model:
             missing_model += 1
@@ -540,6 +557,124 @@ def run(max_records: int | None = None, limit: int = 1000, resource_ids: List[st
         ],
     }
 
+
+
+def sync_market_priority_to_db(
+    priority_tiers_path: Path | None = None,
+    db_url: str | None = None,
+) -> Dict[str, Any]:
+    """
+    Read the priority tiers JSON produced by run() and write il_market_priority
+    values into car_brands.  Brands not found in the DB are skipped (not created).
+
+    Priority = 1-based rank within Tier1, then Tier2, then Tier3.
+    This is the bridge between the annual market-analysis run and Rex/DB-agent
+    configuration — Rex and the DB agent read il_market_priority from the DB to
+    decide what to work on first.
+
+    Returns a summary dict suitable for system_logs.
+    """
+    import os as _os
+
+    tiers_path = priority_tiers_path or DATA_DIR / "rex_transport_priority_tiers.json"
+    if not tiers_path.exists():
+        return {"status": "error", "reason": "priority_tiers file missing — run pipeline first"}
+
+    tiers = json.loads(tiers_path.read_text(encoding="utf-8"))
+
+    # Build ranked list: Tier1 first, then Tier2, then Tier3
+    ranked: List[Dict[str, Any]] = []
+    for tier_name in ["tier1_dominant", "tier2_mid_volume", "tier3_long_tail"]:
+        ranked.extend(tiers.get("tiers", {}).get(tier_name, []))
+
+    if not ranked:
+        return {"status": "error", "reason": "no ranked manufacturers found in tiers file"}
+
+    # Hebrew canonical name → rank (1-based)
+    he_to_rank: Dict[str, int] = {
+        item["canonical_name"]: idx + 1
+        for idx, item in enumerate(ranked)
+    }
+    # Also index aliases
+    for idx, item in enumerate(ranked):
+        for alias in item.get("aliases") or []:
+            if alias and alias not in he_to_rank:
+                he_to_rank[alias] = idx + 1
+
+    # Connect to catalog DB
+    url = db_url or _os.getenv(
+        "DATABASE_URL",
+        "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43@postgres_catalog/autospare",
+    )
+    # Strip asyncpg driver prefix so psycopg2 can parse the URL
+    url = url.replace("postgresql+asyncpg://", "postgresql://")
+
+    try:
+        import psycopg2
+    except ImportError:
+        return {"status": "error", "reason": "psycopg2 not available"}
+
+    conn = psycopg2.connect(url)
+    conn.autocommit = False
+    cur = conn.cursor()
+
+    # Fetch all active car_brands with their aliases
+    cur.execute("SELECT id, name, aliases FROM car_brands WHERE is_active = TRUE")
+    rows = cur.fetchall()
+
+    updated = 0
+    skipped = 0
+    not_in_transport = 0
+
+    for brand_id, en_name, aliases_arr in rows:
+        aliases_arr = aliases_arr or []
+        # Try to find a rank via any Hebrew alias that matches transport data
+        rank = None
+        for alias in aliases_arr:
+            alias_str = str(alias or "").strip()
+            if alias_str in he_to_rank:
+                rank = he_to_rank[alias_str]
+                break
+            # Also try the norm_key match
+            nk = _norm_key(alias_str)
+            for he, r in he_to_rank.items():
+                if _norm_key(he) == nk:
+                    rank = r
+                    break
+            if rank:
+                break
+
+        if rank is None:
+            not_in_transport += 1
+            skipped += 1
+            continue
+
+        cur.execute(
+            "UPDATE car_brands SET il_market_priority = %s, updated_at = NOW() WHERE id = %s",
+            (rank, brand_id),
+        )
+        updated += 1
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    result = {
+        "status": "ok",
+        "total_transport_brands": len(ranked),
+        "car_brands_updated": updated,
+        "car_brands_skipped_no_match": skipped,
+        "car_brands_not_in_transport": not_in_transport,
+        "top10_priority": [
+            {"rank": idx + 1, "canonical_he": item["canonical_name"], "fleet_share_pct": item["fleet_share_pct"]}
+            for idx, item in enumerate(ranked[:10])
+        ],
+    }
+    print(
+        f"[TransportPipeline] sync_market_priority_to_db: "
+        f"updated={updated} skipped={skipped} not_in_transport={not_in_transport}"
+    )
+    return result
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="REX Transport Office dataset analysis + manufacturer prioritization pipeline")

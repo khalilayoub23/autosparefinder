@@ -4,10 +4,7 @@ import os
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote_plus, urlencode, urlparse
 
-DEFAULT_AUTODOC_PROVIDER_URLS = [
-    "https://www.autodoc.eu/api/v1/part/applicability",
-    "https://www.buycarparts.co.uk/api/v1/part/applicability",
-]
+DEFAULT_AUTODOC_PROVIDER_URLS: List[str] = []
 
 _FITMENT_CAPABLE_KINDS = {
     "autodoc_like",
@@ -102,7 +99,7 @@ def provider_enablement_snapshot() -> Dict[str, Any]:
 
     return {
         "autodoc_like": {
-            "enabled": True,
+            "enabled": len(_provider_urls_from_env()) > 0,
             "configured_endpoints": len(_provider_urls_from_env()),
         },
         "nhtsa_vpic": {

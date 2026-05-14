@@ -12,7 +12,7 @@ import logging
 import random
 import re
 import uuid
-from typing import Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from sqlalchemy import text
 
@@ -435,52 +435,125 @@ async def task5_detect_manufacturer_overflow() -> int:
     return overflow
 
 
+# Central coordination contract: who owns what and when it should run.
+# This lives here so cleanup sequencing is explicit and versioned with the agent code.
+AGENT_COORDINATION: Dict[str, Dict[str, str]] = {
+    "catalog_scraper.py": {
+        "role": "REX orchestrator for price sync + discovery + transport trigger",
+        "when": "continuous cycle; should run before and after cleanup windows",
+    },
+    "db_cleanup_agent.py": {
+        "role": "DB hygiene micro-batches (tasks 1-6) for catalog quality",
+        "when": "continuous background loop with short cooldowns",
+    },
+    "db_update_agent.py": {
+        "role": "normalization/enrichment tasks and schema-safe data updates",
+        "when": "scheduled or on-demand admin-triggered runs",
+    },
+    "run_rex_transport_office_pipeline.py": {
+        "role": "transport-office canonical data ingestion pipeline",
+        "when": "periodic ingestion window, before heavy discovery backfills",
+    },
+}
+
+
+def get_cleanup_coordination_plan() -> Dict[str, Any]:
+    """Return a stable, machine-readable coordination plan for operator visibility."""
+    return {
+        "owner": "db_cleanup_agent",
+        "agents": AGENT_COORDINATION,
+        "cleanup_execution_order": [
+            "task1_fix_part_types",
+            "task2_fill_oem_from_crossref",
+            "task3_categorize_by_keywords",
+            "task6_reorganize_categories_rollup",
+            "task4_fix_oem_lookup_flag",
+            "task5_detect_manufacturer_overflow",
+        ],
+    }
+
+
+CLEANUP_TASK_REGISTRY: Dict[str, Callable[[], Awaitable[int]]] = {
+    "task1_fix_part_types": task1_fix_part_types,
+    "task2_fill_oem_from_crossref": task2_fill_oem_from_crossref,
+    "task3_categorize_by_keywords": task3_categorize_by_keywords,
+    "task6_reorganize_categories_rollup": task6_reorganize_categories_rollup,
+    "task4_fix_oem_lookup_flag": task4_fix_oem_lookup_flag,
+    "task5_detect_manufacturer_overflow": task5_detect_manufacturer_overflow,
+}
+
+
+async def run_cleanup_cycle_once(
+    *,
+    cycle: int,
+    state: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Run one cleanup cycle in a deterministic order and return a compact report."""
+    if state is None:
+        state = {"task4_full_batch_cycles": 0, "task4_accelerated": False}
+
+    t1 = await task1_fix_part_types()
+    await asyncio.sleep(2)
+    t2 = await task2_fill_oem_from_crossref()
+    await asyncio.sleep(3)
+    t3 = await task3_categorize_by_keywords()
+    await asyncio.sleep(2)
+    t6 = await task6_reorganize_categories_rollup()
+    await asyncio.sleep(2)
+    t4 = await task4_fix_oem_lookup_flag()
+
+    if t4 == 500:
+        state["task4_full_batch_cycles"] = int(state.get("task4_full_batch_cycles", 0)) + 1
+    else:
+        state["task4_full_batch_cycles"] = 0
+        state["task4_accelerated"] = False
+
+    task4_sleep_s = 1.0
+    if int(state.get("task4_full_batch_cycles", 0)) >= 300:
+        task4_sleep_s = 0.5
+        if not bool(state.get("task4_accelerated", False)):
+            warning_msg = (
+                f"[Cleanup] task4 has returned full batch size (500) for "
+                f"{state['task4_full_batch_cycles']} consecutive cycles; "
+                f"reducing task4 sleep to 0.5s"
+            )
+            logger.warning(warning_msg)
+            print(warning_msg)
+            state["task4_accelerated"] = True
+
+    await asyncio.sleep(task4_sleep_s)
+    t5 = await task5_detect_manufacturer_overflow()
+    await asyncio.sleep(5)
+
+    return {
+        "cycle": cycle,
+        "types": t1,
+        "oem": t2,
+        "categorized": t3,
+        "recategorized": t6,
+        "flags": t4,
+        "overflow": t5,
+        "task4_full_batch_cycles": int(state.get("task4_full_batch_cycles", 0)),
+        "task4_accelerated": bool(state.get("task4_accelerated", False)),
+    }
+
+
 async def run_cleanup_loop() -> None:
     cycle = 0
-    task4_full_batch_cycles = 0
-    task4_accelerated = False
+    state: Dict[str, Any] = {"task4_full_batch_cycles": 0, "task4_accelerated": False}
     print('[Cleanup] Background cleanup loop started')
 
     while True:
         try:
             cycle += 1
-            t1 = await task1_fix_part_types()
-            await asyncio.sleep(2)
-            t2 = await task2_fill_oem_from_crossref()
-            await asyncio.sleep(3)
-            t3 = await task3_categorize_by_keywords()
-            await asyncio.sleep(2)
-            t6 = await task6_reorganize_categories_rollup()
-            await asyncio.sleep(2)
-            t4 = await task4_fix_oem_lookup_flag()
-            if t4 == 500:
-                task4_full_batch_cycles += 1
-            else:
-                task4_full_batch_cycles = 0
-                task4_accelerated = False
-
-            task4_sleep_s = 1.0
-            if task4_full_batch_cycles >= 300:
-                task4_sleep_s = 0.5
-                if not task4_accelerated:
-                    warning_msg = (
-                        f"[Cleanup] task4 has returned full batch size (500) for "
-                        f"{task4_full_batch_cycles} consecutive cycles; "
-                        f"reducing task4 sleep to 0.5s"
-                    )
-                    logger.warning(warning_msg)
-                    print(warning_msg)
-                    task4_accelerated = True
-
-            await asyncio.sleep(task4_sleep_s)
-            t5 = await task5_detect_manufacturer_overflow()
-            await asyncio.sleep(5)
+            report = await run_cleanup_cycle_once(cycle=cycle, state=state)
 
             if cycle % 10 == 0:
                 print(
                     f"[Cleanup] Cycle {cycle} done: "
-                    f"types={t1} oem={t2} categorized={t3} recategorized={t6} "
-                    f"flags={t4} overflow={t5}"
+                    f"types={report['types']} oem={report['oem']} "
+                    f"categorized={report['categorized']} recategorized={report['recategorized']} "
+                    f"flags={report['flags']} overflow={report['overflow']}"
                 )
 
             await asyncio.sleep(30)

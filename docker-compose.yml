@@ -165,7 +165,8 @@ services:
       CLAMD_HOST: clamav
       MEILI_URL: http://meilisearch:7700
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
-      ENVIRONMENT: ${ENVIRONMENT:-production}
+      ENVIRONMENT: production
+      REAL_DATA_ONLY: 'true'
       DEBUG: 'false'
     depends_on:
       postgres_catalog:

@@ -76,6 +76,7 @@ from BACKEND_DATABASE_MODELS import (
 )
 from BACKEND_AUTH_SECURITY import publish_notification
 from resilience import retry_with_backoff
+from agent_todo_utils import get_active_agent_todos, todo_requests_ranked_first
 from manufacturer_normalization import (
     canonicalize_vehicle_model_for_manufacturer,
     normalize_manufacturer_name,
@@ -797,6 +798,37 @@ def get_supplier_shipping(supplier_name: str, supplier_country: Optional[str] = 
         return _COUNTRY_SHIPPING_RATES[country_key]
 
     return SHIPPING_ILS
+
+
+def resolve_customer_shipping_fee(
+    supplier_shipping_ils: Optional[float] = None,
+    supplier_shipping_usd: Optional[float] = None,
+    usd_to_ils_rate: Optional[float] = None,
+    supplier_name: Optional[str] = None,
+    supplier_country: Optional[str] = None,
+) -> float:
+    """Prefer seller shipping from supplier_parts; use profile fallback only when missing."""
+    ship_ils: Optional[float] = None
+    if supplier_shipping_ils is not None:
+        try:
+            ship_ils = float(supplier_shipping_ils)
+        except Exception:
+            ship_ils = None
+    if ship_ils is not None and ship_ils >= 0:
+        return round(ship_ils, 2)
+
+    ship_usd: Optional[float] = None
+    if supplier_shipping_usd is not None:
+        try:
+            ship_usd = float(supplier_shipping_usd)
+        except Exception:
+            ship_usd = None
+    if ship_usd is not None and ship_usd >= 0:
+        rate = float(usd_to_ils_rate or USD_TO_ILS)
+        if rate > 0:
+            return round(ship_usd * rate, 2)
+
+    return get_supplier_shipping(supplier_name or "", supplier_country)
 
 
 _INTERNAL_MARGIN_DISCLOSURE_RE = re.compile(
@@ -2039,7 +2071,13 @@ NEVER:
                 availability = "in_stock" if sp_row.is_available else "on_order"
                 supplier_price_ils = float(sp_row.price_ils or 0)
                 supplier_ship_ils = float(sp_row.shipping_cost_ils or 0)
-                delivery_fee = get_supplier_shipping(sp_row.supplier_name or "", sp_row.supplier_country or "")
+                delivery_fee = resolve_customer_shipping_fee(
+                    supplier_shipping_ils=sp_row.shipping_cost_ils,
+                    supplier_shipping_usd=sp_row.shipping_cost_usd,
+                    usd_to_ils_rate=usd_to_ils_rate,
+                    supplier_name=sp_row.supplier_name,
+                    supplier_country=sp_row.supplier_country,
+                )
                 if supplier_price_ils > 0:
                     pricing = self.calculate_customer_price_from_ils(
                         supplier_price_ils,
@@ -3158,13 +3196,18 @@ class SupplierManagerAgent(BaseAgent):
         if not _sync_lock:
             return {"status": "skipped", "reason": "sync_prices already running on another worker"}
 
-        # Pull real eBay prices before simulating drift
+        env_name = (os.getenv("ENVIRONMENT", "development") or "development").strip().lower()
+        real_data_only = (os.getenv("REAL_DATA_ONLY", "1" if env_name == "production" else "0") or "0").strip().lower() in {"1", "true", "yes", "on"}
+
+        # Pull real eBay prices before optional synthetic drift.
+        ebay_report: Dict[str, Any] = {}
         try:
             from services.ebay_price_sync import sync_ebay_prices
             ebay_report = await sync_ebay_prices(db, limit_per_run=int(os.getenv("EBAY_PRICE_SYNC_LIMIT", "500")))
             logger.info(f"eBay price sync report: {ebay_report}")
         except Exception as _ebay_err:
             logger.error(f"eBay price sync skipped: {_ebay_err}")
+
         import random
         import hashlib
 
@@ -3189,26 +3232,94 @@ class SupplierManagerAgent(BaseAgent):
         sup_res = await db.execute(select(Supplier).where(Supplier.is_active == True))
         suppliers = {str(s.id): s for s in sup_res.scalars().all()}
 
+        pricing_todos = await get_active_agent_todos(db, "pricing_agent")
+        ranked_first = todo_requests_ranked_first(pricing_todos)
+
         report: Dict = {
             "timestamp": now.isoformat(),
             "suppliers_checked": len(suppliers),
             "parts_updated": 0,
             "availability_changes": 0,
             "errors": [],
+            "selection_mode": "ranked_first" if ranked_first else "default",
+            "shared_todos": [
+                {"id": todo["id"], "title": todo["title"], "status": todo["status"]}
+                for todo in pricing_todos
+            ],
+            "real_data_only": real_data_only,
         }
+
+        if real_data_only:
+            report["mode"] = "real_provider_updates_only"
+            report["ebay_report"] = ebay_report or {}
+            report["parts_updated"] = int((ebay_report or {}).get("parts_updated") or 0)
+            report["availability_changes"] = 0
+            report["errors"] = list((ebay_report or {}).get("errors") or [])
+
+            try:
+                db.add(SystemLog(
+                    level="INFO",
+                    logger_name="supplier_manager_agent",
+                    message=f"[Price Sync] real-data-only mode updated={report['parts_updated']} errors={len(report['errors'])}",
+                    endpoint="/background/price-sync",
+                    method="CRON",
+                ))
+                await db.commit()
+            except Exception:
+                pass
+
+            try:
+                db.add(CatalogVersion(
+                    version_tag=f"price-sync-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}",
+                    description=(
+                        f"Real-data sync only: {report['parts_updated']} updated via provider APIs; "
+                        "synthetic drift disabled"
+                    ),
+                    parts_added=0,
+                    parts_updated=report["parts_updated"],
+                    source="supplier_manager_agent",
+                    status="completed",
+                ))
+                await db.commit()
+            except Exception as e:
+                logger.error("CatalogVersion write failed: %s", e)
+
+            print(
+                f"[Supplier Manager] Price sync complete (real-data-only) — "
+                f"updated={report['parts_updated']:,} "
+                f"errors={len(report['errors'])}"
+            )
+
+            async def _bulk_task() -> None:
+                async with async_session_factory() as bulk_db:
+                    await self.detect_bulk_opportunities(bulk_db)
+
+            asyncio.create_task(_bulk_task())
+            await _sync_lock.release()
+            return report
+
         drops: List[Dict] = []
 
         BATCH = 5000
         offset = 0
 
         while True:
+            stmt = select(SupplierPart).where(SupplierPart.supplier_id.in_(list(suppliers.keys())))
+            if ranked_first:
+                stmt = (
+                    stmt
+                    .outerjoin(PartsCatalog, PartsCatalog.id == SupplierPart.part_id)
+                    .outerjoin(CarBrand, func.lower(CarBrand.name) == func.lower(PartsCatalog.manufacturer))
+                    .order_by(CarBrand.il_market_priority.asc().nullslast(), SupplierPart.id)
+                )
+            else:
+                stmt = stmt.order_by(SupplierPart.id)
+
             rows = (await db.execute(
-                select(SupplierPart)
-                .where(SupplierPart.supplier_id.in_(list(suppliers.keys())))
-                .order_by(SupplierPart.id)
+                stmt
                 .offset(offset)
                 .limit(BATCH)
-                .with_for_update(skip_locked=True)
+                .with_for_update(of=SupplierPart, skip_locked=True)
             )).scalars().all()
 
             if not rows:

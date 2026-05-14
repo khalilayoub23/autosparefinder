@@ -32,13 +32,13 @@ from difflib import SequenceMatcher
 
 from BACKEND_DATABASE_MODELS import (
     get_db, PartsCatalog, Vehicle, SupplierPart, Supplier,
-    CarBrand, User, async_session_factory,
+    CarBrand, User, PartImage, async_session_factory,
 )
 from BACKEND_AUTH_SECURITY import (
     get_redis, check_rate_limit, get_current_user,
 )
 from currency_rate import get_usd_to_ils_rate
-from BACKEND_AI_AGENTS import get_agent, get_supplier_shipping as _get_ship
+from BACKEND_AI_AGENTS import get_agent, resolve_customer_shipping_fee as _resolve_ship_fee
 from resilience import retry_with_backoff
 from routes.utils import _mask_supplier
 from manufacturer_normalization import (
@@ -55,6 +55,14 @@ from part_type_taxonomy import (
     iter_part_type_families,
     resolve_part_type_family,
 )
+
+
+def _supplier_source_tag(supplier_name: Optional[str], supplier_website: Optional[str] = None) -> str:
+    name = (supplier_name or "").strip().lower()
+    website = (supplier_website or "").strip().lower()
+    if "ebay" in name or "ebay." in website:
+        return "ebay"
+    return "local"
 
 router = APIRouter()
 
@@ -209,6 +217,19 @@ def _to_int_or_none(value: Any) -> Optional[int]:
         return int(value)
     except Exception:
         return None
+
+
+def _to_bool_or_none(value: Any) -> Optional[bool]:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return None
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "n", "off"}:
+        return False
+    return None
 
 
 async def _lookup_vehicle_by_license_plate(license_plate: str) -> Dict[str, Any]:
@@ -883,13 +904,16 @@ async def search_parts(
     Search the parts catalogue and return results grouped by part type.
 
     Response shape:
-    {
-      "original":    {"part": {...} | null, "suppliers": [...]},
-      "oem":         {"part": {...} | null, "suppliers": [...]},
-      "aftermarket": {"part": {...} | null, "suppliers": [...]},
-      "results_per_type": <int>,
-      "query": <str>
-    }
+      {
+        "original":    {"part": {...} | null, "suppliers": [...]},
+        "oem":         {"part": {...} | null, "suppliers": [...]},
+        "aftermarket": {"part": {...} | null, "suppliers": [...]},
+        "original_options":    [{"part": {...}, "suppliers": [...]}],
+        "oem_options":         [{"part": {...}, "suppliers": [...]}],
+        "aftermarket_options": [{"part": {...}, "suppliers": [...]}],
+        "results_per_type": <int>,
+        "query": <str>
+      }
 
     Suppliers are sorted price_ils ASC (cheapest first).
     The `per_type` param caps how many supplier offers are returned per type
@@ -1008,6 +1032,12 @@ async def search_parts(
     conditions_base: List[str] = ["pc.is_active = TRUE"]
     query_condition_sql = ""
     params: Dict[str, Any] = {}
+    normalized_query_token = re.sub(r"[^A-Z0-9]", "", (query or "").upper())
+    identifier_query = bool(
+        normalized_query_token
+        and len(normalized_query_token) >= 5
+        and any(ch.isdigit() for ch in normalized_query_token)
+    )
 
     vehicle_context = await _resolve_vehicle_search_context(db, vehicle_id)
     strict_vehicle_context = bool(vehicle_context)
@@ -1035,7 +1065,7 @@ async def search_parts(
         params["q_exact"] = query
         params["q_start"] = f"{query}%"
 
-    if category:
+    if category and not identifier_query:
         family_clause = build_part_type_sql_clause(category, params)
         if family_clause:
             conditions_base.append(family_clause)
@@ -1053,7 +1083,7 @@ async def search_parts(
             conditions_base.append(f"(pc.category ILIKE :cat OR EXISTS (SELECT 1 FROM supplier_parts sp2 WHERE sp2.part_id = pc.id AND sp2.part_type ILIKE :cat){keyword_sql})")
             params["cat"] = f"%{category}%"
 
-    selected_part_family = resolve_part_type_family(category) if category else None
+    selected_part_family = resolve_part_type_family(category) if (category and not identifier_query) else None
 
     if strict_vehicle_context:
         strict_vehicle_clause = await _build_strict_vehicle_match_clause(
@@ -1171,6 +1201,7 @@ async def search_parts(
         include_general: bool = False,
         where_sql_override: Optional[str] = None,
         where_sql_base_override: Optional[str] = None,
+        force_direct_db: bool = False,
         db_session: Optional[AsyncSession] = None,
     ) -> List[Dict[str, Any]]:
         query_db = db_session or db
@@ -1183,7 +1214,7 @@ async def search_parts(
         if any(tok in where_sql_effective for tok in _unsafe_sql_tokens):
             raise HTTPException(status_code=400, detail="unsafe_query_rejected")
 
-        if meili_ids:
+        if meili_ids and not force_direct_db:
             # ── Meilisearch path: rank-preserving unnest JOIN ─────────────────
             # UUIDs come from our own index — hex+dash only, no SQL injection risk.
             # Pass as a Python list so asyncpg maps it to a PostgreSQL text[] array.
@@ -1337,6 +1368,7 @@ async def search_parts(
                     sp.price_usd,
                     sp.price_ils,
                     sp.shipping_cost_ils,
+                    sp.shipping_cost_usd,
                     sp.availability,
                     sp.warranty_months,
                     sp.estimated_delivery_days,
@@ -1346,10 +1378,15 @@ async def search_parts(
                     sp.express_price_ils,
                     sp.express_delivery_days,
                     sp.express_cutoff_time,
-                    sp.last_checked_at
+                    sp.last_checked_at,
+                    s.website        AS supplier_website
                 FROM supplier_parts sp
                 JOIN suppliers s ON s.id = sp.supplier_id
-                WHERE sp.part_id = :part_id AND sp.is_available = TRUE
+                WHERE sp.part_id = :part_id
+                  AND sp.is_available = TRUE
+                  AND s.is_active = TRUE
+                  AND s.name NOT IN ('Official Manufacturer Sites', 'Sandbox Supplier QA')
+                  AND NULLIF(BTRIM(sp.supplier_url), '') IS NOT NULL
                 ORDER BY COALESCE(sp.price_ils, sp.price_usd * :usd_to_ils_rate) ASC
                 LIMIT :lim
             """),
@@ -1380,24 +1417,37 @@ async def search_parts(
         suppliers_list = []
         for sp in sup_rows:
             price_ils = float(sp[5]) if sp[5] else (float(sp[4]) * usd_to_ils_rate if sp[4] else None)
+            shipping_cost_ils = float(sp[6]) if sp[6] is not None else None
+            shipping_cost_usd = float(sp[7]) if sp[7] is not None else None
+            supplier_source = _supplier_source_tag(sp[1], sp[18])
+            shipping_cost_ils_resolved = _resolve_ship_fee(
+                supplier_shipping_ils=shipping_cost_ils,
+                supplier_shipping_usd=shipping_cost_usd,
+                usd_to_ils_rate=usd_to_ils_rate,
+                supplier_name=sp[1],
+                supplier_country=sp[2],
+            )
             suppliers_list.append({
                 "supplier_part_id":      str(sp[0]),
                 "supplier_name":         _mask_supplier(sp[1]),
                 "supplier_country":      sp[2] or "",
                 "supplier_sku":          sp[3],
+                "source":                supplier_source,
                 "price_usd":             float(sp[4]) if sp[4] else None,
                 "price_ils":             round(price_ils, 2) if price_ils else None,
-                "shipping_cost_ils":     float(sp[6]) if sp[6] else None,
-                "availability":          sp[7],
-                "warranty_months":       sp[8],
-                "estimated_delivery_days": sp[9],
-                "stock_quantity":        sp[10],
-                "supplier_url":          sp[11],
-                "express_available":     sp[12],
-                "express_price_ils":     float(sp[13]) if sp[13] else None,
-                "express_delivery_days": sp[14],
-                "express_cutoff_time":   sp[15],
-                "last_checked_at":       sp[16].isoformat() if sp[16] else None,
+                "shipping_cost_ils":     shipping_cost_ils,
+                "shipping_cost_usd":     shipping_cost_usd,
+                "shipping_cost_ils_resolved": shipping_cost_ils_resolved,
+                "availability":          sp[8],
+                "warranty_months":       sp[9],
+                "estimated_delivery_days": sp[10],
+                "stock_quantity":        sp[11],
+                "supplier_url":          sp[12],
+                "express_available":     sp[13],
+                "express_price_ils":     float(sp[14]) if sp[14] else None,
+                "express_delivery_days": sp[15],
+                "express_cutoff_time":   sp[16],
+                "last_checked_at":       sp[17].isoformat() if sp[17] else None,
             })
 
         results: List[Dict[str, Any]] = [{"part": part_dict, "suppliers": suppliers_list}]
@@ -1417,6 +1467,7 @@ async def search_parts(
                             sp.price_usd,
                             sp.price_ils,
                             sp.shipping_cost_ils,
+                            sp.shipping_cost_usd,
                             sp.availability,
                             sp.warranty_months,
                             sp.estimated_delivery_days,
@@ -1426,11 +1477,15 @@ async def search_parts(
                             sp.express_price_ils,
                             sp.express_delivery_days,
                             sp.express_cutoff_time,
-                            sp.last_checked_at
+                            sp.last_checked_at,
+                            s.website               AS supplier_website
                         FROM supplier_parts sp
                         JOIN suppliers s ON s.id = sp.supplier_id
                         WHERE sp.part_id = ANY(CAST(:extra_ids AS uuid[]))
                           AND sp.is_available = TRUE
+                          AND s.is_active = TRUE
+                          AND s.name NOT IN ('Official Manufacturer Sites', 'Sandbox Supplier QA')
+                          AND NULLIF(BTRIM(sp.supplier_url), '') IS NOT NULL
                         ORDER BY sp.part_id,
                                                                  COALESCE(sp.price_ils, sp.price_usd * :usd_to_ils_rate) ASC
                     """),
@@ -1465,24 +1520,37 @@ async def search_parts(
                 extra_suppliers: List[Dict[str, Any]] = []
                 if bsp:
                     b_price_ils = float(bsp[6]) if bsp[6] else (float(bsp[5]) * usd_to_ils_rate if bsp[5] else None)
+                    b_shipping_cost_ils = float(bsp[7]) if bsp[7] is not None else None
+                    b_shipping_cost_usd = float(bsp[8]) if bsp[8] is not None else None
+                    b_supplier_source = _supplier_source_tag(bsp[2], bsp[19])
+                    b_shipping_cost_ils_resolved = _resolve_ship_fee(
+                        supplier_shipping_ils=b_shipping_cost_ils,
+                        supplier_shipping_usd=b_shipping_cost_usd,
+                        usd_to_ils_rate=usd_to_ils_rate,
+                        supplier_name=bsp[2],
+                        supplier_country=bsp[3],
+                    )
                     extra_suppliers = [{
                         "supplier_part_id":        bsp[1],
                         "supplier_name":           _mask_supplier(bsp[2]),
                         "supplier_country":        bsp[3] or "",
                         "supplier_sku":            bsp[4],
+                        "source":                  b_supplier_source,
                         "price_usd":               float(bsp[5]) if bsp[5] else None,
                         "price_ils":               round(b_price_ils, 2) if b_price_ils else None,
-                        "shipping_cost_ils":       float(bsp[7]) if bsp[7] else None,
-                        "availability":            bsp[8],
-                        "warranty_months":         bsp[9],
-                        "estimated_delivery_days": bsp[10],
-                        "stock_quantity":          bsp[11],
-                        "supplier_url":            bsp[12],
-                        "express_available":       bsp[13],
-                        "express_price_ils":       float(bsp[14]) if bsp[14] else None,
-                        "express_delivery_days":   bsp[15],
-                        "express_cutoff_time":     bsp[16],
-                        "last_checked_at":         bsp[17].isoformat() if bsp[17] else None,
+                        "shipping_cost_ils":       b_shipping_cost_ils,
+                        "shipping_cost_usd":       b_shipping_cost_usd,
+                        "shipping_cost_ils_resolved": b_shipping_cost_ils_resolved,
+                        "availability":            bsp[9],
+                        "warranty_months":         bsp[10],
+                        "estimated_delivery_days": bsp[11],
+                        "stock_quantity":          bsp[12],
+                        "supplier_url":            bsp[13],
+                        "express_available":       bsp[14],
+                        "express_price_ils":       float(bsp[15]) if bsp[15] else None,
+                        "express_delivery_days":   bsp[16],
+                        "express_cutoff_time":     bsp[17],
+                        "last_checked_at":         bsp[18].isoformat() if bsp[18] else None,
                     }]
                 results.append({"part": extra_dict, "suppliers": extra_suppliers})
 
@@ -1491,18 +1559,21 @@ async def search_parts(
     async def _fetch_three_buckets(
         where_sql_override: Optional[str] = None,
         where_sql_base_override: Optional[str] = None,
+        force_direct_db: bool = False,
     ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
         async with async_session_factory() as db_original, async_session_factory() as db_oem, async_session_factory() as db_after:
             original_task = _fetch_type(
                 ["Original"],
                 where_sql_override=where_sql_override,
                 where_sql_base_override=where_sql_base_override,
+                force_direct_db=force_direct_db,
                 db_session=db_original,
             )
             oem_task = _fetch_type(
                 ["OEM"],
                 where_sql_override=where_sql_override,
                 where_sql_base_override=where_sql_base_override,
+                force_direct_db=force_direct_db,
                 db_session=db_oem,
             )
             aftermarket_task = _fetch_type(
@@ -1510,6 +1581,7 @@ async def search_parts(
                 include_general=True,
                 where_sql_override=where_sql_override,
                 where_sql_base_override=where_sql_base_override,
+                force_direct_db=force_direct_db,
                 db_session=db_after,
             )
             original_bucket, oem_bucket, aftermarket_bucket = await asyncio.gather(
@@ -1563,18 +1635,228 @@ async def search_parts(
                 where_sql_override=json_where,
                 where_sql_base_override=json_where_base,
             )
+    if identifier_query:
+        strict_clause_to_remove = strict_vehicle_clause_added if strict_vehicle_context else manual_strict_clause_added
+        identifier_base_conditions: List[str] = []
+        removed_strict = False
+        for clause in conditions_base:
+            if strict_clause_to_remove and not removed_strict and clause == strict_clause_to_remove:
+                removed_strict = True
+                continue
+            identifier_base_conditions.append(clause)
 
-    # Primary bucket (first/best per type) — kept for the 3-column TypeSection widget
+        identifier_match_sql = (
+            "("
+            "regexp_replace(UPPER(COALESCE(pc.sku, '')), '[^A-Z0-9]', '', 'g') = :identifier_token "
+            "OR regexp_replace(UPPER(COALESCE(pc.oem_number, '')), '[^A-Z0-9]', '', 'g') = :identifier_token "
+            "OR EXISTS ("
+            "SELECT 1 FROM part_cross_reference pcr_exact "
+            "WHERE pcr_exact.part_id = pc.id "
+            "AND regexp_replace(UPPER(COALESCE(pcr_exact.ref_number, '')), '[^A-Z0-9]', '', 'g') = :identifier_token"
+            ")"
+            ")"
+        )
+        identifier_base_conditions.append(identifier_match_sql)
+        identifier_where_base = " AND ".join(identifier_base_conditions)
+        identifier_where = identifier_where_base
+        params["identifier_token"] = normalized_query_token
+        if query_condition_sql:
+            identifier_where = f"{identifier_where_base} AND {query_condition_sql}"
+
+        exact_original, exact_oem, exact_aftermarket = await _fetch_three_buckets(
+            where_sql_override=identifier_where,
+            where_sql_base_override=identifier_where_base,
+            force_direct_db=True,
+        )
+
+        def _merge_exact_rows(
+            existing_rows: List[Dict[str, Any]],
+            exact_rows: List[Dict[str, Any]],
+        ) -> List[Dict[str, Any]]:
+            merged: List[Dict[str, Any]] = []
+            seen_ids: set = set()
+            for row in [*exact_rows, *existing_rows]:
+                part_id = str((row.get("part") or {}).get("id") or "")
+                if not part_id or part_id in seen_ids:
+                    continue
+                seen_ids.add(part_id)
+                merged.append(row)
+            return merged
+
+        original_res = _merge_exact_rows(original_res, exact_original)
+        oem_res = _merge_exact_rows(oem_res, exact_oem)
+        aftermarket_res = _merge_exact_rows(aftermarket_res, exact_aftermarket)
+
+
+    all_bucket_rows = [*original_res, *oem_res, *aftermarket_res]
+
+    # Attach part images to search buckets so result cards can render pictures.
+    part_ids_for_images = list(dict.fromkeys([
+        str((row.get("part") or {}).get("id"))
+        for row in all_bucket_rows
+        if (row.get("part") or {}).get("id")
+    ]))
+
+    image_map: Dict[str, List[str]] = {}
+    spec_payload_map: Dict[str, Dict[str, Any]] = {}
+    if part_ids_for_images:
+        image_rows = (await db.execute(
+            text(
+                """
+                SELECT part_id::text AS part_id, url
+                FROM parts_images
+                WHERE part_id = ANY(CAST(:part_ids AS uuid[]))
+                  AND url IS NOT NULL
+                ORDER BY part_id, is_primary DESC, sort_order ASC, created_at DESC
+                """
+            ),
+            {"part_ids": part_ids_for_images},
+        )).fetchall()
+
+        for img_row in image_rows:
+            pid = str(img_row[0])
+            url = str(img_row[1] or "").strip()
+            if not url:
+                continue
+            pid_images = image_map.setdefault(pid, [])
+            if url not in pid_images:
+                pid_images.append(url)
+
+        missing_part_ids = [pid for pid in part_ids_for_images if pid not in image_map]
+        if missing_part_ids:
+            spec_rows = (await db.execute(
+                text(
+                    """
+                    SELECT
+                        id::text AS part_id,
+                        COALESCE(specifications->'ebay'->'image_urls', '[]'::jsonb) AS image_urls
+                    FROM parts_catalog
+                    WHERE id = ANY(CAST(:part_ids AS uuid[]))
+                    """
+                ),
+                {"part_ids": missing_part_ids},
+            )).fetchall()
+
+            for spec_row in spec_rows:
+                pid = str(spec_row[0])
+                raw_urls = spec_row[1]
+                if isinstance(raw_urls, str):
+                    try:
+                        raw_urls = json.loads(raw_urls)
+                    except Exception:
+                        raw_urls = []
+
+                if isinstance(raw_urls, list):
+                    parsed_urls = [str(u).strip() for u in raw_urls if str(u).strip()]
+                    if parsed_urls:
+                        image_map[pid] = list(dict.fromkeys(parsed_urls))
+
+    if part_ids_for_images:
+        spec_payload_rows = (await db.execute(
+            text(
+                "SELECT id::text AS part_id, COALESCE(specifications, jsonb_build_object()) AS specifications FROM parts_catalog WHERE id = ANY(CAST(:part_ids AS uuid[]))"
+            ),
+            {"part_ids": part_ids_for_images},
+        )).fetchall()
+
+        for spec_payload_row in spec_payload_rows:
+            pid = str(spec_payload_row[0])
+            raw_specs = spec_payload_row[1]
+            if isinstance(raw_specs, str):
+                try:
+                    raw_specs = json.loads(raw_specs)
+                except Exception:
+                    raw_specs = {}
+            if not isinstance(raw_specs, dict):
+                raw_specs = {}
+
+            ebay_meta = raw_specs.get("ebay") if isinstance(raw_specs.get("ebay"), dict) else {}
+            technical_specs = ebay_meta.get("tech_specs") if isinstance(ebay_meta.get("tech_specs"), dict) else {}
+            warranty_text = ebay_meta.get("warranty_text") if isinstance(ebay_meta, dict) else None
+            warranty_months_raw = ebay_meta.get("warranty_months") if isinstance(ebay_meta, dict) else None
+            ships_to_israel = _to_bool_or_none(ebay_meta.get("ships_to_israel") if isinstance(ebay_meta, dict) else None)
+            try:
+                warranty_months = int(warranty_months_raw) if warranty_months_raw is not None else None
+                if warranty_months is not None and warranty_months <= 0:
+                    warranty_months = None
+            except Exception:
+                warranty_months = None
+
+            spec_payload_map[pid] = {
+                "specifications": raw_specs,
+                "technical_specs": technical_specs if isinstance(technical_specs, dict) else {},
+                "warranty_details": {
+                    "text": str(warranty_text).strip()[:500] if warranty_text else None,
+                    "months": warranty_months,
+                    "source": "ebay",
+                } if (warranty_text or warranty_months is not None) else None,
+                "ships_to_israel": ships_to_israel,
+            }
+    for bucket in (original_res, oem_res, aftermarket_res):
+        for row in bucket:
+            part_payload = row.get("part") or {}
+            pid = str(part_payload.get("id") or "")
+            images = image_map.get(pid, [])
+            part_payload["images"] = images
+            part_payload["primary_image"] = images[0] if images else None
+            spec_payload = spec_payload_map.get(pid) or {}
+            part_payload["specifications"] = spec_payload.get("specifications") or {}
+            part_payload["technical_specs"] = spec_payload.get("technical_specs") or {}
+            part_payload["warranty_details"] = spec_payload.get("warranty_details")
+            part_payload["ships_to_israel"] = spec_payload.get("ships_to_israel")
+
+            suppliers_payload = row.get("suppliers") or []
+            filtered_suppliers: List[Dict[str, Any]] = []
+            for supplier_payload in suppliers_payload:
+                supplier_data = supplier_payload or {}
+                supplier_source = str(supplier_data.get("source") or "").strip().lower()
+                if supplier_source == "ebay":
+                    ebay_ships_to_israel = bool(spec_payload.get("ships_to_israel"))
+                    supplier_data["ships_to_israel"] = ebay_ships_to_israel
+                    if not ebay_ships_to_israel:
+                        continue
+                filtered_suppliers.append(supplier_data)
+            row["suppliers"] = filtered_suppliers
+
+    # Primary bucket (best surfaced card per type) for the 3-column TypeSection widget.
+    # Prefer entries with real supplier offers and images to avoid blank cards.
     def _primary(res: List[Dict[str, Any]]) -> Dict[str, Any]:
-        return res[0] if res else {"part": None, "suppliers": []}
+        if not res:
+            return {"part": None, "suppliers": []}
+
+        def _best_price_ils(suppliers: List[Dict[str, Any]]) -> float:
+            for sup in suppliers or []:
+                try:
+                    price = sup.get("price_ils")
+                    if price is not None:
+                        return float(price)
+                except Exception:
+                    continue
+            return float("inf")
+
+        def _rank(entry: Dict[str, Any]) -> Tuple[int, int, int, int, float]:
+            part_payload = entry.get("part") or {}
+            suppliers = entry.get("suppliers") or []
+            has_suppliers = 1 if suppliers else 0
+            has_in_stock = 1 if any((s or {}).get("availability") == "in_stock" for s in suppliers) else 0
+            images = part_payload.get("images") or []
+            has_image = 1 if (part_payload.get("primary_image") or images) else 0
+            has_warranty = 1 if any(((s or {}).get("warranty_months") or 0) > 0 for s in suppliers) else 0
+            return (-has_suppliers, -has_image, -has_warranty, -has_in_stock, _best_price_ils(suppliers))
+
+        return min(res, key=_rank)
 
     _search_result = {
-        "original":         _primary(original_res),
-        "oem":              _primary(oem_res),
-        "aftermarket":      _primary(aftermarket_res),
-        "all_parts":        [*original_res, *oem_res, *aftermarket_res],
-        "results_per_type": per_type,
-        "query":            query,
+        "original":            _primary(original_res),
+        "oem":                 _primary(oem_res),
+        "aftermarket":         _primary(aftermarket_res),
+        # Full grouped lists (not only one primary card per type).
+        "original_options":    original_res,
+        "oem_options":         oem_res,
+        "aftermarket_options": aftermarket_res,
+        "all_parts":           [*original_res, *oem_res, *aftermarket_res],
+        "results_per_type":    per_type,
+        "query":               query,
     }
     _store_cached_search_response(_s_cache_key, _search_result)
     return _search_result
@@ -2759,7 +3041,39 @@ async def get_part(part_id: str, db: AsyncSession = Depends(get_db)):
     part = result.scalar_one_or_none()
     if not part:
         raise HTTPException(status_code=404, detail="Part not found")
-    return {"id": str(part.id), "name": part.name, "manufacturer": part.manufacturer, "category": part.category, "part_type": part.part_type, "description": part.description, "specifications": part.specifications}
+
+    images_res = await db.execute(
+        select(PartImage.url)
+        .where(and_(PartImage.part_id == part.id, PartImage.url.is_not(None)))
+        .order_by(PartImage.is_primary.desc(), PartImage.sort_order.asc(), PartImage.created_at.desc())
+    )
+    image_urls = [str(r[0]) for r in images_res.fetchall() if r[0]]
+
+    specs = part.specifications or {}
+    ebay_meta = specs.get("ebay") if isinstance(specs, dict) else {}
+    warranty_details = None
+    if isinstance(ebay_meta, dict):
+        warranty_text = ebay_meta.get("warranty_text")
+        warranty_months = ebay_meta.get("warranty_months")
+        if warranty_text or warranty_months is not None:
+            warranty_details = {
+                "text": warranty_text,
+                "months": warranty_months,
+                "source": "ebay",
+            }
+
+    return {
+        "id": str(part.id),
+        "name": part.name,
+        "manufacturer": part.manufacturer,
+        "category": part.category,
+        "part_type": part.part_type,
+        "description": part.description,
+        "specifications": specs,
+        "images": image_urls,
+        "primary_image": image_urls[0] if image_urls else None,
+        "warranty_details": warranty_details,
+    }
 
 
 # ==============================================================================
@@ -2777,7 +3091,14 @@ async def compare_parts(part_id: str, db: AsyncSession = Depends(get_db), reques
     # Try in_stock first
     result = await db.execute(
         select(SupplierPart, Supplier).join(Supplier)
-        .where(and_(SupplierPart.part_id == part_id, SupplierPart.is_available == True, Supplier.is_active == True))
+        .where(and_(
+            SupplierPart.part_id == part_id,
+            SupplierPart.is_available == True,
+            Supplier.is_active == True,
+            Supplier.name.notin_(["Official Manufacturer Sites", "Sandbox Supplier QA"]),
+            SupplierPart.supplier_url.is_not(None),
+            func.length(func.btrim(SupplierPart.supplier_url)) > 0,
+        ))
         .order_by(Supplier.priority.asc())
     )
     rows = result.all()
@@ -2786,7 +3107,13 @@ async def compare_parts(part_id: str, db: AsyncSession = Depends(get_db), reques
     if not rows:
         result2 = await db.execute(
             select(SupplierPart, Supplier).join(Supplier)
-            .where(and_(SupplierPart.part_id == part_id, Supplier.is_active == True))
+            .where(and_(
+                SupplierPart.part_id == part_id,
+                Supplier.is_active == True,
+                Supplier.name.notin_(["Official Manufacturer Sites", "Sandbox Supplier QA"]),
+                SupplierPart.supplier_url.is_not(None),
+                func.length(func.btrim(SupplierPart.supplier_url)) > 0,
+            ))
             .order_by(Supplier.priority.asc())
         )
         rows = result2.all()
@@ -2797,7 +3124,13 @@ async def compare_parts(part_id: str, db: AsyncSession = Depends(get_db), reques
     for sp, supplier in rows:
         cost_ils = float(sp.price_ils or 0)
         ship_ils = float(sp.shipping_cost_ils or 0)
-        delivery_fee = _get_ship(supplier.name or "", supplier.country or "")
+        delivery_fee = _resolve_ship_fee(
+            supplier_shipping_ils=sp.shipping_cost_ils,
+            supplier_shipping_usd=sp.shipping_cost_usd,
+            usd_to_ils_rate=usd_to_ils_rate,
+            supplier_name=supplier.name,
+            supplier_country=supplier.country,
+        )
         if cost_ils > 0:
             pricing = agent.calculate_customer_price_from_ils(
                 cost_ils,
@@ -2828,7 +3161,7 @@ async def compare_parts(part_id: str, db: AsyncSession = Depends(get_db), reques
             "total": pricing["total"],
             "profit": pricing["profit"],
             "warranty_months": sp.warranty_months,
-            "estimated_delivery": f"{sp.estimated_delivery_days}-{sp.estimated_delivery_days + 7} ימים",
+            "estimated_delivery": (f"{sp.estimated_delivery_days}-{sp.estimated_delivery_days + 7} ימים" if sp.estimated_delivery_days is not None else None),
         })
     return {"comparisons": sorted(comparisons, key=lambda x: (x["availability"] != "in_stock", x["total"]))}
 

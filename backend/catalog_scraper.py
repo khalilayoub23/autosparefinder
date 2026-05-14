@@ -68,9 +68,18 @@ from resilience import (
 )
 from currency_rate import upsert_usd_to_ils_rate
 from categories import guess_category_by_text
+from agent_todo_utils import get_active_agent_todos, todo_requests_ranked_first
 
 load_dotenv()
 logger = logging.getLogger(__name__)
+
+
+def _real_data_only_enabled() -> bool:
+    env_name = (os.getenv("ENVIRONMENT", "development") or "development").strip().lower()
+    default_flag = "1" if env_name == "production" else "0"
+    raw = (os.getenv("REAL_DATA_ONLY", default_flag) or default_flag).strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
 
 # ── DB ─────────────────────────────────────────────────────────────────────────
 DATABASE_URL = os.getenv("DATABASE_URL", "")
@@ -1434,19 +1443,22 @@ async def _record_api_call(
 ) -> None:
     """Write one row to scraper_api_calls for audit / quota tracking."""
     try:
+        part_num = (url.rsplit("/", 1)[-1] if url else "")[:100]
         await db.execute(
             text("""
                 INSERT INTO scraper_api_calls
-                    (id, source, url, http_status, response_ms, part_id,
-                     success, error_message, called_at)
+                    (id, source, url, query, part_number, http_status, response_ms,
+                     part_id, success, error_message, called_at, created_at)
                 VALUES
-                    (:id, :source, :url, :status, :ms, :part_id,
-                     :success, :err, NOW())
+                    (:id, :source, :url, :query, :part_number, :status, :ms,
+                     CAST(:part_id AS uuid), :success, :err, NOW(), NOW())
             """),
             {
                 "id": str(uuid.uuid4()),
                 "source": source,
-                "url": url[:500],
+                "url": (url or "")[:500],
+                "query": (url or "")[:200],
+                "part_number": part_num,
                 "status": http_status,
                 "ms": response_ms,
                 "part_id": part_id,
@@ -1510,24 +1522,24 @@ async def _write_price_history(
 # SCRAPE STRATEGY  —  which tool to use per supplier
 # ==============================================================================
 SUPPLIER_TOOL_MAP = {
-    "AutoParts Pro IL": scrape_autodoc,      # Israeli → autodoc.co.il
-    "Global Parts Hub": scrape_rockauto_by_oem,
-    "EastAuto Supply":  scrape_aliexpress,   # Chinese → AliExpress
-    "PartsPro USA":     scrape_rockauto,     # USA → RockAuto (USD)
-    "AutoZone Direct":  scrape_ebay_motors,  # USA → eBay Motors
-    "Hyundai Mobis":    scrape_google_shopping,  # Korean OEM → Google Shopping
-    "Kia Parts Direct": scrape_google_shopping,  # Korean OEM → Google Shopping
-    "Bosch Direct":     scrape_autodoc,          # Bosch → autodoc
-    "Toyota Genuine":   scrape_google_shopping,  # Toyota OEM → Google Shopping
+    "AutoParts Pro IL": scrape_rockauto,  # Root fix: use generic search not OEM-only
+    "Global Parts Hub": scrape_rockauto,
+    "EastAuto Supply":  scrape_aliexpress,
+    "PartsPro USA":     scrape_rockauto,
+    "AutoZone Direct":  scrape_ebay_motors,
+    "Hyundai Mobis":    scrape_google_shopping,
+    "Kia Parts Direct": scrape_google_shopping,
+    "Bosch Direct":     scrape_rockauto,  # Root fix: use generic search not OEM-only
+    "Toyota Genuine":   scrape_google_shopping,
     "Motorstore IL":    scrape_motorstore,
     "Meyle":            scrape_meyle,
     "Gates":            scrape_gates,
     "Brembo":           scrape_brembo,
-    "RockAuto":         scrape_rockauto_by_oem,
+    "RockAuto":         scrape_rockauto,
 }
 
-# Fallback priority: if primary returns nothing, try these in order
-FALLBACK_TOOLS = [scrape_ebay_motors, scrape_google_shopping]
+# Fallback priority: RockAuto + eBay + generic shopping
+FALLBACK_TOOLS = [scrape_rockauto, scrape_rockauto_by_oem, scrape_google_shopping, scrape_ebay_motors]
 
 
 # Express shipping config per supplier  {name: (available, price_ils_surcharge, days, cutoff)}
@@ -1640,33 +1652,31 @@ async def _sync_cross_references(
     part_id: str,
     oem_number: str,
     manufacturer: str,
-    source: str = "autodoc",
+    source: str = "febest",
 ) -> None:
     """
-    Fetch OEM cross-reference numbers from autodoc and insert into
-    part_cross_reference.  Skips rows already present.  Runs at most
+    Fetch OEM cross-reference numbers from RockAuto/eBay and insert into
+    part_cross_reference. Skips rows already present. Runs at most
     once per week per part (caller is responsible for the frequency check).
     """
     if not oem_number:
         return
     try:
-        # Autodoc public cross-ref endpoint
-        url = (
-            f"https://www.autodoc.eu/api/v1/part/analogs"
-            f"?partNumber={oem_number}&brand={manufacturer}&lang=en"
-        )
-        resp = await _get(url, headers={"Accept": "application/json"}, timeout=10)
         items: List[Dict] = []
-        if resp and resp.status_code == 200:
-            data = resp.json()
-            items = data.get("items") or data.get("analogs") or data.get("results") or []
-        # Fallback: re-use scrape_autodoc response if API returned nothing
+
+        rockauto = await scrape_rockauto_by_oem(oem_number, manufacturer)
+        for r in (rockauto.get("results") or []):
+            pn = (r.get("rockauto_part_number") or r.get("part_number") or "").strip()
+            if pn and pn != oem_number:
+                items.append({"number": pn, "brand": r.get("brand") or manufacturer})
+
         if not items:
-            ad = await scrape_autodoc(oem_number, manufacturer)
-            for r in ad.get("results", []):
-                pn = r.get("part_number")
+            ebay = await scrape_ebay_motors(oem_number, manufacturer)
+            for r in (ebay.get("results") or []):
+                pn = (r.get("part_number") or "").strip()
                 if pn and pn != oem_number:
-                    items.append({"number": pn, "brand": r.get("brand", "")})
+                    items.append({"number": pn, "brand": r.get("brand") or manufacturer})
+
         for item in items[:10]:
             ref_num = item.get("number") or item.get("partNumber") or item.get("part_number")
             ref_mfr = item.get("brand") or item.get("manufacturer") or manufacturer
@@ -2047,7 +2057,7 @@ async def _scrape_one_part(
     cat_num = sku.split("-", 1)[-1] if "-" in sku else sku
 
     # --- primary tool ---
-    primary_fn = SUPPLIER_TOOL_MAP.get(supplier_name, scrape_ebay_motors)
+    primary_fn = SUPPLIER_TOOL_MAP.get(supplier_name, scrape_rockauto)
     t_start = datetime.utcnow()
     try:
         if primary_fn is scrape_aliexpress:
@@ -2115,22 +2125,30 @@ async def _scrape_one_part(
                 pass
             await asyncio.sleep(0.5)
 
-    autodoc_oem_numbers: List[str] = []
+    # Extract OEM numbers from ANY source (not just Autodoc) - KEY FIX
+    all_oem_numbers: List[str] = []
     for row in raw_results:
         source_name = str(row.get("source") or "").lower()
-        if source_name.startswith("autodoc"):
-            autodoc_oem_numbers.extend(row.get("oem_numbers") or [])
-    if autodoc_oem_numbers:
+        # Accept OEM numbers from Autodoc, RockAuto, eBay, Febest, or any source
+        oem_list = row.get("oem_numbers") or []
+        if oem_list:
+            all_oem_numbers.extend(oem_list)
+        # Also extract part_number as potential OEM (especially from RockAuto/eBay)
+        pn = str(row.get("part_number") or "").strip()
+        if pn and not source_name.startswith(("amazon", "aliexpress", "google")):
+            all_oem_numbers.append(pn)
+    
+    if all_oem_numbers:
         try:
             await _persist_oem_numbers_from_autodoc(
                 db,
                 part_id=part_id,
                 sku=sku,
                 manufacturer=manufacturer,
-                oem_numbers=autodoc_oem_numbers,
+                oem_numbers=all_oem_numbers,
             )
         except Exception as exc:
-            print(f"[Scraper] OEM persist error for {sku}: {exc}")
+            print(f"[Scraper] OEM/barcode persist error for {sku}: {exc}")
 
     if not scraped_prices:
         return result  # nothing found — leave price as-is
@@ -2238,7 +2256,7 @@ async def _scrape_one_part(
             await _sync_online_price(db, part_id, sku, name, manufacturer)
         # Cross-references (autodoc): ~14% of parts per cycle
         if _id_tail % 7 == 0:
-            await _sync_cross_references(db, part_id, cat_num, manufacturer, source="autodoc")
+            await _sync_cross_references(db, part_id, cat_num, manufacturer, source="febest")
         # Vehicle fitment (autodoc): ~14% of parts per cycle, offset
         if _id_tail % 7 == 1:
             await _sync_vehicle_fitment(db, part_id, cat_num, manufacturer)
@@ -2868,89 +2886,68 @@ def _is_bot_block_page(body: str) -> bool:
     return any(marker in text_l for marker in markers)
 
 
-async def _discover_via_autodoc(brand: str, max_parts: int = 200) -> List[Dict]:
-    """Scrape autodoc.eu JSON API to get real OEM + aftermarket parts for a brand."""
-    slug = _AUTODOC_BRAND_SLUGS.get(brand, brand.lower().replace(" ", "-"))
-    results: List[Dict] = []
-    base_ref = f"https://www.autodoc.eu/{slug}"
-    blocked = False
+async def _discover_via_febest(brand: str, max_parts: int = 200) -> List[Dict]:
+    """Discover parts from Febest catalog by brand (Autodoc removed)."""
+    from urllib.parse import urlencode
 
-    for cat_name, cat_slug in _AUTODOC_CATEGORIES:
+    results: List[Dict] = []
+    seen: set[str] = set()
+
+    params = {"brand": brand, "find": "Find"}
+    url = f"https://febest.de/en/catalog?{urlencode(params)}"
+    resp = await _get(url, headers={"Accept": "text/html"}, referer="https://febest.de/en/catalog")
+    if not resp or resp.status_code != 200:
+        return []
+
+    try:
+        soup = BeautifulSoup(resp.text, "html.parser")
+    except Exception:
+        return []
+
+    target_table = None
+    for table in soup.find_all("table"):
+        headers = [th.get_text(" ", strip=True).lower() for th in table.find_all("th")]
+        if "code" in headers and ("compatible oem" in headers or "oem" in headers):
+            target_table = table
+            break
+    if target_table is None:
+        return []
+
+    for tr in target_table.find_all("tr"):
         if len(results) >= max_parts:
             break
-        await asyncio.sleep(SCRAPE_REQUEST_DELAY + random.uniform(0, 0.8))
-
-        search_url = (
-            f"https://www.autodoc.eu/api/v1/part/search"
-            f"?brand={slug}&category={cat_slug}&lang=en&perPage=20&page=1"
-        )
-        resp = await _get(search_url,
-                          headers={"Accept": "application/json",
-                                   "X-Requested-With": "XMLHttpRequest"},
-                          referer=base_ref)
-        if not resp:
+        cells = tr.find_all("td")
+        if len(cells) < 3:
             continue
 
-        if resp.status_code != 200:
-            if resp.status_code in (403, 429, 503):
-                print(
-                    f"[Rex] autodoc blocked for '{brand}' (HTTP {resp.status_code}) "
-                    "- set SCRAPER_PROXY or run from a residential/prod IP."
-                )
-                blocked = True
-                break
+        code = (cells[0].get_text(" ", strip=True) or "").strip().upper().replace(" ", "")
+        name = (cells[1].get_text(" ", strip=True) or "").strip()
+        oem_raw = (cells[2].get_text(" ", strip=True) or "").strip()
+
+        part_number = code or re.sub(r"[^A-Za-z0-9\-./]", "", (oem_raw.split(",")[0] if oem_raw else ""))
+        if not part_number:
             continue
-
-        content_type = (resp.headers.get("content-type") or "").lower()
-        if "json" not in content_type and _is_bot_block_page(resp.text[:1200]):
-            print(
-                f"[Rex] autodoc anti-bot page for '{brand}' "
-                "- discovery will return 0 from this source."
-            )
-            blocked = True
-            break
-
-        try:
-            data  = resp.json()
-            items = data.get("items") or data.get("results") or data.get("parts") or []
-        except Exception:
-            if _is_bot_block_page(resp.text[:1200]):
-                print(
-                    f"[Rex] autodoc anti-bot page for '{brand}' "
-                    "- discovery will return 0 from this source."
-                )
-                blocked = True
-                break
+        if part_number in seen:
             continue
+        seen.add(part_number)
 
-        for item in items:
-            pnum  = (item.get("partNumber") or item.get("number") or item.get("oem") or "").strip()
-            pname = (item.get("name") or item.get("title") or "").strip()
-            pbrand= (item.get("brand") or item.get("manufacturer") or brand).strip()
-            if not pnum or not pname:
-                continue
-            price_raw = item.get("price") or item.get("priceEUR") or 0
-            try:
-                price_usd = float(str(price_raw).replace(",", ".").replace("€", "").strip() or 0)
-            except Exception:
-                price_usd = 0.0
-
-            results.append({
-                "source":      "autodoc",
+        inferred_category = _guess_category_from_text(f"{name} {oem_raw}")
+        results.append(
+            {
+                "source": "febest",
                 "manufacturer": brand,
-                "part_brand":  pbrand,
-                "part_number": pnum.upper().replace(" ", ""),
-                "name":        pname,
-                "category":    cat_name,
-                "part_type":   classify_part_type(pbrand, pname, "autodoc"),
-                "price_usd":   price_usd,
-                "price_ils":   round(price_usd * ILS_PER_USD, 2),
-                "in_stock":    bool(item.get("inStock") or item.get("availability") == "in_stock"),
-                "url":         f"https://www.autodoc.eu/parts/{slug}/{pnum}",
-            })
+                "part_brand": "FEBEST",
+                "part_number": part_number[:100],
+                "name": name or part_number,
+                "category": inferred_category,
+                "part_type": classify_part_type("FEBEST", name or part_number, "febest"),
+                "price_usd": 0.0,
+                "price_ils": 0.0,
+                "in_stock": True,
+                "url": url,
+            }
+        )
 
-    if blocked and not results:
-        print(f"[Rex] autodoc yielded 0 parts for '{brand}' due to source blocking.")
     return results
 
 
@@ -3067,6 +3064,14 @@ async def run_brand_discovery(
     if not DISCOVERY_ENABLED:
         return {"status": "disabled", "message": "DISCOVERY_ENABLED=false"}
 
+    if _real_data_only_enabled():
+        return {
+            "status": "skipped",
+            "reason": "real_data_only mode disables brand_discovery inserts",
+            "job": "brand_discovery",
+            "agent": "Rex",
+        }
+
     from BACKEND_AUTH_SECURITY import get_redis
     from distributed_lock import acquire_lock
     _disc_lock = await acquire_lock(await get_redis(), "brand_discovery", ttl_seconds=86400)
@@ -3084,6 +3089,7 @@ async def run_brand_discovery(
         "brands":        {},
         "total_inserted": 0,
         "total_skipped":  0,
+        "shared_todos": [],
     }
 
     try:
@@ -3140,20 +3146,60 @@ async def run_brand_discovery(
 
                 supplier_id = str(supplier[0]) if supplier else None
 
+                rex_todos = await get_active_agent_todos(db, "rex")
+                report["shared_todos"] = [
+                    {"id": todo["id"], "title": todo["title"], "status": todo["status"]}
+                    for todo in rex_todos
+                ]
+
                 # Auto-select thin brands if none provided
                 if not brands:
-                    rows = (await db.execute(
-                        text("""
-                            SELECT manufacturer, COUNT(*) AS cnt
-                            FROM parts_catalog
-                            WHERE is_active = true
-                            GROUP BY manufacturer
-                            HAVING COUNT(*) < :target
-                            ORDER BY COUNT(*) ASC
-                            LIMIT :lim
-                        """),
-                        {"target": target, "lim": per_run},
-                    )).fetchall()
+                    if todo_requests_ranked_first(rex_todos):
+                        rows = (await db.execute(
+                            text("""
+                                WITH brand_counts AS (
+                                    SELECT
+                                        cb.name AS manufacturer,
+                                        cb.il_market_priority AS il_market_priority,
+                                        COUNT(pc.id) FILTER (WHERE pc.is_active = TRUE) AS cnt
+                                    FROM car_brands cb
+                                    LEFT JOIN parts_catalog pc
+                                        ON pc.manufacturer = cb.name
+                                       AND pc.is_active = TRUE
+                                    WHERE cb.is_active = TRUE
+                                    GROUP BY cb.name, cb.il_market_priority
+                                )
+                                SELECT manufacturer, cnt
+                                FROM brand_counts
+                                WHERE cnt < :target
+                                ORDER BY
+                                    COALESCE(il_market_priority, 999999) ASC,
+                                    cnt ASC,
+                                    manufacturer ASC
+                                LIMIT :lim
+                            """),
+                            {"target": target, "lim": per_run},
+                        )).fetchall()
+                    else:
+                        rows = (await db.execute(
+                            text("""
+                                WITH brand_counts AS (
+                                    SELECT manufacturer, COUNT(*) AS cnt
+                                    FROM parts_catalog
+                                    WHERE is_active = true
+                                    GROUP BY manufacturer
+                                    HAVING COUNT(*) < :target
+                                )
+                                SELECT bc.manufacturer, bc.cnt
+                                FROM brand_counts bc
+                                LEFT JOIN car_brands cb ON cb.name = bc.manufacturer AND cb.is_active = TRUE
+                                ORDER BY
+                                    COALESCE(cb.il_market_priority, 999) ASC,
+                                    bc.cnt ASC
+                                LIMIT :lim
+                            """),
+                            {"target": target, "lim": per_run},
+                        )).fetchall()
                     brands = [r[0] for r in rows if r[0]]
 
                 if not brands:
@@ -3198,17 +3244,33 @@ async def run_brand_discovery(
 
                     await asyncio.sleep(1.5)
 
-                    # Source 2/3 fallbacks - autodoc + eBay
+                    # Source 2/3/4 fallbacks - Febest + RockAuto + eBay
                     if not DISCOVERY_OFFICIAL_ONLY:
                         try:
-                            autodoc_parts = await _discover_via_autodoc(brand, max_parts=min(max(need - len(parts), 0) + 20, 300))
-                            parts.extend(autodoc_parts)
-                            b_report["sources"].append(f"autodoc:{len(autodoc_parts)}")
-                            print(f"[Rex]   autodoc -> {len(autodoc_parts)}")
+                            febest_parts = await _discover_via_febest(brand, max_parts=min(max(need - len(parts), 0) + 20, 260))
+                            parts.extend(febest_parts)
+                            b_report["sources"].append(f"febest:{len(febest_parts)}")
+                            print(f"[Rex]   febest -> {len(febest_parts)}")
                         except Exception as exc:
-                            print(f"[Rex]   autodoc error: {exc}")
+                            print(f"[Rex]   febest error: {exc}")
 
-                        await asyncio.sleep(2)
+                        await asyncio.sleep(1.5)
+
+                        if len(parts) < need:
+                            try:
+                                rockauto_parts = await _search_category_query_multisource(
+                                    query=f"{brand} spare part",
+                                    manufacturer=brand,
+                                    category_he="accessories",
+                                    max_parts=min(need - len(parts) + 20, 120),
+                                )
+                                parts.extend(rockauto_parts)
+                                b_report["sources"].append(f"rockauto:{len(rockauto_parts)}")
+                                print(f"[Rex]   rockauto -> {len(rockauto_parts)}")
+                            except Exception as exc:
+                                print(f"[Rex]   rockauto error: {exc}")
+
+                        await asyncio.sleep(1.5)
 
                         if len(parts) < need:
                             try:
@@ -3220,7 +3282,7 @@ async def run_brand_discovery(
                                 print(f"[Rex]   eBay error: {exc}")
                     else:
                         b_report["sources"].append("fallbacks:skipped_official_only")
-                        print("[Rex]   official-only mode: skipped autodoc + eBay")
+                        print("[Rex]   official-only mode: skipped febest/rockauto/eBay")
 
                     # Deduplicate and filter out already-known SKUs
                     seen: set = set()
@@ -3241,7 +3303,7 @@ async def run_brand_discovery(
                             part_brand_name = part.get("part_brand") or part.get("manufacturer") or ""
 
                             is_oem_source = source_name in _OEM_DISCOVERY_SOURCES
-                            apply_aftermarket = source_name == "autodoc" and "aftermarket" in part_type_name
+                            apply_aftermarket = source_name in {"febest", "rockauto", "rockauto_api", "ebay", "ebay_motors"} and "aftermarket" in part_type_name
                             resolved_aftermarket_brand_id: Optional[uuid.UUID] = None
                             resolved_aftermarket_tier: Optional[str] = None
 
@@ -3381,58 +3443,73 @@ async def run_brand_discovery(
 
 # ==============================================================================
 
-async def _search_autodoc_category_query(
+async def _search_category_query_multisource(
     query: str,
     manufacturer: str,
     category_he: str,
     *,
     max_parts: int = 20,
 ) -> List[Dict[str, Any]]:
-    """Search Autodoc API by free-text query and normalize items for category discovery."""
-    search_url = f"https://www.autodoc.eu/api/v1/part/search?search={quote_plus(query)}&lang=en&perPage=20&page=1"
-    resp = await _get(
-        search_url,
-        headers={"Accept": "application/json", "X-Requested-With": "XMLHttpRequest"},
-    )
-    if not resp or resp.status_code != 200:
-        return []
+    """Search by query using RockAuto + eBay only (Autodoc removed)."""
+    results: List[Dict[str, Any]] = []
 
     try:
-        data = resp.json()
-        items = data.get("items") or data.get("results") or data.get("parts") or []
+        rock = await scrape_rockauto(query, manufacturer)
     except Exception:
-        return []
+        rock = {"results": []}
 
-    results: List[Dict[str, Any]] = []
-    for item in items[:max_parts]:
-        pnum = (item.get("partNumber") or item.get("number") or item.get("oem") or "").strip()
-        pname = (item.get("name") or item.get("title") or "").strip()
-        pbrand = (item.get("brand") or item.get("manufacturer") or manufacturer).strip()
+    for item in (rock.get("results") or [])[:max_parts]:
+        pnum = str(item.get("part_number") or "").strip().upper().replace(" ", "")
+        pname = str(item.get("name") or "").strip()
+        pbrand = str(item.get("brand") or manufacturer).strip()
         if not pnum or not pname:
             continue
-
-        price_raw = item.get("price") or item.get("priceEUR") or item.get("priceUSD") or 0
-        try:
-            price_usd = float(str(price_raw).replace(",", ".").replace("€", "").replace("$", "").strip() or 0)
-        except Exception:
-            price_usd = 0.0
-
-        clean_pnum = pnum.upper().replace(" ", "")
+        price_usd = float(item.get("price_usd") or 0)
         results.append(
             {
-                "source": "autodoc",
+                "source": "rockauto",
                 "manufacturer": manufacturer,
                 "part_brand": pbrand,
-                "part_number": clean_pnum,
+                "part_number": pnum,
                 "name": pname,
                 "category": category_he,
-                "part_type": classify_part_type(pbrand, pname, "autodoc"),
+                "part_type": classify_part_type(pbrand, pname, "rockauto"),
                 "price_usd": price_usd,
                 "price_ils": round(price_usd * ILS_PER_USD, 2),
-                "in_stock": bool(item.get("inStock") or item.get("availability") == "in_stock"),
-                "url": f"https://www.autodoc.eu/search?query={quote_plus(clean_pnum)}",
+                "in_stock": True,
+                "url": str(item.get("url") or "https://www.rockauto.com/en/catalog/"),
             }
         )
+
+    if len(results) < max_parts:
+        try:
+            ebay = await scrape_ebay_motors(query, manufacturer)
+        except Exception:
+            ebay = {"results": []}
+
+        for item in (ebay.get("results") or [])[: max_parts - len(results)]:
+            pnum = str(item.get("part_number") or query).strip().upper().replace(" ", "")
+            pname = str(item.get("name") or "").strip()
+            pbrand = str(item.get("brand") or manufacturer).strip()
+            if not pnum or not pname:
+                continue
+            price_usd = float(item.get("price_usd") or 0)
+            results.append(
+                {
+                    "source": "ebay",
+                    "manufacturer": manufacturer,
+                    "part_brand": pbrand,
+                    "part_number": pnum[:100],
+                    "name": pname,
+                    "category": category_he,
+                    "part_type": classify_part_type(pbrand, pname, "ebay_motors"),
+                    "price_usd": price_usd,
+                    "price_ils": round(price_usd * ILS_PER_USD, 2),
+                    "in_stock": True,
+                    "url": str(item.get("url") or "https://www.ebay.com/"),
+                }
+            )
+
     return results
 
 
@@ -3509,7 +3586,7 @@ async def _run_category_discovery() -> Dict[str, Any]:
 
                                 await asyncio.sleep(SCRAPE_REQUEST_DELAY + random.uniform(0, 0.6))
                                 query = f"{search_term} {manufacturer}".strip()
-                                candidates = await _search_autodoc_category_query(
+                                candidates = await _search_category_query_multisource(
                                     query,
                                     manufacturer,
                                     category_he,
@@ -3526,7 +3603,7 @@ async def _run_category_discovery() -> Dict[str, Any]:
                                     part_brand_name = part.get("part_brand") or part.get("manufacturer") or ""
 
                                     is_oem_source = source_name in _OEM_DISCOVERY_SOURCES
-                                    apply_aftermarket = source_name == "autodoc" and "aftermarket" in part_type_name
+                                    apply_aftermarket = source_name in {"febest", "rockauto", "rockauto_api", "ebay", "ebay_motors"} and "aftermarket" in part_type_name
                                     resolved_aftermarket_brand_id: Optional[uuid.UUID] = None
                                     resolved_aftermarket_tier: Optional[str] = None
 
@@ -3546,7 +3623,7 @@ async def _run_category_discovery() -> Dict[str, Any]:
                                         base_price=float(part.get("price_usd") or 0),
                                         description=(
                                             f"{category_he} discovered for {manufacturer}. "
-                                            f"Query: {query}. Source: autodoc."
+                                            f"Query: {query}. Source: multisource (febest/rockauto/ebay)."
                                         ),
                                         aftermarket_brand_id=resolved_aftermarket_brand_id,
                                         aftermarket_tier=resolved_aftermarket_tier,
@@ -3781,6 +3858,19 @@ async def run_transport_pipeline_if_due() -> None:
                 finally:
                     sys.argv = old_argv
 
+            # Sync market priority rankings into car_brands.il_market_priority
+            try:
+                sync_fn = getattr(mod, "sync_market_priority_to_db", None)
+                if sync_fn:
+                    sync_result = await asyncio.to_thread(sync_fn)
+                    print(
+                        f"[Rex] Transport priority sync: "
+                        f"updated={sync_result.get('car_brands_updated')} "
+                        f"skipped={sync_result.get('car_brands_skipped_no_match')}"
+                    )
+            except Exception as sync_exc:
+                print(f"[Rex] Transport priority sync error (non-fatal): {sync_exc}")
+
             await db.execute(text("""
                 INSERT INTO system_logs
                 (id, logger_name, level, message, created_at)
@@ -3793,6 +3883,8 @@ async def run_transport_pipeline_if_due() -> None:
         except Exception as exc:
             logger.error("[Rex] Transport pipeline failed: %s", exc)
             print(f"[Rex] Transport pipeline failed: {exc}")
+
+
 
 
 async def run_scraper_cycle(*, batch_size: int = SCRAPE_BATCH_SIZE, refresh_fx: bool = True) -> Dict[str, Any]:
@@ -3862,10 +3954,18 @@ async def run_scraper_cycle(*, batch_size: int = SCRAPE_BATCH_SIZE, refresh_fx: 
                     JOIN suppliers       s  ON s.id  = sp.supplier_id
                     JOIN parts_catalog   pc ON pc.id = sp.part_id
                     WHERE pc.is_active = true
+                      AND (
+                          :real_data_only = FALSE
+                          OR (
+                              COALESCE(pc.needs_oem_lookup, FALSE) = FALSE
+                              AND COALESCE(sp.supplier_url, '') <> ''
+                              AND LOWER(TRIM(s.name)) NOT IN ('official manufacturer sites', 'sandbox supplier qa')
+                          )
+                      )
                     ORDER BY sp.last_checked_at ASC NULLS FIRST
                     LIMIT :lim
                 """),
-                {"lim": batch_size},
+                {"lim": batch_size, "real_data_only": _real_data_only_enabled()},
             )).fetchall()
 
             print(f"[Scraper] Cycle started — {len(rows)} parts to check, "
@@ -3901,6 +4001,10 @@ async def run_scraper_cycle(*, batch_size: int = SCRAPE_BATCH_SIZE, refresh_fx: 
                 except Exception as exc:
                     report["errors"] += 1
                     print(f"[Scraper] Error on {row.sku}: {exc}")
+                    try:
+                        await db.rollback()
+                    except Exception:
+                        pass
 
                 await asyncio.sleep(SCRAPE_REQUEST_DELAY * 0.3)  # short inter-part delay
 
@@ -3940,13 +4044,24 @@ async def run_scraper_cycle(*, batch_size: int = SCRAPE_BATCH_SIZE, refresh_fx: 
                 )
                 await db.commit()
             except Exception:
-                pass
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
 
             if job_id:
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
                 await job_registry_finish(db, job_id, status="completed")
 
         except Exception as exc:
             if job_id:
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
                 try:
                     await job_registry_finish(db, job_id, status="dead", error_message=str(exc)[:500])
                 except Exception:
@@ -4093,6 +4208,7 @@ async def scraper_background_loop():
                     print(f"[Scraper] Transport pipeline scheduler error: {str(exc)[:500]}")
 
                 await asyncio.sleep(5)
+
 
             # Job 1 — Price Sync (every SCRAPE_INTERVAL_H hours)
             try:

@@ -30,7 +30,7 @@ import os
 import uuid as _uuid
 import httpx as _httpx
 
-from BACKEND_DATABASE_MODELS import get_pii_db, User, UserProfile, PasswordReset, UserSession
+from BACKEND_DATABASE_MODELS import get_db, get_pii_db, User, UserProfile, PasswordReset, UserSession
 from BACKEND_AUTH_SECURITY import (
     get_current_user,
     register_user, login_user, complete_2fa_login,
@@ -430,6 +430,75 @@ async def social_login(
             "is_verified": user.is_verified,
             "is_admin":    user.is_admin,
         },
+    }
+
+
+# ==============================================================================
+# GET /api/aliexpress/callback
+# ==============================================================================
+
+@router.get("/api/aliexpress/callback")
+async def aliexpress_oauth_callback(
+    code: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    AliExpress sends authorization_code here after user approves the app.
+    Exchange it for access_token + refresh_token.
+    """
+    import hashlib
+    import hmac
+    import time
+
+    app_key = os.getenv("ALIEXPRESS_APP_KEY", "")
+    app_secret = os.getenv("ALIEXPRESS_APP_SECRET", "")
+
+    if not app_key or not app_secret:
+        raise HTTPException(status_code=500, detail="AliExpress app credentials are not configured")
+
+    _ = request
+    _ = db
+
+    params = {
+        "method": "aliexpress.system.oauth.token",
+        "app_key": app_key,
+        "timestamp": str(int(time.time() * 1000)),
+        "sign_method": "sha256",
+        "format": "json",
+        "v": "2.0",
+        "code": code,
+        "grant_type": "authorization_code",
+    }
+    sorted_str = "".join(f"{k}{v}" for k, v in sorted(params.items()))
+    params["sign"] = hmac.new(
+        app_secret.encode("utf-8"), sorted_str.encode("utf-8"), hashlib.sha256
+    ).hexdigest().upper()
+
+    async with _httpx.AsyncClient(timeout=20.0) as client:
+        resp = await client.post("https://api-sg.aliexpress.com/sync", data=params)
+        resp.raise_for_status()
+        data = resp.json()
+
+    token_data = data.get("aliexpress_system_oauth_token_response", {})
+    if isinstance(token_data, dict) and "resp_result" in token_data:
+        rr = token_data.get("resp_result") or {}
+        if isinstance(rr, dict):
+            token_data = rr.get("result") or token_data
+
+    access_token = token_data.get("access_token")
+    refresh_token = token_data.get("refresh_token")
+    expires_in = token_data.get("expire_time")
+
+    # Log to console so you can copy to .env
+    print(f"ALIEXPRESS_ACCESS_TOKEN={access_token}")
+    print(f"ALIEXPRESS_REFRESH_TOKEN={refresh_token}")
+    print(f"Expires: {expires_in}")
+
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "expires_in": expires_in,
     }
 
 

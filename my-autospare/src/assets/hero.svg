@@ -1,0 +1,64 @@
+<svg width="980" height="620" viewBox="0 0 980 620" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="80" y1="40" x2="900" y2="580" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0B4EC8"/>
+      <stop offset="0.5" stop-color="#1A5FE0"/>
+      <stop offset="1" stop-color="#63A3FF"/>
+    </linearGradient>
+    <linearGradient id="metal" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#FAFAFA"/>
+      <stop offset="0.5" stop-color="#BFC7D6"/>
+      <stop offset="1" stop-color="#7D8797"/>
+    </linearGradient>
+    <linearGradient id="coil" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#FF4E42"/>
+      <stop offset="1" stop-color="#A51818"/>
+    </linearGradient>
+    <filter id="blur" x="0" y="0" width="980" height="620" filterUnits="userSpaceOnUse">
+      <feGaussianBlur stdDeviation="30"/>
+    </filter>
+  </defs>
+
+  <rect width="980" height="620" rx="24" fill="url(#bg)"/>
+  <g opacity="0.35" filter="url(#blur)">
+    <circle cx="820" cy="220" r="130" fill="#7FB7FF"/>
+    <circle cx="680" cy="360" r="110" fill="#5EA0FF"/>
+  </g>
+
+  <g transform="translate(510 130)">
+    <circle cx="190" cy="140" r="135" fill="url(#metal)"/>
+    <circle cx="190" cy="140" r="98" fill="#2E3746"/>
+    <circle cx="190" cy="140" r="55" fill="#C8D0DE"/>
+    <circle cx="190" cy="140" r="26" fill="#7B8594"/>
+    <g opacity="0.65">
+      <rect x="184" y="5" width="12" height="36" rx="6" fill="#DCE3EE"/>
+      <rect x="184" y="239" width="12" height="36" rx="6" fill="#DCE3EE"/>
+      <rect x="302" y="132" width="12" height="36" rx="6" fill="#DCE3EE"/>
+      <rect x="66" y="132" width="12" height="36" rx="6" fill="#DCE3EE"/>
+    </g>
+  </g>
+
+  <g transform="translate(760 70)">
+    <rect x="22" y="0" width="26" height="400" rx="10" fill="#7B8594"/>
+    <g stroke="url(#coil)" stroke-width="12">
+      <path d="M12 20 C80 45, 80 80, 12 105"/>
+      <path d="M12 110 C80 135, 80 170, 12 195"/>
+      <path d="M12 200 C80 225, 80 260, 12 285"/>
+      <path d="M12 290 C80 315, 80 350, 12 375"/>
+    </g>
+  </g>
+
+  <g transform="translate(560 290)">
+    <circle cx="80" cy="80" r="70" fill="#4D5B70"/>
+    <circle cx="80" cy="80" r="36" fill="#B8C1D1"/>
+    <rect x="140" y="50" width="130" height="60" rx="16" fill="url(#metal)"/>
+    <rect x="6" y="126" width="180" height="34" rx="10" fill="#2A3241"/>
+    <rect x="200" y="132" width="180" height="28" rx="8" fill="#A5AFBF"/>
+  </g>
+
+  <g transform="translate(500 430)">
+    <rect x="0" y="0" width="110" height="36" rx="10" fill="#E6ECF7"/>
+    <rect x="128" y="0" width="110" height="36" rx="10" fill="#D2DCEC"/>
+    <rect x="256" y="0" width="110" height="36" rx="10" fill="#BBC8DD"/>
+  </g>
+</svg>

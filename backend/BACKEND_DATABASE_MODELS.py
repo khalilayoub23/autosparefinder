@@ -130,6 +130,7 @@ class CarBrand(Base):
     warranty_notes = Column(Text, nullable=True)
     il_importer = Column(String(200), nullable=True)               # e.g. Champion Motors (BMW)
     il_importer_website = Column(String(500), nullable=True)
+    il_market_priority = Column(Integer, nullable=True, index=True)  # lower means higher priority in IL market
     parts_availability = Column(String(20), nullable=True)         # Easy / Medium / Hard
     avg_service_interval_km = Column(Integer, nullable=True)
     popular_models_il = Column(JSONB, nullable=True)               # from transport ministry data
@@ -1554,11 +1555,14 @@ class ScraperApiCall(Base):
                     doc="autodoc / ebay / aliexpress / rockauto / google_shopping / data_gov_il")
     query = Column(String(200), nullable=True)
     part_number = Column(String(100), nullable=True)
+    url = Column(String(500), nullable=True)
+    part_id = Column(UUID(as_uuid=True), ForeignKey("parts_catalog.id", ondelete="SET NULL"), nullable=True, index=True)
     http_status = Column(Integer, nullable=True)
     success = Column(Boolean, nullable=False, default=True)
     results_count = Column(Integer, nullable=True)
     response_ms = Column(Integer, nullable=True)                    # milliseconds
     error_message = Column(Text, nullable=True)
+    called_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
 
@@ -1586,6 +1590,59 @@ class BugReport(Base):
     resolved_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+
+class AgentTodo(Base):
+    """Shared todo list for agents (Rex, db_update, scraper) and admin panel.
+    
+    Used to track work items across price updates, DB maintenance, and catalogue building.
+    Agents can read current todos and update progress.
+    Admin panel displays live status.
+    """
+    __tablename__ = "agent_todos"
+    __table_args__ = (
+        Index("ix_agent_todos_status", "status"),
+        Index("ix_agent_todos_assigned_to_agent", "assigned_to_agent"),
+        Index("ix_agent_todos_created_at", "created_at"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    title = Column(String(255), nullable=False, comment="Task title")
+    description = Column(Text, nullable=True, comment="Detailed description")
+    status = Column(String(50), nullable=False, default="not_started", 
+                    comment="not_started | in_progress | completed | blocked | cancelled")
+    priority = Column(String(20), nullable=False, default="medium",
+                      comment="low | medium | high | critical")
+    
+    # Assignment & tracking
+    assigned_to_agent = Column(String(100), nullable=True, comment="Agent name: rex | db_update_agent | scraper")
+    
+    # Progress tracking
+    progress_pct = Column(Integer, nullable=False, default=0, comment="0-100%")
+    progress_notes = Column(Text, nullable=True, comment="Current progress update")
+    
+    # Category
+    category = Column(String(50), nullable=False, default="general",
+                      comment="pricing | database | catalogue | integration | fix | other")
+    
+    # Dependencies & relationships
+    depends_on_todo_id = Column(UUID(as_uuid=True), ForeignKey("agent_todos.id", ondelete="SET NULL"), nullable=True)
+    blocking_todo_ids = Column(ARRAY(UUID), nullable=True, comment="Array of todo IDs blocked by this")
+    
+    # Timeline
+    target_date = Column(DateTime, nullable=True, comment="Expected completion date")
+    started_at = Column(DateTime, nullable=True, comment="When work started")
+    completed_at = Column(DateTime, nullable=True, comment="When work completed")
+    
+    # Metadata
+    tags = Column(ARRAY(String), nullable=True, comment="Tags for filtering")
+    artifacts = Column(JSONB, nullable=True, comment="Related files/reports/outputs")
+    metrics = Column(JSONB, nullable=True, comment="Completion metrics")
+    
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
 
 
 # ==============================================================================

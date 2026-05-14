@@ -31,6 +31,8 @@ from __future__ import annotations
 
 import asyncio
 from collections import defaultdict
+from difflib import SequenceMatcher
+from pathlib import Path
 import httpx
 import json
 import logging
@@ -50,6 +52,7 @@ from manufacturer_normalization import PARTS_BRANDS, canonicalize_vehicle_model_
 from manufacturer_normalization import normalize_vehicle_model_name, normalize_vehicle_submodel_name
 from manufacturer_normalization import normalize_manufacturer_name
 from categories import CATEGORY_MAP as SHARED_CATEGORY_MAP
+from agent_todo_utils import get_active_agent_todos, extract_todo_task_names
 
 logger = logging.getLogger("db_update_agent")
 
@@ -62,6 +65,93 @@ ILS_PER_USD = 3.72  # fallback – overridden at runtime from system_settings
 
 # Canonical categories come from the shared taxonomy module.
 CANONICAL_CATEGORIES: List[str] = list(SHARED_CATEGORY_MAP.keys()) + ["כללי"]
+
+_HE_CHAR_RE = re.compile(r"[֐-׿]")
+_ALIAS_MIN_SCORE = float(os.getenv("HE_ALIAS_MIN_SCORE", "0.88"))
+_ALIAS_MIN_MARGIN = float(os.getenv("HE_ALIAS_MIN_MARGIN", "0.06"))
+
+
+def _real_data_only_enabled() -> bool:
+    env_name = (os.getenv("ENVIRONMENT", "development") or "development").strip().lower()
+    default_flag = "1" if env_name == "production" else "0"
+    raw = (os.getenv("REAL_DATA_ONLY", default_flag) or default_flag).strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+_HE_TO_LATIN = {
+    "א": "a", "ב": "b", "ג": "g", "ד": "d", "ה": "h", "ו": "v", "ז": "z", "ח": "h", "ט": "t",
+    "י": "y", "כ": "k", "ך": "k", "ל": "l", "מ": "m", "ם": "m", "נ": "n", "ן": "n", "ס": "s",
+    "ע": "a", "פ": "p", "ף": "p", "צ": "ts", "ץ": "ts", "ק": "k", "ר": "r", "ש": "sh", "ת": "t",
+    " ": " ", "׳": "", "'": "",
+}
+
+_MANUAL_HEBREW_CANDIDATES: Dict[str, List[str]] = {
+    "chevrolet": ["שברולט"],
+    "lamborghini": ["למבורגיני"],
+    "porsche": ["פורשה"],
+    "rollsroyce": ["רולס רויס"],
+    "mclaren": ["מקלארן"],
+    "hummer": ["האמר"],
+    "lincoln": ["לינקולן"],
+    "lotus": ["לוטוס"],
+    "mini": ["מיני"],
+    "morgan": ["מורגן"],
+    "pontiac": ["פונטיאק"],
+    "piaggio": ["פיאגו"],
+    "polaris": ["פולריס"],
+    "haval": ["האבל"],
+    "changan": ["צ אנגאן", "צאנגאן"],
+    "dongfeng": ["דונגפנג"],
+    "foton": ["פוטון"],
+    "jac": ["ג אק", "גאק", "ג אקו", "גאקו"],
+    "jmc": ["ג יי אם סי", "גי אם סי"],
+    "baic": ["באיק"],
+    "hongqi": ["הונג צ י", "הונגצי"],
+    "voyah": ["וויה"],
+    "wey": ["ווי"],
+    "ora": ["אורה"],
+    "genesis": ["ג נסיס", "גנסיס"],
+    "liauto": ["לי אוטו"],
+    "jaecoo": ["ג ייקו", "גייקו"],
+    "leapmotor": ["ליפמוטור"],
+    "skywell": ["סקייוול"],
+    "seres": ["סרס"],
+    "omoda": ["אומודה"],
+    "neta": ["נטא"],
+    "lti": ["אל טי איי"],
+    "im": ["איי אם"],
+    "aiways": ["איווייז"],
+    "arcfox": ["ארקפוקס"],
+    "aion": ["איון"],
+    "changyang": ["צ אנג יאנג", "צאנג יאנג"],
+    "dayon": ["דאיון"],
+    "dfsk": ["די אף אס קיי"],
+    "detomaso": ["דה תומאסו"],
+    "exlantix": ["אקסלנטיקס"],
+    "farizon": ["פאריזון"],
+    "forthing": ["פורתינג"],
+    "giayuan": ["גיאיוואן"],
+    "ineos": ["אינאוס"],
+    "karma": ["קארמה"],
+    "levc": ["אל אי וי סי"],
+    "lynkco": ["לינק אנד קו"],
+    "lynxis": ["לינקסיס"],
+    "movimatic": ["מובימטיק"],
+    "sentro": ["סנטרו"],
+    "modern": ["מודרן"],
+    "yudo": ["יודו"],
+    "swm": ["אס דאבליו אם"],
+    "tic": ["טי איי סי"],
+    "wmi": ["דאבליו אם איי"],
+    "xev": ["אקס אי וי"],
+    "gms": ["גי אם אס"],
+    "mcc": ["אם סי סי"],
+}
+
+_TRANSPORT_FREQ_PATHS = [
+    Path(__file__).parent / "data" / "rex_transport_manufacturer_frequency.json",
+    Path("/app/data/rex_transport_manufacturer_frequency.json"),
+]
 
 
 # Mapping of synonyms → canonical category
@@ -264,6 +354,15 @@ BRAND_IMPORTER_MAP: Dict[str, Tuple[str, int, Optional[int], str]] = {
     "tesla":    ("Tesla Israel",           4, None,    "Unlimited km / 8yr battery"),
 }
 
+# Deterministic fallback for active brands not yet curated in BRAND_IMPORTER_MAP.
+# Keeps metadata non-null for search/admin UX while signaling that values need verification.
+DEFAULT_BRAND_METADATA: Tuple[str, int, Optional[int], str] = (
+    "Pending Importer Verification",
+    2,
+    100_000,
+    "Auto-filled default metadata; verify official importer and warranty policy",
+)
+
 # Curated generation/platform year ranges used for strict workbook fitment.
 GENERATION_YEAR_RULES: Dict[Tuple[str, str, str], Tuple[int, int]] = {
     ("citroen", "berlingo", "b9"): (2008, 2018),
@@ -294,6 +393,117 @@ _NAME_SUFFIX_RE = re.compile(
     r"(?:\s+\d{4}(?:\s*[-–]\s*\d{4})?)?[)]*\s*$",  # optional year range
     re.UNICODE,
 )
+_TRAILING_PAREN_RE = re.compile(r"\s*\(([^()]*)\)\s*$")
+_TRAILING_DASH_RE = re.compile(r"\s*[-–]\s*([^()]{2,120})\s*$")
+_YEAR_TOKEN_RE = re.compile(r"\b(?:19|20)\d{2}(?:\s*[-–/]\s*(?:19|20)\d{2})?\b")
+_COMPAT_TOKEN_RE = re.compile(
+    r"\b(?:RH|LH|LT|RT|ACC|AT|A/T|4X4|AWD|FWD|RWD|"
+    r"[A-Z]{1,4}\d{2,}[A-Z0-9-]*|[A-Z]{2,6})\b",
+    re.IGNORECASE,
+)
+_LEADING_TAG_RE = re.compile(r"^\(\s*([A-Za-zא-ת0-9+./\\-]{1,24})\s*\)\s+")
+_EMPTY_PARENS_RE = re.compile(r"\(\s*\)")
+_NOISE_QUOTE_RE = re.compile(r"[׳’`]+")
+_PARENS_GROUP_RE = re.compile(r"\(\s*([^()]{1,120})\s*\)")
+_DASH_SEP_RE = re.compile(r"\s[-–]\s")
+_TRAILING_TOKEN_DASH_RE = re.compile(r"\b([A-Za-zא-ת0-9]{1,24})-(?=\s|$)")
+_YEAR_DANGLING_RANGE_RE = re.compile(r"\b((?:19|20)\d{2})\s*[-–]\s*(?=$|\b)")
+
+# Task 6 dictionary of known reversed French automotive terms.
+REVERSED_FRENCH_TERMS: Dict[str, str] = {
+    "TNIOJ": "JOINT",
+    "SIALER": "RELAIS",
+    "EFARG": "AGRAFE",
+    "EFARGA": "AGRAFE",
+    "EHCUOTRAC": "CARTOUCHE",
+    "RUETARUTBO": "OBTURATEUR",
+    "SRUETARUTBO": "OBTURATEURS",
+    "TENISSUOC": "COUSSINET",
+    "RUETCETORP": "PROTECTEUR",
+    "TEHCORC": "CROCHET",
+    "ERIASSECEN": "NECESSAIRE",
+    "ELLIRG": "GRILLE",
+    "TOPAC": "CAPOT",
+    "EGUAJ": "JAUGE",
+    "LIUH": "HUILE",
+    "TNAYOV": "VOYANT",
+    "ELLEPUOC": "COUPELLE",
+    "OCED": "DECO",
+    "NONRAHC": "CHARNON",
+    "IUQOC": "COQUI",
+    "REITIO": "OITIER",
+    "REITIOB": "BOITIER",
+    "EDNA": "ANED",
+    "TCELLOC": "COLLECT",
+    "ELUSPA": "CAPSULE",
+    "ETRO": "ORTE",
+    "ETROP": "PORTE",
+    "LCAR": "RACL",
+    "PILC": "CLIP",
+    "RTED": "DETR",
+    "NECS": "SCEN",
+    "EGRU": "URGE",
+    "ELGNIRT": "TRINGLER",
+    "ETNED": "DENTE",
+    "TCES": "SECT",
+    "TNARI": "IRANT",
+    "ELLUG": "GULLE",
+    "ERTIV": "VITRE",
+    "EBUT": "TUBE",
+    "EUGAB": "BAGUE",
+    "TROPPUS": "SUPPORT",
+    "RUEVILOJNE": "ENJOLIVEUR",
+    "VILOJNE": "ENJOLIV",
+    "ELCREVUOC": "COUVERCLE",
+    "ESIOTERTNE": "ENTRETOISE",
+    "REILAP": "PALIER",
+    "TNAVA": "AVANT",
+    "ELLEDNOR": "RONDELLE",
+    "EETUB": "BUTEE",
+    "ELLITSAP": "PASTILLE",
+    "RUETCEJORP": "PROJECTEUR",
+    "RUETACIDNI": "INDICATEUR",
+    "RUETCATNOC": "CONTACTEUR",
+    "UAEDNAB": "BANDEAU",
+    "RUELCIG": "GICLEUR",
+    "EMMARGONOM": "MONOGRAMME",
+    "ELLIPUOG": "GOUPILLE",
+    "NOHCUOB": "BOUCHON",
+    "EILUOP": "POULIE",
+    "ELOT": "TOLE",
+    "QITPO": "OPTIQUE",
+    "ETPURRETN": "INTERRUPTEUR",
+    "UETATUMMO": "COMMUTATEUR",
+    "TNIO": "JOINT",
+}
+TASK6_LATIN_PREFIX_MAP: Dict[str, str] = {
+    "SBA": "ABS",
+    "UAE": "EAU",
+    "RGE": "EGR",
+    "XEH": "HEX",
+    "TA": "AT",
+    "ED": "DE",
+    "RA": "AR",
+    "OC": "CO",
+    "EF": "FE",
+    "TROPPUS": "SUPPORT",
+    "TEHCORC": "CROCHET",
+    "EETUB": "BUTEE",
+    "ELPUOC": "COUPLE",
+    "UAEDNAB": "BANDEAU",
+    "ETROP": "PORTE",
+    "REIVEL": "LEVIER",
+    "EFARGA": "AGRAFE",
+    "TNIOJ": "JOINT",
+    "ENITALP": "PLATINE",
+    "TCATNOC": "CONTACT",
+    "TNEMELE": "ELEMENT",
+    "TEILAP": "PALETTE",
+    "RACL": "RACLEUR",
+    "UEF": "FEU",
+}
+TASK6_LATIN_PREFIX_MAP.update(REVERSED_FRENCH_TERMS)
+_TASK6_SQL_PREFIX_PATTERN = r"^(" + "|".join(re.escape(k) for k in sorted(TASK6_LATIN_PREFIX_MAP)) + r")(?:[^A-Za-z]|$)"
 
 # -------------------------------------------------------------------------
 # Shared state
@@ -338,6 +548,204 @@ def _normalize_availability(raw: str) -> Optional[str]:
 def _clean_vehicle_model(value: Optional[str]) -> str:
     """Normalize model names extracted from catalog compatibility blobs."""
     return normalize_vehicle_model_name(value)
+
+
+def _drop_unbalanced_parentheses(value: str) -> str:
+    out: List[str] = []
+    stack: List[int] = []
+    for ch in value:
+        if ch == "(":
+            stack.append(len(out))
+            out.append(ch)
+            continue
+        if ch == ")":
+            if stack:
+                stack.pop()
+                out.append(ch)
+            continue
+        out.append(ch)
+
+    for idx in reversed(stack):
+        if 0 <= idx < len(out):
+            out.pop(idx)
+    return "".join(out)
+
+
+def _looks_like_vehicle_suffix(value: str) -> bool:
+    s = re.sub(r"\s+", " ", (value or "").strip())
+    if not s:
+        return False
+
+    has_year = bool(_YEAR_TOKEN_RE.search(s))
+    has_compat = bool(_COMPAT_TOKEN_RE.search(s))
+    has_mixed_alnum = bool(re.search(r"(?=.*[A-Za-z])(?=.*\d)", s))
+    token_count = len(s.split())
+    ascii_letters = len(re.findall(r"[A-Za-z]", s))
+
+    return bool(
+        has_year
+        or has_compat
+        or has_mixed_alnum
+        or (ascii_letters >= 3 and 1 <= token_count <= 7)
+    )
+
+
+def _normalize_part_name_punctuation(value: str) -> str:
+    s = (value or "").replace(" ", " ")
+    s = s.replace("–", "-").replace("—", "-")
+
+    s = re.sub(r"([A-Za-zא-ת0-9])\(", r"\1 (", s)
+    s = re.sub(r"\)([A-Za-zא-ת0-9])", r") \1", s)
+    s = _EMPTY_PARENS_RE.sub(" ", s)
+
+    for _ in range(2):
+        m = _LEADING_TAG_RE.match(s)
+        if not m:
+            break
+        tag = m.group(1).strip()
+        rest = s[m.end():].lstrip()
+        s = f"{tag} {rest}" if rest else tag
+
+    s = _drop_unbalanced_parentheses(s)
+
+    s = re.sub(r"^[\s'\"`-]+", "", s)
+    s = re.sub(r"[\s'\"`-]+$", "", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _strip_trailing_vehicle_suffix(value: str) -> str:
+    s = value
+    for _ in range(3):
+        changed = False
+
+        m = _TRAILING_PAREN_RE.search(s)
+        if m and _looks_like_vehicle_suffix(m.group(1)):
+            base = s[:m.start()].strip()
+            if len(base) >= 3:
+                s = base
+                changed = True
+
+        m = _TRAILING_DASH_RE.search(s)
+        if m and _looks_like_vehicle_suffix(m.group(1)):
+            base = s[:m.start()].strip()
+            if len(base) >= 3:
+                s = base
+                changed = True
+
+        if not changed:
+            break
+        s = _normalize_part_name_punctuation(s)
+
+    return s
+
+
+def _unwrap_parenthetical_groups(value: str) -> str:
+    def _repl(match: re.Match[str]) -> str:
+        inner = (match.group(1) or "").strip()
+        if not inner:
+            return " "
+        inner = _NOISE_QUOTE_RE.sub("", inner)
+        inner = _YEAR_DANGLING_RANGE_RE.sub(r"\1", inner)
+        inner = _TRAILING_TOKEN_DASH_RE.sub(r"\1", inner)
+        inner = re.sub(r"\s+", " ", inner).strip(" -.,;:+")
+        if not inner:
+            return " "
+        return f" {inner} "
+
+    return _PARENS_GROUP_RE.sub(_repl, value)
+
+
+def _normalize_dash_separators(value: str) -> str:
+    parts = _DASH_SEP_RE.split(value)
+    if len(parts) <= 1:
+        return value
+
+    head = (parts[0] or "").strip()
+    if not head:
+        head = (parts[1] or "").strip() if len(parts) > 1 else ""
+
+    merged = head
+    for tail in parts[1:]:
+        t = (tail or "").strip()
+        if not t:
+            continue
+        if _looks_like_vehicle_suffix(t):
+            continue
+        merged = f"{merged} {t}".strip()
+    return merged
+
+
+def _clean_part_name_phase2(value: str) -> str:
+    s = value
+    s = _NOISE_QUOTE_RE.sub("", s)
+    s = _unwrap_parenthetical_groups(s)
+    s = _normalize_dash_separators(s)
+    s = _YEAR_DANGLING_RANGE_RE.sub(r"\1", s)
+    s = _TRAILING_TOKEN_DASH_RE.sub(r"\1", s)
+    s = re.sub(r"\s*\+\s*", "+", s)
+    s = _normalize_part_name_punctuation(s)
+    return s
+
+
+def _reverse_latin_prefix(name: str) -> str:
+    tokens = str(name or "").split()
+    fixed: List[str] = []
+    in_latin_prefix = True
+
+    for tok in tokens:
+        if in_latin_prefix and re.match(r"^[A-Za-z.]+$", tok):
+            core = tok.rstrip(".")
+            lookup = core.upper()
+            mapped = TASK6_LATIN_PREFIX_MAP.get(lookup)
+            if mapped:
+                suffix = tok[len(core):]
+                fixed.append(mapped + suffix)
+            else:
+                fixed.append(tok)
+            continue
+
+        in_latin_prefix = False
+        fixed.append(tok)
+
+    return " ".join(fixed)
+
+
+def _apply_task6_rules(name: str) -> str:
+    if not name:
+        return name
+
+    value = str(name)
+    # Fix Hebrew/Latin concatenation boundaries.
+    value = re.sub(r"([א-ת])([A-Za-z0-9])", r"\1 \2", value)
+    value = re.sub(r"([A-Za-z0-9])([א-ת])", r"\1 \2", value)
+    value = re.sub(r"([א-ת])[\"'`׳’]+([A-Za-z0-9])", r"\1 \2", value)
+    value = re.sub(r"([A-Za-z0-9])[\"'`׳’]+([א-ת])", r"\1 \2", value)
+
+    value = _reverse_latin_prefix(value)
+    value = re.sub(r" {2,}", " ", value).strip()
+    return value
+
+
+def _clean_part_name_value(name: str) -> str:
+    original = str(name or "")
+    cleaned = _apply_task6_rules(original)
+    cleaned = _normalize_part_name_punctuation(cleaned)
+    cleaned = _strip_trailing_vehicle_suffix(cleaned)
+    cleaned = _clean_part_name_phase2(cleaned)
+
+    legacy = _NAME_SUFFIX_RE.search(cleaned)
+    if legacy:
+        base = cleaned[:legacy.start()].strip()
+        if len(base) >= 3:
+            cleaned = base
+
+    cleaned = _apply_task6_rules(cleaned)
+    cleaned = _normalize_part_name_punctuation(cleaned)
+
+    if len(cleaned) < 2:
+        return original.strip()
+    return cleaned
 
 
 async def ensure_part_vehicle_fitment_table(db: AsyncSession) -> None:
@@ -388,43 +796,95 @@ async def ensure_part_vehicle_fitment_table(db: AsyncSession) -> None:
 
 async def clean_part_names(db: AsyncSession) -> Dict[str, Any]:
     """
-    Strip trailing car-model suffixes from part names.
+    Task 6 — clean part names in controlled batches.
 
-    Pattern:  "<Part Name> - Toyota Corolla 2015"
-              "<Part Name> (Ford Focus 2018)"
-
-    The stripped model info is NOT written to part_vehicle_fitment here
-    because we don't have structured year/make/model data from the suffix alone.
-    The scraper agent is responsible for populating part_vehicle_fitment via
-    autodoc fitment data.  We just clean the name so it reads correctly.
+    Root-fix goals:
+    - split Hebrew/Latin concatenations
+    - fix known reversed French prefixes
+    - collapse whitespace noise
     """
     t0 = time.monotonic()
     rows_updated = 0
     rows_checked = 0
+    batches_run = 0
+    no_update_batches = 0
+    samples: List[Dict[str, str]] = []
+
+    batch_size = max(50, int(os.getenv("TASK6_PART_NAME_BATCH_SIZE", "340")))
+    max_batches = max(1, int(os.getenv("TASK6_PART_NAME_MAX_BATCHES", "2000")))
+
+    select_sql = text(
+        """
+        SELECT id, name
+        FROM parts_catalog
+        WHERE is_active = TRUE
+          AND name IS NOT NULL
+          AND (
+              name ~ '[א-ת][A-Za-z0-9]'
+              OR name ~ '[A-Za-z0-9][א-ת]'
+              OR name ~ '[א-ת]["''`׳’]+[A-Za-z0-9]'
+              OR name ~ '[A-Za-z0-9]["''`׳’]+[א-ת]'
+              OR name ~ :prefix_pattern
+              OR name ~ '\\s{2,}'
+              OR name != TRIM(name)
+          )
+        ORDER BY RANDOM()
+        LIMIT :batch_size
+        """
+    )
+
+    update_sql = text(
+        """
+        UPDATE parts_catalog
+        SET name = :name,
+            updated_at = NOW()
+        WHERE id = :id
+        """
+    )
 
     try:
-        result = await db.execute(
-            text("SELECT id, name FROM parts_catalog WHERE name IS NOT NULL")
+        for _ in range(max_batches):
+            result = await db.execute(
+                select_sql,
+                {
+                    "prefix_pattern": _TASK6_SQL_PREFIX_PATTERN,
+                    "batch_size": batch_size,
+                },
+            )
+            rows = result.fetchall()
+            if not rows:
+                break
+
+            rows_checked += len(rows)
+            batches_run += 1
+
+            updates: List[Dict[str, Any]] = []
+            for part_id, raw_name in rows:
+                source = str(raw_name or "").strip()
+                if not source:
+                    continue
+                cleaned = _clean_part_name_value(source)
+                if cleaned and cleaned != source:
+                    updates.append({"id": part_id, "name": cleaned})
+                    if len(samples) < 25:
+                        samples.append({"before": source, "after": cleaned})
+
+            if updates:
+                await db.execute(update_sql, updates)
+                rows_updated += len(updates)
+
+            await db.commit()
+
+            # If this sampled batch yielded no modifications, avoid spin loops.
+            if not updates:
+                break
+
+        logger.info(
+            "clean_part_names: batches=%d checked=%d updated=%d",
+            batches_run,
+            rows_checked,
+            rows_updated,
         )
-        rows = result.fetchall()
-        rows_checked = len(rows)
-
-        for part_id, name in rows:
-            match = _NAME_SUFFIX_RE.search(name)
-            if match:
-                clean_name = name[: match.start()].strip()
-                if clean_name and clean_name != name:
-                    await db.execute(
-                        text(
-                            "UPDATE parts_catalog SET name = :name, "
-                            "updated_at = NOW() WHERE id = :id"
-                        ),
-                        {"name": clean_name, "id": part_id},
-                    )
-                    rows_updated += 1
-
-        await db.commit()
-        logger.info("clean_part_names: checked=%d updated=%d", rows_checked, rows_updated)
     except Exception as exc:
         await db.rollback()
         logger.error("clean_part_names failed: %s", exc)
@@ -433,8 +893,12 @@ async def clean_part_names(db: AsyncSession) -> Dict[str, Any]:
     return {
         "task": "clean_part_names",
         "status": "ok",
+        "batch_size": batch_size,
+        "batches_run": batches_run,
         "rows_checked": rows_checked,
         "rows_updated": rows_updated,
+        "no_update_batches": no_update_batches,
+        "sample_changes": samples,
         "elapsed_s": round(time.monotonic() - t0, 2),
     }
 
@@ -784,25 +1248,35 @@ async def flag_fake_skus(db: AsyncSession) -> Dict[str, Any]:
 async def fill_car_brands(db: AsyncSession) -> Dict[str, Any]:
     """
     Seed il_importer, warranty_years, warranty_km, warranty_notes for
-    known Israeli brands.  Only updates rows where the field is NULL to
-    avoid overwriting manual edits.
+    known Israeli brands. Only updates NULL fields to avoid overriding
+    manual edits.
+
+    Root behavior: active brands missing explicit mapping receive
+    deterministic fallback metadata.
     """
     t0 = time.monotonic()
     rows_updated = 0
+    mapped_updates = 0
+    fallback_updates = 0
 
     try:
         result = await db.execute(
-            text("SELECT id, name FROM car_brands WHERE name IS NOT NULL")
+            text("SELECT id, name, is_active FROM car_brands WHERE name IS NOT NULL")
         )
         brands = result.fetchall()
 
-        for brand_id, brand_name in brands:
-            data = BRAND_IMPORTER_MAP.get(brand_name.strip().lower())
+        for brand_id, brand_name, is_active in brands:
+            key = brand_name.strip().lower()
+            data = BRAND_IMPORTER_MAP.get(key)
+            used_fallback = False
+            if not data and bool(is_active):
+                data = DEFAULT_BRAND_METADATA
+                used_fallback = True
             if not data:
                 continue
+
             importer, years, km, notes = data
 
-            # Build update only for NULL fields
             updates: List[str] = []
             params: Dict[str, Any] = {"id": brand_id}
 
@@ -816,6 +1290,7 @@ async def fill_car_brands(db: AsyncSession) -> Dict[str, Any]:
             row = r.fetchone()
             if not row:
                 continue
+
             cur_importer, cur_years, cur_km, cur_notes = row
 
             if cur_importer is None:
@@ -840,9 +1315,18 @@ async def fill_car_brands(db: AsyncSession) -> Dict[str, Any]:
                     params,
                 )
                 rows_updated += 1
+                if used_fallback:
+                    fallback_updates += 1
+                else:
+                    mapped_updates += 1
 
         await db.commit()
-        logger.info("fill_car_brands: updated=%d brands", rows_updated)
+        logger.info(
+            "fill_car_brands: updated=%d mapped=%d fallback=%d",
+            rows_updated,
+            mapped_updates,
+            fallback_updates,
+        )
     except Exception as exc:
         await db.rollback()
         logger.error("fill_car_brands failed: %s", exc)
@@ -852,6 +1336,8 @@ async def fill_car_brands(db: AsyncSession) -> Dict[str, Any]:
         "task": "fill_car_brands",
         "status": "ok",
         "rows_updated": rows_updated,
+        "mapped_updates": mapped_updates,
+        "fallback_updates": fallback_updates,
         "elapsed_s": round(time.monotonic() - t0, 2),
     }
 
@@ -1893,6 +2379,15 @@ async def _enrich_pending_parts_task(db: AsyncSession) -> Dict[str, Any]:
 async def _trigger_scraper_for_misses_task(db: AsyncSession) -> Dict[str, Any]:
     """Find high-frequency zero-result queries (miss_count >= 3, not yet triggered)
     and fire REX brand discovery for the likely brand."""
+    if _real_data_only_enabled():
+        return {
+            "task": "trigger_scraper_for_misses",
+            "status": "skipped",
+            "reason": "real_data_only mode disables automatic brand discovery",
+            "triggered": 0,
+            "errors": 0,
+        }
+
     from catalog_scraper import run_brand_discovery
 
     try:
@@ -1947,7 +2442,7 @@ async def _trigger_scraper_for_misses_task(db: AsyncSession) -> Dict[str, Any]:
                 text("UPDATE search_misses SET triggered_scrape = TRUE WHERE id = :tid"),
                 {"tid": _tid},
             )
-        await db.commit()
+    await db.commit()
 
     return {
         "task": "trigger_scraper_for_misses",
@@ -1967,6 +2462,17 @@ async def _trigger_scraper_for_registry_gaps_task(db: AsyncSession) -> Dict[str,
 
     We queue only a bounded batch per run for speed + operational safety.
     """
+    if _real_data_only_enabled():
+        return {
+            "task": "trigger_scraper_for_registry_gaps",
+            "status": "skipped",
+            "reason": "real_data_only mode disables automatic brand discovery",
+            "triggered": 0,
+            "target": 0,
+            "per_run": 0,
+            "brands": [],
+        }
+
     from catalog_scraper import run_brand_discovery
 
     target = max(1, int(os.getenv("DISCOVERY_TARGET", "120")))
@@ -2307,6 +2813,13 @@ async def _populate_supplier_parts_task(db: AsyncSession) -> Dict[str, Any]:
     Idempotent — uses ON CONFLICT DO NOTHING on (supplier_id, part_id).
     Heavy operation; only runs on demand via the admin API, not in run_all_tasks.
     """
+    if _real_data_only_enabled():
+        return {
+            "task": "populate_supplier_parts",
+            "status": "skipped",
+            "reason": "real_data_only mode blocks synthetic supplier-part generation",
+        }
+
     import json
     import uuid as _uuid
 
@@ -2568,6 +3081,323 @@ async def _validate_migrations_task(db: AsyncSession) -> Dict[str, Any]:
     }
 
 
+def _has_hebrew(value: str) -> bool:
+    return bool(_HE_CHAR_RE.search(value or ""))
+
+
+def _norm_en_brand(value: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (value or "").lower())
+
+
+def _skeleton(value: str) -> str:
+    return re.sub(r"[aeiouy]", "", _norm_en_brand(value))
+
+
+def _translit_hebrew(value: str) -> str:
+    out: List[str] = []
+    for ch in (value or ""):
+        if ch in _HE_TO_LATIN:
+            out.append(_HE_TO_LATIN[ch])
+        elif "a" <= ch.lower() <= "z" or "0" <= ch <= "9" or ch == " ":
+            out.append(ch.lower())
+    return re.sub(r"\s+", " ", "".join(out)).strip()
+
+
+def _load_transport_hebrew_candidates() -> Tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+    from run_rex_transport_office_pipeline import (
+        _HE_COUNTRY_TOKENS as _TP_COUNTRY_TOKENS,
+        _clean_space as _tp_clean_space,
+        _norm_key as _tp_norm_key,
+        _strip_punct as _tp_strip_punct,
+    )
+
+    source_path: Optional[Path] = None
+    for p in _TRANSPORT_FREQ_PATHS:
+        if p.exists():
+            source_path = p
+            break
+    if source_path is None:
+        raise FileNotFoundError("rex_transport_manufacturer_frequency.json not found")
+
+    rows = json.loads(source_path.read_text(encoding="utf-8"))
+    if not isinstance(rows, list):
+        raise ValueError("manufacturer frequency artifact is not a list")
+
+    grouped: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        manufacturer = str((row or {}).get("manufacturer") or "").strip()
+        count = int((row or {}).get("count") or 0)
+        if not manufacturer or count <= 0:
+            continue
+        key = _tp_norm_key(manufacturer)
+        if not key:
+            continue
+        g = grouped.setdefault(key, {"total": 0, "variants": {}})
+        g["total"] += count
+        g["variants"][manufacturer] = g["variants"].get(manufacturer, 0) + count
+
+    candidates: List[Dict[str, Any]] = []
+    by_key: Dict[str, Dict[str, Any]] = {}
+
+    for key, group in grouped.items():
+        ordered = sorted(group["variants"].items(), key=lambda x: (-x[1], x[0]))
+        canonical_raw = ordered[0][0]
+        canonical_he = _tp_clean_space(_tp_strip_punct(_TP_COUNTRY_TOKENS.sub(" ", canonical_raw)))
+        if not canonical_he or not _has_hebrew(canonical_he):
+            continue
+
+        aliases_he: List[str] = []
+        for variant, _cnt in ordered[1:]:
+            alias = _tp_clean_space(_tp_strip_punct(_TP_COUNTRY_TOKENS.sub(" ", variant)))
+            if alias and _has_hebrew(alias) and alias != canonical_he and alias not in aliases_he:
+                aliases_he.append(alias)
+
+        latin = _norm_en_brand(_translit_hebrew(canonical_he))
+        if not latin:
+            continue
+
+        cand = {
+            "canonical_key": key,
+            "hebrew_name": canonical_he,
+            "aliases": aliases_he,
+            "total_records": int(group["total"]),
+            "latin_norm": latin,
+            "latin_skeleton": _skeleton(latin),
+        }
+        candidates.append(cand)
+        by_key.setdefault(key, cand)
+        by_key.setdefault(_tp_norm_key(canonical_he), cand)
+        for alias in aliases_he:
+            by_key.setdefault(_tp_norm_key(alias), cand)
+
+    candidates.sort(key=lambda x: (-x["total_records"], x["hebrew_name"]))
+    return candidates, by_key
+
+
+def _match_hebrew_alias(
+    brand_name: str,
+    candidates: List[Dict[str, Any]],
+    by_key: Dict[str, Dict[str, Any]],
+) -> Dict[str, Any]:
+    from run_rex_transport_office_pipeline import _norm_key as _tp_norm_key
+
+    en_norm = _norm_en_brand(brand_name)
+    if not en_norm:
+        return {"accepted": False, "reason": "empty_brand_name"}
+    en_skel = _skeleton(en_norm)
+
+    for manual_he in _MANUAL_HEBREW_CANDIDATES.get(en_norm, []):
+        manual_he = str(manual_he or "").strip()
+        if manual_he:
+            return {
+                "accepted": True,
+                "hebrew_alias": manual_he,
+                "confidence": 1.0,
+                "margin": 1.0,
+                "source": "manual",
+            }
+
+    if len(en_norm) <= 3:
+        return {
+            "accepted": False,
+            "reason": "short_brand_auto_block",
+        }
+
+    scored: List[Tuple[float, int, Dict[str, Any]]] = []
+    for cand in candidates:
+        latin = cand["latin_norm"]
+        direct = SequenceMatcher(None, en_norm, latin).ratio()
+        skel = SequenceMatcher(None, en_skel, cand["latin_skeleton"]).ratio() if en_skel and cand["latin_skeleton"] else 0.0
+        score = max(direct, skel * 0.98)
+        if len(en_norm) >= 3 and len(latin) >= 3 and en_norm[:3] == latin[:3]:
+            score = min(1.0, score + 0.02)
+        scored.append((score, int(cand["total_records"]), cand))
+
+    if not scored:
+        return {"accepted": False, "reason": "no_candidates"}
+
+    scored.sort(key=lambda x: (-x[0], -x[1], x[2]["hebrew_name"]))
+    best_score, _best_count, best = scored[0]
+    second_score = scored[1][0] if len(scored) > 1 else 0.0
+    margin = best_score - second_score
+
+    accepted = best_score >= _ALIAS_MIN_SCORE and margin >= _ALIAS_MIN_MARGIN
+    return {
+        "accepted": accepted,
+        "hebrew_alias": best["hebrew_name"],
+        "confidence": round(best_score, 4),
+        "margin": round(margin, 4),
+        "source": "auto",
+        "reason": None if accepted else "low_confidence",
+    }
+
+
+async def _auto_add_hebrew_brand_aliases_task(db: AsyncSession) -> Dict[str, Any]:
+    try:
+        candidates, by_key = await asyncio.to_thread(_load_transport_hebrew_candidates)
+    except Exception as exc:
+        logger.error("auto_add_hebrew_brand_aliases failed to load transport candidates: %s", exc)
+        return {
+            "task": "auto_add_hebrew_brand_aliases",
+            "status": "error",
+            "error": str(exc),
+        }
+
+    rows = (await db.execute(text(
+        """
+        SELECT id, name, aliases
+        FROM car_brands
+        WHERE is_active = TRUE
+          AND il_market_priority IS NULL
+        ORDER BY name
+        """
+    ))).fetchall()
+
+    all_active = (await db.execute(text("SELECT name, aliases FROM car_brands WHERE is_active = TRUE"))).fetchall()
+    alias_owner: Dict[str, str] = {}
+    for owner_name, owner_aliases in all_active:
+        for alias in list(owner_aliases or []):
+            alias_str = str(alias or "").strip()
+            if alias_str and _has_hebrew(alias_str):
+                alias_owner.setdefault(alias_str, str(owner_name))
+
+    updated = 0
+    skipped_existing_hebrew = 0
+    unmatched: List[str] = []
+    low_confidence: List[Dict[str, Any]] = []
+    matched: List[Dict[str, Any]] = []
+    review_queue_upserted = 0
+
+    for brand_id, name, aliases in rows:
+        alias_list = list(aliases or [])
+        if any(_has_hebrew(str(a)) for a in alias_list):
+            skipped_existing_hebrew += 1
+            continue
+
+        match = _match_hebrew_alias(str(name), candidates, by_key)
+        if not match.get("accepted"):
+            if match.get("reason") == "low_confidence":
+                low_confidence.append(
+                    {
+                        "brand_id": str(brand_id),
+                        "brand": str(name),
+                        "candidate": match.get("hebrew_alias"),
+                        "confidence": match.get("confidence", 0.0),
+                        "margin": match.get("margin", 0.0),
+                        "reason": match.get("reason", "low_confidence"),
+                    }
+                )
+            else:
+                unmatched.append(str(name))
+            continue
+
+        he_alias = str(match.get("hebrew_alias") or "").strip()
+        if not he_alias or he_alias in alias_list:
+            continue
+
+        owner = alias_owner.get(he_alias)
+        if owner and owner != str(name):
+            low_confidence.append(
+                {
+                    "brand_id": str(brand_id),
+                    "brand": str(name),
+                    "candidate": he_alias,
+                    "confidence": match.get("confidence", 0.0),
+                    "margin": match.get("margin", 0.0),
+                    "reason": f"alias_conflict_with:{owner}",
+                }
+            )
+            continue
+
+        new_aliases = alias_list + [he_alias]
+        await db.execute(
+            text("UPDATE car_brands SET aliases = :aliases WHERE id = :id"),
+            {"aliases": new_aliases, "id": str(brand_id)},
+        )
+        updated += 1
+        alias_owner[he_alias] = str(name)
+        matched.append(
+            {
+                "brand": str(name),
+                "hebrew_alias": he_alias,
+                "confidence": match.get("confidence", 0.0),
+                "source": match.get("source", "auto"),
+            }
+        )
+
+    for item in low_confidence:
+        candidate_alias = str(item.get("candidate") or "").strip()
+        if not candidate_alias:
+            continue
+        await db.execute(
+            text(
+                """
+                INSERT INTO brand_alias_review_queue (
+                    id, brand_id, brand_name, candidate_alias,
+                    confidence, margin, reason, source, status,
+                    created_at, updated_at
+                )
+                VALUES (
+                    :id, :brand_id, :brand_name, :candidate_alias,
+                    :confidence, :margin, :reason, :source, 'pending',
+                    NOW(), NOW()
+                )
+                ON CONFLICT (brand_name, candidate_alias)
+                DO UPDATE SET
+                    confidence = EXCLUDED.confidence,
+                    margin = EXCLUDED.margin,
+                    reason = EXCLUDED.reason,
+                    source = EXCLUDED.source,
+                    status = CASE
+                        WHEN brand_alias_review_queue.status = 'approved' THEN 'approved'
+                        WHEN brand_alias_review_queue.status = 'rejected' THEN 'rejected'
+                        ELSE 'pending'
+                    END,
+                    updated_at = NOW()
+                """
+            ),
+            {
+                "id": str(uuid.uuid4()),
+                "brand_id": item.get("brand_id"),
+                "brand_name": str(item.get("brand") or "").strip(),
+                "candidate_alias": candidate_alias,
+                "confidence": float(item.get("confidence") or 0.0),
+                "margin": float(item.get("margin") or 0.0),
+                "reason": str(item.get("reason") or "low_confidence"),
+                "source": "auto_matcher",
+            },
+        )
+        review_queue_upserted += 1
+
+    await db.commit()
+
+    return {
+        "task": "auto_add_hebrew_brand_aliases",
+        "status": "ok",
+        "transport_candidates": len(candidates),
+        "brands_scanned": len(rows),
+        "aliases_added": updated,
+        "skipped_existing_hebrew_alias": skipped_existing_hebrew,
+        "unmatched_count": len(unmatched),
+        "low_confidence_count": len(low_confidence),
+        "review_queue_upserted": review_queue_upserted,
+        "matched_top20": matched[:20],
+        "low_confidence_top20": sorted(low_confidence, key=lambda x: (-x["confidence"], x["brand"]))[:20],
+        "unmatched_top50": unmatched[:50],
+    }
+
+
+async def _sync_transport_market_priority_task(db: AsyncSession) -> Dict[str, Any]:
+    from run_rex_transport_office_pipeline import sync_market_priority_to_db
+
+    result = await asyncio.to_thread(sync_market_priority_to_db)
+    return {
+        "task": "sync_transport_market_priority",
+        "status": result.get("status", "ok"),
+        **result,
+    }
+
+
 TASK_REGISTRY: Dict[str, Any] = {
     "clean_part_names":          clean_part_names,
     "normalize_part_types":      normalize_part_types,
@@ -2590,6 +3420,8 @@ TASK_REGISTRY: Dict[str, Any] = {
     "trigger_scraper_for_registry_gaps": _trigger_scraper_for_registry_gaps_task,
     "trigger_scraper_for_misses": _trigger_scraper_for_misses_task,
     "generate_image_embeddings": _generate_image_embeddings_task,
+    "auto_add_hebrew_brand_aliases": _auto_add_hebrew_brand_aliases_task,
+    "sync_transport_market_priority": _sync_transport_market_priority_task,
     # on-demand heavy tasks — NOT included in run_all_tasks
     "populate_supplier_parts":   _populate_supplier_parts_task,
     "validate_migrations":       _validate_migrations_task,
@@ -2660,6 +3492,11 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
             "generate_image_embeddings",
         ]
 
+        shared_todos = await get_active_agent_todos(db, "db_update_agent")
+        todo_task_names = [name for name in extract_todo_task_names(shared_todos) if name in TASK_REGISTRY]
+        if todo_task_names:
+            ordered_tasks = todo_task_names + [name for name in ordered_tasks if name not in todo_task_names]
+
         for task_name in ordered_tasks:
             logger.info("run_all_tasks → starting: %s", task_name)
             result = await run_task(task_name, db)
@@ -2677,6 +3514,12 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
             "total_elapsed_s": total_elapsed,
             "tasks_ok": ok_count,
             "tasks_error": err_count,
+            "shared_todos": [
+                {"id": todo["id"], "title": todo["title"], "status": todo["status"]}
+                for todo in shared_todos
+            ],
+            "todo_task_names": todo_task_names,
+            "ordered_tasks": ordered_tasks,
             "results": results,
         }
 

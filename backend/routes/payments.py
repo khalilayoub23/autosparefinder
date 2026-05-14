@@ -41,7 +41,7 @@ from routes.utils import (
     trigger_supplier_fulfillment,
     trigger_supplier_refund,
 )
-from BACKEND_AI_AGENTS import get_supplier_shipping, get_supplier_vat_rate
+from BACKEND_AI_AGENTS import get_supplier_vat_rate, resolve_customer_shipping_fee
 
 router = APIRouter()
 
@@ -497,9 +497,10 @@ async def create_checkout_session(
                 if _sp_row[0] is not None:
                     _vat_rate = get_supplier_vat_rate(_sp_row[2], _sp_row[3])
                     _live_unit = round(float(_sp_row[0]) * 1.45 * (1.0 + _vat_rate), 2)
-                    _live_ship = float(_sp_row[1]) if (_sp_row[1] is not None and float(_sp_row[1] or 0) > 0) else get_supplier_shipping(
-                        _sp_row[2],
-                        _sp_row[3],
+                    _live_ship = resolve_customer_shipping_fee(
+                        supplier_shipping_ils=_sp_row[1],
+                        supplier_name=_sp_row[2],
+                        supplier_country=_sp_row[3],
                     )
                     _max_shipping = max(_max_shipping, _live_ship)
                     if abs(_live_unit - round(float(_item.unit_price), 2)) > 0.01:
@@ -763,9 +764,10 @@ async def create_multi_checkout_session(
                 if _sp_row:
                     _vat_rate = get_supplier_vat_rate(_sp_row[2], _sp_row[3])
                     _live_unit = round(float(_sp_row[0]) * 1.45 * (1.0 + _vat_rate), 2)
-                    _live_ship = float(_sp_row[1]) if (_sp_row[1] is not None and float(_sp_row[1] or 0) > 0) else get_supplier_shipping(
-                        _sp_row[2],
-                        _sp_row[3],
+                    _live_ship = resolve_customer_shipping_fee(
+                        supplier_shipping_ils=_sp_row[1],
+                        supplier_name=_sp_row[2],
+                        supplier_country=_sp_row[3],
                     )
                     _max_shipping = max(_max_shipping, _live_ship)
                 else:
@@ -1938,11 +1940,13 @@ async def create_whatsapp_checkout(
         return {"ok": False, "error": "Part has no valid price"}
 
     supplier_vat_rate = get_supplier_vat_rate(supplier_rec.name or "", supplier_rec.country or "")
-    ship_ils = float(sp.shipping_cost_ils or 0) or (
-        float(sp.shipping_cost_usd or 0) * rate if sp.shipping_cost_usd else get_supplier_shipping(supplier_rec.name or "", supplier_rec.country or "")
+    ship_ils = resolve_customer_shipping_fee(
+        supplier_shipping_ils=sp.shipping_cost_ils,
+        supplier_shipping_usd=sp.shipping_cost_usd,
+        usd_to_ils_rate=rate,
+        supplier_name=supplier_rec.name,
+        supplier_country=supplier_rec.country,
     )
-    if ship_ils <= 0:
-        ship_ils = get_supplier_shipping(supplier_rec.name or "", supplier_rec.country or "")
 
     unit_price = round(cost_ils * 1.45, 2)           # 45% markup (ex-VAT)
     vat_per_unit = round(unit_price * supplier_vat_rate, 2)
