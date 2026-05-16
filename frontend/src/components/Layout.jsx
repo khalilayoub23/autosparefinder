@@ -13,7 +13,7 @@ import {
 import toast from 'react-hot-toast'
 
 const NAV_ITEMS = [
-  { path: '/',        icon: MessageSquare, label: 'צ׳אט AI'     },
+  { path: '/chat',    icon: MessageSquare, label: 'צ׳אט AI'     },
   { path: '/parts',   icon: Search,        label: 'חיפוש חלקים' },
   { path: '/orders',  icon: Package,       label: 'הזמנות'       },
   { path: '/profile', icon: User,          label: 'פרופיל'       },
@@ -96,9 +96,9 @@ export default function Layout({ children }) {
     if (n?.type === 'order_update' || d.order_id) navigate('/orders')
     else if (n?.type === 'payment') navigate('/orders')
     else if (n?.type === 'threshold_alert' || n?.type === 'system_alert') navigate('/agents')
-    else if (n?.type === 'message') navigate('/')
+    else if (n?.type === 'message') navigate('/chat')
     else if (n?.type === 'marketing') navigate('/parts')
-    else navigate('/')
+    else navigate('/chat')
   }
 
   return (

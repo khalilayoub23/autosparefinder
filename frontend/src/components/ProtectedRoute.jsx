@@ -9,7 +9,7 @@ export default function ProtectedRoute({ children, adminOnly = false }) {
     return <Navigate to="/login" state={{ from: location }} replace />
   }
   if (adminOnly && !user.is_admin) {
-    return <Navigate to="/" replace />
+    return <Navigate to="/chat" replace />
   }
   return children
 }
