@@ -624,12 +624,15 @@ CORE BEHAVIOR — APPLIES TO ALL CHANNELS (WhatsApp, Telegram, Web):
 3. Always acknowledge the customer's request before asking for more info.
 4. Maximum 4 sentences per message on WhatsApp/Telegram. Web can be longer.
 5. Use natural, human tone — never robotic or bureaucratic.
-6. Never repeat information already given in the same conversation.
-7. If vehicle details were already confirmed in prior turns, do NOT ask for confirmation again unless there is a contradiction.
-8. If the user asks for a specific part, treat it as intent to proceed and move directly to part resolution (no reconfirm loop).
-9. Never output placeholder prices like XXXX/XXX/TBD; if price is unavailable, say you are checking exact pricing now.
-10. Never ask the same clarification more than 2 times in a row; if still missing data, offer a smart fallback path.
-11. Be typo-tolerant and intent-first: if user writes close variants (e.g., גיא/גיר), continue naturally instead of resetting flow.
+6. Sound like a helpful person, not a script: acknowledge one concrete detail from the customer before moving forward.
+7. Keep the tone calm and respectful. Be sales-oriented, but never pushy, guilt-based, or manipulative.
+8. If the customer is frustrated, worried, or confused, first show understanding in one short sentence, then move to the next action.
+9. Never repeat information already given in the same conversation.
+10. If vehicle details were already confirmed in prior turns, do NOT ask for confirmation again unless there is a contradiction.
+11. If the user asks for a specific part, treat it as intent to proceed and move directly to part resolution (no reconfirm loop).
+12. Never output placeholder prices like XXXX/XXX/TBD; if price is unavailable, say you are checking exact pricing now.
+13. Never ask the same clarification more than 2 times in a row; if still missing data, offer a smart fallback path.
+14. Be typo-tolerant and intent-first: if user writes close variants (e.g., גיא/גיר), continue naturally instead of resetting flow.
 
 SALES FLOW — USE AS GUIDANCE (not a rigid script):
   Step 1 → Confirm understanding in natural language and request missing critical detail only if needed
@@ -756,9 +759,9 @@ def _normalize_whatsapp_url(
     if not digits.startswith("972"):
         digits = default_digits
 
-    qs = existing_query or f"text={quote(welcome_text)}"
-    base = f"https://api.whatsapp.com/send/?phone={digits}"
-    return f"{base}&{qs}" if qs else base
+    qs = existing_query
+    base = f"https://wa.me/{digits}"
+    return f"{base}?{qs}" if qs else base
 
 
 NOA_WEBSITE_URL = _normalize_home_url(
@@ -2022,7 +2025,10 @@ NEVER:
                 stmt = stmt.order_by(_dir(PartsCatalog.name))
 
             async with async_session_factory() as cat_db:
-                result = await cat_db.execute(stmt.offset(offset).limit(limit))
+                # Defensive: ensure offset and limit are always integers
+                _offset = int(offset) if offset is not None else 0
+                _limit = int(limit) if limit is not None else 50
+                result = await cat_db.execute(stmt.offset(_offset).limit(_limit))
                 parts = result.scalars().all()
 
         if not parts:
@@ -2101,9 +2107,10 @@ NEVER:
                     )
                 pricing["availability"] = availability
                 pricing["warranty_months"] = sp_row.warranty_months
-                pricing["estimated_delivery_days"] = sp_row.estimated_delivery_days
+                estimated_delivery_days = int(sp_row.estimated_delivery_days) if sp_row.estimated_delivery_days is not None else 14
+                pricing["estimated_delivery_days"] = estimated_delivery_days
                 pricing["supplier_part_id"] = str(sp_row.sp_id)
-                pricing["estimated_delivery"] = f"{sp_row.estimated_delivery_days}–{sp_row.estimated_delivery_days + 7} ימים"
+                pricing["estimated_delivery"] = f"{estimated_delivery_days}–{estimated_delivery_days + 7} ימים"
                 suppliers.append(pricing)
 
             # Fallback: synthesise pricing from base_price when no supplier row exists
@@ -2136,6 +2143,7 @@ NEVER:
                 "manufacturer": part.manufacturer,
                 "category": part.category,
                 "part_type": part.part_type,
+                "aftermarket_tier": part.aftermarket_tier,  # NEW: tier info from DB
                 "description": part.description,
                 "sku": part.sku,
                 "compatible_vehicles": part.compatible_vehicles or [],
@@ -2362,6 +2370,9 @@ STEP 3 — UPSELL SMART:
 
 STEP 4 — CLOSE THE DEAL:
   End every response with a clear call to action.
+  Sell like a trusted advisor: helpful, confident, and concise.
+  Never pressure the customer. Recommend the best next step and explain briefly why it helps.
+  Mirror one real customer detail in your reply (part, car model, budget concern, urgency, etc.).
   The checkout flow depends on the channel:
 
   IF source is "whatsapp" or "telegram":
@@ -2391,6 +2402,8 @@ CRITICAL RULES:
 4. Do NOT answer about: car valuations, insurance, traffic fines, repair costs, or anything outside parts
 5. RETURN POLICY: 14 days from delivery. Manufacturer defects / wrong part / damaged in transit → 100% refund (we cover return shipping). Other reasons → 90% refund (10% handling fee, customer covers return shipping). Refund is sent to the customer ONLY after the supplier confirms receipt of the returned part.
 6. LANGUAGE: Respond in Hebrew. If the customer writes in Arabic, respond in Arabic.
+7. HUMAN SALES TONE: keep replies short, warm, and consultative. Avoid hype, generic slogans, or sounding like an ad.
+8. If you do not yet have enough info, ask for the single most important missing detail only.
 """
 
     # Upsell pairings: buying X → suggest Y
@@ -2412,6 +2425,78 @@ CRITICAL RULES:
         "סוללה":             ["מפצל שחמל", "כבלי הנעה"],
     }
 
+    def _deterministic_sales_fallback(self, message: str, source: Optional[str] = None) -> str:
+        query = self._extract_search_query(message) or "החלק שביקשת"
+        source_key = (source or "").strip().lower()
+        if source_key in {"whatsapp", "telegram"}:
+            return (
+                f"הבנתי שאתה מחפש {query}. כדי לא לזרוק לך מחיר לא מדויק, אני בודקת עכשיו התאמה אמיתית מול הקטלוג. "
+                "אם תשלח מספר רישוי או נפח מנוע, אקצר לך את הבדיקה ואחזור עם התאמה מדויקת."
+            )
+        return (
+            f"הבנתי שאתה מחפש {query}. כדי לתת הצעה מדויקת ולא לנחש, אני צריך לבדוק התאמה אמיתית מול הקטלוג. "
+            "אם יש מספר רישוי או נפח מנוע, שלח אותם ואכוון אותך לחלק המתאים."
+        )
+
+    def _deterministic_sales_results_reply(self, message: str, results: List[Dict], source: Optional[str] = None) -> str:
+        """Display multiple pricing options from search results (up to 3 suppliers per part).
+        Show manufacturer, price breakdown (base + VAT + shipping), delivery, warranty.
+        """
+        if not results:
+            return self._deterministic_sales_fallback(message, source=source)
+
+        query = self._extract_search_query(message) or "החלק שביקשת"
+        lines = [f"בדקתי עבורך {query}. הנה {min(3, len(results))} אופציות בהתאם לתקציב:"]
+        
+        # Show up to 3 parts with their best supplier
+        for i, result in enumerate(results[:3], 1):
+            part_name = (result.get("name") or query).strip()
+            part_mfr = (result.get("manufacturer") or "").strip()
+            suppliers = result.get("suppliers") or []
+            
+            # Use first supplier (best = in_stock first, then sorted by price)
+            if suppliers:
+                supplier = suppliers[0]
+            else:
+                supplier = result.get("pricing") or {}
+            
+            if not supplier:
+                continue
+            
+            total = float(supplier.get("total") or 0.0)
+            warranty = int(supplier.get("warranty_months") or 12)
+            availability = supplier.get("availability") or "on_order"
+            availability_text = "✅ זמין" if availability == "in_stock" else "⏳ בהזמנה"
+            delivery_days = int(supplier.get("estimated_delivery_days") or 14)
+            delivery_text = supplier.get("estimated_delivery") or f"{delivery_days}–{delivery_days + 7} ימים"
+            
+            lines.append("")
+            lines.append(f"{i}. {part_mfr}")
+            if total > 0:
+                lines.append(f"   {part_name} – {total:.0f}₪")
+                lines.append(f"   {availability_text} | {delivery_text} | {warranty} חודשים אחריות")
+            else:
+                lines.append(f"   {part_name} – מחיר לא זמין")
+            
+            # Show alternative suppliers if available (cheaper or in-stock alternative)
+            if len(suppliers) > 1:
+                for alt_idx in range(1, min(2, len(suppliers))):
+                    alt_supplier = suppliers[alt_idx]
+                    alt_total = float(alt_supplier.get("total") or 0.0)
+                    if alt_total > 0 and abs(alt_total - total) > 1:  # different price (>1₪)
+                        lines.append(f"   חלופה: {alt_total:.0f}₪")
+        
+        lines.append("")
+        source_key = (source or "").strip().lower()
+        if source_key in {"whatsapp", "telegram"}:
+            lines.append("איזו אופציה מתאימה? אשלח לך לינק תשלום מאובטח.")
+        else:
+            lines.append("איזו אופציה בחרת? אוכל להמשיך לעגלה.")
+        
+        return "\n".join(lines)
+
+
+
     async def process(self, message: str, conversation_history: List[Dict], db: AsyncSession, **kwargs) -> str:
         """Process a part inquiry: search the DB catalog, present Good/Better/Best tiers, upsell, close."""
         # Delegate DB search to PartsFinderAgent (which owns search_parts_in_db + normalize_manufacturer)
@@ -2419,6 +2504,8 @@ CRITICAL RULES:
 
         # ── 1. Search DB for requested part ───────────────────────────────────
         parts_context = ""
+        results: List[Dict] = []
+        search_failed = False
         is_parts_request = any(kw in message for kw in [
             "חלק", "חלקים", "מחיר", "כמה עולה", "כמה עולות", "יש לכם", "יש לך",
             "בלמ", "רפידות", "מנוע", "מתלה", "פנס", "מסנן", "פילטר",
@@ -2465,6 +2552,7 @@ CRITICAL RULES:
                         query=search_q, vehicle_id=None, category=None, db=db, limit=4, sort_by="price_asc"
                     )
                     if broader:
+                        results = broader
                         lines = [f"\n[BROADER SEARCH — '{search_q}' | {len(broader)} תוצאות]\n"]
                         for i, p in enumerate(broader, 1):
                             pr = p.get("pricing") or {}
@@ -2485,6 +2573,7 @@ CRITICAL RULES:
                     else:
                         parts_context = f"\n[DB: אין תוצאות עבור '{search_q}'. ספר ללקוח ובקש פרטים נוספים על הרכב.]\n"
             except Exception as e:
+                search_failed = True
                 print(f"[SalesAgent] DB search failed: {e}")
 
         # ── 2. Upsell suggestions ─────────────────────────────────────────────
@@ -2513,6 +2602,12 @@ CRITICAL RULES:
                 upsell_context = "\n".join(lines)
         except Exception as e:
             print(f"[SalesAgent] upsell lookup failed: {e}")
+
+        if is_parts_request and (search_failed or not parts_context or parts_context.lstrip().startswith("[DB: אין תוצאות")):
+            return self._deterministic_sales_fallback(message, source=kwargs.get("source"))
+
+        if is_parts_request and results:
+            return self._deterministic_sales_results_reply(message, results, source=kwargs.get("source"))
 
         system = self.system_prompt + parts_context + upsell_context
         return await self.think(
@@ -2928,6 +3023,26 @@ LANGUAGE: ALWAYS respond in Hebrew. If customer writes in Arabic, respond in Ara
 """
 
     async def process(self, message: str, conversation_history: List[Dict], db: AsyncSession, **kwargs) -> str:
+        msg = (message or "").strip()
+        msg_l = msg.lower()
+
+        wrong_part_terms = ("חלק לא נכון", "חלק שגוי", "לא נכון", "לא מתאים", "wrong part", "wrong item")
+        upset_terms = ("מתוסכל", "מאוכזב", "כועס", "מעצבן", "frustrated", "angry")
+
+        if any(term in msg_l for term in wrong_part_terms):
+            opener = "אני מצטערת שזה קרה" if any(term in msg_l for term in upset_terms) else "אני איתך"
+            return (
+                f"{opener}, ונטפל בזה מהר. "
+                "שלח לי בבקשה תמונה של החלק שקיבלת ותמונה של המדבקה או המספר שעל הקופסה, "
+                "ואדאג לבדיקה ולהחלפה בהקדם."
+            )
+
+        if any(term in msg_l for term in upset_terms):
+            return (
+                "אני מבינה את התסכול שלך. "
+                "כתוב לי במשפט אחד מה בדיוק קרה עכשיו, ואני אתן לך את הצעד הכי מהיר לפתרון."
+            )
+
         return await self.think(
             conversation_history + [{"role": "user", "content": message}],
             source=kwargs.get("source"),
@@ -2950,9 +3065,10 @@ LANGUAGE: Match the customer's language. Hebrew → Hebrew. Arabic → Arabic. E
 
 DEFAULT APPROACH (adapt to context, do not sound scripted):
   1. Acknowledge what the customer actually said in their own words
-  2. Diagnose only when needed, with ONE short clarifying question
-  3. Solve with one concrete next action
-  4. Close with a practical next step
+  2. If there is a problem or complaint, apologize once in a human way and take ownership
+  3. Diagnose only when needed, with ONE short clarifying question
+  4. Solve with one concrete next action
+  5. Close with a practical next step
 
 WHAT YOU HANDLE:
 - General questions about the platform
@@ -2981,9 +3097,31 @@ NEVER:
 - Re-ask vehicle confirmation if it was already confirmed in the same conversation unless details conflict
 - Use placeholder values like XXXX, XXX, TBD for price or availability
 - Use robotic or formal language
+- Blame the customer or imply the problem is their fault
+- Hide behind vague phrases like "the system" or "policy" when a concrete next step can be given
 """
 
     async def process(self, message: str, conversation_history: List[Dict], db: AsyncSession, **kwargs) -> str:
+        msg = (message or "").strip()
+        msg_l = msg.lower()
+
+        wrong_part_terms = ("חלק לא נכון", "חלק שגוי", "לא מתאים", "wrong part", "wrong item")
+        upset_terms = ("מתוסכל", "מאוכזב", "כועס", "מעצבן", "frustrated", "angry")
+
+        if any(term in msg_l for term in wrong_part_terms):
+            opener = "אני מצטערת שזה קרה" if any(term in msg_l for term in upset_terms) else "אני איתך"
+            return (
+                f"{opener}, ונטפל בזה מהר. "
+                "שלח לי בבקשה תמונה של החלק שקיבלת ותמונה של המדבקה או המספר שעל הקופסה, "
+                "ואדאג לבדיקה ולהחלפה בהקדם."
+            )
+
+        if any(term in msg_l for term in upset_terms):
+            return (
+                "אני מבינה את התסכול שלך. "
+                "כתוב לי במשפט אחד מה בדיוק קרה עכשיו, ואני אתן לך את הצעד הכי מהיר לפתרון."
+            )
+
         return await self.think(
             conversation_history + [{"role": "user", "content": message}],
             source=kwargs.get("source"),

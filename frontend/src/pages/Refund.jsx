@@ -329,7 +329,7 @@ export default function Refund() {
             </div>
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-blue-800 text-xs">
               <p className="font-semibold mb-1">💬 שירות לקוחות AI 24/7</p>
-              <p>ניתן לפתוח בקשת החזרה ולקבל עדכונים גם דרך <Link to="/" className="underline font-semibold">צ׳אט ה-AI</Link> בכל שעה.</p>
+              <p>ניתן לפתוח בקשת החזרה ולקבל עדכונים גם דרך <Link to="/chat" className="underline font-semibold">צ׳אט ה-AI</Link> בכל שעה.</p>
             </div>
           </div>
         </S>

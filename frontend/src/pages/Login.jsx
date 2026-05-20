@@ -16,7 +16,7 @@ export default function Login() {
   const [showPass, setShowPass] = useState(false)
   const [step, setStep] = useState('login') // 'login' | '2fa'
 
-  const from = location.state?.from?.pathname || '/'
+  const from = location.state?.from?.pathname || '/chat'
 
   const getLoginErrorMessage = (err) => {
     if (!err?.response) {

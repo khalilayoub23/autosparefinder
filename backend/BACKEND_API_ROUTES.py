@@ -7,11 +7,12 @@ All API endpoints live in backend/routes/*.py
 ==============================================================================
 """
 
-from fastapi import FastAPI, Depends, HTTPException, status, Request, Query
+from fastapi import FastAPI, Depends, HTTPException, status, Request, Query, UploadFile, File, Form, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from typing import List, Optional, Dict, Any, Literal
 from datetime import datetime, date, timedelta, timezone
+from zoneinfo import ZoneInfo
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_, func, text
 import logging
@@ -754,11 +755,62 @@ STUCK_ORDER_CHECK_INTERVAL_MIN = 30  # check every 30 minutes
 ABANDONED_CART_INTERVAL_S = int(os.getenv("ABANDONED_CART_INTERVAL_S", "3600"))
 # How long a cart must be idle before it is considered abandoned (default: 2 hours)
 ABANDONED_CART_IDLE_HOURS = int(os.getenv("ABANDONED_CART_IDLE_HOURS", "2"))
+ABANDONED_CART_WINDOW_DAYS = int(os.getenv("ABANDONED_CART_WINDOW_DAYS", "3"))
+ABANDONED_CART_MAX_SENDS_PER_WINDOW = int(os.getenv("ABANDONED_CART_MAX_SENDS_PER_WINDOW", "3"))
+ABANDONED_CART_SEND_START_HOUR_IL = int(os.getenv("ABANDONED_CART_SEND_START_HOUR_IL", "9"))
+ABANDONED_CART_SEND_END_HOUR_IL = int(os.getenv("ABANDONED_CART_SEND_END_HOUR_IL", "21"))
+APP_LOCAL_TZ = ZoneInfo(os.getenv("APP_LOCAL_TIMEZONE", "Asia/Jerusalem"))
 
 # How often the pending-payment reminder runs (default: every 30 min)
 PAYMENT_REMINDER_INTERVAL_S = int(os.getenv("PAYMENT_REMINDER_INTERVAL_S", "1800"))
 # Minimum age of a pending_payment order before first reminder (default: 1 hour)
 PAYMENT_REMINDER_AFTER_H    = int(os.getenv("PAYMENT_REMINDER_AFTER_H", "1"))
+
+
+def _customer_first_name(full_name: str | None) -> str:
+    raw_name = str(full_name or "").strip()
+    if not raw_name:
+        return "שלום"
+    return raw_name.split()[0]
+
+
+def _format_cart_items_for_whatsapp(item_lines: list[str], max_items: int = 3) -> str:
+    clean_items = [str(item or "").strip() for item in item_lines if str(item or "").strip()]
+    if not clean_items:
+        return "הפריטים שבחרת"
+    visible_items = clean_items[:max_items]
+    summary = ", ".join(visible_items)
+    remaining = len(clean_items) - len(visible_items)
+    if remaining > 0:
+        item_label = "פריט" if remaining == 1 else "פריטים"
+        summary += f" ועוד {remaining} {item_label}"
+    return summary
+
+
+def _build_abandoned_cart_whatsapp_message(full_name: str | None, item_lines: list[str], total_value: float) -> str:
+    first_name = _customer_first_name(full_name)
+    items_summary = _format_cart_items_for_whatsapp(item_lines)
+    return (
+        f"היי {first_name}, הפריטים שבחרת עדיין מחכים לך בסל: {items_summary}. "
+        f"שווי הסל כרגע הוא {total_value:.0f}₪. "
+        "כדי להשלים את הרכישה, כנס ל-/api/v1/customers/cart ולחץ על 'לתשלום'."
+    )
+
+
+def _abandoned_cart_send_window_open(now_local: datetime | None = None) -> tuple[bool, datetime]:
+    current_local = now_local or datetime.now(APP_LOCAL_TZ)
+    is_open = ABANDONED_CART_SEND_START_HOUR_IL <= current_local.hour < ABANDONED_CART_SEND_END_HOUR_IL
+    return is_open, current_local
+
+
+def _build_pending_payment_whatsapp_message(full_name: str | None, order_number: str | None, total_amount: float) -> str:
+    first_name = _customer_first_name(full_name)
+    safe_order_number = str(order_number or "").strip() or "שלך"
+    return (
+        f"היי {first_name}, ההזמנה {safe_order_number} בסך {total_amount:.0f}₪ עדיין ממתינה לתשלום. "
+        "כדי להשלים את ההזמנה, כנס ל-/api/v1/customers/cart ולחץ על 'לתשלום'. "
+        "אם צריך עזרה, אפשר פשוט להשיב להודעה הזו."
+    )
 
 # How often the health monitor probes all services (default: every 5 min)
 HEALTH_MONITOR_INTERVAL_S = int(os.getenv("HEALTH_MONITOR_INTERVAL_S", "300"))
@@ -1330,18 +1382,28 @@ async def _abandoned_cart_loop():
 
     For each qualifying cart:
       1. Loads user (phone + full_name) and resolves part names from catalog DB
-      2. Calls MAYA (SalesAgent) to generate a personalised Hebrew WhatsApp message
-      3. Sends via WhatsApp (TwilioWhatsAppProvider)
+      2. Builds a deterministic Hebrew WhatsApp reminder
+      3. Sends via WhatsApp during Israel daytime hours only
       4. Persists a Notification row and pushes SSE
-      5. Touches cart.updated_at = now() to suppress re-sending for another interval
+      5. Caps re-engagement to 3 sends in a rolling 3-day window per cart
     """
     from BACKEND_DATABASE_MODELS import Cart, CartItem as CartItemModel, PartsCatalog, SupplierPart
 
     await asyncio.sleep(10)   # let DB pool warm up on startup
     while True:
         try:
+            is_daytime, il_now = _abandoned_cart_send_window_open()
+            if not is_daytime:
+                print(
+                    f"[AbandonedCart] Skip send outside IL daytime window "
+                    f"({ABANDONED_CART_SEND_START_HOUR_IL}:00-{ABANDONED_CART_SEND_END_HOUR_IL}:00, now={il_now.strftime('%Y-%m-%d %H:%M')})"
+                )
+                await asyncio.sleep(ABANDONED_CART_INTERVAL_S)
+                continue
+
             idle_cutoff   = datetime.utcnow() - timedelta(hours=ABANDONED_CART_IDLE_HOURS)
             recent_cutoff = datetime.utcnow() - timedelta(hours=ABANDONED_CART_IDLE_HOURS)
+            reminder_window_cutoff = datetime.utcnow() - timedelta(days=ABANDONED_CART_WINDOW_DAYS)
 
             async with pii_session_factory() as db:
                 from sqlalchemy import exists as sa_exists
@@ -1375,7 +1437,6 @@ async def _abandoned_cart_loop():
             else:
                 print(f"[AbandonedCart] Found {len(abandoned_carts)} abandoned cart(s) — processing...")
                 # provider replaced by _wa_send
-                maya      = _SalesAgent()
                 sent_count = 0
                 skip_count = 0
 
@@ -1422,18 +1483,27 @@ async def _abandoned_cart_loop():
                             item_lines.append(f"{name} (x{i.quantity})")
                         items_summary = ", ".join(item_lines)
 
-                        # Ask MAYA to generate a personalised WhatsApp message
                         async with pii_session_factory() as db:
-                            maya_prompt = (
-                                f"לקוח בשם {user.full_name} השאיר {len(items)} פריטים בסל: {items_summary}. "
-                                f"שווי הסל: {total_value:.0f}₪. "
-                                f"צור הודעת WhatsApp קצרה ומשכנעת בעברית (עד 3 משפטים) שתחזיר אותו לסל לסיים את הרכישה."
+                            sent_in_window = int((await db.execute(
+                                select(func.count(Notification.id)).where(
+                                    Notification.type == "abandoned_cart",
+                                    Notification.data["cart_id"].astext == str(cart.id),
+                                    Notification.created_at > reminder_window_cutoff,
+                                )
+                            )).scalar() or 0)
+                        if sent_in_window >= ABANDONED_CART_MAX_SENDS_PER_WINDOW:
+                            print(
+                                f"[AbandonedCart] Skip cart {cart.id} — already sent {sent_in_window} reminder(s) "
+                                f"in last {ABANDONED_CART_WINDOW_DAYS} day(s)"
                             )
-                            wa_message = await maya.process(
-                                message=maya_prompt,
-                                conversation_history=[],
-                                db=db,
-                            )
+                            skip_count += 1
+                            continue
+
+                        wa_message = _build_abandoned_cart_whatsapp_message(
+                            full_name=user.full_name,
+                            item_lines=item_lines,
+                            total_value=total_value,
+                        )
 
                         # Send WhatsApp
                         wa_result = await _wa_send(to=user.phone, text=wa_message)
@@ -1458,6 +1528,7 @@ async def _abandoned_cart_loop():
                                     "total_value": round(total_value, 2),
                                     "items":       item_lines,
                                     "wa_sid":      wa_result.get("sid"),
+                                    "wa_text":     wa_message,
                                 },
                                 sent_at=datetime.utcnow(),
                             ))
@@ -1549,7 +1620,6 @@ async def _pending_payment_reminder_loop():
         else:
             print(f"[PaymentReminder] Found {len(pending_orders)} order(s) — sending reminders...")
             # provider replaced by _wa_send
-            lior       = _OrdersAgent()
             sent_count = 0
             skip_count = 0
 
@@ -1568,19 +1638,11 @@ async def _pending_payment_reminder_loop():
                             skip_count += 1
                             continue
 
-                    # Call LIOR to generate a personalised payment reminder
-                    async with pii_session_factory() as db:
-                        lior_prompt = (
-                            f"לקוח {user.full_name} לא השלים תשלום להזמנה {order.order_number} "
-                            f"בסך {order.total_amount}₪. "
-                            f"צור הודעת WhatsApp קצרה ומשכנעת בעברית (עד 3 משפטים) שתזכיר לו "
-                            f"לסיים את התשלום דרך /cart"
-                        )
-                        wa_message = await lior.process(
-                            message=lior_prompt,
-                            conversation_history=[],
-                            db=db,
-                        )
+                    wa_message = _build_pending_payment_whatsapp_message(
+                        full_name=user.full_name,
+                        order_number=order.order_number,
+                        total_amount=float(order.total_amount),
+                    )
 
                     # Send WhatsApp
                     wa_result = await _wa_send(to=user.phone, text=wa_message)
@@ -1604,6 +1666,7 @@ async def _pending_payment_reminder_loop():
                                 "order_number": order.order_number,
                                 "total_amount": float(order.total_amount),
                                 "wa_sid":       wa_result.get("sid"),
+                                "wa_text":      wa_message,
                             },
                             sent_at=datetime.utcnow(),
                         ))
@@ -1896,3 +1959,148 @@ async def health_check(
         # We can log the error internally
         from fastapi import HTTPException
         raise HTTPException(status_code=503, detail="Database unreachable")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Supplier PDF import routes
+# ─────────────────────────────────────────────────────────────────────────────
+import shutil
+import tempfile
+from pathlib import Path as _Path
+import re
+
+_UPLOADS_DIR = _Path("/app/uploads")
+_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+
+_MAX_PDF_MB = 200
+_import_jobs: dict = {}  # job_id -> {status, started, stdout, stderr}
+
+
+@app.post("/api/v1/admin/supplier/upload-pdf")
+async def admin_upload_supplier_pdf(
+    manufacturer: str = Form(...),
+    file: UploadFile = File(...),
+    _admin: User = Depends(get_current_admin_user),
+):
+    """
+    Upload a supplier PDF catalog file.
+    Saves to /backend/uploads/<MANUFACTURER>_<timestamp>.pdf
+    Returns the saved file path for use with /api/admin/supplier/run-import.
+    """
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are accepted")
+    data = await file.read()
+    content_length = len(data)
+    if content_length > _MAX_PDF_MB * 1024 * 1024:
+        raise HTTPException(status_code=413, detail=f"PDF exceeds {_MAX_PDF_MB}MB limit")
+    safe_mfr = re.sub(r"[^A-Za-z0-9_\-]", "", manufacturer)[:20] or "MFR"
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    filename = f"{safe_mfr}_{timestamp}.pdf"
+    dest = _UPLOADS_DIR / filename
+    with open(dest, "wb") as f:
+        f.write(data)
+    logger.info("PDF uploaded: %s (%d bytes)", dest, content_length)
+    return {
+        "status": "uploaded",
+        "manufacturer": manufacturer,
+        "file_path": str(dest),
+        "filename": filename,
+        "size_bytes": content_length,
+    }
+
+
+@app.post("/api/v1/admin/supplier/run-import")
+async def admin_run_supplier_import(
+    background_tasks: BackgroundTasks,
+    manufacturer: str = Form(...),
+    file_path: str = Form(...),
+    apply: bool = Form(default=False),
+    _admin: User = Depends(get_current_admin_user),
+):
+    """
+    Trigger the PDF import pipeline for a manufacturer.
+    Set apply=true to persist changes; default is dry-run.
+    Returns immediately; pipeline runs in background.
+    For dry-run results, check logs or poll /api/admin/import-status/{job_id}.
+    """
+    pdf = _Path(file_path)
+    # Security: only allow files inside uploads dir
+    try:
+        pdf.resolve().relative_to(_UPLOADS_DIR.resolve())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="file_path must be inside uploads directory")
+    if not pdf.exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
+
+    job_id = str(uuid.uuid4())
+    logger.info("[import-job %s] Starting PDF import: mfr=%s pdf=%s apply=%s",
+                job_id, manufacturer, file_path, apply)
+
+    _import_jobs[job_id] = {"status": "running", "progress": 5, "started": datetime.utcnow().isoformat(), "stdout": "", "stderr": ""}
+
+    def _run_import():
+        import subprocess, sys
+        script = _Path("/app/supplier_pdf_import.py")
+        cmd = [sys.executable, str(script), "--pdf", str(pdf), "--manufacturer", manufacturer]
+        if apply:
+            cmd.append("--apply")
+        try:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                    text=True, cwd="/app")
+            stdout_lines = []
+            import json as _json
+            report_dict = None
+            for line in proc.stdout:
+                line = line.rstrip()
+                if line.startswith("PROGRESS:"):
+                    try:
+                        pct = int(line.split(":")[1])
+                        _import_jobs[job_id]["progress"] = pct
+                    except (ValueError, IndexError):
+                        pass
+                elif line.startswith("REPORT_JSON:"):
+                    try:
+                        report_dict = _json.loads(line[len("REPORT_JSON:"):])
+                    except Exception:
+                        pass
+                else:
+                    stdout_lines.append(line)
+            proc.wait(timeout=600)
+            stderr_out = proc.stderr.read()
+            rc = proc.returncode
+            stdout_str = "\n".join(stdout_lines[-50:])
+            logger.info("[import-job %s] exit=%d stdout=%s", job_id, rc, stdout_str[-1000:])
+            if rc != 0:
+                logger.error("[import-job %s] stderr=%s", job_id, stderr_out[-500:])
+            _import_jobs[job_id] = {
+                "status": "done" if rc == 0 else "error",
+                "progress": 100,
+                "returncode": rc,
+                "stdout": stdout_str,
+                "stderr": stderr_out[-500:],
+                "report": report_dict,
+            }
+        except Exception as exc:
+            logger.error("[import-job %s] error: %s", job_id, exc)
+            _import_jobs[job_id] = {"status": "error", "progress": 100, "stdout": "", "stderr": str(exc)}
+
+    background_tasks.add_task(_run_import)
+    return {
+        "status": "queued",
+        "job_id": job_id,
+        "manufacturer": manufacturer,
+        "file_path": file_path,
+        "mode": "apply" if apply else "dry-run",
+        "message": "Import pipeline started. Check server logs for results.",
+    }
+
+
+@app.get("/api/v1/admin/supplier/import-status/{job_id}")
+async def admin_import_status(
+    job_id: str,
+    _admin: User = Depends(get_current_admin_user),
+):
+    job = _import_jobs.get(job_id)
+    if not job:
+        return {"status": "unknown", "job_id": job_id}
+    return {"job_id": job_id, **job}

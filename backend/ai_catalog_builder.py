@@ -14,7 +14,7 @@ Modes:
   python3 ai_catalog_builder.py Toyota BMW --expand
   python3 ai_catalog_builder.py --dry-run
 """
-import asyncio, sys, uuid, json, os, hashlib, re
+import asyncio, sys, uuid, json, os, hashlib, re, logging
 from datetime import datetime
 from typing import Any, Dict
 import asyncpg
@@ -24,6 +24,8 @@ from hf_client import hf_text
 from categories import CATEGORY_MAP
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 _raw_url = os.getenv("DATABASE_URL", "")
 if not _raw_url:
@@ -470,6 +472,106 @@ async def run(mode_new=True, mode_expand=True, specific_brands=None, dry_run=Fal
         print(f"✅ Done!  catalog={total_cat:,}  supplier_parts={total_sp:,}")
         print("  (HF text model via Hugging Face Inference API)")
     print("=" * 60)
+
+
+async def lookup_oem_spec(db: AsyncSession, limit: int = 100) -> Dict[str, Any]:
+    """
+    Uses GPT-4o to find OEM numbers for inactive parts with needs_oem_lookup=TRUE.
+    After finding OEM: clears needs_oem_lookup so enrich_pending_parts can process them.
+    """
+    from sqlalchemy import text as _text
+
+    report: Dict[str, Any] = {
+        "task": "lookup_oem_spec",
+        "scanned": 0,
+        "oem_found": 0,
+        "oem_not_found": 0,
+        "errors": [],
+    }
+
+    rows = (await db.execute(
+        _text("""
+            SELECT id, sku, name, name_he, category, part_type, manufacturer
+            FROM parts_catalog
+            WHERE is_active = FALSE
+              AND needs_oem_lookup = TRUE
+              AND name IS NOT NULL
+              AND name != ''
+            ORDER BY RANDOM()
+            LIMIT :lim
+        """),
+        {"lim": limit},
+    )).fetchall()
+    report["scanned"] = len(rows)
+
+    if not rows:
+        logger.info("[lookup_oem_spec] No parts to process")
+        return report
+
+    for row in rows:
+        try:
+            prompt = (
+                f'You are an automotive parts specialist. '
+                f'Given this auto part, return the most likely OEM part number.\n\n'
+                f'Part name (Hebrew): "{row.name}"\n'
+                f'English name hint: "{row.name_he or ""}"\n'
+                f'Vehicle manufacturer: "{row.manufacturer}"\n'
+                f'Category: "{row.category or "unknown"}"\n'
+                f'Part type: "{row.part_type or "unknown"}"\n\n'
+                f'Return ONLY valid JSON, no explanation:\n'
+                f'{{"oem_number": "EXACT_OEM_NUMBER_OR_NULL", '
+                f'"confidence": "high|medium|low", '
+                f'"canonical_name_en": "2-5 word English name"}}'
+            )
+
+            raw = await hf_text(prompt, system=SYSTEM_PROMPT, timeout=30.0)
+            if not raw:
+                report["oem_not_found"] += 1
+                continue
+
+            clean = raw.strip()
+            clean = re.sub(r'^```(?:json)?\s*', '', clean)
+            clean = re.sub(r'```\s*$', '', clean)
+            s, e = clean.find("{"), clean.rfind("}") + 1
+            data = json.loads(clean[s:e]) if s >= 0 and e > s else {}
+
+            oem = str(data.get("oem_number") or "").strip()
+            confidence = str(data.get("confidence", "low")).lower()
+            name_en = str(data.get("canonical_name_en") or "").strip()
+
+            if oem and oem.upper() != "NULL" and confidence in ("high", "medium"):
+                await db.execute(_text("""
+                    UPDATE parts_catalog
+                    SET oem_number        = :oem,
+                        needs_oem_lookup  = FALSE,
+                        is_active         = TRUE,
+                        name_he           = COALESCE(NULLIF(name_he, ''), :name_en),
+                        updated_at        = NOW()
+                    WHERE id = :part_id
+                """), {
+                    "oem": oem,
+                    "name_en": name_en,
+                    "part_id": str(row.id),
+                })
+                await db.commit()
+                report["oem_found"] += 1
+                logger.info(
+                    "[lookup_oem_spec] %s -> OEM %s (conf=%s)",
+                    row.name, oem, confidence
+                )
+            else:
+                report["oem_not_found"] += 1
+
+        except Exception as exc:
+            report["errors"].append(f"{row.sku}: {exc}")
+            logger.error("[lookup_oem_spec] Error on %s: %s", row.sku, exc)
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+
+    logger.info("[lookup_oem_spec] Done: %s", report)
+    return report
 
 
 if __name__ == "__main__":

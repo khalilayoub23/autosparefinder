@@ -6,14 +6,14 @@
 
 :root {
   font-family: "Inter", sans-serif;
-  color: #0f172a;
-  background: #f8fafc;
+  color: #212529;
+  background: #f8f9fa;
 }
 
 body {
   margin: 0;
   min-width: 320px;
-  background: #f8fafc;
+  background: #f8f9fa;
 }
 
 .perspective-800 { perspective: 800px; }

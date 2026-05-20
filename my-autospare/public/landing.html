@@ -1,0 +1,864 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AutoSpare Finder</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: #f5f7fb;
+      color: #111827;
+    }
+
+    a {
+      text-decoration: none;
+      color: inherit;
+    }
+
+    .topbar {
+      background: #02142b;
+      color: #d1d5db;
+      font-size: 13px;
+      padding: 10px 50px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .topbar-right {
+      display: flex;
+      gap: 24px;
+      align-items: center;
+    }
+
+    .navbar {
+      background: #03182f;
+      padding: 18px 50px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-top: 1px solid rgba(255,255,255,0.06);
+    }
+
+    .logo {
+        display: inline-flex;
+        align-items: center;
+      }
+
+      .logo img {
+        height: 86px;
+        width: auto;
+        max-width: 144px;
+        object-fit: contain;
+      }
+
+    .search-bar {
+      width: 48%;
+      background: white;
+      border-radius: 10px;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+    }
+
+    .search-bar input {
+      flex: 1;
+      border: none;
+      padding: 18px;
+      font-size: 15px;
+      outline: none;
+    }
+
+    .search-category {
+      padding: 18px;
+      border-left: 1px solid #e5e7eb;
+      color: #374151;
+      font-size: 14px;
+      background: #fff;
+    }
+
+    .search-btn {
+      background: #2563eb;
+      color: white;
+      border: none;
+      padding: 18px 24px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+
+    .nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      color: white;
+      font-size: 14px;
+    }
+
+    .menu {
+      background: #041b35;
+      padding: 0 50px;
+      display: flex;
+      gap: 18px;
+      align-items: center;
+      height: 64px;
+      border-top: 1px solid rgba(255,255,255,0.05);
+    }
+
+    .menu a {
+      color: white;
+      font-size: 15px;
+      font-weight: 500;
+      padding: 12px 18px;
+      border-radius: 10px;
+      transition: 0.2s;
+    }
+
+    .menu a.active,
+    .menu a:hover {
+      background: #2563eb;
+    }
+
+    .hero {
+      background: linear-gradient(90deg, #031122 0%, #052d67 100%);
+      min-height: 620px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 70px 70px 40px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at right, rgba(59,130,246,0.4), transparent 50%);
+    }
+
+    .hero-left {
+      width: 50%;
+      position: relative;
+      z-index: 2;
+    }
+
+    .hero-title {
+      font-size: 66px;
+      line-height: 1.1;
+      font-weight: 800;
+      color: white;
+      margin-bottom: 24px;
+    }
+
+    .hero-title span {
+      color: #3b82f6;
+    }
+
+    .hero-text {
+      color: #d1d5db;
+      font-size: 19px;
+      line-height: 1.8;
+      max-width: 620px;
+      margin-bottom: 35px;
+    }
+
+    .finder-box {
+      background: rgba(4, 25, 48, 0.92);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 18px;
+      overflow: hidden;
+      max-width: 720px;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.35);
+    }
+
+    .finder-tabs {
+      display: flex;
+      background: rgba(255,255,255,0.03);
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+
+    .finder-tab {
+      flex: 1;
+      text-align: center;
+      padding: 18px;
+      color: #dbeafe;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .finder-tab.active {
+      background: rgba(37,99,235,0.18);
+      color: white;
+    }
+
+    .finder-search {
+      display: flex;
+      padding: 22px;
+      gap: 18px;
+    }
+
+    .finder-search input {
+      flex: 1;
+      border: none;
+      border-radius: 12px;
+      padding: 18px;
+      font-size: 15px;
+      outline: none;
+    }
+
+    .finder-search button {
+      border: none;
+      background: #2563eb;
+      color: white;
+      padding: 18px 28px;
+      border-radius: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      min-width: 180px;
+    }
+
+    .finder-footer {
+      display: flex;
+      gap: 25px;
+      padding: 0 22px 22px;
+      color: #cbd5e1;
+      font-size: 13px;
+    }
+
+    .hero-right {
+      width: 42%;
+      position: relative;
+      z-index: 2;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .parts-circle {
+      width: 540px;
+      height: 540px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(255,255,255,0.22), rgba(255,255,255,0.02));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+
+    .parts-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 18px;
+      width: 80%;
+    }
+
+    .part-card {
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 18px;
+      height: 160px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: 700;
+      font-size: 20px;
+      backdrop-filter: blur(6px);
+    }
+
+    .features-strip {
+      background: #03172f;
+      padding: 28px 50px;
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 25px;
+      color: white;
+    }
+
+    .feature-item {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+    }
+
+    .feature-icon {
+      width: 52px;
+      height: 52px;
+      border-radius: 14px;
+      background: rgba(37,99,235,0.15);
+      border: 1px solid rgba(255,255,255,0.08);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+    }
+
+    .feature-title {
+      font-size: 15px;
+      font-weight: 700;
+      margin-bottom: 5px;
+    }
+
+    .feature-sub {
+      color: #cbd5e1;
+      font-size: 13px;
+    }
+
+    .section {
+      padding: 70px 50px;
+    }
+
+    .section-grid {
+      display: grid;
+      grid-template-columns: 340px 1fr;
+      gap: 30px;
+    }
+
+    .steps-card,
+    .categories-card {
+      background: white;
+      border-radius: 24px;
+      padding: 35px;
+      box-shadow: 0 10px 35px rgba(15,23,42,0.08);
+    }
+
+    .section-title {
+      font-size: 34px;
+      font-weight: 800;
+      margin-bottom: 35px;
+    }
+
+    .section-title span {
+      color: #2563eb;
+    }
+
+    .step {
+      display: flex;
+      gap: 18px;
+      margin-bottom: 35px;
+      align-items: flex-start;
+    }
+
+    .step-number {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: #2563eb;
+      color: white;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 18px;
+      flex-shrink: 0;
+    }
+
+    .step h4 {
+      font-size: 18px;
+      margin-bottom: 8px;
+    }
+
+    .step p {
+      color: #6b7280;
+      line-height: 1.7;
+      font-size: 14px;
+    }
+
+    .categories-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 30px;
+    }
+
+    .view-all {
+      color: #2563eb;
+      font-weight: 700;
+    }
+
+    .categories-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 22px;
+    }
+
+    .category-card {
+      border: 1px solid #e5e7eb;
+      border-radius: 20px;
+      padding: 25px;
+      text-align: center;
+      transition: 0.25s;
+      cursor: pointer;
+    }
+
+    .category-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 10px 25px rgba(0,0,0,0.08);
+    }
+
+    .category-image {
+      width: 90px;
+      height: 90px;
+      margin: 0 auto 20px;
+      border-radius: 18px;
+      background: linear-gradient(135deg, #dbeafe, #eff6ff);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 36px;
+    }
+
+    .category-name {
+      font-weight: 700;
+      margin-bottom: 8px;
+      font-size: 16px;
+    }
+
+    .category-count {
+      color: #6b7280;
+      font-size: 13px;
+    }
+
+    .bottom-features {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 24px;
+      margin-top: 40px;
+    }
+
+    .bottom-feature {
+      background: white;
+      border-radius: 20px;
+      padding: 25px;
+      box-shadow: 0 10px 30px rgba(15,23,42,0.05);
+      display: flex;
+      gap: 15px;
+      align-items: flex-start;
+    }
+
+    .bottom-feature-icon {
+      width: 52px;
+      height: 52px;
+      border-radius: 16px;
+      background: #eff6ff;
+      color: #2563eb;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      flex-shrink: 0;
+    }
+
+    .bottom-feature h4 {
+      margin-bottom: 8px;
+      font-size: 16px;
+    }
+
+    .bottom-feature p {
+      color: #6b7280;
+      line-height: 1.6;
+      font-size: 14px;
+    }
+
+    @media(max-width: 1200px) {
+      .hero {
+        flex-direction: column;
+        gap: 60px;
+      }
+
+      .hero-left,
+      .hero-right,
+      .search-bar {
+        width: 100%;
+      }
+
+      .section-grid,
+      .features-strip,
+      .bottom-features,
+      .categories-grid {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    @media(max-width: 768px) {
+      .navbar,
+      .topbar,
+      .menu,
+      .hero,
+      .section {
+        padding-left: 20px;
+        padding-right: 20px;
+      }
+
+      .section-grid,
+      .features-strip,
+      .bottom-features,
+      .categories-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .finder-search {
+        flex-direction: column;
+      }
+
+      .hero-title {
+        font-size: 42px;
+      }
+
+      .parts-circle {
+        width: 100%;
+        height: auto;
+        padding: 40px;
+      }
+
+      .parts-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="topbar">
+    <div>Millions of Parts. Multiple Suppliers. The Right Part for Your Vehicle.</div>
+    <div class="topbar-right">
+      <a href="/chat">Support</a>
+      <a href="/orders">Track Order</a>
+      <a href="https://wa.me/972000000000" target="_blank" rel="noopener noreferrer">WhatsApp</a>
+      <span>USD</span>
+    </div>
+  </div>
+
+  <div class="navbar">
+    <a class="logo" href="/" aria-label="AutoSpare Finder Home"><img src="/logo-tests/autosparefinder-logo-header.svg" alt="AutoSpare Finder"></a>
+
+    <div class="search-bar">
+      <input id="headerSearchInput" type="text" placeholder="Search by VIN, OEM Number, SKU or Part Name...">
+      <button id="headerCategoryBtn" class="search-category" type="button">All Categories</button>
+      <button id="headerSearchBtn" class="search-btn" type="button">🔍</button>
+    </div>
+
+    <div class="nav-actions">
+      <a href="/chat">Chat With Us</a>
+      <a href="/login">Sign In</a>
+      <a href="/cart">🛒 Cart</a>
+      <a href="/admin" style="font-size:0.78rem;opacity:0.6;padding:4px 8px;">Admin</a>
+    </div>
+  </div>
+
+  <div class="menu">
+    <a class="active" href="/">Home</a>
+    <a href="#categories">Categories</a>
+    <a href="/parts">Catalog</a>
+    <a href="/parts">Request Quote</a>
+    <a href="#how">How It Works</a>
+    <a href="#about">About Us</a>
+    <a href="/chat">Support</a>
+  </div>
+
+  <section class="hero">
+    <div class="hero-left">
+      <h1 class="hero-title">
+        Find the Right Part.<br>
+        <span>Fast.</span> Easy. <span>Reliable.</span>
+      </h1>
+
+      <p class="hero-text">
+        Search millions of auto parts from trusted suppliers worldwide.
+        Best prices. Fast delivery.
+      </p>
+
+      <div class="finder-box">
+        <div class="finder-tabs">
+          <div class="finder-tab active">Search by VIN</div>
+          <div class="finder-tab">OEM Number</div>
+          <div class="finder-tab">SKU / Part Number</div>
+          <div class="finder-tab">Vehicle Details</div>
+        </div>
+
+        <div class="finder-search">
+          <input id="heroSearchInput" type="text" placeholder="Enter VIN Number (e.g., 1HGCM82633A004352)">
+          <button id="heroSearchBtn" type="button">Search Parts</button>
+        </div>
+
+        <div class="finder-footer">
+          <span>✔ 100% Safe & Secure Search</span>
+          <span>✔ We don't store your VIN</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="hero-right">
+      <div class="parts-circle">
+        <div class="parts-grid">
+          <div class="part-card">Brake Disc</div>
+          <div class="part-card">Suspension</div>
+          <div class="part-card">Alternator</div>
+          <div class="part-card">Filters</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="features-strip">
+    <div class="feature-item">
+      <div class="feature-icon">🛡</div>
+      <div>
+        <div class="feature-title">Trusted Suppliers</div>
+        <div class="feature-sub">1000+ verified suppliers</div>
+      </div>
+    </div>
+
+    <div class="feature-item">
+      <div class="feature-icon">💲</div>
+      <div>
+        <div class="feature-title">Best Prices</div>
+        <div class="feature-sub">Compare & save more</div>
+      </div>
+    </div>
+
+    <div class="feature-item">
+      <div class="feature-icon">🚚</div>
+      <div>
+        <div class="feature-title">Fast Delivery</div>
+        <div class="feature-sub">Local & international</div>
+      </div>
+    </div>
+
+    <div class="feature-item">
+      <div class="feature-icon">🔒</div>
+      <div>
+        <div class="feature-title">Secure Payments</div>
+        <div class="feature-sub">100% secure checkout</div>
+      </div>
+    </div>
+
+    <div class="feature-item">
+      <div class="feature-icon">🎧</div>
+      <div>
+        <div class="feature-title">Expert Support</div>
+        <div class="feature-sub">24/7 support</div>
+      </div>
+    </div>
+  </div>
+
+  <section id="how" class="section">
+    <div class="section-grid">
+
+      <div class="steps-card">
+        <h2 class="section-title">How <span>AutoSpareFinder</span> Works</h2>
+
+        <div class="step">
+          <div class="step-number">1</div>
+          <div>
+            <h4>Search</h4>
+            <p>Find parts by VIN, OEM, SKU or vehicle details.</p>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-number">2</div>
+          <div>
+            <h4>Compare</h4>
+            <p>Compare prices, condition, delivery and suppliers.</p>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-number">3</div>
+          <div>
+            <h4>Order or Quote</h4>
+            <p>Place an order or request a quote if stock is limited.</p>
+          </div>
+        </div>
+
+        <div class="step">
+          <div class="step-number">4</div>
+          <div>
+            <h4>Track & Receive</h4>
+            <p>Track your order and get support anytime.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="categories-card">
+        <div class="categories-header">
+          <h2 id="categories" class="section-title">Top Categories</h2>
+          <a href="/parts" class="view-all">View All Categories →</a>
+        </div>
+
+        <div class="categories-grid">
+          <div class="category-card">
+            <div class="category-image">⚙️</div>
+            <div class="category-name">Engine Parts</div>
+            <div class="category-count">25,000+ parts</div>
+          </div>
+
+          <div class="category-card">
+            <div class="category-image">🛞</div>
+            <div class="category-name">Brake System</div>
+            <div class="category-count">18,000+ parts</div>
+          </div>
+
+          <div class="category-card">
+            <div class="category-image">🔩</div>
+            <div class="category-name">Suspension</div>
+            <div class="category-count">12,000+ parts</div>
+          </div>
+
+          <div class="category-card">
+            <div class="category-image">⚡</div>
+            <div class="category-name">Electrical</div>
+            <div class="category-count">20,000+ parts</div>
+          </div>
+
+          <div class="category-card">
+            <div class="category-image">🚘</div>
+            <div class="category-name">Body Parts</div>
+            <div class="category-count">15,000+ parts</div>
+          </div>
+
+          <div class="category-card">
+            <div class="category-image">⚙</div>
+            <div class="category-name">Transmission</div>
+            <div class="category-count">8,000+ parts</div>
+          </div>
+
+          <div class="category-card">
+            <div class="category-image">❄️</div>
+            <div class="category-name">Cooling System</div>
+            <div class="category-count">7,000+ parts</div>
+          </div>
+
+          <div class="category-card">
+            <div class="category-image">🧰</div>
+            <div class="category-name">Filters</div>
+            <div class="category-count">6,000+ parts</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <div id="about" class="bottom-features">
+      <div class="bottom-feature">
+        <div class="bottom-feature-icon">✔</div>
+        <div>
+          <h4>Parts Compatibility</h4>
+          <p>Guaranteed fit for your vehicle.</p>
+        </div>
+      </div>
+
+      <div class="bottom-feature">
+        <div class="bottom-feature-icon">⚙</div>
+        <div>
+          <h4>Multiple Conditions</h4>
+          <p>New, Used, OEM and Aftermarket options.</p>
+        </div>
+      </div>
+
+      <div class="bottom-feature">
+        <div class="bottom-feature-icon">🌍</div>
+        <div>
+          <h4>Global Shipping</h4>
+          <p>We ship worldwide to most countries.</p>
+        </div>
+      </div>
+
+      <div class="bottom-feature">
+        <div class="bottom-feature-icon">🔄</div>
+        <div>
+          <h4>Easy Returns</h4>
+          <p>Hassle-free returns within 30 days.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+
+<script>
+(function(){
+  const heroInput = document.getElementById('heroSearchInput');
+  const heroBtn = document.getElementById('heroSearchBtn');
+  const headerInput = document.getElementById('headerSearchInput');
+  const headerBtn = document.getElementById('headerSearchBtn');
+  const headerCategoryBtn = document.getElementById('headerCategoryBtn');
+  const tabs = Array.from(document.querySelectorAll('.finder-tab'));
+
+  const modeMap = {
+    'Search by VIN': 'vin',
+    'OEM Number': 'oem',
+    'SKU / Part Number': 'sku',
+    'Vehicle Details': 'vehicle'
+  };
+
+  function currentMode(){
+    const active = tabs.find(t => t.classList.contains('active'));
+    return modeMap[(active && active.textContent.trim()) || 'Search by VIN'] || 'vin';
+  }
+
+  function gotoParts(query, mode){
+    const q = (query || '').trim();
+    if(!q) return;
+    const url = '/parts?search=' + encodeURIComponent(q) + '&mode=' + encodeURIComponent(mode || currentMode());
+    window.location.href = url;
+  }
+
+  function goHeroSearch(){
+    gotoParts(heroInput && heroInput.value, currentMode());
+  }
+
+  function goHeaderSearch(){
+    gotoParts(headerInput && headerInput.value, 'general');
+  }
+
+  tabs.forEach(function(tab){
+    tab.addEventListener('click', function(){
+      tabs.forEach(function(t){ t.classList.remove('active'); });
+      tab.classList.add('active');
+      if (heroInput) {
+        const label = tab.textContent.trim();
+        if (label === 'Search by VIN') heroInput.placeholder = 'Enter VIN Number (e.g., 1HGCM82633A004352)';
+        else if (label === 'OEM Number') heroInput.placeholder = 'Enter OEM Number (e.g., 06H121026DD)';
+        else if (label === 'SKU / Part Number') heroInput.placeholder = 'Enter SKU or Part Number';
+        else heroInput.placeholder = 'Enter Vehicle Details (brand, model, year)';
+      }
+    });
+  });
+
+  if(heroBtn) heroBtn.addEventListener('click', goHeroSearch);
+  if(heroInput) heroInput.addEventListener('keydown', function(e){ if(e.key === 'Enter') goHeroSearch(); });
+  if(headerBtn) headerBtn.addEventListener('click', goHeaderSearch);
+  if(headerCategoryBtn) headerCategoryBtn.addEventListener('click', function(){ window.location.href = '/parts'; });
+  if(headerInput) headerInput.addEventListener('keydown', function(e){ if(e.key === 'Enter') goHeaderSearch(); });
+
+  document.querySelectorAll('.category-card').forEach(function(card){
+    card.style.cursor = 'pointer';
+    card.addEventListener('click', function(){
+      const name = (card.querySelector('.category-name') && card.querySelector('.category-name').textContent || '').trim();
+      gotoParts(name, 'category');
+    });
+  });
+
+  document.querySelectorAll('.part-card').forEach(function(card){
+    card.style.cursor = 'pointer';
+    card.addEventListener('click', function(){
+      gotoParts(card.textContent.trim(), 'general');
+    });
+  });
+})();
+</script>
+
+</body>
+</html>

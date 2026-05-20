@@ -2370,6 +2370,11 @@ async def seed_system_settings(db: AsyncSession) -> Dict[str, Any]:
 # Orchestrator – run_all_tasks
 # =========================================================================
 
+async def _lookup_oem_spec_task(db: AsyncSession) -> dict:
+    from ai_catalog_builder import lookup_oem_spec
+    return await lookup_oem_spec(db, limit=500)
+
+
 async def _enrich_pending_parts_task(db: AsyncSession) -> Dict[str, Any]:
     """Thin wrapper so enrich_pending_parts integrates with TASK_REGISTRY."""
     from ai_catalog_builder import enrich_pending_parts
@@ -2656,30 +2661,33 @@ async def dedup_catalog_parts(db: AsyncSession) -> Dict[str, Any]:
         Remove duplicate rows in parts_catalog:
             1. Same SKU → null out the older duplicate's SKU (keep newest).
             2. Same (name, manufacturer key) → flag older rows with needs_oem_lookup=True for manual review.
-                 Manufacturer key prefers manufacturer_id when the column exists, else falls back to manufacturer text.
-    Both steps are idempotent.
+        Both steps are idempotent.
+        Uses pre-fetched ID lists to avoid CTE locking conflicts.
     """
     t0 = time.monotonic()
     nulled_skus = 0
     flagged_dupes = 0
 
     try:
-        # Step 1 — duplicate SKUs: null out older row's sku
-        r1 = await db.execute(text("""
-            WITH dupes AS (
-                SELECT id FROM (
-                    SELECT id,
-                           ROW_NUMBER() OVER (PARTITION BY sku ORDER BY created_at DESC) AS rn
-                    FROM parts_catalog
-                    WHERE sku IS NOT NULL
-                ) ranked
-                WHERE rn > 1
+        # Step 1 — Find duplicate SKUs
+        dup_sku_ids = (await db.execute(text("""
+            SELECT id FROM (
+                SELECT id,
+                       ROW_NUMBER() OVER (PARTITION BY sku ORDER BY created_at DESC) AS rn
+                FROM parts_catalog
+                WHERE sku IS NOT NULL
+            ) ranked
+            WHERE rn > 1
+        """))).scalars().all()
+        
+        if dup_sku_ids:
+            # Null out older duplicate SKUs
+            r1 = await db.execute(
+                text("UPDATE parts_catalog SET sku = NULL, updated_at = NOW() WHERE id = ANY(:ids) RETURNING id"),
+                {"ids": dup_sku_ids}
             )
-            UPDATE parts_catalog SET sku = NULL, updated_at = NOW()
-            FROM dupes WHERE parts_catalog.id = dupes.id
-            RETURNING parts_catalog.id
-        """))
-        nulled_skus = len(r1.fetchall())
+            await db.flush()
+            nulled_skus = len(r1.fetchall())
 
         has_manufacturer_id = bool((await db.execute(text("""
             SELECT EXISTS (
@@ -2690,7 +2698,7 @@ async def dedup_catalog_parts(db: AsyncSession) -> Dict[str, Any]:
             )
         """))).scalar())
 
-        # Step 2 — duplicate (name, manufacturer key): flag older rows for review
+        # Step 2 — Find duplicate (name, manufacturer) pairs
         if has_manufacturer_id:
             manufacturer_partition = "manufacturer_id"
             manufacturer_filter = "manufacturer_id IS NOT NULL"
@@ -2698,24 +2706,27 @@ async def dedup_catalog_parts(db: AsyncSession) -> Dict[str, Any]:
             manufacturer_partition = "lower(COALESCE(manufacturer, ''))"
             manufacturer_filter = "manufacturer IS NOT NULL"
 
-        r2 = await db.execute(text(f"""
-            WITH dupes AS (
-                SELECT id FROM (
-                    SELECT id,
-                           ROW_NUMBER() OVER (
-                               PARTITION BY lower(name), {manufacturer_partition}
-                               ORDER BY created_at DESC
-                           ) AS rn
-                    FROM parts_catalog
-                    WHERE name IS NOT NULL AND {manufacturer_filter}
-                ) ranked
-                WHERE rn > 1
+        dup_name_ids = (await db.execute(text(f"""
+            SELECT id FROM (
+                SELECT id,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY lower(name), {manufacturer_partition}
+                           ORDER BY created_at DESC
+                       ) AS rn
+                FROM parts_catalog
+                WHERE name IS NOT NULL AND {manufacturer_filter}
+            ) ranked
+            WHERE rn > 1
+        """))).scalars().all()
+        
+        if dup_name_ids:
+            # Flag older duplicates for review
+            r2 = await db.execute(
+                text("UPDATE parts_catalog SET needs_oem_lookup = TRUE, updated_at = NOW() WHERE id = ANY(:ids) RETURNING id"),
+                {"ids": dup_name_ids}
             )
-            UPDATE parts_catalog SET needs_oem_lookup = TRUE, updated_at = NOW()
-            FROM dupes WHERE parts_catalog.id = dupes.id
-            RETURNING parts_catalog.id
-        """))
-        flagged_dupes = len(r2.fetchall())
+            await db.flush()
+            flagged_dupes = len(r2.fetchall())
 
         await db.commit()
         logger.info("dedup_catalog_parts: nulled_skus=%d flagged_dupes=%d", nulled_skus, flagged_dupes)
@@ -2732,79 +2743,6 @@ async def dedup_catalog_parts(db: AsyncSession) -> Dict[str, Any]:
         "flagged_dupes": flagged_dupes,
         "elapsed_s": round(time.monotonic() - t0, 2),
     }
-
-
-
-# ---------------------------------------------------------------------------
-# Task: populate_supplier_parts
-# Links every active part to every active supplier with correct pricing.
-# Safe to re-run: uses ON CONFLICT DO NOTHING.
-# Call via: POST /api/v1/admin/db-agent/run/populate_supplier_parts
-# ---------------------------------------------------------------------------
-
-#  (supplier_name, sku_prefix, price_multiplier, ship_ils, ship_usd, transit_days, avail, is_avail)
-_UNIVERSAL_SUPPLIERS = [
-    ("AutoParts Pro IL", "IL",  1.00,   0.0,  0.0,  3, "in_stock", True),
-    ("Global Parts Hub", "DE",  1.10,  93.0, 25.0, 10, "on_order", False),
-    ("EastAuto Supply",  "CN",  0.85, 130.0, 35.0, 21, "on_order", False),
-    ("PartsPro USA",     "US1", 1.05, 110.0, 30.0, 12, "on_order", False),
-    ("AutoZone Direct",  "US2", 1.15, 120.0, 33.0, 14, "on_order", False),
-]
-_MANUFACTURER_SUPPLIERS = [
-    ("Hyundai Mobis",    "KR1", 0.95, 95.0, 26.0,  8, "on_order", False),
-    ("Kia Parts Direct", "KR2", 0.95, 95.0, 26.0,  8, "on_order", False),
-    ("Bosch Direct",     "DE2", 1.00, 80.0, 22.0,  7, "on_order", False),
-    ("Toyota Genuine",   "JP",  1.05, 99.0, 27.0, 10, "on_order", False),
-]
-_CATEGORY_FALLBACK_ILS: Dict[str, float] = {
-    # Shared 28-category taxonomy
-    "בלמים": 648,
-    "מתלה": 1178,
-    "היגוי": 1178,
-    "מנוע": 1522,
-    "קירור": 1027,
-    "מערכת דלק": 909,
-    "מערכת אוויר": 958,
-    "טורבו": 1522,
-    "פליטה": 2365,
-    "תיבת הילוכים וציר": 2398,
-    "מצמד": 2398,
-    "רצועות תזמון": 429,
-    "הצתה": 862,
-    "סינון": 958,
-    "חשמל ואלקטרוניקה": 862,
-    "חיישנים": 862,
-    "מצבר": 862,
-    "תאורה": 1560,
-    "מזגן וחימום": 997,
-    "גוף הרכב": 1206,
-    "שמשות ומגבים": 446,
-    "פנים הרכב": 1224,
-    "גלגלים וצמיגים": 889,
-    "אטמים וצינורות": 302,
-    "מערכת בטיחות": 1224,
-    "מערכת היברידית וחשמלי": 2398,
-    "שמנים ונוזלים": 958,
-    "כלי עבודה ואביזרים": 350,
-    "כללי": 1320,
-
-    # Legacy names kept for backwards compatibility
-    "גוף ואקסטריור": 1206,
-    "מתלים והגה": 1178,
-    "חשמל": 862,
-    "מסננים ושמנים": 958,
-    "אטמים וחומרים": 302,
-    "מיזוג ומערכת חימום": 997,
-    "תיבת הילוכים": 2398,
-    "מערכת פליטה": 2365,
-    "סרן והינע": 891,
-    "מגבים": 446,
-    "שרשראות ורצועות": 429,
-    "כלים וציוד": 350,
-}
-_WARRANTY_MAP = {"Original": 24, "OEM": 24, "Aftermarket": 12, "Refurbished": 6}
-_BATCH = 5_000
-_DEFAULT_PRICE = 800.0
 
 
 async def _populate_supplier_parts_task(db: AsyncSession) -> Dict[str, Any]:
@@ -3416,6 +3354,7 @@ TASK_REGISTRY: Dict[str, Any] = {
     "sync_manufacturer_registries": sync_manufacturer_registries,
     "refresh_min_max_prices":    refresh_min_max_prices,
     "seed_system_settings":      seed_system_settings,
+    "lookup_oem_spec": _lookup_oem_spec_task,
     "enrich_pending_parts":      _enrich_pending_parts_task,
     "trigger_scraper_for_registry_gaps": _trigger_scraper_for_registry_gaps_task,
     "trigger_scraper_for_misses": _trigger_scraper_for_misses_task,
@@ -3487,6 +3426,7 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
             "flag_fake_skus",
             "fix_base_prices",
             "refresh_min_max_prices",
+            "lookup_oem_spec",
             "enrich_pending_parts",
             "trigger_scraper_for_misses",
             "generate_image_embeddings",

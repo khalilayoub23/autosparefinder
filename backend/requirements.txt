@@ -32,3 +32,5 @@ pytest>=8.3
 pytest-asyncio>=0.24
 pytest-cov>=4.1
 rockauto-api>=0.1.3
+pdfplumber
+pymupdf

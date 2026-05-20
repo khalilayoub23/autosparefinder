@@ -1880,22 +1880,54 @@ async def get_categories(
         return cached_payload
 
     if not any([vehicle_manufacturer, vehicle_model, vehicle_submodel, vehicle_year]):
+        # Query real per-category counts from DB (aggregate, fast)
+        agg_rows = (
+            await db.execute(
+                text(
+                    """
+                    SELECT category, part_type, COUNT(*) AS cnt
+                    FROM parts_catalog
+                    WHERE is_active = TRUE
+                    GROUP BY category, part_type
+                    """
+                )
+            )
+        ).fetchall()
         family_counts: Dict[str, int] = {family.id: 0 for family in iter_part_type_families()}
         subcategory_counts: Dict[str, int] = {}
         flat_counts: Dict[str, int] = {family.label: 0 for family in iter_part_type_families()}
         fallback_counts: Dict[str, int] = {c: 0 for c in CANONICAL_FILTER_CATEGORIES}
-        families = []
-        for family in iter_part_type_families():
-            family_payload = family.serialize(count=0)
-            family_payload["subcategories"] = [subcategory.serialize() for subcategory in family.subcategories]
-            families.append(family_payload)
+        for raw_category, raw_part_type, cnt in agg_rows:
+            family = classify_part_type_family(raw_category, raw_part_type, None, None, None)
+            if family:
+                family_counts[family.id] = family_counts.get(family.id, 0) + cnt
+                flat_counts[family.label] = flat_counts.get(family.label, 0) + cnt
+            else:
+                canonical = _normalize_filter_category(raw_category)
+                if canonical:
+                    fallback_counts[canonical] = fallback_counts.get(canonical, 0) + cnt
+        groups = get_part_type_groups(family_counts)
+        group_order = {group["id"]: idx for idx, group in enumerate(groups)}
+        families = sorted(
+            [family.serialize(count=family_counts.get(family.id, 0)) for family in iter_part_type_families()],
+            key=lambda family: (
+                group_order.get(family["group_id"], 999),
+                -int(family.get("count", 0)),
+                family["label"],
+            ),
+        )
+        for family in families:
+            family["subcategories"] = [
+                subcategory.serialize(count=subcategory_counts.get(subcategory.id, 0))
+                for subcategory in next(item for item in iter_part_type_families() if item.id == family["id"]).subcategories
+            ]
         response = {
             "categories": [family["id"] for family in families],
             "counts": {**fallback_counts, **flat_counts},
             "family_counts": family_counts,
             "subcategory_counts": subcategory_counts,
             "families": families,
-            "groups": get_part_type_groups(family_counts),
+            "groups": groups,
             "total": len(families),
         }
         _store_cached_category_response(cache_key, response)

@@ -13,13 +13,13 @@ import {
 import toast from 'react-hot-toast'
 
 const NAV_ITEMS = [
-  { path: '/',        icon: MessageSquare, label: 'צ׳אט AI'     },
+  { path: '/chat',    icon: MessageSquare, label: 'צ׳אט AI'     },
   { path: '/parts',   icon: Search,        label: 'חיפוש חלקים' },
   { path: '/orders',  icon: Package,       label: 'הזמנות'       },
-  { path: '/profile', icon: User,          label: 'פרופיל'       },
+  { path: '/account', icon: User,          label: 'האזור האישי' },
 ]
 
-const TOP_NAV_ITEMS = NAV_ITEMS.filter((item) => item.path !== '/profile')
+const TOP_NAV_ITEMS = NAV_ITEMS.filter((item) => item.path !== '/account')
 
 export default function Layout({ children }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -96,9 +96,9 @@ export default function Layout({ children }) {
     if (n?.type === 'order_update' || d.order_id) navigate('/orders')
     else if (n?.type === 'payment') navigate('/orders')
     else if (n?.type === 'threshold_alert' || n?.type === 'system_alert') navigate('/agents')
-    else if (n?.type === 'message') navigate('/')
+    else if (n?.type === 'message') navigate('/chat')
     else if (n?.type === 'marketing') navigate('/parts')
-    else navigate('/')
+    else navigate('/chat')
   }
 
   return (
@@ -111,7 +111,7 @@ export default function Layout({ children }) {
       <header className="fixed top-0 right-0 left-0 z-40 bg-[#1B2228] border-b border-slate-600 shadow-[0_10px_28px_rgba(0,0,0,0.35)]">
         <div className="flex items-center justify-between h-24 px-4 max-w-7xl mx-auto">
           {/* Logo - Root fix 1:1 image implementation with breakpoint support */}
-          <Link to="/" className="flex items-center">
+          <Link to="/chat" className="flex items-center">
               <BrandLogo size="appHeader" alt="AutoSpare logo" blend />
             </Link>
 

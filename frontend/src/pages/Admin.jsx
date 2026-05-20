@@ -172,6 +172,7 @@ const TABS = [
   { id: 'parts',     label: 'ייבוא חלקים', icon: FileSpreadsheet },
   { id: 'social',    label: 'רשתות חברתיות', icon: Wand2   },
   { id: 'returns',   label: 'החזרות',          icon: RotateCcw, badge: true },
+  { id: 'pdf_import', label: 'ייבוא PDF',         icon: Upload },
 ]
 
 const DB_VIEW_DATASETS = [
@@ -316,6 +317,246 @@ function countryFlag(name) {
   return <img src={`https://flagcdn.com/20x15/${iso.toLowerCase()}.png`} alt={iso} className="inline-block rounded-sm" style={{width:20,height:15}} />
 }
 
+
+function PdfImportTab() {
+  const [manufacturer, setManufacturer] = useState('')
+  const [file, setFile] = useState(null)
+  const [apply, setApply] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const [result, setResult] = useState(null)
+  const [log, setLog] = useState('')
+  const [progress, setProgress] = useState(0)
+  const [progressLabel, setProgressLabel] = useState('')
+  const [jobDone, setJobDone] = useState(false)
+  const [reportData, setReportData] = useState(null)
+  const fileRef = useRef(null)
+  const pollRef = useRef(null)
+
+  const stopPoll = () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null } }
+
+  const startPoll = (jobId, baseProgress) => {
+    stopPoll()
+    let ticks = 0
+    pollRef.current = setInterval(async () => {
+      ticks++
+      try {
+        const { data } = await api.get(`/admin/supplier/import-status/${jobId}`)
+        // Only advance — never drop
+        if (typeof data.progress === 'number') setProgress(p => Math.max(p, data.progress))
+        if (data.status === 'done') {
+          stopPoll()
+          setProgress(100)
+          setProgressLabel('הושלם ✅')
+          setJobDone(true)
+          if (data.report) setReportData(data.report)
+          setLog(prev => prev + '\n✅ הושלם\n' + (data.stdout || ''))
+          toast.success(apply ? 'ייבוא הושלם בהצלחה' : 'Dry-run הושלם')
+        } else if (data.status === 'error') {
+          stopPoll()
+          setProgress(100)
+          setProgressLabel('שגיאה ❌')
+          setJobDone(true)
+          setLog(prev => prev + '\n❌ שגיאה: ' + (data.stderr || data.stdout || ''))
+          toast.error('הייבוא נכשל — בדוק לוגים')
+        } else {
+          // Still running — show step label based on progress
+          const pct = typeof data.progress === 'number' ? data.progress : 0
+          if (pct < 30) setProgressLabel('מנתח PDF...')
+          else if (pct < 45) setProgressLabel('קורא מסד נתונים...')
+          else if (pct < 65) setProgressLabel('מעדכן חלקים...')
+          else if (pct < 80) setProgressLabel('מסנן ערכים שגויים...')
+          else if (pct < 90) setProgressLabel('בדיקת ספירה...')
+          else setProgressLabel('מסנכרן חיפוש...')
+        }
+      } catch (_) {}
+      if (ticks > 150) { stopPoll(); setProgressLabel('תם הזמן — בדוק לוגים') }
+    }, 2000)
+  }
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    if (!manufacturer.trim() || !file) { toast.error('חובה: יצרן וקובץ PDF'); return }
+    setUploading(true); setResult(null); setLog(''); setProgress(0); setProgressLabel('מעלה קובץ...'); setJobDone(false); setReportData(null)
+    try {
+      // Step 1: upload
+      const fd1 = new FormData()
+      fd1.append('manufacturer', manufacturer.trim().toUpperCase())
+      fd1.append('file', file)
+      const up = await api.post('/admin/supplier/upload-pdf', fd1, { headers: { 'Content-Type': undefined } })
+      const filePath = up.data.file_path
+      setProgress(10)
+      setProgressLabel('הקובץ הועלה — מריץ ייבוא...')
+      setLog(`✅ הועלה: ${up.data.filename}\n`)
+
+      // Step 2: run import
+      const fd2 = new FormData()
+      fd2.append('manufacturer', manufacturer.trim().toUpperCase())
+      fd2.append('file_path', filePath)
+      fd2.append('apply', apply ? 'true' : 'false')
+      const run = await api.post('/admin/supplier/run-import', fd2, { headers: { 'Content-Type': undefined } })
+      setResult(run.data)
+      setProgress(15)
+      setProgressLabel('מעבד...')
+      setLog(prev => prev + `✅ job_id: ${run.data.job_id}\n`)
+      startPoll(run.data.job_id, 15)
+    } catch (err) {
+      const rawDetail = err?.response?.data?.detail
+      const msg = Array.isArray(rawDetail)
+        ? rawDetail.map(e => e?.msg || String(e)).join('; ')
+        : (typeof rawDetail === 'string' ? rawDetail : (err.message || 'שגיאה'))
+      toast.error(msg)
+      setLog(prev => prev + `❌ ${msg}`)
+      setProgress(0); setProgressLabel('')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  return (
+    <div className="space-y-5 max-w-xl">
+      <div className="card p-5">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="p-2 rounded-xl bg-brand-50"><Upload className="w-5 h-5 text-brand-600" /></div>
+          <div>
+            <h3 className="font-bold text-brand-navy">ייבוא קטלוג ספק מ-PDF</h3>
+            <p className="text-xs text-gray-400 mt-0.5">העלה קובץ PDF ובחר יצרן לעדכון הקטלוג</p>
+          </div>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">יצרן <span className="text-red-500">*</span></label>
+            <input
+              className="input-field w-full"
+              placeholder="לדוגמה: ORA, FEBEST, BOSCH"
+              value={manufacturer}
+              onChange={e => setManufacturer(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">קובץ PDF <span className="text-red-500">*</span></label>
+            <div
+              className="border-2 border-dashed border-gray-200 rounded-xl p-6 text-center cursor-pointer hover:border-brand-400 transition-colors"
+              onClick={() => fileRef.current?.click()}
+            >
+              {file ? (
+                <div className="flex items-center justify-center gap-2 text-brand-600">
+                  <FileSpreadsheet className="w-5 h-5" />
+                  <span className="font-medium text-sm">{file.name}</span>
+                  <span className="text-gray-400 text-xs">({(file.size/1024).toFixed(1)} KB)</span>
+                </div>
+              ) : (
+                <div className="text-gray-400 text-sm">
+                  <Upload className="w-6 h-6 mx-auto mb-2 opacity-50" />
+                  לחץ לבחירת קובץ PDF (עד 50 MB)
+                </div>
+              )}
+            </div>
+            <input ref={fileRef} type="file" accept=".pdf" className="hidden" onChange={e => setFile(e.target.files[0] || null)} />
+          </div>
+          <div className="flex items-center gap-3 p-3 rounded-xl bg-yellow-50 border border-yellow-200">
+            <input
+              type="checkbox"
+              id="apply-toggle"
+              checked={apply}
+              onChange={e => setApply(e.target.checked)}
+              className="w-4 h-4 accent-brand-600"
+            />
+            <label htmlFor="apply-toggle" className="text-sm font-medium text-yellow-800 cursor-pointer">
+              Apply (שמור לDB) — בטל לסימולציה בלבד
+            </label>
+          </div>
+          <button
+            type="submit"
+            disabled={uploading || (result && !jobDone)}
+            className="btn-primary w-full flex items-center justify-center gap-2"
+          >
+            {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+            {uploading ? 'מעלה ומריץ...' : apply ? 'העלה ויבא לDB' : 'העלה ובצע Dry-run'}
+          </button>
+        </form>
+      </div>
+
+      {(progress > 0 || result) && (
+        <div className="card p-4 space-y-2">
+          <div className="flex items-center justify-between text-sm mb-1">
+            <span className="font-medium text-gray-700">{progressLabel || 'מעבד...'}</span>
+            <span className="text-gray-500 font-mono">{Math.round(progress)}%</span>
+          </div>
+          <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+            <div
+              className={`h-3 rounded-full transition-all duration-700 ${jobDone && progressLabel.includes('❌') ? 'bg-red-500' : progress === 100 ? 'bg-green-500' : 'bg-brand-600'}`}
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+          {result && !jobDone && (
+            <p className="text-xs text-gray-400 flex items-center gap-1">
+              <Loader2 className="w-3 h-3 animate-spin" /> מעבד ברקע...
+            </p>
+          )}
+        </div>
+      )}
+
+      {jobDone && reportData && (
+        <div className="card p-4 space-y-3">
+          <h4 className="text-sm font-semibold text-gray-800 flex items-center gap-2">
+            {reportData.dry_run ? '🔍 תוצאות Dry-run' : '✅ דוח ייבוא'} — {reportData.manufacturer}
+          </h4>
+          <div className="grid grid-cols-2 gap-2 text-sm">
+            <div className="bg-gray-50 rounded-lg p-2">
+              <p className="text-xs text-gray-500 mb-0.5">שורות PDF</p>
+              <p className="font-bold text-gray-800">{reportData.pdf_valid_keys?.toLocaleString()}</p>
+            </div>
+            <div className="bg-blue-50 rounded-lg p-2">
+              <p className="text-xs text-blue-600 mb-0.5">מחיר עודכן</p>
+              <p className="font-bold text-blue-700">{reportData.updated_price?.toLocaleString()}</p>
+            </div>
+            <div className="bg-purple-50 rounded-lg p-2">
+              <p className="text-xs text-purple-600 mb-0.5">שם עודכן</p>
+              <p className="font-bold text-purple-700">{reportData.updated_name?.toLocaleString()}</p>
+            </div>
+            <div className="bg-green-50 rounded-lg p-2">
+              <p className="text-xs text-green-600 mb-0.5">נוספו חדשים</p>
+              <p className="font-bold text-green-700">{reportData.inserted?.toLocaleString()}</p>
+            </div>
+            <div className="bg-yellow-50 rounded-lg p-2">
+              <p className="text-xs text-yellow-600 mb-0.5">הופעל מחדש</p>
+              <p className="font-bold text-yellow-700">{reportData.reactivated?.toLocaleString()}</p>
+            </div>
+            <div className="bg-red-50 rounded-lg p-2">
+              <p className="text-xs text-red-600 mb-0.5">הושבת (לא זמין)</p>
+              <p className="font-bold text-red-700">{reportData.deactivated_unavailable?.toLocaleString()}</p>
+            </div>
+          </div>
+          {reportData.category_counts && Object.keys(reportData.category_counts).length > 0 && (
+            <div>
+              <p className="text-xs font-semibold text-gray-600 mb-1">קטגוריות (חדשים)</p>
+              <div className="flex flex-wrap gap-1">
+                {Object.entries(reportData.category_counts).sort((a,b)=>b[1]-a[1]).slice(0,8).map(([cat,cnt]) => (
+                  <span key={cat} className="text-xs bg-gray-100 text-gray-700 rounded px-2 py-0.5">{cat} ({cnt})</span>
+                ))}
+              </div>
+            </div>
+          )}
+          <div className="flex items-center justify-between text-xs text-gray-500 border-t pt-2">
+            <span>DB פעיל: <strong>{reportData.db_active_after?.toLocaleString()}</strong></span>
+            <span>Meili: <strong className={reportData.meili_synced ? 'text-green-600' : 'text-gray-400'}>{reportData.meili_synced ? 'מסונכרן ✓' : 'לא—'}</strong></span>
+            <span>{reportData.elapsed_s}s</span>
+          </div>
+        </div>
+      )}
+
+      {log && (
+        <div className="card p-4">
+          <h4 className="text-sm font-semibold text-gray-700 mb-2">פלט</h4>
+          <pre className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg p-3 whitespace-pre-wrap">{log}</pre>
+          {result && (
+            <p className="text-xs text-gray-400 mt-2">בדוק לוגים: <code>docker logs autospare_backend --tail 100 | grep {result.job_id?.slice(0,8)}</code></p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 
 export default function Admin() {
   const [tab, setTab] = useState('dashboard')
@@ -3439,6 +3680,10 @@ export default function Admin() {
             </div>
           )}
         </div>
+      )}
+
+      {tab === 'pdf_import' && (
+        <PdfImportTab />
       )}
     </div>
 

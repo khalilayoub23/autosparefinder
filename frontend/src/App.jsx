@@ -10,6 +10,8 @@ import Privacy from './pages/Privacy'
 import Terms from './pages/Terms'
 import Refund from './pages/Refund'
 import Chat from './pages/Chat'
+import LandingPage from './pages/LandingPage'
+import ClientPortal from './pages/ClientPortal'
 import Parts from './pages/Parts'
 import Orders from './pages/Orders'
 import Cart from './pages/Cart'
@@ -19,20 +21,26 @@ import Agents from './pages/Agents'
 import PaymentSuccess from './pages/PaymentSuccess'
 
 class ErrorBoundary extends Component {
-  state = { error: null }
+  state = { error: null, info: null }
   static getDerivedStateFromError(error) { return { error } }
+  componentDidCatch(error, info) { this.setState({ info }) }
   render() {
     if (this.state.error) {
       return (
-        <div style={{ padding: '2rem', textAlign: 'center', fontFamily: 'sans-serif' }}>
-          <h2>משהו השתבש</h2>
-          <p style={{ color: '#666', fontSize: '0.9rem' }}>{this.state.error?.message}</p>
-          <button
-            style={{ marginTop: '1rem', padding: '0.5rem 1.5rem', background: '#00A3FF', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer' }}
-            onClick={() => { localStorage.removeItem('cart-store'); window.location.reload() }}
-          >
-            נקה מטמון וטען מחדש
-          </button>
+        <div style={{ padding: '2rem', fontFamily: 'sans-serif' }}>
+          <h2 style={{ textAlign: 'center' }}>משהו השתבש</h2>
+          <p style={{ color: '#666', fontSize: '0.9rem', textAlign: 'center' }}>{this.state.error?.message}</p>
+          <pre style={{ background: '#f4f4f4', padding: '1rem', fontSize: '0.75rem', overflowX: 'auto', marginTop: '1rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: '300px', overflowY: 'auto' }}>
+            {this.state.info?.componentStack || this.state.error?.stack}
+          </pre>
+          <div style={{ textAlign: 'center' }}>
+            <button
+              style={{ marginTop: '1rem', padding: '0.5rem 1.5rem', background: '#00A3FF', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer' }}
+              onClick={() => { localStorage.removeItem('cart-store'); localStorage.removeItem('auth-store'); window.location.reload() }}
+            >
+              נקה מטמון וטען מחדש
+            </button>
+          </div>
         </div>
       )
     }
@@ -63,8 +71,9 @@ export default function App() {
           <Route path="/refund" element={<Refund />} />
 
           {/* Main app routes with top layout */}
+          <Route path="/" element={<LandingPage />} />
           <Route
-            path="/"
+            path="/chat"
             element={
               <ProtectedRoute>
                 <Layout>
@@ -109,6 +118,16 @@ export default function App() {
               <ProtectedRoute>
                 <Layout>
                   <Profile />
+                </Layout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/account"
+            element={
+              <ProtectedRoute>
+                <Layout>
+                  <ClientPortal />
                 </Layout>
               </ProtectedRoute>
             }

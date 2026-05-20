@@ -1,8 +1,26 @@
 # AutoSpareFinder Roadmap
 
-Last updated: 2026-05-09
+Last updated: 2026-05-17
 Owner: Auto Spare Admin <admin@autosparefinder.co.il>
 Update cadence: Weekly
+
+## Recent Changes (2026-05-17)
+- Frontend routing upgraded to support a public marketing landing page and private workspace split:
+  - Added new public route `/` rendering `frontend/src/pages/LandingPage.jsx` (no auth required).
+  - Moved authenticated chat workspace to `/chat` to prevent anonymous access to app internals.
+- Implemented landing page based on the approved design attachment and wired key actions to existing backend flows:
+  - Search box now routes to `/parts` with query + mode parameters.
+  - Primary calls-to-action wired to login/register/chat/account/parts routes.
+- Added a new private client portal page at `/account`:
+  - Loads customer profile from `GET /api/v1/profile`.
+  - Loads recent orders from `GET /api/v1/orders`.
+  - Supports profile updates via `PUT /api/v1/profile` (full_name, phone, address fields).
+  - Displays customer KPIs and recent order statuses in one page.
+- Navigation and redirect safety updates to avoid route regressions:
+  - Updated top navigation from `/` to `/chat` for AI chat access.
+  - Updated protected-route admin fallback to `/chat`.
+  - Updated notification routing defaults to `/chat`.
+  - Updated post-login fallback redirect to `/chat`.
 
 ## Recent Changes (2026-05-09)
 - Root-fix conversational quality pass completed in backend/BACKEND_AI_AGENTS.py to reduce scripted replies:

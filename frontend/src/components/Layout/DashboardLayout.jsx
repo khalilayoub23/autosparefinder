@@ -104,7 +104,7 @@ const DashboardLayout = ({ children }) => {
           </nav>
 
           <div className="mt-auto pt-6 border-t border-slate-700">
-            <SidebarLink label="חזרה למערכת" to="/" onClick={closeMobile} />
+            <SidebarLink label="חזרה למערכת" to="/chat" onClick={closeMobile} />
           </div>
         </aside>
 

@@ -419,6 +419,30 @@ async def track_order(order_id: uuid.UUID, current_user: User = Depends(get_curr
     }
 
 
+@router.get("/api/v1/orders/track-public")
+async def track_order_public(order_number: str, db: AsyncSession = Depends(get_pii_db)):
+    order_no = (order_number or "").strip()
+    if not order_no:
+        raise HTTPException(status_code=400, detail="order_number is required")
+
+    result = await db.execute(
+        select(Order)
+        .where(and_(Order.order_number == order_no, Order.deleted_at.is_(None)))
+        .limit(1)
+    )
+    order = result.scalar_one_or_none()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    return {
+        "order_number": order.order_number,
+        "status": order.status,
+        "tracking_number": order.tracking_number,
+        "tracking_url": order.tracking_url,
+        "estimated_delivery": order.estimated_delivery,
+    }
+
+
 @router.put("/api/v1/orders/{order_id}/cancel")
 async def cancel_order(order_id: uuid.UUID, data: OrderCancelRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
     import stripe as stripe_sdk

@@ -583,7 +583,8 @@ def classify_part_type_family(
             return accessory_family
         if any(term and term in haystack for term in service_family.normalized_terms):
             return service_family
-        return None
+        # כללי / general / misc with no other context → service-general family
+        return service_family
     return None
 
 
