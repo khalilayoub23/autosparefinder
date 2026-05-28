@@ -1,0 +1,351 @@
+services:
+  postgres_catalog:
+    image: pgvector/pgvector:pg16
+    container_name: autospare_postgres_catalog
+    restart: unless-stopped
+    mem_limit: 1536m
+    environment:
+      POSTGRES_DB: autospare
+      POSTGRES_USER: autospare
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+    - postgres_catalog_data:/var/lib/postgresql/data
+    - ./database/init.sql:/docker-entrypoint-initdb.d/:ro
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pg_isready -U autospare -d autospare
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    ports:
+    - 127.0.0.1:5432:5432
+    networks:
+    - internal
+    security_opt:
+    - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+  postgres_pii:
+    image: pgvector/pgvector:pg16
+    container_name: autospare_postgres_pii
+    restart: unless-stopped
+    mem_limit: 768m
+    environment:
+      POSTGRES_DB: autospare_pii
+      POSTGRES_USER: autospare
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+    - postgres_pii_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pg_isready -U autospare -d autospare_pii
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    ports:
+    - 127.0.0.1:5433:5432
+    networks:
+    - internal
+    security_opt:
+    - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+  redis:
+    image: redis:7-alpine
+    container_name: autospare_redis
+    restart: unless-stopped
+    mem_limit: 256m
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    volumes:
+    - redis_data:/data
+    healthcheck:
+      test:
+      - CMD
+      - redis-cli
+      - -a
+      - ${REDIS_PASSWORD}
+      - ping
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+    - internal
+    security_opt:
+    - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+  backend:
+    build: ./backend
+    container_name: autospare_backend
+    restart: unless-stopped
+    mem_limit: 1024m
+    shm_size: 256m
+    environment:
+      DATABASE_URL: postgresql+asyncpg://autospare:${DB_PASSWORD}@postgres_catalog:5432/autospare
+      DATABASE_PII_URL: postgresql+asyncpg://autospare:${DB_PASSWORD}@postgres_pii:5432/autospare_pii
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_REFRESH_SECRET_KEY: ${JWT_REFRESH_SECRET_KEY}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      HF_TOKEN: ${HF_TOKEN}
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      CEREBRAS_API_KEY: ${CEREBRAS_API_KEY}
+      CEREBRAS_TEXT_MODEL: ${CEREBRAS_TEXT_MODEL:-llama3.1-8b}
+      HF_TEXT_MODEL: ${HF_TEXT_MODEL}
+      HF_VISION_MODEL: ${HF_VISION_MODEL:-Qwen/Qwen3-VL-8B-Instruct}
+      EXTERNAL_FITMENT_PROVIDER_URLS: ${EXTERNAL_FITMENT_PROVIDER_URLS:-https://www.autodoc.eu/api/v1/part/applicability,https://www.buycarparts.co.uk/api/v1/part/applicability}
+      EXTERNAL_ENABLE_NHTSA: ${EXTERNAL_ENABLE_NHTSA:-true}
+      NHTSA_API_BASE: ${NHTSA_API_BASE:-https://vpic.nhtsa.dot.gov/api}
+      EXTERNAL_ENABLE_EBAY: ${EXTERNAL_ENABLE_EBAY:-true}
+      EBAY_BROWSE_API_BASE: ${EBAY_BROWSE_API_BASE:-https://api.ebay.com/buy/browse/v1}
+      EBAY_MARKETPLACE_ID: ${EBAY_MARKETPLACE_ID:-EBAY_US}
+      EBAY_BEARER_TOKEN: ${EBAY_BEARER_TOKEN:-}
+      EBAY_CLIENT_ID: ${EBAY_CLIENT_ID:-}
+      EBAY_CLIENT_SECRET: ${EBAY_CLIENT_SECRET:-}
+      EBAY_PRICE_SYNC_LIMIT: ${EBAY_PRICE_SYNC_LIMIT:-4400}
+      EBAY_APP_ID: ${EBAY_APP_ID:-}
+      EBAY_CERT_ID: ${EBAY_CERT_ID:-}
+      EBAY_SCOPE: ${EBAY_SCOPE:-https://api.ebay.com/oauth/api_scope/buy.browse}
+      EBAY_IDENTITY_BASE: ${EBAY_IDENTITY_BASE:-https://api.ebay.com/identity/v1}
+      EXTERNAL_ENABLE_ROCKAUTO: ${EXTERNAL_ENABLE_ROCKAUTO:-true}
+      ROCKAUTO_CROSSREF_ENDPOINT_TEMPLATE: ${ROCKAUTO_CROSSREF_ENDPOINT_TEMPLATE:-}
+      ROCKAUTO_ITEMS_PATH: ${ROCKAUTO_ITEMS_PATH:-items}
+      EXTERNAL_ENABLE_OEM_EPC: ${EXTERNAL_ENABLE_OEM_EPC:-true}
+      OEM_EPC_ENDPOINT_TEMPLATES: ${OEM_EPC_ENDPOINT_TEMPLATES:-}
+      OEM_EPC_ITEMS_PATH: ${OEM_EPC_ITEMS_PATH:-items}
+      AGENTS_DEFAULT_MODEL: ${AGENTS_DEFAULT_MODEL}
+      WEB_AI_MODEL: ${WEB_AI_MODEL}
+      WHATSAPP_AI_MODEL: ${WHATSAPP_AI_MODEL}
+      TELEGRAM_AI_MODEL: ${TELEGRAM_AI_MODEL}
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN}
+      TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
+      STRIPE_ISSUING_WEBHOOK_SECRET: ${STRIPE_ISSUING_WEBHOOK_SECRET}
+      ALLOW_SIMULATED_PAYMENTS: ${ALLOW_SIMULATED_PAYMENTS:-0}
+      ALLOW_SIMULATED_PAYMENTS_PUBLIC: ${ALLOW_SIMULATED_PAYMENTS_PUBLIC:-0}
+      ALLOW_SIMULATED_SUPPLIER_PAYMENTS: ${ALLOW_SIMULATED_SUPPLIER_PAYMENTS:-0}
+      SUPPLIER_SPEND_PROVIDER: issuing
+      SUPPLIER_ISSUING_CARD_ID: ${SUPPLIER_ISSUING_CARD_ID:-}
+      SUPPLIER_ISSUING_CURRENCY: ${SUPPLIER_ISSUING_CURRENCY:-usd}
+      SUPPLIER_ISSUING_ILS_PER_USD: ${SUPPLIER_ISSUING_ILS_PER_USD:-3.65}
+      SUPPLIER_ISSUING_AUTO_TOPUP_ON_INSUFFICIENT_FUNDS: ${SUPPLIER_ISSUING_AUTO_TOPUP_ON_INSUFFICIENT_FUNDS:-1}
+      SUPPLIER_ISSUING_AUTO_TOPUP_SOURCE: ${SUPPLIER_ISSUING_AUTO_TOPUP_SOURCE:-btok_us_verified}
+      SUPPLIER_ISSUING_TOPUP_BUFFER_MINOR: ${SUPPLIER_ISSUING_TOPUP_BUFFER_MINOR:-5000}
+      SUPPLIER_ISSUING_TOPUP_MAX_MINOR: ${SUPPLIER_ISSUING_TOPUP_MAX_MINOR:-500000}
+      SENDGRID_API_KEY: ${SENDGRID_API_KEY}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHANNEL_ID: ${TELEGRAM_CHANNEL_ID}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET}
+      TIKTOK_CLIENT_KEY: ${TIKTOK_CLIENT_KEY}
+      TIKTOK_CLIENT_SECRET: ${TIKTOK_CLIENT_SECRET}
+      TIKTOK_SANDBOX: ${TIKTOK_SANDBOX:-true}
+      TELEGRAM_ADMIN_BOT_TOKEN: ${TELEGRAM_ADMIN_BOT_TOKEN}
+      TELEGRAM_OWNER_CHAT_ID: ${TELEGRAM_OWNER_CHAT_ID}
+      NOA_MARKETING_INTERVAL_H: ${NOA_MARKETING_INTERVAL_H:-24}
+      DEV_2FA_CODE: ${DEV_2FA_CODE}
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://autosparefinder.co.il,https://www.autosparefinder.co.il}
+      FRONTEND_PUBLIC_URL: ${FRONTEND_PUBLIC_URL:-https://autosparefinder.co.il}
+      FRONTEND_INTERNAL_URL: ${FRONTEND_INTERNAL_URL:-http://frontend}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+      CLAMD_HOST: clamav
+      MEILI_URL: http://meilisearch:7700
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
+      ENVIRONMENT: production
+      REAL_DATA_ONLY: 'true'
+      DEBUG: 'false'
+    depends_on:
+      postgres_catalog:
+        condition: service_healthy
+      postgres_pii:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      meilisearch:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD
+      - python3
+      - -c
+      - import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health').getcode()
+        == 200 else 1)
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+    - upload_files:/app/uploads
+    command: "/bin/bash -c \"\n  alembic -c alembic.ini upgrade head &&\n  alembic\
+      \ -c alembic_pii.ini upgrade head &&\n  uvicorn BACKEND_API_ROUTES:app --host\
+      \ 0.0.0.0 --port 8000 --workers ${API_WORKERS:-1}\n\"\n"
+    networks:
+    - internal
+    - public
+    security_opt:
+    - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+  frontend:
+    build: ./frontend
+    container_name: autospare_frontend
+    restart: unless-stopped
+    mem_limit: 128m
+    volumes:
+    - frontend_build:/usr/share/nginx/html
+    depends_on:
+    - backend
+    networks:
+    - internal
+    security_opt:
+    - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+  nginx:
+    image: nginx:alpine
+    container_name: autospare_nginx
+    restart: unless-stopped
+    mem_limit: 128m
+    ports:
+    - 80:80
+    volumes:
+    - ./deploy/nginx.conf:/etc/nginx/nginx.conf:ro
+    - frontend_build:/usr/share/nginx/html:ro
+    depends_on:
+    - backend
+    - frontend
+    networks:
+    - public
+    - internal
+    security_opt:
+    - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - wget -q --spider http://127.0.0.1/api/v1/system/health || exit 1
+      interval: 10s
+      timeout: 3s
+      retries: 3
+  meilisearch:
+    image: getmeili/meilisearch:v1.7
+    container_name: autospare_meilisearch
+    restart: unless-stopped
+    mem_limit: 1024m
+    environment:
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
+      MEILI_ENV: production
+    volumes:
+    - meili_data:/meili_data
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - curl -sf http://localhost:7700/health || exit 1
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+    - internal
+    security_opt:
+    - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+  whatsapp-bridge:
+    image: node:20-alpine
+    container_name: whatsapp_bridge
+    working_dir: /app
+    volumes:
+    - ./whatsapp-bridge:/app
+    environment:
+    - BACKEND_URL=http://backend:8000/api/v1/webhooks/whatsapp
+    command: sh -c "npm install --silent && node index.js"
+    ports:
+    - 3001:3001
+    restart: unless-stopped
+    depends_on:
+    - backend
+    networks:
+    - internal
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+  postgres_backup:
+    image: prodrigestivill/postgres-backup-local
+    container_name: autospare_postgres_backup
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: postgres_pii
+      POSTGRES_DB: autospare_pii
+      POSTGRES_USER: autospare
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      SCHEDULE: 0 3 * * *
+      BACKUP_KEEP_DAYS: '7'
+      BACKUP_DIR: /backups
+    volumes:
+    - ./backups:/backups
+    networks:
+    - internal
+    depends_on:
+    - postgres_pii
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+  postgres_backup_catalog:
+    image: prodrigestivill/postgres-backup-local
+    container_name: autospare_postgres_backup_catalog
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: postgres_catalog
+      POSTGRES_DB: autospare
+      POSTGRES_USER: autospare
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      SCHEDULE: 0 3 * * *
+      BACKUP_KEEP_DAYS: '7'
+      BACKUP_DIR: /backups
+    volumes:
+    - ./backups/catalog:/backups
+    networks:
+    - internal
+networks:
+  internal:
+    driver: bridge
+  public:
+    driver: bridge
+volumes:
+  postgres_catalog_data: null
+  postgres_pii_data: null
+  redis_data: null
+  upload_files: null
+  frontend_build: null
+  meili_data: null
+  backup_data: null
