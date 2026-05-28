@@ -443,8 +443,9 @@ AGENT_COORDINATION: Dict[str, Dict[str, str]] = {
         "when": "continuous cycle; should run before and after cleanup windows",
     },
     "db_cleanup_agent.py": {
-        "role": "DB hygiene micro-batches (tasks 1-6) for catalog quality",
-        "when": "continuous background loop with short cooldowns",
+        "role": "DB hygiene micro-batches (tasks 1-6 + zombie watchdog) for catalog quality",
+        "when": "continuous background loop with short cooldowns; zombie watchdog runs every cycle",
+        "zombie_watchdog": "task_zombie_watchdog — auto-remediates stale running jobs whose last_heartbeat_at exceeded their ttl_seconds",
     },
     "db_update_agent.py": {
         "role": "normalization/enrichment tasks and schema-safe data updates",
@@ -473,6 +474,57 @@ def get_cleanup_coordination_plan() -> Dict[str, Any]:
     }
 
 
+async def task_zombie_watchdog() -> int:
+    """
+    Scan job_registry for jobs whose last_heartbeat_at has exceeded their
+    ttl_seconds without completing.  Mark them as 'failed' so the distributed
+    lock is no longer blocked and new cycles can run.
+
+    A job is considered a zombie when:
+      status = 'running'
+      AND last_heartbeat_at < NOW() - (ttl_seconds * INTERVAL '1 second')
+
+    Falls back to a hard 30-minute threshold when ttl_seconds is NULL.
+
+    Returns the number of rows remediated.
+    """
+    remediated = 0
+    async with scraper_session_factory() as db:
+        try:
+            result = await db.execute(text("""
+                WITH zombies AS (
+                    SELECT job_id
+                    FROM job_registry
+                    WHERE status = 'running'
+                      AND last_heartbeat_at < NOW() - (
+                          COALESCE(ttl_seconds, 1800) * INTERVAL '1 second'
+                      )
+                )
+                UPDATE job_registry
+                SET status        = 'failed',
+                    completed_at  = NOW(),
+                    error_message = 'Auto-remediated by zombie watchdog: no heartbeat within TTL'
+                WHERE job_id IN (SELECT job_id FROM zombies)
+                RETURNING job_id
+            """))
+            rows = result.fetchall()
+            remediated = len(rows)
+            await db.commit()
+            if remediated:
+                logger.warning(
+                    "[Cleanup] task_zombie_watchdog: remediated %d stale jobs: %s",
+                    remediated,
+                    [r[0] for r in rows],
+                )
+        except Exception as exc:
+            logger.error("task_zombie_watchdog failed: %s", exc)
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+    return remediated
+
+
 CLEANUP_TASK_REGISTRY: Dict[str, Callable[[], Awaitable[int]]] = {
     "task1_fix_part_types": task1_fix_part_types,
     "task2_fill_oem_from_crossref": task2_fill_oem_from_crossref,
@@ -480,6 +532,7 @@ CLEANUP_TASK_REGISTRY: Dict[str, Callable[[], Awaitable[int]]] = {
     "task6_reorganize_categories_rollup": task6_reorganize_categories_rollup,
     "task4_fix_oem_lookup_flag": task4_fix_oem_lookup_flag,
     "task5_detect_manufacturer_overflow": task5_detect_manufacturer_overflow,
+    "task_zombie_watchdog": task_zombie_watchdog,
 }
 
 
@@ -523,6 +576,8 @@ async def run_cleanup_cycle_once(
 
     await asyncio.sleep(task4_sleep_s)
     t5 = await task5_detect_manufacturer_overflow()
+    await asyncio.sleep(2)
+    t_zombie = await task_zombie_watchdog()
     await asyncio.sleep(5)
 
     return {
@@ -533,6 +588,7 @@ async def run_cleanup_cycle_once(
         "recategorized": t6,
         "flags": t4,
         "overflow": t5,
+        "zombie_jobs_remediated": t_zombie,
         "task4_full_batch_cycles": int(state.get("task4_full_batch_cycles", 0)),
         "task4_accelerated": bool(state.get("task4_accelerated", False)),
     }
@@ -553,7 +609,8 @@ async def run_cleanup_loop() -> None:
                     f"[Cleanup] Cycle {cycle} done: "
                     f"types={report['types']} oem={report['oem']} "
                     f"categorized={report['categorized']} recategorized={report['recategorized']} "
-                    f"flags={report['flags']} overflow={report['overflow']}"
+                    f"flags={report['flags']} overflow={report['overflow']} "
+                    f"zombie_jobs={report['zombie_jobs_remediated']}"
                 )
 
             await asyncio.sleep(30)

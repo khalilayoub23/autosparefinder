@@ -72,3 +72,4 @@ backend/alembic/__pycache__/
 
 .venv-ci/
 whatsapp-bridge/auth_info/
+jaguar_parts_raw.ndjson

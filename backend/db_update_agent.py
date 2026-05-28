@@ -47,7 +47,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from currency_rate import get_usd_to_ils_rate
-from resilience import job_registry_start, job_registry_finish
+from resilience import job_registry_start, job_registry_finish, job_heartbeat
 from manufacturer_normalization import PARTS_BRANDS, canonicalize_vehicle_model_for_manufacturer
 from manufacturer_normalization import normalize_vehicle_model_name, normalize_vehicle_submodel_name
 from manufacturer_normalization import normalize_manufacturer_name
@@ -2147,124 +2147,547 @@ async def backfill_catalog_fitment_from_xls(db: AsyncSession) -> Dict[str, Any]:
     }
 
 
-async def merge_catalog_fitment_from_part_vehicle_fitment(db: AsyncSession) -> Dict[str, Any]:
-    """Promote scraped part_vehicle_fitment rows into parts_catalog.compatible_vehicles."""
+
+# ---------------------------------------------------------------------------
+# BMW chassis-code → fitment backfill
+# ---------------------------------------------------------------------------
+_BMW_CHASSIS_MAP: dict = {
+    # E-series
+    "E30": ("3 Series", 1982, 1994), "E36": ("3 Series", 1990, 2002),
+    "E46": ("3 Series", 1998, 2006), "E90": ("3 Series", 2004, 2013),
+    "E91": ("3 Series", 2004, 2013), "E92": ("3 Series", 2005, 2013),
+    "E93": ("3 Series", 2006, 2013), "E34": ("5 Series", 1988, 1996),
+    "E39": ("5 Series", 1995, 2004), "E60": ("5 Series", 2003, 2010),
+    "E61": ("5 Series", 2003, 2010), "E38": ("7 Series", 1994, 2001),
+    "E65": ("7 Series", 2001, 2008), "E66": ("7 Series", 2001, 2008),
+    "E70": ("X5",       2006, 2013), "E71": ("X6",       2008, 2014),
+    "E72": ("X6",       2009, 2014), "E81": ("1 Series",  2004, 2013),
+    "E82": ("1 Series",  2007, 2013), "E84": ("X1",       2009, 2015),
+    "E85": ("Z4",       2002, 2008), "E86": ("Z4",       2002, 2008),
+    "E87": ("1 Series",  2003, 2013), "E88": ("1 Series",  2007, 2013),
+    "E89": ("Z4",       2009, 2016), "E52": ("Z8",       2000, 2003),
+    "E63": ("6 Series", 2004, 2010), "E64": ("6 Series", 2004, 2010),
+    # F-series (cars)
+    "F01": ("7 Series", 2008, 2015), "F02": ("7 Series", 2008, 2015),
+    "F06": ("6 Series", 2012, 2018), "F07": ("5 Series GT", 2009, 2017),
+    "F10": ("5 Series", 2009, 2017), "F11": ("5 Series", 2009, 2017),
+    "F12": ("6 Series", 2011, 2018), "F13": ("6 Series", 2011, 2018),
+    "F15": ("X5",       2013, 2018), "F16": ("X6",       2014, 2019),
+    "F18": ("5 Series", 2011, 2017), "F20": ("1 Series",  2011, 2019),
+    "F21": ("1 Series",  2011, 2019), "F22": ("2 Series", 2013, 2021),
+    "F23": ("2 Series", 2013, 2021), "F25": ("X3",       2010, 2017),
+    "F26": ("X4",       2013, 2018), "F30": ("3 Series", 2011, 2019),
+    "F31": ("3 Series", 2012, 2019), "F32": ("4 Series", 2013, 2021),
+    "F33": ("4 Series", 2013, 2021), "F34": ("3 Series GT", 2013, 2019),
+    "F36": ("4 Series", 2013, 2021), "F39": ("X2",       2018, 2023),
+    "F40": ("1 Series",  2019, 2026), "F44": ("2 Series GC", 2020, 2026),
+    "F45": ("2 Series Active", 2014, 2021),
+    "F46": ("2 Series Gran", 2014, 2021), "F48": ("X1",   2015, 2022),
+    "F49": ("X1",       2015, 2022), "F70": ("7 Series", 2022, 2026),
+    "F80": ("M3",       2014, 2020), "F82": ("M4",       2014, 2020),
+    "F83": ("M4",       2014, 2020), "F85": ("X5 M",     2014, 2018),
+    "F86": ("X6 M",     2014, 2018), "F87": ("M2",       2015, 2021),
+    "F90": ("M5",       2017, 2026), "F91": ("M8",       2019, 2026),
+    "F92": ("M8",       2019, 2026), "F93": ("M8",       2020, 2026),
+    "F95": ("X5 M",     2019, 2026), "F96": ("X6 M",     2020, 2026),
+    "F97": ("X3 M",     2019, 2026), "F98": ("X4 M",     2019, 2026),
+    # G-series (cars)
+    "G01": ("X3",       2017, 2026), "G02": ("X4",       2018, 2026),
+    "G05": ("X5",       2018, 2026), "G06": ("X6",       2019, 2026),
+    "G07": ("X7",       2018, 2026), "G08": ("iX3",      2020, 2026),
+    "G09": ("XM",       2022, 2026),
+    "G11": ("7 Series", 2015, 2026), "G12": ("7 Series", 2015, 2026),
+    "G15": ("8 Series", 2018, 2026), "G16": ("8 Series GC", 2019, 2026),
+    "G20": ("3 Series", 2018, 2026), "G21": ("3 Series", 2019, 2026),
+    "G22": ("4 Series", 2020, 2026), "G23": ("4 Series", 2020, 2026),
+    "G26": ("i4",       2021, 2026), "G29": ("Z4",       2018, 2026),
+    "G30": ("5 Series", 2016, 2026), "G31": ("5 Series", 2016, 2026),
+    "G32": ("6 Series GT", 2017, 2026), "G38": ("5 Series", 2017, 2026),
+    "G42": ("2 Series", 2021, 2026), "G43": ("2 Series", 2021, 2026),
+    "G45": ("X3",       2024, 2026), "G60": ("5 Series", 2023, 2026),
+    "G70": ("7 Series", 2022, 2026),
+    "G80": ("M3",       2020, 2026), "G81": ("M3",       2021, 2026),
+    "G82": ("M4",       2020, 2026), "G83": ("M4",       2021, 2026),
+    "G87": ("M2",       2022, 2026),
+    # U-series (latest generation)
+    "U10": ("X2",         2023, 2026), "U11": ("X1",       2022, 2026),
+    "U25": ("X2 Electric",2024, 2026),
+    # i / iX
+    "I01": ("i3",       2013, 2022), "I12": ("i8",       2014, 2020),
+    "I20": ("iX",       2021, 2026),
+    # BMW Motorcycles
+    "R17":    ("R 1200 GS",  2004, 2013), "R18":    ("R 18",       2021, 2026),
+    "R19":    ("R 1300 GS",  2023, 2026),
+    "K50":    ("K 1600",     2010, 2026), "K51":    ("K 1600 GT",  2012, 2026),
+    "G310R":  ("G 310 R",    2016, 2026),
+    "F800GS": ("F 800 GS",   2008, 2018), "F900GS": ("F 900 GS",   2018, 2026),
+    "F750GS": ("F 750 GS",   2018, 2026), "F850GS": ("F 850 GS",   2018, 2026),
+}
+
+# MINI chassis codes found in BMW-manufacturer parts (BMW OEM parts for MINI vehicles).
+# When detected in a BMW part, emit fitment with manufacturer='MINI' not 'BMW'.
+_BMW_MINI_PASSTHROUGH: dict = {
+    "F54": ("MINI Clubman",     2015, 2024),
+    "F55": ("MINI 5-door",      2014, 2023),
+    "F56": ("MINI 3-door",      2014, 2023),
+    "F57": ("MINI Convertible", 2015, 2023),
+    "F60": ("MINI Countryman",  2016, 2024),
+    "F66": ("MINI 3-door",      2024, 2026),
+}
+
+_BMW_CHASSIS_RE = re.compile(
+    r'(?<![A-Za-z0-9])' +
+    r'([EFGIU]-?\d{2,3}' +
+    r'|[KR]-?\d{2,3}' +
+    r'|G310[GR]S?|F[789]00[A-Z]{1,3}|F750GS|F850GS)' +
+    r'(?![0-9])',
+    re.IGNORECASE,
+)
+
+
+async def backfill_bmw_fitment_from_name_he(db: AsyncSession) -> Dict[str, Any]:
+    """
+    Parse BMW chassis codes (E46, F30, G20, etc.) from parts_catalog.name_he
+    and insert rows into part_vehicle_fitment for every BMW part that has no
+    fitment yet.  Afterwards, run merge_catalog_fitment_from_part_vehicle_fitment
+    to promote those rows into compatible_vehicles.
+    """
     t0 = time.monotonic()
     await ensure_part_vehicle_fitment_table(db)
 
-    def _normalize_fitment_json_list(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Deduplicate and sort fitment dicts so writes remain stable across runs."""
-        unique: List[Dict[str, Any]] = []
-        seen = set()
+    # Fetch BMW parts without fitment
+    rows = (await db.execute(text("""
+        SELECT pc.id, pc.name_he, pc.name
+        FROM parts_catalog pc
+        WHERE pc.manufacturer = 'BMW'
+          AND pc.is_active = TRUE
+          AND NOT EXISTS (
+              SELECT 1 FROM part_vehicle_fitment pvf WHERE pvf.part_id = pc.id
+          )
+        ORDER BY pc.id
+    """))).fetchall()
+
+    inserted = 0
+    skipped = 0
+    parts_matched = 0
+
+    for part_id, name_he, name_en in rows:
+        text_to_scan = (name_he or "") + " " + (name_en or "")
+        raw = {m.upper().replace('-', '') for m in _BMW_CHASSIS_RE.findall(text_to_scan)}
+        bmw_mapped  = [(c, _BMW_CHASSIS_MAP[c])       for c in raw if c in _BMW_CHASSIS_MAP]
+        mini_mapped = [(c, _BMW_MINI_PASSTHROUGH[c])  for c in raw if c in _BMW_MINI_PASSTHROUGH]
+        if not bmw_mapped and not mini_mapped:
+            skipped += 1
+            continue
+
+        parts_matched += 1
+        _MINI_MFR_ID = "47a433bf-4f6f-4f8f-a686-a8c02f7727a8"
+        _BMW_MFR_ID  = "caa6ba39-02aa-4394-969d-a15f3f19104c"
+        for chassis, (model_series, yf, yt) in bmw_mapped:
+            try:
+                await db.execute(text("""
+                    INSERT INTO part_vehicle_fitment
+                        (id, part_id, manufacturer, manufacturer_id,
+                         model, year_from, year_to, notes, updated_at)
+                    VALUES (gen_random_uuid(), :part_id, 'BMW', :mfr_id,
+                            :model, :yf, :yt, :notes, NOW())
+                    ON CONFLICT (part_id, manufacturer, model, year_from) DO NOTHING
+                """), {
+                    "part_id": str(part_id),
+                    "mfr_id":  _BMW_MFR_ID,
+                    "model":   model_series,
+                    "yf":      yf,
+                    "yt":      min(yt, 2026),
+                    "notes":   f"chassis:{chassis}",
+                })
+                inserted += 1
+            except Exception:
+                pass
+        for chassis, (model_series, yf, yt) in mini_mapped:
+            try:
+                await db.execute(text("""
+                    INSERT INTO part_vehicle_fitment
+                        (id, part_id, manufacturer, manufacturer_id,
+                         model, year_from, year_to, notes, updated_at)
+                    VALUES (gen_random_uuid(), :part_id, 'MINI', :mfr_id,
+                            :model, :yf, :yt, :notes, NOW())
+                    ON CONFLICT (part_id, manufacturer, model, year_from) DO NOTHING
+                """), {
+                    "part_id": str(part_id),
+                    "mfr_id":  _MINI_MFR_ID,
+                    "model":   model_series,
+                    "yf":      yf,
+                    "yt":      min(yt, 2026),
+                    "notes":   f"chassis:{chassis}",
+                })
+                inserted += 1
+            except Exception:
+                pass
+
+        if parts_matched % 500 == 0:
+            await db.commit()
+
+    await db.commit()
+    logger.info(
+        "backfill_bmw_fitment_from_name_he: parts_matched=%d inserted=%d skipped=%d",
+        parts_matched, inserted, skipped,
+    )
+    return {
+        "task":          "backfill_bmw_fitment_from_name_he",
+        "status":        "ok",
+        "parts_matched": parts_matched,
+        "inserted":      inserted,
+        "skipped_no_code": skipped,
+        "elapsed_s":     round(time.monotonic() - t0, 2),
+    }
+
+
+# -------------------------------------------------------------------------
+# Ford model patterns (used by backfill_ford_fitment_from_name_he)
+# -------------------------------------------------------------------------
+_FORD_MODEL_PATTERNS = [
+    # F-truck series
+    (r'F-?150',                          "F-150",           1975, 2026),
+    (r'F-?250',                          "F-250",           1980, 2026),
+    (r'F-?350',                          "F-350",           1980, 2026),
+    (r'F-?450',                          "F-450",           1999, 2026),
+    (r'F-?520',                          "F-520",           2000, 2026),
+    (r'F-?530',                          "F-530",           2000, 2026),
+    (r'F-?550',                          "F-550",           1999, 2026),
+    (r'F-?600',                          "F-600",           2020, 2026),
+    # Cars & crossovers
+    (r'MACH.?E|MACHE',                   "Mustang Mach-E",  2021, 2026),
+    (r'\bMUSTANG|\bMUST\b|\bMUS\s|\bMUS\'', "Mustang",         1964, 2026),
+    (r'\bBRONCO',                        "Bronco",           2021, 2026),
+    (r'\bEXPLORER|\bEXP\s|\bEXP\'', "Explorer",        1990, 2026),
+    (r'\bRANGER',                        "Ranger",           1983, 2026),
+    (r'\bEDGE\b|\bEDG\s|\bEDG\'',  "Edge",            2007, 2023),
+    (r'\bESCAPE',                        "Escape",           2000, 2026),
+    (r'\bFIESTA|פיאסטה',                "Fiesta",          1976, 2023),
+    (r'\bFOCUS|\bFOC\s|\bFOC-|\bFOC\'|פוקוס', "Focus", 1998, 2023),
+    (r'\bFUSION',                        "Fusion",           2005, 2020),
+    (r'\bTRANSIT|\bTRN\s|\bTRN-|טרנזיט', "Transit", 1965, 2026),
+    (r'\bMAVERICK',                      "Maverick",         2021, 2026),
+    (r'\bEXPEDITION',                    "Expedition",       1997, 2026),
+    (r'\bKUGA|קוגה',                    "Kuga",            2008, 2026),
+    (r'\bPUMA\b',                       "Puma",             2019, 2026),
+    (r'\bTAURUS',                        "Taurus",           1985, 2026),
+    (r'\bMONDEO|מונדיאו',             "Mondeo",          1992, 2022),
+    (r'\bCONNECT',                       "Transit Connect",  2002, 2026),
+    (r'\bTOWN.?CAR',                     "Lincoln Town Car", 1981, 2011),
+    (r'\bGALAXY',                        "Galaxy",           1995, 2006),
+    (r'\bC-MAX',                         "C-MAX",            2003, 2019),
+    (r'\bS-MAX',                         "S-MAX",            2006, 2014),
+    (r'\bFLEX\b',                       "Flex",             2009, 2019),
+    (r'\bECOSPORT|\bECO\s',            "EcoSport",         2003, 2023),
+]
+
+
+async def backfill_ford_fitment_from_name_he(db: AsyncSession) -> Dict[str, Any]:
+    """Extract Ford model names from name_he and insert part_vehicle_fitment rows."""
+    t0 = time.monotonic()
+    await ensure_part_vehicle_fitment_table(db)
+
+    _FORD_MFR_ID = "73fc77ef-5414-4270-9476-2444d8b7eb41"
+    compiled = [
+        (re.compile(p, re.IGNORECASE), model, yf, yt)
+        for p, model, yf, yt in _FORD_MODEL_PATTERNS
+    ]
+
+    rows = (await db.execute(text("""
+        SELECT pc.id, pc.name_he, pc.name
+        FROM parts_catalog pc
+        WHERE pc.manufacturer = 'Ford'
+          AND pc.is_active = TRUE
+          AND NOT EXISTS (
+              SELECT 1 FROM part_vehicle_fitment pvf WHERE pvf.part_id = pc.id
+          )
+        ORDER BY pc.id
+    """))).fetchall()
+
+    inserted = 0
+    skipped = 0
+    parts_matched = 0
+
+    for part_id, name_he, name_en in rows:
+        text_to_scan = (name_he or "") + " " + (name_en or "")
+        matched_models: set = set()
+        for pattern, model, yf, yt in compiled:
+            if pattern.search(text_to_scan):
+                matched_models.add((model, yf, yt))
+
+        if not matched_models:
+            skipped += 1
+            continue
+
+        parts_matched += 1
+        for model, yf, yt in matched_models:
+            try:
+                await db.execute(text("""
+                    INSERT INTO part_vehicle_fitment
+                        (id, part_id, manufacturer, manufacturer_id,
+                         model, year_from, year_to, notes, updated_at)
+                    VALUES (gen_random_uuid(), :part_id, 'Ford', :mfr_id,
+                            :model, :yf, :yt, :notes, NOW())
+                    ON CONFLICT (part_id, manufacturer, model, year_from) DO NOTHING
+                """), {
+                    "part_id": str(part_id),
+                    "mfr_id":  _FORD_MFR_ID,
+                    "model":   f"Ford {model}",
+                    "yf":      yf,
+                    "yt":      yt,
+                    "notes":   "extracted:name_he",
+                })
+                inserted += 1
+            except Exception:
+                pass
+
+        if parts_matched % 500 == 0:
+            await db.commit()
+
+    await db.commit()
+    logger.info(
+        "backfill_ford_fitment_from_name_he: parts_matched=%d inserted=%d skipped=%d",
+        parts_matched, inserted, skipped,
+    )
+    return {
+        "task":             "backfill_ford_fitment_from_name_he",
+        "status":           "ok",
+        "parts_matched":    parts_matched,
+        "inserted":         inserted,
+        "skipped_no_match": skipped,
+        "elapsed_s":        round(time.monotonic() - t0, 2),
+    }
+
+
+# -------------------------------------------------------------------------
+# MINI chassis map + regex (used by backfill_mini_fitment_from_name_he)
+# -------------------------------------------------------------------------
+_MINI_CHASSIS_MAP: dict = {
+    "R50": ("MINI One/Cooper",  2001, 2006),
+    "R52": ("MINI Convertible", 2004, 2007),
+    "R53": ("MINI Cooper S",    2002, 2006),
+    "R55": ("MINI Clubman",     2007, 2014),
+    "R56": ("MINI Hatchback",   2007, 2013),
+    "R57": ("MINI Convertible", 2008, 2015),
+    "R58": ("MINI Coupe",       2011, 2015),
+    "R59": ("MINI Roadster",    2012, 2015),
+    "R60": ("MINI Countryman",  2010, 2016),
+    "R61": ("MINI Paceman",     2012, 2016),
+    "F54": ("MINI Clubman",     2015, 2024),
+    "F55": ("MINI 5-door",      2014, 2023),
+    "F56": ("MINI 3-door",      2014, 2023),
+    "F57": ("MINI Convertible", 2015, 2023),
+    "F60": ("MINI Countryman",  2016, 2024),
+    "F66": ("MINI 3-door",      2024, 2026),
+}
+
+_MINI_CHASSIS_RE = re.compile(
+    r"(?<![A-Za-z0-9])([RF]-?\d{2,3})(?![0-9])",
+    re.IGNORECASE,
+)
+
+
+async def backfill_mini_fitment_from_name_he(db: AsyncSession) -> Dict[str, Any]:
+    """Extract MINI chassis codes from name_he/name, insert part_vehicle_fitment rows."""
+    t0 = time.monotonic()
+    await ensure_part_vehicle_fitment_table(db)
+
+    _MINI_MFR_ID = "47a433bf-4f6f-4f8f-a686-a8c02f7727a8"
+
+    rows = (await db.execute(text("""
+        SELECT pc.id, pc.name_he, pc.name
+        FROM parts_catalog pc
+        WHERE pc.manufacturer = 'MINI'
+          AND pc.is_active = TRUE
+          AND NOT EXISTS (
+              SELECT 1 FROM part_vehicle_fitment pvf WHERE pvf.part_id = pc.id
+          )
+        ORDER BY pc.id
+    """))).fetchall()
+
+    parts_matched = 0
+    inserted = 0
+    skipped = 0
+
+    for part_id, name_he, name_en in rows:
+        text_to_scan = (name_he or "") + " " + (name_en or "")
+        raw_codes = {m.upper().replace("-", "") for m in _MINI_CHASSIS_RE.findall(text_to_scan)}
+        mapped = [(c, _MINI_CHASSIS_MAP[c]) for c in raw_codes if c in _MINI_CHASSIS_MAP]
+        if not mapped:
+            skipped += 1
+            continue
+        parts_matched += 1
+        for chassis, (model_series, yf, yt) in mapped:
+            result = await db.execute(text("""
+                INSERT INTO part_vehicle_fitment
+                    (id, part_id, manufacturer, manufacturer_id,
+                     model, year_from, year_to, notes, updated_at)
+                VALUES (gen_random_uuid(), :part_id, 'MINI', :mfr_id,
+                        :model, :yf, :yt, :notes, NOW())
+                ON CONFLICT (part_id, manufacturer, model, year_from) DO NOTHING
+            """), {
+                "part_id": str(part_id),
+                "mfr_id":  _MINI_MFR_ID,
+                "model":   model_series,
+                "yf":      yf,
+                "yt":      min(yt, 2026),
+                "notes":   f"chassis:{chassis}",
+            })
+            inserted += result.rowcount
+
+    await db.commit()
+    logger.info(
+        "backfill_mini_fitment_from_name_he: parts_matched=%d inserted=%d skipped=%d",
+        parts_matched, inserted, skipped,
+    )
+    return {
+        "task":            "backfill_mini_fitment_from_name_he",
+        "status":          "ok",
+        "parts_matched":   parts_matched,
+        "inserted":        inserted,
+        "skipped_no_code": skipped,
+        "elapsed_s":       round(time.monotonic() - t0, 2),
+    }
+
+
+async def merge_catalog_fitment_from_part_vehicle_fitment(db: AsyncSession) -> Dict[str, Any]:
+    """
+    Promote part_vehicle_fitment rows into parts_catalog.compatible_vehicles.
+    Processes one manufacturer at a time (no full-table fetchall) to avoid OOM.
+    Year filter: 1985 <= year_from <= year_to <= 2030.
+    """
+    t0 = time.monotonic()
+    await ensure_part_vehicle_fitment_table(db)
+
+    def _normalize_fitment_json_list(items):
+        unique, seen = [], set()
         for item in items:
             if not isinstance(item, dict):
                 continue
             key = json.dumps(item, sort_keys=True, ensure_ascii=False)
-            if key in seen:
-                continue
-            seen.add(key)
-            unique.append(item)
-        unique.sort(key=lambda row: json.dumps(row, sort_keys=True, ensure_ascii=False))
+            if key not in seen:
+                seen.add(key)
+                unique.append(item)
+        unique.sort(key=lambda r: json.dumps(r, sort_keys=True, ensure_ascii=False))
         return unique
 
-    rows = (await db.execute(text("""
-        SELECT
-            pc.id,
-            pc.compatible_vehicles,
-            pvf.manufacturer,
-            pvf.model,
-            pvf.year_from,
-            pvf.year_to,
-            pvf.engine_type
-        FROM parts_catalog pc
-        JOIN part_vehicle_fitment pvf
-          ON pvf.part_id = pc.id
-        WHERE pvf.manufacturer IS NOT NULL
-          AND TRIM(pvf.manufacturer) <> ''
-          AND pvf.model IS NOT NULL
-          AND TRIM(pvf.model) <> ''
+    # Step 1: get distinct manufacturers that have fitment data
+    mfr_rows = (await db.execute(text("""
+        SELECT DISTINCT manufacturer
+        FROM part_vehicle_fitment
+        WHERE manufacturer IS NOT NULL AND TRIM(manufacturer) <> ''
+        ORDER BY manufacturer
     """))).fetchall()
 
-    part_existing: Dict[str, List[Dict[str, Any]]] = {}
-    part_fitments: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-    scanned_rows = 0
+    total_updated  = 0
+    total_merged   = 0
+    total_scanned  = 0
+    mfrs_processed = 0
 
-    for part_id, compat, manufacturer, model, year_from, year_to, engine_type in rows:
-        scanned_rows += 1
-        pid = str(part_id)
-        if pid not in part_existing:
-            part_existing[pid] = list(compat or []) if isinstance(compat, list) else []
+    for (mfr,) in mfr_rows:
+        # Step 2: per-manufacturer JOIN — at most ~100K rows, ~30 MB
+        rows = (await db.execute(text("""
+            SELECT
+                pc.id,
+                pc.compatible_vehicles,
+                pvf.manufacturer,
+                pvf.model,
+                pvf.year_from,
+                pvf.year_to,
+                pvf.engine_type
+            FROM parts_catalog pc
+            JOIN part_vehicle_fitment pvf ON pvf.part_id = pc.id
+            WHERE pvf.manufacturer = :mfr
+              AND pvf.model IS NOT NULL
+              AND TRIM(pvf.model) <> ''
+              AND pvf.year_from IS NOT NULL
+              AND pvf.year_to   IS NOT NULL
+        """), {"mfr": mfr})).fetchall()
 
-        canonical_manufacturer = normalize_manufacturer_name(str(manufacturer or ""), str(manufacturer or ""))
-        canonical_model = canonicalize_vehicle_model_for_manufacturer(canonical_manufacturer, model)
-        if not canonical_manufacturer or not canonical_model:
+        if not rows:
             continue
+        mfrs_processed += 1
 
-        fitment: Dict[str, Any] = {
-            "manufacturer": canonical_manufacturer,
-            "model": canonical_model,
-            "source": "part_vehicle_fitment",
-        }
+        part_existing: Dict[str, list] = {}
+        part_fitments: Dict[str, list] = defaultdict(list)
 
-        if engine_type:
-            fitment["engine"] = str(engine_type).strip()[:50]
+        for part_id, compat, manufacturer, model, year_from, year_to, engine_type in rows:
+            total_scanned += 1
+            pid = str(part_id)
+            if pid not in part_existing:
+                part_existing[pid] = list(compat or []) if isinstance(compat, list) else []
 
-        try:
-            yf = int(year_from or 0)
-        except Exception:
-            yf = 0
-        try:
-            yt = int(year_to or 0)
-        except Exception:
-            yt = 0
-        if yf and not yt:
-            yt = yf
-        if yf and yt and 1990 <= yf <= yt <= 2027:
-            fitment["year_from"] = yf
-            fitment["year_to"] = yt
+            canonical_manufacturer = normalize_manufacturer_name(
+                str(manufacturer or ""), str(manufacturer or ""))
+            canonical_model = canonicalize_vehicle_model_for_manufacturer(
+                canonical_manufacturer, model)
+            if not canonical_manufacturer or not canonical_model:
+                continue
 
-        part_fitments[pid].append(fitment)
+            fitment: Dict[str, Any] = {
+                "manufacturer": canonical_manufacturer,
+                "model":        canonical_model,
+                "source":       "part_vehicle_fitment",
+            }
+            if engine_type:
+                fitment["engine"] = str(engine_type).strip()[:50]
 
-    updated_parts = 0
-    merged_fitment_rows = 0
+            try:
+                yf = int(year_from or 0)
+            except Exception:
+                yf = 0
+            try:
+                yt = int(year_to or 0)
+            except Exception:
+                yt = 0
+            if yf and not yt:
+                yt = yf
+            if yf and yt and 1985 <= yf <= yt <= 2030:
+                fitment["year_from"] = yf
+                fitment["year_to"]   = yt
 
-    for part_id, entries in part_fitments.items():
-        preserved = [
-            item for item in part_existing.get(part_id, [])
-            if not (isinstance(item, dict) and item.get("source") == "part_vehicle_fitment")
-        ]
-        merged = _normalize_fitment_json_list(preserved + entries)
+            part_fitments[pid].append(fitment)
 
-        existing_json = json.dumps(
-            _normalize_fitment_json_list(list(part_existing.get(part_id, []))),
-            sort_keys=True,
-            ensure_ascii=False,
-        )
-        merged_json = json.dumps(merged, sort_keys=True, ensure_ascii=False)
-        if existing_json == merged_json:
-            continue
+        # Step 3: update parts_catalog for this manufacturer
+        updated_this_mfr = 0
+        for part_id, entries in part_fitments.items():
+            preserved = [
+                item for item in part_existing.get(part_id, [])
+                if not (isinstance(item, dict) and item.get("source") == "part_vehicle_fitment")
+            ]
+            merged = _normalize_fitment_json_list(preserved + entries)
 
-        await db.execute(text("""
-            UPDATE parts_catalog
-            SET compatible_vehicles = CAST(:compat AS jsonb),
-                updated_at = NOW()
-            WHERE id = CAST(:part_id AS uuid)
-        """), {
-            "part_id": part_id,
-            "compat": json.dumps(merged, ensure_ascii=False),
-        })
-        updated_parts += 1
-        merged_fitment_rows += len(entries)
+            existing_json = json.dumps(
+                _normalize_fitment_json_list(list(part_existing.get(part_id, []))),
+                sort_keys=True, ensure_ascii=False)
+            merged_json = json.dumps(merged, sort_keys=True, ensure_ascii=False)
+            if existing_json == merged_json:
+                continue
 
-    await db.commit()
+            await db.execute(text("""
+                UPDATE parts_catalog
+                SET compatible_vehicles = CAST(:compat AS jsonb),
+                    updated_at = NOW()
+                WHERE id = CAST(:part_id AS uuid)
+            """), {"part_id": part_id,
+                   "compat":  json.dumps(merged, ensure_ascii=False)})
+            updated_this_mfr += 1
+            total_merged += len(entries)
+
+        await db.commit()
+        total_updated += updated_this_mfr
+        logger.info("merge_catalog_fitment: mfr=%s scanned=%d updated=%d",
+                    mfr, len(rows), updated_this_mfr)
+
     return {
-        "task": "merge_catalog_fitment_from_part_vehicle_fitment",
-        "status": "ok",
-        "scanned_rows": scanned_rows,
-        "parts_with_fitment": len(part_fitments),
-        "updated_parts": updated_parts,
-        "merged_fitment_rows": merged_fitment_rows,
-        "elapsed_s": round(time.monotonic() - t0, 2),
+        "task":                   "merge_catalog_fitment_from_part_vehicle_fitment",
+        "status":                 "ok",
+        "manufacturers_processed": mfrs_processed,
+        "scanned_rows":           total_scanned,
+        "updated_parts":          total_updated,
+        "merged_fitment_rows":    total_merged,
+        "elapsed_s":              round(time.monotonic() - t0, 2),
     }
 
 
@@ -3350,6 +3773,9 @@ TASK_REGISTRY: Dict[str, Any] = {
     "sync_models_from_catalog": sync_models_from_catalog,
     "sync_models_from_catalog_file": sync_models_from_catalog_file,
     "backfill_catalog_fitment_from_xls": backfill_catalog_fitment_from_xls,
+    "backfill_bmw_fitment_from_name_he": backfill_bmw_fitment_from_name_he,
+    "backfill_mini_fitment_from_name_he": backfill_mini_fitment_from_name_he,
+    "backfill_ford_fitment_from_name_he": backfill_ford_fitment_from_name_he,
     "merge_catalog_fitment_from_part_vehicle_fitment": merge_catalog_fitment_from_part_vehicle_fitment,
     "sync_manufacturer_registries": sync_manufacturer_registries,
     "refresh_min_max_prices":    refresh_min_max_prices,
@@ -3414,6 +3840,9 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
             "sync_models_from_catalog",
             "sync_models_from_catalog_file",
             "backfill_catalog_fitment_from_xls",
+            "backfill_bmw_fitment_from_name_he",
+            "backfill_mini_fitment_from_name_he",
+            "backfill_ford_fitment_from_name_he",
             "merge_catalog_fitment_from_part_vehicle_fitment",
             "sync_manufacturer_registries",
             "trigger_scraper_for_registry_gaps",
@@ -3443,6 +3872,8 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
             results.append(result)
             if result.get("status") == "error":
                 logger.warning("run_all_tasks: task %s errored, continuing", task_name)
+            if job_id:
+                await job_heartbeat(db, job_id)
 
         total_elapsed = round(time.monotonic() - t0, 2)
         ok_count = sum(1 for r in results if r.get("status") == "ok")

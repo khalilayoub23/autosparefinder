@@ -109,6 +109,7 @@ Never run two instances of the same job simultaneously.
 - Never allow ordering before payment confirmed
 - Never run destructive operations without before/after row counts
 - Never overwrite higher-confidence data with lower-confidence data
+- Never fabricate, simulate, or hallucinate data — all counts, metrics, statuses, and query results must come from live DB/service queries; never invent or estimate values when real data is accessible
 
 
 ### Root Fix Policy (Production Safety)

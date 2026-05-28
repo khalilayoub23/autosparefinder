@@ -301,3 +301,34 @@ async def job_registry_finish(
         {"status": status, "err": (error_message[:1000] if error_message else None), "job_id": job_id},
     )
     await db_session.commit()
+
+
+async def job_heartbeat(
+    db_session,
+    job_id: str,
+) -> None:
+    """
+    Bump last_heartbeat_at for a running job.
+
+    Call this periodically inside long-running jobs (e.g. after every task in
+    a pipeline loop) so the zombie watchdog in db_cleanup_agent does NOT
+    mistakenly mark the job as failed.
+    """
+    try:
+        await db_session.execute(
+            text(
+                """
+                UPDATE job_registry
+                SET last_heartbeat_at = NOW()
+                WHERE job_id = :job_id AND status = 'running'
+                """
+            ),
+            {"job_id": job_id},
+        )
+        await db_session.commit()
+    except Exception as exc:
+        logger.warning("job_heartbeat failed for %s: %s", job_id, exc)
+        try:
+            await db_session.rollback()
+        except Exception:
+            pass
