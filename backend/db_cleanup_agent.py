@@ -16,8 +16,9 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from sqlalchemy import text
 
-from catalog_scraper import scraper_session_factory
+from catalog_scraper import scraper_session_factory, scrape_motorstore
 from categories import guess_category_by_text
+from currency_rate import get_usd_to_ils_rate
 
 logger = logging.getLogger("db_cleanup_agent")
 
@@ -525,6 +526,133 @@ async def task_zombie_watchdog() -> int:
     return remediated
 
 
+async def task_recover_priced_inactive(batch_size: int = 100) -> int:
+    """Bucket 2 recovery — Part A (no web):
+    Find inactive parts whose supplier_parts row already has price_usd > 0
+    but whose base_price was never copied (or was zeroed by a PDF sweep).
+    Copy the price, convert USD→ILS, and reactivate the part.
+    Runs in micro-batches every cleanup cycle.
+    """
+    recovered = 0
+    async with scraper_session_factory() as db:
+        try:
+            fx = await get_usd_to_ils_rate(db)
+            result = await db.execute(text("""
+                WITH candidates AS (
+                    SELECT DISTINCT ON (p.id)
+                        p.id,
+                        sp.price_usd,
+                        ROUND((sp.price_usd * :fx)::numeric, 2) AS new_price_ils
+                    FROM parts_catalog p
+                    JOIN supplier_parts sp ON sp.part_id = p.id
+                    WHERE p.is_active = false
+                      AND (p.base_price IS NULL OR p.base_price = 0)
+                      AND sp.price_usd > 0
+                    ORDER BY p.id, sp.price_usd DESC
+                    LIMIT :batch
+                )
+                UPDATE parts_catalog pc
+                SET base_price = candidates.new_price_ils,
+                    is_active   = true,
+                    updated_at  = NOW()
+                FROM candidates
+                WHERE pc.id = candidates.id
+                RETURNING pc.id
+            """), {"fx": fx, "batch": batch_size})
+            rows = result.fetchall()
+            recovered = len(rows)
+            if recovered:
+                await db.commit()
+                logger.info("task_recover_priced_inactive: reactivated=%d fx=%.4f", recovered, fx)
+            else:
+                logger.debug("task_recover_priced_inactive: nothing to recover")
+        except Exception as exc:
+            await db.rollback()
+            logger.error("task_recover_priced_inactive failed: %s", exc)
+            return 0
+    return recovered
+
+
+async def task_recover_motorstore_prices(batch_size: int = 8) -> int:
+    """Bucket 2 recovery — Part B (web scraping):
+    For inactive parts linked to Motorstore IL with no price anywhere,
+    fetch the live price from motorstore.co.il using the OEM number,
+    write it back to supplier_parts + base_price, and reactivate the part.
+    Small batch per cycle to respect rate limits.
+    """
+    recovered = 0
+    async with scraper_session_factory() as db:
+        try:
+            fx = await get_usd_to_ils_rate(db)
+            # Find candidates: inactive, priceless, linked to Motorstore IL supplier, has OEM
+            rows = (await db.execute(text("""
+                SELECT p.id, p.oem_number, p.manufacturer, sp.id AS sp_id
+                FROM parts_catalog p
+                JOIN supplier_parts sp ON sp.part_id = p.id
+                JOIN suppliers s ON s.id = sp.supplier_id
+                WHERE p.is_active = false
+                  AND (p.base_price IS NULL OR p.base_price = 0)
+                  AND (sp.price_usd IS NULL OR sp.price_usd = 0)
+                  AND p.oem_number IS NOT NULL AND p.oem_number != ''
+                  AND s.name ILIKE '%motorstore%'
+                ORDER BY p.updated_at ASC NULLS FIRST
+                LIMIT :batch
+            """), {"batch": batch_size})).fetchall()
+
+            for row in rows:
+                part_id, oem, manufacturer, sp_id = row
+                try:
+                    result = await scrape_motorstore(oem, manufacturer or "")
+                    price_ils = result.get("price")
+                    if not price_ils or float(price_ils) <= 0:
+                        # No price found — touch updated_at so we rotate to next part
+                        await db.execute(text(
+                            "UPDATE parts_catalog SET updated_at = NOW() WHERE id = :id"
+                        ), {"id": part_id})
+                        await db.commit()
+                        continue
+
+                    price_ils = round(float(price_ils), 2)
+                    price_usd = round(price_ils / fx, 2)
+
+                    # Update supplier_parts row
+                    await db.execute(text("""
+                        UPDATE supplier_parts
+                        SET price_usd = :usd, price_ils = :ils,
+                            is_available = true, last_checked_at = NOW()
+                        WHERE id = :sp_id
+                    """), {"usd": price_usd, "ils": price_ils, "sp_id": sp_id})
+
+                    # Update catalog and reactivate
+                    await db.execute(text("""
+                        UPDATE parts_catalog
+                        SET base_price = :ils, is_active = true, updated_at = NOW()
+                        WHERE id = :id
+                    """), {"ils": price_ils, "id": part_id})
+
+                    await db.commit()
+                    recovered += 1
+                    logger.info(
+                        "task_recover_motorstore_prices: recovered %s oem=%s price_ils=%.2f",
+                        manufacturer, oem, price_ils,
+                    )
+                except Exception as part_exc:
+                    logger.warning("task_recover_motorstore_prices: part %s failed: %s", oem, part_exc)
+                    try:
+                        await db.rollback()
+                    except Exception:
+                        pass
+
+        except Exception as exc:
+            logger.error("task_recover_motorstore_prices failed: %s", exc)
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+
+    return recovered
+
+
 CLEANUP_TASK_REGISTRY: Dict[str, Callable[[], Awaitable[int]]] = {
     "task1_fix_part_types": task1_fix_part_types,
     "task2_fill_oem_from_crossref": task2_fill_oem_from_crossref,
@@ -532,6 +660,8 @@ CLEANUP_TASK_REGISTRY: Dict[str, Callable[[], Awaitable[int]]] = {
     "task6_reorganize_categories_rollup": task6_reorganize_categories_rollup,
     "task4_fix_oem_lookup_flag": task4_fix_oem_lookup_flag,
     "task5_detect_manufacturer_overflow": task5_detect_manufacturer_overflow,
+    "task_recover_priced_inactive": task_recover_priced_inactive,
+    "task_recover_motorstore_prices": task_recover_motorstore_prices,
     "task_zombie_watchdog": task_zombie_watchdog,
 }
 
@@ -578,6 +708,10 @@ async def run_cleanup_cycle_once(
     t5 = await task5_detect_manufacturer_overflow()
     await asyncio.sleep(2)
     t_zombie = await task_zombie_watchdog()
+    await asyncio.sleep(2)
+    t_recover_priced = await task_recover_priced_inactive()
+    await asyncio.sleep(3)
+    t_recover_web = await task_recover_motorstore_prices()
     await asyncio.sleep(5)
 
     return {
@@ -589,6 +723,8 @@ async def run_cleanup_cycle_once(
         "flags": t4,
         "overflow": t5,
         "zombie_jobs_remediated": t_zombie,
+        "recovered_priced": t_recover_priced,
+        "recovered_web": t_recover_web,
         "task4_full_batch_cycles": int(state.get("task4_full_batch_cycles", 0)),
         "task4_accelerated": bool(state.get("task4_accelerated", False)),
     }
@@ -610,7 +746,9 @@ async def run_cleanup_loop() -> None:
                     f"types={report['types']} oem={report['oem']} "
                     f"categorized={report['categorized']} recategorized={report['recategorized']} "
                     f"flags={report['flags']} overflow={report['overflow']} "
-                    f"zombie_jobs={report['zombie_jobs_remediated']}"
+                    f"zombie_jobs={report['zombie_jobs_remediated']} "
+                    f"recovered_priced={report['recovered_priced']} "
+                    f"recovered_web={report['recovered_web']}"
                 )
 
             await asyncio.sleep(30)
