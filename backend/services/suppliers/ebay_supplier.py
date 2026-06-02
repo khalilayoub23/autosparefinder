@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import logging
 import os
@@ -6,6 +7,16 @@ import time
 from typing import Any, Optional
 
 import httpx
+
+# Max 3 concurrent eBay calls — stays well under their 5,000 calls/day / burst limit
+_EBAY_SEMAPHORE = asyncio.Semaphore(3)
+# Minimum gap between eBay search calls (seconds)
+_EBAY_MIN_INTERVAL = 0.5
+_ebay_last_call: float = 0.0
+# Circuit breaker: after this many consecutive 429s, pause eBay calls until _ebay_circuit_reset
+_EBAY_CIRCUIT_THRESHOLD = 5
+_ebay_consecutive_429s: int = 0
+_ebay_circuit_reset: float = 0.0  # monotonic time after which calls are allowed again
 
 from services.suppliers.base_supplier import BaseSupplier, PartResult
 
@@ -248,14 +259,45 @@ class EbaySupplier(BaseSupplier):
             "X-EBAY-C-ENDUSERCTX": "contextualLocation=country=IL",
         }
 
-        try:
-            async with httpx.AsyncClient(timeout=20.0) as client:
-                response = await client.get(url, headers=headers, params=params)
-                response.raise_for_status()
-                payload = response.json()
-        except Exception as exc:
-            logger.error("eBay search failed for query '%s': %s", query, exc)
+        global _ebay_last_call, _ebay_consecutive_429s, _ebay_circuit_reset
+        # Circuit breaker: stop calling if quota is exhausted
+        if time.monotonic() < _ebay_circuit_reset:
+            remaining = int(_ebay_circuit_reset - time.monotonic())
+            logger.warning("eBay circuit open — skipping call for %ss", remaining)
             return []
+
+        async with _EBAY_SEMAPHORE:
+            # Enforce minimum interval between requests
+            now = time.monotonic()
+            wait = _EBAY_MIN_INTERVAL - (now - _ebay_last_call)
+            if wait > 0:
+                await asyncio.sleep(wait)
+            _ebay_last_call = time.monotonic()
+
+            for attempt in range(3):
+                try:
+                    async with httpx.AsyncClient(timeout=20.0) as client:
+                        response = await client.get(url, headers=headers, params=params)
+                        if response.status_code == 429:
+                            _ebay_consecutive_429s += 1
+                            retry_after = int(response.headers.get("Retry-After", 2 ** (attempt + 1)))
+                            if _ebay_consecutive_429s >= _EBAY_CIRCUIT_THRESHOLD:
+                                _ebay_circuit_reset = time.monotonic() + 3600  # pause 1 hour
+                                logger.error("eBay quota exhausted — circuit open for 1h (consecutive_429s=%d)", _ebay_consecutive_429s)
+                                return []
+                            logger.warning("eBay 429 rate-limited — backing off %ss (attempt %d)", retry_after, attempt + 1)
+                            await asyncio.sleep(retry_after)
+                            continue
+                        response.raise_for_status()
+                        _ebay_consecutive_429s = 0  # reset on success
+                        payload = response.json()
+                        break
+                except Exception as exc:
+                    logger.error("eBay search failed for query '%s': %s", query, exc)
+                    return []
+            else:
+                logger.error("eBay search gave up after 3 retries for query '%s'", query)
+                return []
 
         items = payload.get("itemSummaries") or []
         results: list[PartResult] = []
@@ -323,14 +365,41 @@ class EbaySupplier(BaseSupplier):
             "X-EBAY-C-ENDUSERCTX": "contextualLocation=country=IL",
         }
 
-        try:
-            async with httpx.AsyncClient(timeout=20.0) as client:
-                response = await client.get(url, headers=headers)
-                response.raise_for_status()
-                item = response.json()
-        except Exception as exc:
-            logger.error("eBay get_part_details failed for '%s': %s", item_id, exc)
+        global _ebay_last_call, _ebay_consecutive_429s, _ebay_circuit_reset
+        if time.monotonic() < _ebay_circuit_reset:
             return None
+
+        async with _EBAY_SEMAPHORE:
+            now = time.monotonic()
+            wait = _EBAY_MIN_INTERVAL - (now - _ebay_last_call)
+            if wait > 0:
+                await asyncio.sleep(wait)
+            _ebay_last_call = time.monotonic()
+
+            for attempt in range(3):
+                try:
+                    async with httpx.AsyncClient(timeout=20.0) as client:
+                        response = await client.get(url, headers=headers)
+                        if response.status_code == 429:
+                            _ebay_consecutive_429s += 1
+                            retry_after = int(response.headers.get("Retry-After", 2 ** (attempt + 1)))
+                            if _ebay_consecutive_429s >= _EBAY_CIRCUIT_THRESHOLD:
+                                _ebay_circuit_reset = time.monotonic() + 3600
+                                logger.error("eBay quota exhausted — circuit open for 1h")
+                                return None
+                            logger.warning("eBay 429 on part_details — backing off %ss", retry_after)
+                            await asyncio.sleep(retry_after)
+                            continue
+                        response.raise_for_status()
+                        _ebay_consecutive_429s = 0
+                        item = response.json()
+                        break
+                except Exception as exc:
+                    logger.error("eBay get_part_details failed for '%s': %s", item_id, exc)
+                    return None
+            else:
+                logger.error("eBay get_part_details gave up after 3 retries for '%s'", item_id)
+                return None
 
         try:
             price_obj = item.get("price") or {}

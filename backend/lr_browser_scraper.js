@@ -1,157 +1,194 @@
-/**
- * Land Rover OEM Parts Scraper — runs in browser DevTools console
- * Site: https://landrover.oempartsonline.com
- *
- * HOW TO USE:
- * 1. Open https://landrover.oempartsonline.com/search?search_str=fuse in Chrome
- * 2. Open DevTools (F12) → Console tab
- * 3. Paste this entire script and press Enter
- * 4. Wait 30-90 minutes (it will log progress)
- * 5. It auto-downloads land_rover_parts.json when done
- */
+// ============================================================
+// Land Rover DOM Collector v3 -- NO fetch() calls at all
+// Cloudflare-proof: reads ONLY the already-rendered page DOM
+// ============================================================
+//
+// HOW TO USE:
+//   1. Go to landrover.oempartsonline.com  (any page)
+//   2. Open DevTools > Sources > Snippets
+//   3. Paste this entire script as a snippet
+//
+//   RUN MODE A -- collect current page (run on each listing page):
+//     Run snippet normally.  Products saved to localStorage.
+//     Then click "Next page" on the site and run again.
+//
+//   RUN MODE B -- auto-paginate (run ONCE on a category/search page):
+//     The script will click the "Next" button and re-inject itself.
+//
+//   DOWNLOAD -- run this in console when done browsing:
+//     lrDownload()
+// ============================================================
 
-(async function() {
-  const DELAY_MS     = 1200;
-  const MAX_PER_PAGE = 50;
-  const seen         = new Map();
+(function lrCollect() {
+  const STORAGE_KEY = 'lr_parts_collected';
 
-  async function searchPage(q, page = 1) {
-    const url = `/ajax/search?search_str=${encodeURIComponent(q)}&page=${page}&per_page=${MAX_PER_PAGE}`;
+  // ---- Load existing collection from localStorage ----
+  let collected = {};
+  try { collected = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch {}
+
+  let added = 0;
+
+  // ---- Helper: add a part record ----
+  function addPart(p) {
+    const key = (p.oem_number || p.sku || p.name || '').trim();
+    if (!key || collected[key]) return;
+    collected[key] = {
+      sku:         (p.sku         || '').trim(),
+      name:        (p.name        || '').trim(),
+      description: (p.description || '').trim().slice(0,500),
+      price:       parseFloat(p.price) || 0,
+      oem_number:  key,
+      category:    (p.category    || '').trim(),
+      image_url:   (p.image_url   || '').trim().slice(0,300),
+      in_stock:    !!p.in_stock,
+    };
+    added++;
+  }
+
+  // ---- Method 1: JSON-LD structured data (most reliable) ----
+  document.querySelectorAll('script[type="application/ld+json"]').forEach(s => {
     try {
-      const r = await fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json' } });
-      if (!r.ok) return null;
-      return await r.json();
-    } catch(e) { return null; }
-  }
+      const d = JSON.parse(s.textContent);
+      const items = Array.isArray(d) ? d : [d];
+      items.forEach(item => {
+        if (item['@type'] === 'Product' || item.sku || item.mpn) {
+          addPart({
+            sku:        item.sku || item.mpn || '',
+            name:       item.name || '',
+            description:item.description || '',
+            price:      item.offers?.price || item.offers?.[0]?.price || 0,
+            oem_number: item.mpn || item.sku || '',
+            category:   item.category || '',
+            image_url:  item.image || item.image?.[0] || '',
+            in_stock:   (item.offers?.availability || '').includes('InStock'),
+          });
+        }
+        // ItemList
+        if (item.itemListElement) {
+          item.itemListElement.forEach(el => {
+            const p = el.item || el;
+            if (p.sku || p.mpn || p.name) addPart({
+              sku: p.sku||p.mpn||'', name: p.name||'',
+              description: p.description||'', price: p.offers?.price||0,
+              oem_number: p.mpn||p.sku||'', category: p.category||'',
+              image_url: p.image||'', in_stock: false,
+            });
+          });
+        }
+      });
+    } catch {}
+  });
 
-  function normalizePart(raw) {
-    return {
-      sku:         raw.sku        || raw.part_number || '',
-      name:        raw.name       || raw.title       || '',
-      description: raw.description|| '',
-      price:       parseFloat(raw.price || raw.retail_price || 0),
-      oem_number:  raw.sku        || raw.oem_number  || raw.part_number || '',
-      category:    raw.category   || raw.categories?.[0]?.name || '',
-      image:       raw.image_url  || raw.thumbnail   || '',
-      in_stock:    raw.in_stock   ?? true,
-    };
-  }
-
-  async function enumerateBySearch(q) {
-    const first = await searchPage(q, 1);
-    if (!first) return 0;
-
-    const data    = first.data   || first.results   || first;
-    const items   = Array.isArray(data) ? data
-                  : (data.items  || data.products || data.parts || []);
-    const total   = data.total   || data.total_count || items.length;
-    const perPage = data.per_page|| MAX_PER_PAGE;
-    const pages   = Math.ceil(total / perPage);
-
-    let added = 0;
-    const processPage = (pageItems) => {
-      for (const raw of pageItems) {
-        const p = normalizePart(raw);
-        if (p.sku && !seen.has(p.sku)) { seen.set(p.sku, p); added++; }
-      }
-    };
-
-    processPage(items);
-
-    for (let pg = 2; pg <= Math.min(pages, 20); pg++) {
-      await new Promise(r => setTimeout(r, DELAY_MS));
-      const more = await searchPage(q, pg);
-      if (!more) break;
-      const mData  = more.data || more.results || more;
-      const mItems = Array.isArray(mData) ? mData : (mData.items || mData.products || []);
-      if (!mItems.length) break;
-      processPage(mItems);
-    }
-    return added;
-  }
-
-  const CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789';
-  const queries2 = [];
-  for (const a of CHARS) for (const b of CHARS) queries2.push(a + b);
-
-  const KEYWORDS = [
-    'LR0','LR1','LR2','LR3','LR4','LR5','LR6','LR7','LR8','LR9',
-    'ANR','AMR','ESR','FTC','NRC','PRC','RTC','STC','WLD','YWB',
-    'filter','gasket','seal','bearing','bush','bracket','bolt','sensor',
-    'pump','valve','hose','pipe','clip','ring','pad','disc','lamp',
-    'switch','relay','fuse','belt','pulley','motor','cable','cover',
+  // ---- Method 2: BigCommerce / Next.js window globals ----
+  const globals = [
+    window.__NEXT_DATA__?.props?.pageProps,
+    window.__INITIAL_STATE__,
+    window.APP_DATA,
+    window.BCData,
+    window.BCAPP_DATA,
+    window.__BC_DATA__,
+    window.jsContext && JSON.parse(window.jsContext || '{}'),
   ];
+  globals.forEach(g => {
+    if (!g) return;
+    const candidates = g.products || g.items || g.results || g.searchResults?.products ||
+                       g.category?.products || g.productResults || [];
+    (Array.isArray(candidates) ? candidates : []).forEach(p => addPart({
+      sku:        p.sku || p.entityId || '',
+      name:       p.name || '',
+      description:p.description || '',
+      price:      p.price?.value || p.prices?.price?.value || p.salePrice || p.price || 0,
+      oem_number: p.mpn || p.sku || '',
+      category:   p.categories?.[0] || p.category || '',
+      image_url:  p.defaultImage?.url || p.mainImage?.url || p.image?.url || '',
+      in_stock:   p.availability === 'available' || p.inStock === true,
+    }));
+  });
 
-  let phase1Done = 0;
-  const TOTAL = queries2.length;
-  const cappedPrefixes = [];
+  // ---- Method 3: DOM product cards ----
+  const cardSelectors = [
+    '[data-product-id]', '[data-entity-id]', '[data-item-id]',
+    '.productCard', '.product-card', '.card--product',
+    '[itemtype*="Product"]', 'article.product',
+    '.product-listing li', '.products-list li',
+  ];
+  cardSelectors.forEach(sel => {
+    document.querySelectorAll(sel).forEach(el => {
+      const name  = (el.querySelector('.card-title,.product-name,.productCard-title,[itemprop="name"],h3,h4')?.textContent || '').trim();
+      const sku   = el.dataset.productId || el.dataset.entityId || el.dataset.itemId ||
+                    el.querySelector('[itemprop="sku"],[data-sku]')?.textContent?.trim() || '';
+      const price = parseFloat(
+        el.querySelector('[data-product-price],[itemprop="price"],.price,.productCard-price')
+          ?.textContent?.replace(/[^0-9.]/g,'') || '0'
+      ) || 0;
+      const img   = el.querySelector('img[src],img[data-src]');
+      const imgUrl= img?.src || img?.dataset?.src || '';
+      const oem   = el.querySelector('[itemprop="mpn"],[data-mpn]')?.textContent?.trim() || sku;
+      if (name || sku) addPart({ sku, name, description:'', price, oem_number: oem, category:'', image_url: imgUrl, in_stock: true });
+    });
+  });
 
-  console.log(`[LR Scraper] Phase 1: ${TOTAL} 2-char searches starting...`);
-
-  for (let i = 0; i < queries2.length; i++) {
-    const q = queries2[i];
-    await new Promise(r => setTimeout(r, DELAY_MS));
-    const first = await searchPage(q, 1);
-    if (!first) continue;
-
-    const data  = first.data || first.results || first;
-    const total = data?.total || data?.total_count || 0;
-    const items = Array.isArray(data) ? data : (data?.items || data?.products || []);
-
-    let added = 0;
-    for (const raw of items) {
-      const p = normalizePart(raw);
-      if (p.sku && !seen.has(p.sku)) { seen.set(p.sku, p); added++; }
-    }
-
-    if (total >= MAX_PER_PAGE || items.length >= MAX_PER_PAGE) {
-      cappedPrefixes.push(q);
-    }
-
-    phase1Done++;
-    if (phase1Done % 100 === 0) {
-      console.log(`[LR Scraper] Phase 1: ${phase1Done}/${TOTAL} | unique=${seen.size} | capped=${cappedPrefixes.length}`);
-    }
+  // ---- Method 4: current single product page ----
+  const h1 = document.querySelector('h1.productView-title, h1.product-title, h1[itemprop="name"], h1');
+  const skuEl  = document.querySelector('[itemprop="sku"], .sku-value, .product-sku, [data-sku]');
+  const priceEl= document.querySelector('[itemprop="price"], .price--main, .productView-price .price');
+  const imgEl  = document.querySelector('.productView-image img, [itemprop="image"]');
+  const descEl = document.querySelector('[itemprop="description"], .productView-description, .product-description');
+  if (h1?.textContent?.trim()) {
+    addPart({
+      sku:        skuEl?.textContent?.trim() || skuEl?.content || '',
+      name:       h1.textContent.trim(),
+      description:descEl?.textContent?.trim().slice(0,500) || '',
+      price:      parseFloat(priceEl?.textContent?.replace(/[^0-9.]/g,'') || '0') || 0,
+      oem_number: skuEl?.textContent?.trim() || document.title.match(/\(([A-Z0-9]+)\)/)?.[1] || '',
+      category:   document.querySelector('.breadcrumb li:nth-last-child(2)')?.textContent?.trim() || '',
+      image_url:  imgEl?.src || imgEl?.getAttribute('content') || '',
+      in_stock:   !!document.querySelector('[itemprop="availability"][href*="InStock"], .stock-in'),
+    });
   }
 
-  console.log(`[LR Scraper] Phase 1 done. ${seen.size} unique parts. ${cappedPrefixes.length} capped prefixes.`);
+  // ---- Save back to localStorage ----
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(collected));
+  const total = Object.keys(collected).length;
+  console.log(`%c[LR Collector] +${added} new parts | ${total} total saved | Page: ${location.pathname}`,
+    'color:#22c55e;font-weight:bold;font-size:14px');
 
-  if (cappedPrefixes.length > 0) {
-    console.log(`[LR Scraper] Phase 2: expanding ${cappedPrefixes.length} prefixes \u00d7 36 = ${cappedPrefixes.length * 36} searches`);
-    let p2done = 0;
-    for (const prefix of cappedPrefixes) {
-      for (const c of CHARS) {
-        await new Promise(r => setTimeout(r, DELAY_MS));
-        await enumerateBySearch(prefix + c);
-        p2done++;
-      }
-      if (p2done % 50 === 0) console.log(`[LR Scraper] Phase 2: ${p2done}/${cappedPrefixes.length * 36} | unique=${seen.size}`);
-    }
+  // ---- Auto-paginate: click Next if exists ----
+  const nextBtn = document.querySelector(
+    'a[rel="next"], .pagination-item--next a, [data-page="next"], a.next, li.next a'
+  );
+  if (nextBtn && nextBtn.href) {
+    console.log(`%c[LR Collector] Next page: ${nextBtn.href} -- navigating in 2s...`,
+      'color:#60a5fa');
+    setTimeout(() => { window.location.href = nextBtn.href; }, 2000);
+  } else {
+    console.log('%c[LR Collector] No next page found. Run lrDownload() to export.',
+      'color:#f59e0b');
   }
 
-  console.log(`[LR Scraper] Phase 3: ${KEYWORDS.length} keyword searches`);
-  for (const kw of KEYWORDS) {
-    await new Promise(r => setTimeout(r, DELAY_MS));
-    await enumerateBySearch(kw);
-  }
-
-  const parts = Array.from(seen.values());
-  console.log(`\n[LR Scraper] COMPLETE \u2014 ${parts.length} unique parts found`);
-
-  const output = {
-    manufacturer: 'Land Rover',
-    scraped_at:   new Date().toISOString(),
-    source:       'landrover.oempartsonline.com',
-    total:        parts.length,
-    parts:        parts,
+  // ---- Expose download function globally ----
+  window.lrDownload = function() {
+    const arr = Object.values(collected);
+    const blob = new Blob(
+      [JSON.stringify({ manufacturer:'Land Rover', total:arr.length, parts: arr }, null, 2)],
+      { type:'application/json' }
+    );
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'land_rover_parts.json';
+    a.click();
+    console.log(`Downloaded ${arr.length} parts. Upload at http://94.130.150.23:8080`);
   };
 
-  const blob = new Blob([JSON.stringify(output, null, 2)], { type: 'application/json' });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href     = url;
-  a.download = 'land_rover_parts.json';
-  a.click();
-  URL.revokeObjectURL(url);
-  console.log('[LR Scraper] Downloaded land_rover_parts.json');
+  window.lrClear = function() {
+    localStorage.removeItem(STORAGE_KEY);
+    console.log('Cleared all collected LR parts.');
+  };
+
+  window.lrStatus = function() {
+    const n = Object.keys(JSON.parse(localStorage.getItem(STORAGE_KEY)||'{}')).length;
+    console.log(`Collected: ${n} parts`);
+  };
+
+  return `+${added} parts this page | ${total} total`;
 })();

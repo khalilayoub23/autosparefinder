@@ -694,6 +694,32 @@ async def _load_runtime_ai_overrides_from_db():
         print(f"[Startup] Failed to load runtime AI overrides (non-fatal): {e}")
 
 
+async def _ebay_fitment_backfill_loop() -> None:
+    """
+    Daily eBay fitment backfill — runs once per day at ~01:00 UTC (after eBay quota resets).
+    Processes 500 parts per run to stay well under the 5,000 call/day Browse API limit.
+    Offset advances each cycle so all 8,123 eBay-linked parts get covered over ~17 days.
+    """
+    import math
+
+    # Wait until 01:00 UTC before first run — quota resets at midnight UTC
+    await asyncio.sleep(3600)  # 1h startup delay
+    _BATCH = 500
+    _TOTAL = 8200  # approximate total eBay-linked parts
+
+    run = 0
+    while True:
+        offset = (_BATCH * run) % _TOTAL
+        try:
+            from ebay_fitment_backfill import run_backfill as _ebay_fitment_run
+            report = await _ebay_fitment_run(dry_run=False, limit=_BATCH, offset=offset)
+            print(f"[EbayFitment] run #{run}: {report}")
+        except Exception as exc:
+            print(f"[EbayFitment] loop error: {exc}")
+        run += 1
+        await asyncio.sleep(86400)  # wait 24h before next batch
+
+
 @app.on_event("startup")
 async def startup():
     from catalog_scraper import start_scraper_task
@@ -736,6 +762,7 @@ async def startup():
     start_db_agent(get_db, 6.0)   # ← DB cleaning / normalisation agent (every 6h)
     asyncio.create_task(run_cleanup_loop())     # ← micro-batch cleanup loop (continuous)
     asyncio.create_task(_noa_marketing_loop())         # ← NOA social media agent (every 24h)
+    asyncio.create_task(_ebay_fitment_backfill_loop()) # ← eBay fitment backfill (daily, runs after midnight)
     await _warm_search_paths()
     print("✅ All systems ready — price-sync + catalog-scraper + db-agent schedulers started")
 

@@ -201,13 +201,79 @@ Best:                MIN(all tiers with stock AND ships_to_israel = TRUE)
 - `TRANSPORT_SYNC` — Trigger run_rex_transport_office_pipeline.py
 - `CATALOG_IMPORT(brand)` — Trigger full catalog import cycle for a brand (SEE IMPORT SKILL below)
 
+### Approved Fitment & OEM Data Sources
+
+> **Never rely on a single source.** REX must query sources in priority order and stop at the first confirmed match.
+> TecDoc is NOT a free/public API — do not call it unless credentials are configured in env vars.
+
+#### Tier 1 — Official Manufacturer Global Sites (confidence 1.00)
+Query these first for OEM part numbers, fitment, and supersession chains.
+All are scrapeable or have public EPC portals — no API key required.
+
+| Manufacturer | Global Parts Portal | Notes |
+|---|---|---|
+| **Toyota / Lexus** | `https://www.toyota-tech.eu` / `https://parts.toyota.com` | Full EPC with model+year+engine fitment |
+| **BMW / MINI** | `https://www.realoem.com` | Free EPC mirror — model, year, engine, OEM number |
+| **Mercedes-Benz** | `https://www.mercedes-benz-parts.com` / `https://epc.mercedes-benz.com` | Full OEM catalog |
+| **Volkswagen Group** (VW, Audi, Skoda, SEAT, Cupra, Porsche) | `https://www.erwin.volkswagen.de` / `https://eshop.audi.com` | ERWIN workshop portal; Audi e-shop for OEM numbers |
+| **Kia** | `https://www.kiaparts.com` / `https://parts.kia.com` | Global OEM catalog |
+| **Hyundai** | `https://www.hyundaiparts.com` | OEM parts + fitment |
+| **Ford** | `https://www.fordparts.com` / `https://www.motorcraftservice.com` | Global OEM + Motorcraft aftermarket |
+| **Mazda** | `https://parts.mazda.com` | OEM parts by model/year |
+| **Subaru** | `https://parts.subaru.com` | OEM parts + fitment |
+| **Mitsubishi** | `https://www.mitsubishicars.com/genuine-parts` / `https://partsfinder.mitsubishimotors.com` | OEM lookup |
+| **Nissan / Infiniti** | `https://www.nissanparts.com` / `https://www.nparts.com` | OEM catalog with VIN lookup |
+| **Jeep / Fiat / Alfa Romeo / RAM** (Stellantis) | `https://mopar.com/en-us/parts` / `https://www.mopar.com` | Mopar OEM parts portal |
+| **Land Rover / Jaguar** | `https://www.jaguarlandrover.com/parts` / `https://eTIS.jlrext.com` | JLR eTIS parts catalog (requires free registration) |
+| **Volvo** | `https://epc.volvocars.com` | Free EPC with VIN/model/year |
+| **Renault** | `https://renault-parts.com` / `https://rparts.renault.com` | OEM parts by model |
+| **Peugeot / Citroën / DS / Opel** (Stellantis EU) | `https://ecat.peugeot.com` / `https://ecat.citroen.com` | eCat portals |
+| **Honda** | `https://www.hondaautomotiveparts.com` / `https://epc.honda.com` | OEM EPC |
+| **BYD** | `https://www.bydauto.co.il` (IL) / `https://parts.byd.com` (global) | IL importer + global parts |
+| **Zeekr / Geely** | `https://www.zeekr.eu/parts` / `https://parts.geely.com` | EV OEM parts |
+| **Chery / Omoda / Jaecoo** | `https://www.chery.cn/parts` | Chinese OEM — scrape with translation |
+
+#### Tier 2 — Israeli & Regional Aggregators (confidence 0.90)
+
+| Priority | Source | URL | What it provides |
+|----------|--------|-----|-----------------|
+| 1 | **samelet.com API** | `https://www.samelet.co.il` | OEM cross-refs, fitment, all major IL brands — best for IL-market parts |
+| 2 | **PartSouq** | `https://www.partsouq.com` | MENA OEM lookup — strong on Toyota/Nissan/Mitsubishi/Kia |
+| 3 | **autodoc.co.il / autodoc.co.uk** | `https://www.autodoc.co.uk` | OEM + aftermarket fitment by ktype — ⚠️ Cloudflare-limited, use with backoff |
+
+#### Tier 3 — Global Aftermarket & Marketplace (confidence 0.65)
+
+| Priority | Source | URL | What it provides |
+|----------|--------|-----|-----------------|
+| 1 | **eBay Motors fitment API** | `https://api.ebay.com/buy/browse/v1` | compatibility_properties per listing — always log to scraper_api_calls |
+| 2 | **7zap.com** | `https://www.7zap.com` | Scrapeable EPC mirror — fitment from VIN/model tables |
+| 3 | **motorstore.com** | `https://www.motorstore.com` | UK aftermarket — OEM cross-ref + European fitment |
+| 4 | **AliExpress** | `https://www.aliexpress.com` | Price + availability — fitment from listing title/description only |
+
+#### Tier 4 — Industry Database (requires credentials)
+
+| Source | Env var required | Notes |
+|---|---|---|
+| **TecDoc API** | `TECDOC_API_KEY` | Full fitment DB — skip silently if key not set. Paid license required. |
+
+**Source selection rules:**
+- **Always start with Tier 1 manufacturer global site** for OEM number and fitment confirmation
+- For Israeli brands (Kia, Mazda, Subaru, Alfa, Jeep, Fiat, RAM): follow with samelet.com (Tier 2)
+- For BMW/MINI: RealOEM.com (already in Tier 1)
+- For Land Rover/Jaguar: JLR eTIS + SNG Barratt catalog
+- For VW Group: Audi eshop / ERWIN + Champion Motors export + autodoc
+- For eBay: always record API call in `scraper_api_calls` table (rate limit: 5,000 calls/day)
+- All scraped Tier 3 data: confidence 0.50 — never overwrite Tier 1/2 data with Tier 3 data
+- Check `TECDOC_API_KEY` in env before attempting TecDoc — skip silently if not set
+
 ---
 
 ## IMPORT SKILL — Full Catalog Import Cycle
 
 > **Used by:** REX (trigger), db_update_agent.py (execution)
-> **Applies to:** Any brand catalog sourced from samelet.com, MCT API, eBay, Excel, or supplier feeds
-> **Script:** `backend/samelet_import.py` (samelet), `backend/import_from_excel.py` (XLS)
+> **Applies to:** ALL import scripts — samelet, champion, zeekr, kia, delek, SNG Barratt, BYD, supplier PDFs
+> **Mandatory post-import flow:** Raw import → Layer 1 (db_cleanup_agent) → Layer 2 (db_update_agent) → Layer 3 (ai_catalog_builder) → Catalog DB confirmed → Meilisearch sync
+> **Data is NOT catalog-ready until master_enriched=TRUE and it has passed all 3 layers**
 
 ### Step 0 — Pre-flight checklist (run before every import)
 - [ ] Verify source URL / API token is live
@@ -353,6 +419,90 @@ After every import, compute and log these metrics:
 - Compare to source expected count
 - If gap > 5%: log warning + add REX todo to re-run with wider search coverage
 - Update `job_registry` with final result JSON (SEE claude.md § Standard Report Format)
+
+---
+
+## POST-IMPORT PIPELINE — Mandatory 3-Layer Flow
+
+> **Every import script writes raw data into `parts_catalog` first.**
+> That raw data is NOT catalog-ready until it has passed through all 3 pipeline layers below.
+> The pipeline runs automatically on a schedule, but REX must queue todos to prioritize newly imported brands.
+
+```
+Import Script
+     │
+     ▼
+parts_catalog (raw insert — is_active=TRUE, master_enriched=FALSE)
+     │
+     ▼
+┌────────────────────────────────────────────────────────────────────┐
+│  LAYER 1 — db_cleanup_agent.py  (runs every 30s, 340 rows/cycle)  │
+│  • Normalize part types (original / oe_equivalent / aftermarket)  │
+│  • Clean part names (strip junk, fix Hebrew prefix reversal)       │
+│  • Assign category from CATEGORY_MAP keywords                      │
+│  • Fix OEM lookup flag (needs_oem_lookup)                          │
+│  • Detect + link manufacturer_id from car_brands                  │
+│  • Extract spec prefixes into specifications JSONB                 │
+└────────────────────────────────────────────────────────────────────┘
+     │
+     ▼
+┌────────────────────────────────────────────────────────────────────┐
+│  LAYER 2 — db_update_agent.py  (scheduled + REX-triggered)        │
+│  • Canonicalize manufacturer name via manufacturer_normalization   │
+│  • Recalculate min_price_ils / max_price_ils from supplier_parts  │
+│  • Wire fitment: sync part_vehicle_fitment from catalog & XLS     │
+│  • Deduplicate catalog rows (flag dupes is_active=FALSE)           │
+│  • Validate prices, flag fake SKUs, normalize availability         │
+│  • Trigger AI enrichment for parts where master_enriched=FALSE    │
+└────────────────────────────────────────────────────────────────────┘
+     │
+     ▼
+┌────────────────────────────────────────────────────────────────────┐
+│  LAYER 3 — ai_catalog_builder.py  (GPT-4o, triggered by L2)       │
+│  • Translate / generate name_he (Hebrew) if missing               │
+│  • Write full description + category for "General Parts" parts     │
+│  • Set master_enriched=TRUE when complete                          │
+│  • Outputs: name, name_he, description, category, specifications  │
+└────────────────────────────────────────────────────────────────────┘
+     │
+     ▼
+parts_catalog (master_enriched=TRUE — data is now catalog-ready)
+     │
+     ▼
+meili_sync.py --manufacturer {BRAND} --no-rebuild
+     │
+     ▼
+Meilisearch index (searchable by users)
+```
+
+### Rules for import scripts regarding the pipeline:
+
+1. **Never skip the pipeline** — a part is NOT ready for search until `master_enriched=TRUE`
+2. **Always set `master_enriched=FALSE` on insert** — this is the gate that triggers Layer 3
+3. **Always set `needs_oem_lookup` correctly** — Layer 1 uses this flag to queue OEM lookups
+4. **Queue REX todos for missing fitment** — Layer 2 processes these todos (see claude.md § fitment)
+5. **Run scoped Meilisearch sync after import** — but only AFTER Layer 1+2 have processed the batch:
+   - For immediate search availability: run sync right after import (parts with `master_enriched=FALSE` will appear but with partial data)
+   - For full-quality search: wait for pipeline to complete, then re-sync
+6. **Do NOT run `meili_sync.py` with `--rebuild`** for a single brand import — scoped sync only
+7. **Pipeline processes `is_active=TRUE` parts only** — deactivated parts are invisible to all layers
+
+### How to trigger the pipeline for a newly imported brand:
+
+```python
+# After import completes — queue pipeline todos for REX/db_update_agent
+await conn.execute("""
+    INSERT INTO agent_todos(id, agent_name, title, description, priority, status, created_at, updated_at)
+    VALUES
+    (gen_random_uuid(), 'REX', $1, $2, 'high', 'not_started', NOW(), NOW()),
+    (gen_random_uuid(), 'REX', $3, $4, 'high', 'not_started', NOW(), NOW())
+""",
+    f'Run db_cleanup cycle for {brand}',
+    f'Newly imported {count} {brand} parts need normalization + category assignment. Run db_cleanup_agent tasks 1-8.',
+    f'Run db_update enrichment for {brand}',
+    f'Newly imported {brand} parts: recalculate prices, wire fitment, trigger AI enrichment.'
+)
+```
 
 ---
 

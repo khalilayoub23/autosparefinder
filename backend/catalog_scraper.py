@@ -1,3 +1,8 @@
+# ⚠️  BROWSER TOOL REQUIRED — DO NOT RUN HTTP REQUESTS FROM SERVER IP
+# The server IP (94.130.150.23) is blocked by Cloudflare and anti-bot systems.
+# All external HTTP extraction must be done via the browser tool (Playwright / run_playwright_code).
+# Pattern: (1) Extract with browser tool → save JSON, (2) Import JSON with DB importer script.
+# See claude.md § Web Scraping Rules.
 """
 ==============================================================================
 REX  —  Catalog Scraper & Brand Discovery Agent
@@ -3821,6 +3826,168 @@ async def _should_run_transport_pipeline(db: AsyncSession) -> tuple[bool, str]:
     return False, f"cooldown not elapsed mode={mode} last_run={last_run}"
 
 
+async def run_jaguar_fitment_lookup_todos(
+    *,
+    parts_per_run: int = 200,
+    sleep_between_parts: float = 1.2,
+) -> Dict[str, Any]:
+    """
+    Process agent_todos assigned to 'rex' with task_names containing
+    'jaguar_fitment_lookup'.  For each todo, calls _sync_vehicle_fitment
+    for every (part_id, oem_number) pair stored in artifacts.
+
+    Processes at most `parts_per_run` parts per invocation so a single
+    call cannot block the entire background cycle.
+
+    Returns a standard job report dict.
+    """
+    report: Dict[str, Any] = {
+        "task": "run_jaguar_fitment_lookup_todos",
+        "status": "ok",
+        "todos_processed": 0,
+        "parts_attempted": 0,
+        "fitment_rows_upserted": 0,
+        "errors": 0,
+        "elapsed_s": 0.0,
+    }
+    import time as _time
+    t0 = _time.monotonic()
+
+    async with scraper_session_factory() as db:
+        # Find pending jaguar fitment todos for rex
+        todos = (await db.execute(text("""
+            SELECT id, title, artifacts
+            FROM agent_todos
+            WHERE assigned_to_agent = 'rex'
+              AND status IN ('not_started', 'in_progress')
+              AND category = 'fitment'
+              AND artifacts->>'task_names' LIKE '%jaguar_fitment_lookup%'
+            ORDER BY priority DESC, created_at ASC
+            LIMIT 5
+        """))).mappings().all()
+
+        if not todos:
+            report["status"] = "nothing_to_do"
+            report["elapsed_s"] = round(_time.monotonic() - t0, 2)
+            print("[Rex] jaguar_fitment_lookup: no pending todos — skipping.")
+            return report
+
+        parts_done = 0
+
+        for todo in todos:
+            todo_id = str(todo["id"])
+            artifacts = todo["artifacts"] or {}
+            if isinstance(artifacts, str):
+                try:
+                    artifacts = json.loads(artifacts)
+                except Exception:
+                    artifacts = {}
+
+            part_ids: List[str] = artifacts.get("part_ids", [])
+            oem_numbers: List[str] = artifacts.get("oem_numbers", [])
+            manufacturer: str = artifacts.get("manufacturer", "Jaguar")
+
+            if not part_ids:
+                # Mark empty todo as completed
+                await db.execute(text("""
+                    UPDATE agent_todos
+                    SET status = 'completed', updated_at = NOW()
+                    WHERE id = :tid
+                """), {"tid": todo_id})
+                await db.commit()
+                report["todos_processed"] += 1
+                continue
+
+            # Mark as in_progress
+            await db.execute(text("""
+                UPDATE agent_todos SET status = 'in_progress', updated_at = NOW()
+                WHERE id = :tid
+            """), {"tid": todo_id})
+            await db.commit()
+
+            # Build a quick OEM lookup: prefer artifacts.oem_numbers list (same order),
+            # but fall back to DB if not present
+            oem_map: Dict[str, str] = {}
+            if oem_numbers and len(oem_numbers) >= len(part_ids):
+                # Parallel lists: won't always match — build a set for quick lookup only
+                for oem in oem_numbers:
+                    oem_map[oem] = oem  # used as fallback
+            # Always fetch from DB for accuracy
+            db_rows = (await db.execute(text("""
+                SELECT id::text, oem_number
+                FROM parts_catalog
+                WHERE id = ANY(CAST(:ids AS uuid[]))
+                  AND is_active = TRUE
+                  AND oem_number IS NOT NULL
+            """), {"ids": part_ids})).mappings().all()
+            part_oem: Dict[str, str] = {str(r["id"]): str(r["oem_number"]) for r in db_rows}
+
+            todo_upserted = 0
+            todo_errors = 0
+            processed_ids: List[str] = []
+
+            for pid in part_ids:
+                if parts_done >= parts_per_run:
+                    break
+                oem = part_oem.get(pid)
+                if not oem:
+                    processed_ids.append(pid)
+                    parts_done += 1
+                    continue
+                try:
+                    fitment_result = await _sync_vehicle_fitment(
+                        db, pid, oem, manufacturer
+                    )
+                    todo_upserted += fitment_result.get("upserted_rows", 0)
+                except Exception as exc:
+                    print(f"[Rex] jaguar_fitment_lookup: error on part {pid}: {exc}")
+                    todo_errors += 1
+                    report["errors"] += 1
+                processed_ids.append(pid)
+                parts_done += 1
+                report["parts_attempted"] += 1
+                report["fitment_rows_upserted"] += todo_upserted
+                await asyncio.sleep(sleep_between_parts)
+
+            # Remove processed part_ids from the todo's artifacts
+            remaining_ids = [p for p in part_ids if p not in set(processed_ids)]
+            new_artifacts = {**artifacts, "part_ids": remaining_ids}
+            new_status = "completed" if not remaining_ids else "not_started"
+
+            await db.execute(text("""
+                UPDATE agent_todos
+                SET status = :st,
+                    artifacts = :art::jsonb,
+                    updated_at = NOW()
+                WHERE id = :tid
+            """), {
+                "st": new_status,
+                "art": json.dumps(new_artifacts),
+                "tid": todo_id,
+            })
+            await db.commit()
+            report["todos_processed"] += 1
+
+            print(
+                f"[Rex] jaguar_fitment_lookup todo={todo_id[:8]}... "
+                f"processed={len(processed_ids)} remaining={len(remaining_ids)} "
+                f"upserted={todo_upserted} errors={todo_errors} status={new_status}"
+            )
+
+            if parts_done >= parts_per_run:
+                print(f"[Rex] jaguar_fitment_lookup: hit parts_per_run limit ({parts_per_run}), deferring rest.")
+                break
+
+    report["elapsed_s"] = round(_time.monotonic() - t0, 2)
+    print(
+        f"[Rex] jaguar_fitment_lookup done — "
+        f"todos={report['todos_processed']} parts={report['parts_attempted']} "
+        f"upserted={report['fitment_rows_upserted']} errors={report['errors']} "
+        f"elapsed={report['elapsed_s']}s"
+    )
+    return report
+
+
 async def run_transport_pipeline_if_due() -> None:
     """Run Transport Office Pipeline based on scheduling logic."""
     async with scraper_session_factory() as db:
@@ -4172,6 +4339,14 @@ async def scraper_background_loop():
                     print(f"[Scraper] resolve_inactive_parts_with_oem_lookup error: {str(exc)[:500]}")
 
                 await asyncio.sleep(5)
+
+            # Job 2f — Jaguar fitment external lookup (every cycle, rate-gated to 200 parts/run)
+            try:
+                await run_jaguar_fitment_lookup_todos()
+            except Exception as exc:
+                print(f"[Scraper] jaguar_fitment_lookup error: {str(exc)[:500]}")
+
+            await asyncio.sleep(5)
 
 
             # Job 2b — Category Discovery (every CATEGORY_DISCOVERY_INTERVAL_H hours)

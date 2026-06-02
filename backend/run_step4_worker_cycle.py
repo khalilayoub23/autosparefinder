@@ -30,6 +30,8 @@ async def _run_cycle(label: str) -> Dict[str, Any]:
         "sync_models_from_catalog",
         "sync_models_from_catalog_file",
         "backfill_catalog_fitment_from_xls",
+        "backfill_bmw_fitment_from_name_he",
+        "backfill_mini_fitment_from_name_he",
         "merge_catalog_fitment_from_part_vehicle_fitment",
     ]
 

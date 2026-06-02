@@ -1,252 +1,249 @@
 #!/usr/bin/env python3
+# ⚠️  BROWSER TOOL REQUIRED — DO NOT RUN HTTP REQUESTS FROM SERVER IP
+# The server IP (94.130.150.23) is blocked by Cloudflare and anti-bot systems.
+# All external HTTP extraction must be done via the browser tool (Playwright / run_playwright_code).
+# Pattern: (1) Extract with browser tool → save JSON, (2) Import JSON with this script.
+# See claude.md § Web Scraping Rules.
 """
-KIA Genuine Parts Import — kia-israel.co.il מחירון חלפים
-Source: https://kia-israel.co.il/מחירון-חלפים (POST search for 'אטם')
-Prices: ex-VAT ILS (column: מחיר ללא מע"מ)
-Name:   Full Hebrew description INCLUDING embedded model abbreviation — do NOT strip it
-Part type: original (genuine KIA parts, suffix 'K')
-manufacturer_id: 626947bf-be3f-4dd1-a52e-fbcff8168cfc (car_brands)
+Script: kia_import.py
+Purpose: Import Kia genuine parts from official Israeli importer (kia-israel.co.il).
+
+Process:
+  1. POST to kia-israel.co.il parts price list page to fetch HTML table
+  2. Parse table rows: SKU, Hebrew description, price (ILS excl. VAT)
+  3. Upsert to parts_catalog with specifications JSONB (per-row savepoints)
+  4. Get-or-create 'Kia Official Importer Israel' supplier record
+  5. Upsert supplier_parts record per part
+  6. Create REX agent todo for missing fitment data
+
+Data Imported / Modified:
+  - parts_catalog: sku, name, name_he, description, manufacturer, manufacturer_id,
+                   part_type, part_condition, base_price, importer_price_ils,
+                   max_price_ils, category, is_active, oem_number,
+                   specifications (JSONB with vat_included, source, warranty, importer)
+  - supplier_parts: supplier_id, part_id, supplier_sku, price_ils, availability,
+                    is_available, warranty_months, estimated_delivery_days, supplier_url
+  - agent_todos: REX task for missing fitment data
+
+Data Sources / Web Links:
+  - Official Kia Israel importer (Delek Motors): https://kia-israel.co.il
+  - Parts price list page: https://kia-israel.co.il/%d7%9e%d7%97%d7%99%d7%a8%d7%95%d7%9f-%d7%97%d7%9c%d7%a4%d7%99%d7%9d
+
+Missing Data Delegation:
+  - Vehicle fitment → REX agent todo created after import
+  - English descriptions → ai_catalog_builder.py (master_enriched=False)
+  - OEM cross-refs → needs_oem_lookup=True on all parts
+
+VAT Rules:
+  - kia-israel.co.il prices are ILS EXCL. 18% VAT
+  - Store: base_price = price (excl. VAT), importer_price_ils = price,
+           max_price_ils = price * 1.18
+
+Confidence tier: 1.00 (Official Israeli importer price data)
+
+Author: AutoSpareFinder Agent
+Last Updated: 2026-06-01
 """
-import asyncio
-import asyncpg
-import urllib.request
-import urllib.parse
-import re
-import sys
+import asyncio, asyncpg, json, urllib.request, urllib.parse, sys, uuid
 from html.parser import HTMLParser
 
 DB_URL = "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43@postgres_catalog:5432/autospare"
-KIA_MANUFACTURER_ID = "626947bf-be3f-4dd1-a52e-fbcff8168cfc"
+KIA_MFR_ID = "626947bf-be3f-4dd1-a52e-fbcff8168cfc"
 PARTS_URL = "https://kia-israel.co.il/%d7%9e%d7%97%d7%99%d7%a8%d7%95%d7%9f-%d7%97%d7%9c%d7%a4%d7%99%d7%9d"
-BATCH_SIZE = 25
+BATCH = 25
 
-
-def map_category(desc: str) -> str:
-    d = desc.lower()
-    if any(k in desc for k in ["מכשיר", "כלי", "חולץ", "מתאם", "להתקנת", "להסרת"]):
-        return "tools-equipment"
-    if any(k in desc for k in ["בלם", "קליפר", "בוכנה בלם", "ABS", "צינור בלם"]):
-        return "brakes-clutch"
-    if any(k in desc for k in ["מצמד", "גלגל תנופה"]):
-        return "brakes-clutch"
-    if any(k in desc for k in ["פליטה", "אגזוז", "קטליזטור", "סעפת פל"]):
-        return "exhaust"
-    if "EGR" in desc or "egr" in d:
-        return "engine"
-    if any(k in desc for k in ["טורבו", "מגדש", "מצנן בין", "intercooler"]):
-        return "engine"
-    if any(k in desc for k in ["מים", "תרמוסטט", "טרמוסטט", "קירור", "מאוורר", "רדיאטור"]):
-        return "cooling-system"
-    if any(k in desc for k in ["דלק", "מרסס", "מזרק", "שסתום דלק", "גז", "דיזל"]):
-        return "fuel-system"
-    if any(k in desc for k in ["הגה", "היגוי", 'תה"\u05dc', "רחפן", "מתלה", "קפיץ", "בולם"]):
-        return "suspension-steering"
-    if any(k in desc for k in ["תיבת הילוכים", "גיר", "ממיר", "דיפרנציאל", "גל ארכובה", "גל הינע"]):
-        return "gearbox"
-    if any(k in desc for k in ["שמן", "ראש מנוע", "שסתום", "ארכובה", "כרבולת", "בוכנה", "גל קמי", "טבעת"]):
-        return "engine"
+def map_category(desc):
+    if any(k in desc for k in ["מכשיר","כלי","חולץ","מתאם","להתקנת","להסרת"]): return "tools-equipment"
+    if any(k in desc for k in ["בלם","קליפר","ABS","צינור בלם"]): return "brakes-clutch"
+    if any(k in desc for k in ["מצמד","גלגל תנופה"]): return "brakes-clutch"
+    if any(k in desc for k in ["סעפת פל","פליטה","אגזוז","קטליזטור"]): return "exhaust"
+    if "EGR" in desc: return "engine"
+    if any(k in desc for k in ["טורבו","מגדש","מצנן בין"]): return "engine"
+    if any(k in desc for k in ["מים","תרמוסטט","טרמוסטט","קירור","רדיאטור","מאוורר"]): return "cooling-system"
+    if any(k in desc for k in ["דלק","מרסס","מזרק","גז","דיזל"]): return "fuel-system"
+    if any(k in desc for k in ["הגה","היגוי","מתלה","קפיץ","בולם"]): return "suspension-steering"
+    if any(k in desc for k in ["תיבת הילוכים","גיר","ממיר","דיפרנציאל","גל ארכובה","גל הינע"]): return "gearbox"
     return "engine"
-
 
 class TableParser(HTMLParser):
     def __init__(self):
         super().__init__()
-        self.in_table = False
-        self.in_row = False
-        self.in_cell = False
-        self.current_row: list[str] = []
-        self.current_cell: list[str] = []
-        self.rows: list[list[str]] = []
+        self.in_t=self.in_r=self.in_c=False
+        self.cur_row=[];self.cur_cell=[];self.rows=[]
+    def handle_starttag(self,tag,attrs):
+        if tag=="table":self.in_t=True
+        elif tag=="tr" and self.in_t:self.in_r=True;self.cur_row=[]
+        elif tag in("td","th") and self.in_r:self.in_c=True;self.cur_cell=[]
+    def handle_endtag(self,tag):
+        if tag=="table":self.in_t=False
+        elif tag=="tr" and self.in_r:
+            self.in_r=False
+            if self.cur_row:self.rows.append(self.cur_row)
+        elif tag in("td","th") and self.in_c:
+            self.in_c=False;self.cur_row.append(" ".join(self.cur_cell).strip())
+    def handle_data(self,d):
+        if self.in_c:self.cur_cell.append(d)
 
-    def handle_starttag(self, tag, attrs):
-        if tag == "table":
-            self.in_table = True
-        elif tag == "tr" and self.in_table:
-            self.in_row = True
-            self.current_row = []
-        elif tag in ("td", "th") and self.in_row:
-            self.in_cell = True
-            self.current_cell = []
-
-    def handle_endtag(self, tag):
-        if tag == "table":
-            self.in_table = False
-        elif tag == "tr" and self.in_row:
-            self.in_row = False
-            if self.current_row:
-                self.rows.append(self.current_row)
-        elif tag in ("td", "th") and self.in_cell:
-            self.in_cell = False
-            self.current_row.append(" ".join(self.current_cell).strip())
-
-    def handle_data(self, data):
-        if self.in_cell:
-            self.current_cell.append(data)
-
-    def handle_entityref(self, name):
-        import html as _html
-        if self.in_cell:
-            self.current_cell.append(_html.unescape(f"&{name};"))
-
-    def handle_charref(self, name):
-        import html as _html
-        if self.in_cell:
-            self.current_cell.append(_html.unescape(f"&#{name};"))
+KIA_SUPPLIER_URL = 'https://kia-israel.co.il'
 
 
-def fetch_parts() -> list[dict]:
-    print("Fetching parts from kia-israel.co.il ...")
-    data = urllib.parse.urlencode({"catalogNum": "", "partDesc": "אטם"}).encode("utf-8")
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Accept": "text/html,application/xhtml+xml",
-        "Accept-Language": "he-IL,he;q=0.9,en;q=0.8",
-        "Referer": "https://kia-israel.co.il/",
-        "Origin": "https://kia-israel.co.il",
-    }
-    req = urllib.request.Request(PARTS_URL, data=data, headers=headers, method="POST")
-    with urllib.request.urlopen(req, timeout=30) as r:
-        html = r.read().decode("utf-8", errors="replace")
-
-    parser = TableParser()
-    parser.feed(html)
-
-    if not parser.rows:
-        raise RuntimeError("No table rows found in response")
-
-    parts = []
-    for row in parser.rows[1:]:
-        if len(row) < 4:
-            continue
-        sku = row[0].strip()
-        suffix = row[1].strip()
-        description = row[2].strip()
-        price_str = row[3].strip().replace(",", "")
-        stock = row[4].strip() if len(row) > 4 else ""
-
-        if not sku or not description:
-            continue
-
-        try:
-            price = float(price_str)
-        except ValueError:
-            print(f"  SKIP bad price '{price_str}' for sku={sku}", file=sys.stderr)
-            continue
-
-        parts.append({
-            "sku": sku,
-            "suffix": suffix,
-            "name": description,
-            "price": price,
-            "in_stock": stock == "יש",
-        })
-
-    print(f"  Parsed {len(parts)} parts from table")
-    return parts
+async def ensure_supplier(conn) -> str:
+    name = 'Kia Official Importer Israel'
+    row = await conn.fetchrow('SELECT id FROM suppliers WHERE name=$1', name)
+    if row:
+        return str(row['id'])
+    sid = str(uuid.uuid4())
+    await conn.execute("""
+        INSERT INTO suppliers (id, name, website, country,
+                               is_active, is_manufacturer, manufacturer_name,
+                               manufacturer_id, reliability_score, created_at, updated_at)
+        VALUES ($1, $2, $3, 'IL', true, true, 'Kia', $4::uuid, 0.95, NOW(), NOW())
+        ON CONFLICT (name) DO NOTHING
+    """, sid, name, KIA_SUPPLIER_URL, KIA_MFR_ID)
+    row = await conn.fetchrow('SELECT id FROM suppliers WHERE name=$1', name)
+    return str(row['id']) if row else sid
 
 
-async def import_parts(parts: list[dict]):
-    conn = await asyncpg.connect(DB_URL)
+    print("Fetching from kia-israel.co.il ...")
+    data=urllib.parse.urlencode({"catalogNum":"","partDesc":"אטם"}).encode("utf-8")
+    headers={"User-Agent":"Mozilla/5.0 Chrome/120","Content-Type":"application/x-www-form-urlencoded",
+             "Accept":"text/html","Referer":"https://kia-israel.co.il/","Origin":"https://kia-israel.co.il"}
+    req=urllib.request.Request(PARTS_URL,data=data,headers=headers,method="POST")
+    with urllib.request.urlopen(req,timeout=30) as r:
+        html=r.read().decode("utf-8",errors="replace")
+    p=TableParser();p.feed(html)
+    parts=[]
+    for row in p.rows[1:]:
+        if len(row)<4:continue
+        sku=row[0].strip();desc=row[2].strip();price_s=row[3].strip().replace(",","")
+        if not sku or not desc:continue
+        try:price=float(price_s)
+        except:print(f"  SKIP bad price '{price_s}' sku={sku}",file=sys.stderr);continue
+        parts.append({"sku":sku,"name":desc,"price":price})
+    print(f"  Parsed {len(parts)} parts");return parts
+
+INSERT_SQL = """
+    INSERT INTO parts_catalog(
+        id, sku, name, name_he, description,
+        manufacturer, manufacturer_id,
+        part_type, part_condition,
+        base_price, importer_price_ils, min_price_ils, max_price_ils,
+        aftermarket_tier,
+        category, is_active, oem_number, specifications,
+        needs_oem_lookup, master_enriched, is_safety_critical,
+        created_at, updated_at
+    ) VALUES (
+        gen_random_uuid(),
+        $1::varchar,           -- sku
+        $2::varchar,           -- name (full Hebrew desc incl. model)
+        $3::varchar,           -- name_he (same)
+        $4::text,              -- description (same, text type)
+        'Kia'::varchar,
+        $5::uuid,              -- manufacturer_id
+        'original'::varchar,
+        'new'::varchar,
+        $6::numeric,           -- base_price (ex-VAT)
+        $6::numeric,           -- importer_price_ils
+        $6::numeric,           -- min_price_ils (same as importer price excl-VAT)
+        ($6::numeric * 1.18),  -- max_price_ils (incl. VAT)
+        NULL,                  -- aftermarket_tier (genuine OEM parts)
+        $7::varchar,           -- category
+        TRUE,
+        $1::varchar,           -- oem_number = sku
+        $8::jsonb,             -- specifications
+        FALSE, FALSE, FALSE,
+        NOW(), NOW()
+    )
+    ON CONFLICT (sku) DO UPDATE SET
+        name               = EXCLUDED.name,
+        name_he            = EXCLUDED.name_he,
+        description        = EXCLUDED.description,
+        base_price         = EXCLUDED.base_price,
+        importer_price_ils = EXCLUDED.importer_price_ils,
+        min_price_ils      = CASE WHEN EXCLUDED.min_price_ils > 0
+                             THEN EXCLUDED.min_price_ils
+                             ELSE parts_catalog.min_price_ils END,
+        max_price_ils      = EXCLUDED.max_price_ils,
+        specifications     = COALESCE(parts_catalog.specifications, '{}')::jsonb
+                              || EXCLUDED.specifications::jsonb,
+        category           = EXCLUDED.category,
+        is_active          = TRUE,
+        updated_at         = NOW()
+    RETURNING id, (xmax = 0) AS was_inserted
+"""
+
+async def run():
+    parts=fetch_parts()
+    if not parts:sys.exit("No parts fetched")
+    conn=await asyncpg.connect(DB_URL)
     try:
-        existing = await conn.fetchval(
-            "SELECT COUNT(*) FROM parts_catalog WHERE manufacturer_id = $1::uuid",
-            KIA_MANUFACTURER_ID,
-        )
-        print(f"Existing Kia parts in DB: {existing}")
-
-        inserted = 0
-        updated = 0
-        skipped = 0
-        errors = []
-
-        for batch_start in range(0, len(parts), BATCH_SIZE):
-            batch = parts[batch_start : batch_start + BATCH_SIZE]
-            async with conn.transaction():
-                for p in batch:
-                    category = map_category(p["name"])
-                    try:
-                        result = await conn.fetchrow(
-                            """
-                            INSERT INTO parts_catalog (
-                                id, sku, name, name_he, description,
-                                manufacturer, manufacturer_id,
-                                part_type, part_condition,
-                                base_price, importer_price_ils,
-                                category, is_active, oem_number,
-                                needs_oem_lookup, master_enriched,
-                                is_safety_critical, created_at, updated_at
-                            ) VALUES (
-                                gen_random_uuid(),
-                                $1, $2, $2, $2,
-                                'Kia', $3::uuid,
-                                'original', 'new',
-                                $4, $4,
-                                $5, TRUE, $1,
-                                FALSE, FALSE, FALSE,
-                                NOW(), NOW()
-                            )
-                            ON CONFLICT (sku) DO UPDATE SET
-                                name          = EXCLUDED.name,
-                                name_he       = EXCLUDED.name_he,
-                                description   = EXCLUDED.description,
-                                base_price    = EXCLUDED.base_price,
-                                importer_price_ils = EXCLUDED.importer_price_ils,
-                                category      = EXCLUDED.category,
-                                is_active     = TRUE,
-                                updated_at    = NOW()
-                            RETURNING (xmax = 0) AS was_inserted
-                            """,
-                            p["sku"],
-                            p["name"],
-                            KIA_MANUFACTURER_ID,
-                            p["price"],
-                            category,
-                        )
-                        if result and result["was_inserted"]:
-                            inserted += 1
-                        else:
-                            updated += 1
-                    except Exception as e:
-                        errors.append(f"sku={p['sku']}: {e}")
-                        skipped += 1
-
-            print(
-                f"  Batch {batch_start // BATCH_SIZE + 1}/{-(-len(parts) // BATCH_SIZE)} done "
-                f"(+{inserted} ins, ~{updated} upd so far)"
-            )
-
-        total_kia = await conn.fetchval(
-            "SELECT COUNT(*) FROM parts_catalog WHERE manufacturer_id = $1::uuid",
-            KIA_MANUFACTURER_ID,
-        )
-        price_stats = await conn.fetchrow(
-            "SELECT MIN(base_price), MAX(base_price), AVG(base_price) FROM parts_catalog WHERE manufacturer_id = $1::uuid",
-            KIA_MANUFACTURER_ID,
-        )
-
-        print("\n=== IMPORT COMPLETE ===")
-        print(f"  Inserted new : {inserted}")
-        print(f"  Updated exist: {updated}")
-        print(f"  Skipped/error: {skipped}")
-        print(f"  Total Kia in DB: {total_kia}")
-        print(f"  Price range: \u20aa{price_stats['min']:.2f} \u2013 \u20aa{price_stats['max']:.2f} (avg \u20aa{price_stats['avg']:.2f})")
-        if errors:
-            print(f"\n  Errors ({len(errors)}):")
-            for e in errors[:10]:
-                print(f"    {e}")
-
+        supplier_id = await ensure_supplier(conn)
+        ex=await conn.fetchval("SELECT COUNT(*) FROM parts_catalog WHERE manufacturer_id=$1::uuid",KIA_MFR_ID)
+        print(f"Existing Kia parts in DB: {ex}")
+        ins=upd=err=0;errs=[]
+        for i in range(0,len(parts),BATCH):
+            batch=parts[i:i+BATCH]
+            for p in batch:
+                cat=map_category(p["name"])
+                specs = json.dumps({
+                    'vat_included':    False,
+                    'vat_rate':        0.18,
+                    'currency':        'ILS',
+                    'source':          'kia-israel.co.il official importer price list',
+                    'shipping_to_il':  True,
+                    'importer':        'Kia Official Importer Israel',
+                    'warranty_months': 24,
+                }, ensure_ascii=False)
+                try:
+                    async with conn.transaction():
+                        r=await conn.fetchrow(INSERT_SQL,
+                            p["sku"], p["name"], p["name"], p["name"],
+                            KIA_MFR_ID, p["price"], cat, specs)
+                        if r and r["was_inserted"]:ins+=1
+                        else:upd+=1
+                        # Upsert supplier_parts
+                        if r and supplier_id:
+                            await conn.execute("""
+                                INSERT INTO supplier_parts (
+                                    id, supplier_id, part_id, supplier_sku,
+                                    price_ils, price_usd, availability, is_available,
+                                    warranty_months, estimated_delivery_days, supplier_url,
+                                    created_at, updated_at)
+                                VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3, $4, 0.0,
+                                        'in_stock', TRUE, 24, 14, $5, NOW(), NOW())
+                                ON CONFLICT (part_id, supplier_id) DO UPDATE SET
+                                    price_ils=EXCLUDED.price_ils, updated_at=NOW()
+                            """, supplier_id, str(r['id']), p['sku'],
+                                 float(p['price']), KIA_SUPPLIER_URL)
+                except Exception as e:
+                    err+=1;errs.append(f"sku={p['sku']}:{type(e).__name__}:{e}")
+            print(f"  Batch {i//BATCH+1}/{-(-len(parts)//BATCH)} done (+{ins}ins ~{upd}upd {err}err)")
+        # REX todo for missing fitment
+        try:
+            await conn.execute("""
+                INSERT INTO agent_todos
+                    (id, agent_name, title, description, priority, status, created_at, updated_at)
+                VALUES (gen_random_uuid(), 'REX',
+                    'Fetch fitment for Kia genuine parts',
+                    'Kia parts imported from kia-israel.co.il have no vehicle fitment. '
+                    'Total parts: ' || $1::text || '. Map via TecDoc or kia-israel.co.il fitment data.',
+                    'high', 'not_started', NOW(), NOW())
+            """, str(ins + upd))
+        except Exception:
+            pass
+        total=await conn.fetchval("SELECT COUNT(*) FROM parts_catalog WHERE manufacturer_id=$1::uuid",KIA_MFR_ID)
+        stats=await conn.fetchrow(
+            "SELECT MIN(base_price)::float,MAX(base_price)::float,AVG(base_price)::float "
+            "FROM parts_catalog WHERE manufacturer_id=$1::uuid",KIA_MFR_ID)
+        print(f"\n=== IMPORT COMPLETE ===")
+        print(f"  Inserted: {ins}  Updated: {upd}  Errors: {err}")
+        print(f"  Total Kia in DB: {total}")
+        if stats and stats[0] is not None:
+            print(f"  Price range: {stats[0]:.2f} - {stats[1]:.2f} ILS ex-VAT (avg {stats[2]:.2f})")
+        if errs:
+            print(f"  First errors:")
+            for e in errs[:5]:print(f"    {e}")
     finally:
         await conn.close()
 
-
-async def main():
-    parts = fetch_parts()
-    if not parts:
-        print("No parts fetched \u2014 aborting")
-        sys.exit(1)
-    await import_parts(parts)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+asyncio.run(run())

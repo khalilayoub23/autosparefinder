@@ -286,7 +286,19 @@ async def sync_ebay_prices(
                       'Jaecoo',
                       'Nissan',
                       'Honda',
-                      'Renault'
+                      'Renault',
+                      'BMW',
+                      'Jaguar',
+                      'MINI',
+                      'Ford',
+                      'Mazda',
+                      'MG',
+                      'Maxus',
+                      'Jetour',
+                      'BYD',
+                      'Chery',
+                      'GWM',
+                      'Omoda'
                   )
                 ORDER BY RANDOM()
                 LIMIT :limit

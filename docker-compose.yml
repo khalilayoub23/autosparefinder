@@ -3,7 +3,9 @@ services:
     image: pgvector/pgvector:pg16
     container_name: autospare_postgres_catalog
     restart: unless-stopped
-    mem_limit: 1536m
+    mem_limit: 2048m
+    shm_size: 256m
+    command: ["postgres", "-c", "shared_buffers=256MB", "-c", "work_mem=8MB", "-c", "maintenance_work_mem=64MB", "-c", "effective_cache_size=512MB", "-c", "max_connections=50"]
     environment:
       POSTGRES_DB: autospare
       POSTGRES_USER: autospare
@@ -103,7 +105,15 @@ services:
       GROQ_API_KEY: ${GROQ_API_KEY}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       CEREBRAS_API_KEY: ${CEREBRAS_API_KEY}
-      CEREBRAS_TEXT_MODEL: ${CEREBRAS_TEXT_MODEL:-llama3.1-8b}
+      CEREBRAS_TEXT_MODEL: ${CEREBRAS_TEXT_MODEL:-gpt-oss-120b}
+      CEREBRAS_FALLBACK_MODEL: ${CEREBRAS_FALLBACK_MODEL:-zai-glm-4.7}
+      ALIEXPRESS_APP_KEY: ${ALIEXPRESS_APP_KEY:-}
+      ALIEXPRESS_APP_SECRET: ${ALIEXPRESS_APP_SECRET:-}
+      ALIEXPRESS_ACCESS_TOKEN: ${ALIEXPRESS_ACCESS_TOKEN:-}
+      ALIEXPRESS_REFRESH_TOKEN: ${ALIEXPRESS_REFRESH_TOKEN:-}
+      ALIEXPRESS_TOKEN_EXPIRE: ${ALIEXPRESS_TOKEN_EXPIRE:-0}
+      ALIEXPRESS_DS_API_URL: ${ALIEXPRESS_DS_API_URL:-https://api-sg.aliexpress.com/sync}
+      ALIEXPRESS_PRICE_SYNC_LIMIT: ${ALIEXPRESS_PRICE_SYNC_LIMIT:-200}
       HF_TEXT_MODEL: ${HF_TEXT_MODEL}
       HF_VISION_MODEL: ${HF_VISION_MODEL:-Qwen/Qwen3-VL-8B-Instruct}
       EXTERNAL_FITMENT_PROVIDER_URLS: ${EXTERNAL_FITMENT_PROVIDER_URLS:-https://www.autodoc.eu/api/v1/part/applicability,https://www.buycarparts.co.uk/api/v1/part/applicability}

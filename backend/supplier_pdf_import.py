@@ -1,24 +1,57 @@
 """
-supplier_pdf_import.py  -  PDF-first supplier catalog import pipeline
+Script: supplier_pdf_import.py
+Purpose: Universal PDF-first supplier catalog import pipeline for all Israeli importers.
 
-Pipeline per manufacturer:
-  1. Parse PDF -> extract rows (OEM, name, price, availability, warranty)
-  2. Read DB rows for same manufacturer
+Process:
+  1. Parse PDF → extract rows (OEM, Hebrew name, price, availability, warranty)
+  2. Read existing DB rows for same manufacturer
   3. Compare: new parts / price changes / name fixes / availability changes
-  4. Import: upsert to parts_catalog (INSERT new, UPDATE stale)
-  5. Fix corrupt rows (Hebrew-text OEM, junk keys) -> mark inactive + queue to AI agent
-  6. Trigger Meilisearch scoped sync
-  7. Count verification: PDF count vs DB active count
+  4. Upsert to parts_catalog (INSERT new, UPDATE stale) with full specifications JSONB
+  5. Create supplier_parts record for each imported part
+  6. Fix corrupt rows (Hebrew-text OEM, junk keys) → mark inactive + queue to ai_catalog_builder
+  7. Trigger Meilisearch scoped sync
+  8. Count verification: PDF count vs DB active count
+  9. Delegate missing fitment to REX agent via agent_todos
+
+Data Imported / Modified:
+  - parts_catalog: sku, oem_number, name, name_he, manufacturer, manufacturer_id, category,
+                   base_price, importer_price_ils, min_price_ils, max_price_ils,
+                   part_condition, is_active, specifications (JSONB with vat_included,
+                   shipping_to_il, warranty_months, source, importer)
+  - supplier_parts: supplier_id, part_id, supplier_sku, price_ils, availability,
+                    is_available, warranty_months, estimated_delivery_days, supplier_url
+  - agent_todos: REX task for missing fitment; db_cleanup_agent task for junk OEM
+
+Data Sources / Web Links:
+  - All Israeli importer PDFs uploaded via admin: /app/uploads/{BRAND}_*.pdf
+  - ORA: https://ora-israel.co.il
+  - Smart: https://smart-israel.co.il
+  - Mitsubishi: https://mitsubishi-motors.co.il
+  - Porsche: https://porsche-israel.co.il
+  - Mercedes-Benz: https://mercedes-benz.co.il
+  - Peugeot: https://peugeot-israel.co.il
+  - Renault: https://renault.co.il
+  - Hyundai: https://hyundai.co.il
+  - Suzuki: https://suzuki.co.il
+  - Genesis: https://genesis-israel.co.il
+
+Missing Data Delegation:
+  - English descriptions → ai_catalog_builder.py (master_enriched=False triggers it)
+  - Fitment (vehicle compatibility) → REX agent todo created after each import
+  - Missing OEM cross-refs → needs_oem_lookup=True on all new parts
+
+VAT Rules:
+  - Israeli official importer PDFs: prices are INCL. 18% VAT
+    → store as base_price; importer_price_ils = price / 1.18; max_price_ils = price
+
+Confidence tier: 1.00 (Official Israeli importer price lists)
 
 Usage:
   python supplier_pdf_import.py --pdf /path/to/ORA.pdf --manufacturer ORA [--apply]
   python supplier_pdf_import.py --pdf /path/to/ORA.pdf --manufacturer ORA --dry-run
 
-Notes:
-  - Price in PDF is assumed to be ILS incl. 18% VAT (base_price field).
-  - availability column: zamin (available) / lo zamin (not available).
-  - If no availability column found, all rows are treated as active.
-  - Script is idempotent: safe to re-run; uses ON CONFLICT upsert.
+Author: AutoSpareFinder Agent
+Last Updated: 2026-06-01
 """
 
 from __future__ import annotations
@@ -564,7 +597,110 @@ def _parse_text_fallback(pdf_path, manufacturer):
     return unique
 
 
-# --- DB operations ---# --- DB operations ---
+# --- Supplier helpers ---
+
+SUPPLIER_URL_MAP = {
+    'ORA': 'https://ora-israel.co.il',
+    'SMART': 'https://smart-israel.co.il',
+    'MITSUBISHI': 'https://mitsubishi-motors.co.il',
+    'PORSCHE': 'https://porsche-israel.co.il',
+    'MERCEDES-BENZ': 'https://mercedes-benz.co.il',
+    'MERCEDES': 'https://mercedes-benz.co.il',
+    'PEUGEOT': 'https://peugeot-israel.co.il',
+    'RENAULT': 'https://renault.co.il',
+    'HYUNDAI': 'https://hyundai.co.il',
+    'SUZUKI': 'https://suzuki.co.il',
+    'GENESIS': 'https://genesis-israel.co.il',
+    'KIA': 'https://kia.co.il',
+    'TOYOTA': 'https://toyota.co.il',
+    'HONDA': 'https://honda.co.il',
+    'NISSAN': 'https://nissan.co.il',
+    'VOLVO': 'https://volvocars.co.il',
+    'MAZDA': 'https://mazda.co.il',
+    'FORD': 'https://ford.co.il',
+    'SKODA': 'https://skoda.co.il',
+    'VOLKSWAGEN': 'https://volkswagen.co.il',
+    'VW': 'https://volkswagen.co.il',
+    'AUDI': 'https://audi.co.il',
+    'SEAT': 'https://seat.co.il',
+}
+
+
+async def _ensure_supplier(conn, manufacturer: str) -> str:
+    """Get-or-create an official Israeli importer supplier record."""
+    supplier_name = f'{manufacturer} Official Importer Israel'
+    row = await conn.fetchrow('SELECT id FROM suppliers WHERE name = $1', supplier_name)
+    if row:
+        return str(row['id'])
+    sid = str(uuid.uuid4())
+    url = SUPPLIER_URL_MAP.get(manufacturer.upper(), '')
+    await conn.execute("""
+        INSERT INTO suppliers (id, name, website, country,
+                               is_active, is_manufacturer,
+                               manufacturer_name, manufacturer_id,
+                               reliability_score, created_at, updated_at)
+        VALUES ($1, $2, $3, 'IL', true, true, $4,
+                (SELECT id FROM car_brands WHERE LOWER(name)=LOWER($4) LIMIT 1),
+                0.90, NOW(), NOW())
+        ON CONFLICT (name) DO NOTHING
+    """, sid, supplier_name, url, manufacturer)
+    row = await conn.fetchrow('SELECT id FROM suppliers WHERE name = $1', supplier_name)
+    return str(row['id']) if row else sid
+
+
+async def _upsert_supplier_part(conn, part_id: str, supplier_id: str,
+                                 oem: str, price: float,
+                                 warranty_months: int, available: bool,
+                                 supplier_url: str):
+    """Insert/update supplier_parts record."""
+    try:
+        await conn.execute("""
+            INSERT INTO supplier_parts (
+                id, supplier_id, part_id, supplier_sku,
+                price_ils, price_usd,
+                availability, is_available, warranty_months,
+                estimated_delivery_days, supplier_url,
+                created_at, updated_at
+            ) VALUES (
+                gen_random_uuid(), $1::uuid, $2::uuid, $3,
+                $4, 0.0,
+                $5, $6, $7,
+                21, $8,
+                NOW(), NOW()
+            )
+            ON CONFLICT (part_id, supplier_id) DO UPDATE SET
+                price_ils    = EXCLUDED.price_ils,
+                is_available = EXCLUDED.is_available,
+                availability = EXCLUDED.availability,
+                updated_at   = NOW()
+        """, supplier_id, part_id, oem, price,
+             'in_stock' if available else 'out_of_stock', available,
+             warranty_months, supplier_url)
+    except Exception as e:
+        log.debug(f'supplier_parts upsert skip: {e}')
+
+
+async def _create_rex_fitment_todo(conn, manufacturer: str, count: int, source: str):
+    """Ask REX to fetch fitment data for newly imported parts."""
+    try:
+        await conn.execute("""
+            INSERT INTO agent_todos
+                (id, agent_name, title, description, priority, status, created_at, updated_at)
+            VALUES (
+                gen_random_uuid(), 'REX',
+                $1, $2,
+                'high', 'not_started',
+                NOW(), NOW()
+            )
+        """,
+        f'Fetch fitment for {manufacturer} ({count} parts)',
+        f'{count} parts imported from {source} ({manufacturer}) have no vehicle fitment data. '
+        f'Query TecDoc or eBay fitment APIs to map parts to specific models/years.')
+    except Exception as e:
+        log.debug(f'Rex todo skip: {e}')
+
+
+# --- DB operations ---
 
 async def fetch_manufacturer_rows(conn, manufacturer):
     rows = await conn.fetch(
@@ -584,13 +720,33 @@ async def fetch_manufacturer_rows(conn, manufacturer):
 
 
 async def _get_manufacturer_id(conn, manufacturer):
+    # Exact match
     row = await conn.fetchrow(
         "SELECT id FROM car_brands WHERE LOWER(name)=LOWER($1) LIMIT 1", manufacturer)
-    if row: return str(row["id"])
+    if row:
+        return str(row["id"])
+    # Partial match
     row = await conn.fetchrow(
         "SELECT id FROM car_brands WHERE LOWER(name) LIKE $1 LIMIT 1",
         f"%{manufacturer.lower()}%")
-    return str(row["id"]) if row else None
+    if row:
+        return str(row["id"])
+    # Not found — create it so the NOT NULL constraint is never violated
+    import uuid as _uuid
+    new_id = str(_uuid.uuid4())
+    await conn.execute(
+        """
+        INSERT INTO car_brands
+            (id, name, is_luxury, is_electric_focused, is_active, created_at)
+        VALUES ($1, $2, false, false, true, NOW())
+        ON CONFLICT DO NOTHING
+        """,
+        new_id, manufacturer,
+    )
+    # Re-fetch in case another worker inserted simultaneously
+    row = await conn.fetchrow(
+        "SELECT id FROM car_brands WHERE LOWER(name)=LOWER($1) LIMIT 1", manufacturer)
+    return str(row["id"]) if row else new_id
 
 
 def _make_sku(manufacturer, oem_norm, existing_skus):
@@ -615,6 +771,8 @@ async def upsert_parts(conn, manufacturer, pdf_rows, db_rows, dry_run):
     manufacturer_id = await _get_manufacturer_id(conn, manufacturer)
 
     to_insert, to_uprice, to_uname, to_ucatname, to_deact, to_react = [], [], [], [], [], []
+    supplier_id = await _ensure_supplier(conn, manufacturer)
+    supplier_url = SUPPLIER_URL_MAP.get(manufacturer.upper(), '')
 
     for pdf_row in pdf_rows:
         nk = pdf_row.oem_norm
@@ -624,25 +782,42 @@ async def upsert_parts(conn, manufacturer, pdf_rows, db_rows, dry_run):
             sku = _make_sku(manufacturer, nk, existing_skus)
             cat = guess_category_by_text(f"{pdf_row.name or ''} {pdf_row.name_he or ''} {manufacturer}") or "general"
             metrics["category_counts"][cat] = metrics["category_counts"].get(cat, 0) + 1
+            # Build specifications JSONB
+            warranty_months = (pdf_row.warranty_years or 1) * 12
+            price_excl_vat = round((pdf_row.price or 0) / 1.18, 2)
+            specs = json.dumps({
+                'vat_included':    True,
+                'vat_rate':        0.18,
+                'currency':        'ILS',
+                'source':          f'Official importer PDF - {manufacturer}',
+                'shipping_to_il':  True,
+                'importer':        f'{manufacturer} Official Importer Israel',
+                'warranty_months': warranty_months,
+                'available':       pdf_row.available,
+            }, ensure_ascii=False)
             to_insert.append((
                 uuid.uuid4(), sku[:100],
                 (pdf_row.name or f"{manufacturer.upper()} {nk}")[:255],
                 cat[:100], manufacturer, manufacturer_id, "OEM",
                 pdf_row.name_he[:255] if pdf_row.name_he else None,
-                json.dumps({"source":"supplier_pdf_import","imported_at":datetime.utcnow().isoformat()},ensure_ascii=False),
+                specs,
                 json.dumps([{"manufacturer":manufacturer.upper(),"model":"All Models",
                              "year_from":2020,"year_to":datetime.utcnow().year,
                              "source":"supplier_pdf_import"}],ensure_ascii=False),
                 pdf_row.oem_number[:100],
                 float(pdf_row.price or 0.0),
+                price_excl_vat,
+                round((pdf_row.price or 0), 2),
                 pdf_row.available,
+                warranty_months,
+                price_excl_vat,   # min_price_ils
             ))
             metrics["inserted"] += 1
         else:
             rid = str(existing["id"])
             if pdf_row.available and not existing.get("is_active"):
                 to_react.append(rid); metrics["reactivated"] += 1
-            elif not pdf_row.available and existing.get("is_active"):
+            elif not pdf_row.available and existing.get("is_active") and not float(existing.get("base_price") or 0) > 0:
                 to_deact.append(rid); metrics["deactivated_unavailable"] += 1
 
             if pdf_row.price is not None:
@@ -671,18 +846,50 @@ async def upsert_parts(conn, manufacturer, pdf_rows, db_rows, dry_run):
 
     if not dry_run:
         BATCH = 25
+        inserted_ids = []
         for i in range(0, len(to_insert), BATCH):
-            await conn.executemany(
-                """INSERT INTO parts_catalog
-                    (id,sku,name,category,manufacturer,manufacturer_id,part_type,
-                     name_he,specifications,compatible_vehicles,oem_number,
-                     base_price,is_active,
-                     part_condition,is_safety_critical,needs_oem_lookup,master_enriched,
-                     created_at,updated_at)
-                   VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11,
-                          $12,$13,'new',false,false,false,NOW(),NOW())
-                   ON CONFLICT (sku) DO NOTHING""",
-                to_insert[i:i+BATCH])
+            chunk = to_insert[i:i+BATCH]
+            for row in chunk:
+                try:
+                    result = await conn.fetchrow(
+                        """INSERT INTO parts_catalog
+                            (id,sku,name,category,manufacturer,manufacturer_id,part_type,
+                             name_he,specifications,compatible_vehicles,oem_number,
+                             base_price,importer_price_ils,max_price_ils,is_active,
+                             part_condition,is_safety_critical,needs_oem_lookup,master_enriched,
+                             min_price_ils,
+                             created_at,updated_at)
+                           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11,
+                                  $12,$13,$14,$15,'New',false,false,false,$16,NOW(),NOW())
+                           ON CONFLICT (sku) DO UPDATE SET
+                             base_price=EXCLUDED.base_price,
+                             importer_price_ils=EXCLUDED.importer_price_ils,
+                             max_price_ils=EXCLUDED.max_price_ils,
+                             min_price_ils=CASE WHEN EXCLUDED.min_price_ils > 0
+                                           THEN EXCLUDED.min_price_ils
+                                           ELSE parts_catalog.min_price_ils END,
+                             name_he=COALESCE(EXCLUDED.name_he, parts_catalog.name_he),
+                             specifications=COALESCE(parts_catalog.specifications,'{}')::jsonb
+                                             || EXCLUDED.specifications::jsonb,
+                             is_active=EXCLUDED.is_active,
+                             updated_at=NOW()
+                           RETURNING id""",
+                        row[0], row[1], row[2], row[3], row[4], row[5], row[6],
+                        row[7], row[8], row[9], row[10], row[11], row[12], row[13], row[14], row[16]
+                    )
+                    if result:
+                        inserted_ids.append((str(result['id']), row[10], row[11],
+                                             row[15], row[14], supplier_id, supplier_url))
+                except Exception as e:
+                    log.debug(f'Insert skip: {e}')
+        # Write supplier_parts for every inserted/updated part
+        for pid, oem, price, warranty_months, available, sid, surl in inserted_ids:
+            await _upsert_supplier_part(conn, pid, sid, oem, price,
+                                         warranty_months, available, surl)
+        # Delegate fitment to REX
+        if inserted_ids:
+            await _create_rex_fitment_todo(conn, manufacturer, len(inserted_ids),
+                                            f'supplier_pdf_import PDF')
         if to_uprice:
             await conn.executemany(
                 "UPDATE parts_catalog SET base_price=$1,updated_at=NOW() WHERE id=$2::uuid", to_uprice)

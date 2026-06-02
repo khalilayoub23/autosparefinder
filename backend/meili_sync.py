@@ -138,11 +138,12 @@ async def run(
 
     print(
         f"[meili_sync] {total} rows in parts_catalog "
-        f"(MEILI_URL={MEILI_URL}, rebuild={rebuild_index}, manufacturer={manufacturer_filter or 'ALL'})"
+        f"(MEILI_URL={MEILI_URL}, rebuild={rebuild_index}, manufacturer={manufacturer_filter or 'ALL'})",
+        flush=True,
     )
 
     if dry_run:
-        print("[meili_sync] --dry-run: no data uploaded.")
+        print("[meili_sync] --dry-run: no data uploaded.", flush=True)
         await conn.close()
         return
 
@@ -153,9 +154,9 @@ async def run(
             try:
                 delete_task = await index.delete()
                 await _wait_task(client, delete_task, timeout_ms=300_000)
-                print("[meili_sync] Existing index deleted for clean rebuild.")
+                print("[meili_sync] Existing index deleted for clean rebuild.", flush=True)
             except Exception:
-                print("[meili_sync] Existing index not found; creating new index.")
+                print("[meili_sync] Existing index not found; creating new index.", flush=True)
 
             create_task = await client.create_index(INDEX_NAME, primary_key="id")
             await _wait_task(client, create_task, timeout_ms=120_000)
@@ -163,28 +164,36 @@ async def run(
             try:
                 create_task = await client.create_index(INDEX_NAME, primary_key="id")
                 await _wait_task(client, create_task, timeout_ms=120_000)
-                print("[meili_sync] Created missing index.")
+                print("[meili_sync] Created missing index.", flush=True)
             except Exception:
                 pass
 
         if manufacturer_filter:
             escaped = _escape_meili_filter_value(manufacturer_filter)
+            # Count existing docs before deleting so we can report progress
+            existing_count = await conn.fetchval(
+                "SELECT COUNT(*) FROM parts_catalog WHERE LOWER(manufacturer)=LOWER($1) AND is_active=TRUE",
+                manufacturer_filter,
+            )
+            print(f"[meili_sync] Deleting existing docs for '{manufacturer_filter}' (up to {existing_count} docs)...", flush=True)
             delete_filter_task = await index.delete_documents_by_filter(
                 f'manufacturer = "{escaped}"'
             )
             await _wait_task(client, delete_filter_task, timeout_ms=300_000)
             print(
                 "[meili_sync] Deleted existing documents for manufacturer "
-                f"'{manufacturer_filter}'."
+                f"'{manufacturer_filter}'.",
+                flush=True,
             )
 
         settings_task = await index.update_settings(INDEX_SETTINGS)
         await _wait_task(client, settings_task, timeout_ms=300_000)
-        print("[meili_sync] Index settings applied.")
+        print("[meili_sync] Index settings applied.", flush=True)
 
         offset = 0
         total_sent = 0
         t0 = datetime.utcnow()
+        last_batch_task = None
 
         while True:
             if manufacturer_filter:
@@ -205,18 +214,25 @@ async def run(
                 d["is_active"] = bool(d["is_active"])
                 d["is_safety_critical"] = bool(d["is_safety_critical"])
 
-            batch_task = await index.add_documents(docs)
-            await _wait_task(client, batch_task)
+            # Fire upload without waiting — Meilisearch queues tasks internally.
+            # We wait only once after all batches are sent (see below).
+            last_batch_task = await index.add_documents(docs)
 
             total_sent += len(docs)
             offset += BATCH_SIZE
             elapsed = (datetime.utcnow() - t0).seconds
-            print(f"[meili_sync] uploaded {total_sent}/{total} ({elapsed}s)")
+            print(f"[meili_sync] uploaded {total_sent}/{total} ({elapsed}s)", flush=True)
+
+        # Wait for the final batch to finish indexing before exiting.
+        if last_batch_task is not None:
+            print("[meili_sync] Waiting for Meilisearch to finish indexing...", flush=True)
+            await _wait_task(client, last_batch_task, timeout_ms=900_000)
 
     await conn.close()
     print(
         "[meili_sync] Done - "
-        f"{total_sent} documents indexed for {manufacturer_filter or 'ALL'}."
+        f"{total_sent} documents indexed for {manufacturer_filter or 'ALL'}.",
+        flush=True,
     )
 
 
@@ -250,7 +266,8 @@ if __name__ == "__main__":
     if args.manufacturer and rebuild:
         print(
             "[meili_sync] --manufacturer provided; using scoped refresh "
-            "without full index rebuild."
+            "without full index rebuild.",
+            flush=True,
         )
         rebuild = False
 
