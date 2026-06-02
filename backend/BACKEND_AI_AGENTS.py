@@ -603,14 +603,46 @@ def _normalize_source(source: Optional[str]) -> str:
     return "default"
 
 
+def _is_supported_chat_model(model_name: str) -> bool:
+    name = (model_name or "").strip()
+    if not name:
+        return False
+
+    explicit = {
+        (HF_DEFAULT_MODEL or "").strip(),
+        (FREE_MODEL or "").strip(),
+        (PREMIUM_MODEL or "").strip(),
+        (os.getenv("CEREBRAS_TEXT_MODEL", "") or "").strip(),
+        (os.getenv("CEREBRAS_FALLBACK_MODEL", "") or "").strip(),
+    }
+    explicit = {m for m in explicit if m}
+    if name in explicit:
+        return True
+
+    # Cerebras chat models currently used in this stack.
+    if name.startswith("gpt-oss-"):
+        return True
+    if name.startswith("zai-glm-"):
+        return True
+
+    return False
+
+
 def _channel_model_for_source(source: Optional[str], fallback_model: str) -> str:
     source_key = _normalize_source(source)
     if source_key == "telegram":
-        return TELEGRAM_AI_MODEL or fallback_model
-    if source_key == "whatsapp":
-        return WHATSAPP_AI_MODEL or fallback_model
-    if source_key == "web":
-        return WEB_AI_MODEL or fallback_model
+        candidate = TELEGRAM_AI_MODEL or fallback_model
+    elif source_key == "whatsapp":
+        candidate = WHATSAPP_AI_MODEL or fallback_model
+    elif source_key == "web":
+        candidate = WEB_AI_MODEL or fallback_model
+    else:
+        candidate = fallback_model
+
+    if _is_supported_chat_model(candidate):
+        return candidate
+
+    print(f"[WARN] Unsupported chat model '{candidate}' for source={source_key}; using fallback={fallback_model}")
     return fallback_model
 
 
@@ -1110,11 +1142,13 @@ class BaseAgent:
                     prompt,
                     system=effective_system,
                     priority=_is_realtime,
+                    model=selected_model,
                 )
             return await hf_text(
                 prompt,
                 system=effective_system,
                 priority=_is_realtime,
+                model=selected_model,
             )
         except Exception as e:
             status = getattr(getattr(e, "response", None), "status_code", None)
@@ -3346,6 +3380,15 @@ class SupplierManagerAgent(BaseAgent):
         except Exception as _ebay_err:
             logger.error(f"eBay price sync skipped: {_ebay_err}")
 
+        # Pull AliExpress DS prices
+        aliexpress_report: Dict[str, Any] = {}
+        try:
+            from services.aliexpress_price_sync import sync_aliexpress_prices
+            aliexpress_report = await sync_aliexpress_prices(db, limit_per_run=int(os.getenv("ALIEXPRESS_PRICE_SYNC_LIMIT", "200")))
+            logger.info(f"AliExpress price sync report: {aliexpress_report}")
+        except Exception as _ali_err:
+            logger.error(f"AliExpress price sync skipped: {_ali_err}")
+
         import random
         import hashlib
 
@@ -4303,21 +4346,24 @@ Persona שיווקית חכמה (חובה):
         if not msg:
             return ""
 
-        # Drop clearly unsupported scripts for NOA channel.
+        # Keep Hebrew+English mixed copy (brand/model terms), only strip unsupported scripts.
         msg = cls._NOA_BAD_SCRIPT_RE.sub("", msg)
-
-        # Remove non-Hebrew words from body text to keep a Hebrew-first caption.
-        msg_wo_tags = re.sub(r"#[^\s#]+", " ", msg)
-        msg_wo_tags = cls._strip_non_hebrew_letters(msg_wo_tags)
-        msg_wo_tags = cls._drop_non_hebrew_words(msg_wo_tags)
-        msg_wo_tags = re.sub(r"\s+", " ", msg_wo_tags).strip()
+        msg = re.sub(r"[ \t]+", " ", msg)
+        msg = re.sub(r"\n{3,}", "\n\n", msg).strip()
 
         tags = cls._filter_hashtags(msg)
         if not tags:
             tags = cls._NOA_DEFAULT_TAGS
-        if tags:
-            return f"{msg_wo_tags}\n{tags}".strip()
-        return msg_wo_tags
+
+        body_lines = [ln for ln in msg.splitlines() if not ln.strip().startswith("#")]
+        body = "\n".join([ln.rstrip() for ln in body_lines if ln.strip()]).strip()
+        if not body:
+            body = (
+                "מחפשים חלקי חילוף לרכב? אנחנו מאתרים חלקים מהר, "
+                "עוזרים בהתאמה לפי רכב, ומרכזים אפשרויות במקום אחד."
+            )
+
+        return f"{body}\n{tags}".strip()
 
     @classmethod
     def _needs_hebrew_rewrite(cls, text: str) -> bool:
@@ -4328,7 +4374,13 @@ Persona שיווקית חכמה (חובה):
             return True
 
         msg_wo_tags = re.sub(r"#[^\s#]+", " ", msg)
-        if cls._contains_non_hebrew_word(msg_wo_tags):
+        he_chars = len(re.findall(r"[\u0590-\u05FF]", msg_wo_tags))
+        alpha_chars = len(re.findall(r"[A-Za-z\u0590-\u05FF]", msg_wo_tags))
+
+        # Rewrite only when Hebrew signal is too weak; allow mixed Hebrew+English naturally.
+        if alpha_chars == 0:
+            return True
+        if (he_chars / alpha_chars) < 0.35:
             return True
         return False
 
@@ -4378,6 +4430,12 @@ Persona שיווקית חכמה (חובה):
         msg = unicodedata.normalize("NFKC", (text or ""))
         msg = re.sub(r"[`*_~]+", "", msg)
         msg = "".join(ch for ch in msg if ch == "\n" or unicodedata.category(ch)[0] != "C")
+
+        # Normalize odd unicode dashes frequently produced by LLMs in Hebrew+English mixes.
+        msg = msg.replace("‐", "-").replace("‑", "-")
+        # Convert Hebrew-letter + dash + Latin token into natural spacing (e.g. ה-Bosch -> ה Bosch).
+        msg = re.sub(r"([\u0590-\u05FF])-(?=[A-Za-z0-9])", r"\1 ", msg)
+
         msg = re.sub(r"[ \t\r\f\v]+", " ", msg)
         msg = re.sub(r"\n{3,}", "\n\n", msg).strip()
         return msg

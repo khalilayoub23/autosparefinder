@@ -34,9 +34,10 @@ HF_CLIP_MODEL   = os.getenv("HF_CLIP_MODEL",   "openai/clip-vit-large-patch14") 
 # For mixed He+En query normalization (transliteration, spelling fixes, synonym expansion)
 HF_LANG_MODEL   = os.getenv("HF_LANG_MODEL",   "Helsinki-NLP/opus-mt-tc-big-he-en")   # He→En for mixed queries
 
-CEREBRAS_API_KEY    = os.getenv("CEREBRAS_API_KEY", "")
-CEREBRAS_TEXT_MODEL = os.getenv("CEREBRAS_TEXT_MODEL", "qwen-3-235b-a22b-instruct-2507")
-CEREBRAS_BASE       = "https://api.cerebras.ai/v1"
+CEREBRAS_API_KEY      = os.getenv("CEREBRAS_API_KEY", "")
+CEREBRAS_TEXT_MODEL   = os.getenv("CEREBRAS_TEXT_MODEL", "gpt-oss-120b")
+CEREBRAS_FALLBACK_MODEL = os.getenv("CEREBRAS_FALLBACK_MODEL", "zai-glm-4.7")
+CEREBRAS_BASE         = "https://api.cerebras.ai/v1"
 GEMINI_API_KEY      = os.getenv("GEMINI_API_KEY", "")
 WHATSAPP_GEMINI_KEY = os.getenv("WHATSAPP_GEMINI_API_KEY", GEMINI_API_KEY)  # dedicated key for webhook
 GEMINI_VIS_MODEL    = os.getenv("GEMINI_VIS_MODEL", "gemini-2.0-flash")
@@ -248,16 +249,76 @@ async def _post_with_retry(
         return resp
 
 
+# ── Cerebras response helpers ─────────────────────────────────────────────────
+
+def _extract_cerebras_content(data: dict) -> str:
+    """Extract text from a Cerebras chat completion response.
+
+    Standard models return message.content.
+    Reasoning models (e.g. zai-glm-4.7) set content=None and put the output
+    in message.reasoning instead.  We prefer content and fall back to reasoning.
+    """
+    try:
+        msg = data["choices"][0]["message"]
+        content = msg.get("content") or ""
+        if content:
+            return content
+        # Reasoning model fallback
+        reasoning = msg.get("reasoning") or ""
+        return reasoning
+    except (KeyError, IndexError, TypeError):
+        return ""
+
+
+async def _cerebras_call(
+    prompt: str,
+    system: str,
+    model: str,
+    timeout: float,
+    priority: bool,
+) -> str:
+    """Single Cerebras chat completion call — does NOT cache or fall back."""
+    if not CEREBRAS_API_KEY:
+        raise RuntimeError("CEREBRAS_API_KEY not set in .env")
+    messages: list[dict[str, str]] = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+    payload = _json.dumps({
+        "model": model,
+        "messages": messages,
+        "max_tokens": 1000,
+        "stream": False,
+    }, ensure_ascii=False).encode()
+    _acquire = not priority
+    if _acquire:
+        await _BG_SEMAPHORE.acquire()
+    try:
+        resp = await _post_with_retry(
+            f"{CEREBRAS_BASE}/chat/completions",
+            {"Authorization": f"Bearer {CEREBRAS_API_KEY}", "Content-Type": "application/json"},
+            payload,
+            timeout,
+            f"cerebras/{model}",
+        )
+    finally:
+        if _acquire:
+            _BG_SEMAPHORE.release()
+    resp.raise_for_status()
+    return _clean_response(_extract_cerebras_content(resp.json()))
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
-async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority: bool = False) -> str:
+async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority: bool = False, model: str | None = None) -> str:
     """Chat completion via HF Router. Cached in Redis for _TEXT_CACHE_TTL seconds.
     priority=True bypasses the background-job semaphore (use for webhook/realtime calls).
     """
     if not CEREBRAS_API_KEY:
         raise RuntimeError("CEREBRAS_API_KEY not set in .env")
 
-    cache_key = _cache_key("txt", CEREBRAS_TEXT_MODEL, system, prompt)
+    selected_model = (model or CEREBRAS_TEXT_MODEL).strip()
+    cache_key = _cache_key("txt", selected_model, system, prompt)
     cached = await _cache_get(cache_key)
     if cached is not None:
         logger.debug("hf_client [text] cache hit")
@@ -272,7 +333,7 @@ async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority
     messages.append({"role": "user", "content": prompt})
 
     payload = _json.dumps({
-        "model": CEREBRAS_TEXT_MODEL,
+        "model": selected_model,
         "messages": messages,
         "max_tokens": 1000,
         "stream": False,
@@ -296,6 +357,15 @@ async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority
         if _acquire:
             _BG_SEMAPHORE.release()
     if resp.status_code == 429:
+        # Try Cerebras fallback model (reasoning model zai-glm-4.7) before external providers
+        if CEREBRAS_FALLBACK_MODEL and CEREBRAS_FALLBACK_MODEL != selected_model:
+            logger.warning("hf_text: Cerebras primary 429 — trying fallback model %s", CEREBRAS_FALLBACK_MODEL)
+            try:
+                result = await _cerebras_call(prompt, system, CEREBRAS_FALLBACK_MODEL, timeout, priority)
+                await _cache_set(cache_key, result, _TEXT_CACHE_TTL)
+                return result
+            except Exception as fb_err:
+                logger.warning("hf_text: Cerebras fallback also failed: %s", fb_err)
         if GEMINI_API_KEY and not _gemini_cb_is_open():
             logger.warning("hf_text: Cerebras 429 — falling back to Gemini")
             try:
@@ -313,15 +383,15 @@ async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority
             logger.warning("hf_text: falling back to GROQ llama-3.3-70b-versatile")
             return await groq_text(prompt=prompt, system=system, timeout=timeout)
     resp.raise_for_status()
-    result: str = resp.json()["choices"][0]["message"]["content"]
+    result: str = _extract_cerebras_content(resp.json())
     result = _clean_response(result)
     await _cache_set(cache_key, result, _TEXT_CACHE_TTL)
     return result
 
 
-async def hf_text_fast(prompt: str, system: str = "", timeout: float = 90.0, priority: bool = False) -> str:
+async def hf_text_fast(prompt: str, system: str = "", timeout: float = 90.0, priority: bool = False, model: str | None = None) -> str:
     """Compatibility wrapper used by agents code-paths."""
-    return await hf_text(prompt=prompt, system=system, timeout=timeout, priority=priority)
+    return await hf_text(prompt=prompt, system=system, timeout=timeout, priority=priority, model=model)
 
 
 # ── Local embedding model ─────────────────────────────────────────────────────

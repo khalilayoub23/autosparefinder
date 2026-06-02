@@ -30,6 +30,7 @@ run_agent_background_loop()  – optional periodic loop (disabled by default).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections import defaultdict
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -3823,6 +3824,8 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
     t0 = time.monotonic()
     results: List[Dict[str, Any]] = []
     job_id: Optional[str] = None
+    task_timeout_s = int(os.getenv("DB_AGENT_TASK_TIMEOUT_S", "1800"))
+    heartbeat_interval_s = int(os.getenv("DB_AGENT_HEARTBEAT_INTERVAL_S", "60"))
     try:
         try:
             job_id = await job_registry_start(db, "run_all_tasks", ttl_seconds=21600)
@@ -3868,7 +3871,39 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
 
         for task_name in ordered_tasks:
             logger.info("run_all_tasks → starting: %s", task_name)
-            result = await run_task(task_name, db)
+            hb_task: Optional[asyncio.Task] = None
+
+            async def _heartbeat_loop() -> None:
+                # Keep heartbeat alive while an individual task is running.
+                while True:
+                    await asyncio.sleep(heartbeat_interval_s)
+                    if job_id:
+                        await job_heartbeat(db, job_id)
+
+            try:
+                if job_id:
+                    hb_task = asyncio.create_task(_heartbeat_loop(), name=f"db_update_agent_hb_{task_name}")
+
+                if task_timeout_s > 0:
+                    result = await asyncio.wait_for(run_task(task_name, db), timeout=task_timeout_s)
+                else:
+                    result = await run_task(task_name, db)
+
+            except asyncio.TimeoutError:
+                with contextlib.suppress(Exception):
+                    await db.rollback()
+                result = {
+                    "task": task_name,
+                    "status": "error",
+                    "error": f"Task timeout after {task_timeout_s}s",
+                }
+                logger.error("run_all_tasks: task %s timed out after %ss", task_name, task_timeout_s)
+            finally:
+                if hb_task:
+                    hb_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await hb_task
+
             results.append(result)
             if result.get("status") == "error":
                 logger.warning("run_all_tasks: task %s errored, continuing", task_name)
