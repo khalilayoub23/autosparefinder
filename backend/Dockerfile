@@ -11,12 +11,16 @@ RUN apt-get update && apt-get install -y \
     fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
+ENV PYTHONUNBUFFERED=1
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 RUN pip install playwright --break-system-packages
 RUN playwright install chromium --with-deps
 
 COPY . .
+
+RUN chmod +x /app/scripts/*.sh
 
 EXPOSE 8000
 

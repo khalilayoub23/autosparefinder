@@ -184,20 +184,23 @@ async def import_brand(conn, slug, brand_name, prefix):
                 name_he = (p.get("MatDescHe","") or "").strip()
                 name = name_en or name_he or sku
                 try:
-                    base_price = float(p.get("PriceNoVat","0") or "0")
-                    imp_price  = float(p.get("PriceWithVat","0") or "0")
-                except: base_price = imp_price = 0.0
+                    il_retail = float(p.get("PriceWithVat","0") or "0")  # consumer retail incl. 17% VAT
+                except: il_retail = 0.0
+                VAT = 0.18
+                il_cost    = round(il_retail / (1 + VAT), 2) if il_retail > 0 else 0.0
+                il_selling = round(il_cost * 1.45, 2) if il_cost > 0 else 0.0
                 category = classify_part(name_en, name_he)
                 part_type = "original" if p.get("MaterialType","01") == "01" else "aftermarket"
                 await conn.execute(
                     """INSERT INTO parts_catalog(id,sku,name,name_he,category,manufacturer,part_type,
-                       base_price,importer_price_ils,oem_number,is_active,created_at,updated_at)
-                       VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,$9,TRUE,NOW(),NOW())
+                       base_price,importer_price_ils,max_price_ils,min_price_ils,oem_number,is_active,created_at,updated_at)
+                       VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,$9,$8,$10,TRUE,NOW(),NOW())
                        ON CONFLICT(sku) DO UPDATE SET name=EXCLUDED.name,name_he=EXCLUDED.name_he,
                        category=EXCLUDED.category,manufacturer=EXCLUDED.manufacturer,
                        base_price=EXCLUDED.base_price,importer_price_ils=EXCLUDED.importer_price_ils,
+                       max_price_ils=EXCLUDED.max_price_ils,min_price_ils=EXCLUDED.min_price_ils,
                        part_type=EXCLUDED.part_type,updated_at=NOW()""",
-                    sku,name,name_he,category,brand_name,part_type,base_price,imp_price,mid)
+                    sku,name,name_he,category,brand_name,part_type,il_selling,il_cost,il_retail,mid)
                 ins += 1
             except Exception as e:
                 err += 1

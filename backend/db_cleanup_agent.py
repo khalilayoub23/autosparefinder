@@ -77,10 +77,15 @@ async def task1_fix_part_types() -> int:
                                WHEN 'מקורימקורי' THEN 'מקורי'
                                WHEN 'משופץמשופץ' THEN 'משופץ'
                                WHEN 'unknownunknown' THEN 'unknown'
+                               WHEN 'aftermarket' THEN 'Aftermarket'
+                               WHEN 'original' THEN 'Original'
+                               WHEN 'refurbished' THEN 'Refurbished'
+                               WHEN 'used' THEN 'Used'
                                ELSE part_type
                            END AS fixed_part_type
                     FROM parts_catalog
-                    WHERE part_type IN ('חליפיחליפי', 'מקורימקורי', 'משופץמשופץ', 'unknownunknown')
+                    WHERE part_type IN ('חליפיחליפי', 'מקורימקורי', 'משופץמשופץ', 'unknownunknown',
+                                       'aftermarket', 'original', 'refurbished', 'used')
                     ORDER BY updated_at NULLS FIRST, created_at NULLS FIRST, id
                     LIMIT 100
                 )
@@ -239,6 +244,148 @@ async def task3_categorize_by_keywords() -> int:
         )
 
         return categorized
+
+
+# ── LLM categories available for fallback ──────────────────────────────────────
+_VALID_CATEGORIES = [
+    "engine", "brakes", "suspension-steering", "electrical-sensors", "body-exterior",
+    "lighting", "cooling", "fuel-air", "exhaust", "filters", "clutch-drivetrain",
+    "gearbox", "wheels-bearings", "air-conditioning-heating", "interior-comfort",
+    "wipers-washers", "fluids", "accessories", "service-general", "כללי",
+]
+
+# Rolling cursor for LLM fallback — tracks which unclassifiable parts we've tried
+_llm_fallback_cursor: list[str] = []
+_llm_consecutive_failures: int = 0  # skip LLM when all providers are 429ing
+
+
+async def task3b_llm_category_fallback(batch_size: int = 20) -> int:
+    """LLM fallback for parts the keyword matcher can't classify.
+    Takes up to batch_size parts from _unclassifiable, asks the LLM in one prompt,
+    writes results. Runs at most 20 parts per cleanup cycle to stay cheap."""
+    from hf_client import hf_text  # import here to avoid circular-import at module load
+
+    global _unclassifiable, _llm_fallback_cursor, _llm_consecutive_failures
+
+    if len(_unclassifiable) == 0:
+        return 0
+
+    # Back off when all providers are rate-limited — skip every other cycle
+    if _llm_consecutive_failures >= 3:
+        _llm_consecutive_failures -= 1  # decay slowly
+        return 0
+
+    # Refill cursor from unclassifiable set when empty
+    if not _llm_fallback_cursor:
+        _llm_fallback_cursor = list(_unclassifiable)[:5000]  # cap to avoid OOM
+    if not _llm_fallback_cursor:
+        return 0
+
+    batch_ids = _llm_fallback_cursor[:batch_size]
+    _llm_fallback_cursor = _llm_fallback_cursor[batch_size:]
+
+    print(f"[Cleanup] task3b: attempting LLM classify for {len(batch_ids)} parts (unclassifiable_total={len(_unclassifiable)})")
+
+    async with scraper_session_factory() as db:
+        try:
+            # Use IN with individual named params — asyncpg handles these reliably
+            id_params = {f"id_{i}": bid for i, bid in enumerate(batch_ids)}
+            in_clause = ", ".join(f":id_{i}" for i in range(len(batch_ids)))
+            rows = (await db.execute(text(f"""
+                SELECT id::text, COALESCE(name,'') || ' ' || COALESCE(name_he,'') AS blob
+                FROM parts_catalog
+                WHERE id::text IN ({in_clause}) AND is_active = TRUE
+            """), id_params)).fetchall()
+        except Exception as exc:
+            print(f"[Cleanup] task3b fetch error: {exc}")
+            return 0
+
+    print(f"[Cleanup] task3b: fetched {len(rows)} rows from DB")
+    if not rows:
+        return 0
+
+    # Build LLM prompt using numbered position instead of UUID in output
+    # The model outputs "N. category" lines — we map back by index
+    indexed_rows = list(rows)
+    numbered_parts = "\n".join(
+        f"{i+1}. {r[1][:100]}" for i, r in enumerate(indexed_rows)
+    )
+    cats_str = ", ".join(_VALID_CATEGORIES)
+    prompt = (
+        f"You must classify {len(indexed_rows)} auto parts. "
+        f"Valid categories: {cats_str}\n\n"
+        f"Output exactly {len(indexed_rows)} lines. Each line: N. category\n"
+        f"Example: 1. engine\n2. brakes\n3. filters\n\n"
+        f"Parts:\n{numbered_parts}"
+    )
+    system = (
+        f"Output exactly {len(indexed_rows)} numbered lines like: 1. engine\n"
+        "Choose from valid categories only. No other text."
+    )
+
+    try:
+        raw = await hf_text(prompt, system=system)
+        _llm_consecutive_failures = 0  # reset on success
+    except Exception as exc:
+        print(f"[Cleanup] task3b LLM call failed: {exc}")
+        _llm_consecutive_failures += 1
+        return 0
+
+    raw_lines = (raw or "").splitlines()
+    print(f"[Cleanup] task3b: LLM returned {len(raw_lines)} lines")
+
+    # Parse "N. category" lines — map position back to UUID
+    # Also accept reasoning lines "N. ... category ..." by taking rightmost valid category per number
+    _NUM_RE = re.compile(r'^\s*(\d+)[.)]\s*(.*)', re.DOTALL)
+    updates: list[dict] = []
+    seen_nums: set[int] = set()
+
+    for line in raw_lines:
+        m = _NUM_RE.match(line)
+        if not m:
+            continue
+        num = int(m.group(1))
+        rest = m.group(2).strip().lower()
+        if num < 1 or num > len(indexed_rows) or num in seen_nums:
+            continue
+        # Find rightmost valid category in the rest of the line
+        best_cat: str | None = None
+        best_pos: int = -1
+        for cat in _VALID_CATEGORIES:
+            idx = rest.rfind(cat)
+            if idx >= 0 and idx > best_pos:
+                best_pos = idx
+                best_cat = cat
+        if best_cat:
+            part_id = indexed_rows[num - 1][0]  # UUID from original batch order
+            updates.append({"id": part_id, "category": best_cat})
+            _unclassifiable.discard(part_id)
+            seen_nums.add(num)
+
+    print(f"[Cleanup] task3b: parsed {len(updates)}/{len(indexed_rows)} valid classifications")
+    if not updates:
+        return 0
+
+    async with scraper_session_factory() as db:
+        try:
+            await db.execute(text("""
+                WITH payload AS (
+                    SELECT x.id::uuid AS id, x.category::text AS category
+                    FROM jsonb_to_recordset(CAST(:rows_json AS jsonb))
+                    AS x(id text, category text)
+                )
+                UPDATE parts_catalog pc
+                SET category = payload.category, updated_at = NOW()
+                FROM payload WHERE pc.id = payload.id
+            """), {"rows_json": json.dumps(updates, ensure_ascii=False)})
+            await db.commit()
+            print(f"[Cleanup] task3b LLM: classified {len(updates)}/{len(indexed_rows)} parts")
+        except Exception as exc:
+            await db.rollback()
+            print(f"[Cleanup] task3b DB write error: {exc}")
+            return 0
+
+    return len(updates)
 
 
 async def task6_reorganize_categories_rollup(batch_size: int = 500) -> int:
@@ -478,8 +625,8 @@ def get_cleanup_coordination_plan() -> Dict[str, Any]:
 async def task_zombie_watchdog() -> int:
     """
     Scan job_registry for jobs whose last_heartbeat_at has exceeded their
-    ttl_seconds without completing.  Mark them as 'failed' so the distributed
-    lock is no longer blocked and new cycles can run.
+    ttl_seconds without completing.  Mark them as 'failed' AND clear the
+    corresponding Redis distributed lock so new cycles can run immediately.
 
     A job is considered a zombie when:
       status = 'running'
@@ -490,26 +637,26 @@ async def task_zombie_watchdog() -> int:
     Returns the number of rows remediated.
     """
     remediated = 0
+    zombie_job_names: list[str] = []
     async with scraper_session_factory() as db:
         try:
             result = await db.execute(text("""
                 WITH zombies AS (
-                    SELECT job_id
+                    SELECT job_id, job_name
                     FROM job_registry
                     WHERE status = 'running'
-                      AND last_heartbeat_at < NOW() - (
-                          COALESCE(ttl_seconds, 1800) * INTERVAL '1 second'
-                      )
+                      AND last_heartbeat_at < NOW() - INTERVAL '2 hours'
                 )
                 UPDATE job_registry
                 SET status        = 'failed',
                     completed_at  = NOW(),
                     error_message = 'Auto-remediated by zombie watchdog: no heartbeat within TTL'
                 WHERE job_id IN (SELECT job_id FROM zombies)
-                RETURNING job_id
+                RETURNING job_id, job_name
             """))
             rows = result.fetchall()
             remediated = len(rows)
+            zombie_job_names = list({r[1] for r in rows})
             await db.commit()
             if remediated:
                 logger.warning(
@@ -523,6 +670,26 @@ async def task_zombie_watchdog() -> int:
                 await db.rollback()
             except Exception:
                 pass
+
+    # Clear Redis distributed locks for all remediated jobs so new runs can start.
+    if zombie_job_names:
+        try:
+            import sys
+            sys.path.insert(0, "/app")
+            from BACKEND_AUTH_SECURITY import get_redis
+            redis = await get_redis()
+            if redis:
+                for jname in zombie_job_names:
+                    lock_key = f"autospare:lock:{jname}"
+                    deleted = await redis.delete(lock_key)
+                    if deleted:
+                        logger.warning(
+                            "[Cleanup] task_zombie_watchdog: cleared Redis lock %s", lock_key
+                        )
+                await redis.aclose()
+        except Exception as exc:
+            logger.error("task_zombie_watchdog: Redis lock clear failed: %s", exc)
+
     return remediated
 
 
@@ -636,14 +803,18 @@ async def task_recover_motorstore_prices(batch_size: int = 8) -> int:
                         "task_recover_motorstore_prices: recovered %s oem=%s price_ils=%.2f",
                         manufacturer, oem, price_ils,
                     )
-                except Exception as part_exc:
+                except BaseException as part_exc:
+                    if isinstance(part_exc, (KeyboardInterrupt, SystemExit)):
+                        raise
                     logger.warning("task_recover_motorstore_prices: part %s failed: %s", oem, part_exc)
                     try:
                         await db.rollback()
                     except Exception:
                         pass
 
-        except Exception as exc:
+        except BaseException as exc:
+            if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                raise
             logger.error("task_recover_motorstore_prices failed: %s", exc)
             try:
                 await db.rollback()
@@ -651,6 +822,32 @@ async def task_recover_motorstore_prices(batch_size: int = 8) -> int:
                 pass
 
     return recovered
+
+
+async def task_deactivate_hebrew_oem(batch_size: int = 500) -> int:
+    """Deactivate parts whose OEM number contains Hebrew characters (invalid OEM)."""
+    deactivated = 0
+    async with scraper_session_factory() as db:
+        try:
+            result = await db.execute(text("""
+                UPDATE parts_catalog SET is_active = FALSE, updated_at = NOW()
+                WHERE oem_number ~ '[\\u05d0-\\u05ea]'
+                  AND is_active = TRUE
+                  AND id IN (
+                      SELECT id FROM parts_catalog
+                      WHERE oem_number ~ '[\\u05d0-\\u05ea]'
+                        AND is_active = TRUE
+                      LIMIT :batch
+                  )
+            """), {"batch": batch_size})
+            deactivated = result.rowcount or 0
+            await db.commit()
+            if deactivated:
+                logger.info("task_deactivate_hebrew_oem: deactivated %d parts", deactivated)
+        except Exception as exc:
+            await db.rollback()
+            logger.error("task_deactivate_hebrew_oem failed: %s", exc)
+    return deactivated
 
 
 CLEANUP_TASK_REGISTRY: Dict[str, Callable[[], Awaitable[int]]] = {
@@ -663,7 +860,98 @@ CLEANUP_TASK_REGISTRY: Dict[str, Callable[[], Awaitable[int]]] = {
     "task_recover_priced_inactive": task_recover_priced_inactive,
     "task_recover_motorstore_prices": task_recover_motorstore_prices,
     "task_zombie_watchdog": task_zombie_watchdog,
+    "task_deactivate_hebrew_oem": task_deactivate_hebrew_oem,
 }
+
+
+async def _process_cleanup_agent_todos() -> int:
+    """Check agent_todos assigned to db_cleanup_agent and execute matching tasks."""
+    processed = 0
+    async with scraper_session_factory() as db:
+        try:
+            rows = await db.execute(text("""
+                SELECT id, title, artifacts FROM agent_todos
+                WHERE assigned_to_agent = 'db_cleanup_agent'
+                  AND status = 'not_started'
+                ORDER BY priority DESC, created_at ASC
+                LIMIT 5
+            """))
+            todos = rows.fetchall()
+        except Exception as exc:
+            logger.error("_process_cleanup_agent_todos: query failed: %s", exc)
+            return 0
+
+    for todo in todos:
+        todo_id = str(todo[0])
+        title = todo[1] or ""
+        artifacts = todo[2] or {}
+
+        # Determine which task(s) to run based on title keywords
+        task_names: list[str] = []
+        if isinstance(artifacts, dict):
+            task_names = artifacts.get("task_names", [])
+        if not task_names:
+            title_lower = title.lower()
+            if "hebrew" in title_lower and "oem" in title_lower:
+                task_names = ["task_deactivate_hebrew_oem"]
+
+        if not task_names:
+            # No matching task — dismiss
+            async with scraper_session_factory() as db:
+                try:
+                    await db.execute(text("""
+                        UPDATE agent_todos SET status = 'dismissed', updated_at = NOW(),
+                            progress_notes = 'No matching cleanup task found for this todo'
+                        WHERE id = CAST(:tid AS uuid)
+                    """), {"tid": todo_id})
+                    await db.commit()
+                except Exception:
+                    await db.rollback()
+            continue
+
+        # Mark in_progress
+        async with scraper_session_factory() as db:
+            try:
+                await db.execute(text("""
+                    UPDATE agent_todos SET status = 'in_progress', updated_at = NOW()
+                    WHERE id = CAST(:tid AS uuid) AND status = 'not_started'
+                """), {"tid": todo_id})
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                continue
+
+        # Run each task
+        all_ok = True
+        for task_name in task_names:
+            fn = CLEANUP_TASK_REGISTRY.get(task_name)
+            if fn is None:
+                logger.warning("_process_cleanup_agent_todos: unknown task %s", task_name)
+                all_ok = False
+                continue
+            try:
+                result = await fn()
+                logger.info("cleanup todo task %s result=%s", task_name, result)
+            except Exception as exc:
+                logger.error("cleanup todo task %s failed: %s", task_name, exc)
+                all_ok = False
+
+        # Mark completed or failed
+        new_status = "completed" if all_ok else "dismissed"
+        async with scraper_session_factory() as db:
+            try:
+                await db.execute(text("""
+                    UPDATE agent_todos SET status = :status, completed_at = NOW(), updated_at = NOW(),
+                        progress_pct = 100,
+                        progress_notes = 'Executed by db_cleanup_agent loop'
+                    WHERE id = CAST(:tid AS uuid)
+                """), {"status": new_status, "tid": todo_id})
+                await db.commit()
+                processed += 1
+            except Exception:
+                await db.rollback()
+
+    return processed
 
 
 async def run_cleanup_cycle_once(
@@ -680,6 +968,8 @@ async def run_cleanup_cycle_once(
     t2 = await task2_fill_oem_from_crossref()
     await asyncio.sleep(3)
     t3 = await task3_categorize_by_keywords()
+    await asyncio.sleep(1)
+    t3b = await task3b_llm_category_fallback(batch_size=500)
     await asyncio.sleep(2)
     t6 = await task6_reorganize_categories_rollup()
     await asyncio.sleep(2)
@@ -719,6 +1009,7 @@ async def run_cleanup_cycle_once(
         "types": t1,
         "oem": t2,
         "categorized": t3,
+        "categorized_llm": t3b,
         "recategorized": t6,
         "flags": t4,
         "overflow": t5,
@@ -751,8 +1042,19 @@ async def run_cleanup_loop() -> None:
                     f"recovered_web={report['recovered_web']}"
                 )
 
+            # Check for agent_todos every 5 cycles (~2.5 min)
+            if cycle % 5 == 0:
+                try:
+                    processed = await _process_cleanup_agent_todos()
+                    if processed:
+                        print(f"[Cleanup] Processed {processed} agent_todos")
+                except Exception as todo_exc:
+                    logger.error("[Cleanup] agent_todos processing error: %s", todo_exc)
+
             await asyncio.sleep(30)
 
-        except Exception as e:
-            print(f"[Cleanup] Error in cycle {cycle}: {e}")
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException as e:
+            print(f"[Cleanup] Error in cycle {cycle}: {type(e).__name__}: {e}")
             await asyncio.sleep(60)

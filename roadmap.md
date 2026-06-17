@@ -1,8 +1,63 @@
 # AutoSpareFinder Roadmap
 
-Last updated: 2026-05-17
+Last updated: 2026-06-15
 Owner: Auto Spare Admin <admin@autosparefinder.co.il>
 Update cadence: Weekly
+
+---
+
+## ⚠️ Operational Rules — Added 2026-06-15 (MUST FOLLOW)
+
+### Rule 1: Memory Check Before Launching Any Background Process
+**Never start a background Python worker (importer, scraper, backfill) without first running:**
+```bash
+docker stats --no-stream --format "{{.Name}}\t{{.MemUsage}}\t{{.MemPerc}}"
+```
+If the backend container is above 60% memory, do NOT launch additional workers.
+The backend container limit is `2048m` (updated 2026-06-15 from 1024m).
+
+**Why this rule exists:** category_backfill.py + freesbe_importer.py + uvicorn together exceeded the old 1GB limit,
+causing 104 container restarts over ~3 hours before the OOM was diagnosed. The fix was a 1-line change to docker-compose.yml.
+The lesson: check memory BEFORE launching, not after crashes accumulate.
+
+### Rule 2: Any Container Restart = Immediate OOM Diagnosis
+If `docker inspect <container> --format '{{.RestartCount}}'` increases between checks:
+1. Run `docker stats --no-stream` immediately
+2. Run `free -h` on the host
+3. Check container memory limit vs usage
+4. Fix root cause BEFORE rescheduling any monitoring wakeup
+
+Do NOT wait for the next 30-minute cycle. One restart → diagnose now.
+
+### Rule 3: category_backfill.py Must Not Run Alongside freesbe_importer.py
+The external category backfill script (`/tmp/category_backfill.py`) uses 5K-row OFFSET queries
+and creates significant memory pressure. The uvicorn `cleanup_loop` (`task3_categorize_by_keywords`)
+handles categorization internally — use that instead. Only run category_backfill.py alone, never
+simultaneously with freesbe_importer.py or other importers.
+
+### Rule 4: Container Memory Limits (current as of 2026-06-15)
+| Container | Limit |
+|---|---|
+| autospare_backend | **2048m** (was 1024m) |
+| autospare_meilisearch | **1536m** (was 1024m) |
+| autospare_postgres_catalog | 2048m |
+| autospare_clamav | 2048m |
+| autospare_postgres_pii | 768m |
+| autospare_redis | 256m |
+
+If any container exceeds 80% of its limit, raise it in `docker-compose.yml` and recreate with `docker compose up -d --no-build <service>`.
+
+---
+
+## Recent Changes (2026-06-15)
+- **Root-fixed 3 silent worker failures:**
+  1. Zombie `run_all_tasks` jobs left Redis lock held → new runs returned `skipped` indefinitely. Fix: zombie watchdog now also deletes `autospare:lock:{job_name}` from Redis when killing stale DB rows.
+  2. 173 REX todos queued with no executor loop → pile-up forever. Fix: added `_rex_dispatch_loop()` to startup that routes REX todos to `db_update_agent` or `scraper` every 15 min.
+  3. `freesbe_importer.py` shared one asyncpg connection across 4 concurrent coroutines → `InterfaceError` crash on first batch. Fix: fetch concurrently (HTTP semaphore=4), write serially (single connection + asyncio.Lock).
+- **Freesbe IL price import running:** 177K parts from admin.freesbe.com (open Strapi API). Fills `importer_price_ils` for Renault/Dacia (RE-), Nissan/Infiniti (NI-), Chery (CH-), Xpeng (XP-), JAC (JM-). ~65K parts priced so far as of 2026-06-15.
+- **Backend container memory limit raised: 1GB → 2GB** to prevent OOM crash loop under load.
+- **Meilisearch memory limit raised: 1GB → 1.5GB** (was at 85% of old limit).
+- **75 db_update_agent todos dispatched and completed** — normalize_categories, fix_base_prices, normalize_base_price, fill_car_brands, sync_models_from_catalog.
 
 ## Recent Changes (2026-05-17)
 - Frontend routing upgraded to support a public marketing landing page and private workspace split:
@@ -1021,9 +1076,9 @@ Operational unblock work (2026-04-16):
     - OEM EPC lane (template-gated via `OEM_EPC_ENDPOINT_TEMPLATES`).
   - Multi-source validation artifact: `logs/phase_c1_step5/step5_pass_report_multi_source_small.json`.
     - NHTSA probe returned `200` reference payload.
-    - eBay lane skipped due missing bearer token.
+    - eBay lane: **FIXED 2026-06-04** — `external_fitment_providers._get_ebay_oauth_token()` auto-fetches token via EBAY_APP_ID+EBAY_CERT_ID OAuth2 flow. `token_present=True` confirmed.
     - RockAuto and OEM EPC lanes skipped due missing endpoint templates.
-    - fitment-capable lanes remain blocked by `403` (`external_provider_access_forbidden`).
+    - fitment-capable autodoc/buycarparts lanes remain blocked by `403` from server IP 207.180.217.129 — needs proxy or GitHub Actions runner.
 - Readiness diagnostics hardening (2026-04-16):
   - Added provider readiness fields in playbook/pass artifacts:
     - `provider_enablement`
@@ -1047,6 +1102,11 @@ Operational unblock work (2026-04-16):
   - `logs/phase_c1_step5/step5_pass_report_20260416T053302Z.json` (`status=blocked`, `part_vehicle_fitment_rows_added=0`, `json_usable_probe_attempts=0`)
 - Operator pause note (2026-04-16):
   - Step 5 reruns are paused by request until credential updates are provided.
+
+**Update 2026-06-04:**
+- eBay fitment lane fixed: `external_fitment_providers._get_ebay_oauth_token()` now auto-fetches OAuth2 token via EBAY_APP_ID+EBAY_CERT_ID. No manual token management needed.
+- Jaguar fitment: new `backfill_jaguar_fitment_from_name()` in `db_update_agent.py` provides coverage via part name parsing (XE/XF/XJ/F-Pace/E-Pace/F-Type/I-Pace/S-Type/X-Type/XK/XKR/XJR etc.) without external API calls. Runs every 6h in ordered_tasks. 429 matchable Jaguar parts identified; merchandise filtered. Recommended approach for all brands that have model names embedded in part descriptions.
+- autodoc.eu and buycarparts.co.uk remain blocked from server IP. For full external fitment coverage, use GitHub Actions runner or a proxy.
 
 Execution cadence:
 - One brand onboarding at a time.
@@ -1115,7 +1175,7 @@ Exit criteria:
 | Fitment Step 3 schema consistency gate | P0 | TBD | DONE | 2026-04-16 | fitment schema/index/merge-contract guardrails passing (2 tests) | 2026-04-16 |
 | Fitment Step 5 blocker playbook | P1 | TBD | DONE | 2026-04-16 | one-command probe matrix report with blocker reason and next actions | 2026-04-16 |
 | Fitment Step 5 external source lane access | P1 | TBD | BLOCKED | 2026-04-27 | preflight is config-ready (`fitment_attempts_executable=8`) but fitment-capable live probes still return 403; token/template-gated lanes remain pending credentials/templates | 2026-04-16 |
-| Stripe live webhook validation | P0 | TBD | TODO | 2026-04-13 | successful live test payment | - |
+| Stripe live webhook validation | P0 | TBD | DONE | 2026-04-13 | sk_live_* and whsec_* confirmed set in production .env (verified 2026-06-04) | 2026-06-04 |
 | Multi-payment reliability regression suite | P1 | TBD | TODO | 2026-04-20 | 0 critical regressions in CI | - |
 | Verify-session idempotency hardening | P1 | TBD | TODO | 2026-04-20 | no duplicate invoice/fulfillment | - |
 | Fitment enrichment pipeline operations | P1 | TBD | IN_PROGRESS | 2026-04-27 | Batches 1-61 executed; latest batch 35,546 XLS updates + 19,624 PVF merge updates; batch 61 KPI delta remained timestamp-only | 2026-04-16 |

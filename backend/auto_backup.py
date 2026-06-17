@@ -28,7 +28,7 @@ def _pg_dump(db_url: str, out_path: str) -> bool:
     """Invoke pg_dump for one connection URL. Returns True on success."""
     m = re.match(
         r"postgres(?:ql)?://([^:@]+)(?::([^@]*))?@([^/:]+)(?::(\d+))?/(.+)",
-        db_url,
+        db_url.replace("+asyncpg", ""),
     )
     if not m:
         logger.error("auto_backup: cannot parse db_url")

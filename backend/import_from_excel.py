@@ -303,7 +303,9 @@ async def run(brands=None, dry_run=False):
                             WHEN $1::text IS NOT NULL AND $1::text <> 'unknown' THEN LEFT($1::text, 50)
                             ELSE COALESCE(NULLIF(part_type, ''), 'OEM')
                         END,
-                        importer_price_ils=$2, online_price_ils=$2, updated_at=NOW()
+                        base_price = CASE WHEN $2 > 0 THEN $2 ELSE base_price END,
+                        max_price_ils = CASE WHEN $2 > 0 THEN $2 ELSE max_price_ils END,
+                        importer_price_ils=0, online_price_ils=0, updated_at=NOW()
                     WHERE id=$3
                 """, rec["part_type"], price, uuid.UUID(part_id))
                 stats["cat_fixed"] += 1

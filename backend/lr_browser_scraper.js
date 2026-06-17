@@ -177,7 +177,7 @@
     a.href = URL.createObjectURL(blob);
     a.download = 'land_rover_parts.json';
     a.click();
-    console.log(`Downloaded ${arr.length} parts. Upload at http://94.130.150.23:8080`);
+    console.log(`Downloaded ${arr.length} parts. Upload at http://207.180.217.129:8080`);
   };
 
   window.lrClear = function() {

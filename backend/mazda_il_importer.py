@@ -55,7 +55,7 @@ MANUFACTURER_ID = "72dd2cd7-a452-471c-8ea8-a376ff905c45"
 SUPPLIER_NAME = "Mazda Israel - Delek Motors"
 SUPPLIER_URL = "https://www.mazda.co.il"
 DELEK_BRAND_ID = 1
-VAT_RATE = 0.18
+VAT_RATE = 0.18  # current Israeli VAT rate
 WARRANTY_MONTHS = 24  # official Israeli importer
 DELIVERY_DAYS = 3
 API_URL = "https://serviceforms.delek-motors.co.il/home/GetPriceListReplacements"
@@ -212,10 +212,13 @@ async def main():
         if not oem or not name_he:
             continue
 
-        # Price: priceWithTax is ILS incl. VAT
-        price_excl = round(price_with_tax / (1 + VAT_RATE), 2) if price_with_tax > 0 else 0.0
-        min_price = price_excl if price_excl > 0 else None
-        max_price = price_with_tax if price_with_tax > 0 else None
+        # Price: priceWithTax is ILS incl. VAT — IL market consumer price
+        il_retail = round(price_with_tax, 2) if price_with_tax > 0 else 0.0
+        # Derive excl-VAT cost and our selling price
+        il_cost   = round(il_retail / (1 + VAT_RATE), 2) if il_retail > 0 else 0.0
+        il_selling = round(il_cost * 1.45, 2) if il_cost > 0 else 0.0
+        min_price = il_cost if il_cost > 0 else None
+        max_price = il_retail if il_retail > 0 else None
 
         sku = f"MAZDA-{oem}"
         category = guess_category(name_he, name_en)
@@ -255,11 +258,11 @@ async def main():
                     part_id = str(row["id"])
                     await conn.execute("""
                         UPDATE parts_catalog SET
-                            importer_price_ils=$1, min_price_ils=$2, max_price_ils=$3,
+                            base_price=$1, importer_price_ils=$2, min_price_ils=$2, max_price_ils=$3,
                             specifications=$4::jsonb, compatible_vehicles=$5::jsonb,
                             is_safety_critical=$6, updated_at=NOW()
                         WHERE id=$7
-                    """, price_excl, min_price, max_price,
+                    """, il_selling, il_cost, il_retail,
                         specs, json.dumps(compat_vehicles),
                         safety, part_id)
                     updated += 1
@@ -268,13 +271,13 @@ async def main():
                     await conn.execute("""
                         INSERT INTO parts_catalog(
                             id, sku, oem_number, name, name_he, manufacturer, manufacturer_id,
-                            category, importer_price_ils, min_price_ils, max_price_ils,
+                            category, base_price, importer_price_ils, min_price_ils, max_price_ils,
                             specifications, compatible_vehicles, part_condition, aftermarket_tier,
                             is_safety_critical, needs_oem_lookup, master_enriched,
                             is_active, created_at, updated_at
                         ) VALUES(
                             $1,$2,$3,$4,$5,$6,$7::uuid,
-                            $8,$9,$10,$11,
+                            $8,$9,$10,$10,$11,
                             $12::jsonb,$13::jsonb,$14,$15,
                             $16,FALSE,FALSE,
                             TRUE,NOW(),NOW()
@@ -282,7 +285,7 @@ async def main():
                     """, part_id, sku, oem,
                         name_en or name_he, name_he,
                         MANUFACTURER, MANUFACTURER_ID,
-                        category, price_excl, min_price, max_price,
+                        category, il_selling, il_cost, il_retail,
                         specs, json.dumps(compat_vehicles),
                         "New", aftermarket_tier, safety)
                     inserted += 1

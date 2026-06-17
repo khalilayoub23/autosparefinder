@@ -91,7 +91,7 @@ services:
     build: ./backend
     container_name: autospare_backend
     restart: unless-stopped
-    mem_limit: 1024m
+    mem_limit: 4096m
     shm_size: 256m
     environment:
       DATABASE_URL: postgresql+asyncpg://autospare:${DB_PASSWORD}@postgres_catalog:5432/autospare
@@ -168,16 +168,38 @@ services:
       TELEGRAM_OWNER_CHAT_ID: ${TELEGRAM_OWNER_CHAT_ID}
       NOA_MARKETING_INTERVAL_H: ${NOA_MARKETING_INTERVAL_H:-24}
       DEV_2FA_CODE: ${DEV_2FA_CODE}
-      CORS_ORIGINS: ${CORS_ORIGINS:-https://autosparefinder.co.il,https://www.autosparefinder.co.il}
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://autosparefinder.co.il,https://www.autosparefinder.co.il,https://www.car-parts.ie}
       FRONTEND_PUBLIC_URL: ${FRONTEND_PUBLIC_URL:-https://autosparefinder.co.il}
       FRONTEND_INTERNAL_URL: ${FRONTEND_INTERNAL_URL:-http://frontend}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
       CLAMD_HOST: clamav
       MEILI_URL: http://meilisearch:7700
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
+      MEILI_REBUILD: '0'
+      HF_ENRICH_MODEL: 'microsoft/Phi-3-mini-4k-instruct'
       ENVIRONMENT: production
-      REAL_DATA_ONLY: 'true'
+      REAL_DATA_ONLY: 'true'        # blocks synthetic/AI-generated data; real harvesting uses REX_HARVEST_ENABLED
+      REX_HARVEST_ENABLED: 'true'  # allows REX to scrape and import real parts data through the pipeline
+      DISCOVERY_TARGET: '500000'   # parts per brand before REX stops (default 200 was too low; goal is 10M parts)
+      DISCOVERY_PER_RUN: '20'      # brands to process per REX cycle (default 5)
+      DISCOVERY_INTERVAL_H: '3'    # run REX every 3h aligned with scraper cycle (default 24)
+      DISCOVERY_ENABLED: 'true'
       DEBUG: 'false'
+      COMPANY_NAME: ${COMPANY_NAME:-Auto Spare Finder}
+      COMPANY_PHONE: ${COMPANY_PHONE:-+972-53-242-6920}
+      COMPANY_NUMBER: ${COMPANY_NUMBER:-060633880}
+      COMPANY_ADDRESS: ${COMPANY_ADDRESS}
+      COMPANY_EMAIL: ${COMPANY_EMAIL:-info@autosparefinder.co.il}
+      SEARCH_ENABLE_HF_QUERY_NORMALIZATION: '0'
+      SEARCH_ENABLE_VECTOR_RERANK: '0'
+      SEARCH_HF_QUERY_NORMALIZATION_TIMEOUT_S: '0.5'
+      SEARCH_VECTOR_RERANK_MIN_QUERY_LEN: '4'
+      ENABLE_CROSS_REFERENCE_EXPANSION: '0'
+      SEARCH_MEILI_TIMEOUT_S: '5.0'
+      SCRAPER_JOB_TTL_S: '21600'
+      SCRAPER_LOCK_TTL_S: '21600'
+      DB_AGENT_HEARTBEAT_INTERVAL_S: '30'
+      OWNER_WHATSAPP_PHONE: '+972532426920'
     depends_on:
       postgres_catalog:
         condition: service_healthy
@@ -199,9 +221,11 @@ services:
       retries: 3
     volumes:
     - upload_files:/app/uploads
+    - worker_state:/app/state
     command: "/bin/bash -c \"\n  alembic -c alembic.ini upgrade head &&\n  alembic\
-      \ -c alembic_pii.ini upgrade head &&\n  uvicorn BACKEND_API_ROUTES:app --host\
-      \ 0.0.0.0 --port 8000 --workers ${API_WORKERS:-1}\n\"\n"
+      \ -c alembic_pii.ini upgrade head &&\n  /app/scripts/container_start.sh &\n\
+      \  uvicorn BACKEND_API_ROUTES:app --host 0.0.0.0 --port 8000 --workers ${API_WORKERS:-1}\n\
+      \"\n"
     networks:
     - internal
     - public
@@ -264,7 +288,7 @@ services:
     image: getmeili/meilisearch:v1.7
     container_name: autospare_meilisearch
     restart: unless-stopped
-    mem_limit: 1024m
+    mem_limit: 1536m
     environment:
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
       MEILI_ENV: production
@@ -302,6 +326,30 @@ services:
     - backend
     networks:
     - internal
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+  clamav:
+    image: clamav/clamav:stable
+    container_name: autospare_clamav
+    restart: unless-stopped
+    mem_limit: 2048m
+    volumes:
+    - clamav_data:/var/lib/clamav
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - clamdcheck.sh || exit 1
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 300s
+    networks:
+    - internal
+    security_opt:
+    - no-new-privileges:true
     logging:
       driver: json-file
       options:
@@ -359,3 +407,5 @@ volumes:
   frontend_build: null
   meili_data: null
   backup_data: null
+  clamav_data: null
+  worker_state: null

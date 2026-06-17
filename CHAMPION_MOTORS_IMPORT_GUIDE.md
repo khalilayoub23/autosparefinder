@@ -29,7 +29,7 @@ Full end-to-end pipeline for importing Champion Motors catalog (championmotors.c
 - Calculates net prices (price ÷ 1.18 for VAT exclusion)
 - Saves to JSON: `/app/champion_motors_parts.json`
 
-**Note**: Server IP (94.130.150.23) is WAF-blocked by Champion Motors. 
+**Note**: Server IP (207.180.217.129) is WAF-blocked by Champion Motors. 
 Must run scraper from client browser OR use VPN/proxy from server.
 
 **Run**:
@@ -195,7 +195,7 @@ Before declaring import complete:
 **Problem**: Status 403 "Access Denied" from championmotors.co.il
 **Solution**: 
 1. Run scraper from client browser (use `champion_motors_scraper.js` browser snippet)
-2. Upload JSON to server via http://94.130.150.23:8080
+2. Upload JSON to server via http://207.180.217.129:8080
 3. Run importer from backend container
 
 ### No parts inserted
@@ -245,7 +245,7 @@ docker exec autospare_backend python /app/meili_sync.py --rebuild
 4. **Validate**:
    - Check parts count: `SELECT COUNT(*) FROM parts_catalog WHERE sku LIKE 'CM-%'`
    - Check fitments: `SELECT COUNT(*) FROM part_vehicle_fitment WHERE part_id IN (SELECT id FROM parts_catalog WHERE sku LIKE 'CM-%')`
-   - Test search: Visit http://94.130.150.23:3000 and search for VW/Audi parts
+   - Test search: Visit http://207.180.217.129:3000 and search for VW/Audi parts
 
 ---
 

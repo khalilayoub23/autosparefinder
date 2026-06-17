@@ -188,18 +188,44 @@ def _search_cache_key(query: str, vehicle_id: Optional[str], vehicle_manufacture
     )
 
 
-def _get_cached_search_response(cache_key: Tuple) -> Optional[Dict[str, Any]]:
+def _search_redis_key(cache_key: Tuple) -> str:
+    """Stable Redis key for a search cache tuple."""
+    import hashlib, json as _json
+    raw = _json.dumps(list(cache_key), ensure_ascii=False, sort_keys=True, default=str)
+    return "autospare:search_cache:" + hashlib.sha256(raw.encode()).hexdigest()[:32]
+
+
+async def _get_cached_search_response(cache_key: Tuple) -> Optional[Dict[str, Any]]:
+    """Redis-backed search cache with in-memory fallback."""
+    import json as _json
+    # L1: in-memory
     cached = SEARCH_RESPONSE_CACHE.get(cache_key)
-    if not cached:
-        return None
-    expires_at, payload = cached
-    if expires_at <= time.monotonic():
+    if cached:
+        expires_at, payload = cached
+        if expires_at > time.monotonic():
+            return copy.deepcopy(payload)
         SEARCH_RESPONSE_CACHE.pop(cache_key, None)
-        return None
-    return copy.deepcopy(payload)
+
+    # L2: Redis
+    try:
+        from BACKEND_AUTH_SECURITY import get_redis
+        redis = await get_redis()
+        raw = await redis.get(_search_redis_key(cache_key))
+        if raw:
+            payload = _json.loads(raw)
+            # Warm L1 from Redis hit
+            SEARCH_RESPONSE_CACHE[cache_key] = (time.monotonic() + SEARCH_RESPONSE_TTL_S, payload)
+            return copy.deepcopy(payload)
+    except Exception:
+        pass  # Redis unavailable — cache miss is acceptable
+
+    return None
 
 
-def _store_cached_search_response(cache_key: Tuple, payload: Dict[str, Any]) -> None:
+async def _store_cached_search_response(cache_key: Tuple, payload: Dict[str, Any]) -> None:
+    """Write-through to Redis and in-memory."""
+    import json as _json
+    # L1: in-memory with size cap
     if len(SEARCH_RESPONSE_CACHE) >= 256:
         expired_keys = [k for k, (exp, _) in SEARCH_RESPONSE_CACHE.items() if exp <= time.monotonic()]
         for k in expired_keys:
@@ -208,6 +234,18 @@ def _store_cached_search_response(cache_key: Tuple, payload: Dict[str, Any]) -> 
             oldest = min(SEARCH_RESPONSE_CACHE, key=lambda k: SEARCH_RESPONSE_CACHE[k][0])
             SEARCH_RESPONSE_CACHE.pop(oldest, None)
     SEARCH_RESPONSE_CACHE[cache_key] = (time.monotonic() + SEARCH_RESPONSE_TTL_S, copy.deepcopy(payload))
+
+    # L2: Redis write-through
+    try:
+        from BACKEND_AUTH_SECURITY import get_redis
+        redis = await get_redis()
+        await redis.setex(
+            _search_redis_key(cache_key),
+            int(SEARCH_RESPONSE_TTL_S),
+            _json.dumps(payload, ensure_ascii=False, default=str),
+        )
+    except Exception:
+        pass  # Redis write failure is non-fatal — L1 still serves
 
 
 def _to_int_or_none(value: Any) -> Optional[int]:
@@ -933,7 +971,7 @@ async def search_parts(
     _s_cache_key = _search_cache_key(query, vehicle_id, vehicle_manufacturer, vehicle_model,
                                      vehicle_submodel, vehicle_year, category,
                                      per_type or 4, sort_by, cross_refs_enabled)
-    _cached_search = _get_cached_search_response(_s_cache_key)
+    _cached_search = await _get_cached_search_response(_s_cache_key)
     if _cached_search is not None:
         return _cached_search
 
@@ -1858,7 +1896,7 @@ async def search_parts(
         "results_per_type":    per_type,
         "query":               query,
     }
-    _store_cached_search_response(_s_cache_key, _search_result)
+    await _store_cached_search_response(_s_cache_key, _search_result)
     return _search_result
 
 
@@ -3191,7 +3229,6 @@ async def compare_parts(part_id: str, db: AsyncSession = Depends(get_db), reques
             "vat": pricing["vat"],
             "shipping": pricing["shipping"],
             "total": pricing["total"],
-            "profit": pricing["profit"],
             "warranty_months": sp.warranty_months,
             "estimated_delivery": (f"{sp.estimated_delivery_days}-{sp.estimated_delivery_days + 7} ימים" if sp.estimated_delivery_days is not None else None),
         })

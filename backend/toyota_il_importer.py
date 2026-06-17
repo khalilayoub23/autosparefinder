@@ -261,8 +261,12 @@ async def main():
         except (ValueError, TypeError):
             price = 0.0
 
-        min_price = price if price > 0 else None
-        max_price = round(price * (1 + VAT_RATE), 2) if price > 0 else None
+        # price is excl. VAT; il_retail is the consumer retail incl. VAT (IL market reference)
+        il_retail = round(price * (1 + VAT_RATE), 2) if price > 0 else 0.0
+        min_price = il_retail if il_retail > 0 else None
+        max_price = il_retail if il_retail > 0 else None
+        # Policy: base_price = cost * 1.45 (45% margin over excl-VAT cost)
+        il_base_price = round(price * 1.45, 2) if price > 0 else 0.0
 
         sku = f"TOYOTA-{oem}"
         category = guess_category(name_he)
@@ -303,11 +307,11 @@ async def main():
                     part_id = str(row["id"])
                     await conn.execute("""
                         UPDATE parts_catalog SET
-                            importer_price_ils=$1, min_price_ils=$2, max_price_ils=$3,
+                            base_price=$1, importer_price_ils=$2, min_price_ils=$3, max_price_ils=$3,
                             specifications=$4::jsonb, compatible_vehicles=$5::jsonb,
                             is_safety_critical=$6, updated_at=NOW()
                         WHERE id=$7
-                    """, price, min_price, max_price,
+                    """, il_base_price, price, il_retail,
                         specs, json.dumps(compat_vehicles),
                         safety, part_id)
                     updated += 1
@@ -316,13 +320,13 @@ async def main():
                     await conn.execute("""
                         INSERT INTO parts_catalog(
                             id, sku, oem_number, name, name_he, manufacturer, manufacturer_id,
-                            category, importer_price_ils, min_price_ils, max_price_ils,
+                            category, base_price, importer_price_ils, min_price_ils, max_price_ils,
                             specifications, compatible_vehicles, part_condition, aftermarket_tier,
                             is_safety_critical, needs_oem_lookup, master_enriched,
                             is_active, created_at, updated_at
                         ) VALUES(
                             $1,$2,$3,$4,$5,$6,$7::uuid,
-                            $8,$9,$10,$11,
+                            $8,$9,$10,$11,$11,
                             $12::jsonb,$13::jsonb,$14,NULL,
                             $15,FALSE,FALSE,
                             TRUE,NOW(),NOW()
@@ -330,7 +334,7 @@ async def main():
                     """, part_id, sku, oem,
                         name_he, name_he,   # name = name_he until AI translates
                         MANUFACTURER, MANUFACTURER_ID,
-                        category, price, min_price, max_price,
+                        category, il_base_price, price, il_retail,
                         specs, json.dumps(compat_vehicles),
                         "New", safety)
                     inserted += 1

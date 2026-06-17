@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 import re
 import sys
@@ -45,13 +46,46 @@ DB_URL = (
 
 INDEX_NAME = "parts"
 BATCH_SIZE = 5000
+CHECKPOINT_FILE = "/app/state/meili_sync_checkpoint.json"
 
-# Root-fix default: rebuild index unless explicitly disabled.
-REBUILD_DEFAULT = os.getenv("MEILI_REBUILD", "1").strip().lower() not in {
+# Safe default: incremental upsert (no index deletion). Use --rebuild only for
+# schema changes that require a full reindex. Setting MEILI_REBUILD=1 in env
+# forces rebuild; checkpoint still prevents accidental re-deletion if it exists.
+REBUILD_DEFAULT = os.getenv("MEILI_REBUILD", "0").strip().lower() not in {
     "0",
     "false",
     "no",
 }
+
+
+def _load_checkpoint() -> dict | None:
+    try:
+        with open(CHECKPOINT_FILE) as f:
+            data = json.load(f)
+        if data.get("index_ready") and isinstance(data.get("offset"), int):
+            return data
+    except (FileNotFoundError, json.JSONDecodeError, KeyError):
+        pass
+    return None
+
+
+def _save_checkpoint(offset: int, total: int, manufacturer_filter: str | None = None) -> None:
+    os.makedirs(os.path.dirname(CHECKPOINT_FILE), exist_ok=True)
+    with open(CHECKPOINT_FILE, "w") as f:
+        json.dump({
+            "index_ready": True,
+            "offset": offset,
+            "total": total,
+            "manufacturer": manufacturer_filter,
+            "updated_at": datetime.utcnow().isoformat(),
+        }, f)
+
+
+def _clear_checkpoint() -> None:
+    try:
+        os.remove(CHECKPOINT_FILE)
+    except FileNotFoundError:
+        pass
 
 INDEX_SETTINGS = MeilisearchSettings(
     searchable_attributes=["name", "name_he", "sku", "oem_number", "manufacturer", "category"],
@@ -60,13 +94,16 @@ INDEX_SETTINGS = MeilisearchSettings(
         "manufacturer",
         "category",
         "part_type",
+        "part_condition",
         "is_active",
         "is_safety_critical",
         "oem_number",
         "sku",
         "min_price_ils",
+        "importer_price_ils",
+        "has_il_price",
     ],
-    sortable_attributes=["min_price_ils", "base_price"],
+    sortable_attributes=["min_price_ils", "base_price", "importer_price_ils"],
     ranking_rules=["words", "typo", "proximity", "attribute", "sort", "exactness"],
     typo_tolerance=TypoTolerance(
         enabled=True,
@@ -76,8 +113,10 @@ INDEX_SETTINGS = MeilisearchSettings(
 
 SELECT_SQL_ALL = """
     SELECT id::text, sku, name, name_he, manufacturer, category,
-           part_type, oem_number, is_active, is_safety_critical,
-           min_price_ils::float, base_price::float
+           part_type, part_condition, oem_number, is_active, is_safety_critical,
+           min_price_ils::float, base_price::float,
+           importer_price_ils::float,
+           (importer_price_ils IS NOT NULL AND importer_price_ils > 0) AS has_il_price
     FROM parts_catalog
     WHERE is_active = TRUE
     ORDER BY id
@@ -86,8 +125,10 @@ SELECT_SQL_ALL = """
 
 SELECT_SQL_MANUFACTURER = """
     SELECT id::text, sku, name, name_he, manufacturer, category,
-           part_type, oem_number, is_active, is_safety_critical,
-           min_price_ils::float, base_price::float
+           part_type, part_condition, oem_number, is_active, is_safety_critical,
+           min_price_ils::float, base_price::float,
+           importer_price_ils::float,
+           (importer_price_ils IS NOT NULL AND importer_price_ils > 0) AS has_il_price
     FROM parts_catalog
     WHERE LOWER(manufacturer) = LOWER($3)
       AND is_active = TRUE
@@ -147,10 +188,30 @@ async def run(
         await conn.close()
         return
 
+    # Check for a resumable checkpoint (only for full-catalog runs, not manufacturer-scoped)
+    checkpoint = None
+    resume_offset = 0
+    if not manufacturer_filter:
+        checkpoint = _load_checkpoint()
+        if checkpoint:
+            resume_offset = checkpoint["offset"]
+            print(
+                f"[meili_sync] Checkpoint found: resuming from offset {resume_offset}/{total} "
+                f"(saved {checkpoint.get('updated_at', '?')})",
+                flush=True,
+            )
+
     async with AsyncClient(MEILI_URL, MEILI_MASTER_KEY) as client:
         index = client.index(INDEX_NAME)
 
-        if rebuild_index and not manufacturer_filter:
+        if checkpoint:
+            # Resume mode: continue uploading from checkpoint offset.
+            # Always update settings even on resume so new filterable/sortable
+            # attributes take effect without requiring a full rebuild.
+            print("[meili_sync] Resuming upload — applying settings update.", flush=True)
+            settings_task = await index.update_settings(INDEX_SETTINGS)
+            await _wait_task(client, settings_task, timeout_ms=300_000)
+        elif rebuild_index and not manufacturer_filter:
             try:
                 delete_task = await index.delete()
                 await _wait_task(client, delete_task, timeout_ms=300_000)
@@ -170,7 +231,6 @@ async def run(
 
         if manufacturer_filter:
             escaped = _escape_meili_filter_value(manufacturer_filter)
-            # Count existing docs before deleting so we can report progress
             existing_count = await conn.fetchval(
                 "SELECT COUNT(*) FROM parts_catalog WHERE LOWER(manufacturer)=LOWER($1) AND is_active=TRUE",
                 manufacturer_filter,
@@ -186,12 +246,17 @@ async def run(
                 flush=True,
             )
 
-        settings_task = await index.update_settings(INDEX_SETTINGS)
-        await _wait_task(client, settings_task, timeout_ms=300_000)
-        print("[meili_sync] Index settings applied.", flush=True)
+        if not checkpoint:
+            settings_task = await index.update_settings(INDEX_SETTINGS)
+            await _wait_task(client, settings_task, timeout_ms=300_000)
+            print("[meili_sync] Index settings applied.", flush=True)
 
-        offset = 0
-        total_sent = 0
+        # Write initial checkpoint before first batch (marks index as ready)
+        if not manufacturer_filter and not checkpoint:
+            _save_checkpoint(0, total)
+
+        offset = resume_offset
+        total_sent = resume_offset  # already uploaded before checkpoint
         t0 = datetime.utcnow()
         last_batch_task = None
 
@@ -223,12 +288,25 @@ async def run(
             elapsed = (datetime.utcnow() - t0).seconds
             print(f"[meili_sync] uploaded {total_sent}/{total} ({elapsed}s)", flush=True)
 
+            # Save checkpoint after every batch so a restart can resume from here
+            if not manufacturer_filter:
+                _save_checkpoint(offset, total)
+
         # Wait for the final batch to finish indexing before exiting.
         if last_batch_task is not None:
             print("[meili_sync] Waiting for Meilisearch to finish indexing...", flush=True)
             await _wait_task(client, last_batch_task, timeout_ms=900_000)
 
     await conn.close()
+
+    # Mark checkpoint as fully complete — do NOT clear it.
+    # Clearing the checkpoint causes the next run to see no checkpoint and
+    # trigger a full rebuild (deleting 3.45M indexed documents). Instead,
+    # save offset=total so the next run loads the checkpoint, skips upload
+    # (no rows at that offset), and exits safely without touching the index.
+    if not manufacturer_filter:
+        _save_checkpoint(total, total)
+
     print(
         "[meili_sync] Done - "
         f"{total_sent} documents indexed for {manufacturer_filter or 'ALL'}.",

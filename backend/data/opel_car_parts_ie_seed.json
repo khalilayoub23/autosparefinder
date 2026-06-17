@@ -1,0 +1,86 @@
+{
+  "extracted_at": "2026-06-03T18:56:53.709Z",
+  "source": "car-parts.ie",
+  "url": "https://www.car-parts.ie/car-parts/opel/astra-f-estate-51-52/1-7-tds-f35-m35-60-kw/control-valve-coolant/1820?page=3",
+  "title": "Heater control valve OPEL Astra F Caravan (T92) 1.7 TDS (F35, M35) 82 hp 12.1991",
+  "maker": "OPEL",
+  "model": "Astra F Caravan (T92) (09.1991 - 01.1998)",
+  "engine": "1.7 TDS (F35, M35) (60 KW / 82 HP) (12.1991 - 01.1998)",
+  "products": [
+    {
+      "product_url": "https://www.car-parts.ie/car-parts/kamoka/p-7870345",
+      "name": "KAMOKA 27450U Wiper blade Length: 450mm, Front, Hook fixing",
+      "inferred_sku": "27450U"
+    },
+    {
+      "product_url": "https://www.car-parts.ie/car-parts/ridex/p-8098006",
+      "name": "RIDEX 298W0046 Wiper blade Standard, Length: 400mm, Length: 400mm, Rear, Front, Hook fixing",
+      "inferred_sku": "298W0046"
+    },
+    {
+      "product_url": "https://www.car-parts.ie/car-parts/ridex/p-8098211",
+      "name": "RIDEX 298W0067 Wiper blade Beam, Length: 450mm, Length: 450mm, Driver side, Front, Hook fixing",
+      "inferred_sku": "298W0067"
+    },
+    {
+      "product_url": "https://www.car-parts.ie/car-parts/ashika/p-8118974",
+      "name": "ASHIKA SA-F40 Wiper blade Beam, Length: 400mm, Rear",
+      "inferred_sku": "SA-F40"
+    },
+    {
+      "product_url": "https://www.car-parts.ie/car-parts/valeo/p-9954910",
+      "name": "VALEO 578572 Wiper blade Flat wiper blade, with pre-mounted adaptor, Length: 450mm, Length: 450mm, Driver side, Passenger Side, Hook fixing",
+      "inferred_sku": "578572"
+    },
+    {
+      "product_url": "https://www.car-parts.ie/car-parts/hella/p-10566022",
+      "name": "HELLA 9XW 358 053-181 Wiper blade Beam, Length: 450mm, both sides, Driver side, Passenger Side",
+      "inferred_sku": "053-181"
+    },
+    {
+      "product_url": "https://www.car-parts.ie/car-parts/hella/p-10566035",
+      "name": "HELLA 9XW 358 061-181 Wiper blade Flat wiper blade, Length: 450mm, both sides, Driver side, Passenger Side",
+      "inferred_sku": "061-181"
+    },
+    {
+      "product_url": "https://www.car-parts.ie/car-parts/kraft/p-11546810",
+      "name": "KRAFT K41HYB Wiper blade Length: 410mm, Rear",
+      "inferred_sku": "K41HYB"
+    },
+    {
+      "product_url": "https://www.car-parts.ie/car-parts/ashika/p-12042538",
+      "name": "ASHIKA SA-F45 Wiper blade Beam, Length: 450mm, Passenger Side",
+      "inferred_sku": "SA-F45"
+    },
+    {
+      "product_url": "https://www.car-parts.ie/car-parts/ashika/p-12042577",
+      "name": "ASHIKA SA-X40C Wiper blade Length: 400mm, Rear",
+      "inferred_sku": "SA-X40C"
+    },
+    {
+      "product_url": "https://www.car-parts.ie/car-parts/ashika/p-12042582",
+      "name": "ASHIKA SA-X45C Wiper blade Length: 450mm, Front",
+      "inferred_sku": "SA-X45C"
+    },
+    {
+      "product_url": "https://www.car-parts.ie/car-parts/japko/p-12080629",
+      "name": "JAPKO SJF45 Wiper blade Length: 450mm, Passenger Side",
+      "inferred_sku": "SJF45"
+    },
+    {
+      "product_url": "https://www.car-parts.ie/car-parts/japko/p-12080928",
+      "name": "JAPKO SJX45C Wiper blade Length: 450mm, Front",
+      "inferred_sku": "SJX45C"
+    },
+    {
+      "product_url": "https://www.car-parts.ie/car-parts/japko/p-12080929",
+      "name": "JAPKO SJX45S Wiper blade Length: 450mm, Front",
+      "inferred_sku": "SJX45S"
+    },
+    {
+      "product_url": "https://www.car-parts.ie/car-parts/ridex/p-12755397",
+      "name": "RIDEX 298W0137 Wiper blade Bracket wiper blade without spoiler, Standard, Length: 450mm, Length: 450mm, Passenger Side, Driver side, Front, Hook fixing",
+      "inferred_sku": "298W0137"
+    }
+  ]
+}

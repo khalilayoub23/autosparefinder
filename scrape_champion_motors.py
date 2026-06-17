@@ -30,7 +30,7 @@ except Exception:
 import requests
 
 CATALOG_URL  = "https://www.championmotors.co.il/catalog/"
-SERVER_URL   = "http://94.130.150.23:9191"
+SERVER_URL   = "http://207.180.217.129:9191"
 SAVE_LOCALLY = "champion_motors_parts.json"
 
 # Column order in DOM (RTL table)
@@ -160,7 +160,7 @@ def main():
             print("Unexpected server response")
     except requests.exceptions.ConnectionError:
         print(f"\nServer unreachable. Upload manually:")
-        print(f"  scp {SAVE_LOCALLY} root@94.130.150.23:/opt/autosparefinder/champion_motors_parts.json")
+        print(f"  scp {SAVE_LOCALLY} root@207.180.217.129:/opt/autosparefinder/champion_motors_parts.json")
 
 if __name__ == "__main__":
     main()

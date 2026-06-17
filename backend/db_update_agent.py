@@ -56,6 +56,15 @@ from categories import CATEGORY_MAP as SHARED_CATEGORY_MAP
 from agent_todo_utils import get_active_agent_todos, extract_todo_task_names
 
 logger = logging.getLogger("db_update_agent")
+# Ensure the logger outputs to stderr (docker logs captures it) if no handler
+# is configured on the root logger. This is a no-op when uvicorn/gunicorn sets
+# up its own logging.
+if not logging.root.handlers:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        stream=__import__("sys").stderr,
+    )
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -73,9 +82,16 @@ _ALIAS_MIN_MARGIN = float(os.getenv("HE_ALIAS_MIN_MARGIN", "0.06"))
 
 
 def _real_data_only_enabled() -> bool:
+    """True when synthetic data generation is blocked (AI-generated parts, fake supplier links)."""
     env_name = (os.getenv("ENVIRONMENT", "development") or "development").strip().lower()
     default_flag = "1" if env_name == "production" else "0"
     raw = (os.getenv("REAL_DATA_ONLY", default_flag) or default_flag).strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _rex_harvest_enabled() -> bool:
+    """True when REX may trigger real-source discovery. Separate from synthetic-data guard."""
+    raw = (os.getenv("REX_HARVEST_ENABLED", "true") or "true").strip().lower()
     return raw in {"1", "true", "yes", "on"}
 
 
@@ -263,6 +279,51 @@ CATEGORY_MAP: Dict[str, str] = {
     "motorcycle accessories": "כללי",
     "motorcycle clothing": "כללי",
     "motorcycle helmets": "כללי",
+
+    # car-parts.ie slug-style categories (from importer pipeline)
+    "service-general": "כללי",
+    "body-exterior": "גוף הרכב",
+    "electrical-sensors": "חשמל ואלקטרוניקה",
+    "air-conditioning-heating": "מזגן וחימום",
+    "suspension-steering": "מתלה",
+    "interior-comfort": "פנים הרכב",
+    "fuel-air": "מערכת דלק",
+    "wheels-bearings": "גלגלים וצמיגים",
+    "clutch-drivetrain": "מצמד",
+    "wipers-washers": "שמשות ומגבים",
+    "cooling": "מערכת קירור",
+    "exhaust": "מערכת פליטה",
+    "gearbox": "תיבת הילוכים",
+    "belts-chains": "רצועות תזמון",
+    "safety-systems": "בלמים",
+    "fluids": "כללי",
+    "filters": "כללי",
+
+    # title-case variants from oempartsonline / champion motors importers
+    "General Parts": "כללי",
+    "Body Parts": "גוף הרכב",
+    "Engine Parts": "מנוע",
+    "Electrical": "חשמל ואלקטרוניקה",
+    "Brakes": "בלמים",
+    "Suspension": "מתלה",
+    "Service & General": "כללי",
+    "Fuel System": "מערכת דלק",
+    "Accessories": "כללי",
+    "Steering": "היגוי",
+    "Transmission": "תיבת הילוכים",
+    "Cooling": "מערכת קירור",
+    "Exhaust": "מערכת פליטה",
+    "Interior": "פנים הרכב",
+    "Lighting": "תאורה",
+    "Filters": "כללי",
+    "Fluids": "כללי",
+    "Belts & Chains": "רצועות תזמון",
+    "Wheels & Bearings": "גלגלים וצמיגים",
+    "Air Conditioning": "מזגן וחימום",
+    "Body & Exterior": "גוף הרכב",
+    "Clutch & Drivetrain": "מצמד",
+    "Wipers & Washers": "שמשות ומגבים",
+    "Safety Systems": "בלמים",
 }
 
 # Legacy category aliases remapped to the shared 28-category taxonomy
@@ -911,39 +972,37 @@ async def clean_part_names(db: AsyncSession) -> Dict[str, Any]:
 async def normalize_part_types(db: AsyncSession) -> Dict[str, Any]:
     """
     Unify part_type values to one of: "Original", "OEM", "Aftermarket".
-    Acts on both parts_catalog and supplier_parts tables.
+    Uses a single CASE WHEN SQL UPDATE per table — replaces the old fetchall()
+    loop that loaded 3.45M rows into Python memory causing ~2 GB heap growth.
     """
     t0 = time.monotonic()
     catalog_updated = supplier_updated = 0
 
+    # Build CASE WHEN from PART_TYPE_MAP:  LOWER(TRIM(part_type)) → canonical
+    when_clauses = "\n            ".join(
+        f"WHEN LOWER(TRIM(part_type)) = '{k}' THEN '{v}'"
+        for k, v in PART_TYPE_MAP.items()
+    )
+    case_sql = f"CASE\n            {when_clauses}\n            ELSE part_type\n        END"
+
     try:
-        for table in ("parts_catalog", "supplier_parts"):
-            if table == "parts_catalog":
-                result = await db.execute(
-                    text("SELECT id, part_type FROM parts_catalog WHERE part_type IS NOT NULL")
-                )
+        for table, counter_attr in (("parts_catalog", "catalog_updated"), ("supplier_parts", "supplier_updated")):
+            result = await db.execute(
+                text(f"""
+                    UPDATE {table}
+                    SET part_type  = {case_sql},
+                        updated_at = NOW()
+                    WHERE part_type IS NOT NULL
+                      AND LOWER(TRIM(part_type)) = ANY(:keys)
+                      AND part_type NOT IN ('Original', 'OEM', 'Aftermarket')
+                """),
+                {"keys": list(PART_TYPE_MAP.keys())},
+            )
+            n = result.rowcount
+            if counter_attr == "catalog_updated":
+                catalog_updated = n
             else:
-                result = await db.execute(
-                    text("SELECT id, part_type FROM supplier_parts WHERE part_type IS NOT NULL")
-                )
-            rows = result.fetchall()
-            for row_id, raw_type in rows:
-                canonical = _normalize_part_type(raw_type)
-                if canonical and canonical != raw_type:
-                    if table == "parts_catalog":
-                        await db.execute(
-                            text("UPDATE parts_catalog SET part_type = :val, updated_at = NOW() WHERE id = :id"),
-                            {"val": canonical, "id": row_id},
-                        )
-                    else:
-                        await db.execute(
-                            text("UPDATE supplier_parts SET part_type = :val, updated_at = NOW() WHERE id = :id"),
-                            {"val": canonical, "id": row_id},
-                        )
-                    if table == "parts_catalog":
-                        catalog_updated += 1
-                    else:
-                        supplier_updated += 1
+                supplier_updated = n
 
         await db.commit()
         logger.info(
@@ -971,42 +1030,93 @@ async def normalize_part_types(db: AsyncSession) -> Dict[str, Any]:
 
 async def normalize_categories(db: AsyncSession) -> Dict[str, Any]:
     """
-    Map non-canonical category values to the shared canonical Hebrew categories.
-    Unrecognised categories are set to "כללי" (general).
+    Map non-canonical category values to canonical Hebrew categories using a
+    single bulk SQL CASE UPDATE — replaces the old per-row loop that timed out
+    on large catalogs (3M+ rows × individual UPDATE = >30 min).
+
+    Strategy:
+      1. Build one SQL CASE expression from CATEGORY_MAP + CATEGORY_NAME_REMAP.
+      2. Fire it as a single UPDATE … WHERE category NOT IN (canonical_set).
+         Postgres executes this as a sequential scan + in-place update in seconds.
+      3. A second pass sets any still-unknown values to 'כללי'.
+      4. A max_wall_seconds guard aborts gracefully if called from a time-boxed run.
     """
     t0 = time.monotonic()
-    rows_updated = 0
+    max_wall = int(os.getenv("NORMALIZE_CAT_MAX_WALL_S", "300"))  # 5-min hard cap
 
     try:
-        result = await db.execute(
-            text("SELECT id, category FROM parts_catalog WHERE category IS NOT NULL")
-        )
-        rows = result.fetchall()
+        canonical_set = set(CANONICAL_CATEGORIES)
+        canonical_sql = ", ".join(f"'{c}'" for c in CANONICAL_CATEGORIES)
 
-        for part_id, raw_cat in rows:
-            canonical = _normalize_category(raw_cat)
-            if canonical is not None:
-                await db.execute(
-                    text(
-                        "UPDATE parts_catalog SET category = :cat, updated_at = NOW() "
-                        "WHERE id = :id"
-                    ),
-                    {"cat": canonical, "id": part_id},
-                )
-                rows_updated += 1
-            elif raw_cat.strip() not in CANONICAL_CATEGORIES:
-                # Unknown category — fall back to general
-                await db.execute(
-                    text(
-                        "UPDATE parts_catalog SET category = 'כללי', "
-                        "updated_at = NOW() WHERE id = :id"
-                    ),
-                    {"id": part_id},
-                )
-                rows_updated += 1
+        # ── Build CASE branches ────────────────────────────────────────────────
+        # Merge CATEGORY_MAP (raw→Hebrew) with CATEGORY_NAME_REMAP (Hebrew→Hebrew)
+        branches: List[str] = []
+        seen_raw: set = set()
+        combined: Dict[str, str] = {}
+        for raw, mid in CATEGORY_MAP.items():
+            target = CATEGORY_NAME_REMAP.get(mid, mid)
+            combined[raw.lower()] = target
+        # Also direct remap entries whose raw form is not already canonical
+        for raw, target in CATEGORY_NAME_REMAP.items():
+            if raw not in canonical_set:
+                combined.setdefault(raw.lower(), target)
 
-        await db.commit()
-        logger.info("normalize_categories: updated=%d", rows_updated)
+        for raw_lower, target in combined.items():
+            if target in canonical_set and raw_lower not in seen_raw:
+                seen_raw.add(raw_lower)
+                escaped_raw = raw_lower.replace("'", "''")
+                escaped_tgt = target.replace("'", "''")
+                branches.append(
+                    f"WHEN TRIM(LOWER(category)) = '{escaped_raw}' THEN '{escaped_tgt}'"
+                )
+
+        rows_mapped = 0
+        rows_fallback = 0
+
+        if branches and (time.monotonic() - t0) < max_wall:
+            case_sql = "CASE\n  " + "\n  ".join(branches) + "\n  ELSE NULL\nEND"
+            # Single bulk UPDATE: only rows whose mapped value is non-null
+            result = await db.execute(text(f"""
+                UPDATE parts_catalog
+                SET    category   = sub.new_cat,
+                       updated_at = NOW()
+                FROM (
+                    SELECT id,
+                           {case_sql} AS new_cat
+                    FROM   parts_catalog
+                    WHERE  category IS NOT NULL
+                      AND  TRIM(category) NOT IN ({canonical_sql})
+                ) sub
+                WHERE  parts_catalog.id = sub.id
+                  AND  sub.new_cat IS NOT NULL
+            """))
+            rows_mapped = result.rowcount if hasattr(result, 'rowcount') and result.rowcount else 0
+            await db.commit()
+            logger.info("normalize_categories: bulk mapped=%d elapsed=%.1fs", rows_mapped, time.monotonic() - t0)
+
+        # ── Fallback pass: set unknowns to 'כללי' in batches to avoid long locks ─
+        batch_size = 5000
+        while (time.monotonic() - t0) < max_wall:
+            result2 = await db.execute(text(f"""
+                WITH batch AS (
+                    SELECT id FROM parts_catalog
+                    WHERE  category IS NOT NULL
+                      AND  TRIM(category) NOT IN ({canonical_sql})
+                    LIMIT  {batch_size}
+                )
+                UPDATE parts_catalog
+                SET    category   = 'כללי',
+                       updated_at = NOW()
+                FROM   batch
+                WHERE  parts_catalog.id = batch.id
+            """))
+            n = result2.rowcount if hasattr(result2, 'rowcount') and result2.rowcount else 0
+            await db.commit()
+            rows_fallback += n
+            if n < batch_size:
+                break  # no more rows to update
+        logger.info("normalize_categories: fallback_set_general=%d", rows_fallback)
+
     except Exception as exc:
         await db.rollback()
         logger.error("normalize_categories failed: %s", exc)
@@ -1015,7 +1125,9 @@ async def normalize_categories(db: AsyncSession) -> Dict[str, Any]:
     return {
         "task": "normalize_categories",
         "status": "ok",
-        "rows_updated": rows_updated,
+        "rows_mapped": rows_mapped,
+        "rows_fallback": rows_fallback,
+        "rows_updated": rows_mapped + rows_fallback,
         "elapsed_s": round(time.monotonic() - t0, 2),
     }
 
@@ -1034,11 +1146,13 @@ async def normalize_availability(db: AsyncSession) -> Dict[str, Any]:
 
     try:
         result = await db.execute(
-            text("SELECT id, availability FROM supplier_parts WHERE availability IS NOT NULL")
+            text("SELECT id, availability FROM supplier_parts WHERE availability IS NOT NULL LIMIT 5000")
         )
         rows = result.fetchall()
 
-        for row_id, raw_avail in rows:
+        for _idx, (row_id, raw_avail) in enumerate(rows):
+            if _idx % 100 == 0:
+                await asyncio.sleep(0)
             canonical = _normalize_availability(raw_avail)
             if canonical and canonical != raw_avail:
                 await db.execute(
@@ -1071,81 +1185,166 @@ async def normalize_availability(db: AsyncSession) -> Dict[str, Any]:
 
 async def fix_base_prices(db: AsyncSession) -> Dict[str, Any]:
     """
-    Ensure parts_catalog.base_price (incl. 18 % VAT) is not below the
-    cheapest supplier cost:
+    Ensure parts_catalog.base_price is not below the cheapest supplier retail price.
 
-        min_supplier_cost_ils * (1 + VAT) * MARGIN
+    Pricing policy:
+      - Domestic (IL) suppliers: cost_excl_vat × 1.18 × 1.45
+      - International suppliers: cost_excl_vat × 1.45 (no IL VAT)
+      - MARGIN = 1.45 (45% hidden markup — never shown to customers)
 
-    Where MARGIN = 1.30 (30 % retailer mark-up) if base_price is NULL or
-    suspiciously low.
-
-    All ILS prices in the catalogue include VAT; supplier cost (price_ils)
-    does NOT include VAT.
+    VAT is determined per supplier via suppliers.country = 'IL'.
+    supplier_parts.price_ils is always stored excl. VAT.
     """
-    MARGIN = 1.30
+    MARGIN = 1.45
     t0 = time.monotonic()
     rows_updated = 0
 
-    try:
-        ils_rate = await _get_ils_rate(db)
+    # Retry up to 3× on deadlock — concurrent freesbe/run_all writes can cause transient deadlocks
+    for _attempt in range(3):
+        try:
+            ils_rate = await _get_ils_rate(db)
 
-        # Find parts where base_price < supplier cost+VAT+margin or is NULL
-        result = await db.execute(
-            text(
-                """
-                SELECT
-                    pc.id,
-                    pc.base_price,
-                    MIN(
-                        CASE
-                            WHEN sp.price_ils IS NOT NULL THEN sp.price_ils
-                            WHEN sp.price_usd IS NOT NULL THEN sp.price_usd * :rate
-                            ELSE NULL
-                        END
-                    ) AS min_cost_ils
-                FROM parts_catalog pc
-                JOIN supplier_parts sp ON sp.part_id = pc.id AND sp.is_available = TRUE
-                GROUP BY pc.id, pc.base_price
-                HAVING
-                    pc.base_price IS NULL
-                    OR pc.base_price < MIN(
-                        CASE
-                            WHEN sp.price_ils IS NOT NULL THEN sp.price_ils
-                            WHEN sp.price_usd IS NOT NULL THEN sp.price_usd * :rate
-                            ELSE NULL
-                        END
-                    ) * :vat * :margin
-                """
-            ),
-            {"rate": ils_rate, "vat": 1 + VAT, "margin": MARGIN},
-        )
-        rows = result.fetchall()
-
-        for part_id, old_price, min_cost_ils in rows:
-            if min_cost_ils is None:
-                continue
-            new_price = round(float(min_cost_ils) * (1 + VAT) * MARGIN, 2)
-            await db.execute(
+            # Single bulk UPDATE via CTE — minimises lock window vs row-by-row loop
+            # Pricing policy: base_price = supplier_cost_excl_vat × 1.45 (45% margin, no VAT factor)
+            result = await db.execute(
                 text(
-                    "UPDATE parts_catalog SET base_price = :price, "
-                    "updated_at = NOW() WHERE id = :id"
+                    """
+                    WITH new_prices AS (
+                        SELECT
+                            pc.id,
+                            ROUND(MIN(
+                                CASE
+                                    WHEN sp.price_ils IS NOT NULL THEN
+                                        sp.price_ils * :margin
+                                    WHEN sp.price_usd IS NOT NULL THEN
+                                        sp.price_usd * :rate * :margin
+                                    ELSE NULL
+                                END
+                            )::numeric, 2) AS min_retail_ils
+                        FROM parts_catalog pc
+                        JOIN supplier_parts sp ON sp.part_id = pc.id AND sp.is_available = TRUE
+                        JOIN suppliers s ON s.id = sp.supplier_id
+                        GROUP BY pc.id
+                        HAVING MIN(
+                            CASE
+                                WHEN sp.price_ils IS NOT NULL THEN
+                                    sp.price_ils * :margin
+                                WHEN sp.price_usd IS NOT NULL THEN
+                                    sp.price_usd * :rate * :margin
+                                ELSE NULL
+                            END
+                        ) IS NOT NULL
+                    )
+                    UPDATE parts_catalog pc
+                    SET base_price = np.min_retail_ils, updated_at = NOW()
+                    FROM new_prices np
+                    WHERE pc.id = np.id
+                      AND (pc.base_price IS NULL OR pc.base_price < np.min_retail_ils)
+                    """
                 ),
-                {"price": new_price, "id": part_id},
+                {"rate": ils_rate, "margin": MARGIN},
             )
-            rows_updated += 1
+            rows_updated = result.rowcount or 0
+            await db.commit()
+            logger.info("fix_base_prices: updated=%d (rate=%.2f)", rows_updated, ils_rate)
+            break  # success
 
-        await db.commit()
-        logger.info("fix_base_prices: updated=%d (rate=%.2f)", rows_updated, ils_rate)
-    except Exception as exc:
-        await db.rollback()
-        logger.error("fix_base_prices failed: %s", exc)
-        return {"task": "fix_base_prices", "status": "error", "error": str(exc)}
+        except Exception as exc:
+            await db.rollback()
+            exc_str = str(exc)
+            if "deadlock" in exc_str.lower() and _attempt < 2:
+                wait = 2 ** _attempt
+                logger.warning("fix_base_prices deadlock (attempt %d/3), retrying in %ds", _attempt + 1, wait)
+                await asyncio.sleep(wait)
+                continue
+            logger.error("fix_base_prices failed: %s", exc)
+            return {"task": "fix_base_prices", "status": "error", "error": exc_str}
 
     return {
         "task": "fix_base_prices",
         "status": "ok",
         "rows_updated": rows_updated,
         "ils_per_usd_used": ils_rate,
+        "elapsed_s": round(time.monotonic() - t0, 2),
+    }
+
+
+# =========================================================================
+# Task 5b – Normalize base_price from alternate price columns
+# =========================================================================
+
+async def normalize_base_price(db: AsyncSession) -> Dict[str, Any]:
+    """
+    Compute base_price (customer-facing retail) from source price columns.
+
+    Pricing policy: base_price = cost_excl_vat × 1.45. No exceptions.
+
+    Decision tree (applied in priority order):
+
+      1. importer_price_ils > 0  (actual wholesale cost excl. VAT, all IL brands):
+         base = importer_price_ils * 1.45
+
+      2. importer=0, online_price_ils > 0  (eBay/international, no IL VAT):
+         base = online_price_ils * 1.45
+
+      3. importer=0, online=0, max_price_ils > 0  (IL consumer ref price incl. 18% VAT):
+         base = (max_price_ils / 1.18) * 1.45  — divide out VAT first, then apply margin
+    """
+    MARGIN = float(os.getenv("IL_MARGIN", "1.45"))
+    t0 = time.monotonic()
+    try:
+        # Case 1: importer_price_ils is the actual cost excl. VAT — 45% margin over cost
+        r1 = await db.execute(text("""
+            UPDATE parts_catalog
+            SET base_price = ROUND((importer_price_ils * :margin)::numeric, 2),
+                updated_at = NOW()
+            WHERE importer_price_ils > 0
+              AND is_active = TRUE
+        """), {"margin": MARGIN})
+        importer_updated = r1.rowcount
+
+        # Case 2: eBay / international buy price (already excl. VAT) — 45% margin
+        r2 = await db.execute(text("""
+            UPDATE parts_catalog
+            SET base_price = ROUND((online_price_ils * :margin)::numeric, 2),
+                updated_at = NOW()
+            WHERE (importer_price_ils IS NULL OR importer_price_ils = 0)
+              AND online_price_ils > 0
+              AND is_active = TRUE
+        """), {"margin": MARGIN})
+        online_updated = r2.rowcount
+
+        # Case 3: IL importer reference price (incl. 18% VAT) — divide out VAT, then 45% margin
+        r3 = await db.execute(text("""
+            UPDATE parts_catalog
+            SET base_price = ROUND((max_price_ils / 1.18 * :margin)::numeric, 2),
+                updated_at = NOW()
+            WHERE (importer_price_ils IS NULL OR importer_price_ils = 0)
+              AND (online_price_ils IS NULL OR online_price_ils = 0)
+              AND max_price_ils > 0
+              AND is_active = TRUE
+        """), {"margin": MARGIN})
+        max_updated = r3.rowcount
+
+        await db.commit()
+        total = online_updated + importer_updated + max_updated
+        logger.info(
+            "normalize_base_price: online→%d importer→%d il_ref→%d total=%d in %.2fs",
+            online_updated, importer_updated, max_updated, total,
+            round(time.monotonic() - t0, 2),
+        )
+    except Exception as exc:
+        await db.rollback()
+        logger.error("normalize_base_price failed: %s", exc)
+        return {"task": "normalize_base_price", "status": "error", "error": str(exc)}
+
+    return {
+        "task": "normalize_base_price",
+        "status": "ok",
+        "online_price_updated": online_updated,
+        "importer_price_updated": importer_updated,
+        "il_ref_price_updated": max_updated,
+        "total_updated": total,
         "elapsed_s": round(time.monotonic() - t0, 2),
     }
 
@@ -1488,6 +1687,7 @@ async def sync_models_from_catalog(db: AsyncSession) -> Dict[str, Any]:
           AND TRIM(manufacturer) <> ''
           AND compatible_vehicles IS NOT NULL
           AND jsonb_typeof(compatible_vehicles) = 'array'
+        LIMIT 2000
     """))).fetchall()
 
     if not rows:
@@ -1495,8 +1695,11 @@ async def sync_models_from_catalog(db: AsyncSession) -> Dict[str, Any]:
 
     # Track seen combinations in this run to minimize duplicate DB checks.
     seen_keys = set()
+    _yield_every = 50  # yield to event loop every N rows to keep heartbeat alive
 
-    for manufacturer, compat in rows:
+    for _row_idx, (manufacturer, compat) in enumerate(rows):
+        if _row_idx % _yield_every == 0:
+            await asyncio.sleep(0)
         mfr = (manufacturer or "").strip()
         if not mfr:
             continue
@@ -1682,28 +1885,38 @@ async def sync_models_from_catalog_file(db: AsyncSession) -> Dict[str, Any]:
             return "", "", year_hint, year_from, year_to
         return base, sub, year_hint, year_from, year_to
 
-    wb = openpyxl.load_workbook(xlsx_path, read_only=True, data_only=True)
+    def _load_xlsx_rows(path, s_map):
+        """Load all sheet rows from the workbook synchronously (runs in a thread)."""
+        import openpyxl as _xl
+        wb = _xl.load_workbook(path, read_only=True, data_only=True)
+        result = {}
+        for s_name, (_, s_type) in s_map.items():
+            if s_name not in wb.sheetnames:
+                continue
+            ws = wb[s_name]
+            start = 8 if s_type == "F" else 3
+            result[s_name] = list(ws.iter_rows(min_row=start, values_only=True))
+        wb.close()
+        return result
+
+    sheet_rows = await asyncio.to_thread(_load_xlsx_rows, xlsx_path, sheet_map)
 
     seen_run = set()
     for sheet_name, (raw_mfr, stype) in sheet_map.items():
-        if sheet_name not in wb.sheetnames:
+        if sheet_name not in sheet_rows:
             continue
 
         canonical_mfr = normalize_manufacturer_name(raw_mfr, raw_mfr)
         mfr_variants = [canonical_mfr, raw_mfr, sheet_name]
-        ws = wb[sheet_name]
 
-        # Sheet-specific model column location.
         if stype == "F":
-            start_row = 8
             model_idx = 0
         elif stype == "A":
-            start_row = 3
             model_idx = 7
         else:
             continue
 
-        for row in ws.iter_rows(min_row=start_row, values_only=True):
+        for row in sheet_rows[sheet_name]:
             if model_idx >= len(row):
                 continue
             model_raw = row[model_idx]
@@ -2020,13 +2233,28 @@ async def backfill_catalog_fitment_from_xls(db: AsyncSession) -> Dict[str, Any]:
         if key[0] and key[1]:
             hierarchy_map[key] = (int(year_from or 0), int(year_to or 0))
 
-    wb = openpyxl.load_workbook(xlsx_path, read_only=True, data_only=True)
+    def _load_fitment_xlsx_rows(path, s_map):
+        """Load fitment rows from workbook synchronously (runs in a thread)."""
+        import openpyxl as _xl
+        wb = _xl.load_workbook(path, read_only=True, data_only=True)
+        result = {}
+        for s_name, (_, _sku_pfx, s_type) in s_map.items():
+            if s_name not in wb.sheetnames:
+                continue
+            ws = wb[s_name]
+            start = 8 if s_type == "F" else 3
+            result[s_name] = list(ws.iter_rows(min_row=start, values_only=True))
+        wb.close()
+        return result
+
+    fitment_sheet_rows = await asyncio.to_thread(_load_fitment_xlsx_rows, xlsx_path, sheet_map)
+
     matched_rows = 0
     updated_parts = 0
     fitment_rows = 0
 
     for sheet_name, (raw_mfr, sku_prefix, stype) in sheet_map.items():
-        if sheet_name not in wb.sheetnames:
+        if sheet_name not in fitment_sheet_rows:
             continue
 
         canonical_mfr = normalize_manufacturer_name(raw_mfr, raw_mfr)
@@ -2047,7 +2275,9 @@ async def backfill_catalog_fitment_from_xls(db: AsyncSession) -> Dict[str, Any]:
         by_oem: Dict[str, Tuple[str, Any]] = {}
         by_name: Dict[str, Tuple[str, Any]] = {}
         part_compat_by_id: Dict[str, List[Any]] = {}
-        for part_id, sku, oem_number, name, compat in part_rows:
+        for _pk, (part_id, sku, oem_number, name, compat) in enumerate(part_rows):
+            if _pk % 500 == 0:
+                await asyncio.sleep(0)
             pid = str(part_id)
             part_compat_by_id[pid] = list(compat or []) if isinstance(compat, list) else []
             if sku:
@@ -2061,10 +2291,10 @@ async def backfill_catalog_fitment_from_xls(db: AsyncSession) -> Dict[str, Any]:
                 by_name[str(name).strip()] = (pid, compat)
 
         part_fitments: Dict[str, List[Dict[str, Any]]] = {}
-        ws = wb[sheet_name]
-        start_row = 8 if stype == "F" else 3
         seen_rows: set[Tuple[str, str, str]] = set()
-        for row in ws.iter_rows(min_row=start_row, values_only=True):
+        for _xi, row in enumerate(fitment_sheet_rows[sheet_name]):
+            if _xi % 200 == 0:
+                await asyncio.sleep(0)
             rec = _parse_fitment_row(row, stype)
             if not rec:
                 continue
@@ -2109,7 +2339,9 @@ async def backfill_catalog_fitment_from_xls(db: AsyncSession) -> Dict[str, Any]:
             part_fitments.setdefault(part_id, []).append(entry)
             matched_rows += 1
 
-        for part_id, entries in part_fitments.items():
+        for _xj, (part_id, entries) in enumerate(part_fitments.items()):
+            if _xj % 50 == 0:
+                await asyncio.sleep(0)
             preserved = [
                 item for item in part_compat_by_id.get(part_id, [])
                 if not (isinstance(item, dict) and item.get("source") == "parts_database.xlsx")
@@ -2272,7 +2504,9 @@ async def backfill_bmw_fitment_from_name_he(db: AsyncSession) -> Dict[str, Any]:
     skipped = 0
     parts_matched = 0
 
-    for part_id, name_he, name_en in rows:
+    for _bi, (part_id, name_he, name_en) in enumerate(rows):
+        if _bi % 200 == 0:
+            await asyncio.sleep(0)
         text_to_scan = (name_he or "") + " " + (name_en or "")
         raw = {m.upper().replace('-', '') for m in _BMW_CHASSIS_RE.findall(text_to_scan)}
         bmw_mapped  = [(c, _BMW_CHASSIS_MAP[c])       for c in raw if c in _BMW_CHASSIS_MAP]
@@ -2410,7 +2644,9 @@ async def backfill_ford_fitment_from_name_he(db: AsyncSession) -> Dict[str, Any]
     skipped = 0
     parts_matched = 0
 
-    for part_id, name_he, name_en in rows:
+    for _fi, (part_id, name_he, name_en) in enumerate(rows):
+        if _fi % 200 == 0:
+            await asyncio.sleep(0)
         text_to_scan = (name_he or "") + " " + (name_en or "")
         matched_models: set = set()
         for pattern, model, yf, yt in compiled:
@@ -2511,7 +2747,9 @@ async def backfill_mini_fitment_from_name_he(db: AsyncSession) -> Dict[str, Any]
     inserted = 0
     skipped = 0
 
-    for part_id, name_he, name_en in rows:
+    for _mi, (part_id, name_he, name_en) in enumerate(rows):
+        if _mi % 200 == 0:
+            await asyncio.sleep(0)
         text_to_scan = (name_he or "") + " " + (name_en or "")
         raw_codes = {m.upper().replace("-", "") for m in _MINI_CHASSIS_RE.findall(text_to_scan)}
         mapped = [(c, _MINI_CHASSIS_MAP[c]) for c in raw_codes if c in _MINI_CHASSIS_MAP]
@@ -2549,6 +2787,126 @@ async def backfill_mini_fitment_from_name_he(db: AsyncSession) -> Dict[str, Any]
         "inserted":        inserted,
         "skipped_no_code": skipped,
         "elapsed_s":       round(time.monotonic() - t0, 2),
+    }
+
+
+# Jaguar model → (canonical_model_name, year_from, year_to)
+# Ordered most-specific first to prevent partial match overlaps.
+_JAGUAR_MODEL_MAP: list[tuple[re.Pattern, str, int, int]] = [
+    (re.compile(r"(?<![A-Za-z0-9])F[-\s]PACE(?![A-Za-z0-9])", re.IGNORECASE), "F-Pace",  2016, 2025),
+    (re.compile(r"(?<![A-Za-z0-9])E[-\s]PACE(?![A-Za-z0-9])", re.IGNORECASE), "E-Pace",  2018, 2024),
+    (re.compile(r"(?<![A-Za-z0-9])F[-\s]TYPE(?![A-Za-z0-9])", re.IGNORECASE), "F-Type",  2013, 2023),
+    (re.compile(r"(?<![A-Za-z0-9])I[-\s]PACE(?![A-Za-z0-9])", re.IGNORECASE), "I-Pace",  2018, 2024),
+    (re.compile(r"(?<![A-Za-z0-9])S[-\s]TYPE(?![A-Za-z0-9])", re.IGNORECASE), "S-Type",  1999, 2008),
+    (re.compile(r"(?<![A-Za-z0-9])X[-\s]TYPE(?![A-Za-z0-9])", re.IGNORECASE), "X-Type",  2001, 2010),
+    (re.compile(r"(?<![A-Za-z0-9])XKR(?![A-Za-z0-9])",        re.IGNORECASE), "XKR",     2000, 2014),
+    (re.compile(r"(?<![A-Za-z0-9])XK8(?![A-Za-z0-9])",        re.IGNORECASE), "XK8",     2000, 2013),
+    (re.compile(r"(?<![A-Za-z0-9])XK(?![A-Za-z0-9])",         re.IGNORECASE), "XK",      2000, 2014),
+    (re.compile(r"(?<![A-Za-z0-9])XJR(?![A-Za-z0-9])",        re.IGNORECASE), "XJR",     2000, 2007),
+    (re.compile(r"(?<![A-Za-z0-9])XJ8(?![A-Za-z0-9])",        re.IGNORECASE), "XJ8",     2000, 2005),
+    (re.compile(r"(?<![A-Za-z0-9])XJ6(?![A-Za-z0-9])",        re.IGNORECASE), "XJ6",     2004, 2009),
+    (re.compile(r"(?<![A-Za-z0-9])XJ(?![A-Za-z0-9])",         re.IGNORECASE), "XJ",      2000, 2018),
+    (re.compile(r"(?<![A-Za-z0-9])XE[-\s]?S(?![A-Za-z0-9])",  re.IGNORECASE), "XE",      2015, 2017),
+    (re.compile(r"(?<![A-Za-z0-9])XE(?![A-Za-z0-9])",         re.IGNORECASE), "XE",      2015, 2022),
+    (re.compile(r"(?<![A-Za-z0-9])XF[-\s]?[RS]?(?![A-Za-z0-9])", re.IGNORECASE), "XF",   2008, 2018),
+]
+_JAGUAR_MFR_ID = "fde0f2dc-c6fb-4ab6-b699-765044fbc073"
+
+
+async def backfill_jaguar_fitment_from_name(db: AsyncSession) -> Dict[str, Any]:
+    """
+    Parse Jaguar model names (XE, XF, XJ, F-Pace, E-Pace, etc.) from
+    parts_catalog.name and name_he, then insert rows into part_vehicle_fitment
+    for Jaguar parts that currently have no fitment data.
+
+    Uses Israeli vehicle registry year ranges from vehicle_market_il.
+    Mirrors the BMW chassis-code approach — no external API calls needed.
+    Processes up to 2000 parts per run; idempotent via ON CONFLICT DO NOTHING.
+    """
+    t0 = time.monotonic()
+    await ensure_part_vehicle_fitment_table(db)
+
+    # Exclude branded merchandise: clothing, accessories, and non-automotive items
+    _MERCH_EXCLUDE = re.compile(
+        r'\b(shirt|polo|shoe|shoes|boot|jacket|wallet|keyring|key\s+ring|'
+        r'mug|notebook|ebook|e-book|badge|scarf|hat\b|bag\b|scale\s+model|'
+        r'umbrella|cap\b|sock|cufflink|glove|passport|money\s+clip|suede|'
+        r'driving\s+shoe|print\b|sticker|poster|pennant|artwork|miniature)\b',
+        re.IGNORECASE,
+    )
+
+    rows = (await db.execute(text("""
+        SELECT pc.id, pc.name, pc.name_he
+        FROM parts_catalog pc
+        WHERE pc.manufacturer = 'Jaguar'
+          AND pc.is_active = TRUE
+          AND (pc.category IS NULL OR pc.category != 'accessories')
+          AND NOT EXISTS (
+              SELECT 1 FROM part_vehicle_fitment pvf WHERE pvf.part_id = pc.id
+          )
+        ORDER BY pc.id
+        LIMIT 2000
+    """))).fetchall()
+
+    inserted = 0
+    skipped = 0
+    parts_matched = 0
+
+    for idx, (part_id, name, name_he) in enumerate(rows):
+        if idx % 50 == 0:
+            await asyncio.sleep(0)
+
+        text_to_scan = " ".join(filter(None, [name or "", name_he or ""]))
+
+        # Skip branded merchandise — clothing, lifestyle, non-automotive items
+        if _MERCH_EXCLUDE.search(text_to_scan):
+            skipped += 1
+            continue
+
+        matched_models: list[tuple[str, int, int]] = []
+        seen_models: set[str] = set()
+
+        for pattern, model_name, yf, yt in _JAGUAR_MODEL_MAP:
+            if pattern.search(text_to_scan) and model_name not in seen_models:
+                matched_models.append((model_name, yf, yt))
+                seen_models.add(model_name)
+
+        if not matched_models:
+            skipped += 1
+            continue
+
+        parts_matched += 1
+        for model_name, yf, yt in matched_models:
+            try:
+                await db.execute(text("""
+                    INSERT INTO part_vehicle_fitment
+                        (id, part_id, manufacturer, manufacturer_id,
+                         model, year_from, year_to, notes, updated_at)
+                    VALUES (gen_random_uuid(), :part_id, 'Jaguar', :mfr_id,
+                            :model, :yf, :yt, 'name_parse:jaguar', NOW())
+                    ON CONFLICT (part_id, manufacturer, model, year_from) DO NOTHING
+                """), {
+                    "part_id": str(part_id),
+                    "mfr_id":  _JAGUAR_MFR_ID,
+                    "model":   model_name,
+                    "yf":      yf,
+                    "yt":      yt,
+                })
+                inserted += 1
+            except Exception:
+                pass
+
+    with contextlib.suppress(Exception):
+        await db.commit()
+
+    return {
+        "task":          "backfill_jaguar_fitment_from_name",
+        "status":        "ok",
+        "scanned":       len(rows),
+        "parts_matched": parts_matched,
+        "inserted":      inserted,
+        "skipped":       skipped,
+        "elapsed_s":     round(time.monotonic() - t0, 2),
     }
 
 
@@ -2613,7 +2971,9 @@ async def merge_catalog_fitment_from_part_vehicle_fitment(db: AsyncSession) -> D
         part_existing: Dict[str, list] = {}
         part_fitments: Dict[str, list] = defaultdict(list)
 
-        for part_id, compat, manufacturer, model, year_from, year_to, engine_type in rows:
+        for i, (part_id, compat, manufacturer, model, year_from, year_to, engine_type) in enumerate(rows):
+            if i % 100 == 0:  # unconditional yield before any continue so heartbeat always fires
+                await asyncio.sleep(0)
             total_scanned += 1
             pid = str(part_id)
             if pid not in part_existing:
@@ -2652,7 +3012,9 @@ async def merge_catalog_fitment_from_part_vehicle_fitment(db: AsyncSession) -> D
 
         # Step 3: update parts_catalog for this manufacturer
         updated_this_mfr = 0
-        for part_id, entries in part_fitments.items():
+        for j, (part_id, entries) in enumerate(part_fitments.items()):
+            if j % 50 == 0:  # unconditional yield before continue so heartbeat always fires
+                await asyncio.sleep(0)
             preserved = [
                 item for item in part_existing.get(part_id, [])
                 if not (isinstance(item, dict) and item.get("source") == "part_vehicle_fitment")
@@ -2677,6 +3039,7 @@ async def merge_catalog_fitment_from_part_vehicle_fitment(db: AsyncSession) -> D
             total_merged += len(entries)
 
         await db.commit()
+        await asyncio.sleep(0)  # yield after each manufacturer commit
         total_updated += updated_this_mfr
         logger.info("merge_catalog_fitment: mfr=%s scanned=%d updated=%d",
                     mfr, len(rows), updated_this_mfr)
@@ -2802,17 +3165,17 @@ async def _lookup_oem_spec_task(db: AsyncSession) -> dict:
 async def _enrich_pending_parts_task(db: AsyncSession) -> Dict[str, Any]:
     """Thin wrapper so enrich_pending_parts integrates with TASK_REGISTRY."""
     from ai_catalog_builder import enrich_pending_parts
-    return await enrich_pending_parts(db, limit=100)
+    return await enrich_pending_parts(db, limit=2000)
 
 
 async def _trigger_scraper_for_misses_task(db: AsyncSession) -> Dict[str, Any]:
     """Find high-frequency zero-result queries (miss_count >= 3, not yet triggered)
     and fire REX brand discovery for the likely brand."""
-    if _real_data_only_enabled():
+    if not _rex_harvest_enabled():
         return {
             "task": "trigger_scraper_for_misses",
             "status": "skipped",
-            "reason": "real_data_only mode disables automatic brand discovery",
+            "reason": "REX_HARVEST_ENABLED=false",
             "triggered": 0,
             "errors": 0,
         }
@@ -2891,11 +3254,11 @@ async def _trigger_scraper_for_registry_gaps_task(db: AsyncSession) -> Dict[str,
 
     We queue only a bounded batch per run for speed + operational safety.
     """
-    if _real_data_only_enabled():
+    if not _rex_harvest_enabled():
         return {
             "task": "trigger_scraper_for_registry_gaps",
             "status": "skipped",
-            "reason": "real_data_only mode disables automatic brand discovery",
+            "reason": "REX_HARVEST_ENABLED=false",
             "triggered": 0,
             "target": 0,
             "per_run": 0,
@@ -3169,18 +3532,81 @@ async def dedup_catalog_parts(db: AsyncSession) -> Dict[str, Any]:
     }
 
 
+# ── populate_supplier_parts constants ───────────────────────────────────────
+_BATCH = 500  # rows per DB page when iterating parts_catalog
+
+_DEFAULT_PRICE = 80.0  # ILS fallback when part has no base_price
+
+_CATEGORY_FALLBACK_ILS: Dict[str, float] = {
+    "בלמים": 150.0,
+    "מתלה": 200.0,
+    "היגוי": 180.0,
+    "מנוע": 300.0,
+    "קירור": 120.0,
+    "מערכת דלק": 180.0,
+    "מערכת אוויר": 80.0,
+    "טורבו": 500.0,
+    "פליטה": 250.0,
+    "תיבת הילוכים וציר": 400.0,
+    "מצמד": 200.0,
+    "רצועות תזמון": 90.0,
+    "הצתה": 80.0,
+    "סינון": 60.0,
+    "חשמל ואלקטרוניקה": 120.0,
+    "חיישנים": 80.0,
+    "מצבר": 250.0,
+    "תאורה": 100.0,
+    "מזגן וחימום": 150.0,
+    "גוף הרכב": 200.0,
+    "שמשות ומגבים": 80.0,
+    "פנים הרכב": 100.0,
+    "גלגלים וצמיגים": 100.0,
+    "אטמים וצינורות": 60.0,
+    "מערכת בטיחות": 300.0,
+    "מערכת היברידית וחשמלי": 500.0,
+    "שמנים ונוזלים": 50.0,
+    "כלי עבודה ואביזרים": 60.0,
+    "כללי": 80.0,
+}
+
+_WARRANTY_MAP: Dict[str, int] = {
+    "original": 24, "Original": 24,
+    "oe_equivalent": 12, "OE Equivalent": 12,
+    "aftermarket": 12, "Aftermarket": 12,
+    "economy": 6, "Economy": 6,
+    "generic": 6,
+    "New": 12, "Used": 3, "Remanufactured": 6,
+}
+
+# REAL_DATA_ONLY: populate_supplier_parts only links suppliers that have REAL sourced data.
+# DO NOT add generic marketplace suppliers (eBay Motors, Motorstore IL) here — they produce
+# fabricated price rows that violate the pricing policy. Real eBay/Motorstore rows come from
+# ebay_brand_importer.py and scrape_motorstore() respectively.
+
+# Manufacturer-specific = official importers, linked only to their own-brand parts
+# price_mult = 1.0 means price_ils = base_price (our 45% margin already applied)
+_MANUFACTURER_SUPPLIERS: List[Any] = [
+    ("Inbar Group - Land Rover Israel", "LR-IL",  1.00, 0.0, 0.0, 7, "in_stock", True),
+    ("Geo Mobility - Zeekr Israel",     "ZEEKR",  1.00, 0.0, 0.0, 7, "in_stock", True),
+]
+
+# _UNIVERSAL_SUPPLIERS intentionally empty — no fake marketplace links allowed.
+# Rule: supplier_parts rows must come from real scrapers/importers only.
+_UNIVERSAL_SUPPLIERS: List[Any] = []
+# ────────────────────────────────────────────────────────────────────────────
+
+
 async def _populate_supplier_parts_task(db: AsyncSession) -> Dict[str, Any]:
     """
-    Link every active part to every active supplier with computed pricing.
+    Link manufacturer-direct suppliers to their own-brand parts with computed pricing.
     Idempotent — uses ON CONFLICT DO NOTHING on (supplier_id, part_id).
     Heavy operation; only runs on demand via the admin API, not in run_all_tasks.
+
+    REAL_DATA_ONLY rule: only manufacturer-specific suppliers are linked here.
+    Generic marketplace suppliers (eBay Motors, Motorstore IL) must NOT be added to
+    _UNIVERSAL_SUPPLIERS — their rows must come from real scrapers/importers only.
+    price_ils = base_price (mult=1.0) — 45% margin already in base_price.
     """
-    if _real_data_only_enabled():
-        return {
-            "task": "populate_supplier_parts",
-            "status": "skipped",
-            "reason": "real_data_only mode blocks synthetic supplier-part generation",
-        }
 
     import json
     import uuid as _uuid
@@ -3226,7 +3652,7 @@ async def _populate_supplier_parts_task(db: AsyncSession) -> Dict[str, Any]:
                 CAST(j->>'estimated_delivery_days' AS INT),
                 CAST(j->>'is_available' AS BOOLEAN),
                 NOW(), NOW()
-            FROM json_array_elements(:payload::json) AS j
+            FROM json_array_elements(CAST(:payload AS json)) AS j
             ON CONFLICT (supplier_id, part_id) DO NOTHING
         """), {"payload": payload})
         await db.commit()
@@ -3767,6 +4193,7 @@ TASK_REGISTRY: Dict[str, Any] = {
     "dedup_catalog_parts":       dedup_catalog_parts,
     "normalize_availability":    normalize_availability,
     "fix_base_prices":           fix_base_prices,
+    "normalize_base_price":      normalize_base_price,
     "fix_manufacturer_overflow": fix_manufacturer_overflow,
     "flag_fake_skus":            flag_fake_skus,
     "fill_car_brands":           fill_car_brands,
@@ -3777,6 +4204,7 @@ TASK_REGISTRY: Dict[str, Any] = {
     "backfill_bmw_fitment_from_name_he": backfill_bmw_fitment_from_name_he,
     "backfill_mini_fitment_from_name_he": backfill_mini_fitment_from_name_he,
     "backfill_ford_fitment_from_name_he": backfill_ford_fitment_from_name_he,
+    "backfill_jaguar_fitment_from_name": backfill_jaguar_fitment_from_name,
     "merge_catalog_fitment_from_part_vehicle_fitment": merge_catalog_fitment_from_part_vehicle_fitment,
     "sync_manufacturer_registries": sync_manufacturer_registries,
     "refresh_min_max_prices":    refresh_min_max_prices,
@@ -3814,7 +4242,11 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
     """
     from BACKEND_AUTH_SECURITY import get_redis
     from distributed_lock import acquire_lock
-    _agent_lock = await acquire_lock(await get_redis(), "db_update_agent", ttl_seconds=21600)
+    lock_ttl_s = int(os.getenv("DB_AGENT_LOCK_TTL_S", "21600"))
+    job_ttl_s = int(os.getenv("DB_AGENT_JOB_TTL_S", "21600"))
+    heartbeat_interval_s = int(os.getenv("DB_AGENT_HEARTBEAT_INTERVAL_S", "60"))
+    redis = await get_redis()
+    _agent_lock = await acquire_lock(redis, "db_update_agent", ttl_seconds=lock_ttl_s)
     if not _agent_lock:
         return {"status": "skipped", "reason": "db_update_agent already running on another worker",
                 "tasks_ok": 0, "tasks_error": 0}
@@ -3825,10 +4257,98 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
     results: List[Dict[str, Any]] = []
     job_id: Optional[str] = None
     task_timeout_s = int(os.getenv("DB_AGENT_TASK_TIMEOUT_S", "1800"))
-    heartbeat_interval_s = int(os.getenv("DB_AGENT_HEARTBEAT_INTERVAL_S", "60"))
+
+    # Publish worker start to shared memory so agents can see live status
+    try:
+        from agents.memory import AgentMemory as _AgentMemory
+        _wm = _AgentMemory(db, agent_name="db_update_agent")
+        await _wm.write_worker_heartbeat({"status": "starting", "started_at": started_at})
+    except Exception:
+        pass
+
+    # --- Thread-based heartbeat (immune to asyncio event-loop blocking) ----------
+    import threading as _threading
+    import psycopg2 as _psycopg2
+    import redis as _redis_sync
+
+    _hb_stop = _threading.Event()
+
+    def _heartbeat_thread(jid: str, stop_evt: "_threading.Event") -> None:
+        """Daemon thread: bumps last_heartbeat_at and refreshes Redis lock every
+        heartbeat_interval_s seconds using plain synchronous clients.  Completely
+        independent of the asyncio event loop, so it keeps firing even while the
+        main loop is doing CPU-heavy work."""
+        lock_key = "autospare:lock:db_update_agent"
+        db_url_raw = os.getenv("DATABASE_URL", "")
+        # Convert asyncpg URL → psycopg2 dsn
+        db_dsn = db_url_raw.replace("postgresql+asyncpg://", "postgresql://")
+        redis_url = os.getenv("REDIS_URL", "")
+        def _make_db_conn():
+            conn = _psycopg2.connect(
+                db_dsn,
+                connect_timeout=5,
+                keepalives=1,
+                keepalives_idle=10,
+                keepalives_interval=2,
+                keepalives_count=3,
+                options="-c statement_timeout=8000",
+            )
+            conn.autocommit = True
+            return conn
+
+        try:
+            db_conn = _make_db_conn()
+        except Exception as exc:
+            print(f"[heartbeat_thread] DB connect failed: {exc}")
+            db_conn = None
+        try:
+            rconn = _redis_sync.from_url(redis_url)
+        except Exception as exc:
+            print(f"[heartbeat_thread] Redis connect failed: {exc}")
+            rconn = None
+
+        print(f"[heartbeat_thread] started, interval={heartbeat_interval_s}s, job_id={jid}", flush=True)
+        while not stop_evt.wait(timeout=heartbeat_interval_s):
+            print(f"[heartbeat_thread] tick, db_conn={'ok' if db_conn else 'none'}", flush=True)
+            if db_conn:
+                try:
+                    with db_conn.cursor() as cur:
+                        cur.execute(
+                            "UPDATE job_registry SET last_heartbeat_at = NOW() "
+                            "WHERE job_id = %s AND status = 'running'",  # noqa: S608
+                            (jid,),
+                        )
+                        updated = cur.rowcount
+                    if updated:
+                        print(f"[heartbeat_thread] DB updated ok", flush=True)
+                    else:
+                        print(f"[heartbeat_thread] WARN: 0 rows updated for job_id={jid} (job may be gone/failed)", flush=True)
+                except Exception as exc:
+                    print(f"[heartbeat_thread] DB update failed: {exc}", flush=True)
+                    try:
+                        db_conn = _make_db_conn()
+                    except Exception as reconn_exc:
+                        print(f"[heartbeat_thread] DB reconnect failed: {reconn_exc}", flush=True)
+                        db_conn = None
+            if rconn:
+                try:
+                    rconn.set(lock_key, "1", ex=lock_ttl_s, xx=True)
+                except Exception as exc:
+                    print(f"[heartbeat_thread] Redis refresh failed: {exc}", flush=True)
+        if db_conn:
+            try:
+                db_conn.close()
+            except Exception:
+                pass
+        if rconn:
+            try:
+                rconn.close()
+            except Exception:
+                pass
+
     try:
         try:
-            job_id = await job_registry_start(db, "run_all_tasks", ttl_seconds=21600)
+            job_id = await job_registry_start(db, "run_all_tasks", ttl_seconds=job_ttl_s)
         except Exception as exc:
             logger.warning("run_all_tasks job_registry_start failed: %s", exc)
             try:
@@ -3841,12 +4361,13 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
             "fill_car_brands",
             "normalize_imported_manufacturers",
             "sync_models_from_catalog",
-            "sync_models_from_catalog_file",
+            # sync_models_from_catalog_file excluded — XLS already imported; runs on-demand only
             "backfill_catalog_fitment_from_xls",
-            "backfill_bmw_fitment_from_name_he",
+            # "backfill_bmw_fitment_from_name_he",  # DISABLED: OOM / already complete
             "backfill_mini_fitment_from_name_he",
-            "backfill_ford_fitment_from_name_he",
-            "merge_catalog_fitment_from_part_vehicle_fitment",
+            # "backfill_ford_fitment_from_name_he",  # DISABLED: OOM / already complete
+            # "backfill_jaguar_fitment_from_name",  # DISABLED: OOM / already complete
+            # "merge_catalog_fitment_from_part_vehicle_fitment",  # DISABLED: full-catalog scan, OOM per cycle, near-zero updates
             "sync_manufacturer_registries",
             "trigger_scraper_for_registry_gaps",
             "clean_part_names",
@@ -3856,7 +4377,8 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
             "normalize_availability",
             "fix_manufacturer_overflow",
             "flag_fake_skus",
-            "fix_base_prices",
+            # "fix_base_prices",  # DISABLED: OOM / already complete
+            # "normalize_base_price",  # DISABLED: OOM / already complete
             "refresh_min_max_prices",
             "lookup_oem_spec",
             "enrich_pending_parts",
@@ -3869,21 +4391,21 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
         if todo_task_names:
             ordered_tasks = todo_task_names + [name for name in ordered_tasks if name not in todo_task_names]
 
-        for task_name in ordered_tasks:
-            logger.info("run_all_tasks → starting: %s", task_name)
-            hb_task: Optional[asyncio.Task] = None
+        if job_id:
+            _hb_thread = _threading.Thread(
+                target=_heartbeat_thread,
+                args=(job_id, _hb_stop),
+                name="db_agent_heartbeat",
+                daemon=True,
+            )
+            _hb_thread.start()
 
-            async def _heartbeat_loop() -> None:
-                # Keep heartbeat alive while an individual task is running.
-                while True:
-                    await asyncio.sleep(heartbeat_interval_s)
-                    if job_id:
-                        await job_heartbeat(db, job_id)
+        for task_name in ordered_tasks:
+            t_task = time.monotonic()
+            print(f"[run_all_tasks] starting: {task_name}", flush=True)
+            logger.info("run_all_tasks → starting: %s", task_name)
 
             try:
-                if job_id:
-                    hb_task = asyncio.create_task(_heartbeat_loop(), name=f"db_update_agent_hb_{task_name}")
-
                 if task_timeout_s > 0:
                     result = await asyncio.wait_for(run_task(task_name, db), timeout=task_timeout_s)
                 else:
@@ -3897,13 +4419,23 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
                     "status": "error",
                     "error": f"Task timeout after {task_timeout_s}s",
                 }
+                print(f"[run_all_tasks] TIMEOUT: {task_name} after {task_timeout_s}s", flush=True)
                 logger.error("run_all_tasks: task %s timed out after %ss", task_name, task_timeout_s)
-            finally:
-                if hb_task:
-                    hb_task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await hb_task
 
+            except Exception as task_exc:
+                with contextlib.suppress(Exception):
+                    await db.rollback()
+                result = {
+                    "task": task_name,
+                    "status": "error",
+                    "error": str(task_exc)[:400],
+                }
+                print(f"[run_all_tasks] ERROR: {task_name} — {str(task_exc)[:200]}", flush=True)
+                logger.error("run_all_tasks: task %s raised: %s", task_name, task_exc, exc_info=True)
+
+            elapsed_task = round(time.monotonic() - t_task, 1)
+            status = result.get("status", "?")
+            print(f"[run_all_tasks] done: {task_name} status={status} elapsed={elapsed_task}s", flush=True)
             results.append(result)
             if result.get("status") == "error":
                 logger.warning("run_all_tasks: task %s errored, continuing", task_name)
@@ -3913,6 +4445,31 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
         total_elapsed = round(time.monotonic() - t0, 2)
         ok_count = sum(1 for r in results if r.get("status") == "ok")
         err_count = len(results) - ok_count
+
+        # Mark todos complete whose task_names all finished ok
+        completed_task_names = {r["task"] for r in results if r.get("status") == "ok"}
+        todos_completed = 0
+        for todo in shared_todos:
+            task_names_for_todo = [n for n in extract_todo_task_names([todo]) if n in TASK_REGISTRY]
+            if not task_names_for_todo:
+                continue
+            if all(t in completed_task_names for t in task_names_for_todo):
+                try:
+                    await db.execute(text(
+                        "UPDATE agent_todos SET status = 'completed', completed_at = NOW(), "
+                        "progress_pct = 100, updated_at = NOW() "
+                        "WHERE id = CAST(:tid AS uuid) AND status != 'completed'"
+                    ), {"tid": todo["id"]})
+                    todos_completed += 1
+                except Exception:
+                    pass
+        if todos_completed:
+            try:
+                await db.commit()
+            except Exception:
+                pass
+            logger.info("run_all_tasks: marked %d todos completed", todos_completed)
+            print(f"[run_all_tasks] marked {todos_completed} todos completed", flush=True)
 
         report = {
             "started_at": started_at,
@@ -3937,20 +4494,56 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
             err_count,
             total_elapsed,
         )
+        # Publish final stats to shared memory
+        try:
+            from agents.memory import AgentMemory as _AgentMemory
+            _wm = _AgentMemory(db, agent_name="db_update_agent")
+            await _wm.write_worker_heartbeat({
+                "status": "completed", "tasks_ok": ok_count, "tasks_error": err_count,
+                "elapsed_s": round(total_elapsed, 1),
+            })
+        except Exception:
+            pass
         if job_id:
+            _finish_ok = False
             try:
-                await job_registry_finish(db, job_id, status="completed")
+                # Use a fresh session — the run session may be in a bad state after 25 tasks.
+                from BACKEND_DATABASE_MODELS import async_session_factory as _asf_finish
+                async with _asf_finish() as _finish_db:
+                    await job_registry_finish(_finish_db, job_id, status="completed")
+                _finish_ok = True
             except Exception as exc:
                 logger.warning("run_all_tasks job_registry_finish failed: %s", exc)
+                print(f"[run_all_tasks] WARN: job_registry_finish failed: {exc}", flush=True)
+            if not _finish_ok:
+                # Fallback: use psycopg2 directly (same as heartbeat thread) to avoid orphan records
+                try:
+                    import psycopg2 as _pg2
+                    _fb_dsn = os.getenv("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://")
+                    with _pg2.connect(_fb_dsn, connect_timeout=5) as _fc:
+                        _fc.autocommit = True
+                        with _fc.cursor() as _cur:
+                            _cur.execute(
+                                "UPDATE job_registry SET status='completed', completed_at=NOW(), "
+                                "last_heartbeat_at=NOW() WHERE job_id=%s AND status='running'",
+                                (job_id,),
+                            )
+                    print(f"[run_all_tasks] psycopg2 fallback finish OK for {job_id}", flush=True)
+                except Exception as fb_exc:
+                    print(f"[run_all_tasks] psycopg2 fallback finish FAILED: {fb_exc}", flush=True)
+        _hb_stop.set()  # stop heartbeat only after DB is updated
         await _agent_lock.release()
         return report
 
     except Exception as exc:
         if job_id:
             try:
-                await job_registry_finish(db, job_id, status="dead", error_message=str(exc)[:500])
-            except Exception:
-                pass
+                from BACKEND_DATABASE_MODELS import async_session_factory as _asf_finish
+                async with _asf_finish() as _finish_db:
+                    await job_registry_finish(_finish_db, job_id, status="dead", error_message=str(exc)[:500])
+            except Exception as finish_exc:
+                print(f"[run_all_tasks] WARN: job_registry_finish(dead) failed: {finish_exc}", flush=True)
+        _hb_stop.set()
         _agent_running = False
         await _agent_lock.release()
         raise
@@ -3975,19 +4568,20 @@ _bg_task: Optional[asyncio.Task] = None
 async def _agent_loop(get_db_fn, interval_hours: float = 6.0) -> None:
     """Periodic background loop.  Runs run_all_tasks every `interval_hours`."""
     from resilience import log_job_failure
+    # Give container_start.sh time to clear stale Redis locks before first run
+    await asyncio.sleep(90)
     logger.info(
         "DB update agent background loop started (interval=%.1fh)", interval_hours
     )
     while True:
+        result: dict = {}
         try:
             async for db in get_db_fn():
-                await run_all_tasks(db)
+                result = await run_all_tasks(db)
         except Exception as exc:
             error_msg = str(exc)[:500]
             logger.error("DB update agent loop error: %s", error_msg)
-            # Log failure to DLQ (Gap 2b)
             try:
-                # Import get_pii_db to access PII database for logging
                 from BACKEND_DATABASE_MODELS import pii_session_factory
                 async with pii_session_factory() as pii_db:
                     await log_job_failure(
@@ -4000,7 +4594,12 @@ async def _agent_loop(get_db_fn, interval_hours: float = 6.0) -> None:
             except Exception as dlq_err:
                 logger.error("Failed to log run_all_tasks to DLQ: %s", dlq_err)
 
-        await asyncio.sleep(interval_hours * 3600)
+        # If skipped (lock held), retry in 2 minutes instead of sleeping the full interval
+        if result.get("status") == "skipped":
+            logger.warning("run_all_tasks skipped (lock held) — will retry in 2m")
+            await asyncio.sleep(120)
+        else:
+            await asyncio.sleep(interval_hours * 3600)
 
 
 def start_agent_task(get_db_fn, interval_hours: float = 6.0) -> None:

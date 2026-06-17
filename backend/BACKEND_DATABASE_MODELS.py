@@ -47,11 +47,23 @@ DATABASE_PII_URL = os.getenv(
     "postgresql+asyncpg://autospare:autospare@localhost:5432/autospare_pii"
 )
 
-engine = create_async_engine(DATABASE_URL, echo=False, future=True)
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=False,
+    future=True,
+    pool_pre_ping=True,   # validates connections before use — prevents stale-connection InterfaceErrors
+    pool_recycle=1800,    # recycle connections every 30 min to avoid server-side timeout drops
+)
 async_session_factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 # PII database — separate engine for GDPR-scoped data
-pii_engine = create_async_engine(DATABASE_PII_URL, echo=False, future=True)
+pii_engine = create_async_engine(
+    DATABASE_PII_URL,
+    echo=False,
+    future=True,
+    pool_pre_ping=True,
+    pool_recycle=1800,
+)
 pii_session_factory = sessionmaker(pii_engine, class_=AsyncSession, expire_on_commit=False)
 
 

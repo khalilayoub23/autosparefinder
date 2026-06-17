@@ -301,23 +301,23 @@ async def insert_part(conn, supplier_id: str, product: dict, variant: dict,
                 INSERT INTO parts_catalog(
                     id, sku, oem_number, name, manufacturer, manufacturer_id,
                     category, description, specifications, compatible_vehicles,
-                    importer_price_ils, online_price_ils, min_price_ils, max_price_ils,
+                    base_price, importer_price_ils, min_price_ils, max_price_ils,
                     part_condition, aftermarket_tier, part_type,
                     is_safety_critical, needs_oem_lookup, master_enriched,
                     is_active, created_at, updated_at
                 ) VALUES(
                     gen_random_uuid(), $1, $2, $3, $4, $5::uuid,
                     $6, $7, $8::jsonb, $9::jsonb,
-                    $10, $10, $10, $11,
+                    $10, 0, $10, $11,
                     'New', NULL, 'original',
                     FALSE, FALSE, FALSE,
                     TRUE, NOW(), NOW()
                 )
                 ON CONFLICT (sku) DO UPDATE SET
-                    online_price_ils = EXCLUDED.online_price_ils,
+                    base_price = EXCLUDED.base_price,
+                    importer_price_ils = 0,
                     min_price_ils = EXCLUDED.min_price_ils,
                     max_price_ils = EXCLUDED.max_price_ils,
-                    importer_price_ils = EXCLUDED.importer_price_ils,
                     updated_at = NOW()
                 RETURNING id
                 """,

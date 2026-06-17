@@ -1,5 +1,5 @@
 # ⚠️  BROWSER TOOL REQUIRED — DO NOT RUN HTTP REQUESTS FROM SERVER IP
-# The server IP (94.130.150.23) is blocked by Cloudflare and anti-bot systems.
+# The server IP (207.180.217.129) is blocked by Cloudflare and anti-bot systems.
 # All external HTTP extraction must be done via the browser tool (Playwright / run_playwright_code).
 # Pattern: (1) Extract with browser tool → save JSON, (2) Import JSON with this script.
 # See claude.md § Web Scraping Rules.

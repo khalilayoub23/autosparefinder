@@ -1,16 +1,41 @@
 """
-agents/memory.py — Shared memory store for all AutoSpareFinder agents.
+agents/memory.py — Shared memory store for all AutoSpareFinder agents and workers.
 
 Three layers:
   1. PostgreSQL  — persistent long-term memory (brand guide, decisions, metrics)
   2. Redis       — short-term tactical memory (last 24h events, trends)
   3. In-process  — ephemeral cache (current session only)
 
+Key namespacing convention:
+  - Agent-scoped keys  : plain key  e.g. "post_history", "campaign_plan"
+  - Cross-agent shared : "shared:{key}"  — written by workers, read by agents
+
+Shared key schema (all agents can read these):
+  shared:worker_status:{name}  → {worker, stats, updated_at}  — worker heartbeat
+  shared:catalog_stats         → {total_active, added_24h, updated_24h, top_brands}
+  shared:rex_progress          → {brands_done, brands_total, last_brand, todos_left}
+  shared:noa_last_campaign     → {week_theme, platforms, created_at}
+  shared:price_sync_stats      → {updated, errors, last_run}
+  shared:system_health         → {services_down, zombie_count, dlq_count, checked_at}
+
+Workers must call write_worker_heartbeat() on every cycle to stay visible to agents.
+
 Usage:
     from agents.memory import AgentMemory
-    mem = AgentMemory(db, agent_name="marketing_agent")
-    await mem.set("last_post_performance", {"likes": 120, "views": 3400})
-    data = await mem.get("last_post_performance")
+    mem = AgentMemory(db, agent_name="catalog_scraper")
+
+    # Worker heartbeat (call from every worker cycle)
+    await mem.write_worker_heartbeat({"parts_scraped": 100, "errors": 2})
+
+    # Read system context (agents use this to personalise content)
+    ctx = await mem.get_system_context()
+    # ctx["catalog_stats"]["total_active"] → 970082
+
+    # Cross-agent shared write
+    await mem.set_shared("catalog_stats", {"total_active": 970082, ...})
+
+    # Agent-scoped write (only visible to that agent's memory key)
+    await mem.set("post_history", [...])
 """
 from __future__ import annotations
 
@@ -132,6 +157,46 @@ class AgentMemory:
         if len(existing) > max_events:
             existing = existing[-max_events:]
         await self.set(key, existing)
+
+    # ── Shared cross-agent namespace ──────────────────────────────────────────
+
+    async def set_shared(self, key: str, value: Any, ttl_hours: Optional[int] = None) -> None:
+        """Write to the shared cross-agent namespace. Key is stored as 'shared:{key}'."""
+        await self.set(f"shared:{key}", value, ttl_hours=ttl_hours)
+
+    async def get_shared(self, key: str) -> Optional[Any]:
+        """Read from the shared cross-agent namespace."""
+        return await self.get(f"shared:{key}")
+
+    async def write_worker_heartbeat(self, stats: dict) -> None:
+        """Workers call this each cycle to publish status to shared memory.
+        Agents read this via get_system_context() for live system awareness."""
+        payload = {
+            "worker": self.agent_name,
+            "stats": stats,
+            "updated_at": datetime.utcnow().isoformat(),
+        }
+        await self.set_shared(f"worker_status:{self.agent_name}", payload, ttl_hours=2)
+
+    async def get_system_context(self) -> dict:
+        """Return current system status from shared memory.
+        Agents call this to understand live catalog state before generating content."""
+        shared_keys = [
+            "catalog_stats",
+            f"worker_status:catalog_scraper",
+            f"worker_status:db_update_agent",
+            f"worker_status:rex",
+            "rex_progress",
+            "noa_last_campaign",
+            "price_sync_stats",
+            "system_health",
+        ]
+        ctx: dict = {}
+        for k in shared_keys:
+            val = await self.get_shared(k)
+            if val is not None:
+                ctx[k] = val
+        return ctx
 
     async def get_brand_guide(self) -> dict:
         """Return AutoSpareFinder brand guide — shared across all agents."""

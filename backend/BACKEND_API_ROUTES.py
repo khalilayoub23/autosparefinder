@@ -81,6 +81,45 @@ BLOCKED_SETTINGS = {
 from routes.utils import _guarded_task, trigger_supplier_fulfillment  # shared background-loop utilities
 from routes.stripe_config import resolve_stripe_secret_key, is_valid_stripe_secret_key
 
+# ── Supervised background tasks ───────────────────────────────────────────────
+# Tracks every asyncio task started at startup.  If a task exits unexpectedly
+# (crash / unhandled exception) the done-callback fires a WhatsApp alert directly
+# to the owner phone so the crash is never silently swallowed.
+_SUPERVISED_TASKS: dict = {}  # name → asyncio.Task
+
+
+def _supervised_task(name: str, coro) -> "asyncio.Task":
+    """
+    Drop-in replacement for asyncio.create_task() that:
+      1. Registers the task in _SUPERVISED_TASKS for health-monitor inspection.
+      2. Adds a done-callback: alerts owner via WhatsApp if the task exits for any
+         reason other than intentional CancelledError (i.e. a crash).
+    """
+    task = asyncio.create_task(coro, name=name)
+
+    def _on_done(t: "asyncio.Task") -> None:
+        if t.cancelled():
+            return  # intentional shutdown — no alert
+        exc = None
+        try:
+            exc = t.exception()
+        except Exception:
+            pass
+        owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
+        if owner:
+            msg_parts = [f"🔴 Background task died: *{name}*"]
+            if exc:
+                msg_parts.append(f"Error: {type(exc).__name__}: {exc}")
+            msg_parts.append("⚠️ This task will NOT restart automatically — check the server.")
+            asyncio.get_event_loop().create_task(
+                _wa_send(to=owner, text="\n".join(msg_parts))
+            )
+        print(f"[TaskMonitor] DIED: {name} exc={exc}")
+
+    task.add_done_callback(_on_done)
+    _SUPERVISED_TASKS[name] = task
+    return task
+
 
 def _is_blocked_setting_key(key: str) -> bool:
     return key.strip().lower() in BLOCKED_SETTINGS
@@ -694,6 +733,92 @@ async def _load_runtime_ai_overrides_from_db():
         print(f"[Startup] Failed to load runtime AI overrides (non-fatal): {e}")
 
 
+async def _status_update_loop() -> None:
+    """Every 30 minutes: WhatsApp the owner a live summary of all workers, agents, and catalog growth."""
+    _owner_phone = os.getenv("OWNER_WHATSAPP_PHONE", "")
+    if not _owner_phone:
+        return
+    await asyncio.sleep(60)  # brief startup delay before first report
+
+    while True:
+        try:
+            _now = datetime.now(timezone.utc)
+            lines: list[str] = [
+                f"\U0001f4ca *AutoSpareFinder — Status Update* ({_now.strftime('%H:%M UTC')})"
+            ]
+
+            async with async_session_factory() as _db:
+                jobs = (await _db.execute(text("""
+                    SELECT job_name, status, started_at, last_heartbeat_at
+                    FROM job_registry
+                    WHERE started_at > NOW() - INTERVAL '2 hours'
+                    ORDER BY started_at DESC NULLS LAST
+                    LIMIT 12
+                """))).fetchall()
+
+                todos = (await _db.execute(text("""
+                    SELECT status, COUNT(*) AS cnt
+                    FROM agent_todos
+                    WHERE assigned_to_agent = 'rex' AND category = 'catalog_discovery'
+                    GROUP BY status
+                    ORDER BY status
+                """))).fetchall()
+
+                new_parts = (await _db.execute(text("""
+                    SELECT COUNT(*) FROM parts_catalog
+                    WHERE created_at > NOW() - INTERVAL '30 minutes'
+                """))).scalar() or 0
+
+                total_parts = (await _db.execute(text("""
+                    SELECT COUNT(*) FROM parts_catalog WHERE is_active = TRUE
+                """))).scalar() or 0
+
+            lines.append("\n*Workers:*")
+            if jobs:
+                for job in jobs:
+                    age_min = (
+                        int((_now - job.started_at.replace(tzinfo=timezone.utc) if job.started_at.tzinfo is None else _now - job.started_at).total_seconds() / 60)
+                        if job.started_at else 0
+                    )
+                    hb_ago = ""
+                    if job.last_heartbeat_at:
+                        hb_ts = job.last_heartbeat_at if job.last_heartbeat_at.tzinfo else job.last_heartbeat_at.replace(tzinfo=timezone.utc)
+                        hb_min = int((_now - hb_ts).total_seconds() / 60)
+                        hb_ago = f" hb={hb_min}m"
+                    icon = (
+                        "\U0001f7e2" if job.status == "running" else
+                        "\U0001f534" if job.status in ("failed", "dead") else
+                        "⏳"
+                    )
+                    lines.append(f"  {icon} {job.job_name}: {job.status} (+{age_min}m{hb_ago})")
+            else:
+                lines.append("  (no recent jobs)")
+
+            dead_tasks = [n for n, t in _SUPERVISED_TASKS.items() if t.done() and not t.cancelled()]
+            running_cnt = sum(1 for t in _SUPERVISED_TASKS.values() if not t.done())
+            dead_suffix = f", {len(dead_tasks)} dead ❌" if dead_tasks else " ✅"
+            lines.append(f"\n*Background tasks:* {running_cnt} running{dead_suffix}")
+            if dead_tasks:
+                lines.append(f"  Dead: {', '.join(dead_tasks[:5])}")
+
+            lines.append("\n*REX catalog todos:*")
+            if todos:
+                for row in todos:
+                    lines.append(f"  {row.status}: {row.cnt}")
+            else:
+                lines.append("  (none)")
+
+            lines.append(f"\n*Catalog:* {total_parts:,} active parts")
+            lines.append(f"  +{new_parts} added in last 30m")
+
+            await _wa_send(to=_owner_phone, text="\n".join(lines))
+            print(f"[StatusUpdate] Sent status report to owner ({len(lines)} lines)")
+        except Exception as _exc:
+            print(f"[StatusUpdate] loop error: {_exc}")
+
+        await asyncio.sleep(1800)  # 30 minutes
+
+
 async def _ebay_fitment_backfill_loop() -> None:
     """
     Daily eBay fitment backfill — runs once per day at ~01:00 UTC (after eBay quota resets).
@@ -718,6 +843,113 @@ async def _ebay_fitment_backfill_loop() -> None:
             print(f"[EbayFitment] loop error: {exc}")
         run += 1
         await asyncio.sleep(86400)  # wait 24h before next batch
+
+
+async def _enrich_catalog_loop() -> None:
+    """
+    Dedicated AI enrichment loop — runs every 30 minutes, 500 parts per cycle.
+    Uses Groq llama-3.1-8b-instant (~1.6 parts/sec) → ~24K parts/day.
+    Covers 3.24M pending parts over ~135 days.
+    Separate from run_all_tasks so enrichment is not bottlenecked by the 6h cycle.
+    """
+    await asyncio.sleep(120)  # 2min startup delay
+    while True:
+        try:
+            from ai_catalog_builder import enrich_pending_parts
+            async for db in get_db():
+                report = await enrich_pending_parts(db, limit=1000)
+                print(f"[EnrichLoop] {report}")
+                break
+        except Exception as exc:
+            print(f"[EnrichLoop] error: {exc}")
+        await asyncio.sleep(1800)  # 30 minutes
+
+
+async def _rex_dispatch_loop() -> None:
+    """
+    REX todo executor — polls agent_todos for 'rex' assigned rows and routes them
+    to the correct worker.  Runs every 15 minutes.
+
+    Routing rules:
+      - todos with artifacts.task_names → reassign to db_update_agent so run_all_tasks picks them up
+      - todos with artifacts.action in ('scrape','catalog_discovery','harvest') → reassign to scraper queue
+      - todos with artifacts.action == 'category_normalize_pass' → reassign to db_update_agent
+      - unknown todos → mark completed (nothing to do; prevents permanent pile-up)
+    """
+    await asyncio.sleep(120)  # 2-min startup grace
+    while True:
+        try:
+            async for db in get_db():
+                rows = (await db.execute(text("""
+                    SELECT id::text, title, artifacts
+                    FROM agent_todos
+                    WHERE assigned_to_agent = 'rex'
+                      AND status IN ('not_started', 'in_progress')
+                    ORDER BY
+                        CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
+                        created_at ASC
+                    LIMIT 50
+                """))).fetchall()
+
+                if not rows:
+                    break
+
+                routed_to_dbu = 0
+                routed_to_scraper = 0
+                dismissed = 0
+
+                for row in rows:
+                    tid = row[0]
+                    arts = dict(row[2] or {})
+                    action = str(arts.get("action", "")).lower()
+                    task_names = arts.get("task_names") or []
+
+                    if task_names or action in ("category_normalize_pass", "normalize_categories",
+                                                "fix_base_prices", "normalize_base_price"):
+                        # Route to db_update_agent — run_all_tasks will pick it up
+                        if not task_names:
+                            arts["task_names"] = ["normalize_categories"]
+                        await db.execute(text("""
+                            UPDATE agent_todos
+                            SET assigned_to_agent = 'db_update_agent',
+                                artifacts = :arts::jsonb,
+                                updated_at = NOW()
+                            WHERE id = CAST(:tid AS uuid)
+                        """), {"tid": tid, "arts": __import__("json").dumps(arts)})
+                        routed_to_dbu += 1
+
+                    elif action in ("scrape", "catalog_discovery", "harvest",
+                                    "brand_discovery", "web_scrape"):
+                        # Route to scraper agent
+                        await db.execute(text("""
+                            UPDATE agent_todos
+                            SET assigned_to_agent = 'scraper',
+                                updated_at = NOW()
+                            WHERE id = CAST(:tid AS uuid)
+                        """), {"tid": tid})
+                        routed_to_scraper += 1
+
+                    else:
+                        # No known executor — mark done to prevent pile-up
+                        await db.execute(text("""
+                            UPDATE agent_todos
+                            SET status = 'completed', completed_at = NOW(), updated_at = NOW(),
+                                progress_notes = 'Dismissed by REX dispatcher: no executor for this action'
+                            WHERE id = CAST(:tid AS uuid)
+                        """), {"tid": tid})
+                        dismissed += 1
+
+                await db.commit()
+                if routed_to_dbu or routed_to_scraper or dismissed:
+                    print(
+                        f"[REX] Dispatch cycle: db_update_agent={routed_to_dbu} "
+                        f"scraper={routed_to_scraper} dismissed={dismissed}"
+                    )
+
+        except Exception as exc:
+            print(f"[REX] dispatch loop error: {exc}")
+
+        await asyncio.sleep(900)  # 15 min
 
 
 @app.on_event("startup")
@@ -746,23 +978,26 @@ async def startup():
     # ApprovalQueue table = admin approval workflow (not a message queue).
     # Upgrade to Celery/Redis Streams when scaling beyond single VPS.
     if os.getenv("ENABLE_LOCAL_EMBED_WARMUP", "false").lower() in ("1", "true", "yes"):
-        asyncio.create_task(_warmup_embed_model())
+        _supervised_task("embed_warmup", _warmup_embed_model())
     else:
         print("[EmbedWarmup] disabled (ENABLE_LOCAL_EMBED_WARMUP=false)")
-    asyncio.create_task(_price_sync_loop())
-    asyncio.create_task(_stuck_orders_monitor_loop())   # ← periodic stuck-order monitor (every 30 min)
-    asyncio.create_task(_notify_search_miss_loop())     # ← search-miss user notifications (every 60 min)
-    asyncio.create_task(_scrape_search_misses_loop())   # ← nightly eBay search for unresolved search misses
-    asyncio.create_task(_abandoned_cart_loop())         # ← abandoned-cart WhatsApp re-engagement (every 60 min)
-    asyncio.create_task(_pending_payment_reminder_loop())  # ← pending-payment WhatsApp reminder (every 30 min)
-    asyncio.create_task(_health_monitor_loop())            # ← service health monitoring + admin alerting (every 5 min)
-    asyncio.create_task(_vip_detection_loop())             # ← VIP promotion + order stats sync (every 24 h)
-    asyncio.create_task(_backup_loop())                    # ← pg_dump autospare + autospare_pii (every 24 h)
-    start_scraper_task()           # ← catalog scraper background loop
-    start_db_agent(get_db, 6.0)   # ← DB cleaning / normalisation agent (every 6h)
-    asyncio.create_task(run_cleanup_loop())     # ← micro-batch cleanup loop (continuous)
-    asyncio.create_task(_noa_marketing_loop())         # ← NOA social media agent (every 24h)
-    asyncio.create_task(_ebay_fitment_backfill_loop()) # ← eBay fitment backfill (daily, runs after midnight)
+    _supervised_task("price_sync_loop",             _price_sync_loop())
+    _supervised_task("stuck_orders_monitor",        _stuck_orders_monitor_loop())
+    _supervised_task("notify_search_miss_loop",     _notify_search_miss_loop())
+    _supervised_task("scrape_search_misses_loop",   _scrape_search_misses_loop())
+    _supervised_task("abandoned_cart_loop",         _abandoned_cart_loop())
+    _supervised_task("pending_payment_reminder",    _pending_payment_reminder_loop())
+    _supervised_task("health_monitor_loop",         _health_monitor_loop())
+    _supervised_task("vip_detection_loop",          _vip_detection_loop())
+    _supervised_task("backup_loop",                 _backup_loop())
+    start_scraper_task()           # ← catalog scraper: every 3h (owns its own task internally)
+    start_db_agent(get_db, 3.0)   # ← DB cleaning / normalisation agent (every 3h, staggered from scraper)
+    _supervised_task("cleanup_loop",                run_cleanup_loop())
+    _supervised_task("noa_marketing_loop",          _noa_marketing_loop())
+    _supervised_task("ebay_fitment_backfill_loop",  _ebay_fitment_backfill_loop())
+    _supervised_task("enrich_catalog_loop",         _enrich_catalog_loop())
+    _supervised_task("status_update_loop",          _status_update_loop())
+    _supervised_task("rex_dispatch_loop",           _rex_dispatch_loop())
     await _warm_search_paths()
     print("✅ All systems ready — price-sync + catalog-scraper + db-agent schedulers started")
 
@@ -842,89 +1077,278 @@ def _build_pending_payment_whatsapp_message(full_name: str | None, order_number:
 # How often the health monitor probes all services (default: every 5 min)
 HEALTH_MONITOR_INTERVAL_S = int(os.getenv("HEALTH_MONITOR_INTERVAL_S", "300"))
 
+async def _noa_send_telegram(token: str, chat_id: str, text: str, keyboard: list | None = None) -> None:
+    """Send a Telegram message, silently ignore errors."""
+    try:
+        payload: dict = {"chat_id": chat_id, "text": text[:4096]}
+        if keyboard:
+            payload["reply_markup"] = {"inline_keyboard": keyboard}
+        async with __import__("httpx").AsyncClient(timeout=10.0) as _c:
+            await _c.post(f"https://api.telegram.org/bot{token}/sendMessage", json=payload)
+    except Exception as _e:
+        logger.warning("noa_send_telegram error: %s", _e)
+
+
 async def _noa_marketing_loop():
-    """Background loop: NOA social media agent runs every 24 hours."""
-    import random
+    """
+    Weekly campaign engine for NOA social media agent.
+
+    Monday  → generate 7-day campaign brief (theme + per-platform plan) → WhatsApp + Telegram
+    Tue–Sun → generate that day's platform post from the weekly plan → Telegram for approval
+
+    Anti-repeat: reads last 5 post topics from agent_memory before generating.
+    Platform rotation: TikTok (Tue/Sat) · Instagram (Wed/Sun) · Facebook (Thu) · WhatsApp blast (Fri)
+    """
+    import random, json as _json
     from agents.memory import AgentMemory, ensure_memory_table
+    from hf_client import hf_text as _hf_text
     from BACKEND_DATABASE_MODELS import async_session_factory
+
     NOA_INTERVAL_H = int(os.getenv("NOA_MARKETING_INTERVAL_H", "24"))
-    # Wait 30 min after startup before first run — prevents Gemini quota exhaustion at boot
-    await asyncio.sleep(1800)
+    await asyncio.sleep(1800)  # 30-min startup delay
+
     TELEGRAM_OWNER_ID = os.getenv("TELEGRAM_OWNER_CHAT_ID", "")
     TELEGRAM_ADMIN_TOKEN = os.getenv("TELEGRAM_ADMIN_BOT_TOKEN", "")
+    OWNER_PHONE = os.getenv("OWNER_WHATSAPP_PHONE", "")
 
-    # פוסטים אפשריים לכל יום
-    POST_TYPES = ["daily", "tip", "promo", "brand"]
+    # Israeli automotive seasonal context (month → demand peaks)
+    _SEASONAL: dict[int, str] = {
+        12: "חורף — סוללות, צמיגי גשם, מגבי שמשה, תאורה",
+        1:  "חורף — סוללות, צמיגי גשם, מגבי שמשה, תאורה",
+        2:  "חורף — סוללות, צמיגי גשם, מגבי שמשה, תאורה",
+        3:  "מעבר עונות — שמן מנוע, מסנני שמן, הכנת מנוע לקיץ",
+        4:  "אביב — שמן מנוע, מסנני שמן, הכנת מנוע לקיץ",
+        5:  "אביב — מיזוג אוויר (A/C), קירור, חגורות הנעה",
+        6:  "קיץ — מיזוג אוויר, מצנן (radiator), נוזל קירור",
+        7:  "קיץ — מיזוג אוויר, מצנן (radiator), נוזל קירור",
+        8:  "קיץ — מיזוג אוויר, מצנן (radiator), נוזל קירור",
+        9:  "סוף קיץ — בלמים, טסט שנתי, הכנת רכב לחורף",
+        10: "סוף קיץ — בלמים, טסט שנתי, הכנת רכב לחורף",
+        11: "כניסה לחורף — סוללות, מגבי שמשה, אורות",
+    }
+
+    # Popular cars in Israel
+    _CARS = [
+        "Toyota Corolla", "Hyundai Tucson", "Kia Sportage", "Mazda 3",
+        "Skoda Octavia", "Volkswagen Golf", "Dacia Duster", "Seat Leon",
+        "Hyundai i20", "Toyota C-HR", "Kia Niro", "Honda Civic",
+        "Mitsubishi Outlander", "Renault Kadjar", "Suzuki Vitara",
+        "Peugeot 3008", "Nissan Qashqai", "Ford Fiesta", "Toyota RAV4",
+    ]
+
+    # Part topics — (Hebrew name, English name, common pain point)
+    _PARTS = [
+        ("בלמי דיסק", "brake pads", "קול חריקה בבלימה"),
+        ("מסנן שמן", "oil filter", "שמן שחור, מנוע כבד"),
+        ("מצבר", "battery", "הרכב לא עולה בבוקר"),
+        ("חגורת תזמון", "timing belt", "תחזוקה מניעתית שמונעת קטסטרופה"),
+        ("מנורות LED קדמיות", "LED headlights", "תאורה חלשה בלילה"),
+        ("מגבי שמשה", "wiper blades", "שריטות על השמשה בגשם"),
+        ("מסנן מזגן (קבינה)", "cabin AC filter", "ריח עובש מהמזגן"),
+        ("סלילי הצתה", "ignition coils", "רעד במנוע, תאוצה גרועה"),
+        ("חיישני ABS", "ABS sensor", "נורת ABS דולקת"),
+        ("מוט ייצוב (שלדג)", "stabilizer bar link", "קשקוש מהשלדה"),
+        ("רדיאטור", "radiator", "רכב מתחמם מעבר"),
+        ("נרות הצתה", "spark plugs", "צריכת דלק גבוהה"),
+        ("פחי אוויר", "air filter", "תאוצה איטית, מנוע חנוק"),
+        ("מיסבי גלגל", "wheel bearings", "רעש 윙윙 מהגלגל במהירות"),
+    ]
+
+    # Platform rotation by weekday (0=Mon, 1=Tue … 6=Sun)
+    _DAY_PLATFORM = {
+        1: ("tiktok",    "TikTok — hook קצר וחד, שורה ראשונה שמחזיקה"),
+        2: ("instagram", "Instagram — story-telling ויזואלי, אמוציונלי"),
+        3: ("facebook",  "Facebook — פוסט מידעי בעל ערך, ניתן לשיתוף"),
+        4: ("whatsapp",  "WhatsApp channel — הודעה קצרה ומניעה לפעולה"),
+        5: ("tiktok",    "TikTok — זווית שונה לגמרי מהתיקטוק הקודם"),
+        6: ("instagram", "Instagram Reels — שאלה פתוחה לקהל"),
+    }
 
     while True:
         try:
+            now = datetime.now(timezone.utc)
+            weekday = now.weekday()   # 0=Monday … 6=Sunday
+            month = now.month
+            week_num = now.isocalendar()[1]
+            season = _SEASONAL.get(month, "")
+            car = random.choice(_CARS)
+            heb_part, eng_part, pain = random.choice(_PARTS)
+
             async with async_session_factory() as db:
                 await ensure_memory_table(db)
                 mem = AgentMemory(db, agent_name="noa")
-                brand_guide = await mem.get_brand_guide()
-
-                # בחר סוג פוסט אקראי
-                post_type = random.choice(POST_TYPES)
-
-                # צור תוכן דרך NOA
                 noa = SocialMediaManagerAgent()
-                caption = await noa.generate_post(
-                    topic=f"{post_type} post about auto parts",
-                    platform="TikTok",
-                    tone="engaging",
-                )
-                caption = noa._finalize_noa_post(caption, platforms=["tiktok"])
 
-                hashtags = [f"#{m.group(1)}" for m in noa._NOA_HASHTAG_RE.finditer(caption)]
-                pending_payload = {
-                    "caption": caption,
-                    "hashtags": hashtags,
-                    "post_type": post_type,
-                    "platform": "tiktok",
-                    "status": "awaiting_approval",
-                }
+                # Load recent history — inject as "do not repeat" context
+                history_raw = await mem.get("post_history") or []
+                recent_topics: list[str] = []
+                if isinstance(history_raw, list):
+                    for h in history_raw[-6:]:
+                        if isinstance(h, dict):
+                            t = h.get("topic") or h.get("caption", "")[:70]
+                            if t:
+                                recent_topics.append(str(t))
+                no_repeat = (
+                    f"\nנושאים שכבר כוסו לאחרונה — אל תחזרי עליהם:\n" +
+                    "\n".join(f"• {t}" for t in recent_topics)
+                ) if recent_topics else ""
 
-                # שמור בזיכרון
-                await mem.set("pending_post", pending_payload, ttl_hours=72)
-                await mem.append_event("post_history", pending_payload)
-
-                # שלח לאישורך בטלגרם
-                if TELEGRAM_OWNER_ID and TELEGRAM_ADMIN_TOKEN:
-                    msg = (
-                        f"🎯 NOA — TikTok post ready\n\n"
-                        f"📝 {caption}"
+                if weekday == 0:
+                    # ── Monday: generate weekly campaign brief ──────────────────
+                    campaign_prompt = (
+                        "את נועה, מנהלת המדיה החברתית של AutoSpareFinder.\n"
+                        "היום יום שני — תכנני קמפיין שיווקי שבועי מלא.\n\n"
+                        f"הקשר השבוע:\n"
+                        f"• עונה/ביקוש: {season}\n"
+                        f"• רכב לדגמה (שים לב, אפשר לבחור אחר): {car}\n"
+                        f"• חלק לדגמה: {heb_part} ({eng_part}) — כאב שכיח: {pain}\n"
+                        f"• שבוע {week_num} בשנה {now.year}\n"
+                        f"{no_repeat}\n\n"
+                        "הנחיות:\n"
+                        "• בחרי נושא שבועי יצירתי ורלוונטי — לא חייב להיות בדיוק הרכב/חלק שניתן לדגמה\n"
+                        "• תכנני 6 פוסטים יומיים: ב׳=TikTok, ג׳=Instagram, ד׳=Facebook, ה׳=WhatsApp, ו׳=TikTok, שבת=Instagram\n"
+                        "• כל פוסט — זווית שונה לגמרי, לא וריאציה של אותו טקסט\n"
+                        "• כתבי copy_hebrew מלא לכל יום — טקסט מוכן לפרסום, לא תיאור של הטקסט\n\n"
+                        "החזירי JSON בלבד (ללא markdown) עם השדות:\n"
+                        "week_theme, core_message, target_persona, hashtag_strategy, success_metrics,\n"
+                        "daily_plan: [{day, platform, content_angle, visual_concept, copy_hebrew, cta}]\n"
                     )
-                    msg = noa._append_noa_links(noa._normalize_noa_symbols(msg))
-                    async with __import__("httpx").AsyncClient(timeout=10.0) as _c:
-                        await _c.post(
-                            f"https://api.telegram.org/bot{TELEGRAM_ADMIN_TOKEN}/sendMessage",
-                            json={
-                                "chat_id": TELEGRAM_OWNER_ID,
-                                "text": msg,
-                                "reply_markup": {
-                                    "inline_keyboard": [
-                                        [
-                                            {"text": "✈️ Telegram", "url": NOA_TELEGRAM_URL},
-                                            {"text": "💬 WhatsApp", "url": NOA_WHATSAPP_URL},
-                                        ],
-                                        [
-                                            {"text": "📸 Instagram", "url": NOA_INSTAGRAM_URL},
-                                            {"text": "📘 Facebook", "url": NOA_FACEBOOK_URL},
-                                        ],
-                                        [
-                                            {"text": "🌐 Website", "url": NOA_WEBSITE_URL},
-                                        ],
-                                        [
-                                            {"text": "✅ אשר פרסום", "callback_data": "approve_post"},
-                                            {"text": "✏️ ערוך", "callback_data": "edit_post"},
-                                            {"text": "❌ דחה", "callback_data": "reject_post"},
-                                        ],
-                                    ]
-                                }
-                            }
+
+                    raw_plan = await _hf_text(prompt=campaign_prompt, system=noa.system_prompt, timeout=120.0)
+
+                    plan: dict = {}
+                    try:
+                        jm = re.search(r'\{[\s\S]*\}', raw_plan)
+                        if jm:
+                            plan = _json.loads(jm.group(0))
+                    except Exception:
+                        plan = {"raw": raw_plan}
+
+                    await mem.set("current_week_plan", plan, ttl_hours=192)  # 8 days
+
+                    # Format WhatsApp campaign brief
+                    theme = plan.get("week_theme") or "קמפיין שבועי"
+                    core_msg = plan.get("core_message") or ""
+                    persona = plan.get("target_persona") or ""
+                    tags = plan.get("hashtag_strategy") or ""
+                    kpi = plan.get("success_metrics") or "engagement + reach"
+
+                    wa_lines = [
+                        f"📅 *NOA — קמפיין שבוע {week_num}*",
+                        "",
+                        f"🎯 *נושא:* {theme}",
+                        f"💬 *מסר מרכזי:* {core_msg}",
+                        f"👤 *קהל יעד:* {persona}",
+                        "",
+                        "📆 *תוכנית יומית:*",
+                    ]
+                    _day_labels = ["ב׳", "ג׳", "ד׳", "ה׳", "ו׳", "שבת"]
+                    for idx, day_item in enumerate(plan.get("daily_plan", [])[:6]):
+                        if isinstance(day_item, dict):
+                            plt = day_item.get("platform") or ""
+                            angle = day_item.get("content_angle") or ""
+                            wa_lines.append(f"• יום {_day_labels[idx]} *{plt}* — {angle}")
+                    wa_lines += [
+                        "",
+                        f"#️⃣ *האשטאגים:* {tags}",
+                        f"📊 *מטרה:* {kpi}",
+                    ]
+                    wa_msg = "\n".join(wa_lines)
+
+                    if OWNER_PHONE:
+                        await _wa_send(to=OWNER_PHONE, text=wa_msg)
+                    if TELEGRAM_OWNER_ID and TELEGRAM_ADMIN_TOKEN:
+                        await _noa_send_telegram(TELEGRAM_ADMIN_TOKEN, TELEGRAM_OWNER_ID, wa_msg)
+
+                    await mem.append_event("post_history", {
+                        "type": "campaign_brief", "topic": theme,
+                        "platform": "all", "created_at": now.isoformat(),
+                    })
+                    logger.info("noa_marketing_loop: weekly campaign brief week=%d theme=%s", week_num, theme)
+
+                else:
+                    # ── Tue–Sun: generate that day's platform post ──────────────
+                    platform_info = _DAY_PLATFORM.get(weekday)
+                    if not platform_info:
+                        await asyncio.sleep(NOA_INTERVAL_H * 3600)
+                        continue
+
+                    platform, platform_desc = platform_info
+                    week_plan: dict = await mem.get("current_week_plan") or {}
+
+                    # Extract today's angle from week plan if available
+                    plan_hint = ""
+                    _wday_keys = {1: "tue", 2: "wed", 3: "thu", 4: "fri", 5: "sat", 6: "sun"}
+                    wkey = _wday_keys.get(weekday, "")
+                    for day_item in week_plan.get("daily_plan", []):
+                        if isinstance(day_item, dict):
+                            day_str = str(day_item.get("day") or "").lower()
+                            if wkey and (wkey in day_str or day_str.startswith(wkey[:2])):
+                                angle = day_item.get("content_angle") or ""
+                                copy_hint = day_item.get("copy_hebrew") or ""
+                                visual = day_item.get("visual_concept") or ""
+                                if angle:
+                                    plan_hint += f"\nזווית שנבחרה בתוכנית השבוע: {angle}"
+                                if visual:
+                                    plan_hint += f"\nקונספט ויזואלי: {visual}"
+                                if copy_hint:
+                                    plan_hint += f"\nרמז לטקסט מהתוכנית: {copy_hint}"
+                                break
+
+                    week_theme = week_plan.get("week_theme") or ""
+                    theme_hint = f"\nנושא השבוע: {week_theme}" if week_theme else ""
+
+                    post_prompt = (
+                        f"כתבי פוסט {platform_desc} בעברית עבור AutoSpareFinder.\n\n"
+                        f"הקשר:\n"
+                        f"• רכב: {car}\n"
+                        f"• חלק: {heb_part} ({eng_part})\n"
+                        f"• כאב שכיח: {pain}\n"
+                        f"• עונה: {season}\n"
+                        f"{theme_hint}{plan_hint}\n"
+                        f"{no_repeat}\n\n"
+                        "כתיבה:\n"
+                        "• פתחי עם ה-hook בשורה ראשונה — קצרה, חדה, לא שאלה גנרית\n"
+                        "• ציוני את שם הרכב ואת שם החלק הספציפי\n"
+                        "• פתרון: חיפוש לפי מספר רישוי ב-autosparefinder.co.il\n"
+                        "• סיימי בשאלה אחת מעוררת שיח\n"
+                        "• האשטאגים בשורה אחרונה בלבד\n\n"
+                        "החזירי: טקסט הפוסט הסופי בלבד — ללא הסבר, ללא כותרת, ללא ספירה."
+                    )
+
+                    raw_post = await _hf_text(prompt=post_prompt, system=noa.system_prompt, timeout=90.0)
+                    caption = noa._finalize_noa_post(raw_post, platforms=[platform])
+
+                    hashtags = [f"#{m.group(1)}" for m in noa._NOA_HASHTAG_RE.finditer(caption)]
+                    pending_payload = {
+                        "caption": caption,
+                        "hashtags": hashtags,
+                        "platform": platform,
+                        "topic": f"{heb_part} — {car}",
+                        "post_type": platform,
+                        "status": "awaiting_approval",
+                        "created_at": now.isoformat(),
+                    }
+
+                    await mem.set("pending_post", pending_payload, ttl_hours=72)
+                    await mem.append_event("post_history", pending_payload)
+
+                    # Send to Telegram for approval
+                    if TELEGRAM_OWNER_ID and TELEGRAM_ADMIN_TOKEN:
+                        tg_msg = f"🎯 NOA — {platform.title()} post ready\n\n📝 {caption}"
+                        tg_msg = noa._append_noa_links(noa._normalize_noa_symbols(tg_msg))
+                        await _noa_send_telegram(
+                            TELEGRAM_ADMIN_TOKEN, TELEGRAM_OWNER_ID, tg_msg,
+                            keyboard=[
+                                [
+                                    {"text": f"✅ אשר ({platform})", "callback_data": f"approve_{platform}"},
+                                    {"text": "✏️ ערוך", "callback_data": "edit_post"},
+                                    {"text": "❌ דחה", "callback_data": "reject_post"},
+                                ],
+                            ],
                         )
 
-                logger.info("noa_marketing_loop: post generated type=%s", post_type)
+                    logger.info("noa_marketing_loop: %s post generated topic=%s — %s", platform, heb_part, car)
 
         except Exception as exc:
             logger.error("noa_marketing_loop error: %s", exc)
@@ -1062,9 +1486,35 @@ async def _health_monitor_loop():
     Probes all 7 external services. Tracks previous state per service.
     On service DOWN:      notifies all admins via WhatsApp + Notification row + SSE.
     On service RESTORED:  notifies all admins the same way.
+    Also sends directly to OWNER_WHATSAPP_PHONE for every alert (service + thresholds).
     Never sends the same alert twice in a row for the same service.
     """
     await asyncio.sleep(20)  # let DB pool warm up on startup
+
+    # Direct owner WhatsApp — bypasses the admin-user lookup so alerts always arrive
+    # even before the owner creates an account, and for threshold alerts that previously
+    # only created in-app Notification rows without sending WhatsApp.
+    _OWNER_PHONE = os.getenv("OWNER_WHATSAPP_PHONE", "")
+
+    async def _alert_owner(title: str, msg: str, alert_key: str = "", cooldown_s: int = 3600) -> None:
+        """Send WhatsApp to the owner phone with Redis-backed cooldown (survives restarts)."""
+        if not _OWNER_PHONE:
+            return
+        if alert_key:
+            try:
+                _r = await get_redis()
+                _rkey = f"autospare:alert_cooldown:{alert_key}"
+                if await _r.exists(_rkey):
+                    return  # still within cooldown window
+                await _r.set(_rkey, "1", ex=cooldown_s)
+            except Exception:
+                pass  # Redis unavailable — allow alert through
+        try:
+            result = await _wa_send(to=_OWNER_PHONE, text=f"{title}\n{msg}")
+            if not result.get("ok"):
+                print(f"[HealthMonitor] Owner WhatsApp failed ({alert_key}): {result.get('error')}")
+        except Exception as _exc:
+            print(f"[HealthMonitor] Owner WhatsApp error ({alert_key}): {_exc}")
 
     _prev_states: dict = {}  # service_name → "ok" | "error"
 
@@ -1171,6 +1621,7 @@ async def _health_monitor_loop():
                     async with pii_session_factory() as db:
                         admins_res = await db.execute(select(User).where(User.is_admin == True))
                         admins = admins_res.scalars().all()
+                        admin_phones = set()
                         for admin in admins:
                             db.add(Notification(
                                 user_id=admin.id,
@@ -1187,10 +1638,14 @@ async def _health_monitor_loop():
                                 "message": _msg,
                             })))
                             if admin.phone and str(admin.id) != str(WHATSAPP_ANON_USER_ID):
+                                admin_phones.add(admin.phone)
                                 wa_result = await _wa_send(to=admin.phone, text=f"{_title}\n{_msg}")
                                 if not wa_result.get("ok"):
                                     print(f"[HealthMonitor] WhatsApp failed for admin {admin.id}: {wa_result.get('error')}")
                         await db.commit()
+                        # Send directly to owner phone (no cooldown — service state changes are already deduplicated)
+                        if _OWNER_PHONE and _OWNER_PHONE not in admin_phones:
+                            await _alert_owner(_title, _msg, alert_key="")
                 except Exception as _e:
                     print(f"[HealthMonitor] Notify error for {svc}: {_e}")
 
@@ -1201,29 +1656,38 @@ async def _health_monitor_loop():
                 print("[HealthMonitor] Pass complete — all services OK")
 
             # ── Threshold checks (Gap 3 — Alerting) ────────────────────────────────
-            # Check 1: parts_updated < 100 in last 6 hours (catalog stagnation)
+            # Check 1: parts updated < 50 in last 6 hours (catalog stagnation)
+            # Uses parts_catalog.updated_at — the only reliable signal of actual scraper work.
+            # (SystemLog catalog_scraper entries are sparse event logs, not per-part counts)
             try:
                 async with async_session_factory() as _db:
                     cutoff_6h = datetime.utcnow() - timedelta(hours=6)
                     parts_updated_6h = (await _db.execute(
-                        select(func.count(SystemLog.id)).where(
-                            SystemLog.logger_name == "catalog_scraper",
-                            SystemLog.level.in_(["INFO", "WARNING"]),
-                            SystemLog.created_at >= cutoff_6h,
-                        )
+                        text("SELECT COUNT(*) FROM parts_catalog WHERE updated_at > :cutoff AND is_active = TRUE"),
+                        {"cutoff": cutoff_6h},
                     )).scalar() or 0
-                    
-                    if parts_updated_6h < 100:
+
+                    if parts_updated_6h < 50:
                         _alert_title = "⚠️  קטלוג: עדכונים נמוכים בשעות האחרונות"
                         _alert_msg = (
-                            f"קטלוג עלומים {parts_updated_6h} עדכונים בשעות ה-6 האחרונות (יעד: 100+). "
-                            f"בדוק את ה scraper."
+                            f"רק {parts_updated_6h} חלקים עודכנו ב-6 השעות האחרונות (יעד: 50+). "
+                            f"הסקרייפר אולי תקוע."
                         )
                         print(f"[HealthMonitor] ALERT: parts_updated={parts_updated_6h} < 100 in 6h")
-                        
+                        await _alert_owner(_alert_title, _alert_msg, alert_key="catalog_stagnation")
                         async with pii_session_factory() as _pii_db:
                             admins_res = await _pii_db.execute(select(User).where(User.is_admin == True))
                             admins = admins_res.scalars().all()
+                            _send_admin_wa_cs = True
+                            try:
+                                _r2 = await get_redis()
+                                _awk_cs = "autospare:alert_cooldown_admin_wa:catalog_stagnation"
+                                if await _r2.exists(_awk_cs):
+                                    _send_admin_wa_cs = False
+                                else:
+                                    await _r2.set(_awk_cs, "1", ex=3600)
+                            except Exception:
+                                pass
                             for admin in admins:
                                 _pii_db.add(Notification(
                                     user_id=admin.id,
@@ -1238,6 +1702,8 @@ async def _health_monitor_loop():
                                     "title": _alert_title,
                                     "message": _alert_msg,
                                 })))
+                                if _send_admin_wa_cs and admin.phone and str(admin.id) != str(WHATSAPP_ANON_USER_ID):
+                                    await _wa_send(to=admin.phone, text=f"{_alert_title}\n{_alert_msg}")
                             await _pii_db.commit()
             except Exception as _e:
                 print(f"[HealthMonitor] Threshold check 1 error: {_e}")
@@ -1267,7 +1733,7 @@ async def _health_monitor_loop():
                             f"בדוק לוגים: {errors}/{total} שגיאות בשעה האחרונה."
                         )
                         print(f"[HealthMonitor] ALERT: error_rate={error_rate:.1f}% > 5%")
-                        
+                        await _alert_owner(_alert_title, _alert_msg, alert_key="high_error_rate")
                         async with pii_session_factory() as _pii_db:
                             admins_res = await _pii_db.execute(select(User).where(User.is_admin == True))
                             admins = admins_res.scalars().all()
@@ -1331,10 +1797,21 @@ async def _health_monitor_loop():
                             f"אם הוא צריך לרוץ הוא אולי תקוע."
                         )
                         print(f"[HealthMonitor] ALERT: worker silence={silence_mins:.0f} min > 120 min")
+                        await _alert_owner(_alert_title, _alert_msg, alert_key="worker_silence")
 
                         async with pii_session_factory() as _pii_db:
                             admins_res = await _pii_db.execute(select(User).where(User.is_admin == True))
                             admins = admins_res.scalars().all()
+                            _send_admin_wa_ws = True
+                            try:
+                                _r2 = await get_redis()
+                                _awk_ws = "autospare:alert_cooldown_admin_wa:worker_silence"
+                                if await _r2.exists(_awk_ws):
+                                    _send_admin_wa_ws = False
+                                else:
+                                    await _r2.set(_awk_ws, "1", ex=3600)
+                            except Exception:
+                                pass
                             for admin in admins:
                                 _pii_db.add(Notification(
                                     user_id=admin.id,
@@ -1349,26 +1826,43 @@ async def _health_monitor_loop():
                                     "title": _alert_title,
                                     "message": _alert_msg,
                                 })))
+                                if _send_admin_wa_ws and admin.phone and str(admin.id) != str(WHATSAPP_ANON_USER_ID):
+                                    await _wa_send(to=admin.phone, text=f"{_alert_title}\n{_alert_msg}")
                             await _pii_db.commit()
             except Exception as _e:
                 print(f"[HealthMonitor] Threshold check 3 error: {_e}")
 
-            # Check 4: unprocessed job failures > threshold (Gap 3: Alerting thresholds)
+            # Check 4: unprocessed job failures > threshold — only alert on NEW failures
             try:
                 JOB_FAILURES_ALERT_THRESHOLD = int(os.getenv("JOB_FAILURES_ALERT_THRESHOLD", "10"))
                 async with pii_session_factory() as _pii_db:
                     unprocessed_count = (await _pii_db.execute(
                         select(func.count(JobFailure.id)).where(JobFailure.status.in_(["pending", "retrying"]))
                     )).scalar() or 0
-                    
-                    if unprocessed_count >= JOB_FAILURES_ALERT_THRESHOLD:
+
+                    # Only alert if count is above threshold AND has grown since last alert
+                    # (prevents spamming the same stale failures on every restart/cycle)
+                    _dlq_rkey = "autospare:dlq_last_alerted_count"
+                    _dlq_new = False
+                    try:
+                        _r = await get_redis()
+                        _prev_str = await _r.get(_dlq_rkey)
+                        _prev_count = int(_prev_str) if _prev_str else 0
+                        if unprocessed_count >= JOB_FAILURES_ALERT_THRESHOLD and unprocessed_count > _prev_count:
+                            _dlq_new = True
+                            await _r.set(_dlq_rkey, str(unprocessed_count), ex=86400)
+                    except Exception:
+                        _dlq_new = unprocessed_count >= JOB_FAILURES_ALERT_THRESHOLD
+
+                    if _dlq_new:
                         _alert_title = f"🔴 DLQ Alert: {unprocessed_count} unprocessed failures"
                         _alert_msg = (
                             f"Dead Letter Queue has {unprocessed_count} unprocessed job failures "
                             f"(threshold: {JOB_FAILURES_ALERT_THRESHOLD}). Review failures in admin dashboard."
                         )
                         print(f"[HealthMonitor] ALERT: job_failures={unprocessed_count} >= {JOB_FAILURES_ALERT_THRESHOLD}")
-                        
+                        await _alert_owner(_alert_title, _alert_msg, alert_key="job_failures_dlq", cooldown_s=21600)
+
                         admins_res = await _pii_db.execute(select(User).where(User.is_admin == True))
                         admins = admins_res.scalars().all()
                         for admin in admins:
@@ -1385,9 +1879,145 @@ async def _health_monitor_loop():
                                 "title": _alert_title,
                                 "message": _alert_msg,
                             })))
+                            if admin.phone and str(admin.id) != str(WHATSAPP_ANON_USER_ID):
+                                await _wa_send(to=admin.phone, text=f"{_alert_title}\n{_alert_msg}")
                         await _pii_db.commit()
             except Exception as _e:
                 print(f"[HealthMonitor] Threshold check 4 (job_failures) error: {_e}")
+
+            # Check 5: job_registry — failed/dead/zombie worker jobs
+            # Alerts once per unique job_id (state-change deduplication via seen set).
+            try:
+                async with async_session_factory() as _db:
+                    from datetime import timezone as _tz
+
+                    # 5a: Jobs that transitioned to failed or dead
+                    _failed_rows = (await _db.execute(text("""
+                        SELECT job_id, job_name, status, error_message, started_at
+                        FROM job_registry
+                        WHERE status IN ('failed', 'dead')
+                          AND started_at > NOW() - INTERVAL '12 hours'
+                        ORDER BY started_at DESC
+                    """))).fetchall()
+
+                    for _jr in _failed_rows:
+                        _key = f"job_fail_{_jr.job_id}"
+                        try:
+                            _r = await get_redis()
+                            _rk = f"autospare:alert_cooldown:{_key}"
+                            if await _r.exists(_rk):
+                                continue  # already alerted this job (persists across restarts)
+                            await _r.set(_rk, "1", ex=86400)
+                        except Exception:
+                            pass
+                        _jt = f"🔴 Worker failed: {_jr.job_name}"
+                        _jm = (
+                            f"Job *{_jr.job_name}* finished with status={_jr.status}.\n"
+                            + (f"Error: {(_jr.error_message or '')[:200]}\n" if _jr.error_message else "")
+                            + f"Started: {str(_jr.started_at)[:19]}"
+                        )
+                        print(f"[HealthMonitor] ALERT: job {_jr.job_name} ({_jr.job_id}) {_jr.status}")
+                        await _alert_owner(_jt, _jm, alert_key="")  # no cooldown — each job_id is unique
+
+                    # 5b: Zombie jobs — running but heartbeat silent beyond their TTL.
+                    # Respects ttl_seconds from job_registry (same logic as task_zombie_watchdog).
+                    # Falls back to 2 hours for NULL TTL jobs (was 30 min — too aggressive for
+                    # long-running tasks like merge_catalog_fitment which can take 45+ min).
+                    _zombie_rows = (await _db.execute(text("""
+                        SELECT job_id, job_name, last_heartbeat_at,
+                               EXTRACT(EPOCH FROM (NOW() - last_heartbeat_at)) AS silence_s
+                        FROM job_registry
+                        WHERE status = 'running'
+                          AND last_heartbeat_at < NOW() - (
+                              COALESCE(ttl_seconds, 7200) * INTERVAL '1 second'
+                          )
+                    """))).fetchall()
+
+                    # Maps job_registry name → Redis lock name (they differ when acquire_lock()
+                    # uses a shorter key than the job name registered in job_registry_start()).
+                    _JOB_LOCK_MAP = {
+                        "run_scraper_cycle":   "scraper_cycle",
+                        "run_brand_discovery": "brand_discovery",
+                        "run_all_tasks":       "db_update_agent",
+                        "category_discovery":  "category_discovery",
+                    }
+                    for _zr in _zombie_rows:
+                        _silence_min = int((_zr.silence_s or 0) // 60)
+                        # Auto-fix 1: clear Redis distributed lock so next run can acquire it
+                        try:
+                            _r = await get_redis()
+                            _lock_name = _JOB_LOCK_MAP.get(_zr.job_name, _zr.job_name)
+                            _lock_key = f"autospare:lock:{_lock_name}"
+                            _was_locked = await _r.exists(_lock_key)
+                            if _was_locked:
+                                await _r.delete(_lock_key)
+                                print(f"[HealthMonitor] Auto-cleared zombie lock: {_lock_key}")
+                        except Exception as _le:
+                            print(f"[HealthMonitor] Failed to clear zombie lock {_zr.job_name}: {_le}")
+                        # Auto-fix 2: mark job as failed in registry
+                        try:
+                            await _db.execute(text("""
+                                UPDATE job_registry
+                                SET status = 'failed',
+                                    error_message = :msg,
+                                    completed_at  = NOW()
+                                WHERE job_id = :jid AND status = 'running'
+                            """), {
+                                "jid": _zr.job_id,
+                                "msg": f"Auto-killed by zombie sweep: heartbeat silent {_silence_min}min",
+                            })
+                            await _db.commit()
+                        except Exception as _ue:
+                            print(f"[HealthMonitor] Failed to mark zombie failed {_zr.job_name}: {_ue}")
+                        # Alert owner (once per job_id)
+                        _key = f"zombie_{_zr.job_id}"
+                        try:
+                            _r = await get_redis()
+                            _rk = f"autospare:alert_cooldown:{_key}"
+                            if await _r.exists(_rk):
+                                continue
+                            await _r.set(_rk, "1", ex=86400)
+                        except Exception:
+                            pass
+                        _zt = f"⏱️ Zombie auto-killed: {_zr.job_name}"
+                        _zm = (
+                            f"Job *{_zr.job_name}* was silent for {_silence_min} min — "
+                            f"Redis lock cleared and status set to failed automatically.\n"
+                            f"Next scheduled run will start fresh."
+                        )
+                        print(f"[HealthMonitor] ALERT: zombie {_zr.job_name} ({_zr.job_id}) silent={_silence_min}min — auto-fixed")
+                        await _alert_owner(_zt, _zm, alert_key="")
+
+                    # 5c: Supervised asyncio tasks that are no longer running
+                    for _tname, _task in list(_SUPERVISED_TASKS.items()):
+                        if _task.done() and not _task.cancelled():
+                            _key = f"task_dead_{_tname}"
+                            _already_alerted = False
+                            try:
+                                _r = await get_redis()
+                                _rk = f"autospare:alert_cooldown:{_key}"
+                                _already_alerted = bool(await _r.exists(_rk))
+                                if not _already_alerted:
+                                    await _r.set(_rk, "1", ex=86400)
+                            except Exception:
+                                pass
+                            if not _already_alerted:
+                                _exc = None
+                                try:
+                                    _exc = _task.exception()
+                                except Exception:
+                                    pass
+                                _tt = f"💀 asyncio task stopped: {_tname}"
+                                _tm = (
+                                    f"Background loop *{_tname}* is no longer running.\n"
+                                    + (f"Exception: {_exc}\n" if _exc else "")
+                                    + "System will NOT auto-restart — manual intervention needed."
+                                )
+                                print(f"[HealthMonitor] ALERT: task {_tname} stopped exc={_exc}")
+                                await _alert_owner(_tt, _tm, alert_key="")
+
+            except Exception as _e:
+                print(f"[HealthMonitor] Check 5 (job_registry/tasks) error: {_e}")
 
         except Exception as e:
             print(f"[HealthMonitor] Outer error: {e}")

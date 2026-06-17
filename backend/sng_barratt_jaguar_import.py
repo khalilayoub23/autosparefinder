@@ -154,18 +154,19 @@ async def import_batch(conn, supplier_id, batch, skip_fitment):
                     INSERT INTO parts_catalog(
                         id,sku,name,category,manufacturer,manufacturer_id,
                         part_type,description,oem_number,aftermarket_tier,
-                        base_price,online_price_ils,min_price_ils,max_price_ils,
+                        base_price,importer_price_ils,online_price_ils,min_price_ils,max_price_ils,
                         compatible_vehicles,specifications,
                         part_condition,is_active,needs_oem_lookup,created_at,updated_at)
                     VALUES(gen_random_uuid(),$1,$2,$3,'Jaguar',$4,
                            $5,$6,$7,$8,
-                           $9,$9,$9,$9,$10::jsonb,$11::jsonb,
+                           $9,0,0,$9,$9,$10::jsonb,$11::jsonb,
                            'New',TRUE,FALSE,NOW(),NOW())
                     ON CONFLICT(sku) DO UPDATE SET
                         name=EXCLUDED.name, description=EXCLUDED.description,
                         oem_number=EXCLUDED.oem_number, aftermarket_tier=EXCLUDED.aftermarket_tier,
                         base_price=EXCLUDED.base_price,
-                        online_price_ils=EXCLUDED.online_price_ils,
+                        importer_price_ils=0,
+                        online_price_ils=0,
                         min_price_ils=CASE WHEN EXCLUDED.min_price_ils > 0
                                       THEN EXCLUDED.min_price_ils
                                       ELSE parts_catalog.min_price_ils END,

@@ -37,7 +37,8 @@ Missing Data Delegation:
   - Missing OEM numbers → needs_oem_lookup=True
 
 Confidence tier: 1.00 (Official Israeli importer price list)
-VAT: Prices in PDF are EXCL. 18% VAT — stored as importer_price_ils; max_price_ils = price * 1.18
+VAT: Prices in PDF are EXCL. 18% VAT — stored as max_price_ils (incl. 18% VAT = price * 1.18);
+     base_price = max_price_ils (IL official ref, no markup); importer_price_ils = 0
 
 Author: AutoSpareFinder Agent
 Last Updated: 2026-06-01
@@ -280,13 +281,11 @@ async def upsert_part(conn, p: dict, supplier_id: str) -> tuple[str | None, bool
         'importer':          'גיאו מוביליטי בע"מ',
         'warranty_months':   12,
     })
-    max_price = round(p['price_ils'] * 1.18, 2)
-
     row = await conn.fetchrow("""
         INSERT INTO parts_catalog (
             id, sku, oem_number, name, name_he,
             manufacturer, manufacturer_id, category,
-            importer_price_ils, min_price_ils, max_price_ils,
+            base_price, importer_price_ils, min_price_ils, max_price_ils,
             part_condition, aftermarket_tier, is_safety_critical,
             specifications, compatible_vehicles,
             is_active, needs_oem_lookup, master_enriched,
@@ -294,14 +293,15 @@ async def upsert_part(conn, p: dict, supplier_id: str) -> tuple[str | None, bool
         ) VALUES (
             gen_random_uuid(), $1, $2, $3, $4,
             'Zeekr', $5::uuid, $6,
-            $7, $7, $8,
-            'New', $9, $10,
-            $11::jsonb, $12::jsonb,
+            ROUND($7::numeric*1.18,2), 0, ROUND($7::numeric*1.18,2), ROUND($7::numeric*1.18,2),
+            'New', $8, $9,
+            $10::jsonb, $11::jsonb,
             true, false, false,
             NOW(), NOW()
         )
         ON CONFLICT (sku) DO UPDATE SET
-            importer_price_ils  = EXCLUDED.importer_price_ils,
+            base_price          = EXCLUDED.base_price,
+            importer_price_ils  = 0,
             min_price_ils       = EXCLUDED.min_price_ils,
             max_price_ils       = EXCLUDED.max_price_ils,
             name_he             = COALESCE(EXCLUDED.name_he, parts_catalog.name_he),
@@ -320,7 +320,7 @@ async def upsert_part(conn, p: dict, supplier_id: str) -> tuple[str | None, bool
     """,
         p['sku'], p['oem_number'], p['name'], p['name_he'],
         ZEEKR_BRAND_ID, p['category'],
-        p['price_ils'], max_price,
+        p['price_ils'],
         p['aftermarket_tier'], p['safety'],
         specs,
         json.dumps([{'make': 'Zeekr', 'model': m,

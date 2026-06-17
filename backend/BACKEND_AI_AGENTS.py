@@ -2147,12 +2147,30 @@ NEVER:
                 pricing["estimated_delivery"] = f"{estimated_delivery_days}–{estimated_delivery_days + 7} ימים"
                 suppliers.append(pricing)
 
-            # Fallback: synthesise pricing from base_price when no supplier row exists
+            # Fallback: synthesise pricing from base_price when no supplier row exists.
+            # base_price 3-case logic:
+            #   1. importer_price_ils > 0 (KGM/SsangYong \u2014 real wholesale cost):
+            #      base = max \u00d7 1.45; price_no_vat = importer \u00d7 1.45; vat = price_no_vat \u00d7 0.18
+            #   2. online_price_ils > 0 (eBay/international): base = online \u00d7 1.45; vat = 0
+            #   3. max_price_ils only (IL official importer reference \u2014 no markup):
+            #      base = max (dealer retail incl. VAT); decompose for display
             bp = float(part.base_price) if part.base_price else 0.0
             if not suppliers and bp > 0:
-                price_no_vat = round(bp / 1.18, 2)
-                vat            = round(bp - price_no_vat, 2)
-                shipping       = 35.0
+                importer_cost = float(part.importer_price_ils) if part.importer_price_ils else 0.0
+                online_cost   = float(part.online_price_ils) if part.online_price_ils else 0.0
+                shipping      = SHIPPING_ILS
+                if importer_cost > 0:
+                    # KGM/SsangYong \u2014 actual wholesale trade cost, apply IL VAT on top of margin
+                    price_no_vat = round(importer_cost * PROFIT_MARGIN, 2)
+                    vat          = round(price_no_vat * VAT_RATE, 2)
+                elif online_cost > 0:
+                    # International / eBay \u2014 no IL VAT
+                    price_no_vat = round(online_cost * PROFIT_MARGIN, 2)
+                    vat          = 0.0
+                else:
+                    # IL official importer reference (base = dealer retail incl. VAT) \u2014 decompose for display
+                    price_no_vat = round(bp / (1 + VAT_RATE), 2)
+                    vat          = round(bp - price_no_vat, 2)
                 suppliers = [{
                     "price_no_vat": price_no_vat,
                     "vat": vat,
@@ -2163,8 +2181,6 @@ NEVER:
                     "estimated_delivery_days": 14,
                     "supplier_part_id": None,
                     "estimated_delivery": "14\u201321 \u05d9\u05de\u05d9\u05dd",
-                    "cost_ils": round(bp / 1.45, 2),
-                    "profit": round(price_no_vat - round(bp / 1.45, 2), 2),
                     "is_base_price_fallback": True,
                 }]
 
@@ -3715,42 +3731,36 @@ class SocialMediaManagerAgent(BaseAgent):
     model = PREMIUM_MODEL      # premium: creative content generation
     temperature = 0.9
     agent_name = "Noa"          # נועה — social media strategist
-    system_prompt = """את נועה, מנהלת המדיה החברתית של AutoSpareFinder — פלטפורמת חיפוש והשוואת חלקי חילוף .
+    system_prompt = """את נועה, מנהלת המדיה החברתית של AutoSpareFinder — פלטפורמת חיפוש והשוואת חלקי חילוף לרכב בישראל.
 
 יכולות המערכת שחייבות להופיע בתוכן:
-- חיפוש חלק לפי מספר רכב — הלקוח מזין מספר רישוי והמערכת מוצאת חלקים תואמים אוטומטית
-- השוואת מחירים בין כמה ספקים — המערכת מציגה את האפשרויות הזולות ביותר בלחיצה אחת
-- אלפי חלקי חילוף חדשים — מקוריים, OEM ותחליף-שוק חליפים מספקים מובילים
-- משלוח לכל הארץ — ישירות מהספק עד הבית
-- תמיכה בעברית מלאה — שירות אנושי + AI
+- חיפוש חלק לפי מספר רישוי — הלקוח מזין מספר לוחית והמערכת מוצאת חלקים תואמים אוטומטית
+- השוואת מחירים בין כמה ספקים בלחיצה אחת
+- אלפי חלקי חילוף — מקוריים, OEM ותחליפים איכותיים מספקים מובילים
+- משלוח לכל הארץ ישירות מהספק
+- תמיכה בעברית — שירות + AI
 
-Persona שיווקית חכמה (חובה):
-- כתבי כמו מנהלת שיווק אנושית, לא כמו בוט.
-- בכל פוסט: כאב אמיתי אחד של נהג + הבטחת ערך אחת + CTA אחד ברור.
-- בלי חזרות, בלי ניסוחים כלליים, בלי טקסט טכני מבלבל.
-- הימנעי מטענות לא מבוססות; עדיף דיוק על פני הייפ.
+כישורי כתיבה — חובה:
+- כתבי כמו מנהלת שיווק אנושית עם אינטואיציה — לא כמו בוט שממלא תבנית קבועה
+- כל פוסט: כאב אמיתי וספציפי של נהג → פתרון ברור דרך הפלטפורמה → CTA בודד
+- ציוני שמות רכב ספציפיים ושמות חלקים ספציפיים — אין כאב בלי פרטים
+- כתבי בעברית זורמת; אנגלית רק לשמות מותגים/חלקים
+- הימנעי מטענות לא מבוססות; עדיף מדויק על פני מרשים
+- כל פוסט חייב להיות שונה בזווית, בפתיחה, בטון — אין תבניות חוזרות
 
-כללי כתיבה לTikTok:
-- כתוב בעברית תקנית וזורמת — RTL טבעי
-- שלב שמות חלקים ומותגים באנגלית (Toyota, Bosch, ABS וכו')
-- פתח עם hook חזק — שאלה, עובדה מפתיעה, או כאב של בעל רכב
-- הדגש תמיד את הנוחות: חיפוש לפי מספר רישוי — פשוט, מהיר, מדויק
-- כלול קריאה לפעולה: "חפש לפי מספר הרכב שלך ב-autosparefinder.co.il"
-- 3-5 האשטאגים בעברית + 1-2 באנגלית
-- אורך: 150-250 תווים
-
-סוגי תוכן (שנה מדי יום):
-- טיפ תחזוקה: "ידעת ש-brake pads צריך להחליף כל 30,000 קִעמ? מצא את החלק לרכב שלך לפי מספר רישוי"
-- השוואה: "למה לשלם יותר? המערכת שלנו משווה מחירים מכמה ספקים ומוצאת לך את הזול ביותר"
-- חיפוש חכם: "הזן מספר רישוי — תוך שניות תדע אילו חלקים מתאימים לרכב שלך בדיוק"
-- מבצע: "חלקי בלמים לטויוטה? השווה מחירים עכשיו ב-autosparefinder.co.il"
+פורמט לפי פלטפורמה:
+- TikTok: hook חזק בשורה ראשונה, גוף קצר (3-5 שורות), 3-4 האשטאגים
+- Instagram: story-telling אמוציונלי, תמונה מנטלית, 4-6 האשטאגים
+- Facebook: מידעי ובעל ערך, ניתן לשיתוף, יכול להיות ארוך יותר
+- WhatsApp: הודעה ישירה וקצרה, CTA מיידי לאתר
 
 אסור בהחלט:
-- תווים סיניים, יפנים, קוריאנים או כל שפה זרה שאינה אנגלית/עברית/ערבית
-- לטעון שאנחנו מוסך או מתקנים רכובים — אנחנו פלטפורמת חיפוש והשוואה בלבד
+- תווים סיניים, יפנים, קוריאנים או שפה שאינה עברית/אנגלית/ערבית
+- לטעון שאנחנו מוסך, מתקנים רכובים, מתקינים חלקים — אנחנו פלטפורמת חיפוש בלבד
 - להבטיח זמני משלוח ספציפיים
-- לדבר על מלאי — אנחנו לא מנהלים מלאי, אנחנו מחברים לקוחות לספקים
-- תוכן גנרי ויבש ללא קשר לחלקי רכב
+- לדבר על מלאי — אנחנו מחברים לקוחות לספקים
+- תוכן גנרי ללא אזכור ספציפי של רכב, חלק, או מצב נהג
+- לפתוח עם "מחפשים חלקי חילוף?", "ידעת ש..." או "למה לשלם יותר?" — זה שחוק
 """
 
     _NOA_ALLOWED_LATIN_HASHTAGS: set[str] = {"autosparefinder", "tiktok", "instagram", "facebook", "whatsapp"}
@@ -4529,10 +4539,38 @@ Persona שיווקית חכמה (חובה):
         return f"{msg}\n\n{footer}".strip()
 
     @classmethod
+    def _extract_post_from_reasoning(cls, text: str) -> str:
+        """Pull the actual post out of a raw LLM response that contains chain-of-thought reasoning.
+        Models sometimes count characters, write analysis, then produce the final post.
+        We extract the shortest coherent Hebrew block that looks publishable."""
+        if len(text) <= 600:
+            return text
+        # Prefer the last quoted block — models often put final version in quotes
+        quoted = re.findall(r'"([^"]{30,350})"', text)
+        if quoted:
+            # pick the last quote that has Hebrew chars
+            for candidate in reversed(quoted):
+                if re.search(r'[֐-׿]', candidate):
+                    return candidate
+        # Take the first paragraph with Hebrew that isn't just counting characters
+        # (counting lines look like "1 מ 2 ת 3 ו ..." with many single chars)
+        for para in text.split('\n\n'):
+            para = para.strip()
+            heb_chars = len(re.findall(r'[֐-׿]', para))
+            digits_spaces = len(re.findall(r'\d+\s+[֐-׿]\s+', para))
+            if heb_chars > 15 and digits_spaces < 5 and 30 < len(para) < 500:
+                return para
+        # Last resort: first 280 chars
+        return text[:280]
+
+    @classmethod
     def _finalize_noa_post(cls, text: str, platforms: Optional[List[str]] = None) -> str:
         platform_set = {(p or "").strip().lower() for p in (platforms or []) if (p or "").strip()}
 
-        normalized = cls._normalize_for_platforms(text or "", platforms=list(platform_set))
+        # Strip model reasoning / character-counting before any further processing
+        cleaned = cls._extract_post_from_reasoning(text or "")
+
+        normalized = cls._normalize_for_platforms(cleaned, platforms=list(platform_set))
         if cls._needs_hebrew_rewrite(normalized) or cls._is_low_quality_caption(normalized):
             normalized = cls._repair_low_quality_caption(normalized, platforms=list(platform_set))
 
@@ -4547,7 +4585,9 @@ Persona שיווקית חכמה (חובה):
         prompt = (
             f"כתבי פוסט {platform} בנושא {topic} בטון {tone}. "
             "הפוסט חייב להישמע אנושי ולא תבניתי: לפתוח בכאב אמיתי של נהג, "
-            "לתת פתרון ברור דרך הפלטפורמה, ולסיים בשאלה אחת מקדמת."
+            "לתת פתרון ברור דרך הפלטפורמה, ולסיים בשאלה אחת מקדמת.\n"
+            "הנחיות פלט חובה: החזירי את טקסט הפוסט בלבד — ללא הסבר, "
+            "ללא ספירת תווים, ללא חשיבה בקול רם. רק הפוסט הסופי המוכן לפרסום."
         )
         raw = await hf_text(prompt=prompt, system=self.system_prompt)
         return self._finalize_noa_post(raw, platforms=[platform] if platform else [])

@@ -72,22 +72,21 @@ export default function App() {
 
           {/* Main app routes with top layout */}
           <Route path="/" element={<LandingPage />} />
+          {/* /parts is public — guests can browse, auth only required for cart/quote */}
+          <Route
+            path="/parts"
+            element={
+              <Layout>
+                <Parts />
+              </Layout>
+            }
+          />
           <Route
             path="/chat"
             element={
               <ProtectedRoute>
                 <Layout>
                   <Chat />
-                </Layout>
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/parts"
-            element={
-              <ProtectedRoute>
-                <Layout>
-                  <Parts />
                 </Layout>
               </ProtectedRoute>
             }

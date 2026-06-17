@@ -190,7 +190,11 @@ Sequential tasks:
 1. `sync_models_from_catalog` → initial model sync
 2. `sync_models_from_catalog_file` → XLS-based sync
 3. `backfill_catalog_fitment_from_xls(db)` → build fitment rows
-4. `merge_catalog_fitment_from_part_vehicle_fitment(db)` → merge into canonical table
+4. `backfill_bmw_fitment_from_name_he(db)` → BMW chassis codes from part names
+5. `backfill_mini_fitment_from_name_he(db)` → MINI chassis codes from part names
+6. `backfill_ford_fitment_from_name_he(db)` → Ford model codes from part names
+7. `backfill_jaguar_fitment_from_name(db)` → Jaguar model names (XE/XF/F-Pace etc.) from part names; filters merchandise
+8. `merge_catalog_fitment_from_part_vehicle_fitment(db)` → merge into canonical table
 
 Target table: `part_vehicle_fitment`
 Unique index: `(part_id, manufacturer, model, year_from)`

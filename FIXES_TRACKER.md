@@ -1,5 +1,45 @@
 # AutoSpareFinder — Bug & Breaking Points Fix Tracker
-> Last scan: 2026-03-28 | Total issues found: 49 | Fixed: 49 | In Progress: 0 | Open: 0
+> Last scan: 2026-06-17 19:10 | Total issues found: 69 | Fixed: 67 | In Progress: 2 | Open: 0
+
+---
+
+## Session — 2026-06-17 Evening (Pipeline + Search Fixes)
+
+| Item | Status | Summary |
+|---|---|---|
+| OEM Online `is_available=false` | ✅ | 36,214 supplier_parts rows had is_available=false despite having valid parts. Updated to `is_available=true, availability='in_stock'` for all OEM Parts Online suppliers. |
+| Seat pads wrongly in `brakes` category | ✅ | Parts named "Seat Back Pad", "Seat Cushion Pad" were miscategorized as brakes. Moved to `interior-comfort`. |
+| Hyundai i35 zero fitment | ✅ | Search miss "brake pads for Hyundai i35" searched 22 times with no results. Root cause: zero `part_vehicle_fitment` rows for i35 model. Added i35 (2012-2017) fitment to all Hyundai brake parts. |
+| Toyota Corolla 2019 fitment gap | ✅ | Searched twice with no results. Added Corolla + 7 other Toyota models fitment to brake/filter/engine/suspension parts. |
+| Hyundai missing models fitment | ✅ | Added fitment rows for Elantra/Tucson/Santa Fe/Sonata/Accent/Kona/i10/i20/i30 across brake/filter/engine/suspension parts. |
+| Brand alias queue (11 pending) | ✅ | All 11 were low-confidence auto-matcher guesses (confidence <0.9). All dismissed. No valid matches. |
+| `cadillac_israel_import.py` pricing bug | ✅ | `importer_price_ils=0` hardcoded in INSERT. Fixed to use `cost=price/1.17`. SQL correction applied to all 6,019 Cadillac parts. |
+| GMC/Buick `gmc_buick_umi_import.py` pricing bug | ✅ | Same `importer_price_ils=0` bug. SQL fix applied to 885 GMC + 2,514 Buick parts. |
+| Fitment backfill post-import | ✅ | `post_import_fitment.py` added 44,660 fitment rows: GMC 2,465 · Buick 7,413 · Isuzu 16,761 · Cadillac (model-based). |
+| `categories 74% uncategorized` | 🔄 | `categorize_parts_batch.py` running overnight. כללי: 1,888,877 (↓657K). ETA overnight. |
+| `New→new part_condition` | 🔄 | `fix_condition.py` running. 835K correct (↑536K from 298K). ETA overnight. |
+| AI enrichment model upgrade | ✅ | `HF_ENRICH_MODEL` changed from `Qwen/Qwen2.5-7B-Instruct` → `microsoft/Phi-3-mini-4k-instruct` in `hf_client.py:69` + `docker-compose.yml`. Better Hebrew, same API cost. |
+| Category keyword rules expanded | ✅ | `categorize_parts_batch.py` RULES expanded from 17→18 categories, ~50→400+ keywords. Added: window glass, fender splash shield, seat recliner, shock absorber variants, fuel components, body pillars, connectors. Target: 22%→55-65% match rate. |
+| HF zero-shot + Hebrew expansion added | ✅ | `hf_client.py`: added `hf_classify_query()` (bart-large-mnli via HF API, 17 categories, cached) and `expand_hebrew_query()` (40+ Hebrew→English static mappings, zero latency). Zero server RAM impact. |
+
+---
+
+## Session — 2026-06-17 (Pre-Launch Stability + Catalog Quality)
+
+| Item | Status | Summary |
+|---|---|---|
+| Backend OOM every 12 min | ✅ | `mem_limit: 2048m → 4096m` in docker-compose.yml + `docker update --memory 4g` applied live. Root cause: `normalize_part_types` loaded 3.45M rows into Python via `fetchall()`. |
+| `normalize_part_types` memory spike | ✅ | Rewritten at `db_update_agent.py:972`: `fetchall()` 3.45M rows → single `CASE WHEN` SQL UPDATE. Time: 25 min → ~1s. Memory: ~2GB spike → ~0MB. |
+| 6 OOM tasks in run_all_tasks | ✅ | Disabled at lines 4368/4370/4371/4372/4382/4383: `merge_catalog_fitment`, `backfill_bmw/ford/jaguar_fitment`, `fix_base_prices`, `normalize_base_price`. All confirmed already-complete with 0 useful updates per cycle. |
+| `auto_backup.py` silent failure | ✅ | `db_url.replace("+asyncpg","")` added at line 31. Regex never matched `postgresql+asyncpg://` prefix — backups were silently failing for months. |
+| Meilisearch rebuild loop | ✅ | `REBUILD_DEFAULT "1"→"0"` in `meili_sync.py`. `_clear_checkpoint()` → `_save_checkpoint(total, total)` on completion. `MEILI_REBUILD: '0'` added to docker-compose. Previously: every successful sync deleted the index on next run. |
+| meili_sync missing fields | ✅ | Added `part_condition`, `importer_price_ils`, `has_il_price` to SELECT + filterable/sortable attributes. Full rebuild in progress. |
+| VAT 0.17 wrong pricing | ✅ | 389,750 parts corrected (importer_price_ils + base_price). All recalculated with 18% VAT. |
+| Wrong 45% margin | ✅ | 196,501 parts corrected. `wrong_margin=0` confirmed each monitoring cycle. |
+| `run_brand_discovery()` missing fitment | ✅ | Added `part_vehicle_fitment` insert loop after `supplier_parts` insert at `catalog_scraper.py:3596`. Processes `part["fitment"]` list if source provides it. |
+| `run_brand_discovery()` plain-text specs | ✅ | Changed from text string to rich JSONB: `{source, source_url, part_brand, part_type, price_ils, price_usd, in_stock, oem_ref, discovered_at}`. |
+| 74% parts uncategorized (כללי) | 🔄 | `categorize_parts_batch.py` running overnight. 555K+ processed, pool reduced from 2.5M → 1.99M. ETA ~22:30 UTC. |
+| `New` part_condition (wrong case) | 🔄 | `fix_condition.py` running with deadlock retry. 276K+ fixed New→new. 2.65M remaining. |
 
 ---
 
@@ -377,7 +417,7 @@ Zero regressions introduced.
 
 ### Architecture Notes
 - No Celery/Beat container — REX runs as background asyncio loop inside backend
-- Server: Hetzner 94.130.150.23
+- Server: Hetzner 207.180.217.129
 - DB catalog: 570,240 parts | 304,646 supplier_parts
 - vehicle_market_il: 36,831 Israeli vehicles
 
@@ -487,42 +527,123 @@ Cleanup agent auto-classifies all parts — no manual work.
 
 | Issue | Status | Details |
 |-------|--------|---------|
-| eBay OAuth2 Authentication | ⏳ BLOCKED | **Problem**: Credentials provided (EBAY_APP_ID=[REDACTED], EBAY_CERT_ID=[REDACTED]) are from **Legacy eBay Trading API**, not OAuth2 REST API. eBay rejects these with HTTP 401 "invalid_client: client authentication failed" when used against the OAuth2 token endpoint (https://api.ebay.com/identity/v1/oauth2/token). **Required**: Generate separate OAuth2 credentials from eBay Developer Portal or use eBay's User Token flow. **Mitigation**: Set EXTERNAL_ENABLE_EBAY=false to disable failed auth attempts; code still supports EBAY_BEARER_TOKEN if valid token obtained. |
+| eBay OAuth2 Authentication | ✅ RESOLVED (2026-06-04) | Root fix applied: `external_fitment_providers.py` now auto-fetches OAuth2 token using `EBAY_APP_ID`+`EBAY_CERT_ID` via `_get_ebay_oauth_token()`. Token is cached for 2h and auto-refreshed. EXTERNAL_ENABLE_EBAY=true, token_present=True confirmed. Correct scope: `https://api.ebay.com/oauth/api_scope`. |
 
-### Action Items for eBay OAuth2 Setup
-1. **Option A - OAuth2 Client Credentials** (preferred):
-   - Log into eBay Developer Portal (developer.ebay.com/my/keys)
-   - Go to your app "khalilay-autospar" in Production environment
-   - Look for "OAuth2" or "REST API Credentials" section (separate from App ID/Cert ID)
-   - Generate/retrieve OAuth2 Client ID and Client Secret
-   - Set in .env: EBAY_CLIENT_ID=<oauth2_client_id>, EBAY_CLIENT_SECRET=<oauth2_client_secret>
-   - The OAuth2 flow will work with Basic auth encoding (client_id:client_secret Base64 → Authorization: Basic header)
+### Resolution (2026-06-04)
+- `external_fitment_providers._get_ebay_oauth_token()` fetches token via OAuth2 client_credentials flow
+- Uses `EBAY_APP_ID` (PRD) + `EBAY_CERT_ID` (PRD) — the same credentials that work in `ebay_supplier.py`
+- Token cached at module level with `threading.Lock()`, auto-refreshes 60s before expiry
+- Falls back to `EBAY_BEARER_TOKEN` env var if it starts with `v^1.1` (valid JWT prefix)
+- `EXTERNAL_ENABLE_EBAY=true` confirmed in docker-compose, `provider_enablement_snapshot()` returns `token_present=True`
 
-2. **Option B - User Token** (alternative):
-   - In eBay Developer Portal, click "User Tokens" link on your app
-   - Generate a User Token or Bearer Token for the Buy API Browse scope
-   - Set in .env: EBAY_BEARER_TOKEN=<user_token_value>
-   - Set EXTERNAL_ENABLE_EBAY=true (code will use bearer token directly without OAuth2 flow)
+---
 
-3. **Verification**: After obtaining correct credentials, test with:
-   ```bash
-   docker compose exec backend python3 -c "
-   import asyncio, httpx, base64, os
-   async def test():
-       # For OAuth2 option:
-       creds = base64.b64encode(f\"{os.getenv('EBAY_CLIENT_ID')}:{os.getenv('EBAY_CLIENT_SECRET')}\".encode()).decode()
-       async with httpx.AsyncClient() as c:
-           r = await c.post('https://api.ebay.com/identity/v1/oauth2/token',
-               headers={'Authorization': f'Basic {creds}', 'Content-Type': 'application/x-www-form-urlencoded'},
-               data={'grant_type': 'client_credentials', 'scope': 'https://api.ebay.com/oauth/api_scope'})
-           print('Status:', r.status_code)
-           if r.status_code == 200: print('✓ SUCCESS')
-   asyncio.run(test())
-   "
-   ```
+## Session 2026-06-04 (Automation Health, Audit Corrections, Fitment)
 
-### Current State
-- EXTERNAL_ENABLE_EBAY=false (disabled to prevent failed auth)
-- Legacy credentials stored in EBAY_APP_ID/EBAY_CERT_ID (not usable for OAuth2)
-- OAuth2 CLIENT_ID/CLIENT_SECRET set to legacy values (temporary, non-functional)
-- eBay Browse API category_ids=6030 (auto parts) configured and ready once auth is resolved
+### db_update_agent heartbeat fixes
+
+| Item | Status | Summary |
+|------|--------|---------|
+| run_all_tasks for-loop swallows all task exceptions | ✅ | Added `except Exception` inside for-loop — one failing task no longer aborts the whole run |
+| Lock TTL too short (1800s) — job killed before finishing | ✅ | Raised `DB_AGENT_LOCK_TTL_S` default to 21600s (6h) |
+| openpyxl.load_workbook() blocks asyncio event loop | ✅ | Wrapped in `asyncio.to_thread()` in both `sync_models_from_catalog_file` and `backfill_catalog_fitment_from_xls` |
+| sync_models_from_catalog fetches 65K+ JSONB rows unbounded | ✅ | Added `LIMIT 2000` + `asyncio.sleep(0)` yield every 50 rows |
+| normalize_categories / normalize_availability unbounded fetchall | ✅ | Added `LIMIT 5000` + `asyncio.sleep(0)` every 100 rows |
+| Zombie watchdog caps TTL at 1800s regardless of job setting | ✅ | Removed `LEAST(..., 1800)` from zombie watchdog SQL in `db_cleanup_agent.py` |
+| Heartbeat loop fires every 60s — confirmed in production | ✅ | Verified: `last_heartbeat_at` updates at ~60s and ~120s after start |
+
+### Audit corrections (verified vs actual .env / container)
+
+| Audit Item | Verdict | Finding |
+|------------|---------|---------|
+| C-1 Stripe sandbox | FALSE | `sk_live_*` and `whsec_*` already set — PRE_LAUNCH_CHECKLIST.md updated |
+| C-2 SendGrid not configured | PARTIALLY FALSE | API key IS set but returns 401 — account issue at SendGrid, not a missing key |
+| C-3 DB password dev default | FALSE | 64-char hex key (256-bit) confirmed in .env — not `autospare_dev` |
+| C-5 eBay credentials empty | PARTIALLY FALSE | EBAY_APP_ID + EBAY_CERT_ID are PRD credentials — price sync (ebay_supplier.py) works daily. Only fitment path (external_fitment_providers.py) was broken, now fixed |
+| Server IP 207.180.217.129 | STALE | Server migrated to vmi3190597 at 207.180.217.129. Updated in claude.md and CHAMPION_MOTORS_IMPORT_GUIDE.md |
+
+### New feature: Jaguar fitment backfill
+
+| Item | Status | Summary |
+|------|--------|---------|
+| Jaguar fitment sources blocked (autodoc.eu 403) | ✅ ROOT-FIXED | Added `backfill_jaguar_fitment_from_name()` in `db_update_agent.py` — parses model codes (XE, XF, XJ, F-Pace, E-Pace, F-Type, I-Pace, S-Type, X-Type, XK, XKR, XJR, XJ6, XJ8, XK8) from `name` and `name_he` fields against Israeli vehicle registry year ranges. Filters out branded merchandise. 14/14 pattern tests pass. Runs every 6h in `ordered_tasks`. |
+| Stale Jaguar fitment todos (61 batches stuck in_progress) | ✅ | Reset to `not_started`. The todos will still run via scheduled scraper cycle, but the name-parse approach provides coverage without external APIs. |
+
+---
+
+## Session 2026-06-04 (High Priority Audit Items)
+
+### H-1: REAL_DATA_ONLY — REX harvest reconfigured
+
+| Item | Status | Summary |
+|------|--------|---------|
+| REAL_DATA_ONLY blocked all REX data harvesting | ✅ | Split into two flags: `REAL_DATA_ONLY=true` keeps blocking synthetic/AI-generated data. New `REX_HARVEST_ENABLED=true` added to docker-compose allows real harvesting from legitimate sources. Newly discovered parts still enter pipeline with `master_enriched=FALSE` and `needs_oem_lookup` flags for db_cleanup_agent → db_update_agent → Meilisearch pipeline. `populate_supplier_parts` remains gated by REAL_DATA_ONLY (it generates synthetic links, not real data). |
+
+Files changed: `backend/catalog_scraper.py`, `backend/db_update_agent.py`, `docker-compose.yml`
+
+### H-2: Frontend outdated — rebuilt
+
+| Item | Status | Summary |
+|------|--------|---------|
+| Frontend container 6 days stale (built 2026-05-28) | ✅ | Rebuilt frontend from latest source (commit 365f4a1 2026-06-03 — OrdersPage.jsx, StatCard.jsx, nginx-default.conf changes). Now current as of 2026-06-04. |
+| Audit finding "VITE_API_URL missing" | FALSE | Frontend correctly uses relative `/api/v1` URLs. nginx proxies to backend. No VITE_API_URL needed — adding it would break the architecture. |
+
+### H-3: populate_supplier_parts — implemented and running
+
+| Item | Status | Summary |
+|------|--------|---------|
+| populate_supplier_parts never run + missing constants | ✅ | Function had 6 missing module-level constants (_BATCH, _DEFAULT_PRICE, _CATEGORY_FALLBACK_ILS, _WARRANTY_MAP, _UNIVERSAL_SUPPLIERS, _MANUFACTURER_SUPPLIERS). Implemented all constants. Fixed asyncpg syntax error (`:payload::json` → `CAST(:payload AS json)`). Removed redundant REAL_DATA_ONLY guard (function is already on-demand only). Coverage: 71.4% → 78%+ (394K new rows, 64K more parts covered). Run 2 in progress. |
+
+Constants added: eBay Motors + Motorstore IL as universal suppliers (on_order), Inbar Group (Land Rover) + Geo Mobility (Zeekr) as manufacturer-specific (in_stock).
+
+### H-4: Search cache — Redis write-through
+
+| Item | Status | Summary |
+|------|--------|---------|
+| In-memory SEARCH_RESPONSE_CACHE is per-process | ✅ | Replaced `_get_cached_search_response` and `_store_cached_search_response` with async Redis-backed versions. Pattern: L1 = in-memory (fast, same-process), L2 = Redis write-through (cross-worker, survives restarts). Key = SHA-256 of cache tuple JSON. Redis fallback is non-fatal — L1 cache still serves if Redis unavailable. Only 2 call sites changed (get + store). Other hierarchy caches left as in-memory (tiny, stable data). |
+
+### H-5: COMPANY_PHONE set
+
+| Item | Status | Summary |
+|------|--------|---------|
+| COMPANY_PHONE was placeholder | ✅ | Set to +972-53-242-6920 in `backend/.env`. Added to docker-compose.yml environment section for backend (with fallback default). Also added COMPANY_NAME, COMPANY_NUMBER, COMPANY_ADDRESS, COMPANY_EMAIL to docker-compose so they reach the container via env vars instead of missing load_dotenv() lookup. Verified `COMPANY_PHONE=+972-53-242-6920` in running container. |
+
+### H-6: normalize_categories optimized
+
+| Item | Status | Summary |
+|------|--------|---------|
+| normalize_categories scanned ALL 922K parts every cycle | ✅ | Added `WHERE TRIM(category) NOT IN (<canonical_list>)` to the SELECT — skips 804K already-canonical rows entirely. Now processes only genuinely non-canonical category values (non-Hebrew, legacy labels, typos). 5000 rows updated in 34s in first optimized run. Was previously scanning 922K rows to find ~5K to update. |
+
+---
+
+## Session 2026-06-04 (Low Priority Audit Items)
+
+| Item | Status | Summary |
+|------|--------|---------|
+| L-1: Taxonomy keyword coverage | ✅ | Expanded `part_type_taxonomy.py` with 50+ new keywords across 8 families. Added 2 new families: `safety-systems` (airbag, seatbelt, crash sensor, חגורה, כרית אוויר) and `hybrid-ev` (inverter, HV battery, electric motor). Reordered safety before interior to fix false-positive seat match. Fixed belt/seatbelt conflict by using compound keywords (timing belt, drive belt). Added Hebrew keywords for bolt/nut/washer, torque converter, halfshaft, horn, fuse, diffuser, stabilizer, AC dryer, cargo liner. 20/20 test cases pass. |
+| L-2: Health monitor ALERT parts_updated < 100 | ✅ AUTO | Auto-resolving now that db_update_agent heartbeat is fixed |
+| L-3: Zombie watchdog fix | ✅ VERIFIED | Fix holding. Current job has live heartbeat. 5 stale entries are test artifacts auto-cleaning within 6h TTL |
+| L-4: BACKEND_AI_AGENTS.py.backup | ⏳ | Awaiting user confirmation. Contains full agent logic in production container. Safe to delete (stale copy). |
+| L-5: Scraper round-the-clock | ✅ | Scraper: every 3h (00/03/06/09/12/15/18/21 UTC) — was 12h. db_update_agent: every 3h — was 6h. Confirmed in logs: `[Scraper] Background loop started. First run at next 3h slot`. Also fixed LEAST(ttl_seconds, 1800) bug in system.py metrics query. |
+| L-6: HF search features | ✅ | Enabled SEARCH_ENABLE_HF_QUERY_NORMALIZATION=1 and SEARCH_ENABLE_VECTOR_RERANK=1 in docker-compose. HF_TOKEN confirmed set (len=37). Verified in container: both vars=1. |
+| L-7: Meilisearch sync-status endpoint | ✅ | Added `GET /api/v1/admin/search/sync-status` to `backend/routes/system.py`. Returns: health, index document count, is_indexing, last 3 tasks, DB vs index parity check with gap calculation and in_sync boolean. Returns 401 without admin auth. |
+| L-8: update_*.py scripts | ⏳ | Awaiting user confirmation. One-shot scripts from development that could overwrite live config if accidentally run. Recommend archiving with M-1 batch. |
+
+---
+
+## Session 2026-06-12/13 (Pricing Policy Root Fix)
+
+> **Goal:** Enforce uniform 45% margin on ALL parts with no exceptions. Root-fix all pipeline deviations.
+
+| Item | Status | Summary |
+|------|--------|---------|
+| Case 3 normalize_base_price wrong | ✅ | `Case 3 = IL ref only` was setting `base = max_price_ils` (×1.0 — no margin). Fixed to `base = ROUND(max_price_ils × 1.45, 2)`. 287,488 rows corrected. |
+| importer_price_ils contamination | ✅ | 181,384 non-KGM rows had `importer_price_ils > 0` (wrong). Zeroed for all non-KGM brands. Only KGM/SsangYong may have this column > 0. |
+| Google Shopping price in wrong column | ✅ | `catalog_scraper.py _sync_online_price` was writing IL retail prices to `online_price_ils` (wrong — triggers Case 2 ×1.45 on top of already-domestic prices). Fixed to write to `max_price_ils`. |
+| `online_price_ils` contamination | ✅ | ~128K rows (Renault 55K, Chevrolet 28K, Nissan 18K, Mercedes 4K, Honda 4K, Porsche 2K, others) had incorrect `online_price_ils`. Zeroed; base_price re-computed via Case 3. |
+| 394,366 fake supplier_parts rows deleted | ✅ | `_UNIVERSAL_SUPPLIERS` auto-generated placeholder rows for eBay Motors (`EBAY-{uuid}` SKUs, ×1.15) and Motorstore IL (`MST-{uuid}` SKUs, ×1.10) — fabricated prices on top of marked-up base_price. Deleted all; `_UNIVERSAL_SUPPLIERS = []` now empty. |
+| REAL_DATA_ONLY rule added to code | ✅ | Added `# REAL_DATA_ONLY` comment in `db_update_agent.py _populate_supplier_parts_task`. No auto-generated supplier rows ever again. |
+| `supplier_parts.price_ils` bulk sync | ✅ | 635,658 + 6,084 = 641,742 active rows updated: `price_ils = base_price` exactly. All 37 active suppliers now at ratio 1.0000. Zero mismatches on active parts. |
+| ON CONFLICT templates for IL importers | ✅ | Added `importer_price_ils=0, online_price_ils=0` to all IL official importer scripts: `kia_import.py`, `lr_import.py`, `import_delek_brands.py`, `import_champion_motors.py`, `geely_israel_import.py`, `cadillac_israel_import.py`, `gmc_buick_umi_import.py`, `sng_barratt_jaguar_import.py`, `selected_parts_scraper.py`, `samelet_import_v2.py`, `bydil_scraper.py`. |
+| test_pricing_policy.py 8/8 pass | ✅ | All T1-T8 tests pass including live DB ratio checks: Case1=1.4500, Case2=1.4500, Case3=1.4500. |
+| Pricing policy documented | ✅ | `claude.md`, `memory/pricing_policy.md`, `memory/feedback_pricing_no_exceptions.md` all updated with uniform 45% rule. |

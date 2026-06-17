@@ -317,9 +317,9 @@ async def import_parts(parts: list) -> dict:
 
         sku = f"SUBARU-{material}"
         category = infer_category(name_he)
-        importer_price = round(price_no_vat, 2)
-        max_price = round(price_with_vat, 2)
-        min_price = importer_price
+        il_retail = round(price_with_vat, 2)   # consumer retail incl. VAT = market reference
+        max_price = il_retail
+        min_price = il_retail
 
         specs = {
             "vat_included": False,
@@ -342,10 +342,11 @@ async def import_parts(parts: list) -> dict:
                     part_id = str(existing["id"])
                     await conn.execute(
                         """UPDATE parts_catalog SET
-                           name_he=$2, importer_price_ils=$3, min_price_ils=$4, max_price_ils=$5,
-                           specifications=$6, updated_at=NOW()
+                           name_he=$2, base_price=$3, min_price_ils=$3, max_price_ils=$3,
+                           importer_price_ils=0,
+                           specifications=$4, updated_at=NOW()
                            WHERE id=$1""",
-                        part_id, name_he, importer_price, min_price, max_price,
+                        part_id, name_he, il_retail,
                         json.dumps(specs),
                     )
                     updated += 1
@@ -354,14 +355,14 @@ async def import_parts(parts: list) -> dict:
                     await conn.execute(
                         """INSERT INTO parts_catalog(
                            id, sku, oem_number, name, name_he, manufacturer, manufacturer_id,
-                           category, importer_price_ils, min_price_ils, max_price_ils,
+                           category, base_price, importer_price_ils, min_price_ils, max_price_ils,
                            specifications, part_condition, aftermarket_tier,
                            needs_oem_lookup, master_enriched, is_active, created_at, updated_at)
-                           VALUES($1,$2,$3,$4,$5,$6,$7::uuid,$8,$9,$10,$11,$12::jsonb,'New',$13,FALSE,FALSE,TRUE,NOW(),NOW())""",
+                           VALUES($1,$2,$3,$4,$5,$6,$7::uuid,$8,$9,0,$9,$9,$10::jsonb,'New',$11,FALSE,FALSE,TRUE,NOW(),NOW())""",
                         part_id, sku, material,
                         name_he,  # use Hebrew as name until AI translates
                         name_he, MANUFACTURER, MANUFACTURER_ID,
-                        category, importer_price, min_price, max_price,
+                        category, il_retail,
                         json.dumps(specs), aftermarket_tier,
                     )
                     inserted += 1

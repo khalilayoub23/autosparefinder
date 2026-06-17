@@ -1,0 +1,9 @@
+{
+  "model": "claude-sonnet-4-6",
+  "permissions": {
+    "defaultMode": "auto",
+    "allow": [
+      "mcp__claude-in-chrome__navigate"
+    ]
+  }
+}

@@ -1,5 +1,5 @@
 # ⚠️  BROWSER TOOL REQUIRED — DO NOT RUN HTTP REQUESTS FROM SERVER IP
-# The server IP (94.130.150.23) is blocked by Cloudflare and anti-bot systems.
+# The server IP (207.180.217.129) is blocked by Cloudflare and anti-bot systems.
 # All external HTTP extraction must be done via the browser tool (Playwright / run_playwright_code).
 # Pattern: (1) Extract with browser tool → save JSON, (2) Import JSON with DB importer script.
 # See claude.md § Web Scraping Rules.
@@ -42,6 +42,7 @@ Tools exposed to admin API via /api/v1/admin/scraper/*:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
@@ -50,6 +51,7 @@ import random
 import re
 import uuid
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote_plus, urljoin, urlparse
 
@@ -70,19 +72,38 @@ from resilience import (
     get_supplier_domain_from_url,
     job_registry_start,
     job_registry_finish,
+    job_heartbeat,
 )
 from currency_rate import upsert_usd_to_ils_rate
 from categories import guess_category_by_text
-from agent_todo_utils import get_active_agent_todos, todo_requests_ranked_first
+from agent_todo_utils import (
+    get_active_agent_todos,
+    todo_requests_ranked_first,
+    extract_todo_brands,
+    extract_todo_discovery_target,
+)
 
 load_dotenv()
 logger = logging.getLogger(__name__)
 
 
 def _real_data_only_enabled() -> bool:
+    """True when synthetic data generation is blocked (AI-generated parts, fake links)."""
     env_name = (os.getenv("ENVIRONMENT", "development") or "development").strip().lower()
     default_flag = "1" if env_name == "production" else "0"
     raw = (os.getenv("REAL_DATA_ONLY", default_flag) or default_flag).strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _rex_harvest_enabled() -> bool:
+    """
+    True when REX is allowed to scrape and harvest REAL parts data from external sources.
+    Independent of REAL_DATA_ONLY — real scraped data should always flow through the pipeline.
+    Default: True in production (set REX_HARVEST_ENABLED=false to disable).
+    Newly inserted parts always enter with master_enriched=FALSE and needs_oem_lookup flags
+    so the normalization pipeline (db_cleanup_agent → db_update_agent → meili_sync) picks them up.
+    """
+    raw = (os.getenv("REX_HARVEST_ENABLED", "true") or "true").strip().lower()
     return raw in {"1", "true", "yes", "on"}
 
 
@@ -128,6 +149,54 @@ DISCOVERY_OFFICIAL_SUFFIXES = [
 if not DISCOVERY_OFFICIAL_SUFFIXES:
     DISCOVERY_OFFICIAL_SUFFIXES = ["com"]
 
+# ── Source 0: local pre-scraped seed files ─────────────────────────────────────
+# Maps brand name → Path of seed JSON + the importer module name to use.
+# Seed JSONs live in backend/data/ and are baked into the Docker image.
+_LOCAL_SEED_REGISTRY: Dict[str, Path] = {}
+
+def _init_local_seed_registry() -> None:
+    _data = Path(__file__).parent / "data"
+    _candidates: Dict[str, Path] = {
+        "Opel": _data / "opel_car_parts_ie_seed.json",
+    }
+    for _brand, _path in _candidates.items():
+        if _path.exists():
+            _LOCAL_SEED_REGISTRY[_brand] = _path
+
+_init_local_seed_registry()
+
+
+async def _run_local_seed_import(brand: str, b_report: Dict[str, Any]) -> int:
+    """
+    Source 0 — import from a pre-scraped local seed file.
+    Returns total parts inserted + updated (0 if no seed registered for brand).
+    Uses brand-specific importers that connect directly via asyncpg (bypass-safe).
+    """
+    seed_path = _LOCAL_SEED_REGISTRY.get(brand)
+    if not seed_path:
+        return 0
+    try:
+        if brand == "Opel":
+            from opel_car_parts_ie_import import import_file as _importer  # type: ignore
+        else:
+            return 0
+        result = await _importer(seed_path)
+        inserted = result.get("parts_inserted", 0)
+        updated  = result.get("parts_updated", 0)
+        fitment  = result.get("fitment_rows", 0)
+        b_report["sources"].append(f"local_seed:{inserted}new+{updated}upd")
+        b_report["inserted"] += inserted
+        print(
+            f"[Rex]   Source 0 local_seed -> "
+            f"inserted={inserted} updated={updated} fitment={fitment} "
+            f"supplier_rows={result.get('supplier_rows', 0)}"
+        )
+        return inserted + updated
+    except Exception as exc:
+        print(f"[Rex]   Source 0 local_seed error ({brand}): {exc}")
+        return 0
+
+
 # ── Category-driven discovery (ensures core part types exist per brand) ────────
 DISCOVERY_CATEGORIES = [
     # Hebrew name → Autodoc search terms (English)
@@ -162,6 +231,17 @@ FX_REFRESH_INTERVAL_H = float(os.getenv("FX_REFRESH_INTERVAL_H", "24"))
 # ── HTTP helpers ───────────────────────────────────────────────────────────────
 _BLOCKED_SOURCES: Dict[str, datetime] = {}
 _SOURCE_COOLDOWN_MINUTES = int(os.getenv("SCRAPER_SOURCE_COOLDOWN_MINUTES", "60"))
+
+# Permanently dead or unreachable domains — blocked for 30 days (effectively forever).
+# Add any domain that consistently returns ERR_CONNECTION_REFUSED or is defunct.
+_PERMANENTLY_DEAD_DOMAINS = {
+    "roverparts.co.uk",      # ERR_CONNECTION_REFUSED — site offline
+    "www.rockauto.com",      # 100% timeout rate — IP-blocked / CDN wall
+    "rockauto.com",          # same domain, both forms
+}
+_PERMANENT_BLOCK_DAYS = 30
+for _dead in _PERMANENTLY_DEAD_DOMAINS:
+    _BLOCKED_SOURCES[_dead] = datetime.utcnow() + timedelta(days=_PERMANENT_BLOCK_DAYS)
 
 _USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -208,7 +288,7 @@ _AFTERMARKET_BRANDS  = {"febi", "bilstein", "mann", "mahle", "lemforder", "sachs
                         "elring", "victor reinz", "ajusa", "meyle", "ruville",
                         "topran", "swag", "jp group", "kawe", "textar", "pagid",
                         "zimmermann", "delphi", "luk", "exedy", "aisin", "nipparts"}
-_OEM_DISCOVERY_SOURCES = {"epc-data", "partsouq", "realoem"}
+_OEM_DISCOVERY_SOURCES = {"epc-data", "partsouq", "realoem", "official_site", "oemdtc", "car-parts.ie"}
 _AFTERMARKET_BRAND_CACHE: Dict[str, Tuple[Optional[uuid.UUID], str]] = {}
 
 
@@ -485,7 +565,19 @@ def _extract_listing_name(block: Any, fallback_name: str) -> str:
     return (name[:160] if name else fallback_name)
 
 
-async def _playwright_fetch_page(url: str, timeout_ms: int = 20000) -> Tuple[str, str]:
+async def _playwright_fetch_page(
+    url: str,
+    timeout_ms: int = 25000,
+    wait_for_content: bool = False,
+) -> Tuple[str, str]:
+    """
+    Fetch a page using a headless Chromium browser.
+
+    Uses --disable-blink-features=AutomationControlled + navigator.webdriver override
+    so manufacturer sites / Cloudflare do not instantly identify the crawler.
+    wait_for_content=True adds an extra 2.5 s after DOMContentLoaded so JS-rendered
+    product grids (React/Vue) fully populate before we read the DOM.
+    """
     try:
         from playwright.async_api import async_playwright
     except Exception as exc:
@@ -498,13 +590,34 @@ async def _playwright_fetch_page(url: str, timeout_ms: int = 20000) -> Tuple[str
         async with async_playwright() as p:
             browser = await p.chromium.launch(
                 headless=True,
-                args=["--no-sandbox", "--disable-dev-shm-usage"],
+                args=[
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-blink-features=AutomationControlled",
+                    "--disable-infobars",
+                ],
             )
-            context = await browser.new_context(user_agent=_rand_ua())
+            context = await browser.new_context(
+                user_agent=_rand_ua(),
+                viewport={"width": 1366, "height": 768},
+                locale="en-US",
+                extra_http_headers={
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                    "DNT": "1",
+                },
+            )
+            # Mask webdriver flag so manufacturer sites don't instant-block
+            await context.add_init_script(
+                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
+                "Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});"
+                "Object.defineProperty(navigator, 'languages', {get: () => ['en-US','en']});"
+            )
             page = await context.new_page()
             page.set_default_timeout(timeout_ms)
             await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
-            await page.wait_for_timeout(800)
+            # JS-heavy SPAs (React/Vue parts catalogs) need extra time to render
+            await page.wait_for_timeout(2500 if wait_for_content else 900)
             html = await page.content()
             try:
                 text = await page.inner_text("body")
@@ -951,31 +1064,34 @@ async def scrape_rockauto(
     rate_limit_per_minute: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
-    Scrape RockAuto for a part number.  RockAuto uses a React/JSON structure;
-    we extract prices from the embedded JSON data payload.
+    Harvest RockAuto via Playwright browser (bypasses Cloudflare/bot detection).
+    RockAuto embeds part data as JSON arrays in script tags — extracted via regex.
     """
-    # Rate-limit check (Gap 4)
     import redis.asyncio as _aioredis
     try:
         redis_client = _aioredis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"), decode_responses=True)
-        limit = rate_limit_per_minute or 30
+        limit = rate_limit_per_minute or 10
         if not await check_supplier_rate_limit(redis_client, "rockauto.com", limit_per_minute=limit):
             logger.warning("RockAuto rate limit exceeded, skipping scrape")
             return {"results": [], "skipped": True, "reason": "rate_limit"}
     except Exception as e:
         logger.warning(f"Rate limit check failed for RockAuto: {e}")
-    
-    await asyncio.sleep(SCRAPE_REQUEST_DELAY + random.uniform(0, 0.5))
+
+    await asyncio.sleep(SCRAPE_REQUEST_DELAY + random.uniform(1.0, 2.5))
 
     url = f"https://www.rockauto.com/en/partsearch/?partnum={part_number}"
-    resp = await _get(url)
-    if not resp:
+    try:
+        html, _ = await _playwright_fetch_page(url, timeout_ms=30000, wait_for_content=True)
+    except Exception as exc:
+        logger.warning("RockAuto Playwright fetch failed for %s: %s", part_number, exc)
         return {"tool": "scrape_rockauto", "part_number": part_number, "results": []}
 
-    soup = BeautifulSoup(resp.text, "html.parser")
+    if not html:
+        return {"tool": "scrape_rockauto", "part_number": part_number, "results": []}
+
+    soup = BeautifulSoup(html, "html.parser")
     results: List[Dict] = []
 
-    # RockAuto embeds parts as JS arrays in script tags
     for script in soup.find_all("script"):
         content = script.string or ""
         if "partnum" in content.lower() or "listprice" in content.lower():
@@ -1008,77 +1124,65 @@ async def scrape_rockauto_by_oem(
     *,
     rate_limit_per_minute: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Search RockAuto by OEM number using rockauto-api package."""
+    """Harvest RockAuto by OEM number via Playwright browser (no external API package)."""
     import redis.asyncio as _aioredis
 
     try:
         redis_client = _aioredis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"), decode_responses=True)
-        limit = rate_limit_per_minute or 30
+        limit = rate_limit_per_minute or 10
         if not await check_supplier_rate_limit(redis_client, "rockauto.com", limit_per_minute=limit):
             logger.warning("RockAuto OEM rate limit exceeded, skipping scrape")
             return {"tool": "scrape_rockauto_by_oem", "part_number": part_number, "results": [], "skipped": True, "reason": "rate_limit"}
     except Exception as exc:
         logger.warning(f"Rate limit check failed for RockAuto OEM: {exc}")
 
-    await asyncio.sleep(SCRAPE_REQUEST_DELAY + random.uniform(0, 0.5))
+    await asyncio.sleep(SCRAPE_REQUEST_DELAY + random.uniform(1.0, 2.5))
 
+    url = f"https://www.rockauto.com/en/partsearch/?partnum={quote_plus(part_number)}"
     try:
-        from rockauto_api import RockAutoClient
+        html, _ = await _playwright_fetch_page(url, timeout_ms=30000, wait_for_content=True)
     except Exception as exc:
-        logger.warning("rockauto_api import failed: %s", exc)
+        logger.warning("RockAuto OEM Playwright fetch failed for %s: %s", part_number, exc)
         return {"tool": "scrape_rockauto_by_oem", "part_number": part_number, "results": []}
 
-    client = RockAutoClient(enable_caching=False)
-    try:
-        search_result = await client.search_parts_by_number(
-            part_number,
-            manufacturer=(manufacturer or None),
-        )
-    except Exception as exc:
-        logger.warning("RockAuto OEM search failed for %s: %s", part_number, exc)
+    if not html:
         return {"tool": "scrape_rockauto_by_oem", "part_number": part_number, "results": []}
-    finally:
-        try:
-            await client.close()
-        except Exception:
-            pass
 
+    soup = BeautifulSoup(html, "html.parser")
     results: List[Dict[str, Any]] = []
-    for part in list(getattr(search_result, "parts", []) or [])[:10]:
-        price_raw = str(getattr(part, "price", "") or "")
-        price_match = re.search(r"([\d,]+(?:\.\d+)?)", price_raw)
-        if not price_match:
-            continue
 
-        try:
-            price_usd = float(price_match.group(1).replace(",", ""))
-        except Exception:
-            continue
+    for script in soup.find_all("script"):
+        content = script.string or ""
+        if "partnum" in content.lower() or "listprice" in content.lower():
+            price_matches = re.findall(r'"listprice"\s*:\s*([\d.]+)', content)
+            name_matches  = re.findall(r'"partdescription"\s*:\s*"([^"]+)"', content)
+            pn_matches    = re.findall(r'"partnumber"\s*:\s*"([^"]+)"', content)
+            brand_matches = re.findall(r'"brandname"\s*:\s*"([^"]+)"', content)
+            for i, pm in enumerate(price_matches[:10]):
+                try:
+                    price_usd = float(pm)
+                    if price_usd <= 0:
+                        continue
+                    pn = pn_matches[i] if i < len(pn_matches) else part_number
+                    brand_name = brand_matches[i] if i < len(brand_matches) else manufacturer
+                    name = name_matches[i] if i < len(name_matches) else f"{brand_name} {pn}".strip()
+                    results.append({
+                        "source": "rockauto",
+                        "part_number": part_number,
+                        "name": name,
+                        "brand": brand_name,
+                        "price_usd": round(price_usd, 2),
+                        "price_ils": round(price_usd * ILS_PER_USD, 2),
+                        "availability": "in_stock",
+                        "url": url,
+                        "rockauto_part_number": pn,
+                    })
+                except Exception:
+                    pass
+            if results:
+                break
 
-        if price_usd <= 0:
-            continue
-
-        pn = str(getattr(part, "part_number", "") or "").strip() or part_number
-        brand_name = str(getattr(part, "brand", "") or "").strip() or manufacturer
-        name = str(getattr(part, "name", "") or "").strip() or f"{brand_name} {pn}".strip()
-
-        results.append({
-            "source": "rockauto_api",
-            "part_number": part_number,
-            "name": name,
-            "brand": brand_name,
-            "price_usd": round(price_usd, 2),
-            "price_ils": round(price_usd * ILS_PER_USD, 2),
-            "availability": str(getattr(part, "availability", "") or "unknown"),
-            "url": str(getattr(part, "url", "") or "https://www.rockauto.com/en/partsearch/?partnum=" + quote_plus(part_number)),
-            "rockauto_part_number": pn,
-        })
-
-    return {
-        "tool": "scrape_rockauto_by_oem",
-        "part_number": part_number,
-        "results": results,
-    }
+    return {"tool": "scrape_rockauto_by_oem", "part_number": part_number, "results": results}
 
 
 async def fetch_ils_exchange_rate() -> float:
@@ -1527,24 +1631,25 @@ async def _write_price_history(
 # SCRAPE STRATEGY  —  which tool to use per supplier
 # ==============================================================================
 SUPPLIER_TOOL_MAP = {
-    "AutoParts Pro IL": scrape_rockauto,  # Root fix: use generic search not OEM-only
-    "Global Parts Hub": scrape_rockauto,
+    "AutoParts Pro IL": scrape_google_shopping,
+    "Global Parts Hub": scrape_google_shopping,
     "EastAuto Supply":  scrape_aliexpress,
-    "PartsPro USA":     scrape_rockauto,
+    "PartsPro USA":     scrape_google_shopping,
     "AutoZone Direct":  scrape_ebay_motors,
+    "eBay Motors":      scrape_ebay_motors,
     "Hyundai Mobis":    scrape_google_shopping,
     "Kia Parts Direct": scrape_google_shopping,
-    "Bosch Direct":     scrape_rockauto,  # Root fix: use generic search not OEM-only
+    "Bosch Direct":     scrape_google_shopping,
     "Toyota Genuine":   scrape_google_shopping,
     "Motorstore IL":    scrape_motorstore,
     "Meyle":            scrape_meyle,
     "Gates":            scrape_gates,
     "Brembo":           scrape_brembo,
-    "RockAuto":         scrape_rockauto,
+    # RockAuto removed — domain is permanently blocked (100% timeout)
 }
 
-# Fallback priority: RockAuto + eBay + generic shopping
-FALLBACK_TOOLS = [scrape_rockauto, scrape_rockauto_by_oem, scrape_google_shopping, scrape_ebay_motors]
+# Fallback priority: eBay + generic shopping (RockAuto permanently blocked)
+FALLBACK_TOOLS = [scrape_google_shopping, scrape_ebay_motors]
 
 
 # Express shipping config per supplier  {name: (available, price_ils_surcharge, days, cutoff)}
@@ -1569,9 +1674,10 @@ async def _sync_online_price(
     manufacturer: str,
 ) -> None:
     """
-    Fetch a Google Shopping reference price for the part and store it in
-    parts_catalog.online_price_ils (incl. 18% VAT).  Runs at most once per
+    Fetch a Google Shopping reference price for the part and store it as
+    max_price_ils (IL retail market reference, incl. 18% VAT). Runs at most once per
     day per part (checked via parts_catalog.updated_at).
+    Does NOT set online_price_ils — that column is for international (non-IL) buy prices.
     """
     try:
         result = await scrape_google_shopping(f"{manufacturer} {sku} {name}")
@@ -1580,9 +1686,9 @@ async def _sync_online_price(
             return
         prices.sort()
         median_ils = prices[len(prices) // 2]
-        # Store WITH 18% VAT (scraped retail prices already include VAT)
+        # Store as IL market reference (Google Shopping IL retail price, incl. 18% VAT)
         await db.execute(
-            text("UPDATE parts_catalog SET online_price_ils = :p WHERE id = :id"),
+            text("UPDATE parts_catalog SET max_price_ils = :p WHERE id = :id AND (max_price_ils IS NULL OR max_price_ils = 0)"),
             {"p": round(median_ils, 2), "id": part_id},
         )
         await db.commit()
@@ -2062,13 +2168,15 @@ async def _scrape_one_part(
     cat_num = sku.split("-", 1)[-1] if "-" in sku else sku
 
     # --- primary tool ---
-    primary_fn = SUPPLIER_TOOL_MAP.get(supplier_name, scrape_rockauto)
+    primary_fn = SUPPLIER_TOOL_MAP.get(supplier_name, scrape_google_shopping)
     t_start = datetime.utcnow()
     try:
         if primary_fn is scrape_aliexpress:
             data = await primary_fn(f"{manufacturer} {cat_num} auto part")
         elif primary_fn in (scrape_motorstore, scrape_meyle, scrape_gates, scrape_brembo):
             data = await primary_fn(cat_num, manufacturer)
+        elif primary_fn in (scrape_google_shopping, scrape_ebay_motors):
+            data = await primary_fn(f"{manufacturer} {cat_num} auto part")
         else:
             data = await primary_fn(cat_num, manufacturer, rate_limit_per_minute=rate_limit_per_minute)
         ms = int((datetime.utcnow() - t_start).total_seconds() * 1000)
@@ -2171,6 +2279,15 @@ async def _scrape_one_part(
     # Clamp update: don't move more than ±25% from current in a single run
     old = current_price_ils or derived_cost_ils
     new_ils = round(max(old * 0.75, min(derived_cost_ils, old * 1.25)), 2)
+
+    # Hard cap: reject obviously corrupt prices (scraper parse errors produce huge numbers)
+    _MAX_PRICE_ILS = 99_999.0
+    if new_ils > _MAX_PRICE_ILS:
+        logger.warning(
+            "Price overflow guard: clamping %.2f → %.2f ILS for supplier_part_id=%s",
+            new_ils, _MAX_PRICE_ILS, supplier_part_id,
+        )
+        new_ils = _MAX_PRICE_ILS
 
     price_changed = abs(new_ils - old) / max(old, 1) >= 0.005
 
@@ -2315,15 +2432,55 @@ _OEM_NUM_PATTERNS: Dict[str, List[str]] = {
 # Manufacturer official websites / parts portals.
 # These are used by Rex discovery before marketplace sources.
 _OFFICIAL_SITE_SEARCH_URLS: Dict[str, List[str]] = {
-    "Toyota": ["https://autoparts.toyota.com/search?search_str={q}"],
-    "Lexus": ["https://parts.lexus.com/search?search_str={q}"],
-    "Ford": ["https://parts.ford.com/shop/en/us/search?q={q}"],
-    "Volkswagen": ["https://parts.vw.com/search?searchTerm={q}"],
-    "Audi": ["https://parts.audiusa.com/search?searchTerm={q}"],
-    "Subaru": ["https://parts.subaru.com/search?searchTerm={q}"],
-    "Mazda": ["https://parts.mazdausa.com/search?searchTerm={q}"],
-    "Nissan": ["https://parts.nissanusa.com/search?searchTerm={q}"],
-    "Honda": ["https://dreamshop.honda.com/s/search?q={q}"],
+    # ── Established brands ──────────────────────────────────────────────────────
+    "Toyota":      ["https://autoparts.toyota.com/search?search_str={q}"],
+    "Lexus":       ["https://parts.lexus.com/search?search_str={q}",
+                    "https://www.lexus-europe.com/en/ownership/parts-accessories"],
+    "Ford":        ["https://parts.ford.com/shop/en/us/search?q={q}"],
+    "Volkswagen":  ["https://parts.vw.com/search?searchTerm={q}"],
+    "Audi":        ["https://parts.audiusa.com/search?searchTerm={q}"],
+    "Subaru":      ["https://parts.subaru.com/search?searchTerm={q}"],
+    "Mazda":       ["https://parts.mazdausa.com/search?searchTerm={q}"],
+    "Nissan":      ["https://parts.nissanusa.com/search?searchTerm={q}"],
+    "Honda":       ["https://dreamshop.honda.com/s/search?q={q}"],
+    # ── HIGH-priority missing brands (Israeli market) ───────────────────────────
+    "Opel":        ["https://www.opel.com/en/home/explore/accessories-parts/genuine-parts.html",
+                    "https://www.vauxhall.co.uk/find-a-dealer/accessories.html",
+                    "https://partsouq.com/en/search?q=opel+{q}",
+                    "https://car-parts.ie/en/car-parts/opel/?q={q}"],
+    "Isuzu":       ["https://www.isuzu.co.uk/owners/parts-and-accessories",
+                    "https://parts.isuzu-lt.com/en/search?q={q}",
+                    "https://partsouq.com/en/search?q=isuzu+{q}"],
+    "Geely":       ["https://www.geely.com/en/geelyglobal.html",
+                    "https://partsouq.com/en/search?q=geely+{q}",
+                    "https://www.oemdtc.com/geely-spare-parts/"],
+    "Daihatsu":    ["https://www.daihatsu.co.uk/owners/parts-and-accessories",
+                    "https://partsouq.com/en/search?q=daihatsu+{q}",
+                    "https://www.oemdtc.com/daihatsu-spare-parts/"],
+    "Chrysler":    ["https://www.mopar.com/en-us/parts.html",
+                    "https://parts.mopar.com/search?q={q}",
+                    "https://partsouq.com/en/search?q=chrysler+{q}"],
+    "Rover":       ["https://www.roverparts.co.uk/catalogsearch/result/?q={q}",
+                    "https://partsouq.com/en/search?q=rover+{q}",
+                    "https://www.oemdtc.com/rover-spare-parts/"],
+    "Cadillac":    ["https://parts.cadillac.com/shop/en/us/search?q={q}",
+                    "https://partsouq.com/en/search?q=cadillac+{q}"],
+    "Lynk & Co":   ["https://www.lynkco.com/en/ownership/parts-accessories",
+                    "https://partsouq.com/en/search?q=lynk+co+{q}"],
+    # ── MEDIUM-priority missing brands ──────────────────────────────────────────
+    "SsangYong":   ["https://partsouq.com/en/search?q=ssangyong+{q}",
+                    "https://www.oemdtc.com/ssangyong-spare-parts/"],
+    "KG Mobility": ["https://partsouq.com/en/search?q=kg+mobility+{q}"],
+    "Buick":       ["https://parts.buick.com/shop/en/us/search?q={q}",
+                    "https://partsouq.com/en/search?q=buick+{q}"],
+    "Cupra":       ["https://www.cupraofficial.com/ownership/parts-accessories.html",
+                    "https://partsouq.com/en/search?q=cupra+{q}"],
+    "DS Automobiles": ["https://www.dsautomobiles.com/en/ownership/parts-and-accessories.html",
+                       "https://partsouq.com/en/search?q=ds+automobile+{q}"],
+    "Maserati":    ["https://www.maserati.com/en/en/ownership/parts-and-accessories",
+                    "https://partsouq.com/en/search?q=maserati+{q}"],
+    "Polestar":    ["https://www.polestar.com/en/ownership/parts-and-accessories/",
+                    "https://partsouq.com/en/search?q=polestar+{q}"],
 }
 
 _OFFICIAL_BRAND_DOMAINS: Dict[str, str] = {
@@ -2365,6 +2522,27 @@ _OFFICIAL_BRAND_DOMAINS: Dict[str, str] = {
     "GMC": "gmc.com",
     "RAM": "ramtrucks.com",
     "Geely": "geely.com",
+    "Isuzu": "isuzu.com",
+    "Daihatsu": "daihatsu.com",
+    "Chrysler": "mopar.com",
+    "Rover": "roverparts.co.uk",
+    "Lynk & Co": "lynkco.com",
+    "SsangYong": "ssangyong.com",
+    "KG Mobility": "kgmobility.com",
+    "Deepal": "deepal.com",
+    "Seres": "seres.com",
+    "Cupra": "cupraofficial.com",
+    "Dongfeng": "dongfeng-global.com",
+    "Skywell": "skywell.com",
+    "Aiways": "aiways.com",
+    "GAC": "gacmotor.com",
+    "FAW": "faw.com",
+    "Forthing": "forthing-auto.com",
+    "DS Automobiles": "dsautomobiles.com",
+    "JAC": "jac-motors.com",
+    "Foton": "foton.com",
+    "Polestar": "polestar.com",
+    "Maserati": "maserati.com",
     "BYD": "byd.com",
     "MG": "mg.co.uk",
     "Haval": "haval.com",
@@ -2408,6 +2586,15 @@ _OFFICIAL_DISCOVERY_QUERIES: List[str] = [
     "{brand} genuine parts",
     "{brand} oem part number",
     "{brand} spare parts",
+    "{brand} original parts catalog",
+]
+
+# Universal OEM parts portals — queried for every brand via Playwright.
+# These cover the full brand catalog without requiring VIN or login.
+_OEM_UNIVERSAL_PORTALS: List[str] = [
+    "https://partsouq.com/en/search?q={brand}+{q}",
+    "https://www.oemdtc.com/{brand_slug}-spare-parts/",
+    "https://car-parts.ie/en/car-parts/{brand_slug}/?q={q}",
 ]
 
 _OFFICIAL_DISCOVERY_QUERIES_BY_SUFFIX: Dict[str, List[str]] = {
@@ -2702,6 +2889,16 @@ def _build_official_search_urls(brand: str) -> List[str]:
             if allow_www:
                 urls.append(f"https://www.{domain}{path_t}")
 
+    # Append universal OEM portals (partsouq, oemdtc, car-parts.ie) for every brand.
+    # These cover the full parts catalog without VIN or login via Playwright.
+    brand_slug = re.sub(r"[^a-z0-9]+", "-", brand.lower()).strip("-")
+    for portal_t in _OEM_UNIVERSAL_PORTALS:
+        try:
+            portal_url = portal_t.format(brand=brand, brand_slug=brand_slug, q="{q}")
+        except Exception:
+            continue
+        urls.append(portal_url)
+
     return _dedupe_keep_order(urls, limit=DISCOVERY_OFFICIAL_MAX_URLS)
 
 
@@ -2733,7 +2930,6 @@ async def _discover_via_official_sites(brand: str, max_parts: int = 220) -> List
             break
 
         url_domain = _extract_domain_from_search_url_template(url_t)
-        referer = f"https://{url_domain}" if url_domain else default_referer
 
         for q_t in _build_official_queries(brand, url_domain):
             if len(results) >= max_parts or requests_used >= DISCOVERY_OFFICIAL_MAX_REQUESTS:
@@ -2744,23 +2940,21 @@ async def _discover_via_official_sites(brand: str, max_parts: int = 220) -> List
                 url = url_t.format(q=query)
             except Exception:
                 url = url_t.replace("{q}", query)
-            await asyncio.sleep(SCRAPE_REQUEST_DELAY + random.uniform(0, 0.8))
+            await asyncio.sleep(SCRAPE_REQUEST_DELAY + random.uniform(0.5, 1.5))
 
-            resp = await _get(url, referer=referer, timeout=25, use_proxy=False)
+            # Use Playwright (real browser) so manufacturer sites / Cloudflare
+            # don't block the server IP. wait_for_content=True lets SPA product
+            # grids fully render before we read the DOM.
+            html, page_text = await _playwright_fetch_page(url, timeout_ms=28000, wait_for_content=True)
             requests_used += 1
-            if not resp:
+            if not html and not page_text:
                 continue
 
-            if resp.status_code != 200:
-                if resp.status_code in (403, 429, 503):
-                    blocked_hits += 1
-                continue
-
-            if _is_bot_block_page(resp.text[:1800]):
+            if _is_bot_block_page(html[:2000]):
                 blocked_hits += 1
                 continue
 
-            soup = BeautifulSoup(resp.text, "html.parser")
+            soup = BeautifulSoup(html, "html.parser")
 
             # Structured products from JSON-LD blocks.
             for obj in _iter_json_ld_objects(soup):
@@ -2794,7 +2988,7 @@ async def _discover_via_official_sites(brand: str, max_parts: int = 220) -> List
                 if not _looks_like_part_context(name) and not pnums:
                     continue
 
-                candidate_url = str(obj.get("url") or str(resp.url))
+                candidate_url = str(obj.get("url") or url)
                 for pn in pnums[:4]:
                     if pn in seen_nums:
                         continue
@@ -2838,9 +3032,9 @@ async def _discover_via_official_sites(brand: str, max_parts: int = 220) -> List
 
                 price_usd, price_ils = _extract_price_from_text(text_blob)
                 link = node if node.name == "a" and node.get("href") else node.find("a", href=True)
-                candidate_url = str(resp.url)
+                candidate_url = url
                 if link and link.get("href"):
-                    candidate_url = urljoin(str(resp.url), link.get("href"))
+                    candidate_url = urljoin(url, link.get("href"))
 
                 for pn in pnums[:3]:
                     if pn in seen_nums:
@@ -3069,10 +3263,10 @@ async def run_brand_discovery(
     if not DISCOVERY_ENABLED:
         return {"status": "disabled", "message": "DISCOVERY_ENABLED=false"}
 
-    if _real_data_only_enabled():
+    if not _rex_harvest_enabled():
         return {
             "status": "skipped",
-            "reason": "real_data_only mode disables brand_discovery inserts",
+            "reason": "REX_HARVEST_ENABLED=false — real data harvesting is disabled",
             "job": "brand_discovery",
             "agent": "Rex",
         }
@@ -3157,6 +3351,16 @@ async def run_brand_discovery(
                     for todo in rex_todos
                 ]
 
+                # If caller didn't pass explicit brands, check todos for a pinned list
+                if not brands:
+                    todo_brands = extract_todo_brands(rex_todos)
+                    if todo_brands:
+                        brands = todo_brands
+                        todo_target = extract_todo_discovery_target(rex_todos)
+                        if todo_target:
+                            target = todo_target
+                        print(f"[Rex] Using pinned brand list from todos ({len(brands)} brands, target={target})")
+
                 # Auto-select thin brands if none provided
                 if not brands:
                     if todo_requests_ranked_first(rex_todos):
@@ -3216,10 +3420,35 @@ async def run_brand_discovery(
 
                 await fetch_ils_exchange_rate()
                 print(f"[Rex] Brand discovery starting - {len(brands)} brands: {brands}")
+                try:
+                    from agents.memory import AgentMemory as _AgentMemory
+                    _rx_mem = _AgentMemory(db, agent_name="rex")
+                    await _rx_mem.write_worker_heartbeat({
+                        "status": "running", "brands": brands, "target_per_brand": target,
+                    })
+                except Exception:
+                    pass
 
                 for brand in brands:
                     b_report: Dict[str, Any] = {"inserted": 0, "skipped_dup": 0, "sources": []}
                     print(f"\n[Rex] -- Discovering: {brand} --")
+
+                    # Source 0a — oempartsonline.com harvest (OEM data, best quality)
+                    brand_slug = brand.lower().replace(" ", "").replace("-", "")
+                    oem_slug = "vw" if brand_slug == "volkswagen" else brand_slug
+                    if oem_slug in OEM_ONLINE_BRANDS:
+                        try:
+                            oem_result = await run_oempartsonline_pipeline(oem_slug)
+                            oem_count = (oem_result.get("parts_inserted") or
+                                         oem_result.get("inserted") or 0)
+                            b_report["sources"].append(f"oempartsonline:{oem_count}")
+                            print(f"[Rex]   oempartsonline -> {oem_count} (status={oem_result.get('status')})")
+                        except Exception as exc:
+                            print(f"[Rex]   oempartsonline error: {exc}")
+
+                    # Source 0b — local pre-scraped seed files (direct DB import, no web request)
+                    # Runs before existing_skus query so locally imported parts count toward need
+                    await _run_local_seed_import(brand, b_report)
 
                     # Existing SKUs to avoid duplicates
                     existing = (await db.execute(
@@ -3318,6 +3547,20 @@ async def run_brand_discovery(
                                     db=db,
                                 )
 
+                            # Build rich specs JSON instead of plain text description
+                            _specs_json = json.dumps({
+                                "source":       part.get("source", ""),
+                                "source_url":   (part.get("url") or "")[:500],
+                                "part_brand":   part.get("part_brand") or part.get("manufacturer") or brand,
+                                "part_type":    part.get("part_type", ""),
+                                "category":     part.get("category", ""),
+                                "price_usd":    part.get("price_usd") or 0.0,
+                                "price_ils":    part.get("price_ils") or 0.0,
+                                "in_stock":     part.get("in_stock", True),
+                                "oem_ref":      part.get("oem_number") or part.get("oem_ref") or "",
+                                "discovered_at": datetime.utcnow().isoformat(),
+                            }, ensure_ascii=False)
+
                             part_id, created = await db_upsert_part(
                                 db,
                                 sku=sku_clean,
@@ -3326,11 +3569,7 @@ async def run_brand_discovery(
                                 category=part["category"],
                                 part_type=part["part_type"],
                                 base_price=part["price_usd"],
-                                description=(
-                                    f"{part['part_type']} part for {brand}. "
-                                    f"Part: {sku_clean}. Category: {part['category']}. "
-                                    f"Source: {part['source']}."
-                                ),
+                                description=_specs_json,
                                 aftermarket_brand_id=resolved_aftermarket_brand_id,
                                 aftermarket_tier=resolved_aftermarket_tier,
                                 apply_aftermarket=apply_aftermarket,
@@ -3365,6 +3604,32 @@ async def run_brand_discovery(
                                         "url":  (part.get("url") or "")[:500],
                                     },
                                 )
+                                # Write vehicle fitment rows if the source provides them
+                                _fitment = part.get("fitment") or []
+                                for _fit in _fitment:
+                                    try:
+                                        await db.execute(text("""
+                                            INSERT INTO part_vehicle_fitment(
+                                                id, part_id, manufacturer,
+                                                model, year_from, year_to, notes,
+                                                created_at, updated_at
+                                            ) VALUES (
+                                                :id, :pid, :mfr,
+                                                :model, :yf, :yt, :notes,
+                                                NOW(), NOW()
+                                            ) ON CONFLICT (part_id, manufacturer, model, year_from)
+                                            DO NOTHING
+                                        """), {
+                                            "id":    str(uuid.uuid4()),
+                                            "pid":   part_id,
+                                            "mfr":   brand,
+                                            "model": _fit.get("model", brand),
+                                            "yf":    _fit.get("year_from") or 2000,
+                                            "yt":    _fit.get("year_to"),
+                                            "notes": f"REX discovery via {part.get('source','')}",
+                                        })
+                                    except Exception:
+                                        pass
                                 await db.commit()
                                 b_report["inserted"] += 1
                             elif not created:
@@ -3443,6 +3708,22 @@ async def run_brand_discovery(
 
     report["finished_at"] = datetime.utcnow().isoformat()
     print(f"\n[Rex] Brand discovery done - total inserted: {report['total_inserted']}")
+    try:
+        from agents.memory import AgentMemory as _AgentMemory
+        async with scraper_session_factory() as _rx_db:
+            _rx_mem = _AgentMemory(_rx_db, agent_name="rex")
+            await _rx_mem.write_worker_heartbeat({
+                "status": "completed",
+                "total_inserted": report["total_inserted"],
+                "brands_processed": len(report.get("brands", [])),
+                "finished_at": report["finished_at"],
+            })
+            await _rx_mem.set_shared("rex_progress", {
+                "total_inserted": report["total_inserted"],
+                "finished_at": report["finished_at"],
+            }, ttl_hours=24)
+    except Exception:
+        pass
     return report
 
 
@@ -3957,7 +4238,7 @@ async def run_jaguar_fitment_lookup_todos(
             await db.execute(text("""
                 UPDATE agent_todos
                 SET status = :st,
-                    artifacts = :art::jsonb,
+                    artifacts = CAST(:art AS jsonb),
                     updated_at = NOW()
                 WHERE id = :tid
             """), {
@@ -4067,7 +4348,11 @@ async def run_scraper_cycle(*, batch_size: int = SCRAPE_BATCH_SIZE, refresh_fx: 
 
     from BACKEND_AUTH_SECURITY import get_redis
     from distributed_lock import acquire_lock
-    _cycle_lock = await acquire_lock(await get_redis(), "scraper_cycle", ttl_seconds=7200)
+    lock_ttl_s = int(os.getenv("SCRAPER_LOCK_TTL_S", "1800"))
+    job_ttl_s = int(os.getenv("SCRAPER_JOB_TTL_S", "1800"))
+    heartbeat_interval_s = int(os.getenv("SCRAPER_HEARTBEAT_INTERVAL_S", "60"))
+    redis = await get_redis()
+    _cycle_lock = await acquire_lock(redis, "scraper_cycle", ttl_seconds=lock_ttl_s)
     if not _cycle_lock:
         return {"status": "skipped", "reason": "scraper_cycle already running on another worker"}
 
@@ -4091,15 +4376,36 @@ async def run_scraper_cycle(*, batch_size: int = SCRAPE_BATCH_SIZE, refresh_fx: 
 
     async with scraper_session_factory() as db:
         job_id = None
+        hb_task: Optional[asyncio.Task] = None
+
+        async def _heartbeat_loop() -> None:
+            lock_key = "autospare:lock:scraper_cycle"
+            while True:
+                await asyncio.sleep(heartbeat_interval_s)
+                if not job_id:
+                    continue
+                try:
+                    async with scraper_session_factory() as hb_db:
+                        await job_heartbeat(hb_db, job_id)
+                except Exception as exc:
+                    print(f"[Scraper] heartbeat failed for {job_id}: {exc}")
+                try:
+                    await redis.set(lock_key, "1", ex=lock_ttl_s, xx=True)
+                except Exception as exc:
+                    print(f"[Scraper] lock refresh failed for {lock_key}: {exc}")
+
         try:
             try:
-                job_id = await job_registry_start(db, "run_scraper_cycle", ttl_seconds=int(SCRAPE_INTERVAL_H * 3600))
+                job_id = await job_registry_start(db, "run_scraper_cycle", ttl_seconds=job_ttl_s)
             except Exception as exc:
                 print(f"[Scraper] job_registry_start error: {exc}")
                 try:
                     await db.rollback()
                 except Exception:
                     pass
+
+            if job_id:
+                hb_task = asyncio.create_task(_heartbeat_loop(), name="scraper_cycle_hb")
 
             # Pull oldest-checked supplier_parts joined to parts_catalog
             rows = (await db.execute(
@@ -4126,7 +4432,20 @@ async def run_scraper_cycle(*, batch_size: int = SCRAPE_BATCH_SIZE, refresh_fx: 
                           OR (
                               COALESCE(pc.needs_oem_lookup, FALSE) = FALSE
                               AND COALESCE(sp.supplier_url, '') <> ''
-                              AND LOWER(TRIM(s.name)) NOT IN ('official manufacturer sites', 'sandbox supplier qa')
+                              AND LOWER(TRIM(s.name)) NOT IN (
+                                  'official manufacturer sites', 'sandbox supplier qa',
+                                  -- OEM Israeli dealers: prices come from dedicated importer jobs, not Playwright
+                                  'champion motors', 'champion motors il',
+                                  'ford delek motors', 'toyota israel - union motors',
+                                  'bmw delek motors', 'mazda israel - delek motors',
+                                  'voyah delek motors', 'delek motors il',
+                                  'inbar group - land rover israel',
+                                  'geo mobility - zeekr israel',
+                                  'byd il (shlomo motors)',
+                                  'sng barratt',
+                                  'm-hero delek motors',
+                                  'subaru israel - samelet motors'
+                              )
                           )
                       )
                     ORDER BY sp.last_checked_at ASC NULLS FIRST
@@ -4137,11 +4456,29 @@ async def run_scraper_cycle(*, batch_size: int = SCRAPE_BATCH_SIZE, refresh_fx: 
 
             print(f"[Scraper] Cycle started — {len(rows)} parts to check, "
                   f"ILS/USD={ILS_PER_USD}")
+            try:
+                from agents.memory import AgentMemory as _AgentMemory
+                _sm = _AgentMemory(db, agent_name="catalog_scraper")
+                await _sm.write_worker_heartbeat({
+                    "status": "running", "parts_in_batch": len(rows), "ils_per_usd": ILS_PER_USD,
+                })
+            except Exception:
+                pass
+
+            # Per-cycle source failure circuit breaker:
+            # if a supplier yields no price N times in a row, skip it for the rest of the cycle.
+            _cycle_no_result_streak: Dict[str, int] = {}
+            _cycle_skipped_suppliers: set = set()
+            _CYCLE_SKIP_THRESHOLD = 5  # skip supplier after 5 consecutive misses
 
             for row in rows:
                 if report["errors"] >= SCRAPE_MAX_ERRORS:
                     print(f"[Scraper] Max errors ({SCRAPE_MAX_ERRORS}) reached — stopping batch")
                     break
+
+                if row.supplier_name in _cycle_skipped_suppliers:
+                    report["parts_checked"] += 1
+                    continue
 
                 try:
                     result = await _scrape_one_part(
@@ -4161,6 +4498,14 @@ async def run_scraper_cycle(*, batch_size: int = SCRAPE_BATCH_SIZE, refresh_fx: 
                     report["parts_checked"] += 1
                     if result["action"] == "price_updated":
                         report["prices_updated"] += 1
+                        _cycle_no_result_streak[row.supplier_name] = 0
+                    else:
+                        streak = _cycle_no_result_streak.get(row.supplier_name, 0) + 1
+                        _cycle_no_result_streak[row.supplier_name] = streak
+                        if streak >= _CYCLE_SKIP_THRESHOLD:
+                            _cycle_skipped_suppliers.add(row.supplier_name)
+                            print(f"[Scraper] Supplier '{row.supplier_name}' skipped for cycle "
+                                  f"— {streak} consecutive misses")
                     if result.get("availability"):
                         report["availability_changes"] += 1
                     report["rows"].append(result)
@@ -4187,6 +4532,18 @@ async def run_scraper_cycle(*, batch_size: int = SCRAPE_BATCH_SIZE, refresh_fx: 
                 f"errors={report['errors']} "
                 f"elapsed={elapsed:.0f}s",
             )
+            try:
+                from agents.memory import AgentMemory as _AgentMemory
+                _sm = _AgentMemory(db, agent_name="catalog_scraper")
+                await _sm.write_worker_heartbeat({
+                    "status": "completed",
+                    "parts_checked": report["parts_checked"],
+                    "prices_updated": report["prices_updated"],
+                    "errors": report["errors"],
+                    "elapsed_s": round(elapsed, 1),
+                })
+            except Exception:
+                pass
 
             # Write job-level catalog_versions audit row
             try:
@@ -4234,6 +4591,11 @@ async def run_scraper_cycle(*, batch_size: int = SCRAPE_BATCH_SIZE, refresh_fx: 
                 except Exception:
                     pass
             raise
+        finally:
+            if hb_task:
+                hb_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await hb_task
 
     print(
         f"[Scraper] ✅ Cycle done — "
@@ -4264,12 +4626,11 @@ async def scraper_background_loop():
     """
     from resilience import log_job_failure
     global _last_run_report, _last_fx_report
-    # Calculate seconds until next fixed run time (00:00 or 12:00 UTC)
+    # Calculate seconds until next fixed run time — every 3h: 00:00, 03:00, 06:00, ..., 21:00 UTC
     def _seconds_until_next_run() -> float:
         now = datetime.utcnow()
-        # Next run is either 00:00 or 12:00 UTC today/tomorrow
         candidates = []
-        for hour in (0, 12):
+        for hour in (0, 3, 6, 9, 12, 15, 18, 21):
             candidate = now.replace(hour=hour, minute=0, second=0, microsecond=0)
             if candidate <= now:
                 candidate += timedelta(days=1)
@@ -4279,7 +4640,7 @@ async def scraper_background_loop():
 
     first_wait = _seconds_until_next_run()
     print(f"[Scraper] Background loop started. "
-          f"First run at next 00:00 or 12:00 UTC "
+          f"First run at next 3h slot (00/03/06/09/12/15/18/21 UTC) "
           f"(in {first_wait/3600:.1f}h).")
 
     await asyncio.sleep(first_wait)
@@ -4410,7 +4771,7 @@ async def scraper_background_loop():
         
         sleep_s = _seconds_until_next_run()
         print(f"[Rex] ✅ Cycle done. Next run in {sleep_s/3600:.1f}h "
-              f"at next 00:00 or 12:00 UTC.")
+              f"at next 3h slot (UTC).")
         await asyncio.sleep(sleep_s)
 
 
@@ -4457,6 +4818,135 @@ def get_scraper_status() -> Dict[str, Any]:
         "last_fx_refresh":         _last_fx_report,
         "last_price_sync":         _last_run_report,
         "last_discovery":          _last_discovery_report,
+    }
+
+
+# ==============================================================================
+# OEM PARTS ONLINE PIPELINE  —  REX harvest for oempartsonline.com brands
+# ==============================================================================
+
+# Brands available on oempartsonline.com (subdomain = brand slug)
+OEM_ONLINE_BRANDS = [
+    "toyota", "honda", "nissan", "ford", "bmw", "hyundai", "kia",
+    "mazda", "subaru", "mitsubishi", "volvo", "jaguar", "landrover",
+    "porsche", "lexus", "infiniti", "acura", "mopar", "vw",
+]
+
+
+async def run_oempartsonline_pipeline(
+    brand: str,
+    *,
+    max_models: int = 0,
+    force: bool = False,
+) -> Dict[str, Any]:
+    """
+    Full harvest + import pipeline for one oempartsonline.com brand.
+
+    Steps:
+      1. Run oem_parts_online_scraper.py via subprocess (Playwright, Xvfb)
+      2. Import the resulting JSON via oempartsonline_importer.py
+
+    Returns a dict summarising what was inserted/updated.
+    """
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    brand = brand.lower().strip()
+    if brand not in OEM_ONLINE_BRANDS:
+        return {"status": "skipped", "reason": f"brand '{brand}' not in OEM_ONLINE_BRANDS list"}
+
+    if not _rex_harvest_enabled():
+        return {"status": "skipped", "reason": "REX_HARVEST_ENABLED=false"}
+
+    output_path = f"/tmp/{brand}_oem_parts.json"
+    scraper_path = Path(__file__).parent / "oem_parts_online_scraper.py"
+    importer_path = Path(__file__).parent / "oempartsonline_importer.py"
+
+    # Check if already scraped recently (skip unless forced)
+    if not force and Path(output_path).exists():
+        age_h = (asyncio.get_event_loop().time() -
+                 Path(output_path).stat().st_mtime) / 3600
+        if age_h < 24:
+            logger.info("[Rex/OEMOnline] %s: using cached file (%.1fh old)", brand, age_h)
+        # Still run import in case file is new
+    else:
+        # ── Step 1: Playwright scrape ─────────────────────────────────────────
+        logger.info("[Rex/OEMOnline] scraping %s.oempartsonline.com ...", brand)
+        env = {**__import__("os").environ, "MAX_MODELS": str(max_models)}
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable, str(scraper_path),
+                "--brand", brand, "--output", output_path,
+                env=env,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=3600)
+            if proc.returncode != 0:
+                logger.error("[Rex/OEMOnline] scraper failed for %s: %s",
+                             brand, (stdout or b"").decode()[-500:])
+                return {"status": "error", "brand": brand,
+                        "error": "scraper exited non-zero"}
+            logger.info("[Rex/OEMOnline] scraper done for %s", brand)
+        except asyncio.TimeoutError:
+            logger.error("[Rex/OEMOnline] scraper timed out for %s", brand)
+            return {"status": "error", "brand": brand, "error": "scraper timeout"}
+        except Exception as exc:
+            logger.error("[Rex/OEMOnline] scraper exception for %s: %s", brand, exc)
+            return {"status": "error", "brand": brand, "error": str(exc)}
+
+    if not Path(output_path).exists():
+        return {"status": "error", "brand": brand, "error": "output file not found"}
+
+    # ── Step 2: Import JSON → DB ──────────────────────────────────────────────
+    logger.info("[Rex/OEMOnline] importing %s ...", brand)
+    try:
+        proc2 = await asyncio.create_subprocess_exec(
+            sys.executable, str(importer_path),
+            "--file", output_path, "--brand", brand,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        out2, _ = await asyncio.wait_for(proc2.communicate(), timeout=1800)
+        result_text = (out2 or b"").decode().strip()
+        try:
+            result = json.loads(result_text.split("\n")[-1])
+        except Exception:
+            result = {"raw": result_text[-200:]}
+        result["status"] = "ok" if proc2.returncode == 0 else "error"
+        result["brand"] = brand
+        logger.info("[Rex/OEMOnline] import done for %s: %s", brand, result)
+        return result
+    except Exception as exc:
+        logger.error("[Rex/OEMOnline] import exception for %s: %s", brand, exc)
+        return {"status": "error", "brand": brand, "error": str(exc)}
+
+
+async def run_oempartsonline_all_brands(
+    brands: List[str] | None = None,
+    max_models: int = 0,
+) -> Dict[str, Any]:
+    """
+    Run the oempartsonline harvest pipeline for all (or specified) brands sequentially.
+    Called by REX's brand discovery loop when it detects thin brands.
+    """
+    targets = [b.lower() for b in (brands or OEM_ONLINE_BRANDS)]
+    results: Dict[str, Any] = {}
+    total_inserted = 0
+
+    for brand in targets:
+        result = await run_oempartsonline_pipeline(brand, max_models=max_models)
+        results[brand] = result
+        total_inserted += result.get("inserted", 0) or result.get("parts_inserted", 0)
+        # Polite delay between brands
+        await asyncio.sleep(5)
+
+    return {
+        "job": "oempartsonline_harvest",
+        "brands_processed": len(targets),
+        "total_inserted": total_inserted,
+        "results": results,
     }
 
 

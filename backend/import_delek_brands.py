@@ -68,13 +68,15 @@ DATA_DIR   = Path("/opt/autosparefinder")
 
 # Brand config: make_name → (sku_prefix, json_file, supplier_name)
 BRAND_CONFIG = {
-    "BMW":              ("BMW",  "bmw_parts.json",    "BMW Delek Motors"),
-    "Mazda":("MAZDA","jlr_parts.json","Mazda Delek Motors"),
-    "Ford":             ("FORD", "ford_parts.json",   "Ford Delek Motors"),
-    "MINI":             ("MINI", "mini_parts.json",   "MINI Delek Motors"),
-    "NIO":              ("NIO",  "nio_parts.json",    "NIO Delek Motors"),
-    "M-HERO":           ("MHR",  "mhero_parts.json",  "M-HERO Delek Motors"),
-    "VOYAH":            ("VYH",  "voyah_parts.json",  "VOYAH Delek Motors"),
+    "BMW":               ("BMW",   "bmw_parts.json",          "BMW Delek Motors"),
+    "Jaguar Land Rover": ("JLR",   "jlr_parts.json",          "JLR Delek Motors"),
+    "Ford":              ("FORD",  "ford_parts.json",          "Ford Delek Motors"),
+    "MINI":              ("MINI",  "mini_parts.json",          "MINI Delek Motors"),
+    "NIO":               ("NIO",   "nio_parts.json",           "NIO Delek Motors"),
+    "M-HERO":            ("MHR",   "mhero_parts.json",         "M-HERO Delek Motors"),
+    "M-HERO 2":          ("MHR2",  "mhero2_parts.json",        "M-HERO 2 Delek Motors"),
+    "VOYAH":             ("VYH",   "voyah_parts.json",         "VOYAH Delek Motors"),
+    "Leapmotor":         ("LEAP",  "leapmotor_parts_clean.json", "Leapmotor Israel"),
 }
 
 OEM_RE = re.compile(r"^[A-Z0-9][\w\-./]{1,49}$", re.IGNORECASE)
@@ -195,16 +197,26 @@ async def import_brand(conn, make, sku_prefix, json_file, supplier_name):
             for row in batch:
                 try:
                     async with conn.transaction():   # savepoint per row
-                        base_p = row["base_price"]
-                        max_p = round(base_p * 1.18, 2) if base_p > 0 else 0.0
+                        # retail_excl = Delek official retail price EXCL. 18% VAT
+                        # This is the BMW/Ford/Mazda IL consumer retail price, NOT our procurement cost.
+                        # max_price_ils = retail incl. VAT = market reference ceiling
+                        # retail_excl = Delek/Champion official retail price EXCL. 18% VAT (reference cost).
+                        # importer_price_ils = retail_excl (IL reference cost excl. VAT)
+                        # max_price_ils      = retail_excl * 1.18 (consumer IL reference price)
+                        # base_price         = retail_excl * 1.45 (our selling price = cost × 1.45)
+                        retail_excl  = row["retail_price_ils"]
+                        il_retail    = round(retail_excl * 1.18, 2) if retail_excl > 0 else 0.0
+                        base_price_v = round(retail_excl * 1.45, 2) if retail_excl > 0 else 0.0
                         specs = json.dumps({
-                            'vat_included':    False,
-                            'vat_rate':        0.18,
-                            'currency':        'ILS',
-                            'source':          f'Delek Motors official importer - {make}',
-                            'shipping_to_il':  True,
-                            'importer':        f'{make} Delek Motors Israel',
-                            'warranty_months': 24,
+                            'vat_included':       False,
+                            'vat_rate':           0.18,
+                            'currency':           'ILS',
+                            'source':             f'Delek Motors official importer - {make}',
+                            'shipping_to_il':     True,
+                            'importer':           f'{make} Delek Motors Israel',
+                            'warranty_months':    24,
+                            'il_retail_excl_vat': retail_excl,
+                            'il_retail_incl_vat': il_retail,
                         }, ensure_ascii=False)
                         result = await conn.fetchrow("""
                             INSERT INTO parts_catalog(
@@ -214,17 +226,18 @@ async def import_brand(conn, make, sku_prefix, json_file, supplier_name):
                                 is_active, aftermarket_tier,
                                 specifications,
                                 needs_oem_lookup, master_enriched, updated_at
-                            ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11,$11,$12,$13,$14,
-                                     $15::jsonb,False,False,NOW())
+                            ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
+                                     $11, $12, $12, $13,
+                                     TRUE, $14,
+                                     $15::jsonb, FALSE, FALSE, NOW())
                             ON CONFLICT(sku) DO UPDATE SET
-                                oem_number   = EXCLUDED.oem_number,
-                                name_he      = COALESCE(EXCLUDED.name_he, parts_catalog.name_he),
-                                base_price   = CASE WHEN EXCLUDED.base_price > 0
+                                oem_number    = EXCLUDED.oem_number,
+                                name_he       = COALESCE(EXCLUDED.name_he, parts_catalog.name_he),
+                                base_price    = CASE WHEN EXCLUDED.base_price > 0
                                                THEN EXCLUDED.base_price
                                                ELSE parts_catalog.base_price END,
-                                importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0
-                                               THEN EXCLUDED.importer_price_ils
-                                               ELSE parts_catalog.importer_price_ils END,
+                                importer_price_ils = EXCLUDED.importer_price_ils,
+                                online_price_ils   = 0,
                                 min_price_ils = CASE WHEN EXCLUDED.min_price_ils > 0
                                                THEN EXCLUDED.min_price_ils
                                                ELSE parts_catalog.min_price_ils END,
@@ -233,18 +246,22 @@ async def import_brand(conn, make, sku_prefix, json_file, supplier_name):
                                                ELSE parts_catalog.max_price_ils END,
                                 specifications = COALESCE(parts_catalog.specifications,'{}')::jsonb
                                                   || EXCLUDED.specifications::jsonb,
-                                is_active    = TRUE,
-                                updated_at   = NOW()
+                                is_active     = TRUE,
+                                updated_at    = NOW()
                             RETURNING id
                         """,
                         row["id"], row["sku"], row["name"], row["name_he"],
                         row["manufacturer"], row["brand_id"],
                         row["oem_number"], row["category"], row["part_type"],
-                        "New", base_p, max_p, True,
-                        row["tier"], specs)
+                        "New",
+                        base_price_v,       # $11: base_price = cost × 1.45
+                        retail_excl,        # $12: importer_price_ils = min_price_ils = excl-VAT cost
+                        il_retail,          # $13: max_price_ils = consumer price incl. 18% VAT
+                        row["tier"],        # $14: aftermarket_tier
+                        specs)              # $15: specifications
                         stats["inserted"] += 1
 
-                        # supplier_parts
+                        # supplier_parts — Delek supplier price = retail excl. VAT (their trade reference)
                         if result and supplier_id:
                             pid = str(result["id"])
                             await conn.execute("""
@@ -258,7 +275,7 @@ async def import_brand(conn, make, sku_prefix, json_file, supplier_name):
                                 ON CONFLICT (part_id, supplier_id) DO UPDATE SET
                                     price_ils=EXCLUDED.price_ils, updated_at=NOW()
                             """, supplier_id, pid, row["oem_number"],
-                                 float(row["base_price"] or 0), url)
+                                 float(retail_excl or 0), url)
 
                         # part_vehicle_fitment
                         if result and row.get("models"):
@@ -312,7 +329,7 @@ async def import_brand(conn, make, sku_prefix, json_file, supplier_name):
             "oem_number":   oem,
             "category":     categorise(name_he),
             "part_type":    "original" if is_orig else "oe_equivalent",
-            "base_price":   price,
+            "retail_price_ils": price,
             "tier":         None if is_orig else "OE_equivalent",
             "models":       [p.get("model", make)] if p.get("model") else [make],
         })

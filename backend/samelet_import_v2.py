@@ -14,7 +14,7 @@ Process:
 
 Data Imported / Modified:
   - parts_catalog: sku, name, name_he, category, manufacturer, manufacturer_id,
-                   part_type, base_price (excl. VAT), importer_price_ils (incl. VAT),
+                   part_type, base_price (IL retail incl. VAT), importer_price_ils (0 — no trade cost),
                    max_price_ils, oem_number, specifications (JSONB), is_active
   - supplier_parts: supplier_id, part_id, supplier_sku, price_ils, availability,
                     is_available, warranty_months, estimated_delivery_days, supplier_url
@@ -39,16 +39,19 @@ Missing Data Delegation:
 
 VAT Rules:
   - samelet.com returns PriceNoVat (excl.) and PriceWithVat (incl. 18%)
-  - Store: base_price = PriceNoVat, importer_price_ils = PriceWithVat, max_price_ils = PriceWithVat
+  - Store: base_price = PriceWithVat, importer_price_ils = 0, max_price_ils = PriceWithVat
+  - These are official IL importer retail prices (shown to customers as OEM reference, no extra markup)
 
 Confidence tier: 1.00 (Official Israeli importer price data)
 
 Author: AutoSpareFinder Agent
 Last Updated: 2026-06-01
 """
-import asyncio, asyncpg, requests, time, re, os, string, json, uuid
+import asyncio, asyncpg, requests, time, re, os, string, json, uuid, sys
 
-DB_URL = "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43@postgres_catalog:5432/autospare"
+DB_URL = os.environ.get("DATABASE_URL", "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43@postgres_catalog:5432/autospare").replace("postgresql+asyncpg://", "postgresql://")
+# Run a single brand: python3 samelet_import_v2.py Hongqi  (or 'hongqi')
+SINGLE = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("SAMELET_BRAND", "")
 
 BRANDS = [
     ("alfaromeo","Alfa Romeo","Italy","AR"),
@@ -250,28 +253,31 @@ async def import_brand(conn, slug, brand_name, prefix):
             name_he = (p.get("MatDescHe","") or "").strip()
             name = name_en or name_he or sku
             try:
-                base_price = float(p.get("PriceNoVat","0") or "0")
-                imp_price  = float(p.get("PriceWithVat","0") or "0")
+                il_retail = float(p.get("PriceWithVat","0") or "0")  # consumer retail incl. VAT
             except:
-                base_price = imp_price = 0.0
-            max_price = imp_price if imp_price > 0 else round(base_price * 1.18, 2)
+                il_retail = 0.0
+            # il_retail = market reference (IL official dealer retail incl. VAT)
+            # base_price = il_retail (show OEM reference; no markup — we source internationally)
+            # importer_price_ils = 0 (we don't procure from the official importer at retail)
+            max_price = il_retail
             category  = classify_part(name_en, name_he)
             part_type = "original" if p.get("MaterialType","01") == "01" else "aftermarket"
             specs = json.dumps({
-                "vat_included":    True,
-                "vat_rate":        0.18,
-                "currency":        "ILS",
-                "source":          f"samelet.com official importer - {brand_name}",
-                "shipping_to_il":  True,
-                "importer":        supplier_name,
-                "warranty_months": 12,
-                "samelet_slug":    slug,
-                "material_type":   p.get("MaterialType",""),
+                "vat_included":       True,
+                "vat_rate":           0.18,
+                "currency":           "ILS",
+                "source":             f"samelet.com official importer - {brand_name}",
+                "shipping_to_il":     True,
+                "importer":           supplier_name,
+                "warranty_months":    12,
+                "samelet_slug":       slug,
+                "material_type":      p.get("MaterialType",""),
+                "il_retail_incl_vat": il_retail,
             }, ensure_ascii=False)
             tier = 'OE_equivalent' if part_type == 'aftermarket' else None
             batch.append((sku, name, name_he, category, brand_name, manufacturer_id,
-                          part_type, base_price, imp_price, max_price, mid, specs,
-                          imp_price, tier))
+                          part_type, il_retail, 0.0, max_price, mid, specs,
+                          max_price, tier))
         except Exception as e:
             err += 1
             if err <= 3: print(f"  [ERR] prep {mid}: {e}")
@@ -296,9 +302,7 @@ async def import_brand(conn, slug, brand_name, prefix):
                     manufacturer=EXCLUDED.manufacturer,
                     base_price=CASE WHEN EXCLUDED.base_price > 0 THEN EXCLUDED.base_price
                                     ELSE parts_catalog.base_price END,
-                    importer_price_ils=CASE WHEN EXCLUDED.importer_price_ils > 0
-                                           THEN EXCLUDED.importer_price_ils
-                                           ELSE parts_catalog.importer_price_ils END,
+                    importer_price_ils=0,
                     max_price_ils=CASE WHEN EXCLUDED.max_price_ils > 0
                                       THEN EXCLUDED.max_price_ils
                                       ELSE parts_catalog.max_price_ils END,
@@ -331,9 +335,7 @@ async def import_brand(conn, slug, brand_name, prefix):
                             name_he=COALESCE(EXCLUDED.name_he, parts_catalog.name_he),
                             base_price=CASE WHEN EXCLUDED.base_price > 0 THEN EXCLUDED.base_price
                                             ELSE parts_catalog.base_price END,
-                            importer_price_ils=CASE WHEN EXCLUDED.importer_price_ils > 0
-                                               THEN EXCLUDED.importer_price_ils
-                                               ELSE parts_catalog.importer_price_ils END,
+                            importer_price_ils=0,
                             min_price_ils=CASE WHEN EXCLUDED.min_price_ils > 0
                                           THEN EXCLUDED.min_price_ils
                                           ELSE parts_catalog.min_price_ils END,
@@ -354,7 +356,7 @@ async def import_brand(conn, slug, brand_name, prefix):
     # Create supplier_parts for all upserted parts
     if supplier_id:
         existing_parts = await conn.fetch(
-            "SELECT id, oem_number, importer_price_ils FROM parts_catalog WHERE LOWER(manufacturer)=LOWER($1) AND is_active=TRUE",
+            "SELECT id, oem_number, base_price FROM parts_catalog WHERE LOWER(manufacturer)=LOWER($1) AND is_active=TRUE",
             brand_name)
         sp_count = 0
         for part in existing_parts:
@@ -371,7 +373,7 @@ async def import_brand(conn, slug, brand_name, prefix):
                         price_ils=EXCLUDED.price_ils,
                         updated_at=NOW()
                 """, supplier_id, str(part["id"]), str(part["oem_number"]),
-                     float(part["importer_price_ils"] or 0), supplier_url)
+                     float(part["base_price"] or 0), supplier_url)
                 sp_count += 1
             except Exception:
                 pass

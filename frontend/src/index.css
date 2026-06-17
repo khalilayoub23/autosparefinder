@@ -4,7 +4,6 @@
 
 @layer base {
   * {
-    direction: rtl;
     scrollbar-width: thin;
     scrollbar-color: #8ba1b4 #e2e8f0;
   }

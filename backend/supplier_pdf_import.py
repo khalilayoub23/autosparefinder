@@ -209,10 +209,10 @@ def parse_warranty(text):
 
 # --- Column auto-detection ---
 
-_AVAIL_T = {"זמין", "available", "availability", "in stock", "stock", "qty", "status"}
-_PRICE_T = {"price", "מחיר", "cost", "מכירה", "sell"}
-_NAME_T  = {"name", "description", "שם", "תיאור", "part name"}
-_OEM_T   = {"catalog", "oem", "part no", "part number", "מספר", "קטלוג", "code", "ref", "sku"}
+_AVAIL_T = {"זמין", "במלאי", "available", "availability", "in stock", "stock", "qty", "status"}
+_PRICE_T = {"price", "מחיר", "מחירון", "cost", "מכירה", "sell"}
+_NAME_T  = {"name", "description", "שם", "תיאור", "פריט", "part name"}
+_OEM_T   = {"catalog", "oem", "part no", "part number", "מספר", "קטלוג", "מקט", "code", "ref", "sku"}
 _WARR_T  = {"warranty", "אחריות", "garanti"}
 
 
@@ -309,13 +309,33 @@ def parse_pdf(pdf_path, manufacturer):
         if col_map is None:
             first = _cells(table[0])
             ncols = len(first)
-            col_map = {
-                "available": 0 if ncols >= 5 else None,
-                "price":     1 if ncols >= 5 else (0 if ncols == 4 else None),
-                "name":      2 if ncols >= 5 else (1 if ncols >= 4 else None),
-                "oem":       ncols - 1,
-                "warranty":  None,
-            }
+            # Hebrew RTL IL importer format (Lexus/Porsche/Toyota):
+            # col0=row#, col1=availability, col2=price, col3=warranty, col4=name, col5=OEM
+            # or 5-col variant: col0=availability, col1=price, col2=name, col3=warranty, col4=OEM
+            if ncols >= 6:
+                col_map = {
+                    "available": 1,
+                    "price":     2,
+                    "name":      4,
+                    "oem":       ncols - 1,
+                    "warranty":  3,
+                }
+            elif ncols >= 5:
+                col_map = {
+                    "available": 0,
+                    "price":     1,
+                    "name":      2,
+                    "oem":       ncols - 1,
+                    "warranty":  None,
+                }
+            else:
+                col_map = {
+                    "available": None,
+                    "price":     0 if ncols == 4 else None,
+                    "name":      1 if ncols >= 4 else None,
+                    "oem":       ncols - 1,
+                    "warranty":  None,
+                }
             header_idx = 0
             log.info("Fallback column map: %s", col_map)
 
@@ -599,6 +619,72 @@ def _parse_text_fallback(pdf_path, manufacturer):
 
 # --- Supplier helpers ---
 
+# VAT rate embedded IN the PDF price per brand (0.0 = prices are EXCL. VAT).
+# MANDATORY: update this dict whenever a new brand is added. Never assume.
+# If brand NOT in map: prices are treated as excl. VAT (IL VAT 18% added to max_price).
+PRICES_INCL_VAT = {
+    "PORSCHE":    0.18,   # Official IL price list incl. 18% VAT
+    "CADILLAC":   0.17,   # IL importer (GM Israel) uses 17% VAT
+    "KGM":        0.17,   # kgm.co.il uses 17% VAT
+    "SSANGYONG":  0.17,   # same source as KGM
+}
+
+# International (eBay/online) brands — these get 0% IL VAT (no VAT added to max_price)
+INTERNATIONAL_BRANDS = {
+    "ROVER", "SAAB", "DAEWOO", "MASERATI",
+}
+
+
+KGM_BRANDS = {"KGM", "SSANGYONG"}
+
+
+def compute_price_triple(raw_price: float, manufacturer: str) -> tuple[float, float, float]:
+    """
+    MANDATORY VAT CHECK — called before writing any price to the DB.
+
+    Returns (importer_price_ils, max_price_ils, base_price).
+
+    Pricing rules:
+      - International (Rover/Saab etc.): no IL VAT, base = raw * 1.45
+      - KGM/SsangYong: actual wholesale trade price, base = il_retail * 1.45
+      - IL official importers (Porsche, Toyota, etc.): dealer retail reference,
+        base = max_price_ils (no extra markup — customer sees official retail to compare)
+    """
+    brand_upper = manufacturer.upper()
+    embedded_vat = PRICES_INCL_VAT.get(brand_upper, 0.0)
+
+    if brand_upper in INTERNATIONAL_BRANDS:
+        # International source: no IL VAT, apply margin
+        importer_price = 0.0
+        max_price      = round(raw_price, 2)
+        base_price     = round(raw_price * 1.45, 2)
+    elif brand_upper in KGM_BRANDS and embedded_vat > 0:
+        # Actual wholesale trade price — importer cost is real
+        importer_price = round(raw_price / (1 + embedded_vat), 2)
+        max_price      = round(importer_price * 1.18, 2)
+        base_price     = round(max_price * 1.45, 2)
+    elif embedded_vat > 0:
+        # IL official importer, price includes VAT — normalize to IL retail reference
+        importer_price = 0.0
+        excl           = round(raw_price / (1 + embedded_vat), 2)
+        max_price      = round(excl * 1.18, 2)
+        base_price     = max_price  # show dealer retail as reference, no extra markup
+    else:
+        # IL official importer, price excludes VAT
+        importer_price = 0.0
+        max_price      = round(raw_price * 1.18, 2)
+        base_price     = max_price  # show dealer retail as reference, no extra markup
+
+    # Sanity assertion — catch misconfiguration
+    expected_base = base_price  # no longer always max * 1.45
+    if abs(base_price - expected_base) > 0.02:
+        raise ValueError(
+            f"compute_price_triple: base_price mismatch for {manufacturer}: "
+            f"got {base_price}, expected {expected_base}"
+        )
+
+    return importer_price, max_price, base_price
+
 SUPPLIER_URL_MAP = {
     'ORA': 'https://ora-israel.co.il',
     'SMART': 'https://smart-israel.co.il',
@@ -639,8 +725,8 @@ async def _ensure_supplier(conn, manufacturer: str) -> str:
                                is_active, is_manufacturer,
                                manufacturer_name, manufacturer_id,
                                reliability_score, created_at, updated_at)
-        VALUES ($1, $2, $3, 'IL', true, true, $4,
-                (SELECT id FROM car_brands WHERE LOWER(name)=LOWER($4) LIMIT 1),
+        VALUES ($1, $2, $3, 'IL', true, true, $4::text,
+                (SELECT id FROM car_brands WHERE LOWER(name)=LOWER($4::text) LIMIT 1),
                 0.90, NOW(), NOW())
         ON CONFLICT (name) DO NOTHING
     """, sid, supplier_name, url, manufacturer)
@@ -783,10 +869,16 @@ async def upsert_parts(conn, manufacturer, pdf_rows, db_rows, dry_run):
             cat = guess_category_by_text(f"{pdf_row.name or ''} {pdf_row.name_he or ''} {manufacturer}") or "general"
             metrics["category_counts"][cat] = metrics["category_counts"].get(cat, 0) + 1
             # Build specifications JSONB
+            # VAT logic — universal formula: base_price = max_price_ils × 1.45
+            #   max_price_ils = incl-VAT price (market price)
+            #   importer_price_ils = excl-VAT cost
             warranty_months = (pdf_row.warranty_years or 1) * 12
-            price_excl_vat = round((pdf_row.price or 0) / 1.18, 2)
+            raw_price       = float(pdf_row.price or 0.0)
+            # MANDATORY VAT CHECK — use compute_price_triple (never inline)
+            importer_price, max_price, base_price = compute_price_triple(raw_price, manufacturer)
+            embedded_vat = PRICES_INCL_VAT.get(manufacturer.upper(), 0.0)
             specs = json.dumps({
-                'vat_included':    True,
+                'vat_included':    embedded_vat > 0,
                 'vat_rate':        0.18,
                 'currency':        'ILS',
                 'source':          f'Official importer PDF - {manufacturer}',
@@ -805,12 +897,12 @@ async def upsert_parts(conn, manufacturer, pdf_rows, db_rows, dry_run):
                              "year_from":2020,"year_to":datetime.utcnow().year,
                              "source":"supplier_pdf_import"}],ensure_ascii=False),
                 pdf_row.oem_number[:100],
-                float(pdf_row.price or 0.0),
-                price_excl_vat,
-                round((pdf_row.price or 0), 2),
+                base_price,     # base_price = max_price_ils × 1.45
+                importer_price, # importer_price_ils = excl-VAT cost
+                max_price,      # max_price_ils = incl-VAT retail price
                 pdf_row.available,
                 warranty_months,
-                price_excl_vat,   # min_price_ils
+                importer_price, # min_price_ils = excl-VAT cost
             ))
             metrics["inserted"] += 1
         else:
@@ -821,9 +913,13 @@ async def upsert_parts(conn, manufacturer, pdf_rows, db_rows, dry_run):
                 to_deact.append(rid); metrics["deactivated_unavailable"] += 1
 
             if pdf_row.price is not None:
-                db_price = float(existing.get("base_price") or 0)
-                if abs(db_price - pdf_row.price) > 0.01:
-                    to_uprice.append((pdf_row.price, rid)); metrics["updated_price"] += 1
+                raw_price     = float(pdf_row.price)
+                # MANDATORY VAT CHECK — always use compute_price_triple
+                new_importer, new_max, new_base = compute_price_triple(raw_price, manufacturer)
+                db_base       = float(existing.get("base_price") or 0)
+                if abs(db_base - new_base) > 0.01:
+                    to_uprice.append((new_importer, new_max, new_base, rid))
+                    metrics["updated_price"] += 1
 
             if pdf_row.name and existing.get("name"):
                 db_name = str(existing["name"])
@@ -883,16 +979,21 @@ async def upsert_parts(conn, manufacturer, pdf_rows, db_rows, dry_run):
                 except Exception as e:
                     log.debug(f'Insert skip: {e}')
         # Write supplier_parts for every inserted/updated part
+        # price in inserted_ids is importer_price_ils (excl. VAT) — correct cost basis
+        # calculate_customer_price_from_ils() will apply × 1.45 margin + IL VAT on top
         for pid, oem, price, warranty_months, available, sid, surl in inserted_ids:
             await _upsert_supplier_part(conn, pid, sid, oem, price,
-                                         warranty_months, available, surl)
+                                        warranty_months, available, surl)
         # Delegate fitment to REX
         if inserted_ids:
             await _create_rex_fitment_todo(conn, manufacturer, len(inserted_ids),
                                             f'supplier_pdf_import PDF')
         if to_uprice:
             await conn.executemany(
-                "UPDATE parts_catalog SET base_price=$1,updated_at=NOW() WHERE id=$2::uuid", to_uprice)
+                """UPDATE parts_catalog
+                   SET importer_price_ils=$1, max_price_ils=$2, base_price=$3, updated_at=NOW()
+                   WHERE id=$4::uuid""",
+                to_uprice)
         if to_uname:
             await conn.executemany(
                 "UPDATE parts_catalog SET name=$1,name_he=$2,updated_at=NOW() WHERE id=$3::uuid", to_uname)

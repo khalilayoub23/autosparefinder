@@ -56,6 +56,12 @@ api.interceptors.response.use(
     // Don't intercept auth endpoints — let the caller handle the error directly
     const isAuthEndpoint = AUTH_ENDPOINTS.some((e) => url.includes(e))
     if (error.response?.status === 401 && !original._retry && !isAuthEndpoint) {
+      // If the user never had a token, this is a guest browsing a public route — don't redirect.
+      const hadToken = !!(localStorage.getItem('access_token') || localStorage.getItem('refresh_token'))
+      if (!hadToken) {
+        return Promise.reject(error)
+      }
+
       if (isRefreshing) {
         return new Promise((resolve, reject) => {
           refreshQueue.push({ resolve, reject })

@@ -227,22 +227,17 @@ class AliExpressSupplier(BaseSupplier):
             )
             return []
 
-        params = self._build_request(
-            "aliexpress.ds.product.specialinfo.get",
-            {
-                "product_ids": query,  # used when query is a product_id list
-                "ship_to_country": "IL",
-                "target_currency": "USD",
-                "target_language": "EN",
-            },
-        )
-        # DS API has no text-search endpoint; search by OEM/product_id via specialinfo.
-        # For keyword search, fall back to wholesale.get with a known product_id.
-        # Primary use is search_by_oem (product_id lookup).
+        # DS wholesale.get requires a purely numeric AliExpress product_id (10-18 digits).
+        # OEM strings (e.g. "NI277609HM0A") will always return MissingParameter — skip them.
+        _q = query.strip()
+        if not _q.isdigit() or not (10 <= len(_q) <= 18):
+            logger.debug("AliExpress DS: skipping non-numeric query '%s' (not a product_id)", _q)
+            return []
+
         params = self._build_request(
             "aliexpress.ds.product.wholesale.get",
             {
-                "product_id": query,
+                "product_id": _q,
                 "ship_to_country": "IL",
                 "target_currency": "USD",
                 "target_language": "EN",
@@ -255,12 +250,17 @@ class AliExpressSupplier(BaseSupplier):
                 resp.raise_for_status()
                 data = resp.json()
         except Exception as exc:
-            logger.error("AliExpress DS search failed for '%s': %s", query, exc)
+            logger.error("AliExpress DS search failed for '%s': %s", _q, exc)
             return []
 
         err = data.get("error_response", {})
         if err:
-            logger.warning("AliExpress DS search error for '%s': %s", query, err)
+            err_code = err.get("code", "")
+            # ITEM_ID_NOT_FOUND is expected when an AliExpress ID is no longer listed
+            if err_code in ("15", "27"):
+                logger.debug("AliExpress DS: product not found for id '%s'", _q)
+            else:
+                logger.warning("AliExpress DS search error for '%s': %s", _q, err)
             return []
 
         body = (

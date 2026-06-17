@@ -2,16 +2,21 @@
 System — /api/v1/system/* endpoints extracted from BACKEND_API_ROUTES.py.
 
 Endpoints:
-  GET /api/v1/system/health    (public)
-  GET /api/v1/system/settings  (public)
-  GET /api/v1/system/version   (public)
-  GET /api/v1/system/metrics   (admin)
+  GET /api/v1/system/health               (public)
+  GET /api/v1/system/settings             (public)
+  GET /api/v1/system/version              (public)
+  GET /api/v1/system/metrics              (admin)
+  GET /api/v1/admin/search/sync-status    (admin)
 """
 import os
+import json
+import subprocess
 from datetime import datetime
+from typing import Any
 
 import clamd as _clamd
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import JSONResponse, HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, text
 
@@ -23,6 +28,142 @@ from BACKEND_DATABASE_MODELS import (
 from BACKEND_AUTH_SECURITY import get_current_admin_user, get_redis
 
 router = APIRouter()
+
+# ── Temporary scrape-collect endpoint (remove after import) ──────────────────
+_collect_buffers: dict = {}
+
+CORS_HEADERS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+}
+
+@router.options("/api/v1/system/collect")
+async def collect_preflight():
+    return JSONResponse(content={}, headers=CORS_HEADERS)
+
+@router.post("/api/v1/system/collect")
+async def collect_scrape_data(request: Request):
+    ct = request.headers.get("content-type", "")
+    if "multipart/form-data" in ct or "application/x-www-form-urlencoded" in ct:
+        form = await request.form()
+        brand = form.get("brand", "unknown")
+        done = form.get("done", "false").lower() == "true"
+        raw = form.get("data") or form.get("chunk", "[]")
+        chunk = json.loads(raw) if raw else []
+        data = {}
+    elif "text/plain" in ct:
+        # mode: no-cors fetch from cross-origin tabs sends body as text/plain
+        raw_body = await request.body()
+        data = json.loads(raw_body)
+        brand = data.get("brand", "unknown")
+        chunk = data.get("chunk", data.get("parts", []))
+        done = data.get("done", False)
+    else:
+        data = await request.json()
+        brand = data.get("brand", "unknown")
+        chunk = data.get("chunk", data.get("parts", []))
+        done = data.get("done", False)
+
+    if brand not in _collect_buffers:
+        _collect_buffers[brand] = {"meta": {}, "parts": []}
+
+    if "meta" in data:
+        _collect_buffers[brand]["meta"] = data["meta"]
+    if chunk:
+        _collect_buffers[brand]["parts"].extend(chunk)
+
+    if done:
+        buf = _collect_buffers[brand]
+        total = len(buf["parts"])
+        del _collect_buffers[brand]
+
+        # OEM brands use oempartsonline_importer; others use car_parts_ie_import_generic
+        # Strip _fallback/_url/_extra suffixes so fallback batches route correctly
+        brand_base = brand.lower().split("_")[0]
+        OEM_BRANDS = {"infiniti", "lexus", "acura", "mopar", "toyota", "honda", "nissan",
+                      "ford", "bmw", "hyundai", "kia", "mazda", "subaru", "mitsubishi",
+                      "volvo", "jaguar", "landrover", "porsche", "audi", "volkswagen", "vw", "gm"}
+        if brand_base in OEM_BRANDS:
+            path = f"/tmp/{brand}_oem.json"
+            with open(path, "w") as f:
+                json.dump(buf["parts"], f)
+            log_path = f"/tmp/{brand}_oem_import.log"
+            proc = subprocess.Popen(
+                ["python3", "/app/oempartsonline_importer.py", "--file", path, "--brand", brand_base],
+                stdout=open(log_path, "w"),
+                stderr=subprocess.STDOUT,
+                close_fds=True,
+            )
+            print(f"[collect] OEM import started for {brand}: pid={proc.pid} log={log_path}")
+        else:
+            out = {**buf["meta"], "parts": buf["parts"]}
+            path = f"/tmp/{brand}_cpie.json"
+            with open(path, "w") as f:
+                json.dump(out, f)
+            log_path = f"/tmp/{brand}_cpie_import.log"
+            proc = subprocess.Popen(
+                ["python3", "/app/car_parts_ie_import_generic.py", "--brand", brand, "--file", path],
+                stdout=open(log_path, "w"),
+                stderr=subprocess.STDOUT,
+                close_fds=True,
+            )
+            print(f"[collect] auto-import started for {brand}: pid={proc.pid} log={log_path}")
+
+        return JSONResponse({"status": "saved", "path": path, "total": total, "import_pid": proc.pid}, headers=CORS_HEADERS)
+
+    return JSONResponse(
+        {"status": "ok", "brand": brand, "total": len(_collect_buffers[brand]["parts"])},
+        headers=CORS_HEADERS
+    )
+
+
+@router.get("/api/v1/system/oem-relay")
+async def oem_relay_page():
+    """HTTP relay page — browser navigates here (bypassing CF) and POSTs same-origin."""
+    html = """<!DOCTYPE html>
+<html><head><meta charset=utf-8><title>OEM Relay</title></head>
+<body>
+<pre id=log style="white-space:pre-wrap;font-size:12px">OEM relay loading...</pre>
+<script>
+const BACKEND = '';
+const L = document.getElementById('log');
+function log(msg){ L.textContent += '\\n' + new Date().toTimeString().slice(0,8)+' '+msg; }
+
+async function sendAllParts(brand, parts) {
+  const CHUNK = 2000;
+  const total = parts.length;
+  log('Sending ' + total + ' parts for ' + brand + ' in ' + Math.ceil(total/CHUNK) + ' chunks...');
+  for (let i = 0; i < parts.length || i === 0; i += CHUNK) {
+    const chunk = parts.slice(i, i+CHUNK);
+    const done = (i + CHUNK >= parts.length);
+    const fd = new FormData();
+    fd.append('brand', brand);
+    fd.append('data', JSON.stringify(chunk));
+    fd.append('done', done ? 'true' : 'false');
+    try {
+      const r = await fetch(BACKEND + '/api/v1/system/collect', {method:'POST', body:fd});
+      const j = await r.json();
+      log('chunk ' + (Math.floor(i/CHUNK)+1) + ': ' + JSON.stringify(j));
+      if (done) { log('✅ Import triggered! pid=' + j.import_pid); break; }
+    } catch(e) { log('ERROR: ' + e); break; }
+  }
+}
+
+(async () => {
+  try {
+    const raw = window.name;
+    if (!raw || raw.length < 10) { log('No data in window.name (length=' + (raw||'').length + ')'); return; }
+    log('window.name size: ' + raw.length + ' bytes');
+    const payload = JSON.parse(raw);
+    window.name = '';  // clear to free memory
+    if (!payload.brand || !payload.parts) { log('Bad payload: ' + Object.keys(payload)); return; }
+    await sendAllParts(payload.brand, payload.parts);
+  } catch(e) { log('FATAL: ' + e); }
+})();
+</script>
+</body></html>"""
+    return HTMLResponse(html)
 
 
 @router.get("/api/v1/system/health")
@@ -223,3 +364,80 @@ async def get_system_metrics(
         },
         "jobs": stuck_details,  # Queue monitoring
     }
+
+
+@router.get("/api/v1/admin/search/sync-status", tags=["Admin – Search"])
+async def search_sync_status(
+    current_user=Depends(get_current_admin_user),
+):
+    """
+    Returns Meilisearch index status, document count, last-updated timestamp,
+    and whether the DB catalog count is in sync with the search index.
+    """
+    import httpx as _httpx
+    meili_url = os.getenv("MEILI_URL", "")
+    meili_key = os.getenv("MEILI_MASTER_KEY", "")
+
+    if not meili_url:
+        return {"status": "not_configured", "meili_url": None}
+
+    headers = {"Authorization": f"Bearer {meili_key}"} if meili_key else {}
+
+    result: dict = {"meili_url": meili_url}
+
+    try:
+        async with _httpx.AsyncClient(timeout=5.0) as client:
+            # 1. Overall health
+            health = await client.get(f"{meili_url}/health", headers=headers)
+            result["health"] = health.json() if health.status_code == 200 else {"status": "error", "code": health.status_code}
+
+            # 2. Index stats
+            stats = await client.get(f"{meili_url}/indexes/parts/stats", headers=headers)
+            if stats.status_code == 200:
+                sd = stats.json()
+                result["index"] = {
+                    "number_of_documents": sd.get("numberOfDocuments", 0),
+                    "is_indexing": sd.get("isIndexing", False),
+                    "field_distribution_sample": dict(list((sd.get("fieldDistribution") or {}).items())[:5]),
+                }
+            else:
+                result["index"] = {"status": "error", "code": stats.status_code}
+
+            # 3. Tasks (last 3)
+            tasks = await client.get(f"{meili_url}/tasks?limit=3&indexUids=parts", headers=headers)
+            if tasks.status_code == 200:
+                td = tasks.json()
+                result["recent_tasks"] = [
+                    {
+                        "uid": t.get("uid"),
+                        "type": t.get("type"),
+                        "status": t.get("status"),
+                        "enqueuedAt": t.get("enqueuedAt"),
+                        "finishedAt": t.get("finishedAt"),
+                    }
+                    for t in (td.get("results") or [])
+                ]
+            else:
+                result["recent_tasks"] = []
+
+    except Exception as exc:
+        result["error"] = str(exc)[:200]
+
+    # 4. DB parity check
+    try:
+        async with async_session_factory() as db:
+            db_count = (await db.execute(
+                text("SELECT COUNT(*) FROM parts_catalog WHERE is_active = TRUE")
+            )).scalar_one()
+        result["db_active_parts"] = db_count
+        index_count = (result.get("index") or {}).get("number_of_documents", 0)
+        result["parity"] = {
+            "db_count": db_count,
+            "index_count": index_count,
+            "gap": db_count - index_count,
+            "in_sync": abs(db_count - index_count) < 1000,
+        }
+    except Exception as exc:
+        result["parity"] = {"error": str(exc)[:200]}
+
+    return result

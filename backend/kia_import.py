@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ⚠️  BROWSER TOOL REQUIRED — DO NOT RUN HTTP REQUESTS FROM SERVER IP
-# The server IP (94.130.150.23) is blocked by Cloudflare and anti-bot systems.
+# The server IP (207.180.217.129) is blocked by Cloudflare and anti-bot systems.
 # All external HTTP extraction must be done via the browser tool (Playwright / run_playwright_code).
 # Pattern: (1) Extract with browser tool → save JSON, (2) Import JSON with this script.
 # See claude.md § Web Scraping Rules.
@@ -104,23 +104,34 @@ async def ensure_supplier(conn) -> str:
     return str(row['id']) if row else sid
 
 
-    print("Fetching from kia-israel.co.il ...")
-    data=urllib.parse.urlencode({"catalogNum":"","partDesc":"אטם"}).encode("utf-8")
+SEARCH_TERMS = [
+    "", "א","ב","ג","ד","ה","ו","ז","ח","ט","י","כ","ל","מ","נ","ס","ע","פ","צ","ק","ר","ש","ת",
+    "oil","filter","pump","valve","sensor","belt","hose","seal","gasket","bearing","brake",
+]
+
+def fetch_parts():
     headers={"User-Agent":"Mozilla/5.0 Chrome/120","Content-Type":"application/x-www-form-urlencoded",
              "Accept":"text/html","Referer":"https://kia-israel.co.il/","Origin":"https://kia-israel.co.il"}
-    req=urllib.request.Request(PARTS_URL,data=data,headers=headers,method="POST")
-    with urllib.request.urlopen(req,timeout=30) as r:
-        html=r.read().decode("utf-8",errors="replace")
-    p=TableParser();p.feed(html)
-    parts=[]
-    for row in p.rows[1:]:
-        if len(row)<4:continue
-        sku=row[0].strip();desc=row[2].strip();price_s=row[3].strip().replace(",","")
-        if not sku or not desc:continue
-        try:price=float(price_s)
-        except:print(f"  SKIP bad price '{price_s}' sku={sku}",file=sys.stderr);continue
-        parts.append({"sku":sku,"name":desc,"price":price})
-    print(f"  Parsed {len(parts)} parts");return parts
+    seen=set();all_parts=[]
+    for term in SEARCH_TERMS:
+        try:
+            data=urllib.parse.urlencode({"catalogNum":"","partDesc":term}).encode("utf-8")
+            req=urllib.request.Request(PARTS_URL,data=data,headers=headers,method="POST")
+            with urllib.request.urlopen(req,timeout=30) as r:
+                html=r.read().decode("utf-8",errors="replace")
+            p=TableParser();p.feed(html)
+            new=0
+            for row in p.rows[1:]:
+                if len(row)<4:continue
+                sku=row[0].strip();desc=row[2].strip();price_s=row[3].strip().replace(",","")
+                if not sku or not desc or sku in seen:continue
+                try:price=float(price_s)
+                except:continue
+                seen.add(sku);all_parts.append({"sku":sku,"name":desc,"price":price});new+=1
+            print(f"  term='{term}': {new} new parts (total {len(all_parts)})")
+        except Exception as e:
+            print(f"  term='{term}': error {e}", file=sys.stderr)
+    return all_parts
 
 INSERT_SQL = """
     INSERT INTO parts_catalog(
@@ -142,10 +153,10 @@ INSERT_SQL = """
         $5::uuid,              -- manufacturer_id
         'original'::varchar,
         'new'::varchar,
-        $6::numeric,           -- base_price (ex-VAT)
-        $6::numeric,           -- importer_price_ils
-        $6::numeric,           -- min_price_ils (same as importer price excl-VAT)
-        ($6::numeric * 1.18),  -- max_price_ils (incl. VAT)
+        ROUND($6::numeric * 1.18, 2),  -- base_price = il_retail (consumer retail incl. VAT)
+        0::numeric,                    -- importer_price_ils (no actual procurement cost)
+        ROUND($6::numeric * 1.18, 2),  -- min_price_ils = il_retail
+        ROUND($6::numeric * 1.18, 2),  -- max_price_ils = il_retail
         NULL,                  -- aftermarket_tier (genuine OEM parts)
         $7::varchar,           -- category
         TRUE,
@@ -159,10 +170,8 @@ INSERT_SQL = """
         name_he            = EXCLUDED.name_he,
         description        = EXCLUDED.description,
         base_price         = EXCLUDED.base_price,
-        importer_price_ils = EXCLUDED.importer_price_ils,
-        min_price_ils      = CASE WHEN EXCLUDED.min_price_ils > 0
-                             THEN EXCLUDED.min_price_ils
-                             ELSE parts_catalog.min_price_ils END,
+        importer_price_ils = 0,
+        min_price_ils      = EXCLUDED.min_price_ils,
         max_price_ils      = EXCLUDED.max_price_ils,
         specifications     = COALESCE(parts_catalog.specifications, '{}')::jsonb
                               || EXCLUDED.specifications::jsonb,

@@ -65,6 +65,11 @@ def _gemini_cb_trip() -> None:
 ROUTER_BASE  = "https://router.huggingface.co/v1"
 INFER_BASE   = "https://router.huggingface.co/hf-inference/models"
 
+# Model used for background enrichment tasks (part naming, Hebrew translation, category suggestions).
+# Phi-3-mini: Microsoft SLM — better Hebrew than Qwen2.5-7B, fast on HF PRO Router, avoids Cerebras quota.
+# Fallback chain: Phi-3-mini → Groq llama-3.1-8b-instant (already configured in hf_router_text).
+HF_ENRICH_MODEL = os.getenv("HF_ENRICH_MODEL", "microsoft/Phi-3-mini-4k-instruct")
+
 # Cache TTL (seconds).  0 = disabled.
 _TEXT_CACHE_TTL  = int(os.getenv("HF_TEXT_CACHE_TTL",  "3600"))   # 1 hour
 _EMBED_CACHE_TTL = int(os.getenv("HF_EMBED_CACHE_TTL", "86400"))  # 24 hours
@@ -79,6 +84,28 @@ _RETRY_AFTER_CAP_SECONDS = float(os.getenv("HF_RETRY_AFTER_CAP_SECONDS", "8"))
 # Background job concurrency limiter — limits Rex/scraper to 1 concurrent AI call.
 # Webhook calls bypass this with hf_text(priority=True) to ensure fast response.
 _BG_SEMAPHORE = asyncio.Semaphore(1)
+
+# Priority (agent) concurrency limiter — prevents mass concurrent agent calls from
+# saturating Gemini when many agents fire simultaneously (e.g. during load tests).
+_PRIORITY_SEMAPHORE = asyncio.Semaphore(4)
+
+# Gemini concurrency limiter — Gemini free-tier allows ~60 RPM but bursts trip 429.
+# Cap at 2 concurrent Gemini calls to stay well within the rate limit.
+_GEMINI_SEMAPHORE = asyncio.Semaphore(2)
+
+# Gemini per-minute token bucket: 50 calls/min max (leaves headroom vs 60 RPM limit).
+_GEMINI_CALL_TIMESTAMPS: list[float] = []
+_GEMINI_RPM_LIMIT = 50
+
+def _gemini_rate_check() -> bool:
+    """Return True if a Gemini call is allowed under the per-minute token bucket."""
+    now = time.time()
+    global _GEMINI_CALL_TIMESTAMPS
+    _GEMINI_CALL_TIMESTAMPS = [t for t in _GEMINI_CALL_TIMESTAMPS if now - t < 60]
+    if len(_GEMINI_CALL_TIMESTAMPS) >= _GEMINI_RPM_LIMIT:
+        return False
+    _GEMINI_CALL_TIMESTAMPS.append(now)
+    return True
 
 
 def _bounded_backoff(attempt: int) -> float:
@@ -342,6 +369,8 @@ async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority
     _acquire = not priority
     if _acquire:
         await _BG_SEMAPHORE.acquire()
+    else:
+        await _PRIORITY_SEMAPHORE.acquire()
     try:
         resp = await _post_with_retry(
             f"{CEREBRAS_BASE}/chat/completions",
@@ -356,6 +385,8 @@ async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority
     finally:
         if _acquire:
             _BG_SEMAPHORE.release()
+        else:
+            _PRIORITY_SEMAPHORE.release()
     if resp.status_code == 429:
         # Try Cerebras fallback model (reasoning model zai-glm-4.7) before external providers
         if CEREBRAS_FALLBACK_MODEL and CEREBRAS_FALLBACK_MODEL != selected_model:
@@ -368,15 +399,18 @@ async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority
                 logger.warning("hf_text: Cerebras fallback also failed: %s", fb_err)
         if GEMINI_API_KEY and not _gemini_cb_is_open():
             logger.warning("hf_text: Cerebras 429 — falling back to Gemini")
-            try:
-                result = await gemini_text(prompt=prompt, system=system, timeout=timeout)
-                return result
-            except Exception as gemini_err:
-                err_str = str(gemini_err)
-                logger.warning(f"hf_text: Gemini also failed ({gemini_err}) — falling back to GROQ")
-                # Trip circuit breaker on quota exhaustion (429)
-                if "429" in err_str or "quota" in err_str.lower() or "limit" in err_str.lower():
-                    _gemini_cb_trip()
+            async with _GEMINI_SEMAPHORE:
+                if not _gemini_rate_check():
+                    logger.warning("hf_text: Gemini RPM bucket full — skipping to GROQ")
+                else:
+                    try:
+                        result = await gemini_text(prompt=prompt, system=system, timeout=timeout)
+                        return result
+                    except Exception as gemini_err:
+                        err_str = str(gemini_err)
+                        logger.warning(f"hf_text: Gemini also failed ({gemini_err}) — falling back to GROQ")
+                        if "429" in err_str or "quota" in err_str.lower() or "limit" in err_str.lower():
+                            _gemini_cb_trip()
         elif _gemini_cb_is_open():
             logger.debug("hf_text: Gemini circuit breaker open — skipping directly to GROQ")
         if GROQ_API_KEY:
@@ -392,6 +426,155 @@ async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority
 async def hf_text_fast(prompt: str, system: str = "", timeout: float = 90.0, priority: bool = False, model: str | None = None) -> str:
     """Compatibility wrapper used by agents code-paths."""
     return await hf_text(prompt=prompt, system=system, timeout=timeout, priority=priority, model=model)
+
+
+async def hf_router_text(prompt: str, system: str = "", timeout: float = 45.0, model: str | None = None) -> str:
+    """Chat completion via HF Router with PRO token.
+
+    Designed for background enrichment jobs (NOT user-facing) that need a
+    reliable, multilingual model without competing with the Cerebras chatbot quota.
+    HF PRO gives 20× inference credits → high rate limits on the router.
+    """
+    if not HF_TOKEN:
+        raise RuntimeError("HF_TOKEN not set — cannot use HF Router")
+
+    selected_model = model or HF_ENRICH_MODEL
+    cache_key = _cache_key("rtr", selected_model, system, prompt)
+    cached = await _cache_get(cache_key)
+    if cached is not None:
+        logger.debug("hf_router_text cache hit")
+        return _clean_response(cached)
+
+    messages: list[dict[str, str]] = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+
+    payload = _json.dumps({
+        "model": selected_model,
+        "messages": messages,
+        "max_tokens": 512,
+        "stream": False,
+    }, ensure_ascii=False).encode()
+
+    await _BG_SEMAPHORE.acquire()
+    try:
+        resp = await _post_with_retry(
+            f"{ROUTER_BASE}/chat/completions",
+            {"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json"},
+            payload,
+            timeout,
+            f"hf_router/{selected_model}",
+        )
+    finally:
+        _BG_SEMAPHORE.release()
+
+    if resp.status_code == 429:
+        # Router quota hit — fall back to Groq as last resort
+        if GROQ_API_KEY:
+            logger.warning("hf_router_text: HF Router 429 — falling back to Groq")
+            return await groq_text(prompt=prompt, system=system, timeout=timeout,
+                                   model="llama-3.1-8b-instant")
+        resp.raise_for_status()
+
+    resp.raise_for_status()
+    result: str = resp.json()["choices"][0]["message"]["content"]
+    result = _clean_response(result)
+    await _cache_set(cache_key, result, _TEXT_CACHE_TTL)
+    return result
+
+
+# ── Hebrew query normalizer (Option 3 / DistilBERT via HF Inference API) ─────
+# Classifies Hebrew/English auto-part search queries using zero-shot classification.
+# Uses distilbert-base-multilingual-cased via HF Inference API — zero RAM on server.
+# Falls back gracefully if API unavailable. Used by search normalization pipeline.
+
+_HF_ZSC_MODEL = os.getenv(
+    "HF_ZSC_MODEL",
+    "facebook/bart-large-mnli"   # BART MNLI: best zero-shot classification; multilingual via mBART family
+)
+
+_AUTO_CATEGORIES = [
+    "brakes", "engine", "suspension", "body exterior", "electrical sensors",
+    "filters", "cooling", "exhaust", "lighting", "wipers",
+    "transmission gearbox", "belts chains", "wheels bearings",
+    "interior comfort", "fuel air", "air conditioning heating", "clutch drivetrain",
+]
+
+# Hebrew model/brand shortcuts → expanded English for better search
+_HE_EXPANSIONS: dict[str, str] = {
+    "קורולה": "corolla", "אקורה": "corolla", "קמרי": "camry",
+    "טוסון": "tucson", "סנטה פה": "santa fe", "אי 20": "i20",
+    "אי 30": "i30", "אי 35": "i35", "אי 40": "i40",
+    "גולף": "golf", "פולו": "polo", "פאסאט": "passat",
+    "אוקטביה": "octavia", "סופרב": "superb", "פביה": "fabia",
+    "רפידות": "brake pads", "דיסק": "brake disc", "מסנן": "filter",
+    "שמן": "oil", "צמיג": "tyre tire", "בולם": "shock absorber",
+    "פנס": "headlight", "ממחק": "wiper", "מצבר": "battery",
+    "מזגן": "air conditioning", "קלאץ": "clutch", "גיר": "gearbox",
+    "פגוש": "bumper", "כנף": "fender", "שמשה": "windshield",
+    "מאיין": "muffler exhaust", "מנוע": "engine", "קפיץ": "spring",
+}
+
+
+async def hf_classify_query(query: str, top_k: int = 3) -> list[dict]:
+    """
+    Zero-shot classify a search query into auto-part categories.
+    Uses distilbert-base-multilingual-cased via HF Inference API.
+    Returns [{label, score}] sorted by confidence. Falls back to [] on error.
+    No server memory impact — pure API call.
+    """
+    if not HF_TOKEN or not query.strip():
+        return []
+
+    cache_key = _cache_key("zsc", _HF_ZSC_MODEL, "", query)
+    cached = await _cache_get(cache_key)
+    if cached:
+        try:
+            import json as _json
+            return _json.loads(cached)
+        except Exception:
+            pass
+
+    url = f"{INFER_BASE}/{_HF_ZSC_MODEL}"
+    payload = {
+        "inputs": query,
+        "parameters": {"candidate_labels": _AUTO_CATEGORIES, "multi_label": False},
+    }
+    headers = {"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json"}
+
+    try:
+        async with _client() as c:
+            resp = await c.post(url, json=payload, headers=headers, timeout=10.0)
+            if resp.status_code == 200:
+                data = resp.json()
+                labels = data.get("labels", [])
+                scores = data.get("scores", [])
+                result = sorted(
+                    [{"label": l, "score": round(s, 4)} for l, s in zip(labels, scores)],
+                    key=lambda x: -x["score"]
+                )[:top_k]
+                import json as _json
+                await _cache_set(cache_key, _json.dumps(result), 3600)
+                return result
+    except Exception:
+        pass
+    return []
+
+
+def expand_hebrew_query(query: str) -> str:
+    """
+    Lightweight Hebrew→English query expansion using a static dictionary.
+    Zero API cost, zero latency. Runs before any ML call to improve search recall.
+    Example: 'רפידות לקורולה 2019' → 'brake pads corolla 2019'
+    """
+    q = query.strip()
+    expanded_terms = [q]
+    q_lower = q.lower()
+    for he, en in _HE_EXPANSIONS.items():
+        if he in q:
+            expanded_terms.append(en)
+    return " ".join(dict.fromkeys(expanded_terms))  # deduplicate, preserve order
 
 
 # ── Local embedding model ─────────────────────────────────────────────────────
@@ -427,34 +610,45 @@ def _get_embed_model():
 
 
 async def hf_embed(text: str, timeout: float = 10.0) -> list[float]:
-    """Remote text embedding via HF Inference API — no local model needed."""
-    cache_key = _cache_key("emb", HF_EMBED_MODEL, text)
+    """Text embedding via Gemini API (384-dim, multilingual He/En/Ar).
+
+    HF router changed sentence-transformer models to SentenceSimilarityPipeline
+    which returns similarity scores, not embedding vectors.  Gemini embedding-001
+    supports outputDimensionality=384 so vectors match the existing pgvector schema.
+    Falls back to empty list — search degrades to text-only, never crashes.
+    """
+    cache_key = _cache_key("emb", "gemini-embed-001-384", text)
     cached = await _cache_get(cache_key)
     if cached is not None:
         try:
             return _json.loads(cached)
         except Exception:
             pass
+    if not GEMINI_API_KEY:
+        logger.warning("hf_client [embed] GEMINI_API_KEY not set — returning empty embedding")
+        return []
     try:
         t0 = time.monotonic()
         http = _get_http()
         resp = await asyncio.wait_for(
             http.post(
-                f"{INFER_BASE}/{HF_EMBED_MODEL}",
-                headers={"Authorization": f"Bearer {HF_TOKEN}"},
-                json={"inputs": text},
+                f"{GEMINI_BASE}/gemini-embedding-001:embedContent?key={GEMINI_API_KEY}",
+                headers={"Content-Type": "application/json"},
+                json={
+                    "content": {"parts": [{"text": text}]},
+                    "outputDimensionality": 384,
+                },
             ),
             timeout=timeout,
         )
         resp.raise_for_status()
-        result = resp.json()
-        if isinstance(result, list) and isinstance(result[0], list):
-            result = result[0]
-        logger.debug("hf_client [embed] latency_ms=%d", round((time.monotonic() - t0) * 1000))
+        result: list[float] = resp.json().get("embedding", {}).get("values", [])
+        logger.debug("hf_client [embed] latency_ms=%d dims=%d",
+                     round((time.monotonic() - t0) * 1000), len(result))
         await _cache_set(cache_key, _json.dumps(result), _EMBED_CACHE_TTL)
         return result
     except Exception as exc:
-        logger.warning("hf_client [embed] failed: %s", exc)
+        logger.warning("hf_client [embed] Gemini embed failed: %s", exc)
         return []
 
 async def groq_vision(

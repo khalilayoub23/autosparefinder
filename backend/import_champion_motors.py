@@ -134,13 +134,14 @@ async def run_import():
                             is_active,aftermarket_tier,specifications,
                             needs_oem_lookup,master_enriched,updated_at
                         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
-                                 $11,ROUND($11/1.18,2),ROUND($11/1.18,2),$11,
+                                 $11,0,$11,$11,
                                  $12,$13,$14::jsonb,$15,$16,NOW())
                         ON CONFLICT(sku) DO UPDATE SET
                             oem_number=EXCLUDED.oem_number,
                             name_he=EXCLUDED.name_he,
                             base_price=CASE WHEN EXCLUDED.base_price>0 THEN EXCLUDED.base_price ELSE parts_catalog.base_price END,
-                            importer_price_ils=CASE WHEN EXCLUDED.importer_price_ils>0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
+                            importer_price_ils=0,
+                            online_price_ils=0,
                             min_price_ils=CASE WHEN EXCLUDED.min_price_ils>0 THEN EXCLUDED.min_price_ils ELSE parts_catalog.min_price_ils END,
                             max_price_ils=CASE WHEN EXCLUDED.max_price_ils>0 THEN EXCLUDED.max_price_ils ELSE parts_catalog.max_price_ils END,
                             specifications=COALESCE(parts_catalog.specifications,'{}')::jsonb || EXCLUDED.specifications::jsonb,

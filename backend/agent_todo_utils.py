@@ -66,3 +66,35 @@ def todo_requests_ranked_first(todos: List[Dict[str, Any]]) -> bool:
         if "priority" in tags or mode == "ranked_first":
             return True
     return False
+
+
+def extract_todo_brands(todos: List[Dict[str, Any]]) -> List[str]:
+    """Return deduplicated brand list from any todo's artifacts.brands field."""
+    seen: set = set()
+    brands: List[str] = []
+    for todo in todos:
+        artifacts = todo.get("artifacts") or {}
+        raw = artifacts.get("brands") or []
+        if isinstance(raw, str):
+            raw = [raw]
+        for b in raw:
+            if isinstance(b, str) and b.strip() and b.strip() not in seen:
+                seen.add(b.strip())
+                brands.append(b.strip())
+    return brands
+
+
+def extract_todo_discovery_target(todos: List[Dict[str, Any]]) -> int | None:
+    """Return the highest target from any todo's artifacts.target field."""
+    best: int | None = None
+    for todo in todos:
+        artifacts = todo.get("artifacts") or {}
+        val = artifacts.get("target")
+        if val is not None:
+            try:
+                v = int(val)
+                if best is None or v > best:
+                    best = v
+            except (ValueError, TypeError):
+                pass
+    return best

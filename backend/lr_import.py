@@ -28,7 +28,8 @@ Missing Data Delegation:
 
 VAT Rules:
   - JSON file prices assumed ILS EXCL. VAT (dealer pricing)
-  - Store as-is in importer_price_ils; max_price_ils = price * 1.18
+  - max_price_ils = price * 1.18 (incl. 18% IL VAT); base_price = max_price_ils (IL official ref, no markup)
+  - importer_price_ils = 0 (Land Rover IL is official importer reference, not our procurement cost)
 
 Confidence tier: 0.90 (web scrape of official dealer site)
 
@@ -44,7 +45,7 @@ LR_SUPPLIER_URL = 'https://www.landrover.co.il'
 
 DB_URL   = os.getenv("DATABASE_URL",
            "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43"
-           "@postgres_catalog:5432/autospare")
+           "@postgres_catalog:5432/autospare").replace("postgresql+asyncpg://", "postgresql://")
 JSON_SRC = os.getenv("JSON_FILE", "/opt/autosparefinder/land_rover_parts.json")
 
 # ── Category guesser ────────────────────────────────────────
@@ -174,21 +175,20 @@ async def main():
                         INSERT INTO parts_catalog
                           (id, sku, name, description, oem_number,
                            manufacturer, manufacturer_id,
-                           category, part_condition, importer_price_ils,
+                           category, part_condition, base_price, importer_price_ils,
                            min_price_ils, max_price_ils, aftermarket_tier,
                            specifications,
                            is_active, needs_oem_lookup, master_enriched,
                            created_at, updated_at)
                         VALUES (gen_random_uuid(),$1,$2,$3,$4,'Land Rover',$5::uuid,$6,'new',
-                                $7,$7,$8,NULL,$9::jsonb,TRUE,TRUE,FALSE,NOW(),NOW())
+                                $7,0,$7,$8,NULL,$9::jsonb,TRUE,TRUE,FALSE,NOW(),NOW())
                         ON CONFLICT (sku) DO UPDATE SET
                           name=EXCLUDED.name,
                           description=EXCLUDED.description,
                           oem_number=EXCLUDED.oem_number,
-                          importer_price_ils=EXCLUDED.importer_price_ils,
-                          min_price_ils=CASE WHEN EXCLUDED.min_price_ils > 0
-                                        THEN EXCLUDED.min_price_ils
-                                        ELSE parts_catalog.min_price_ils END,
+                          base_price=EXCLUDED.base_price,
+                          importer_price_ils=0,
+                          min_price_ils=EXCLUDED.min_price_ils,
                           max_price_ils=EXCLUDED.max_price_ils,
                           specifications=COALESCE(parts_catalog.specifications,'{}')::jsonb
                                           || EXCLUDED.specifications::jsonb,

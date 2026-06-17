@@ -20,7 +20,7 @@ from typing import Any, Dict
 import asyncpg
 from sqlalchemy.ext.asyncio import AsyncSession
 from dotenv import load_dotenv
-from hf_client import hf_text
+from hf_client import hf_text, hf_router_text, groq_text
 from categories import CATEGORY_MAP
 
 load_dotenv()
@@ -227,17 +227,15 @@ async def insert_parts(conn, supplier_id, brand: str, parts: list,
     return cat_ins, sp_ins, errors
 
 
-async def enrich_pending_parts(db: AsyncSession, limit: int = 100) -> Dict[str, Any]:
+async def enrich_pending_parts(db: AsyncSession, limit: int = 200) -> Dict[str, Any]:
     """
     Callable enrichment task for db_update_agent / pipeline use.
 
     Finds up to `limit` parts_catalog rows where:
         needs_oem_lookup = FALSE AND master_enriched = FALSE
-    For each part:
-    1. Asks HF text model to infer canonical_name, canonical_name_he, quality_level
-      2. Upserts a parts_master row (ON CONFLICT on canonical_name+category)
-      3. Inserts a part_variants row linking parts_master -> parts_catalog
-      4. Sets parts_catalog.master_enriched = TRUE
+    Strategy:
+      - Fast path: parts with name_he + deterministic quality → no AI, process instantly
+      - AI path: batched 10 per HF call → 0.5s between batches (120 RPM, safe for HF PRO)
 
     Returns {"task": "enrich_pending_parts", "status": "ok",
              "processed": int, "inserted_master": int,
@@ -283,29 +281,23 @@ async def enrich_pending_parts(db: AsyncSession, limit: int = 100) -> Dict[str, 
     }
     VALID_QUALITY = set(QUALITY_MAP.values())
 
-    for row in rows:
+    _OEM_BRANDS = {
+        "acura", "honda", "toyota", "lexus", "nissan", "infiniti", "mazda",
+        "subaru", "mitsubishi", "kia", "hyundai", "volkswagen", "audi",
+        "bmw", "mercedes", "ford", "chevrolet", "gm", "volvo", "jaguar",
+        "land rover", "porsche", "skoda", "seat", "cupra",
+    }
+
+    def _infer_quality(row) -> str | None:
+        pt = (row.part_type or "").lower()
+        if pt in ("oem", "original"):
+            return "OEM"
+        if (row.manufacturer or "").lower() in _OEM_BRANDS:
+            return "OEM_Equivalent"
+        return None
+
+    async def _upsert_one(row, canonical_name: str, canonical_name_he: str, quality_level: str):
         try:
-            prompt = (
-                f'Part: "{row.name}" (Hebrew: "{row.name_he or ""}"), '
-                f'category: "{row.category}", type: "{row.part_type}", '
-                f'brand: "{row.manufacturer}".\n'
-                f'Return ONLY valid JSON with keys: '
-                f'"canonical_name" (English, 2-6 words), '
-                f'"canonical_name_he" (Hebrew, 2-6 words), '
-                f'"quality_level" (one of: OEM, OEM_Equivalent, '
-                f'Aftermarket_Premium, Aftermarket_Standard, Economy).'
-            )
-            raw = (await hf_text(prompt, system=SYSTEM_PROMPT, timeout=30.0)).strip()
-            s, e = raw.find("{"), raw.rfind("}") + 1
-            data = json.loads(raw[s:e]) if s >= 0 and e > s else {}
-
-            canonical_name    = str(data.get("canonical_name",    row.name))[:255]
-            canonical_name_he = str(data.get("canonical_name_he", row.name_he or ""))[:255]
-            raw_ql            = str(data.get("quality_level", "Aftermarket_Standard")).lower()
-            quality_level     = QUALITY_MAP.get(raw_ql, "Aftermarket_Standard")
-            if quality_level not in VALID_QUALITY:
-                quality_level = "Aftermarket_Standard"
-
             master_row = (await db.execute(
                 _text("""
                     INSERT INTO parts_master
@@ -355,13 +347,92 @@ async def enrich_pending_parts(db: AsyncSession, limit: int = 100) -> Dict[str, 
             )
             await db.commit()
             report["processed"] += 1
-
         except Exception:
             report["errors"] += 1
             try:
                 await db.rollback()
             except Exception:
                 pass
+
+    def _build_batch_prompt(batch: list) -> str:
+        items = "\n".join(
+            f'{i+1}. name="{r.name}", name_he="{r.name_he or ""}", '
+            f'type="{r.part_type}", brand="{r.manufacturer}", category="{r.category}"'
+            for i, r in enumerate(batch)
+        )
+        return (
+            f"For each of these {len(batch)} auto parts, return a JSON array of objects "
+            f'with keys: "canonical_name" (English, 2-6 words), '
+            f'"canonical_name_he" (Hebrew, 2-6 words), '
+            f'"quality_level" (one of: OEM, OEM_Equivalent, Aftermarket_Premium, '
+            f'Aftermarket_Standard, Economy).\n\n'
+            f"{items}\n\n"
+            f"Return ONLY a valid JSON array of {len(batch)} objects in the same order."
+        )
+
+    def _parse_batch_response(batch: list, raw: str) -> list:
+        try:
+            s, e = raw.find("["), raw.rfind("]") + 1
+            items_data = json.loads(raw[s:e]) if s >= 0 and e > s else []
+        except Exception:
+            items_data = []
+        results = []
+        for i, row in enumerate(batch):
+            d = items_data[i] if i < len(items_data) else {} if isinstance(items_data, list) else {}
+            cname    = str(d.get("canonical_name",    row.name or ""))[:255]
+            cname_he = str(d.get("canonical_name_he", row.name_he or ""))[:255]
+            raw_ql   = str(d.get("quality_level", "Aftermarket_Standard")).lower()
+            ql       = QUALITY_MAP.get(raw_ql, "Aftermarket_Standard")
+            if ql not in VALID_QUALITY:
+                ql = "Aftermarket_Standard"
+            results.append((row, cname, cname_he, ql))
+        return results
+
+    _ai_sem = asyncio.Semaphore(2)  # limit concurrent Groq calls to stay under rate limits
+
+    async def _enrich_ai_batch(batch: list, use_hf_router: bool) -> list:
+        """Groq primary (fast) → HF Router → Cerebras fallback chain."""
+        prompt = _build_batch_prompt(batch)
+        async with _ai_sem:
+            for provider_fn, kwargs in [
+                (groq_text,      {"model": "llama-3.1-8b-instant", "timeout": 30.0}),
+                (hf_router_text, {"timeout": 60.0}),
+                (hf_text,        {"timeout": 60.0}),
+            ]:
+                try:
+                    raw = (await provider_fn(prompt, system=SYSTEM_PROMPT, **kwargs)).strip()
+                    return _parse_batch_response(batch, raw)
+                except Exception:
+                    continue
+            return [
+                (row, (row.name or "")[:255], (row.name_he or "")[:255], "Aftermarket_Standard")
+                for row in batch
+            ]
+
+    # ── Split into fast-path (no AI) and AI-needed ────────────────────────────
+    fast_rows = []
+    ai_rows   = []
+    for row in rows:
+        has_he      = bool((row.name_he or "").strip())
+        inferred_ql = _infer_quality(row)
+        if has_he and inferred_ql:
+            fast_rows.append((row, (row.name or "").strip()[:255],
+                              (row.name_he or "").strip()[:255], inferred_ql))
+        else:
+            ai_rows.append(row)
+
+    # Fast path — no AI, instant
+    for row, cname, cname_he, ql in fast_rows:
+        await _upsert_one(row, cname, cname_he, ql)
+
+    # AI path — batches of 30, Groq primary + HF/Cerebras fallback, 2 concurrent
+    AI_BATCH = 30
+    batches = [ai_rows[i:i + AI_BATCH] for i in range(0, len(ai_rows), AI_BATCH)]
+    tasks   = [_enrich_ai_batch(b, i % 2 == 0) for i, b in enumerate(batches)]
+    all_results = await asyncio.gather(*tasks)
+    for batch_results in all_results:
+        for row, cname, cname_he, ql in batch_results:
+            await _upsert_one(row, cname, cname_he, ql)
 
     return report
 

@@ -1439,6 +1439,11 @@ export default function Parts() {
   const { addItem: addItemLocal } = useCartStore()
   // Wrapper: saves to local store immediately, then syncs to server in background
   const addItem = (item) => {
+    if (!user) {
+      toast.error('Please sign in to add items to your cart')
+      setTimeout(() => { window.location.href = '/login' }, 1500)
+      return
+    }
     addItemLocal(item)
     if (item.partId) cartApi.addItem(item.partId, item.quantity ?? 1).catch(() => {})
   }
@@ -1669,7 +1674,7 @@ export default function Parts() {
   useEffect(() => {
     const urlSearch   = searchParams.get('search')   || ''
     const urlCategory = searchParams.get('category') || ''
-    loadVehicles()
+    if (user) loadVehicles()
     partsApi.manufacturers()
       .then(async ({ data }) => {
         let list = data.manufacturers || []

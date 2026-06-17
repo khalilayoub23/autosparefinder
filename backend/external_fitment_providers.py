@@ -1,10 +1,73 @@
 from __future__ import annotations
 
+import base64
 import os
+import time
+import threading
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote_plus, urlencode, urlparse
 
 DEFAULT_AUTODOC_PROVIDER_URLS: List[str] = []
+
+# Module-level eBay OAuth2 token cache — auto-refreshes via client credentials.
+# Thread-safe: only used from within async tasks but cached at module level.
+_ebay_token_lock = threading.Lock()
+_ebay_token_cache: Dict[str, Any] = {"token": "", "expires_at": 0.0}
+
+
+def _get_ebay_oauth_token() -> str:
+    """
+    Return a valid eBay OAuth2 client-credentials access token.
+    Reads EBAY_APP_ID + EBAY_CERT_ID from env, caches the token until 60s
+    before expiry, and uses EBAY_BEARER_TOKEN as a static fallback if set to
+    a real JWT (starts with 'v^1.1').
+    """
+    # Fast path: cached token still valid
+    with _ebay_token_lock:
+        if _ebay_token_cache["token"] and time.time() < _ebay_token_cache["expires_at"]:
+            return _ebay_token_cache["token"]
+
+    # Check if EBAY_BEARER_TOKEN is already a valid JWT-style token
+    static = os.getenv("EBAY_BEARER_TOKEN", "").strip()
+    if static.startswith("v^1.1"):
+        with _ebay_token_lock:
+            _ebay_token_cache["token"] = static
+            _ebay_token_cache["expires_at"] = time.time() + 3600
+        return static
+
+    # Fetch a fresh token via OAuth2 client credentials
+    app_id = os.getenv("EBAY_APP_ID", "").strip() or os.getenv("EBAY_CLIENT_ID", "").strip()
+    cert_id = os.getenv("EBAY_CERT_ID", "").strip() or os.getenv("EBAY_CLIENT_SECRET", "").strip()
+    if not app_id or not cert_id:
+        return ""
+
+    try:
+        import httpx as _httpx
+        creds = base64.b64encode(f"{app_id}:{cert_id}".encode()).decode()
+        token_url = "https://api.ebay.com/identity/v1/oauth2/token"
+        resp = _httpx.Client(timeout=10).post(
+            token_url,
+            headers={
+                "Authorization": f"Basic {creds}",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            data={
+                "grant_type": "client_credentials",
+                "scope": "https://api.ebay.com/oauth/api_scope",
+            },
+        )
+        if resp.status_code == 200:
+            payload = resp.json()
+            token = str(payload.get("access_token") or "")
+            expires_in = int(payload.get("expires_in") or 0)
+            if token and expires_in > 0:
+                with _ebay_token_lock:
+                    _ebay_token_cache["token"] = token
+                    _ebay_token_cache["expires_at"] = time.time() + max(0, expires_in - 60)
+                return token
+    except Exception:
+        pass
+    return ""
 
 _FITMENT_CAPABLE_KINDS = {
     "autodoc_like",
@@ -92,7 +155,7 @@ def provider_endpoint_summary() -> List[str]:
 
 
 def provider_enablement_snapshot() -> Dict[str, Any]:
-    ebay_token_present = bool(str(os.getenv("EBAY_BEARER_TOKEN", "")).strip())
+    ebay_token_present = bool(_get_ebay_oauth_token())
     rockauto_template_present = bool(str(os.getenv("ROCKAUTO_CROSSREF_ENDPOINT_TEMPLATE", "")).strip())
     oem_templates_raw = str(os.getenv("OEM_EPC_ENDPOINT_TEMPLATES", "")).strip()
     oem_templates_count = len([t for t in oem_templates_raw.split(",") if t.strip()]) if oem_templates_raw else 0
@@ -129,13 +192,13 @@ def provider_configuration_gaps() -> List[Dict[str, str]]:
     gaps: List[Dict[str, str]] = []
 
     if _env_bool("EXTERNAL_ENABLE_EBAY", default=False):
-        token = str(os.getenv("EBAY_BEARER_TOKEN", "")).strip()
+        token = _get_ebay_oauth_token()
         if not token:
             gaps.append(
                 {
                     "provider": "ebay_browse",
-                    "gap": "missing_ebay_bearer_token",
-                    "how_to_fix": "Set EBAY_BEARER_TOKEN, or set EBAY_CLIENT_ID/EBAY_CLIENT_SECRET and run scripts/generate_ebay_bearer_token.sh.",
+                    "gap": "missing_ebay_oauth_token",
+                    "how_to_fix": "Set EBAY_APP_ID and EBAY_CERT_ID (PRD credentials) so the token is auto-fetched via OAuth2.",
                 }
             )
 
@@ -263,7 +326,7 @@ def build_external_provider_attempts(part_number: str, brand: str) -> List[Dict[
     if _env_bool("EXTERNAL_ENABLE_EBAY", default=False):
         ebay_base = os.getenv("EBAY_BROWSE_API_BASE", "https://api.ebay.com/buy/browse/v1").rstrip("/")
         marketplace = os.getenv("EBAY_MARKETPLACE_ID", "EBAY_US").strip() or "EBAY_US"
-        token = os.getenv("EBAY_BEARER_TOKEN", "").strip()
+        token = _get_ebay_oauth_token()
         query = f"{normalized_brand} {normalized_part}".strip()
         ebay_url = f"{ebay_base}/item_summary/search?{urlencode({'q': query, 'limit': 20})}"
         headers = {

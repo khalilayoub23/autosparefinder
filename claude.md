@@ -10,7 +10,7 @@
 
 ## Web Scraping Rules — ALWAYS USE THE BROWSER TOOL
 
-- **NEVER use the server IP to fetch external websites.** The server IP (94.130.150.23) is blocked by Cloudflare and many anti-bot systems. Direct requests via `urllib`, `requests`, `httpx`, or `aiohttp` to external sites WILL be blocked.
+- **NEVER use the server IP to fetch external websites.** The server IP (207.180.217.129) is blocked by Cloudflare and many anti-bot systems. Direct requests via `urllib`, `requests`, `httpx`, or `aiohttp` to external sites WILL be blocked.
 - **ALWAYS use the browser tool (Playwright / `run_playwright_code`)** for any extraction from external websites (oempartsonline.com, toyota.co.il, samelet.com, eBay, AliExpress, etc.).
 - **Two-step import pattern** (mandatory for all external data):
   1. **Extract**: Use the browser tool to scrape and save data to a JSON file on disk.
@@ -30,7 +30,7 @@
 ## System Overview
 Platform: Israeli auto parts marketplace
 Stack: FastAPI + PostgreSQL (catalog + PII) + Redis + Meilisearch + Docker Compose
-Server: Hetzner 94.130.150.23
+Server: vmi3190597 207.180.217.129
 
 ---
 
@@ -82,8 +82,57 @@ Three layers in priority order:
 2. Redis — short-term, survives restarts, expires
 3. PostgreSQL — persistent, survives all failures
 
-API: `AgentMemory.set/get/delete` | `append_event` for audit
-Max items: 8 | Max value length: 280 chars
+**Key namespacing:**
+- Agent-scoped: plain key e.g. `"post_history"` — private to that agent
+- Cross-agent shared: `"shared:{key}"` — writable by workers, readable by all agents
+
+**API:**
+```python
+mem = AgentMemory(db, agent_name="my_worker")
+await mem.set(key, value, ttl_hours=N)          # agent-scoped
+await mem.get(key)
+await mem.set_shared(key, value, ttl_hours=N)   # cross-agent shared
+await mem.get_shared(key)
+await mem.write_worker_heartbeat(stats_dict)    # workers: call every cycle
+ctx = await mem.get_system_context()            # agents: read live system state
+await mem.append_event("post_history", event)   # audit trail (max 50 items)
+```
+
+**Shared key schema** (all agents can read, workers must write):
+| Key | Writer | Content |
+|-----|--------|---------|
+| `shared:worker_status:{name}` | each worker | `{worker, stats, updated_at}` — heartbeat |
+| `shared:catalog_stats` | catalog_scraper | `{total_active, added_24h, updated_24h, top_brands}` |
+| `shared:rex_progress` | REX | `{brands_done, brands_total, last_brand, todos_left}` |
+| `shared:noa_last_campaign` | NOA loop | `{week_theme, platforms, created_at}` |
+| `shared:price_sync_stats` | sync_prices | `{updated, errors, last_run}` |
+| `shared:system_health` | health monitor | `{services_down, zombie_count, dlq_count, checked_at}` |
+
+**Rule: every worker MUST call `write_worker_heartbeat()` at the start and end of each cycle.**
+This is the only way agents know a worker is alive and what it produced.
+
+### Alerting System (BACKEND_API_ROUTES.py `_health_monitor_loop`)
+Runs every 5 min. All owner alerts use Redis-backed cooldowns that survive container restarts.
+
+| Alert | Cooldown key | Default TTL |
+|-------|-------------|-------------|
+| Service down/restored | state-change dedup (no cooldown) | — |
+| catalog_stagnation (<50 parts updated in 6h) | `autospare:alert_cooldown:catalog_stagnation` | 1h |
+| high_error_rate (>5% errors/1h) | `autospare:alert_cooldown:high_error_rate` | 1h |
+| worker_silence (db_update_agent >2h) | `autospare:alert_cooldown:worker_silence` | 1h |
+| DLQ growth (new failures only) | `autospare:dlq_last_alerted_count` in Redis | 24h |
+| per-job failure | `autospare:alert_cooldown:job_fail_{job_id}` | 24h |
+| zombie auto-kill | `autospare:alert_cooldown:zombie_{job_id}` | 24h |
+
+Admin users also receive WhatsApp per alert type, also gated by `autospare:alert_cooldown_admin_wa:{alert_key}` with same TTL.
+
+### Zombie Auto-Fix (Check 5b in health monitor)
+Any job with `status = 'running'` and heartbeat silent > 30 min is automatically:
+1. Redis lock `autospare:lock:{job_name}` deleted → next scheduled run can acquire it
+2. `job_registry.status` set to `'failed'` with auto-kill message
+3. Owner alerted once per job_id (24h cooldown)
+
+No manual `redis-cli DEL` or SQL update needed — the sweep handles it every 5 min.
 
 ### Todo System (agent_todo_utils.py)
 Read active todos at start of EVERY cycle.
@@ -98,10 +147,13 @@ Retry: HTTP 429, 503, 504 | Skip: 404, 401, 403
 ### Distributed Lock (distributed_lock.py)
 Acquire lock before any write-heavy job.
 Never run two instances of the same job simultaneously.
+Lock key pattern: `autospare:lock:{job_name}` — TTL 86400s default.
+Zombie sweep auto-clears locks for jobs with stale heartbeat (>30 min silent).
 
 ### Job Registry
 `job_registry_start(job_name)` before every job.
 `job_registry_finish(job_name, result)` after completion.
+Workers MUST update heartbeat regularly via `job_registry_heartbeat()` or write to `job_registry.last_heartbeat_at` — silence >30 min triggers auto-kill.
 
 ### Concurrency
 `_TASK_SEMAPHORE = asyncio.Semaphore(50)` — max 50 concurrent tasks.
@@ -130,6 +182,15 @@ Never run two instances of the same job simultaneously.
 - Never overwrite higher-confidence data with lower-confidence data
 - Never fabricate, simulate, or hallucinate data — all counts, metrics, statuses, and query results must come from live DB/service queries; never invent or estimate values when real data is accessible
 
+
+### Golden Rules (apply to every task, every session)
+
+1. **Make a todo list first.** For every task, split into a numbered checklist before writing any code. Work through items in order. Do not skip or combine steps.
+2. **Root fix only.** No patches, no temporary workarounds shipped as final resolution. If a quick guard is needed for emergency mitigation, mark it temporary and complete the root fix in the same cycle.
+3. **After each fix, write a test and run it.** Confirm the fix works before moving to the next item.
+4. **Be careful of breaking points.** Before any change, identify critical paths that could break (auth flow, payment flow, data path, API contracts). Check them explicitly after the fix.
+5. **Document every fix.** Add a session entry to FIXES_TRACKER.md. Update PRE_LAUNCH_CHECKLIST.md, roadmap.md, or phases.md as relevant. Do not close a task without documentation.
+6. **Verify from real data, not .md files.** Always read the live container env, DB, or source files — never trust stale documentation as ground truth.
 
 ### Root Fix Policy (Production Safety)
 - For each task, run explicit breaking-point checks (critical paths, route links, auth flow, and data-path validation) before closing.
@@ -165,12 +226,65 @@ Higher confidence always wins. All conflicts logged.
 
 ## Business Rules
 
-- VAT: 18% (Israel only) — TAL agent handles this
 - Primary currency: ILS (₪). USD converted via `currency_rate.py`
 - Part origin tags: `original` | `oe_equivalent` | `aftermarket` → SEE phases.md § Layer 8
 - Aftermarket tiers: `OEM` | `OE Equivalent` | `Economy` → displayed by MAYA + NIR
 - Fitment source of truth: `part_vehicle_fitment` table → built in phases.md § Phase 4
 - Vehicle registry: `vehicle_market_il` (36,831+ vehicles from data.gov.il)
+
+### PRICING POLICY — CORE BUSINESS RULE (do not violate)
+
+**Applies to ALL part types: OEM, original, aftermarket, accessories. No exceptions.**
+
+**SINGLE RULE: base_price = cost × 1.45 for EVERY part.**
+
+| Rule | Detail |
+|------|--------|
+| Profit margin | **45%** on every part — HIDDEN from customers, never shown in any API response |
+| All parts | `base_price = cost_price × 1.45` regardless of source type |
+| Shipping | Per supplier policy — env `DEFAULT_CUSTOMER_SHIPPING_ILS` (default ₪59) |
+| `importer_price_ils` | KGM/SsangYong only: wholesale cost excl. VAT. **Must be 0 for ALL other brands.** |
+| `online_price_ils` | International/eBay buy price (no IL VAT). eBay, Spareto, car-parts.ie, OEMPartsOnline. |
+| `max_price_ils` | IL market reference (dealer retail incl. 18% VAT). Source for Case 1 and Case 3. |
+| `base_price` | Always stored as `cost × 1.45`. Computed by `normalize_base_price()` every 6h. |
+
+**normalize_base_price() — 3 cases, all × 1.45:**
+
+| Case | Condition | Formula |
+|------|-----------|---------|
+| 1 | `importer_price_ils > 0` (KGM/SsangYong) | `base = ROUND(max_price_ils × 1.45, 2)` |
+| 2 | `importer=0, online_price_ils > 0` (eBay/international) | `base = ROUND(online_price_ils × 1.45, 2)` |
+| 3 | `importer=0, online=0, max_price_ils > 0` (IL official ref) | `base = ROUND(max_price_ils × 1.45, 2)` |
+
+**VAT per source (determines max_price_ils, NOT base_price formula):**
+- Toyota / Kia / LR / Mazda / Subaru: PDF price **EXCL. VAT** → `max_price_ils = pdf_price × 1.18`
+- Porsche: PDF price **INCL. 18% VAT** → `max_price_ils = pdf_price`
+- KGM / SsangYong: PDF price **INCL. 17% VAT** → `importer = pdf_price / 1.17`, `max = importer × 1.18`
+- eBay / international: no IL VAT → `online_price_ils = converted_price` (no VAT added)
+
+Handled by `PRICES_INCL_VAT` dict in `supplier_pdf_import.py` and `il_importer_pdf_import.py`.
+
+**NEVER expose in customer-facing API:**
+- `profit` field
+- `cost_ils` field
+- `importer_price_ils` in search results
+- Any field that lets a customer back-calculate the 45% margin
+
+**MANDATORY VAT CHECK RULE — every import, upload, or harvest:**
+Before writing any price to the DB, ALWAYS verify whether the source price includes VAT or not.
+
+| Source | VAT in price? | Action |
+|--------|--------------|--------|
+| Official IL importer PDFs (Toyota, Kia, LR, Nissan) | EXCL. VAT | `max = price × 1.18` |
+| Porsche PDF | INCL. 18% VAT | `max = price` |
+| KGM / SsangYong PDF | INCL. 17% VAT | `importer = price / 1.17`, `max = importer × 1.18` |
+| eBay / international | No IL VAT | `online_price_ils = converted_price` |
+| Unknown source | MUST VERIFY | Log warning, default to excl-VAT if unresolved |
+
+**Verification:** `test_pricing_policy.py` — T1-T8 must all pass. Key ratios:
+- `base_price / max_price_ils = 1.4500` for ALL parts (Cases 1 and 3)
+- `base_price / online_price_ils = 1.4500` for international parts (Case 2)
+- `importer_price_ils = 0` for all non-KGM/SsangYong brands (enforced in ON CONFLICT)
 
 ---
 
@@ -338,11 +452,17 @@ ON CONFLICT(part_id, supplier_id) DO UPDATE SET
     updated_at=NOW()
 ```
 - `price_usd` — **always pass `0.0`, NEVER `NULL`** — column is NOT NULL
-- `price_ils` — store in ILS; convert GBP/USD first using `currency_rate.py`
+- `price_ils` — **must equal `base_price` exactly** (45% margin already applied). Do NOT use `importer_price_ils` (which is 0 for non-KGM) or add any extra multiplier on top.
 - `availability` — `'in_stock'` / `'out_of_stock'` / `'on_order'`
 - `warranty_months` — **24** for official Israeli importers (Delek, Kia, Land Rover); **12** default for all others
 - `estimated_delivery_days` — 14 for local, 21 for UK/EU, 30 for overseas
 - ON CONFLICT key is `(part_id, supplier_id)`
+
+**REAL_DATA_ONLY supplier rule (enforced in `db_update_agent.py`):**
+- `_UNIVERSAL_SUPPLIERS = []` — intentionally empty. No supplier rows are auto-generated for all parts.
+- Every `supplier_parts` row must come from a real scraper/importer that has sourced actual data for that specific part.
+- `_MANUFACTURER_SUPPLIERS` only links official IL importers (LR, Zeekr) at `price_mult = 1.0` (price_ils = base_price, no extra multiplier).
+- **Never add fake/placeholder rows with fabricated SKUs** (EBAY-uuid, MST-uuid, etc.) — these were deleted in June 2026.
 
 ---
 
