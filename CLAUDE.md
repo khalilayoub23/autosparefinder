@@ -212,7 +212,8 @@ The system uses three complementary AI approaches tuned to the server constraint
 (8 GB RAM, 4-core AMD EPYC VPS, NO GPU, no swap):
 
 ### Option 1: Phi-3-mini via HF Router (enrichment/generation)
-- **Model**: `microsoft/Phi-3-mini-4k-instruct`
+- **Model**: `microsoft/Phi-3-mini-4k-instruct:featherless-ai`
+- **Provider suffix required**: HF Router uses `{model}:{provider}` format. Featherless AI hosts Phi-3-mini.
 - **Config**: `HF_ENRICH_MODEL` in `hf_client.py:69` + `docker-compose.yml`
 - **Use cases**: `enrich_pending_parts` (Hebrew→English translation, part naming),
   search query normalization, chatbot Hebrew responses

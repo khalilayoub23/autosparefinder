@@ -3,7 +3,7 @@ services:
     image: pgvector/pgvector:pg16
     container_name: autospare_postgres_catalog
     restart: unless-stopped
-    mem_limit: 2048m
+    mem_limit: 3072m
     shm_size: 256m
     command: ["postgres", "-c", "shared_buffers=256MB", "-c", "work_mem=8MB", "-c", "maintenance_work_mem=64MB", "-c", "effective_cache_size=512MB", "-c", "max_connections=50"]
     environment:
@@ -176,7 +176,7 @@ services:
       MEILI_URL: http://meilisearch:7700
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
       MEILI_REBUILD: '0'
-      HF_ENRICH_MODEL: 'microsoft/Phi-3-mini-4k-instruct'
+      HF_ENRICH_MODEL: 'microsoft/Phi-3-mini-4k-instruct:featherless-ai'
       ENVIRONMENT: production
       REAL_DATA_ONLY: 'true'        # blocks synthetic/AI-generated data; real harvesting uses REX_HARVEST_ENABLED
       REX_HARVEST_ENABLED: 'true'  # allows REX to scrape and import real parts data through the pipeline
@@ -335,7 +335,7 @@ services:
     image: clamav/clamav:stable
     container_name: autospare_clamav
     restart: unless-stopped
-    mem_limit: 2048m
+    mem_limit: 512m
     volumes:
     - clamav_data:/var/lib/clamav
     healthcheck:

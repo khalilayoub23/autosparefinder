@@ -66,9 +66,10 @@ ROUTER_BASE  = "https://router.huggingface.co/v1"
 INFER_BASE   = "https://router.huggingface.co/hf-inference/models"
 
 # Model used for background enrichment tasks (part naming, Hebrew translation, category suggestions).
-# Phi-3-mini: Microsoft SLM — better Hebrew than Qwen2.5-7B, fast on HF PRO Router, avoids Cerebras quota.
-# Fallback chain: Phi-3-mini → Groq llama-3.1-8b-instant (already configured in hf_router_text).
-HF_ENRICH_MODEL = os.getenv("HF_ENRICH_MODEL", "microsoft/Phi-3-mini-4k-instruct")
+# Phi-3-mini via Featherless AI provider — use :featherless-ai suffix to route to the correct provider.
+# Confirmed on HF Router inference providers page (huggingface.co/{model}?inference_provider=featherless-ai)
+# Fallback chain: Phi-3-mini → Groq llama-3.1-8b-instant (configured in hf_router_text).
+HF_ENRICH_MODEL = os.getenv("HF_ENRICH_MODEL", "microsoft/Phi-3-mini-4k-instruct:featherless-ai")
 
 # Cache TTL (seconds).  0 = disabled.
 _TEXT_CACHE_TTL  = int(os.getenv("HF_TEXT_CACHE_TTL",  "3600"))   # 1 hour
