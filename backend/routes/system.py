@@ -42,12 +42,22 @@ CORS_HEADERS = {
 async def collect_preflight():
     return JSONResponse(content={}, headers=CORS_HEADERS)
 
+_COLLECT_SECRET = os.environ.get("COLLECT_SECRET", "")
+
 @router.post("/api/v1/system/collect")
 async def collect_scrape_data(request: Request):
+    if _COLLECT_SECRET:
+        token = request.headers.get("X-Collect-Secret", "")
+        if token != _COLLECT_SECRET:
+            from fastapi import HTTPException as _HTTPException
+            raise _HTTPException(status_code=403, detail="Forbidden")
     ct = request.headers.get("content-type", "")
+    _vehicle_slug = ""  # captured from any branch
+
     if "multipart/form-data" in ct or "application/x-www-form-urlencoded" in ct:
         form = await request.form()
-        brand = form.get("brand", "unknown")
+        brand = form.get("brand", "") or ""
+        _vehicle_slug = form.get("vehicle", "") or ""
         done = form.get("done", "false").lower() == "true"
         raw = form.get("data") or form.get("chunk", "[]")
         chunk = json.loads(raw) if raw else []
@@ -56,39 +66,56 @@ async def collect_scrape_data(request: Request):
         # mode: no-cors fetch from cross-origin tabs sends body as text/plain
         raw_body = await request.body()
         data = json.loads(raw_body)
-        brand = data.get("brand", "unknown")
+        brand = data.get("brand", "") or ""
+        _vehicle_slug = data.get("vehicle", "") or ""
         chunk = data.get("chunk", data.get("parts", []))
         done = data.get("done", False)
     else:
         data = await request.json()
-        brand = data.get("brand", "unknown")
+        brand = data.get("brand", "") or ""
+        _vehicle_slug = data.get("vehicle", "") or ""
         chunk = data.get("chunk", data.get("parts", []))
         done = data.get("done", False)
 
-    if brand not in _collect_buffers:
-        _collect_buffers[brand] = {"meta": {}, "parts": []}
+    print(f"[collect] ct={ct!r} brand={brand!r} vehicle={_vehicle_slug!r} done={done} parts={len(chunk)}", flush=True)
+    # Extract brand from vehicle slug — browser harvester sends "vehicle":"toyota/corolla-ke" not "brand"
+    if not brand and _vehicle_slug:
+        brand = _vehicle_slug.split("/")[0]
+    if not brand:
+        brand = "unknown"
+
+    vehicle_slug = _vehicle_slug  # already captured above from any branch
+    # Key by brand+vehicle, not brand alone — multiple vehicles of the same brand
+    # (e.g. several Mercedes models) routinely finish around the same time, and a
+    # brand-only key let them clobber each other's buffer and /tmp file.
+    buf_key = f"{brand}::{vehicle_slug}" if vehicle_slug else brand
+    file_tag = buf_key.replace("/", "_").replace(":", "_")
+
+    if buf_key not in _collect_buffers:
+        _collect_buffers[buf_key] = {"meta": {}, "parts": []}
 
     if "meta" in data:
-        _collect_buffers[brand]["meta"] = data["meta"]
+        _collect_buffers[buf_key]["meta"] = data["meta"]
     if chunk:
-        _collect_buffers[brand]["parts"].extend(chunk)
+        _collect_buffers[buf_key]["parts"].extend(chunk)
 
     if done:
-        buf = _collect_buffers[brand]
+        buf = _collect_buffers[buf_key]
         total = len(buf["parts"])
-        del _collect_buffers[brand]
+        del _collect_buffers[buf_key]
 
-        # OEM brands use oempartsonline_importer; others use car_parts_ie_import_generic
-        # Strip _fallback/_url/_extra suffixes so fallback batches route correctly
+        # Route to correct importer based on DATA FORMAT, not just brand name.
         brand_base = brand.lower().split("_")[0]
         OEM_BRANDS = {"infiniti", "lexus", "acura", "mopar", "toyota", "honda", "nissan",
                       "ford", "bmw", "hyundai", "kia", "mazda", "subaru", "mitsubishi",
                       "volvo", "jaguar", "landrover", "porsche", "audi", "volkswagen", "vw", "gm"}
-        if brand_base in OEM_BRANDS:
-            path = f"/tmp/{brand}_oem.json"
+        sample_part = buf["parts"][0] if buf["parts"] else {}
+        is_cpie_data = "price_eur" in sample_part or "source_url" in sample_part
+        if brand_base in OEM_BRANDS and not is_cpie_data:
+            path = f"/tmp/{file_tag}_oem.json"
             with open(path, "w") as f:
                 json.dump(buf["parts"], f)
-            log_path = f"/tmp/{brand}_oem_import.log"
+            log_path = f"/tmp/{file_tag}_oem_import.log"
             proc = subprocess.Popen(
                 ["python3", "/app/oempartsonline_importer.py", "--file", path, "--brand", brand_base],
                 stdout=open(log_path, "w"),
@@ -97,23 +124,29 @@ async def collect_scrape_data(request: Request):
             )
             print(f"[collect] OEM import started for {brand}: pid={proc.pid} log={log_path}")
         else:
+            # Include vehicle slug in JSON so importer can write fitment rows
             out = {**buf["meta"], "parts": buf["parts"]}
-            path = f"/tmp/{brand}_cpie.json"
+            if vehicle_slug:
+                out["vehicle_slug"] = vehicle_slug
+            path = f"/tmp/{file_tag}_cpie.json"
             with open(path, "w") as f:
                 json.dump(out, f)
-            log_path = f"/tmp/{brand}_cpie_import.log"
+            log_path = f"/tmp/{file_tag}_cpie_import.log"
+            cmd = ["python3", "/app/car_parts_ie_import_generic.py", "--brand", brand, "--file", path]
+            if vehicle_slug:
+                cmd += ["--vehicle-slug", vehicle_slug]
             proc = subprocess.Popen(
-                ["python3", "/app/car_parts_ie_import_generic.py", "--brand", brand, "--file", path],
+                cmd,
                 stdout=open(log_path, "w"),
                 stderr=subprocess.STDOUT,
                 close_fds=True,
             )
-            print(f"[collect] auto-import started for {brand}: pid={proc.pid} log={log_path}")
+            print(f"[collect] auto-import started for {brand} vehicle={vehicle_slug}: pid={proc.pid} log={log_path}")
 
         return JSONResponse({"status": "saved", "path": path, "total": total, "import_pid": proc.pid}, headers=CORS_HEADERS)
 
     return JSONResponse(
-        {"status": "ok", "brand": brand, "total": len(_collect_buffers[brand]["parts"])},
+        {"status": "ok", "brand": brand, "total": len(_collect_buffers[buf_key]["parts"])},
         headers=CORS_HEADERS
     )
 

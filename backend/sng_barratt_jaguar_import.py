@@ -160,12 +160,12 @@ async def import_batch(conn, supplier_id, batch, skip_fitment):
                     VALUES(gen_random_uuid(),$1,$2,$3,'Jaguar',$4,
                            $5,$6,$7,$8,
                            $9,0,0,$9,$9,$10::jsonb,$11::jsonb,
-                           'New',TRUE,FALSE,NOW(),NOW())
+                           'new',TRUE,FALSE,NOW(),NOW())
                     ON CONFLICT(sku) DO UPDATE SET
                         name=EXCLUDED.name, description=EXCLUDED.description,
                         oem_number=EXCLUDED.oem_number, aftermarket_tier=EXCLUDED.aftermarket_tier,
                         base_price=EXCLUDED.base_price,
-                        importer_price_ils=0,
+                        importer_price_ils=CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
                         online_price_ils=0,
                         min_price_ils=CASE WHEN EXCLUDED.min_price_ils > 0
                                       THEN EXCLUDED.min_price_ils
@@ -196,7 +196,7 @@ async def import_batch(conn, supplier_id, batch, skip_fitment):
                         part_type,created_at,updated_at)
                     VALUES(gen_random_uuid(),$1,$2,$3,
                            $4,$5,$6,12,21,$7,$8,$9,NOW(),NOW())
-                    ON CONFLICT (part_id, supplier_id) DO UPDATE SET
+                    ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE SET
                         price_usd=EXCLUDED.price_usd,
                         price_ils=EXCLUDED.price_ils,
                         is_available=EXCLUDED.is_available,

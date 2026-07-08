@@ -37,12 +37,16 @@ def _pg_dump(db_url: str, out_path: str) -> bool:
     env = {**os.environ}
     if password:
         env["PGPASSWORD"] = password
+    # Compressed custom format (-Fc, zlib level 6 by default): ~3.5x smaller
+    # than plain SQL (1.6GB vs 5.6GB for the 4M-part catalog). Uncompressed
+    # dumps at 7-daily retention were consuming 39GB of the 150GB disk.
+    # Restore with: pg_restore -h <host> -U <user> -d <db> <file>
     cmd = [
         "pg_dump",
         "-h", host,
         "-p", port or "5432",
         "-U", user,
-        "-Fp", "--no-owner", "--no-acl",
+        "-Fc", "--no-owner", "--no-acl",
         "-f", out_path,
         dbname,
     ]
@@ -91,12 +95,17 @@ def _tag_backup(backup_path: str) -> str:
 def _prune_old_backups_smart(db_label: str) -> None:
     """
     Smart pruning with retention tags:
-    - Keep last 7 daily backups
-    - Keep last 4 weekly backups
-    - Keep last 3 monthly backups
+    - Keep last 2 daily backups
+    - Keep last 1 weekly backup
+    - Keep last 1 monthly backup
+
+    Retention reduced from 7/4/3 on 2026-07-02: this task is the SECOND backup
+    layer — the dedicated postgres_backup containers already keep rotated
+    daily/weekly/monthly compressed backups in /opt/autosparefinder/backups.
+    7 daily uncompressed dumps were consuming 39GB (26%) of the 150GB disk.
     """
     pattern = os.path.join(BACKUP_DIR, f"{db_label}_*.sql")
-    files = sorted(glob.glob(pattern))
+    files = sorted(glob.glob(pattern) + glob.glob(pattern + ".gz"))
     
     if not files:
         return
@@ -123,15 +132,15 @@ def _prune_old_backups_smart(db_label: str) -> None:
         # Count and keep based on tag
         if tag == "daily":
             daily_count += 1
-            if daily_count > 7:
+            if daily_count > 2:
                 _delete_backup(backup_path)
         elif tag == "weekly":
             weekly_count += 1
-            if weekly_count > 4:
+            if weekly_count > 1:
                 _delete_backup(backup_path)
         elif tag == "monthly":
             monthly_count += 1
-            if monthly_count > 3:
+            if monthly_count > 1:
                 _delete_backup(backup_path)
 
 

@@ -556,11 +556,21 @@ function _supplierForCard(sp) {
       ? resolvedShip
       : (Number.isFinite(rawShip) ? rawShip : 0)).toFixed(2))
 
-  // eBay pricing rule: customer card price = eBay ILS cost * 1.45 (45% margin).
-  const priceNet = Number(((isEbay
-      ? baseCostIls * 1.45
-      : baseCostIls * 1.30)).toFixed(2))
-    const vatAmount = isEbay ? 0 : Number((priceNet * 0.18).toFixed(2))
+  // Single source of truth (2026-07-05): the backend computes the canonical
+  // customer price (cost×1.45 + 18% VAT — identical to Stripe checkout) and
+  // sends it as customer_price_ils / customer_vat_ils / customer_total_ils.
+  // Use those directly. The old client-side ×1.30 margin diverged from what
+  // the customer was actually charged at checkout.
+  const backendNet = Number(sp?.customer_price_ils)
+  const backendVat = Number(sp?.customer_vat_ils)
+  const hasBackendPrice = Number.isFinite(backendNet) && backendNet > 0
+
+  const priceNet = hasBackendPrice
+    ? backendNet
+    : Number((baseCostIls * 1.45).toFixed(2))
+  const vatAmount = hasBackendPrice && Number.isFinite(backendVat)
+    ? backendVat
+    : Number((priceNet * 0.18).toFixed(2))
 
   return {
     ...sp,
@@ -814,7 +824,185 @@ function MobileBottomSheet({ open, onClose, title, subtitle, children, footer = 
   )
 }
 
+// ─── All-offers comparison modal (eBay-style "see all offers") ──────────────
+function AllOffersModal({ part, onAddToCart, onClose }) {
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [offers, setOffers] = useState([])
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    setError(null)
+    partsApi.suppliers(part.id)
+      .then((res) => {
+        if (cancelled) return
+        const raw = res.data?.suppliers || []
+        const normalized = raw
+          .map((sp) => _supplierForCard(sp))
+          .sort((a, b) => (a.total ?? Infinity) - (b.total ?? Infinity))
+        setOffers(normalized)
+      })
+      .catch(() => { if (!cancelled) setError('שגיאה בטעינת ההצעות — נסה שוב') })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [part.id])
+
+  const bestTotal = offers.length > 0 ? offers[0].total : null
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center" aria-modal="true" role="dialog">
+      <button
+        type="button"
+        aria-label="סגור"
+        className="absolute inset-0 bg-slate-950/50 backdrop-blur-[2px]"
+        onClick={onClose}
+      />
+      <div className="relative flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-t-[28px] bg-white shadow-2xl sm:rounded-[28px]">
+        {/* Header */}
+        <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
+          <div className="min-w-0 text-right">
+            <h3 className="text-base font-black text-brand-navy">השוואת כל ההצעות</h3>
+            <p className="mt-0.5 truncate text-xs text-slate-500">
+              {part.name_he || part.name}
+              {!loading && offers.length > 0 ? ` · ${offers.length} הצעות` : ''}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-500 hover:bg-slate-100"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto px-4 py-4">
+          {loading ? (
+            <div className="flex flex-col items-center justify-center gap-3 py-14 text-slate-400">
+              <Loader2 className="h-7 w-7 animate-spin" />
+              <span className="text-sm">טוען את כל ההצעות…</span>
+            </div>
+          ) : error ? (
+            <div className="flex flex-col items-center justify-center gap-2 py-14 text-center">
+              <AlertCircle className="h-6 w-6 text-red-400" />
+              <span className="text-sm text-slate-500">{error}</span>
+            </div>
+          ) : offers.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-2 py-14 text-center">
+              <Tag className="h-6 w-6 text-slate-300" />
+              <span className="text-sm text-slate-500">אין הצעות ספק זמינות לחלק זה כרגע</span>
+            </div>
+          ) : (
+            <div className="space-y-2.5">
+              {offers.map((s, i) => {
+                const isBest = i === 0
+                const savings = !isBest && bestTotal != null && s.total != null
+                  ? Number((s.total - bestTotal).toFixed(2))
+                  : null
+                return (
+                  <div
+                    key={s.supplier_part_id || i}
+                    className={`rounded-2xl border px-3.5 py-3 ${
+                      isBest
+                        ? 'border-emerald-200 bg-emerald-50/60 shadow-sm'
+                        : 'border-slate-200 bg-white'
+                    }`}
+                  >
+                    {/* Row 1: rank + supplier + badges */}
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 text-xs font-medium text-slate-700">
+                        <span className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-bold ${
+                          isBest ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-500'
+                        }`}>{i + 1}</span>
+                        <CountryFlag country={s.supplier_country} />
+                        <span className="truncate">{s.supplier_name || `ספק #${i + 1}`}</span>
+                        {isBest && (
+                          <span className="inline-flex items-center rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] font-bold text-white">
+                            המחיר הטוב ביותר
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <AvailabilityBadge availability={s.availability} deliveryDays={s.estimated_delivery_days} />
+                        {s.express_available && (
+                          <ExpressBadge price={s.express_price_ils} days={s.express_delivery_days} cutoff={s.express_cutoff_time} />
+                        )}
+                        {s.warranty_months ? (
+                          <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] text-slate-500">
+                            <Shield className="h-3 w-3" />{s.warranty_months} חוד׳
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    {/* Row 2: price breakdown + total + cart */}
+                    <div className="mt-2.5 flex flex-wrap items-center justify-between gap-3">
+                      <div className="grid flex-1 grid-cols-3 gap-1 rounded-xl bg-slate-50 py-1.5 text-center text-[11px] text-slate-500" style={{ minWidth: '11rem' }}>
+                        <div><div className="font-semibold text-slate-700">₪{s.price_no_vat?.toFixed(2)}</div>נטו</div>
+                        <div className="border-x border-slate-200"><div className="font-semibold text-slate-700">₪{s.vat?.toFixed(2)}</div>מע״מ</div>
+                        <div><div className="font-semibold text-slate-700">{_shippingDisplay(s.shipping, true)}</div>משלוח</div>
+                      </div>
+                      <div className="text-left">
+                        <div className={`text-xl font-black leading-none ${isBest ? 'text-emerald-700' : 'text-brand-navy'}`}>
+                          ₪{s.total?.toFixed(2)}
+                        </div>
+                        {savings != null && savings > 0 && (
+                          <div className="mt-0.5 text-[10px] text-slate-400">+₪{savings.toFixed(2)} מהזול ביותר</div>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => {
+                          onAddToCart({
+                            partId: part.id,
+                            supplierPartId: s.supplier_part_id || `fallback-${part.id}-${i}`,
+                            name: part.name_he || part.name,
+                            manufacturer: part.manufacturer,
+                            price: s.subtotal,
+                            vat: s.vat,
+                            deliveryDays: s.estimated_delivery_days || null,
+                            isEstimated: false,
+                          })
+                          toast.success(`${part.name_he || part.name} נוסף לסל 🛒`)
+                          onClose()
+                        }}
+                        className={`flex min-h-10 items-center justify-center gap-1.5 rounded-xl px-4 text-sm font-bold transition-colors ${
+                          isBest
+                            ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                            : 'border border-brand-200 bg-white text-brand-700 hover:bg-brand-50'
+                        }`}
+                      >
+                        <ShoppingCart className="h-4 w-4" />
+                        הוסף לסל
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function CompareAllOffersButton({ part, supplierCount = null, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-slate-50 py-2 text-xs font-bold text-slate-600 transition-colors hover:border-brand-200 hover:bg-brand-50 hover:text-brand-700"
+    >
+      <SlidersHorizontal className="h-3.5 w-3.5" />
+      השווה את כל ההצעות{supplierCount ? ` (${supplierCount})` : ''}
+    </button>
+  )
+}
+
 function TypeSection({ typeKey, data, onAddToCart }) {
+  const [showAllOffers, setShowAllOffers] = useState(false)
   const meta = TYPE_META[typeKey] || TYPE_META.aftermarket
   if (!data?.part) {
     return (
@@ -973,12 +1161,21 @@ function TypeSection({ typeKey, data, onAddToCart }) {
             )
           })
         )}
+        <CompareAllOffersButton
+          part={part}
+          supplierCount={part.supplier_count}
+          onClick={() => setShowAllOffers(true)}
+        />
       </div>
+      {showAllOffers && (
+        <AllOffersModal part={part} onAddToCart={onAddToCart} onClose={() => setShowAllOffers(false)} />
+      )}
     </div>
   )
 }
 
 function PartCard({ part, onAddToCart }) {
+  const [showAllOffers, setShowAllOffers] = useState(false)
   const suppliers = part.suppliers || (part.pricing ? [part.pricing] : [])
   const normalizedSuppliers = suppliers.map((sp) => _supplierForCard(sp))
   const warrantyInfo = _partWarranty(part, normalizedSuppliers)
@@ -1140,8 +1337,16 @@ function PartCard({ part, onAddToCart }) {
               ))}
             </div>
           )}
+          <CompareAllOffersButton
+            part={part}
+            supplierCount={part.supplier_count}
+            onClick={() => setShowAllOffers(true)}
+          />
         </div>
       </div>
+      {showAllOffers && (
+        <AllOffersModal part={part} onAddToCart={onAddToCart} onClose={() => setShowAllOffers(false)} />
+      )}
     </article>
   )
 }

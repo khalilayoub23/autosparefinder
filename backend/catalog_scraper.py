@@ -1411,7 +1411,7 @@ async def db_upsert_part(db: AsyncSession, *, sku: str, name: str, manufacturer:
         return str(existing[0]), False
 
     part_id = str(uuid.uuid4())
-    insert_part_condition = "OEM" if is_oem_source else "New"
+    insert_part_condition = "oem" if is_oem_source else "new"
     insert_aftermarket_tier = aftermarket_tier if apply_aftermarket and not is_oem_source else None
     insert_aftermarket_brand = str(aftermarket_brand_id) if (apply_aftermarket and aftermarket_brand_id and not is_oem_source) else None
     insert_oem_number = oem_number if is_oem_source and oem_number else None

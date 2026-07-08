@@ -305,7 +305,8 @@ async def run(brands=None, dry_run=False):
                         END,
                         base_price = CASE WHEN $2 > 0 THEN $2 ELSE base_price END,
                         max_price_ils = CASE WHEN $2 > 0 THEN $2 ELSE max_price_ils END,
-                        importer_price_ils=0, online_price_ils=0, updated_at=NOW()
+                        importer_price_ils = CASE WHEN importer_price_ils > 0 THEN importer_price_ils ELSE 0 END,
+                        online_price_ils=0, updated_at=NOW()
                     WHERE id=$3
                 """, rec["part_type"], price, uuid.UUID(part_id))
                 stats["cat_fixed"] += 1

@@ -294,7 +294,7 @@ async def upsert_part(conn, product: dict, eur_rate: float) -> dict:
                 """INSERT INTO parts_catalog
                     (id, sku, oem_number, name, manufacturer_id, aftermarket_brand_id,
                      base_price, online_price_ils, specifications, is_active, part_condition)
-                   VALUES (gen_random_uuid(), $1, $2, $3, $4::uuid, $5::uuid, $6, $7, $8::jsonb, true, 'New')
+                   VALUES (gen_random_uuid(), $1, $2, $3, $4::uuid, $5::uuid, $6, $7, $8::jsonb, true, 'new')
                    ON CONFLICT (sku) DO UPDATE SET
                      name = EXCLUDED.name,
                      updated_at = NOW()

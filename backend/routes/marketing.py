@@ -30,11 +30,13 @@ async def validate_coupon(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_pii_db)
 ):
+    # FAIL CLOSED (fixed 2026-07-05): this stub used to return valid=True with
+    # 10% off for ANY code any customer typed — a plain revenue hole. No coupon
+    # system exists yet (no coupons table); until one does, every code is invalid.
     return {
-        "valid": True,
+        "valid": False,
         "code": data.code,
-        "discount_type": "percentage",
-        "discount_value": 10
+        "message": "קוד הקופון אינו תקף",
     }
 
 @router.get("/api/v1/marketing/coupons")

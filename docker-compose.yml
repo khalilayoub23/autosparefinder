@@ -200,6 +200,9 @@ services:
       SCRAPER_LOCK_TTL_S: '21600'
       DB_AGENT_HEARTBEAT_INTERVAL_S: '30'
       OWNER_WHATSAPP_PHONE: '+972532426920'
+      COLLECT_SECRET: ${COLLECT_SECRET}
+      FLARESOLVERR_URL: http://flaresolverr:8191/v1
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
     depends_on:
       postgres_catalog:
         condition: service_healthy

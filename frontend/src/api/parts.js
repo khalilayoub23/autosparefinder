@@ -27,6 +27,8 @@ export const partsApi = {
   searchByVin: (vin, part_query = '', category = null, limit = 50, offset = 0) =>
     api.get('/parts/search-by-vin', { params: { vin, part_query, category, limit, offset } }),
   getById: (id) => api.get(`/parts/${id}`),
+  suppliers: (partId, limit = 100) =>
+    api.get(`/parts/${partId}/suppliers`, { params: { limit } }),
   compare: (part_id) => api.post('/parts/compare', null, { params: { part_id } }),
   searchByVehicle: (vehicle_id, category) =>
     api.post('/parts/search-by-vehicle', null, { params: { vehicle_id, category } }),

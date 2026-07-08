@@ -287,7 +287,7 @@ async def main():
                         MANUFACTURER, MANUFACTURER_ID,
                         category, il_selling, il_cost, il_retail,
                         specs, json.dumps(compat_vehicles),
-                        "New", aftermarket_tier, safety)
+                        "new", aftermarket_tier, safety)
                     inserted += 1
 
                 # Fitment rows

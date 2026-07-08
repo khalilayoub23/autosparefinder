@@ -38,6 +38,11 @@ async def telegram_admin_webhook(request: Request):
     """
     Handles approval/rejection callbacks from NOA's admin Telegram bot.
     """
+    secret = os.getenv("TELEGRAM_WEBHOOK_SECRET", "").strip()
+    header_secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    if not secret or header_secret != secret:
+        raise HTTPException(status_code=403, detail="Invalid Telegram secret token")
+
     data = await request.json()
 
     # Handle inline keyboard button press
@@ -48,6 +53,14 @@ async def telegram_admin_webhook(request: Request):
         message_id = query["message"]["message_id"]
 
         async with httpx.AsyncClient(timeout=10.0) as client:
+            # NOA sends platform-specific approvals (approve_tiktok / approve_instagram
+            # / approve_facebook / approve_whatsapp) — the handler only matched the
+            # legacy "approve_post", so approval taps did NOTHING (fixed 2026-07-05).
+            if callback_data.startswith("approve_"):
+                callback_platform = callback_data.replace("approve_", "") or "post"
+                callback_data = "approve_post"
+            else:
+                callback_platform = ""
             if callback_data == "approve_post":
                 # אשר פרסום
                 from agents.memory import AgentMemory
@@ -63,15 +76,45 @@ async def telegram_admin_webhook(request: Request):
                                   break
 
                       if pending:
-                          from social.tiktok_publisher import post_text_content
+                          caption = pending.get("caption", "")
                           hashtags = pending.get("hashtags") or []
-                          result = await post_text_content(
-                              caption=pending.get("caption", ""),
-                              hashtags=hashtags,
-                          )
-                          pending["status"] = "published" if result.get("ok") else "failed"
+                          plat = (callback_platform or pending.get("platform") or "post").lower()
+                          notes: list[str] = []
+
+                          # 1) Telegram channel — real public distribution we fully
+                          #    control; every approved post goes out here.
+                          try:
+                              from social.telegram_publisher import publish_to_telegram
+                              tg_res = await publish_to_telegram(caption)
+                              notes.append("✅ פורסם בערוץ הטלגרם" if tg_res.get("ok")
+                                           else f"⚠️ טלגרם: {tg_res.get('error', 'נכשל')}")
+                          except Exception as _te:
+                              notes.append(f"⚠️ טלגרם: {_te}")
+
+                          # 2) TikTok API (currently sandbox — uploads land in the
+                          #    sandbox app, not the public feed, until app approval).
+                          if plat in ("tiktok", "post"):
+                              try:
+                                  from social.tiktok_publisher import post_text_content
+                                  tk = await post_text_content(caption=caption, hashtags=hashtags)
+                                  _sandbox = os.getenv("TIKTOK_SANDBOX", "true").lower() == "true"
+                                  if tk.get("ok"):
+                                      notes.append("✅ TikTok (sandbox — לא ציבורי עד אישור האפליקציה)" if _sandbox else "✅ פורסם ב-TikTok")
+                                  else:
+                                      notes.append(f"⚠️ TikTok: {tk.get('error')}")
+                              except Exception as _tk:
+                                  notes.append(f"⚠️ TikTok: {_tk}")
+
+                          # 3) Platforms without API tokens yet — hand back
+                          #    copy-paste-ready text.
+                          if plat in ("instagram", "facebook", "whatsapp"):
+                              notes.append(f"📋 {plat.title()}: אין עדיין חיבור API — הטקסט מוכן להעתקה למטה")
+
+                          pending["status"] = "approved"
                           await mem.set("pending_post", pending)
-                          reply = "✅ Published successfully to TikTok" if result.get("ok") else f"❌ Publish error: {result.get('error')}"
+                          reply = "🎯 הפוסט אושר!\n" + "\n".join(notes)
+                          if plat in ("instagram", "facebook", "whatsapp"):
+                              reply += f"\n\n--- העתק מכאן ---\n{caption}"
                       else:
                           reply = "⚠️ No pending NOA post was found for approval"
 
@@ -372,6 +415,20 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_pii_
     profile_name = parsed.get("profile_name", "")
     reply_jid = raw_data.get("reply_jid", "")
 
+    # De-duplicate at ingress (same pattern as the Telegram webhook) — WhatsApp
+    # delivers the same message in multiple upserts, which caused every user
+    # message to be processed and answered twice (found 2026-07-05).
+    wa_message_id = str(raw_data.get("message_id") or "").strip()
+    if wa_message_id:
+        try:
+            from BACKEND_AUTH_SECURITY import get_redis
+            redis = await get_redis()
+            is_new = await redis.set(f"wa:msg:{wa_message_id}", "1", ex=3600, nx=True)
+            if not is_new:
+                return Response(content="<Response/>", media_type="text/xml")
+        except Exception:
+            pass  # dedup is best-effort; never block message handling
+
     media_kind = str(parsed.get("media_kind") or "").strip().lower()
     media_b64 = str(parsed.get("media_base64") or "").strip()
     media_mime = str(parsed.get("media_mime") or "").strip().lower()
@@ -399,6 +456,16 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_pii_
         ).order_by(Conversation.last_message_at.desc()).limit(1)
     )
     conversation = conv_result.scalar_one_or_none()
+
+    # Conversation freshness (added 2026-07-05): the latest conversation was
+    # reused FOREVER, so a customer saying "hi" after weeks got the bot
+    # "continuing" a months-old thread ("ממשיכים עם Citroen BERLINGO 2013…").
+    # If the last message is older than 24h, start a clean conversation.
+    if conversation is not None and conversation.last_message_at is not None:
+        _age = datetime.now(tz=timezone(timedelta(hours=3))).replace(tzinfo=None) - conversation.last_message_at
+        if _age > timedelta(hours=24):
+            conversation = None
+
     is_new_conversation = conversation is None
 
     if not conversation:
@@ -530,6 +597,26 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_pii_
                     "media_bytes": len(media_bytes),
                 }
 
+        # Vision runs on EVERY image (fixed 2026-07-05) — previously an image
+        # sent WITH a caption skipped analysis entirely (`if not body:` gated
+        # it), so the bot answered the caption and silently ignored the image.
+        if media_kind == "image" and media_bytes and body:
+            try:
+                from hf_client import hf_vision
+                _img_prompt = (
+                    "תאר מה מוצג בתמונה בקצרה ובמדויק (חלק רכב, צילום מסך של שגיאה, "
+                    f"מסמך וכו'). ההודעה המצורפת מהלקוח: {body}"
+                )
+                _img_analysis = await hf_vision(
+                    base64.b64encode(media_bytes).decode("ascii"),
+                    _img_prompt,
+                    mime=media_mime or "image/jpeg",
+                )
+                if (_img_analysis or "").strip():
+                    body = f"{body}\n[תוכן התמונה שצורפה]: {_img_analysis.strip()}"
+            except Exception as exc:
+                print(f"[WhatsApp] Vision-with-caption failed (continuing with caption only): {exc}")
+
         if not body:
             try:
                 if media_kind == "image":
@@ -658,23 +745,29 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_pii_
     elif body in ("/start", "/התחל", "start", "hello", "hi", "היי", "הי", "هلا", "مرحبا", "שלום"):
         pass
 
-    user_msg = Message(
-        conversation_id=conversation.id,
-        role="user",
-        content=body,
-        content_type=user_content_type,
-        analysis=user_analysis,
-    )
-    db.add(user_msg)
-    await db.flush()
+    # NOTE (2026-07-05): do NOT insert the user message here for the AI path —
+    # process_customer_message() in BACKEND_AI_AGENTS.py saves it, and inserting
+    # in both places stored every customer message TWICE (doubling the history
+    # fed to the model). Only the early-exit human-handoff paths below, which
+    # never reach the agent, persist it themselves.
+    def _user_msg_row() -> Message:
+        return Message(
+            conversation_id=conversation.id,
+            role="user",
+            content=body,
+            content_type=user_content_type,
+            analysis=user_analysis,
+        )
 
     handoff_settings = await _load_handoff_settings()
 
     if _takeover_active(conversation):
+        db.add(_user_msg_row())
         await db.commit()
         return Response(content="<Response/>", media_type="application/xml")
 
     if _handoff_lock_active(conversation, handoff_settings):
+        db.add(_user_msg_row())
         cooldown = int(handoff_settings.get("waiting_notice_cooldown_seconds") or 120)
         if _handoff_waiting_notice_due(conversation, cooldown):
             waiting_text = _handoff_waiting_message(body)
@@ -693,6 +786,7 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_pii_
         return Response(content="<Response/>", media_type="application/xml")
 
     if _wants_human_handoff(body):
+        db.add(_user_msg_row())
         _apply_handoff_request(conversation, reason="intent", message=body)
         ack_text = _handoff_ack_message(body)
         send_result = await wa_send(sender_phone, ack_text, reply_jid=reply_jid)
@@ -709,17 +803,27 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_pii_
         await db.commit()
         return Response(content="<Response/>", media_type="application/xml")
 
+    import re as _re
+
+    # Route ALL messages (including purchase intent) through the AI agent.
+    # The agent already handles "אני רוצה להזמין" by calling create_checkout_link()
+    # and returning a real Stripe payment URL. The old short-circuit was bypassing this.
     try:
-        agent_result = await process_user_message(
-            user_id=str(conversation_user_id),
-            message=body,
-            conversation_id=conv_id,
-            db=db,
-            source="whatsapp",
+        # 12s timeout — purchase flow needs extra time to build Stripe session
+        agent_result = await asyncio.wait_for(
+            process_user_message(
+                user_id=str(conversation_user_id),
+                message=body,
+                conversation_id=conv_id,
+                db=db,
+                source="whatsapp",
+            ),
+            timeout=12.0,
         )
-        import re
         raw_reply = agent_result.get("response", "מצטערים, נתקלנו בבעיה. אנא נסה שוב.")
-        reply_text = re.sub(r'<[^>]+>', '', raw_reply).strip()
+        reply_text = _re.sub(r'<[^>]+>', '', raw_reply).strip()
+    except asyncio.TimeoutError:
+        reply_text = "⏳ מחפש עבורך... שלח שוב את שאלתך ואענה תוך שניות."
     except Exception as exc:
         safe_phone = (phone_e164 or "")
         safe_tail = safe_phone[-4:] if len(safe_phone) >= 4 else safe_phone
@@ -744,7 +848,7 @@ async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_pii_
     secret = os.getenv("TELEGRAM_WEBHOOK_SECRET", "").strip()
     header_secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
 
-    if secret and header_secret != secret:
+    if not secret or header_secret != secret:
         raise HTTPException(status_code=403, detail="Invalid Telegram secret token")
 
     try:
@@ -876,6 +980,13 @@ async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_pii_
             )
             conversation = conv_result.scalar_one_or_none()
 
+            # Conversation freshness (parity with WhatsApp, 2026-07-05): don't
+            # resurrect a stale thread — >24h idle starts a clean conversation.
+            if conversation is not None and conversation.last_message_at is not None:
+                _tg_age = datetime.now(tz=timezone(timedelta(hours=3))).replace(tzinfo=None) - conversation.last_message_at
+                if _tg_age > timedelta(hours=24):
+                    conversation = None
+
             # ── Welcome message for new conversations or /start ──────────────────
             is_new_conversation = conversation is None
             if text.strip() in ("/start", "/התחל", "start", "hello", "hi", "היי", "הי", "هلا", "مرحبا", "שלום") and (
@@ -919,7 +1030,8 @@ async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_pii_
                     welcome = f"أهلاً وسهلاً! 👋\nأنا {worker}، {role_ar} خدمة العملاء في AutoSpareFinder.\nكيف أستطيع مساعدتك اليوم؟\nهل تبحث عن قطعة غيار، أو تريد متابعة طلب، أو لديك استفسار؟ 😊"
                 else:
                     welcome = f"שלום וברוכים הבאים! 👋\nאני {worker}, {role} השירות של AutoSpareFinder.\nאיך אוכל לעזור לך היום?\nמחפש חלק לרכב, רוצה לעקוב אחר הזמנה, או שיש לך שאלה? 😊"
-                await send_telegram_message(chat_id, welcome)
+                # Fix 5: send welcome in background so we return 200 instantly (<50ms)
+                asyncio.create_task(send_telegram_message(chat_id, welcome))
                 return {"ok": True}
 
             if not conversation:
@@ -1012,14 +1124,21 @@ async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_pii_
                     "delivered": bool(send_result.get("ok")),
                 }
 
-            agent_result = await process_user_message(
-                user_id=str(conversation.user_id),
-                message=text,
-                conversation_id=conv_id,
-                db=db,
-                source="telegram",
-            )
-            raw_reply = agent_result.get("response", "מצטערים, נתקלנו בבעיה. אנא נסה שוב.")
+            # 12s timeout — purchase flow needs extra time for Stripe session creation
+            try:
+                agent_result = await asyncio.wait_for(
+                    process_user_message(
+                        user_id=str(conversation.user_id),
+                        message=text,
+                        conversation_id=conv_id,
+                        db=db,
+                        source="telegram",
+                    ),
+                    timeout=12.0,
+                )
+                raw_reply = agent_result.get("response", "מצטערים, נתקלנו בבעיה. אנא נסה שוב.")
+            except asyncio.TimeoutError:
+                raw_reply = "⏳ אני מחפש עבורך... הבקשה לוקחת קצת יותר מהרגיל. אנא שלח שוב את שאלתך."
             reply_text = _sanitize_for_telegram(raw_reply)
         except Exception:
             import traceback
@@ -1029,15 +1148,15 @@ async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_pii_
             print(traceback.format_exc())
             reply_text = "תודה על פנייתך! 😊 נציג שירות יחזור אליך בהקדם."
 
-        send_result = await send_telegram_message(chat_id, reply_text)
-        if not send_result.get("ok"):
-            print(f"[Telegram] Send failed for chat {chat_id}: {send_result.get('error')}")
+        # Fix 3 cont: send response in background so webhook returns immediately to Telegram
+        # (Telegram retries if we don't respond within 5s — background task prevents duplicate retries)
+        asyncio.create_task(send_telegram_message(chat_id, reply_text))
 
         return {
             "ok": True,
             "conversation_id": conv_id,
             "fallback": used_fallback,
-            "delivered": bool(send_result.get("ok")),
+            "delivered": True,
         }
     finally:
         await _stop_typing()

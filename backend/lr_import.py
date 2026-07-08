@@ -29,7 +29,7 @@ Missing Data Delegation:
 VAT Rules:
   - JSON file prices assumed ILS EXCL. VAT (dealer pricing)
   - max_price_ils = price * 1.18 (incl. 18% IL VAT); base_price = max_price_ils (IL official ref, no markup)
-  - importer_price_ils = 0 (Land Rover IL is official importer reference, not our procurement cost)
+  - importer_price_ils = CASE WHEN to preserve existing price (CLAUDE.md: cost=price/1.18, base=cost×1.45)
 
 Confidence tier: 0.90 (web scrape of official dealer site)
 
@@ -187,7 +187,7 @@ async def main():
                           description=EXCLUDED.description,
                           oem_number=EXCLUDED.oem_number,
                           base_price=EXCLUDED.base_price,
-                          importer_price_ils=0,
+                          importer_price_ils=CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
                           min_price_ils=EXCLUDED.min_price_ils,
                           max_price_ils=EXCLUDED.max_price_ils,
                           specifications=COALESCE(parts_catalog.specifications,'{}')::jsonb
@@ -210,7 +210,7 @@ async def main():
                                     created_at, updated_at)
                                 VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3, $4, 0.0,
                                         $5, $6, 24, 21, $7, NOW(), NOW())
-                                ON CONFLICT (part_id, supplier_id) DO UPDATE SET
+                                ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE SET
                                     price_ils=EXCLUDED.price_ils,
                                     is_available=EXCLUDED.is_available,
                                     updated_at=NOW()

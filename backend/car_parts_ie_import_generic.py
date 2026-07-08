@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import fcntl
 import hashlib
 import json
 import re
@@ -61,7 +62,7 @@ DB_DSN = (
 SUPPLIER_NAME = "Car-Parts.ie"
 SUPPLIER_URL = "https://www.car-parts.ie"
 
-# Known manufacturer_ids for common brands
+# Known manufacturer_ids for common brands (must match car_brands.id)
 MANUFACTURER_IDS: dict[str, str] = {
     "toyota":       "01954786-65c7-4ff4-a6ad-4836b31da9f4",
     "honda":        "6034f4f4-6dfa-4c88-998c-e62f45956ea9",
@@ -92,6 +93,14 @@ MANUFACTURER_IDS: dict[str, str] = {
     "fiat":         "471408c0-527b-49d3-a964-fb108916d586",
     "chevrolet":    "a0b9a4d9-6334-40c3-8e2a-f84f9fdd11a1",
     "suzuki":       "f2f6913a-7ea6-4a99-b65a-c9b1d548e38c",
+    # car-parts.ie brands
+    "rover":        "9e3b7475-c104-4f75-a006-26c5858b9c37",
+    "saab":         "c21a289d-5b3e-411f-afbb-5f7a4d022a88",
+    "daewoo":       "3b2a1c64-76ef-4960-ab3d-8b2337ea3409",
+    "chrysler":     "e7b5ae95-649c-4da8-81ad-cc565a86582a",
+    "mg":           "341be223-5852-4f29-bd96-085ef2c5d07b",
+    "haval":        "1f0da611-bb17-4749-91bd-90c7a6db54fe",
+    "ssangyong":    "588b0288-fb17-499e-83a8-750e3be2d318",
 }
 
 # category slug → system category id
@@ -205,11 +214,38 @@ async def _ensure_supplier(conn: asyncpg.Connection) -> str:
     return sid
 
 
+def _parse_vehicle_slug(slug: str) -> tuple[str, str, int | None, int | None]:
+    """
+    Parse a car-parts.ie vehicle slug into (manufacturer, model, year_from, year_to).
+    Example: "mercedes-benz/vito-bus-w639" → ("Mercedes-Benz", "Vito W639", None, None)
+             "honda/jazz-iv-gk"            → ("Honda", "Jazz IV GK", None, None)
+    """
+    if not slug:
+        return ("", "", None, None)
+    parts = slug.strip("/").split("/")
+    brand_slug = parts[0] if parts else ""
+    model_slug = parts[1] if len(parts) > 1 else ""
+    # Convert brand slug to title
+    brand_map = {
+        "mercedes-benz": "Mercedes-Benz", "land-rover": "Land Rover",
+        "alfa-romeo": "Alfa Romeo", "aston-martin": "Aston Martin",
+    }
+    manufacturer = brand_map.get(brand_slug, brand_slug.replace("-", " ").title())
+    # Convert model slug to readable name
+    model_clean = model_slug.replace("-", " ").title()
+    # Extract years from slug if present (e.g. "transit-mk7-2006-2014")
+    year_match = re.findall(r"\b(19|20)\d{2}\b", model_slug)
+    year_from = int(year_match[0]) if year_match else None
+    year_to   = int(year_match[-1]) if len(year_match) > 1 else year_from
+    return (manufacturer, model_clean, year_from, year_to)
+
+
 async def import_file(
     path: Path,
     brand_arg: str | None = None,
     model_arg: str | None = None,
     engine_arg: str | None = None,
+    vehicle_slug: str | None = None,
     start_from: int = 0,
 ) -> dict:
     raw = json.loads(path.read_text())
@@ -227,11 +263,22 @@ async def import_file(
         maker_key = (raw.get("maker") or brand_arg or manufacturer).lower()
         model_text = model_arg or _clean(raw.get("model_text") or raw.get("model") or "")
         engine_text = engine_arg or _clean(raw.get("engine_text") or raw.get("engine") or "")
+        # Pick up vehicle_slug from JSON if not passed as arg
+        vehicle_slug = vehicle_slug or raw.get("vehicle_slug", "")
 
     manufacturer_id = _resolve_manufacturer_id(maker_key)
     sku_prefix = re.sub(r"[^A-Z0-9]", "", manufacturer.upper())[:5] or "CPIE"
     model_name = re.sub(r"\(\d{2}\.\d{4}.*?\)", "", model_text).strip()
     year_from, year_to = _extract_years(f"{model_text} {engine_text}")
+
+    # If no model_text but we have a vehicle slug, parse it for fitment
+    slug_manufacturer, slug_model, slug_year_from, slug_year_to = _parse_vehicle_slug(vehicle_slug or "")
+    if not model_name and slug_model:
+        model_name = slug_model
+        manufacturer = slug_manufacturer or manufacturer
+        if not year_from and slug_year_from:
+            year_from = slug_year_from
+            year_to = slug_year_to
 
     conn = await asyncpg.connect(DB_DSN)
     try:
@@ -257,19 +304,45 @@ async def import_file(
             sku = f"{sku_prefix}-{sku_raw}"
             name = _clean(product.get("name") or sku_raw)
             category = _map_category(product.get("category") or "")
-            url = _clean(product.get("product_url") or "")
+            url = _clean(product.get("product_url") or product.get("source_url") or "")
             price_eur = product.get("price_eur") or 0.0
+            brand_part = _clean(product.get("brand") or "")
+            description_text = _clean(product.get("description") or "")
+            image_url = _clean(product.get("image_url") or "")
+            in_stock = bool(product.get("in_stock", True))
+            # EUR→ILS: 1 EUR ≈ 3.9 ILS; treat as reference market price (incl. VAT equiv)
+            # cost = price_ils / 1.18, base_price = cost * 1.45 (CLAUDE.md: 45% margin)
             price_ils = round(float(price_eur) * 3.9, 2) if price_eur else None
+            cost_ils = round(price_ils / 1.18, 2) if price_ils else None
+            base_price_ils = round(cost_ils * 1.45, 2) if cost_ils else None
 
+            # Build compatible_vehicles from top-level model OR per-part fitment array
             compatible_vehicles = []
-            if model_name and year_from:
+            # Use year_from=1990 as fallback when slug has no year info — manufacturer+model is enough for filtering
+            eff_year_from = year_from or 1990
+            eff_year_to = year_to or 2030
+            if model_name:
                 compatible_vehicles.append({
                     "manufacturer": manufacturer,
                     "model": model_name,
-                    "year_from": year_from,
-                    "year_to": year_to or year_from,
+                    "year_from": eff_year_from,
+                    "year_to": eff_year_to,
                     "engine": engine_text or None,
                 })
+            elif product.get("fitment"):
+                for fit in (product["fitment"] if isinstance(product["fitment"], list) else []):
+                    fit_maker = _clean(fit.get("manufacturer") or manufacturer)
+                    fit_model = _clean(fit.get("model") or "")
+                    fit_yf = fit.get("year_from") or year_from
+                    fit_yt = fit.get("year_to") or year_to or fit_yf
+                    if fit_model:
+                        compatible_vehicles.append({
+                            "manufacturer": fit_maker,
+                            "model": fit_model,
+                            "year_from": fit_yf,
+                            "year_to": fit_yt,
+                            "engine": _clean(fit.get("engine") or engine_text or ""),
+                        })
 
             try:
                 row = await conn.fetchrow(
@@ -278,16 +351,16 @@ async def import_file(
                         id, sku, oem_number, name, name_he,
                         manufacturer, manufacturer_id,
                         category, description, specifications, compatible_vehicles,
-                        part_type, aftermarket_tier,
-                        online_price_ils, min_price_ils, max_price_ils,
+                        part_type, part_condition, aftermarket_tier,
+                        importer_price_ils, base_price, online_price_ils, min_price_ils, max_price_ils,
                         is_safety_critical, needs_oem_lookup, master_enriched,
                         is_active, created_at, updated_at
                     ) VALUES(
                         gen_random_uuid(), $1, $2, $3, $3,
                         $4, $5::uuid,
-                        $6, NULL, $7::jsonb, $8::jsonb,
-                        'aftermarket', 'OE_equivalent',
-                        $9, $9, $9,
+                        $6, $12, $7::jsonb, $8::jsonb,
+                        'aftermarket', 'new', 'OE_equivalent',
+                        $10, $11, $9, $9, $9,
                         FALSE, FALSE, FALSE,
                         TRUE, NOW(), NOW()
                     )
@@ -297,15 +370,29 @@ async def import_file(
                         compatible_vehicles = COALESCE(
                             parts_catalog.compatible_vehicles, EXCLUDED.compatible_vehicles
                         ),
+                        importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0
+                            THEN EXCLUDED.importer_price_ils
+                            ELSE parts_catalog.importer_price_ils END,
+                        base_price = CASE WHEN EXCLUDED.base_price > 0
+                            THEN EXCLUDED.base_price
+                            ELSE parts_catalog.base_price END,
                         updated_at = NOW()
                     RETURNING id, (xmax = 0) AS is_insert
                     """,
                     sku, sku_raw, name,
                     manufacturer, manufacturer_id,
                     category,
-                    json.dumps({"source": SUPPLIER_NAME, "product_url": url}),
+                    json.dumps({
+                        "source": SUPPLIER_NAME,
+                        "product_url": url,
+                        "part_brand": brand_part,
+                        "description": description_text,
+                        "image_url": image_url,
+                        "in_stock": in_stock,
+                    }),
                     json.dumps(compatible_vehicles),
-                    price_ils,
+                    price_ils, cost_ils, base_price_ils,
+                    description_text or None,
                 )
             except Exception as e:
                 print(f"  [warn] skip {sku}: {e}", flush=True)
@@ -317,8 +404,10 @@ async def import_file(
             else:
                 updated += 1
 
-            if model_name and year_from:
+            for cv in compatible_vehicles:
                 try:
+                    fit_maker = cv["manufacturer"]
+                    fit_mid = _resolve_manufacturer_id(fit_maker.lower())
                     await conn.execute(
                         """
                         INSERT INTO part_vehicle_fitment(
@@ -327,13 +416,14 @@ async def import_file(
                             created_at, updated_at
                         ) VALUES(
                             gen_random_uuid(), $1::uuid, $2, $3::uuid,
-                            $4, $5, $6, NULL, $7, NOW(), NOW()
+                            $4, $5, $6, $7, NULL, NOW(), NOW()
                         )
                         ON CONFLICT (part_id, manufacturer, model, year_from)
-                        DO UPDATE SET year_to=EXCLUDED.year_to, updated_at=NOW()
+                        DO UPDATE SET year_to=EXCLUDED.year_to, engine_type=EXCLUDED.engine_type, updated_at=NOW()
                         """,
-                        part_id, manufacturer, manufacturer_id,
-                        model_name, year_from, year_to or year_from, engine_text,
+                        part_id, fit_maker, fit_mid,
+                        cv["model"], cv.get("year_from"), cv.get("year_to") or cv.get("year_from"),
+                        cv.get("engine") or None,
                     )
                     fitment_rows += 1
                 except Exception:
@@ -352,7 +442,11 @@ async def import_file(
                         0.0, $4, 'in_stock', TRUE, 10, 12, $5, NOW(), NOW()
                     )
                     ON CONFLICT (supplier_id, supplier_sku)
-                    DO UPDATE SET supplier_url=EXCLUDED.supplier_url, updated_at=NOW()
+                    DO UPDATE SET
+                        price_ils=EXCLUDED.price_ils,
+                        is_available=EXCLUDED.is_available,
+                        supplier_url=EXCLUDED.supplier_url,
+                        updated_at=NOW()
                     """,
                     supplier_id, part_id, sku_raw, price_ils, url,
                 )
@@ -383,12 +477,14 @@ def main() -> None:
     ap.add_argument("--file", required=True, help="Path to JSON exported by crawler")
     ap.add_argument("--model", default="", help="Model text (e.g. 'Golf IV (1J1) (08.1997 - 06.2006)')")
     ap.add_argument("--engine", default="", help="Engine text (e.g. '1.4 16V (55 KW)')")
+    ap.add_argument("--vehicle-slug", default="",
+                    help="Vehicle slug from harvester (e.g. 'mercedes-benz/vito-bus-w639') — used for fitment")
     ap.add_argument("--resume-from", type=int, default=0,
                     help="Resume from this part index (overrides checkpoint file)")
     args = ap.parse_args()
 
     brand = args.brand.lower()
-    checkpoint_file = Path(f"/tmp/{brand}_cpie_checkpoint.json")
+    checkpoint_file = Path(args.file).with_suffix(".checkpoint.json")
 
     start_from = args.resume_from
     if start_from == 0 and checkpoint_file.exists():
@@ -400,8 +496,18 @@ def main() -> None:
         except Exception:
             pass
 
-    report = asyncio.run(import_file(Path(args.file), brand, args.model, args.engine,
-                                     start_from=start_from))
+    # Serialize concurrent harvester-triggered runs — without this, several vehicles
+    # of the same brand finishing close together spawn overlapping processes that
+    # lock-contend upserting the same shared SKUs in parts_catalog for many minutes.
+    lock_fp = open("/tmp/car_parts_ie_import.lock", "w")
+    fcntl.flock(lock_fp, fcntl.LOCK_EX)
+    try:
+        report = asyncio.run(import_file(Path(args.file), brand, args.model, args.engine,
+                                         vehicle_slug=args.vehicle_slug,
+                                         start_from=start_from))
+    finally:
+        fcntl.flock(lock_fp, fcntl.LOCK_UN)
+        lock_fp.close()
 
     if report.get("checkpoint_at") is not None:
         checkpoint_file.write_text(json.dumps({

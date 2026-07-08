@@ -218,52 +218,80 @@ async def import_brand(conn, make, sku_prefix, json_file, supplier_name):
                             'il_retail_excl_vat': retail_excl,
                             'il_retail_incl_vat': il_retail,
                         }, ensure_ascii=False)
-                        result = await conn.fetchrow("""
-                            INSERT INTO parts_catalog(
-                                id, sku, name, name_he, manufacturer, manufacturer_id,
-                                oem_number, category, part_type, part_condition,
-                                base_price, importer_price_ils, min_price_ils, max_price_ils,
-                                is_active, aftermarket_tier,
-                                specifications,
-                                needs_oem_lookup, master_enriched, updated_at
-                            ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
-                                     $11, $12, $12, $13,
-                                     TRUE, $14,
-                                     $15::jsonb, FALSE, FALSE, NOW())
-                            ON CONFLICT(sku) DO UPDATE SET
-                                oem_number    = EXCLUDED.oem_number,
-                                name_he       = COALESCE(EXCLUDED.name_he, parts_catalog.name_he),
-                                base_price    = CASE WHEN EXCLUDED.base_price > 0
-                                               THEN EXCLUDED.base_price
-                                               ELSE parts_catalog.base_price END,
-                                importer_price_ils = EXCLUDED.importer_price_ils,
-                                online_price_ils   = 0,
-                                min_price_ils = CASE WHEN EXCLUDED.min_price_ils > 0
-                                               THEN EXCLUDED.min_price_ils
-                                               ELSE parts_catalog.min_price_ils END,
-                                max_price_ils = CASE WHEN EXCLUDED.max_price_ils > 0
-                                               THEN EXCLUDED.max_price_ils
-                                               ELSE parts_catalog.max_price_ils END,
-                                specifications = COALESCE(parts_catalog.specifications,'{}')::jsonb
-                                                  || EXCLUDED.specifications::jsonb,
-                                is_active     = TRUE,
-                                updated_at    = NOW()
-                            RETURNING id
-                        """,
-                        row["id"], row["sku"], row["name"], row["name_he"],
-                        row["manufacturer"], row["brand_id"],
-                        row["oem_number"], row["category"], row["part_type"],
-                        "New",
-                        base_price_v,       # $11: base_price = cost × 1.45
-                        retail_excl,        # $12: importer_price_ils = min_price_ils = excl-VAT cost
-                        il_retail,          # $13: max_price_ils = consumer price incl. 18% VAT
-                        row["tier"],        # $14: aftermarket_tier
-                        specs)              # $15: specifications
-                        stats["inserted"] += 1
+                        # Check if catalog already has this OEM (exact or normalized) to avoid creating duplicates
+                        oem_raw = row["oem_number"]
+                        norm_oem = re.sub(r'[\s\-./]', '', oem_raw).upper() if oem_raw else ''
+                        existing_id = await conn.fetchval(
+                            "SELECT id FROM parts_catalog WHERE oem_number=$1 AND LOWER(manufacturer)=LOWER($2) AND is_active LIMIT 1",
+                            oem_raw, row["manufacturer"],
+                        )
+                        if not existing_id and norm_oem:
+                            existing_id = await conn.fetchval(
+                                "SELECT id FROM parts_catalog "
+                                "WHERE REPLACE(REPLACE(UPPER(oem_number),' ',''),'-','')=$1 "
+                                "AND LOWER(manufacturer)=LOWER($2) AND is_active LIMIT 1",
+                                norm_oem, row["manufacturer"],
+                            )
+
+                        # Use existing catalog entry or insert new one
+                        catalog_id = existing_id
+                        if existing_id:
+                            # Update prices on existing catalog entry (may be OEMPartsOnline or older import)
+                            await conn.execute("""
+                                UPDATE parts_catalog SET
+                                    importer_price_ils = CASE WHEN $1>0 THEN $1 ELSE importer_price_ils END,
+                                    max_price_ils      = CASE WHEN $2>0 THEN $2 ELSE max_price_ils END,
+                                    base_price         = CASE WHEN $3>0 THEN $3 ELSE base_price END,
+                                    specifications     = COALESCE(specifications,'{}')::jsonb || $4::jsonb,
+                                    updated_at         = NOW()
+                                WHERE id=$5
+                            """, retail_excl, il_retail, base_price_v, specs, existing_id)
+                            stats["inserted"] += 1
+                        else:
+                            catalog_id = await conn.fetchval("""
+                                INSERT INTO parts_catalog(
+                                    id, sku, name, name_he, manufacturer, manufacturer_id,
+                                    oem_number, category, part_type, part_condition,
+                                    base_price, importer_price_ils, min_price_ils, max_price_ils,
+                                    is_active, aftermarket_tier,
+                                    specifications,
+                                    needs_oem_lookup, master_enriched, updated_at
+                                ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
+                                         $11, $12, $12, $13,
+                                         TRUE, $14,
+                                         $15::jsonb, FALSE, FALSE, NOW())
+                                ON CONFLICT(sku) DO UPDATE SET
+                                    oem_number    = EXCLUDED.oem_number,
+                                    name_he       = COALESCE(EXCLUDED.name_he, parts_catalog.name_he),
+                                    base_price    = CASE WHEN EXCLUDED.base_price > 0
+                                                   THEN EXCLUDED.base_price
+                                                   ELSE parts_catalog.base_price END,
+                                    importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0
+                                                   THEN EXCLUDED.importer_price_ils
+                                                   ELSE parts_catalog.importer_price_ils END,
+                                    max_price_ils = CASE WHEN EXCLUDED.max_price_ils > 0
+                                                   THEN EXCLUDED.max_price_ils
+                                                   ELSE parts_catalog.max_price_ils END,
+                                    specifications = COALESCE(parts_catalog.specifications,'{}')::jsonb
+                                                      || EXCLUDED.specifications::jsonb,
+                                    is_active     = TRUE,
+                                    updated_at    = NOW()
+                                RETURNING id
+                            """,
+                            row["id"], row["sku"], row["name"], row["name_he"],
+                            row["manufacturer"], row["brand_id"],
+                            row["oem_number"], row["category"], row["part_type"],
+                            "new",
+                            base_price_v,       # $11: base_price = cost × 1.45
+                            retail_excl,        # $12: importer_price_ils = min_price_ils = excl-VAT cost
+                            il_retail,          # $13: max_price_ils = consumer price incl. 18% VAT
+                            row["tier"],        # $14: aftermarket_tier
+                            specs)              # $15: specifications
+                            stats["inserted"] += 1
 
                         # supplier_parts — Delek supplier price = retail excl. VAT (their trade reference)
-                        if result and supplier_id:
-                            pid = str(result["id"])
+                        if catalog_id and supplier_id:
+                            pid = str(catalog_id)
                             await conn.execute("""
                                 INSERT INTO supplier_parts (
                                     id, supplier_id, part_id, supplier_sku,
@@ -272,14 +300,14 @@ async def import_brand(conn, make, sku_prefix, json_file, supplier_name):
                                     created_at, updated_at)
                                 VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3, $4, 0.0,
                                         'in_stock', TRUE, 24, 14, $5, NOW(), NOW())
-                                ON CONFLICT (part_id, supplier_id) DO UPDATE SET
-                                    price_ils=EXCLUDED.price_ils, updated_at=NOW()
+                                ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE SET
+                                    price_ils=EXCLUDED.price_ils, is_available=true, updated_at=NOW()
                             """, supplier_id, pid, row["oem_number"],
                                  float(retail_excl or 0), url)
 
                         # part_vehicle_fitment
-                        if result and row.get("models"):
-                            pid = str(result["id"])
+                        if catalog_id and row.get("models"):
+                            pid = str(catalog_id)
                             for model_name in row["models"]:
                                 yr_map = {
                                     'BMW': (2015, None), 'Ford': (2015, None),

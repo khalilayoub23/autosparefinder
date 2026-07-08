@@ -145,11 +145,18 @@ async def register(data: RegisterRequest, request: Request, db: AsyncSession = D
 async def login(data: LoginRequest, request: Request, db: AsyncSession = Depends(get_pii_db), redis=Depends(get_redis)):
     """Login – returns tokens or triggers 2FA"""
     device_fp = generate_device_fingerprint(request)
-    ip = request.client.host if request.client else "unknown"
+    # Use X-Real-IP (set by nginx to $remote_addr, un-spoofable by clients).
+    # X-Forwarded-For is client-controlled and can be used to rotate past per-IP rate limits.
+    ip = request.headers.get("X-Real-IP") or (request.client.host if request.client else "unknown")
     if redis:
-        allowed = await check_rate_limit(redis, f'rate:login:{ip}', 5, 60)
+        # 20/min per IP (raised from 5 — enough for legitimate users, still blocks brute force)
+        allowed = await check_rate_limit(redis, f'rate:login:{ip}', 20, 60)
         if not allowed:
             raise HTTPException(status_code=429, detail='יותר מדי בקשות — נסה שוב בעוד דקה')
+        # Also rate-limit per email to prevent targeted brute-force even across IPs
+        allowed_email = await check_rate_limit(redis, f'rate:login:email:{data.email.lower()}', 10, 60)
+        if not allowed_email:
+            raise HTTPException(status_code=429, detail='יותר מדי ניסיונות כניסה — נסה שוב בעוד דקה')
     ua = request.headers.get("user-agent", "")
     try:
         user, access_token, refresh_token = await login_user(
@@ -342,9 +349,11 @@ async def social_login(
                     full_name = info.get("name", email.split("@")[0])
                 else:
                     info = resp.json()
-                    # Optionally verify audience (aud) matches our client ID
+                    # Always verify audience — an empty client ID means OAuth is misconfigured
                     client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
-                    if client_id and info.get("aud") != client_id:
+                    if not client_id:
+                        raise HTTPException(status_code=500, detail="Google OAuth not configured on server")
+                    if info.get("aud") != client_id:
                         raise HTTPException(status_code=401, detail="Google token לא תקין")
                     oauth_id = info.get("sub", "")
                     email = info.get("email", "")
@@ -490,10 +499,7 @@ async def aliexpress_oauth_callback(
     refresh_token = token_data.get("refresh_token")
     expires_in = token_data.get("expire_time")
 
-    # Log to console so you can copy to .env
-    print(f"ALIEXPRESS_ACCESS_TOKEN={access_token}")
-    print(f"ALIEXPRESS_REFRESH_TOKEN={refresh_token}")
-    print(f"Expires: {expires_in}")
+    # Tokens stored in env/DB — never log to stdout
 
     return {
         "access_token": access_token,

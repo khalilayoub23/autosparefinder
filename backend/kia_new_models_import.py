@@ -111,7 +111,7 @@ async def run():
                           (id, sku, name, category, base_price, oem_number,
                            manufacturer, manufacturer_id, is_active,
                            part_condition, needs_oem_lookup)
-                        VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,'Kia',$6,TRUE,'New',FALSE)
+                        VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,'Kia',$6,TRUE,'new',FALSE)
                         ON CONFLICT (sku) DO UPDATE
                           SET name=EXCLUDED.name,
                               base_price=EXCLUDED.base_price,

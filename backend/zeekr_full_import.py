@@ -38,7 +38,7 @@ Missing Data Delegation:
 
 Confidence tier: 1.00 (Official Israeli importer price list)
 VAT: Prices in PDF are EXCL. 18% VAT — stored as max_price_ils (incl. 18% VAT = price * 1.18);
-     base_price = max_price_ils (IL official ref, no markup); importer_price_ils = 0
+     base_price = cost×1.45, importer_price_ils = cost = max_price_ils/1.18 (CLAUDE.md formula)
 
 Author: AutoSpareFinder Agent
 Last Updated: 2026-06-01
@@ -294,14 +294,14 @@ async def upsert_part(conn, p: dict, supplier_id: str) -> tuple[str | None, bool
             gen_random_uuid(), $1, $2, $3, $4,
             'Zeekr', $5::uuid, $6,
             ROUND($7::numeric*1.18,2), 0, ROUND($7::numeric*1.18,2), ROUND($7::numeric*1.18,2),
-            'New', $8, $9,
+            'new', $8, $9,
             $10::jsonb, $11::jsonb,
             true, false, false,
             NOW(), NOW()
         )
         ON CONFLICT (sku) DO UPDATE SET
             base_price          = EXCLUDED.base_price,
-            importer_price_ils  = 0,
+            importer_price_ils  = CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
             min_price_ils       = EXCLUDED.min_price_ils,
             max_price_ils       = EXCLUDED.max_price_ils,
             name_he             = COALESCE(EXCLUDED.name_he, parts_catalog.name_he),
@@ -369,7 +369,7 @@ async def upsert_supplier_part(conn, part_id: str, supplier_id: str, raw_sku: st
             14, $5,
             NOW(), NOW()
         )
-        ON CONFLICT (part_id, supplier_id) DO UPDATE SET
+        ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE SET
             price_ils    = EXCLUDED.price_ils,
             is_available = true,
             updated_at   = NOW()

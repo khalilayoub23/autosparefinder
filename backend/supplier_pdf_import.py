@@ -754,7 +754,7 @@ async def _upsert_supplier_part(conn, part_id: str, supplier_id: str,
                 21, $8,
                 NOW(), NOW()
             )
-            ON CONFLICT (part_id, supplier_id) DO UPDATE SET
+            ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE SET
                 price_ils    = EXCLUDED.price_ils,
                 is_available = EXCLUDED.is_available,
                 availability = EXCLUDED.availability,
@@ -956,7 +956,7 @@ async def upsert_parts(conn, manufacturer, pdf_rows, db_rows, dry_run):
                              min_price_ils,
                              created_at,updated_at)
                            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11,
-                                  $12,$13,$14,$15,'New',false,false,false,$16,NOW(),NOW())
+                                  $12,$13,$14,$15,'new',false,false,false,$16,NOW(),NOW())
                            ON CONFLICT (sku) DO UPDATE SET
                              base_price=EXCLUDED.base_price,
                              importer_price_ils=EXCLUDED.importer_price_ils,

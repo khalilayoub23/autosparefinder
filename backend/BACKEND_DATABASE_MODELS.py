@@ -47,12 +47,17 @@ DATABASE_PII_URL = os.getenv(
     "postgresql+asyncpg://autospare:autospare@localhost:5432/autospare_pii"
 )
 
+_pool_size = int(os.environ.get("DB_POOL_SIZE", "10"))
+_max_overflow = int(os.environ.get("DB_MAX_OVERFLOW", "5"))
+
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,
     future=True,
-    pool_pre_ping=True,   # validates connections before use — prevents stale-connection InterfaceErrors
-    pool_recycle=1800,    # recycle connections every 30 min to avoid server-side timeout drops
+    pool_pre_ping=True,
+    pool_recycle=1800,
+    pool_size=_pool_size,
+    max_overflow=_max_overflow,
 )
 async_session_factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
@@ -63,6 +68,8 @@ pii_engine = create_async_engine(
     future=True,
     pool_pre_ping=True,
     pool_recycle=1800,
+    pool_size=max(5, _pool_size // 2),
+    max_overflow=max(2, _max_overflow // 2),
 )
 pii_session_factory = sessionmaker(pii_engine, class_=AsyncSession, expire_on_commit=False)
 

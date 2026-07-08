@@ -23,6 +23,7 @@ import io
 import asyncio
 import httpx
 from dotenv import load_dotenv
+import watchdog_state as _wds
 
 # Sentinel user for anonymous WhatsApp conversations (no registered account found)
 WHATSAPP_ANON_USER_ID = _UUID("00000000-0000-0000-0000-000000000001")
@@ -86,6 +87,7 @@ from routes.stripe_config import resolve_stripe_secret_key, is_valid_stripe_secr
 # (crash / unhandled exception) the done-callback fires a WhatsApp alert directly
 # to the owner phone so the crash is never silently swallowed.
 _SUPERVISED_TASKS: dict = {}  # name → asyncio.Task
+_BACKEND_START_UTC: "datetime" = datetime.now(timezone.utc)  # set at import time; used by watchdog to identify orphaned DB connections
 
 
 def _supervised_task(name: str, coro) -> "asyncio.Task":
@@ -734,15 +736,28 @@ async def _load_runtime_ai_overrides_from_db():
 
 
 async def _status_update_loop() -> None:
-    """Every 30 minutes: WhatsApp the owner a live summary of all workers, agents, and catalog growth."""
+    """
+    Owner WhatsApp notifications — rewritten 2026-07-05 per Khalil's feedback
+    (every-30-min reports were spam). New policy:
+      • Checks every 30 minutes, but SENDS only when something is wrong
+        (dead supervised tasks, or failed/dead jobs in the last 2h).
+      • Plus ONE full daily digest at ~09:00 Israel time (06:00 UTC).
+    """
     _owner_phone = os.getenv("OWNER_WHATSAPP_PHONE", "")
     if not _owner_phone:
         return
     await asyncio.sleep(60)  # brief startup delay before first report
 
+    _last_digest_date: str | None = None
+    _last_problem_sig: str = ""  # don't repeat the same problem alert every 30min
+
     while True:
         try:
             _now = datetime.now(timezone.utc)
+            _il_hour = (_now.hour + 3) % 24
+            _today = _now.strftime("%Y-%m-%d")
+            is_digest_time = _il_hour == 9 and _last_digest_date != _today
+
             lines: list[str] = [
                 f"\U0001f4ca *AutoSpareFinder — Status Update* ({_now.strftime('%H:%M UTC')})"
             ]
@@ -811,12 +826,43 @@ async def _status_update_loop() -> None:
             lines.append(f"\n*Catalog:* {total_parts:,} active parts")
             lines.append(f"  +{new_parts} added in last 30m")
 
-            await _wa_send(to=_owner_phone, text="\n".join(lines))
-            print(f"[StatusUpdate] Sent status report to owner ({len(lines)} lines)")
+            # Decide whether to actually send: problems, or the daily digest.
+            # A dead/failed job only counts if NOT superseded by a newer
+            # running/completed cycle of the same task — deploy restarts kill
+            # mid-cycle jobs that respawn healthy minutes later, and those
+            # were spamming the owner with false alarms (fixed 2026-07-06).
+            _healthy_names = {
+                str(j.job_name).split(":")[0]
+                for j in jobs if j.status in ("running", "completed")
+            }
+            failed_jobs = [
+                j for j in jobs
+                if j.status in ("failed", "dead")
+                and str(j.job_name).split(":")[0] not in _healthy_names
+            ]
+            problem_sig = ",".join(sorted(dead_tasks)) + "|" + ",".join(
+                sorted(f"{j.job_name}:{j.status}" for j in failed_jobs)
+            )
+            has_problem = bool(dead_tasks or failed_jobs)
+
+            if is_digest_time:
+                lines[0] = f"\U0001f4c5 *AutoSpareFinder — דוח יומי* ({_now.strftime('%H:%M UTC')})"
+                await _wa_send(to=_owner_phone, text="\n".join(lines))
+                _last_digest_date = _today
+                print("[StatusUpdate] Sent daily digest to owner")
+            elif has_problem and problem_sig != _last_problem_sig:
+                lines[0] = f"⚠️ *AutoSpareFinder — בעיה במערכת* ({_now.strftime('%H:%M UTC')})"
+                await _wa_send(to=_owner_phone, text="\n".join(lines))
+                _last_problem_sig = problem_sig
+                print(f"[StatusUpdate] Sent PROBLEM alert to owner: {problem_sig[:120]}")
+            else:
+                if not has_problem:
+                    _last_problem_sig = ""  # problem cleared — re-alert if it returns
+                print("[StatusUpdate] Checked — all healthy, no message sent")
         except Exception as _exc:
             print(f"[StatusUpdate] loop error: {_exc}")
 
-        await asyncio.sleep(1800)  # 30 minutes
+        await asyncio.sleep(1800)  # check every 30 minutes (send only on problems/digest)
 
 
 async def _ebay_fitment_backfill_loop() -> None:
@@ -952,6 +998,422 @@ async def _rex_dispatch_loop() -> None:
         await asyncio.sleep(900)  # 15 min
 
 
+async def _zombie_reaper_loop() -> None:
+    """Periodically reap zombie child processes (from subprocess.Popen imports)."""
+    import os as _os
+    while True:
+        try:
+            reaped = 0
+            while True:
+                pid, _ = _os.waitpid(-1, _os.WNOHANG)
+                if pid == 0:
+                    break
+                reaped += 1
+            if reaped:
+                print(f"[zombie_reaper] reaped {reaped} child processes", flush=True)
+        except ChildProcessError:
+            pass
+        except Exception:
+            pass
+        await asyncio.sleep(60)
+
+
+async def _car_parts_ie_harvester_loop() -> None:
+    """Supervises car_parts_ie_flaresolverr_harvester.py — relaunches it whenever it exits or crashes."""
+    import sys as _sys
+    import time as _time
+
+    await asyncio.sleep(60)  # let flaresolverr/network settle on startup
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "car_parts_ie_flaresolverr_harvester.py")
+    env = dict(os.environ)
+    env.setdefault("FLARESOLVERR_URL", "http://flaresolverr:8191/v1")
+    backoff = 30
+
+    while True:
+        started = _time.time()
+        try:
+            print(f"[car_parts_ie_harvester] launching {script}", flush=True)
+            proc = await asyncio.create_subprocess_exec(
+                _sys.executable, script,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+                env=env,
+            )
+            rc = await proc.wait()
+            uptime = _time.time() - started
+            print(f"[car_parts_ie_harvester] exited rc={rc} after {uptime:.0f}s — restarting", flush=True)
+        except Exception as exc:
+            uptime = 0.0
+            print(f"[car_parts_ie_harvester] failed to launch: {exc}", flush=True)
+
+        # Ran for a while before dying → treat as a fresh start next time.
+        # Died immediately (e.g. flaresolverr unreachable) → back off harder.
+        backoff = 30 if uptime > 300 else min(backoff * 2, 1800)
+        await asyncio.sleep(backoff)
+
+
+async def _harvest_supervisor_loop() -> None:
+    """
+    Smart harvest supervisor (goal 2026-07-07). The harvester itself is now
+    queue-driven — it pulls the next highest-priority pending model from
+    harvest_queue (seeded from vehicle_market_il, ranked by active Israeli road
+    vehicles) and auto-advances. This loop is the OVERSIGHT layer:
+      • Reports coverage progress toward the full IL market (all brands+models).
+      • Re-seeds the queue if it's ever empty (never lets the harvester idle).
+      • Sends the owner a weekly harvest digest (Sunday ~09:00 IL).
+    """
+    await asyncio.sleep(900)  # let startup settle
+    _last_digest_date: str | None = None
+    while True:
+        try:
+            async with async_session_factory() as db:
+                row = (await db.execute(text("""
+                    SELECT
+                        COUNT(*) FILTER (WHERE status IN ('done','empty')) AS done,
+                        COUNT(*) FILTER (WHERE status='done') AS done_with_parts,
+                        COUNT(*) AS total,
+                        COUNT(DISTINCT brand_en) FILTER (WHERE status='done') AS brands_done,
+                        COUNT(DISTINCT brand_en) AS brands_total,
+                        COUNT(*) FILTER (WHERE status='pending') AS pending,
+                        COALESCE(SUM(parts_found),0) AS parts_total
+                    FROM harvest_queue
+                """))).fetchone()
+            if row:
+                done, done_parts, total, bdone, btot, pending, parts = row
+                pct = round(done * 100.0 / total, 1) if total else 0
+                print(
+                    f"[harvest_supervisor] IL-market coverage: {done}/{total} models ({pct}%), "
+                    f"{bdone}/{btot} brands, pending={pending}, parts_found={parts}",
+                    flush=True,
+                )
+
+                _now = datetime.now(timezone.utc)
+                _il_hour = (_now.hour + 3) % 24
+                _today = _now.strftime("%Y-%m-%d")
+                if _now.weekday() == 6 and _il_hour == 9 and _last_digest_date != _today:
+                    owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
+                    if owner:
+                        # Top 3 highest-IL-priority models still pending
+                        async with async_session_factory() as db2:
+                            top_pending = (await db2.execute(text("""
+                                SELECT brand_en, model_name, il_vehicle_count
+                                FROM harvest_queue WHERE status='pending'
+                                ORDER BY priority_rank ASC LIMIT 3
+                            """))).fetchall()
+                        nxt = "\n".join(f"• {r[0]} {r[1]} ({r[2]:,} רכבים)" for r in top_pending)
+                        msg = (
+                            f"🚗 *דוח קטלוג שבועי*\n"
+                            f"כיסוי שוק ישראל: {done}/{total} דגמים ({pct}%)\n"
+                            f"מותגים: {bdone}/{btot}\n"
+                            f"סה\"כ חלקים שנאספו: {parts:,}\n\n"
+                            f"הבאים בתור (עדיפות עליונה):\n{nxt}"
+                        )
+                        try:
+                            from social.whatsapp_provider import send_message as _wa
+                            await _wa(owner, msg)
+                        except Exception:
+                            pass
+                    _last_digest_date = _today
+        except Exception as exc:
+            print(f"[harvest_supervisor] error: {exc}", flush=True)
+        await asyncio.sleep(1800)  # every 30 min
+
+
+async def _force_kill_pid(pid: int, label: str) -> None:
+    """SIGTERM a pid, escalate to SIGKILL if it's still alive 5s later."""
+    import signal as _signal
+    try:
+        os.kill(pid, _signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    await asyncio.sleep(5)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return
+    try:
+        os.kill(pid, _signal.SIGKILL)
+        print(f"[car_parts_ie_watchdog] SIGKILL escalation for {label} pid={pid}", flush=True)
+    except ProcessLookupError:
+        pass
+
+
+async def _car_parts_ie_stall_watchdog_loop() -> None:
+    """
+    Two-tier DB connection supervisor — context-aware, not threshold-based:
+
+    TIER 1 — Orphaned connections (backend_start < this container's start):
+      The connection belongs to a dead process (previous container instance that
+      didn't close its sockets cleanly). No legitimate work is in progress on it.
+      Kill after just 60s of blocking — these should never persist at all.
+
+    TIER 2 — Active backend connections (backend_start >= container start):
+      The connection belongs to live backend work (e.g. db_update_agent running
+      normalize_part_types across 4M rows, legitimately taking 20+ min). Never
+      kill these — just log a warning so very-long blockers are visible.
+
+    Also kills car_parts_ie_import_generic.py subprocesses stuck past their
+    expected 1-2 min runtime ceiling.
+    """
+    import subprocess as _sp
+
+    STUCK_IMPORT_S = 600     # importer subprocesses: normal <2 min, stuck >10 min = kill
+    ORPHAN_BLOCKER_S = 60    # connections from dead prev-container: kill after 60s
+    LIVE_WARN_S = 1800       # active-backend connections: warn if blocking >30 min
+    # Zombie query threshold: a same-container connection running the SAME query for
+    # this long AND actively blocking other queries is almost certainly from a dead
+    # process (e.g. a killed docker exec job whose asyncpg connection outlived it).
+    # With delta processing, no legitimate task ever runs longer than a few minutes.
+    # Set conservatively at 45 min — well above any real task, well below the 60+ min
+    # zombie queries we observed today.
+    ZOMBIE_QUERY_S = 2700
+
+    await asyncio.sleep(180)
+    while True:
+        # ── Stuck importer subprocesses ──────────────────────────────────────
+        try:
+            ps_out = _sp.run(
+                ["ps", "-eo", "pid,etimes,args"],
+                capture_output=True, text=True, timeout=10,
+            ).stdout
+            for line in ps_out.splitlines():
+                if "car_parts_ie_import_generic.py" not in line:
+                    continue
+                parts = line.split(None, 2)
+                if len(parts) < 3:
+                    continue
+                try:
+                    pid, etimes = int(parts[0]), int(parts[1])
+                except ValueError:
+                    continue
+                if etimes > STUCK_IMPORT_S:
+                    print(f"[car_parts_ie_watchdog] importer pid={pid} stuck for {etimes}s — killing", flush=True)
+                    _wds.record("kill_stuck_importer", pid, etimes, f"exceeded {STUCK_IMPORT_S}s threshold")
+                    await _force_kill_pid(pid, "stuck importer")
+        except Exception as exc:
+            print(f"[car_parts_ie_watchdog] process scan error: {exc}", flush=True)
+
+        # ── Blocking DB connections — orphan vs active ────────────────────────
+        try:
+            async with async_session_factory() as db:
+                rows = (await db.execute(text("""
+                    SELECT DISTINCT
+                        blocking.pid,
+                        EXTRACT(EPOCH FROM (now() - blocking.query_start))::int AS dur_s,
+                        blocking.backend_start < :container_start AS is_orphan
+                    FROM pg_locks bl
+                    JOIN pg_stat_activity blocked  ON bl.pid = blocked.pid
+                    JOIN pg_locks kl
+                        ON  kl.locktype          = bl.locktype
+                        AND kl.database          IS NOT DISTINCT FROM bl.database
+                        AND kl.relation          IS NOT DISTINCT FROM bl.relation
+                        AND kl.page              IS NOT DISTINCT FROM bl.page
+                        AND kl.tuple             IS NOT DISTINCT FROM bl.tuple
+                        AND kl.transactionid     IS NOT DISTINCT FROM bl.transactionid
+                        AND kl.classid           IS NOT DISTINCT FROM bl.classid
+                        AND kl.objid             IS NOT DISTINCT FROM bl.objid
+                        AND kl.objsubid          IS NOT DISTINCT FROM bl.objsubid
+                        AND kl.pid != bl.pid
+                    JOIN pg_stat_activity blocking ON kl.pid = blocking.pid
+                    WHERE NOT bl.granted
+                      AND blocking.pid != pg_backend_pid()
+                      AND now() - blocking.query_start > make_interval(secs => :min_dur)
+                """), {
+                    "container_start": _BACKEND_START_UTC,
+                    "min_dur": ORPHAN_BLOCKER_S,
+                })).fetchall()
+
+                for pid, dur_s, is_orphan in rows:
+                    if is_orphan:
+                        # Tier 1 — External orphan (previous container): kill immediately
+                        await db.execute(text("SELECT pg_terminate_backend(:pid)"), {"pid": pid})
+                        _wds.record("kill_orphan", pid, dur_s, "backend_start predates this container")
+                        print(
+                            f"[car_parts_ie_watchdog] ORPHAN connection pid={pid} "
+                            f"blocking_for={dur_s}s (pre-dates this container) — terminated",
+                            flush=True,
+                        )
+                    elif dur_s >= ZOMBIE_QUERY_S:
+                        # Tier 2 — Zombie query: same container but running 45+ min AND blocking.
+                        # Most likely a killed docker exec / manual run whose asyncpg connection
+                        # outlived the process. With delta processing, no real task runs this long.
+                        await db.execute(text("SELECT pg_terminate_backend(:pid)"), {"pid": pid})
+                        _wds.record("kill_orphan", pid, dur_s,
+                                    f"zombie: same-container query running {dur_s}s still blocking")
+                        print(
+                            f"[car_parts_ie_watchdog] ZOMBIE query pid={pid} "
+                            f"running {dur_s}s AND blocking — terminated (same-container but no live task runs this long)",
+                            flush=True,
+                        )
+                    elif dur_s >= LIVE_WARN_S:
+                        # Tier 3 — Active backend work: warn only, never kill
+                        _wds.record("warn_live_long", pid, dur_s, f"active backend query blocking for {dur_s}s — not killed")
+                        print(
+                            f"[car_parts_ie_watchdog] WARNING: active backend connection pid={pid} "
+                            f"blocking for {dur_s}s — monitoring only (within zombie threshold)",
+                            flush=True,
+                        )
+                if rows:
+                    await db.commit()
+        except Exception as exc:
+            print(f"[car_parts_ie_watchdog] lock scan error: {exc}", flush=True)
+
+        await asyncio.sleep(180)  # every 3 min
+
+
+async def _car_parts_ie_harvester_healthcheck_loop() -> None:
+    """
+    Every 30 min: confirm the harvester process is alive and has logged recent
+    progress. If it's alive but stalled (no log activity), kill it so
+    _car_parts_ie_harvester_loop's crash-relaunch picks it back up.
+    """
+    import subprocess as _sp
+    import time as _time
+
+    log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state", "logs", "flaresolverr_harvester.log")
+    STALE_LOG_S = 900  # no log line in 15 min while the process is alive = stuck
+
+    await asyncio.sleep(300)
+    while True:
+        try:
+            ps_out = _sp.run(
+                ["ps", "-eo", "pid,args"],
+                capture_output=True, text=True, timeout=10,
+            ).stdout
+            pid = None
+            for line in ps_out.splitlines():
+                if "car_parts_ie_flaresolverr_harvester.py" in line:
+                    pid = int(line.split(None, 1)[0])
+                    break
+
+            log_age_s = None
+            if os.path.exists(log_path):
+                log_age_s = _time.time() - os.path.getmtime(log_path)
+
+            stalled = pid is not None and log_age_s is not None and log_age_s > STALE_LOG_S
+            status = "STALLED" if stalled else ("MISSING" if pid is None else "ok")
+            print(
+                f"[car_parts_ie_healthcheck] alive={pid is not None} pid={pid} "
+                f"log_age_s={int(log_age_s) if log_age_s is not None else None} status={status}",
+                flush=True,
+            )
+
+            if stalled:
+                await _force_kill_pid(pid, "stalled harvester")
+
+            # FlareSolverr session-leak guard (added 2026-07-07). Second layer
+            # behind the harvester's own per-cycle cleanup: if sessions ever
+            # exceed a hard cap the box is being starved (each session = a
+            # headless Chrome). 33 leaked sessions once drove host load to 90
+            # and took search down. We can't restart the flaresolverr container
+            # from here (no docker socket in the backend), so destroy the
+            # leaked sessions directly via the API, then kill the harvester so
+            # its supervisor relaunches it with a clean 3-session baseline.
+            try:
+                import httpx as _hx
+                _fs_url = os.getenv("FLARESOLVERR_URL", "http://flaresolverr:8191/v1")
+                async with _hx.AsyncClient(timeout=20) as _hc:
+                    _sr = await _hc.post(_fs_url, json={"cmd": "sessions.list"})
+                    _sessions = _sr.json().get("sessions", []) if _sr.status_code == 200 else []
+                    _SESSION_CAP = 8  # 3 expected × safety margin
+                    if len(_sessions) > _SESSION_CAP:
+                        print(f"[car_parts_ie_healthcheck] FlareSolverr session leak: {len(_sessions)} > {_SESSION_CAP} — destroying all sessions", flush=True)
+                        for _sid in _sessions:
+                            try:
+                                await _hc.post(_fs_url, json={"cmd": "sessions.destroy", "session": _sid})
+                            except Exception:
+                                pass
+                        if pid is not None:
+                            await _force_kill_pid(pid, "harvester after session-leak cleanup")
+            except Exception as _fexc:
+                print(f"[car_parts_ie_healthcheck] session-leak check skipped: {_fexc}", flush=True)
+        except Exception as exc:
+            print(f"[car_parts_ie_healthcheck] error: {exc}", flush=True)
+
+        await asyncio.sleep(1800)  # 30 min
+
+
+async def _meili_verify_parity() -> None:
+    """
+    Destination verification — added 2026-07-02 after the index silently
+    drifted 620K docs behind while the sync's own checkpoint claimed 100%
+    complete. Lesson: a pipeline's self-report ("I sent everything") is not
+    verification; only comparing the actual destination against the actual
+    source is. Runs after every sync cycle: counts docs in Meilisearch vs
+    active rows in parts_catalog, logs the gap every time, and WhatsApp-alerts
+    the owner when the gap exceeds 100K docs so drift can never again
+    accumulate unnoticed.
+    """
+    import httpx as _httpx
+
+    try:
+        meili_url = os.getenv("MEILI_URL", "http://meilisearch:7700")
+        meili_key = os.getenv("MEILI_MASTER_KEY", "")
+        async with _httpx.AsyncClient(timeout=15) as hc:
+            r = await hc.get(
+                f"{meili_url}/indexes/parts/stats",
+                headers={"Authorization": f"Bearer {meili_key}"} if meili_key else {},
+            )
+            meili_docs = r.json().get("numberOfDocuments", 0)
+
+        import asyncpg as _apg
+        db_url = os.getenv("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://")
+        conn = await _apg.connect(db_url)
+        try:
+            await conn.execute("SET statement_timeout = '120s'")
+            db_count = await conn.fetchval("SELECT COUNT(*) FROM parts_catalog WHERE is_active")
+        finally:
+            await conn.close()
+
+        gap = db_count - meili_docs
+        print(f"[meili_parity] index={meili_docs:,} catalog={db_count:,} gap={gap:,}", flush=True)
+
+        if gap > 100_000:
+            owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
+            if owner:
+                msg = (
+                    "⚠️ *Meilisearch drift detected*\n"
+                    f"Index: {meili_docs:,} docs\nCatalog: {db_count:,} active parts\n"
+                    f"Gap: {gap:,} docs — sync is falling behind or skipping rows."
+                )
+                try:
+                    from social.whatsapp_provider import send_message as _wa_alert
+                    await _wa_alert(owner, msg)
+                except Exception:
+                    pass
+    except Exception as exc:
+        print(f"[meili_parity] check failed (non-fatal): {exc}", flush=True)
+
+
+async def _meili_sync_loop() -> None:
+    """
+    Keeps the Meilisearch index in sync with parts_catalog. Found 2026-06-30:
+    this had no scheduling whatsoever (no cron, not in run_all_tasks) — it ran
+    once manually on 2026-06-24 and then drifted for 6 days, ending up ~580K
+    documents behind the catalog (everything harvested since wasn't searchable).
+    Runs incremental (MEILI_REBUILD=0 in env, not a full rebuild) every 2h,
+    then verifies the destination actually matches the source (parity check).
+    """
+    import sys as _sys
+
+    await asyncio.sleep(600)  # let startup settle
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "meili_sync.py")
+    while True:
+        try:
+            print("[meili_sync_loop] starting incremental sync", flush=True)
+            proc = await asyncio.create_subprocess_exec(
+                _sys.executable, script,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            rc = await proc.wait()
+            print(f"[meili_sync_loop] sync finished rc={rc}", flush=True)
+            await _meili_verify_parity()
+        except Exception as exc:
+            print(f"[meili_sync_loop] error: {exc}", flush=True)
+        await asyncio.sleep(7200)  # every 2h
+
+
 @app.on_event("startup")
 async def startup():
     from catalog_scraper import start_scraper_task
@@ -998,6 +1460,12 @@ async def startup():
     _supervised_task("enrich_catalog_loop",         _enrich_catalog_loop())
     _supervised_task("status_update_loop",          _status_update_loop())
     _supervised_task("rex_dispatch_loop",           _rex_dispatch_loop())
+    _supervised_task("zombie_reaper",               _zombie_reaper_loop())
+    _supervised_task("car_parts_ie_harvester_loop",  _car_parts_ie_harvester_loop())
+    _supervised_task("car_parts_ie_stall_watchdog",  _car_parts_ie_stall_watchdog_loop())
+    _supervised_task("car_parts_ie_healthcheck",     _car_parts_ie_harvester_healthcheck_loop())
+    _supervised_task("meili_sync_loop",              _meili_sync_loop())
+    _supervised_task("harvest_supervisor",           _harvest_supervisor_loop())
     await _warm_search_paths()
     print("✅ All systems ready — price-sync + catalog-scraper + db-agent schedulers started")
 
@@ -1151,8 +1619,44 @@ async def _noa_marketing_loop():
         ("רדיאטור", "radiator", "רכב מתחמם מעבר"),
         ("נרות הצתה", "spark plugs", "צריכת דלק גבוהה"),
         ("פחי אוויר", "air filter", "תאוצה איטית, מנוע חנוק"),
-        ("מיסבי גלגל", "wheel bearings", "רעש 윙윙 מהגלגל במהירות"),
+        ("מיסבי גלגל", "wheel bearings", "רעש זמזום מהגלגל במהירות"),
     ]
+
+    async def _noa_real_catalog_fact(db, eng_part: str, heb_part: str, car: str) -> str:
+        """Marketing grounding (added 2026-07-05): pull a REAL priced part from
+        the catalog matching today's topic so NOA advertises true facts —
+        real part, real price, real fit — never invented claims."""
+        try:
+            car_make = car.split()[0]
+            row = (await db.execute(text("""
+                SELECT pc.name, pc.name_he, pc.base_price, pc.manufacturer
+                FROM parts_catalog pc
+                WHERE pc.is_active AND pc.base_price > 20 AND pc.base_price < 5000
+                  AND (pc.name_he ILIKE :hq OR pc.name ILIKE :eq)
+                  AND pc.manufacturer ILIKE :mfr
+                ORDER BY random() LIMIT 1
+            """), {"hq": f"%{heb_part.split()[0]}%", "eq": f"%{eng_part.split()[0]}%",
+                   "mfr": f"%{car_make}%"})).fetchone()
+            if not row:
+                row = (await db.execute(text("""
+                    SELECT pc.name, pc.name_he, pc.base_price, pc.manufacturer
+                    FROM parts_catalog pc
+                    WHERE pc.is_active AND pc.base_price > 20 AND pc.base_price < 5000
+                      AND (pc.name_he ILIKE :hq OR pc.name ILIKE :eq)
+                    ORDER BY random() LIMIT 1
+                """), {"hq": f"%{heb_part.split()[0]}%", "eq": f"%{eng_part.split()[0]}%"})).fetchone()
+            if row:
+                _pname = (row[1] or row[0] or "").strip()[:70]
+                _price = round(float(row[2]) * 1.18)  # display incl. VAT
+                return (f"\nעובדה אמיתית מהקטלוג (מותר ואף רצוי לצטט): "
+                        f"{_pname} ({row[3]}) — החל מ‑₪{_price} כולל מע\"מ באתר.")
+        except Exception as exc:
+            logger.warning("noa_marketing_loop: catalog fact lookup failed: %s", exc)
+        return ""
+
+    def _noa_utm_link(platform: str, week_num: int) -> str:
+        return (f"https://autosparefinder.co.il/?utm_source={platform}"
+                f"&utm_medium=social&utm_campaign=noa_w{week_num}")
 
     # Platform rotation by weekday (0=Mon, 1=Tue … 6=Sun)
     _DAY_PLATFORM = {
@@ -1193,8 +1697,10 @@ async def _noa_marketing_loop():
                     "\n".join(f"• {t}" for t in recent_topics)
                 ) if recent_topics else ""
 
+                real_fact = await _noa_real_catalog_fact(db, eng_part, heb_part, car)
+
                 if weekday == 0:
-                    # ── Monday: generate weekly campaign brief ──────────────────
+                    # ── Monday: generate weekly campaign brief + ad pack ─────────
                     campaign_prompt = (
                         "את נועה, מנהלת המדיה החברתית של AutoSpareFinder.\n"
                         "היום יום שני — תכנני קמפיין שיווקי שבועי מלא.\n\n"
@@ -1203,18 +1709,34 @@ async def _noa_marketing_loop():
                         f"• רכב לדגמה (שים לב, אפשר לבחור אחר): {car}\n"
                         f"• חלק לדגמה: {heb_part} ({eng_part}) — כאב שכיח: {pain}\n"
                         f"• שבוע {week_num} בשנה {now.year}\n"
+                        f"{real_fact}\n"
                         f"{no_repeat}\n\n"
                         "הנחיות:\n"
                         "• בחרי נושא שבועי יצירתי ורלוונטי — לא חייב להיות בדיוק הרכב/חלק שניתן לדגמה\n"
                         "• תכנני 6 פוסטים יומיים: ב׳=TikTok, ג׳=Instagram, ד׳=Facebook, ה׳=WhatsApp, ו׳=TikTok, שבת=Instagram\n"
                         "• כל פוסט — זווית שונה לגמרי, לא וריאציה של אותו טקסט\n"
-                        "• כתבי copy_hebrew מלא לכל יום — טקסט מוכן לפרסום, לא תיאור של הטקסט\n\n"
+                        "• כתבי copy_hebrew מלא לכל יום — טקסט מוכן לפרסום, לא תיאור של הטקסט\n"
+                        "• אם ניתנה עובדה אמיתית מהקטלוג — שלבי את המחיר האמיתי; אסור להמציא מחירים אחרים\n\n"
+                        "בנוסף — חבילת מודעות ממומנות (Facebook/Instagram Ads):\n"
+                        "• 3 וריאציות מודעה לבדיקת A/B — כל אחת בזווית אחרת (כאב / מחיר / קלות שימוש)\n"
+                        "• headline עד 40 תווים; primary_text עד 125 תווים; cta קצר\n"
+                        "• רק טענות אמיתיות: חיפוש לפי לוחית, השוואת ספקים, המחיר האמיתי מהקטלוג אם ניתן\n\n"
+                        "בנוסף — קמפיין Google Ads (חיפוש) לפי המתודולוגיה של Google:\n"
+                        "• קבוצת מודעות אחת ממוקדת לנושא השבוע (שלב Do במשפך)\n"
+                        "• keywords_exact: 5-8 ביטויי כוונה חמה בעברית [חלק+דגם/מחיר]\n"
+                        "• keywords_phrase: 4-6 ביטויי השוואה (שלב Think)\n"
+                        "• negatives: שלילות חובה (יד שניה, משומש, מוסך, תיקון וכו')\n"
+                        "• headlines: 8-10 כותרות RSA שונות באמת, כל אחת עד 30 תווים\n"
+                        "• descriptions: 4 תיאורים עד 90 תווים\n"
+                        "• רק טענות אמיתיות; אם ניתן מחיר אמיתי מהקטלוג — שלבי אותו בכותרת אחת לפחות\n\n"
                         "החזירי JSON בלבד (ללא markdown) עם השדות:\n"
                         "week_theme, core_message, target_persona, hashtag_strategy, success_metrics,\n"
-                        "daily_plan: [{day, platform, content_angle, visual_concept, copy_hebrew, cta}]\n"
+                        "daily_plan: [{day, platform, content_angle, visual_concept, copy_hebrew, cta}],\n"
+                        "ad_pack: [{variant, headline, primary_text, cta}],\n"
+                        "google_ads: {ad_group, keywords_exact, keywords_phrase, negatives, headlines, descriptions}\n"
                     )
 
-                    raw_plan = await _hf_text(prompt=campaign_prompt, system=noa.system_prompt, timeout=120.0)
+                    raw_plan = await _hf_text(prompt=campaign_prompt, system=noa.system_prompt, timeout=180.0, max_tokens=6000)
 
                     plan: dict = {}
                     try:
@@ -1253,6 +1775,34 @@ async def _noa_marketing_loop():
                         f"#️⃣ *האשטאגים:* {tags}",
                         f"📊 *מטרה:* {kpi}",
                     ]
+                    # Ad pack — ready-to-run paid ad variants for A/B testing
+                    _ads = [a for a in (plan.get("ad_pack") or []) if isinstance(a, dict)][:3]
+                    if _ads:
+                        wa_lines += ["", "🎯 *חבילת מודעות ממומנות (A/B):*"]
+                        for ai, ad in enumerate(_ads, 1):
+                            wa_lines.append(
+                                f"{ai}. *{ad.get('headline','')}*\n"
+                                f"   {ad.get('primary_text','')}\n"
+                                f"   CTA: {ad.get('cta','')}"
+                            )
+                        wa_lines.append(f"🔗 קישור למודעות: {_noa_utm_link('paid_ads', week_num)}")
+                    # Google Ads search campaign pack (See-Think-Do-Care / RSA specs)
+                    _gads = plan.get("google_ads") or {}
+                    if isinstance(_gads, dict) and _gads.get("headlines"):
+                        wa_lines += ["", f"🔎 *Google Ads — {_gads.get('ad_group','קבוצת מודעות')}*"]
+                        _kw_e = ", ".join(map(str, (_gads.get("keywords_exact") or [])[:8]))
+                        _kw_p = ", ".join(map(str, (_gads.get("keywords_phrase") or [])[:6]))
+                        _neg = ", ".join(map(str, (_gads.get("negatives") or [])[:8]))
+                        if _kw_e: wa_lines.append(f"🎯 Exact: {_kw_e}")
+                        if _kw_p: wa_lines.append(f"💭 Phrase: {_kw_p}")
+                        if _neg:  wa_lines.append(f"🚫 שלילות: {_neg}")
+                        wa_lines.append("📰 כותרות RSA:")
+                        for h in (_gads.get("headlines") or [])[:10]:
+                            wa_lines.append(f"  • {str(h)[:30]}")
+                        wa_lines.append("📄 תיאורים:")
+                        for d in (_gads.get("descriptions") or [])[:4]:
+                            wa_lines.append(f"  • {str(d)[:90]}")
+                        wa_lines.append(f"🔗 Final URL: {_noa_utm_link('google_ads', week_num)}")
                     wa_msg = "\n".join(wa_lines)
 
                     if OWNER_PHONE:
@@ -1305,19 +1855,29 @@ async def _noa_marketing_loop():
                         f"• חלק: {heb_part} ({eng_part})\n"
                         f"• כאב שכיח: {pain}\n"
                         f"• עונה: {season}\n"
+                        f"{real_fact}\n"
                         f"{theme_hint}{plan_hint}\n"
                         f"{no_repeat}\n\n"
                         "כתיבה:\n"
                         "• פתחי עם ה-hook בשורה ראשונה — קצרה, חדה, לא שאלה גנרית\n"
                         "• ציוני את שם הרכב ואת שם החלק הספציפי\n"
+                        "• אם ניתנה עובדה אמיתית מהקטלוג — שלבי את המחיר האמיתי (זה מה שמוכר); אסור להמציא מחיר\n"
                         "• פתרון: חיפוש לפי מספר רישוי ב-autosparefinder.co.il\n"
                         "• סיימי בשאלה אחת מעוררת שיח\n"
                         "• האשטאגים בשורה אחרונה בלבד\n\n"
                         "החזירי: טקסט הפוסט הסופי בלבד — ללא הסבר, ללא כותרת, ללא ספירה."
                     )
 
-                    raw_post = await _hf_text(prompt=post_prompt, system=noa.system_prompt, timeout=90.0)
+                    raw_post = await _hf_text(prompt=post_prompt, system=noa.system_prompt, timeout=90.0, max_tokens=1500)
                     caption = noa._finalize_noa_post(raw_post, platforms=[platform])
+                    # UTM attribution (added 2026-07-05): every post link carries
+                    # utm_source=<platform> so clicks are measurable per channel —
+                    # "success_metrics" mean nothing without attribution.
+                    caption = re.sub(
+                        r"(?<![/\w.])autosparefinder\.co\.il(?![/\w])",
+                        _noa_utm_link(platform, week_num).replace("https://", ""),
+                        caption,
+                    )
 
                     hashtags = [f"#{m.group(1)}" for m in noa._NOA_HASHTAG_RE.finditer(caption)]
                     pending_payload = {
@@ -1785,18 +2345,38 @@ async def _health_monitor_loop():
                 return dt
 
             try:
-                from db_update_agent import _last_report
-                last_heartbeat = _extract_dt(_last_report)
-                if last_heartbeat and isinstance(last_heartbeat, datetime):
-                    silence_mins = (datetime.utcnow() - last_heartbeat).total_seconds() / 60
+                # ROOT FIX 2026-07-06: this check used to read the in-memory
+                # `db_update_agent._last_report`, which only updates when a FULL
+                # cycle completes. Cycles legitimately run 1-3h and start 3h
+                # apart, so "silence" exceeded the 120-min threshold during
+                # EVERY normal cycle — 75 false WhatsApp alarms/day to the
+                # owner. Real liveness lives in job_registry heartbeats (ticked
+                # every few seconds while a cycle runs):
+                #   • cycle RUNNING + heartbeat >30 min old  → genuinely stuck
+                #   • no cycle at all for >5h (normal gap ≤ ~3h) → scheduler dead
+                _stall_reason = None
+                silence_mins = 0.0
+                async with async_session_factory() as _cdb:
+                    _hb_row = (await _cdb.execute(text("""
+                        SELECT status, last_heartbeat_at FROM job_registry
+                        WHERE job_id LIKE 'run_all_tasks%'
+                        ORDER BY started_at DESC LIMIT 1
+                    """))).fetchone()
+                if _hb_row and _hb_row[1]:
+                    _hb_ts = _hb_row[1]
+                    if _hb_ts.tzinfo is not None:
+                        _hb_ts = _hb_ts.astimezone(timezone.utc).replace(tzinfo=None)
+                    silence_mins = (datetime.utcnow() - _hb_ts).total_seconds() / 60
+                    if str(_hb_row[0]) == "running" and silence_mins > 30:
+                        _stall_reason = f"מחזור רץ אבל ה-heartbeat קפוא כבר {silence_mins:.0f} דקות — כנראה תקוע"
+                    elif str(_hb_row[0]) != "running" and silence_mins > 300:
+                        _stall_reason = f"לא התחיל מחזור חדש כבר {silence_mins:.0f} דקות (רגיל: עד ~180)"
 
-                    if silence_mins > 120:  # 2 hours
-                        _alert_title = "⏱️  Worker db_update_agent: שקט למעל 2 שעות"
-                        _alert_msg = (
-                            f"העובד db_update_agent לא שלח heartbeat במשך {silence_mins:.0f} דקות. "
-                            f"אם הוא צריך לרוץ הוא אולי תקוע."
-                        )
-                        print(f"[HealthMonitor] ALERT: worker silence={silence_mins:.0f} min > 120 min")
+                if _stall_reason:
+                    if True:
+                        _alert_title = "⏱️  Worker db_update_agent: תקוע באמת"
+                        _alert_msg = f"db_update_agent: {_stall_reason}."
+                        print(f"[HealthMonitor] ALERT: worker stalled — {_stall_reason}")
                         await _alert_owner(_alert_title, _alert_msg, alert_key="worker_silence")
 
                         async with pii_session_factory() as _pii_db:

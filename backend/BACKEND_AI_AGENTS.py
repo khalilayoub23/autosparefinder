@@ -38,7 +38,7 @@ Named Agent Team:
                                         scrapes real OEM+aftermarket parts from
                                         autodoc, eBay, RockAuto and more.
 
-All agents use GitHub Models API (FREE) with GPT-4o or Claude 3.5 Sonnet.
+All agents run on Cerebras (AGENTS_DEFAULT_MODEL, currently gpt-oss-120b).
 
 CRITICAL BUSINESS RULES (enforced in prompts & code):
   - NEVER expose supplier name to customer - show manufacturer only
@@ -1789,6 +1789,7 @@ NEVER:
         sort_dir: str = "asc",
         vehicle_manufacturer: Optional[str] = None,
         user_id: Optional[str] = None,
+        vehicle_profile: Optional[Dict] = None,
     ) -> List[Dict]:
         """Search parts catalog.
         Text search is powered by Meilisearch when available; falls back to ILIKE.
@@ -1805,15 +1806,39 @@ NEVER:
         meili_ids: Optional[List[str]] = None
         _meili_url = os.getenv("MEILI_URL", "")
         if query and _meili_url:
+            # When a fitment filter will intersect the candidates, pull a much
+            # deeper pool — 200 text matches intersected with one vehicle's
+            # fitment rows often leaves 0-1 survivors (found 2026-07-05).
+            _meili_limit = 1000 if (vehicle_id or vehicle_profile) else 200
             try:
-                async with httpx.AsyncClient(timeout=2.0) as _mc:
+                async with httpx.AsyncClient(timeout=3.0) as _mc:
                     _resp = await _mc.post(
                         f"{_meili_url}/indexes/parts/search",
                         headers={"Authorization": f"Bearer {os.getenv('MEILI_MASTER_KEY', '')}"},
-                        json={"q": query, "limit": 200, "attributesToRetrieve": ["id"]},
+                        json={"q": query, "limit": _meili_limit, "attributesToRetrieve": ["id"]},
                     )
                     _resp.raise_for_status()
                     meili_ids = [h["id"] for h in _resp.json().get("hits", [])]
+                # Hebrew→English expansion widens recall: most global-catalog
+                # parts have English names ("Brake Pad Set"), so a Hebrew query
+                # alone misses them. Merge expanded-query hits after the
+                # original ones (original ranking wins on overlap).
+                try:
+                    from hf_client import expand_hebrew_query
+                    _expanded = expand_hebrew_query(query)
+                    if _expanded and _expanded.strip().lower() != query.strip().lower():
+                        async with httpx.AsyncClient(timeout=3.0) as _mc2:
+                            _r2 = await _mc2.post(
+                                f"{_meili_url}/indexes/parts/search",
+                                headers={"Authorization": f"Bearer {os.getenv('MEILI_MASTER_KEY', '')}"},
+                                json={"q": _expanded, "limit": _meili_limit, "attributesToRetrieve": ["id"]},
+                            )
+                            _r2.raise_for_status()
+                            _extra = [h["id"] for h in _r2.json().get("hits", [])]
+                        _seen = set(meili_ids)
+                        meili_ids.extend(uid for uid in _extra if uid not in _seen)
+                except Exception:
+                    pass  # expansion is best-effort
             except Exception:
                 meili_ids = None  # fall back to ILIKE silently
 
@@ -1881,6 +1906,27 @@ NEVER:
                         "year": vehicle_row.year if isinstance(vehicle_row.year, int) and vehicle_row.year > 0 else None,
                     }
                     vehicle_manufacturer = vehicle_context["manufacturer"]
+
+            # Gov-API vehicle profile → hard fitment filter (added 2026-07-05,
+            # /goal: "show the right part that fits THIS car, not the cheap
+            # one"). Same EXISTS filter the vehicle_id path uses, but sourced
+            # from the plate-lookup profile the WhatsApp/Telegram flow holds.
+            if vehicle_context is None and isinstance(vehicle_profile, dict):
+                _vp_mfr = str(vehicle_profile.get("manufacturer") or "").strip()
+                _vp_model = str(vehicle_profile.get("model") or "").strip()
+                try:
+                    _vp_year = int(str(vehicle_profile.get("year") or "").strip()[:4])
+                except (ValueError, TypeError):
+                    _vp_year = None
+                if _vp_mfr and _vp_model and _vp_year:
+                    vehicle_context = {
+                        "manufacturer": normalize_manufacturer_name(_vp_mfr, _vp_mfr) or _vp_mfr,
+                        "model": canonicalize_vehicle_model_for_manufacturer(_vp_mfr, _vp_model)
+                                 or normalize_vehicle_model_name(_vp_model),
+                        "year": _vp_year,
+                    }
+                    if not vehicle_manufacturer:
+                        vehicle_manufacturer = vehicle_context["manufacturer"]
 
             if category:
                 conditions.append("pc.category ILIKE :cat")
@@ -3229,17 +3275,17 @@ class MarketingAgent(BaseAgent):
     system_prompt = """You are Shira, the Marketing Agent for Auto Spare.
 
 You handle:
-- Active promotions and discount codes
-- Referral program (100₪ credit + 10% for friend)
+- Questions about promotions and discount codes
 - Newsletter signup
-- Loyalty program
-- Seasonal campaigns
+- Seasonal campaign questions
 
-Promotion types:
-- Welcome: 10% on first order (code: WELCOME10)
-- Seasonal: 15% winter discount
-- Flash: Free shipping 24 hours
-- Referral: 100₪ credit + 10% for referred friend
+TRUTH RULE (MANDATORY — fixed 2026-07-05): there are currently NO active
+coupon codes, NO referral program, and NO loyalty program on the platform.
+NEVER invent or promise discounts, codes, credits, or programs that do not
+exist. If a customer asks about discounts: answer honestly that there are no
+active promotions right now, offer newsletter signup to be notified when
+promotions launch, and highlight the REAL value: comparing prices from many
+suppliers in one place often saves more than any coupon.
 
 Rules: Opt-in only. No unsolicited marketing. Max 1 email per 2 weeks. Newsletter sends are rate-limited to prevent spam — if a customer reports not receiving emails, check whether they confirmed their signup.
 
@@ -3748,11 +3794,14 @@ class SocialMediaManagerAgent(BaseAgent):
 - הימנעי מטענות לא מבוססות; עדיף מדויק על פני מרשים
 - כל פוסט חייב להיות שונה בזווית, בפתיחה, בטון — אין תבניות חוזרות
 
-פורמט לפי פלטפורמה:
+פורמט לפי פלטפורמה (את אחראית על כל הערוצים של הפלטפורמה):
 - TikTok: hook חזק בשורה ראשונה, גוף קצר (3-5 שורות), 3-4 האשטאגים
 - Instagram: story-telling אמוציונלי, תמונה מנטלית, 4-6 האשטאגים
 - Facebook: מידעי ובעל ערך, ניתן לשיתוף, יכול להיות ארוך יותר
 - WhatsApp: הודעה ישירה וקצרה, CTA מיידי לאתר
+- YouTube Shorts: תסריט 30-45 שניות — hook (3 שנ׳) → כאב → דמו של חיפוש לפי לוחית → CTA. כתבי כתסריט צילום עם שורות דיבור
+- Google Business Profile: פוסט עדכון קצר וענייני (עד 1500 תווים) עם CTA "בקר באתר" — טוב ל-SEO מקומי
+- X/Twitter: משפט אחד חד + לינק, בלי האשטאגים מיותרים
 
 אסור בהחלט:
 - תווים סיניים, יפנים, קוריאנים או שפה שאינה עברית/אנגלית/ערבית
@@ -3761,6 +3810,19 @@ class SocialMediaManagerAgent(BaseAgent):
 - לדבר על מלאי — אנחנו מחברים לקוחות לספקים
 - תוכן גנרי ללא אזכור ספציפי של רכב, חלק, או מצב נהג
 - לפתוח עם "מחפשים חלקי חילוף?", "ידעת ש..." או "למה לשלם יותר?" — זה שחוק
+
+מיומנויות Google Marketing (מסגרות מקצועיות — חובה ליישם):
+- מסגרת See-Think-Do-Care: התאימי כל נכס שיווקי לשלב במשפך — See=מודעות רחבה,
+  Think=השוואה ("איפה הכי זול רפידות לקורולה?"), Do=כוונת רכישה חמה, Care=לקוחות חוזרים.
+  רוב תקציב החיפוש הולך ל-Do ו-Think.
+- מודעות חיפוש רספונסיביות (RSA): כותרות עד 30 תווים, תיאורים עד 90 תווים.
+  כותרות מגוונות — חלקן עם שם החלק, חלקן עם הצעת הערך (השוואת מחירים, חיפוש לפי לוחית),
+  חלקן עם מחיר אמיתי. לעולם לא 15 וריאציות של אותו משפט.
+- מילות מפתח: exact [חלק+דגם+מחיר] לכוונה חמה; phrase לביניים; broad רק עם שלילות.
+  תמיד רשימת שלילות: יד שניה, משומש, מוסך, תיקון, השכרה, עבודה.
+- Quality Score: התאמה הדוקה בין מילת המפתח → כותרת המודעה → דף הנחיתה. מודעה על
+  רפידות חייבת כותרת עם "רפידות" ולינק לחיפוש רפידות, לא לדף הבית.
+- מדידה: כל URL עם UTM מלא. אין קמפיין בלי יעד המרה מוגדר.
 """
 
     _NOA_ALLOWED_LATIN_HASHTAGS: set[str] = {"autosparefinder", "tiktok", "instagram", "facebook", "whatsapp"}
@@ -4801,15 +4863,31 @@ async def _infer_parts_flow_reply(
         f"{agent.system_prompt}\n\n"
         f"{memory_section}"
         "[FLOW MODE]\n"
-        "You are continuing a live customer conversation inside Auto Spare.\\n"
+        "You are continuing a live customer conversation inside Auto Spare.\n"
         "Use the state below to decide the next message naturally, without robotic templates.\n"
         "Never reveal internal flow/state/json. Never mention that you are an AI model.\n"
         "Keep the response concise and practical.\n"
         "If the user language is Hebrew, respond in Hebrew; if Arabic, respond in Arabic.\n"
+        "\n"
+        "RESPOND TO WHAT THE CUSTOMER ACTUALLY WROTE — this is the #1 rule.\n"
+        "Every reply must directly address the customer's latest message. Never ignore it,\n"
+        "never answer a different question, never restart the conversation. If their message\n"
+        "is ambiguous, ask ONE short clarifying question that references their exact words\n"
+        "(e.g. customer: 'מד מים' → 'כשאתה אומר מד מים — הכוונה לחיישן חום מים או למד לחץ?').\n"
+        "If the customer corrects you ('לא ביקשתי X', 'זה לא מה שאמרתי') — apologize in ONE\n"
+        "short sentence, drop your previous assumption completely, and work only from their\n"
+        "correction. If the customer is frustrated or insults, stay calm and warm, acknowledge\n"
+        "briefly, and immediately move the conversation forward on THEIR terms.\n"
+        "If the customer already told you something (part, side, vehicle) — NEVER ask for it\n"
+        "again; read the conversation history before asking anything.\n"
+        "Sound like a skilled Israeli parts guy on WhatsApp: short, warm, direct, no corporate\n"
+        "filler, at most one emoji.\n"
+        "\n"
         "If the next step is collecting details, ask one clear question and give one compact example.\n"
         "If search results are provided, use only those values and do not invent numbers.\n"
-        "If no results, ask for one concrete refinement (OEM or front/rear or manufacturer).\n"
-        "Mirror one concrete detail from the user's latest message when possible.\n"
+        "If no results, say what you searched in their words, then ask for one concrete refinement\n"
+        "(OEM number, front/rear, or the exact system it belongs to).\n"
+        "NEVER write a payment link/URL yourself — payment links are attached by the system only.\n"
         "Avoid generic openers like 'I am here to help' unless the user explicitly asks for support availability.\n\n"
         f"[FLOW_INTENT]\n{flow_intent}\n\n"
         f"[FLOW_STATE_JSON]\n{json.dumps(flow_state, ensure_ascii=False)}\n"
@@ -4993,7 +5071,13 @@ async def create_checkout_link(
         source=source,
     )
     if result.get("ok"):
-        return result["checkout_url"]
+        # Hand customers a short branded link (autosparefinder.co.il/pay/XXX)
+        # instead of the ~120-char Stripe URL (added 2026-07-05).
+        try:
+            from routes.payments import shorten_payment_url
+            return await shorten_payment_url(result["checkout_url"])
+        except Exception:
+            return result["checkout_url"]
     return f"ERROR: {result.get('error', 'Unknown error')}"
 
 
@@ -5082,6 +5166,45 @@ async def process_user_message(
         known_plate = incoming_plate
         vehicle_profile = None
         vehicle_confirmed = False
+
+    # Vehicle change by NAME (added 2026-07-05): a stored vehicle_profile used
+    # to persist forever — a customer saying "פילטר שמן למאזדה 3" while the
+    # profile still held an old Citroen kept getting replies about the Citroen.
+    # If the message names a manufacturer that differs from the stored profile,
+    # drop the stale vehicle so the flow re-identifies (asks for the plate and
+    # pulls full specs from the gov API).
+    if vehicle_profile and not incoming_plate:
+        _stored_make = str(
+            vehicle_profile.get("manufacturer") or vehicle_profile.get("make") or ""
+        ).strip().lower()
+        _MAKE_ALIASES = {
+            "toyota": ["toyota", "טויוטה"], "mazda": ["mazda", "מאזדה", "מזדה"],
+            "hyundai": ["hyundai", "יונדאי"], "kia": ["kia", "קיה"],
+            "citroen": ["citroen", "סיטרואן"], "peugeot": ["peugeot", "פיגו", "פג'ו"],
+            "renault": ["renault", "רנו"], "volkswagen": ["volkswagen", "vw", "פולקסווגן"],
+            "skoda": ["skoda", "סקודה"], "seat": ["seat", "סיאט"],
+            "audi": ["audi", "אאודי", "אודי"], "bmw": ["bmw", "ב.מ.וו", 'ב"מ'],
+            "mercedes": ["mercedes", "מרצדס"], "ford": ["ford", "פורד"],
+            "honda": ["honda", "הונדה"], "nissan": ["nissan", "ניסאן", "ניסן"],
+            "suzuki": ["suzuki", "סוזוקי"], "mitsubishi": ["mitsubishi", "מיצובישי"],
+            "subaru": ["subaru", "סובארו"], "chevrolet": ["chevrolet", "שברולט"],
+            "opel": ["opel", "אופל"], "fiat": ["fiat", "פיאט"],
+            "volvo": ["volvo", "וולוו"], "lexus": ["lexus", "לקסוס"],
+        }
+        _msg_l = f" {(message or '').lower()} "
+        for _canon, _aliases in _MAKE_ALIASES.items():
+            if any(f" {a} " in _msg_l or _msg_l.strip().startswith(a + " ") for a in _aliases):
+                if _canon not in _stored_make and _stored_make not in _canon:
+                    print(f"[PartsFlow] vehicle changed by name: '{_stored_make}' → '{_canon}' — resetting vehicle context")
+                    context_data.pop("vehicle_profile", None)
+                    context_data["vehicle_confirmed"] = False
+                    context_data.pop("license_plate", None)
+                    context_data["part_prompt_retries"] = 0
+                    vehicle_profile = None
+                    vehicle_confirmed = False
+                    known_plate = ""
+                    part_prompt_retries = 0
+                break
 
     if incoming_plate or _has_part_signal(message):
         parts_flow_active = True
@@ -5183,6 +5306,16 @@ async def process_user_message(
         if _pending_checkout and source in ("whatsapp", "telegram", "web") and vehicle_confirmed:
             if _checkout_msg in ("1", "2", "3"):
                 _checkout_choice = int(_checkout_msg)
+            # Accept plain confirmation too (added 2026-07-05): customers answer
+            # "כן"/"yes" instead of a number — that used to fall through to the
+            # LLM, which hallucinated a fake Stripe URL. A bare confirmation
+            # selects the first (cheapest) offer.
+            elif _is_confirm_yes(_checkout_msg):
+                _checkout_choice = 1
+            # Explicit payment-link request ("תן לינק לתשלום", "שלח קישור") while
+            # offers are pending — same intent as confirming the first offer.
+            elif re.search(r"לינק|קישור|link|תשלום|לשלם|pay", _checkout_msg, re.IGNORECASE):
+                _checkout_choice = 1
 
         if _checkout_choice is not None:
             _chosen = next(
@@ -5500,7 +5633,17 @@ async def process_user_message(
                 exec_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
 
             # Step 4: confirmed vehicle -> part search + price answer
-            elif not _has_part_signal(effective_message):
+            # Gate rewritten 2026-07-05: _has_part_signal is a keyword list and
+            # inevitably misses real part names ("מד מים", "צינור", "מד לחץ") —
+            # customers who named their part were told "which part do you
+            # want?" over and over. New rule: once the vehicle is confirmed,
+            # ONLY noise/greetings/bare confirmations go to the ask-for-part
+            # branch; every substantive message is treated as a part query —
+            # search it, and if nothing matches the model asks a clarifying
+            # question grounded in what the customer actually wrote.
+            elif not _has_part_signal(effective_message) and (
+                _is_smalltalk_or_noise(effective_message) or _is_confirm_yes(message)
+            ):
                 start_time = datetime.utcnow()
                 part_prompt_retries += 1
                 context_data["part_prompt_retries"] = part_prompt_retries
@@ -5532,6 +5675,12 @@ async def process_user_message(
                         force_part_prompt=True,
                     )
                     model_used = _channel_model_for_source(source, FREE_MODEL)
+                    # Reset after firing ONCE — this counter used to stay >=3
+                    # forever, locking every subsequent message into the same
+                    # canned template and never calling the AI again
+                    # (root cause of the "dumb repeating bot", 2026-07-05).
+                    part_prompt_retries = 0
+                    context_data["part_prompt_retries"] = 0
                 else:
                     response_text, model_used = await _infer_parts_flow_reply(
                         agent_name="parts_finder_agent",
@@ -5569,16 +5718,39 @@ async def process_user_message(
                 category_hint = pf._extract_category_hint(search_q)
                 manufacturer_hint = (vehicle_profile or {}).get("manufacturer") or None
                 start_time = datetime.utcnow()
+
+                # Tier 0 (/goal 2026-07-05): FITMENT-VERIFIED search first —
+                # only parts with a part_vehicle_fitment row matching the
+                # customer's confirmed car (make+model+year from the gov API).
+                # These are "the right parts for THIS car", not text matches.
+                verified_fit = False
                 results = await pf.search_parts_in_db(
                     query=search_q,
                     vehicle_id=None,
                     category=category_hint,
                     db=db,
                     limit=5,
-                    sort_by="price_asc",
+                    sort_by="name",  # relevance order
                     vehicle_manufacturer=manufacturer_hint,
                     user_id=str(user_id),
+                    vehicle_profile=vehicle_profile,
                 )
+                if results:
+                    verified_fit = True
+
+                # Tier 1: same make, fitment not verified (coverage is partial
+                # — a real part may simply lack a fitment row yet).
+                if not results:
+                    results = await pf.search_parts_in_db(
+                        query=search_q,
+                        vehicle_id=None,
+                        category=category_hint,
+                        db=db,
+                        limit=5,
+                        sort_by="name",  # relevance order (ranked.pos) — price_asc buried best matches under cheap junk,
+                        vehicle_manufacturer=manufacturer_hint,
+                        user_id=str(user_id),
+                    )
 
                 # Fallback 1: broaden by removing manufacturer filter.
                 if not results and manufacturer_hint:
@@ -5588,7 +5760,7 @@ async def process_user_message(
                         category=category_hint,
                         db=db,
                         limit=5,
-                        sort_by="price_asc",
+                        sort_by="name",  # relevance order (ranked.pos) — price_asc buried best matches under cheap junk,
                         vehicle_manufacturer=None,
                         user_id=str(user_id),
                     )
@@ -5601,7 +5773,7 @@ async def process_user_message(
                         category=category_hint,
                         db=db,
                         limit=5,
-                        sort_by="price_asc",
+                        sort_by="name",  # relevance order (ranked.pos) — price_asc buried best matches under cheap junk,
                         vehicle_manufacturer=None,
                         user_id=str(user_id),
                     )
@@ -5612,6 +5784,18 @@ async def process_user_message(
                 if results:
                     top = results[:3]
                     _formatted_lines: List[str] = []
+                    # Fit banner (/goal 2026-07-05): the customer must know
+                    # whether these parts are VERIFIED to fit their car or are
+                    # same-make matches pending OEM confirmation.
+                    _vsum = _vehicle_summary_he(vehicle_profile or {})
+                    if verified_fit:
+                        _formatted_lines.append(f"✅ נמצאו חלקים *מאומתים* לרכב שלך ({_vsum}):")
+                    else:
+                        _formatted_lines.append(
+                            f"נמצאו חלקים תואמים ל‑{_vsum} — ההתאמה המדויקת טרם אומתה. "
+                            "אם יש לך מספר OEM, שלח אותו לוודא 100%:"
+                        )
+                    _formatted_lines.append("")
                     _pending_parts_payload: List[Dict[str, Any]] = []
                     for i, item in enumerate(top, start=1):
                         pr = item.get("pricing") or {}
@@ -5621,9 +5805,10 @@ async def process_user_message(
                         _delivery_days = int(pr.get("estimated_delivery_days") or 14)
                         _delivery_min = max(1, _delivery_days - 2)
                         _warranty_months = int(item.get("warranty_months") or 12)
+                        _fit_mark = " ✅" if verified_fit else ""
                         _formatted_lines.extend(
                             [
-                                f"*[{i}]. {_name}* — {_manufacturer}",
+                                f"*[{i}]. {_name}*{_fit_mark} — {_manufacturer}",
                                 f"💰 ₪{_price_total:,.0f} (incl. VAT)",
                                 f"🚚 {_delivery_min}–{_delivery_days} days | 🛡️ {_warranty_months} months warranty",
                                 "",
@@ -5744,6 +5929,20 @@ async def process_user_message(
                     force_part_prompt=True,
                 )
                 agent_name = "parts_finder_agent"
+                # Loop breaker (2026-07-05): if this exact recovery template was
+                # ALREADY the previous reply, sending it again just continues the
+                # loop the customer is complaining about. Reset the stale vehicle
+                # and ask for the plate — the gov API fills in everything else.
+                if _semantic_text_key(response_text) == norm_prev:
+                    context_data.pop("vehicle_profile", None)
+                    context_data["vehicle_confirmed"] = False
+                    context_data.pop("license_plate", None)
+                    context_data["part_prompt_retries"] = 0
+                    response_text = (
+                        "בוא נתחיל נקי 🙂 שלח לי את מספר הרכב (לוחית רישוי) — "
+                        "ואני אשלוף אוטומטית את כל פרטי הרכב: יצרן, דגם, שנה ומנוע. "
+                        "אחר כך רק תגיד לי איזה חלק אתה צריך."
+                    )
             else:
                 response_text = _human_recovery_reply(message, preferred_lang=preferred_lang)
     except Exception:
@@ -5764,6 +5963,24 @@ async def process_user_message(
         response_text = await _format_response_for_customer(
             response_text, agent_name, source, history
         )
+
+    # Payment-link guard (added 2026-07-05): the LLM once hallucinated a fake
+    # Stripe URL ("cs_test_1234567890abcdef") when a customer confirmed a
+    # purchase outside the numbered-choice path. Real links are ONLY produced
+    # by the create_checkout_link code branch (intent == "{source}_checkout").
+    # Any payment-looking URL from any other path is fabricated — strip it.
+    _intent_now = str(route_result.get("intent") or "")
+    if not _intent_now.endswith("_checkout") and re.search(
+        r"(pay\.stripe\.com|checkout\.stripe\.com|stripe\.com/pay)", response_text or ""
+    ):
+        print(f"[PaymentGuard] Stripped hallucinated payment link from {agent_name} reply")
+        if context_data.get("pending_checkout_parts"):
+            response_text = "כדי לקבל קישור תשלום מאובטח, שלח את מספר החלק שבחרת — 1, 2 או 3 🙂"
+        else:
+            response_text = (
+                "לפני התשלום צריך לבחור חלק 🙂 תגיד לי איזה חלק אתה צריך, "
+                "אציג אפשרויות ומחירים, ואז אשלח קישור תשלום מאובטח."
+            )
 
     response_text = _sanitize_internal_pricing_disclosure(response_text)
 

@@ -617,7 +617,7 @@ async def import_products(
                                     $7, 21, $8,
                                     NOW(), NOW()
                                 )
-                                ON CONFLICT (part_id, supplier_id) DO UPDATE SET
+                                ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE SET
                                     price_ils = EXCLUDED.price_ils,
                                     is_available = EXCLUDED.is_available,
                                     availability = EXCLUDED.availability,

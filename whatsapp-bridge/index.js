@@ -18,6 +18,56 @@ import pino from 'pino'
 
 const BACKEND_WEBHOOK = process.env.BACKEND_URL || 'http://backend:8000/api/v1/webhooks/whatsapp'
 const BRIDGE_PORT = 3001
+
+// Connection-event log (added 2026-07-05): persistent, timestamped record of
+// every connect/disconnect/watchdog action so disconnection patterns can be
+// tracked over time. Lives on the bind mount → survives restarts, readable
+// from the host at /opt/autosparefinder/whatsapp-bridge/connection_events.log
+import fs from 'fs'
+const EVENT_LOG = '/app/connection_events.log'
+function logEvent(event, detail = '') {
+  const line = `${new Date().toISOString()} | ${event}${detail ? ' | ' + detail : ''}\n`
+  console.log('[ConnLog]', line.trim())
+  try {
+    // Cap growth: keep the newest ~2000 lines once the file passes 512KB
+    try {
+      const st = fs.statSync(EVENT_LOG)
+      if (st.size > 524288) {
+        const tail = fs.readFileSync(EVENT_LOG, 'utf8').split('\n').slice(-2000).join('\n')
+        fs.writeFileSync(EVENT_LOG, tail + '\n')
+      }
+    } catch {}
+    fs.appendFileSync(EVENT_LOG, line)
+  } catch (err) {
+    console.error('[ConnLog] write failed:', err.message)
+  }
+}
+logEvent('PROCESS_START', `pid=${process.pid}`)
+
+// Liveness watchdog (added 2026-07-05): Baileys sockets can die SILENTLY —
+// no 'close' event fires, the process keeps running, and inbound messages
+// just stop (customers get no replies). Every 3 minutes we push a presence
+// update; if the write fails twice in a row the socket is dead — exit(1)
+// and Docker's unless-stopped restart policy revives us with a live socket
+// (session persists in auth_info, no QR re-scan needed).
+let livenessTimer = null
+function startLivenessWatchdog(sock) {
+  if (livenessTimer) clearInterval(livenessTimer)
+  let consecutiveFailures = 0
+  livenessTimer = setInterval(async () => {
+    try {
+      await sock.sendPresenceUpdate('available')
+      consecutiveFailures = 0
+    } catch (err) {
+      consecutiveFailures += 1
+      logEvent('WATCHDOG_PING_FAILED', `attempt=${consecutiveFailures}/2 err=${err.message}`)
+      if (consecutiveFailures >= 2) {
+        logEvent('WATCHDOG_RESTART', 'socket dead — exiting for Docker restart')
+        process.exit(1)
+      }
+    }
+  }, 180000)
+}
 const logger = pino({ level: 'silent' })
 const MAX_MEDIA_BYTES = Math.max(256000, Number.parseInt(process.env.WA_MEDIA_MAX_BYTES || '6291456', 10) || 6291456)
 
@@ -148,29 +198,43 @@ async function startBot() {
   const { state, saveCreds } = await useMultiFileAuthState('./auth_info')
   const { version } = await fetchLatestBaileysVersion()
 
+  // Connection-health config (root fix 2026-07-05): with the defaults, a
+  // dropped TCP connection to WhatsApp went undetected — no 'close' event,
+  // bridge believed it was online, customers got no replies (silent death).
+  // Same disease we fixed for Postgres with TCP keepalives. These settings
+  // make the library itself detect a dead socket within ~35s and fire the
+  // normal close→reconnect path (graceful, no process restart needed):
   const sock = makeWASocket({
     version,
     auth: state,
     logger,
     printQRInTerminal: false,
     getMessage: async () => ({ conversation: '' }),
+    keepAliveIntervalMs: 15000,     // probe every 15s (default 30s)
+    connectTimeoutMs: 30000,        // fail dead connects fast
+    defaultQueryTimeoutMs: 60000,   // never wait forever on a query
+    retryRequestDelayMs: 3000,
   })
 
   waSocket = sock
 
   sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
     if (qr) {
+      logEvent('QR_DISPLAYED', 'awaiting scan')
       console.log('\n📱 Scan QR with WhatsApp:\n')
       qrcode.generate(qr, { small: true })
     }
     if (connection === 'close') {
       const code = new Boom(lastDisconnect?.error)?.output?.statusCode
       const reconnect = code !== DisconnectReason.loggedOut
+      logEvent('DISCONNECTED', `code=${code} reason=${lastDisconnect?.error?.message || 'unknown'} reconnect=${reconnect}`)
       console.log('[Bridge] Closed (' + code + '). Reconnect: ' + reconnect)
       if (reconnect) startBot()
     }
     if (connection === 'open') {
+      logEvent('CONNECTED')
       console.log('✅ WhatsApp connected')
+      startLivenessWatchdog(sock)
     }
   })
 
@@ -262,6 +326,7 @@ async function startBot() {
         body: text,
         profile_name: msg.pushName || '',
         reply_jid: jid,
+        message_id: msg.key.id || '',
       }
 
       if (mediaKind) {

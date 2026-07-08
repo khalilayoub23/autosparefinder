@@ -11,6 +11,7 @@ import json
 import logging
 import random
 import re
+import time
 import uuid
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
@@ -77,17 +78,27 @@ async def task1_fix_part_types() -> int:
                                WHEN 'מקורימקורי' THEN 'מקורי'
                                WHEN 'משופץמשופץ' THEN 'משופץ'
                                WHEN 'unknownunknown' THEN 'unknown'
-                               WHEN 'aftermarket' THEN 'Aftermarket'
-                               WHEN 'original' THEN 'Original'
-                               WHEN 'refurbished' THEN 'Refurbished'
-                               WHEN 'used' THEN 'Used'
+                               WHEN 'aftermarket' THEN 'aftermarket'
+                               WHEN 'Aftermarket' THEN 'aftermarket'
+                               WHEN 'ALTERNATIVE' THEN 'aftermarket'
+                               WHEN 'original' THEN 'oem'
+                               WHEN 'Original' THEN 'oem'
+                               WHEN 'OEM' THEN 'oem'
+                               WHEN 'refurbished' THEN 'remanufactured'
+                               WHEN 'Refurbished' THEN 'remanufactured'
+                               WHEN 'used' THEN 'used'
+                               WHEN 'Used' THEN 'used'
+                               WHEN 'USED' THEN 'used'
                                ELSE part_type
                            END AS fixed_part_type
                     FROM parts_catalog
                     WHERE part_type IN ('חליפיחליפי', 'מקורימקורי', 'משופץמשופץ', 'unknownunknown',
-                                       'aftermarket', 'original', 'refurbished', 'used')
+                                       'aftermarket', 'Aftermarket', 'ALTERNATIVE',
+                                       'original', 'Original', 'OEM',
+                                       'refurbished', 'Refurbished',
+                                       'used', 'Used', 'USED')
                     ORDER BY updated_at NULLS FIRST, created_at NULLS FIRST, id
-                    LIMIT 100
+                    LIMIT 500
                 )
                 UPDATE parts_catalog pc
                 SET part_type = batch.fixed_part_type,
@@ -693,13 +704,28 @@ async def task_zombie_watchdog() -> int:
     return remediated
 
 
+# Backoff state (added 2026-07-07): this task's candidate scan is inherently
+# expensive (probes supplier_parts for ~28K inactive-unpriced parts) and there
+# are normally 0 to recover. Running it every 30s hammered the disk forever for
+# nothing — the chronic load source that stalled imports/connections and set
+# off watchdog mass-kills. When a run finds nothing, back off exponentially
+# (30s → … → 30 min cap). A run that recovers something resets to eager.
+_RECOVER_INACTIVE_SKIP_UNTIL = 0.0
+_RECOVER_INACTIVE_BACKOFF_S = 30.0
+_RECOVER_INACTIVE_BACKOFF_MAX = 1800.0
+
+
 async def task_recover_priced_inactive(batch_size: int = 100) -> int:
     """Bucket 2 recovery — Part A (no web):
     Find inactive parts whose supplier_parts row already has price_usd > 0
     but whose base_price was never copied (or was zeroed by a PDF sweep).
     Copy the price, convert USD→ILS, and reactivate the part.
-    Runs in micro-batches every cleanup cycle.
+    Runs with exponential backoff — dormant when nothing to recover.
     """
+    global _RECOVER_INACTIVE_SKIP_UNTIL, _RECOVER_INACTIVE_BACKOFF_S
+    if time.monotonic() < _RECOVER_INACTIVE_SKIP_UNTIL:
+        return 0
+
     recovered = 0
     async with scraper_session_factory() as db:
         try:
@@ -731,8 +757,17 @@ async def task_recover_priced_inactive(batch_size: int = 100) -> int:
             if recovered:
                 await db.commit()
                 logger.info("task_recover_priced_inactive: reactivated=%d fx=%.4f", recovered, fx)
+                # Work found → reset to eager so we drain the backlog fast.
+                _RECOVER_INACTIVE_BACKOFF_S = 30.0
+                _RECOVER_INACTIVE_SKIP_UNTIL = 0.0
             else:
-                logger.debug("task_recover_priced_inactive: nothing to recover")
+                # Nothing to recover (the normal case) → back off exponentially
+                # so we stop re-scanning ~28K parts every 30s for zero result.
+                _RECOVER_INACTIVE_BACKOFF_S = min(
+                    _RECOVER_INACTIVE_BACKOFF_S * 2, _RECOVER_INACTIVE_BACKOFF_MAX
+                )
+                _RECOVER_INACTIVE_SKIP_UNTIL = time.monotonic() + _RECOVER_INACTIVE_BACKOFF_S
+                logger.debug("task_recover_priced_inactive: nothing to recover — backing off %.0fs", _RECOVER_INACTIVE_BACKOFF_S)
         except Exception as exc:
             await db.rollback()
             logger.error("task_recover_priced_inactive failed: %s", exc)
@@ -954,6 +989,143 @@ async def _process_cleanup_agent_todos() -> int:
     return processed
 
 
+async def task_normalize_base_price_batched(batch_size: int = 1000) -> int:
+    """Batched normalize_base_price — replaces the disabled full-table-scan version.
+    Finds parts where base_price=0 but a supplier_parts price exists, then sets:
+      supplier_parts.price_ils = ex-VAT cost (documented in db_update_agent.py:1243)
+      base_price = cost * 1.45  (45% margin — CLAUDE.md policy)
+      importer_price_ils = cost (the raw ex-VAT cost)
+    Safe: processes batch_size rows per call, never scans full 3.4M table at once."""
+    fixed = 0
+    try:
+        async with scraper_session_factory() as db:
+            result = await db.execute(text("""
+                UPDATE parts_catalog pc
+                SET base_price        = ROUND((sp_min.min_price * 1.45)::numeric, 2),
+                    importer_price_ils = sp_min.min_price,
+                    max_price_ils      = COALESCE(NULLIF(pc.max_price_ils, 0), ROUND((sp_min.min_price * 1.18)::numeric, 2)),
+                    min_price_ils      = sp_min.min_price,
+                    updated_at         = NOW()
+                FROM (
+                    SELECT sp.part_id, MIN(sp.price_ils) AS min_price
+                    FROM supplier_parts sp
+                    WHERE sp.is_available = TRUE AND sp.price_ils > 0
+                      AND EXISTS (
+                          SELECT 1 FROM parts_catalog p2
+                          WHERE p2.id = sp.part_id AND p2.is_active
+                            AND (p2.base_price IS NULL OR p2.base_price = 0)
+                      )
+                    GROUP BY sp.part_id
+                    LIMIT :batch
+                ) sp_min
+                WHERE pc.id = sp_min.part_id
+                  AND pc.is_active
+                  AND (pc.base_price IS NULL OR pc.base_price = 0)
+            """), {"batch": batch_size})
+            fixed = result.rowcount or 0
+            if fixed:
+                await db.commit()
+                logger.info("task_normalize_base_price_batched: fixed %d parts", fixed)
+    except Exception as exc:
+        logger.error("task_normalize_base_price_batched failed: %s", exc)
+    return fixed
+
+
+async def task_heal_importer_price(batch_size: int = 2000) -> int:
+    """Self-heal: fix parts where max_price_ils > 0 but importer_price_ils = 0.
+    Applies CLAUDE.md formula: cost = max_price_ils / 1.18, base = cost * 1.45.
+    Catches importer bugs where price was loaded but importer_price_ils was hardcoded 0."""
+    fixed = 0
+    try:
+        async with scraper_session_factory() as db:
+            result = await db.execute(text("""
+                UPDATE parts_catalog
+                SET importer_price_ils = ROUND((max_price_ils / 1.18)::numeric, 2),
+                    base_price = ROUND(((max_price_ils / 1.18) * 1.45)::numeric, 2),
+                    updated_at = NOW()
+                WHERE id IN (
+                    SELECT id FROM parts_catalog
+                    WHERE is_active
+                      AND max_price_ils > 0
+                      AND (importer_price_ils IS NULL OR importer_price_ils = 0)
+                      AND (base_price IS NULL OR base_price = 0)
+                    LIMIT :batch
+                )
+            """), {"batch": batch_size})
+            fixed = result.rowcount or 0
+            if fixed:
+                await db.commit()
+                logger.info("task_heal_importer_price: fixed %d parts", fixed)
+    except Exception as exc:
+        logger.error("task_heal_importer_price failed: %s", exc)
+    return fixed
+
+
+async def task_heal_part_type_original(batch_size: int = 5000) -> int:
+    """Self-heal: normalise non-canonical part_type values to lowercase canonical.
+    Covers 'original'/'Original'/'OEM'→'oem', 'Aftermarket'→'aftermarket', etc.
+    Runs every cycle until all ~3.5M non-canonical rows are corrected."""
+    fixed = 0
+    try:
+        async with scraper_session_factory() as db:
+            result = await db.execute(text("""
+                UPDATE parts_catalog
+                SET part_type = CASE part_type
+                    WHEN 'original'     THEN 'oem'
+                    WHEN 'Original'     THEN 'oem'
+                    WHEN 'OEM'          THEN 'oem'
+                    WHEN 'Aftermarket'  THEN 'aftermarket'
+                    WHEN 'ALTERNATIVE'  THEN 'aftermarket'
+                    WHEN 'Refurbished'  THEN 'remanufactured'
+                    WHEN 'Used'         THEN 'used'
+                    WHEN 'USED'         THEN 'used'
+                    ELSE part_type
+                END,
+                updated_at = NOW()
+                WHERE id IN (
+                    SELECT id FROM parts_catalog
+                    WHERE part_type IN (
+                        'original','Original','OEM',
+                        'Aftermarket','ALTERNATIVE',
+                        'Refurbished','Used','USED'
+                    )
+                    LIMIT :batch
+                )
+            """), {"batch": batch_size})
+            fixed = result.rowcount or 0
+            if fixed:
+                await db.commit()
+                logger.info("task_heal_part_type_original: fixed %d parts", fixed)
+    except Exception as exc:
+        logger.error("task_heal_part_type_original failed: %s", exc)
+    return fixed
+
+
+async def task_heal_part_condition(batch_size: int = 5000) -> int:
+    """Self-heal: fix part_condition='New'/'OEM'/etc. (uppercase) → lowercase.
+    Catches importers that write wrong case — runs every cleanup cycle as a safety net."""
+    fixed = 0
+    try:
+        async with scraper_session_factory() as db:
+            result = await db.execute(text("""
+                UPDATE parts_catalog
+                SET part_condition = LOWER(part_condition), updated_at = NOW()
+                WHERE id IN (
+                    SELECT id FROM parts_catalog
+                    WHERE is_active
+                      AND part_condition IN ('New','OEM','Used','Aftermarket','Remanufactured','OE_Equivalent')
+                    LIMIT :batch
+                )
+            """), {"batch": batch_size})
+            fixed = result.rowcount or 0
+            if fixed:
+                await db.commit()
+                logger.info("task_heal_part_condition: fixed %d parts", fixed)
+    except Exception as exc:
+        logger.error("task_heal_part_condition failed: %s", exc)
+    return fixed
+
+
 async def run_cleanup_cycle_once(
     *,
     cycle: int,
@@ -1002,6 +1174,14 @@ async def run_cleanup_cycle_once(
     t_recover_priced = await task_recover_priced_inactive()
     await asyncio.sleep(3)
     t_recover_web = await task_recover_motorstore_prices()
+    await asyncio.sleep(2)
+    t_heal_price = await task_heal_importer_price()
+    await asyncio.sleep(2)
+    t_heal_cond = await task_heal_part_condition()
+    await asyncio.sleep(2)
+    t_heal_part_type = await task_heal_part_type_original()
+    await asyncio.sleep(2)
+    t_normalize_base = await task_normalize_base_price_batched()
     await asyncio.sleep(5)
 
     return {
@@ -1016,6 +1196,9 @@ async def run_cleanup_cycle_once(
         "zombie_jobs_remediated": t_zombie,
         "recovered_priced": t_recover_priced,
         "recovered_web": t_recover_web,
+        "healed_importer_price": t_heal_price,
+        "healed_part_condition": t_heal_cond,
+        "normalized_base_price": t_normalize_base,
         "task4_full_batch_cycles": int(state.get("task4_full_batch_cycles", 0)),
         "task4_accelerated": bool(state.get("task4_accelerated", False)),
     }

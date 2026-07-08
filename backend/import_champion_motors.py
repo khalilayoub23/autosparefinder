@@ -47,7 +47,7 @@ from pathlib import Path
 import asyncpg
 import urllib.parse as up
 
-INPUT_FILE   = os.getenv("CM_JSON", "/opt/autosparefinder/champion_motors_parts.json")
+INPUT_FILE   = os.getenv("CM_JSON", "/app/state/champion_motors_parts.json")
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43@postgres_catalog:5432/autospare"
@@ -134,14 +134,13 @@ async def run_import():
                             is_active,aftermarket_tier,specifications,
                             needs_oem_lookup,master_enriched,updated_at
                         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
-                                 $11,0,$11,$11,
+                                 ROUND($11::numeric/1.18*1.45,2),ROUND($11::numeric/1.18,2),$11,$11,
                                  $12,$13,$14::jsonb,$15,$16,NOW())
                         ON CONFLICT(sku) DO UPDATE SET
                             oem_number=EXCLUDED.oem_number,
                             name_he=EXCLUDED.name_he,
                             base_price=CASE WHEN EXCLUDED.base_price>0 THEN EXCLUDED.base_price ELSE parts_catalog.base_price END,
-                            importer_price_ils=0,
-                            online_price_ils=0,
+                            importer_price_ils=CASE WHEN EXCLUDED.importer_price_ils>0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
                             min_price_ils=CASE WHEN EXCLUDED.min_price_ils>0 THEN EXCLUDED.min_price_ils ELSE parts_catalog.min_price_ils END,
                             max_price_ils=CASE WHEN EXCLUDED.max_price_ils>0 THEN EXCLUDED.max_price_ils ELSE parts_catalog.max_price_ils END,
                             specifications=COALESCE(parts_catalog.specifications,'{}')::jsonb || EXCLUDED.specifications::jsonb,
@@ -209,7 +208,7 @@ async def run_import():
             "model": model_str,
             "category": categorise(name_he, raw_part.get("part_type_he","")),
             "part_type": "original" if is_orig else "oe_equivalent",
-            "part_condition": "New",
+            "part_condition": "new",
             "base_price": raw_part.get("price_ils") or 0.0,
             "aftermarket_tier": None if is_orig else "OE_equivalent",
             "specifications": json.dumps({
@@ -246,8 +245,8 @@ async def run_import():
                     created_at, updated_at)
                 VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3, $4, 0.0,
                         'in_stock', TRUE, 12, 14, $5, NOW(), NOW())
-                ON CONFLICT (part_id, supplier_id) DO UPDATE SET
-                    price_ils=EXCLUDED.price_ils, updated_at=NOW()
+                ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE SET
+                    price_ils=EXCLUDED.price_ils, is_available=true, updated_at=NOW()
             """, str(supplier_id), str(part['id']),
                  str(part['oem_number'] or ''), float(part['base_price'] or 0), cm_url)
             sp_count += 1

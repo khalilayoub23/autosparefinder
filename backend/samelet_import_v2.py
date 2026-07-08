@@ -39,7 +39,7 @@ Missing Data Delegation:
 
 VAT Rules:
   - samelet.com returns PriceNoVat (excl.) and PriceWithVat (incl. 18%)
-  - Store: base_price = PriceWithVat, importer_price_ils = 0, max_price_ils = PriceWithVat
+  - Store: cost=PriceWithVat/1.18, base_price=cost×1.45, importer_price_ils=cost, max_price_ils=PriceWithVat
   - These are official IL importer retail prices (shown to customers as OEM reference, no extra markup)
 
 Confidence tier: 1.00 (Official Israeli importer price data)
@@ -256,9 +256,9 @@ async def import_brand(conn, slug, brand_name, prefix):
                 il_retail = float(p.get("PriceWithVat","0") or "0")  # consumer retail incl. VAT
             except:
                 il_retail = 0.0
-            # il_retail = market reference (IL official dealer retail incl. VAT)
-            # base_price = il_retail (show OEM reference; no markup — we source internationally)
-            # importer_price_ils = 0 (we don't procure from the official importer at retail)
+            # CLAUDE.md formula: cost = price/1.18, base_price = cost*1.45, max_price = price
+            cost = round(il_retail / 1.18, 2) if il_retail > 0 else 0.0
+            base_price_val = round(cost * 1.45, 2) if cost > 0 else 0.0
             max_price = il_retail
             category  = classify_part(name_en, name_he)
             part_type = "original" if p.get("MaterialType","01") == "01" else "aftermarket"
@@ -276,7 +276,7 @@ async def import_brand(conn, slug, brand_name, prefix):
             }, ensure_ascii=False)
             tier = 'OE_equivalent' if part_type == 'aftermarket' else None
             batch.append((sku, name, name_he, category, brand_name, manufacturer_id,
-                          part_type, il_retail, 0.0, max_price, mid, specs,
+                          part_type, base_price_val, cost, max_price, mid, specs,
                           max_price, tier))
         except Exception as e:
             err += 1
@@ -294,7 +294,7 @@ async def import_brand(conn, slug, brand_name, prefix):
                     part_condition, needs_oem_lookup, master_enriched,
                     created_at, updated_at)
                 VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6::uuid,$7,$8,$9,$10,$13,$11,$12::jsonb,$14,TRUE,
-                       'New',FALSE,FALSE,NOW(),NOW())
+                       'new',FALSE,FALSE,NOW(),NOW())
                 ON CONFLICT(sku) DO UPDATE SET
                     name=EXCLUDED.name,
                     name_he=COALESCE(EXCLUDED.name_he, parts_catalog.name_he),
@@ -302,7 +302,7 @@ async def import_brand(conn, slug, brand_name, prefix):
                     manufacturer=EXCLUDED.manufacturer,
                     base_price=CASE WHEN EXCLUDED.base_price > 0 THEN EXCLUDED.base_price
                                     ELSE parts_catalog.base_price END,
-                    importer_price_ils=0,
+                    importer_price_ils=CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
                     max_price_ils=CASE WHEN EXCLUDED.max_price_ils > 0
                                       THEN EXCLUDED.max_price_ils
                                       ELSE parts_catalog.max_price_ils END,
@@ -329,13 +329,13 @@ async def import_brand(conn, slug, brand_name, prefix):
                             part_condition, needs_oem_lookup, master_enriched,
                             created_at, updated_at)
                         Values(gen_random_uuid(),$1,$2,$3,$4,$5,$6::uuid,$7,$8,$9,$10,$13,$11,$12::jsonb,$14,TRUE,
-                               'New',FALSE,FALSE,NOW(),NOW())
+                               'new',FALSE,FALSE,NOW(),NOW())
                         ON CONFLICT(sku) DO UPDATE SET
                             name=EXCLUDED.name,
                             name_he=COALESCE(EXCLUDED.name_he, parts_catalog.name_he),
                             base_price=CASE WHEN EXCLUDED.base_price > 0 THEN EXCLUDED.base_price
                                             ELSE parts_catalog.base_price END,
-                            importer_price_ils=0,
+                            importer_price_ils=CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
                             min_price_ils=CASE WHEN EXCLUDED.min_price_ils > 0
                                           THEN EXCLUDED.min_price_ils
                                           ELSE parts_catalog.min_price_ils END,
@@ -369,7 +369,7 @@ async def import_brand(conn, slug, brand_name, prefix):
                         created_at, updated_at)
                     VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3, $4, 0.0,
                             'in_stock', TRUE, 12, 21, $5, NOW(), NOW())
-                    ON CONFLICT (part_id, supplier_id) DO UPDATE SET
+                    ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE SET
                         price_ils=EXCLUDED.price_ils,
                         updated_at=NOW()
                 """, supplier_id, str(part["id"]), str(part["oem_number"]),

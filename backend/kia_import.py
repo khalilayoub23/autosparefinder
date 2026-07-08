@@ -154,7 +154,7 @@ INSERT_SQL = """
         'original'::varchar,
         'new'::varchar,
         ROUND($6::numeric * 1.18, 2),  -- base_price = il_retail (consumer retail incl. VAT)
-        0::numeric,                    -- importer_price_ils (no actual procurement cost)
+        $6::numeric,                   -- importer_price_ils = ex-VAT cost (CLAUDE.md formula)
         ROUND($6::numeric * 1.18, 2),  -- min_price_ils = il_retail
         ROUND($6::numeric * 1.18, 2),  -- max_price_ils = il_retail
         NULL,                  -- aftermarket_tier (genuine OEM parts)
@@ -170,7 +170,7 @@ INSERT_SQL = """
         name_he            = EXCLUDED.name_he,
         description        = EXCLUDED.description,
         base_price         = EXCLUDED.base_price,
-        importer_price_ils = 0,
+        importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
         min_price_ils      = EXCLUDED.min_price_ils,
         max_price_ils      = EXCLUDED.max_price_ils,
         specifications     = COALESCE(parts_catalog.specifications, '{}')::jsonb
@@ -220,7 +220,7 @@ async def run():
                                     created_at, updated_at)
                                 VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3, $4, 0.0,
                                         'in_stock', TRUE, 24, 14, $5, NOW(), NOW())
-                                ON CONFLICT (part_id, supplier_id) DO UPDATE SET
+                                ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE SET
                                     price_ils=EXCLUDED.price_ils, updated_at=NOW()
                             """, supplier_id, str(r['id']), p['sku'],
                                  float(p['price']), KIA_SUPPLIER_URL)

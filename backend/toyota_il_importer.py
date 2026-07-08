@@ -58,7 +58,12 @@ SUPPLIER_URL = "https://union-motors.toyota.co.il"
 VAT_RATE = 0.18
 WARRANTY_MONTHS = 12
 DELIVERY_DAYS = 3
-SOURCE_FILE = "/app/toyota_il_parts.json"
+SOURCE_FILE = os.getenv(
+    "TOYOTA_JSON",
+    "/app/state/toyota_il_parts.json"
+    if os.path.exists("/app/state/toyota_il_parts.json")
+    else "/app/toyota_il_parts.json",
+)
 
 # Hebrew model name → English model name mapping
 # Handles common Toyota models sold in Israel
@@ -230,8 +235,9 @@ async def ensure_supplier(conn) -> str:
 async def main():
     start = time.time()
 
-    # Load source data
-    parts = json.loads(Path(SOURCE_FILE).read_text(encoding="utf-8"))
+    # Load source data — harvester writes {"parts": [...], "count": N}
+    raw = json.loads(Path(SOURCE_FILE).read_text(encoding="utf-8"))
+    parts = raw if isinstance(raw, list) else raw.get("parts", [])
     log.info("Loaded %d parts from %s", len(parts), SOURCE_FILE)
 
     conn = await asyncpg.connect(DSN)
@@ -336,7 +342,7 @@ async def main():
                         MANUFACTURER, MANUFACTURER_ID,
                         category, il_base_price, price, il_retail,
                         specs, json.dumps(compat_vehicles),
-                        "New", safety)
+                        "new", safety)
                     inserted += 1
 
                 # Insert fitment rows
@@ -369,7 +375,7 @@ async def main():
                         $7, $8, $9,
                         NOW(), NOW()
                     )
-                    ON CONFLICT(part_id, supplier_id) DO UPDATE SET
+                    ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE SET
                         price_ils=EXCLUDED.price_ils,
                         availability=EXCLUDED.availability,
                         is_available=EXCLUDED.is_available,

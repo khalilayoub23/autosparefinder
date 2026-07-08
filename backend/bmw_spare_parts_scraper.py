@@ -358,7 +358,7 @@ async def insert_part(conn, supplier_id: str, part: dict, eur_to_ils: float) -> 
                     gen_random_uuid(), $1, $2, $3, 'BMW', $4::uuid,
                     $5, $6, $7::jsonb, '[]'::jsonb,
                     $8, $8, $9,
-                    'New', NULL, 'original',
+                    'new', NULL, 'original',
                     FALSE, FALSE, FALSE,
                     TRUE, NOW(), NOW()
                 )
@@ -393,7 +393,7 @@ async def insert_part(conn, supplier_id: str, part: dict, eur_to_ils: float) -> 
                     ) VALUES(gen_random_uuid(),$1::uuid,$2::uuid,$3,
                               $4,0.0,'in_stock',TRUE,
                               12,30,$5,NOW(),NOW())
-                    ON CONFLICT(part_id,supplier_id) DO UPDATE SET
+                    ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE SET
                         price_ils=EXCLUDED.price_ils,
                         is_available=TRUE,
                         updated_at=NOW()

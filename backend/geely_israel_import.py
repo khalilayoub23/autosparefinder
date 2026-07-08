@@ -1444,14 +1444,14 @@ async def import_parts(conn: asyncpg.Connection) -> dict:
                     ) VALUES (
                         gen_random_uuid(), $1, $2, $3, 'Geely', $4::uuid,
                         $5, $6, '{}'::jsonb,
-                        $7, 0, $7, $7,
+                        $7, ROUND($7::numeric/1.18,2), $7, $7,
                         'original', FALSE, FALSE,
                         FALSE, TRUE, NOW(), NOW()
                     )
                     ON CONFLICT (sku) DO UPDATE SET
                         name = EXCLUDED.name,
                         base_price = EXCLUDED.base_price,
-                        importer_price_ils = 0,
+                        importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
                         min_price_ils = EXCLUDED.min_price_ils,
                         max_price_ils = EXCLUDED.max_price_ils,
                         updated_at = NOW()

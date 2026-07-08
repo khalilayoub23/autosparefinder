@@ -260,7 +260,7 @@ async def import_to_db(conn: asyncpg.Connection, parts: list[dict]):
                 INSERT INTO supplier_parts
                     (id, part_id, supplier_id, sku, price_ils, currency, in_stock, created_at, updated_at)
                 VALUES (gen_random_uuid(), $1, $2, $3, $4, 'ILS', $5, NOW(), NOW())
-                ON CONFLICT (part_id, supplier_id) DO UPDATE
+                ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE
                 SET price_ils = EXCLUDED.price_ils, in_stock = EXCLUDED.in_stock, updated_at = NOW()
             """, str(m["id"]), str(supplier_id), sku, price_with_vat, in_stock)
             supplier_rows += 1

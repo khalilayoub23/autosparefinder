@@ -338,9 +338,12 @@ async def _cerebras_call(
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority: bool = False, model: str | None = None) -> str:
+async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority: bool = False, model: str | None = None, max_tokens: int = 2000) -> str:
     """Chat completion via HF Router. Cached in Redis for _TEXT_CACHE_TTL seconds.
     priority=True bypasses the background-job semaphore (use for webhook/realtime calls).
+    max_tokens: raise for large structured outputs — reasoning models (gpt-oss)
+    spend part of the budget on chain-of-thought before the answer; 1000 was
+    too small for JSON campaign plans (found 2026-07-05).
     """
     if not CEREBRAS_API_KEY:
         raise RuntimeError("CEREBRAS_API_KEY not set in .env")
@@ -363,7 +366,7 @@ async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority
     payload = _json.dumps({
         "model": selected_model,
         "messages": messages,
-        "max_tokens": 1000,
+        "max_tokens": max(256, int(max_tokens)),
         "stream": False,
     }, ensure_ascii=False).encode()
 

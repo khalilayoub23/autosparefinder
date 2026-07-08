@@ -309,13 +309,13 @@ async def insert_part(conn, supplier_id: str, product: dict, variant: dict,
                     gen_random_uuid(), $1, $2, $3, $4, $5::uuid,
                     $6, $7, $8::jsonb, $9::jsonb,
                     $10, 0, $10, $11,
-                    'New', NULL, 'original',
+                    'new', NULL, 'original',
                     FALSE, FALSE, FALSE,
                     TRUE, NOW(), NOW()
                 )
                 ON CONFLICT (sku) DO UPDATE SET
                     base_price = EXCLUDED.base_price,
-                    importer_price_ils = 0,
+                    importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
                     min_price_ils = EXCLUDED.min_price_ils,
                     max_price_ils = EXCLUDED.max_price_ils,
                     updated_at = NOW()
@@ -346,7 +346,7 @@ async def insert_part(conn, supplier_id: str, product: dict, variant: dict,
                     ) VALUES(gen_random_uuid(),$1::uuid,$2::uuid,$3,
                               $4,0.0,$5,$6,
                               12,30,$7,NOW(),NOW())
-                    ON CONFLICT(part_id,supplier_id) DO UPDATE SET
+                    ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE SET
                         price_ils=EXCLUDED.price_ils,
                         is_available=EXCLUDED.is_available,
                         updated_at=NOW()

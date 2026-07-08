@@ -332,7 +332,7 @@ INSERT INTO parts_catalog(
 ) VALUES(
     $1, $2, $3, $4, $5, $6,
     $7, $8, $9, $10,
-    $11, 0, $11, $11::numeric,
+    $11, ROUND($11::numeric/1.18,2), $11, $11::numeric,
     TRUE, $12,
     FALSE, FALSE,
     $13, NOW()
@@ -350,7 +350,7 @@ ON CONFLICT(sku) DO UPDATE SET
     max_price_ils = CASE WHEN EXCLUDED.max_price_ils > 0
                     THEN EXCLUDED.max_price_ils
                     ELSE parts_catalog.max_price_ils END,
-    importer_price_ils = 0,
+    importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
     specifications = EXCLUDED.specifications,
     is_active    = TRUE,
     updated_at   = NOW()
@@ -449,7 +449,7 @@ async def import_to_db(parts: list[dict], dry_run: bool = False) -> dict:
                             created_at, updated_at)
                         VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3, $4, 0.0,
                                 'in_stock', TRUE, 12, 21, $5, NOW(), NOW())
-                        ON CONFLICT (part_id, supplier_id) DO UPDATE SET
+                        ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE SET
                             price_ils=EXCLUDED.price_ils,
                             is_available=EXCLUDED.is_available,
                             updated_at=NOW()
@@ -504,7 +504,7 @@ async def import_to_db(parts: list[dict], dry_run: bool = False) -> dict:
             catalog,                    # $7  oem_number
             categorise(name_he, catalog),# $8 category
             "original" if is_orig else "oe_equivalent",  # $9 part_type
-            "New",                      # $10 part_condition
+            "new",                      # $10 part_condition
             price,                      # $11 base_price (incl. VAT; importer/min/max computed in SQL)
             None if is_orig else "OE_equivalent",        # $12 aftermarket_tier
             json.dumps(specs, ensure_ascii=False),        # $13 specifications

@@ -966,19 +966,66 @@ async def clean_part_names(db: AsyncSession) -> Dict[str, Any]:
 
 
 # =========================================================================
+# Delta processing helpers — checkpoint read/write via system_settings
+# =========================================================================
+# Each delta task stores its last-successful-run timestamp here so that on
+# the next cycle it only processes rows modified since then, not the whole table.
+# Fallback window when no checkpoint exists: 6 h (covers a missed cycle).
+
+_DELTA_FALLBACK_HOURS = 6
+
+
+async def _get_task_checkpoint(db: AsyncSession, task_name: str) -> "datetime":
+    """Return the last successful run time for *task_name*, or fallback to now-6h.
+
+    Always returns a naive UTC datetime to match parts_catalog.updated_at which is
+    'timestamp without time zone' — asyncpg refuses to bind tz-aware datetimes there.
+    """
+    key = f"delta_checkpoint__{task_name}"
+    row = (await db.execute(
+        text("SELECT value FROM system_settings WHERE key = :k"),
+        {"k": key},
+    )).scalar_one_or_none()
+    if row:
+        try:
+            # Strip tzinfo regardless of storage format so asyncpg binds correctly
+            return datetime.fromisoformat(row).replace(tzinfo=None)
+        except Exception:
+            pass
+    return datetime.utcnow() - timedelta(hours=_DELTA_FALLBACK_HOURS)
+
+
+async def _save_task_checkpoint(db: AsyncSession, task_name: str) -> None:
+    """Persist the current UTC timestamp as the checkpoint for *task_name*."""
+    key = f"delta_checkpoint__{task_name}"
+    val = datetime.utcnow().isoformat()  # naive UTC matches updated_at column type
+    await db.execute(text("""
+        INSERT INTO system_settings (id, key, value, value_type, is_public, updated_at)
+        VALUES (gen_random_uuid(), :k, :v, 'string', false, NOW())
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+    """), {"k": key, "v": val})
+    await db.commit()
+
+
+# =========================================================================
 # Task 2 – Normalize part types
 # =========================================================================
 
 async def normalize_part_types(db: AsyncSession) -> Dict[str, Any]:
     """
     Unify part_type values to one of: "Original", "OEM", "Aftermarket".
-    Uses a single CASE WHEN SQL UPDATE per table — replaces the old fetchall()
-    loop that loaded 3.45M rows into Python memory causing ~2 GB heap growth.
+
+    Delta mode: only processes rows modified since the last successful run
+    (stored in system_settings as 'delta_checkpoint__normalize_part_types').
+    On a 4M-row table under concurrent harvesting this cuts the scan from
+    the entire table down to the rows ingested in the last cycle — from
+    60+ min timeouts to typically <5 s.
     """
     t0 = time.monotonic()
     catalog_updated = supplier_updated = 0
 
-    # Build CASE WHEN from PART_TYPE_MAP:  LOWER(TRIM(part_type)) → canonical
+    since = await _get_task_checkpoint(db, "normalize_part_types")
+
     when_clauses = "\n            ".join(
         f"WHEN LOWER(TRIM(part_type)) = '{k}' THEN '{v}'"
         for k, v in PART_TYPE_MAP.items()
@@ -992,11 +1039,12 @@ async def normalize_part_types(db: AsyncSession) -> Dict[str, Any]:
                     UPDATE {table}
                     SET part_type  = {case_sql},
                         updated_at = NOW()
-                    WHERE part_type IS NOT NULL
+                    WHERE updated_at > :since
+                      AND part_type IS NOT NULL
                       AND LOWER(TRIM(part_type)) = ANY(:keys)
                       AND part_type NOT IN ('Original', 'OEM', 'Aftermarket')
                 """),
-                {"keys": list(PART_TYPE_MAP.keys())},
+                {"since": since, "keys": list(PART_TYPE_MAP.keys())},
             )
             n = result.rowcount
             if counter_attr == "catalog_updated":
@@ -1005,10 +1053,10 @@ async def normalize_part_types(db: AsyncSession) -> Dict[str, Any]:
                 supplier_updated = n
 
         await db.commit()
+        await _save_task_checkpoint(db, "normalize_part_types")
         logger.info(
-            "normalize_part_types: catalog=%d supplier=%d",
-            catalog_updated,
-            supplier_updated,
+            "normalize_part_types (delta since %s): catalog=%d supplier=%d elapsed=%.1fs",
+            since.isoformat(), catalog_updated, supplier_updated, time.monotonic() - t0,
         )
     except Exception as exc:
         await db.rollback()
@@ -1020,6 +1068,7 @@ async def normalize_part_types(db: AsyncSession) -> Dict[str, Any]:
         "status": "ok",
         "catalog_updated": catalog_updated,
         "supplier_updated": supplier_updated,
+        "delta_since": since.isoformat(),
         "elapsed_s": round(time.monotonic() - t0, 2),
     }
 
@@ -1030,77 +1079,76 @@ async def normalize_part_types(db: AsyncSession) -> Dict[str, Any]:
 
 async def normalize_categories(db: AsyncSession) -> Dict[str, Any]:
     """
-    Map non-canonical category values to canonical Hebrew categories using a
-    single bulk SQL CASE UPDATE — replaces the old per-row loop that timed out
-    on large catalogs (3M+ rows × individual UPDATE = >30 min).
+    Map non-canonical category values to canonical Hebrew categories.
 
-    Strategy:
-      1. Build one SQL CASE expression from CATEGORY_MAP + CATEGORY_NAME_REMAP.
-      2. Fire it as a single UPDATE … WHERE category NOT IN (canonical_set).
-         Postgres executes this as a sequential scan + in-place update in seconds.
-      3. A second pass sets any still-unknown values to 'כללי'.
-      4. A max_wall_seconds guard aborts gracefully if called from a time-boxed run.
+    Delta mode: only processes rows where updated_at > last checkpoint.
+    Pass 1 (bulk CASE UPDATE) maps known raw values → canonical Hebrew category.
+    Pass 2 (batched fallback) sets anything still non-canonical → 'כללי'.
+    Both passes are scoped to recently-modified rows only, so the table lock
+    time is proportional to ingestion volume, not catalog size.
     """
     t0 = time.monotonic()
-    max_wall = int(os.getenv("NORMALIZE_CAT_MAX_WALL_S", "300"))  # 5-min hard cap
+    since = await _get_task_checkpoint(db, "normalize_categories")
 
     try:
         canonical_set = set(CANONICAL_CATEGORIES)
         canonical_sql = ", ".join(f"'{c}'" for c in CANONICAL_CATEGORIES)
 
-        # ── Build CASE branches ────────────────────────────────────────────────
-        # Merge CATEGORY_MAP (raw→Hebrew) with CATEGORY_NAME_REMAP (Hebrew→Hebrew)
+        # Build CASE branches (same logic as before)
         branches: List[str] = []
         seen_raw: set = set()
         combined: Dict[str, str] = {}
         for raw, mid in CATEGORY_MAP.items():
             target = CATEGORY_NAME_REMAP.get(mid, mid)
             combined[raw.lower()] = target
-        # Also direct remap entries whose raw form is not already canonical
         for raw, target in CATEGORY_NAME_REMAP.items():
             if raw not in canonical_set:
                 combined.setdefault(raw.lower(), target)
-
         for raw_lower, target in combined.items():
             if target in canonical_set and raw_lower not in seen_raw:
                 seen_raw.add(raw_lower)
                 escaped_raw = raw_lower.replace("'", "''")
                 escaped_tgt = target.replace("'", "''")
-                branches.append(
-                    f"WHEN TRIM(LOWER(category)) = '{escaped_raw}' THEN '{escaped_tgt}'"
-                )
+                branches.append(f"WHEN TRIM(LOWER(category)) = '{escaped_raw}' THEN '{escaped_tgt}'")
 
         rows_mapped = 0
         rows_fallback = 0
 
-        if branches and (time.monotonic() - t0) < max_wall:
+        # ── Pass 1: bulk CASE UPDATE — delta scope ─────────────────────────────
+        if branches:
             case_sql = "CASE\n  " + "\n  ".join(branches) + "\n  ELSE NULL\nEND"
-            # Single bulk UPDATE: only rows whose mapped value is non-null
             result = await db.execute(text(f"""
                 UPDATE parts_catalog
                 SET    category   = sub.new_cat,
                        updated_at = NOW()
                 FROM (
-                    SELECT id,
-                           {case_sql} AS new_cat
+                    SELECT id, {case_sql} AS new_cat
                     FROM   parts_catalog
-                    WHERE  category IS NOT NULL
+                    WHERE  updated_at > :since
+                      AND  category IS NOT NULL
                       AND  TRIM(category) NOT IN ({canonical_sql})
                 ) sub
                 WHERE  parts_catalog.id = sub.id
                   AND  sub.new_cat IS NOT NULL
-            """))
-            rows_mapped = result.rowcount if hasattr(result, 'rowcount') and result.rowcount else 0
+            """), {"since": since})
+            rows_mapped = result.rowcount or 0
             await db.commit()
-            logger.info("normalize_categories: bulk mapped=%d elapsed=%.1fs", rows_mapped, time.monotonic() - t0)
+            logger.info("normalize_categories pass1 (delta since %s): mapped=%d elapsed=%.1fs",
+                        since.isoformat(), rows_mapped, time.monotonic() - t0)
 
-        # ── Fallback pass: set unknowns to 'כללי' in batches to avoid long locks ─
+        # ── Pass 2: fallback → 'כללי' in small batches — delta scope ───────────
+        # Capture the max id at pass-start so rows arriving mid-pass (which get
+        # updated_at=NOW() and stay in scope) don't keep the loop alive indefinitely.
+        cutoff_row = await db.execute(text("SELECT MAX(id) FROM parts_catalog WHERE updated_at > :since"), {"since": since})
+        cutoff_id = cutoff_row.scalar()
         batch_size = 5000
-        while (time.monotonic() - t0) < max_wall:
+        while cutoff_id:
             result2 = await db.execute(text(f"""
                 WITH batch AS (
                     SELECT id FROM parts_catalog
-                    WHERE  category IS NOT NULL
+                    WHERE  updated_at > :since
+                      AND  id <= :cutoff_id
+                      AND  category IS NOT NULL
                       AND  TRIM(category) NOT IN ({canonical_sql})
                     LIMIT  {batch_size}
                 )
@@ -1109,13 +1157,16 @@ async def normalize_categories(db: AsyncSession) -> Dict[str, Any]:
                        updated_at = NOW()
                 FROM   batch
                 WHERE  parts_catalog.id = batch.id
-            """))
-            n = result2.rowcount if hasattr(result2, 'rowcount') and result2.rowcount else 0
+            """), {"since": since, "cutoff_id": cutoff_id})
+            n = result2.rowcount or 0
             await db.commit()
             rows_fallback += n
             if n < batch_size:
-                break  # no more rows to update
-        logger.info("normalize_categories: fallback_set_general=%d", rows_fallback)
+                break
+
+        await _save_task_checkpoint(db, "normalize_categories")
+        logger.info("normalize_categories pass2 (delta): fallback=%d total_elapsed=%.1fs",
+                    rows_fallback, time.monotonic() - t0)
 
     except Exception as exc:
         await db.rollback()
@@ -1128,6 +1179,7 @@ async def normalize_categories(db: AsyncSession) -> Dict[str, Any]:
         "rows_mapped": rows_mapped,
         "rows_fallback": rows_fallback,
         "rows_updated": rows_mapped + rows_fallback,
+        "delta_since": since.isoformat(),
         "elapsed_s": round(time.monotonic() - t0, 2),
     }
 
@@ -1293,6 +1345,11 @@ async def normalize_base_price(db: AsyncSession) -> Dict[str, Any]:
     MARGIN = float(os.getenv("IL_MARGIN", "1.45"))
     t0 = time.monotonic()
     try:
+        # No-op guard added 2026-07-07: each UPDATE now only writes rows whose
+        # base_price would ACTUALLY change (`IS DISTINCT FROM`). The old version
+        # re-wrote all ~1.9M priced rows every cycle even when the value was
+        # already correct — millions of pointless disk writes + updated_at churn
+        # (which also kept re-triggering meili_sync). Now steady state writes ~0.
         # Case 1: importer_price_ils is the actual cost excl. VAT — 45% margin over cost
         r1 = await db.execute(text("""
             UPDATE parts_catalog
@@ -1300,6 +1357,7 @@ async def normalize_base_price(db: AsyncSession) -> Dict[str, Any]:
                 updated_at = NOW()
             WHERE importer_price_ils > 0
               AND is_active = TRUE
+              AND base_price IS DISTINCT FROM ROUND((importer_price_ils * :margin)::numeric, 2)
         """), {"margin": MARGIN})
         importer_updated = r1.rowcount
 
@@ -1311,6 +1369,7 @@ async def normalize_base_price(db: AsyncSession) -> Dict[str, Any]:
             WHERE (importer_price_ils IS NULL OR importer_price_ils = 0)
               AND online_price_ils > 0
               AND is_active = TRUE
+              AND base_price IS DISTINCT FROM ROUND((online_price_ils * :margin)::numeric, 2)
         """), {"margin": MARGIN})
         online_updated = r2.rowcount
 
@@ -1323,6 +1382,7 @@ async def normalize_base_price(db: AsyncSession) -> Dict[str, Any]:
               AND (online_price_ils IS NULL OR online_price_ils = 0)
               AND max_price_ils > 0
               AND is_active = TRUE
+              AND base_price IS DISTINCT FROM ROUND((max_price_ils / 1.18 * :margin)::numeric, 2)
         """), {"margin": MARGIN})
         max_updated = r3.rowcount
 
@@ -3063,35 +3123,75 @@ async def refresh_min_max_prices(db: AsyncSession) -> Dict[str, Any]:
     """
     Recalculate parts_catalog.min_price_ils / max_price_ils from live
     supplier_parts prices (WITH 18% VAT applied).
+
+    DELTA-ONLY (rewritten 2026-07-07): the old version re-aggregated ALL 3.7M
+    supplier_parts and re-updated EVERY matching parts_catalog row every cycle —
+    a 26-30 min full-table pass that saturated the single virtual disk and made
+    the box fragile under any added load. Now it only recomputes parts whose
+    supplier_parts changed since the last successful run (checkpoint). A price
+    change touches a few thousand rows, not millions. A weekly full pass still
+    runs to catch anything missed (e.g. a part going fully unavailable).
     """
     t0 = time.monotonic()
+    since = await _get_task_checkpoint(db, "refresh_min_max_prices")
+
+    # Weekly safety full pass: if the checkpoint is >7 days old (or first run),
+    # do the complete recompute once, then delta from there.
+    full_pass = (datetime.utcnow() - since) > timedelta(days=7)
 
     try:
-        await db.execute(
-            text(
-                """
-                WITH price_agg AS (
-                    SELECT
-                        part_id,
-                        MIN(COALESCE(price_ils, price_usd * :rate)) * :vat AS min_p,
-                        MAX(COALESCE(price_ils, price_usd * :rate)) * :vat AS max_p
-                    FROM supplier_parts
-                    WHERE is_available = TRUE
-                    GROUP BY part_id
-                )
-                UPDATE parts_catalog pc
-                SET
-                    min_price_ils = pa.min_p,
-                    max_price_ils = pa.max_p,
-                    updated_at   = NOW()
-                FROM price_agg pa
-                WHERE pc.id = pa.part_id
-                """
-            ),
-            {"rate": await _get_ils_rate(db), "vat": 1 + VAT},
-        )
+        await db.execute(text("SET LOCAL lock_timeout = '10min'"))
+        rate = await _get_ils_rate(db)
+
+        if full_pass:
+            await db.execute(
+                text(
+                    """
+                    WITH price_agg AS (
+                        SELECT part_id,
+                               MIN(COALESCE(price_ils, price_usd * :rate)) * :vat AS min_p,
+                               MAX(COALESCE(price_ils, price_usd * :rate)) * :vat AS max_p
+                        FROM supplier_parts WHERE is_available = TRUE
+                        GROUP BY part_id
+                    )
+                    UPDATE parts_catalog pc
+                    SET min_price_ils = pa.min_p, max_price_ils = pa.max_p, updated_at = NOW()
+                    FROM price_agg pa WHERE pc.id = pa.part_id
+                    """
+                ),
+                {"rate": rate, "vat": 1 + VAT},
+            )
+            mode = "full"
+        else:
+            # Only parts whose supplier_parts changed since the checkpoint.
+            await db.execute(
+                text(
+                    """
+                    WITH changed AS (
+                        SELECT DISTINCT part_id FROM supplier_parts
+                        WHERE updated_at > :since
+                    ),
+                    price_agg AS (
+                        SELECT sp.part_id,
+                               MIN(COALESCE(sp.price_ils, sp.price_usd * :rate)) * :vat AS min_p,
+                               MAX(COALESCE(sp.price_ils, sp.price_usd * :rate)) * :vat AS max_p
+                        FROM supplier_parts sp
+                        JOIN changed c ON c.part_id = sp.part_id
+                        WHERE sp.is_available = TRUE
+                        GROUP BY sp.part_id
+                    )
+                    UPDATE parts_catalog pc
+                    SET min_price_ils = pa.min_p, max_price_ils = pa.max_p, updated_at = NOW()
+                    FROM price_agg pa WHERE pc.id = pa.part_id
+                    """
+                ),
+                {"since": since, "rate": rate, "vat": 1 + VAT},
+            )
+            mode = "delta"
+
         await db.commit()
-        logger.info("refresh_min_max_prices: done")
+        await _save_task_checkpoint(db, "refresh_min_max_prices")
+        logger.info("refresh_min_max_prices: done (%s pass)", mode)
     except Exception as exc:
         await db.rollback()
         logger.error("refresh_min_max_prices failed: %s", exc)
@@ -3100,6 +3200,7 @@ async def refresh_min_max_prices(db: AsyncSession) -> Dict[str, Any]:
     return {
         "task": "refresh_min_max_prices",
         "status": "ok",
+        "mode": mode,
         "elapsed_s": round(time.monotonic() - t0, 2),
     }
 
@@ -3445,55 +3546,82 @@ async def _generate_image_embeddings_task(db: AsyncSession) -> Dict[str, Any]:
 
 async def dedup_catalog_parts(db: AsyncSession) -> Dict[str, Any]:
     """
-        Remove duplicate rows in parts_catalog:
-            1. Same SKU → null out the older duplicate's SKU (keep newest).
-            2. Same (name, manufacturer key) → flag older rows with needs_oem_lookup=True for manual review.
-        Both steps are idempotent.
-        Uses pre-fetched ID lists to avoid CTE locking conflicts.
+    Remove duplicate rows in parts_catalog.
+
+    Delta mode: only examines SKUs / (name, manufacturer) pairs where at least
+    one row was modified since the last checkpoint. For those keys it checks the
+    full catalog for duplicates (a recently-imported part may duplicate an old one).
+    This turns a 60+ min full-table window-function scan into a <1 min targeted
+    check proportional to ingestion volume, not catalog size.
+
+    Steps:
+      1. SKU dedup: null out the older row for any SKU that appears in a recently
+         modified row and has a duplicate anywhere in the catalog.
+      2. Name/manufacturer dedup: flag older duplicates for OEM lookup review.
     """
     t0 = time.monotonic()
     nulled_skus = 0
     flagged_dupes = 0
 
+    since = await _get_task_checkpoint(db, "dedup_catalog_parts")
+
     try:
-        # Step 1 — Find duplicate SKUs
+        # ── Step 1: SKU dedup — only check SKUs touched since last run ──────────
         dup_sku_ids = (await db.execute(text("""
+            WITH changed_skus AS (
+                SELECT DISTINCT sku FROM parts_catalog
+                WHERE updated_at > :since AND sku IS NOT NULL
+            )
             SELECT id FROM (
                 SELECT id,
                        ROW_NUMBER() OVER (PARTITION BY sku ORDER BY created_at DESC) AS rn
                 FROM parts_catalog
-                WHERE sku IS NOT NULL
+                WHERE sku IN (SELECT sku FROM changed_skus)
             ) ranked
             WHERE rn > 1
-        """))).scalars().all()
-        
+        """), {"since": since})).scalars().all()
+
         if dup_sku_ids:
-            # Null out older duplicate SKUs
             r1 = await db.execute(
                 text("UPDATE parts_catalog SET sku = NULL, updated_at = NOW() WHERE id = ANY(:ids) RETURNING id"),
-                {"ids": dup_sku_ids}
+                {"ids": dup_sku_ids},
             )
             await db.flush()
             nulled_skus = len(r1.fetchall())
 
+        # ── Step 2: name/manufacturer dedup — only pairs touched recently ───────
         has_manufacturer_id = bool((await db.execute(text("""
             SELECT EXISTS (
-                SELECT 1
-                FROM information_schema.columns
-                WHERE table_name = 'parts_catalog'
-                  AND column_name = 'manufacturer_id'
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'parts_catalog' AND column_name = 'manufacturer_id'
             )
         """))).scalar())
 
-        # Step 2 — Find duplicate (name, manufacturer) pairs
         if has_manufacturer_id:
             manufacturer_partition = "manufacturer_id"
             manufacturer_filter = "manufacturer_id IS NOT NULL"
+            changed_pairs_cte = """
+                WITH changed_pairs AS (
+                    SELECT DISTINCT lower(name) AS n, manufacturer_id AS m
+                    FROM parts_catalog
+                    WHERE updated_at > :since AND name IS NOT NULL AND manufacturer_id IS NOT NULL
+                )
+            """
+            dedup_filter = "(lower(name), manufacturer_id) IN (SELECT n, m FROM changed_pairs)"
         else:
             manufacturer_partition = "lower(COALESCE(manufacturer, ''))"
             manufacturer_filter = "manufacturer IS NOT NULL"
+            changed_pairs_cte = """
+                WITH changed_pairs AS (
+                    SELECT DISTINCT lower(name) AS n, lower(COALESCE(manufacturer,'')) AS m
+                    FROM parts_catalog
+                    WHERE updated_at > :since AND name IS NOT NULL AND manufacturer IS NOT NULL
+                )
+            """
+            dedup_filter = "(lower(name), lower(COALESCE(manufacturer,''))) IN (SELECT n, m FROM changed_pairs)"
 
         dup_name_ids = (await db.execute(text(f"""
+            {changed_pairs_cte}
             SELECT id FROM (
                 SELECT id,
                        ROW_NUMBER() OVER (
@@ -3502,21 +3630,23 @@ async def dedup_catalog_parts(db: AsyncSession) -> Dict[str, Any]:
                        ) AS rn
                 FROM parts_catalog
                 WHERE name IS NOT NULL AND {manufacturer_filter}
+                  AND {dedup_filter}
             ) ranked
             WHERE rn > 1
-        """))).scalars().all()
-        
+        """), {"since": since})).scalars().all()
+
         if dup_name_ids:
-            # Flag older duplicates for review
             r2 = await db.execute(
                 text("UPDATE parts_catalog SET needs_oem_lookup = TRUE, updated_at = NOW() WHERE id = ANY(:ids) RETURNING id"),
-                {"ids": dup_name_ids}
+                {"ids": dup_name_ids},
             )
             await db.flush()
             flagged_dupes = len(r2.fetchall())
 
         await db.commit()
-        logger.info("dedup_catalog_parts: nulled_skus=%d flagged_dupes=%d", nulled_skus, flagged_dupes)
+        await _save_task_checkpoint(db, "dedup_catalog_parts")
+        logger.info("dedup_catalog_parts (delta since %s): nulled_skus=%d flagged_dupes=%d elapsed=%.1fs",
+                    since.isoformat(), nulled_skus, flagged_dupes, time.monotonic() - t0)
 
     except Exception as exc:
         await db.rollback()
@@ -3528,6 +3658,7 @@ async def dedup_catalog_parts(db: AsyncSession) -> Dict[str, Any]:
         "status": "ok",
         "nulled_skus": nulled_skus,
         "flagged_dupes": flagged_dupes,
+        "delta_since": since.isoformat(),
         "elapsed_s": round(time.monotonic() - t0, 2),
     }
 
@@ -4186,6 +4317,82 @@ async def _sync_transport_market_priority_task(db: AsyncSession) -> Dict[str, An
     }
 
 
+async def validate_watchdog_actions(db: AsyncSession) -> Dict[str, Any]:
+    """
+    Reads the watchdog's event log, confirms every action was correct, and alerts
+    via WhatsApp if an anomaly is detected. Called each run_all_tasks cycle so the
+    db_update_agent serves as the authoritative auditor for the watchdog's behaviour.
+
+    Rules validated:
+      kill_orphan        → must have details confirming pre-container-start backend_start
+      kill_stuck_importer → must have dur_s > 0 (sanity; code guarantees > STUCK_IMPORT_S)
+      warn_live_long     → informational only, marked ok
+      Anomaly trigger    → any kill action where details suggest it might be a live
+                           connection, or an unexpected burst (>10 kills in one cycle)
+    """
+    try:
+        import watchdog_state as _wds
+    except ImportError:
+        return {"task": "validate_watchdog_actions", "status": "skip", "reason": "watchdog_state not available"}
+
+    events = _wds.drain_unvalidated()
+    if not events:
+        return {"task": "validate_watchdog_actions", "status": "ok", "validated": 0, "anomalies": 0}
+
+    anomalies = []
+    validated = 0
+    summary = {"kill_orphan": 0, "kill_stuck_importer": 0, "warn_live_long": 0}
+
+    for evt in events:
+        summary[evt.action] = summary.get(evt.action, 0) + 1
+
+        if evt.action == "kill_orphan":
+            # Verify the recorded reason confirms orphan origin
+            if "predates" not in evt.details and "pre-dates" not in evt.details:
+                anomalies.append(
+                    f"kill_orphan pid={evt.pid} dur={evt.dur_s}s — details don't confirm orphan: '{evt.details}'"
+                )
+        elif evt.action == "kill_stuck_importer":
+            if evt.dur_s <= 0:
+                anomalies.append(f"kill_stuck_importer pid={evt.pid} has invalid dur_s={evt.dur_s}")
+
+        evt.validated = True
+        validated += 1
+
+    # Burst check: >5 kills in one validation cycle is unusual
+    total_kills = summary.get("kill_orphan", 0) + summary.get("kill_stuck_importer", 0)
+    if total_kills > 5:
+        anomalies.append(
+            f"Unusual kill burst: {total_kills} kills in one cycle "
+            f"(orphans={summary['kill_orphan']} importers={summary['kill_stuck_importer']})"
+        )
+
+    if anomalies:
+        owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
+        if owner:
+            msg = "⚠️ *Watchdog anomaly detected by db_update_agent*:\n" + "\n".join(f"• {a}" for a in anomalies)
+            try:
+                from social.whatsapp_provider import send_message as _wa_alert
+                await _wa_alert(owner, msg)
+            except Exception:
+                pass
+        logger.warning("validate_watchdog_actions anomalies: %s", anomalies)
+
+    stats = _wds.stats()
+    logger.info(
+        "validate_watchdog_actions: validated=%d anomalies=%d | lifetime: %s",
+        validated, len(anomalies), stats,
+    )
+    return {
+        "task": "validate_watchdog_actions",
+        "status": "ok" if not anomalies else "warn",
+        "validated": validated,
+        "anomalies": len(anomalies),
+        "anomaly_details": anomalies,
+        "lifetime_stats": stats,
+    }
+
+
 TASK_REGISTRY: Dict[str, Any] = {
     "clean_part_names":          clean_part_names,
     "normalize_part_types":      normalize_part_types,
@@ -4215,6 +4422,7 @@ TASK_REGISTRY: Dict[str, Any] = {
     "trigger_scraper_for_misses": _trigger_scraper_for_misses_task,
     "generate_image_embeddings": _generate_image_embeddings_task,
     "auto_add_hebrew_brand_aliases": _auto_add_hebrew_brand_aliases_task,
+    "validate_watchdog_actions": validate_watchdog_actions,
     "sync_transport_market_priority": _sync_transport_market_priority_task,
     # on-demand heavy tasks — NOT included in run_all_tasks
     "populate_supplier_parts":   _populate_supplier_parts_task,
@@ -4384,6 +4592,7 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
             "enrich_pending_parts",
             "trigger_scraper_for_misses",
             "generate_image_embeddings",
+            "validate_watchdog_actions",
         ]
 
         shared_todos = await get_active_agent_todos(db, "db_update_agent")

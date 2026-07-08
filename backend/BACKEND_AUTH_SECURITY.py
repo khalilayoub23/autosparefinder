@@ -713,32 +713,24 @@ async def create_password_reset_token(email: str, db: AsyncSession) -> Optional[
 
     reset_link = f"{os.getenv('FRONTEND_URL', 'http://localhost:5173')}/reset-password?token={token}"
 
-    sendgrid_key = os.getenv("SENDGRID_API_KEY")
-    if sendgrid_key:
-        try:
-            import httpx
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(
-                    "https://api.sendgrid.com/v3/mail/send",
-                    headers={"Authorization": f"Bearer {sendgrid_key}", "Content-Type": "application/json"},
-                    json={
-                        "personalizations": [{"to": [{"email": email}]}],
-                        "from": {"email": os.getenv("SENDGRID_FROM_EMAIL", "noreply@autospare.com"), "name": "Auto Spare"},
-                        "subject": "קישור לאיפוס סיסמא | Auto Spare",
-                        "content": [{
-                            "type": "text/plain",
-                            "value": f"לחץ על הקישור לאיפוס הסיסמא (תוקף שעה): {reset_link}",
-                        }],
-                    },
-                )
-                if resp.status_code not in (200, 202):
-                    print(f"[ERROR] SendGrid returned {resp.status_code}: {resp.text}")
-        except Exception as exc:
-            print(f"[ERROR] Failed to send password reset email: {exc}")
-    else:
-        # Development fallback: print to console
-        if os.getenv("ENVIRONMENT", "production") == "development":
+    # Provider-agnostic send (SMTP first, SendGrid fallback) via email_utils
+    try:
+        from routes.email_utils import _send_via_sendgrid as _send_email
+        sent = await _send_email(
+            to_email=email,
+            to_name="",
+            subject="קישור לאיפוס סיסמא | AutoSpareFinder",
+            html=(
+                f'<div dir="rtl" style="font-family:Arial,sans-serif">'
+                f'<p>לחץ על הקישור לאיפוס הסיסמא (תוקף שעה):</p>'
+                f'<p><a href="{reset_link}">{reset_link}</a></p></div>'
+            ),
+            text=f"לחץ על הקישור לאיפוס הסיסמא (תוקף שעה): {reset_link}",
+        )
+        if not sent and os.getenv("ENVIRONMENT", "production") == "development":
             print(f"[DEV] Password reset link for {email}: {reset_link}")
+    except Exception as exc:
+        print(f"[ERROR] Failed to send password reset email: {exc}")
     return token
 
 

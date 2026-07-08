@@ -66,6 +66,15 @@ def _supplier_source_tag(supplier_name: Optional[str], supplier_website: Optiona
 
 router = APIRouter()
 
+# Manufacturers list — an unindexed SELECT DISTINCT over 4.18M rows. Had NO
+# cache: every hit ran the full scan, and concurrent hits stampeded (each ran
+# its own scan), which took the whole box down under load / harvest (2026-07-07).
+# 10-min cache + single-flight lock so only ONE request ever runs the scan while
+# others wait for the shared result.
+MANUFACTURERS_RESPONSE_TTL_S = 600.0
+MANUFACTURERS_RESPONSE_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+_MANUFACTURERS_REBUILD_LOCK = asyncio.Lock()
+
 CATEGORY_RESPONSE_TTL_S = 300.0
 CATEGORY_RESPONSE_CACHE: Dict[Tuple[str, str, str, str], Tuple[float, Dict[str, Any]]] = {}
 HIERARCHY_RESPONSE_TTL_S = 300.0
@@ -84,6 +93,24 @@ GOV_IL_DATASTORE_URL = "https://data.gov.il/api/3/action/datastore_search"
 
 _EXTERNAL_API_MAX_CONCURRENCY = int(os.getenv("EXTERNAL_API_MAX_CONCURRENCY", "8"))
 _EXTERNAL_API_SEMAPHORE = asyncio.Semaphore(max(1, _EXTERNAL_API_MAX_CONCURRENCY))
+
+# ── Canonical customer pricing (goal 2026-07-05: same price on every surface) ─
+# ONE formula, identical to Stripe checkout (create_whatsapp_checkout):
+#   sell_net = supplier_cost × 1.45   (uniform 45% margin — CLAUDE.md policy)
+#   vat      = sell_net × 0.18
+#   total    = sell_net + vat + shipping
+# Every supplier offer the API returns carries these fields; the frontend and
+# chat display them as-is and never invent their own margins again.
+_MARGIN = 1.45
+_VAT_RATE = 0.18
+
+def _customer_price_fields(cost_ils: Optional[float], ship_ils: Optional[float]) -> Dict[str, Any]:
+    if not cost_ils or cost_ils <= 0:
+        return {"customer_price_ils": None, "customer_vat_ils": None, "customer_total_ils": None}
+    sell_net = round(float(cost_ils) * _MARGIN, 2)
+    vat = round(sell_net * _VAT_RATE, 2)
+    total = round(sell_net + vat + float(ship_ils or 0), 2)
+    return {"customer_price_ils": sell_net, "customer_vat_ils": vat, "customer_total_ils": total}
 
 PLATE_LOOKUP_CACHE_TTL_S = float(os.getenv("PLATE_LOOKUP_CACHE_TTL_S", "180"))
 VIN_LOOKUP_CACHE_TTL_S = float(os.getenv("VIN_LOOKUP_CACHE_TTL_S", "300"))
@@ -1005,17 +1032,70 @@ async def search_parts(
     meili_ids: Optional[List[str]] = None
     _meili_url = os.getenv("MEILI_URL", "")
     if query and _meili_url:
+        # Parity with chat search (2026-07-05): when a vehicle filter will
+        # intersect the candidates, pull a deeper pool — 200 text matches
+        # intersected with one vehicle's fitment rows often leaves 0-1
+        # survivors. And expand Hebrew queries to English so global-catalog
+        # parts ("Brake Pad Set") are reachable from a Hebrew search.
+        _has_vehicle_filter = bool(vehicle_id or (vehicle_manufacturer and vehicle_model and vehicle_year))
+        _meili_limit = 1000 if _has_vehicle_filter else 200
+        _expanded_q = ""
         try:
-            async with httpx.AsyncClient(timeout=SEARCH_MEILI_TIMEOUT_S) as _mc:
-                _resp = await _mc.post(
-                    f"{_meili_url}/indexes/parts/search",
-                    headers={"Authorization": f"Bearer {os.getenv('MEILI_MASTER_KEY', '')}"},
-                    json={"q": query, "limit": 200, "attributesToRetrieve": ["id"]},
-                )
-                _resp.raise_for_status()
-                meili_ids = [h["id"] for h in _resp.json().get("hits", [])]
+            from hf_client import expand_hebrew_query
+            _cand = expand_hebrew_query(query)
+            if _cand and _cand.strip().lower() != query.strip().lower():
+                _expanded_q = _cand.strip()
         except Exception:
-            meili_ids = None  # keep ILIKE fallback
+            pass
+
+        # Check Redis cache first — shared across all workers (30-min TTL).
+        # Key includes limit + expansion so old shallow entries don't shadow.
+        _meili_redis_key = f"meili:v2:{_meili_limit}:{query.lower().strip()[:100]}|{_expanded_q.lower()[:50]}"
+        try:
+            if redis:
+                _cached_ids = await redis.get(_meili_redis_key)
+                if _cached_ids:
+                    import json as _json
+                    meili_ids = _json.loads(_cached_ids)
+        except Exception:
+            pass
+
+        if meili_ids is None:
+            try:
+                # Semaphore: max 8 concurrent Meilisearch queries per worker
+                async with _EXTERNAL_API_SEMAPHORE:
+                    async with httpx.AsyncClient(timeout=SEARCH_MEILI_TIMEOUT_S) as _mc:
+                        _resp = await _mc.post(
+                            f"{_meili_url}/indexes/parts/search",
+                            headers={"Authorization": f"Bearer {os.getenv('MEILI_MASTER_KEY', '')}"},
+                            json={"q": query, "limit": _meili_limit, "attributesToRetrieve": ["id"]},
+                        )
+                        _resp.raise_for_status()
+                        meili_ids = [h["id"] for h in _resp.json().get("hits", [])]
+                        if _expanded_q:
+                            try:
+                                _r2 = await _mc.post(
+                                    f"{_meili_url}/indexes/parts/search",
+                                    headers={"Authorization": f"Bearer {os.getenv('MEILI_MASTER_KEY', '')}"},
+                                    json={"q": _expanded_q, "limit": _meili_limit, "attributesToRetrieve": ["id"]},
+                                )
+                                _r2.raise_for_status()
+                                _seen = set(meili_ids)
+                                meili_ids.extend(
+                                    h["id"] for h in _r2.json().get("hits", [])
+                                    if h["id"] not in _seen
+                                )
+                            except Exception:
+                                pass  # expansion is best-effort
+                        # Cache in Redis for 30 min — shared across all workers
+                        if redis and meili_ids is not None:
+                            try:
+                                import json as _json2
+                                await redis.set(_meili_redis_key, _json2.dumps(meili_ids), ex=1800)
+                            except Exception:
+                                pass
+            except Exception:
+                meili_ids = None  # keep ILIKE fallback
 
     # ── Short-circuit when Meilisearch found zero hits ────────────────────────
     if meili_ids is not None and len(meili_ids) == 0:
@@ -1396,6 +1476,7 @@ async def search_parts(
         part_id_str = str(part_row[0])
 
         # All available supplier offers for this part, sorted cheapest first
+        # Fetch up to 20 (marketplace comparison) — frontend caps display via per_type
         sup_rows = (await query_db.execute(
             text("""
                 SELECT
@@ -1426,10 +1507,46 @@ async def search_parts(
                   AND s.name NOT IN ('Official Manufacturer Sites', 'Sandbox Supplier QA')
                   AND NULLIF(BTRIM(sp.supplier_url), '') IS NOT NULL
                 ORDER BY COALESCE(sp.price_ils, sp.price_usd * :usd_to_ils_rate) ASC
-                LIMIT :lim
+                LIMIT 20
             """),
-            {"part_id": part_id_str, "lim": per_type, "usd_to_ils_rate": usd_to_ils_rate},
+            {"part_id": part_id_str, "usd_to_ils_rate": usd_to_ils_rate},
         )).fetchall()
+
+        # Supplier count + price range (for marketplace comparison badge)
+        sup_agg = (await query_db.execute(
+            text("""
+                SELECT COUNT(*) as total_suppliers,
+                       MIN(COALESCE(sp.price_ils, sp.price_usd * :rate)) as cheapest_ils,
+                       MAX(COALESCE(sp.price_ils, sp.price_usd * :rate)) as most_expensive_ils
+                FROM supplier_parts sp
+                JOIN suppliers s ON s.id = sp.supplier_id
+                WHERE sp.part_id = :part_id
+                  AND sp.is_available = TRUE
+                  AND s.is_active = TRUE
+                  AND s.name NOT IN ('Official Manufacturer Sites', 'Sandbox Supplier QA')
+                  AND NULLIF(BTRIM(sp.supplier_url), '') IS NOT NULL
+            """),
+            {"part_id": part_id_str, "rate": usd_to_ils_rate},
+        )).fetchone()
+
+        # Resolve barcode per quality type:
+        # Original/OEM-equiv: use oem_number (it IS the barcode)
+        # Aftermarket: use cross-reference ref_number if available
+        _oem_barcode = part_row[11] or part_row[12]  # oem_number or barcode field
+        _part_type_lower = (part_row[6] or "").lower()
+        _aftermarket_barcode = None
+        if "aftermarket" in _part_type_lower:
+            try:
+                _xref = await query_db.execute(
+                    text("SELECT ref_number FROM part_cross_reference WHERE part_id = :pid::uuid AND ref_type ILIKE 'aftermarket' LIMIT 1"),
+                    {"pid": part_id_str}
+                )
+                _xref_row = _xref.fetchone()
+                if _xref_row:
+                    _aftermarket_barcode = _xref_row[0]
+            except Exception:
+                pass
+        _display_barcode = _aftermarket_barcode or _oem_barcode
 
         part_dict = {
             "id":               str(part_row[0]),
@@ -1444,12 +1561,16 @@ async def search_parts(
             "max_price_ils":    float(part_row[9]) if part_row[9] else None,
             "description":      part_row[10],
             "oem_number":       part_row[11],
-            "barcode":          part_row[12],
+            "barcode":          _display_barcode,   # quality-specific barcode
             "weight_kg":        float(part_row[13]) if part_row[13] else None,
             "is_safety_critical": part_row[14],
             "part_condition":   part_row[15],
             "created_at":       part_row[16].isoformat() if part_row[16] else None,
             "updated_at":       part_row[17].isoformat() if part_row[17] else None,
+            # Marketplace comparison metadata
+            "supplier_count":       int(sup_agg[0]) if sup_agg else 0,
+            "cheapest_price_ils":   round(float(sup_agg[1]), 2) if sup_agg and sup_agg[1] else None,
+            "most_expensive_ils":   round(float(sup_agg[2]), 2) if sup_agg and sup_agg[2] else None,
         }
 
         suppliers_list = []
@@ -1473,6 +1594,7 @@ async def search_parts(
                 "source":                supplier_source,
                 "price_usd":             float(sp[4]) if sp[4] else None,
                 "price_ils":             round(price_ils, 2) if price_ils else None,
+                **_customer_price_fields(price_ils, shipping_cost_ils_resolved),
                 "shipping_cost_ils":     shipping_cost_ils,
                 "shipping_cost_usd":     shipping_cost_usd,
                 "shipping_cost_ils_resolved": shipping_cost_ils_resolved,
@@ -1480,7 +1602,7 @@ async def search_parts(
                 "warranty_months":       sp[9],
                 "estimated_delivery_days": sp[10],
                 "stock_quantity":        sp[11],
-                "supplier_url":          sp[12],
+                # supplier_url omitted — internal use only for order placement
                 "express_available":     sp[13],
                 "express_price_ils":     float(sp[14]) if sp[14] else None,
                 "express_delivery_days": sp[15],
@@ -1532,8 +1654,25 @@ async def search_parts(
             except Exception:
                 batch_rows = []
             best_sup_map: Dict[str, Any] = {row[0]: row for row in batch_rows}
+            # Batch cross-ref for aftermarket barcodes
+            aftermarket_ids = [str(r[0]) for r in matching_rows[1:] if (r[6] or "").lower().find("aftermarket") >= 0]
+            xref_barcode_map: Dict[str, str] = {}
+            if aftermarket_ids:
+                try:
+                    _xref_rows = (await query_db.execute(
+                        text("SELECT part_id::text, ref_number FROM part_cross_reference WHERE part_id = ANY(CAST(:ids AS uuid[])) AND ref_type ILIKE 'aftermarket' ORDER BY id LIMIT 500"),
+                        {"ids": aftermarket_ids}
+                    )).fetchall()
+                    for _xr in _xref_rows:
+                        if _xr[0] not in xref_barcode_map:
+                            xref_barcode_map[_xr[0]] = _xr[1]
+                except Exception:
+                    pass
             for extra_row in matching_rows[1:]:
                 extra_id = str(extra_row[0])
+                _ex_oem_barcode = extra_row[11] or extra_row[12]
+                _ex_pt = (extra_row[6] or "").lower()
+                _ex_barcode = (xref_barcode_map.get(extra_id) if "aftermarket" in _ex_pt else None) or _ex_oem_barcode
                 extra_dict = {
                     "id":               extra_id,
                     "sku":              extra_row[1],
@@ -1547,7 +1686,7 @@ async def search_parts(
                     "max_price_ils":    float(extra_row[9]) if extra_row[9] else None,
                     "description":      extra_row[10],
                     "oem_number":       extra_row[11],
-                    "barcode":          extra_row[12],
+                    "barcode":          _ex_barcode,
                     "weight_kg":        float(extra_row[13]) if extra_row[13] else None,
                     "is_safety_critical": extra_row[14],
                     "part_condition":   extra_row[15],
@@ -1576,6 +1715,7 @@ async def search_parts(
                         "source":                  b_supplier_source,
                         "price_usd":               float(bsp[5]) if bsp[5] else None,
                         "price_ils":               round(b_price_ils, 2) if b_price_ils else None,
+                        **_customer_price_fields(b_price_ils, b_shipping_cost_ils_resolved),
                         "shipping_cost_ils":       b_shipping_cost_ils,
                         "shipping_cost_usd":       b_shipping_cost_usd,
                         "shipping_cost_ils_resolved": b_shipping_cost_ils_resolved,
@@ -1583,7 +1723,7 @@ async def search_parts(
                         "warranty_months":         bsp[10],
                         "estimated_delivery_days": bsp[11],
                         "stock_quantity":          bsp[12],
-                        "supplier_url":            bsp[13],
+                        # supplier_url omitted — internal only
                         "express_available":       bsp[14],
                         "express_price_ils":       float(bsp[15]) if bsp[15] else None,
                         "express_delivery_days":   bsp[16],
@@ -1884,15 +2024,48 @@ async def search_parts(
 
         return min(res, key=_rank)
 
+    # ── External supplier results — returned from cache only, never blocks search ──
+    # External lookups run in a background task after this response returns.
+    # On the NEXT search for the same query, cached ext results are included.
+    _ext_cache_key = f"ext_sup:{query.lower().strip()[:80]}"
+    external_supplier_results: list = []
+    try:
+        if redis:
+            _cached_ext = await redis.get(_ext_cache_key)
+            if _cached_ext:
+                import json as _json
+                external_supplier_results = _json.loads(_cached_ext)
+    except Exception:
+        pass
+
+    # Fire external lookup in background — doesn't block this response at all
+    if query and os.getenv("ENABLE_EXTERNAL_SUPPLIERS", "1").strip() in ("1", "true", "yes"):
+        async def _fetch_ext_suppliers(_q: str, _key: str, _redis):
+            try:
+                from services.supplier_aggregator import ACTIVE_SUPPLIERS
+                _suppliers = [s for s in ACTIVE_SUPPLIERS if getattr(s, "name", "") != "local_db"]
+                _tasks = [asyncio.wait_for(s.search(_q, limit=3), timeout=2.0) for s in _suppliers]
+                _responses = await asyncio.gather(*_tasks, return_exceptions=True)
+                _results = []
+                for _res in _responses:
+                    if isinstance(_res, list):
+                        _results.extend(r.__dict__ if hasattr(r, "__dict__") else r for r in _res)
+                if _results and _redis:
+                    import json as _json2
+                    await _redis.set(_key, _json2.dumps(_results, default=str), ex=3600)
+            except Exception:
+                pass
+        asyncio.create_task(_fetch_ext_suppliers(query, _ext_cache_key, redis))
+
     _search_result = {
         "original":            _primary(original_res),
         "oem":                 _primary(oem_res),
         "aftermarket":         _primary(aftermarket_res),
-        # Full grouped lists (not only one primary card per type).
         "original_options":    original_res,
         "oem_options":         oem_res,
         "aftermarket_options": aftermarket_res,
         "all_parts":           [*original_res, *oem_res, *aftermarket_res],
+        "external_suppliers":  external_supplier_results,  # cached from prev lookup
         "results_per_type":    per_type,
         "query":               query,
     }
@@ -2256,6 +2429,26 @@ async def get_parts_by_license_plate(
 
 @router.get("/api/v1/parts/manufacturers")
 async def get_manufacturers(db: AsyncSession = Depends(get_db)):
+    # Serve from cache if warm (2026-07-07 stampede fix).
+    _mc = MANUFACTURERS_RESPONSE_CACHE.get("all")
+    if _mc and _mc[0] > time.monotonic():
+        return copy.deepcopy(_mc[1])
+    # Single-flight: only one request runs the expensive scan; the rest wait
+    # here and pick up the freshly-cached result instead of stampeding.
+    async with _MANUFACTURERS_REBUILD_LOCK:
+        _mc = MANUFACTURERS_RESPONSE_CACHE.get("all")
+        if _mc and _mc[0] > time.monotonic():
+            return copy.deepcopy(_mc[1])
+        result = await _get_manufacturers_uncached(db)
+        if isinstance(result, dict) and result.get("manufacturers"):
+            MANUFACTURERS_RESPONSE_CACHE["all"] = (
+                time.monotonic() + MANUFACTURERS_RESPONSE_TTL_S,
+                copy.deepcopy(result),
+            )
+        return result
+
+
+async def _get_manufacturers_uncached(db: AsyncSession):
     non_display = {
         "Stellantis", "General Motors", "Volkswagen Group", "BMW Group", "Toyota Group",
         "Honda Group", "Hyundai Motor Group", "Geely Group", "Tata Motors", "SAIC", "GAC",
@@ -3024,8 +3217,10 @@ async def search_parts_by_vin(
 ):
     """Decode a VIN via NHTSA free API, cache in vehicles table, and search parts."""
     if redis and request:
-        _vin_ip = request.client.host if request.client else "anon"
-        await check_rate_limit(redis, f"search_by_vin:{_vin_ip}", 10, 60)
+        _vin_ip = request.headers.get("X-Real-IP") or (request.client.host if request.client else "anon")
+        allowed = await check_rate_limit(redis, f"search_by_vin:{_vin_ip}", 10, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail="יותר מדי בקשות VIN — נסה שוב בעוד דקה")
     vin_clean = vin.strip().upper().replace("-", "")
     if len(vin_clean) != 17:
         raise HTTPException(status_code=400, detail="VIN must be exactly 17 characters")
@@ -3103,6 +3298,150 @@ async def search_parts_by_vin(
 
 # ==============================================================================
 # GET /api/v1/parts/{part_id}
+# ==============================================================================
+
+@router.get("/api/v1/parts/{part_id}/suppliers")
+async def get_part_suppliers(
+    part_id: str,
+    limit: int = Query(default=50, le=200),
+    db: AsyncSession = Depends(get_db),
+    request: Request = None,
+    redis=Depends(get_redis),
+):
+    """
+    Marketplace comparison endpoint — returns ALL supplier offers for a part,
+    sorted cheapest total (price + shipping) first.
+    Used by the product detail page comparison table (eBay/AliExpress style).
+    """
+    if redis and request:
+        ip = request.client.host if request.client else "unknown"
+        allowed = await check_rate_limit(redis, f"rate:part_suppliers:{ip}", 60, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail="יותר מדי בקשות — נסה שוב בעוד דקה")
+
+    usd_to_ils_rate = float(await get_usd_to_ils_rate(db))
+
+    # Fetch all available suppliers — no URL filter (marketplace shows all price sources)
+    rows = (await db.execute(
+        text("""
+            SELECT
+                sp.id::text,
+                s.name,
+                s.country,
+                s.website,
+                sp.supplier_sku,
+                sp.price_usd,
+                sp.price_ils,
+                sp.shipping_cost_ils,
+                sp.shipping_cost_usd,
+                sp.availability,
+                sp.stock_quantity,
+                sp.warranty_months,
+                sp.estimated_delivery_days,
+                sp.supplier_url,
+                sp.express_available,
+                sp.express_price_ils,
+                sp.express_delivery_days,
+                sp.last_checked_at,
+                sp.part_type,
+                COALESCE(sp.price_ils, sp.price_usd * :rate)
+                    + COALESCE(sp.shipping_cost_ils, 0) AS total_cost_ils
+            FROM supplier_parts sp
+            JOIN suppliers s ON s.id = sp.supplier_id
+            WHERE sp.part_id = :pid
+              AND sp.is_available = TRUE
+              AND s.is_active = TRUE
+              AND s.name NOT IN ('Official Manufacturer Sites', 'Sandbox Supplier QA')
+            ORDER BY total_cost_ils ASC NULLS LAST
+            LIMIT :lim
+        """),
+        {"pid": part_id, "rate": usd_to_ils_rate, "lim": limit},
+    )).fetchall()
+
+    suppliers = []
+    for r in rows:
+        price_ils = float(r[6]) if r[6] else (float(r[5]) * usd_to_ils_rate if r[5] else None)
+        ship_ils = _resolve_ship_fee(
+            supplier_shipping_ils=float(r[7]) if r[7] else None,
+            supplier_shipping_usd=float(r[8]) if r[8] else None,
+            usd_to_ils_rate=usd_to_ils_rate,
+            supplier_name=r[1],
+            supplier_country=r[2],
+        )
+        _cust = _customer_price_fields(price_ils, ship_ils)
+        suppliers.append({
+            "supplier_part_id":        r[0],
+            # Supplier identity is masked — customer only sees AutoSpareFinder
+            # Real supplier name/URL stored internally for order placement only
+            "supplier_name":           _mask_supplier(r[1]),
+            "supplier_country":        r[2] or "",
+            # supplier_website and supplier_url intentionally OMITTED from response
+            # — exposing these lets customers bypass us and order directly
+            "supplier_sku":            r[4],
+            "price_usd":               float(r[5]) if r[5] else None,
+            # price_ils = CUSTOMER sell price (cost×1.45), never raw supplier
+            # cost — this endpoint used to leak our purchase cost (2026-07-05)
+            "price_ils":               _cust["customer_price_ils"],
+            **_cust,
+            "shipping_cost_ils":       ship_ils,
+            "availability":            r[9],
+            "stock_quantity":          r[10],
+            "warranty_months":         r[11],
+            "estimated_delivery_days": r[12],
+            "express_available":       r[14],
+            "express_price_ils":       float(r[15]) if r[15] else None,
+            "express_delivery_days":   r[16],
+            "last_checked_at":         r[17].isoformat() if r[17] else None,
+            "part_type":               r[18],
+            "total_cost_ils":          _cust["customer_total_ils"],
+            "source":                  _supplier_source_tag(r[1], r[3]),
+        })
+
+    # Fallback: if no supplier_parts, check if part has IL importer price
+    # Add AutoSpareFinder as a synthetic supplier offer (marketplace own stock)
+    if not suppliers:
+        part_row = (await db.execute(
+            text("SELECT base_price, importer_price_ils, part_condition, sku FROM parts_catalog WHERE id = :pid AND is_active"),
+            {"pid": part_id}
+        )).fetchone()
+        if part_row and part_row[0] and float(part_row[0]) > 0:
+            suppliers.append({
+                "supplier_part_id":       None,
+                "supplier_name":          "AutoSpareFinder",
+                "supplier_country":       "IL",
+                "supplier_website":       "https://autosparefinder.co.il",
+                "supplier_logo":          None,
+                "supplier_sku":           part_row[3],
+                "price_usd":              None,
+                # base_price is already cost×1.45 — add VAT for the customer total
+                "price_ils":              float(part_row[0]),
+                "customer_price_ils":     float(part_row[0]),
+                "customer_vat_ils":       round(float(part_row[0]) * _VAT_RATE, 2),
+                "customer_total_ils":     round(float(part_row[0]) * (1 + _VAT_RATE), 2),
+                "shipping_cost_ils":      0.0,
+                "availability":           "in_stock",
+                "stock_quantity":         None,
+                "warranty_months":        12,
+                "estimated_delivery_days": 3,
+                "supplier_url":           f"https://autosparefinder.co.il/parts/{part_id}",
+                "express_available":      False,
+                "express_price_ils":      None,
+                "express_delivery_days":  None,
+                "last_checked_at":        None,
+                "part_condition":         part_row[2] or "new",
+                "part_type":              "aftermarket",
+                "total_cost_ils":         round(float(part_row[0]) * (1 + _VAT_RATE), 2),
+                "source":                 "autosparefinder",
+            })
+
+    return {
+        "part_id":        part_id,
+        "supplier_count": len(suppliers),
+        "cheapest_ils":   suppliers[0]["price_ils"] if suppliers else None,
+        "suppliers":      suppliers,
+    }
+
+
 # ==============================================================================
 
 @router.get("/api/v1/parts/{part_id}")

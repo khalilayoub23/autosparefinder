@@ -363,6 +363,97 @@ def _tracking_by_supplier_name(rows: list[dict]) -> dict[str, dict]:
     return mapping
 
 
+async def _send_post_payment_notification(order_db, tracking_number: str, tracking_url: str, db: AsyncSession) -> None:
+    """
+    Sends order confirmation + tracking to customer via their original channel.
+    - WA_* orders → WhatsApp message
+    - TG_* orders → Telegram message
+    - WEB_* orders → email + in-app (in-app already done by caller)
+    """
+    try:
+        order_num = order_db.order_number or ""
+        frontend_url = os.getenv("FRONTEND_URL", "https://autosparefinder.co.il")
+
+        # Determine channel from order number prefix
+        if order_num.startswith("WA"):
+            channel = "whatsapp"
+        elif order_num.startswith("TG"):
+            channel = "telegram"
+        else:
+            channel = "web"
+
+        # Build customer-friendly message
+        msg_he = (
+            f"✅ ההזמנה שלך אושרה! 🎉\n\n"
+            f"מספר הזמנה: {order_num}\n"
+            f"מספר מעקב: {tracking_number}\n"
+            f"🔗 עקוב אחר החבילה: {tracking_url}\n\n"
+            f"נשמח לעזור בכל שאלה 😊"
+        )
+
+        if channel == "whatsapp":
+            # Look up phone from conversation context
+            from sqlalchemy import select as _sel
+            from BACKEND_DATABASE_MODELS import Conversation
+            conv_res = await db.execute(
+                _sel(Conversation)
+                .where(Conversation.user_id == order_db.user_id)
+                .order_by(Conversation.last_message_at.desc())
+                .limit(1)
+            )
+            conv = conv_res.scalar_one_or_none()
+            phone = None
+            if conv and isinstance(conv.context, dict):
+                phone = conv.context.get("phone_e164") or conv.context.get("phone")
+            if phone:
+                from social.whatsapp_provider import send_message as _wa_send
+                await _wa_send(phone, msg_he)
+
+        elif channel == "telegram":
+            # Look up chat_id from conversation context
+            from sqlalchemy import select as _sel
+            from BACKEND_DATABASE_MODELS import Conversation
+            conv_res = await db.execute(
+                _sel(Conversation)
+                .where(Conversation.user_id == order_db.user_id)
+                .order_by(Conversation.last_message_at.desc())
+                .limit(1)
+            )
+            conv = conv_res.scalar_one_or_none()
+            chat_id = None
+            if conv and isinstance(conv.context, dict):
+                chat_id = conv.context.get("telegram_chat_id")
+            if chat_id:
+                from social.telegram_publisher import send_telegram_message
+                await send_telegram_message(chat_id, msg_he)
+
+        elif channel == "web":
+            # Send email to registered user
+            try:
+                from sqlalchemy import select as _sel
+                from BACKEND_DATABASE_MODELS import pii_session_factory, User
+                async with pii_session_factory() as pii_db:
+                    user_res = await pii_db.execute(
+                        _sel(User).where(User.id == order_db.user_id)
+                    )
+                    user = user_res.scalar_one_or_none()
+                    if user and user.email:
+                        from routes.email_utils import send_order_confirmation_email
+                        await send_order_confirmation_email(
+                            to_email=user.email,
+                            full_name=user.full_name or "לקוח יקר",
+                            order_number=order_num,
+                            tracking_number=tracking_number,
+                            tracking_url=tracking_url,
+                            order_url=f"{frontend_url}/orders/{order_db.id}",
+                        )
+            except Exception as email_err:
+                print(f"[PostPayment] Email send failed: {email_err}")
+
+    except Exception as e:
+        print(f"[PostPayment] Notification failed for order {getattr(order_db, 'order_number', '?')}: {e}")
+
+
 async def trigger_supplier_fulfillment(paid_orders: list, db: AsyncSession) -> None:
     """Run supplier-fulfillment flow only after payment confirmation.
 
@@ -912,6 +1003,15 @@ async def trigger_supplier_fulfillment(paid_orders: list, db: AsyncSession) -> N
                     },
                 ))
                 asyncio.create_task(_guarded_task(publish_notification(str(order_db.user_id), {"type": "order_update", "title": _title_user, "message": _msg_user})))
+
+                # ── Post-payment notifications: WhatsApp / Telegram / Web email ──────
+                asyncio.create_task(_guarded_task(_send_post_payment_notification(
+                    order_db=order_db,
+                    tracking_number=number,
+                    tracking_url=url,
+                    db=db,
+                )))
+
                 metadata = dict(supplier_payment.metadata_json or {})
                 metadata["supplier_purchase_status"] = "ordered"
                 metadata["supplier_purchase_carrier"] = carrier

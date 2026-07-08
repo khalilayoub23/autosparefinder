@@ -343,7 +343,7 @@ async def import_parts(parts: list) -> dict:
                     await conn.execute(
                         """UPDATE parts_catalog SET
                            name_he=$2, base_price=$3, min_price_ils=$3, max_price_ils=$3,
-                           importer_price_ils=0,
+                           importer_price_ils=CASE WHEN parts_catalog.importer_price_ils > 0 THEN parts_catalog.importer_price_ils ELSE ROUND($3::numeric / 1.18, 2) END,
                            specifications=$4, updated_at=NOW()
                            WHERE id=$1""",
                         part_id, name_he, il_retail,
@@ -358,7 +358,7 @@ async def import_parts(parts: list) -> dict:
                            category, base_price, importer_price_ils, min_price_ils, max_price_ils,
                            specifications, part_condition, aftermarket_tier,
                            needs_oem_lookup, master_enriched, is_active, created_at, updated_at)
-                           VALUES($1,$2,$3,$4,$5,$6,$7::uuid,$8,$9,0,$9,$9,$10::jsonb,'New',$11,FALSE,FALSE,TRUE,NOW(),NOW())""",
+                           VALUES($1,$2,$3,$4,$5,$6,$7::uuid,$8,$9,ROUND($9::numeric/1.18,2),$9,$9,$10::jsonb,'new',$11,FALSE,FALSE,TRUE,NOW(),NOW())""",
                         part_id, sku, material,
                         name_he,  # use Hebrew as name until AI translates
                         name_he, MANUFACTURER, MANUFACTURER_ID,

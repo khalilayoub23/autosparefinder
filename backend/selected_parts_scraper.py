@@ -285,7 +285,7 @@ async def import_products(conn: asyncpg.Connection, products: list[dict]) -> dic
                     )
                     ON CONFLICT (sku) DO UPDATE SET
                         base_price = EXCLUDED.base_price,
-                        importer_price_ils = 0,
+                        importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
                         min_price_ils = EXCLUDED.min_price_ils,
                         max_price_ils = EXCLUDED.max_price_ils,
                         name = EXCLUDED.name,

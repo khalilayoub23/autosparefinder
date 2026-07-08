@@ -46,6 +46,50 @@ from BACKEND_AI_AGENTS import get_supplier_vat_rate, resolve_customer_shipping_f
 router = APIRouter()
 
 
+# ── Short payment links (added 2026-07-05) ──────────────────────────────────
+# Stripe checkout URLs are ~120 chars — ugly and suspicious-looking in a
+# WhatsApp message. We hand customers autosparefinder.co.il/pay/{code}
+# instead; the code maps to the real Stripe URL in Redis (24h TTL, matching
+# Stripe session expiry). nginx routes /pay/ → /api/v1/pay/.
+
+async def shorten_payment_url(checkout_url: str) -> str:
+    """Return a short branded /pay/ URL for a Stripe checkout URL.
+    Falls back to the original URL if Redis is unavailable."""
+    import secrets as _secrets
+    try:
+        from BACKEND_AUTH_SECURITY import get_redis
+        redis = await get_redis()
+        code = _secrets.token_urlsafe(5)  # ~7 chars, 40 bits — plenty for 24h TTL
+        await redis.set(f"payshort:{code}", checkout_url, ex=86400)
+        base = os.getenv("FRONTEND_URL", "https://autosparefinder.co.il").rstrip("/")
+        return f"{base}/pay/{code}"
+    except Exception as exc:
+        print(f"[PayShort] shorten failed, using full URL: {exc}")
+        return checkout_url
+
+
+@router.get("/api/v1/pay/{code}")
+async def resolve_short_payment_link(code: str):
+    """Redirect a short /pay/{code} link to its Stripe checkout URL."""
+    from fastapi.responses import RedirectResponse
+    clean = re.sub(r"[^A-Za-z0-9_\-]", "", code or "")[:16]
+    target = None
+    if clean:
+        try:
+            from BACKEND_AUTH_SECURITY import get_redis
+            redis = await get_redis()
+            raw = await redis.get(f"payshort:{clean}")
+            if raw:
+                target = raw.decode() if isinstance(raw, (bytes, bytearray)) else str(raw)
+        except Exception as exc:
+            print(f"[PayShort] resolve failed: {exc}")
+    if target and target.startswith("https://checkout.stripe.com/"):
+        return RedirectResponse(url=target, status_code=302)
+    # Expired or unknown code → back to the site with a friendly landing
+    base = os.getenv("FRONTEND_URL", "https://autosparefinder.co.il").rstrip("/")
+    return RedirectResponse(url=f"{base}/cart?pay_link=expired", status_code=302)
+
+
 def _is_truthy_env(value: str | None) -> bool:
     return (value or "").strip().lower() in ("1", "true", "yes", "on")
 
@@ -1993,6 +2037,18 @@ async def create_whatsapp_checkout(
             stripe_sdk.api_key = stripe_key
             frontend_url = os.getenv("FRONTEND_URL", "https://autosparefinder.co.il")
 
+            # Customer-facing line-item name: prefer Hebrew, fall back through
+            # name/SKU, strip stray quotes — some catalog names are mangled
+            # (e.g. `'רמקול אח`) and this is what appears on the payment page.
+            _display_name = ""
+            for _cand in ((part.name_he or ""), (part.name or ""), (part.sku or "")):
+                _cand = _cand.strip().strip("'\"׳״")
+                if len(_cand) >= 3:
+                    _display_name = _cand[:120]
+                    break
+            if not _display_name:
+                _display_name = "חלק חילוף לרכב"
+
             try:
                 session = await asyncio.get_running_loop().run_in_executor(
                     None,
@@ -2003,7 +2059,7 @@ async def create_whatsapp_checkout(
                                 "price_data": {
                                     "currency": "ils",
                                     "product_data": {
-                                        "name": part.name,
+                                        "name": _display_name,
                                         "description": (
                                             f"{part.manufacturer or ''} | "
                                             f"אחריות {sp.warranty_months or 12} חודשים"
