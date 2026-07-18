@@ -27,9 +27,10 @@ _NEG_CACHE = {"Cache-Control": "public, max-age=600"}
 
 @router.get("/api/v1/thumbnails/{key:path}", tags=["Thumbnails"])
 async def get_thumbnail(key: str):
-    # Only ever serve from the thumbnails prefix; reject traversal/absolute/arbitrary keys.
+    # Only ever serve from the thumbnail prefixes; reject traversal/absolute/arbitrary keys.
+    # thumbs/ = content-addressed (deduped) objects; parts/ = legacy part-id-addressed.
     if (not key or ".." in key or key.startswith("/") or "\\" in key
-            or "%2e" in key.lower() or not key.startswith("parts/")):
+            or "%2e" in key.lower() or not key.startswith(("thumbs/", "parts/"))):
         return Response(status_code=404, headers=_NEG_CACHE)
     if not s3_storage.s3_enabled():
         raise HTTPException(status_code=503, detail="Thumbnail storage not configured")

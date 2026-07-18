@@ -32,7 +32,7 @@ import re
 import urllib.request
 
 import asyncpg
-from PIL import Image, ImageChops, ImageOps, ImageDraw, ImageFont
+from PIL import Image, ImageChops
 
 import s3_storage as S
 
@@ -62,23 +62,35 @@ def _best_source(url: str) -> str:
     return u
 
 
+# Max real words (>=3 letters) an accepted image may contain. A genuine PART photo has little/no
+# text; a label / OEM-box / brand card / supplier ad is text-heavy. Owner rule 2026-07-18: the
+# picture must have NO label or brand name → reject text-heavy images. Tunable via env.
+_MAX_WORDS = int(os.getenv("THUMB_MAX_OCR_WORDS", "3"))
+_WORD_RE = re.compile(r"[A-Za-z֐-׿؀-ۿ]{3,}")
+
+
 def _is_promo(pil_img) -> bool:
-    """True if the image carries supplier/promo text (→ reject)."""
+    """True if the image must be REJECTED — it carries supplier/promo text, OR it is a
+    label/box/brand-dominated shot (too much text to be a clean part picture)."""
     try:
         import pytesseract
         text = pytesseract.image_to_string(pil_img)
     except Exception:
-        return False  # OCR unavailable → don't over-reject (still standardized/re-hosted)
+        return False  # OCR unavailable → don't over-reject
     low = text.lower()
     if _PROMO_RE.search(low):
         return True
-    # A phone-like run + any "call/contact/tel" nearby is a strong supplier-ad signal.
     if _PHONE_RE.search(text) and any(w in low for w in ("call", "tel", "phone", "contact", "whats")):
+        return True
+    # label / brand-name density: more than _MAX_WORDS real words ⇒ a label/box/brand image.
+    if len(_WORD_RE.findall(text)) > _MAX_WORDS:
         return True
     return False
 
 
-def _standardize(pil_img, caption: str = "") -> bytes:
+def _standardize(pil_img) -> bytes:
+    """Clean part image only — NO caption/label/brand text is ever drawn (owner rule
+    2026-07-18): trim uniform border, fit to a clean white 500×500 square, compress ≤150 KB."""
     im = pil_img.convert("RGB")
     # auto-trim uniform border
     bg = Image.new("RGB", im.size, (255, 255, 255))
@@ -87,19 +99,9 @@ def _standardize(pil_img, caption: str = "") -> bytes:
     if bbox:
         im = im.crop(bbox)
     im.thumbnail((BOX - 20, BOX - 20), Image.LANCZOS)
-    # centre on a clean white square
+    # centre on a clean white square (no text overlay)
     canvas = Image.new("RGB", (BOX, BOX), (255, 255, 255))
     canvas.paste(im, ((BOX - im.width) // 2, (BOX - im.height) // 2))
-    if caption:
-        d = ImageDraw.Draw(canvas)
-        cap = caption[:42]
-        try:
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 18)
-        except Exception:
-            font = ImageFont.load_default()
-        tw = d.textlength(cap, font=font)
-        d.rectangle([(0, BOX - 26), (BOX, BOX)], fill=(17, 24, 39))
-        d.text(((BOX - tw) / 2, BOX - 23), cap, fill=(255, 255, 255), font=font)
     for q in (85, 80, 75, 70, 65, 60, 55):
         b = io.BytesIO()
         canvas.save(b, "JPEG", quality=q, optimize=True, progressive=True)
@@ -112,7 +114,6 @@ def _standardize(pil_img, caption: str = "") -> bytes:
 async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=500)
-    ap.add_argument("--caption", action="store_true", help="overlay the part name")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
 
@@ -132,22 +133,33 @@ async def main():
     """, a.limit)
     print(f"candidates: {len(rows)}")
 
-    ok = rejected = no_source = failed = 0
+    ok = rejected = no_source = failed = deduped = 0
+    src_cache: dict = {}  # source-url → (status, url) so an identical source in this run isn't re-fetched/re-OCR'd
     for r in rows:
         pid, name, url = str(r["id"]), r["name"] or "", r["url"]
         status, thumb = None, None
         try:
-            raw = urllib.request.urlopen(urllib.request.Request(_best_source(url), headers=UA), timeout=25).read()
-            src = Image.open(io.BytesIO(raw))
-            if _is_promo(src):
-                status = "rejected_ad"; rejected += 1
+            if url in src_cache:                       # same source url already processed this run
+                status, thumb = src_cache[url]
+                if status == "ok":
+                    deduped += 1
             else:
-                data = _standardize(src, caption=(name if a.caption else ""))
-                key = S.thumb_key(pid)
-                if a.dry_run or S.upload_bytes(key, data):
-                    status, thumb = "ok", S.thumb_url(pid); ok += 1
+                raw = urllib.request.urlopen(urllib.request.Request(_best_source(url), headers=UA), timeout=25).read()
+                src = Image.open(io.BytesIO(raw))
+                if _is_promo(src):
+                    status = "rejected_ad"; rejected += 1
                 else:
-                    status = "failed"; failed += 1
+                    data = _standardize(src)
+                    key = S.content_key(data)          # content-addressed → automatic dedup
+                    if a.dry_run:
+                        status, thumb = "ok", S.url_for_key(key); ok += 1
+                    elif S.object_exists(key):          # identical image already in the bucket → reuse
+                        status, thumb = "ok", S.url_for_key(key); ok += 1; deduped += 1
+                    elif S.upload_bytes(key, data):
+                        status, thumb = "ok", S.url_for_key(key); ok += 1
+                    else:
+                        status = "failed"; failed += 1
+                src_cache[url] = (status, thumb)
         except Exception as exc:
             status = "no_source"; no_source += 1
             if no_source <= 3:
@@ -159,7 +171,7 @@ async def main():
                 r["id"], thumb, status)
 
     await conn.close()
-    print(f"\nDONE — ok={ok} rejected_ad={rejected} no_source={no_source} failed={failed}")
+    print(f"\nDONE — ok={ok} (deduped_reuse={deduped}) rejected_ad={rejected} no_source={no_source} failed={failed}")
 
 
 if __name__ == "__main__":

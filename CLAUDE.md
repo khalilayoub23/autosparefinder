@@ -1197,13 +1197,17 @@ image + the part name only — never a supplier link/ad).
   the `autosparefinder_internal` network, then **restart** `autospare_nginx` (not reload).
 - **Cleanup pipeline:** `maintenance/build_part_thumbnails.py` — for each part with a source
   image and no `part_thumbnails` row: fetch (upgrade eBay `s-l225`→`s-l500`), **OCR the image
-  (tesseract) and REJECT it if it contains supplier/promo text** ("coming soon", "contact us",
-  "auto parts", a URL, "whatsapp", hotline…) — OEM box text (brand + part number + "quality")
-  is kept; then standardize (auto-trim, fit to a clean 500×500 white square, compress ≤150 KB
-  progressive JPEG, optional `--caption` part-name overlay) and upload to `parts/<ab>/<uuid>.jpg`.
-  Records outcome in **`part_thumbnails(part_id, url, status)`** — `ok | rejected_ad | no_source
-  | failed` (a separate table, NOT a column on the 4M-row parts_catalog → no DDL lock storms).
-  Run: `python3 /app/maintenance/build_part_thumbnails.py --limit 500 [--caption]`.
+  (tesseract) and REJECT it** if it (a) contains supplier/promo text ("coming soon", "contact us",
+  "auto parts", a URL, "whatsapp", hotline…) OR (b) is **text/label/brand-heavy** — more than
+  `THUMB_MAX_OCR_WORDS` (default 3) real words ⇒ it's a label / OEM-box / brand-card / ad, NOT a
+  clean part picture (owner rule: the picture must have **NO label or brand name**). Then
+  standardize: auto-trim, fit to a clean 500×500 white square, compress ≤150 KB progressive JPEG,
+  **NO caption/label/brand text is ever drawn**. **Dedup = content-addressed keys**: the object
+  key is `thumbs/<ab>/<sha256(bytes)>.jpg`, so an identical image is stored **once** and reused by
+  every part that shares it (no duplicate uploads; `object_exists` short-circuits). Outcome in the
+  separate **`part_thumbnails(part_id, url, status)`** table (`ok | rejected_ad | no_source |
+  failed`; NOT a column on the 4M-row parts_catalog → no DDL lock storms). `url` points at the
+  shared content-addressed object. Run: `python3 /app/maintenance/build_part_thumbnails.py --limit 500`.
 - **Search wiring:** `routes/parts.py` surfaces ONLY the clean bucket thumbnail as
   `primary_image` (LEFT JOIN `part_thumbnails` status='ok'); raw supplier image URLs are
   **never returned** to customers. The frontend `_partImageCandidates` already reads
@@ -1216,10 +1220,12 @@ image + the part name only — never a supplier link/ad).
   → returns the part with `primary_image` = the bucket URL. Test: `devtests/thumbnail_pipeline_test.py`.
 - **Security (audited 2026-07-18):** the S3 secret lives ONLY in `.env` (gitignored — never in a
   tracked file/log/response). Bucket is **fully private** — the test-time public-read policy was
-  removed, public-access-block is on, and anonymous LIST/GET both return 401 (only the backend,
-  with credentials, can read). The serving proxy returns **only image bytes** (no `x-amz-*`/
-  bucket/endpoint headers leak) and rejects anything that isn't a `parts/…` key — traversal
-  (`..`, `%2e`, leading `/`, `\\`) and other prefixes all 404. 404s carry a negative Cache-Control
+  removed → anonymous LIST/GET both return 401 (Contabo denies anonymous by default; only the
+  backend, with credentials, reads). **Do NOT set a Contabo `public-access-block`** — its
+  implementation blocks even authenticated PutObject (breaks the import); rely on no-bucket-policy
+  + default-deny. The serving proxy returns **only image bytes** (no `x-amz-*`/
+  bucket/endpoint headers leak) and rejects anything that isn't a `thumbs/…` or `parts/…` key —
+  traversal (`..`, `%2e`, leading `/`, `\\`) and other prefixes all 404. 404s carry a negative Cache-Control
   so a flood of random keys is absorbed at the edge (the un-rate-limited location's only DoS
   vector). **Residual:** Contabo access keys are ACCOUNT-WIDE (can reach every bucket) — if the
   key is ever exposed, rotate it in the Contabo panel and update `.env`.

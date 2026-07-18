@@ -50,14 +50,27 @@ def get_client():
     return _client
 
 
+def content_key(data: bytes) -> str:
+    """Content-addressed object key: sha256 of the (final) image bytes. Identical images
+    therefore map to ONE object, so a picture is stored once and reused by every part that
+    shares it (no duplicate uploads). 2-char shard prefix keeps listings fast."""
+    import hashlib
+    h = hashlib.sha256(data).hexdigest()
+    return f"thumbs/{h[:2]}/{h}.jpg"
+
+
+def url_for_key(key: str) -> str:
+    """The public-facing (our-domain) URL a client uses to fetch an object by key."""
+    return f"{THUMB_PUBLIC_BASE}/{key}"
+
+
 def thumb_key(part_id: str) -> str:
-    """Sharded object key for a part thumbnail (2-char prefix keeps listings fast)."""
+    """(legacy, part-id-addressed) — kept for the serving route's back-compat only."""
     pid = str(part_id).replace("/", "")
     return f"parts/{pid[:2]}/{pid}.jpg"
 
 
 def thumb_url(part_id: str) -> str:
-    """The public-facing (our-domain) URL a client uses to fetch the thumbnail."""
     return f"{THUMB_PUBLIC_BASE}/{thumb_key(part_id)}"
 
 
