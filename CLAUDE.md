@@ -8,6 +8,40 @@
 > Topical docs live in `docs/` (`docs/skills.md`, `docs/phases.md`, `docs/UI_UX.md`,
 > `docs/roadmap.md`, `docs/SUPPLIERS.md`, `docs/schema/`).
 
+## Mistake Log — Document Every Error & Never Repeat It (MANDATORY)
+
+**Rule (owner-set 2026-07-18):** when a mistake is found — mine or a recurring system bug —
+I MUST (1) record it in the **Mistake Log table below** (what went wrong, the ROOT cause, and
+the concrete lesson), and (2) **apply the lesson everywhere the pattern exists, not just where
+it surfaced.** The lesson is not learned until the log entry is written AND the fix is verified
+across every affected file/surface. Before closing any task, re-read this log and check the
+work against it.
+
+**Why this rule exists (the triggering incident):** the pricing policy was *documented* but not
+*fully implemented in the according files* — the conditional-VAT rule and the "importer must
+carry a real cost, never 0" rule lived in the docs while individual importers / the search
+display / NOA still applied flat VAT or left `importer_price_ils=0`. The owner had to catch it
+twice. **A policy is only "done" when it is enforced in code on EVERY surface that touches it —
+not when it's written down.**
+
+**Operating rules distilled from past mistakes:**
+1. **Fix all layers, not the first one.** When a rule/policy is wrong in one file, `grep` the
+   whole codebase for the same pattern and fix every occurrence (importers, search, agents,
+   marketing, checkout). "Fixed where it was reported" ≠ fixed.
+2. **A policy needs a single enforcement point + a guard.** Prefer one server-side function
+   (e.g. `_customer_price_fields` / `get_supplier_vat_rate`) that every surface calls, plus a
+   self-healing task that corrects drift — never re-implement the rule per file.
+3. **Verify against the LIVE system and the exact failing sample**, not the code's self-report
+   or a `.md` file. A goal isn't done until an end-to-end check proves the outcome.
+4. **Watch for the same class of bug** the log already names before writing new code.
+
+| Date | Mistake / bug | Root cause | Lesson applied (everywhere) |
+|---|---|---|---|
+| 2026-07-14 | Search DISPLAY + NOA showed foreign parts ~18% too high | Flat `×1.18` VAT instead of conditional (IL-only) VAT | One `get_supplier_vat_rate` used by search, chat agents, NOA, checkout — 18% LOCAL only, 0% foreign. Verified on every surface. |
+| 2026-07-18 | 3,627 IL parts stuck at `importer_price_ils=0` with margin-less `base_price` | Heal task's `AND base_price=0` guard skipped already-based parts | Removed the guard, heal from IL supplier cost (`base=cost×1.45`), `SKIP LOCKED`; gap→0; re-verified 18% VAT for IL importers end-to-end. |
+| 2026-07-18 | Renamed `CLAUDE.md`→`claude.md` would silently stop instruction-loading | Case-sensitive Linux FS; harness loads exact `CLAUDE.md` | Keep the filename exactly `CLAUDE.md`; never a second lowercase copy. |
+| 2026-07-18 | Import-testing modules ran real work (bulk_harvest / colmobil started harvesting/importing) | Some scripts do work at module import / ignore `--help` | Never bulk-`import` script modules to test them; use `py_compile` + AST import-resolution, and only actually-import the import-safe library modules. |
+
 ## PLATFORM GOALS (owner-set via /goal — MANDATORY LOG)
 
 **Standing rules:**
@@ -975,6 +1009,39 @@ subprocess. **Rules when touching backend files:**
 - `state/` (the `worker_state` volume) is always `/app/state`; `data/`, `uploads/`,
   `test_images/` are always at `/app`. Never anchor them off a subfolder's `__file__`.
 
+### Creating a NEW file — place it right AND wire it in, in the same change (MANDATORY)
+
+The 2026-07-18 reorg happened because new files had been written to the flat root and left
+loosely connected. **Do not repeat that.** A new file is not "done" until it is (a) in the
+correct folder and (b) actually reachable/active in the system — never "write to root now,
+move/wire later."
+
+**Where each new file goes (decide BEFORE writing it):**
+| New file is… | Put it in | And wire it by… |
+|---|---|---|
+| an importer (writes catalog/prices) | `backend/importers/` | invoke as `python3 /app/importers/<name>.py`; follow the Import Data Standard + SQL patterns; add the top-of-file docstring |
+| a site harvester | `backend/harvesters/` | if it should run continuously, register a supervised loop in `BACKEND_API_ROUTES.startup()` via `_supervised_task(...)`; anchor state at `/app/state` (`Path(__file__).resolve().parent.parent`) |
+| a playwright/html scraper | `backend/scrapers/` | called by its importer/`catalog_scraper` with the `scrapers/` path |
+| a run_/build_/categorize_/backfill_ pipeline or cleanup job | `backend/maintenance/` | add it to `db_update_agent`/`db_cleanup_agent` task list or schedule it; use bounded batches + `SKIP LOCKED` |
+| a shared library module (imported by the app) | `backend/` root | just `import <name>` — it's on the path |
+| an API route group | `backend/routes/` | **`app.include_router(...)` in `BACKEND_API_ROUTES.py`** — an unregistered router is dead code |
+| a supplier/price-sync service | `backend/services/` | wire into the aggregator / sync loop that consumes it |
+| a customer-agent skill | `backend/agents/` or `BACKEND_AI_AGENTS.py` | reachable from `process_user_message` (the one shared brain) |
+| an ad-hoc test/debug harness | `backend/devtests/` | — |
+| a superseded one-off | `backend/legacy/` or `archive/` | — |
+| a data dump / fixture | `backend/data/` (runtime) or `archive/data/` (host artifact) | never the repo root |
+| a doc | `docs/` (topical) or root (only `CLAUDE.md`/`README.md`/`FIXES_TRACKER.md`/`ROADMAP.md`) | link it from `CLAUDE.md` if agents need it |
+
+**Wiring checklist before closing (an orphan file is a bug):**
+1. Placed in the correct folder above — never the flat root as a parking spot.
+2. Connected to its trigger: router registered / supervised-task added / scheduler entry /
+   caller updated — and invoked with the correct `/app/<subfolder>/…` path.
+3. Top-of-file docstring (Script Documentation Standard).
+4. **Proven active**, not just present: hit the route, run one cycle, or confirm the loop
+   logs — a file that exists but nothing calls is not done.
+5. If it makes a public-facing surface, it returns only masked/right-sized data (see the
+   Partner API rules) — never raw cost/margin/supplier internals.
+
 ### backend/ layout
 | Path | Contents |
 |---|---|
@@ -1073,3 +1140,32 @@ REX (scraper coordinator). Full skills → `docs/skills.md`.
 Every backend script keeps a top-of-file docstring: `Script:` / `Purpose:` / `Process:` steps /
 `Data Imported/Modified:` (which tables/fields) / `Data Sources:` (URLs) / `Missing Data
 Delegation:` / `Last Updated:`. Update it when you change the script.
+
+---
+
+## Partner / Public API (routes/public_api.py) — added 2026-07-18
+
+A small, API-key-authenticated surface for external sites/devs. **Right-sized by design: it
+exposes only what a partner needs and NEVER internal data** (supplier names, our cost, the 45%
+margin, `base_price`, `importer_price_ils`/`online_price_ils`, or any internal flag).
+
+- **Base path:** `/api/public/v1/` — `health` (no auth), `search`, `parts/{id}`, `fitment`,
+  `manufacturers`. Registered in `BACKEND_API_ROUTES.py` via `include_router(public_api_router)`.
+- **Auth:** `X-API-Key` header → sha256 → `api_keys` table (catalog DB). Per-key Redis rate limit
+  (`apikey_rl:{id}`, default 60/min, set per key). Issue/list/revoke keys with
+  `python3 /app/maintenance/issue_api_key.py --partner "Name" [--rate N]` (raw key shown once;
+  only the sha256 is stored).
+- **Pricing:** reuses `_customer_price_fields` (routes/parts.py) so the API returns EXACTLY the
+  customer-facing price — `cost × 1.45 + CONDITIONAL VAT` (18% IL suppliers, 0% foreign). Never a
+  raw or flat-VAT price. (Verified 2026-07-18: IL part 38.53 → VAT 6.94 → 45.47; foreign part
+  VAT 0.)
+- **Search** uses Meilisearch (`/indexes/parts/search`, needs the `Authorization: Bearer
+  $MEILI_MASTER_KEY` header) then prices the hits from the DB. **Fitment** resolves the fitting
+  part-ids FIRST (pvf trgm/norm indexes + LIMIT) then prices only those — never price-sort the
+  whole match set (that was 28s → 0.198s).
+- **Response schema (the ONLY exposed fields):** `part_id, oem_number, name, name_he,
+  manufacturer, category, barcode, available, price{amount, vat, total, currency, vat_included}`.
+  Any new field added here must pass the "no internal data" bar.
+- **Any NEW public/partner endpoint MUST**: require `X-API-Key` (`Depends(require_api_key)`),
+  price via `_customer_price_fields`, return the masked schema via `_shape`, and add a
+  `check_rate_limit`. Partner-facing docs: `docs/PUBLIC_API.md` (keep it in sync).
