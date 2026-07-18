@@ -527,6 +527,7 @@ export default function LandingPage() {
                 <li><a href="/chat" className="hover:text-white transition-colors">AI Parts Assistant</a></li>
                 <li><a href="/orders" className="hover:text-white transition-colors">Track Your Order</a></li>
                 <li><a href="/register" className="hover:text-white transition-colors">Create Account</a></li>
+                <li><a href="/developers" className="hover:text-white transition-colors">Developers / API</a></li>
               </ul>
             </div>
             <div>
@@ -543,6 +544,7 @@ export default function LandingPage() {
           <div className="mt-10 pt-6 border-t border-white/10 flex flex-col sm:flex-row items-center justify-between gap-3 text-[12px] text-slate-500">
             <span>© {new Date().getFullYear()} AutoSpareFinder. All rights reserved.</span>
             <div className="flex items-center gap-5">
+              <a href="/developers" className="hover:text-slate-300 transition-colors">API</a>
               <a href="/privacy" className="hover:text-slate-300 transition-colors">Privacy</a>
               <a href="/terms" className="hover:text-slate-300 transition-colors">Terms</a>
               <a href="/refund" className="hover:text-slate-300 transition-colors">Refunds</a>

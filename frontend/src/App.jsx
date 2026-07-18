@@ -17,6 +17,7 @@ const ResetPassword = lazy(() => import('./pages/ResetPassword'))
 const Privacy = lazy(() => import('./pages/Privacy'))
 const Terms = lazy(() => import('./pages/Terms'))
 const Refund = lazy(() => import('./pages/Refund'))
+const DeveloperApi = lazy(() => import('./pages/DeveloperApi'))
 const Chat = lazy(() => import('./pages/Chat'))
 const ClientPortal = lazy(() => import('./pages/ClientPortal'))
 const Parts = lazy(() => import('./pages/Parts'))
@@ -86,6 +87,8 @@ export default function App() {
           <Route path="/privacy" element={<Privacy />} />
           <Route path="/terms" element={<Terms />} />
           <Route path="/refund" element={<Refund />} />
+          <Route path="/developers" element={<DeveloperApi />} />
+          <Route path="/api" element={<DeveloperApi />} />
 
           {/* Main app routes with top layout */}
           <Route path="/" element={<LandingPage />} />
