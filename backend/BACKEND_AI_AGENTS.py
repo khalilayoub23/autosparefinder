@@ -470,12 +470,17 @@ def _is_order_intent(text: str) -> bool:
     return bool(_ORDER_INTENT_RE.search(text or ""))
 
 
-def _vehicle_summary_he(vehicle_profile: Dict[str, Any]) -> str:
-    manufacturer = vehicle_profile.get("manufacturer") or "לא ידוע"
-    model = vehicle_profile.get("model") or "לא ידוע"
-    year = vehicle_profile.get("year") or "לא ידוע"
-    engine = vehicle_profile.get("engine_type") or vehicle_profile.get("fuel_type") or "לא ידוע"
-    return f"{manufacturer} {model}, שנת {year}, מנוע {engine}"
+def _vehicle_summary_he(vehicle_profile: Dict[str, Any], lang: str = "he") -> str:
+    _unknown = {"he": "לא ידוע", "ar": "غير معروف", "en": "unknown"}.get(lang, "לא ידוע")
+    manufacturer = vehicle_profile.get("manufacturer") or _unknown
+    model = vehicle_profile.get("model") or _unknown
+    year = vehicle_profile.get("year") or _unknown
+    engine = vehicle_profile.get("engine_type") or vehicle_profile.get("fuel_type") or _unknown
+    return {
+        "he": f"{manufacturer} {model}, שנת {year}, מנוע {engine}",
+        "ar": f"{manufacturer} {model}، موديل {year}، محرك {engine}",
+        "en": f"{manufacturer} {model}, year {year}, engine {engine}",
+    }.get(lang, f"{manufacturer} {model}, שנת {year}, מנוע {engine}")
 
 
 def _quick_part_from_message(text: str) -> Optional[str]:
@@ -486,40 +491,40 @@ def _quick_part_from_message(text: str) -> Optional[str]:
 # Canonical make → alias list (Hebrew + English). Module-level so the free-text
 # vehicle extractor and the in-flow "vehicle changed by name" reset share ONE map.
 _MAKE_ALIAS_MAP: Dict[str, List[str]] = {
-    "toyota": ["toyota", "טויוטה"], "mazda": ["mazda", "מאזדה", "מזדה"],
-    "hyundai": ["hyundai", "יונדאי"], "kia": ["kia", "קיה"],
-    "citroen": ["citroen", "סיטרואן"], "peugeot": ["peugeot", "פיגו", "פג'ו", "פיג'ו"],
-    "renault": ["renault", "רנו"], "volkswagen": ["volkswagen", "vw", "פולקסווגן"],
-    "skoda": ["skoda", "סקודה"], "seat": ["seat", "סיאט"],
-    "audi": ["audi", "אאודי", "אודי"], "bmw": ["bmw", "ב.מ.וו", 'ב"מוו', 'ב"מ'],
-    "mercedes": ["mercedes", "מרצדס", "מרסדס"], "ford": ["ford", "פורד"],
-    "honda": ["honda", "הונדה"], "nissan": ["nissan", "ניסאן", "ניסן"],
-    "suzuki": ["suzuki", "סוזוקי"], "mitsubishi": ["mitsubishi", "מיצובישי"],
-    "subaru": ["subaru", "סובארו"], "chevrolet": ["chevrolet", "שברולט"],
-    "opel": ["opel", "אופל"], "fiat": ["fiat", "פיאט"],
-    "volvo": ["volvo", "וולוו"], "lexus": ["lexus", "לקסוס"],
-    "jeep": ["jeep", "ג'יפ", "גיפ"], "dacia": ["dacia", "דאצ'יה", "דאציה"],
-    "tesla": ["tesla", "טסלה"], "mini": ["mini", "מיני"],
+    "toyota": ["toyota", "טויוטה", "تويوتا"], "mazda": ["mazda", "מאזדה", "מזדה", "مازدا"],
+    "hyundai": ["hyundai", "יונדאי", "هيونداي", "هيوندا"], "kia": ["kia", "קיה", "كيا"],
+    "citroen": ["citroen", "סיטרואן", "ستروين", "سيتروين"], "peugeot": ["peugeot", "פיגו", "פג'ו", "פיג'ו", "بيجو"],
+    "renault": ["renault", "רנו", "رينو"], "volkswagen": ["volkswagen", "vw", "פולקסווגן", "فولكس فاجن", "فولكسفاجن"],
+    "skoda": ["skoda", "סקודה", "سكودا"], "seat": ["seat", "סיאט", "سيات"],
+    "audi": ["audi", "אאודי", "אודי", "أودي", "اودي"], "bmw": ["bmw", "ב.מ.וו", 'ב"מוו', 'ב"מ', "بي ام دبليو"],
+    "mercedes": ["mercedes", "מרצדס", "מרסדס", "مرسيدس"], "ford": ["ford", "פורד", "فورد"],
+    "honda": ["honda", "הונדה", "هوندا"], "nissan": ["nissan", "ניסאן", "ניסן", "نيسان"],
+    "suzuki": ["suzuki", "סוזוקי", "سوزوكي"], "mitsubishi": ["mitsubishi", "מיצובישי", "ميتسوبيشي"],
+    "subaru": ["subaru", "סובארו", "سوبارو"], "chevrolet": ["chevrolet", "שברולט", "شفروليه"],
+    "opel": ["opel", "אופל", "أوبل", "اوبل"], "fiat": ["fiat", "פיאט", "فيات"],
+    "volvo": ["volvo", "וולוו", "فولفو"], "lexus": ["lexus", "לקסוס", "لكزس", "لكسس"],
+    "jeep": ["jeep", "ג'יפ", "גיפ", "جيب"], "dacia": ["dacia", "דאצ'יה", "דאציה", "داسيا"],
+    "tesla": ["tesla", "טסלה", "تسلا"], "mini": ["mini", "מיני", "ميني"],
 }
 
 # Highest-volume IL model names (Hebrew + English) → canonical model token.
 # Keeps fitment-first search precise when the customer names a model in free text.
 _MODEL_LEXICON: Dict[str, List[str]] = {
-    "corolla": ["corolla", "קורולה"], "yaris": ["yaris", "יאריס"],
-    "camry": ["camry", "קאמרי"], "rav4": ["rav4", "rav 4", "ראב4", "ראב 4"],
-    "civic": ["civic", "סיוויק", "סיביק"], "accord": ["accord", "אקורד"],
-    "sportage": ["sportage", "ספורטאז'", "ספורטג'"], "picanto": ["picanto", "פיקנטו"],
-    "rio": ["rio", "ריו"], "niro": ["niro", "נירו"],
+    "corolla": ["corolla", "קורולה", "كورولا"], "yaris": ["yaris", "יאריס", "يارس", "ياريس"],
+    "camry": ["camry", "קאמרי", "كامري"], "rav4": ["rav4", "rav 4", "ראב4", "ראב 4", "راف فور", "راف4"],
+    "civic": ["civic", "סיוויק", "סיביק", "سيفيك"], "accord": ["accord", "אקורד", "أكورد"],
+    "sportage": ["sportage", "ספורטאז'", "ספורטג'", "سبورتاج"], "picanto": ["picanto", "פיקנטו", "بيكانتو"],
+    "rio": ["rio", "ריו", "ريو"], "niro": ["niro", "נירו", "نيرو"],
     "i10": ["i10"], "i20": ["i20"], "i25": ["i25"], "i30": ["i30"], "i35": ["i35"],
-    "tucson": ["tucson", "טוסון"], "elantra": ["elantra", "אלנטרה"],
-    "golf": ["golf", "גולף"], "polo": ["polo", "פולו"], "passat": ["passat", "פאסאט"],
-    "octavia": ["octavia", "אוקטביה"], "fabia": ["fabia", "פאביה"],
-    "3": ["mazda 3", "מאזדה 3", "מזדה 3"], "6": ["mazda 6", "מאזדה 6"],
+    "tucson": ["tucson", "טוסון", "توسان"], "elantra": ["elantra", "אלנטרה", "النترا", "إلنترا"],
+    "golf": ["golf", "גולף", "جولف"], "polo": ["polo", "פולו", "بولو"], "passat": ["passat", "פאסאט", "باسات"],
+    "octavia": ["octavia", "אוקטביה", "أوكتافيا"], "fabia": ["fabia", "פאביה", "فابيا"],
+    "3": ["mazda 3", "מאזדה 3", "מזדה 3", "مازدا 3"], "6": ["mazda 6", "מאזדה 6", "مازدا 6"],
     "cx5": ["cx-5", "cx5", "סי אקס 5"], "cx30": ["cx-30", "cx30"],
-    "qashqai": ["qashqai", "קשקאי"], "juke": ["juke", "ג'וק"], "micra": ["micra", "מיקרה"],
-    "clio": ["clio", "קליאו"], "captur": ["captur", "קפצ'ור"], "megane": ["megane", "מגאן"],
-    "focus": ["focus", "פוקוס"], "fiesta": ["fiesta", "פיאסטה"],
-    "sprinter": ["sprinter", "ספרינטר"], "transit": ["transit", "טרנזיט"],
+    "qashqai": ["qashqai", "קשקאי", "قاشقاي"], "juke": ["juke", "ג'וק", "جوك"], "micra": ["micra", "מיקרה", "ميكرا"],
+    "clio": ["clio", "קליאו", "كليو"], "captur": ["captur", "קפצ'ור", "كابتور"], "megane": ["megane", "מגאן", "ميجان"],
+    "focus": ["focus", "פוקוס", "فوكس"], "fiesta": ["fiesta", "פיאסטה", "فييستا"],
+    "sprinter": ["sprinter", "ספרינטר", "سبرينتر"], "transit": ["transit", "טרנזיט", "ترانزيت"],
 }
 
 
@@ -535,6 +540,10 @@ def _alias_present(alias: str, low: str) -> bool:
         return False
     if re.search(r"[a-z]", a):
         return re.search(r"(?<![a-z0-9])" + re.escape(a) + r"(?![a-z])", low) is not None
+    # Arabic: allow ONE attached preposition prefix (ل/ب/و/ف/ك glue onto the next word,
+    # e.g. "لتويوتا" = for-Toyota) with Arabic-letter boundaries on both sides.
+    if re.search(r"[؀-ۿ]", a):
+        return re.search(r"(?<![؀-ۿ])[لبوفك]?" + re.escape(a) + r"(?![؀-ۿ])", low) is not None
     return re.search(r"(?<![א-ת])[לבמהוכש]?" + re.escape(a) + r"(?![א-ת])", low) is not None
 
 
@@ -566,6 +575,8 @@ def _strip_vehicle_terms(text: str, make: str = "", model: str = "") -> str:
                 continue
             if re.search(r"[a-z]", al.lower()):
                 out = re.sub(r"(?<![a-z0-9])" + re.escape(al) + r"(?![a-z])", " ", out, flags=re.IGNORECASE)
+            elif re.search(r"[؀-ۿ]", al):
+                out = re.sub(r"(?<![؀-ۿ])[لبوفك]?" + re.escape(al) + r"(?![؀-ۿ])", " ", out)
             else:
                 out = re.sub(r"(?<![א-ת])[לבמהוכש]?" + re.escape(al) + r"(?![א-ת])", " ", out)
     # Drop dangling Hebrew connective prefixes left behind ("ל", "של") and tidy.
@@ -1539,6 +1550,25 @@ class BaseAgent:
     # Order matters — first key found in the message wins; put the more specific
     # part term first (מסנן/filter before שמן/oil so an oil FILTER → filters).
     _CATEGORY_KEYWORDS: Dict[str, str] = {
+        # ── Arabic part terms (2026-07-18) → same English category tokens ──
+        "فلتر": "filter", "مرشح": "filter", "فرامل": "brake", "بريك": "brake",
+        "تيل": "brake", "قماشات": "brake", "ديسك": "brake", "قرص فرامل": "brake",
+        "كلتش": "clutch", "دبرياج": "clutch", "قابض": "clutch",
+        "محرك": "engine", "موتور": "engine", "بستم": "engine", "بستون": "engine",
+        "تربو": "engine", "عمود كامات": "engine", "عمود مرفقي": "engine",
+        "مساعد": "suspension", "مساعدين": "suspension", "تعليق": "suspension",
+        "مقصات": "suspension", "توجيه": "steering", "دركسون": "steering",
+        "بطارية": "electrical", "دينمو": "electrical", "مارش": "electrical",
+        "بوجيه": "electrical", "شمعات": "electrical", "حساس": "electrical",
+        "كهرباء": "electrical", "لمبة": "lighting", "فانوس": "lighting",
+        "كشاف": "lighting", "زيت": "oil", "ماء": "cooling", "رادياتير": "cooling",
+        "تبريد": "cooling", "مكيف": "ac", "تكييف": "ac", "كمبروسر": "ac",
+        "عادم": "exhaust", "شكمان": "exhaust", "اكزوز": "exhaust",
+        "جير": "transmission", "قير": "transmission", "علبة سرعات": "transmission",
+        "مساحات": "wiper", "مساحة": "wiper", "مرايا": "mirror", "مراية": "mirror",
+        "طرمبة": "pump", "طلمبة": "pump", "بلف": "valve", "صمام": "valve",
+        "جلبة": "bushing", "رمان بلي": "bearing", "رمان": "bearing", "طقم": "kit",
+        "سير": "belt", "سيور": "belt", "جنزير": "belt", "اطار": "tire", "كاوتش": "tire",
         # filters (before oil/fluids so "מסנן שמן"/"oil filter" → filters)
         "מסנן": "filter", "פילטר": "filter", "filter": "filter",
         # brakes
@@ -2654,6 +2684,10 @@ NEVER:
             "בלמ", "רפידות", "מנוע", "מתלה", "פנס", "מסנן", "פילטר",
             "מגב", "גלגל", "צמיג", "מראה", "מיזוג", "חיישן", "אטם",
             "קירור", "דלק", "גיר", "סרן", "רצועה", "שרשרת",
+            # Arabic part-request terms (2026-07-18)
+            "قطعة", "قطع", "قطع غيار", "سعر", "بكم", "فلتر", "مرشح", "فرامل",
+            "تيل", "محرك", "موتور", "مساعد", "بطارية", "زيت", "مساحات", "مرايا",
+            "كلتش", "جير", "تكييف", "مكيف", "رادياتير", "بحاجة", "أريد", "ابحث",
         ]) or plate_match
 
         if is_parts_request:
@@ -6313,7 +6347,7 @@ async def process_user_message(
                     # Fit banner (/goal 2026-07-05): the customer must know
                     # whether these parts are VERIFIED to fit their car or are
                     # same-make matches pending OEM confirmation.
-                    _vsum = _vehicle_summary_he(vehicle_profile or {})
+                    _vsum = _vehicle_summary_he(vehicle_profile or {}, _lang)
                     # Language-aware banner + labels (2026-07-18): the customer must read the
                     # results in THEIR language (he/ar/en), not a hardcoded Hebrew/English mix.
                     if verified_fit:

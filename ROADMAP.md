@@ -40,15 +40,22 @@ in all 3 languages, and fix the NOA link-shortener.
    real body URLs. *Verified:* valid links survive + shrink (www stripped), malformed `://./`
    `://../` orphan `://` still removed.
 
+**Arabic chat gap — CLOSED (2026-07-18):**
+- Added **Arabic make/model aliases** to `_MAKE_ALIAS_MAP` + `_MODEL_LEXICON` (27 makes, 30+
+  models) and taught `_alias_present` / `_strip_vehicle_terms` to match Arabic (Arabic-letter
+  boundaries + the attached preposition prefix ل/ب/و/ف/ك, e.g. "لتويوتا"). Arabic queries now
+  enter the fitment-first flow (`تويوتا كورولا 2018` → toyota/corolla/2018, part query cleanly
+  separated).
+- Added ~50 **Arabic part terms** to `_CATEGORY_KEYWORDS` (فلتر→filter, فرامل→brake, محرك→engine,
+  مساعد→suspension, بطارية→electrical, تكييف→ac …) + the `is_parts_request` recognizer.
+- **Vehicle summary localized** (`_vehicle_summary_he(profile, lang)` → he/ar/en).
+- **Verified:** `chat_multilang_test.py` → **3/3** — Arabic customer gets an Arabic reply (was
+  Hebrew), HE fully Hebrew, EN fully English.
+
 **Open follow-ups (next iteration):**
-- **Arabic chat depth:** add Arabic make/model aliases so Arabic queries (e.g. `تويوتا كورولا`)
-  enter the fitment-first flow (currently HE+EN only → Arabic falls to the LLM), and steer the
-  LLM to reply in Arabic (it currently defaults to Hebrew for the Arabic conversational path).
-  Target: chat_multilang_test 3/3.
-- **Vehicle summary (`_vsum`) localization** — still Hebrew ("שנת", "מנוע לא ידוע") inside the
-  otherwise-localized results banner; localize per `_lang`.
 - Extend i18n beyond the landing to the rest of the SPA (parts/chat/cart) if full trilingual UI
   is wanted (out of G7 scope — landing only).
+- Broaden Arabic part-term + model coverage as real Arabic queries arrive (search_misses).
 
 **Next (owner-stated, after G7):** images → server bucket + deploy; add Reddit / Discord / X
 channels to NOA.
