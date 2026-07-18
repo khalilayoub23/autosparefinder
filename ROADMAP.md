@@ -1,6 +1,57 @@
 # AutoSpareFinder — Product Roadmap
-*Last updated: 2026-06-25*
+*Last updated: 2026-07-18*
 *Vision: Global car parts comparison + sales marketplace (eBay/AliExpress for auto parts + AI)*
+
+---
+
+## Workstream — Multi-language (AR/HE/EN) + landing i18n + chat/NOA (goal G7, 2026-07-18)
+
+> Process log for goal **G7** (per owner: document the *process* here, not FIXES_TRACKER).
+
+**Objective:** the system supports 3 languages — Arabic, Hebrew, English. The landing page
+supports all 3 with RTL + responsive on PC/tablet/mobile. Then verify links/buttons, test chat
+in all 3 languages, and fix the NOA link-shortener.
+
+**Audit (starting state):**
+- Backend chat *had* 3-language LANGUAGE RULES (detect first message → reply in-language) but
+  the **structured search-results output was hardcoded Hebrew banner + English labels**, and
+  Arabic free-text vehicle capture / LLM steering were weak.
+- Frontend landing page was **English-only** with a **dead `?lang=` switcher** (no i18n lib, no
+  translations, `index.html lang="en"`, no dir).
+
+**Delivered:**
+1. **Landing i18n** — new `frontend/src/i18n.js` (lang from `?lang`/localStorage/browser, sets
+   `<html lang>`, ~70-string AR/HE/EN dictionary, `t()` with interpolation). `LandingPage.jsx`
+   fully translated, dynamic `dir` on the landing container, working language switcher, and
+   `rtl:`/`ltr:` Tailwind logical variants for directional spots (dropdown, hero icon/padding,
+   WhatsApp button, step connector, cart badge). `dir` scoped to the landing container so the
+   app's other (Hebrew-hardcoded) pages are untouched — **no breaking points**.
+   *Verified:* Playwright e2e `backend/devtests/landing_i18n_links_test.py` — **30/30 PASS**:
+   dir (rtl he/ar, ltr en), translated headings render, **no horizontal overflow** at desktop
+   1280 / tablet 820 / mobile 390, **all 15 links resolve**, 11 buttons enabled, hero search
+   navigates to `/parts`. Screenshots confirm a fully-mirrored professional Arabic RTL page.
+2. **Chat results formatter** — now language-aware (fit banner + price "incl. VAT" + shipping
+   "days" + "months warranty" localized he/ar/en). *Verified* `chat_multilang_test.py`: HE reply
+   fully Hebrew, EN reply fully English (**2/3**).
+3. **NOA link shortener** — root-caused: `_strip_malformed_links` had an unguarded
+   `re.sub("://[^\\s]+")` that **destroyed every URL in a message body** to a dangling "https"
+   (only icon-footer links survived) — the "link shrinker not working at all messages" report.
+   Removed it (the guarded `(?<!\\w)://` already strips orphans), added a shrink pass that tidies
+   real body URLs. *Verified:* valid links survive + shrink (www stripped), malformed `://./`
+   `://../` orphan `://` still removed.
+
+**Open follow-ups (next iteration):**
+- **Arabic chat depth:** add Arabic make/model aliases so Arabic queries (e.g. `تويوتا كورولا`)
+  enter the fitment-first flow (currently HE+EN only → Arabic falls to the LLM), and steer the
+  LLM to reply in Arabic (it currently defaults to Hebrew for the Arabic conversational path).
+  Target: chat_multilang_test 3/3.
+- **Vehicle summary (`_vsum`) localization** — still Hebrew ("שנת", "מנוע לא ידוע") inside the
+  otherwise-localized results banner; localize per `_lang`.
+- Extend i18n beyond the landing to the rest of the SPA (parts/chat/cart) if full trilingual UI
+  is wanted (out of G7 scope — landing only).
+
+**Next (owner-stated, after G7):** images → server bucket + deploy; add Reddit / Discord / X
+channels to NOA.
 
 ---
 
