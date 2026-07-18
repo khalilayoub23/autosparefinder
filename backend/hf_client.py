@@ -860,6 +860,20 @@ async def groq_text(prompt: str, system: str = "", timeout: float = 60.0, model:
     return _clean_response(result)
 
 
+# Vocabulary hint for the transcriber (Groq/OpenAI Whisper `prompt`): biases spelling
+# toward automotive Hebrew part names + common IL car models WITHOUT forcing a language,
+# so English requests still transcribe. Fixes short-term mis-hearings surfaced in testing
+# (e.g. מצת "spark plug" → מצאת, קיה ספורטג' → קיאס). Overridable via WHISPER_VOCAB_PROMPT.
+_AUDIO_VOCAB_PROMPT = os.getenv(
+    "WHISPER_VOCAB_PROMPT",
+    "חלקי חילוף לרכב. רפידות בלם, דיסקיות בלם, מצת, מצתים, מסנן שמן, מסנן אוויר, מסנן דלק, "
+    "פנס קדמי, פנס אחורי, בולם זעזועים, אלטרנטור, מצמד, משאבת מים, רדיאטור, מדחס מזגן, "
+    "מראה צד, זרוע הגה, ווסת לחץ, חיישן, קואיל הצתה, משאבת ABS, תיבת הילוכים. "
+    "דגמים: טויוטה קורולה, הונדה סיוויק, מאזדה 3, קיה ספורטג', יונדאי i35, פולקסווגן גולף, "
+    "סיטרואן ברלינגו, ב.מ.וו, מספר שלדה VIN.",
+)
+
+
 async def hf_audio(audio_bytes: bytes, timeout: float = 60.0) -> str:
     if not GROQ_API_KEY:
         raise RuntimeError("GROQ_API_KEY not set in .env")
@@ -868,7 +882,7 @@ async def hf_audio(audio_bytes: bytes, timeout: float = 60.0) -> str:
         "POST",
         f"{GROQ_BASE}/audio/transcriptions",
         headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
-        data={"model": GROQ_AUDIO_MODEL},
+        data={"model": GROQ_AUDIO_MODEL, "prompt": _AUDIO_VOCAB_PROMPT},
         files={"file": ("audio.webm", audio_bytes, "audio/webm")},
     )
 

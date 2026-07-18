@@ -1033,26 +1033,54 @@ async def normalize_part_types(db: AsyncSession) -> Dict[str, Any]:
     case_sql = f"CASE\n            {when_clauses}\n            ELSE part_type\n        END"
 
     try:
+        # BOUNDED BATCHING (2026-07-13): the old single UPDATE matched every delta row
+        # — when the checkpoint was stale that was millions of rows locked in ONE tx for
+        # 27+ min, serializing all parts_catalog writes (lock storm that blocked the
+        # categorizer, importers, enrichment). Now: chunks of BATCH, committed each loop
+        # (locks released), FOR UPDATE SKIP LOCKED so it never waits on rows another
+        # writer holds, per-batch statement_timeout. Updated rows leave the match set,
+        # so no cursor is needed; locked rows are retried a few times then left for the
+        # next cycle. Same lock-safe pattern as bmw_oem_dedup / categorize_parts_batch.
+        BATCH = 5000
         for table, counter_attr in (("parts_catalog", "catalog_updated"), ("supplier_parts", "supplier_updated")):
-            result = await db.execute(
-                text(f"""
-                    UPDATE {table}
-                    SET part_type  = {case_sql},
-                        updated_at = NOW()
-                    WHERE updated_at > :since
-                      AND part_type IS NOT NULL
-                      AND LOWER(TRIM(part_type)) = ANY(:keys)
-                      AND part_type NOT IN ('Original', 'OEM', 'Aftermarket')
-                """),
-                {"since": since, "keys": list(PART_TYPE_MAP.keys())},
-            )
-            n = result.rowcount
+            total_n = 0
+            empty_streak = 0
+            for _ in range(20000):  # hard cap; normally exits on empty match set
+                await db.execute(text("SET LOCAL statement_timeout = '30s'"))
+                result = await db.execute(
+                    text(f"""
+                        WITH batch AS (
+                            SELECT id FROM {table}
+                            WHERE updated_at > :since
+                              AND part_type IS NOT NULL
+                              AND LOWER(TRIM(part_type)) = ANY(:keys)
+                              AND part_type NOT IN ('Original', 'OEM', 'Aftermarket')
+                            ORDER BY id
+                            LIMIT :batch
+                            FOR UPDATE SKIP LOCKED
+                        )
+                        UPDATE {table} t
+                        SET part_type = {case_sql}, updated_at = NOW()
+                        FROM batch WHERE t.id = batch.id
+                    """),
+                    {"since": since, "keys": list(PART_TYPE_MAP.keys()), "batch": BATCH},
+                )
+                n = result.rowcount
+                await db.commit()  # release locks every batch
+                total_n += n
+                if n == 0:
+                    empty_streak += 1
+                    if empty_streak >= 3:
+                        break  # match set empty (or all locked — next cycle catches)
+                    await asyncio.sleep(2)
+                    continue
+                empty_streak = 0
+                await asyncio.sleep(0.2)  # be gentle to the harvester/importers
             if counter_attr == "catalog_updated":
-                catalog_updated = n
+                catalog_updated = total_n
             else:
-                supplier_updated = n
+                supplier_updated = total_n
 
-        await db.commit()
         await _save_task_checkpoint(db, "normalize_part_types")
         logger.info(
             "normalize_part_types (delta since %s): catalog=%d supplier=%d elapsed=%.1fs",
@@ -1090,7 +1118,33 @@ async def normalize_categories(db: AsyncSession) -> Dict[str, Any]:
     t0 = time.monotonic()
     since = await _get_task_checkpoint(db, "normalize_categories")
 
-    try:
+    # Deadlock resilience (fixed 2026-07-11): this task runs long batched UPDATEs
+    # on parts_catalog while the harvester/importers concurrently UPDATE the same
+    # rows → DeadlockDetectedError aborted the whole ~20-min task (status=error)
+    # ~5×/day. Deadlocks are transient: retry the whole task a few times, and
+    # (below) Pass 2 now takes row locks in a consistent id order with FOR UPDATE
+    # SKIP LOCKED so it never waits on rows another writer holds.
+    _MAX_DEADLOCK_RETRIES = 4
+    for _attempt in range(_MAX_DEADLOCK_RETRIES):
+        try:
+            return await _normalize_categories_once(db, since, t0)
+        except Exception as exc:
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+            if "deadlock" in str(exc).lower() and _attempt < _MAX_DEADLOCK_RETRIES - 1:
+                logger.warning("normalize_categories deadlock (attempt %d/%d) — retrying",
+                               _attempt + 1, _MAX_DEADLOCK_RETRIES)
+                await asyncio.sleep(1.5 * (_attempt + 1))
+                continue
+            logger.error("normalize_categories failed: %s", exc)
+            return {"task": "normalize_categories", "status": "error", "error": str(exc)}
+
+
+async def _normalize_categories_once(db: AsyncSession, since, t0) -> Dict[str, Any]:
+    """One attempt of normalize_categories (wrapped in deadlock retry above)."""
+    if True:
         canonical_set = set(CANONICAL_CATEGORIES)
         canonical_sql = ", ".join(f"'{c}'" for c in CANONICAL_CATEGORIES)
 
@@ -1143,6 +1197,11 @@ async def normalize_categories(db: AsyncSession) -> Dict[str, Any]:
         cutoff_id = cutoff_row.scalar()
         batch_size = 5000
         while cutoff_id:
+            # ORDER BY id + FOR UPDATE SKIP LOCKED: take row locks in a consistent
+            # order and skip rows another writer (harvester/importer) is holding,
+            # so this batch never forms a deadlock cycle and never blocks on a
+            # contended row. Skipped rows stay in delta scope (updated_at) and are
+            # picked up on a later pass/cycle.
             result2 = await db.execute(text(f"""
                 WITH batch AS (
                     SELECT id FROM parts_catalog
@@ -1150,7 +1209,9 @@ async def normalize_categories(db: AsyncSession) -> Dict[str, Any]:
                       AND  id <= :cutoff_id
                       AND  category IS NOT NULL
                       AND  TRIM(category) NOT IN ({canonical_sql})
+                    ORDER BY id
                     LIMIT  {batch_size}
+                    FOR UPDATE SKIP LOCKED
                 )
                 UPDATE parts_catalog
                 SET    category   = 'כללי',
@@ -1167,11 +1228,6 @@ async def normalize_categories(db: AsyncSession) -> Dict[str, Any]:
         await _save_task_checkpoint(db, "normalize_categories")
         logger.info("normalize_categories pass2 (delta): fallback=%d total_elapsed=%.1fs",
                     rows_fallback, time.monotonic() - t0)
-
-    except Exception as exc:
-        await db.rollback()
-        logger.error("normalize_categories failed: %s", exc)
-        return {"task": "normalize_categories", "status": "error", "error": str(exc)}
 
     return {
         "task": "normalize_categories",
@@ -1344,12 +1400,22 @@ async def normalize_base_price(db: AsyncSession) -> Dict[str, Any]:
     """
     MARGIN = float(os.getenv("IL_MARGIN", "1.45"))
     t0 = time.monotonic()
+    # Delta scope (added 2026-07-11): base_price only needs recomputing when a
+    # SOURCE price column changed — and every importer bumps updated_at when it
+    # writes prices (mandatory pipeline rule) — so we only scan rows touched since
+    # the last checkpoint instead of the whole 1.9M-row table every cycle. The old
+    # full-table scan ran ~30 min holding a snapshot (blocking other work and
+    # deadlocking the harvester); delta scans a few thousand rows in seconds. A
+    # weekly full pass still catches anything missed (e.g. a MARGIN change). Same
+    # pattern as refresh_min_max_prices.
+    since = await _get_task_checkpoint(db, "normalize_base_price")
+    full_pass = (datetime.utcnow() - since) > timedelta(days=7)
     try:
-        # No-op guard added 2026-07-07: each UPDATE now only writes rows whose
-        # base_price would ACTUALLY change (`IS DISTINCT FROM`). The old version
-        # re-wrote all ~1.9M priced rows every cycle even when the value was
-        # already correct — millions of pointless disk writes + updated_at churn
-        # (which also kept re-triggering meili_sync). Now steady state writes ~0.
+        # Fail fast instead of deadlocking/blocking on rows the harvester holds;
+        # the run_all_tasks central deadlock/lock retry re-runs it next.
+        await db.execute(text("SET LOCAL lock_timeout = '2min'"))
+        # No-op guard: each UPDATE writes only rows whose base_price would ACTUALLY
+        # change (`IS DISTINCT FROM`) — steady state writes ~0.
         # Case 1: importer_price_ils is the actual cost excl. VAT — 45% margin over cost
         r1 = await db.execute(text("""
             UPDATE parts_catalog
@@ -1357,8 +1423,9 @@ async def normalize_base_price(db: AsyncSession) -> Dict[str, Any]:
                 updated_at = NOW()
             WHERE importer_price_ils > 0
               AND is_active = TRUE
+              AND (:full_pass OR updated_at > :since)
               AND base_price IS DISTINCT FROM ROUND((importer_price_ils * :margin)::numeric, 2)
-        """), {"margin": MARGIN})
+        """), {"margin": MARGIN, "full_pass": full_pass, "since": since})
         importer_updated = r1.rowcount
 
         # Case 2: eBay / international buy price (already excl. VAT) — 45% margin
@@ -1369,8 +1436,9 @@ async def normalize_base_price(db: AsyncSession) -> Dict[str, Any]:
             WHERE (importer_price_ils IS NULL OR importer_price_ils = 0)
               AND online_price_ils > 0
               AND is_active = TRUE
+              AND (:full_pass OR updated_at > :since)
               AND base_price IS DISTINCT FROM ROUND((online_price_ils * :margin)::numeric, 2)
-        """), {"margin": MARGIN})
+        """), {"margin": MARGIN, "full_pass": full_pass, "since": since})
         online_updated = r2.rowcount
 
         # Case 3: IL importer reference price (incl. 18% VAT) — divide out VAT, then 45% margin
@@ -1382,11 +1450,13 @@ async def normalize_base_price(db: AsyncSession) -> Dict[str, Any]:
               AND (online_price_ils IS NULL OR online_price_ils = 0)
               AND max_price_ils > 0
               AND is_active = TRUE
+              AND (:full_pass OR updated_at > :since)
               AND base_price IS DISTINCT FROM ROUND((max_price_ils / 1.18 * :margin)::numeric, 2)
-        """), {"margin": MARGIN})
+        """), {"margin": MARGIN, "full_pass": full_pass, "since": since})
         max_updated = r3.rowcount
 
         await db.commit()
+        await _save_task_checkpoint(db, "normalize_base_price")
         total = online_updated + importer_updated + max_updated
         logger.info(
             "normalize_base_price: online→%d importer→%d il_ref→%d total=%d in %.2fs",
@@ -1738,6 +1808,13 @@ async def sync_models_from_catalog(db: AsyncSession) -> Dict[str, Any]:
     t0 = time.monotonic()
     inserted = 0
     scanned = 0
+    skipped = 0
+    # Cache manufacturer name → car_brands.id for this run. vehicles.manufacturer_id
+    # is a NOT NULL FK to car_brands(id); the insert previously omitted it, which
+    # failed the whole task with NotNullViolationError (e.g. "Vw") every cycle.
+    # Fixed 2026-07-11: resolve the id (case-insensitive, by name OR alias) and
+    # skip rows whose brand is not registered yet rather than aborting.
+    _mfr_id_cache: Dict[str, Any] = {}
 
     rows = (await db.execute(text("""
         SELECT manufacturer, compatible_vehicles
@@ -1808,12 +1885,33 @@ async def sync_models_from_catalog(db: AsyncSession) -> Dict[str, Any]:
             if exists:
                 continue
 
+            # Resolve NOT NULL manufacturer_id (FK to car_brands) before insert.
+            mkey = mfr.casefold()
+            if mkey not in _mfr_id_cache:
+                mid_row = (await db.execute(text("""
+                    SELECT id FROM car_brands
+                    WHERE LOWER(BTRIM(name)) = LOWER(BTRIM(:mfr))
+                       OR EXISTS (
+                           SELECT 1 FROM unnest(COALESCE(aliases, '{}')) a
+                           WHERE LOWER(BTRIM(a)) = LOWER(BTRIM(:mfr))
+                       )
+                    ORDER BY is_active DESC
+                    LIMIT 1
+                """), {"mfr": mfr})).fetchone()
+                _mfr_id_cache[mkey] = mid_row[0] if mid_row else None
+            manufacturer_id = _mfr_id_cache[mkey]
+            if manufacturer_id is None:
+                # Brand not registered yet — sync_manufacturer_registries adds it;
+                # a later cycle will pick this vehicle up. Skip, don't abort.
+                skipped += 1
+                continue
+
             await db.execute(text("""
                 INSERT INTO vehicles
-                    (id, license_plate, manufacturer, model, year, vin, created_at)
+                    (id, license_plate, manufacturer, manufacturer_id, model, year, vin, created_at)
                 VALUES
-                    (gen_random_uuid(), NULL, :mfr, :model, :year, NULL, NOW())
-            """), {"mfr": mfr, "model": model, "year": year})
+                    (gen_random_uuid(), NULL, :mfr, :mid, :model, :year, NULL, NOW())
+            """), {"mfr": mfr, "mid": manufacturer_id, "model": model, "year": year})
             inserted += 1
 
     await db.commit()
@@ -1822,6 +1920,7 @@ async def sync_models_from_catalog(db: AsyncSession) -> Dict[str, Any]:
         "status": "ok",
         "scanned": scanned,
         "inserted": inserted,
+        "skipped": skipped,
         "elapsed_s": round(time.monotonic() - t0, 2),
     }
 
@@ -3582,6 +3681,10 @@ async def dedup_catalog_parts(db: AsyncSession) -> Dict[str, Any]:
         """), {"since": since})).scalars().all()
 
         if dup_sku_ids:
+            # Sort ids so the UPDATE takes row locks in a consistent (id) order —
+            # reduces deadlocks with concurrent writers that also touch these rows
+            # (the run_all_tasks central retry is the backstop). 2026-07-11.
+            dup_sku_ids = sorted(str(i) for i in dup_sku_ids)
             r1 = await db.execute(
                 text("UPDATE parts_catalog SET sku = NULL, updated_at = NOW() WHERE id = ANY(:ids) RETURNING id"),
                 {"ids": dup_sku_ids},
@@ -4341,7 +4444,12 @@ async def validate_watchdog_actions(db: AsyncSession) -> Dict[str, Any]:
 
     anomalies = []
     validated = 0
-    summary = {"kill_orphan": 0, "kill_stuck_importer": 0, "warn_live_long": 0}
+    summary = {"kill_orphan": 0, "kill_zombie": 0, "kill_stuck_importer": 0, "warn_live_long": 0}
+
+    # A same-container zombie query must have been blocking well past the watchdog's
+    # ZOMBIE_QUERY_S threshold before it is killed. Kept a little below the code's
+    # 2700s so a borderline timing race isn't mislabeled an anomaly.
+    ZOMBIE_MIN_DUR_S = 2400
 
     for evt in events:
         summary[evt.action] = summary.get(evt.action, 0) + 1
@@ -4352,6 +4460,14 @@ async def validate_watchdog_actions(db: AsyncSession) -> Dict[str, Any]:
                 anomalies.append(
                     f"kill_orphan pid={evt.pid} dur={evt.dur_s}s — details don't confirm orphan: '{evt.details}'"
                 )
+        elif evt.action == "kill_zombie":
+            # Legitimate same-container zombie kill — validate on its OWN terms:
+            # it must have been blocking long enough to qualify as a zombie.
+            if evt.dur_s < ZOMBIE_MIN_DUR_S:
+                anomalies.append(
+                    f"kill_zombie pid={evt.pid} dur={evt.dur_s}s — killed too early "
+                    f"(< {ZOMBIE_MIN_DUR_S}s zombie threshold)"
+                )
         elif evt.action == "kill_stuck_importer":
             if evt.dur_s <= 0:
                 anomalies.append(f"kill_stuck_importer pid={evt.pid} has invalid dur_s={evt.dur_s}")
@@ -4360,11 +4476,13 @@ async def validate_watchdog_actions(db: AsyncSession) -> Dict[str, Any]:
         validated += 1
 
     # Burst check: >5 kills in one validation cycle is unusual
-    total_kills = summary.get("kill_orphan", 0) + summary.get("kill_stuck_importer", 0)
+    total_kills = (summary.get("kill_orphan", 0) + summary.get("kill_zombie", 0)
+                   + summary.get("kill_stuck_importer", 0))
     if total_kills > 5:
         anomalies.append(
             f"Unusual kill burst: {total_kills} kills in one cycle "
-            f"(orphans={summary['kill_orphan']} importers={summary['kill_stuck_importer']})"
+            f"(orphans={summary['kill_orphan']} zombies={summary['kill_zombie']} "
+            f"importers={summary['kill_stuck_importer']})"
         )
 
     if anomalies:
@@ -4450,7 +4568,14 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
     """
     from BACKEND_AUTH_SECURITY import get_redis
     from distributed_lock import acquire_lock
-    lock_ttl_s = int(os.getenv("DB_AGENT_LOCK_TTL_S", "21600"))
+    # ROOT FIX 2026-07-09: was 21600s (6h). The heartbeat thread refreshes this
+    # lock every 60s while the cycle runs, so the TTL only needs to outlast the
+    # refresh interval — NOT the whole cycle. A 6h TTL meant that when a cycle
+    # was killed (e.g. zombie watchdog under load) its lock lingered for up to
+    # 6 HOURS, and every subsequent cycle skipped "lock held" the entire time —
+    # the db agent was effectively down for 7h. 600s (10 min) TTL + 60s refresh
+    # = a dead holder's lock auto-expires in ≤10 min and the next cycle runs.
+    lock_ttl_s = int(os.getenv("DB_AGENT_LOCK_TTL_S", "600"))
     job_ttl_s = int(os.getenv("DB_AGENT_JOB_TTL_S", "21600"))
     heartbeat_interval_s = int(os.getenv("DB_AGENT_HEARTBEAT_INTERVAL_S", "60"))
     redis = await get_redis()
@@ -4614,33 +4739,66 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
             print(f"[run_all_tasks] starting: {task_name}", flush=True)
             logger.info("run_all_tasks → starting: %s", task_name)
 
-            try:
-                if task_timeout_s > 0:
-                    result = await asyncio.wait_for(run_task(task_name, db), timeout=task_timeout_s)
-                else:
-                    result = await run_task(task_name, db)
+            # Central deadlock-retry (added 2026-07-11): several batched-UPDATE
+            # tasks (normalize_categories/part_types, dedup_catalog_parts,
+            # backfill_catalog_fitment_from_xls) contend with the concurrent
+            # harvester on parts_catalog rows → transient DeadlockDetectedError
+            # that used to abort the task (status=error) ~5×/day each. Postgres
+            # picks a victim and aborts it; retrying the transaction resolves it.
+            # Handles BOTH a raised deadlock and a task that catches it and returns
+            # {status:error, error:"...deadlock..."}. Timeouts are NOT retried.
+            _MAX_TASK_DEADLOCK_RETRIES = 3
+            result = None
+            for _dl_attempt in range(_MAX_TASK_DEADLOCK_RETRIES):
+                try:
+                    if task_timeout_s > 0:
+                        result = await asyncio.wait_for(run_task(task_name, db), timeout=task_timeout_s)
+                    else:
+                        result = await run_task(task_name, db)
 
-            except asyncio.TimeoutError:
-                with contextlib.suppress(Exception):
-                    await db.rollback()
-                result = {
-                    "task": task_name,
-                    "status": "error",
-                    "error": f"Task timeout after {task_timeout_s}s",
-                }
-                print(f"[run_all_tasks] TIMEOUT: {task_name} after {task_timeout_s}s", flush=True)
-                logger.error("run_all_tasks: task %s timed out after %ss", task_name, task_timeout_s)
+                except asyncio.TimeoutError:
+                    with contextlib.suppress(Exception):
+                        await db.rollback()
+                    result = {
+                        "task": task_name,
+                        "status": "error",
+                        "error": f"Task timeout after {task_timeout_s}s",
+                    }
+                    print(f"[run_all_tasks] TIMEOUT: {task_name} after {task_timeout_s}s", flush=True)
+                    logger.error("run_all_tasks: task %s timed out after %ss", task_name, task_timeout_s)
+                    break
 
-            except Exception as task_exc:
-                with contextlib.suppress(Exception):
-                    await db.rollback()
-                result = {
-                    "task": task_name,
-                    "status": "error",
-                    "error": str(task_exc)[:400],
-                }
-                print(f"[run_all_tasks] ERROR: {task_name} — {str(task_exc)[:200]}", flush=True)
-                logger.error("run_all_tasks: task %s raised: %s", task_name, task_exc, exc_info=True)
+                except Exception as task_exc:
+                    with contextlib.suppress(Exception):
+                        await db.rollback()
+                    if "deadlock" in str(task_exc).lower() and _dl_attempt < _MAX_TASK_DEADLOCK_RETRIES - 1:
+                        print(f"[run_all_tasks] DEADLOCK: {task_name} (attempt {_dl_attempt+1}) — retrying", flush=True)
+                        logger.warning("run_all_tasks: task %s deadlock (attempt %d) — retrying", task_name, _dl_attempt + 1)
+                        await asyncio.sleep(1.0 * (_dl_attempt + 1))
+                        continue
+                    result = {
+                        "task": task_name,
+                        "status": "error",
+                        "error": str(task_exc)[:400],
+                    }
+                    print(f"[run_all_tasks] ERROR: {task_name} — {str(task_exc)[:200]}", flush=True)
+                    logger.error("run_all_tasks: task %s raised: %s", task_name, task_exc, exc_info=True)
+                    break
+
+                # Task returned a result. Retry if it self-reported a deadlock.
+                if (
+                    isinstance(result, dict)
+                    and result.get("status") == "error"
+                    and "deadlock" in str(result.get("error", "")).lower()
+                    and _dl_attempt < _MAX_TASK_DEADLOCK_RETRIES - 1
+                ):
+                    with contextlib.suppress(Exception):
+                        await db.rollback()
+                    print(f"[run_all_tasks] DEADLOCK(result): {task_name} (attempt {_dl_attempt+1}) — retrying", flush=True)
+                    logger.warning("run_all_tasks: task %s returned deadlock (attempt %d) — retrying", task_name, _dl_attempt + 1)
+                    await asyncio.sleep(1.0 * (_dl_attempt + 1))
+                    continue
+                break
 
             elapsed_task = round(time.monotonic() - t_task, 1)
             status = result.get("status", "?")

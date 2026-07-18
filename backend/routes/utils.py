@@ -445,7 +445,7 @@ async def _send_post_payment_notification(order_db, tracking_number: str, tracki
                             order_number=order_num,
                             tracking_number=tracking_number,
                             tracking_url=tracking_url,
-                            order_url=f"{frontend_url}/orders/{order_db.id}",
+                            order_url=f"{frontend_url}/orders",
                         )
             except Exception as email_err:
                 print(f"[PostPayment] Email send failed: {email_err}")

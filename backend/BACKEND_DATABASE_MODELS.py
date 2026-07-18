@@ -58,6 +58,13 @@ engine = create_async_engine(
     pool_recycle=1800,
     pool_size=_pool_size,
     max_overflow=_max_overflow,
+    # Safety net (2026-07-14): cap ANY single statement at 15 min so a pathologically
+    # slow / contended query (e.g. a maintenance UPDATE starved on a 4-core box) is
+    # cancelled and retried instead of holding locks for 29+ min and stalling the box.
+    # Nothing legitimate runs this long — batched tasks cap each batch at 30s, the
+    # manufacturers scan is ~68s. Per-batch SET LOCAL statement_timeout still applies
+    # tighter caps where set; this is only the outer ceiling.
+    connect_args={"server_settings": {"statement_timeout": "900000"}},  # 900000 ms = 15 min
 )
 async_session_factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
@@ -339,8 +346,9 @@ class TwoFactorCode(PiiBase):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    code = Column(String(6), nullable=False)
+    code = Column(String(128), nullable=False)  # stores an HMAC-SHA256 hash, not the raw code
     phone = Column(String(20))
+    wa_message_key = Column(Text, nullable=True)  # JSON key of the WhatsApp code msg, for delete-after-verify
     attempts = Column(Integer, default=0)
     expires_at = Column(DateTime, nullable=False)
     verified_at = Column(DateTime, nullable=True)

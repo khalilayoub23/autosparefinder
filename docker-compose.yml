@@ -94,6 +94,11 @@ services:
     mem_limit: 4096m
     shm_size: 256m
     environment:
+      # /app is on the path so sitecustomize.py auto-loads and appends the script
+      # subfolders (importers/harvesters/scrapers/maintenance/legacy/devtests) to
+      # sys.path — every bare `import X` resolves regardless of which subfolder X.py
+      # now lives in, for uvicorn AND every `python3 /app/.../X.py` subprocess.
+      PYTHONPATH: /app
       DATABASE_URL: postgresql+asyncpg://autospare:${DB_PASSWORD}@postgres_catalog:5432/autospare
       DATABASE_PII_URL: postgresql+asyncpg://autospare:${DB_PASSWORD}@postgres_pii:5432/autospare_pii
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
@@ -143,6 +148,9 @@ services:
       TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID}
       TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN}
       TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER}
+      # 2FA delivery: WhatsApp (Baileys bridge) primary, Twilio SMS auto-fallback.
+      WHATSAPP_2FA_PRIMARY: ${WHATSAPP_2FA_PRIMARY:-1}
+      WHATSAPP_BRIDGE_URL: ${WHATSAPP_BRIDGE_URL:-http://whatsapp-bridge:3001/send}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
       STRIPE_ISSUING_WEBHOOK_SECRET: ${STRIPE_ISSUING_WEBHOOK_SECRET}
@@ -158,6 +166,13 @@ services:
       SUPPLIER_ISSUING_TOPUP_BUFFER_MINOR: ${SUPPLIER_ISSUING_TOPUP_BUFFER_MINOR:-5000}
       SUPPLIER_ISSUING_TOPUP_MAX_MINOR: ${SUPPLIER_ISSUING_TOPUP_MAX_MINOR:-500000}
       SENDGRID_API_KEY: ${SENDGRID_API_KEY}
+      # Transactional email via Gmail SMTP (2026-07-14). Provider-neutral: email_utils
+      # prefers SMTP when SMTP_HOST is set, so these route all mail through Gmail.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
       TELEGRAM_CHANNEL_ID: ${TELEGRAM_CHANNEL_ID}
       TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET}
@@ -223,6 +238,11 @@ services:
       timeout: 10s
       retries: 3
     volumes:
+    # Live source bind-mount — on-disk backend/ is always what runs, so `docker compose
+    # up` / recreate can't revert code to a stale image (the drift documented in CLAUDE.md).
+    # Python deps still come from the image (site-packages); these sub-path volumes
+    # override /app/uploads and /app/state on top of the bind mount.
+    - ./backend:/app
     - upload_files:/app/uploads
     - worker_state:/app/state
     command: "/bin/bash -c \"\n  alembic -c alembic.ini upgrade head &&\n  alembic\
@@ -334,30 +354,14 @@ services:
       options:
         max-size: 10m
         max-file: '3'
-  clamav:
-    image: clamav/clamav:stable
-    container_name: autospare_clamav
-    restart: unless-stopped
-    mem_limit: 512m
-    volumes:
-    - clamav_data:/var/lib/clamav
-    healthcheck:
-      test:
-      - CMD-SHELL
-      - clamdcheck.sh || exit 1
-      interval: 60s
-      timeout: 30s
-      retries: 3
-      start_period: 300s
-    networks:
-    - internal
-    security_opt:
-    - no-new-privileges:true
-    logging:
-      driver: json-file
-      options:
-        max-size: 10m
-        max-file: '3'
+  # clamav: DECOMMISSIONED 2026-07-12 — this box has 7.8GB RAM / NO swap, and modern
+  # ClamAV needs ~1.2-2GB just to load signatures. At the only affordable cap (512m)
+  # clamd was OOM-killed on every DB load (signal 9) and never actually ran for ~4
+  # weeks. Giving it the RAM it needs would risk OOM-killing Postgres/backend. The
+  # upload scanner (routes/utils.py:_scan_bytes_for_virus) fails OPEN, so uploads
+  # (owner-only, auth-gated) keep working. Re-enable this block + set mem_limit>=1500m
+  # ONLY if the box gets more RAM. Do not run ClamAV at 512m — it cannot start.
+  # postgres_backup below is unchanged.
   postgres_backup:
     image: prodrigestivill/postgres-backup-local
     container_name: autospare_postgres_backup

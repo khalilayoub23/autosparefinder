@@ -97,6 +97,19 @@ docker cp "$VOLUME_STATE_FILE" autospare_backend:/app/state/worker_state.json 2>
     echo "[pre_restart] Worker state copied to container volume" || \
     echo "[pre_restart] WARNING: could not copy to container (may already be stopped)"
 
+# 4.6 Close out in-flight job_registry rows so a restart does not orphan them.
+# run_all_tasks / run_brand_discovery run as asyncio tasks INSIDE uvicorn (not as
+# the subprocesses SIGTERM'd below), so without this their 'running' rows survive
+# the restart and get reaped 2h later as 'failed' → false "Worker failed" owner
+# alert. Mark them 'superseded' (terminal, non-alerting). heartbeat can't revert
+# it (its WHERE status='running' no longer matches). The app's shutdown handler
+# does this too — belt & suspenders so the pre-restart layer is self-sufficient.
+echo "Closing in-flight jobs (job_registry running → superseded)..." >&2
+docker exec autospare_postgres_catalog psql -U autospare -d autospare -t -c "
+UPDATE job_registry SET status='superseded', completed_at=NOW(),
+    error_message='Superseded: pre-restart graceful shutdown'
+WHERE status='running';" 2>/dev/null | tr -d '[:space:]' | { read n; echo "  marked superseded" >&2; } || true
+
 # 5. Gracefully stop active importers (let them finish current DB batch)
 echo "Sending SIGTERM to active importers..." >&2
 docker exec autospare_backend bash -c "

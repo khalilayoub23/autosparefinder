@@ -90,6 +90,151 @@ async def resolve_short_payment_link(code: str):
     return RedirectResponse(url=f"{base}/cart?pay_link=expired", status_code=302)
 
 
+async def regenerate_order_pay_link(order_id: str) -> str | None:
+    """Mint a fresh, pressable /pay/ checkout link for an EXISTING pending_payment order
+    — used by the pending-payment WhatsApp reminder (no JWT context).
+
+    Builds the Stripe line items from the order's already-canonically-priced OrderItems
+    (total_price includes the 45% margin + VAT), so it never re-derives pricing. Returns
+    a short https .../pay/{code} URL, or None on any failure (caller falls back to the
+    cart URL). Stripe session URLs expire in 24h, which is why we regenerate on each
+    reminder rather than reusing the order's original checkout URL.
+    """
+    import stripe as stripe_sdk
+    from BACKEND_DATABASE_MODELS import pii_session_factory as _pii_sf, Order, OrderItem, Payment, User
+
+    stripe_key, _ = resolve_stripe_secret_key()
+    if not _is_valid_stripe_secret_key(stripe_key):
+        return None
+    try:
+        async with _pii_sf() as db:
+            order = (await db.execute(select(Order).where(Order.id == order_id))).scalar_one_or_none()
+            if not order or order.status not in ("pending_payment", "confirmed"):
+                return None
+            if float(order.total_amount or 0) <= 0:
+                return None
+            items = (await db.execute(select(OrderItem).where(OrderItem.order_id == order.id))).scalars().all()
+            if not items:
+                return None
+            user = (await db.execute(select(User).where(User.id == order.user_id))).scalar_one_or_none()
+
+            line_items = []
+            for it in items:
+                q = int(it.quantity or 0)
+                if q <= 0:
+                    continue
+                unit_agorot = int(round(float(it.total_price) / q * 100))
+                if unit_agorot <= 0:
+                    continue
+                line_items.append({
+                    "price_data": {
+                        "currency": "ils",
+                        "product_data": {
+                            "name": it.part_name or "חלק חילוף",
+                            "description": f"{it.manufacturer or ''} | אחריות {it.warranty_months or 12} חודשים",
+                        },
+                        "unit_amount": unit_agorot,
+                    },
+                    "quantity": q,
+                })
+            if not line_items:
+                return None
+            if order.shipping_cost and float(order.shipping_cost) > 0:
+                line_items.append({
+                    "price_data": {"currency": "ils", "product_data": {"name": "משלוח"},
+                                   "unit_amount": int(float(order.shipping_cost) * 100)},
+                    "quantity": 1,
+                })
+
+            stripe_sdk.api_key = stripe_key
+            frontend_url = os.getenv("FRONTEND_URL", "https://autosparefinder.co.il")
+            session = await asyncio.get_running_loop().run_in_executor(
+                None,
+                lambda: stripe_sdk.checkout.Session.create(
+                    payment_method_types=["card"],
+                    line_items=line_items,
+                    mode="payment",
+                    success_url=f"{frontend_url}/payment/success?session_id={{CHECKOUT_SESSION_ID}}",
+                    cancel_url=f"{frontend_url}/cart",
+                    customer_email=(user.email if user else None),
+                    metadata={"order_id": str(order.id), "order_number": order.order_number,
+                              "user_id": str(order.user_id), "source": "pending_reminder"},
+                    locale="auto",
+                ),
+            )
+            db.add(Payment(
+                order_id=order.id, user_id=order.user_id,
+                payment_intent_id=session.id, provider="stripe",
+                provider_transaction_id=session.id,
+                amount_ils=order.total_amount, amount=order.total_amount,
+                currency="ILS", status="pending",
+            ))
+            await db.commit()
+        return await shorten_payment_url(session.url)
+    except Exception as exc:
+        print(f"[PayReminder] regenerate_order_pay_link failed for {order_id}: {exc}")
+        return None
+
+
+async def _email_paid_order(order_id: str) -> None:
+    """Best-effort transactional emails for a newly-paid order — payment receipt + invoice.
+    Opens its own sessions and swallows all errors so it can NEVER affect the payment
+    webhook. Order confirmation (with tracking) is sent separately by fulfillment."""
+    try:
+        from BACKEND_DATABASE_MODELS import pii_session_factory as _pii_sf, Order, User, Invoice
+        from routes.email_utils import send_template
+        import email_templates as ET
+        site = os.getenv("FRONTEND_URL", "https://autosparefinder.co.il").rstrip("/")
+        async with _pii_sf() as db:
+            order = (await db.execute(select(Order).where(Order.id == order_id))).scalar_one_or_none()
+            if not order:
+                return
+            user = (await db.execute(select(User).where(User.id == order.user_id))).scalar_one_or_none()
+            if not user or not user.email:
+                return
+            inv = (await db.execute(select(Invoice).where(Invoice.order_id == order.id))).scalar_one_or_none()
+        name = user.full_name or ""
+        total = float(order.total_amount or 0)
+        # Link to the orders list route (there is no /orders/:id detail route in the SPA;
+        # /orders/{id} falls through the router's catch-all and redirects to the homepage).
+        invoice_url = f"{site}/orders"
+        await send_template(user.email, name,
+                            ET.payment_received(name, order.order_number, total, invoice_url))
+        if inv:
+            await send_template(user.email, name,
+                                ET.invoice(name, order.order_number, inv.invoice_number, total, invoice_url))
+        # Missing-details reach-out: we're paid but can't ship without a complete address
+        # or a phone. Ask the customer to complete exactly what's missing.
+        addr = order.shipping_address if isinstance(order.shipping_address, dict) else {}
+        if not (addr.get("address_line1") or addr.get("address") or "").strip():
+            await send_template(user.email, name,
+                                ET.missing_details(name, "address", f"{site}/profile", order.order_number))
+        elif not (getattr(user, "phone", "") or "").strip():
+            await send_template(user.email, name,
+                                ET.missing_details(name, "phone", f"{site}/profile", order.order_number))
+    except Exception as _e:
+        print(f"[Email] paid-order email failed for {order_id}: {_e}")
+
+
+async def _email_refund_confirmation(order_id: str, amount_ils: float) -> None:
+    """Best-effort refund-confirmation email. Own session, all errors swallowed."""
+    try:
+        from BACKEND_DATABASE_MODELS import pii_session_factory as _pii_sf, Order, User
+        from routes.email_utils import send_template
+        import email_templates as ET
+        async with _pii_sf() as db:
+            order = (await db.execute(select(Order).where(Order.id == order_id))).scalar_one_or_none()
+            if not order:
+                return
+            user = (await db.execute(select(User).where(User.id == order.user_id))).scalar_one_or_none()
+            if not user or not user.email:
+                return
+        await send_template(user.email, user.full_name or "",
+                            ET.refund_confirmation(user.full_name or "", order.order_number, float(amount_ils)))
+    except Exception as _e:
+        print(f"[Email] refund email failed for {order_id}: {_e}")
+
+
 def _is_truthy_env(value: str | None) -> bool:
     return (value or "").strip().lower() in ("1", "true", "yes", "on")
 
@@ -447,6 +592,10 @@ async def _reconcile_pending_checkout_sessions_for_user(user_id, db: AsyncSessio
 
     if changed:
         await db.commit()
+
+    # Fire payment-receipt + invoice emails for newly-paid orders (background, never blocks).
+    for _oid in orders_to_fulfill_ids:
+        asyncio.create_task(_email_paid_order(str(_oid)))
 
     return {
         "checked_sessions": len(session_ids),
@@ -1852,6 +2001,7 @@ async def refund_payment(
                 message=_refund_msg,
             ))
             asyncio.create_task(_guarded_task(publish_notification(str(order.user_id), {"type": "refund", "title": "החזר כספי אושר על ידי מנהל", "message": _refund_msg})))
+            asyncio.create_task(_email_refund_confirmation(str(order.id), refund_ils))
             # Ensure an Invoice record exists (credit note for the refund)
             existing_inv = (await db.execute(
                 select(Invoice).where(Invoice.order_id == order.id)

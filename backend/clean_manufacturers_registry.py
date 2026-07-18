@@ -20,7 +20,7 @@ import asyncio
 import re
 from typing import Dict, Iterable, Tuple
 
-from sqlalchemy import select, text
+from sqlalchemy import select, text, func
 
 from BACKEND_DATABASE_MODELS import (
     CarBrand,
@@ -247,7 +247,14 @@ def classify(raw: str) -> Tuple[str, str]:
 
 
 async def _upsert_car(db, name: str, aliases: Iterable[str]):
-    row = (await db.execute(select(CarBrand).where(CarBrand.name == name))).scalar_one_or_none()
+    # Case-INSENSITIVE lookup: the unique index is ux_car_brands_name_ci_active
+    # on lower(btrim(name)). A case-sensitive `name == 'Gms'` check missed the
+    # existing 'gms' row and tried to INSERT a duplicate → UniqueViolationError
+    # that failed sync_manufacturer_registries every cycle (fixed 2026-07-11).
+    row = (await db.execute(
+        select(CarBrand).where(func.lower(func.btrim(CarBrand.name)) == name.strip().lower())
+        .order_by(CarBrand.is_active.desc()).limit(1)
+    )).scalar_one_or_none()
     merged_aliases = sorted({a for a in aliases if a and a.strip() and a.strip() != name})
 
     if row is None:
@@ -271,7 +278,12 @@ async def _upsert_car(db, name: str, aliases: Iterable[str]):
 
 
 async def _upsert_truck(db, name: str, aliases: Iterable[str]):
-    row = (await db.execute(select(TruckBrand).where(TruckBrand.name == name))).scalar_one_or_none()
+    # Case-insensitive lookup — same reason as _upsert_car (avoid duplicate INSERT
+    # against a case-insensitive unique index).
+    row = (await db.execute(
+        select(TruckBrand).where(func.lower(func.btrim(TruckBrand.name)) == name.strip().lower())
+        .order_by(TruckBrand.is_active.desc()).limit(1)
+    )).scalar_one_or_none()
     merged_aliases = sorted({a for a in aliases if a and a.strip() and a.strip() != name})
 
     if row is None:

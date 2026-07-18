@@ -623,7 +623,7 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_pii_
                     if not media_bytes:
                         raise RuntimeError("missing image bytes")
                     from hf_client import hf_vision
-                    vision_prompt = media_caption or "זהה את החלק בתמונה והצע חלפים מתאימים"
+                    vision_prompt = media_caption or "זהה את החלק המרכזי/הקדמי שהתמונה ממוקדת עליו (לא הצינור או הכיסוי הגדול שברקע) והצע חלפים מתאימים"
                     inferred = await hf_vision(
                         base64.b64encode(media_bytes).decode("ascii"),
                         vision_prompt,
@@ -954,7 +954,7 @@ async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_pii_
                 import base64
                 image_b64 = base64.b64encode(image_bytes).decode()
                 from hf_client import hf_vision
-                caption = message.get("caption") or "זהה את החלק בתמונה והצע חלפים מתאימים"
+                caption = message.get("caption") or "זהה את החלק המרכזי/הקדמי שהתמונה ממוקדת עליו (לא הצינור או הכיסוי הגדול שברקע) והצע חלפים מתאימים"
                 text = await hf_vision(image_b64, caption)
                 if not text:
                     await send_telegram_message(chat_id, "מצטערים, לא הצלחתי לזהות את התמונה. נסה תמונה ברורה יותר. 😊")

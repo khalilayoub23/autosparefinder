@@ -28,6 +28,19 @@ export default function Profile() {
   const [savingPass, setSavingPass] = useState(false)
   const [geoResult, setGeoResult] = useState(null)  // null | 'loading' | { ok, display, lat, lon } | 'error'
   const [geoChecking, setGeoChecking] = useState(false)
+  const [account, setAccount] = useState({ email: '', verified: null })
+  const [resending, setResending] = useState(false)
+  useEffect(() => {
+    api.get('/auth/me')
+      .then(({ data }) => setAccount({ email: data.email || data.user?.email || '', verified: !!(data.is_verified ?? data.user?.is_verified) }))
+      .catch(() => {})
+  }, [])
+  const resendVerify = async () => {
+    setResending(true)
+    try { await api.post('/auth/resend-verification'); toast.success('מייל אימות נשלח 📧 — בדוק את תיבת הדואר') }
+    catch { toast.error('לא הצלחנו לשלוח כרגע') }
+    finally { setResending(false) }
+  }
 
   const NOTIF_KEYS = [
     { key: 'order_update', label: 'עדכוני הזמנות', desc: 'שינוי סטטוס, אישור, משלוח' },
@@ -141,6 +154,28 @@ export default function Profile() {
     <div className="max-w-2xl mx-auto space-y-6">
       <div>
         <h1 className="section-title">הפרופיל שלי</h1>
+      </div>
+
+      {account.verified !== null && (
+        <div className={`flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 ${account.verified ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'}`}>
+          <div className="flex items-center gap-2 text-sm">
+            <span className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-white ${account.verified ? 'bg-emerald-500' : 'bg-amber-500'}`}>
+              {account.verified ? '✓' : '!'}
+            </span>
+            <span className={account.verified ? 'text-emerald-800' : 'text-amber-800'}>
+              {account.verified ? 'המייל שלך מאומת' : `המייל ${account.email} עדיין לא אומת`}
+            </span>
+          </div>
+          {!account.verified && (
+            <button type="button" onClick={resendVerify} disabled={resending}
+              className="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-600 disabled:opacity-50">
+              {resending ? 'שולח…' : 'שלח מייל אימות'}
+            </button>
+          )}
+        </div>
+      )}
+
+      <div className="hidden">
         <p className="text-gray-500 mt-1">{user?.email}</p>
       </div>
 

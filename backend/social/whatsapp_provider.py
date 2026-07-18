@@ -5,6 +5,7 @@ import httpx
 
 BRIDGE_URL = os.getenv("WHATSAPP_BRIDGE_URL", "http://whatsapp-bridge:3001/send")
 TYPING_URL = BRIDGE_URL.replace("/send", "/typing")
+DELETE_URL = BRIDGE_URL.replace("/send", "/delete")
 
 
 def _normalize_bridge_phone(to: str) -> str:
@@ -39,6 +40,21 @@ async def send_message(to: str, text: str, reply_jid: str = "") -> dict:
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(BRIDGE_URL, json=payload)
+        data = resp.json()
+        # "key" is the sent-message key (remoteJid/id/fromMe) — lets the caller later
+        # delete-for-everyone (e.g. remove a verified 2FA code from the chat).
+        return {"ok": data.get("ok", False), "error": data.get("error"), "key": data.get("key")}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "key": None}
+
+
+async def delete_message(key: dict) -> dict:
+    """Delete-for-everyone a message we sent, by its bridge message key. Best-effort."""
+    if not key:
+        return {"ok": False, "error": "no key"}
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(DELETE_URL, json={"key": key})
         data = resp.json()
         return {"ok": data.get("ok", False), "error": data.get("error")}
     except Exception as exc:

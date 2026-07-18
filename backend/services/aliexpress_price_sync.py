@@ -24,6 +24,9 @@ from services.suppliers.aliexpress_supplier import AliExpressSupplier
 
 logger = logging.getLogger(__name__)
 
+# Rotating id cursor over the unpriced backlog (see ebay_price_sync for rationale).
+_ALIEXPRESS_SYNC_LAST_ID = "00000000-0000-0000-0000-000000000000"
+
 aliexpress = AliExpressSupplier()
 USD_TO_ILS_FALLBACK = float(os.getenv("USD_TO_ILS", "3.72"))
 
@@ -149,6 +152,9 @@ async def sync_aliexpress_prices(
         report["ils_per_usd_rate"] = float(ils_per_usd_rate)
         report["run_started_at"] = datetime.utcnow().isoformat() + "Z"
 
+        # Target UNPRICED parts via a rotating id cursor so every run closes the
+        # gap instead of re-pricing already-priced rows (fixed 2026-07-11).
+        global _ALIEXPRESS_SYNC_LAST_ID
         parts = await db.execute(
             text("""
                 SELECT id, oem_number, name
@@ -156,12 +162,19 @@ async def sync_aliexpress_prices(
                 WHERE is_active = TRUE
                   AND oem_number IS NOT NULL
                   AND oem_number != ''
-                ORDER BY RANDOM()
+                  AND (base_price IS NULL OR base_price = 0)
+                  AND id > CAST(:last_id AS uuid)
+                ORDER BY id
                 LIMIT :limit
             """),
-            {"limit": limit_per_run},
+            {"limit": limit_per_run, "last_id": _ALIEXPRESS_SYNC_LAST_ID},
         )
-        part_rows = parts.fetchall()
+        part_rows_pre = parts.fetchall()
+        if len(part_rows_pre) < limit_per_run:
+            _ALIEXPRESS_SYNC_LAST_ID = "00000000-0000-0000-0000-000000000000"
+        elif part_rows_pre:
+            _ALIEXPRESS_SYNC_LAST_ID = str(part_rows_pre[-1].id)
+        part_rows = part_rows_pre
         logger.info("AliExpress price sync: checking %d parts", len(part_rows))
 
         for part in part_rows:
@@ -341,6 +354,8 @@ async def sync_aliexpress_prices(
                         ((price_ils - old_price_ils) / old_price_ils * Decimal("100"))
                         .quantize(Decimal("0.0001"))
                     )
+                    # Cap to NUMERIC(7,4) max ±999.9999 (see ebay_price_sync).
+                    change_pct = max(-999.9999, min(999.9999, change_pct))
                 await db.execute(
                     text("""
                         INSERT INTO price_history (

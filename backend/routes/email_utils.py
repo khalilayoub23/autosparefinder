@@ -92,6 +92,24 @@ async def _send_via_sendgrid(to_email: str, to_name: str, subject: str,
         return False
 
 
+async def send_email(to_email: str, to_name: str, subject: str, html: str, text: str) -> bool:
+    """Provider-neutral transactional send. Uses Gmail (or any) SMTP when SMTP_HOST is
+    set — e.g. SMTP_HOST=smtp.gmail.com SMTP_PORT=587 SMTP_USER=<gmail> SMTP_PASS=<app
+    password> — and falls back to the SendGrid HTTP API only if no SMTP is configured.
+    Switching providers is env-only, never code."""
+    return await _send_via_sendgrid(to_email, to_name, subject, html, text)
+
+
+async def send_template(to_email: str, to_name: str, template: tuple) -> bool:
+    """Send a (subject, html, text) tuple produced by email_templates.py."""
+    try:
+        subject, html, text = template
+    except Exception:
+        print("[Email] send_template got a malformed template tuple")
+        return False
+    return await send_email(to_email, to_name, subject, html, text)
+
+
 async def send_order_confirmation_email(
     to_email: str,
     full_name: str,
@@ -100,40 +118,16 @@ async def send_order_confirmation_email(
     tracking_url: str,
     order_url: str,
 ) -> bool:
-    subject = f"✅ הזמנתך אושרה — {order_number} | AutoSpareFinder"
-    html = f"""
-    <div dir="rtl" style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px">
-      <img src="https://autosparefinder.co.il/logo.png" alt="AutoSpareFinder" style="height:50px;margin-bottom:20px">
-      <h2 style="color:#1a1a2e">שלום {full_name} 👋</h2>
-      <p style="font-size:16px">ההזמנה שלך <strong>{order_number}</strong> אושרה ונשלחה לספק!</p>
-
-      <div style="background:#f0f9ff;border-radius:8px;padding:16px;margin:20px 0">
-        <p style="margin:0;font-size:14px;color:#666">מספר מעקב</p>
-        <p style="margin:4px 0;font-size:20px;font-weight:bold;color:#1a1a2e">{tracking_number}</p>
-        <a href="{tracking_url}"
-           style="display:inline-block;margin-top:10px;padding:10px 20px;background:#4361ee;color:#fff;border-radius:6px;text-decoration:none;font-weight:bold">
-          עקוב אחר החבילה →
-        </a>
-      </div>
-
-      <p style="font-size:14px;color:#555">
-        לצפייה בפרטי ההזמנה המלאים:
-        <a href="{order_url}" style="color:#4361ee">לחץ כאן</a>
-      </p>
-
-      <hr style="border:none;border-top:1px solid #eee;margin:20px 0">
-      <p style="font-size:12px;color:#999">AutoSpareFinder — השוואת מחירי חלפים לרכב<br>
-      לתמיכה: support@autosparefinder.co.il</p>
-    </div>
-    """
-    text = (
-        f"שלום {full_name},\n\n"
-        f"ההזמנה {order_number} אושרה!\n"
-        f"מספר מעקב: {tracking_number}\n"
-        f"קישור מעקב: {tracking_url}\n"
-        f"פרטי הזמנה: {order_url}\n\n"
-        f"תודה, AutoSpareFinder"
-    )
+    # Use the shared branded RTL shell (email_templates) instead of ad-hoc inline HTML.
+    try:
+        from email_templates import delivery_update
+        subject, html, text = delivery_update(
+            full_name, order_number, "אושרה ונשלחה לספק", tracking_number, tracking_url)
+    except Exception:
+        subject = f"✅ הזמנתך אושרה — {order_number} | AutoSpareFinder"
+        html = (f'<div dir="rtl" style="font-family:Arial,sans-serif">שלום {full_name}, '
+                f'ההזמנה {order_number} אושרה. מעקב: <a href="{tracking_url}">{tracking_number}</a></div>')
+        text = f"שלום {full_name}, הזמנה {order_number} אושרה. מעקב: {tracking_url}"
     return await _send_via_sendgrid(to_email, full_name, subject, html, text)
 
 

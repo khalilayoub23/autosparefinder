@@ -545,18 +545,28 @@ async def run(mode_new=True, mode_expand=True, specific_brands=None, dry_run=Fal
     print("=" * 60)
 
 
-async def lookup_oem_spec(db: AsyncSession, limit: int = 100) -> Dict[str, Any]:
+async def lookup_oem_spec(db: AsyncSession, limit: int = 100, max_seconds: float = 1500.0) -> Dict[str, Any]:
     """
-    Uses GPT-4o to find OEM numbers for inactive parts with needs_oem_lookup=TRUE.
+    Uses an LLM to find OEM numbers for inactive parts with needs_oem_lookup=TRUE.
     After finding OEM: clears needs_oem_lookup so enrich_pending_parts can process them.
+
+    Soft time-budget (added 2026-07-11): each row is a rate-limited LLM call, so a
+    large `limit` used to blow past the run_all_tasks 60-min hard timeout and get
+    KILLED (status=error, 8×/day). Now it stops after `max_seconds` and returns a
+    clean partial result (status=ok, stopped_early=True); the remaining rows are
+    picked up next cycle. The task therefore never hits the hard timeout.
     """
+    import time as _time
     from sqlalchemy import text as _text
 
+    _t0 = _time.monotonic()
     report: Dict[str, Any] = {
         "task": "lookup_oem_spec",
+        "status": "ok",
         "scanned": 0,
         "oem_found": 0,
         "oem_not_found": 0,
+        "stopped_early": False,
         "errors": [],
     }
 
@@ -580,6 +590,12 @@ async def lookup_oem_spec(db: AsyncSession, limit: int = 100) -> Dict[str, Any]:
         return report
 
     for row in rows:
+        # Stop before the run_all_tasks hard timeout; finish the rest next cycle.
+        if _time.monotonic() - _t0 > max_seconds:
+            report["stopped_early"] = True
+            logger.info("[lookup_oem_spec] soft budget %.0fs reached — stopping early after %d rows",
+                        max_seconds, report["oem_found"] + report["oem_not_found"])
+            break
         try:
             prompt = (
                 f'You are an automotive parts specialist. '

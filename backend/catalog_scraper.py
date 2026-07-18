@@ -111,7 +111,12 @@ def _rex_harvest_enabled() -> bool:
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL environment variable is not set")
-_engine = create_async_engine(DATABASE_URL, pool_size=5, max_overflow=2, echo=False)
+_engine = create_async_engine(
+    DATABASE_URL, pool_size=5, max_overflow=2, echo=False,
+    # 15-min statement ceiling — same safety net as the main engine (2026-07-14): a
+    # db_cleanup maintenance query can never hold locks / burn CPU for 29+ min again.
+    connect_args={"server_settings": {"statement_timeout": "900000"}},
+)
 scraper_session_factory = async_sessionmaker(_engine, expire_on_commit=False)
 
 # ── Schedule  ──────────────────────────────────────────────────────────────────
@@ -3304,6 +3309,24 @@ async def run_brand_discovery(
                     except Exception:
                         pass
 
+                # Heartbeat loop (fix 2026-07-08): brand discovery scrapes brands
+                # via Playwright for many minutes; without periodic job_registry
+                # heartbeats the zombie watchdog killed it as stale ("no heartbeat
+                # within TTL") under load. Mirror run_scraper_cycle's pattern —
+                # tick every 60s so liveness is proven during long scrapes.
+                async def _disc_heartbeat_loop() -> None:
+                    while True:
+                        await asyncio.sleep(60)
+                        if not job_id:
+                            continue
+                        try:
+                            async with scraper_session_factory() as _hb_db:
+                                await job_heartbeat(_hb_db, job_id)
+                        except Exception as _hb_exc:
+                            print(f"[Rex] discovery heartbeat failed: {_hb_exc}")
+                if job_id:
+                    _disc_hb_task = asyncio.create_task(_disc_heartbeat_loop(), name="brand_discovery_hb")
+
                 # Get/create supplier id used for discovery inserts.
                 supplier = (await db.execute(
                     text("SELECT id FROM suppliers WHERE name ILIKE '%AutoParts%' LIMIT 1")
@@ -3665,6 +3688,12 @@ async def run_brand_discovery(
                 raise
 
     finally:
+        try:
+            _t = locals().get("_disc_hb_task")
+            if _t is not None:
+                _t.cancel()
+        except Exception:
+            pass
         try:
             await _disc_lock.release()
         except Exception as lock_exc:
@@ -4860,7 +4889,7 @@ async def run_oempartsonline_pipeline(
         return {"status": "skipped", "reason": "REX_HARVEST_ENABLED=false"}
 
     output_path = f"/tmp/{brand}_oem_parts.json"
-    scraper_path = Path(__file__).parent / "oem_parts_online_scraper.py"
+    scraper_path = Path(__file__).parent / "scrapers" / "oem_parts_online_scraper.py"
     importer_path = Path(__file__).parent / "oempartsonline_importer.py"
 
     # Check if already scraped recently (skip unless forced)

@@ -31,14 +31,14 @@ import unicodedata
 from difflib import SequenceMatcher
 
 from BACKEND_DATABASE_MODELS import (
-    get_db, PartsCatalog, Vehicle, SupplierPart, Supplier,
+    get_db, get_pii_db, PartsCatalog, Vehicle, SupplierPart, Supplier,
     CarBrand, User, PartImage, async_session_factory,
 )
 from BACKEND_AUTH_SECURITY import (
     get_redis, check_rate_limit, get_current_user,
 )
 from currency_rate import get_usd_to_ils_rate
-from BACKEND_AI_AGENTS import get_agent, resolve_customer_shipping_fee as _resolve_ship_fee
+from BACKEND_AI_AGENTS import get_agent, resolve_customer_shipping_fee as _resolve_ship_fee, get_supplier_vat_rate
 from resilience import retry_with_backoff
 from routes.utils import _mask_supplier
 from manufacturer_normalization import (
@@ -71,7 +71,10 @@ router = APIRouter()
 # its own scan), which took the whole box down under load / harvest (2026-07-07).
 # 10-min cache + single-flight lock so only ONE request ever runs the scan while
 # others wait for the shared result.
-MANUFACTURERS_RESPONSE_TTL_S = 600.0
+# 6h: the manufacturers list barely changes, and stale-while-revalidate serves instantly
+# regardless — so a short TTL only means needlessly re-running the ~68s scan. The startup
+# pre-warm fills it before first use; background refresh keeps it current a few times a day.
+MANUFACTURERS_RESPONSE_TTL_S = 21600.0
 MANUFACTURERS_RESPONSE_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
 _MANUFACTURERS_REBUILD_LOCK = asyncio.Lock()
 
@@ -104,13 +107,88 @@ _EXTERNAL_API_SEMAPHORE = asyncio.Semaphore(max(1, _EXTERNAL_API_MAX_CONCURRENCY
 _MARGIN = 1.45
 _VAT_RATE = 0.18
 
-def _customer_price_fields(cost_ils: Optional[float], ship_ils: Optional[float]) -> Dict[str, Any]:
+def _customer_price_fields(
+    cost_ils: Optional[float],
+    ship_ils: Optional[float],
+    supplier_name: Optional[str] = None,
+    supplier_country: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Customer-facing price = cost×1.45 + CONDITIONAL VAT + shipping.
+
+    VAT (2026-07-14 fix): 18% ONLY for LOCAL (IL) suppliers, 0% for foreign-sourced parts —
+    identical to what checkout actually charges (create_whatsapp_checkout / get_supplier_vat_rate)
+    and to brands.py / identify-from-image / NOA. Before, search applied a FLAT 18% to every
+    supplier, so a foreign part DISPLAYED ~18% higher than it was charged at checkout. The
+    displayed price must equal the charged price. When the supplier is unknown, fall back to the
+    local rate so VAT is never silently dropped.
+    """
     if not cost_ils or cost_ils <= 0:
         return {"customer_price_ils": None, "customer_vat_ils": None, "customer_total_ils": None}
     sell_net = round(float(cost_ils) * _MARGIN, 2)
-    vat = round(sell_net * _VAT_RATE, 2)
+    if supplier_name is not None or supplier_country is not None:
+        vat_rate = get_supplier_vat_rate(supplier_name=supplier_name, supplier_country=supplier_country)
+    else:
+        vat_rate = _VAT_RATE
+    vat = round(sell_net * vat_rate, 2)
     total = round(sell_net + vat + float(ship_ils or 0), 2)
     return {"customer_price_ils": sell_net, "customer_vat_ils": vat, "customer_total_ils": total}
+
+async def _current_part_price(cat_db, part_id: str):
+    """Cheapest available supplier → conditional-VAT customer price (net+VAT, no shipping).
+    Returns (price_ils, part_name) or None. Shared by the watch endpoints + the checker loop."""
+    row = (await cat_db.execute(text("""
+        SELECT sp.price_ils, s.name, s.country, pc.name_he, pc.name
+        FROM supplier_parts sp
+        JOIN suppliers s ON s.id = sp.supplier_id
+        JOIN parts_catalog pc ON pc.id = sp.part_id
+        WHERE sp.part_id = :pid AND sp.is_available AND sp.price_ils > 0 AND s.is_active
+        ORDER BY sp.price_ils ASC LIMIT 1
+    """), {"pid": part_id})).first()
+    if not row:
+        return None
+    fields = _customer_price_fields(float(row[0]), 0, supplier_name=row[1], supplier_country=row[2])
+    return fields["customer_total_ils"], (row[3] or row[4] or "")
+
+
+@router.post("/api/v1/parts/{part_id}/watch")
+async def watch_part(part_id: str, current_user: User = Depends(get_current_user),
+                     db: AsyncSession = Depends(get_pii_db)):
+    """Watch a part's price — we email the customer (price_drop) if it drops ≥5%."""
+    async with async_session_factory() as cat:
+        cur = await _current_part_price(cat, part_id)
+    if not cur:
+        raise HTTPException(status_code=404, detail="החלק לא זמין לתמחור כרגע")
+    price, name = cur
+    await db.execute(text("""
+        INSERT INTO part_price_watches (user_id, part_id, part_name, watch_price_ils)
+        VALUES (:u, :p, :n, :pr)
+        ON CONFLICT (user_id, part_id)
+        DO UPDATE SET watch_price_ils = :pr, part_name = :n, last_notified_price_ils = NULL
+    """), {"u": str(current_user.id), "p": part_id, "n": name, "pr": price})
+    await db.commit()
+    return {"watching": True, "price_ils": price}
+
+
+@router.delete("/api/v1/parts/{part_id}/watch")
+async def unwatch_part(part_id: str, current_user: User = Depends(get_current_user),
+                       db: AsyncSession = Depends(get_pii_db)):
+    await db.execute(text("DELETE FROM part_price_watches WHERE user_id = :u AND part_id = :p"),
+                     {"u": str(current_user.id), "p": part_id})
+    await db.commit()
+    return {"watching": False}
+
+
+@router.get("/api/v1/parts/watches")
+async def list_watches(current_user: User = Depends(get_current_user),
+                       db: AsyncSession = Depends(get_pii_db)):
+    rows = (await db.execute(text("""
+        SELECT part_id, part_name, watch_price_ils, created_at
+        FROM part_price_watches WHERE user_id = :u ORDER BY created_at DESC
+    """), {"u": str(current_user.id)})).fetchall()
+    return {"watches": [{"part_id": str(r[0]), "part_name": r[1],
+                         "watch_price_ils": float(r[2]),
+                         "created_at": r[3].isoformat() if r[3] else None} for r in rows]}
+
 
 PLATE_LOOKUP_CACHE_TTL_S = float(os.getenv("PLATE_LOOKUP_CACHE_TTL_S", "180"))
 VIN_LOOKUP_CACHE_TTL_S = float(os.getenv("VIN_LOOKUP_CACHE_TTL_S", "300"))
@@ -908,33 +986,60 @@ async def _build_strict_vehicle_match_clause(
         if combined and combined not in model_variants:
             model_variants.append(combined)
 
+    # PERF (2026-07-11): this EXISTS was a ~57s scan (×3 part types) on the cold
+    # path because its predicates were un-indexable. Rewritten to be index-usable
+    # via pg_trgm GIN (manufacturer/model LIKE) + btree (model = ANY), WITHOUT
+    # losing recall (verified match-count parity on Corolla / Corolla Verso /
+    # Mazda 3 / i35 / Sportage).
+    #
+    # Manufacturer: equality (single-brand rows) + forward substring LIKE
+    # (comma-joined multi-brand rows like "FORD, …, TOYOTA, …"). The old reverse
+    # ":q LIKE '%'||manufacturer||'%'" branch is dropped — measured to add 0
+    # recall for real brands and it made the whole OR un-indexable.
     pvf_mfr_clauses = []
     for idx, variant in enumerate(clean_variants):
         key = f"{prefix}_mfr_{idx}"
-        params[key] = variant
+        params[key] = str(variant).strip().lower()
         pvf_mfr_clauses.append(
-            f"(LOWER(TRIM(pvf.manufacturer)) = LOWER(TRIM(:{key}))"
-            f" OR LOWER(TRIM(pvf.manufacturer)) LIKE CONCAT('%', LOWER(TRIM(:{key})), '%')"
-            f" OR LOWER(TRIM(:{key})) LIKE CONCAT('%', LOWER(TRIM(pvf.manufacturer)), '%'))"
+            f"(LOWER(TRIM(pvf.manufacturer)) = :{key}"
+            f" OR LOWER(TRIM(pvf.manufacturer)) LIKE '%' || :{key} || '%')"
         )
 
+    # Model: match TERMS = each model variant PLUS its progressive word-prefixes,
+    # so a SPECIFIC customer model ("Corolla Verso") still matches a GENERAL
+    # fitment model ("Corolla"). This replaces the old un-indexable reverse LIKE
+    # with an indexable "= ANY(...)" (btree) — SAME recall (Corolla Verso →
+    # 43,704 rows both ways). The forward prefix LIKE ("Corolla %") catches the
+    # opposite direction (fitment MORE specific, e.g. "Corolla Cross").
+    model_terms: set = set()
+    model_fwd: List[str] = []
+    for variant in model_variants:
+        v = str(variant or "").strip().lower()
+        if not v:
+            continue
+        model_fwd.append(v)
+        words = v.split()
+        for i in range(1, len(words) + 1):
+            model_terms.add(" ".join(words[:i]))
     pvf_model_clauses = []
-    for idx, variant in enumerate(model_variants):
-        key = f"{prefix}_model_{idx}"
-        params[key] = variant
-        pvf_model_clauses.append(
-            f"(LOWER(TRIM(pvf.model)) = LOWER(TRIM(:{key}))"
-            f" OR LOWER(TRIM(pvf.model)) LIKE CONCAT(LOWER(TRIM(:{key})), ' %')"
-            f" OR LOWER(TRIM(:{key})) LIKE CONCAT(LOWER(TRIM(pvf.model)), ' %'))"
-        )
+    if model_terms:
+        mt_key = f"{prefix}_model_terms"
+        params[mt_key] = sorted(model_terms)
+        pvf_model_clauses.append(f"LOWER(TRIM(pvf.model)) = ANY(:{mt_key})")
+    for idx, v in enumerate(model_fwd):
+        key = f"{prefix}_modelfwd_{idx}"
+        params[key] = v
+        pvf_model_clauses.append(f"LOWER(TRIM(pvf.model)) LIKE :{key} || ' %'")
 
     params[f"{prefix}_year"] = int(vehicle_year)
+    _mfr_sql = f"({' OR '.join(pvf_mfr_clauses)})" if pvf_mfr_clauses else "TRUE"
+    _model_sql = f"({' OR '.join(pvf_model_clauses)})" if pvf_model_clauses else "TRUE"
     pvf_clause = (
         "EXISTS ("
         " SELECT 1 FROM part_vehicle_fitment pvf"
         " WHERE pvf.part_id = pc.id"
-        f"   AND ({' OR '.join(pvf_mfr_clauses)})"
-        f"   AND ({' OR '.join(pvf_model_clauses)})"
+        f"   AND {_mfr_sql}"
+        f"   AND {_model_sql}"
         f"   AND pvf.year_from <= :{prefix}_year"
         f"   AND COALESCE(pvf.year_to, pvf.year_from) >= :{prefix}_year"
         ")"
@@ -1594,7 +1699,8 @@ async def search_parts(
                 "source":                supplier_source,
                 "price_usd":             float(sp[4]) if sp[4] else None,
                 "price_ils":             round(price_ils, 2) if price_ils else None,
-                **_customer_price_fields(price_ils, shipping_cost_ils_resolved),
+                **_customer_price_fields(price_ils, shipping_cost_ils_resolved,
+                                         supplier_name=sp[1], supplier_country=sp[2]),
                 "shipping_cost_ils":     shipping_cost_ils,
                 "shipping_cost_usd":     shipping_cost_usd,
                 "shipping_cost_ils_resolved": shipping_cost_ils_resolved,
@@ -1715,7 +1821,8 @@ async def search_parts(
                         "source":                  b_supplier_source,
                         "price_usd":               float(bsp[5]) if bsp[5] else None,
                         "price_ils":               round(b_price_ils, 2) if b_price_ils else None,
-                        **_customer_price_fields(b_price_ils, b_shipping_cost_ils_resolved),
+                        **_customer_price_fields(b_price_ils, b_shipping_cost_ils_resolved,
+                                                 supplier_name=bsp[2], supplier_country=bsp[3]),
                         "shipping_cost_ils":       b_shipping_cost_ils,
                         "shipping_cost_usd":       b_shipping_cost_usd,
                         "shipping_cost_ils_resolved": b_shipping_cost_ils_resolved,
@@ -2428,13 +2535,44 @@ async def get_parts_by_license_plate(
 # ==============================================================================
 
 @router.get("/api/v1/parts/manufacturers")
+async def _refresh_manufacturers_cache() -> None:
+    """Run the expensive manufacturers scan and refresh the cache. Opens its own DB
+    session so it can run in the background (never tied to a user request). Single-flight
+    via the shared lock so only one scan ever runs at a time."""
+    if _MANUFACTURERS_REBUILD_LOCK.locked():
+        return  # a refresh is already in flight
+    async with _MANUFACTURERS_REBUILD_LOCK:
+        _mc = MANUFACTURERS_RESPONSE_CACHE.get("all")
+        if _mc and _mc[0] > time.monotonic():
+            return  # someone else just refreshed it
+        try:
+            async with async_session_factory() as _db:
+                result = await _get_manufacturers_uncached(_db)
+            if isinstance(result, dict) and result.get("manufacturers"):
+                MANUFACTURERS_RESPONSE_CACHE["all"] = (
+                    time.monotonic() + MANUFACTURERS_RESPONSE_TTL_S,
+                    copy.deepcopy(result),
+                )
+        except Exception as _e:
+            print(f"[manufacturers] background refresh failed: {_e}")
+
+
 async def get_manufacturers(db: AsyncSession = Depends(get_db)):
-    # Serve from cache if warm (2026-07-07 stampede fix).
+    # The underlying scan (CROSS JOIN LATERAL over compatible_vehicles across 4.18M
+    # rows) takes ~60-70s and NO index can fix an unnest+aggregate — so a user request
+    # must NEVER trigger it inline (that was the "pages hang after login" symptom, since
+    # the parts page fetches the brand dropdown). Strategy: stale-while-revalidate.
+    #   • fresh cache        → serve instantly
+    #   • stale cache        → serve the stale copy instantly + refresh in the background
+    #   • cold (no cache)    → single-flight compute (happens once, then it's warm; the
+    #                          startup pre-warm normally fills this before any user hits it)
     _mc = MANUFACTURERS_RESPONSE_CACHE.get("all")
-    if _mc and _mc[0] > time.monotonic():
+    if _mc:
+        if _mc[0] <= time.monotonic():
+            # stale — kick a background refresh but DON'T block the user on it
+            asyncio.create_task(_refresh_manufacturers_cache())
         return copy.deepcopy(_mc[1])
-    # Single-flight: only one request runs the expensive scan; the rest wait
-    # here and pick up the freshly-cached result instead of stampeding.
+    # Cold cache: single-flight so only one request runs the scan; others wait for it.
     async with _MANUFACTURERS_REBUILD_LOCK:
         _mc = MANUFACTURERS_RESPONSE_CACHE.get("all")
         if _mc and _mc[0] > time.monotonic():
@@ -3368,7 +3506,7 @@ async def get_part_suppliers(
             supplier_name=r[1],
             supplier_country=r[2],
         )
-        _cust = _customer_price_fields(price_ils, ship_ils)
+        _cust = _customer_price_fields(price_ils, ship_ils, supplier_name=r[1], supplier_country=r[2])
         suppliers.append({
             "supplier_part_id":        r[0],
             # Supplier identity is masked — customer only sees AutoSpareFinder
@@ -3708,8 +3846,13 @@ async def identify_part_from_image(
                     + vehicle_context
                     + catalog_hint
                     + " Look at this image and identify the car part shown. "
+                    "If SEVERAL parts are visible (e.g. a component still mounted in the engine "
+                    "bay), identify the part in the CENTER / FOREGROUND that the photo is framed "
+                    "and focused on — NOT the largest hose, pipe, duct or cover filling the "
+                    "background. If crowded and unsure, LOWER confidence and list the other "
+                    "likely foreground parts in possible_names. "
                     "Think step by step: 1) What vehicle system does this part belong to? "
-                    "2) What is the exact part? "
+                    "2) What is the exact part in the foreground? "
                     "3) Does it match a name from the catalog list above? "
                     "Respond ONLY with a valid JSON object, no markdown: "
                     '{"part_name_he": "<best Hebrew name — prefer exact catalog match>", '

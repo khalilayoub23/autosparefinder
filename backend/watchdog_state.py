@@ -13,7 +13,7 @@ import collections
 from datetime import datetime, timezone
 from typing import Literal
 
-WatchdogAction = Literal["kill_orphan", "warn_live_long", "kill_stuck_importer"]
+WatchdogAction = Literal["kill_orphan", "kill_zombie", "warn_live_long", "kill_stuck_importer"]
 
 
 class WatchdogEvent:
@@ -45,11 +45,13 @@ def drain_unvalidated() -> list[WatchdogEvent]:
 def stats() -> dict:
     """Summary counts for the heartbeat — all events regardless of validation."""
     kills = sum(1 for e in _EVENTS if e.action == "kill_orphan")
+    zombie_kills = sum(1 for e in _EVENTS if e.action == "kill_zombie")
     importer_kills = sum(1 for e in _EVENTS if e.action == "kill_stuck_importer")
     warns = sum(1 for e in _EVENTS if e.action == "warn_live_long")
     return {
         "total_events": len(_EVENTS),
         "orphan_kills": kills,
+        "zombie_kills": zombie_kills,
         "importer_kills": importer_kills,
         "live_warnings": warns,
         "unvalidated": len(drain_unvalidated()),

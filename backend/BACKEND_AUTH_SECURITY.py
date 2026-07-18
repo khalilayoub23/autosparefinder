@@ -76,15 +76,44 @@ TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_MESSAGING_SERVICE_SID = os.getenv("TWILIO_MESSAGING_SERVICE_SID")
 TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
 USE_TWILIO_MESSAGING_SERVICE = os.getenv("USE_TWILIO_MESSAGING_SERVICE", "false").lower() in ("1", "true", "yes", "on")
-ENABLE_WHATSAPP_2FA = os.getenv("ENABLE_WHATSAPP_2FA", "false").lower() in ("1", "true", "yes", "on")
 
-# Branded/private 2FA text template.
-# Placeholders: {code}, {minutes}
+# Quiet the Twilio SDK's HTTP logger: at INFO it dumps the full request/response (incl.
+# the destination phone number) to docker logs on every SMS. Raise to WARNING so routine
+# sends log nothing; genuine errors still surface. (The 2FA code was never in the body
+# log, but the phone number was — this closes that.)
+import logging as _logging
+_logging.getLogger("twilio.http_client").setLevel(_logging.WARNING)
+_logging.getLogger("twilio").setLevel(_logging.WARNING)
+ENABLE_WHATSAPP_2FA = os.getenv("ENABLE_WHATSAPP_2FA", "false").lower() in ("1", "true", "yes", "on")
+# When true: deliver the 2FA code via the WhatsApp (Baileys) bridge FIRST — free, no
+# Twilio — and only fall back to Twilio SMS if the WhatsApp send fails (bridge down, or
+# the number has no WhatsApp). This keeps users from ever being locked out while making
+# WhatsApp the default channel. Set WHATSAPP_2FA_PRIMARY=1 to enable.
+WHATSAPP_2FA_PRIMARY = os.getenv("WHATSAPP_2FA_PRIMARY", "false").lower() in ("1", "true", "yes", "on")
+
+# Customer-service chat link included in the 2FA SMS. WhatsApp by default — it's
+# login-free, so a customer who is stuck AT the login/2FA step can still reach a human
+# (a web chat behind auth would be useless in exactly that moment). Override with
+# TWO_FA_SUPPORT_URL (e.g. a Telegram https://t.me/... or web-chat URL) if preferred.
+TWO_FA_SUPPORT_URL = (
+    os.getenv("TWO_FA_SUPPORT_URL")
+    or os.getenv("NOA_WHATSAPP_URL")
+    or "https://wa.me/972532426920"
+).strip().rstrip("/")
+
+# Branded/private 2FA text template — warm + welcoming, with the CS-chat link.
+# Placeholders: {name}, {code}, {minutes}, {support}
+# Kept to ~2 UCS-2 (Hebrew) SMS segments (≤134 UTF-16 units incl. a normal-length
+# name) — warm greeting + CS-chat link + security note, no tagline/extra emoji.
 TWO_FA_MESSAGE_TEMPLATE = os.getenv(
     "TWO_FA_MESSAGE_TEMPLATE",
-    "שלום {name}, קוד האימות שלך ל-AutoSpare הוא {code}. תוקף הקוד {minutes} דקות. אין לשתף קוד זה עם אף גורם.",
+    "היי {name} 👋 ברוכים הבאים ל-AutoSpare!\n"
+    "קוד האימות: {code} (בתוקף {minutes} דק').\n"
+    "עזרה: {support}\n"
+    "קוד אישי, לא לשתף.",
 )
-TWO_FA_BRAND_ICON = os.getenv("TWO_FA_BRAND_ICON", "🔧")
+# Icon now lives inside the warm text, so no orphan brand-icon line by default.
+TWO_FA_BRAND_ICON = os.getenv("TWO_FA_BRAND_ICON", "").strip()
 TWO_FA_LOGO_URL = os.getenv("TWO_FA_LOGO_URL", "").strip()
 
 # ==============================================================================
@@ -275,6 +304,29 @@ async def record_successful_login(user: User, ip_address: str, db: AsyncSession)
 # 2FA
 # ==============================================================================
 
+# Secret used to HMAC the 2FA code before storing it. Keyed off JWT_SECRET_KEY (a
+# server-side secret that never lives in the DB), so a DB-only breach cannot brute-force
+# the 6-digit code (10^6 space would be trivial to reverse from a plain hash without a
+# secret key). Overridable via TWO_FA_HASH_SECRET.
+_TWO_FA_HASH_SECRET = (os.getenv("TWO_FA_HASH_SECRET") or JWT_SECRET_KEY or "").encode()
+
+
+def hash_2fa_code(code: str) -> str:
+    """HMAC-SHA256 of a 2FA code (hex). Codes are stored/compared as this hash, never raw."""
+    import hmac as _hmac
+    import hashlib as _hashlib
+    return _hmac.new(_TWO_FA_HASH_SECRET, (code or "").encode(), _hashlib.sha256).hexdigest()
+
+
+def _2fa_code_matches(raw_input: str, stored: str) -> bool:
+    """Constant-time compare. Handles legacy plaintext rows (len 6) during the transition
+    window so a code issued just before this deploy still verifies until it expires."""
+    import hmac as _hmac
+    if stored and len(stored) == 6:  # legacy plaintext (pre-hashing); expires within 10 min
+        return _hmac.compare_digest(stored, raw_input or "")
+    return _hmac.compare_digest(stored or "", hash_2fa_code(raw_input))
+
+
 def generate_2fa_code() -> str:
     # DEV_2FA_CODE is ONLY permitted in non-production environments.
     # Using it in production would be a security backdoor.
@@ -299,19 +351,40 @@ def _normalize_e164(phone: str, default_cc: str = "972") -> str:
     return f"+{phone}"
 
 
+# Bidi control marks for RTL SMS. Hebrew is RTL but the code/URL/"AutoSpare" are LTR;
+# without direction hints the phone's bidi algorithm reorders those runs and the message
+# looks scrambled. RLM at each line start pins the line's base direction to RTL; LRM
+# around the URL keeps that LTR run intact so it doesn't jumble the Hebrew around it.
+_RLM = "‏"  # RIGHT-TO-LEFT MARK
+_LRM = "‎"  # LEFT-TO-RIGHT MARK
+
+
+def _rtl_lines(text: str) -> str:
+    """Prefix every non-empty line with RLM so mixed Hebrew/Latin lines render RTL."""
+    return "\n".join((_RLM + ln) if ln.strip() else ln for ln in text.split("\n"))
+
+
 def _build_2fa_message(code: str, full_name: Optional[str] = None) -> str:
-    """Render the configured 2FA message text safely."""
+    """Render the configured 2FA message text safely (RTL-clean for Hebrew phones)."""
     safe_name = (full_name or "").strip()[:60]
+    support_ltr = f"{_LRM}{TWO_FA_SUPPORT_URL}{_LRM}"
     try:
         base = TWO_FA_MESSAGE_TEMPLATE.format(
             code=code,
             minutes=TWO_FA_EXPIRY_MINUTES,
             name=safe_name or "לקוח יקר",
+            support=support_ltr,
+            # Back-compat: honor any custom template still using {site}.
+            site=support_ltr,
         ).strip()
     except Exception:
         # Fallback to a safe default if template placeholders are invalid
-        greeting = f"שלום {safe_name}, " if safe_name else ""
-        base = f"{greeting}AutoSpare: קוד האימות שלך הוא {code}. תוקף הקוד {TWO_FA_EXPIRY_MINUTES} דקות."
+        greeting = f"היי {safe_name} 👋 " if safe_name else "היי 👋 "
+        base = (
+            f"{greeting}ברוכים הבאים ל-AutoSpare! קוד האימות שלך הוא {code} "
+            f"(בתוקף {TWO_FA_EXPIRY_MINUTES} דקות). צריכים עזרה? דברו איתנו: {support_ltr}. "
+            "הקוד אישי לך בלבד, נא לא לשתף."
+        )
 
     lines = []
     if TWO_FA_BRAND_ICON:
@@ -319,8 +392,8 @@ def _build_2fa_message(code: str, full_name: Optional[str] = None) -> str:
     lines.append(base)
     if TWO_FA_LOGO_URL:
         # SMS cannot embed an inline image reliably, so include a direct logo link.
-        lines.append(f"לוגו: {TWO_FA_LOGO_URL}")
-    return "\n".join(lines)
+        lines.append(f"לוגו: {_LRM}{TWO_FA_LOGO_URL}{_LRM}")
+    return _rtl_lines("\n".join(lines))
 
 
 async def send_sms_2fa(phone: str, code: str, full_name: Optional[str] = None) -> bool:
@@ -368,10 +441,14 @@ async def send_sms_2fa(phone: str, code: str, full_name: Optional[str] = None) -
         return False
 
 
-async def send_whatsapp_2fa(phone: str, code: str, full_name: Optional[str] = None) -> bool:
-    """Send 2FA code via WhatsApp as a parallel channel. Returns True if sent."""
-    if not ENABLE_WHATSAPP_2FA:
-        return False
+async def send_whatsapp_2fa(phone: str, code: str, full_name: Optional[str] = None) -> dict:
+    """Send 2FA code via the WhatsApp (Baileys) bridge.
+
+    Returns {"ok": bool, "key": <sent-message key or None>}. The key is stored so the
+    code message can be deleted-for-everyone after the code is verified.
+    """
+    if not (ENABLE_WHATSAPP_2FA or WHATSAPP_2FA_PRIMARY):
+        return {"ok": False, "key": None}
     try:
         from social.whatsapp_provider import get_whatsapp_provider
         provider = get_whatsapp_provider()
@@ -379,12 +456,12 @@ async def send_whatsapp_2fa(phone: str, code: str, full_name: Optional[str] = No
             phone,
             _build_2fa_message(code, full_name)
         )
-        if not result["ok"]:
-            print(f"[WARN] WhatsApp 2FA failed: {result['error']}")
-        return result["ok"]
+        if not result.get("ok"):
+            print(f"[WARN] WhatsApp 2FA failed: {result.get('error')}")
+        return {"ok": bool(result.get("ok")), "key": result.get("key")}
     except Exception as e:
         print(f"[WARN] WhatsApp 2FA error: {e}")
-        return False
+        return {"ok": False, "key": None}
 
 
 async def create_2fa_code(user_id: str, phone: str, db: AsyncSession) -> Optional[str]:
@@ -398,7 +475,7 @@ async def create_2fa_code(user_id: str, phone: str, db: AsyncSession) -> Optiona
 
     two_fa = TwoFactorCode(
         user_id=user_id,
-        code=code,
+        code=hash_2fa_code(code),  # store only the HMAC hash — never the raw code
         phone=phone,
         expires_at=expires,
     )
@@ -406,11 +483,34 @@ async def create_2fa_code(user_id: str, phone: str, db: AsyncSession) -> Optiona
     await db.commit()
 
     import asyncio as _asyncio
-    # Send SMS as the primary 2FA channel. WhatsApp is optional via env flag.
-    tasks = [send_sms_2fa(phone, code, full_name)]
-    if ENABLE_WHATSAPP_2FA:
-        tasks.append(send_whatsapp_2fa(phone, code, full_name))
-    await _asyncio.gather(*tasks, return_exceptions=True)
+    # Delivery channel selection:
+    #  • WHATSAPP_2FA_PRIMARY → WhatsApp first (free, via Baileys bridge); fall back to
+    #    Twilio SMS only if WhatsApp fails, so a user is never locked out.
+    #  • ENABLE_WHATSAPP_2FA (and not primary) → send BOTH channels in parallel.
+    #  • neither → SMS only (original behaviour).
+    if WHATSAPP_2FA_PRIMARY:
+        wa = {"ok": False, "key": None}
+        try:
+            wa = await send_whatsapp_2fa(phone, code, full_name)
+        except Exception as _e:
+            print(f"[2FA] WhatsApp primary send error: {_e}")
+        if wa.get("ok"):
+            # Persist the message key so the code can be deleted-for-everyone once
+            # it's verified (delete-after-verify). No key = still delivered, just
+            # not deletable; harmless.
+            if wa.get("key"):
+                import json as _json
+                two_fa.wa_message_key = _json.dumps(wa["key"])
+                await db.commit()
+            print("[2FA] code delivered via WhatsApp (primary)")
+        else:
+            print("[2FA] WhatsApp send failed — falling back to Twilio SMS")
+            await send_sms_2fa(phone, code, full_name)
+    else:
+        tasks = [send_sms_2fa(phone, code, full_name)]
+        if ENABLE_WHATSAPP_2FA:
+            tasks.append(send_whatsapp_2fa(phone, code, full_name))
+        await _asyncio.gather(*tasks, return_exceptions=True)
     return code
 
 
@@ -436,12 +536,26 @@ async def verify_2fa_code(user_id: str, code: str, db: AsyncSession) -> bool:
         await db.commit()
         raise HTTPException(status_code=400, detail="Too many attempts. Request a new code.")
 
-    if two_fa.code != code:
+    if not _2fa_code_matches(code, two_fa.code):
         await db.commit()
         return False
 
     two_fa.verified_at = datetime.utcnow()
+    _wa_key_raw = getattr(two_fa, "wa_message_key", None)
     await db.commit()
+
+    # Best-effort: now that the code is verified, delete the WhatsApp code message from
+    # the chat (delete-for-everyone) so it doesn't linger. NEVER let a delete failure
+    # affect the login — the code is already verified; this is pure hygiene.
+    if _wa_key_raw:
+        try:
+            import json as _json
+            from social.whatsapp_provider import delete_message as _wa_delete
+            res = await _wa_delete(_json.loads(_wa_key_raw))
+            if not res.get("ok"):
+                print(f"[2FA] WA code-message delete not confirmed (non-fatal): {res.get('error')}")
+        except Exception as _e:
+            print(f"[2FA] WA code-message delete failed (non-fatal): {_e}")
     return True
 
 
@@ -696,6 +810,80 @@ async def logout_user(token: str, db: AsyncSession):
     await revoke_session(token, db)
 
 
+def create_email_verification_token(user_id: str, hours: int = 48) -> str:
+    """Stateless signed email-verification token (HMAC over user_id + expiry, keyed by
+    JWT_SECRET_KEY). No DB row needed — self-contained and tamper-proof."""
+    import hmac as _hmac, hashlib as _hl, base64 as _b64, time as _t
+    exp = int(_t.time()) + hours * 3600
+    msg = f"{user_id}.{exp}"
+    sig = _hmac.new(JWT_SECRET_KEY.encode(), msg.encode(), _hl.sha256).hexdigest()[:32]
+    return _b64.urlsafe_b64encode(f"{msg}.{sig}".encode()).decode().rstrip("=")
+
+
+def verify_email_verification_token(token: str) -> Optional[str]:
+    """Return the user_id if the token is valid + unexpired, else None."""
+    import hmac as _hmac, hashlib as _hl, base64 as _b64, time as _t
+    try:
+        pad = "=" * (-len(token) % 4)
+        raw = _b64.urlsafe_b64decode((token + pad).encode()).decode()
+        user_id, exp, sig = raw.rsplit(".", 2)
+        if int(exp) < int(_t.time()):
+            return None
+        expected = _hmac.new(JWT_SECRET_KEY.encode(), f"{user_id}.{exp}".encode(), _hl.sha256).hexdigest()[:32]
+        return user_id if _hmac.compare_digest(sig, expected) else None
+    except Exception:
+        return None
+
+
+def create_cart_recovery_token(user_id: str, hours: int = 72) -> str:
+    """Signed, purpose-scoped ('cart') recovery token (HMAC over user_id + expiry, keyed by
+    JWT_SECRET_KEY). Lets an abandoned-cart email/WhatsApp link open the RECIPIENT's own cart
+    by logging them into their own account — regardless of which session the browser currently
+    holds (a plain /cart link shows whoever is logged into that device, not the recipient).
+    Short 72h TTL bounds a forwarded-email window. Purpose tag prevents replaying an
+    email-verification token here (and vice-versa)."""
+    import hmac as _hmac, hashlib as _hl, base64 as _b64, time as _t
+    exp = int(_t.time()) + hours * 3600
+    msg = f"cart.{user_id}.{exp}"
+    sig = _hmac.new(JWT_SECRET_KEY.encode(), msg.encode(), _hl.sha256).hexdigest()[:32]
+    return _b64.urlsafe_b64encode(f"{msg}.{sig}".encode()).decode().rstrip("=")
+
+
+def verify_cart_recovery_token(token: str) -> Optional[str]:
+    """Return the user_id if the token is a valid, unexpired, purpose='cart' token, else None."""
+    import hmac as _hmac, hashlib as _hl, base64 as _b64, time as _t
+    try:
+        pad = "=" * (-len(token) % 4)
+        raw = _b64.urlsafe_b64decode((token + pad).encode()).decode()
+        body, sig = raw.rsplit(".", 1)
+        purpose, user_id, exp = body.split(".", 2)
+        if purpose != "cart":
+            return None
+        if int(exp) < int(_t.time()):
+            return None
+        expected = _hmac.new(JWT_SECRET_KEY.encode(), body.encode(), _hl.sha256).hexdigest()[:32]
+        return user_id if _hmac.compare_digest(sig, expected) else None
+    except Exception:
+        return None
+
+
+async def send_verification_email(user, db: AsyncSession) -> bool:
+    """Build a verification link and email it via the branded template. Best-effort."""
+    try:
+        if not getattr(user, "email", ""):
+            return False
+        token = create_email_verification_token(str(user.id))
+        site = os.getenv("FRONTEND_URL", "https://autosparefinder.co.il").rstrip("/")
+        verify_link = f"{site}/api/v1/auth/verify-email?token={token}"
+        from routes.email_utils import send_template
+        from email_templates import verify_email as _verify_tpl
+        return await send_template(user.email, user.full_name or "",
+                                   _verify_tpl(user.full_name or "", verify_link))
+    except Exception as exc:
+        print(f"[Email] verification send failed: {exc}")
+        return False
+
+
 async def create_password_reset_token(email: str, db: AsyncSession) -> Optional[str]:
     result = await db.execute(select(User).where(User.email == email))
     user = result.scalar_one_or_none()
@@ -713,20 +901,12 @@ async def create_password_reset_token(email: str, db: AsyncSession) -> Optional[
 
     reset_link = f"{os.getenv('FRONTEND_URL', 'http://localhost:5173')}/reset-password?token={token}"
 
-    # Provider-agnostic send (SMTP first, SendGrid fallback) via email_utils
+    # Branded RTL template via email_utils (provider-neutral: Gmail/any SMTP, SendGrid fallback)
     try:
-        from routes.email_utils import _send_via_sendgrid as _send_email
-        sent = await _send_email(
-            to_email=email,
-            to_name="",
-            subject="קישור לאיפוס סיסמא | AutoSpareFinder",
-            html=(
-                f'<div dir="rtl" style="font-family:Arial,sans-serif">'
-                f'<p>לחץ על הקישור לאיפוס הסיסמא (תוקף שעה):</p>'
-                f'<p><a href="{reset_link}">{reset_link}</a></p></div>'
-            ),
-            text=f"לחץ על הקישור לאיפוס הסיסמא (תוקף שעה): {reset_link}",
-        )
+        from routes.email_utils import send_template
+        from email_templates import password_reset
+        sent = await send_template(email, user.full_name or "",
+                                   password_reset(user.full_name or "", reset_link, minutes=60))
         if not sent and os.getenv("ENVIRONMENT", "production") == "development":
             print(f"[DEV] Password reset link for {email}: {reset_link}")
     except Exception as exc:

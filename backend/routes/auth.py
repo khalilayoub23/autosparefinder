@@ -38,8 +38,12 @@ from BACKEND_AUTH_SECURITY import (
     create_password_reset_token, use_password_reset_token,
     change_password, create_2fa_code, verify_2fa_code,
     get_redis, check_rate_limit, generate_device_fingerprint,
-    create_access_token, create_refresh_token,
+    create_access_token, create_refresh_token, create_session,
+    verify_email_verification_token, send_verification_email,
+    verify_cart_recovery_token,
 )
+import secrets as _secrets
+from fastapi.responses import RedirectResponse as _RedirectResponse
 
 router = APIRouter()
 
@@ -131,10 +135,96 @@ async def register(data: RegisterRequest, request: Request, db: AsyncSession = D
         db.add(UserProfile(user_id=user.id, customer_type=data.customer_type))
     await db.commit()
     await create_2fa_code(str(user.id), user.phone, db)
+    # Welcome + email-verification (best-effort — never block or fail registration).
+    try:
+        from routes.email_utils import send_template
+        from email_templates import welcome
+        await send_template(user.email, user.full_name or "", welcome(user.full_name or ""))
+        await send_verification_email(user, db)
+    except Exception as _we:
+        print(f"[Email] welcome/verify send failed for {user.email}: {_we}")
     return {
         "user": {"id": str(user.id), "email": user.email, "full_name": user.full_name, "customer_type": data.customer_type},
         "message": f"קוד אימות נשלח ל-{user.phone[-4:]}",
     }
+
+
+# ==============================================================================
+# GET /api/v1/auth/verify-email  — clicked from the verification email
+# ==============================================================================
+
+@router.get("/api/v1/auth/verify-email")
+async def verify_email_link(token: str, db: AsyncSession = Depends(get_pii_db)):
+    """Verify the email from the emailed link, then redirect to the site."""
+    site = os.getenv("FRONTEND_URL", "https://autosparefinder.co.il").rstrip("/")
+    user_id = verify_email_verification_token(token)
+    if not user_id:
+        return _RedirectResponse(url=f"{site}/login?verify=invalid", status_code=302)
+    try:
+        res = await db.execute(select(User).where(User.id == user_id))
+        user = res.scalar_one_or_none()
+        if user and not user.is_verified:
+            user.is_verified = True
+            await db.commit()
+    except Exception as exc:
+        print(f"[Auth] verify-email failed: {exc}")
+        return _RedirectResponse(url=f"{site}/login?verify=error", status_code=302)
+    return _RedirectResponse(url=f"{site}/login?verified=1", status_code=302)
+
+
+@router.post("/api/v1/auth/resend-verification")
+async def resend_verification(current_user: User = Depends(get_current_user),
+                              db: AsyncSession = Depends(get_pii_db), redis=Depends(get_redis)):
+    """Re-send the verification email to the logged-in user."""
+    if redis:
+        allowed = await check_rate_limit(redis, f"rate:resend_verify:{current_user.id}", 3, 300)
+        if not allowed:
+            raise HTTPException(status_code=429, detail="נסה שוב בעוד כמה דקות")
+    if current_user.is_verified:
+        return {"message": "כבר מאומת", "verified": True}
+    await send_verification_email(current_user, db)
+    return {"message": "מייל אימות נשלח", "verified": False}
+
+
+# ==============================================================================
+# GET /api/v1/customers/cart/recover — one-tap return-to-YOUR-cart from an
+# abandoned-cart email/WhatsApp. A plain /cart link shows whoever is logged into
+# the device; this signed link logs the RECIPIENT into their own account and lands
+# them on their cart. Token is HMAC-signed, purpose-scoped, 72h TTL. The tokens are
+# handed to the SPA via the URL FRAGMENT (#ar/#rt) so they never hit server logs or
+# the Referer header; the frontend stores them and strips the fragment immediately.
+# ==============================================================================
+
+@router.get("/api/v1/customers/cart/recover")
+async def recover_cart(token: str, request: Request,
+                       db: AsyncSession = Depends(get_pii_db), redis=Depends(get_redis)):
+    site = os.getenv("FRONTEND_URL", "https://autosparefinder.co.il").rstrip("/")
+    ip = request.headers.get("X-Real-IP") or (request.client.host if request.client else "unknown")
+    if redis:
+        allowed = await check_rate_limit(redis, f"rate:cart_recover:{ip}", 20, 300)
+        if not allowed:
+            return _RedirectResponse(url=f"{site}/login?cart=busy", status_code=302)
+    user_id = verify_cart_recovery_token(token)
+    if not user_id:
+        # Expired or tampered — send them to log in normally; their cart is server-side.
+        return _RedirectResponse(url=f"{site}/login?next=/cart&cart=expired", status_code=302)
+    try:
+        user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+        if not user or not getattr(user, "is_active", True):
+            return _RedirectResponse(url=f"{site}/login?next=/cart&cart=expired", status_code=302)
+        # Mint a normal, revocable session (same path as login) so the recipient is truly
+        # signed into THEIR account and can browse/checkout.
+        session_id = _secrets.token_hex(16)
+        access_token = create_access_token(str(user.id), session_id)
+        refresh_token = create_refresh_token(str(user.id), session_id)
+        ua = request.headers.get("User-Agent", "cart-recovery")
+        fp = generate_device_fingerprint(request)
+        await create_session(user, access_token, refresh_token, fp, ip, ua, False, db)
+    except Exception as exc:
+        print(f"[Auth] cart-recover failed: {exc}")
+        return _RedirectResponse(url=f"{site}/login?next=/cart&cart=error", status_code=302)
+    # Fragment handoff (never sent to the server / Referer); SPA consumes + strips it.
+    return _RedirectResponse(url=f"{site}/cart#ar={access_token}&rt={refresh_token}", status_code=302)
 
 
 # ==============================================================================

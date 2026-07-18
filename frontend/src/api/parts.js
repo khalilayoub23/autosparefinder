@@ -29,6 +29,10 @@ export const partsApi = {
   getById: (id) => api.get(`/parts/${id}`),
   suppliers: (partId, limit = 100) =>
     api.get(`/parts/${partId}/suppliers`, { params: { limit } }),
+  // Price-watch: email the customer (price_drop) when a watched part's price drops.
+  watch: (partId) => api.post(`/parts/${partId}/watch`),
+  unwatch: (partId) => api.delete(`/parts/${partId}/watch`),
+  watches: () => api.get('/parts/watches'),
   compare: (part_id) => api.post('/parts/compare', null, { params: { part_id } }),
   searchByVehicle: (vehicle_id, category) =>
     api.post('/parts/search-by-vehicle', null, { params: { vehicle_id, category } }),

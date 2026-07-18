@@ -119,6 +119,7 @@ app.post('/send', async (req, res) => {
 
   try {
     const jid = normalizeTargetJid(to, reply_jid)
+    let sent = null
 
     if (hasImage) {
       const b64 = image_base64.includes(',') ? image_base64.split(',').pop() : image_base64
@@ -137,7 +138,7 @@ app.post('/send', async (req, res) => {
         messagePayload.mimetype = mime_type.trim()
       }
       console.log('[Bridge] Sending image to', jid, '| bytes:', imageBuffer.length)
-      await waSocket.sendMessage(jid, messagePayload)
+      sent = await waSocket.sendMessage(jid, messagePayload)
     } else if (hasAudio) {
       const b64 = audio_base64.includes(',') ? audio_base64.split(',').pop() : audio_base64
       const audioBuffer = Buffer.from((b64 || '').trim(), 'base64')
@@ -153,17 +154,19 @@ app.post('/send', async (req, res) => {
         ptt: audio_ptt !== false,
       }
       console.log('[Bridge] Sending audio to', jid, '| bytes:', audioBuffer.length)
-      await waSocket.sendMessage(jid, payload)
+      sent = await waSocket.sendMessage(jid, payload)
       if (hasText) {
-        await waSocket.sendMessage(jid, { text: text.trim() })
+        sent = await waSocket.sendMessage(jid, { text: text.trim() })
       }
     } else {
       console.log('[Bridge] Sending to', jid, '| text length:', text.length)
-      await waSocket.sendMessage(jid, { text })
+      sent = await waSocket.sendMessage(jid, { text })
     }
 
     console.log('[Bridge] Sent OK to', jid)
-    res.json({ ok: true })
+    // Return the message key so the caller can later delete-for-everyone (used to
+    // remove a 2FA code from the chat once it's been verified). Non-breaking add.
+    res.json({ ok: true, key: sent?.key || null })
   } catch (err) {
     console.error('[Bridge] Send error:', err.message)
     res.status(500).json({ ok: false, error: err.message })
@@ -186,6 +189,25 @@ app.post('/typing', async (req, res) => {
     setTimeout(() => waSocket.sendPresenceUpdate('paused', jid).catch(() => {}), 25000)
     res.json({ ok: true })
   } catch (err) {
+    res.status(500).json({ ok: false, error: err.message })
+  }
+})
+
+// Delete-for-everyone a message we previously sent — used to remove a 2FA code from
+// the chat after it has been verified. Best-effort: the caller ignores failures, and a
+// failed delete never affects login (the code is already used/expired). Expects the
+// full message key returned by /send: { remoteJid, id, fromMe }.
+app.post('/delete', async (req, res) => {
+  const { key } = req.body || {}
+  if (!waSocket || !key || !key.remoteJid || !key.id) {
+    return res.status(400).json({ ok: false, error: 'Missing key or socket not ready' })
+  }
+  try {
+    await waSocket.sendMessage(key.remoteJid, { delete: key })
+    console.log('[Bridge] Deleted message', key.id, 'in', key.remoteJid)
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('[Bridge] Delete error:', err.message)
     res.status(500).json({ ok: false, error: err.message })
   }
 })

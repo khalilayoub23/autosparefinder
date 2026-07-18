@@ -312,7 +312,102 @@ class AliExpressSupplier(BaseSupplier):
         return results
 
     async def search_by_oem(self, oem_number: str, limit: int = 10) -> list[PartResult]:
-        return await self.search(oem_number, limit)
+        q = _safe_text(oem_number)
+        # A numeric AliExpress product_id → direct fetch (existing path).
+        if q.isdigit() and 10 <= len(q) <= 18:
+            return await self.search(q, limit)
+        # Otherwise keyword-search by OEM, but only ACCEPT a listing whose title
+        # actually contains the OEM (strict fitment-safety guard). AliExpress's DS
+        # "selection" feed is fuzzy/category-based, so without this guard we would
+        # attach a WRONG part's price — forbidden by the fitment-first rule. Few
+        # but CORRECT matches beats many wrong ones.
+        return await self._oem_guarded_text_search(q, limit)
+
+    @staticmethod
+    def _norm_oem(s: str) -> str:
+        import re as _re
+        return _re.sub(r"[^0-9A-Z]", "", _safe_text(s).upper())
+
+    async def text_search(self, keyword: str, limit: int = 20) -> list[dict]:
+        """Raw DS keyword search (aliexpress.ds.text.search). Returns the curated
+        'selection' product list. Fuzzy — callers must apply their own guard."""
+        if not await self._ensure_token():
+            return []
+        params = self._build_request(
+            "aliexpress.ds.text.search",
+            {"keyWord": keyword, "countryCode": "IL", "currency": "USD",
+             "local": "en_US", "pageSize": str(min(50, max(1, limit))), "pageIndex": "1"},
+        )
+        try:
+            async with httpx.AsyncClient(timeout=25.0) as client:
+                resp = await client.post(ALIEXPRESS_API_URL, data=params)
+                resp.raise_for_status()
+                data = resp.json()
+        except Exception as exc:
+            logger.error("AliExpress ds.text.search failed for '%s': %s", keyword, exc)
+            return []
+        if data.get("error_response"):
+            logger.warning("AliExpress ds.text.search error for '%s': %s", keyword, data["error_response"])
+            return []
+        return (
+            data.get("aliexpress_ds_text_search_response", {})
+            .get("data", {})
+            .get("products", {})
+            .get("selection_search_product", [])
+        ) or []
+
+    @staticmethod
+    def _oem_matches_title(oem: str, title: str) -> bool:
+        """Bulletproof fitment guard: the OEM must appear in the title as a bounded
+        TOKEN, not merely as a substring. A plain substring test would false-match
+        (e.g. OEM '12345' inside '123456'), attaching a WRONG part's price. We require
+        len >= 8 (short codes collide too easily) AND a boundary match on the raw
+        title for the OEM in its common written forms (as-is, no-separators,
+        dash->space). Fuzzy AliExpress titles almost never pass this — by design:
+        for a fuzzy source, correctness beats recall."""
+        import re as _re
+        norm = AliExpressSupplier._norm_oem(oem)
+        if len(norm) < 8:
+            return False
+        t = (title or "").upper()
+        variants = {oem.upper().strip(), norm, oem.upper().replace("-", " ").strip()}
+        for v in variants:
+            if len(v) < 8:
+                continue
+            if _re.search(r"(?<![0-9A-Z])" + _re.escape(v) + r"(?![0-9A-Z])", t):
+                return True
+        return False
+
+    async def _oem_guarded_text_search(self, oem: str, limit: int) -> list[PartResult]:
+        norm = self._norm_oem(oem)
+        if len(norm) < 8:  # short codes collide too easily — never guess
+            return []
+        prods = await self.text_search(oem, limit=30)
+        import re as _re
+        def _p(v):
+            m = _re.search(r"[\d]+\.[\d]+|[\d]+", _safe_text(v).replace(",", ""))
+            return float(m.group()) if m else 0.0
+        results: list[PartResult] = []
+        for p in prods:
+            title = _safe_text(p.get("title"))
+            if not self._oem_matches_title(oem, title):   # bounded-token guard
+                continue
+            price = _p(p.get("targetSalePrice")) or _p(p.get("salePrice")) or _p(p.get("originalPrice"))
+            if price <= 0:
+                continue
+            item_id = _safe_text(p.get("itemId"))
+            results.append(PartResult(
+                supplier=self.name, item_id=item_id, title=title, price=price,
+                currency="USD", shipping_cost=0.0, total_cost=price, condition="New",
+                seller="", seller_rating=None,
+                item_url=f"https://www.aliexpress.com/item/{item_id}.html",
+                image_url=_safe_text(p.get("itemMainPic")) or None, location="CN",
+                estimated_delivery_days=20, ships_to_israel=True,
+                image_urls=[_safe_text(p.get("itemMainPic"))] if p.get("itemMainPic") else None,
+                tech_specs={"part_origin": classify_part_origin(title), "oem_verified": True},
+                warranty_text=None, warranty_months=None,
+            ))
+        return results[:limit]
 
     async def get_part_details(self, item_id: str) -> Optional[PartResult]:
         if not await self._ensure_token():

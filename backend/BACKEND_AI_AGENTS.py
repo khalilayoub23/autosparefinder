@@ -457,6 +457,19 @@ def _is_confirm_no(text: str) -> bool:
     return msg in _CONFIRM_NO
 
 
+_ORDER_INTENT_RE = re.compile(
+    r"(רוצה\s+להזמין|מעוניין\s+להזמין|אני\s+מזמין|בוא\s+נזמין|תזמין|אזמין|להזמין|"
+    r"לקנות|קנה\s+לי|אני\s+קונה|סוגר|נסגור|"
+    r"\border\b|\bbuy\b|\bpurchase\b|\bcheckout\b|place\s+(an\s+)?order|i'?ll\s+take\s+it|take\s+it)",
+    re.IGNORECASE,
+)
+
+
+def _is_order_intent(text: str) -> bool:
+    """True when the message expresses intent to buy/order (not a new part query)."""
+    return bool(_ORDER_INTENT_RE.search(text or ""))
+
+
 def _vehicle_summary_he(vehicle_profile: Dict[str, Any]) -> str:
     manufacturer = vehicle_profile.get("manufacturer") or "לא ידוע"
     model = vehicle_profile.get("model") or "לא ידוע"
@@ -468,6 +481,137 @@ def _vehicle_summary_he(vehicle_profile: Dict[str, Any]) -> str:
 def _quick_part_from_message(text: str) -> Optional[str]:
     msg = (text or "").strip()
     return _QUICK_PART_CHOICES.get(msg)
+
+
+# Canonical make → alias list (Hebrew + English). Module-level so the free-text
+# vehicle extractor and the in-flow "vehicle changed by name" reset share ONE map.
+_MAKE_ALIAS_MAP: Dict[str, List[str]] = {
+    "toyota": ["toyota", "טויוטה"], "mazda": ["mazda", "מאזדה", "מזדה"],
+    "hyundai": ["hyundai", "יונדאי"], "kia": ["kia", "קיה"],
+    "citroen": ["citroen", "סיטרואן"], "peugeot": ["peugeot", "פיגו", "פג'ו", "פיג'ו"],
+    "renault": ["renault", "רנו"], "volkswagen": ["volkswagen", "vw", "פולקסווגן"],
+    "skoda": ["skoda", "סקודה"], "seat": ["seat", "סיאט"],
+    "audi": ["audi", "אאודי", "אודי"], "bmw": ["bmw", "ב.מ.וו", 'ב"מוו', 'ב"מ'],
+    "mercedes": ["mercedes", "מרצדס", "מרסדס"], "ford": ["ford", "פורד"],
+    "honda": ["honda", "הונדה"], "nissan": ["nissan", "ניסאן", "ניסן"],
+    "suzuki": ["suzuki", "סוזוקי"], "mitsubishi": ["mitsubishi", "מיצובישי"],
+    "subaru": ["subaru", "סובארו"], "chevrolet": ["chevrolet", "שברולט"],
+    "opel": ["opel", "אופל"], "fiat": ["fiat", "פיאט"],
+    "volvo": ["volvo", "וולוו"], "lexus": ["lexus", "לקסוס"],
+    "jeep": ["jeep", "ג'יפ", "גיפ"], "dacia": ["dacia", "דאצ'יה", "דאציה"],
+    "tesla": ["tesla", "טסלה"], "mini": ["mini", "מיני"],
+}
+
+# Highest-volume IL model names (Hebrew + English) → canonical model token.
+# Keeps fitment-first search precise when the customer names a model in free text.
+_MODEL_LEXICON: Dict[str, List[str]] = {
+    "corolla": ["corolla", "קורולה"], "yaris": ["yaris", "יאריס"],
+    "camry": ["camry", "קאמרי"], "rav4": ["rav4", "rav 4", "ראב4", "ראב 4"],
+    "civic": ["civic", "סיוויק", "סיביק"], "accord": ["accord", "אקורד"],
+    "sportage": ["sportage", "ספורטאז'", "ספורטג'"], "picanto": ["picanto", "פיקנטו"],
+    "rio": ["rio", "ריו"], "niro": ["niro", "נירו"],
+    "i10": ["i10"], "i20": ["i20"], "i25": ["i25"], "i30": ["i30"], "i35": ["i35"],
+    "tucson": ["tucson", "טוסון"], "elantra": ["elantra", "אלנטרה"],
+    "golf": ["golf", "גולף"], "polo": ["polo", "פולו"], "passat": ["passat", "פאסאט"],
+    "octavia": ["octavia", "אוקטביה"], "fabia": ["fabia", "פאביה"],
+    "3": ["mazda 3", "מאזדה 3", "מזדה 3"], "6": ["mazda 6", "מאזדה 6"],
+    "cx5": ["cx-5", "cx5", "סי אקס 5"], "cx30": ["cx-30", "cx30"],
+    "qashqai": ["qashqai", "קשקאי"], "juke": ["juke", "ג'וק"], "micra": ["micra", "מיקרה"],
+    "clio": ["clio", "קליאו"], "captur": ["captur", "קפצ'ור"], "megane": ["megane", "מגאן"],
+    "focus": ["focus", "פוקוס"], "fiesta": ["fiesta", "פיאסטה"],
+    "sprinter": ["sprinter", "ספרינטר"], "transit": ["transit", "טרנזיט"],
+}
+
+
+def _alias_present(alias: str, low: str) -> bool:
+    """Word-ish match for a make/model alias inside a lowercased message.
+
+    Latin aliases match on ASCII word boundaries. Hebrew aliases allow ONE
+    attached preposition prefix (ל/ב/מ/ה/ו/כ/ש) — Hebrew glues these onto the
+    next word, so "לטויוטה" (for-Toyota) must still match "טויוטה".
+    """
+    a = alias.strip().lower()
+    if not a:
+        return False
+    if re.search(r"[a-z]", a):
+        return re.search(r"(?<![a-z0-9])" + re.escape(a) + r"(?![a-z])", low) is not None
+    return re.search(r"(?<![א-ת])[לבמהוכש]?" + re.escape(a) + r"(?![א-ת])", low) is not None
+
+
+def _strip_vehicle_terms(text: str, make: str = "", model: str = "") -> str:
+    """Remove the customer's KNOWN make/model/year tokens from a part query.
+
+    When a customer names the part AND the car in one breath ("oil filter for
+    Toyota Corolla 2018"), the vehicle words pollute the text search and the
+    fitment-filtered pool returns 0 — the part names never contain "corolla
+    2018". We already know the car (it's in the profile), so strip only those
+    specific tokens, leaving a clean part query ("oil filter"). Deliberately
+    narrow: only the confirmed make/model aliases, never arbitrary brand words.
+    """
+    out = text or ""
+    out = re.sub(r"\b(19|20)\d{2}\b", " ", out)
+    groups: List[List[str]] = []
+    mk = (make or "").strip().lower()
+    md = (model or "").strip().lower()
+    # Model first: multi-word model aliases ("מאזדה 3") must match before the
+    # bare make alias ("מאזדה") removes half of them and orphans the "3".
+    if md and md in _MODEL_LEXICON:
+        groups.append(_MODEL_LEXICON[md])
+    if mk and mk in _MAKE_ALIAS_MAP:
+        groups.append(_MAKE_ALIAS_MAP[mk])
+    for aliases in groups:
+        for a in aliases:
+            al = (a or "").strip()
+            if not al:
+                continue
+            if re.search(r"[a-z]", al.lower()):
+                out = re.sub(r"(?<![a-z0-9])" + re.escape(al) + r"(?![a-z])", " ", out, flags=re.IGNORECASE)
+            else:
+                out = re.sub(r"(?<![א-ת])[לבמהוכש]?" + re.escape(al) + r"(?![א-ת])", " ", out)
+    # Drop dangling Hebrew connective prefixes left behind ("ל", "של") and tidy.
+    out = re.sub(r"(^|\s)(של|ל|עבור|for|to)(\s|$)", " ", out, flags=re.IGNORECASE)
+    out = re.sub(r"\s+", " ", out).strip(" -:,‏‎")
+    return out
+
+
+# A VIN is exactly 17 chars, uppercase letters+digits, never I/O/Q. This spots one a
+# customer typed OR that vision extracted from a windshield/chassis photo.
+_VIN_RE = re.compile(r"\b([A-HJ-NPR-Z0-9]{17})\b", re.IGNORECASE)
+
+
+def _extract_vin_from_text(text: str) -> str:
+    """Return the first plausible 17-char VIN in the text, uppercased, or ''.
+    Requires a mix of letters and digits (a run of 17 digits or 17 letters isn't a VIN)."""
+    for m in _VIN_RE.finditer((text or "").upper()):
+        v = m.group(1)
+        if any(c.isdigit() for c in v) and any(c.isalpha() for c in v):
+            return v
+    return ""
+
+
+def _extract_vehicle_from_text(text: str) -> "tuple[str, str, str]":
+    """Best-effort deterministic (make, model, year) from a free-text message.
+
+    LLM-independent by design — free-text vehicle capture must work even when the
+    chat models are rate-limited (429). Returns ('', '', '') when nothing found.
+    """
+    raw = text or ""
+    low = f" {raw.lower()} "
+    make = ""
+    for canon, aliases in _MAKE_ALIAS_MAP.items():
+        if any(_alias_present(a, low) for a in aliases):
+            make = canon
+            break
+    model = ""
+    for mcanon, maliases in _MODEL_LEXICON.items():
+        if any(_alias_present(a, low) for a in maliases):
+            model = mcanon
+            break
+    year = ""
+    ym = re.search(r"\b(19|20)\d{2}\b", raw)
+    if ym:
+        year = ym.group(0)
+    return make, model, year
 
 
 _SYSTEM_EXIT_KEYWORDS = [
@@ -699,6 +843,49 @@ PROHIBITED:
 - Never ask more than ONE question per message
 - Never send walls of text — keep it short and scannable
 - Never use markdown headers (##, **bold**) on WhatsApp
+
+SHIPPING TRUTH (MANDATORY — no invented policies):
+- There is NO free-shipping threshold, NO "free over ₪300", NO flat delivery
+  promise. Shipping is a per-supplier fee shown at checkout, and delivery time
+  varies by supplier/origin. NEVER state a specific free-shipping amount or a
+  guaranteed number of delivery days you did not get from real order/supplier
+  data. If asked about shipping: say we ship across Israel, the exact cost and
+  time appear at checkout for the chosen part, and offer to find the part so
+  they can see real figures. Only cite a delivery window that came from actual
+  supplier/order data for a specific part — never a generic made-up one.
+
+PROFESSIONAL SKILLS & TRAITS (how a great human agent behaves — apply these, don't announce them):
+- LISTEN & REMEMBER: Read what the customer actually wrote, reflect one concrete
+  detail back, and never re-ask for something already given in this conversation
+  (car, part, plate, name, city). Carry context forward across turns.
+- EMPATHY & EQ: Read the emotional tone. If they're frustrated, worried, rushed,
+  or angry, open with ONE short line of genuine understanding before the next
+  step. If they're friendly/joking, be warm back. Match their energy, stay calm
+  when they're heated — never defensive, never robotic.
+- NEEDS DISCOVERY (consultative, not interrogation): Ask the ONE question that
+  actually narrows the part down (front/rear, engine, OEM number) — a diagnostic
+  question, not a generic "how can I help". Understand the job behind the request.
+- OBJECTION HANDLING & NEGOTIATION: When a customer pushes on price or hesitates,
+  acknowledge it honestly, then reframe to real value (fitment-verified for THEIR
+  car, warranty, genuine/OEM quality). You may NOT invent discounts, coupons,
+  loyalty tiers, or free shipping that don't exist — persuade with truth, never
+  with a fabricated deal. If a real promotion exists in the data, use it.
+- CONFIDENT CLOSING (never pushy): Once the right part is found, lead to the next
+  step — offer the order clearly and make it easy. Be persistent through ONE
+  gentle nudge, then respect a "no" and pivot to a better-fitting alternative.
+- HONESTY & TRANSPARENCY: If you don't know, say so and say what you'll do to find
+  out. Never bluff a price, a fit, or a delivery time. Trust is the whole product.
+- OWNERSHIP & FOLLOW-THROUGH: Own the problem to resolution. Tell the customer the
+  concrete next action and make sure the conversation ends with them knowing
+  exactly what happens next.
+- ADAPT & PERSONALIZE: Mirror the customer's language and formality. Short, clear,
+  scannable on WhatsApp/Telegram; a returning customer should feel remembered.
+- KNOW WHEN TO HAND OFF: If the issue is beyond parts/sales (payment dispute,
+  account lockout, complex complaint) or the customer explicitly asks for a human,
+  route it to the right specialist instead of guessing — a smooth handoff beats a
+  wrong answer.
+- CONSISTENCY: Same honesty, same prices, same quality of help on every channel
+  and every turn. The customer gets the same trustworthy experience each time.
 """
 
 
@@ -715,34 +902,56 @@ SHIPPING_ILS = float(os.getenv("DEFAULT_CUSTOMER_SHIPPING_ILS", "59"))  # dynami
 from BACKEND_DATABASE_MODELS import USD_TO_ILS
 from currency_rate import get_usd_to_ils_rate
 
-# Customer-facing delivery fee per supplier (varies by origin country)
+# Customer-facing delivery fee per supplier.
+# DATA POLICY (2026-07-11): real per-item shipping is captured at harvest into
+# supplier_parts.shipping_cost_ils (eBay via API, RockAuto via cart) and is ALWAYS
+# preferred by resolve_customer_shipping_fee(). This dict is only a last-resort
+# fallback and must contain ONLY verified suppliers — the previous version was
+# full of FICTIONAL supplier names (Global Parts Hub / EastAuto Supply / PartsPro
+# USA / AutoZone Direct / Hyundai Mobis / Kia Parts Direct / Bosch Direct / Toyota
+# Genuine) that match ZERO real suppliers in the DB (0 parts each) with invented
+# rates. They were removed — never re-add a fee for a supplier that isn't real.
 SUPPLIER_SHIPPING_RATES: dict = {
-    "AutoParts Pro IL": 29.0,     # Israel domestic delivery
-    "Global Parts Hub": 91.0,     # Germany / Europe
-    "EastAuto Supply":  149.0,    # China / Far East
-    "PartsPro USA":     110.0,    # USA → Israel (UPS/FedEx)
-    "AutoZone Direct":  120.0,    # USA → Israel (retail shipping)
-    "Hyundai Mobis":    95.0,     # South Korea → Israel (OEM direct)
-    "Kia Parts Direct": 95.0,     # South Korea → Israel (OEM direct)
-    "Bosch Direct":     80.0,     # Germany (manufacturer direct)
-    "Toyota Genuine":   99.0,     # Japan → Israel (OEM direct)
+    # AutoParts Pro IL — real supplier, 115k parts, Israel-domestic courier.
+    # ESTIMATE (typical IL domestic courier ~₪25-35); not yet order-verified.
+    "AutoParts Pro IL": 29.0,
+    # RockAuto — MEASURED live 2026-07-11 in the RockAuto cart (OEM 04152-YZZA1,
+    # ship-to Tel Aviv IL): cheapest international option $57.99 (Economy) /
+    # $61.99 (Expedited). PER-ORDER floor (weight scales above it), NOT per-part.
+    # Derived from the live USD→ILS rate so it tracks currency; the importer
+    # stamps the same on each offer. (Replaced a fabricated ₪110.)
+    "RockAuto":         round(57.99 * float(os.getenv("USD_TO_ILS", "3.01")), 2),  # ≈₪175, measured
+    # eBay Motors / AliExpress are intentionally ABSENT — real per-item shipping
+    # already flows from each API (ebay shippingCost → shipping_cost_ils on 26k+
+    # parts, avg ₪510; aliexpress logistics). A flat number here would be both
+    # fake and redundant. If the API omits it, the per-origin fallback applies.
 }
 
 _LOCAL_SUPPLIER_NAMES = {"autoparts pro il"}
 _LOCAL_COUNTRY_KEYS = {"il", "israel", "ישראל"}
+# Per-origin-country LAST-RESORT fallback (used only when a supplier has no
+# captured shipping_cost AND is not in SUPPLIER_SHIPPING_RATES above).
+# ⚠️ These are UNVERIFIED ESTIMATES, not measured quotes — international parcel
+# shipping is really per-shipment (weight/dimensions/carrier). Two real anchors
+# measured 2026-07-11 show how rough these are: US→IL is ~$58≈₪175 floor at
+# RockAuto (so 'us':110 understates it), and IE (car-parts.ie, our BIGGEST
+# supplier at 561k parts) does NOT ship to Israel at all — EU-only — so an 'ie'
+# flat rate is fiction; those parts need an EU-hub freight-forwarder (two-leg)
+# and are flagged for a real forwarder quote before they can be priced honestly.
+# The durable fix is capture-at-harvest (like eBay), not better guesses here.
 _COUNTRY_SHIPPING_RATES: Dict[str, float] = {
-    "il": 29.0,
+    "il": 29.0,        # Israel domestic — estimate
     "israel": 29.0,
-    "de": 91.0,
+    "de": 91.0,        # estimate (unverified)
     "germany": 91.0,
     "eu": 91.0,
-    "cn": 149.0,
+    "cn": 149.0,       # estimate (unverified)
     "china": 149.0,
-    "us": 110.0,
+    "us": 110.0,       # estimate — RockAuto cart measured ~₪175 floor; retailer-specific, left as-is pending a per-supplier capture
     "usa": 110.0,
-    "kr": 95.0,
+    "kr": 95.0,        # estimate (unverified)
     "korea": 95.0,
-    "jp": 99.0,
+    "jp": 99.0,        # estimate (unverified)
     "japan": 99.0,
 }
 
@@ -870,6 +1079,102 @@ _INTERNAL_MARGIN_DISCLOSURE_RE = re.compile(
     r"(supplier\s*cost\s*[x×*]\s*1\.45|עלות\s*ספק\s*[x×*]\s*1\.45|\b1\.45\b|45\s*%\s*(margin|markup|מרווח|רווח)|margin\s*[:=]\s*45)",
     re.IGNORECASE,
 )
+
+
+_REASONING_LEAK_MARKERS = re.compile(
+    r"(analyze the user|the user'?s (input|intent|message|question|request)|"
+    r"the user (is|was|wants|asked|ignored|provided|means|said|gave|just|now|has)\b|"
+    r"\*\*intent:?\*\*|\*\*language:?\*\*|\*\*channel:?\*\*|\*\*context:?\*\*|\[channel:|"
+    r"shared memory|system prompt|the prompt (says|mentions|is|wants|said)|"
+    r"flow[_ ]?state|flow[_ ]?intent|route_result|collect_license|parts_price_search|"
+    r"vehicle_details_confirmation|ask_part_after|no_results|"
+    r"mandatory\)|truth rule|never invent|i must follow|"
+    r"let'?s (check|try|see|think|start|go|proceed|get|offer|assume|keep)|"
+    r"chain of thought|<think>|reasoning:|yielded 0|0 results|a previous search|"
+    r"before i (have|found|had)|since (they|the user|he|she)|"
+    r"make\s*\+\s*model|year\s*\+\s*engine|i (cannot|can't) (give|provide|price) )",
+    re.IGNORECASE,
+)
+_REASONING_LINE = re.compile(
+    r"^\s*(\d+\.\s*(\*\*|language|intent|channel|context|respond|don'?t|no\b|keep|flow|the user)|"
+    r"\*\s*\*\*(language|intent|channel|context|analyze|consult)|"
+    r"\*\*(analyze|consult|step|note)\b|<?/?think>?|let'?s\b|the user\b|flow state|"
+    r"the flow\b|usually,|or offer\b)",
+    re.IGNORECASE,
+)
+
+def _strip_leaked_reasoning(text: str, user_msg: str = "") -> str:
+    """Remove chain-of-thought / system-prompt leakage that fallback models
+    (zai-glm, groq) sometimes emit instead of a clean reply (found 2026-07-09:
+    a discount question got the bot's raw 'Analyze the User's Input... Truth
+    Rule (MANDATORY)...' analysis dumped to the customer). If the whole message
+    is reasoning with no clean reply left, return a safe language-appropriate
+    fallback rather than exposing internals."""
+    msg = (text or "").strip()
+    if not msg:
+        return msg
+    # (A) Multi-draft candidate dump (added 2026-07-09): under 429 fallback the
+    # weaker model sometimes emits SEVERAL alternative replies, each wrapped in
+    # quotes, one with an English meta-note like '(Too vague, maybe they will
+    # just say car)'. This has no reasoning keyword to trigger on. Detect ≥2
+    # quote-wrapped lines and keep only the first candidate's text.
+    _q_line = re.compile(r'^\s*["“”\'](?P<body>.+?)["“”\']\s*(\([^)]*\))?\s*$')
+    _nonblank = [ln for ln in msg.splitlines() if ln.strip()]
+    _quoted = [ln for ln in _nonblank if _q_line.match(ln)]
+    if len(_quoted) >= 2:
+        _m = _q_line.match(_quoted[0])
+        _first = (_m.group("body") if _m else _quoted[0]).strip()
+        _first = re.sub(r"\s*\([^)]*\)\s*$", "", _first).strip()
+        if len(_first) >= 10:
+            msg = _first
+    if not _REASONING_LEAK_MARKERS.search(msg):
+        return msg
+    # A leak was detected — the model dumped its analysis. Be aggressive: drop
+    # every meta-reasoning line AND every bullet/quote line (leaked rule quotes
+    # like "* NO active coupon codes" have no trigger keyword of their own but
+    # are still internal). Keep only natural, non-bullet reply sentences.
+    _rule_quote = re.compile(
+        r"(no active coupon|no referral|no loyalty|never invent|never promise|"
+        r"truth rule|mandatory|coupon codes|discount.{0,3}code|do not exist|"
+        r"system prompt|instruction)",
+        re.IGNORECASE,
+    )
+    # (B) Reply-then-reasoning (added 2026-07-09): the fallback model often emits
+    # a perfectly good reply, THEN keeps "thinking out loud" ("Let's check if I
+    # need the plate. The flow state mentions..."). Keep only the clean text
+    # BEFORE the first reasoning line — that's the real reply.
+    _prefix: List[str] = []
+    for ln in msg.splitlines():
+        if _REASONING_LINE.match(ln) or _REASONING_LEAK_MARKERS.search(ln) or _rule_quote.search(ln):
+            break
+        _prefix.append(ln)
+    _prefix_text = "\n".join(_prefix).strip().strip('"“”\'').strip()
+    if (
+        len(_prefix_text) >= 15
+        and not _REASONING_LEAK_MARKERS.search(_prefix_text)
+        and not _rule_quote.search(_prefix_text)
+    ):
+        return _prefix_text
+    kept = []
+    for ln in msg.splitlines():
+        s = ln.strip()
+        if not s or _REASONING_LINE.match(ln):
+            continue
+        if s.startswith(("*", "-", "•", ">")):          # bullets = reasoning residue
+            continue
+        if _REASONING_LEAK_MARKERS.search(ln) or _rule_quote.search(ln):
+            continue
+        kept.append(s)
+    cleaned = "\n".join(kept).strip()
+    # If what's left still smells of reasoning or is too short, use a safe reply.
+    if not cleaned or len(cleaned) < 15 or _REASONING_LEAK_MARKERS.search(cleaned) or _rule_quote.search(cleaned):
+        lang = _detect_reply_language(user_msg or msg)
+        if lang == "ar":
+            return "أنا معك 🙂 ما القطعة التي تبحث عنها، ولأي سيارة (موديل وسنة أو رقم اللوحة)؟"
+        if lang == "en":
+            return "I'm here 🙂 Which part are you looking for, and for which car (model + year, or plate number)?"
+        return "אני כאן 🙂 איזה חלק אתה מחפש, ולאיזה רכב (דגם + שנה או מספר רישוי)?"
+    return cleaned
 
 
 def _sanitize_internal_pricing_disclosure(text: str) -> str:
@@ -1222,43 +1527,94 @@ class BaseAgent:
     # ── Shared text-extraction helpers (used by PartsFinderAgent & SalesAgent) ─
 
     # Hebrew → DB category keyword map
+    # Part-term (Hebrew AND English) → ENGLISH DB-category SUBSTRING.
+    # ROOT FIX 2026-07-09: the DB `category` column is English kebab-case slugs
+    # ('brakes','engine','filters','suspension-steering',…) plus Hebrew 'כללי';
+    # it holds ZERO Hebrew display names. The old map returned 'בלמים'/'מנוע'/
+    # 'סינון' → `category ILIKE '%בלמים%'` matched 0 rows, silently zeroing every
+    # category-filtered search. Each value here is an English SUBSTRING proven to
+    # match the live vocabulary via ILIKE (e.g. 'brake' → 'brakes'/'Brakes'/
+    # 'brakes-clutch' = 112k rows; 'filter' → 'filters'/'filters-oils' = 20k).
+    # Keys cover both languages so a Hebrew OR English query resolves the same.
+    # Order matters — first key found in the message wins; put the more specific
+    # part term first (מסנן/filter before שמן/oil so an oil FILTER → filters).
     _CATEGORY_KEYWORDS: Dict[str, str] = {
-        "בלמ": "בלמים", "רפידות": "בלמים", "דיסק": "בלמים", "צלחות": "בלמים",
-        "קליפר": "בלמים", "רכב בלם": "בלמים",
-        "מנוע": "מנוע", "פיסטון": "מנוע", "גל ארכובה": "מנוע", "גל זיזים": "מנוע",
-        "ראש מנוע": "מנוע", "טורבו": "טורבו", "מצמד": "מצמד",
-        "מתלה": "מתלה", "זרוע": "מתלה", "קפיץ": "מתלה", "בולם": "מתלה",
-        "הגה": "היגוי", "טרפז": "היגוי",
-        "פנס": "תאורה", "פנסים": "תאורה", "נורה": "תאורה", "LED": "תאורה",
-        "בוקר": "גוף הרכב", "פגוש": "גוף הרכב", "כנף": "גוף הרכב", "דלת": "גוף הרכב",
-        "מכסה מנוע": "גוף הרכב", "מראה": "גוף הרכב",
-        "חיישן": "חיישנים", "מחוון": "חיישנים",
-        "מצתר": "חשמל ואלקטרוניקה", "ECU": "חשמל ואלקטרוניקה",
-        "ממסר": "חשמל ואלקטרוניקה", "אלטרנטור": "חשמל ואלקטרוניקה",
-        "מצבר": "מצבר",
-        "מסנן": "סינון", "פילטר": "סינון", "שמן": "שמנים ונוזלים",
-        "מיזוג": "מזגן וחימום", "AC": "מזגן וחימום",
-        "קומפרסור": "מזגן וחימום", "אוורור": "מזגן וחימום",
-        "תיבת הילוכים": "תיבת הילוכים וציר", "גיר": "תיבת הילוכים וציר",
-        "דלק": "מערכת דלק", "משאבת דלק": "מערכת דלק", "אינג'קטור": "מערכת דלק",
-        "קירור": "קירור", "ראדיאטור": "קירור", "טרמוסטט": "קירור",
-        "משאבת מים": "קירור", "מאוורר": "קירור",
-        "כיסא": "פנים הרכב", "שטיח": "פנים הרכב", "פנים": "פנים הרכב", "דשבורד": "פנים הרכב",
-        "כרית אויר": "מערכת בטיחות",
-        "גלגל": "גלגלים וצמיגים", "צמיג": "גלגלים וצמיגים", "ג'אנט": "גלגלים וצמיגים",
-        "קטליזטור": "פליטה", "מאיין": "פליטה",
-        "אטם": "אטמים וצינורות", "גאסקט": "אטמים וצינורות",
-        "רצועה": "רצועות תזמון", "שרשרת": "רצועות תזמון",
-        "סרן": "תיבת הילוכים וציר", "כרדן": "תיבת הילוכים וציר", "ג'וינט": "תיבת הילוכים וציר",
-        "מגב": "שמשות ומגבים",
-        "ג'ק": "כלי עבודה ואביזרים", "כלי עבודה": "כלי עבודה ואביזרים",
+        # filters (before oil/fluids so "מסנן שמן"/"oil filter" → filters)
+        "מסנן": "filter", "פילטר": "filter", "filter": "filter",
+        # brakes
+        "בלמ": "brake", "רפידות": "brake", "דיסק": "brake", "צלחות": "brake",
+        "קליפר": "brake", "brake": "brake", "pad": "brake", "caliper": "brake", "rotor": "brake",
+        # clutch / drivetrain
+        "מצמד": "clutch", "clutch": "clutch",
+        "סרן": "drivetrain", "כרדן": "drivetrain", "ג'וינט": "drivetrain",
+        "axle": "drivetrain", "driveshaft": "drivetrain", "cv joint": "drivetrain",
+        # engine
+        "מנוע": "engine", "פיסטון": "engine", "גל ארכובה": "engine", "גל זיזים": "engine",
+        "ראש מנוע": "engine", "טורבו": "engine", "piston": "engine", "crankshaft": "engine",
+        "camshaft": "engine", "turbo": "engine", "engine": "engine",
+        # suspension / steering
+        "מתלה": "suspension", "זרוע": "suspension", "קפיץ": "suspension", "בולם": "suspension",
+        "suspension": "suspension", "shock": "suspension", "strut": "suspension",
+        "spring": "suspension", "control arm": "suspension",
+        "הגה": "steer", "טרפז": "steer", "steering": "steer", "tie rod": "steer",
+        # lighting
+        "פנס": "light", "פנסים": "light", "נורה": "light", "led": "light",
+        "light": "light", "headlight": "light", "lamp": "light", "bulb": "light",
+        # body / exterior
+        "בוקר": "body", "פגוש": "body", "כנף": "body", "דלת": "body",
+        "מכסה מנוע": "body", "מראה": "body", "body": "body", "bumper": "body",
+        "fender": "body", "door": "body", "mirror": "body", "hood": "body",
+        # sensors / electrical
+        "חיישן": "sensor", "מחוון": "sensor", "sensor": "sensor",
+        "מצתר": "electr", "ecu": "electr", "ממסר": "electr", "אלטרנטור": "electr",
+        "מצבר": "electr", "alternator": "electr", "relay": "electr",
+        "ignition": "electr", "electr": "electr", "battery": "electr",
+        # a/c & heating
+        "מיזוג": "conditioning", "מזגן": "conditioning", "קומפרסור": "conditioning",
+        "אוורור": "conditioning", "חימום": "conditioning",
+        "ac": "conditioning", "conditioning": "conditioning", "heating": "conditioning",
+        # gearbox
+        "תיבת הילוכים": "gearbox", "גיר": "gearbox", "gearbox": "gearbox", "transmission": "gearbox",
+        # fuel
+        "משאבת דלק": "fuel", "אינג'קטור": "fuel", "דלק": "fuel",
+        "fuel": "fuel", "injector": "fuel",
+        # cooling
+        "ראדיאטור": "cool", "טרמוסטט": "cool", "משאבת מים": "cool", "מאוורר": "cool",
+        "קירור": "cool", "radiator": "cool", "thermostat": "cool", "coolant": "cool",
+        # interior
+        "כיסא": "interior", "שטיח": "interior", "דשבורד": "interior", "פנים": "interior",
+        "interior": "interior", "seat": "interior", "carpet": "interior", "dashboard": "interior",
+        # safety
+        "כרית אויר": "safety", "airbag": "safety", "safety": "safety",
+        # wheels / bearings
+        "גלגל": "wheel", "צמיג": "wheel", "ג'אנט": "wheel", "מיסב": "wheel",
+        "wheel": "wheel", "tire": "wheel", "tyre": "wheel", "rim": "wheel", "bearing": "wheel",
+        # exhaust
+        "קטליזטור": "exhaust", "מאיין": "exhaust", "exhaust": "exhaust",
+        "catalytic": "exhaust", "muffler": "exhaust",
+        # belts / timing
+        "רצועה": "belt", "שרשרת": "belt", "belt": "belt", "chain": "belt", "timing": "belt",
+        # wipers / washers
+        "מגב": "wiper", "wiper": "wiper", "washer": "wiper",
+        # fluids / oil (after filters)
+        "שמן": "fluid", "נוזל": "fluid", "oil": "fluid", "fluid": "fluid",
+        # tools
+        "ג'ק": "tool", "כלי עבודה": "tool", "tool": "tool", "jack": "tool",
     }
 
     def _extract_category_hint(self, message: str) -> Optional[str]:
-        """Quick keyword-based category detection without LLM call."""
-        msg_lower = message.lower()
+        """Quick keyword→English-DB-category detection (no LLM). Bilingual keys;
+        returns an English substring for `category ILIKE '%<hint>%'`. See the
+        _CATEGORY_KEYWORDS docstring for why English (Hebrew matched 0 rows)."""
+        msg_lower = (message or "").lower()
         for kw, cat in self._CATEGORY_KEYWORDS.items():
-            if kw.lower() in msg_lower:
+            k = kw.lower()
+            if re.search(r"[a-z]", k):
+                # Latin key → word boundary so short keys ("ac", "led", "oil")
+                # don't match inside unrelated words ("black", "sled", "boil").
+                if re.search(r"(?<![a-z])" + re.escape(k) + r"(?![a-z])", msg_lower):
+                    return cat
+            elif k in msg_lower:
                 return cat
         return None
 
@@ -2480,8 +2836,8 @@ STEP 4 — CLOSE THE DEAL:
       "רוצה להזמין? כתוב 'כן' ואשלח לך לינק תשלום ישיר."
 
   IF source is "web":
-    - Direct to cart: /api/v1/customers/cart
-    - ALWAYS end with: "להשלמת ההזמנה — עבור לעגלה שלך: /api/v1/customers/cart ולחץ 'לתשלום'."
+    - Direct to cart: https://autosparefinder.co.il/cart
+    - ALWAYS end with: "להשלמת ההזמנה — עבור לעגלה שלך: https://autosparefinder.co.il/cart ולחץ 'לתשלום'."
 
   WISHLIST: If a customer asks to save a part for later, direct them to /wishlist
 
@@ -2621,7 +2977,7 @@ CRITICAL RULES:
                     lines = [
                         f"\n[CATALOG — {len(results)} חלקים | הצג תוצאות כ-טוב/טוב-יותר/הכי-טוב]\n"
                         "השתמש ONLY במחירים האלו — אל תמציא!\n"
-                        "סיים כל תשובה ב: 'להשלמת ההזמנה — עבור ל /cart ולחץ לתשלום'\n"
+                        "סיים כל תשובה ב: 'להשלמת ההזמנה — עבור ל https://autosparefinder.co.il/cart ולחץ לתשלום'\n"
                     ]
                     for i, p in enumerate(results, 1):
                         pr = p.get("pricing") or {}
@@ -2749,16 +3105,16 @@ TRACKING RULES:
 - NEVER tell the customer to enter the tracking number manually — the link is pre-built
 
 CART & PAYMENT ROUTING:
-- The canonical cart URL is /api/v1/customers/cart — always use this exact path.
+- The canonical cart URL is https://autosparefinder.co.il/cart — always use this exact path.
 - When a customer asks for a payment link or how to pay, ALWAYS answer:
-  "כן! כנס לעגלה שלך: /api/v1/customers/cart ולחץ על 'לתשלום' — התשלום מתבצע דרך Stripe בצורה מאובטחת."
-- For pending_payment orders: "כדי להשלים את התשלום — כנס לעגלה שלך: /api/v1/customers/cart ולחץ 'לתשלום'."
-- /api/v1/customers/cart is always a valid path — never refuse to direct the customer there.
+  "כן! כנס לעגלה שלך: https://autosparefinder.co.il/cart ולחץ על 'לתשלום' — התשלום מתבצע דרך Stripe בצורה מאובטחת."
+- For pending_payment orders: "כדי להשלים את התשלום — כנס לעגלה שלך: https://autosparefinder.co.il/cart ולחץ 'לתשלום'."
+- https://autosparefinder.co.il/cart is always a valid path — never refuse to direct the customer there.
 - Do NOT invent external URLs. Do NOT write placeholder links like [עמוד תשלום](#).
 
 ABANDONED CART:
 - If a customer mentions items they added but didn't complete payment for, this is an abandoned cart.
-- Say: "ראיתי שיש פריטים בעגלה שלך שלא הושלמו. כדי להשלים את הרכישה — כנס ל /api/v1/customers/cart ולחץ 'לתשלום'."
+- Say: "ראיתי שיש פריטים בעגלה שלך שלא הושלמו. כדי להשלים את הרכישה — כנס ל https://autosparefinder.co.il/cart ולחץ 'לתשלום'."
 
 LANGUAGE: ALWAYS respond in Hebrew. If customer writes in Arabic, respond in Arabic."""
 
@@ -3109,7 +3465,7 @@ Refund policy:
 
 Payment: Stripe (credit/debit card). NEVER ask for card details.
 CHECKOUT: When a customer asks how to pay or wants a payment link, ALWAYS say:
-  "כן! כנס לעגלה שלך: /cart ולחץ על 'לתשלום' — התשלום מתבצע דרך Stripe בצורה מאובטחת."
+  "כן! כנס לעגלה שלך: https://autosparefinder.co.il/cart ולחץ על 'לתשלום' — התשלום מתבצע דרך Stripe בצורה מאובטחת."
 Do NOT say you cannot provide links. /cart is always the correct answer.
 Business: מס' עוסק מורשה 060633880 | הרצל 55, עכו
 
@@ -3834,6 +4190,16 @@ class SocialMediaManagerAgent(BaseAgent):
         r"(מכונא|מוסך|מוסכניק|מעבדה|נתקן|תיקון|מתקנים|התקנ|נחליף|טיפול\s+ברכב|אבחון\s+תקלה)",
         re.IGNORECASE,
     )
+    # Narrow, first-person-only version used for LINE DROPPING in _enforce_sales_only.
+    # Matches only a claim that WE service/repair/install cars — not bare words like
+    # "מוסך"/"תיקון", which legitimately appear in customer-pain copy ("בלי לרוץ בין
+    # מוסכים", "לפני שאתה רץ לתיקון יקר") that must survive intact. Dropping whole lines
+    # on the broad regex was mangling good posts into incoherent fragments.
+    _NOA_FIRST_PERSON_SERVICE_RE = re.compile(
+        r"(אנחנו|אצלנו|במוסך\s+שלנו|הצוות\s+שלנו)\S{0,15}?\s*"
+        r"(מתקנים|נתקן|מתקינים|נתקין|מחליפים|נחליף|מטפלים|נטפל|מבצעים\s+תיקון|עושים\s+טיפול)",
+        re.IGNORECASE,
+    )
     _NOA_DEFAULT_TAGS = "#חלקיחילוף #התאמתחלקים #חלפיםלרכב #משלוחמהיר #רכב"
     _NOA_RICH_TAGS = "#חלקיחילוף #התאמתחלקים #חלפיםלרכב #משלוחמהיר #AutoSpareFinder #TikTok"
     _NOA_PLATE_RE = re.compile(r"(מספר\s*רישוי|לוחית|plate)", re.IGNORECASE)
@@ -3948,14 +4314,23 @@ class SocialMediaManagerAgent(BaseAgent):
                 continue
             body_lines.append(ln)
 
-        body = re.sub(r"\s+", " ", " ".join(body_lines)).strip()
-        for pattern, repl in cls._NOA_TIKTOK_COMPLIANCE_REWRITES:
-            body = re.sub(pattern, repl, body, flags=re.IGNORECASE)
+        # Preserve the line structure — TikTok posts LIVE on the hook-line + short-body
+        # rhythm. The old code flattened every newline into one run-on sentence (a top
+        # cause of the robotic feel); we only collapse intra-line whitespace and apply the
+        # compliance rewrites per line.
+        cleaned_lines: list[str] = []
+        for ln in body_lines:
+            ln = re.sub(r"[ \t]+", " ", ln).strip()
+            for pattern, repl in cls._NOA_TIKTOK_COMPLIANCE_REWRITES:
+                ln = re.sub(pattern, repl, ln, flags=re.IGNORECASE)
+            if ln:
+                cleaned_lines.append(ln)
+        body = "\n".join(cleaned_lines).strip()
 
         has_promo_claim = bool(cls._NOA_TIKTOK_PRICE_PROMO_RE.search(body))
         has_disclosure = any(marker in body for marker in cls._NOA_TIKTOK_DISCLOSURE_MARKERS)
         if has_promo_claim and not has_disclosure:
-            body = f"{body} המחירים, המבצעים והזמינות כפופים לתנאי האתר."
+            body = f"{body}\nהמחירים, המבצעים והזמינות כפופים לתנאי האתר."
 
         tags = cls._filter_hashtags("\n".join(hashtag_lines))
         if not tags:
@@ -4041,39 +4416,50 @@ class SocialMediaManagerAgent(BaseAgent):
         if not msg:
             return ""
 
+        # Compliance rewrites — only FIRST-PERSON claims that we service/repair/install
+        # cars (we're a parts marketplace, not a garage). Targeted and grammar-safe.
+        # We deliberately do NOT blanket-replace bare words like "מוסך"/"תיקון"/"התקנה":
+        # the old code did, turning legit pain copy ("בלי לרוץ בין מוסכים") into broken
+        # Hebrew ("בין חנות חלקים") — a top cause of the robotic, incoherent posts.
         replacements = (
-            (r"אנחנו מתקנים", "אנחנו מוכרים ומספקים"),
-            (r"אנחנו נתקן", "אנחנו נתאים את החלק הנכון"),
-            (r"נחליף לך", "נספק לך את החלק המתאים"),
-            (r"תיקון", "התאמת חלק"),
-            (r"מכונאי", "צוות חלקים"),
-            (r"מוסך", "חנות חלקים"),
-            (r"התקנה", "התאמה"),
+            (r"אנחנו\s+מתקנים", "אנחנו מוכרים ומספקים"),
+            (r"אנחנו\s+נתקן", "אנחנו נתאים את החלק הנכון"),
+            (r"אנחנו\s+מתקינים", "אנחנו מספקים"),
+            (r"נחליף\s+לך", "נספק לך את החלק המתאים"),
+            (r"נתקין\s+לך", "נתאים לך"),
         )
+        claim_rewritten = False
         for pattern, repl in replacements:
-            msg = re.sub(pattern, repl, msg, flags=re.IGNORECASE)
+            msg, n = re.subn(pattern, repl, msg, flags=re.IGNORECASE)
+            if n:
+                claim_rewritten = True
 
-        lines = [ln.strip() for ln in msg.splitlines() if ln.strip()]
-        body_lines: list[str] = []
-        for ln in lines:
-            if ln.startswith("#"):
+        # Keep the model's structure. Drop ONLY lines that still assert we operate as a
+        # garage (narrow first-person regex), and strip hashtag lines (re-added below).
+        # Preserve line breaks — they ARE the platform formatting (hook line, short body).
+        kept_lines: list[str] = []
+        for ln in msg.splitlines():
+            s = ln.strip()
+            if s.startswith("#"):
                 continue
-            if cls._NOA_SERVICE_CLAIM_RE.search(ln):
+            if s and cls._NOA_FIRST_PERSON_SERVICE_RE.search(s):
+                claim_rewritten = True
                 continue
-            body_lines.append(ln)
+            kept_lines.append(ln.rstrip())
 
-        body = re.sub(r"\s+", " ", " ".join(body_lines)).strip()
-        if body and not re.search(r"(חלק|חלפים|מלאי|הזמנ|משלוח|התאמ)", body):
-            body = f"{body} אנחנו מוכרים חלקי חילוף בלבד ומתאימים את החלק לפי פרטי הרכב שלך."
-        body = cls._ensure_platform_value_points(body)
-        if body and "מוכרים חלקי חילוף בלבד" not in body:
-            body = f"{body} אנחנו מוכרים חלקי חילוף בלבד."
+        body = re.sub(r"\n{3,}", "\n\n", "\n".join(kept_lines)).strip()
+
+        # Append the "parts only" disclosure at most ONCE, on its own line, and ONLY when
+        # we actually had to neutralise a service claim. Normal posts are left as the model
+        # wrote them — no stapled value-point boilerplate on every post.
+        if claim_rewritten and body and "מוכרים חלקי חילוף בלבד" not in body:
+            body = f"{body}\nאנחנו מוכרים חלקי חילוף בלבד ומתאימים את החלק לפי פרטי הרכב."
 
         tags = cls._filter_hashtags(msg)
         if not tags:
             tags = cls._NOA_DEFAULT_TAGS
         if not body:
-            body = "מחפשים חלק לרכב? שלחו דגם, שנה ומנוע ונחזיר התאמה מהירה ומדויקת." 
+            body = "מחפשים חלק לרכב? שלחו דגם, שנה ומנוע ונחזיר התאמה מהירה ומדויקת."
         return f"{body}\n{tags}".strip()
 
     @classmethod
@@ -4088,7 +4474,12 @@ class SocialMediaManagerAgent(BaseAgent):
         body = re.sub(r"#[^\s#]+", " ", msg)
         body = re.sub(r"\s+", " ", body).strip()
         words = body.split()
-        if len(words) < 14:
+        # 8-word floor (was 14): short, punchy TikTok/X posts are BY DESIGN brief (the
+        # system prompt asks for a strong one-line hook + a short body). A 14-word minimum
+        # was flagging good short posts as "low quality" and replacing them with a canned
+        # generic fallback — a direct cause of the templated, robotic feel. The garble and
+        # single-letter checks below still catch genuinely broken output.
+        if len(words) < 8:
             return True
         stripped_words = [re.sub(r"[^\u0590-\u05FF0-9]", "", w) for w in words]
         short_count = sum(1 for w in stripped_words if 0 < len(w) <= 2)
@@ -4109,7 +4500,8 @@ class SocialMediaManagerAgent(BaseAgent):
                 "מחפשים חלק לרכב בלי לרוץ בין מוסכים? מזינים מספר רישוי ומקבלים התאמה מהירה "
                 "והשוואת מחירים במקום אחד."
             )
-        body = cls._ensure_platform_value_points(body)
+        # Single clean disclosure only — no stacked value-point boilerplate (that stapling
+        # is what made repaired posts read like a filled-in template).
         if "מוכרים חלקי חילוף בלבד" not in body:
             body = f"{body} אנחנו מוכרים חלקי חילוף בלבד."
 
@@ -4781,6 +5173,7 @@ async def process_agent_response_for_message(
         model_used = _channel_model_for_source(source, getattr(agent, "model", FREE_MODEL))
 
     exec_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+    response_text = _strip_leaked_reasoning(response_text)
     response_text = _sanitize_internal_pricing_disclosure(response_text)
 
     # Save assistant message
@@ -5316,6 +5709,12 @@ async def process_user_message(
             # offers are pending — same intent as confirming the first offer.
             elif re.search(r"לינק|קישור|link|תשלום|לשלם|pay", _checkout_msg, re.IGNORECASE):
                 _checkout_choice = 1
+            # Free-text order intent ("אני רוצה להזמין", "I want to order") with no
+            # NEW part named → the customer wants to buy the part we just showed.
+            # Selects the first (best-ranked) offer instead of dropping to the
+            # generic orders agent / cart redirect (gap fixed 2026-07-09).
+            elif _is_order_intent(_checkout_msg) and not _has_part_signal(_checkout_msg):
+                _checkout_choice = 1
 
         if _checkout_choice is not None:
             _chosen = next(
@@ -5395,65 +5794,109 @@ async def process_user_message(
                 # No valid part in context — fall through to normal flow
                 _checkout_choice = None
 
-        # ── Step 1: intro + ask for plate ────────────────────────────────────────
-        if _checkout_choice is not None:
-            pass  # checkout URL already built above, skip normal flow
-        elif not known_plate:
-            # Check if customer already provided manufacturer + model + year
-            _known_manufacturer = str(context_data.get("vehicle_manufacturer") or "").strip()
-            _known_model = str(context_data.get("vehicle_model") or "").strip()
-            _known_year = str(context_data.get("vehicle_year") or "").strip()
+        # VIN capture (added 2026-07-13): a customer who sends their VIN — typed, or
+        # read by vision from a windshield/chassis-plate photo — should have the car
+        # decoded automatically, not be asked to type make/model/year. We decode via
+        # NHTSA (cached + circuit-broken) and drop the result into context_data, which
+        # the free-text block just below then treats exactly like a customer-stated car.
+        # NHTSA reliably returns make+year even for EU VINs (model can come back blank
+        # for European models — then make+year still seeds the flow and we ask only the
+        # model, instead of the whole car).
+        if (
+            _checkout_choice is None
+            and not known_plate
+            and not (vehicle_confirmed and isinstance(vehicle_profile, dict))
+        ):
+            _vin = _extract_vin_from_text(message)
+            if _vin and not context_data.get("vin"):
+                try:
+                    from routes.parts import _decode_vin_with_resilience
+                    _vd = await _decode_vin_with_resilience(_vin)
+                except Exception as _ve:
+                    _vd = None
+                    print(f"[PartsFlow] VIN decode failed for {_vin}: {str(_ve)[:80]}")
+                if _vd and str(_vd.get("manufacturer") or "").strip():
+                    _vmake = str(_vd.get("manufacturer") or "").strip()
+                    _vmodel = str(_vd.get("model") or "").strip()
+                    _vyear = str(_vd.get("year") or "").strip()
+                    context_data["vin"] = _vin
+                    if _vmake:
+                        context_data["vehicle_manufacturer"] = _vmake
+                    if _vmodel:
+                        context_data["vehicle_model"] = _vmodel
+                    if _vyear and _vyear != "0":
+                        context_data["vehicle_year"] = _vyear
+                    print(f"[PartsFlow] VIN decoded: {_vin} -> {_vmake}/{_vmodel}/{_vyear}")
 
-            # Try to extract from current message if not in context
-            if not _known_manufacturer or not _known_year:
-                import re as _re
-                _year_match = _re.search(r'\b(19|20)\d{2}\b', message)
-                if _year_match:
-                    _known_year = _year_match.group(0)
-                    context_data["vehicle_year"] = _known_year
-
-            _has_vehicle_info = bool(_known_manufacturer and _known_year) or bool(_known_model and _known_year)
-
-            if _has_vehicle_info:
-                # Build synthetic vehicle profile from what we know
+        # Free-text vehicle capture (added 2026-07-09): when there is no plate yet
+        # but the customer names make (+ model) + year in free text, build a
+        # CONFIRMED vehicle profile up front so the SAME fitment-first search path
+        # runs — the customer should not be forced to send a plate when they've
+        # already told us the car. Deterministic (LLM-independent) so it still
+        # works when the chat models are 429-throttled.
+        if (
+            _checkout_choice is None
+            and not known_plate
+            and not (vehicle_confirmed and isinstance(vehicle_profile, dict))
+        ):
+            _ft_make, _ft_model, _ft_year = _extract_vehicle_from_text(message)
+            _ft_make = _ft_make or str(context_data.get("vehicle_manufacturer") or "").strip()
+            _ft_model = _ft_model or str(context_data.get("vehicle_model") or "").strip()
+            _ft_year = _ft_year or str(context_data.get("vehicle_year") or "").strip()
+            if _ft_make:
+                context_data["vehicle_manufacturer"] = _ft_make
+            if _ft_model:
+                context_data["vehicle_model"] = _ft_model
+            if _ft_year:
+                context_data["vehicle_year"] = _ft_year
+            if (_ft_make or _ft_model) and _ft_year:
                 vehicle_profile = {
-                    "manufacturer": _known_manufacturer or "",
-                    "model": _known_model or "",
-                    "year": _known_year or "",
+                    "manufacturer": _ft_make,
+                    "model": _ft_model,
+                    "year": _ft_year,
                     "engine_type": "",
                     "license_plate": None,
                     "source": "customer_provided",
                 }
+                vehicle_confirmed = True
                 context_data["vehicle_profile"] = vehicle_profile
                 context_data["vehicle_confirmed"] = True
-                context_data["vehicle_manufacturer"] = _known_manufacturer
-            else:
-                start_time = datetime.utcnow()
-                if not intro_sent:
-                    context_data["intro_sent"] = True
-                response_text, model_used = await _infer_parts_flow_reply(
-                    agent_name="service_agent",
-                    source=source,
-                    history=history,
-                    user_message=message,
-                    flow_intent="collect_license_plate_or_vehicle_info",
-                    flow_state={
-                        "intro_sent": bool(context_data.get("intro_sent")),
-                        "known_plate": known_plate or None,
-                        "supported_plate_formats": ["12-345-67", "123-45-678", "1234567", "12345678"],
-                        "alternative": "or provide manufacturer + model + year",
-                    },
-                
-                    shared_memory_prompt=shared_memory_prompt,)
-                route_result = {
-                    "agent": "service_agent",
-                    "confidence": 1.0,
-                    "language": "he",
-                    "intent": "collect_license_plate_or_vehicle_info",
-                    "extracted_data": {},
-                }
-                agent_name = "service_agent"
-                exec_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+                print(f"[PartsFlow] free-text vehicle captured: {_ft_make}/{_ft_model}/{_ft_year}")
+
+        # ── Step 1: intro + ask for plate ────────────────────────────────────────
+        if _checkout_choice is not None:
+            pass  # checkout URL already built above, skip normal flow
+        elif not known_plate and not (vehicle_confirmed and isinstance(vehicle_profile, dict)):
+            # No plate and no confirmed free-text vehicle → ask for a plate or
+            # make + model + year. (Free-text make+model+year is captured by the
+            # pre-capture block above, which builds a confirmed profile and routes
+            # straight to the search branch below.)
+            start_time = datetime.utcnow()
+            if not intro_sent:
+                context_data["intro_sent"] = True
+            response_text, model_used = await _infer_parts_flow_reply(
+                agent_name="service_agent",
+                source=source,
+                history=history,
+                user_message=message,
+                flow_intent="collect_license_plate_or_vehicle_info",
+                flow_state={
+                    "intro_sent": bool(context_data.get("intro_sent")),
+                    "known_plate": known_plate or None,
+                    "supported_plate_formats": ["12-345-67", "123-45-678", "1234567", "12345678"],
+                    "alternative": "or provide manufacturer + model + year",
+                },
+
+                shared_memory_prompt=shared_memory_prompt,)
+            route_result = {
+                "agent": "service_agent",
+                "confidence": 1.0,
+                "language": "he",
+                "intent": "collect_license_plate_or_vehicle_info",
+                "extracted_data": {},
+            }
+            agent_name = "service_agent"
+            exec_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
 
         else:
             # Step 2: resolve vehicle details from gov.il and ask for confirmation
@@ -5714,6 +6157,22 @@ async def process_user_message(
                     search_q = search_q.replace(incoming_plate, "").strip(" -:")
                 if len(search_q.strip()) < 2:
                     search_q = effective_message.strip()
+                # Strip the customer's restated car from the part query (added
+                # 2026-07-09): "מסנן שמן לטויוטה קורולה 2018" → "מסנן שמן". The
+                # vehicle words otherwise poison the fitment-filtered search and
+                # return 0 (part names never contain "corolla 2018").
+                _mk_hint = (vehicle_profile or {}).get("manufacturer") or ""
+                _md_hint = (vehicle_profile or {}).get("model") or ""
+                if _mk_hint or _md_hint:
+                    _cleaned_q = _strip_vehicle_terms(search_q, _mk_hint, _md_hint)
+                    if len(_cleaned_q) >= 2:
+                        search_q = _cleaned_q
+                # Price/quantity/how-much follow-up with no NEW part named
+                # ("כמה זה עולה?", "how much?", "יש במלאי?") → the customer means
+                # the part we were just discussing. Reuse the last part query so
+                # we re-price it instead of searching for the follow-up phrase.
+                if last_part_query and not _has_part_signal(effective_message) and not _quick_part_from_message(message):
+                    search_q = last_part_query
 
                 category_hint = pf._extract_category_hint(search_q)
                 manufacturer_hint = (vehicle_profile or {}).get("manufacturer") or None
@@ -5723,6 +6182,10 @@ async def process_user_message(
                 # only parts with a part_vehicle_fitment row matching the
                 # customer's confirmed car (make+model+year from the gov API).
                 # These are "the right parts for THIS car", not text matches.
+                # make + category are KEPT (owner directive 2026-07-09): they
+                # stop us selling the wrong part. When the category filter is
+                # thin/empty, we do NOT silently show cross-category parts — we
+                # fall back progressively and the agent verifies with the client.
                 verified_fit = False
                 results = await pf.search_parts_in_db(
                     query=search_q,
@@ -5735,11 +6198,28 @@ async def process_user_message(
                     user_id=str(user_id),
                     vehicle_profile=vehicle_profile,
                 )
+                # Tier 0b: fitment + make WITHOUT category — the category
+                # vocabulary is inconsistent (the same oil filter sits in
+                # 'filters'/'engine'/'כללי'/'general'), so a category miss must
+                # not discard a genuinely fitment-VERIFIED part. Still 100% safe:
+                # the part_vehicle_fitment row proves it fits THIS exact car.
+                if not results:
+                    results = await pf.search_parts_in_db(
+                        query=search_q,
+                        vehicle_id=None,
+                        category=None,
+                        db=db,
+                        limit=5,
+                        sort_by="name",
+                        vehicle_manufacturer=manufacturer_hint,
+                        user_id=str(user_id),
+                        vehicle_profile=vehicle_profile,
+                    )
                 if results:
                     verified_fit = True
 
-                # Tier 1: same make, fitment not verified (coverage is partial
-                # — a real part may simply lack a fitment row yet).
+                # Tier 1: same make + category, fitment not verified (coverage is
+                # partial — a real part may simply lack a fitment row yet).
                 if not results:
                     results = await pf.search_parts_in_db(
                         query=search_q,
@@ -5751,8 +6231,48 @@ async def process_user_message(
                         vehicle_manufacturer=manufacturer_hint,
                         user_id=str(user_id),
                     )
+                # Tier 1b: same make WITHOUT category (category vocab mismatch).
+                if not results:
+                    results = await pf.search_parts_in_db(
+                        query=search_q,
+                        vehicle_id=None,
+                        category=None,
+                        db=db,
+                        limit=5,
+                        sort_by="name",
+                        vehicle_manufacturer=manufacturer_hint,
+                        user_id=str(user_id),
+                    )
 
-                # Fallback 1: broaden by removing manufacturer filter.
+                # Tier 2: RELAXED query, still make (+fitment). A multi-word Hebrew
+                # query with a trailing qualifier over-constrains against English
+                # catalog names — "רפידות בלם קדמיות" returns 0 but "רפידות בלם"
+                # returns 5 ("Brake Pads Front"). Progressively drop trailing words
+                # (keep make so we never cross-brand). Fitment-first, then make.
+                if not results:
+                    _tokens = [t for t in re.split(r"\s+", (search_q or "").strip()) if t]
+                    for _n in range(len(_tokens) - 1, 1, -1):   # try first n-1 … 2 words
+                        _rq = " ".join(_tokens[:_n])
+                        results = await pf.search_parts_in_db(
+                            query=_rq, vehicle_id=None, category=None, db=db, limit=5,
+                            sort_by="name", vehicle_manufacturer=manufacturer_hint,
+                            user_id=str(user_id), vehicle_profile=vehicle_profile,
+                        )
+                        if results:
+                            verified_fit = True
+                            break
+                        results = await pf.search_parts_in_db(
+                            query=_rq, vehicle_id=None, category=None, db=db, limit=5,
+                            sort_by="name", vehicle_manufacturer=manufacturer_hint,
+                            user_id=str(user_id),
+                        )
+                        if results:
+                            break
+
+                # Fallback 1: last resort — broaden by removing the manufacturer
+                # filter. These are NOT same-make so they show with the unverified
+                # banner ("ההתאמה טרם אומתה — שלח OEM לוודא"): the agent explicitly
+                # asks the client to verify rather than implying a guaranteed fit.
                 if not results and manufacturer_hint:
                     results = await pf.search_parts_in_db(
                         query=search_q,
@@ -5982,6 +6502,7 @@ async def process_user_message(
                 "אציג אפשרויות ומחירים, ואז אשלח קישור תשלום מאובטח."
             )
 
+    response_text = _strip_leaked_reasoning(response_text)
     response_text = _sanitize_internal_pricing_disclosure(response_text)
 
     db.add(AgentAction(

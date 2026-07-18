@@ -3052,6 +3052,37 @@ async def get_all_orders_admin(
     }
 
 
+async def _email_order_status_update(order_id: str, status_he: str, new_status: str = "") -> None:
+    """Best-effort delivery-status email to the customer (+ a review request on delivery).
+    Own session, all errors swallowed so it never affects the admin action."""
+    try:
+        import os
+        from BACKEND_DATABASE_MODELS import pii_session_factory, Order, User
+        from routes.email_utils import send_template
+        import email_templates as ET
+        site = os.getenv("FRONTEND_URL", "https://autosparefinder.co.il").rstrip("/")
+        async with pii_session_factory() as _db:
+            order = (await _db.execute(select(Order).where(Order.id == order_id))).scalar_one_or_none()
+            if not order:
+                return
+            user = (await _db.execute(select(User).where(User.id == order.user_id))).scalar_one_or_none()
+            if not user or not user.email:
+                return
+        name = user.full_name or ""
+        tracking = getattr(order, "tracking_number", None)
+        # CTA links to the order page (shows live tracking); if a real tracking number
+        # exists the email surfaces it in the details box too.
+        await send_template(user.email, name,
+                            ET.delivery_update(name, order.order_number, status_he,
+                                               tracking, f"{site}/orders"))
+        # On delivery, follow up with a review request.
+        if new_status == "delivered":
+            await send_template(user.email, name,
+                                ET.review_request(name, order.order_number, f"{site}/orders"))
+    except Exception as _e:
+        print(f"[Email] order-status email failed for {order_id}: {_e}")
+
+
 @router.put("/api/v1/admin/orders/{order_id}/status")
 async def update_order_status_admin(
     order_id: str,
@@ -3095,6 +3126,10 @@ async def update_order_status_admin(
     ))
     asyncio.create_task(_guarded_task(publish_notification(str(order.user_id), {"type": "order_update", "title": "עדכון סטטוס הזמנה", "message": _status_msg})))
     await db.commit()
+    # Delivery-status email to the customer (background, never blocks the admin action).
+    if new_status in ("processing", "shipped", "delivered", "cancelled"):
+        asyncio.create_task(_guarded_task(
+            _email_order_status_update(str(order.id), status_labels.get(new_status, new_status), new_status)))
     return {"message": "Status updated", "old": old_status, "new": new_status}
 
 

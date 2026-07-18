@@ -1,24 +1,40 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { Component } from 'react'
+import { Component, Suspense, lazy } from 'react'
 import { Toaster } from 'react-hot-toast'
 import Layout from './components/Layout'
 import ProtectedRoute from './components/ProtectedRoute'
+
+// Route-level code-splitting (2026-07-14): each page is a separate lazy chunk so the
+// first load after login downloads only the shell + the page being viewed, instead of
+// one ~848KB bundle containing the whole app (heavy pages — Admin, Parts, Agents, Chat —
+// dominated it). Login + LandingPage stay eager so the two most common first-paints show
+// with no Suspense flash.
 import Login from './pages/Login'
-import Register from './pages/Register'
-import ResetPassword from './pages/ResetPassword'
-import Privacy from './pages/Privacy'
-import Terms from './pages/Terms'
-import Refund from './pages/Refund'
-import Chat from './pages/Chat'
 import LandingPage from './pages/LandingPage'
-import ClientPortal from './pages/ClientPortal'
-import Parts from './pages/Parts'
-import Orders from './pages/Orders'
-import Cart from './pages/Cart'
-import Profile from './pages/Profile'
-import Admin from './pages/Admin'
-import Agents from './pages/Agents'
-import PaymentSuccess from './pages/PaymentSuccess'
+
+const Register = lazy(() => import('./pages/Register'))
+const ResetPassword = lazy(() => import('./pages/ResetPassword'))
+const Privacy = lazy(() => import('./pages/Privacy'))
+const Terms = lazy(() => import('./pages/Terms'))
+const Refund = lazy(() => import('./pages/Refund'))
+const Chat = lazy(() => import('./pages/Chat'))
+const ClientPortal = lazy(() => import('./pages/ClientPortal'))
+const Parts = lazy(() => import('./pages/Parts'))
+const Orders = lazy(() => import('./pages/Orders'))
+const Cart = lazy(() => import('./pages/Cart'))
+const Profile = lazy(() => import('./pages/Profile'))
+const Admin = lazy(() => import('./pages/Admin'))
+const Agents = lazy(() => import('./pages/Agents'))
+const PaymentSuccess = lazy(() => import('./pages/PaymentSuccess'))
+
+function PageLoader() {
+  return (
+    <div style={{ minHeight: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ width: 40, height: 40, border: '3px solid #e5e7eb', borderTopColor: '#00A3FF', borderRadius: '50%', animation: 'asf-spin 0.8s linear infinite' }} />
+      <style>{'@keyframes asf-spin{to{transform:rotate(360deg)}}'}</style>
+    </div>
+  )
+}
 
 class ErrorBoundary extends Component {
   state = { error: null, info: null }
@@ -61,6 +77,7 @@ export default function App() {
           }}
         />
 
+        <Suspense fallback={<PageLoader />}>
         <Routes>
           {/* Public routes */}
           <Route path="/login" element={<Login />} />
@@ -184,6 +201,7 @@ export default function App() {
 
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </Suspense>
       </BrowserRouter>
     </ErrorBoundary>
   )

@@ -48,6 +48,18 @@ _PART_TYPE_FIX_VALUES = {
 
 
 def _guess_category(text: str) -> str | None:
+    # Prefer the comprehensive category_map (goal G6, 2026-07-13): richer keyword rules
+    # + car-parts.ie URL-slug + variant normalization. The blob is passed as BOTH name
+    # and name_he so category_map's Latin AND Hebrew keyword rules both see it. Falls
+    # back to the legacy matcher. This upgrades the live pipeline so NEW parts get the
+    # better categorization automatically (existing backlog handled by recategorize_backlog.py).
+    try:
+        from category_map import categorize as _cm_categorize
+        cat = _cm_categorize(name=text, name_he=text)
+        if cat:
+            return cat
+    except Exception:
+        pass
     return guess_category_by_text(text)
 
 
@@ -989,16 +1001,42 @@ async def _process_cleanup_agent_todos() -> int:
     return processed
 
 
+_BASE_PRICE_BATCH_SKIP_UNTIL = 0.0
+_BASE_PRICE_BATCH_BACKOFF_S = 30.0
+_BASE_PRICE_BATCH_BACKOFF_MAX = 1800.0
+
+
 async def task_normalize_base_price_batched(batch_size: int = 1000) -> int:
     """Batched normalize_base_price — replaces the disabled full-table-scan version.
     Finds parts where base_price=0 but a supplier_parts price exists, then sets:
       supplier_parts.price_ils = ex-VAT cost (documented in db_update_agent.py:1243)
       base_price = cost * 1.45  (45% margin — CLAUDE.md policy)
       importer_price_ils = cost (the raw ex-VAT cost)
-    Safe: processes batch_size rows per call, never scans full 3.4M table at once."""
+    Safe: processes batch_size rows per call, never scans full 3.4M table at once.
+
+    Exponential backoff (added 2026-07-11): there are ~2.24M active parts with
+    base_price=0, but essentially ALL of them are the unpriced global catalog with
+    NO supplier price — i.e. NOTHING is fixable. This task was Seq-scanning 2.24M
+    rows every 30s to fix 0 rows — a chronic ~30-min bottleneck that held a
+    snapshot open (it blocked a CONCURRENTLY index build) and deadlocked the
+    harvester. Now it backs off (30s → 30min) when it fixes nothing, and resets to
+    eager the moment new priced parts appear. Same pattern as
+    task_recover_priced_inactive."""
+    global _BASE_PRICE_BATCH_SKIP_UNTIL, _BASE_PRICE_BATCH_BACKOFF_S
+    if time.monotonic() < _BASE_PRICE_BATCH_SKIP_UNTIL:
+        return 0
     fixed = 0
     try:
         async with scraper_session_factory() as db:
+            await db.execute(text("SET LOCAL statement_timeout = '30s'"))
+            # ROOT FIX 2026-07-11: drive from RECENTLY-UPDATED supplier_parts
+            # (indexed by ix_supplier_parts_updated_at → 0.27ms) instead of
+            # scanning all 2.24M base_price=0 parts (90s+, found nothing). A
+            # base_price=0 part only becomes fixable when the harvester writes a
+            # supplier price for it — which bumps supplier_parts.updated_at — so
+            # the recent window catches exactly those. The 35-min window is wider
+            # than the max backoff (30 min) below, so nothing is missed between
+            # runs. Idempotent: once fixed, base_price>0 excludes it next time.
             result = await db.execute(text("""
                 UPDATE parts_catalog pc
                 SET base_price        = ROUND((sp_min.min_price * 1.45)::numeric, 2),
@@ -1009,12 +1047,8 @@ async def task_normalize_base_price_batched(batch_size: int = 1000) -> int:
                 FROM (
                     SELECT sp.part_id, MIN(sp.price_ils) AS min_price
                     FROM supplier_parts sp
-                    WHERE sp.is_available = TRUE AND sp.price_ils > 0
-                      AND EXISTS (
-                          SELECT 1 FROM parts_catalog p2
-                          WHERE p2.id = sp.part_id AND p2.is_active
-                            AND (p2.base_price IS NULL OR p2.base_price = 0)
-                      )
+                    WHERE sp.updated_at > NOW() - INTERVAL '35 min'
+                      AND sp.is_available = TRUE AND sp.price_ils > 0
                     GROUP BY sp.part_id
                     LIMIT :batch
                 ) sp_min
@@ -1026,31 +1060,72 @@ async def task_normalize_base_price_batched(batch_size: int = 1000) -> int:
             if fixed:
                 await db.commit()
                 logger.info("task_normalize_base_price_batched: fixed %d parts", fixed)
+                # Work found → reset to eager to drain the backlog fast.
+                _BASE_PRICE_BATCH_BACKOFF_S = 30.0
+                _BASE_PRICE_BATCH_SKIP_UNTIL = 0.0
+            else:
+                _bump_base_price_backoff()
     except Exception as exc:
-        logger.error("task_normalize_base_price_batched failed: %s", exc)
+        # Timeout / error also backs off — never hammer on failure.
+        logger.warning("task_normalize_base_price_batched: %s — backing off", str(exc)[:120])
+        _bump_base_price_backoff()
     return fixed
 
 
-async def task_heal_importer_price(batch_size: int = 2000) -> int:
-    """Self-heal: fix parts where max_price_ils > 0 but importer_price_ils = 0.
-    Applies CLAUDE.md formula: cost = max_price_ils / 1.18, base = cost * 1.45.
-    Catches importer bugs where price was loaded but importer_price_ils was hardcoded 0."""
+def _bump_base_price_backoff() -> None:
+    """Exponential backoff (30s → 30min) when nothing fixable or on error."""
+    global _BASE_PRICE_BATCH_SKIP_UNTIL, _BASE_PRICE_BATCH_BACKOFF_S
+    _BASE_PRICE_BATCH_BACKOFF_S = min(
+        _BASE_PRICE_BATCH_BACKOFF_S * 2, _BASE_PRICE_BATCH_BACKOFF_MAX
+    )
+    _BASE_PRICE_BATCH_SKIP_UNTIL = time.monotonic() + _BASE_PRICE_BATCH_BACKOFF_S
+
+
+async def task_heal_importer_price(batch_size: int = 500) -> int:
+    """Self-heal: IL-sourced parts that have a reference price (max_price_ils > 0) but a
+    ZERO importer cost (importer_price_ils NULL/0). Importers must bring the ex-VAT cost —
+    a 0 there means a mispriced part (and usually base_price left at cost with NO 45% margin).
+
+    Fix: importer_price_ils = the cheapest IL supplier's recorded ex-VAT cost
+    (`supplier_parts.price_ils`, the SAME value the customer price is derived from, so the
+    fields stay consistent and customer-facing prices don't move), and base_price = cost*1.45.
+
+    Guards:
+      - `online_price_ils = 0` → only IL-sourced parts; NEVER touch foreign parts (their cost
+        is online_price_ils and importer_price_ils=0 is correct there).
+      - `FOR UPDATE SKIP LOCKED` → never fights the harvester/importers for row locks.
+      - Fixed 2026-07-18: the old version skipped any row that already had a base_price
+        (`AND base_price = 0`), so parts whose base_price was written but importer cost was
+        left 0 were NEVER healed — that left a permanent backlog of margin-less parts."""
     fixed = 0
     try:
         async with scraper_session_factory() as db:
             result = await db.execute(text("""
-                UPDATE parts_catalog
-                SET importer_price_ils = ROUND((max_price_ils / 1.18)::numeric, 2),
-                    base_price = ROUND(((max_price_ils / 1.18) * 1.45)::numeric, 2),
-                    updated_at = NOW()
-                WHERE id IN (
+                WITH gap AS (
                     SELECT id FROM parts_catalog
                     WHERE is_active
                       AND max_price_ils > 0
                       AND (importer_price_ils IS NULL OR importer_price_ils = 0)
-                      AND (base_price IS NULL OR base_price = 0)
+                      AND (online_price_ils IS NULL OR online_price_ils = 0)
+                    ORDER BY id
                     LIMIT :batch
+                    FOR UPDATE SKIP LOCKED
+                ),
+                cost AS (
+                    SELECT sp.part_id, MIN(sp.price_ils) AS c
+                    FROM supplier_parts sp
+                    JOIN suppliers s ON s.id = sp.supplier_id
+                    WHERE sp.part_id IN (SELECT id FROM gap)
+                      AND sp.price_ils > 0
+                      AND s.country = 'Israel'
+                    GROUP BY sp.part_id
                 )
+                UPDATE parts_catalog pc
+                SET importer_price_ils = cost.c,
+                    base_price = ROUND((cost.c * 1.45)::numeric, 2),
+                    updated_at = NOW()
+                FROM cost
+                WHERE pc.id = cost.part_id
             """), {"batch": batch_size})
             fixed = result.rowcount or 0
             if fixed:

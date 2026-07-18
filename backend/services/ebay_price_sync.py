@@ -17,6 +17,11 @@ from services.suppliers.ebay_supplier import EbaySupplier
 
 logger = logging.getLogger(__name__)
 
+# Rotating cursor (id) for walking the unpriced-parts backlog across runs so
+# every daily run prices FRESH unpriced parts instead of re-selecting the same
+# ones. Resets on restart (starts from the lowest id again — harmless).
+_EBAY_SYNC_LAST_ID = "00000000-0000-0000-0000-000000000000"
+
 ebay = EbaySupplier()
 USD_TO_ILS_FALLBACK = float(os.getenv("USD_TO_ILS", "3.72"))
 
@@ -266,47 +271,61 @@ async def sync_ebay_prices(
         report["ils_per_usd_rate"] = float(ils_per_usd_rate)
         report["run_started_at"] = datetime.utcnow().isoformat() + "Z"
 
+        # Brands to price from eBay. Default now covers the LARGEST unpriced
+        # blocks too (Kia/Toyota/Porsche/Lexus/Volvo/Audi/Subaru/… were missing
+        # from the old 24-brand list, so 70% of the 2.24M unpriced parts could
+        # NEVER get an eBay price). Override with EBAY_PRICE_SYNC_BRANDS (comma
+        # list) or set it to 'ALL' to price every brand by OEM number.
+        _DEFAULT_BRANDS = [
+            "Chevrolet", "Mercedes-Benz", "Hyundai", "Citroen", "Peugeot",
+            "Mitsubishi", "Genesis", "Smart", "Jaecoo", "Nissan", "Honda",
+            "Renault", "BMW", "Jaguar", "MINI", "Ford", "Mazda", "MG", "Maxus",
+            "Jetour", "BYD", "Chery", "GWM", "Omoda",
+            # added 2026-07-11 — the big unpriced brands:
+            "Kia", "Toyota", "Porsche", "Lexus", "Volvo", "Infiniti", "Chrysler",
+            "Land Rover", "Audi", "Subaru", "Acura", "WEY", "Volkswagen", "Skoda",
+            "SEAT", "Suzuki", "Opel", "Fiat", "Alfa Romeo", "Dacia", "Lancia",
+            "Cadillac", "GMC", "Buick", "Dodge", "Jeep", "RAM", "Lincoln",
+        ]
+        _brands_env = (os.getenv("EBAY_PRICE_SYNC_BRANDS", "") or "").strip()
+        _all_brands = _brands_env.upper() == "ALL"
+        _brands = [b.strip() for b in _brands_env.split(",") if b.strip()] or _DEFAULT_BRANDS
+
+        # Target ONLY unpriced parts (base_price 0/NULL) so every run CLOSES the
+        # gap instead of re-pricing already-priced rows (the old ORDER BY RANDOM()
+        # over millions wasted its budget on priced parts AND took 48s). Walk the
+        # unpriced backlog in id order via a rotating cursor (`_EBAY_SYNC_LAST_ID`)
+        # — cheap (pkey index, ~1.8s) and makes deterministic forward progress;
+        # wraps to the start when it reaches the end. Priced parts still get
+        # market-drift refresh from the synthetic pass in sync_prices.
+        global _EBAY_SYNC_LAST_ID
+        _brand_filter = "" if _all_brands else "AND manufacturer = ANY(:brands)"
+        _q_params = {"limit": limit_per_run, "last_id": _EBAY_SYNC_LAST_ID}
+        if not _all_brands:
+            _q_params["brands"] = _brands
         parts = await db.execute(
             text(
-                """
+                f"""
                 SELECT id, oem_number, name
                 FROM parts_catalog
                 WHERE is_active = true
                   AND oem_number IS NOT NULL
                   AND oem_number != ''
-                  AND manufacturer IN (
-                      'Chevrolet',
-                      'Mercedes-Benz',
-                      'Hyundai',
-                      'Citroen',
-                      'Peugeot',
-                      'Mitsubishi',
-                      'Genesis',
-                      'Smart',
-                      'Jaecoo',
-                      'Nissan',
-                      'Honda',
-                      'Renault',
-                      'BMW',
-                      'Jaguar',
-                      'MINI',
-                      'Ford',
-                      'Mazda',
-                      'MG',
-                      'Maxus',
-                      'Jetour',
-                      'BYD',
-                      'Chery',
-                      'GWM',
-                      'Omoda'
-                  )
-                ORDER BY RANDOM()
+                  AND (base_price IS NULL OR base_price = 0)
+                  AND id > CAST(:last_id AS uuid)
+                  {_brand_filter}
+                ORDER BY id
                 LIMIT :limit
                 """
             ),
-            {"limit": limit_per_run},
+            _q_params,
         )
         part_rows = parts.fetchall()
+        # Advance / wrap the cursor.
+        if len(part_rows) < limit_per_run:
+            _EBAY_SYNC_LAST_ID = "00000000-0000-0000-0000-000000000000"  # reached end → wrap
+        elif part_rows:
+            _EBAY_SYNC_LAST_ID = str(part_rows[-1].id)
 
         logger.info("eBay price sync: checking %d parts", len(part_rows))
         search_url_base = f"{getattr(ebay, '_base_url', 'https://api.ebay.com')}/buy/browse/v1/item_summary/search"
@@ -596,6 +615,12 @@ async def sync_ebay_prices(
                 change_pct = None
                 if old_price_ils is not None and old_price_ils > 0:
                     change_pct = float(((price_ils - old_price_ils) / old_price_ils * Decimal("100")).quantize(Decimal("0.0001")))
+                    # price_history.change_pct is NUMERIC(7,4) (max ±999.9999). A
+                    # part re-priced from a stale near-zero old price can compute
+                    # a huge % (e.g. +4405%) that overflowed and ABORTED the whole
+                    # sync run partway (fixed 2026-07-11). Cap it — it's just a
+                    # change indicator, not used for money.
+                    change_pct = max(-999.9999, min(999.9999, change_pct))
 
                 await db.execute(
                     text(

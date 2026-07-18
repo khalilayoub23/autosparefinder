@@ -1174,7 +1174,7 @@ function TypeSection({ typeKey, data, onAddToCart }) {
   )
 }
 
-function PartCard({ part, onAddToCart }) {
+function PartCard({ part, onAddToCart, brandLogos = {} }) {
   const [showAllOffers, setShowAllOffers] = useState(false)
   const suppliers = part.suppliers || (part.pricing ? [part.pricing] : [])
   const normalizedSuppliers = suppliers.map((sp) => _supplierForCard(sp))
@@ -1202,6 +1202,33 @@ function PartCard({ part, onAddToCart }) {
   const typeLabel = PART_TYPE_LABEL[part.part_type] || part.part_type || 'כללי'
   const accent = CATEGORY_ACCENT[part.category] || CATEGORY_ACCENT['כללי']
 
+  // Price-watch heart — emails the customer (price_drop) when this part's price drops.
+  const [watching, setWatching] = useState(false)
+  const [watchBusy, setWatchBusy] = useState(false)
+  const toggleWatch = async () => {
+    if (watchBusy) return
+    if (!localStorage.getItem('access_token')) {
+      toast('כדי לעקוב אחרי מחיר צריך להתחבר', { icon: '🔔' })
+      return
+    }
+    setWatchBusy(true)
+    try {
+      if (watching) {
+        await partsApi.unwatch(part.id)
+        setWatching(false)
+        toast('הופסק המעקב אחר המחיר')
+      } else {
+        await partsApi.watch(part.id)
+        setWatching(true)
+        toast.success('עוקבים אחר המחיר — נעדכן במייל אם יירד 📉')
+      }
+    } catch (e) {
+      toast.error(e?.response?.status === 404 ? 'החלק לא זמין לתמחור כרגע' : 'לא הצלחנו לעדכן מעקב')
+    } finally {
+      setWatchBusy(false)
+    }
+  }
+
   return (
     <article className="group relative flex h-full flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_18px_50px_-30px_rgba(15,23,42,0.28)] transition-all duration-200 hover:-translate-y-1 hover:shadow-[0_24px_70px_-30px_rgba(15,23,42,0.35)]">
       <div className={`absolute inset-x-0 top-0 h-24 ${accent.bg} opacity-80`} />
@@ -1218,11 +1245,34 @@ function PartCard({ part, onAddToCart }) {
               </div>
               <h3 className="min-h-[3rem] text-base font-black leading-6 text-brand-navy line-clamp-2">{part.name}</h3>
               <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
-                <span className="inline-flex items-center rounded-full border border-slate-200 bg-white/90 px-2.5 py-1 font-medium text-slate-600">{part.manufacturer || 'יצרן לא זמין'}</span>
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white/90 pl-1 pr-2.5 py-1 font-medium text-slate-600">
+                  {part.manufacturer ? (
+                    <img
+                      src={logoForManufacturer(part.manufacturer, brandLogos) || fallbackLogoDataUri(part.manufacturer)}
+                      alt=""
+                      aria-hidden="true"
+                      loading="lazy"
+                      className="h-4 w-4 flex-shrink-0 rounded-sm object-contain"
+                      onError={(e) => { e.currentTarget.src = fallbackLogoDataUri(part.manufacturer) }}
+                    />
+                  ) : null}
+                  {part.manufacturer || 'יצרן לא זמין'}
+                </span>
                 {part.sku ? <span className="inline-flex items-center rounded-full border border-slate-200 bg-white/90 px-2.5 py-1 font-medium text-slate-600">SKU: {part.sku}</span> : null}
               </div>
             </div>
-            <div className="hidden h-11 w-11 flex-shrink-0 items-center justify-center rounded-2xl bg-white/90 text-xl shadow-sm sm:flex">{accent.icon}</div>
+            <button
+              type="button"
+              onClick={toggleWatch}
+              disabled={watchBusy}
+              aria-pressed={watching}
+              title={watching ? 'הפסק מעקב מחיר' : 'עקוב אחרי המחיר — נעדכן במייל אם יירד'}
+              className={`flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-2xl border shadow-sm transition-colors ${watching ? 'border-brand-200 bg-brand-50 text-brand-600' : 'border-slate-200 bg-white/90 text-slate-400 hover:text-brand-500 hover:border-brand-200'} disabled:opacity-50`}
+            >
+              <svg viewBox="0 0 24 24" className="h-5 w-5" fill={watching ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 1 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8z" />
+              </svg>
+            </button>
           </div>
         </div>
 
@@ -4707,7 +4757,7 @@ export default function Parts() {
           })() : (
             <>
               <div className="grid grid-cols-1 gap-4 sm:gap-5 md:grid-cols-2 xl:grid-cols-3">
-                {displayParts.map((p) => <PartCard key={p.id} part={p} onAddToCart={addItem} />)}
+                {displayParts.map((p) => <PartCard key={p.id} part={p} onAddToCart={addItem} brandLogos={brandLogos} />)}
                 {displayParts.length === 0 && filterAvail && (
                   <div className="col-span-3 rounded-[24px] border border-dashed border-slate-200 py-8 text-center text-sm text-slate-400">
                     אין חלקים עם סטטוס "{filterAvail === 'in_stock' ? 'במלאי' : 'על הזמנה'}" בדף זה

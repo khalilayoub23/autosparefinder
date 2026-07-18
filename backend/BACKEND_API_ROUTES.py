@@ -57,18 +57,33 @@ logger = logging.getLogger(__name__)
 
 SEARCH_WARMUP_ENABLED = os.getenv("SEARCH_WARMUP_ENABLED", "1").strip().lower() in ("1", "true", "yes", "on")
 SEARCH_WARMUP_DELAY_S = float(os.getenv("SEARCH_WARMUP_DELAY_S", "0"))
-SEARCH_WARMUP_QUERY_TIMEOUT_S = float(os.getenv("SEARCH_WARMUP_QUERY_TIMEOUT_S", "3"))
+
+# 25s (was 3s): the heaviest warmup shape (empty query + full vehicle fitment) is
+# a COLD-cache prime that legitimately takes >3s, so a 3s cap timed it out every
+# boot → the wait_for cancellation left the asyncpg connection unusable and logged
+# "cannot call Transaction.rollback(): the underlying connection is closed" (fixed
+# 2026-07-11, together with the per-case session isolation in _warm_search_paths).
+SEARCH_WARMUP_QUERY_TIMEOUT_S = float(os.getenv("SEARCH_WARMUP_QUERY_TIMEOUT_S", "25"))
 SEARCH_WARMUP_CASES: List[Dict[str, Any]] = [
-    {"query": "engine", "category": "מנוע", "timeout_s": 12},
-    {"query": "filter", "category": "סינון"},
+    # category values are English DB slugs (the Hebrew names matched 0 rows —
+    # see the category root-fix 2026-07-09).
+    {"query": "engine", "category": "engine", "timeout_s": 12},
+    {"query": "filter", "category": "filter"},
     {"query": "mirror"},
     {"query": "battery"},
     {"query": "bosch"},
     {
+        # Empty query + full vehicle fitment = "browse all parts for my car".
+        # Measured 78s COLD / 0s warm (2026-07-11) — an unbounded fitment scan.
+        # This warmup PRIMES that Redis cache so the first real customer gets the
+        # warm path instead of eating 78s. Needs a timeout above the cold time;
+        # it runs in the background at startup, so a long prime is non-blocking.
+        # (Deeper perf TODO: the cold empty-query fitment scan itself is slow.)
         "query": "",
         "vehicle_manufacturer": "Toyota",
         "vehicle_model": "Corolla",
         "vehicle_year": 2018,
+        "timeout_s": 120,
     },
 ]
 
@@ -229,9 +244,14 @@ async def _warm_search_paths() -> None:
     try:
         from routes.parts import search_parts
 
-        async with async_session_factory() as db:
-            for case in SEARCH_WARMUP_CASES:
-                try:
+        # Fresh session PER case (fixed 2026-07-11): a shared session broke here —
+        # when a case hit the wait_for timeout, cancelling the query mid-flight
+        # left the asyncpg connection in an aborted state, so every later case
+        # failed with "cannot call Transaction.rollback(): the underlying
+        # connection is closed" (17× in logs). One session per case isolates that.
+        for case in SEARCH_WARMUP_CASES:
+            try:
+                async with async_session_factory() as db:
                     await asyncio.wait_for(
                         search_parts(
                             query=case.get("query", ""),
@@ -250,9 +270,21 @@ async def _warm_search_paths() -> None:
                         ),
                         timeout=float(case.get("timeout_s", SEARCH_WARMUP_QUERY_TIMEOUT_S)),
                     )
-                except Exception as exc:
-                    logger.warning("[SearchWarmup] failed for %s: %s", case, exc)
+            except Exception as exc:
+                logger.warning("[SearchWarmup] failed for %s: %s", case, exc)
         print(f"[SearchWarmup] primed {len(SEARCH_WARMUP_CASES)} search shapes")
+
+        # Pre-warm the manufacturers cache (its scan is ~68s; the parts page fetches
+        # the brand dropdown on load, so a cold cache = the "pages hang after login"
+        # symptom). Kick it off in the BACKGROUND — awaiting it would block startup /
+        # readiness for ~68s on every restart. It fills the cache within a minute; the
+        # single-flight lock covers the rare user who hits it before it finishes.
+        try:
+            from routes.parts import _refresh_manufacturers_cache
+            asyncio.create_task(_guarded_task(_refresh_manufacturers_cache()))
+            print("[SearchWarmup] manufacturers cache pre-warm scheduled (background)")
+        except Exception as exc:
+            logger.warning("[SearchWarmup] manufacturers pre-warm failed: %s", exc)
     except Exception as exc:
         logger.warning("[SearchWarmup] startup warmup failed: %s", exc)
 
@@ -788,6 +820,21 @@ async def _status_update_loop() -> None:
                     SELECT COUNT(*) FROM parts_catalog WHERE is_active = TRUE
                 """))).scalar() or 0
 
+                # Harvest-queue progress (fix 2026-07-08): the daily report
+                # looked "the same every day" because it showed only total_parts
+                # (4.19M, barely moves) and never the harvesters' actual work.
+                # Add live IL-queue coverage + a 24h delta so the report visibly
+                # reflects what the harvesters accomplished.
+                _hq = (await _db.execute(text("""
+                    SELECT
+                        COUNT(*) FILTER (WHERE status IN ('done','empty')) AS done,
+                        COUNT(*) AS total,
+                        COUNT(DISTINCT brand_en) FILTER (WHERE status='done') AS brands_done,
+                        COALESCE(SUM(parts_found),0) AS parts_found,
+                        COUNT(*) FILTER (WHERE last_harvested_at > NOW() - INTERVAL '24 hours') AS done_24h
+                    FROM harvest_queue
+                """))).fetchone()
+
             lines.append("\n*Workers:*")
             if jobs:
                 for job in jobs:
@@ -826,6 +873,15 @@ async def _status_update_loop() -> None:
             lines.append(f"\n*Catalog:* {total_parts:,} active parts")
             lines.append(f"  +{new_parts} added in last 30m")
 
+            # Harvest coverage — the moving number that shows daily progress.
+            if _hq and _hq[1]:
+                _hq_done, _hq_total, _hq_brands, _hq_parts, _hq_24h = _hq
+                _hq_pct = round(_hq_done * 100.0 / _hq_total, 1) if _hq_total else 0
+                lines.append(
+                    f"\n*Harvest (IL market):* {_hq_done:,}/{_hq_total:,} models ({_hq_pct}%)"
+                )
+                lines.append(f"  {_hq_brands} brands · {_hq_parts:,} parts found · +{_hq_24h} models in 24h")
+
             # Decide whether to actually send: problems, or the daily digest.
             # A dead/failed job only counts if NOT superseded by a newer
             # running/completed cycle of the same task — deploy restarts kill
@@ -835,10 +891,24 @@ async def _status_update_loop() -> None:
                 str(j.job_name).split(":")[0]
                 for j in jobs if j.status in ("running", "completed")
             }
+
+            # Restart-orphan guard (2026-07-13): a job whose last activity predates this
+            # container's start died with the previous process (deploy/OOM/SIGKILL), not
+            # from a real failure. Don't count it as a problem worth alerting the owner.
+            _cstart_naive = _BACKEND_START_UTC.replace(tzinfo=None)
+
+            def _job_within_container(j) -> bool:
+                ts = j.last_heartbeat_at or j.started_at
+                if ts is None:
+                    return True
+                ts = ts.replace(tzinfo=None) if ts.tzinfo else ts
+                return ts >= _cstart_naive
+
             failed_jobs = [
                 j for j in jobs
                 if j.status in ("failed", "dead")
                 and str(j.job_name).split(":")[0] not in _healthy_names
+                and _job_within_container(j)
             ]
             problem_sig = ",".join(sorted(dead_tasks)) + "|" + ",".join(
                 sorted(f"{j.job_name}:{j.status}" for j in failed_jobs)
@@ -1024,7 +1094,7 @@ async def _car_parts_ie_harvester_loop() -> None:
     import time as _time
 
     await asyncio.sleep(60)  # let flaresolverr/network settle on startup
-    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "car_parts_ie_flaresolverr_harvester.py")
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "harvesters", "car_parts_ie_flaresolverr_harvester.py")
     env = dict(os.environ)
     env.setdefault("FLARESOLVERR_URL", "http://flaresolverr:8191/v1")
     backoff = 30
@@ -1049,6 +1119,41 @@ async def _car_parts_ie_harvester_loop() -> None:
         # Ran for a while before dying → treat as a fresh start next time.
         # Died immediately (e.g. flaresolverr unreachable) → back off harder.
         backoff = 30 if uptime > 300 else min(backoff * 2, 1800)
+        await asyncio.sleep(backoff)
+
+
+async def _amayama_fs_harvester_loop() -> None:
+    """Supervises amayama_flaresolverr_harvester.py — the SERVER-SIDE Amayama harvester
+    (FlareSolverr session+warmup bypasses Amayama's Cloudflare; injects the account
+    login cookie from amayama_session.json for prices+IL shipping). Relaunches on exit;
+    if amayama_session.json is missing (no login cookie), the harvester exits fast and
+    this backs off — so it costs nothing until the cookie is provided."""
+    import sys as _sys
+    import time as _time
+    await asyncio.sleep(75)
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "harvesters", "amayama_flaresolverr_harvester.py")
+    cookie = os.path.join(os.path.dirname(os.path.abspath(__file__)), "amayama_session.json")
+    env = dict(os.environ)
+    env.setdefault("FLARESOLVERR_URL", "http://flaresolverr:8191/v1")
+    backoff = 60
+    while True:
+        started = _time.time()
+        if not os.path.exists(cookie):
+            # no login cookie yet — don't spin; check again in 30 min
+            await asyncio.sleep(1800)
+            continue
+        try:
+            print(f"[amayama_fs_harvester] launching {script}", flush=True)
+            proc = await asyncio.create_subprocess_exec(
+                _sys.executable, script,
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL, env=env)
+            rc = await proc.wait()
+            uptime = _time.time() - started
+            print(f"[amayama_fs_harvester] exited rc={rc} after {uptime:.0f}s — restarting", flush=True)
+        except Exception as exc:
+            uptime = 0.0
+            print(f"[amayama_fs_harvester] failed to launch: {exc}", flush=True)
+        backoff = 60 if uptime > 300 else min(backoff * 2, 1800)
         await asyncio.sleep(backoff)
 
 
@@ -1238,7 +1343,13 @@ async def _car_parts_ie_stall_watchdog_loop() -> None:
                         # Most likely a killed docker exec / manual run whose asyncpg connection
                         # outlived the process. With delta processing, no real task runs this long.
                         await db.execute(text("SELECT pg_terminate_backend(:pid)"), {"pid": pid})
-                        _wds.record("kill_orphan", pid, dur_s,
+                        # Distinct action from kill_orphan: a same-container zombie is a
+                        # LEGITIMATE kill (not an orphan pre-dating the container), so it must
+                        # NOT be graded against the orphan's "predates" rule — doing so made
+                        # validate_watchdog_actions flag every zombie kill as a false anomaly
+                        # (root-fixed 2026-07-13). The validator recognises kill_zombie on its
+                        # own terms (dur_s must exceed the zombie threshold).
+                        _wds.record("kill_zombie", pid, dur_s,
                                     f"zombie: same-container query running {dur_s}s still blocking")
                         print(
                             f"[car_parts_ie_watchdog] ZOMBIE query pid={pid} "
@@ -1414,6 +1525,124 @@ async def _meili_sync_loop() -> None:
         await asyncio.sleep(7200)  # every 2h
 
 
+async def _reconcile_orphaned_jobs() -> None:
+    """Reconcile jobs left 'running' by a PREVIOUS backend container.
+
+    Root cause of the recurring "🔴 Worker failed: run_all_tasks / run_brand_discovery
+    — no heartbeat within TTL" owner alerts (root-fixed 2026-07-10): a backend
+    restart (deploy / `compose up` recreate / OOM / crash) kills in-flight
+    run_all_tasks and run_brand_discovery cycles mid-run. Their job_registry rows
+    stay status='running' with a frozen last_heartbeat_at. Nothing cleans them up
+    until the db_cleanup zombie watchdog reaps them ~2h later as 'failed', which
+    the HealthMonitor then reports to the owner as a worker failure — even though
+    nothing actually failed, the process was just restarted.
+
+    This runs ONCE at startup, BEFORE any scheduler starts a new cycle, so every
+    status='running' row with a heartbeat older than this container's start is
+    provably an orphan from the previous process. Mark them 'superseded' (a
+    terminal, NON-alerting status the HealthMonitor ignores) and free their Redis
+    locks so the fresh cycles can acquire them immediately instead of waiting out
+    the 2h zombie window. Genuine mid-run stalls (process alive but stuck >2h)
+    are unaffected — those still get reaped and alerted by the watchdog.
+    """
+    cutoff = _BACKEND_START_UTC.replace(tzinfo=None)  # job_registry timestamps are naive UTC
+    _JOB_LOCK_MAP = {
+        "run_scraper_cycle":   "scraper_cycle",
+        "run_brand_discovery": "brand_discovery",
+        "run_all_tasks":       "db_update_agent",
+        "category_discovery":  "category_discovery",
+        "sync_prices":         "price_sync",
+    }
+    try:
+        async with async_session_factory() as _db:
+            rows = (await _db.execute(text("""
+                UPDATE job_registry
+                SET status        = 'superseded',
+                    completed_at  = NOW(),
+                    error_message = 'Superseded: backend restarted mid-run (orphaned by previous container)'
+                WHERE status = 'running'
+                  AND COALESCE(last_heartbeat_at, started_at) < :cutoff
+                RETURNING job_id, job_name
+            """), {"cutoff": cutoff})).fetchall()
+            await _db.commit()
+        if rows:
+            names = [str(r.job_name).split(":")[0] for r in rows]
+            print(f"[Startup] reconciled {len(rows)} orphaned running job(s) → superseded: {names}")
+            try:
+                from BACKEND_AUTH_SECURITY import get_redis
+                _r = await get_redis()
+                if _r:
+                    for base in {n for n in names}:
+                        lock = _JOB_LOCK_MAP.get(base, base)
+                        await _r.delete(f"autospare:lock:{lock}")
+                    try:
+                        await _r.aclose()
+                    except Exception:
+                        pass
+            except Exception as _le:
+                print(f"[Startup] orphan lock clear failed: {_le}")
+        else:
+            print("[Startup] no orphaned running jobs to reconcile")
+    except Exception as e:
+        print(f"[Startup] orphan job reconciliation failed: {e}")
+
+
+async def _amayama_harvest_monitor_loop() -> None:
+    """Supervisor for the Amayama harvest. Amayama is browser-driven (its Cloudflare
+    blocks FlareSolverr AND it needs the owner's login for IL shipping), so unlike
+    car-parts.ie we CANNOT auto-restart it server-side. Instead this monitors
+    throughput: every 30 min it logs the Amayama supplier_parts count + delta, and
+    if the harvest has stalled (0 growth for ~1h) WHILE Japanese-brand OEMs are still
+    unpriced, it WhatsApps the owner once (with cooldown) to reopen the Amayama tab."""
+    import harvest_heartbeat
+    import time as _time
+    await asyncio.sleep(600)
+    last_count = None
+    last_alert_ts = 0.0
+    ALERT_COOLDOWN_S = 4 * 3600  # nudge at most every 4h while down
+    DOWN_S = 1500  # ~25 min with no feed activity = harvester genuinely stopped
+    JP_BRANDS = ("toyota", "lexus", "honda", "nissan", "mazda", "subaru",
+                 "mitsubishi", "infiniti", "acura", "suzuki", "daihatsu")
+    while True:
+        try:
+            async with async_session_factory() as _db:
+                cnt = (await _db.execute(text(
+                    "SELECT COUNT(*) FROM supplier_parts sp JOIN suppliers s ON s.id=sp.supplier_id "
+                    "WHERE s.name='Amayama'"
+                ))).scalar() or 0
+                pending = (await _db.execute(text(
+                    "SELECT COUNT(*) FROM parts_catalog "
+                    "WHERE is_active AND (base_price IS NULL OR base_price=0) "
+                    "AND LOWER(manufacturer) = ANY(:b)"
+                ), {"b": list(JP_BRANDS)})).scalar() or 0
+            delta = None if last_count is None else cnt - last_count
+            # Watch the SERVER-SIDE harvester (source 'amayama_fs' — feed heartbeat).
+            # It's supervised (auto-restarts), so a stale heartbeat means it can't run —
+            # almost always the login cookie (ama_ssid_s) expired, sometimes FlareSolverr.
+            hb_age = harvest_heartbeat.age_seconds("amayama_fs")
+            harvester_down = (hb_age is None) or (hb_age > DOWN_S)
+            print(f"[amayama_monitor] amayama_parts={cnt} delta={delta} jp_unpriced={pending} "
+                  f"fs_heartbeat_age_s={int(hb_age) if hb_age is not None else None} "
+                  f"server_harvester={'DOWN' if harvester_down else 'alive'}", flush=True)
+            if harvester_down and pending > 1000 and (_time.time() - last_alert_ts) > ALERT_COOLDOWN_S:
+                last_alert_ts = _time.time()
+                owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
+                if owner:
+                    try:
+                        await _wa_send(to=owner, text=(
+                            "🈁 SERVER Amayama harvester (FlareSolverr) is DOWN — no feed "
+                            "activity ~25 min. ~{:,} Japanese-brand parts still unpriced. "
+                            "Most likely the Amayama login cookie expired: refresh "
+                            "backend/amayama_session.json (ama_ssid_s). It auto-restarts "
+                            "once fixed.".format(pending)))
+                    except Exception:
+                        pass
+            last_count = cnt
+        except Exception as e:
+            print(f"[amayama_monitor] error: {e}", flush=True)
+        await asyncio.sleep(1800)  # 30 min
+
+
 @app.on_event("startup")
 async def startup():
     from catalog_scraper import start_scraper_task
@@ -1421,6 +1650,10 @@ async def startup():
     from db_cleanup_agent import run_cleanup_loop
     print("🚀 Auto Spare API starting...")
     print(f"   Environment: {os.getenv('ENVIRONMENT', 'development')}")
+    # Reconcile jobs orphaned by the previous container BEFORE any scheduler
+    # starts a new cycle — prevents the false "Worker failed: no heartbeat" alert
+    # that a restart used to trigger 2h later, and frees stale locks immediately.
+    await _reconcile_orphaned_jobs()
     await _load_runtime_ai_overrides_from_db()
     # Ensure the WhatsApp sentinel user exists (anonymous conversations fallback)
     async with pii_session_factory() as _db:
@@ -1449,6 +1682,7 @@ async def startup():
     _supervised_task("scrape_search_misses_loop",   _scrape_search_misses_loop())
     _supervised_task("abandoned_cart_loop",         _abandoned_cart_loop())
     _supervised_task("pending_payment_reminder",    _pending_payment_reminder_loop())
+    _supervised_task("price_watch_loop",            _price_watch_loop())
     _supervised_task("health_monitor_loop",         _health_monitor_loop())
     _supervised_task("vip_detection_loop",          _vip_detection_loop())
     _supervised_task("backup_loop",                 _backup_loop())
@@ -1465,6 +1699,8 @@ async def startup():
     _supervised_task("car_parts_ie_stall_watchdog",  _car_parts_ie_stall_watchdog_loop())
     _supervised_task("car_parts_ie_healthcheck",     _car_parts_ie_harvester_healthcheck_loop())
     _supervised_task("meili_sync_loop",              _meili_sync_loop())
+    _supervised_task("amayama_harvest_monitor",      _amayama_harvest_monitor_loop())
+    _supervised_task("amayama_fs_harvester",         _amayama_fs_harvester_loop())
     _supervised_task("harvest_supervisor",           _harvest_supervisor_loop())
     await _warm_search_paths()
     print("✅ All systems ready — price-sync + catalog-scraper + db-agent schedulers started")
@@ -1472,6 +1708,51 @@ async def startup():
 
 @app.on_event("shutdown")
 async def shutdown():
+    # Close out in-flight jobs BEFORE the process dies (added 2026-07-11).
+    # `docker restart` and `compose up` recreate both send SIGTERM, which uvicorn
+    # turns into this graceful shutdown. run_all_tasks / run_brand_discovery run
+    # as asyncio tasks INSIDE this process, so a restart kills them instantly and
+    # their job_registry rows would be left status='running' → orphaned → reaped
+    # by the 2h zombie watchdog as 'failed' → false "Worker failed" owner alert.
+    # (pre_restart.sh only SIGTERMs separate importer SUBPROCESSES; it never
+    # touched these in-process asyncio jobs — which is why the pre-restart layer
+    # didn't stop the orphan/anomaly alerts.) Marking them 'superseded' here
+    # closes the orphan window on every GRACEFUL restart; _reconcile_orphaned_jobs()
+    # at startup is the safety net for UNGRACEFUL deaths (OOM / SIGKILL / crash),
+    # where this handler never gets to run.
+    try:
+        _JOB_LOCK_MAP = {
+            "run_scraper_cycle": "scraper_cycle", "run_brand_discovery": "brand_discovery",
+            "run_all_tasks": "db_update_agent", "category_discovery": "category_discovery",
+            "sync_prices": "price_sync",
+        }
+        async with async_session_factory() as _db:
+            _rows = (await _db.execute(text("""
+                UPDATE job_registry
+                SET status='superseded', completed_at=NOW(),
+                    error_message='Superseded: backend graceful shutdown (restart)'
+                WHERE status='running'
+                RETURNING job_name
+            """))).fetchall()
+            await _db.commit()
+        if _rows:
+            _names = {str(r.job_name).split(":")[0] for r in _rows}
+            print(f"[Shutdown] closed {len(_rows)} in-flight job(s) → superseded: {sorted(_names)}")
+            try:
+                from BACKEND_AUTH_SECURITY import get_redis
+                _r = await get_redis()
+                if _r:
+                    for _base in _names:
+                        await _r.delete(f"autospare:lock:{_JOB_LOCK_MAP.get(_base, _base)}")
+                    try:
+                        await _r.aclose()
+                    except Exception:
+                        pass
+            except Exception as _le:
+                print(f"[Shutdown] lock clear failed: {_le}")
+    except Exception as _e:
+        print(f"[Shutdown] job reconciliation failed: {_e}")
+
     from hf_client import close_http
     await close_http()
     print("✅ HF connection pool closed")
@@ -1517,13 +1798,34 @@ def _format_cart_items_for_whatsapp(item_lines: list[str], max_items: int = 3) -
     return summary
 
 
-def _build_abandoned_cart_whatsapp_message(full_name: str | None, item_lines: list[str], total_value: float) -> str:
+def _cart_recovery_url(user_id) -> str:
+    """A one-tap link that logs the RECIPIENT into their own account and lands on their
+    cart (see /api/v1/customers/cart/recover). Used instead of a bare /cart URL, which
+    would show whoever is logged into the device — not the person the reminder is for."""
+    from BACKEND_AUTH_SECURITY import create_cart_recovery_token
+    base = os.getenv("FRONTEND_URL", "https://autosparefinder.co.il").rstrip("/")
+    return f"{base}/api/v1/customers/cart/recover?token={create_cart_recovery_token(str(user_id))}"
+
+
+def _build_abandoned_cart_whatsapp_message(
+    full_name: str | None,
+    item_lines: list[str],
+    total_value: float,
+    pay_link: str | None = None,
+) -> str:
     first_name = _customer_first_name(full_name)
     items_summary = _format_cart_items_for_whatsapp(item_lines)
+    # pay_link is a full https URL (a one-tap /pay/ checkout link when we could build one,
+    # otherwise the cart page) so WhatsApp auto-linkifies it into a pressable link. The old
+    # message pointed at the bare API path "/api/v1/customers/cart", which is NOT a URL, is
+    # not tappable, and isn't even a customer-facing page — customers had nothing to click.
+    link = (pay_link or "").strip() or (
+        os.getenv("FRONTEND_URL", "https://autosparefinder.co.il").rstrip("/") + "/cart"
+    )
     return (
         f"היי {first_name}, הפריטים שבחרת עדיין מחכים לך בסל: {items_summary}. "
-        f"שווי הסל כרגע הוא {total_value:.0f}₪. "
-        "כדי להשלים את הרכישה, כנס ל-/api/v1/customers/cart ולחץ על 'לתשלום'."
+        f"שווי הסל כרגע הוא {total_value:.0f}₪.\n"
+        f"להשלמת הרכישה ותשלום מאובטח: {link}"
     )
 
 
@@ -1533,12 +1835,21 @@ def _abandoned_cart_send_window_open(now_local: datetime | None = None) -> tuple
     return is_open, current_local
 
 
-def _build_pending_payment_whatsapp_message(full_name: str | None, order_number: str | None, total_amount: float) -> str:
+def _build_pending_payment_whatsapp_message(
+    full_name: str | None,
+    order_number: str | None,
+    total_amount: float,
+    pay_link: str | None = None,
+) -> str:
     first_name = _customer_first_name(full_name)
     safe_order_number = str(order_number or "").strip() or "שלך"
+    # Full https URL so WhatsApp linkifies it (was a bare, un-tappable API path).
+    link = (pay_link or "").strip() or (
+        os.getenv("FRONTEND_URL", "https://autosparefinder.co.il").rstrip("/") + "/cart"
+    )
     return (
-        f"היי {first_name}, ההזמנה {safe_order_number} בסך {total_amount:.0f}₪ עדיין ממתינה לתשלום. "
-        "כדי להשלים את ההזמנה, כנס ל-/api/v1/customers/cart ולחץ על 'לתשלום'. "
+        f"היי {first_name}, ההזמנה {safe_order_number} בסך {total_amount:.0f}₪ עדיין ממתינה לתשלום.\n"
+        f"להשלמת התשלום המאובטח: {link}\n"
         "אם צריך עזרה, אפשר פשוט להשיב להודעה הזו."
     )
 
@@ -1625,31 +1936,51 @@ async def _noa_marketing_loop():
     async def _noa_real_catalog_fact(db, eng_part: str, heb_part: str, car: str) -> str:
         """Marketing grounding (added 2026-07-05): pull a REAL priced part from
         the catalog matching today's topic so NOA advertises true facts —
-        real part, real price, real fit — never invented claims."""
+        real part, real price, real fit — never invented claims.
+
+        Price MUST match what the customer actually pays (2026-07-14 fix): use the
+        cheapest AVAILABLE supplier's real cost and the CANONICAL formula — margin ×1.45
+        plus VAT computed by get_supplier_vat_rate, which applies 18% ONLY to local (IL)
+        suppliers and 0% to foreign-sourced parts. The old code did a flat base_price×1.18
+        which (a) ignored that VAT condition (overstating every foreign part by 18%) and
+        (b) trusted base_price, which is unreliable for some rows (landing near raw cost).
+        """
         try:
+            from BACKEND_AI_AGENTS import get_supplier_vat_rate, PROFIT_MARGIN
             car_make = car.split()[0]
-            row = (await db.execute(text("""
-                SELECT pc.name, pc.name_he, pc.base_price, pc.manufacturer
+            # Cheapest available supplier per matching part = the same cost the website
+            # search/checkout price off of. Carry the supplier country for the VAT rule.
+            _sql = """
+                SELECT pc.name, pc.name_he, pc.manufacturer,
+                       mp.cost, mp.supplier_name, mp.country
                 FROM parts_catalog pc
-                WHERE pc.is_active AND pc.base_price > 20 AND pc.base_price < 5000
+                JOIN LATERAL (
+                    SELECT sp.price_ils AS cost, s.name AS supplier_name, s.country
+                    FROM supplier_parts sp JOIN suppliers s ON s.id = sp.supplier_id
+                    WHERE sp.part_id = pc.id AND sp.is_available AND sp.price_ils > 0
+                    ORDER BY sp.price_ils ASC LIMIT 1
+                ) mp ON TRUE
+                WHERE pc.is_active
                   AND (pc.name_he ILIKE :hq OR pc.name ILIKE :eq)
-                  AND pc.manufacturer ILIKE :mfr
+                  {mfr_clause}
+                  AND mp.cost BETWEEN 15 AND 4000
                 ORDER BY random() LIMIT 1
-            """), {"hq": f"%{heb_part.split()[0]}%", "eq": f"%{eng_part.split()[0]}%",
-                   "mfr": f"%{car_make}%"})).fetchone()
+            """
+            params = {"hq": f"%{heb_part.split()[0]}%", "eq": f"%{eng_part.split()[0]}%"}
+            row = (await db.execute(text(_sql.format(mfr_clause="AND pc.manufacturer ILIKE :mfr")),
+                                    {**params, "mfr": f"%{car_make}%"})).fetchone()
             if not row:
-                row = (await db.execute(text("""
-                    SELECT pc.name, pc.name_he, pc.base_price, pc.manufacturer
-                    FROM parts_catalog pc
-                    WHERE pc.is_active AND pc.base_price > 20 AND pc.base_price < 5000
-                      AND (pc.name_he ILIKE :hq OR pc.name ILIKE :eq)
-                    ORDER BY random() LIMIT 1
-                """), {"hq": f"%{heb_part.split()[0]}%", "eq": f"%{eng_part.split()[0]}%"})).fetchone()
+                row = (await db.execute(text(_sql.format(mfr_clause="")), params)).fetchone()
             if row:
                 _pname = (row[1] or row[0] or "").strip()[:70]
-                _price = round(float(row[2]) * 1.18)  # display incl. VAT
+                cost = float(row[3])
+                sell_net = cost * PROFIT_MARGIN                      # cost × 1.45
+                vat_rate = get_supplier_vat_rate(                     # 18% local, 0% foreign
+                    supplier_name=row[4], supplier_country=row[5])
+                price = round(sell_net + sell_net * vat_rate)         # pre-shipping "from"
+                vat_note = "כולל מע\"מ" if vat_rate > 0 else "ללא מע\"מ (יבוא)"
                 return (f"\nעובדה אמיתית מהקטלוג (מותר ואף רצוי לצטט): "
-                        f"{_pname} ({row[3]}) — החל מ‑₪{_price} כולל מע\"מ באתר.")
+                        f"{_pname} ({row[2]}) — החל מ‑₪{price} {vat_note} באתר.")
         except Exception as exc:
             logger.warning("noa_marketing_loop: catalog fact lookup failed: %s", exc)
         return ""
@@ -2084,7 +2415,8 @@ async def _health_monitor_loop():
         "redis":            "Redis",
         "meilisearch":      "Meilisearch",
         "huggingface":      "Hugging Face",
-        "clamav":           "ClamAV",
+        # clamav DECOMMISSIONED 2026-07-12 (RAM-incompatible with this no-swap box;
+        # uploads fail-open). Removed from health probes so it no longer alerts.
         "stripe":           "Stripe",
     }
 
@@ -2128,18 +2460,7 @@ async def _health_monitor_loop():
         _hf_token = os.getenv("HF_TOKEN", "")
         states["huggingface"] = "ok" if _hf_token else "error"
 
-        _clam_ok = False
-        for _make_scanner in (
-            lambda: _clamd.ClamdUnixSocket(),
-            lambda: _clamd.ClamdNetworkSocket(host=os.getenv("CLAMD_HOST", "clamav"), port=3310),
-        ):
-            try:
-                _make_scanner().ping()
-                _clam_ok = True
-                break
-            except Exception:
-                continue
-        states["clamav"] = "ok" if _clam_ok else "error"
+        # clamav probe removed 2026-07-12 — service decommissioned (see SERVICE_LABELS).
 
         _stripe_key, _ = resolve_stripe_secret_key()
         states["stripe"] = "ok" if is_valid_stripe_secret_key(_stripe_key) else "error"
@@ -2416,9 +2737,29 @@ async def _health_monitor_loop():
             try:
                 JOB_FAILURES_ALERT_THRESHOLD = int(os.getenv("JOB_FAILURES_ALERT_THRESHOLD", "10"))
                 async with pii_session_factory() as _pii_db:
+                    # ROOT FIX 2026-07-08: only count RECENT failures (last 48h).
+                    # The DLQ had 61 stale pending failures from transient infra
+                    # errors months ago (old pool config, DB restarts) that were
+                    # never retried/resolved. Counting ALL of them kept the count
+                    # ≥ threshold forever, and the Redis dedup key's 24h TTL meant
+                    # the "prev count" reset daily → re-alerted on ancient stale
+                    # failures every day. A failure nobody acted on for months is
+                    # not a live problem; only failures in the last 48h are.
+                    _dlq_cutoff = datetime.utcnow() - timedelta(hours=48)
                     unprocessed_count = (await _pii_db.execute(
-                        select(func.count(JobFailure.id)).where(JobFailure.status.in_(["pending", "retrying"]))
+                        select(func.count(JobFailure.id)).where(
+                            JobFailure.status.in_(["pending", "retrying"]),
+                            JobFailure.created_at > _dlq_cutoff,
+                        )
                     )).scalar() or 0
+                    # Auto-resolve stale entries (>7d) so the DLQ self-cleans and
+                    # never accumulates a permanent backlog of dead transient errors.
+                    await _pii_db.execute(text("""
+                        UPDATE job_failures
+                        SET status='resolved', resolved_at=NOW(), resolved_by='auto_aged_7d'
+                        WHERE status IN ('pending','retrying') AND created_at < NOW() - INTERVAL '7 days'
+                    """))
+                    await _pii_db.commit()
 
                     # Only alert if count is above threshold AND has grown since last alert
                     # (prevents spamming the same stale failures on every restart/cycle)
@@ -2471,14 +2812,37 @@ async def _health_monitor_loop():
                 async with async_session_factory() as _db:
                     from datetime import timezone as _tz
 
-                    # 5a: Jobs that transitioned to failed or dead
+                    # 5a: Jobs that transitioned to failed or dead — but ONLY if
+                    # not already superseded by a newer healthy run of the same
+                    # task. A backend restart orphans mid-run jobs; the next cycle
+                    # respawns healthy minutes later. Alerting on the orphan is a
+                    # false alarm (root-fixed 2026-07-10; same filter the status
+                    # digest already applies). Orphans are now marked 'superseded'
+                    # at startup so most never reach here; this NOT EXISTS guard
+                    # covers any the 2h watchdog reaps as 'failed' after recovery.
+                    # Second guard (root-fixed 2026-07-13): only alert on jobs whose last
+                    # activity falls WITHIN this container's lifetime. A restart (deploy /
+                    # OOM / SIGKILL) orphans in-flight jobs whose heartbeat froze under the
+                    # PREVIOUS container; the 2h zombie watchdog later flips them to 'failed'.
+                    # Those are not real failures — the process was just replaced. Comparing
+                    # COALESCE(last_heartbeat, started_at) to this container's start cleanly
+                    # separates "died in the previous container" (skip) from "genuinely failed
+                    # while we were running" (alert), independent of whether a newer run exists.
+                    _cstart = _BACKEND_START_UTC.replace(tzinfo=None)
                     _failed_rows = (await _db.execute(text("""
                         SELECT job_id, job_name, status, error_message, started_at
-                        FROM job_registry
+                        FROM job_registry jr
                         WHERE status IN ('failed', 'dead')
                           AND started_at > NOW() - INTERVAL '12 hours'
+                          AND COALESCE(jr.last_heartbeat_at, jr.started_at) >= :cstart
+                          AND NOT EXISTS (
+                              SELECT 1 FROM job_registry j2
+                              WHERE split_part(j2.job_name, ':', 1) = split_part(jr.job_name, ':', 1)
+                                AND j2.status IN ('running', 'completed', 'superseded')
+                                AND j2.started_at > jr.started_at
+                          )
                         ORDER BY started_at DESC
-                    """))).fetchall()
+                    """), {"cstart": _cstart})).fetchall()
 
                     for _jr in _failed_rows:
                         _key = f"job_fail_{_jr.job_id}"
@@ -2503,15 +2867,20 @@ async def _health_monitor_loop():
                     # Respects ttl_seconds from job_registry (same logic as task_zombie_watchdog).
                     # Falls back to 2 hours for NULL TTL jobs (was 30 min — too aggressive for
                     # long-running tasks like merge_catalog_fitment which can take 45+ min).
+                    # Same container-lifetime guard as 5a: a 'running' row whose heartbeat
+                    # froze before this container started is a restart orphan (handled by
+                    # _reconcile_orphaned_jobs → 'superseded'), NOT a genuine stall. Only
+                    # alert on jobs that were heartbeating within THIS container's lifetime.
                     _zombie_rows = (await _db.execute(text("""
                         SELECT job_id, job_name, last_heartbeat_at,
                                EXTRACT(EPOCH FROM (NOW() - last_heartbeat_at)) AS silence_s
                         FROM job_registry
                         WHERE status = 'running'
+                          AND last_heartbeat_at >= :cstart
                           AND last_heartbeat_at < NOW() - (
                               COALESCE(ttl_seconds, 7200) * INTERVAL '1 second'
                           )
-                    """))).fetchall()
+                    """), {"cstart": _cstart})).fetchall()
 
                     # Maps job_registry name → Redis lock name (they differ when acquire_lock()
                     # uses a shorter key than the job name registered in job_registry_start()).
@@ -2606,6 +2975,58 @@ async def _health_monitor_loop():
 
 
 # ── Abandoned-cart re-engagement loop ───────────────────────────────────────
+async def _price_watch_loop():
+    """Every 6h: for each price watch, compare the current cheapest customer price to the
+    watched price; if it dropped >=5% (and below the last-notified price), email price_drop.
+    Cross-DB: watches live in PII, prices in catalog. Best-effort per watch."""
+    from routes.parts import _current_part_price
+    import email_templates as _ET
+    from routes.email_utils import send_template
+    _site = os.getenv("FRONTEND_URL", "https://autosparefinder.co.il").rstrip("/")
+    await asyncio.sleep(300)
+    while True:
+        try:
+            async with pii_session_factory() as pdb:
+                watches = (await pdb.execute(text(
+                    "SELECT id, user_id, part_id, part_name, watch_price_ils, last_notified_price_ils "
+                    "FROM part_price_watches"))).fetchall()
+            notified = 0
+            for w in watches:
+                try:
+                    async with async_session_factory() as cat:
+                        cur = await _current_part_price(cat, str(w.part_id))
+                    if not cur:
+                        continue
+                    price, name = cur
+                    threshold = float(w.watch_price_ils) * 0.95
+                    already = w.last_notified_price_ils
+                    if price <= threshold and (already is None or price < float(already)):
+                        async with pii_session_factory() as pdb:
+                            user = (await pdb.execute(select(User).where(User.id == w.user_id))).scalar_one_or_none()
+                            if user and user.email:
+                                # No /parts/:id detail route exists in the SPA — deep-link into
+                                # the parts SEARCH route (which reads ?search=) so the watched
+                                # part actually opens instead of redirecting to the homepage.
+                                from urllib.parse import quote as _quote
+                                _pname = w.part_name or name
+                                _purl = f"{_site}/parts?search={_quote(_pname)}"
+                                await send_template(user.email, user.full_name or "",
+                                    _ET.price_drop(user.full_name or "", _pname, price, _purl))
+                                notified += 1
+                            await pdb.execute(text(
+                                "UPDATE part_price_watches SET last_notified_price_ils=:p, last_notified_at=NOW() WHERE id=:id"),
+                                {"p": price, "id": w.id})
+                            await pdb.commit()
+                except Exception as _we:
+                    print(f"[PriceWatch] watch {getattr(w,'id','?')} error: {_we}")
+                await asyncio.sleep(0.2)
+            if watches:
+                print(f"[PriceWatch] checked {len(watches)} watches, notified {notified}")
+        except Exception as e:
+            print(f"[PriceWatch] loop error: {e}")
+        await asyncio.sleep(6 * 3600)  # every 6h
+
+
 async def _abandoned_cart_loop():
     """
     Background loop: runs every ABANDONED_CART_INTERVAL_S seconds (default 60 min).
@@ -2736,10 +3157,40 @@ async def _abandoned_cart_loop():
                             skip_count += 1
                             continue
 
+                        # Build a REAL, pressable payment link. For a single-item cart we can
+                        # mint a one-tap canonical /pay/ checkout link (create_checkout_link runs
+                        # the same server-side pricing as Stripe/website — never the raw cart
+                        # unit_price, which is supplier COST). For multi-item carts the message
+                        # falls back to the full cart URL (correct multi-item pricing + checkout
+                        # button live there); we don't reprice a basket in a background loop.
+                        pay_link = None
+                        try:
+                            if len(items) == 1:
+                                from BACKEND_AI_AGENTS import create_checkout_link
+                                _it = items[0]
+                                _link = await create_checkout_link(
+                                    part_id=str(_it.part_id),
+                                    quantity=int(_it.quantity or 1),
+                                    user_id=str(user.id),
+                                    shipping_address={},
+                                    source="whatsapp",
+                                )
+                                if _link and not _link.startswith("ERROR:"):
+                                    pay_link = _link
+                                else:
+                                    print(f"[AbandonedCart] pay-link build failed for cart {cart.id}: {_link}")
+                        except Exception as _ple:
+                            print(f"[AbandonedCart] pay-link exception for cart {cart.id}: {_ple}")
+
+                        # For a single-item cart we have a direct /pay/ link; otherwise fall
+                        # back to a recipient-scoped cart-recovery link (NOT a bare /cart, which
+                        # would open whoever is logged into the device — the "shows my cart" bug).
+                        recovery_url = _cart_recovery_url(user.id)
                         wa_message = _build_abandoned_cart_whatsapp_message(
                             full_name=user.full_name,
                             item_lines=item_lines,
                             total_value=total_value,
+                            pay_link=pay_link or recovery_url,
                         )
 
                         # Send WhatsApp
@@ -2748,6 +3199,18 @@ async def _abandoned_cart_loop():
                             print(f"[AbandonedCart] WhatsApp failed for user {user.id}: {wa_result.get('error')}")
                             skip_count += 1
                             continue
+
+                        # Also nudge by email (best-effort — same cart, branded template).
+                        if getattr(user, "email", ""):
+                            try:
+                                from routes.email_utils import send_template
+                                import email_templates as _ET
+                                _site = os.getenv("FRONTEND_URL", "https://autosparefinder.co.il").rstrip("/")
+                                await send_template(user.email, user.full_name or "",
+                                    _ET.abandoned_cart(user.full_name or "", items_summary,
+                                                       total_value, pay_link or recovery_url))
+                            except Exception as _ace:
+                                print(f"[AbandonedCart] email failed for {user.id}: {_ace}")
 
                         # Persist Notification + SSE push + touch cart.updated_at
                         _title = "🛒 שכחת משהו בסל?"
@@ -2875,10 +3338,21 @@ async def _pending_payment_reminder_loop():
                             skip_count += 1
                             continue
 
+                    # Regenerate a fresh, pressable /pay/ link for this existing order
+                    # (canonical pricing from its OrderItems; Stripe URLs expire in 24h so
+                    # we mint a new one each reminder). Falls back to the cart URL on failure.
+                    _order_pay_link = None
+                    try:
+                        from routes.payments import regenerate_order_pay_link
+                        _order_pay_link = await regenerate_order_pay_link(str(order.id))
+                    except Exception as _ple:
+                        print(f"[PaymentReminder] pay-link exception for order {order.id}: {_ple}")
+
                     wa_message = _build_pending_payment_whatsapp_message(
                         full_name=user.full_name,
                         order_number=order.order_number,
                         total_amount=float(order.total_amount),
+                        pay_link=_order_pay_link,
                     )
 
                     # Send WhatsApp
@@ -3277,7 +3751,7 @@ async def admin_run_supplier_import(
 
     def _run_import():
         import subprocess, sys
-        script = _Path("/app/supplier_pdf_import.py")
+        script = _Path("/app/importers/supplier_pdf_import.py")
         cmd = [sys.executable, str(script), "--pdf", str(pdf), "--manufacturer", manufacturer]
         if apply:
             cmd.append("--apply")

@@ -824,11 +824,19 @@ async def upload_image(file: UploadFile = File(...), current_user: User = Depend
             prompt = (
                 "You are an expert automotive parts identifier. "
                 "Look at this image and identify the car part shown. "
+                "If SEVERAL parts are visible (e.g. a component still mounted in the "
+                "engine bay), identify the part in the CENTER / FOREGROUND that the photo "
+                "is framed and focused on — NOT the largest hose, pipe, duct or cover that "
+                "merely happens to fill the background. If it is a VIN / chassis-number "
+                "plate, set part_name_en to \"VIN\". "
                 "Respond ONLY with a JSON object, no markdown: "
                 '{"part_name_he": "<SHORT Hebrew name as used in Israeli auto parts catalogs>", '
                 '"part_name_en": "<name in English>", '
                 '"possible_names": ["<alt Hebrew name 1>", "<alt Hebrew name 2>", "<alt Hebrew name 3>"], '
                 '"confidence": <0.0-1.0>. '
+                'When the shot is crowded and you are unsure which part is the subject, '
+                'LOWER the confidence and put the next most likely foreground parts in '
+                'possible_names so the customer can be asked to confirm. '
                 'IMPORTANT: part_name_he and ALL possible_names must be SHORT Hebrew terms '
                 '(1-3 words) exactly as written in Israeli auto parts price lists, '
                 'e.g. "מצערת", "בית מצערת", "מסנן אוויר", "משאבת מים". '

@@ -34,8 +34,10 @@ _collect_buffers: dict = {}
 
 CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    # X-Collect-Secret must be allowed so the owner's cross-origin browser
+    # harvester (running on rockauto.com) can authenticate the relay + feed.
+    "Access-Control-Allow-Headers": "Content-Type, X-Collect-Secret",
 }
 
 @router.options("/api/v1/system/collect")
@@ -44,16 +46,107 @@ async def collect_preflight():
 
 _COLLECT_SECRET = os.environ.get("COLLECT_SECRET", "")
 
+
+@router.options("/api/v1/system/unpriced-oems")
+async def unpriced_oems_preflight():
+    return JSONResponse(content={}, headers=CORS_HEADERS)
+
+
+# Rotating keyset cursor so repeated calls sweep the whole unpriced catalog
+# instead of returning the same first N every time (module-level, per-process).
+_UNPRICED_OEM_CURSOR: dict = {"last_id": "00000000-0000-0000-0000-000000000000"}
+
+# US-market brands where a US retailer (RockAuto) has the best catalog overlap.
+# Feeding these first maximises the match rate of the browser harvest.
+_ROCKAUTO_FRIENDLY_BRANDS = [
+    "toyota", "honda", "ford", "chevrolet", "gmc", "dodge", "jeep", "chrysler",
+    "nissan", "subaru", "mazda", "volkswagen", "bmw", "mercedes", "audi",
+    "hyundai", "kia", "acura", "lexus", "infiniti", "cadillac", "buick",
+]
+
+
+@router.api_route("/api/v1/system/unpriced-oems", methods=["GET", "POST"])
+async def unpriced_oems_feed(request: Request, db: AsyncSession = Depends(get_db)):
+    """Authenticated feed of UNPRICED OEM numbers for the owner's RockAuto browser
+    harvester to batch-price. Returns active parts with no base_price, swept via a
+    rotating id cursor so successive calls cover the whole catalog. Requires the
+    same secret as /collect — this enumerates OEM numbers and must never be an open
+    catalog-scrape endpoint. GET (same-origin/server): secret via X-Collect-Secret
+    header + ?limit/?brands/?reset query. POST (cross-origin browser): text/plain
+    body {secret, limit, brands, reset} — a CORS "simple request" (no preflight,
+    which the global CORSMiddleware would reject). Response carries ACAO:* so the
+    browser can read it. Params: limit (max 500), brands=csv, reset=1."""
+    body = {}
+    if request.method == "POST":
+        try:
+            body = json.loads(await request.body())
+        except Exception:
+            body = {}
+    secret = request.headers.get("X-Collect-Secret", "") or (body.get("secret") if isinstance(body, dict) else "") or ""
+    if _COLLECT_SECRET and secret != _COLLECT_SECRET:
+        from fastapi import HTTPException as _HTTPException
+        raise _HTTPException(status_code=403, detail="Forbidden")
+
+    def _param(name, default=""):
+        if isinstance(body, dict) and body.get(name) is not None:
+            return str(body.get(name))
+        return request.query_params.get(name, default)
+
+    # Heartbeat: a browser harvester hitting the feed = it's ALIVE (even if Cloudflare
+    # is blocking it and 0 parts come back). The monitor uses this to alert only when
+    # the harvester is genuinely stopped, not merely idle-output.
+    try:
+        import harvest_heartbeat
+        harvest_heartbeat.record(_param("source") or "unknown")
+    except Exception:
+        pass
+
+    try:
+        limit = max(1, min(500, int(_param("limit", "200"))))
+    except Exception:
+        limit = 200
+    if _param("reset") == "1":
+        _UNPRICED_OEM_CURSOR["last_id"] = "00000000-0000-0000-0000-000000000000"
+
+    brands_param = (_param("brands", "") or "").strip()
+    brands = [b.strip().lower() for b in brands_param.split(",") if b.strip()] if brands_param else _ROCKAUTO_FRIENDLY_BRANDS
+
+    from sqlalchemy import text as _text
+    rows = (await db.execute(_text("""
+        SELECT id, oem_number, manufacturer
+        FROM parts_catalog
+        WHERE is_active
+          AND (base_price IS NULL OR base_price = 0)
+          AND oem_number IS NOT NULL AND oem_number <> ''
+          AND id > CAST(:last_id AS uuid)
+          AND LOWER(manufacturer) = ANY(:brands)
+        ORDER BY id
+        LIMIT :limit
+    """), {"last_id": _UNPRICED_OEM_CURSOR["last_id"], "brands": brands, "limit": limit})).fetchall()
+
+    if rows:
+        _UNPRICED_OEM_CURSOR["last_id"] = str(rows[-1][0])
+    else:
+        # swept to the end — wrap around for the next call
+        _UNPRICED_OEM_CURSOR["last_id"] = "00000000-0000-0000-0000-000000000000"
+
+    oems = [r[1] for r in rows]
+    return JSONResponse(
+        {"count": len(oems), "oems": oems, "next_cursor": _UNPRICED_OEM_CURSOR["last_id"],
+         "wrapped": not rows},
+        headers=CORS_HEADERS,
+    )
+
 @router.post("/api/v1/system/collect")
 async def collect_scrape_data(request: Request):
-    if _COLLECT_SECRET:
-        token = request.headers.get("X-Collect-Secret", "")
-        if token != _COLLECT_SECRET:
-            from fastapi import HTTPException as _HTTPException
-            raise _HTTPException(status_code=403, detail="Forbidden")
     ct = request.headers.get("content-type", "")
     _vehicle_slug = ""  # captured from any branch
+    body_secret = ""    # secret may arrive in the body (text/plain relay path)
 
+    # Parse body FIRST so the secret can come from the body — the cross-origin
+    # browser harvester posts as text/plain (a CORS "simple request") to avoid a
+    # preflight that the global CORSMiddleware rejects; a custom X-Collect-Secret
+    # header would force that preflight, so the secret rides in the body instead.
     if "multipart/form-data" in ct or "application/x-www-form-urlencoded" in ct:
         form = await request.form()
         brand = form.get("brand", "") or ""
@@ -62,20 +155,31 @@ async def collect_scrape_data(request: Request):
         raw = form.get("data") or form.get("chunk", "[]")
         chunk = json.loads(raw) if raw else []
         data = {}
+        body_secret = form.get("secret", "") or ""
     elif "text/plain" in ct:
-        # mode: no-cors fetch from cross-origin tabs sends body as text/plain
         raw_body = await request.body()
-        data = json.loads(raw_body)
+        try:
+            data = json.loads(raw_body)
+        except Exception:
+            data = {}
         brand = data.get("brand", "") or ""
         _vehicle_slug = data.get("vehicle", "") or ""
         chunk = data.get("chunk", data.get("parts", []))
         done = data.get("done", False)
+        body_secret = data.get("secret", "") or ""
     else:
         data = await request.json()
         brand = data.get("brand", "") or ""
         _vehicle_slug = data.get("vehicle", "") or ""
         chunk = data.get("chunk", data.get("parts", []))
         done = data.get("done", False)
+        body_secret = data.get("secret", "") or ""
+
+    if _COLLECT_SECRET:
+        token = request.headers.get("X-Collect-Secret", "") or body_secret
+        if token != _COLLECT_SECRET:
+            from fastapi import HTTPException as _HTTPException
+            raise _HTTPException(status_code=403, detail="Forbidden")
 
     print(f"[collect] ct={ct!r} brand={brand!r} vehicle={_vehicle_slug!r} done={done} parts={len(chunk)}", flush=True)
     # Extract brand from vehicle slug — browser harvester sends "vehicle":"toyota/corolla-ke" not "brand"
@@ -111,7 +215,34 @@ async def collect_scrape_data(request: Request):
                       "volvo", "jaguar", "landrover", "porsche", "audi", "volkswagen", "vw", "gm"}
         sample_part = buf["parts"][0] if buf["parts"] else {}
         is_cpie_data = "price_eur" in sample_part or "source_url" in sample_part
-        if brand_base in OEM_BRANDS and not is_cpie_data:
+        # RockAuto price-fill harvest (browser-relayed; source/brand='rockauto').
+        # Matches by normalized OEM to existing unpriced parts and fills the price.
+        if brand_base == "rockauto":
+            path = f"/tmp/{file_tag}_rockauto.json"
+            with open(path, "w") as f:
+                json.dump(buf["parts"], f)
+            log_path = f"/tmp/{file_tag}_rockauto_import.log"
+            proc = subprocess.Popen(
+                ["python3", "/app/importers/rockauto_price_import.py", path],
+                stdout=open(log_path, "w"),
+                stderr=subprocess.STDOUT,
+                close_fds=True,
+            )
+            print(f"[collect] RockAuto price import started: pid={proc.pid} log={log_path}")
+        elif brand_base == "amayama":
+            # Amayama OEM price-fill harvest (browser-relayed; brand='amayama').
+            path = f"/tmp/{file_tag}_amayama.json"
+            with open(path, "w") as f:
+                json.dump(buf["parts"], f)
+            log_path = f"/tmp/{file_tag}_amayama_import.log"
+            proc = subprocess.Popen(
+                ["python3", "/app/importers/amayama_price_import.py", path],
+                stdout=open(log_path, "w"),
+                stderr=subprocess.STDOUT,
+                close_fds=True,
+            )
+            print(f"[collect] Amayama price import started: pid={proc.pid} log={log_path}")
+        elif brand_base in OEM_BRANDS and not is_cpie_data:
             path = f"/tmp/{file_tag}_oem.json"
             with open(path, "w") as f:
                 json.dump(buf["parts"], f)
@@ -132,7 +263,7 @@ async def collect_scrape_data(request: Request):
             with open(path, "w") as f:
                 json.dump(out, f)
             log_path = f"/tmp/{file_tag}_cpie_import.log"
-            cmd = ["python3", "/app/car_parts_ie_import_generic.py", "--brand", brand, "--file", path]
+            cmd = ["python3", "/app/importers/car_parts_ie_import_generic.py", "--brand", brand, "--file", path]
             if vehicle_slug:
                 cmd += ["--vehicle-slug", vehicle_slug]
             proc = subprocess.Popen(

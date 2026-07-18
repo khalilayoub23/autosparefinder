@@ -358,10 +358,22 @@ async def run(
                     cutoff=incremental_cutoff.isoformat() if incremental_cutoff else None,
                 )
 
-        # Wait for the final batch to finish indexing before exiting.
+        # Wait for the final batch to finish indexing before exiting. On a large
+        # (re)build we fire every batch without waiting, so Meilisearch may queue
+        # hundreds of tasks and take well over the wait window to DRAIN — the last
+        # task can't even start until the earlier ones finish. A timeout here is
+        # NOT a failure: every batch is checkpointed and Meilisearch keeps indexing
+        # in the background, and the post-sync parity check (_meili_verify_parity)
+        # catches any genuine drift. So treat it as non-fatal instead of crashing
+        # the whole sync (was the "Meili crashed" MeilisearchTimeoutError, 2026-07-13).
         if last_batch_task is not None:
             print("[meili_sync] Waiting for Meilisearch to finish indexing...", flush=True)
-            await _wait_task(client, last_batch_task, timeout_ms=900_000)
+            try:
+                await _wait_task(client, last_batch_task, timeout_ms=1_800_000)  # 30 min
+            except Exception as e:
+                print(f"[meili_sync] Final indexing wait exceeded window (non-fatal, "
+                      f"Meilisearch continues indexing in the background): "
+                      f"{type(e).__name__}: {str(e)[:120]}", flush=True)
 
     await conn.close()
 
