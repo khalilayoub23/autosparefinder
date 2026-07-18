@@ -20,16 +20,22 @@ router = APIRouter()
 _ALLOWED_CT = {"image/jpeg", "image/png", "image/webp"}
 
 
+# Negative cache: let Cloudflare/edge cache 404s so a flood of random/invalid keys can't
+# repeatedly hit the backend + S3 (the un-rate-limited thumbnails location's one DoS vector).
+_NEG_CACHE = {"Cache-Control": "public, max-age=600"}
+
+
 @router.get("/api/v1/thumbnails/{key:path}", tags=["Thumbnails"])
 async def get_thumbnail(key: str):
-    # Only ever serve from the thumbnails prefix; reject anything else (no arbitrary key access).
-    if not key or ".." in key or not key.startswith("parts/"):
-        raise HTTPException(status_code=404, detail="Not found")
+    # Only ever serve from the thumbnails prefix; reject traversal/absolute/arbitrary keys.
+    if (not key or ".." in key or key.startswith("/") or "\\" in key
+            or "%2e" in key.lower() or not key.startswith("parts/")):
+        return Response(status_code=404, headers=_NEG_CACHE)
     if not s3_storage.s3_enabled():
         raise HTTPException(status_code=503, detail="Thumbnail storage not configured")
     obj = s3_storage.get_object(key)
     if obj is None:
-        raise HTTPException(status_code=404, detail="Thumbnail not found")
+        return Response(status_code=404, headers=_NEG_CACHE)
     data, content_type = obj
     if content_type not in _ALLOWED_CT:
         content_type = "image/jpeg"

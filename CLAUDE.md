@@ -1214,3 +1214,12 @@ image + the part name only — never a supplier link/ad).
 - **Verified 2026-07-18:** S3 round-trip; a real part (Land Rover LR016621) → clean 500×500
   ≤150 KB JPEG served through the domain; the SOUK ad image → OCR-rejected; search "oil filter"
   → returns the part with `primary_image` = the bucket URL. Test: `devtests/thumbnail_pipeline_test.py`.
+- **Security (audited 2026-07-18):** the S3 secret lives ONLY in `.env` (gitignored — never in a
+  tracked file/log/response). Bucket is **fully private** — the test-time public-read policy was
+  removed, public-access-block is on, and anonymous LIST/GET both return 401 (only the backend,
+  with credentials, can read). The serving proxy returns **only image bytes** (no `x-amz-*`/
+  bucket/endpoint headers leak) and rejects anything that isn't a `parts/…` key — traversal
+  (`..`, `%2e`, leading `/`, `\\`) and other prefixes all 404. 404s carry a negative Cache-Control
+  so a flood of random keys is absorbed at the edge (the un-rate-limited location's only DoS
+  vector). **Residual:** Contabo access keys are ACCOUNT-WIDE (can reach every bucket) — if the
+  key is ever exposed, rotate it in the Contabo panel and update `.env`.
