@@ -35,3 +35,5 @@ rockauto-api>=0.1.3
 pdfplumber
 pymupdf
 twilio>=9.0,<10.0
+boto3
+pytesseract

@@ -3550,6 +3550,8 @@ from routes.parts import router as parts_router
 app.include_router(parts_router)
 from routes.public_api import router as public_api_router
 app.include_router(public_api_router)
+from routes.thumbnails import router as thumbnails_router
+app.include_router(thumbnails_router)
 from routes.reviews import router as reviews_router
 app.include_router(reviews_router)
 from routes.vehicles import router as vehicles_router

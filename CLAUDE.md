@@ -1171,3 +1171,46 @@ margin, `base_price`, `importer_price_ils`/`online_price_ils`, or any internal f
 - **Any NEW public/partner endpoint MUST**: require `X-API-Key` (`Depends(require_api_key)`),
   price via `_customer_price_fields`, return the masked schema via `_shape`, and add a
   `check_rate_limit`. Partner-facing docs: `docs/PUBLIC_API.md` (keep it in sync).
+
+---
+
+## Part Thumbnails — Contabo Object Storage (S3) + cleanup pipeline (added 2026-07-18)
+
+Part images are re-hosted as clean thumbnails in a **Contabo Object Storage (S3-compatible)**
+bucket and served from our own domain. Source supplier images are often contaminated with
+**supplier ads/placeholders** (e.g. "PRODUCT IMAGE COMING SOON / SOUK AUTO PARTS / CONTACT US"),
+so they are **filtered, never blindly re-hosted** (owner rule: a thumbnail may carry the part
+image + the part name only — never a supplier link/ad).
+
+- **Config (secret only in `.env`, gitignored):** `S3_ENDPOINT=https://eu2.contabostorage.com`,
+  `S3_REGION=eu2`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET=part-thumbnails`,
+  `THUMB_PUBLIC_BASE=https://autosparefinder.co.il/api/v1/thumbnails`. Also referenced in
+  `docker-compose.yml` backend env. Client: `s3_storage.py` (boto3, s3v4).
+- **Bucket is PRIVATE.** Contabo does NOT serve anonymous public GETs even with a public-read
+  policy (verified: 401). Thumbnails are streamed by the backend `routes/thumbnails.py` →
+  `GET /api/v1/thumbnails/{key:path}` with `Cache-Control: public, max-age=31536000, immutable`
+  so **Cloudflare edge-caches** each one (backend fetches from S3 at most once). Serving only
+  the image bytes guarantees no supplier link/ad can ride along.
+- **nginx:** a dedicated `location ~* ^/api/v1/thumbnails/` is declared **before** the
+  `\.(jpg|png|…)$` static regex (which would otherwise hijack keys ending in `.jpg` as missing
+  static files → 404), un-rate-limited. Single-file mount → validate in a throwaway container on
+  the `autosparefinder_internal` network, then **restart** `autospare_nginx` (not reload).
+- **Cleanup pipeline:** `maintenance/build_part_thumbnails.py` — for each part with a source
+  image and no `part_thumbnails` row: fetch (upgrade eBay `s-l225`→`s-l500`), **OCR the image
+  (tesseract) and REJECT it if it contains supplier/promo text** ("coming soon", "contact us",
+  "auto parts", a URL, "whatsapp", hotline…) — OEM box text (brand + part number + "quality")
+  is kept; then standardize (auto-trim, fit to a clean 500×500 white square, compress ≤150 KB
+  progressive JPEG, optional `--caption` part-name overlay) and upload to `parts/<ab>/<uuid>.jpg`.
+  Records outcome in **`part_thumbnails(part_id, url, status)`** — `ok | rejected_ad | no_source
+  | failed` (a separate table, NOT a column on the 4M-row parts_catalog → no DDL lock storms).
+  Run: `python3 /app/maintenance/build_part_thumbnails.py --limit 500 [--caption]`.
+- **Search wiring:** `routes/parts.py` surfaces ONLY the clean bucket thumbnail as
+  `primary_image` (LEFT JOIN `part_thumbnails` status='ok'); raw supplier image URLs are
+  **never returned** to customers. The frontend `_partImageCandidates` already reads
+  `primary_image`. Any new surface that shows a part image MUST use the bucket thumbnail, never
+  a raw supplier URL.
+- **Tooling** baked into the backend image (Dockerfile): `tesseract-ocr` + `pytesseract` +
+  `boto3` + `fonts-dejavu-core`.
+- **Verified 2026-07-18:** S3 round-trip; a real part (Land Rover LR016621) → clean 500×500
+  ≤150 KB JPEG served through the domain; the SOUK ad image → OCR-rejected; search "oil filter"
+  → returns the part with `primary_image` = the bucket URL. Test: `devtests/thumbnail_pipeline_test.py`.

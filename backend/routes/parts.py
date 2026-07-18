@@ -2077,13 +2077,27 @@ async def search_parts(
                 } if (warranty_text or warranty_months is not None) else None,
                 "ships_to_israel": ships_to_israel,
             }
+    # Clean thumbnails (Contabo bucket) are the ONLY image surfaced to customers, so a raw
+    # supplier ad/placeholder image can never slip through (owner rule 2026-07-18). Raw
+    # supplier image URLs from parts_images/eBay are intentionally NOT returned.
+    thumb_map: Dict[str, str] = {}
+    if part_ids_for_images:
+        try:
+            _tr = (await db.execute(text(
+                "SELECT part_id::text, url FROM part_thumbnails "
+                "WHERE part_id = ANY(CAST(:ids AS uuid[])) AND status='ok' AND url IS NOT NULL"
+            ), {"ids": part_ids_for_images})).fetchall()
+            thumb_map = {str(r[0]): str(r[1]) for r in _tr}
+        except Exception:
+            thumb_map = {}
+
     for bucket in (original_res, oem_res, aftermarket_res):
         for row in bucket:
             part_payload = row.get("part") or {}
             pid = str(part_payload.get("id") or "")
-            images = image_map.get(pid, [])
-            part_payload["images"] = images
-            part_payload["primary_image"] = images[0] if images else None
+            _thumb = thumb_map.get(pid)
+            part_payload["images"] = [_thumb] if _thumb else []
+            part_payload["primary_image"] = _thumb
             spec_payload = spec_payload_map.get(pid) or {}
             part_payload["specifications"] = spec_payload.get("specifications") or {}
             part_payload["technical_specs"] = spec_payload.get("technical_specs") or {}

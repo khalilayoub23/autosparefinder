@@ -99,6 +99,13 @@ services:
       # sys.path — every bare `import X` resolves regardless of which subfolder X.py
       # now lives in, for uvicorn AND every `python3 /app/.../X.py` subprocess.
       PYTHONPATH: /app
+      # Contabo Object Storage (S3-compatible) — part thumbnails. Secret lives only in .env.
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_REGION: ${S3_REGION:-eu2}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+      S3_BUCKET: ${S3_BUCKET:-part-thumbnails}
+      THUMB_PUBLIC_BASE: ${THUMB_PUBLIC_BASE:-https://autosparefinder.co.il/api/v1/thumbnails}
       DATABASE_URL: postgresql+asyncpg://autospare:${DB_PASSWORD}@postgres_catalog:5432/autospare
       DATABASE_PII_URL: postgresql+asyncpg://autospare:${DB_PASSWORD}@postgres_pii:5432/autospare_pii
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
