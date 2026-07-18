@@ -26,6 +26,7 @@ Author: AutoSpareFinder Agent
 Last Updated: 2026-07-18
 """
 import os
+import uuid as _uuid
 import hashlib
 from typing import Any, Dict, List, Optional
 
@@ -116,7 +117,20 @@ _ROW_SQL = """
 """
 
 
+def _valid_uuids(ids: List[str]) -> List[str]:
+    """Keep only well-formed UUIDs — a malformed id must yield an empty/404 result, never a
+    500 from the DB driver rejecting the cast."""
+    out = []
+    for i in ids:
+        try:
+            out.append(str(_uuid.UUID(str(i))))
+        except (ValueError, AttributeError, TypeError):
+            continue
+    return out
+
+
 async def _rows_for_ids(db: AsyncSession, ids: List[str]) -> Dict[str, Any]:
+    ids = _valid_uuids(ids)
     if not ids:
         return {}
     rows = (await db.execute(text(
@@ -172,15 +186,33 @@ async def public_search(
                 continue
             items.append(it)
     else:
-        # Browse by manufacturer (+optional category), name-ordered.
+        # Validate the brand against car_brands FIRST (tiny, indexed). An unknown/bogus
+        # manufacturer (e.g. "Toyota'--") must return empty immediately — otherwise the
+        # LIMIT scan below never finds a match and walks the whole 4M-row table (a DoS vector).
+        known = (await db.execute(text(
+            "SELECT 1 FROM car_brands WHERE lower(btrim(name)) = lower(btrim(:m)) AND is_active LIMIT 1"
+        ), {"m": manufacturer})).first()
+        if not known:
+            return {"query": {"q": q, "manufacturer": manufacturer, "category": category},
+                    "count": 0, "limit": limit, "offset": offset, "results": []}
+        # NO ORDER BY — sorting a whole brand (e.g. 90K Mercedes parts, no composite
+        # (manufacturer,name) index) is a 40s+ sort. Pick a page of ids FIRST (index-bounded,
+        # ~0.4s) then price only those. Partners wanting ranked results pass `q` (Meilisearch).
+        cat_clause = "AND category = :cat" if category else ""
         rows = (await db.execute(text(
-            f"SELECT {_ROW_SQL} WHERE pc.is_active AND pc.manufacturer ILIKE :mfr "
-            f"{'AND pc.category = :cat' if category else ''} "
-            f"ORDER BY pc.name LIMIT :lim OFFSET :off"
-        ), {"mfr": manufacturer, "cat": category, "lim": min(limit, _MAX_LIMIT) + offset, "off": 0}
+            f"""WITH picked AS (
+                    SELECT id FROM parts_catalog
+                    WHERE is_active AND manufacturer ILIKE :mfr {cat_clause}
+                    LIMIT :lim OFFSET :off
+                )
+                SELECT {_ROW_SQL} WHERE pc.id IN (SELECT id FROM picked)"""
+        ), {"mfr": manufacturer, "cat": category, "lim": limit, "off": offset}
         )).mappings().all()
-        items = [_shape(r) for r in rows]
+        return {"query": {"q": q, "manufacturer": manufacturer, "category": category},
+                "count": len(rows), "limit": limit, "offset": offset,
+                "results": [_shape(r) for r in rows]}
 
+    # q-search path: `items` is the full ranked list → return the requested page.
     page = items[offset: offset + limit]
     return {"query": {"q": q, "manufacturer": manufacturer, "category": category},
             "count": len(page), "limit": limit, "offset": offset, "results": page}
