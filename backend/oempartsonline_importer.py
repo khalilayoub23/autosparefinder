@@ -497,6 +497,11 @@ async def import_products(
 
                     in_stock = bool(product.get("in_stock"))
                     availability = "in_stock" if in_stock else "out_of_stock"
+                    # Part photo (the scraper captures image_url) → parts_images below,
+                    # feeding the thumbnail pipeline. Absolutize relative URLs.
+                    image_url = (product.get("image_url") or "").strip()
+                    if image_url and not image_url.startswith("http"):
+                        image_url = f"{supplier_base_url}{image_url}" if image_url.startswith("/") else ""
 
                     # Build compatible_vehicles JSONB
                     compatible_vehicles = []
@@ -631,6 +636,20 @@ async def import_products(
                                 in_stock,
                                 warranty_months,
                                 product_url,
+                            )
+
+                        # Part photo → parts_images (source for the thumbnail pipeline).
+                        # NOT EXISTS guard: no unique (part_id,url) index → avoid re-import dups.
+                        if part_id and image_url and image_url.startswith("http"):
+                            await conn.execute(
+                                """
+                                INSERT INTO parts_images(id, part_id, url, is_primary, sort_order, created_at)
+                                SELECT gen_random_uuid(), $1::uuid, $2::varchar, TRUE, 0, NOW()
+                                WHERE NOT EXISTS (
+                                    SELECT 1 FROM parts_images WHERE part_id=$1::uuid AND url=$2::varchar
+                                )
+                                """,
+                                str(part_id), image_url,
                             )
 
                         inserted += 1

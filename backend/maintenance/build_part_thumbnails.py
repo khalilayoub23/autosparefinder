@@ -2,24 +2,27 @@
 Script: maintenance/build_part_thumbnails.py
 Purpose: Build clean part thumbnails in the Contabo Object Storage bucket.
 
-Process (per part with a source image and thumbnail_status IS NULL):
-  1. Pick the best source image (parts_images.url; upgrade eBay s-l225→s-l500 for quality).
-  2. Fetch it.
-  3. CLEANUP FILTER (owner rule: no supplier links/ads — part image only): OCR the image and
-     REJECT it if it contains supplier/promo text ("coming soon", "contact us", "auto parts",
-     a URL, "whatsapp", phone hotline, etc.). This drops the "PRODUCT IMAGE COMING SOON / SOUK
-     AUTO PARTS" style placeholders. OEM box text (brand + part number + "quality/original")
-     is NOT promo and is kept.
-  4. Standardize: RGB, auto-trim borders, fit to a clean white 500×500 square, compress to
-     ≤150 KB JPEG (quality stepped down), progressive + optimized. Optional part-name caption.
-  5. Upload to the bucket at parts/<ab>/<uuid>.jpg and set
-     parts_catalog.thumbnail_url + thumbnail_status='ok'. Rejected → 'rejected_ad',
-     no fetchable/clean source → 'no_source'.
+Runs continuously under the `_thumbnail_import_loop()` supervisor in BACKEND_API_ROUTES.py
+(niced subprocess, batched); can also be run by hand for a one-off batch.
 
-Data Modified: parts_catalog.thumbnail_url, parts_catalog.thumbnail_status; bucket objects.
+Process (per part with a source image and no part_thumbnails row yet):
+  1. Pick the best source image (parts_images.url; upgrade eBay s-l225→s-l500 for quality).
+  2. Fetch it (in-run source-url cache so an identical source isn't re-fetched/re-OCR'd).
+  3. CLEANUP FILTER (owner rule: no supplier links/ads AND no label/brand name — clean part
+     image only): OCR the image and REJECT it if it contains supplier/promo text ("coming
+     soon", "contact us", "auto parts", a URL, "whatsapp", phone hotline, …) OR is text-heavy
+     (> THUMB_MAX_OCR_WORDS real words ⇒ a label / OEM-box / brand card, not a clean part shot).
+  4. Standardize: RGB, auto-trim borders, fit to a clean white 500×500 square, compress to
+     ≤150 KB JPEG (quality stepped down), progressive + optimized. NO caption/label ever drawn.
+  5. Content-address the final bytes (thumbs/<sha256>.jpg) → identical images map to ONE bucket
+     object (dedup: a picture is stored once, reused by every part that shares it). Upload only
+     if the object doesn't already exist. Record the result in part_thumbnails(part_id, url,
+     status): 'ok' / 'rejected_ad' / 'no_source' / 'failed'.
+
+Data Modified: part_thumbnails (part_id, url, status); bucket objects (thumbs/<sha256>.jpg).
 
 Usage (inside the backend container):
-  python3 /app/maintenance/build_part_thumbnails.py --limit 500 [--caption] [--dry-run]
+  python3 /app/maintenance/build_part_thumbnails.py --limit 500 [--dry-run]
 
 Author: AutoSpareFinder Agent
 Last Updated: 2026-07-18
@@ -59,6 +62,11 @@ def _best_source(url: str) -> str:
     u = url.strip()
     # eBay: bump tiny/thumb variants to a usable size.
     u = re.sub(r"/s-l\d{2,4}\.", "/s-l500.", u)
+    # car-parts.ie CDN (autoteile-meile): the harvested URL uses m=2 (108×100). The `m=`
+    # param is a size selector — m=0 is the full 1024px original. Pull that so the pipeline
+    # downscales a crisp source into the 500×500 thumbnail (verified 2026-07-18: m=0→1024²).
+    if "autoteile-meile.de" in u:
+        u = re.sub(r"([?&]m=)\d+", r"\g<1>0", u)
     return u
 
 

@@ -1208,6 +1208,34 @@ image + the part name only — never a supplier link/ad).
   separate **`part_thumbnails(part_id, url, status)`** table (`ok | rejected_ad | no_source |
   failed`; NOT a column on the 4M-row parts_catalog → no DDL lock storms). `url` points at the
   shared content-addressed object. Run: `python3 /app/maintenance/build_part_thumbnails.py --limit 500`.
+- **Source images — harvest→thumbnail connection (added 2026-07-18):** the thumbnail pipeline
+  only cleans what the harvesters capture. The two parts-CREATING harvesters now write the part
+  photo to **`parts_images`** (the pipeline's input): **(1)** `car_parts_ie_flaresolverr_harvester.py`
+  `parse_parts()` extracts the block image via a markup-agnostic `_extract_image()` (lazy attrs
+  `data-src`/`data-original`/… first, then `src`, then a CSS `background-image`; skips
+  placeholder/logo/`data:` URIs; absolutizes) into `part["image_url"]`; it rides the existing
+  `/collect` pass-through (no field whitelist) into `car_parts_ie_import_generic.py`, which INSERTs
+  a `parts_images` row (`is_primary`, `NOT EXISTS` dedup guard — there is **no** unique
+  `(part_id,url)` index, so never use `ON CONFLICT` here; and `url` is `varchar` → cast `$2::varchar`
+  or you hit `AmbiguousParameterError`). **(2)** `oempartsonline_importer.py` — the scraper already
+  captured `image_url`; the importer now writes the same `parts_images` row. From there the
+  thumbnail supervisor picks the part up automatically (it scans parts lacking a `part_thumbnails`
+  row). `amayama`/`rockauto` relays are **price-fill only** (match existing parts by OEM) — they
+  create no parts and need no image write. Any NEW parts-creating harvester MUST also write
+  `parts_images` or its parts get no thumbnail. (Was 0.7% of the catalog imaged before this — the
+  car-parts.ie bulk captured none.)
+- **Supervisor (watches + handles the import):** `_thumbnail_import_loop()` in
+  `BACKEND_API_ROUTES.py`, registered at `startup()` via
+  `_supervised_task("thumbnail_import_loop", …)` (so a crash of the loop auto-restarts). It runs
+  `maintenance/build_part_thumbnails.py` continuously in modest batches (`--limit
+  THUMBNAIL_IMPORT_BATCH=300`) as a **subprocess** (isolates the synchronous OCR/PIL off the event
+  loop) at **low CPU priority** (`os.nice(15)`) so it never starves the flaresolverr harvesters on
+  this 4-core box; a **40-min hard cap** kills a stuck batch, a **`THUMBNAIL_IMPORT_SLEEP=90`s**
+  pause sits between batches, and it **exponentially backs off** (up to 1h) when the backlog is
+  drained (then re-checks for newly-imported parts). Toggle with `THUMBNAIL_IMPORT_ENABLED=0`.
+  Observe it at **`GET /api/v1/system/thumbnail-import`** (last cycle + live coverage: ok /
+  rejected_ad / no_source / distinct_images / dedup_saved) and in `docker logs` (`[thumbnail_import]`).
+  **Do NOT** also run a manual `docker exec -d … build_part_thumbnails` — the supervisor owns the import.
 - **Search wiring:** `routes/parts.py` surfaces ONLY the clean bucket thumbnail as
   `primary_image` (LEFT JOIN `part_thumbnails` status='ok'); raw supplier image URLs are
   **never returned** to customers. The frontend `_partImageCandidates` already reads

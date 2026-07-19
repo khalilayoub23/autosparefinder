@@ -294,7 +294,7 @@ async def import_file(
     conn = await asyncpg.connect(DB_DSN)
     try:
         supplier_id = await _ensure_supplier(conn)
-        inserted = updated = fitment_rows = supplier_rows = 0
+        inserted = updated = fitment_rows = supplier_rows = image_rows = 0
         checkpoint_at: int | None = None
 
         if start_from > 0:
@@ -465,6 +465,27 @@ async def import_file(
             except Exception:
                 pass
 
+            # Part photo → parts_images (the SOURCE the thumbnail pipeline cleans/dedups/
+            # serves). Connects the harvest pipeline to the thumbnail pipeline: a harvested
+            # image lands here, the thumbnail supervisor picks it up (it scans parts lacking
+            # a part_thumbnails row), OCR-filters ads/labels, and re-hosts a clean 500×500.
+            # No unique index on (part_id,url) → guard with NOT EXISTS to avoid re-harvest dups.
+            if image_url and image_url.startswith("http"):
+                try:
+                    await conn.execute(
+                        """
+                        INSERT INTO parts_images(id, part_id, url, is_primary, sort_order, created_at)
+                        SELECT gen_random_uuid(), $1::uuid, $2::varchar, TRUE, 0, NOW()
+                        WHERE NOT EXISTS (
+                            SELECT 1 FROM parts_images WHERE part_id=$1::uuid AND url=$2::varchar
+                        )
+                        """,
+                        part_id, image_url,
+                    )
+                    image_rows += 1
+                except Exception:
+                    pass
+
         return {
             "manufacturer": manufacturer,
             "model": model_name,
@@ -473,6 +494,7 @@ async def import_file(
             "parts_updated": updated,
             "fitment_rows": fitment_rows,
             "supplier_rows": supplier_rows,
+            "image_rows": image_rows,
             "checkpoint_at": checkpoint_at,
         }
     finally:

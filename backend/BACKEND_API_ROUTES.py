@@ -1122,6 +1122,96 @@ async def _car_parts_ie_harvester_loop() -> None:
         await asyncio.sleep(backoff)
 
 
+# ── Part-thumbnail import supervisor ──────────────────────────────────────────
+# Module-level status so a healthcheck / /system endpoint can read the last cycle.
+_THUMBNAIL_IMPORT_STATUS: dict = {"state": "starting", "total_ok": 0, "last_batch": None, "updated_at": None}
+
+
+async def _thumbnail_import_loop() -> None:
+    """Supervisor for the part-thumbnail cleanup pipeline (maintenance/build_part_thumbnails.py).
+
+    Runs the pipeline in modest batches, continuously: builds clean, deduped, no-label thumbnails
+    for parts that have a source image; backs off (and periodically re-checks) when the backlog is
+    empty; and NEVER starves the flaresolverr harvesters — small batches + a sleep between them +
+    the child runs at low CPU priority (os.nice) because tesseract OCR is CPU-heavy on this 4-core
+    box. Each batch is a SUBPROCESS (isolates the synchronous OCR/PIL work off the event loop) with
+    a hard time cap so a hung fetch can't wedge the loop. Crash-restart of THIS loop is handled by
+    the _supervised_task wrapper. Toggle with THUMBNAIL_IMPORT_ENABLED=0."""
+    import sys as _sys
+    import time as _time
+    import re as _re
+    from datetime import datetime as _dt
+
+    if os.getenv("THUMBNAIL_IMPORT_ENABLED", "1") != "1":
+        print("[thumbnail_import] disabled via THUMBNAIL_IMPORT_ENABLED=0", flush=True)
+        _THUMBNAIL_IMPORT_STATUS["state"] = "disabled"
+        return
+
+    await asyncio.sleep(120)  # let startup + harvesters settle before adding OCR load
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "maintenance", "build_part_thumbnails.py")
+    # Smaller batches → status updates land sooner + gentler per-batch CPU/lock pressure
+    # while OCR competes with the flaresolverr harvesters on this 4-core box.
+    batch = int(os.getenv("THUMBNAIL_IMPORT_BATCH", "80"))
+    between = int(os.getenv("THUMBNAIL_IMPORT_SLEEP", "90"))
+    idle_backoff = 300
+
+    while True:
+        # gate — only run when the bucket is actually configured
+        try:
+            import s3_storage as _S
+            if not _S.s3_enabled():
+                _THUMBNAIL_IMPORT_STATUS["state"] = "no_s3"
+                await asyncio.sleep(600); continue
+        except Exception:
+            await asyncio.sleep(600); continue
+
+        started = _time.time()
+        n_cand = ok = rej = nosrc = 0
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                _sys.executable, "-u", script, "--limit", str(batch),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+                preexec_fn=lambda: os.nice(15),   # low CPU priority — yield to harvesters
+                env=dict(os.environ),
+            )
+            try:
+                out, _ = await asyncio.wait_for(proc.communicate(), timeout=2400)  # 40-min cap
+            except asyncio.TimeoutError:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                out = b""
+                print("[thumbnail_import] batch exceeded 40min — killed (stuck fetch?)", flush=True)
+            text = (out or b"").decode("utf-8", "ignore")
+            cm = _re.search(r"candidates:\s*(\d+)", text)
+            n_cand = int(cm.group(1)) if cm else 0
+            dm = _re.search(r"DONE — ok=(\d+).*?rejected_ad=(\d+)\s+no_source=(\d+)", text)
+            if dm:
+                ok, rej, nosrc = int(dm.group(1)), int(dm.group(2)), int(dm.group(3))
+        except Exception as exc:
+            print(f"[thumbnail_import] batch failed: {exc}", flush=True)
+
+        _THUMBNAIL_IMPORT_STATUS["total_ok"] += ok
+        _THUMBNAIL_IMPORT_STATUS["last_batch"] = {
+            "candidates": n_cand, "ok": ok, "rejected_ad": rej, "no_source": nosrc,
+            "seconds": round(_time.time() - started, 1),
+        }
+        _THUMBNAIL_IMPORT_STATUS["updated_at"] = _dt.utcnow().isoformat()
+        _THUMBNAIL_IMPORT_STATUS["state"] = "idle" if n_cand == 0 else "importing"
+        print(f"[thumbnail_import] candidates={n_cand} ok={ok} rejected={rej} no_source={nosrc} "
+              f"({_THUMBNAIL_IMPORT_STATUS['last_batch']['seconds']}s) total_ok={_THUMBNAIL_IMPORT_STATUS['total_ok']}",
+              flush=True)
+
+        if n_cand == 0:
+            # backlog drained — back off, re-check later for newly-imported parts / refreshes
+            await asyncio.sleep(idle_backoff)
+            idle_backoff = min(idle_backoff * 2, 3600)
+        else:
+            idle_backoff = 300
+            await asyncio.sleep(between)
+
+
 async def _amayama_fs_harvester_loop() -> None:
     """Supervises amayama_flaresolverr_harvester.py — the SERVER-SIDE Amayama harvester
     (FlareSolverr session+warmup bypasses Amayama's Cloudflare; injects the account
@@ -1696,6 +1786,7 @@ async def startup():
     _supervised_task("rex_dispatch_loop",           _rex_dispatch_loop())
     _supervised_task("zombie_reaper",               _zombie_reaper_loop())
     _supervised_task("car_parts_ie_harvester_loop",  _car_parts_ie_harvester_loop())
+    _supervised_task("thumbnail_import_loop",        _thumbnail_import_loop())
     _supervised_task("car_parts_ie_stall_watchdog",  _car_parts_ie_stall_watchdog_loop())
     _supervised_task("car_parts_ie_healthcheck",     _car_parts_ie_harvester_healthcheck_loop())
     _supervised_task("meili_sync_loop",              _meili_sync_loop())
@@ -3659,6 +3750,24 @@ class WebhookOrderPayload(BaseModel):
 async def webhook_new_order_receiver(payload: WebhookOrderPayload, db: AsyncSession = Depends(get_pii_db)):
     logger.info(f"Webhook Triggered: New Order Received - #{payload.order_id} by {payload.customer_name}")
     return {"status": "success", "triggered_id": payload.order_id}
+
+@app.get("/api/v1/system/thumbnail-import")
+async def thumbnail_import_status(cat_db: AsyncSession = Depends(get_db)):
+    """Observability for the thumbnail-import supervisor (last cycle + live catalog coverage)."""
+    out = dict(_THUMBNAIL_IMPORT_STATUS)
+    try:
+        row = (await cat_db.execute(text(
+            "SELECT COUNT(*) FILTER (WHERE status='ok') AS ok, "
+            "COUNT(*) FILTER (WHERE status='rejected_ad') AS rejected_ad, "
+            "COUNT(*) FILTER (WHERE status='no_source') AS no_source, "
+            "COUNT(DISTINCT url) FILTER (WHERE status='ok') AS distinct_images FROM part_thumbnails"
+        ))).first()
+        out["catalog"] = {"ok": row[0], "rejected_ad": row[1], "no_source": row[2],
+                          "distinct_images": row[3], "dedup_saved": (row[0] or 0) - (row[3] or 0)}
+    except Exception:
+        out["catalog"] = None
+    return out
+
 
 @app.get("/api/health")
 async def health_check(

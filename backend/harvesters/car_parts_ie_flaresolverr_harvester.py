@@ -452,6 +452,41 @@ def post_relay(vehicle: str, parts: list, done: bool = False) -> bool:
         return False
 
 # ── HTML parsing ──────────────────────────────────────────────────────────────
+# Attributes a lazy-loaded <img> may carry the real URL in (src is often a 1x1
+# placeholder until JS swaps it). Checked in order; first usable one wins.
+_IMG_ATTRS = ("data-src", "data-original", "data-lazy", "data-lazy-src", "data-echo", "src")
+# Reject non-real images: inline data URIs, blank/spacer/placeholder/logo assets.
+_IMG_SKIP_RE = re.compile(r"^data:|(?:spacer|blank|placeholder|no[-_]?image|loading|logo)", re.I)
+
+
+def _extract_image(el, path: str) -> str | None:
+    """Best-effort part-photo URL from a product block. Generic across the site's
+    markup: any <img> (lazy attrs first), else a background-image style. Returns an
+    absolute https URL, or None. Real filtering (ads/labels) happens later in the
+    thumbnail pipeline — here we only avoid obvious placeholders/logos."""
+    for img in el.select("img"):
+        for a in _IMG_ATTRS:
+            v = (img.get(a) or "").strip()
+            if v and not _IMG_SKIP_RE.search(v.rsplit("/", 1)[-1]) and not v.startswith("data:"):
+                return _abs_url(v)
+    m = re.search(r"background(?:-image)?\s*:\s*url\((['\"]?)(.*?)\1\)",
+                  " ".join(e.get("style", "") for e in el.select("[style]")), re.I)
+    if m and not _IMG_SKIP_RE.search(m.group(2)):
+        return _abs_url(m.group(2))
+    return None
+
+
+def _abs_url(u: str) -> str:
+    u = u.strip()
+    if u.startswith("//"):
+        return "https:" + u
+    if u.startswith("/"):
+        return BASE + u
+    if u.startswith("http"):
+        return u
+    return f"{BASE}/{u.lstrip('/')}"
+
+
 def parse_parts(html: str, path: str) -> list:
     soup = BeautifulSoup(html, "html.parser")
     parts = []
@@ -471,6 +506,9 @@ def parse_parts(html: str, path: str) -> list:
                 "price_eur": float(pm.group(1)) if pm else None,
                 "brand": name.split()[0] if name else "",
                 "source_url": f"{BASE}{path}",
+                # Part photo → parts_images (source for the thumbnail pipeline). The
+                # importer reads product["image_url"]; None is fine (no image → skipped).
+                "image_url": _extract_image(el, path),
             })
     return parts
 

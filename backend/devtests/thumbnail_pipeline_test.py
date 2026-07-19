@@ -14,6 +14,9 @@ Verifies:
   5. Serving: GET /api/v1/thumbnails/{key} returns ≤150 KB image bytes, immutable cache, on OUR
      domain (no supplier host); traversal/non-thumbnail keys are 404.
   6. Search wiring: results expose `primary_image` and NEVER a raw supplier (ebay/…) image url.
+  7. Harvest→image connection: the car-parts.ie harvester's _extract_image() yields absolute
+     https part photos (and skips placeholders); parts_images (the pipeline INPUT that harvesters
+     feed) is populated. This is the harvest→thumbnail link added 2026-07-18.
 
 Usage:  python3 /app/devtests/thumbnail_pipeline_test.py
 Author: AutoSpareFinder Agent — Last Updated: 2026-07-18
@@ -131,6 +134,45 @@ def main():
               all("ebay" not in str(p.get("primary_image") or "") and "contabo" not in str(p.get("primary_image") or "") for p in parts))
     except Exception as e:
         check("search parts expose primary_image (wiring present)", False, str(e)[:50])
+
+    # ── 6. Supervisor (status endpoint) ──────────────────────────────
+    print("[6] Supervisor")
+    try:
+        st = json.loads(urllib.request.urlopen(urllib.request.Request(
+            "https://autosparefinder.co.il/api/v1/system/thumbnail-import", headers=UA), timeout=20).read())
+        check("supervisor status endpoint live", isinstance(st, dict) and "state" in st and "total_ok" in st, st.get("state"))
+        cat = st.get("catalog") or {}
+        check("supervisor reports catalog coverage", "ok" in cat and "distinct_images" in cat,
+              f"ok={cat.get('ok')} distinct={cat.get('distinct_images')} dedup_saved={cat.get('dedup_saved')}")
+        check("dedup integrity (distinct ≤ ok, saved ≥ 0)",
+              (cat.get("distinct_images", 0) <= cat.get("ok", 0)) and cat.get("dedup_saved", 0) >= 0)
+    except Exception as e:
+        check("supervisor status endpoint live", False, str(e)[:50])
+
+    # ── 7. Harvest → image connection (the harvesters FEED parts_images) ─────
+    print("[7] Harvest→image connection")
+    try:
+        import importlib.util as _il
+        _hs = _il.spec_from_file_location("cph", "/app/harvesters/car_parts_ie_flaresolverr_harvester.py")
+        cph = _il.module_from_spec(_hs); _hs.loader.exec_module(cph)
+        from bs4 import BeautifulSoup as _BS
+        def _blk(html):
+            return _BS(f'<div class="rec_products_single_block">{html}</div>', "html.parser").select_one(".rec_products_single_block")
+        lazy = cph._extract_image(_blk('<img data-src="//cdn.car-parts.ie/p/1.jpg" src="/spacer.gif">'), "/car-parts/bmw/x/oil-filter")
+        rel  = cph._extract_image(_blk('<img src="/media/x/2.jpg">'), "/x")
+        none = cph._extract_image(_blk('<img src="/img/no-image.png">'), "/x")
+        check("harvester extracts lazy image → absolute https", lazy == "https://cdn.car-parts.ie/p/1.jpg")
+        check("harvester absolutizes relative image", rel == "https://www.car-parts.ie/media/x/2.jpg")
+        check("harvester skips placeholder/logo images", none is None)
+        # parts_images is the pipeline INPUT and is populated (harvest side alive)
+        async def _imgcount():
+            c = await asyncpg.connect(DB)
+            n = await c.fetchval("SELECT COUNT(*) FROM parts_images WHERE url IS NOT NULL")
+            await c.close(); return n
+        n_img = asyncio.get_event_loop().run_until_complete(_imgcount())
+        check("parts_images populated (thumbnail-pipeline input)", n_img > 0, f"{n_img} source images")
+    except Exception as e:
+        check("harvester extracts lazy image → absolute https", False, str(e)[:60])
 
     passed = sum(1 for _, ok in results if ok)
     print("\n" + "=" * 56)
