@@ -3462,29 +3462,28 @@ async def publish_social_post(
     platform_results: Dict[str, Any] = {}
     published_ids: Dict[str, Any] = {}
 
+    # One dispatch path for every platform (telegram, tiktok, facebook, instagram, x,
+    # discord, reddit) via social/registry.py \u2014 no per-platform branching here. Media
+    # (image/video URL) and CTA link ride in the post's meta so image-required platforms
+    # (instagram/tiktok) get a picture; the NOA enqueue puts the part thumbnail there.
+    from social import registry
+    _meta_in = _social_meta(post)
+    media_url = _meta_in.get("media_url") or _meta_in.get("image_url")
+    link = _meta_in.get("link") or _meta_in.get("cta_url")
+    hashtags = re.findall(r"#([A-Za-z0-9_\u0590-\u05FF]+)", post.content or "")
+
     for platform in platforms:
-        if platform == "telegram":
-            tg_result = await publish_to_telegram(post.content)
-            platform_results[platform] = tg_result
-            if tg_result.get("ok"):
-                published_ids[platform] = tg_result.get("message_id")
+        if platform in registry.MEDIA_REQUIRED and not media_url:
+            platform_results[platform] = {
+                "ok": False, "manual_required": True,
+                "error": f"{platform} requires an image/video (no media_url on this post)",
+            }
             continue
-
-        if platform == "tiktok":
-            hashtags = re.findall(r"#([A-Za-z0-9_\u0590-\u05FF]+)", post.content or "")
-            caption = re.sub(r"#[^\s#]+", " ", post.content or "")
-            caption = re.sub(r"\s+", " ", caption).strip()
-            tt_result = await post_text_content(caption=caption, hashtags=hashtags)
-            platform_results[platform] = tt_result
-            if tt_result.get("ok"):
-                published_ids[platform] = tt_result.get("post_id") or tt_result.get("publish_id")
-            continue
-
-        platform_results[platform] = {
-            "ok": False,
-            "manual_required": True,
-            "error": "publisher_not_configured",
-        }
+        res = await registry.dispatch(platform, post.content, media_url=media_url,
+                                      hashtags=hashtags, link=link)
+        platform_results[platform] = res
+        if res.get("ok"):
+            published_ids[platform] = res.get("id")
 
     if not published_ids:
         raise HTTPException(

@@ -1959,6 +1959,63 @@ async def _noa_send_telegram(token: str, chat_id: str, text: str, keyboard: list
         logger.warning("noa_send_telegram error: %s", _e)
 
 
+# System UUID that owns NOA-generated social posts (created_by is a pii User id with no
+# cross-DB FK — a stable sentinel is fine and lets us filter NOA's posts).
+_NOA_SYSTEM_USER_ID = uuid.UUID("00000000-0000-0000-0000-0000000000a1")
+
+
+async def _noa_featured_thumbnail(car: str, eng_part: str) -> "str | None":
+    """A clean part thumbnail (from the thumbnail pipeline) for the featured car+part,
+    so image-required platforms have media. Matches the car's brand + the part name;
+    returns None if nothing clean matches (text platforms still post)."""
+    try:
+        brand = (car or "").strip().split()[0] if car else ""
+        async with async_session_factory() as cat_db:
+            row = (await cat_db.execute(text(
+                """
+                SELECT t.url
+                FROM part_thumbnails t
+                JOIN parts_catalog pc ON pc.id = t.part_id
+                WHERE t.status = 'ok' AND t.url IS NOT NULL AND pc.is_active
+                  AND (:brand = '' OR pc.manufacturer ILIKE :brand)
+                  AND (:part = '' OR pc.name ILIKE :part)
+                LIMIT 1
+                """
+            ), {"brand": f"%{brand}%", "part": f"%{(eng_part or '').strip()}%"})).first()
+            return str(row[0]) if row and row[0] else None
+    except Exception as exc:
+        logger.warning("noa featured-thumbnail lookup failed: %s", exc)
+        return None
+
+
+async def _noa_enqueue_social_post(caption: str, platforms: list, media_url: "str | None",
+                                   topic: str) -> "str | None":
+    """Create a pending_approval SocialPost so NOA's drafts flow through the SAME
+    approval→publish queue the admin endpoints + social/registry consume. Returns the id."""
+    try:
+        from BACKEND_DATABASE_MODELS import SocialPost
+        meta = {"source": "noa_marketing_loop", "topic": topic}
+        if media_url:
+            meta["media_url"] = media_url
+        async with async_session_factory() as cat_db:
+            sp = SocialPost(
+                id=uuid.uuid4(),
+                content=caption,
+                platforms=platforms,
+                status="pending_approval",
+                external_post_ids=meta,
+                created_by=_NOA_SYSTEM_USER_ID,
+            )
+            cat_db.add(sp)
+            await cat_db.commit()
+            logger.info("noa_marketing_loop: enqueued social_post %s platforms=%s media=%s",
+                        sp.id, platforms, bool(media_url))
+            return str(sp.id)
+    except Exception as exc:
+        logger.error("noa enqueue social_post failed: %s", exc)
+        return None
+
+
 async def _noa_marketing_loop():
     """
     Weekly campaign engine for NOA social media agent.
@@ -2081,13 +2138,16 @@ async def _noa_marketing_loop():
                 f"&utm_medium=social&utm_campaign=noa_w{week_num}")
 
     # Platform rotation by weekday (0=Mon, 1=Tue … 6=Sun)
+    # One platform per day so all six public channels get covered across a week.
+    # (tiktok/instagram are media-required — the enqueue attaches a part thumbnail;
+    # tiktok additionally needs video so it may stay draft until a clip is supplied.)
     _DAY_PLATFORM = {
         1: ("tiktok",    "TikTok — hook קצר וחד, שורה ראשונה שמחזיקה"),
         2: ("instagram", "Instagram — story-telling ויזואלי, אמוציונלי"),
         3: ("facebook",  "Facebook — פוסט מידעי בעל ערך, ניתן לשיתוף"),
-        4: ("whatsapp",  "WhatsApp channel — הודעה קצרה ומניעה לפעולה"),
-        5: ("tiktok",    "TikTok — זווית שונה לגמרי מהתיקטוק הקודם"),
-        6: ("instagram", "Instagram Reels — שאלה פתוחה לקהל"),
+        4: ("x",         "X/Twitter — חד, קצר, מתחת ל-280 תווים, טוויט אחד"),
+        5: ("reddit",    "Reddit — כותרת בשורה ראשונה + גוף מסביר, טון אותנטי לא-פרסומי"),
+        6: ("discord",   "Discord — הודעה קהילתית ידידותית עם קריאה לפעולה"),
     }
 
     while True:
@@ -2302,6 +2362,19 @@ async def _noa_marketing_loop():
                     )
 
                     hashtags = [f"#{m.group(1)}" for m in noa._NOA_HASHTAG_RE.finditer(caption)]
+
+                    # Attach a clean part thumbnail (from the thumbnail pipeline) so
+                    # image-required platforms (instagram/tiktok) have media.
+                    media_url = await _noa_featured_thumbnail(car, eng_part)
+
+                    # ENQUEUE into the social_posts approval queue → owner approves →
+                    # the registry publishes to the real platform. This is the single
+                    # source of truth the admin endpoints + Telegram approval consume.
+                    social_post_id = await _noa_enqueue_social_post(
+                        caption=caption, platforms=[platform], media_url=media_url,
+                        topic=f"{heb_part} — {car}",
+                    )
+
                     pending_payload = {
                         "caption": caption,
                         "hashtags": hashtags,
@@ -2309,6 +2382,8 @@ async def _noa_marketing_loop():
                         "topic": f"{heb_part} — {car}",
                         "post_type": platform,
                         "status": "awaiting_approval",
+                        "social_post_id": social_post_id,
+                        "media_url": media_url,
                         "created_at": now.isoformat(),
                     }
 

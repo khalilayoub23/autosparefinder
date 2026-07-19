@@ -78,42 +78,60 @@ async def telegram_admin_webhook(request: Request):
                       if pending:
                           caption = pending.get("caption", "")
                           hashtags = pending.get("hashtags") or []
+                          media_url = pending.get("media_url")
                           plat = (callback_platform or pending.get("platform") or "post").lower()
+                          sp_id = pending.get("social_post_id")
                           notes: list[str] = []
+                          from social import registry
 
                           # 1) Telegram channel — real public distribution we fully
                           #    control; every approved post goes out here.
-                          try:
-                              from social.telegram_publisher import publish_to_telegram
-                              tg_res = await publish_to_telegram(caption)
-                              notes.append("✅ פורסם בערוץ הטלגרם" if tg_res.get("ok")
-                                           else f"⚠️ טלגרם: {tg_res.get('error', 'נכשל')}")
-                          except Exception as _te:
-                              notes.append(f"⚠️ טלגרם: {_te}")
+                          tg_res = await registry.dispatch("telegram", caption)
+                          notes.append("✅ פורסם בערוץ הטלגרם" if tg_res.get("ok")
+                                       else f"⚠️ טלגרם: {tg_res.get('error', 'נכשל')}")
+                          results = {"telegram": tg_res}
+                          published: dict = {"telegram": tg_res.get("id")} if tg_res.get("ok") else {}
 
-                          # 2) TikTok API (currently sandbox — uploads land in the
-                          #    sandbox app, not the public feed, until app approval).
-                          if plat in ("tiktok", "post"):
+                          # 2) The post's target platform(s) — ONE registry dispatch for
+                          #    facebook/instagram/x/discord/reddit/tiktok. not_configured
+                          #    (no token yet) → hand back copy-paste-ready text.
+                          for p in ([plat] if plat not in ("post", "", "telegram") else []):
+                              if p in registry.MEDIA_REQUIRED and not media_url:
+                                  notes.append(f"⚠️ {p}: דרושה תמונה/וידאו (אין מדיה לפוסט)")
+                                  results[p] = {"ok": False, "error": "media required"}
+                                  continue
+                              r = await registry.dispatch(p, caption, media_url=media_url, hashtags=hashtags)
+                              results[p] = r
+                              if r.get("ok"):
+                                  published[p] = r.get("id"); notes.append(f"✅ פורסם ב-{p.title()}")
+                              elif r.get("not_configured"):
+                                  notes.append(f"📋 {p.title()}: אין עדיין חיבור API — הטקסט מוכן להעתקה למטה")
+                              else:
+                                  notes.append(f"⚠️ {p.title()}: {r.get('error')}")
+
+                          # 3) Update the social_posts row so the approval queue reflects reality.
+                          if sp_id:
                               try:
-                                  from social.tiktok_publisher import post_text_content
-                                  tk = await post_text_content(caption=caption, hashtags=hashtags)
-                                  _sandbox = os.getenv("TIKTOK_SANDBOX", "true").lower() == "true"
-                                  if tk.get("ok"):
-                                      notes.append("✅ TikTok (sandbox — לא ציבורי עד אישור האפליקציה)" if _sandbox else "✅ פורסם ב-TikTok")
-                                  else:
-                                      notes.append(f"⚠️ TikTok: {tk.get('error')}")
-                              except Exception as _tk:
-                                  notes.append(f"⚠️ TikTok: {_tk}")
+                                  import datetime as _dt
+                                  from sqlalchemy import select as _sel
+                                  from BACKEND_DATABASE_MODELS import SocialPost
+                                  sp = (await db.execute(_sel(SocialPost).where(SocialPost.id == sp_id))).scalar_one_or_none()
+                                  if sp:
+                                      sp.status = "published" if published else "approved"
+                                      if published:
+                                          _m = dict(sp.external_post_ids or {}); _m.update(published)
+                                          _m["published_platforms"] = sorted(published.keys())
+                                          sp.external_post_ids = _m
+                                          sp.published_at = _dt.datetime.utcnow()
+                                      sp.updated_at = _dt.datetime.utcnow()
+                                      await db.commit()
+                              except Exception as _dbe:
+                                  notes.append(f"⚠️ DB: {_dbe}")
 
-                          # 3) Platforms without API tokens yet — hand back
-                          #    copy-paste-ready text.
-                          if plat in ("instagram", "facebook", "whatsapp"):
-                              notes.append(f"📋 {plat.title()}: אין עדיין חיבור API — הטקסט מוכן להעתקה למטה")
-
-                          pending["status"] = "approved"
+                          pending["status"] = "published" if published else "approved"
                           await mem.set("pending_post", pending)
                           reply = "🎯 הפוסט אושר!\n" + "\n".join(notes)
-                          if plat in ("instagram", "facebook", "whatsapp"):
+                          if any((results.get(p) or {}).get("not_configured") for p in results):
                               reply += f"\n\n--- העתק מכאן ---\n{caption}"
                       else:
                           reply = "⚠️ No pending NOA post was found for approval"
