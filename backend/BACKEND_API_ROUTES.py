@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_, func, text
 import logging
+import json
 import uuid
 from uuid import UUID as _UUID
 import os
@@ -129,7 +130,7 @@ def _supervised_task(name: str, coro) -> "asyncio.Task":
                 msg_parts.append(f"Error: {type(exc).__name__}: {exc}")
             msg_parts.append("⚠️ This task will NOT restart automatically — check the server.")
             asyncio.get_event_loop().create_task(
-                _wa_send(to=owner, text="\n".join(msg_parts))
+                _wa_send_quiet(to=owner, text="\n".join(msg_parts))
             )
         print(f"[TaskMonitor] DIED: {name} exc={exc}")
 
@@ -917,12 +918,12 @@ async def _status_update_loop() -> None:
 
             if is_digest_time:
                 lines[0] = f"\U0001f4c5 *AutoSpareFinder — דוח יומי* ({_now.strftime('%H:%M UTC')})"
-                await _wa_send(to=_owner_phone, text="\n".join(lines))
+                await _wa_send_quiet(to=_owner_phone, text="\n".join(lines))
                 _last_digest_date = _today
                 print("[StatusUpdate] Sent daily digest to owner")
             elif has_problem and problem_sig != _last_problem_sig:
                 lines[0] = f"⚠️ *AutoSpareFinder — בעיה במערכת* ({_now.strftime('%H:%M UTC')})"
-                await _wa_send(to=_owner_phone, text="\n".join(lines))
+                await _wa_send_quiet(to=_owner_phone, text="\n".join(lines))
                 _last_problem_sig = problem_sig
                 print(f"[StatusUpdate] Sent PROBLEM alert to owner: {problem_sig[:120]}")
             else:
@@ -1304,8 +1305,7 @@ async def _harvest_supervisor_loop() -> None:
                             f"הבאים בתור (עדיפות עליונה):\n{nxt}"
                         )
                         try:
-                            from social.whatsapp_provider import send_message as _wa
-                            await _wa(owner, msg)
+                            await _wa_send_quiet(to=owner, text=msg)
                         except Exception:
                             pass
                     _last_digest_date = _today
@@ -1719,7 +1719,7 @@ async def _amayama_harvest_monitor_loop() -> None:
                 owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
                 if owner:
                     try:
-                        await _wa_send(to=owner, text=(
+                        await _wa_send_quiet(to=owner, text=(
                             "🈁 SERVER Amayama harvester (FlareSolverr) is DOWN — no feed "
                             "activity ~25 min. ~{:,} Japanese-brand parts still unpriced. "
                             "Most likely the Amayama login cookie expired: refresh "
@@ -1861,7 +1861,70 @@ ABANDONED_CART_WINDOW_DAYS = int(os.getenv("ABANDONED_CART_WINDOW_DAYS", "3"))
 ABANDONED_CART_MAX_SENDS_PER_WINDOW = int(os.getenv("ABANDONED_CART_MAX_SENDS_PER_WINDOW", "3"))
 ABANDONED_CART_SEND_START_HOUR_IL = int(os.getenv("ABANDONED_CART_SEND_START_HOUR_IL", "9"))
 ABANDONED_CART_SEND_END_HOUR_IL = int(os.getenv("ABANDONED_CART_SEND_END_HOUR_IL", "21"))
+# Minimum spacing between two reminders for the SAME cart (part of the 3-sends cap fix).
+ABANDONED_CART_MIN_GAP_H = int(os.getenv("ABANDONED_CART_MIN_GAP_H", "24"))
 APP_LOCAL_TZ = ZoneInfo(os.getenv("APP_LOCAL_TIMEZONE", "Asia/Jerusalem"))
+
+# ── GLOBAL notification quiet hours (G8 2026-07-20, owner directive) ───────────
+# NO outbound WhatsApp — customer reminders, owner alerts, NOA briefs — may be sent
+# outside the IL daytime window (default 09:00-21:00). Messages produced at night are
+# queued in Redis and flushed by the health-monitor pass once the window opens.
+NOTIFY_SEND_START_HOUR_IL = int(os.getenv("NOTIFY_SEND_START_HOUR_IL", str(ABANDONED_CART_SEND_START_HOUR_IL)))
+NOTIFY_SEND_END_HOUR_IL = int(os.getenv("NOTIFY_SEND_END_HOUR_IL", str(ABANDONED_CART_SEND_END_HOUR_IL)))
+_WA_QUIET_QUEUE_KEY = "autospare:wa_quiet_queue"
+
+
+def _notify_window_open(now_local: "datetime | None" = None) -> tuple[bool, datetime]:
+    current_local = now_local or datetime.now(APP_LOCAL_TZ)
+    is_open = NOTIFY_SEND_START_HOUR_IL <= current_local.hour < NOTIFY_SEND_END_HOUR_IL
+    return is_open, current_local
+
+
+async def _wa_send_quiet(to: str, text: str, critical: bool = False) -> dict:
+    """Quiet-hours-aware WhatsApp send. Inside the window (or critical=True) → send now.
+    Outside → queue to Redis; the health monitor flushes the queue at window open, so
+    nothing is lost and nobody gets a 03:00 message."""
+    is_open, _ = _notify_window_open()
+    if is_open or critical:
+        return await _wa_send(to=to, text=text)
+    try:
+        _r = await get_redis()
+        await _r.rpush(_WA_QUIET_QUEUE_KEY, json.dumps({
+            "to": to, "text": text[:3800],
+            "queued_at": datetime.now(APP_LOCAL_TZ).strftime("%d/%m %H:%M"),
+        }, ensure_ascii=False))
+        await _r.ltrim(_WA_QUIET_QUEUE_KEY, -50, -1)  # keep at most 50 queued
+        print(f"[QuietHours] queued WhatsApp for {to[-4:] if to else '?'} (outside "
+              f"{NOTIFY_SEND_START_HOUR_IL}:00-{NOTIFY_SEND_END_HOUR_IL}:00 window)")
+        return {"ok": True, "queued": True}
+    except Exception as exc:
+        # Redis down — better to deliver late-night than to lose the alert entirely.
+        print(f"[QuietHours] queue failed ({exc}) — sending immediately")
+        return await _wa_send(to=to, text=text)
+
+
+async def _flush_wa_quiet_queue() -> int:
+    """Send everything queued during quiet hours. Called by the health monitor each pass
+    while the window is open. Returns number of messages sent."""
+    sent = 0
+    try:
+        _r = await get_redis()
+        while sent < 50:
+            raw = await _r.lpop(_WA_QUIET_QUEUE_KEY)
+            if not raw:
+                break
+            try:
+                item = json.loads(raw)
+                await _wa_send(to=item["to"],
+                               text=f"🌙 [נשלח מאוחר — נשמר משעות הלילה {item.get('queued_at','')}]\n{item['text']}")
+                sent += 1
+            except Exception as exc:
+                print(f"[QuietHours] flush item failed: {exc}")
+        if sent:
+            print(f"[QuietHours] flushed {sent} queued message(s)")
+    except Exception as exc:
+        print(f"[QuietHours] flush error: {exc}")
+    return sent
 
 # How often the pending-payment reminder runs (default: every 30 min)
 PAYMENT_REMINDER_INTERVAL_S = int(os.getenv("PAYMENT_REMINDER_INTERVAL_S", "1800"))
@@ -2031,8 +2094,24 @@ async def _noa_marketing_loop():
     from hf_client import hf_text as _hf_text
     from BACKEND_DATABASE_MODELS import async_session_factory
 
-    NOA_INTERVAL_H = int(os.getenv("NOA_MARKETING_INTERVAL_H", "24"))
-    await asyncio.sleep(1800)  # 30-min startup delay
+    # G8 2026-07-20: the loop no longer free-runs on a 24h timer anchored to container
+    # start (which drifted to 03:00 sends after night restarts). It fires once a day at
+    # a fixed IL local time inside the notification window.
+    NOA_POST_HOUR_IL = int(os.getenv("NOA_POST_HOUR_IL", "9"))
+    NOA_POST_MINUTE_IL = int(os.getenv("NOA_POST_MINUTE_IL", "30"))
+    # WhatsApp is the PRIMARY owner channel (owner directive); Telegram only mirrors
+    # when explicitly enabled.
+    NOA_TELEGRAM_MIRROR = os.getenv("NOA_TELEGRAM_MIRROR", "0") == "1"
+
+    def _secs_until_next_post() -> float:
+        now_l = datetime.now(APP_LOCAL_TZ)
+        target = now_l.replace(hour=NOA_POST_HOUR_IL, minute=NOA_POST_MINUTE_IL,
+                               second=0, microsecond=0)
+        if target <= now_l:
+            target += timedelta(days=1)
+        return max(60.0, (target - now_l).total_seconds())
+
+    await asyncio.sleep(_secs_until_next_post())
 
     TELEGRAM_OWNER_ID = os.getenv("TELEGRAM_OWNER_CHAT_ID", "")
     TELEGRAM_ADMIN_TOKEN = os.getenv("TELEGRAM_ADMIN_BOT_TOKEN", "")
@@ -2152,7 +2231,7 @@ async def _noa_marketing_loop():
 
     while True:
         try:
-            now = datetime.now(timezone.utc)
+            now = datetime.now(APP_LOCAL_TZ)   # IL local — weekday/season match the audience
             weekday = now.weekday()   # 0=Monday … 6=Sunday
             month = now.month
             week_num = now.isocalendar()[1]
@@ -2194,6 +2273,7 @@ async def _noa_marketing_loop():
                         f"{real_fact}\n"
                         f"{no_repeat}\n\n"
                         "הנחיות:\n"
+                        "• כתבי חכם, מצחיק ואנושי: כל copy_hebrew עם קריצה אחת + עובדה שמלמדת משהו + מכירה ברורה (כאב→פתרון→מחיר→CTA)\n"
                         "• בחרי נושא שבועי יצירתי ורלוונטי — לא חייב להיות בדיוק הרכב/חלק שניתן לדגמה\n"
                         "• תכנני 6 פוסטים יומיים: ב׳=TikTok, ג׳=Instagram, ד׳=Facebook, ה׳=WhatsApp, ו׳=TikTok, שבת=Instagram\n"
                         "• כל פוסט — זווית שונה לגמרי, לא וריאציה של אותו טקסט\n"
@@ -2288,8 +2368,8 @@ async def _noa_marketing_loop():
                     wa_msg = "\n".join(wa_lines)
 
                     if OWNER_PHONE:
-                        await _wa_send(to=OWNER_PHONE, text=wa_msg)
-                    if TELEGRAM_OWNER_ID and TELEGRAM_ADMIN_TOKEN:
+                        await _wa_send_quiet(to=OWNER_PHONE, text=wa_msg)
+                    if NOA_TELEGRAM_MIRROR and TELEGRAM_OWNER_ID and TELEGRAM_ADMIN_TOKEN:
                         await _noa_send_telegram(TELEGRAM_ADMIN_TOKEN, TELEGRAM_OWNER_ID, wa_msg)
 
                     await mem.append_event("post_history", {
@@ -2302,7 +2382,7 @@ async def _noa_marketing_loop():
                     # ── Tue–Sun: generate that day's platform post ──────────────
                     platform_info = _DAY_PLATFORM.get(weekday)
                     if not platform_info:
-                        await asyncio.sleep(NOA_INTERVAL_H * 3600)
+                        await asyncio.sleep(_secs_until_next_post())
                         continue
 
                     platform, platform_desc = platform_info
@@ -2340,13 +2420,16 @@ async def _noa_marketing_loop():
                         f"{real_fact}\n"
                         f"{theme_hint}{plan_hint}\n"
                         f"{no_repeat}\n\n"
-                        "כתיבה:\n"
+                        "כתיבה (חכם + מצחיק + אנושי + מוכר — הוראת בעלים):\n"
                         "• פתחי עם ה-hook בשורה ראשונה — קצרה, חדה, לא שאלה גנרית\n"
+                        "• שלבי קריצה אחת חכמה — אירוניה עדינה או סיטואציה שכל נהג מכיר (בלי בדיחות דחוקות)\n"
+                        "• למדי את הקורא משהו קטן ואמיתי על הרכב/החלק — שירגיש חכם יותר אחרי הקריאה\n"
+                        "• כתבי כמו בן אדם: גוף ראשון, משפטים קצרים, עברית מדוברת, 1-3 אמוג'י\n"
                         "• ציוני את שם הרכב ואת שם החלק הספציפי\n"
-                        "• אם ניתנה עובדה אמיתית מהקטלוג — שלבי את המחיר האמיתי (זה מה שמוכר); אסור להמציא מחיר\n"
-                        "• פתרון: חיפוש לפי מספר רישוי ב-autosparefinder.co.il\n"
-                        "• סיימי בשאלה אחת מעוררת שיח\n"
-                        "• האשטאגים בשורה אחרונה בלבד\n\n"
+                        "• זה פוסט מכירה: אם ניתנה עובדה אמיתית מהקטלוג — שלבי את המחיר האמיתי (זה מה שמוכר); אסור להמציא מחיר\n"
+                        "• פתרון: חיפוש לפי מספר רישוי ב-autosparefinder.co.il — CTA אחד ברור\n"
+                        "• סיימי בשאלה שקל וכיף לענות עליה בתגובה\n"
+                        "• האשטאגים בשורה אחרונה בלבד — עברית, ערבית ואנגלית מעולם הרכב\n\n"
                         "החזירי: טקסט הפוסט הסופי בלבד — ללא הסבר, ללא כותרת, ללא ספירה."
                     )
 
@@ -2366,6 +2449,18 @@ async def _noa_marketing_loop():
                     # Attach a clean part thumbnail (from the thumbnail pipeline) so
                     # image-required platforms (instagram/tiktok) have media.
                     media_url = await _noa_featured_thumbnail(car, eng_part)
+
+                    # G8 2026-07-20: EVERY post gets media with a QR code (thumbnail+QR
+                    # composite, or brand-canvas+QR when no clean thumbnail matches).
+                    # The QR lands on /api/v1/go where the customer picks their channel —
+                    # replacing the old 5-link text footer.
+                    try:
+                        from social.qr_media import build_post_media
+                        media_url = await build_post_media(media_url, f"qr_{platform}_w{week_num}")
+                    except Exception as _qre:
+                        logger.warning("noa_marketing_loop: QR media failed: %s", _qre)
+                    if media_url and "/thumbs/qr/" in media_url:
+                        caption = f"{caption}\n📲 סרקו את הקוד בתמונה — ובחרו איפה נוח לכם לדבר איתנו"
 
                     # ENQUEUE into the social_posts approval queue → owner approves →
                     # the registry publishes to the real platform. This is the single
@@ -2390,8 +2485,19 @@ async def _noa_marketing_loop():
                     await mem.set("pending_post", pending_payload, ttl_hours=72)
                     await mem.append_event("post_history", pending_payload)
 
-                    # Send to Telegram for approval
-                    if TELEGRAM_OWNER_ID and TELEGRAM_ADMIN_TOKEN:
+                    # Send to WHATSAPP for approval (owner directive G8 2026-07-20 —
+                    # WhatsApp instead of Telegram). Telegram only mirrors if enabled.
+                    if OWNER_PHONE:
+                        _site = os.getenv("FRONTEND_URL", "https://autosparefinder.co.il").rstrip("/")
+                        wa_post_msg = (
+                            f"🎯 *NOA — פוסט {platform.title()} מוכן לאישור*\n\n"
+                            f"{caption}\n\n"
+                            + (f"🖼️ מדיה (עם QR): {media_url}\n" if media_url else "")
+                            + f"✅ לאישור ופרסום: {_site}/admin (תור הפוסטים)\n"
+                            + f"🆔 {social_post_id or '—'}"
+                        )
+                        await _wa_send_quiet(to=OWNER_PHONE, text=wa_post_msg)
+                    if NOA_TELEGRAM_MIRROR and TELEGRAM_OWNER_ID and TELEGRAM_ADMIN_TOKEN:
                         tg_msg = f"🎯 NOA — {platform.title()} post ready\n\n📝 {caption}"
                         tg_msg = noa._append_noa_links(noa._normalize_noa_symbols(tg_msg))
                         await _noa_send_telegram(
@@ -2410,7 +2516,7 @@ async def _noa_marketing_loop():
         except Exception as exc:
             logger.error("noa_marketing_loop error: %s", exc)
 
-        await asyncio.sleep(NOA_INTERVAL_H * 3600)
+        await asyncio.sleep(_secs_until_next_post())
 
 
 
@@ -2567,7 +2673,7 @@ async def _health_monitor_loop():
             except Exception:
                 pass  # Redis unavailable — allow alert through
         try:
-            result = await _wa_send(to=_OWNER_PHONE, text=f"{title}\n{msg}")
+            result = await _wa_send_quiet(to=_OWNER_PHONE, text=f"{title}\n{msg}")
             if not result.get("ok"):
                 print(f"[HealthMonitor] Owner WhatsApp failed ({alert_key}): {result.get('error')}")
         except Exception as _exc:
@@ -2635,6 +2741,11 @@ async def _health_monitor_loop():
 
     while True:
         try:
+            # G8 2026-07-20: deliver WhatsApp messages queued during quiet hours as soon
+            # as the daytime window opens (this pass runs every 5 min).
+            if _notify_window_open()[0]:
+                await _flush_wa_quiet_queue()
+
             current_states = await _probe()
             # provider replaced by _wa_send
 
@@ -2686,7 +2797,7 @@ async def _health_monitor_loop():
                             })))
                             if admin.phone and str(admin.id) != str(WHATSAPP_ANON_USER_ID):
                                 admin_phones.add(admin.phone)
-                                wa_result = await _wa_send(to=admin.phone, text=f"{_title}\n{_msg}")
+                                wa_result = await _wa_send_quiet(to=admin.phone, text=f"{_title}\n{_msg}")
                                 if not wa_result.get("ok"):
                                     print(f"[HealthMonitor] WhatsApp failed for admin {admin.id}: {wa_result.get('error')}")
                         await db.commit()
@@ -2750,7 +2861,7 @@ async def _health_monitor_loop():
                                     "message": _alert_msg,
                                 })))
                                 if _send_admin_wa_cs and admin.phone and str(admin.id) != str(WHATSAPP_ANON_USER_ID):
-                                    await _wa_send(to=admin.phone, text=f"{_alert_title}\n{_alert_msg}")
+                                    await _wa_send_quiet(to=admin.phone, text=f"{_alert_title}\n{_alert_msg}")
                             await _pii_db.commit()
             except Exception as _e:
                 print(f"[HealthMonitor] Threshold check 1 error: {_e}")
@@ -2894,7 +3005,7 @@ async def _health_monitor_loop():
                                     "message": _alert_msg,
                                 })))
                                 if _send_admin_wa_ws and admin.phone and str(admin.id) != str(WHATSAPP_ANON_USER_ID):
-                                    await _wa_send(to=admin.phone, text=f"{_alert_title}\n{_alert_msg}")
+                                    await _wa_send_quiet(to=admin.phone, text=f"{_alert_title}\n{_alert_msg}")
                             await _pii_db.commit()
             except Exception as _e:
                 print(f"[HealthMonitor] Threshold check 3 error: {_e}")
@@ -2967,7 +3078,7 @@ async def _health_monitor_loop():
                                 "message": _alert_msg,
                             })))
                             if admin.phone and str(admin.id) != str(WHATSAPP_ANON_USER_ID):
-                                await _wa_send(to=admin.phone, text=f"{_alert_title}\n{_alert_msg}")
+                                await _wa_send_quiet(to=admin.phone, text=f"{_alert_title}\n{_alert_msg}")
                         await _pii_db.commit()
             except Exception as _e:
                 print(f"[HealthMonitor] Threshold check 4 (job_failures) error: {_e}")
@@ -3227,7 +3338,6 @@ async def _abandoned_cart_loop():
 
             idle_cutoff   = datetime.utcnow() - timedelta(hours=ABANDONED_CART_IDLE_HOURS)
             recent_cutoff = datetime.utcnow() - timedelta(hours=ABANDONED_CART_IDLE_HOURS)
-            reminder_window_cutoff = datetime.utcnow() - timedelta(days=ABANDONED_CART_WINDOW_DAYS)
 
             async with pii_session_factory() as db:
                 from sqlalchemy import exists as sa_exists
@@ -3307,18 +3417,32 @@ async def _abandoned_cart_loop():
                             item_lines.append(f"{name} (x{i.quantity})")
                         items_summary = ", ".join(item_lines)
 
+                        # ROOT FIX (G8 2026-07-20): the cap used to count only reminders
+                        # inside a ROLLING 3-day window — so every 3 days the same cart
+                        # legally earned 3 MORE sends, forever. That is how "max 3" kept
+                        # breaking. The cap is now LIFETIME per cart (no time cutoff),
+                        # plus a minimum gap between consecutive sends.
                         async with pii_session_factory() as db:
-                            sent_in_window = int((await db.execute(
-                                select(func.count(Notification.id)).where(
+                            _cap_row = (await db.execute(
+                                select(func.count(Notification.id), func.max(Notification.created_at)).where(
                                     Notification.type == "abandoned_cart",
                                     Notification.data["cart_id"].astext == str(cart.id),
-                                    Notification.created_at > reminder_window_cutoff,
                                 )
-                            )).scalar() or 0)
-                        if sent_in_window >= ABANDONED_CART_MAX_SENDS_PER_WINDOW:
+                            )).first()
+                        sent_total = int(_cap_row[0] or 0)
+                        last_sent_at = _cap_row[1]
+                        if sent_total >= ABANDONED_CART_MAX_SENDS_PER_WINDOW:
                             print(
-                                f"[AbandonedCart] Skip cart {cart.id} — already sent {sent_in_window} reminder(s) "
-                                f"in last {ABANDONED_CART_WINDOW_DAYS} day(s)"
+                                f"[AbandonedCart] Skip cart {cart.id} — lifetime cap reached "
+                                f"({sent_total}/{ABANDONED_CART_MAX_SENDS_PER_WINDOW} reminders ever sent)"
+                            )
+                            skip_count += 1
+                            continue
+                        if last_sent_at and (datetime.utcnow() - last_sent_at) < timedelta(hours=ABANDONED_CART_MIN_GAP_H):
+                            print(
+                                f"[AbandonedCart] Skip cart {cart.id} — last reminder "
+                                f"{(datetime.utcnow() - last_sent_at).total_seconds()/3600:.1f}h ago "
+                                f"(< {ABANDONED_CART_MIN_GAP_H}h gap)"
                             )
                             skip_count += 1
                             continue
@@ -3445,9 +3569,19 @@ async def _pending_payment_reminder_loop():
       3. Sends via WhatsApp (TwilioWhatsAppProvider)
       4. Persists a Notification row (type='payment_reminder') and pushes SSE
     """
+    PAYMENT_REMINDER_MAX_SENDS = int(os.getenv("PAYMENT_REMINDER_MAX_SENDS", "3"))
     await asyncio.sleep(15)   # let DB pool warm up on startup
     while True:
         try:
+            # G8 2026-07-20: same IL-daytime window as the cart loop — this loop used to
+            # send around the clock (THE 03:00 reminder source). Defer to daytime.
+            _pp_open, _pp_now = _notify_window_open()
+            if not _pp_open:
+                print(f"[PaymentReminder] Skip — outside IL daytime window "
+                      f"({NOTIFY_SEND_START_HOUR_IL}:00-{NOTIFY_SEND_END_HOUR_IL}:00, "
+                      f"now={_pp_now.strftime('%H:%M')})")
+                await asyncio.sleep(PAYMENT_REMINDER_INTERVAL_S)
+                continue
             old_cutoff      = datetime.utcnow() - timedelta(hours=PAYMENT_REMINDER_AFTER_H)
             max_age_cutoff  = datetime.utcnow() - timedelta(hours=24)
             reminder_cutoff = datetime.utcnow() - timedelta(hours=6)
@@ -3503,6 +3637,21 @@ async def _pending_payment_reminder_loop():
                         ):
                             skip_count += 1
                             continue
+
+                    # G8 2026-07-20: lifetime cap — max PAYMENT_REMINDER_MAX_SENDS (3)
+                    # reminders per order, ever (the 6h dedup alone allowed ~4/day).
+                    async with pii_session_factory() as db:
+                        _pr_sent = int((await db.execute(
+                            select(func.count(Notification.id)).where(
+                                Notification.type == "payment_reminder",
+                                Notification.data["order_id"].astext == str(order.id),
+                            )
+                        )).scalar() or 0)
+                    if _pr_sent >= PAYMENT_REMINDER_MAX_SENDS:
+                        print(f"[PaymentReminder] Skip order {order.order_number} — lifetime cap "
+                              f"({_pr_sent}/{PAYMENT_REMINDER_MAX_SENDS})")
+                        skip_count += 1
+                        continue
 
                     # Regenerate a fresh, pressable /pay/ link for this existing order
                     # (canonical pricing from its OrderItems; Stripe URLs expire in 24h so
@@ -3718,6 +3867,8 @@ from routes.public_api import router as public_api_router
 app.include_router(public_api_router)
 from routes.thumbnails import router as thumbnails_router
 app.include_router(thumbnails_router)
+from routes.connect import router as connect_router
+app.include_router(connect_router)
 from routes.reviews import router as reviews_router
 app.include_router(reviews_router)
 from routes.vehicles import router as vehicles_router

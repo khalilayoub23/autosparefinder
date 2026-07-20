@@ -4861,6 +4861,42 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
             err_count,
             total_elapsed,
         )
+        # G8 2026-07-20 (owner directive): task errors must reach the owner's WhatsApp,
+        # not sit silently in the report/DB until someone checks. Alert once per unique
+        # failing-task SET per 24h (Redis-keyed) so a persistent error doesn't nag every
+        # 3h cycle but a NEW failure alerts immediately. Quiet-hours-aware via
+        # _wa_send_quiet (queued at night, delivered in the morning window).
+        if err_count > 0:
+            try:
+                import hashlib as _hashlib
+                _err_tasks = [
+                    r for r in results
+                    if isinstance(r, dict) and r.get("status") == "error"
+                ]
+                _sig = _hashlib.sha256(
+                    ",".join(sorted(str(r.get("task", "?")) for r in _err_tasks)).encode()
+                ).hexdigest()[:16]
+                from BACKEND_AUTH_SECURITY import get_redis as _gr
+                _r = await _gr()
+                _ck = f"autospare:alert_cooldown:dbagent_task_errors:{_sig}"
+                if not await _r.exists(_ck):
+                    await _r.set(_ck, "1", ex=86400)
+                    _lines = [f"🛠️ *db_update_agent — {err_count} משימות נכשלו במחזור האחרון*"]
+                    for r in _err_tasks[:8]:
+                        _lines.append(f"• {r.get('task','?')}: {str(r.get('error',''))[:120]}")
+                    if len(_err_tasks) > 8:
+                        _lines.append(f"…ועוד {len(_err_tasks) - 8}")
+                    _lines.append(f"({ok_count} משימות הצליחו, {total_elapsed:.0f}s)")
+                    _owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
+                    if _owner:
+                        try:
+                            from BACKEND_API_ROUTES import _wa_send_quiet as _waq
+                            await _waq(to=_owner, text="\n".join(_lines))
+                        except Exception:
+                            from social.whatsapp_provider import send_message as _was
+                            await _was(to=_owner, text="\n".join(_lines))
+            except Exception as _alert_exc:
+                logger.warning("run_all_tasks error-alert failed: %s", _alert_exc)
         # Publish final stats to shared memory
         try:
             from agents.memory import AgentMemory as _AgentMemory

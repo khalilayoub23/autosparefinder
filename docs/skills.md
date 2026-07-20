@@ -161,7 +161,7 @@ Best:                MIN(all tiers with stock AND ships_to_israel = TRUE)
 - `CAMPAIGN_CREATE` — Create marketing campaign
 - `SEO_ENRICH(part_id)` — Generate SEO description using ai_catalog_builder output
 
-**Integration:** Works with NOA for Telegram posts. Approval via NOA → webhooks.py callback flow.
+**Integration:** Works with NOA for social posts. Approval flows through the owner's WHATSAPP (G8 2026-07-20); Telegram callback flow remains only as an optional mirror (`NOA_TELEGRAM_MIRROR=1`).
 
 ---
 
@@ -180,11 +180,17 @@ Best:                MIN(all tiers with stock AND ships_to_israel = TRUE)
 
 ## NOA — Social Media
 
-**Skills:**
+**Pipeline role:** Daily post engine `_noa_marketing_loop()` (BACKEND_API_ROUTES.py) — Monday weekly campaign brief, Tue–Sun one platform post/day (TikTok/Instagram/Facebook/X/Reddit/Discord rotation), fires at `NOA_POST_HOUR_IL` (default 09:30 IL) inside the notification window — never at night.
 
-- `TELEGRAM_POST(content)` — Send to Telegram channel/group
-- `CONTENT_GENERATE(part_id)` — Generate part feature content
-- `APPROVAL_FLOW(content)` — Send to admin Telegram bot → approve/reject via webhooks.py callback_query
+**Skills (updated 2026-07-20, goal G8):**
+
+- `CONTENT_GENERATE(part_id)` — Generate part feature content grounded in a REAL catalog part + canonical customer price (`_noa_real_catalog_fact`)
+- `HUMAN_VOICE_WRITE` — Smart/funny/human/selling copy: one clever wink per post + a real fact that teaches the reader something + pain→solution→real price→single CTA + an easy engagement question. Enforced by the system-prompt personality block ("אישיות וטון") + structure-preserving sanitizers (`_finalize_noa_post`). Never templated boilerplate.
+- `QR_FUNNEL(platform, week)` — Every post's media carries a QR code (`social/qr_media.py` → thumbnail+QR composite or brand-canvas+QR, uploaded to S3 `thumbs/qr/`) landing on the channel-picker hub `GET /api/v1/go` (routes/connect.py) where the customer picks WhatsApp/Telegram/Website/Facebook/Instagram. Replaces the old 5-link text footer; captions keep at most ONE (UTM'd) website link.
+- `HASHTAG_MIX` — Rotating Hebrew + Arabic + English automotive hashtag pools (`_noa_hashtag_mix` / `_enrich_hashtags`): keeps the model's own tags and tops up to ~9 varied tags per post. Arabic tags are first-class (`_NOA_HASHTAG_RE` includes ؀-ۿ).
+- `WHATSAPP_APPROVAL(content)` — Drafts enqueue as `pending_approval` SocialPost; the approval preview (caption + QR media link + post id) goes to the OWNER's WHATSAPP (`_wa_send_quiet`, quiet-hours aware). Telegram is only a mirror when `NOA_TELEGRAM_MIRROR=1`.
+- `CAMPAIGN_BRIEF` — Monday: weekly theme + 6-day plan + A/B ad pack + Google Ads pack → owner WhatsApp.
+- `PUBLISH(platforms)` — After approval, `social/registry.py` dispatches to the real platform publishers.
 
 ---
 

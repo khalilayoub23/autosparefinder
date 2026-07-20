@@ -4176,13 +4176,18 @@ class SocialMediaManagerAgent(BaseAgent):
 - משלוח לכל הארץ ישירות מהספק
 - תמיכה בעברית — שירות + AI
 
-כישורי כתיבה — חובה:
-- כתבי כמו מנהלת שיווק אנושית עם אינטואיציה — לא כמו בוט שממלא תבנית קבועה
-- כל פוסט: כאב אמיתי וספציפי של נהג → פתרון ברור דרך הפלטפורמה → CTA בודד
+אישיות וטון — חובה (עודכן 2026-07-20, הוראת בעלים):
+- את אישה אמיתית, חכמה ושנונה שמכירה מכוניות מבפנים — לא מחלקת שיווק ולא בוט שממלא תבנית
+- חכם: כל פוסט מלמד משהו קטן ואמיתי (עובדה, מספר, טיפ של מכונאי) שגורם לקורא להרגיש חכם יותר
+- מצחיק: קריצה אחת חכמה לפוסט — אירוניה עדינה, הגזמה מודעת, או סיטואציה שכל נהג מכיר
+  ("הרעש הזה שמתעלמים ממנו עד שהוא מפסיק להיות מצחיק"). בלי בדיחות דחוקות, בלי ליצנות
+- אנושי: גוף ראשון, משפטים קצרים, עברית מדוברת, 1-3 אמוג'י לכל היותר. מותר לפתוח בסיפור קצר
+- מוכר: כל פוסט הוא פוסט מכירה — כאב ספציפי → הפתרון שלנו → מחיר/הצעה אמיתית → CTA אחד ברור.
+  אין "פוסט מודעות מותג" ריק שלא מוביל לפעולה
+- מעורר אינטראקציה: סיימי בשאלה שקל וכיף לענות עליה בתגובה ("איזה רעש הרכב שלכם עושה הבוקר?")
 - ציוני שמות רכב ספציפיים ושמות חלקים ספציפיים — אין כאב בלי פרטים
-- כתבי בעברית זורמת; אנגלית רק לשמות מותגים/חלקים
 - הימנעי מטענות לא מבוססות; עדיף מדויק על פני מרשים
-- כל פוסט חייב להיות שונה בזווית, בפתיחה, בטון — אין תבניות חוזרות
+- כל פוסט חייב להיות שונה בזווית, בפתיחה, בטון — אין תבניות חוזרות, אין אותו משפט פעמיים
 
 פורמט לפי פלטפורמה (את אחראית על כל הערוצים של הפלטפורמה):
 - TikTok: hook חזק בשורה ראשונה, גוף קצר (3-5 שורות), 3-4 האשטאגים
@@ -4200,6 +4205,9 @@ class SocialMediaManagerAgent(BaseAgent):
 - לדבר על מלאי — אנחנו מחברים לקוחות לספקים
 - תוכן גנרי ללא אזכור ספציפי של רכב, חלק, או מצב נהג
 - לפתוח עם "מחפשים חלקי חילוף?", "ידעת ש..." או "למה לשלם יותר?" — זה שחוק
+- לכתוב משפטי גילוי נאות/הסתייגות משלך ("אנחנו מוכרים חלקי חילוף בלבד",
+  "כפוף לתנאי האתר" וכו') — המערכת מוסיפה אותם אוטומטית בשורה נפרדת כשצריך.
+  משפט כזה בתוך גוף הפוסט הורס את הזרימה האנושית ונשמע כמו בוט
 
 מיומנויות Google Marketing (מסגרות מקצועיות — חובה ליישם):
 - מסגרת See-Think-Do-Care: התאימי כל נכס שיווקי לשלב במשפך — See=מודעות רחבה,
@@ -4215,9 +4223,29 @@ class SocialMediaManagerAgent(BaseAgent):
 - מדידה: כל URL עם UTM מלא. אין קמפיין בלי יעד המרה מוגדר.
 """
 
-    _NOA_ALLOWED_LATIN_HASHTAGS: set[str] = {"autosparefinder", "tiktok", "instagram", "facebook", "whatsapp"}
+    # Rotating hashtag pools (G8 2026-07-20): every post gets a DIFFERENT mix of
+    # Hebrew + Arabic + English automotive tags instead of one identical static line.
+    _NOA_TAG_POOL_HE = [
+        "#\u05D7\u05DC\u05E7\u05D9\u05D7\u05D9\u05DC\u05D5\u05E3", "#\u05D7\u05DC\u05E4\u05D9\u05DD", "#\u05D7\u05DC\u05E7\u05D9\u05E8\u05DB\u05D1", "#\u05E8\u05DB\u05D1", "#\u05E8\u05DB\u05D1\u05D9\u05DD", "#\u05D0\u05D1\u05D9\u05D6\u05E8\u05D9\u05E8\u05DB\u05D1",
+        "#\u05EA\u05D7\u05D6\u05D5\u05E7\u05EA\u05E8\u05DB\u05D1", "#\u05D8\u05D9\u05E4\u05D5\u05DC\u05E8\u05DB\u05D1", "#\u05DE\u05D5\u05E1\u05DA", "#\u05D8\u05E1\u05D8", "#\u05E0\u05D4\u05D2\u05D9\u05DD", "#\u05D7\u05D9\u05E1\u05DB\u05D5\u05DF\u05D1\u05E8\u05DB\u05D1",
+        "#\u05D4\u05E9\u05D5\u05D5\u05D0\u05EA\u05DE\u05D7\u05D9\u05E8\u05D9\u05DD", "#\u05E8\u05DB\u05D1\u05D9\u05D7\u05E9\u05DE\u05DC\u05D9", "#\u05D0\u05D5\u05D8\u05D5",
+    ]
+    _NOA_TAG_POOL_AR = [
+        "#\u0642\u0637\u0639_\u063A\u064A\u0627\u0631", "#\u0642\u0637\u0639_\u063A\u064A\u0627\u0631_\u0633\u064A\u0627\u0631\u0627\u062A", "#\u0633\u064A\u0627\u0631\u0627\u062A", "#\u0635\u064A\u0627\u0646\u0629_\u0633\u064A\u0627\u0631\u0627\u062A",
+        "#\u0645\u064A\u0643\u0627\u0646\u064A\u0643\u064A", "#\u0633\u064A\u0627\u0631\u062A\u064A", "#\u0639\u0627\u0644\u0645_\u0627\u0644\u0633\u064A\u0627\u0631\u0627\u062A",
+    ]
+    _NOA_TAG_POOL_EN = [
+        "#CarParts", "#AutoParts", "#SpareParts", "#CarMaintenance", "#CarCare",
+        "#Mechanic", "#OEM", "#Aftermarket", "#CarTips", "#DIYCar",
+        "#CarsOfInstagram", "#CarCommunity", "#Israel",
+    ]
+    _NOA_ALLOWED_LATIN_HASHTAGS: set[str] = {
+        "autosparefinder", "tiktok", "instagram", "facebook", "whatsapp",
+    } | {t.lstrip("#").lower() for t in _NOA_TAG_POOL_EN}
     _NOA_BAD_SCRIPT_RE = re.compile(r"[\u0400-\u052F\u0370-\u03FF\u0900-\u097F\u0E00-\u0E7F\u3040-\u30FF\u4E00-\u9FFF\uAC00-\uD7AF]")
-    _NOA_HASHTAG_RE = re.compile(r"#([A-Za-z0-9_\u0590-\u05FF]+)")
+    # Hashtag charset includes Arabic (\u0600-\u06FF) \u2014 owner directive 2026-07-20.
+    _NOA_HASHTAG_RE = re.compile(r"#([A-Za-z0-9_\u0590-\u05FF\u0600-\u06FF]+)")
+    _NOA_RTL_TAG_RE = re.compile(r"[\u0590-\u05FF\u0600-\u06FF]")
     _NOA_HEBREW_CHAR_RE = re.compile(r"[\u0590-\u05FF]")
     _NOA_UNICODE_LETTER_RE = re.compile(r"[^\W\d_]", re.UNICODE)
     _NOA_SERVICE_CLAIM_RE = re.compile(
@@ -4298,13 +4326,46 @@ class SocialMediaManagerAgent(BaseAgent):
         seen: set[str] = set()
         for tag_body in raw_tags:
             tag = f"#{tag_body}"
-            norm = tag.lower()
-            is_hebrew_tag = re.search(r"[\u0590-\u05FF]", tag_body) is not None
-            if is_hebrew_tag or norm in cls._NOA_ALLOWED_LATIN_HASHTAGS:
+            norm = tag.lower().lstrip("#")
+            # Hebrew AND Arabic tags pass as-is; Latin tags only from the allowlist.
+            is_rtl_tag = cls._NOA_RTL_TAG_RE.search(tag_body) is not None
+            if is_rtl_tag or norm in cls._NOA_ALLOWED_LATIN_HASHTAGS:
                 if norm not in seen:
                     keep.append(tag)
                     seen.add(norm)
         return " ".join(keep)
+
+    @classmethod
+    def _noa_hashtag_mix(cls, count_he: int = 3, count_ar: int = 2, count_en: int = 3) -> str:
+        """A fresh Hebrew+Arabic+English automotive hashtag mix \u2014 different every call,
+        so posts stop carrying one identical tag line (G8 2026-07-20)."""
+        import random as _random
+        tags = ["#AutoSpareFinder"]
+        tags += _random.sample(cls._NOA_TAG_POOL_HE, min(count_he, len(cls._NOA_TAG_POOL_HE)))
+        tags += _random.sample(cls._NOA_TAG_POOL_AR, min(count_ar, len(cls._NOA_TAG_POOL_AR)))
+        tags += _random.sample(cls._NOA_TAG_POOL_EN, min(count_en, len(cls._NOA_TAG_POOL_EN)))
+        return " ".join(tags)
+
+    @classmethod
+    def _enrich_hashtags(cls, text: str, target: int = 9) -> str:
+        """Keep the model's own (filtered) tags and top up from the pools to `target`
+        total tags, deduped case-insensitively. Body is left untouched."""
+        msg = (text or "").strip()
+        if not msg:
+            return msg
+        body_lines = [ln for ln in msg.splitlines() if not ln.strip().startswith("#")]
+        body = "\n".join(ln.rstrip() for ln in body_lines).strip()
+        existing = cls._filter_hashtags(msg).split()
+        seen = {t.lower() for t in existing}
+        pool = cls._noa_hashtag_mix().split()
+        for t in pool:
+            if len(existing) >= target:
+                break
+            if t.lower() not in seen:
+                existing.append(t)
+                seen.add(t.lower())
+        tag_line = " ".join(existing)
+        return f"{body}\n{tag_line}".strip() if body else tag_line
 
     @classmethod
     def _contains_service_claim(cls, text: str) -> bool:
@@ -4368,7 +4429,7 @@ class SocialMediaManagerAgent(BaseAgent):
 
         tags = cls._filter_hashtags("\n".join(hashtag_lines))
         if not tags:
-            tags = cls._NOA_DEFAULT_TAGS
+            tags = cls._noa_hashtag_mix()
         return f"{body}\n{tags}".strip()
 
     @classmethod
@@ -4491,7 +4552,7 @@ class SocialMediaManagerAgent(BaseAgent):
 
         tags = cls._filter_hashtags(msg)
         if not tags:
-            tags = cls._NOA_DEFAULT_TAGS
+            tags = cls._noa_hashtag_mix()
         if not body:
             body = "מחפשים חלק לרכב? שלחו דגם, שנה ומנוע ונחזיר התאמה מהירה ומדויקת."
         return f"{body}\n{tags}".strip()
@@ -4519,7 +4580,25 @@ class SocialMediaManagerAgent(BaseAgent):
         short_count = sum(1 for w in stripped_words if 0 < len(w) <= 2)
         if words and (short_count / len(words)) > 0.30:
             return True
-        if re.search(r"\b[\u0590-\u05FF]\b", body):
+        # A lone Hebrew letter is a garble signal \u2014 BUT the one-letter prefixes
+        # (\u05DE/\u05D1/\u05DC/\u05D4/\u05D5/\u05E9/\u05DB/\u05D3) bound by a hyphen to a number or Latin word are normal
+        # Hebrew: "\u05D4\u05D7\u05DC \u05DE-198 \u05E9\u05E7\u05DC", "\u05D1-2020", "\u05DC-Bosch". The old unguarded \b[\u05D0-\u05EA]\b
+        # matched those, so EVERY post quoting a real price was judged low-quality and
+        # sent to the repair path \u2014 which flattened its line breaks and stapled canned
+        # boilerplate. That was a direct cause of robotic posts (root-fixed G8 2026-07-20).
+        # A lone Hebrew letter signals garble — EXCEPT the one-letter prefixes
+        # (מ/ב/ל/ה/ו/ש/כ/ד) bound to a number or a Latin brand token, which is ordinary
+        # Hebrew: "החל מ-198", "ב-2020", "ב AutoSpareFinder", "ה Corolla", "ל Toyota".
+        # Flagging those sent good posts down the repair path, which flattened their line
+        # breaks and stapled canned boilerplate — a direct cause of robotic posts.
+        _lone = re.compile(
+            r"(?<![\u0590-\u05FF\-])\b([\u0590-\u05FF])\b(?![\-\u2010-\u2015])"
+        )
+        for m in _lone.finditer(body):
+            if m.group(1) in "\u05de\u05d1\u05dc\u05d4\u05d5\u05e9\u05db\u05d3":
+                tail = body[m.end():m.end() + 24].lstrip(" -\u2010-\u2015")
+                if tail[:1].isalnum() and not re.match(r"[\u0590-\u05FF]", tail[:1]):
+                    continue   # prefix + number/Latin token → legitimate
             return True
         return False
 
@@ -4528,7 +4607,13 @@ class SocialMediaManagerAgent(BaseAgent):
         platform_set = {(p or "").strip().lower() for p in (platforms or []) if (p or "").strip()}
         normalized = cls._sanitize_caption(text or "")
         body = re.sub(r"#[^\s#]+", " ", normalized)
-        body = re.sub(r"\s+", " ", body).strip()
+        # PRESERVE line structure (G8 2026-07-20). The old `\s+`→" " collapse turned a
+        # well-formed multi-line post into one run-on paragraph whenever repair fired —
+        # the same structure-destroying bug already fixed in _enforce_sales_only /
+        # _enforce_tiktok_ads_policy. Only intra-line whitespace is collapsed here.
+        body = "\n".join(
+            ln for ln in (re.sub(r"[ \t]+", " ", l).strip() for l in body.splitlines()) if ln
+        ).strip()
         if len(body.split()) < 8:
             body = (
                 "מחפשים חלק לרכב בלי לרוץ בין מוסכים? מזינים מספר רישוי ומקבלים התאמה מהירה "
@@ -4539,7 +4624,7 @@ class SocialMediaManagerAgent(BaseAgent):
         if "מוכרים חלקי חילוף בלבד" not in body:
             body = f"{body} אנחנו מוכרים חלקי חילוף בלבד."
 
-        tags = cls._NOA_RICH_TAGS if "tiktok" in platform_set else cls._NOA_DEFAULT_TAGS
+        tags = cls._noa_hashtag_mix()
         repaired = f"{body}\n{tags}".strip()
         if "tiktok" in platform_set:
             return cls._enforce_tiktok_ads_policy(repaired)
@@ -4851,7 +4936,7 @@ class SocialMediaManagerAgent(BaseAgent):
 
         tags = cls._filter_hashtags(msg)
         if not tags:
-            tags = cls._NOA_DEFAULT_TAGS
+            tags = cls._noa_hashtag_mix()
 
         body_lines = [ln for ln in msg.splitlines() if not ln.strip().startswith("#")]
         body = "\n".join([ln.rstrip() for ln in body_lines if ln.strip()]).strip()
@@ -4932,13 +5017,29 @@ class SocialMediaManagerAgent(BaseAgent):
     def _normalize_noa_symbols(cls, text: str) -> str:
         import unicodedata
         msg = unicodedata.normalize("NFKC", (text or ""))
+        # Strip markdown emphasis, but PRESERVE underscores inside hashtags: Arabic and
+        # multi-word tags (#قطع_غيار, #صيانة_سيارات) rely on them, and stripping the
+        # underscore silently merged the words into an unsearchable tag (G8 2026-07-20).
+        _tag_re = re.compile(r"#[^\s#]+")
+        _held: list = []
+
+        def _hold(m):
+            _held.append(m.group(0))
+            return f"\x00TAG{len(_held) - 1}\x00"
+
+        msg = _tag_re.sub(_hold, msg)
         msg = re.sub(r"[`*_~]+", "", msg)
+        for i, t in enumerate(_held):
+            msg = msg.replace(f"\x00TAG{i}\x00", t)
         msg = "".join(ch for ch in msg if ch == "\n" or unicodedata.category(ch)[0] != "C")
 
         # Normalize odd unicode dashes frequently produced by LLMs in Hebrew+English mixes.
         msg = msg.replace("‐", "-").replace("‑", "-")
-        # Convert Hebrew-letter + dash + Latin token into natural spacing (e.g. ה-Bosch -> ה Bosch).
-        msg = re.sub(r"([\u0590-\u05FF])-(?=[A-Za-z0-9])", r"\1 ", msg)
+        # Convert Hebrew-letter + dash + LATIN token into natural spacing (ה-Bosch -> ה Bosch).
+        # Digits are deliberately EXCLUDED (G8 2026-07-20): "החל מ-198 שקל" and "ב-2020" are
+        # correct Hebrew, and stripping that hyphen mangled exactly the price/year phrasing
+        # that selling posts are built on.
+        msg = re.sub(r"([\u0590-\u05FF])-(?=[A-Za-z])", r"\1 ", msg)
 
         msg = re.sub(r"[ \t\r\f\v]+", " ", msg)
         msg = re.sub(r"\n{3,}", "\n\n", msg).strip()
@@ -4990,22 +5091,18 @@ class SocialMediaManagerAgent(BaseAgent):
 
     @classmethod
     def _noa_links_footer(cls) -> str:
-        lines = [
-            f"✈️ {cls._short_noa_link(NOA_TELEGRAM_URL)}",
-            f"💬 {cls._short_noa_link(NOA_WHATSAPP_URL)}",
-            f"📘 {cls._short_noa_link(NOA_FACEBOOK_URL)}",
-            f"📸 {cls._short_noa_link(NOA_INSTAGRAM_URL)}",
-            f"🌐 {cls._short_noa_link(NOA_WEBSITE_URL)}",
-            "Auto Spare | חלקי חילוף לרכב",
-            "Auto Spare - חלקי רכב בעזרת בינה מלאכותית",
-        ]
-        return "\n".join([ln for ln in lines if ln.strip()]).strip()
+        """G8 2026-07-20 (owner directive): the old 7-line footer (5 platform links + 2
+        slogans) stapled onto EVERY post is gone — it made all posts look identical and
+        spammy. Posts now carry a QR code in the media that lands on the channel-picker
+        hub (/api/v1/go); the text keeps at most ONE link (the website)."""
+        site = cls._short_noa_link(NOA_WEBSITE_URL)
+        return f"🌐 {site}" if site else ""
     @classmethod
     def _force_noa_hashtags(cls, text: str, tags: Optional[str] = None) -> str:
         msg = (text or "").strip()
         if not msg:
             return msg
-        chosen_tags = (tags or cls._NOA_RICH_TAGS).strip()
+        chosen_tags = (tags or cls._noa_hashtag_mix()).strip()
         body_lines = [ln for ln in msg.splitlines() if not ln.strip().startswith("#")]
         body = "\n".join([ln.rstrip() for ln in body_lines if ln.strip()]).strip()
         if not body:
@@ -5021,16 +5118,11 @@ class SocialMediaManagerAgent(BaseAgent):
         if not footer:
             return msg
         msg_l = msg.lower()
-        has_footer = (
-            "✈️" in msg and "t.me/" in msg_l
-            and "💬" in msg and ("wa.me/" in msg_l or "api.whatsapp.com/send" in msg_l)
-            and "📘" in msg and "facebook.com/" in msg_l
-            and "📸" in msg and "instagram.com/" in msg_l
-            and "🌐" in msg and "autosparefinder.co.il" in msg_l
-        )
-        if has_footer:
+        # A post that already carries a link (the loop injects the UTM site link into the
+        # body) needs no footer at all — the QR in the media covers all other channels.
+        if "autosparefinder.co.il" in msg_l or "http://" in msg_l or "https://" in msg_l:
             return msg
-        return f"{msg}\n\n{footer}".strip()
+        return f"{msg}\n{footer}".strip()
 
     @classmethod
     def _extract_post_from_reasoning(cls, text: str) -> str:
@@ -5071,8 +5163,9 @@ class SocialMediaManagerAgent(BaseAgent):
         normalized = cls._normalize_noa_symbols(normalized)
         normalized = cls._strip_malformed_links(normalized)
         if "tiktok" in platform_set:
-            normalized = cls._force_noa_hashtags(normalized, tags=cls._NOA_RICH_TAGS)
             normalized = cls._enforce_tiktok_ads_policy(normalized)
+        # Broaden reach: keep the model's own tags, top up from the HE/AR/EN pools (G8).
+        normalized = cls._enrich_hashtags(normalized)
         return cls._append_noa_links(normalized)
 
     async def generate_post(self, topic: str, platform: str, tone: str = "professional") -> str:
