@@ -3,9 +3,9 @@ services:
     image: pgvector/pgvector:pg16
     container_name: autospare_postgres_catalog
     restart: unless-stopped
-    mem_limit: 3072m
-    shm_size: 256m
-    command: ["postgres", "-c", "shared_buffers=256MB", "-c", "work_mem=8MB", "-c", "maintenance_work_mem=64MB", "-c", "effective_cache_size=512MB", "-c", "max_connections=50"]
+    mem_limit: 5120m
+    shm_size: 512m
+    command: ["postgres", "-c", "shared_buffers=2GB", "-c", "work_mem=32MB", "-c", "maintenance_work_mem=256MB", "-c", "effective_cache_size=8GB", "-c", "max_connections=50"]
     environment:
       POSTGRES_DB: autospare
       POSTGRES_USER: autospare
@@ -35,7 +35,7 @@ services:
     image: pgvector/pgvector:pg16
     container_name: autospare_postgres_pii
     restart: unless-stopped
-    mem_limit: 768m
+    mem_limit: 1024m
     environment:
       POSTGRES_DB: autospare_pii
       POSTGRES_USER: autospare
@@ -64,7 +64,7 @@ services:
     image: redis:7-alpine
     container_name: autospare_redis
     restart: unless-stopped
-    mem_limit: 256m
+    mem_limit: 512m
     command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
     volumes:
     - redis_data:/data
@@ -335,7 +335,7 @@ services:
     image: getmeili/meilisearch:v1.7
     container_name: autospare_meilisearch
     restart: unless-stopped
-    mem_limit: 1536m
+    mem_limit: 2560m
     environment:
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
       MEILI_ENV: production
