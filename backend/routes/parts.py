@@ -1158,8 +1158,10 @@ async def search_parts(
         _meili_limit = 1000 if _has_vehicle_filter else 200
         _expanded_q = ""
         try:
-            from hf_client import expand_hebrew_query
-            _cand = expand_hebrew_query(query)
+            # expand_query = Hebrew AND Arabic -> English (Arabic added 2026-07-20;
+            # an Arabic search previously matched nothing, the catalog being EN+HE only).
+            from hf_client import expand_query
+            _cand = expand_query(query)
             if _cand and _cand.strip().lower() != query.strip().lower():
                 _expanded_q = _cand.strip()
         except Exception:

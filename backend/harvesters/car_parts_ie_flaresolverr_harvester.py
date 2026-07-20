@@ -39,7 +39,7 @@ BASE             = "https://www.car-parts.ie"
 _BASE_DIR        = Path(__file__).resolve().parent.parent  # /app (script now in harvesters/)
 STATE_FILE       = _BASE_DIR / "state" / "flaresolverr_state.json"
 LOG_DIR          = _BASE_DIR / "state" / "logs"
-PARALLEL_SESSIONS = 4      # concurrent FlareSolverr browser sessions. Raised 3→4 on 2026-07-20 after
+PARALLEL_SESSIONS = 5      # concurrent FlareSolverr browser sessions. Raised 3→4 on 2026-07-20 after
                            # server upgrade from 4 vCPUs to 6 vCPUs (load avg ~1.7/core vs prior 2.5/core).
                            # Prior test at 5 sessions on the OLD 4-core box dropped throughput to 0 models/10min
                            # (load avg 22-25). On 6 CPUs, 4 sessions gives headroom. Do NOT raise to 5+

@@ -566,6 +566,98 @@ async def hf_classify_query(query: str, top_k: int = 3) -> list[dict]:
     return []
 
 
+# ── Arabic → English query expansion (added 2026-07-20) ──────────────────────
+# The catalog is English + Hebrew: only ONE active part contains any Arabic text, so an
+# Arabic search matched nothing at all (verified live: "فلتر زيت" -> 0 results) even
+# though the platform serves Arabic-speaking customers. Hebrew search works because
+# name_he exists AND Hebrew is expanded to English; Arabic needs the same bridge.
+_AR_EXPANSIONS = {
+    # ── parts ──
+    "فلتر زيت": "oil filter", "فلتر هواء": "air filter", "فلتر بنزين": "fuel filter",
+    "فلتر مكيف": "cabin filter", "فلتر": "filter", "زيت": "oil",
+    "فحمات فرامل": "brake pads", "تيل فرامل": "brake pads", "فحمات": "brake pads",
+    "فرامل": "brake", "فرملة": "brake", "دسك": "brake disc", "هوب": "brake disc",
+    "بطارية": "battery", "مساحات": "wiper blades", "مساحة": "wiper",
+    "شمعات": "spark plugs", "بوجيهات": "spark plugs", "بوجيه": "spark plug",
+    "كويل": "ignition coil", "بخاخ": "fuel injector", "بخاخات": "fuel injectors",
+    "ردياتير": "radiator", "رادياتير": "radiator", "مبرد": "radiator",
+    "ثرموستات": "thermostat", "مكيف": "air conditioning", "كمبروسر": "compressor",
+    "دينامو": "alternator", "سلف": "starter motor", "مارش": "starter motor",
+    "طرمبة": "pump", "مضخة": "pump", "طرمبة ماء": "water pump",
+    "كلتش": "clutch", "دبرياج": "clutch", "جير": "gearbox", "ناقل حركة": "transmission",
+    "محرك": "engine", "موتور": "engine", "مكينة": "engine",
+    "عفشة": "suspension", "مقص": "control arm", "مساعد": "shock absorber",
+    "مساعدات": "shock absorbers", "صدام": "bumper", "رفرف": "fender",
+    "كبوت": "hood", "باب": "door", "زجاج": "glass", "مرآة": "mirror", "مراية": "mirror",
+    "كشاف": "headlight", "مصباح": "lamp", "لمبة": "bulb", "اشارة": "turn signal",
+    "حزام": "belt", "سير": "belt", "سير مكيف": "ac belt", "طقم": "kit",
+    "حساس": "sensor", "حساسات": "sensors", "كاتم": "muffler", "عادم": "exhaust",
+    "كرنك": "crankshaft", "كامة": "camshaft", "جوان": "gasket", "طارة": "steering wheel",
+    "دركسون": "steering", "رمان بلي": "wheel bearing", "بلية": "bearing",
+    "قطع غيار": "spare parts", "قطعة": "part",
+    # ── position / qualifiers ──
+    "امامي": "front", "أمامي": "front", "خلفي": "rear", "يمين": "right", "يسار": "left",
+    # ── brands / models ──
+    "تويوتا": "toyota", "كورولا": "corolla", "كامري": "camry", "يارس": "yaris",
+    "هيونداي": "hyundai", "توسان": "tucson", "النترا": "elantra", "اكسنت": "accent",
+    "كيا": "kia", "سبورتاج": "sportage", "بيكانتو": "picanto", "ريو": "rio",
+    "مازدا": "mazda", "نيسان": "nissan", "قشقاي": "qashqai", "هوندا": "honda",
+    "سيفيك": "civic", "مرسيدس": "mercedes", "بي ام دبليو": "bmw", "بيإمدبليو": "bmw",
+    "سكودا": "skoda", "اوكتافيا": "octavia", "فولكس": "volkswagen", "جولف": "golf",
+    "شيفروليه": "chevrolet", "فورد": "ford", "بيجو": "peugeot", "رينو": "renault",
+    "سوزوكي": "suzuki", "ميتسوبيشي": "mitsubishi", "سوبارو": "subaru", "لكزس": "lexus",
+}
+
+
+def _normalize_arabic(text: str) -> str:
+    """Fold the Arabic orthographic variants customers actually type: alef forms
+    (أ إ آ ٱ -> ا), taa marbuta (ة -> ه), alef maqsura (ى -> ي), and strip harakat."""
+    if not text:
+        return ""
+    out = []
+    for ch in text:
+        if "\u064b" <= ch <= "\u0652":      # harakat / tanween — drop
+            continue
+        if ch in "\u0623\u0625\u0622\u0671":
+            out.append("\u0627")
+        elif ch == "\u0629":
+            out.append("\u0647")
+        elif ch == "\u0649":
+            out.append("\u064a")
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def expand_arabic_query(query: str) -> str:
+    """Arabic→English expansion, mirroring expand_hebrew_query. Longest keys first so
+    'فلتر زيت' yields 'oil filter' rather than the generic 'filter' + 'oil'."""
+    q = (query or "").strip()
+    if not q:
+        return q
+    q_norm = _normalize_arabic(q)
+    hits = []
+    for ar in sorted(_AR_EXPANSIONS, key=len, reverse=True):
+        if _normalize_arabic(ar) in q_norm:
+            hits.append(_AR_EXPANSIONS[ar])
+    if not hits:
+        return q
+    # ENGLISH-ONLY on a hit. Unlike Hebrew (name_he really exists in the catalog, so
+    # keeping the Hebrew helps), only ONE active part contains Arabic — leaving the
+    # Arabic words in would make Meilisearch look for tokens no document has and
+    # return nothing, which is exactly why Arabic search matched 0 results.
+    # Any non-Arabic tokens the user typed (a model name, a year) are preserved.
+    kept = [t for t in q.split() if not any("\u0600" <= ch <= "\u06ff" for ch in t)]
+    return " ".join(dict.fromkeys(hits + kept))
+
+
+def expand_query(query: str) -> str:
+    """Single entry point used by search: applies Hebrew AND Arabic expansion, so any of
+    the platform's three languages reaches the English catalog."""
+    out = expand_hebrew_query(query)
+    return expand_arabic_query(out) if out else out
+
+
 def expand_hebrew_query(query: str) -> str:
     """
     Lightweight Hebrew→English query expansion using a static dictionary.

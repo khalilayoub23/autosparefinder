@@ -99,6 +99,11 @@ services:
       # sys.path — every bare `import X` resolves regardless of which subfolder X.py
       # now lives in, for uvicorn AND every `python3 /app/.../X.py` subprocess.
       PYTHONPATH: /app
+      # Thumbnail pipeline throughput (raised 2026-07-20 — owner: "run at full power").
+      # The harvest re-trigger produces source images faster than the old 80/90s cadence
+      # could clean them. nice(15) still yields CPU to the FlareSolverr harvesters.
+      THUMBNAIL_IMPORT_BATCH: ${THUMBNAIL_IMPORT_BATCH:-400}
+      THUMBNAIL_IMPORT_SLEEP: ${THUMBNAIL_IMPORT_SLEEP:-15}
       # Contabo Object Storage (S3-compatible) — part thumbnails. Secret lives only in .env.
       S3_ENDPOINT: ${S3_ENDPOINT:-}
       S3_REGION: ${S3_REGION:-eu2}
