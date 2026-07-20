@@ -1054,6 +1054,18 @@ async def _build_strict_vehicle_match_clause(
 # GET /api/v1/parts/search
 # ==============================================================================
 
+# Quality-bucket -> part_type synonyms, ALL lowercase (compared against
+# lower(btrim(parts_catalog.part_type))). Mirrors PART_TYPE_MAP in db_update_agent so the
+# same vocabulary works whether a row holds the raw form ("oem") or the canonical
+# normalized form ("OEM"). Added 2026-07-20 with the case-sensitivity root fix.
+_PT_ORIGINAL = ["original", "oem_original", "genuine", "מקורי", "מקורימקורי"]
+_PT_OEM = ["oem", "oem_equivalent", "oe_equivalent", "oe"]
+_PT_AFTERMARKET = [
+    "aftermarket", "after market", "generic", "third party", "third_party",
+    "refurbished", "remanufactured", "תחליפי", "חליפיחליפי", "תחליפיתחליפי", "שוק משני",
+]
+
+
 @router.get("/api/v1/parts/search")
 async def search_parts(
     query: str = Query(default="", alias="q", max_length=200),
@@ -1441,9 +1453,17 @@ async def search_parts(
             # ── Meilisearch path: rank-preserving unnest JOIN ─────────────────
             # UUIDs come from our own index — hex+dash only, no SQL injection risk.
             # Pass as a Python list so asyncpg maps it to a PostgreSQL text[] array.
-            pt_condition = "pc.part_type = ANY(:pt)"
+            # Case/format-insensitive match (root fix 2026-07-20). The bucket values are
+            # the CANONICAL capitalized forms ("OEM"), but the live catalog stores the raw
+            # lowercase forms ("oem", "aftermarket", "oe_equivalent") because
+            # normalize_part_types has not converted those 4.1M rows. `= ANY(:pt)` is
+            # case-SENSITIVE, so every bucket matched 0 rows and SEARCH RETURNED NOTHING
+            # for every query. Comparing lower(btrim(...)) against a lowercased synonym
+            # list works under BOTH conventions, so it cannot re-break when the
+            # normalizer later capitalizes the column.
+            pt_condition = "lower(btrim(pc.part_type)) = ANY(:pt)"
             if include_general:
-                pt_condition = "(pc.part_type = ANY(:pt) OR pc.part_type IS NULL OR pc.part_type = '' OR pc.part_type ILIKE 'unknown' OR pc.part_type ILIKE 'general' OR pc.part_type ILIKE 'כללי')"
+                pt_condition = "(lower(btrim(pc.part_type)) = ANY(:pt) OR pc.part_type IS NULL OR pc.part_type = '' OR pc.part_type ILIKE 'unknown' OR pc.part_type ILIKE 'general' OR pc.part_type ILIKE 'כללי')"
 
             part_rows = (await query_db.execute(
                 text(f"""
@@ -1471,9 +1491,17 @@ async def search_parts(
             # ── ILIKE fallback path ───────────────────────────────────────────
             if relevance_sql and any(tok in relevance_sql for tok in _unsafe_sql_tokens):
                 raise HTTPException(status_code=400, detail="unsafe_query_rejected")
-            pt_condition = "pc.part_type = ANY(:pt)"
+            # Case/format-insensitive match (root fix 2026-07-20). The bucket values are
+            # the CANONICAL capitalized forms ("OEM"), but the live catalog stores the raw
+            # lowercase forms ("oem", "aftermarket", "oe_equivalent") because
+            # normalize_part_types has not converted those 4.1M rows. `= ANY(:pt)` is
+            # case-SENSITIVE, so every bucket matched 0 rows and SEARCH RETURNED NOTHING
+            # for every query. Comparing lower(btrim(...)) against a lowercased synonym
+            # list works under BOTH conventions, so it cannot re-break when the
+            # normalizer later capitalizes the column.
+            pt_condition = "lower(btrim(pc.part_type)) = ANY(:pt)"
             if include_general:
-                pt_condition = "(pc.part_type = ANY(:pt) OR pc.part_type IS NULL OR pc.part_type = '' OR pc.part_type ILIKE 'unknown' OR pc.part_type ILIKE 'general' OR pc.part_type ILIKE 'כללי')"
+                pt_condition = "(lower(btrim(pc.part_type)) = ANY(:pt) OR pc.part_type IS NULL OR pc.part_type = '' OR pc.part_type ILIKE 'unknown' OR pc.part_type ILIKE 'general' OR pc.part_type ILIKE 'כללי')"
 
             # Empty-text vehicle/category queries are latency-sensitive and can
             # match a very large set. Avoid global price sorting in that mode,
@@ -1848,21 +1876,21 @@ async def search_parts(
     ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
         async with async_session_factory() as db_original, async_session_factory() as db_oem, async_session_factory() as db_after:
             original_task = _fetch_type(
-                ["Original"],
+                _PT_ORIGINAL,
                 where_sql_override=where_sql_override,
                 where_sql_base_override=where_sql_base_override,
                 force_direct_db=force_direct_db,
                 db_session=db_original,
             )
             oem_task = _fetch_type(
-                ["OEM"],
+                _PT_OEM,
                 where_sql_override=where_sql_override,
                 where_sql_base_override=where_sql_base_override,
                 force_direct_db=force_direct_db,
                 db_session=db_oem,
             )
             aftermarket_task = _fetch_type(
-                ["Aftermarket", "Refurbished"],
+                _PT_AFTERMARKET,
                 include_general=True,
                 where_sql_override=where_sql_override,
                 where_sql_base_override=where_sql_base_override,
