@@ -60,8 +60,15 @@ _PHONE_RE = re.compile(r"(\+?\d[\d\s\-]{7,}\d)")
 
 def _best_source(url: str) -> str:
     u = url.strip()
-    # eBay: bump tiny/thumb variants to a usable size.
-    u = re.sub(r"/s-l\d{2,4}\.", "/s-l500.", u)
+    # eBay: request the LARGEST variant. This used to force "/s-l500." for every size token,
+    # which upgraded tiny thumbs (s-l225) but silently DOWNGRADED big ones (s-l1600 -> s-l500)
+    # — and that blinded the OCR ad-filter: at 500px tesseract read 0 words from a disclaimer
+    # image ("ACTUAL PRODUCT MAY VARY", brand logos) and accepted it, while the same image at
+    # s-l1600 (1400x1400) yields 12 words and is correctly rejected. Branded/ad images were
+    # leaking into the bucket purely because we fetched them too small to read.
+    # Bigger is also a crisper source for the 500x500 thumbnail (same intent as the
+    # autoteile-meile m=0 rule below, which pulls the full original).
+    u = re.sub(r"/s-l\d{2,4}\.", "/s-l1600.", u)
     # car-parts.ie CDN (autoteile-meile): the harvested URL uses m=2 (108×100). The `m=`
     # param is a size selector — m=0 is the full 1024px original. Pull that so the pipeline
     # downscales a crisp source into the 500×500 thumbnail (verified 2026-07-18: m=0→1024²).
@@ -75,6 +82,24 @@ def _best_source(url: str) -> str:
 # picture must have NO label or brand name → reject text-heavy images. Tunable via env.
 _MAX_WORDS = int(os.getenv("THUMB_MAX_OCR_WORDS", "3"))
 _WORD_RE = re.compile(r"[A-Za-z֐-׿؀-ۿ]{3,}")
+
+
+def _fetch_source(url: str) -> bytes:
+    """Fetch the best (largest) source variant, falling back to the smaller one if the CDN
+    has no such size. Large matters: the OCR ad-filter can only reject text it can READ."""
+    candidates = [_best_source(url)]
+    fallback = re.sub(r"/s-l\d{2,4}\.", "/s-l500.", url.strip())
+    if fallback not in candidates:
+        candidates.append(fallback)
+    if url.strip() not in candidates:
+        candidates.append(url.strip())
+    last = None
+    for cand in candidates:
+        try:
+            return urllib.request.urlopen(urllib.request.Request(cand, headers=UA), timeout=25).read()
+        except Exception as exc:
+            last = exc
+    raise last if last else RuntimeError("no source candidate")
 
 
 def _is_promo(pil_img) -> bool:
@@ -152,7 +177,7 @@ async def main():
                 if status == "ok":
                     deduped += 1
             else:
-                raw = urllib.request.urlopen(urllib.request.Request(_best_source(url), headers=UA), timeout=25).read()
+                raw = _fetch_source(url)
                 src = Image.open(io.BytesIO(raw))
                 if _is_promo(src):
                     status = "rejected_ad"; rejected += 1
