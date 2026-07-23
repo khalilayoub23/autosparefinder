@@ -3728,7 +3728,7 @@ async def _price_sync_loop():
     remainder; otherwise runs immediately.
     """
     from BACKEND_AI_AGENTS import SupplierManagerAgent
-    from resilience import log_job_failure, job_registry_start, job_registry_finish
+    from resilience import log_job_failure, job_registry_start, job_registry_finish, job_heartbeat
     interval_s = PRICE_SYNC_INTERVAL_H * 3600
 
     # Determine how long to wait before the first run
@@ -3763,19 +3763,48 @@ async def _price_sync_loop():
                 except Exception as exc:
                     print(f"[PriceSync] job_registry_start failed: {exc}")
 
+                # ROOT FIX 2026-07-23: sync_prices runs eBay+AliExpress for ~1-2h. Previously
+                # the whole run used this ONE `db` session and never heartbeated, so (a) the
+                # zombie watchdog marked it 'dead' after 30 min of silence, and (b) the long-held
+                # transaction hit idle_in_transaction / connection reset → job_registry_finish
+                # threw "invalid transaction". Fix: heartbeat on a separate short session every
+                # 5 min, and finish on a FRESH session (the long-running one may be poisoned).
+                async def _hb_loop():
+                    while True:
+                        await asyncio.sleep(300)
+                        try:
+                            async with async_session_factory() as _hbdb:
+                                await job_heartbeat(_hbdb, job_id)
+                        except Exception as _hbe:
+                            print(f"[PriceSync] heartbeat failed: {_hbe}")
+                hb_task = asyncio.create_task(_hb_loop()) if job_id else None
+
                 agent = SupplierManagerAgent()
-                report = await agent.sync_prices(db)
+                try:
+                    report = await agent.sync_prices(db)
+                finally:
+                    if hb_task:
+                        hb_task.cancel()
+                        try:
+                            await hb_task
+                        except BaseException:
+                            pass
                 status = str((report or {}).get("status") or "ok")
+
+                async def _finish(_status: str, _err: "str | None" = None):
+                    if not job_id:
+                        return
+                    try:
+                        async with async_session_factory() as _fdb:
+                            await job_registry_finish(_fdb, job_id, status=_status, error_message=_err)
+                    except Exception as _fe:
+                        print(f"[PriceSync] job_registry_finish failed: {_fe}")
 
                 if status == "skipped":
                     reason = str((report or {}).get("reason") or "unknown")
                     sleep_s = min(interval_s, 900)
                     print(f"[PriceSync] skipped — {reason}. retry_in={int(sleep_s)}s")
-                    if job_id:
-                        try:
-                            await job_registry_finish(db, job_id, status="skipped", error_message=reason)
-                        except Exception as exc:
-                            print(f"[PriceSync] job_registry_finish failed: {exc}")
+                    await _finish("skipped", reason)
                 else:
                     updated = int((report or {}).get("parts_updated") or 0)
                     avail_changes = int((report or {}).get("availability_changes") or 0)
@@ -3786,11 +3815,7 @@ async def _price_sync_loop():
                         f"avail_changes={avail_changes}  "
                         f"errors={errors_count}"
                     )
-                    if job_id:
-                        try:
-                            await job_registry_finish(db, job_id, status="completed")
-                        except Exception as exc:
-                            print(f"[PriceSync] job_registry_finish failed: {exc}")
+                    await _finish("completed")
         except Exception as exc:
             error_msg = str(exc)[:500]
             print(f"[PriceSync] ❌ error: {error_msg}")

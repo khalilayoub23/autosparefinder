@@ -3816,7 +3816,9 @@ class SupplierManagerAgent(BaseAgent):
         """
         from BACKEND_AUTH_SECURITY import get_redis
         from distributed_lock import acquire_lock
-        _sync_lock = await acquire_lock(await get_redis(), "sync_prices", ttl_seconds=3600)
+        # TTL must exceed the real runtime (eBay+AliExpress ≈ 1-2h) or the lock expires
+        # mid-run → a second trigger double-runs / logs false "already running" skips.
+        _sync_lock = await acquire_lock(await get_redis(), "sync_prices", ttl_seconds=int(os.getenv("SYNC_PRICES_LOCK_TTL_S", "14400")))
         if not _sync_lock:
             return {"status": "skipped", "reason": "sync_prices already running on another worker"}
 
@@ -3883,11 +3885,46 @@ class SupplierManagerAgent(BaseAgent):
         }
 
         if real_data_only:
-            report["mode"] = "real_provider_updates_only"
+            # RECONCILE REAL SOURCES (2026-07-23): production is REAL_DATA_ONLY, so NO synthetic
+            # drift is applied (the ±1-6% block below is never reached). This branch pulls REAL
+            # marketplace prices (eBay + AliExpress) AND reports freshness across EVERY real price
+            # source — including the harvester-owned car-parts.ie catalog — so "price sync" reflects
+            # all sources, not just eBay/AliExpress. Prices are never fabricated.
+            _ebay_updated = int((ebay_report or {}).get("parts_updated") or 0)
+            _ali_updated = int((aliexpress_report or {}).get("parts_updated") or 0)
+            report["mode"] = "reconcile_real_sources"
             report["ebay_report"] = ebay_report or {}
-            report["parts_updated"] = int((ebay_report or {}).get("parts_updated") or 0)
+            report["aliexpress_report"] = aliexpress_report or {}
+            report["parts_updated"] = _ebay_updated + _ali_updated
             report["availability_changes"] = 0
-            report["errors"] = list((ebay_report or {}).get("errors") or [])
+            report["errors"] = (list((ebay_report or {}).get("errors") or [])
+                                + list((aliexpress_report or {}).get("errors") or []))
+
+            # Cross-source freshness reconciliation (cheap — harvest_queue is ~1.4K rows).
+            from sqlalchemy import text as _recon_text
+            recon: Dict[str, Any] = {
+                "ebay": {"checked": int((ebay_report or {}).get("parts_checked") or 0), "updated": _ebay_updated},
+                "aliexpress": {"checked": int((aliexpress_report or {}).get("parts_checked") or 0), "updated": _ali_updated},
+            }
+            try:
+                _hq = (await db.execute(_recon_text(
+                    "SELECT COUNT(*) AS total, "
+                    "COUNT(*) FILTER (WHERE status IN ('done','empty')) AS harvested, "
+                    "COUNT(*) FILTER (WHERE last_harvested_at > NOW() - INTERVAL '14 days') AS fresh_14d, "
+                    "COUNT(*) FILTER (WHERE status IN ('done','empty') AND "
+                    "  (last_harvested_at IS NULL OR last_harvested_at <= NOW() - INTERVAL '14 days')) AS stale "
+                    "FROM harvest_queue"))).first()
+                if _hq is not None:
+                    recon["car_parts_ie"] = {
+                        "models_total": _hq.total, "harvested": _hq.harvested,
+                        "fresh_14d": _hq.fresh_14d, "stale_needs_refresh": _hq.stale,
+                        "note": "prices refreshed by the harvester on its ≤14d cycle",
+                    }
+            except Exception as _recon_err:
+                recon["car_parts_ie"] = {"error": str(_recon_err)[:120]}
+            report["reconciliation"] = recon
+            logger.info("[Price Sync] reconcile real sources — ebay=%d ali=%d recon=%s",
+                        _ebay_updated, _ali_updated, recon.get("car_parts_ie"))
 
             try:
                 db.add(SystemLog(
