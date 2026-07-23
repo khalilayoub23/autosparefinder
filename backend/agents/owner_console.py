@@ -270,22 +270,70 @@ def _pick_agent(message: str) -> tuple[str, str]:
     return "router_agent", m
 
 
+# WhatsApp-facing reply rules shared by both agents. Two things ruined the earlier replies:
+# (1) the fallback LLM dumped its chain-of-thought ("1. Analyze the Request… 5. Constructing
+#     the Final Output") instead of the answer; (2) markdown **bold** doesn't render in
+# WhatsApp (bold is a single *). These rules + the post-processor below fix both.
+_WA_REPLY_RULES = (
+    "\n\nכללי מענה מחייבים (וואטסאפ):\n"
+    "• ענה בעברית בלבד, קצר וישיר — עד ~6 שורות. בלי הקדמות ובלי סיכומים מיותרים.\n"
+    "• תן אך ורק את התשובה הסופית. אסור בהחלט להראות שלבי חשיבה/ניתוח/תכנון "
+    "(אסור 'Analyze', 'Draft', 'Step', '1. …', 'Internal Monologue', רשימת שלבים).\n"
+    "• עיצוב וואטסאפ: הדגשה עם כוכבית *בודדת* בלבד — לעולם לא **. בלי כותרות markdown (#).\n"
+    "• השתמש בנתוני המערכת החיים למטה; אל תמציא מספרים.\n"
+    "• אם צריך פעולה מובנית — הפנה לפקודה: סטטוס / שאיבה / פוסטים / אשר / דחה."
+)
 _OWNER_SYSTEM = {
     "router_agent": (
-        "אתה AVI — המתאם הראשי של מערכת AutoSpareFinder. אתה מדבר עכשיו עם *חליל, הבעלים* "
-        "של הפלטפורמה — לא לקוח. דבר אליו ישירות, מקצועי, קצר וברור בעברית. אתה מכיר את "
-        "מצב המערכת החי המצורף למטה — השתמש בו כדי לתת תשובות מבוססות. הבעלים יכול לבקש "
-        "ממך מידע על המערכת, לנתב משימות לסוכנים, ולבקש פעולות. אם פעולה דורשת פקודה "
-        "מובנית (סטטוס/שאיבה/פוסטים/אשר/דחה) — הצע לו לכתוב אותה. לעולם אל תתייחס אליו "
-        "כלקוח ואל תמכור לו. אל תמציא נתונים — אם אינך יודע, אמור זאת."
+        "אתה AVI — המתאם הראשי של AutoSpareFinder, מדבר עם *חליל, הבעלים* (לא לקוח). "
+        "תפקידך: לתת לו תמונת מצב מדויקת של המערכת, המלצות תפעוליות, ולנתב משימות. "
+        "היה ישיר, מקצועי ומועיל. אל תמכור לו ואל תתייחס אליו כלקוח."
+        + _WA_REPLY_RULES
     ),
     "social_media_manager_agent": (
-        "אתה NOA — מנהלת הסושיאל והשיווק של AutoSpareFinder. את מדברת עכשיו עם *חליל, "
-        "הבעלים* — לא קהל. דברי אליו ישירות בעברית, חכם ואנושי. את יכולה לדון ברעיונות "
-        "לפוסטים/קמפיינים, לתת המלצות, ולהסביר מה מפורסם. הבעלים יכול לאשר או לדחות "
-        "פוסטים ממתינים ע\"י כתיבת 'פוסטים' ואז 'אשר'/'דחה'. אל תמציאי מחירים או נתונים."
+        "את NOA — מנהלת השיווק והסושיאל של AutoSpareFinder, מדברת עם *חליל, הבעלים*. "
+        "כשהוא מבקש פוסט — כתבי את הפוסט המוכן לפרסום בלבד (פתיח קולע, גוף קצר, וקריאה "
+        "לפעולה), אנושי וחכם, בלי להסביר את התהליך. כשהוא שואל על שיווק — תני תשובה ממוקדת. "
+        "אל תמציאי מחירים או נתונים. לאישור/דחיית פוסטים ממתינים: 'פוסטים' ואז 'אשר'/'דחה'."
+        + _WA_REPLY_RULES
     ),
 }
+
+
+def _clean_wa_reply(text: str) -> str:
+    """Post-process an agent reply for WhatsApp: strip any leaked chain-of-thought, and
+    convert markdown the app can't render. Belt-and-braces on top of the prompt rules —
+    the fallback model in particular still leaks a numbered 'analysis' when Cerebras 429s."""
+    t = (text or "").strip()
+    # 1) strip leaked reasoning via the shared customer-flow stripper
+    try:
+        from BACKEND_AI_AGENTS import _strip_leaked_reasoning
+        t = _strip_leaked_reasoning(t) or t
+    except Exception:
+        pass
+    # 2) targeted salvage: if it's still a numbered "analysis dump" (…Constructing the Final
+    #    Output / Final Output / Final Response), keep only what comes AFTER that heading
+    #    (consuming any trailing markdown/colon/dashes so no "**:" junk remains).
+    looks_like_cot = bool(re.search(
+        r"(?im)^\s*\d+\.\s|Analyze the Request|Internal Monologue|Drafting the Post|"
+        r"Refining the Post|Constructing the Final", t))
+    if looks_like_cot:
+        m = None
+        for mm in re.finditer(r"(?:Constructing the Final Output|Final Output|Final Response|"
+                              r"התוצר הסופי|הפוסט הסופי|התשובה הסופית)[\s*:\-.]*", t, re.I):
+            m = mm  # take the LAST such marker
+        if m:
+            t = t[m.end():].strip()
+        else:
+            # no explicit "final" marker — drop obvious analysis lines, keep the rest
+            t = "\n".join(ln for ln in t.splitlines() if not re.match(
+                r"\s*(?:\d+\.\s*)?\*{0,2}(?:Analyze|Draft|Refin|Construct|Present|Step|User|"
+                r"Request|Role|Tone|Context|Topic|Target|Format|Headline|Body|CTA)\b", ln, re.I)).strip()
+    # 3) markdown → WhatsApp: **bold** → *bold*, drop markdown headers/list-star noise
+    t = re.sub(r"\*\*+([^*\n]+?)\*\*+", r"*\1*", t)
+    t = re.sub(r"(?m)^\s{0,3}#{1,6}\s*", "", t)
+    t = re.sub(r"\n{3,}", "\n\n", t).strip()
+    return t
 
 
 async def process_owner_message(message: str, source: str = "whatsapp") -> str:
@@ -341,14 +389,12 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp") -> 
         from hf_client import hf_text
         status_block = await build_status_snapshot(db)
         system = (_OWNER_SYSTEM[agent_key]
-                  + "\n\n--- מצב המערכת החי (עכשיו) ---\n" + status_block
-                  + "\n(אם הבעלים מבקש פעולה מהירה, הפנה לפקודות: סטטוס/שאיבה/פוסטים/אשר/דחה. "
-                  + "השב בעברית, קצר וברור, עד ~6 שורות.)")
+                  + "\n\n--- מצב המערכת החי (עכשיו) ---\n" + status_block)
         hist = await _load_history()
         convo = "\n".join(f"{m['role']}: {m['content']}" for m in hist[-8:])
         prompt = (convo + "\n" if convo else "") + f"user: {clean}"
-        reply = await hf_text(prompt, system=system, priority=True, max_tokens=700)
-        reply = (reply or "").strip() or "לא הצלחתי לייצר תשובה כרגע, נסה שוב."
+        reply = await hf_text(prompt, system=system, priority=True, max_tokens=600)
+        reply = _clean_wa_reply(reply) or "לא הצלחתי לייצר תשובה כרגע, נסה שוב."
         hist2 = hist + [{"role": "user", "content": clean},
                         {"role": "assistant", "content": reply}]
         await _save_history(hist2)

@@ -475,11 +475,23 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_pii_
             # The owner's device may present a masked WhatsApp LID (…@lid) as the sender,
             # which is NOT his real number — replying to it (or its "<lid>@s.whatsapp.net"
             # conversion) delivers nowhere. Always reply to his REAL number
-            # (OWNER_WHATSAPP_PHONE = +972586050155), which the bridge routes to
-            # 972586050155@s.whatsapp.net. Confirmed by the owner 2026-07-24.
-            reply = await process_owner_message(body, source="whatsapp")
-            if reply:
-                await wa_send(to=OWNER_PHONE or sender_phone, text=reply)
+            # (OWNER_WHATSAPP_PHONE = +972586050155). Confirmed by the owner 2026-07-24.
+            # Generate + send the reply in the BACKGROUND and ack the webhook immediately:
+            # AVI/NOA replies can take 20-90s under Cerebras rate-limits, which would
+            # otherwise block the webhook and time out the bridge.
+            _dest = OWNER_PHONE or sender_phone
+            _body = body
+
+            async def _owner_reply_bg():
+                try:
+                    from social.whatsapp_provider import send_message as _send
+                    r = await process_owner_message(_body, source="whatsapp")
+                    if r:
+                        await _send(to=_dest, text=r)
+                except Exception as _e:
+                    print(f"[owner_console] bg reply failed: {_e}")
+
+            asyncio.create_task(_owner_reply_bg())
             return Response(content="<Response/>", media_type="text/xml")
     except Exception as _oe:
         print(f"[owner_console] error, falling through: {_oe}")
