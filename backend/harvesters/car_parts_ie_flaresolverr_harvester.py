@@ -33,13 +33,18 @@ _state_lock = threading.Lock()
 # FLARESOLVERR_URL override lets this run either on the host (default, talks to
 # the published port) or inside the backend container (set to the service name).
 FLARESOLVERR     = os.environ.get("FLARESOLVERR_URL", "http://localhost:8191/v1")
+FLARESOLVERR_2   = os.environ.get("FLARESOLVERR_URL_2", "")   # optional 2nd instance for solves
+_DEFAULT_UA      = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/124.0.0.0 Safari/537.36")
+# How long a minted cf_clearance cookie is trusted before a refresh (car-parts.ie ~30 min).
+CLEARANCE_TTL_S  = int(os.environ.get("HARVESTER_CLEARANCE_TTL_S", "1500"))
 RELAY            = "https://autosparefinder.co.il/api/v1/system/collect"
 _COLLECT_SECRET  = os.environ.get("COLLECT_SECRET", "")
 BASE             = "https://www.car-parts.ie"
 _BASE_DIR        = Path(__file__).resolve().parent.parent  # /app (script now in harvesters/)
 STATE_FILE       = _BASE_DIR / "state" / "flaresolverr_state.json"
 LOG_DIR          = _BASE_DIR / "state" / "logs"
-PARALLEL_SESSIONS = int(os.environ.get("HARVESTER_PARALLEL_SESSIONS", "2"))
+PARALLEL_SESSIONS = int(os.environ.get("HARVESTER_PARALLEL_SESSIONS", "1"))
                            # concurrent FlareSolverr browser sessions (each is a real headless-Chrome
                            # Cloudflare solve → ~140% CPU sustained). 4 was fine for BURSTY IL-market
                            # harvesting (queue drained fast → harvester idled). After the 2026-07-23
@@ -391,54 +396,126 @@ def save_state(state):
     STATE_FILE.write_text(json.dumps(state, indent=2))
 
 # ── FlareSolverr helpers ──────────────────────────────────────────────────────
-def fs_request(cmd: dict) -> dict:
-    data = json.dumps(cmd).encode()
-    req = urllib.request.Request(
-        FLARESOLVERR,
-        data=data,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
+def _fs_call(host: str, cmd: dict) -> dict:
+    """Low-level FlareSolverr JSON call to a specific instance URL."""
+    req = urllib.request.Request(host, data=json.dumps(cmd).encode(),
+                                 headers={"Content-Type": "application/json"}, method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=cmd.get("maxTimeout", 20000) // 1000 + 5) as r:
+        with urllib.request.urlopen(req, timeout=cmd.get("maxTimeout", 20000) // 1000 + 15) as r:
             return json.loads(r.read())
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        return {"status": "error", "message": str(e)[:120]}
 
-def fs_create_session() -> str:
-    r = fs_request({"cmd": "sessions.create"})
-    return r.get("session", "")
 
-def fs_destroy_session(session_id: str):
-    fs_request({"cmd": "sessions.destroy", "session": session_id})
+def fs_request(cmd: dict) -> dict:
+    return _fs_call(FLARESOLVERR, cmd)
+
 
 def fs_cleanup_stale_sessions() -> int:
-    """
-    Destroy any sessions left open from a previous run that died mid-cycle
-    (container restart, SIGTERM from the healthcheck watchdog, crash, etc).
-    Each leaked session is a live headless Chrome process that keeps consuming
-    CPU/RAM forever since FlareSolverr has no TTL — left unchecked these pile up
-    across restarts and starve the sessions actually doing work.
-    Raises RuntimeError if FlareSolverr is unreachable.
-    """
-    r = fs_request({"cmd": "sessions.list"})
-    if r.get("status") != "ok":
-        raise RuntimeError(f"FlareSolverr unreachable: {r.get('message', 'unknown error')}")
-    stale = r.get("sessions", [])
-    for sid in stale:
-        fs_destroy_session(sid)
-    return len(stale)
+    """Destroy any FlareSolverr sessions left open from a previous run, on BOTH instances,
+    so no headless-Chrome lingers. Best-effort (never raises — a down instance is skipped)."""
+    n = 0
+    for host in (FLARESOLVERR, FLARESOLVERR_2):
+        if not host:
+            continue
+        r = _fs_call(host, {"cmd": "sessions.list"})
+        for sid in (r.get("sessions", []) if r.get("status") == "ok" else []):
+            _fs_call(host, {"cmd": "sessions.destroy", "session": sid})
+            n += 1
+    return n
 
-def fs_get(url: str, session_id: str, timeout_ms: int = 20000) -> str:
-    r = fs_request({
-        "cmd": "request.get",
-        "url": url,
-        "session": session_id,
-        "maxTimeout": timeout_ms,
-    })
-    if r.get("status") == "ok":
-        return r.get("solution", {}).get("response", "")
+
+# ── Cloudflare clearance — FlareSolverr is used ONLY to MINT a cookie ─────────
+# ROOT FIX 2026-07-23: we no longer route EVERY page through FlareSolverr's browser.
+# car-parts.ie pages are server-rendered, so we mint a cf_clearance cookie via FlareSolverr
+# ONCE (then destroy its session immediately) and fetch every page with plain urllib + that
+# cookie. FlareSolverr now runs a browser ~2×/hour instead of thousands of times per hour —
+# so the orphaned-Chrome accumulation that pinned the box simply cannot happen. The cookie
+# lasts ~30 min; http_get refreshes it on a Cloudflare block. (The old fs_get — one browser
+# request per page — is what leaked Chrome and is gone.)
+import threading as _threading
+
+_CLEARANCE = {"cookie": "", "ua": _DEFAULT_UA, "ts": 0.0}
+_CLEARANCE_LOCK = _threading.Lock()
+
+
+def _solve_clearance() -> bool:
+    """Mint a fresh cf_clearance cookie via FlareSolverr, then DESTROY the session so no
+    browser lingers. Tries both instances. Returns True on success."""
+    for host in (FLARESOLVERR_2, FLARESOLVERR):   # prefer the 2nd instance if configured
+        if not host:
+            continue
+        sid = ""
+        try:
+            sid = _fs_call(host, {"cmd": "sessions.create"}).get("session", "")
+            if not sid:
+                continue
+            sol = _fs_call(host, {"cmd": "request.get", "url": BASE + "/",
+                                  "session": sid, "maxTimeout": 60000}).get("solution", {})
+            if sol.get("status") == 200 and sol.get("cookies"):
+                ck = "; ".join(c["name"] + "=" + c["value"] for c in sol["cookies"])
+                with _CLEARANCE_LOCK:
+                    _CLEARANCE["cookie"] = ck
+                    _CLEARANCE["ua"] = sol.get("userAgent") or _DEFAULT_UA
+                    _CLEARANCE["ts"] = time.time()
+                log.info(f"cf_clearance minted via {host.split('//')[-1].split(':')[0]} "
+                         f"({len(sol['cookies'])} cookies)")
+                return True
+        except Exception as e:
+            log.warning(f"clearance solve error on {host}: {str(e)[:80]}")
+        finally:
+            if sid:
+                _fs_call(host, {"cmd": "sessions.destroy", "session": sid})  # no lingering browser
+    return False
+
+
+def ensure_clearance(force: bool = False) -> bool:
+    with _CLEARANCE_LOCK:
+        fresh = bool(_CLEARANCE["cookie"]) and (time.time() - _CLEARANCE["ts"] < CLEARANCE_TTL_S)
+    if fresh and not force:
+        return True
+    for _ in range(6):
+        if _solve_clearance():
+            return True
+        time.sleep(6)
+    log.error("could not mint cf_clearance cookie after retries")
+    return False
+
+
+def http_get(url: str, timeout_s: int = 40) -> str:
+    """Fetch a car-parts.ie page with plain urllib + the cf_clearance cookie — NO browser.
+    On a Cloudflare block (403/503/429) refresh the cookie once and retry."""
+    for attempt in range(2):
+        with _CLEARANCE_LOCK:
+            ck, ua = _CLEARANCE["cookie"], _CLEARANCE["ua"]
+        if not ck:
+            ensure_clearance()
+            with _CLEARANCE_LOCK:
+                ck, ua = _CLEARANCE["cookie"], _CLEARANCE["ua"]
+            if not ck:
+                return ""
+        try:
+            req = urllib.request.Request(url, headers={
+                "User-Agent": ua, "Cookie": ck,
+                "Accept-Language": "en-IE,en;q=0.9",
+                "Accept": "text/html,application/xhtml+xml",
+                "Referer": BASE + "/"})
+            with urllib.request.urlopen(req, timeout=timeout_s) as r:
+                return r.read().decode("utf-8", "replace")
+        except urllib.error.HTTPError as e:
+            if e.code in (403, 503, 429) and attempt == 0:   # cookie expired / challenged
+                ensure_clearance(force=True)
+                continue
+            return ""
+        except Exception:
+            return ""
     return ""
+
+
+def fs_get(url: str, session_id: str = "", timeout_ms: int = 20000) -> str:
+    """Back-compat shim: harvest_model still calls fs_get(url, session, timeout_ms), but it
+    now goes through plain HTTP + the cf_clearance cookie (no FlareSolverr browser per page)."""
+    return http_get(url, timeout_s=max(15, timeout_ms // 1000))
 
 # ── Relay POST ────────────────────────────────────────────────────────────────
 def post_relay(vehicle: str, parts: list, done: bool = False) -> bool:
@@ -587,19 +664,10 @@ def harvest_model(session_id: str, vehicle: str, state: dict) -> int:
 
 # ── Worker (queue-driven) ─────────────────────────────────────────────────────
 def worker(worker_id: int, models_this_cycle: int, state: dict):
-    """Pull the next highest-priority pending model from harvest_queue, harvest
-    it, record the result, repeat — until the per-cycle budget is spent or the
-    queue is empty. No hardcoded model list; the IL-market-priority queue drives
-    everything. `models_this_cycle` bounds how many this worker takes before the
-    cycle rests (keeps the box from being pinned indefinitely)."""
-    session_id = fs_create_session()
-    if not session_id:
-        log.error(f"Worker {worker_id}: failed to create session")
-        return
-
-    log.info(f"Worker {worker_id}: session {session_id[:8]}...")
-    fs_get(f"{BASE}/", session_id, timeout_ms=30000)  # warm up CF challenge
-
+    """Pull the next highest-priority pending model from harvest_queue, harvest it via
+    plain HTTP (+ the shared cf_clearance cookie — NO browser, NO FlareSolverr session),
+    record the result, repeat — until the per-cycle budget is spent or the queue is empty.
+    `models_this_cycle` bounds how many this worker takes before the cycle rests."""
     done = 0
     while done < models_this_cycle:
         claim = claim_next_model()
@@ -608,7 +676,7 @@ def worker(worker_id: int, models_this_cycle: int, state: dict):
             break
         qid, vehicle = claim
         try:
-            n = harvest_model(session_id, vehicle, state)
+            n = harvest_model("", vehicle, state)   # session arg unused (http_get shim)
             complete_model(qid, n)
             with _state_lock:
                 state["total_parts"] = state.get("total_parts", 0) + n
@@ -625,21 +693,26 @@ def worker(worker_id: int, models_this_cycle: int, state: dict):
         done += 1
         time.sleep(INTER_MODEL)
 
-    fs_destroy_session(session_id)
     log.info(f"Worker {worker_id}: done ({done} models this cycle)")
+
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
     state = load_state()
 
-    # Verify FlareSolverr is running, then clear out any sessions orphaned by a
-    # previous run that didn't get to exit cleanly — see fs_cleanup_stale_sessions.
+    # Clean any sessions a previous run left open (best-effort), then mint the FIRST
+    # cf_clearance cookie. From here every page is fetched by plain HTTP with that cookie
+    # (http_get) — FlareSolverr only runs a browser to (re)mint the cookie ~2×/hour, so
+    # the orphaned-Chrome accumulation that used to pin the box can't happen.
     try:
         n = fs_cleanup_stale_sessions()
-        log.info(f"FlareSolverr ready — cleared {n} stale session(s) from previous run")
+        if n:
+            log.info(f"Cleared {n} stale FlareSolverr session(s) from a previous run")
     except Exception as e:
-        log.error(f"FlareSolverr not reachable: {e}")
-        return
+        log.warning(f"session cleanup skipped: {e}")
+
+    if not ensure_clearance(force=True):
+        log.error("FlareSolverr could not mint an initial cf_clearance cookie — retrying in-loop")
 
     # Reclaim any models left 'in_progress' by a previous run killed mid-model,
     # so they get retried instead of wedging the queue forever.
@@ -650,19 +723,12 @@ def main():
     while True:
         state["cycles"] = state.get("cycles", 0) + 1
 
-        # ROOT FIX 2026-07-07: recycle sessions at the START of every cycle, not
-        # just at process startup. FlareSolverr has NO session TTL, and a worker
-        # that errors (or a failed destroy, or a mid-cycle restart) leaks its
-        # headless-Chrome session forever. Over days these piled up — found 33
-        # zombie renderers driving host load to 90 and starving search of DB
-        # connections. Since every worker from the previous cycle has already
-        # been join()ed, ANY session alive here is a leak — safe to destroy.
+        # Keep the cf_clearance cookie fresh (re-mint when older than CLEARANCE_TTL_S).
+        # This is the ONLY FlareSolverr browser use now — a couple of solves per hour.
         try:
-            leaked = fs_cleanup_stale_sessions()
-            if leaked:
-                log.warning(f"Cycle start: destroyed {leaked} leaked session(s) from prior cycle")
+            ensure_clearance()
         except Exception as e:
-            log.error(f"Cycle-start session cleanup failed (FlareSolverr may be down): {e}")
+            log.error(f"clearance refresh failed (FlareSolverr may be down): {e}")
 
         # Periodic stale-reclaim (fix 2026-07-08): startup-only reclaim missed
         # orphans on a long-running harvester — the top-3 models sat stuck
@@ -689,8 +755,9 @@ def main():
             f"({prog['brands_done']}/{prog['brands_total']} brands), pending={pending} ═══"
         )
 
-        # Each of the 3 workers takes a bounded slice of the queue this cycle,
-        # then the cycle rests — keeps host load in check on the 4-core box.
+        # Each worker takes a bounded slice of the queue this cycle, then the cycle rests.
+        # Workers now fetch by plain HTTP (no browser), so concurrency is cheap — PARALLEL_
+        # SESSIONS is just the thread count. (Env HARVESTER_PARALLEL_SESSIONS.)
         MODELS_PER_WORKER_PER_CYCLE = int(os.getenv("HARVEST_MODELS_PER_WORKER", "8"))
         threads = []
         for i in range(PARALLEL_SESSIONS):
@@ -701,7 +768,7 @@ def main():
             )
             t.start()
             threads.append(t)
-            time.sleep(10)  # stagger session creation
+            time.sleep(1)
 
         for t in threads:
             t.join()

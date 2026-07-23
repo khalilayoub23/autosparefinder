@@ -34,6 +34,11 @@ from typing import Any, Dict, List
 from sqlalchemy import text as _sql
 
 OWNER_PHONE = (os.getenv("OWNER_WHATSAPP_PHONE", "") or "").strip()
+# WhatsApp now routes some contacts by a stable LID ("<digits>@lid") instead of the phone
+# number (privacy update). The owner's device sends as a LID, so phone-only matching missed
+# him and his messages fell through to the customer bot (found 2026-07-23: his inbound arrived
+# as 98058566160397@lid, not +972586050155). Match the LID too. Comma-separated digits/LIDs OK.
+OWNER_LIDS = {re.sub(r"[^\d]", "", x) for x in os.getenv("OWNER_WHATSAPP_LID", "").split(",") if x.strip()}
 _HISTORY_KEY = "owner:console:history"
 _HISTORY_MAX = 12  # turns kept for conversational memory
 
@@ -43,12 +48,17 @@ def _norm_phone(p: str) -> str:
 
 
 def is_owner(phone: str) -> bool:
-    """True if this phone is the platform owner. Never matches the platform's OWN number
-    (that would be a self-loop); OWNER_PHONE is +972586050155, the platform account is a
-    different number (see [[status-update-loop]])."""
-    if not OWNER_PHONE:
+    """True if this sender is the platform owner — by phone OR by his WhatsApp LID. Never
+    matches the platform's OWN number (that would be a self-loop); OWNER_PHONE is
+    +972586050155, the platform account is a different number (see [[status-update-loop]])."""
+    norm = _norm_phone(phone)
+    if not norm:
         return False
-    return _norm_phone(phone) == _norm_phone(OWNER_PHONE)
+    if OWNER_PHONE and norm == _norm_phone(OWNER_PHONE):
+        return True
+    if norm in OWNER_LIDS:
+        return True
+    return False
 
 
 # ── live system status ────────────────────────────────────────────────────────
