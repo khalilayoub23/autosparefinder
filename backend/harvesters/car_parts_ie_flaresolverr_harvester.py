@@ -440,18 +440,16 @@ _CLEARANCE_LOCK = _threading.Lock()
 
 
 def _solve_clearance() -> bool:
-    """Mint a fresh cf_clearance cookie via FlareSolverr, then DESTROY the session so no
-    browser lingers. Tries both instances. Returns True on success."""
+    """Mint a fresh cf_clearance cookie via a SESSIONLESS FlareSolverr request. Verified
+    2026-07-23: a sessionless `request.get` spins a throwaway browser, solves, and CLOSES
+    it cleanly (chrome 0→0) — whereas sessions.create+destroy ORPHANS the browser (the leak).
+    So this leaves ZERO lingering Chrome. Tries both instances. Returns True on success."""
     for host in (FLARESOLVERR_2, FLARESOLVERR):   # prefer the 2nd instance if configured
         if not host:
             continue
-        sid = ""
         try:
-            sid = _fs_call(host, {"cmd": "sessions.create"}).get("session", "")
-            if not sid:
-                continue
             sol = _fs_call(host, {"cmd": "request.get", "url": BASE + "/",
-                                  "session": sid, "maxTimeout": 60000}).get("solution", {})
+                                  "maxTimeout": 60000}).get("solution", {})
             if sol.get("status") == 200 and sol.get("cookies"):
                 ck = "; ".join(c["name"] + "=" + c["value"] for c in sol["cookies"])
                 with _CLEARANCE_LOCK:
@@ -459,13 +457,10 @@ def _solve_clearance() -> bool:
                     _CLEARANCE["ua"] = sol.get("userAgent") or _DEFAULT_UA
                     _CLEARANCE["ts"] = time.time()
                 log.info(f"cf_clearance minted via {host.split('//')[-1].split(':')[0]} "
-                         f"({len(sol['cookies'])} cookies)")
+                         f"({len(sol['cookies'])} cookies, sessionless)")
                 return True
         except Exception as e:
             log.warning(f"clearance solve error on {host}: {str(e)[:80]}")
-        finally:
-            if sid:
-                _fs_call(host, {"cmd": "sessions.destroy", "session": sid})  # no lingering browser
     return False
 
 
