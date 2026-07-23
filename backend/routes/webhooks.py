@@ -464,6 +464,21 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_pii_
 
     phone_e164 = sender_phone.replace("whatsapp:", "").strip()
 
+    # ── OWNER COMMAND CONSOLE ─────────────────────────────────────────────────
+    # The owner's WhatsApp messages are NOT customer traffic — route them to his
+    # private console: chat with AVI/NOA (owner mode), live system status, and
+    # approve/reject the NOA posts they send him. Text messages only (media falls
+    # through). On any error, fall through to normal handling so nothing is lost.
+    try:
+        from agents.owner_console import is_owner, process_owner_message
+        if is_owner(phone_e164) and body:
+            reply = await process_owner_message(body, source="whatsapp")
+            if reply:
+                await wa_send(to=sender_phone, text=reply)
+            return Response(content="<Response/>", media_type="text/xml")
+    except Exception as _oe:
+        print(f"[owner_console] error, falling through: {_oe}")
+
     user_result = await db.execute(select(User).where(User.phone == phone_e164))
     user = user_result.scalar_one_or_none()
     conversation_user_id = user.id if user else WHATSAPP_ANON_USER_ID

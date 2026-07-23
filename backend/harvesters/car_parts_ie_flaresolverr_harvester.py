@@ -39,14 +39,28 @@ BASE             = "https://www.car-parts.ie"
 _BASE_DIR        = Path(__file__).resolve().parent.parent  # /app (script now in harvesters/)
 STATE_FILE       = _BASE_DIR / "state" / "flaresolverr_state.json"
 LOG_DIR          = _BASE_DIR / "state" / "logs"
-PARALLEL_SESSIONS = 4      # concurrent FlareSolverr browser sessions. Raised 3→4 on 2026-07-20 after
-                           # server upgrade from 4 vCPUs to 6 vCPUs (load avg ~1.7/core vs prior 2.5/core).
-                           # Prior test at 5 sessions on the OLD 4-core box dropped throughput to 0 models/10min
-                           # (load avg 22-25). On 6 CPUs, 4 sessions gives headroom. Do NOT raise to 5+
-                           # without re-measuring: compare load avg + models-completed/10min before/after.
+PARALLEL_SESSIONS = int(os.environ.get("HARVESTER_PARALLEL_SESSIONS", "2"))
+                           # concurrent FlareSolverr browser sessions (each is a real headless-Chrome
+                           # Cloudflare solve → ~140% CPU sustained). 4 was fine for BURSTY IL-market
+                           # harvesting (queue drained fast → harvester idled). After the 2026-07-23
+                           # full-catalogue seeding (6,000-model backlog) the harvester runs FLAT-OUT,
+                           # so 4 sessions pinned flaresolverr at ~577% CPU and the box to load avg ~18.7
+                           # on 6 vCPUs (oversubscribed) → DB statement-timeouts failed heal/parity tasks
+                           # and starved sync_prices' heartbeat (false 'dead' alerts). Lowered to 2 for
+                           # SUSTAINED operation: the full catalogue is a multi-week marathon, not a sprint.
+                           # Env-tunable — raise (e.g. 4) ONLY after the server upgrade is actually active
+                           # (nproc > 6) AND re-measuring load avg (< ~12) + models-completed/10min.
+                           # Prior test at 5 on the OLD 4-core box → 0 models/10min (load 22-25). Do not guess.
 BATCH_SIZE       = 50
 PAGE_TIMEOUT     = 20000   # ms per page request
-INTER_MODEL      = 5       # seconds between models
+INTER_MODEL      = int(os.environ.get("HARVESTER_INTER_MODEL_S", "20"))
+                           # seconds a worker pauses between models. Raised 5→20 on 2026-07-23:
+                           # with the 6,000-model full-catalogue backlog the harvester runs
+                           # flat-out, and CF solving is CPU-heavy — a real gap between models
+                           # gives the box duty-cycle headroom so the agents/workers (heal,
+                           # meili parity, sync_prices heartbeat) aren't starved into timeouts.
+                           # The full catalogue is a multi-week marathon; throughput is secondary
+                           # to keeping the box healthy. Env-tunable.
 
 # ── Smart harvest queue (goal 2026-07-07) ────────────────────────────────────
 # The harvester is now QUEUE-DRIVEN instead of iterating a hardcoded 144-model

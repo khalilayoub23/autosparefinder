@@ -810,7 +810,7 @@ Search endpoint returns `external_suppliers` array (from Redis cache, non-blocki
 
 **Capacity reality check** — 11 containers run concurrently (3× Postgres, Meilisearch, Redis, backend, frontend, Nginx, FlareSolverr, WhatsApp bridge, 2× backup). Load average normally sits 8-12 on 6 CPUs (~1.5-2 per core); above 18 is oversubscription. Key constraints:
 - No swap → RAM exhaustion = immediate OOM kills, no graceful degradation.
-- **6 vCPUs → `PARALLEL_SESSIONS = 4`** (raised from 3 on 2026-07-20). Tested at 5 sessions on the OLD 4-core box: throughput DROPPED (load avg 22-25). On 6 CPUs, 4 sessions is the current calibrated value. Do not raise to 5+ without re-measuring (compare load avg + models/10min before vs after).
+- **6 vCPUs → `PARALLEL_SESSIONS = 2`** (env `HARVESTER_PARALLEL_SESSIONS`; lowered 4→2 on 2026-07-23). 4 was fine when the IL-market queue drained fast and the harvester idled between bursts; after the full-catalogue seeding (6,000-model backlog) the harvester runs FLAT-OUT and 4 sessions pinned flaresolverr at ~577% CPU / load 18.7 (oversubscribed) → DB statement-timeouts failed heal/parity tasks + starved sync_prices' heartbeat. Also `INTER_MODEL = 20 s` (env `HARVESTER_INTER_MODEL_S`, was 5) for duty-cycle headroom. Raise back toward 4 ONLY after the server upgrade is actually active (`nproc` > 6) AND re-measuring. **FlareSolverr Chrome LEAK:** rapid successive backend restarts orphan headless-Chrome processes in the flaresolverr container (no session TTL) — they accumulate (saw 49 chromium for 4 sessions → 577% CPU). If flaresolverr CPU is high and won't drop after tuning, check `docker exec flaresolverr ps aux | grep -c chrom` and **`docker restart flaresolverr flaresolverr2`** to clear them.
 - `idle_in_transaction_session_timeout = 30min` (set via ALTER SYSTEM 2026-06-30).
 - Watchdog `BLOCKER_S = 2700s` (45 min) — moot for active-backend connections (never killed), relevant only for orphan-detection fallback.
 - `DB_AGENT_TASK_TIMEOUT_S = 3600` — per-task timeout inside `run_all_tasks`. Set in `docker-compose.yml`.
@@ -1114,6 +1114,15 @@ shared brain `process_user_message`): AVI (router), NIR (parts/fitment/OEM), MAY
 pricing), LIOR (orders), TAL (finance/VAT/invoices), DANA (support/returns/warranty), OREN
 (security/fraud), SHIRA (marketing), BOAZ (supplier B2B + daily price sync), NOA (social),
 REX (scraper coordinator). Full skills → `docs/skills.md`.
+**Owner WhatsApp console** (`agents/owner_console.py`, added 2026-07-23): the OWNER's WhatsApp
+messages (`OWNER_WHATSAPP_PHONE`) are intercepted in `routes/webhooks.py` BEFORE the customer
+brain and routed here — a private ops console. Two-way owner-mode chat with AVI (default) / NOA
+(prefix "נועה"/"noa") via a DIRECT `hf_text` call (NOT `get_agent("router_agent")` — that's a
+JSON classifier and emits garbage on freeform chat) seeded with a live system-status block +
+rolling Redis history. Deterministic commands: `סטטוס`/status, `שאיבה`/harvester, `פוסטים`/posts,
+`אשר <id>`/approve (marks approved + publishes via `social/registry.dispatch`), `דחה`/reject,
+`עזרה`/help — so the owner acts on NOA's approval notifications by replying. Uses its own
+CATALOG-DB session (those tables aren't in the PII DB the webhook passes).
 **Layer B — pipeline workers**: `catalog_scraper` (ingest), `db_cleanup_agent` (30s self-heal),
 `db_update_agent` (`run_all_tasks` every 3h), `ai_catalog_builder` (enrichment), `meili_sync`
 (indexing, 2h loop), `run_rex_transport_office_pipeline` (vehicle registry), REX harvest queue,
