@@ -472,9 +472,22 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_pii_
     try:
         from agents.owner_console import is_owner, process_owner_message
         if is_owner(phone_e164) and body:
+            # The owner's device messages via a WhatsApp LID (…@lid), NOT his phone number.
+            # Replies MUST go back to that exact reply_jid — the bridge otherwise converts a
+            # "…@lid" recipient to "<lid-digits>@s.whatsapp.net" (a wrong number) and the
+            # owner never receives the reply ("Sent OK" but delivered nowhere). Also stash
+            # the reply_jid so NOTIFICATIONS (hourly report, alerts) can reach the same LID —
+            # the bare phone number may not deliver to a LID-primary account.
+            if reply_jid:
+                try:
+                    from BACKEND_AUTH_SECURITY import get_redis
+                    _r = await get_redis()
+                    await _r.set("owner:wa_reply_jid", reply_jid, ex=30 * 86400)
+                except Exception:
+                    pass
             reply = await process_owner_message(body, source="whatsapp")
             if reply:
-                await wa_send(to=sender_phone, text=reply)
+                await wa_send(to=sender_phone, text=reply, reply_jid=reply_jid)
             return Response(content="<Response/>", media_type="text/xml")
     except Exception as _oe:
         print(f"[owner_console] error, falling through: {_oe}")
