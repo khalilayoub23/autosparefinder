@@ -247,6 +247,8 @@ services:
       NOA_TELEGRAM_MIRROR: '1'
       COLLECT_SECRET: ${COLLECT_SECRET}
       FLARESOLVERR_URL: http://flaresolverr:8191/v1
+      FLARESOLVERR_URL_2: http://flaresolverr2:8191/v1
+      CPIE_FULL_SEED_ENABLED: ${CPIE_FULL_SEED_ENABLED:-1}
       GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
     depends_on:
       postgres_catalog:

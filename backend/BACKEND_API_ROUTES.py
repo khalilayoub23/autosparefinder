@@ -1123,6 +1123,52 @@ async def _car_parts_ie_harvester_loop() -> None:
         await asyncio.sleep(backoff)
 
 
+async def _car_parts_ie_full_seed_loop() -> None:
+    """Keeps harvest_queue seeded with the FULL car-parts.ie catalogue so the main slug
+    harvester covers all 176 brands, not just the IL-market seed. Runs
+    maintenance/seed_car_parts_ie_full_catalog.py — which walks /car-brands (176 brands) →
+    /car-brands/{brand}-parts (every model slug, statically via a cf_clearance cookie) and
+    inserts each '{brand}/{model}' as a pending row (ON CONFLICT DO NOTHING, so re-runs only
+    add NEW models car-parts.ie has published). The proven harvester then harvests them.
+
+    (Replaced the dead cf_clearance-handoff + numeric-cascade crawler: car-parts.ie's
+    maker_id/model_id/car_id 'spares-search' path returns 0 results — the inventory lives on
+    the static slug pages this seeder enumerates. See FIXES_TRACKER 2026-07-23.)
+
+    Runs once shortly after startup, then every ~30 days. LOW CPU priority; uses flaresolverr2
+    so its one CF solve never starves the main harvester. Log → /app/state/logs/cpie_full_seed.log.
+    Toggle off with CPIE_FULL_SEED_ENABLED=0. Crash-restart via _supervised_task."""
+    import sys as _sys
+    import time as _time
+    if os.getenv("CPIE_FULL_SEED_ENABLED", "1") != "1":
+        print("[cpie_full_seed] disabled (CPIE_FULL_SEED_ENABLED=0)", flush=True)
+        return
+    await asyncio.sleep(180)  # let startup + the harvester settle first
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "maintenance", "seed_car_parts_ie_full_catalog.py")
+    logpath = "/app/state/logs/cpie_full_seed.log"
+    os.makedirs("/app/state/logs", exist_ok=True)
+    env = dict(os.environ)
+    env.setdefault("FLARESOLVERR_URL_2", "http://flaresolverr2:8191/v1")
+    between = int(os.getenv("CPIE_FULL_SEED_INTERVAL_S", str(30 * 24 * 3600)))  # ~monthly
+    while True:
+        started = _time.time()
+        try:
+            print(f"[cpie_full_seed] seeding (log → {logpath})", flush=True)
+            with open(logpath, "a") as _lf:
+                proc = await asyncio.create_subprocess_exec(
+                    _sys.executable, "-u", script,
+                    stdout=_lf, stderr=asyncio.subprocess.STDOUT,
+                    preexec_fn=lambda: os.nice(10), env=env,
+                )
+                rc = await proc.wait()
+            print(f"[cpie_full_seed] finished rc={rc} after {_time.time()-started:.0f}s", flush=True)
+        except Exception as exc:
+            print(f"[cpie_full_seed] launch failed: {exc}", flush=True)
+        # Success → wait the full interval; a fast failure (CF down) → retry in 1h.
+        await asyncio.sleep(between if _time.time() - started > 120 else 3600)
+
+
 # ── Part-thumbnail import supervisor ──────────────────────────────────────────
 # Module-level status so a healthcheck / /system endpoint can read the last cycle.
 _THUMBNAIL_IMPORT_STATUS: dict = {"state": "starting", "total_ok": 0, "last_batch": None, "updated_at": None}
@@ -1254,12 +1300,22 @@ async def _harvest_supervisor_loop() -> None:
     queue-driven — it pulls the next highest-priority pending model from
     harvest_queue (seeded from vehicle_market_il, ranked by active Israeli road
     vehicles) and auto-advances. This loop is the OVERSIGHT layer:
-      • Reports coverage progress toward the full IL market (all brands+models).
+      • Reports coverage progress toward the full catalogue (all brands+models).
       • Re-seeds the queue if it's ever empty (never lets the harvester idle).
+      • Sends the owner an HOURLY WhatsApp progress report (coverage + last-hour delta +
+        a stall warning if no progress), quiet-hours aware (skipped, not queued, at night).
       • Sends the owner a weekly harvest digest (Sunday ~09:00 IL).
     """
     await asyncio.sleep(900)  # let startup settle
     _last_digest_date: str | None = None
+    # Hourly WhatsApp progress report state (owner asked for hourly harvester updates,
+    # 2026-07-23). Reports the delta since the last SENT report; only sent inside the
+    # notify window (skipped — not queued — at night so the owner isn't dumped a stack
+    # of stale hourly reports at 09:00). Interval override: HARVEST_REPORT_INTERVAL_S.
+    _report_interval_s = int(os.getenv("HARVEST_REPORT_INTERVAL_S", "3600"))
+    _last_report_utc: "datetime | None" = None
+    _prev_done: int | None = None
+    _prev_parts: int | None = None
     while True:
         try:
             async with async_session_factory() as db:
@@ -1271,19 +1327,71 @@ async def _harvest_supervisor_loop() -> None:
                         COUNT(DISTINCT brand_en) FILTER (WHERE status='done') AS brands_done,
                         COUNT(DISTINCT brand_en) AS brands_total,
                         COUNT(*) FILTER (WHERE status='pending') AS pending,
+                        COUNT(*) FILTER (WHERE status='in_progress') AS in_progress,
                         COALESCE(SUM(parts_found),0) AS parts_total
                     FROM harvest_queue
                 """))).fetchone()
             if row:
-                done, done_parts, total, bdone, btot, pending, parts = row
+                done, done_parts, total, bdone, btot, pending, in_progress, parts = row
                 pct = round(done * 100.0 / total, 1) if total else 0
                 print(
-                    f"[harvest_supervisor] IL-market coverage: {done}/{total} models ({pct}%), "
-                    f"{bdone}/{btot} brands, pending={pending}, parts_found={parts}",
+                    f"[harvest_supervisor] catalogue coverage: {done}/{total} models ({pct}%), "
+                    f"{bdone}/{btot} brands, in_progress={in_progress}, pending={pending}, "
+                    f"parts_found={parts}",
                     flush=True,
                 )
 
                 _now = datetime.now(timezone.utc)
+
+                # ── Hourly harvester progress report to the owner's WhatsApp ──────────
+                _open, _local = _notify_window_open()
+                _due = (_last_report_utc is None
+                        or (_now - _last_report_utc).total_seconds() >= _report_interval_s - 60)
+                if _open and _due:
+                    owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
+                    if owner:
+                        if _last_report_utc is None:
+                            mins = 0
+                            d_models = d_parts = 0
+                        else:
+                            mins = int((_now - _last_report_utc).total_seconds() / 60)
+                            d_models = done - (_prev_done or 0)
+                            d_parts = parts - (_prev_parts or 0)
+                        # current models being harvested (nice-to-have context)
+                        try:
+                            async with async_session_factory() as db3:
+                                cur = (await db3.execute(text("""
+                                    SELECT brand_en, model_name FROM harvest_queue
+                                    WHERE status='in_progress'
+                                    ORDER BY updated_at DESC LIMIT 3
+                                """))).fetchall()
+                            cur_txt = "\n".join(f"• {r[0]} {r[1]}" for r in cur) or "—"
+                        except Exception:
+                            cur_txt = "—"
+                        if _last_report_utc is None:
+                            delta_line = "📈 דוח ראשון מאז ההפעלה"
+                        elif d_models == 0 and d_parts == 0:
+                            delta_line = (f"⚠️ אין התקדמות ב-{mins} הדק' האחרונות — "
+                                          f"ייתכן שהשואב תקוע")
+                        else:
+                            delta_line = (f"📈 ב-{mins} הדק' האחרונות: "
+                                          f"+{d_models} דגמים, +{d_parts:,} חלקים")
+                        msg = (
+                            f"🔧 *דוח שאיבת קטלוג (שעתי)*\n"
+                            f"כיסוי: {done:,}/{total:,} דגמים ({pct}%) · {bdone}/{btot} מותגים\n"
+                            f"{delta_line}\n"
+                            f"⏳ בתהליך: {in_progress} · ממתינים: {pending:,}\n"
+                            f"סה\"כ חלקים שנאספו: {parts:,}\n"
+                            f"נשאבים כעת:\n{cur_txt}"
+                        )
+                        try:
+                            await _wa_send_quiet(to=owner, text=msg)
+                        except Exception as _rex:
+                            print(f"[harvest_supervisor] hourly report send failed: {_rex}", flush=True)
+                    _last_report_utc = _now
+                    _prev_done = done
+                    _prev_parts = parts
+
                 _il_hour = (_now.hour + 3) % 24
                 _today = _now.strftime("%Y-%m-%d")
                 if _now.weekday() == 6 and _il_hour == 9 and _last_digest_date != _today:
@@ -1786,6 +1894,7 @@ async def startup():
     _supervised_task("rex_dispatch_loop",           _rex_dispatch_loop())
     _supervised_task("zombie_reaper",               _zombie_reaper_loop())
     _supervised_task("car_parts_ie_harvester_loop",  _car_parts_ie_harvester_loop())
+    _supervised_task("car_parts_ie_full_seed",       _car_parts_ie_full_seed_loop())
     _supervised_task("thumbnail_import_loop",        _thumbnail_import_loop())
     _supervised_task("car_parts_ie_stall_watchdog",  _car_parts_ie_stall_watchdog_loop())
     _supervised_task("car_parts_ie_healthcheck",     _car_parts_ie_harvester_healthcheck_loop())
