@@ -293,6 +293,23 @@ async def import_file(
 
     conn = await asyncpg.connect(DB_DSN)
     try:
+        # ── Import-path optimization (2026-07-23) ────────────────────────────
+        # This importer writes ~4 INSERTs/part (catalog+fitment+supplier+image) in
+        # AUTOCOMMIT mode → ~1,600 fsync'd commits per 400-part model, which was the
+        # postgres_catalog CPU bottleneck (~176%) that capped how many harvester workers
+        # we could run. The harvest import is fully IDEMPOTENT + re-runnable (every model
+        # is re-harvested on a later cycle), so we don't need each row durably fsync'd:
+        #   • synchronous_commit=off → commits don't wait for disk fsync (a crash can lose
+        #     the last <1s of writes, which the next harvest cycle re-imports — no
+        #     integrity risk, ON CONFLICT makes re-import a no-op).
+        #   • per-connection work_mem bump → the ON CONFLICT index probes stay in memory.
+        # Locks are still released per-row (autocommit kept), so this does NOT increase
+        # lock contention with the concurrent harvester / cleanup agents.
+        try:
+            await conn.execute("SET synchronous_commit = off")
+            await conn.execute("SET work_mem = '32MB'")
+        except Exception:
+            pass
         supplier_id = await _ensure_supplier(conn)
         inserted = updated = fitment_rows = supplier_rows = image_rows = 0
         checkpoint_at: int | None = None
