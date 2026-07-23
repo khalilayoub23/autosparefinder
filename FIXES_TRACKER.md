@@ -3,6 +3,16 @@
 
 ---
 
+## Session — 2026-07-23c (amayama merge check + postgres import optimization + worker scale-up)
+
+| Item | Status | Detail |
+|------|--------|--------|
+| **Verify migrating the amayama harvester to the HTTP+cookie approach — NOT viable** | ✅ 2026-07-23 tested + verdict | Owner asked to merge amayama onto the same leak-free HTTP mechanism the car-parts harvester now uses. **Tested rigorously** (mint a cf_clearance cookie via a warmed FlareSolverr session + inject the account login cookies, then fetch `/en/search?q=<oem>` via plain `urllib`): for **3 real amayama-priced OEMs**, urllib returned a **reCAPTCHA challenge page** every time (3,481 bytes, `onRecaptchaLoaded`, 0 part rows), while the FlareSolverr browser path is what the live harvester uses. **Verdict: the merge would BREAK amayama** — unlike car-parts.ie (server-rendered, no bot-wall), amayama gates search behind reCAPTCHA that only a real browser passes. amayama MUST stay on FlareSolverr. (Its own slow session-recycle leak is a separate, non-urgent item; not touched, since its authenticated session is delicate and it's currently stable.) |
+| **Root-fix + optimize the postgres import path (owner: so we can add more workers / go faster)** | ✅ 2026-07-23 verified | `car_parts_ie_import_generic.py` wrote ~4 INSERTs/part in **autocommit** → ~1,600 **fsync'd commits per 400-part model**, which pinned `postgres_catalog` at ~176% CPU and was the ceiling on harvester workers. The harvest import is **idempotent + re-runnable** (ON CONFLICT; every model re-harvested on a later cycle), so per-row durable fsync is unnecessary. Fix: `SET synchronous_commit = off` (+ `work_mem = 32MB` for the ON CONFLICT index probes) on the import connection — commits stop waiting for disk; a crash loses <1s of writes that the next cycle re-imports (no integrity risk). Autocommit kept, so **locks still release per-row → no added contention** with the harvester/cleanup agents. **Verified live: postgres_catalog ~176% → ~92%, host load ~15 → ~10-11, no failures.** Imports are one-subprocess-per-model (flock-serialized), so faster imports drain the queue faster → more workers now pay off. |
+| **Scale car-parts workers 3 → 5** | ✅ 2026-07-23 verified | With ~0.8 postgres cores freed, raised `HARVESTER_PARALLEL_SESSIONS` 3→5 (cheap now — HTTP fetch threads, no browser). **Verified: all 5 workers producing, postgres_catalog ~130% avg, host load ~12 (5-min), 0 failures** — i.e. 5 workers now run COOLER than 3 workers did before the import fix (which sat at 176% postgres / load 15). Net: ~67% more harvest throughput at lower load. Further scaling is bounded by the amayama harvester (~200% on FlareSolverr, unchangeable — needs its browser) and `postgres_catalog`; 5 is the calibrated value, env-tunable via `HARVESTER_PARALLEL_SESSIONS`. |
+
+---
+
 ## Session — 2026-07-23b (harvest load root-fix + Owner WhatsApp console)
 
 Owner: (1) is the 729-empty-slug issue fixed? (2) is the high FlareSolverr CPU / resource use fixed? (3) why did agent/worker failure alerts start — seems tied to the high CPU? Then: connect NOA + AVI to my WhatsApp so I can converse with them, give them tasks, and act on their notifications.
