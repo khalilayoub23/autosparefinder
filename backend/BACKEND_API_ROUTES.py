@@ -1989,40 +1989,19 @@ def _notify_window_open(now_local: "datetime | None" = None) -> tuple[bool, date
     return is_open, current_local
 
 
-async def _owner_reply_jid_for(to: str) -> str:
-    """If `to` is the owner, return his stashed WhatsApp reply_jid (his …@lid). His device
-    messages via a LID, and the bare phone number may not deliver to a LID-primary account,
-    so notifications must target the same LID his messages come from (stored by the owner
-    console on each inbound). Empty string for non-owner or if none stored yet."""
-    try:
-        owner = (os.getenv("OWNER_WHATSAPP_PHONE", "") or "")
-        if not owner:
-            return ""
-        _d = lambda s: "".join(ch for ch in str(s) if ch.isdigit())
-        if _d(to) != _d(owner):
-            return ""
-        _r = await get_redis()
-        rj = await _r.get("owner:wa_reply_jid")
-        if isinstance(rj, bytes):
-            rj = rj.decode()
-        return rj or ""
-    except Exception:
-        return ""
-
-
 async def _wa_send_quiet(to: str, text: str, critical: bool = False) -> dict:
     """Quiet-hours-aware WhatsApp send. Inside the window (or critical=True) → send now.
     Outside → queue to Redis; the health monitor flushes the queue at window open, so
-    nothing is lost and nobody gets a 03:00 message. Owner-bound messages are routed to
-    his …@lid reply_jid (his device messages via a LID — the bare phone may not deliver)."""
-    rjid = await _owner_reply_jid_for(to)
+    nothing is lost and nobody gets a 03:00 message. Owner notifications go to his REAL
+    number (OWNER_WHATSAPP_PHONE) — a masked …@lid is NOT deliverable (owner-confirmed
+    2026-07-24), so we never route to a LID."""
     is_open, _ = _notify_window_open()
     if is_open or critical:
-        return await _wa_send(to=to, text=text, reply_jid=rjid)
+        return await _wa_send(to=to, text=text)
     try:
         _r = await get_redis()
         await _r.rpush(_WA_QUIET_QUEUE_KEY, json.dumps({
-            "to": to, "text": text[:3800], "reply_jid": rjid,
+            "to": to, "text": text[:3800],
             "queued_at": datetime.now(APP_LOCAL_TZ).strftime("%d/%m %H:%M"),
         }, ensure_ascii=False))
         await _r.ltrim(_WA_QUIET_QUEUE_KEY, -50, -1)  # keep at most 50 queued
@@ -2048,8 +2027,7 @@ async def _flush_wa_quiet_queue() -> int:
             try:
                 item = json.loads(raw)
                 await _wa_send(to=item["to"],
-                               text=f"🌙 [נשלח מאוחר — נשמר משעות הלילה {item.get('queued_at','')}]\n{item['text']}",
-                               reply_jid=item.get("reply_jid", ""))
+                               text=f"🌙 [נשלח מאוחר — נשמר משעות הלילה {item.get('queued_at','')}]\n{item['text']}")
                 sent += 1
             except Exception as exc:
                 print(f"[QuietHours] flush item failed: {exc}")

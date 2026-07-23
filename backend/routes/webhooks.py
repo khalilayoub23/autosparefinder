@@ -470,24 +470,16 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_pii_
     # approve/reject the NOA posts they send him. Text messages only (media falls
     # through). On any error, fall through to normal handling so nothing is lost.
     try:
-        from agents.owner_console import is_owner, process_owner_message
+        from agents.owner_console import is_owner, process_owner_message, OWNER_PHONE
         if is_owner(phone_e164) and body:
-            # The owner's device messages via a WhatsApp LID (…@lid), NOT his phone number.
-            # Replies MUST go back to that exact reply_jid — the bridge otherwise converts a
-            # "…@lid" recipient to "<lid-digits>@s.whatsapp.net" (a wrong number) and the
-            # owner never receives the reply ("Sent OK" but delivered nowhere). Also stash
-            # the reply_jid so NOTIFICATIONS (hourly report, alerts) can reach the same LID —
-            # the bare phone number may not deliver to a LID-primary account.
-            if reply_jid:
-                try:
-                    from BACKEND_AUTH_SECURITY import get_redis
-                    _r = await get_redis()
-                    await _r.set("owner:wa_reply_jid", reply_jid, ex=30 * 86400)
-                except Exception:
-                    pass
+            # The owner's device may present a masked WhatsApp LID (…@lid) as the sender,
+            # which is NOT his real number — replying to it (or its "<lid>@s.whatsapp.net"
+            # conversion) delivers nowhere. Always reply to his REAL number
+            # (OWNER_WHATSAPP_PHONE = +972586050155), which the bridge routes to
+            # 972586050155@s.whatsapp.net. Confirmed by the owner 2026-07-24.
             reply = await process_owner_message(body, source="whatsapp")
             if reply:
-                await wa_send(to=sender_phone, text=reply, reply_jid=reply_jid)
+                await wa_send(to=OWNER_PHONE or sender_phone, text=reply)
             return Response(content="<Response/>", media_type="text/xml")
     except Exception as _oe:
         print(f"[owner_console] error, falling through: {_oe}")
