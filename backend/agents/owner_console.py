@@ -248,6 +248,7 @@ _HELP = (
     "*לפנות לסוכן — עם @:*\n"
     "• *@אבי <הודעה>* — AVI, מנהל/מתאם המערכת\n"
     "• *@נועה <הודעה>* — NOA, שיווק וסושיאל\n"
+    "• *@עוזר <הודעה>* — עוזר אישי כללי (חכם ומועיל)\n"
     "(בלי @ — פונה ל-AVI כברירת מחדל)\n\n"
     "*פקודות מהירות:*\n"
     "• *סטטוס* — סקירת מערכת חיה\n"
@@ -265,7 +266,19 @@ _HELP = (
 _AGENT_TOKENS = {
     "noa": "social_media_manager_agent", "נועה": "social_media_manager_agent",
     "avi": "router_agent", "אבי": "router_agent",
+    # A general-purpose owner assistant you can @-call (owner request 2026-07-25). It is an
+    # assistant agent running on the platform's own LLM — not the external dev tool.
+    "claude": "assistant_agent", "קלוד": "assistant_agent",
+    "assistant": "assistant_agent", "עוזר": "assistant_agent",
 }
+
+# Shared roster context so an agent doesn't hallucinate who the others are.
+_ROSTER = (
+    "\n\nצוות הסוכנים של AutoSpareFinder (לידיעתך): AVI (מתאם/מנהל מערכת), "
+    "NOA (שיווק וסושיאל), NIR (חלקים/התאמה/OEM), MAYA (מכירות/תמחור), LIOR (הזמנות), "
+    "TAL (כספים/מע\"מ/חשבוניות), DANA (תמיכה/החזרות), OREN (אבטחה/הונאות), "
+    "BOAZ (ספקים/סנכרון מחירים), REX (שאיבת קטלוג)."
+)
 
 
 def _pick_agent(message: str) -> tuple[str, str, bool]:
@@ -275,9 +288,10 @@ def _pick_agent(message: str) -> tuple[str, str, bool]:
       • anything else                               → AVI, the orchestrator (explicit=False)
     The '@' form is the clear way to call an agent (owner request 2026-07-25)."""
     m = message.strip()
-    mm = re.match(r"^@\s*(noa|נועה|avi|אבי)\b[\s:,،.\-–]*", m, re.I)
+    _toks = "|".join(re.escape(t) for t in sorted(_AGENT_TOKENS, key=len, reverse=True))
+    mm = re.match(rf"^@\s*({_toks})\b[\s:,،.\-–]*", m, re.I)
     if not mm:
-        mm = re.match(r"^(noa|נועה|avi|אבי)\b[\s:,،.\-–]+", m, re.I)
+        mm = re.match(rf"^({_toks})\b[\s:,،.\-–]+", m, re.I)
     if mm:
         key = _AGENT_TOKENS[mm.group(1).lower()]
         rest = m[mm.end():].strip()
@@ -345,16 +359,24 @@ _OWNER_SYSTEM = {
         "אתה AVI — המתאם הראשי של AutoSpareFinder, מדבר עם *חליל, הבעלים* (לא לקוח). "
         "תפקידך: לתת לו תמונת מצב מדויקת של המערכת, המלצות תפעוליות, ולנתב משימות. "
         "היה ישיר, מקצועי ומועיל. אל תמכור לו ואל תתייחס אליו כלקוח."
-        + _WA_REPLY_RULES
+        + _ROSTER + _WA_REPLY_RULES
     ),
     "social_media_manager_agent": (
         "את NOA — מנהלת השיווק והסושיאל של AutoSpareFinder, מדברת עם *חליל, הבעלים*. "
         "כשהוא מבקש פוסט — כתבי את הפוסט המוכן לפרסום בלבד (פתיח קולע, גוף קצר, וקריאה "
         "לפעולה), אנושי וחכם, בלי להסביר את התהליך. כשהוא שואל על שיווק — תני תשובה ממוקדת. "
         "אל תמציאי מחירים או נתונים. לאישור/דחיית פוסטים ממתינים: 'פוסטים' ואז 'אשר'/'דחה'."
-        + _WA_REPLY_RULES
+        + _ROSTER + _WA_REPLY_RULES
+    ),
+    "assistant_agent": (
+        "אתה *העוזר האישי* של חליל, הבעלים של AutoSpareFinder (הוא קורא לך גם 'קלוד'). "
+        "אתה עוזר כללי, חכם ומועיל — עונה על כל שאלה, מסביר, מתכנן, ונותן עצה טכנית ועסקית "
+        "על המערכת והעסק. יש לך גישה למצב המערכת החי למטה. אתה עוזר תפעולי, לא סוכן שירות "
+        "לקוחות ולא מוכר. אם צריך פעולה מובנית — הפנה לפקודה."
+        + _ROSTER + _WA_REPLY_RULES
     ),
 }
+_AGENT_TAG = {"social_media_manager_agent": "NOA", "assistant_agent": "עוזר"}
 
 
 def _clean_wa_reply(text: str) -> str:
@@ -473,7 +495,7 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp") -> 
         hist2 = hist + [{"role": "user", "content": clean},
                         {"role": "assistant", "content": reply}]
         await _save_history(hist2)
-        tag = "NOA" if is_noa else "AVI"
+        tag = _AGENT_TAG.get(agent_key, "AVI")
         return f"[{tag}] {reply}"
     except Exception as e:
         return f"⚠️ שגיאה בעיבוד ההודעה: {str(e)[:120]}"

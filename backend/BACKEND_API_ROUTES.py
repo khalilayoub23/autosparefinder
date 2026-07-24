@@ -2389,7 +2389,7 @@ async def _noa_marketing_loop():
 
                 real_fact = await _noa_real_catalog_fact(db, eng_part, heb_part, car)
 
-                if weekday == 0:
+                if weekday == 0 and now.hour <= _post_hours[0]:
                     # ── Monday: generate weekly campaign brief + ad pack ─────────
                     campaign_prompt = (
                         "את נועה, מנהלת המדיה החברתית של AutoSpareFinder.\n"
@@ -2507,14 +2507,20 @@ async def _noa_marketing_loop():
                     })
                     logger.info("noa_marketing_loop: weekly campaign brief week=%d theme=%s", week_num, theme)
 
-                else:
-                    # ── Tue–Sun: generate that day's platform post ──────────────
-                    platform_info = _DAY_PLATFORM.get(weekday)
-                    if not platform_info:
-                        await asyncio.sleep(_secs_until_next_post())
-                        continue
-
-                    platform, platform_desc = platform_info
+                # ── Every run (2×/day): ONE universal post → ALL connected platforms ──
+                # Owner directive 2026-07-25: the SAME post goes to every connected platform,
+                # twice a day at peak hours — not a different platform per day.
+                if True:
+                    try:
+                        from social import registry as _reg
+                        _configured = _reg.configured_platforms() or []
+                    except Exception:
+                        _configured = []
+                    if not _configured:
+                        _configured = ["facebook", "instagram", "telegram", "x", "discord", "reddit"]
+                    platform = "all"
+                    platform_desc = ("פוסט אוניברסלי שמתאים לכל הפלטפורמות (קצר, קולע, מתחת ל-280 "
+                                     "תווים היכן שאפשר) — אותו תוכן יפורסם בכולן")
                     week_plan: dict = await mem.get("current_week_plan") or {}
 
                     # Extract today's angle from week plan if available
@@ -2563,7 +2569,7 @@ async def _noa_marketing_loop():
                     )
 
                     raw_post = await _hf_text(prompt=post_prompt, system=_noa_system, timeout=90.0, max_tokens=1500)
-                    caption = noa._finalize_noa_post(raw_post, platforms=[platform])
+                    caption = noa._finalize_noa_post(raw_post, platforms=_configured)
                     # UTM attribution (added 2026-07-05): every post link carries
                     # utm_source=<platform> so clicks are measurable per channel —
                     # "success_metrics" mean nothing without attribution.
@@ -2595,7 +2601,7 @@ async def _noa_marketing_loop():
                     # the registry publishes to the real platform. This is the single
                     # source of truth the admin endpoints + Telegram approval consume.
                     social_post_id = await _noa_enqueue_social_post(
-                        caption=caption, platforms=[platform], media_url=media_url,
+                        caption=caption, platforms=_configured, media_url=media_url,
                         topic=f"{heb_part} — {car}",
                     )
 
