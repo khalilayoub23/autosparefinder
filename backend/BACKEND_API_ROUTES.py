@@ -2206,21 +2206,26 @@ async def _noa_marketing_loop():
     from BACKEND_DATABASE_MODELS import async_session_factory
 
     # G8 2026-07-20: the loop no longer free-runs on a 24h timer anchored to container
-    # start (which drifted to 03:00 sends after night restarts). It fires once a day at
-    # a fixed IL local time inside the notification window.
-    NOA_POST_HOUR_IL = int(os.getenv("NOA_POST_HOUR_IL", "9"))
-    NOA_POST_MINUTE_IL = int(os.getenv("NOA_POST_MINUTE_IL", "30"))
+    # start (which drifted to 03:00 sends). It fires at fixed IL local times in the window.
+    # 2026-07-25 (owner directive): TWICE a day at PEAK user hours (default 13:00 + 20:00 IL —
+    # lunch + evening), not once at 09:30. Override with NOA_POST_HOURS_IL="13,20".
+    NOA_POST_HOURS_IL = os.getenv("NOA_POST_HOURS_IL",
+                                  os.getenv("NOA_POST_HOUR_IL", "13") + ",20")
+    _post_hours = sorted({int(h) for h in re.findall(r"\d+", NOA_POST_HOURS_IL)}) or [13, 20]
+    NOA_POST_MINUTE_IL = int(os.getenv("NOA_POST_MINUTE_IL", "0"))
     # WhatsApp is the PRIMARY owner channel (owner directive); Telegram only mirrors
     # when explicitly enabled.
     NOA_TELEGRAM_MIRROR = os.getenv("NOA_TELEGRAM_MIRROR", "0") == "1"
 
     def _secs_until_next_post() -> float:
         now_l = datetime.now(APP_LOCAL_TZ)
-        target = now_l.replace(hour=NOA_POST_HOUR_IL, minute=NOA_POST_MINUTE_IL,
-                               second=0, microsecond=0)
-        if target <= now_l:
-            target += timedelta(days=1)
-        return max(60.0, (target - now_l).total_seconds())
+        nxt = None
+        for h in _post_hours:
+            t = now_l.replace(hour=h, minute=NOA_POST_MINUTE_IL, second=0, microsecond=0)
+            if t <= now_l:
+                t += timedelta(days=1)
+            nxt = t if nxt is None else min(nxt, t)
+        return max(60.0, (nxt - now_l).total_seconds())
 
     await asyncio.sleep(_secs_until_next_post())
 
@@ -2355,6 +2360,19 @@ async def _noa_marketing_loop():
                 mem = AgentMemory(db, agent_name="noa")
                 noa = SocialMediaManagerAgent()
 
+                # Owner guidelines (saved from the WhatsApp console) — MUST be applied to
+                # every generation. This is how the owner's directives to NOA actually take
+                # effect operationally, not just as a chat acknowledgement.
+                _owner_guidelines = ""
+                try:
+                    _g = await mem.get("owner_guidelines")
+                    _owner_guidelines = (_g.get("text") if isinstance(_g, dict) else _g) or ""
+                except Exception:
+                    _owner_guidelines = ""
+                _noa_system = noa.system_prompt + (
+                    ("\n\n=== הנחיות קבועות מהבעלים (חובה לפעול לפיהן בכל פוסט) ===\n"
+                     + _owner_guidelines) if _owner_guidelines else "")
+
                 # Load recent history — inject as "do not repeat" context
                 history_raw = await mem.get("post_history") or []
                 recent_topics: list[str] = []
@@ -2409,7 +2427,7 @@ async def _noa_marketing_loop():
                         "google_ads: {ad_group, keywords_exact, keywords_phrase, negatives, headlines, descriptions}\n"
                     )
 
-                    raw_plan = await _hf_text(prompt=campaign_prompt, system=noa.system_prompt, timeout=180.0, max_tokens=6000)
+                    raw_plan = await _hf_text(prompt=campaign_prompt, system=_noa_system, timeout=180.0, max_tokens=6000)
 
                     plan: dict = {}
                     try:
@@ -2544,7 +2562,7 @@ async def _noa_marketing_loop():
                         "החזירי: טקסט הפוסט הסופי בלבד — ללא הסבר, ללא כותרת, ללא ספירה."
                     )
 
-                    raw_post = await _hf_text(prompt=post_prompt, system=noa.system_prompt, timeout=90.0, max_tokens=1500)
+                    raw_post = await _hf_text(prompt=post_prompt, system=_noa_system, timeout=90.0, max_tokens=1500)
                     caption = noa._finalize_noa_post(raw_post, platforms=[platform])
                     # UTM attribution (added 2026-07-05): every post link carries
                     # utm_source=<platform> so clicks are measurable per channel —

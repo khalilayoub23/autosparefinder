@@ -244,30 +244,87 @@ async def _save_history(hist: List[Dict[str, str]]) -> None:
 
 
 _HELP = (
-    "🎛️ *מרכז הבקרה שלך* (WhatsApp)\n"
-    "אני יכול לחבר אותך ל-*AVI* (מנהל/מתאם) ו-*NOA* (שיווק/סושיאל).\n\n"
-    "פקודות מהירות:\n"
+    "🎛️ *מרכז הבקרה שלך* (WhatsApp)\n\n"
+    "*לפנות לסוכן — עם @:*\n"
+    "• *@אבי <הודעה>* — AVI, מנהל/מתאם המערכת\n"
+    "• *@נועה <הודעה>* — NOA, שיווק וסושיאל\n"
+    "(בלי @ — פונה ל-AVI כברירת מחדל)\n\n"
+    "*פקודות מהירות:*\n"
     "• *סטטוס* — סקירת מערכת חיה\n"
     "• *שאיבה* — התקדמות שאיבת הקטלוג\n"
     "• *פוסטים* — פוסטים של NOA שממתינים לאישור\n"
-    "• *אשר [מזהה]* — אשר ופרסם פוסט\n"
-    "• *דחה [מזהה]* — דחה פוסט\n"
+    "• *אשר [מזהה]* / *דחה [מזהה]* — אשר/דחה פוסט\n"
+    "• *הנחיות* — ההנחיות הקבועות שנתת ל-NOA\n"
     "• *עזרה* — התפריט הזה\n\n"
-    "לשיחה: פשוט כתוב. להפניה ל-NOA התחל ב-\"נועה\". "
-    "אפשר לשאול אותי לבצע משימות ולנהל את המערכת."
+    "דוגמה: *@נועה תשמרי: 2 פוסטים ביום בשעות שיא, עם קריאה לפעולה* — "
+    "וזה יישמר וייושם בפועל."
 )
 
 
 # ── agent chat (owner mode) ───────────────────────────────────────────────────
-def _pick_agent(message: str) -> tuple[str, str]:
-    """Return (agent_key, stripped_message). Default AVI (router)."""
+_AGENT_TOKENS = {
+    "noa": "social_media_manager_agent", "נועה": "social_media_manager_agent",
+    "avi": "router_agent", "אבי": "router_agent",
+}
+
+
+def _pick_agent(message: str) -> tuple[str, str, bool]:
+    """Return (agent_key, stripped_message, explicit). Routing:
+      • '@noa …' / '@נועה …' / '@avi …' / '@אבי …'  → that agent (explicit=True)
+      • bare 'noa …' / 'avi …' prefix               → that agent (explicit=True)
+      • anything else                               → AVI, the orchestrator (explicit=False)
+    The '@' form is the clear way to call an agent (owner request 2026-07-25)."""
     m = message.strip()
-    low = m.lower()
-    for tok, key in (("noa", "social_media_manager_agent"), ("נועה", "social_media_manager_agent"),
-                     ("avi", "router_agent"), ("אבי", "router_agent")):
-        if low.startswith(tok):
-            return key, m[len(tok):].lstrip(" :,-–").strip() or m
-    return "router_agent", m
+    mm = re.match(r"^@\s*(noa|נועה|avi|אבי)\b[\s:,،.\-–]*", m, re.I)
+    if not mm:
+        mm = re.match(r"^(noa|נועה|avi|אבי)\b[\s:,،.\-–]+", m, re.I)
+    if mm:
+        key = _AGENT_TOKENS[mm.group(1).lower()]
+        rest = m[mm.end():].strip()
+        return key, (rest or m), True
+    return "router_agent", m, False
+
+
+# ── NOA owner-guidelines (persisted so NOA's posting loop actually applies them) ──
+_SAVE_INTENT = re.compile(
+    r"תשמר|שמר[יי]?|נוהל|הנחי|מעכשיו|מעתה|תמיד תפרסמ|save|remember|guideline|from now",
+    re.I)
+
+
+def _guidelines_text(raw) -> str:
+    """AgentMemory.get double-decodes plain strings across processes, so we store the
+    guidelines as a DICT {'text': …} (dicts round-trip correctly). Accept legacy string too."""
+    if isinstance(raw, dict):
+        return str(raw.get("text") or "")
+    return str(raw or "")
+
+
+async def _noa_guidelines_get(db) -> str:
+    try:
+        from agents.memory import AgentMemory, ensure_memory_table
+        await ensure_memory_table(db)
+        return _guidelines_text(await AgentMemory(db, agent_name="noa").get("owner_guidelines"))
+    except Exception:
+        return ""
+
+
+async def _noa_guidelines_save(db, text: str) -> None:
+    """Append a new owner directive to NOA's persisted guidelines (deduped, kept compact).
+    NOA's marketing loop reads this same key and injects it into every generation."""
+    try:
+        from agents.memory import AgentMemory, ensure_memory_table
+        await ensure_memory_table(db)
+        mem = AgentMemory(db, agent_name="noa")
+        try:
+            cur = _guidelines_text(await mem.get("owner_guidelines"))
+        except Exception:
+            cur = ""   # corrupt/legacy value → start fresh (the dict form below round-trips)
+        line = re.sub(r"\s+", " ", text).strip()
+        if line and line not in cur:
+            cur = (cur + "\n• " + line).strip()[-2000:]   # keep last ~2000 chars
+        await mem.set("owner_guidelines", {"text": cur}, ttl_hours=24 * 365)  # dict → safe
+    except Exception as e:
+        print(f"[owner_console] guideline save failed: {e}")
 
 
 # WhatsApp-facing reply rules shared by both agents. Two things ruined the earlier replies:
@@ -380,25 +437,43 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp") -> 
         if not post:
             return "לא מצאתי פוסט ממתין. כתוב *פוסטים* לרשימה."
         return await _reject_post(db, post)
+    if low in ("הנחיות", "guidelines", "נהלים", "כללים"):
+        g = await _noa_guidelines_get(db)
+        return ("📋 *הנחיות NOA (נשמרות ומיושמות):*\n" + g) if g else \
+            "אין הנחיות שמורות ל-NOA עדיין. כתוב לה למשל: @נועה תשמרי: 2 פוסטים ביום בשעות שיא."
 
     # ── conversational path (AVI / NOA in owner mode) ─────────────────────────
     # Call the LLM DIRECTLY (not via get_agent): the router_agent is a JSON classifier
     # and produces garbage on freeform chat. We just need a grounded conversational reply.
-    agent_key, clean = _pick_agent(msg)
+    agent_key, clean, explicit = _pick_agent(msg)
+    is_noa = agent_key == "social_media_manager_agent"
+
+    # If the owner gives NOA a DIRECTIVE (save/always/from-now/guideline …), persist it so
+    # NOA's actual posting loop applies it — not just an ack in chat. (This is the fix for
+    # "I told AVI guidelines for NOA — did NOA get them?": now she really does.)
+    saved_note = ""
+    if is_noa and _SAVE_INTENT.search(clean):
+        await _noa_guidelines_save(db, clean)
+        saved_note = "\n\n📋 שמרתי את ההנחיה ואפעל לפיה מעכשיו. (לצפייה: כתוב *הנחיות*)"
+
     try:
         from hf_client import hf_text
         status_block = await build_status_snapshot(db)
-        system = (_OWNER_SYSTEM[agent_key]
-                  + "\n\n--- מצב המערכת החי (עכשיו) ---\n" + status_block)
+        system = _OWNER_SYSTEM[agent_key] + "\n\n--- מצב המערכת החי (עכשיו) ---\n" + status_block
+        if is_noa:
+            g = await _noa_guidelines_get(db)
+            if g:
+                system += ("\n\n--- הנחיות קבועות מהבעלים (חובה לפעול לפיהן) ---\n" + g)
         hist = await _load_history()
         convo = "\n".join(f"{m['role']}: {m['content']}" for m in hist[-8:])
         prompt = (convo + "\n" if convo else "") + f"user: {clean}"
         reply = await hf_text(prompt, system=system, priority=True, max_tokens=600)
-        reply = _clean_wa_reply(reply) or "לא הצלחתי לייצר תשובה כרגע, נסה שוב."
+        reply = _clean_wa_reply(reply) or "בסדר, קיבלתי."
+        reply += saved_note
         hist2 = hist + [{"role": "user", "content": clean},
                         {"role": "assistant", "content": reply}]
         await _save_history(hist2)
-        tag = "NOA" if agent_key == "social_media_manager_agent" else "AVI"
+        tag = "NOA" if is_noa else "AVI"
         return f"[{tag}] {reply}"
     except Exception as e:
         return f"⚠️ שגיאה בעיבוד ההודעה: {str(e)[:120]}"
