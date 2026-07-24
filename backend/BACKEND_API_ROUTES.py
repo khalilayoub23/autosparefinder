@@ -3888,6 +3888,21 @@ async def _price_sync_loop():
         print("[PriceSync] no recent sync found — running now")
 
     await asyncio.sleep(first_wait)
+
+    # ROOT FIX 2026-07-25: this loop is the SOLE scheduled runner of sync_prices, so a
+    # lock present at startup is stale — left by a run that was killed mid-flight (a backend
+    # restart/OOM). sync_prices' own release() only runs on its success path, so an error or
+    # a kill leaked autospare:lock:sync_prices for the full 4h TTL → every subsequent run
+    # logged "skipped — already running on another worker" and the price sync stalled. Clear
+    # it once here so a fresh container never inherits a phantom lock.
+    try:
+        from BACKEND_AUTH_SECURITY import get_redis as _get_redis_ps
+        _r0 = await _get_redis_ps()
+        if await _r0.delete("autospare:lock:sync_prices"):
+            print("[PriceSync] cleared a stale sync_prices lock from a prior killed run")
+    except Exception as _lce:
+        print(f"[PriceSync] startup lock check failed: {_lce}")
+
     while True:
         job_id = None
         sleep_s = interval_s
@@ -3924,6 +3939,14 @@ async def _price_sync_loop():
                             await hb_task
                         except BaseException:
                             pass
+                    # Always free the lock after a run — sync_prices only releases it on its
+                    # own success path, so an error mid-run would otherwise hold it for 4h and
+                    # skip every subsequent run. (This loop is the sole scheduled runner.)
+                    try:
+                        from BACKEND_AUTH_SECURITY import get_redis as _grp
+                        await (await _grp()).delete("autospare:lock:sync_prices")
+                    except Exception:
+                        pass
                 status = str((report or {}).get("status") or "ok")
 
                 async def _finish(_status: str, _err: "str | None" = None):
