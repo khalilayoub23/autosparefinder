@@ -1,9 +1,10 @@
 {
-  "model": "claude-sonnet-4-6",
   "permissions": {
-    "defaultMode": "auto",
     "allow": [
-      "mcp__claude-in-chrome__navigate"
-    ]
-  }
+      "mcp__claude-in-chrome__navigate",
+      "Bash(curl -s https://raw.githubusercontent.com/garrytan/gstack/main/README.md -o /tmp/claude-0/-opt-autosparefinder/5a0e32e4-b6ab-41db-83a3-98b7ecfef8b2/scratchpad/gstack_readme.md)"
+    ],
+    "defaultMode": "auto"
+  },
+  "model": "claude-sonnet-4-6"
 }

@@ -3,6 +3,17 @@
 
 ---
 
+## Session — 2026-07-25 (price-sync lock + DB task-timeout root-fixes + owner console)
+
+| Item | Status | Detail |
+|------|--------|--------|
+| **`sync_prices` stuck "dead"/"skipped forever"** | ✅ 2026-07-25 root-fixed + verified | Two bugs. **(1) Lock never freed:** `sync_prices` acquires a Redis lock (4h TTL) but only calls `release()` on its own success path — an error mid-run, or the process being killed (a backend restart/OOM), leaked `autospare:lock:sync_prices` for the full 4h, so every later run logged "skipped — already running on another worker". Fix in `_price_sync_loop` (the sole scheduled runner): clear a lock present at startup (a fresh container's lock is always a killed-run leftover) + force-free it in the run's `finally`. Verified live: startup logged "cleared a stale sync_prices lock", lock now `held=False`. **(2) Run logged "dead" though the work succeeded:** eBay+AliExpress ran ~1.5h on the SHARED `db` session, whose connection was dead by the post-sync steps → "Can't reconnect until invalid transaction is rolled back". Fix: run each provider sync on its OWN fresh session (both commit internally, so it's safe) and `db.rollback()` afterward so the reconciliation/log writes get a live connection. |
+| **`task_heal_importer_price` — statement-timeout every cycle (scan-for-nothing)** | ✅ 2026-07-25 fixed | The IL-price backlog was healed to 0 (2026-07-18), so most cycles this task scans 4.2M `parts_catalog` rows for zero matches and — under harvester load — hits the statement timeout (logged ERROR every 30s). Applied the established scan-for-nothing guard (same as `task_recover_priced_inactive`): exponential backoff (30s→30min) when nothing to heal OR on timeout, reset to eager the moment work appears, plus `SET LOCAL statement_timeout='15s'` so a slow scan aborts fast instead of holding a snapshot. |
+| **NOA social capability audit (owner: "verify NOA can read activity + reply to DMs/groups/posts")** | ✅ 2026-07-25 audited — NOT implemented | Verified against the code: `social/*_publisher.py` are **publish-only** (`publish`/`is_configured`), with **no** read/comment/DM/mention/reply functions, and there are **no inbound webhooks** for Facebook/Instagram/X/Reddit/Discord comments or DMs (only Telegram, for publishing). So NOA can POST but cannot READ engagement or REPLY to DMs/comments/groups. Building it is a real project: per-platform read+reply APIs, inbound webhooks/polling, and additional platform permissions (Meta messaging scopes need app review) the owner must grant — not a config toggle. Reported with a phased path. |
+| **Heavy maintenance tasks time out (`refresh_min_max_prices` 900s, `enrich_pending_parts` 1800s)** | ⚠️ noted, not changed | These hit their hard per-task timeout and log `status=error` some cycles (they often succeed on the next). Left untouched this session to avoid destabilizing the maintenance pipeline; a proper fix is a soft time-budget (stop early with `status=ok, stopped_early=True`) like `lookup_oem_spec`. External/expected noise also present and NOT root-fixable here: eBay 403 cooldowns, HF CLIP 400s, Cerebras/Gemini 429s under load, Playwright page-navigation races. |
+
+---
+
 ## Session — 2026-07-23c (amayama merge check + postgres import optimization + worker scale-up)
 
 | Item | Status | Detail |

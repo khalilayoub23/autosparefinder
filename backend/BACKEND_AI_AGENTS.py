@@ -3825,11 +3825,19 @@ class SupplierManagerAgent(BaseAgent):
         env_name = (os.getenv("ENVIRONMENT", "development") or "development").strip().lower()
         real_data_only = (os.getenv("REAL_DATA_ONLY", "1" if env_name == "production" else "0") or "0").strip().lower() in {"1", "true", "yes", "on"}
 
-        # Pull real eBay prices before optional synthetic drift.
+        # ROOT FIX 2026-07-25: run eBay + AliExpress on their OWN fresh sessions. Combined they
+        # take ~1.5h; using the shared `db` for that long left its connection dead by the time
+        # the post-sync steps reused it → "Can't reconnect until invalid transaction is rolled
+        # back", and the whole run was logged 'dead' even though the price work SUCCEEDED. Both
+        # services commit internally, so a dedicated session is safe. After them, reset `db`
+        # (rollback discards any stale/failed state so the next query reconnects cleanly).
+        from BACKEND_DATABASE_MODELS import async_session_factory as _price_asf
+
         ebay_report: Dict[str, Any] = {}
         try:
             from services.ebay_price_sync import sync_ebay_prices
-            ebay_report = await sync_ebay_prices(db, limit_per_run=int(os.getenv("EBAY_PRICE_SYNC_LIMIT", "500")))
+            async with _price_asf() as _edb:
+                ebay_report = await sync_ebay_prices(_edb, limit_per_run=int(os.getenv("EBAY_PRICE_SYNC_LIMIT", "500")))
             logger.info(f"eBay price sync report: {ebay_report}")
         except Exception as _ebay_err:
             logger.error(f"eBay price sync skipped: {_ebay_err}")
@@ -3838,10 +3846,18 @@ class SupplierManagerAgent(BaseAgent):
         aliexpress_report: Dict[str, Any] = {}
         try:
             from services.aliexpress_price_sync import sync_aliexpress_prices
-            aliexpress_report = await sync_aliexpress_prices(db, limit_per_run=int(os.getenv("ALIEXPRESS_PRICE_SYNC_LIMIT", "200")))
+            async with _price_asf() as _adb:
+                aliexpress_report = await sync_aliexpress_prices(_adb, limit_per_run=int(os.getenv("ALIEXPRESS_PRICE_SYNC_LIMIT", "200")))
             logger.info(f"AliExpress price sync report: {aliexpress_report}")
         except Exception as _ali_err:
             logger.error(f"AliExpress price sync skipped: {_ali_err}")
+
+        # The shared `db` sat idle through the long syncs above — reset it so the post-sync
+        # queries (rate lookup, reconciliation, SystemLog/CatalogVersion) get a live connection.
+        try:
+            await db.rollback()
+        except Exception:
+            pass
 
         import random
         import hashlib

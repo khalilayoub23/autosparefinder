@@ -1081,6 +1081,16 @@ def _bump_base_price_backoff() -> None:
     _BASE_PRICE_BATCH_SKIP_UNTIL = time.monotonic() + _BASE_PRICE_BATCH_BACKOFF_S
 
 
+# Scan-for-nothing guard (added 2026-07-25): the backlog was healed to 0 (2026-07-18), so
+# most cycles this task scans 4.2M parts_catalog rows for zero matches and — under harvester
+# load — hits the statement timeout (logged ERROR every cycle). Same fix as
+# task_recover_priced_inactive: exponential backoff when nothing to heal (or on timeout), and
+# a short per-statement timeout so a slow scan aborts fast instead of holding a snapshot.
+_HEAL_IMPORTER_SKIP_UNTIL = 0.0
+_HEAL_IMPORTER_BACKOFF_S = 30.0
+_HEAL_IMPORTER_BACKOFF_MAX = 1800.0
+
+
 async def task_heal_importer_price(batch_size: int = 500) -> int:
     """Self-heal: IL-sourced parts that have a reference price (max_price_ils > 0) but a
     ZERO importer cost (importer_price_ils NULL/0). Importers must bring the ex-VAT cost —
@@ -1097,9 +1107,16 @@ async def task_heal_importer_price(batch_size: int = 500) -> int:
       - Fixed 2026-07-18: the old version skipped any row that already had a base_price
         (`AND base_price = 0`), so parts whose base_price was written but importer cost was
         left 0 were NEVER healed — that left a permanent backlog of margin-less parts."""
+    global _HEAL_IMPORTER_SKIP_UNTIL, _HEAL_IMPORTER_BACKOFF_S
+    if time.monotonic() < _HEAL_IMPORTER_SKIP_UNTIL:
+        return 0
+
     fixed = 0
     try:
         async with scraper_session_factory() as db:
+            # Fail the scan fast if it can't find work quickly (don't hold a snapshot /
+            # hit the global timeout under load). A timeout here just backs off + retries.
+            await db.execute(text("SET LOCAL statement_timeout = '15000'"))
             result = await db.execute(text("""
                 WITH gap AS (
                     SELECT id FROM parts_catalog
@@ -1131,8 +1148,19 @@ async def task_heal_importer_price(batch_size: int = 500) -> int:
             if fixed:
                 await db.commit()
                 logger.info("task_heal_importer_price: fixed %d parts", fixed)
+                _HEAL_IMPORTER_BACKOFF_S = 30.0          # work found → stay eager
+                _HEAL_IMPORTER_SKIP_UNTIL = 0.0
+            else:
+                # Nothing to heal (the normal case) → back off so we stop scanning 4.2M rows
+                # every cycle. Window must exceed the max backoff so nothing is missed.
+                _HEAL_IMPORTER_BACKOFF_S = min(_HEAL_IMPORTER_BACKOFF_S * 2, _HEAL_IMPORTER_BACKOFF_MAX)
+                _HEAL_IMPORTER_SKIP_UNTIL = time.monotonic() + _HEAL_IMPORTER_BACKOFF_S
     except Exception as exc:
-        logger.error("task_heal_importer_price failed: %s", exc)
+        # Timeout/error → back off too (don't hammer a struggling DB every 30s).
+        _HEAL_IMPORTER_BACKOFF_S = min(_HEAL_IMPORTER_BACKOFF_S * 2, _HEAL_IMPORTER_BACKOFF_MAX)
+        _HEAL_IMPORTER_SKIP_UNTIL = time.monotonic() + _HEAL_IMPORTER_BACKOFF_S
+        logger.warning("task_heal_importer_price backing off %.0fs after: %s",
+                       _HEAL_IMPORTER_BACKOFF_S, str(exc)[:120])
     return fixed
 
 
