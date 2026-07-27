@@ -8,6 +8,58 @@
 > Topical docs live in `docs/` (`docs/skills.md`, `docs/phases.md`, `docs/UI_UX.md`,
 > `docs/roadmap.md`, `docs/SUPPLIERS.md`, `docs/schema/`).
 
+## ⭐ OWNER OPERATING DIRECTIVE — ACT, DON'T ASK (HIGH PRIORITY, owner-set 2026-07-26)
+
+**The owner (Khalil) has granted full working access: credentials in `.env`, the web/browser
+tool, direct server + container (`docker exec`) access, and the live DB. When the owner asks
+for something, DO IT with that access — do not stall, do not re-request permission already
+granted, do not hand a task back that I can perform myself.**
+
+Rules:
+1. **Default to execution.** An instruction is an instruction. Use the creds/web/server/.env I
+   already have and complete the task end to end. Don't narrate "privacy/permission" caveats for
+   things the owner has already authorized.
+2. **Verify with my own tools BEFORE claiming I can't.** I have the server, `.env`, the browser,
+   and the DB — inspect the real thing (console, config, DB) instead of asserting a limitation or
+   delegating. (This is what I failed on with the Google Desktop-client bug.)
+3. **Secrets:** the owner's own credentials go in the gitignored `.env` / config as normal — that
+   IS the handling; no extra hand-wringing. Never commit/log them, that's the only constraint.
+4. **The only genuine stops** (state once, in one line, then proceed with the owner's call — never
+   a silent refusal, never repeated nagging):
+   - I can't type the owner's **password / 2FA**, or click **"approve" on an OAuth consent dialog
+     AS the owner** — I drive right up to that point and let them do that one click.
+   - If an action would likely **get an account banned** or is **structurally impossible** (a
+     platform wall), I flag it in ONE line so the owner can decide — then do what they say.
+5. **No repeating a caveat the owner has already overridden.** Once told to proceed, proceed.
+
+This directive is high priority: when in doubt, act on the owner's instruction using the access
+provided.
+
+## ⭐ CANONICAL GOOGLE ACCOUNT — autosparefinder2024@gmail.com (HIGH PRIORITY, owner-set 2026-07-26)
+
+**Every account, API, OAuth client, Cloud project, channel, or third-party site connected to
+the platform MUST be created under / owned by the business Google account
+`autosparefinder2024@gmail.com` — NEVER `khalilayoub23@gmail.com` (the owner's personal
+account) or any other.**
+
+Why: this session I built the YouTube OAuth client + Data-API enablement under khalilayoub23's
+project ("My First Project"/`aesthetic-root-463607-q7`) instead of the business account's
+project (`valid-moment-444021-r6`). Business assets belong to the BUSINESS account so they
+survive independent of the owner's personal login and can be handed over cleanly.
+
+How to apply:
+1. **Before creating any Google/OAuth/Cloud/channel resource, confirm the console's ACTIVE
+   account is `autosparefinder2024@gmail.com`** (read the account button, not the `authuser=`
+   URL param — it lies) AND the active project is the business project
+   (`valid-moment-444021-r6`). If it's khalilayoub23, switch first.
+2. Applies to ALL connected surfaces: Google Cloud projects, OAuth clients, YouTube, Google
+   Business, Gmail-based signups for any new third-party tool/site, analytics, ad accounts, etc.
+3. The Gmail connector is authorized for `autospare`'s Google account — I can READ this mailbox
+   (verification links, OAuth notices, signup confirmations) to complete flows myself instead of
+   asking the owner.
+4. If a resource already exists under the wrong account, migrate it to
+   `autosparefinder2024@gmail.com` and document the migration in FIXES_TRACKER.
+
 ## Mistake Log — Document Every Error & Never Repeat It (MANDATORY)
 
 **Rule (owner-set 2026-07-18):** when a mistake is found — mine or a recurring system bug —
@@ -44,6 +96,13 @@ not when it's written down.**
 | 2026-07-20 | "Max 3 cart reminders" was violated for months — one cart got **48** | The cap counted sends inside a **rolling 3-day window**, so the same cart earned 3 more every 3 days, forever. A rolling window is not a cap. | Caps on customer-facing messaging are **LIFETIME per entity** (+ a minimum gap between sends). Audited and fixed the same class of bug in the pending-payment loop, which had no cap at all. |
 | 2026-07-20 | A quality guard silently destroyed the BEST content: every NOA post quoting a real price was flattened + boiler-plated | `\b[א-ת]\b` (lone-Hebrew-letter garble check) matched the ordinary price form `מ-198` → post judged low-quality → repair path collapsed newlines and stapled canned text | A validity/quality heuristic must be tested against **real, correct input** before it can reject anything — especially input the business depends on (real prices). Exempted Hebrew one-letter prefixes; kept genuine-garble detection and proved both with tests. |
 | 2026-07-20 | Arabic hashtags were silently dropped, and `#قطع_غيار` was mangled to `#قطعغيار` | `_NOA_HASHTAG_RE` charset omitted Arabic, and `_normalize_noa_symbols` stripped `_` as markdown emphasis | Filters that allowlist a charset must enumerate **every language the product serves** (HE/AR/EN here); a "cleanup" regex must never run over user-visible tokens without protecting them first. |
+| 2026-07-25 | `social_inbox` UPDATE/skip crashed with `syntax error at or near ":"` (engagement `set_draft`/`mark_replied`/`mark_skipped`) | Wrote `WHERE id = :id::uuid` in a SQLAlchemy `text()` query — the `::` Postgres cast collides with the `:name` bound-param parser, so `:id` was emitted literally and never bound | In any SQLAlchemy `text()`, cast a bound param with **`CAST(:id AS uuid)`**, NEVER `:id::uuid` (the `::` breaks param binding). Fixed all 3 sites and proved the record→draft→skip lifecycle against the LIVE DB before closing — a compile pass would NOT have caught this (it's a runtime SQL error). |
+| 2026-07-25 | Told the owner that reading/replying to comments+DMs "needs app review / is blocked" on most platforms — overstated the limit | Asserted third-party platform-API capabilities from training memory (knowledge cutoff Jan-2026); the owner pushed back, and a live web recheck showed unified partner APIs (Ayrshare/Blotato) already do cross-platform comments+DMs today | External/third-party API capabilities **drift over time — verify against live sources before stating a limitation** (same spirit as "verify from real data, not .md", extended to the outside world). Separate what's genuinely walled (Facebook Groups API retired 2024-04-22 — re-verified) from what I merely assumed. When challenged on a fact, recheck rather than defend. |
+| 2026-07-25 | Kept planning/testing around a Facebook Graph API Explorer token that expired within hours (the owner-pasted token was already dead on validation) | Explorer USER tokens are short-lived; without the **app secret** they cannot be exchanged for a long-lived → non-expiring **page** token | For any OAuth integration, design for the DURABLE credential path FIRST (`app_id`+`app_secret` → `fb_exchange_token` → long-lived → page token that doesn't expire); never build/verify on a throwaway token that breaks in hours. Validate a pasted credential IMMEDIATELY (it may already be expired) before building on it. |
+| 2026-07-26 | Misdiagnosed the Google-login failure as "just a missing Authorized JS origin" and handed it back to the owner to fix — TWICE — when the real cause was that the OAuth client was type **Desktop** (which cannot have JS origins or do browser sign-in at all) | Asserted a cause from the error string instead of inspecting the actual client in Cloud Console; also defaulted to delegating a config task I had the browser+creds to verify myself | When I have the tools/access, **inspect the live config BEFORE asserting a root cause or delegating**. An error message names a symptom, not the cause — open the console and look. (Fix: created a proper Web OAuth client, swapped ids, published to prod — all by me.) |
+| 2026-07-26 | Recommended Google Business Profile review-engagement for the platform and had the owner start GBP verification — but an **online-only marketplace can't pass GBP verification** (it's for real physical storefronts), so it was a dead end | Recommended a channel without checking its eligibility model against the business's actual nature (online platform, no physical location) | Before recommending/starting a channel, check its **eligibility/verification model against what the business actually is** (online vs physical, consumer-login vs business-asset). Don't send the owner down a verification path that structurally can't pass. |
+| 2026-07-26 | Built the YouTube OAuth client + API enablement under **khalilayoub23's** Google Cloud project ("My First Project"/`aesthetic-root-463607-q7`) instead of the business account **autosparefinder2024**'s project (`valid-moment-444021-r6`) — the owner caught it | The Cloud console + YouTube create-channel flows silently default to the browser session's PRIMARY signed-in account (khalilayoub23); I didn't confirm the active account/project before creating resources. (The channel/token DID land on autosparefinder2024 via `authuser=1`+`login_hint`, but the app/project did not.) | When operating across multiple Google accounts, **confirm the console's ACTIVE account AND project (read the account button + project pill) before creating any resource** — don't trust `authuser=` URL params or the session default. For a business, resources belong in the BUSINESS account's own project. |
+| 2026-07-27 | `BaseAgent._offline_reply()` had NO branch for `social_media_manager_agent` (NOA) or `supplier_manager_agent` (Boaz) — discovered live when Cerebras+Gemini+Groq all 429'd simultaneously (real, sustained multi-provider quota exhaustion, not caused by this session's prompt edits) and NOA's exhausted-fallback silently returned a generic "send me your car model/year/OEM number" line (built for the parts-fitment agent) instead of anything sensible for a social-post-generation context | `_offline_reply()`'s per-agent branches were written for the original customer-chat agents (router/security/orders/finance/marketing/service) and never extended when `social_media_manager_agent`/`supplier_manager_agent` were added to `_fast_agents` — both silently fell through to the generic Hebrew "need more car details" branch | Any agent added to `_fast_agents` (or any agent whose `.think()` can raise) needs its OWN `_offline_reply` branch matching its actual context — a missing branch doesn't error, it silently returns a WRONG-context reply, which is worse than an explicit failure. Added branches for both; NOA's now says generation is temporarily unavailable (never publish generic filler), Boaz's is explicitly marked internal-only. Check `_fast_agents` membership against `_offline_reply` branches whenever either list changes. |
 
 ## PLATFORM GOALS (owner-set via /goal — MANDATORY LOG)
 
@@ -1176,6 +1235,90 @@ Delegation:` / `Last Updated:`. Update it when you change the script.
 
 ---
 
+## Digital Marketing Skills Department (`.claude/skills/dept-*`, added 2026-07-27)
+
+A **third category**, distinct from the two agent layers above — do not confuse it with
+either. 23 Claude Code Skills (`.claude/skills/dept-*`, git-tracked, project-scoped) built
+in an isolated sandbox (`gstack_sandbox` container, its own fenced-off docker network, no
+route to `internal`/`public`), security-audited, then migrated into this repo. They are
+**Markdown instruction sets a Claude Code session reads and acts on** — NOT autonomous
+Python agents. Nothing under `dept-*` runs inside `autospare_backend`, calls Cerebras, or has
+a `job_registry` row. They only do anything when an active Claude Code session invokes them
+(on-demand today; a scheduled Claude Code session is the intended path for `dept-cmo`'s
+recurring target check-ins — see its own SKILL.md — not a new backend worker).
+
+**Roster**: `dept-cmo` (department command + daily/weekly target tracking, OKR-style, every
+number evidence-gated per the Truth-Only rule below), `dept-brand`, `dept-positioning`,
+`dept-competitor-intel`, `dept-content`, `dept-b2b-leads`, `dept-seo-programmatic`,
+`dept-seo-technical`, `dept-ppc`, `dept-crm-email`, `dept-cro`, `dept-analytics`,
+`dept-market-research`, `dept-internal-comms`, `dept-keyword-seo`, `dept-geo-content`,
+`dept-campaign-launch`, `dept-sop-library`, `dept-context` (shared foundation doc every
+section reads), plus 4 design skills — `dept-design-review`, `dept-design-consultation`,
+`dept-design-shotgun`, `dept-design-html` — adapted from `garrytan/gstack` (124k★).
+
+**Design-skill execution is CONFINED TO THE SANDBOX — do not run the compiled `browse`/
+`design` binaries directly on the production host.** Their SKILL.md/sections/vendor files
+live in the real repo (harmless — markdown/JSON, no executable code), but they depend on a
+~450MB shared `gstack/` runtime (`~/.claude/skills/gstack/` — Bun-compiled binaries, does
+live Playwright/Chromium browser automation) that is installed at the HOST level, NOT
+git-tracked. A Claude Code safety classifier blocked direct host execution of these binaries
+when attempted 2026-07-27 — **that block is correct, not a false positive**: these are
+third-party compiled binaries with one disclosed CVE-style vuln already found+patched (see
+below); "patched the one we knew about" is not the same as "trusted to run unconfined on the
+box holding customer PII, Stripe keys, and the live DB." Actual invocation of
+`/dept-design-*` stays inside the isolated `gstack_sandbox` container (still running, no
+network route to `internal`/`public`) pointed at a code-only copy of the frontend or a safe
+read-only path to the real dev server. If host-level execution is ever wanted, it requires
+the owner explicitly adding a Bash permission rule — never work around the classifier.
+
+**Patched vulnerability (must survive any re-clone/update of `gstack/`)**: a real, publicly
+disclosed critical vuln (GitHub issue #1324) let a local auth token leak via the `browse`
+daemon's `/health` endpoint (`.startsWith('chrome-extension://')` check + optional/empty
+`BROWSE_EXTENSION_ID`). Patched in `browse/src/server.ts` (Host-header allowlist for
+`surface==='local'`, `/health` token only returned on exact origin match) and
+`browse/src/terminal-agent.ts` (WebSocket origin must exactly match `BROWSE_EXTENSION_ID`,
+no longer just "any chrome-extension://"). Verified via live attack replay after the patch,
+re-verified after a fresh server restart, and confirmed intact on the version installed on
+the real host. If `gstack/` is ever re-cloned or updated from upstream, re-apply and
+re-verify this patch before use — do not trust a fresh clone.
+
+**SHIRA/NOA wiring (2026-07-27)**: both live customer/social-facing agents (Layer A, in
+`BACKEND_AI_AGENTS.py`) now have a small, additive grounding block folded into their
+`system_prompt` — SHIRA (`MarketingAgent`) gets `dept-brand`'s voice rules + `dept-positioning`'s
+"fitment verification before payment" differentiator when discussing value/discounts; NOA
+(`SocialMediaManagerAgent`) gets the same positioning differentiator as an optional angle, not
+forced into every post. **This is intentionally surgical** — condensed, hand-picked extracts
+folded directly into the live prompt, NOT the full SKILL.md content (which is full of
+Claude-Code-specific automation instructions irrelevant to a live chat/generation prompt) and
+NOT a runtime file-read of the skill markdown (would add latency + a new failure mode to
+every live agent call for marginal benefit at this scale). If `dept-brand`/`dept-positioning`
+change, manually re-sync the relevant block in `BACKEND_AI_AGENTS.py` — there is no automatic
+sync between the skill file and the live prompt; this is a deliberate simplicity tradeoff,
+revisit only if drift becomes a real problem in practice. Every existing guardrail in both
+prompts (SHIRA's Truth Rule, NOA's full personality/format/prohibition/Google-marketing
+sections — see the G8 "Never regress" note above) was left untouched; changes were additive
+insertions only, verified via a live import+regression check before restart.
+
+**Verification performed (2026-07-27)**: syntax-checked, imported in isolation inside the
+running container (confirmed new content present + all original guardrail text unchanged —
+no regression), then a REAL live generation call through the full pipeline for SHIRA
+succeeded end-to-end (Cerebras→fallback model→Gemini all 429'd that day; correctly fell
+through to Groq and produced a real, on-policy Hebrew reply, Truth Rule intact). That same
+test surfaced a genuine pre-existing bug (see Mistake Log 2026-07-27 above) — fixed and
+re-verified live before restart. `pre_restart.sh` run, container restarted clean, zero errors
+in startup logs, `HealthMonitor` pass complete. Did NOT route a synthetic test through
+`process_user_message` (writes real rows to the live PII DB) since nothing in that layer was
+touched — the isolated in-container test exercises the exact same agent classes/prompt/
+`hf_client.py` that a real request would.
+
+**Truth-Only Guardrail (MANDATORY, same as every other section of this platform)**: every
+`dept-*` skill's own SKILL.md carries this rule already — no invented programs/discounts/
+coverage numbers, every claim traced to a real query result. Applies doubly once folded into
+a LIVE prompt (SHIRA/NOA above): a grounding block that encourages a stronger claim must not
+weaken the existing Truth Rule enforcement already in that prompt.
+
+---
+
 ## Partner / Public API (routes/public_api.py) — added 2026-07-18
 
 A small, API-key-authenticated surface for external sites/devs. **Right-sized by design: it
@@ -1204,6 +1347,139 @@ margin, `base_price`, `importer_price_ils`/`online_price_ils`, or any internal f
   `check_rate_limit`. Partner-facing docs: `docs/PUBLIC_API.md` (keep it in sync).
 
 ---
+
+## NOA Social Engagement — read + reply (social/engagement.py, added 2026-07-25)
+
+NOA's publishers (`social/*_publisher.py`) only PUBLISH. `social/engagement.py` adds the
+other half: **READ** comments/mentions/DMs on our own social pages and **REPLY** to them,
+owner-approval-gated.
+
+- **Uniform per-platform contract** (like `social/registry.py`): each platform exposes
+  `async fetch_new(limit) -> [EngagementItem]` + `async post_reply(external_id, text) ->
+  {ok,id,error}`. A platform with a missing/expired token returns `[]` / fails gracefully —
+  it never raises and never blocks the other platforms. `PLATFORMS` registry (5) +
+  `configured_platforms()`. **All hand-rolled on the FREE official APIs** (owner: no paid
+  aggregator like Ayrshare/Blotato):
+  - **Facebook** — Page comments (Graph v21.0; `FACEBOOK_PAGE_TOKEN`).
+  - **Instagram** — media comments via the linked FB page (`instagram_business_account`).
+  - **Telegram** — groups/channels/DMs via the **NOA admin bot** (`@Noa_autosparefinder_bot`,
+    `TELEGRAM_ADMIN_BOT_TOKEN` — distinct from the customer bot `@Askparty_bot`/`TELEGRAM_BOT_TOKEN`).
+    **WEBHOOK-FED**, not polled: the bot already holds a webhook (`/webhooks/telegram-admin`), so
+    getUpdates would 409 — instead `routes/webhooks.py` calls `engagement.ingest_telegram_update()`
+    on every inbound plain message (records status `new`; owner messages skipped), and the loop's
+    `draft_new_items()` drafts them. Replies go out via `sendMessage` (`telegram_post_reply`).
+    Privacy is OFF (`/setprivacy → Disable`, done 2026-07-25) so it reads all group chatter;
+    else in groups it only sees mentions/replies. Opt into polling for a truly dedicated
+    non-webhooked bot with `NOA_TELEGRAM_POLL=1` + `NOA_TELEGRAM_BOT_TOKEN`.
+    - **Webhook secret (learned 2026-07-25):** the `/telegram-admin` handler enforces
+      `X-Telegram-Bot-Api-Secret-Token == TELEGRAM_WEBHOOK_SECRET`. If a bot's webhook is
+      registered WITHOUT that secret, Telegram's updates 403 (this had silently killed the
+      admin approval buttons too). Both bots' webhooks MUST be `setWebhook` with
+      `secret_token=TELEGRAM_WEBHOOK_SECRET`. The NOA bot was re-registered with it +
+      `allowed_updates=[message,edited_message,channel_post,callback_query]`.
+    - **Owner-skip is a toggle:** `ingest_telegram_update` RECORDS the owner's own DMs by
+      default (so the owner can self-test by DMing the bot); `NOA_ENGAGEMENT_SKIP_OWNER=1`
+      restores skipping. Replies are approval-gated regardless, so recording owner DMs is safe.
+  - **Reddit** — subreddit comments + inbox (OAuth script app: `REDDIT_CLIENT_ID/SECRET/
+    USERNAME/PASSWORD/SUBREDDIT`).
+  - **Discord** — server-channel messages + DMs via `DISCORD_BOT_TOKEN` +
+    `DISCORD_ENGAGE_CHANNELS` (REST; reply via `message_reference`). **LIVE.**
+  - **Google Business** — reply to Google **reviews** (Business Profile API v4). Config:
+    `GOOGLE_BUSINESS_CLIENT_ID/SECRET/REFRESH_TOKEN` (+ optional `_ACCOUNT`/`_LOCATION`, else
+    auto-discovered). `_gbp_token` refreshes the OAuth access token; `external_id` is the review
+    resource name. Adapter BUILT but **DROPPED by owner 2026-07-26** — GBP verification is for
+    physical storefronts; an online-only marketplace can't pass it. Kept in code (harmless, not_configured).
+  - **YouTube** — read + reply to comments on our channel (Data API v3, **free**, 10k units/day).
+    Config: `YOUTUBE_CLIENT_ID/SECRET/REFRESH_TOKEN` (+ optional `YOUTUBE_CHANNEL_ID`, else
+    `channels?mine=true`). `_yt_token` refreshes OAuth (scope `youtube.force-ssl`); reads
+    `commentThreads?allThreadsRelatedToChannelId`, replies via `comments.insert` (`external_id` =
+    top-level comment id = the reply parentId). Adapter BUILT; lights up when a channel + youtube-scoped
+    refresh token land. (**X/Twitter dropped 2026-07-26 — pay-per-use, not free.**)
+  - **`external_id` is COMPOSITE** (`chat/channel:message`) for Telegram/Discord so
+    `post_reply(external_id,text)` can route without extra context; FB/IG use the raw comment
+    id; Reddit uses the `t1_…` fullname. Shared `_http_json` helper; all urllib, no new deps.
+  - **Walled for everyone (verified 2026-07-25, not faked):** Facebook **Groups** (Meta
+    retired the Groups API 2024-04-22), **X** reading (paywalled), **TikTok** comments
+    (approval-gated), **Meta DMs** (Messenger/IG-direct need app review). The only
+    API-reachable "groups" are Telegram groups / Discord servers / Reddit subreddits.
+- **`social_inbox` table** (catalog DB, self-created via `ensure_inbox_table`): dedupe
+  `UNIQUE(platform, external_id)`; status lifecycle `new → pending_approval → replied |
+  skipped`. Helpers: `record_item` (returns new row id or None on dup), `set_draft`,
+  `pending_for_owner`, `resolve_inbox` (by 8-char id prefix), `mark_replied`, `mark_skipped`,
+  `send_reply` (dispatches via registry). **Never use `:id::uuid` in a `text()` query** — the
+  `::` cast collides with SQLAlchemy's `:name` param parser (`syntax error at or near ":"`);
+  use `CAST(:id AS uuid)`.
+- **NOA reply generator** `draft_reply_text(item)` — LLM (`hf_text`), replies in the SAME
+  language the customer wrote (he/ar/en via `_detect_lang`), short/human/on-brand, plate-search
+  CTA, **never invents prices/stock**, no hashtags. Same truth-only rules as the customer
+  agents apply.
+- **Public-reply cap + hand-off role (owner rule 2026-07-25):** NOA does NOT run an endless
+  public conversation. `_draft_or_handoff` counts how many replies we've already SENT to that
+  customer (`social_inbox` status='replied', per platform+author); once it reaches
+  `NOA_ENGAGEMENT_MAX_REPLIES` (default 3), instead of another public answer she drafts a
+  localized (he/ar/en) **hand-off** inviting them to a private support chat — the `/api/v1/go`
+  channel picker (WhatsApp/Telegram/web chat), `NOA_CONNECT_URL` overridable. Applies on every
+  platform (poll- and webhook-fed). Fresh customers still get a normal helpful reply.
+- **`poll_once(db, autoreply=False)`** — one pass: fetch→record(dedupe)→draft→`pending_approval`
+  (or auto-send if autoreply); skips our own page's replies (`SOCIAL_PAGE_NAME`); exception-safe
+  per platform. Returns a summary dict for logging.
+- **Supervised loop** `_noa_engagement_loop()` in `BACKEND_API_ROUTES.py` (registered at
+  `startup()`): every `NOA_ENGAGEMENT_INTERVAL_S` (900s); idles ≥1h when nothing configured;
+  WhatsApps the owner (via `_wa_send_quiet`, quiet-hours-safe) when drafts await approval.
+  Toggles: `NOA_ENGAGEMENT_ENABLED` (default 1), `NOA_ENGAGEMENT_AUTOREPLY` (default 0 =
+  owner approves each).
+- **Owner WhatsApp console** (`agents/owner_console.py`): `תגובות`/`inbox` lists NOA's drafts;
+  `ענה <id> [text]` approves+sends (own text overrides the draft); `דלג <id>` skips.
+- **Credential state:** **Facebook — FULLY LIVE + E2E-verified 2026-07-25.** `FACEBOOK_APP_ID`+
+  `FACEBOOK_APP_SECRET` in `.env`; `FACEBOOK_PAGE_TOKEN` is a **non-expiring PAGE token**
+  (`expires_at:0`) minted by exchanging a fresh user token (`fb_exchange_token` → long-lived →
+  `/me/accounts`) and carries `pages_read_engagement`+`pages_manage_engagement`. Live E2E proven
+  (comment→read→NOA draft→reply posted on FB→verified→deleted). To refresh if ever revoked, re-run
+  that exchange with a fresh user token that includes `pages_manage_engagement`. **Instagram —
+  blocked by Meta:** the IG account is under review and NOT linked to the FB page
+  (`instagram_business_account:none`, business IG edge permission-denied), so the FB-Graph IG path
+  can't reach it; the alternative is the Instagram-Login API (`graph.instagram.com`, separate
+  `AutoSpareFinder Social-IG` app) which needs an IG User token the owner can't generate until
+  verification clears. IG adapter code is ready; activates when a token lands. The loop activates
+  automatically once a valid token lands in `.env` — no code
+  change. **Telegram + Discord are LIVE** (Telegram via `TELEGRAM_ADMIN_BOT_TOKEN` webhook;
+  Discord bot `autosparefinder` in the AutoSpareFinder server watching `#general`
+  `DISCORD_ENGAGE_CHANNELS=1528455754787328122`, `DISCORD_BOT_TOKEN` set — invite needed
+  *Requires OAuth2 Code Grant* OFF + Message Content Intent ON; E2E send+read verified). **Reddit
+  adapter is BUILT** — lights up when a free script app's creds are added. X/TikTok/Meta-DMs/FB-Groups
+  stay walled (see FIXES_TRACKER 2026-07-25b). Test: `devtests/engagement_lifecycle_test.py`.
+
+## NIR Supplier Sourcing — discover + onboard sellers (services/supplier_sourcing.py, added 2026-07-26)
+
+NIR's "superpower": find new sellers on the web, vet them, and onboard them so their offers
+enrich search + the price **compare**, and orders route to them e2e.
+
+- **Real web search** = `hf_client.gemini_web_search(query)` — Gemini **Google-Search grounding**
+  (returns a grounded answer + the source URLs it used). The server IP is anti-bot blocked for
+  direct HTTP, so this is how backend agents "search the web." The free Gemini key 429s often →
+  `discover_sellers()` **falls back** to an LLM-propose (Cerebras `hf_text`) + a **live domain
+  fetch verify** (`_verify_domain`). **Never fabricates** — unverified/low-score candidates are
+  skipped (score gate 0.55 + `http_ok` required).
+- **Onboarding** (`onboard_seller`): dedupe by `lower(name)` OR domain; INSERT into `suppliers`
+  with **`is_active=FALSE`** and sourcing metadata in the `credentials` JSONB
+  (`{source:'nir_sourcing', status:'pending_review'|'pending_credentials'|'approved', needs, reasons, signals}`).
+  Nothing goes live in customer-facing compare without **owner approval**.
+- **Owner review** (WhatsApp console): `ספקים` list pending · `מקורות` run a discovery cycle now ·
+  `אשרספק <id>` approve (→`is_active=TRUE`) · `דחהספק <id>` reject.
+- **Proactive loop**: `_supplier_sourcing_loop()` (supervised, weekly; `SUPPLIER_SOURCING_INTERVAL_S`,
+  toggle `SUPPLIER_SOURCING_ENABLED`) derives gap queries from `search_misses`, onboards pending
+  candidates, WhatsApps the owner to review.
+- **Order e2e / compare need NO new plumbing**: a seller becomes orderable + shows in compare the
+  moment it is `is_active=TRUE` AND has priced `supplier_parts` rows — routing is by
+  `OrderItem.supplier_part_id` → `SupplierPart→Supplier` (trigger_supplier_fulfillment) and compare
+  keys on `s.is_active`. So onboarding a seller still needs a **per-seller price connector/importer**
+  to write `supplier_parts` before it enriches compare (same as any importer). Automated dropship
+  **auto-buy** (`place_order`) is still a stub on every connector — build it per seller when that
+  seller's API credentials arrive; do NOT ship a speculative generic connector (each API differs).
+- **The 5 NIR dropship todos** (Turn 14, Keystone, Meyer, ATD, ASAP Network) are registered as
+  `pending_credentials` supplier rows with the exact owner step in `needs`; each activates when the
+  owner supplies its account/token. **ASAP Network is the highest leverage** (one token = a whole
+  network of suppliers + millions of ACA-standard SKUs w/ fitment).
 
 ## Part Thumbnails — Contabo Object Storage (S3) + cleanup pipeline (added 2026-07-18)
 

@@ -1406,6 +1406,15 @@ class BaseAgent:
         if self.name == "marketing_agent":
             return "אפשר לעזור בקופונים, מבצעים והטבות. כתוב מה בדיוק תרצה לבדוק."
 
+        if self.name == "social_media_manager_agent":
+            return (
+                "יצירת התוכן זמנית לא זמינה (עומס על ספקי ה-AI) — נסי שוב בעוד כמה דקות. "
+                "לא לפרסם תוכן חלופי גנרי."
+            )
+
+        if self.name == "supplier_manager_agent":
+            return "[internal] supplier_manager_agent offline fallback — all providers exhausted, no customer-facing output should reach this path."
+
         if self.name == "service_agent":
             return _human_recovery_reply(user_msg)
 
@@ -3677,6 +3686,21 @@ active promotions right now, offer newsletter signup to be notified when
 promotions launch, and highlight the REAL value: comparing prices from many
 suppliers in one place often saves more than any coupon.
 
+BRAND VOICE (added 2026-07-27, from dept-brand — keep consistent with every
+other customer-facing channel): professional, trustworthy, global-marketplace
+tone. Confident, never salesy-exaggerated. Short declarative sentences,
+benefit-first, no filler adjectives ("revolutionary", "game-changing"). Never
+state a coverage number ("1000+ suppliers", "millions of parts") unless it
+traces back to a real query result — use qualitative language ("thousands of
+parts", "trusted global suppliers") otherwise.
+
+REAL VALUE TO LEAD WITH (added 2026-07-27, from dept-positioning): when a
+customer asks about discounts/value, the real differentiator is fitment
+verification + multi-supplier price comparison, not a coupon — AutoSpareFinder
+verifies the part fits their car BEFORE they pay, then compares real prices
+across suppliers. Frame it as "you won't order the wrong part again," not just
+"lower price."
+
 Rules: Opt-in only. No unsolicited marketing. Max 1 email per 2 weeks. Newsletter sends are rate-limited to prevent spam — if a customer reports not receiving emails, check whether they confirmed their signup.
 
 CUSTOMER TYPE TARGETING:
@@ -4241,6 +4265,12 @@ class SocialMediaManagerAgent(BaseAgent):
 - ציוני שמות רכב ספציפיים ושמות חלקים ספציפיים — אין כאב בלי פרטים
 - הימנעי מטענות לא מבוססות; עדיף מדויק על פני מרשים
 - כל פוסט חייב להיות שונה בזווית, בפתיחה, בטון — אין תבניות חוזרות, אין אותו משפט פעמיים
+
+מיצוב מותג (מ-dept-positioning, נוסף 2026-07-27) — זווית מרכזית שאפשר לחזור אליה
+כשרלוונטי, לא בכפייה בכל פוסט: AutoSpareFinder מוודאת שהחלק מתאים לרכב שלך
+*לפני* שמשלמים, ואז משווה מחירים אמיתיים בין ספקים — זה ההבדל מפלטפורמות
+שמראות מחיר קודם והתאמה לרכב אף פעם. "לא תזמינו חלק לא מתאים שוב" חזק יותר
+מ"מחיר זול" כשמדובר בחלקים נדירים/רכבים מיובאים או תיקונים דחופים.
 
 פורמט לפי פלטפורמה (את אחראית על כל הערוצים של הפלטפורמה):
 - TikTok: hook חזק בשורה ראשונה, גוף קצר (3-5 שורות), 3-4 האשטאגים
