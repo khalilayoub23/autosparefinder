@@ -47,6 +47,9 @@ from datetime import datetime
 from pathlib import Path
 import asyncpg
 
+# ONE category source of truth — never a private ruleset here.
+from category_map import categorize_on_ingest
+
 INPUT    = Path("/opt/autosparefinder/jaguar_parts_raw.ndjson")
 LOGS_DIR = Path("/opt/autosparefinder/logs")
 DB_DSN   = (os.getenv("DATABASE_URL","postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43@localhost:5432/autospare")
@@ -85,7 +88,7 @@ def sku(pn):
 
 def part_type(tn):
     t = (tn or "").lower()
-    return "Original" if any(x in t for x in ("original","oem","genuine")) else "Aftermarket"
+    return "original" if any(x in t for x in ("original","oem","genuine")) else "aftermarket"
 
 def base_price_ils(gbp):
     if not gbp or gbp <= 0: return None
@@ -94,20 +97,16 @@ def base_price_ils(gbp):
 def price_usd(gbp):
     return round((gbp or 0) * 1.264, 2)
 
-def category(name, desc):
-    t = f"{name} {desc}".lower()
-    if any(w in t for w in ("brake","disc","pad","caliper","master cylinder")): return "בלמים"
-    if any(w in t for w in ("engine","piston","valve","gasket","timing","camshaft","oil seal")): return "מנוע"
-    if any(w in t for w in ("gearbox","clutch","transmission","gear")): return "תיבת הילוכים"
-    if any(w in t for w in ("suspension","spring","shock","absorber","strut","bush")): return "מתלה"
-    if any(w in t for w in ("steering","rack","column","tie rod","wheel bearing")): return "היגוי"
-    if any(w in t for w in ("cooling","radiator","fan","thermostat","coolant","water pump")): return "קירור"
-    if any(w in t for w in ("fuel","injector","carburetor","carburettor","filter element")): return "דלק"
-    if any(w in t for w in ("electrical","wiring","sensor","switch","relay","fuse","lamp","light")): return "חשמל"
-    if any(w in t for w in ("body","panel","bumper","door","bonnet","wing","sill")): return "מרכב"
-    if any(w in t for w in ("exhaust","manifold","silencer","muffler")): return "פליטה"
-    if any(w in t for w in ("interior","carpet","seat","trim","dashboard")): return "פנים הרכב"
-    return "חלקי חילוף"
+def category(name, desc) -> str:
+    """Delegates to category_map — the ONE source of truth.
+
+    This previously returned Hebrew DISPLAY names ('בלמים', 'מנוע',
+    'תיבת הילוכים', 'מתלה', 'היגוי'). Those are display-only labels that
+    parts_catalog.category may NEVER hold, so every one of these ~250k parts got
+    an unstorable value that normalize_categories then had to map back.
+    Never re-add keyword rules here — add them to category_map.py.
+    """
+    return categorize_on_ingest(name=name, extra=desc)
 
 async def ensure_supplier(conn):
     row = await conn.fetchrow("SELECT id FROM suppliers WHERE name=$1", SUPPLIER_NAME)

@@ -47,23 +47,24 @@ Last Updated: 2026-06-01
 import asyncio, asyncpg, json, urllib.request, urllib.parse, sys, uuid
 from html.parser import HTMLParser
 
+# ONE category source of truth — never a private ruleset here.
+from category_map import categorize_on_ingest
+
 DB_URL = "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43@postgres_catalog:5432/autospare"
 KIA_MFR_ID = "626947bf-be3f-4dd1-a52e-fbcff8168cfc"
 PARTS_URL = "https://kia-israel.co.il/%d7%9e%d7%97%d7%99%d7%a8%d7%95%d7%9f-%d7%97%d7%9c%d7%a4%d7%99%d7%9d"
 BATCH = 25
 
-def map_category(desc):
-    if any(k in desc for k in ["מכשיר","כלי","חולץ","מתאם","להתקנת","להסרת"]): return "tools-equipment"
-    if any(k in desc for k in ["בלם","קליפר","ABS","צינור בלם"]): return "brakes-clutch"
-    if any(k in desc for k in ["מצמד","גלגל תנופה"]): return "brakes-clutch"
-    if any(k in desc for k in ["סעפת פל","פליטה","אגזוז","קטליזטור"]): return "exhaust"
-    if "EGR" in desc: return "engine"
-    if any(k in desc for k in ["טורבו","מגדש","מצנן בין"]): return "engine"
-    if any(k in desc for k in ["מים","תרמוסטט","טרמוסטט","קירור","רדיאטור","מאוורר"]): return "cooling-system"
-    if any(k in desc for k in ["דלק","מרסס","מזרק","גז","דיזל"]): return "fuel-system"
-    if any(k in desc for k in ["הגה","היגוי","מתלה","קפיץ","בולם"]): return "suspension-steering"
-    if any(k in desc for k in ["תיבת הילוכים","גיר","ממיר","דיפרנציאל","גל ארכובה","גל הינע"]): return "gearbox"
-    return "engine"
+def map_category(desc) -> str:
+    """Delegates to category_map — the ONE source of truth.
+
+    This previously carried its own keyword ruleset returning a vocabulary
+    parts_catalog.category may never hold (hyphenated slugs like brakes-clutch/filters-oils), so every part it
+    classified got an unusable label that normalize_categories then had to
+    map back or flatten into the catch-all.
+    Never re-add keyword rules here — add them to category_map.py.
+    """
+    return categorize_on_ingest(name=desc)
 
 class TableParser(HTMLParser):
     def __init__(self):

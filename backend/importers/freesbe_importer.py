@@ -26,6 +26,10 @@ import sys
 import uuid
 from datetime import datetime
 
+# ONE category source of truth — categorize at INGEST so parts never land
+# with a NULL category and depend on the self-healing task to find them.
+from category_map import categorize_on_ingest
+
 sys.path.insert(0, '/app')
 
 DB_URL = os.environ.get("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://")
@@ -180,16 +184,20 @@ async def process_page(conn, parts: list, stats: dict, brand_id_cache: dict,
         await conn.execute(
             """
             INSERT INTO parts_catalog (
-                id, sku, oem_number, name, manufacturer, manufacturer_id,
+                id, sku, oem_number, name, manufacturer, manufacturer_id, category,
+                specifications,
                 importer_price_ils, base_price, is_active,
                 master_enriched, needs_oem_lookup, created_at, updated_at
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,TRUE,FALSE,FALSE,NOW(),NOW())
+            ) VALUES ($1,$2,$3,$4,$5,$6,$9,$10::jsonb,$7,$8,TRUE,FALSE,FALSE,NOW(),NOW())
             ON CONFLICT (sku) DO UPDATE SET
-                importer_price_ils = EXCLUDED.importer_price_ils,
+                importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
                 updated_at = NOW()
             """,
             new_id, sku, p["raw_oem"], name, manufacturer, brand_id,
             price_inc_vat, base_price,
+            categorize_on_ingest(name=name),
+            json.dumps({"source": "freesbe_importer", "source_url": API_BASE,
+                        "raw_oem": p.get("raw_oem")}),
         )
         stats["inserted"] += 1
 

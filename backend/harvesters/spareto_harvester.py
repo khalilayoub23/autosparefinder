@@ -20,6 +20,10 @@ import time
 from html import unescape
 from typing import Optional
 
+# ONE category source of truth — categorize at INGEST so parts never land
+# with a NULL category and depend on the self-healing task to find them.
+from category_map import categorize_on_ingest
+
 DB_URL = "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43@postgres_catalog:5432/autospare"
 
 HEADERS = {
@@ -285,6 +289,7 @@ async def upsert_part(conn, product: dict, eur_rate: float) -> dict:
                 WHERE id = $1""",
                 existing["id"], name, price_ils, price_ils,
                 json.dumps(specs) if specs else None,
+                categorize_on_ingest(name=name),
                 aftermarket_brand_id,
             )
             part_id = existing["id"]
@@ -293,8 +298,10 @@ async def upsert_part(conn, product: dict, eur_rate: float) -> dict:
             part_id = await conn.fetchval(
                 """INSERT INTO parts_catalog
                     (id, sku, oem_number, name, manufacturer_id, aftermarket_brand_id,
-                     base_price, online_price_ils, specifications, is_active, part_condition)
-                   VALUES (gen_random_uuid(), $1, $2, $3, $4::uuid, $5::uuid, $6, $7, $8::jsonb, true, 'new')
+                     base_price, online_price_ils, specifications, is_active, part_condition,
+                     category)
+                   VALUES (gen_random_uuid(), $1, $2, $3, $4::uuid, $5::uuid, $6, $7, $8::jsonb, true, 'new',
+                           $9)
                    ON CONFLICT (sku) DO UPDATE SET
                      name = EXCLUDED.name,
                      updated_at = NOW()

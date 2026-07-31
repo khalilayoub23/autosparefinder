@@ -28,6 +28,13 @@ import asyncio, json, os, re, sys, time, uuid, asyncpg, urllib.request
 import fitz
 from pathlib import Path
 
+# ONE category source of truth.
+from category_map import categorize_on_ingest
+
+# ONE warranty source of truth — resolve() returns (months, source);
+# never hardcode a warranty or drop its provenance. See warranty_policy.py.
+from warranty_policy import resolve as _warranty_resolve
+
 DB_URL = os.environ.get("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://")
 VAT = 0.18
 MARGIN = 0.45
@@ -132,6 +139,12 @@ def extract_parts(pdf_path: Path, expected_brand_en: str) -> list[dict]:
 
         lines = [l.strip() for l in text.split('\n') if l.strip()]
         pending_oem: str | None = None
+        # The PDF layout is '{OEM}{brand_he}' then '{desc}{price} {stock}', so the
+        # part DESCRIPTION is the text before the price (or a standalone line while
+        # an OEM is pending). It used to be parsed and thrown away, which is why
+        # new parts were inserted with name = the OEM NUMBER and then categorised
+        # from a part code (e.g. 'IL333' -> engine). Capture it.
+        pending_desc: str = ""
 
         for line in lines:
             if any(h in line for h in SKIP_HEADERS):
@@ -148,15 +161,23 @@ def extract_parts(pdf_path: Path, expected_brand_en: str) -> list[dict]:
                 elif om:
                     # OEM + price on same line
                     oem_here = om.group(1)
+                desc_here = (line[:pm.start()].strip() or pending_desc).strip()
+                if oem_here and desc_here.startswith(oem_here):
+                    desc_here = desc_here[len(oem_here):].strip()
                 if oem_here and oem_here not in seen and price > 0:
                     seen.add(oem_here)
-                    parts.append({'oem': oem_here, 'price': price})
+                    parts.append({'oem': oem_here, 'price': price,
+                                  'desc': desc_here[:300]})
                 pending_oem = None
+                pending_desc = ""
 
             elif om:
                 # OEM line (no price yet) — set as pending
                 pending_oem = om.group(1)
-            # else: description text or brand-name-only line — keep pending_oem
+                pending_desc = ""
+            elif pending_oem:
+                # description text between the OEM line and its price line
+                pending_desc = (pending_desc + " " + line).strip()
 
         if page_num % 200 == 0 or page_num == total:
             log(f"  {expected_brand_en} page {page_num}/{total}, parts: {len(parts):,}")
@@ -205,6 +226,8 @@ async def import_brand(conn, brand_en: str, parts: list[dict], supplier_id: str,
         cost = round(retail / (1 + VAT), 2)
         selling = round(cost * MARGIN + cost, 2)
         oem = p["oem"]
+        # Real description when the PDF gave one; the OEM is only a fallback.
+        name_he = (p.get("desc") or "").strip() or oem
 
         try:
             async with conn.transaction():
@@ -242,11 +265,11 @@ async def import_brand(conn, brand_en: str, parts: list[dict], supplier_id: str,
                     part_id = await conn.fetchval("""
                         INSERT INTO parts_catalog(
                             id, sku, oem_number, name, name_he, manufacturer, manufacturer_id,
-                            part_type, part_condition, importer_price_ils, max_price_ils,
+                            part_type, part_condition, category, importer_price_ils, max_price_ils,
                             base_price, is_active, specifications
                         ) VALUES(
-                            gen_random_uuid(), $1, $2, $2, $2, $3, $4,
-                            'oem', 'new', $5, $6, $7, true, $8::jsonb
+                            gen_random_uuid(), $1, $2, $9, $9, $3, $4,
+                            'oem', 'new', $10, $5, $6, $7, true, $8::jsonb
                         )
                         ON CONFLICT (sku) DO UPDATE SET
                             importer_price_ils=CASE WHEN EXCLUDED.importer_price_ils>0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
@@ -254,17 +277,20 @@ async def import_brand(conn, brand_en: str, parts: list[dict], supplier_id: str,
                             base_price=CASE WHEN EXCLUDED.base_price>0 THEN EXCLUDED.base_price ELSE parts_catalog.base_price END,
                             updated_at=NOW()
                         RETURNING id
-                    """, sku, oem, brand_en, manufacturer_id, cost, retail, selling, spec_base)
+                    """, sku, oem, brand_en, manufacturer_id, cost, retail, selling, spec_base,
+                        name_he, categorize_on_ingest(name_he=name_he))
                     inserted += 1
 
                 if part_id and supplier_id:
                     await conn.execute("""
                         INSERT INTO supplier_parts(id,supplier_id,part_id,supplier_sku,price_ils,price_usd,
-                            availability,is_available,supplier_url,created_at,updated_at)
-                        VALUES(gen_random_uuid(),$1,$2::uuid,$3,$4,0,'in_stock',true,$5,NOW(),NOW())
+                            availability,is_available,supplier_url,warranty_months,
+                            warranty_source,created_at,updated_at)
+                        VALUES(gen_random_uuid(),$1,$2::uuid,$3,$4,0,'in_stock',true,$5,$6,$7,NOW(),NOW())
                         ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE SET
                             price_ils=EXCLUDED.price_ils, is_available=true, updated_at=NOW()
-                    """, supplier_id, part_id, oem, retail, "https://www.colmobil.co.il/spareparts/")
+                    """, supplier_id, part_id, oem, retail, "https://www.colmobil.co.il/spareparts/",
+                        *_warranty_resolve(None))
 
         except Exception as e:
             errors += 1

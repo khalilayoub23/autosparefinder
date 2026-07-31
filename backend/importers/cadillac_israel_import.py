@@ -9,6 +9,9 @@ Run inside container: python3 /app/importers/cadillac_israel_import.py
 from __future__ import annotations
 import asyncio, logging, re
 import asyncpg
+
+# Category rules DELEGATED to category_map — the single source of truth.
+from category_map import CATCH_ALL, categorize_on_ingest
 import openpyxl
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -64,35 +67,18 @@ TERM_MAP = [
 ]
 
 # Category rules: Hebrew keyword → slug
-CAT_RULES = [
-    (['דיסק בלם', 'רפידות בלם', 'רפידת בלם', 'בלם', 'ABS'], 'brakes'),
-    (['בולם זעזועים', 'קפיץ', 'מיסב', 'זרוע', 'מתלה'], 'suspension-steering'),
-    (['הגה', 'תיבת הגה'], 'suspension-steering'),
-    (['פנס', 'מנורה', 'תאורה', 'LED', 'נורה'], 'lighting'),
-    (['רדיאטור', 'משאבת מים', 'תרמוסטט', 'קירור', 'מאוורר'], 'cooling'),
-    (['מסנן', 'פילטר', 'אוויר', 'שמן מנוע'], 'engine'),
-    (['מנוע', 'בוכנה', 'גל ארכובה', 'ראש גליל'], 'engine'),
-    (['חיישן', 'ממסר', 'נתיך', 'כבל', 'צמת', 'ECU', 'יחידת בקרה', 'סוללה', 'מצבר'], 'electrical-sensors'),
-    (['פגוש', 'דלת', 'כנף', 'גג', 'פנל', 'גוף'], 'body-exterior'),
-    (['שמשה', 'חלון', 'מגב'], 'body-exterior'),
-    (['מושב', 'ריפוד', 'שטיח'], 'interior'),
-    (['כרית אוויר', 'חגורת בטיחות'], 'body-exterior'),
-    (['תיבת הילוכים', 'גיר', 'מצמד', 'ציריה'], 'gearbox'),
-    (['מזגן', 'HVAC'], 'air-conditioning-heating'),
-    (['מצת', 'סליל הצתה', 'מזרק דלק', 'משאבת דלק'], 'fuel-air'),
-    (['רצועה', 'שרשרת', 'גלגלת'], 'belts-chains'),
-    (['ציריה', 'גל הינע'], 'clutch-drivetrain'),
-]
 
 HEBREW_RE = re.compile(r'[א-ת]')
 
 
 def categorize(desc: str) -> str:
-    for keywords, cat in CAT_RULES:
-        for kw in keywords:
-            if kw in desc:
-                return cat
-    return 'accessories'
+    """
+    Hebrew description -> canonical slug via category_map.
+    The private CAT_RULES this replaces sent 'מסנן'/'פילטר'/'אוויר' to
+    'engine' — filters are their own category, and bare 'אוויר' (air)
+    matched almost anything.
+    """
+    return categorize_on_ingest(name_he=desc)
 
 
 def translate_name(heb: str) -> str:
@@ -184,7 +170,7 @@ async def import_parts(conn: asyncpg.Connection, rows: list) -> dict:
                     ON CONFLICT (sku) DO UPDATE SET
                         name = EXCLUDED.name,
                         base_price = EXCLUDED.base_price,
-                        importer_price_ils = EXCLUDED.importer_price_ils,
+                        importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
                         min_price_ils = EXCLUDED.min_price_ils,
                         max_price_ils = EXCLUDED.max_price_ils,
                         updated_at = NOW()

@@ -32,6 +32,10 @@ from typing import Optional
 import asyncpg
 import pdfplumber
 
+# ONE category source of truth — this INSERT used to hardcode
+# 'Parts & Accessories', which is not a category at all.
+from category_map import categorize_on_ingest
+
 
 MARGIN = 1.45
 
@@ -350,7 +354,7 @@ async def import_prices(
                             )
                             SELECT
                                 gen_random_uuid(), $1, $1, $2, $3,
-                                'Parts & Accessories', $2,
+                                $10, $2,
                                 $4, $5, $4, $6,
                                 $7, $8::jsonb, $9,
                                 TRUE, FALSE, NOW(), NOW()
@@ -361,6 +365,7 @@ async def import_prices(
                             oem, row["name"], brand,
                             price_excl, price_incl, base,
                             row["part_type"], specs, row["in_stock"],
+                            categorize_on_ingest(name=row["name"]),
                         )
                         inserted += 1
             except Exception as e:

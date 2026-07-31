@@ -55,6 +55,14 @@ from part_type_taxonomy import (
     iter_part_type_families,
     resolve_part_type_family,
 )
+# Category vocabulary — category_map is the single source of truth.
+from category_map import (
+    CANONICAL as CANONICAL_CATEGORY_SET,
+    CATCH_ALL as CATEGORY_CATCH_ALL,
+    categorize_on_ingest,
+    display_name as category_display_name,
+    normalize_category_label,
+)
 
 
 def _supplier_source_tag(supplier_name: Optional[str], supplier_website: Optional[str] = None) -> str:
@@ -442,102 +450,63 @@ async def _lookup_vehicle_by_license_plate(license_plate: str) -> Dict[str, Any]
         return result
 
 
-CANONICAL_FILTER_CATEGORIES: List[str] = [
-    "בלמים",
-    "גלגלים וצמיגים",
-    "דלק",
-    "היגוי",
-    "חשמל רכב",
-    "כללי",
-    "מגבים",
-    "מיזוג",
-    "מנוע",
-    "מתלה",
-    "פחיין ומרכב",
-    "ריפוד ופנים",
-    "שרשראות ורצועות",
-    "תאורה",
-]
+# Facet buckets for the category filter. These are the CANONICAL SLUGS actually
+# stored in parts_catalog.category — they used to be Hebrew DISPLAY names
+# ("בלמים", "פחיין ומרכב"), a vocabulary that shares no values with the column,
+# so the filter compared against strings that can never be present.
+CANONICAL_FILTER_CATEGORIES: List[str] = sorted(CANONICAL_CATEGORY_SET)
 
-FILTER_CATEGORY_MAP: Dict[str, str] = {
-    "brakes": "בלמים",
-    "brake": "בלמים",
-    "בלם": "בלמים",
-    "wheels": "גלגלים וצמיגים",
-    "tyres": "גלגלים וצמיגים",
-    "tires": "גלגלים וצמיגים",
-    "גלגלים": "גלגלים וצמיגים",
-    "צמיגים": "גלגלים וצמיגים",
-    "fuel": "דלק",
-    "fuel system": "דלק",
-    "מערכת דלק": "דלק",
-    "steering": "היגוי",
-    "electrical": "חשמל רכב",
-    "electric": "חשמל רכב",
-    "electronics": "חשמל רכב",
-    "חשמל": "חשמל רכב",
-    "general": "כללי",
-    "misc": "כללי",
-    "miscellaneous": "כללי",
-    "other": "כללי",
-    "אחר": "כללי",
-    "wipers": "מגבים",
-    "wiper": "מגבים",
-    "מגב": "מגבים",
-    "ac": "מיזוג",
-    "air conditioning": "מיזוג",
-    "climate": "מיזוג",
-    "hvac": "מיזוג",
-    "engine": "מנוע",
-    "motor": "מנוע",
-    "suspension": "מתלה",
-    "body": "פחיין ומרכב",
-    "bodywork": "פחיין ומרכב",
-    "מרכב": "פחיין ומרכב",
-    "interior": "ריפוד ופנים",
-    "upholstery": "ריפוד ופנים",
-    "belts": "שרשראות ורצועות",
-    "chains": "שרשראות ורצועות",
-    "belt": "שרשראות ורצועות",
-    "timing": "שרשראות ורצועות",
-    "רצועות": "שרשראות ורצועות",
-    "lighting": "תאורה",
-    "lights": "תאורה",
-    "light": "תאורה",
-    "lamps": "תאורה",
-    "תאור": "תאורה",
-}
+# FILTER_CATEGORY_MAP removed 2026-07-27 — its Hebrew-display targets are now
+# category_map.DISPLAY, and label->slug resolution is normalize_category_label().
 
+# Keyword expansion used when a filter value has no part_type family clause.
+# Keyed by CANONICAL SLUG (was keyed by Hebrew display name, which
+# _normalize_filter_category can no longer produce).
 FILTER_CATEGORY_KEYWORDS: Dict[str, List[str]] = {
-    "בלמים": ["בלם", "בלמים", "רפיד", "צלחת", "דיסק בלם", "brake", "brakes", "pad", "pads", "rotor", "disc"],
-    "מנוע": ["מנוע", "אטם", "שסתום", "פילטר שמן", "engine", "gasket", "valve", "oil filter", "thermostat"],
-    "מיזוג": ["מזגן", "מדחס", "מעבה", "מאייד", "ac", "a/c", "compressor", "condenser", "evaporator"],
-    "חשמל רכב": ["חשמל", "אלטרנטור", "סטרטר", "חיישן", "מצת", "alternator", "starter", "sensor", "spark plug"],
-    "מתלה": ["בולם", "זרוע", "תפוח", "מיסב", "suspension", "shock", "strut", "bearing", "arm"],
-    "היגוי": ["הגה", "מסרק", "קצה הגה", "steering", "rack", "tie rod"],
-    "תאורה": ["פנס", "תאורה", "נורה", "lamp", "light", "headlight", "tail light", "bulb"],
-    "מגבים": ["מגב", "wiper", "washer"],
-    "דלק": ["דלק", "משאבת דלק", "מזרק", "fuel", "injector", "pump"],
-    "פחיין ומרכב": ["פגוש", "גריל", "כנף", "דלת", "מכסה", "bumper", "grille", "fender", "door", "hood"],
-    "ריפוד ופנים": ["ריפוד", "מושב", "דשבורד", "trim", "interior", "seat", "dashboard"],
-    "שרשראות ורצועות": ["רצוע", "שרשרת", "טיימינג", "belt", "chain", "timing"],
-    "גלגלים וצמיגים": ["צמיג", "גלגל", "גנט", "tire", "tyre", "wheel", "rim"],
+    "brakes": ["בלם", "בלמים", "רפיד", "צלחת", "דיסק בלם", "فرامل", "brake", "brakes", "pad", "pads", "rotor", "disc"],
+    "engine": ["מנוע", "אטם", "שסתום", "محرك", "engine", "gasket", "valve", "piston", "camshaft"],
+    "filters": ["מסנן", "פילטר", "فلتر", "filter", "oil filter", "air filter", "cabin filter"],
+    "air-conditioning-heating": ["מזגן", "מדחס", "מעבה", "מאייד", "مكيف", "ac", "a/c", "compressor", "condenser", "evaporator"],
+    "electrical-sensors": ["חשמל", "אלטרנטור", "סטרטר", "חיישן", "מצת", "حساس", "alternator", "starter", "sensor", "spark plug"],
+    "suspension-steering": ["בולם", "זרוע", "תפוח", "הגה", "מסרק", "ممتص الصدمات", "مقود", "suspension", "shock", "strut", "arm", "steering", "rack", "tie rod"],
+    "wheels-bearings": ["צמיג", "גלגל", "גנט", "מיסב", "جنط", "tire", "tyre", "wheel", "rim", "bearing", "hub"],
+    "lighting": ["פנס", "תאורה", "נורה", "مصباح", "lamp", "light", "headlight", "tail light", "bulb"],
+    "wipers-washers": ["מגב", "ממחק", "مساحات", "wiper", "washer"],
+    "fuel-air": ["דלק", "משאבת דלק", "מזרק", "مضخة الوقود", "fuel", "injector", "throttle", "turbo"],
+    "body-exterior": ["פגוש", "גריל", "כנף", "דלת", "מכסה", "مصد", "bumper", "grille", "fender", "door", "hood"],
+    "interior-comfort": ["ריפוד", "מושב", "דשבורד", "مقعد", "trim", "interior", "seat", "dashboard"],
+    "belts-chains": ["רצוע", "שרשרת", "טיימינג", "سير", "belt", "chain", "timing"],
+    "cooling": ["רדיאטור", "קירור", "משאבת מים", "رديتر", "radiator", "coolant", "water pump", "thermostat"],
+    "exhaust": ["פליטה", "אגזוז", "عادم", "exhaust", "muffler", "catalytic"],
+    "gearbox": ["גיר", "תיבת הילוכים", "علبة التروس", "gearbox", "transmission"],
+    "clutch-drivetrain": ["מצמד", "كلتش", "clutch", "flywheel", "driveshaft", "differential"],
+    "safety-systems": ["כרית אוויר", "חגורת בטיחות", "وسادة هوائية", "airbag", "seat belt"],
+    "fluids": ["שמן", "נוזל", "زيت", "oil", "fluid", "coolant", "grease"],
+    "hybrid-ev": ["היברידי", "هجين", "hybrid", "ev", "inverter", "traction battery"],
+    "accessories": ["אביזר", "إكسسوار", "accessory", "holder", "cover"],
+    "service-general": ["ערכת שירות", "طقم صيانة", "service kit", "repair kit", "gasket set"],
 }
 
 
 def _normalize_filter_category(raw: Optional[str]) -> str:
+    """
+    User-supplied filter value (slug, Hebrew/Arabic name, supplier label, free
+    text) -> CANONICAL SLUG. Empty string when there is nothing to filter on.
+
+    Everything routes through category_map so the search filter, the importers
+    and the DB column all speak one vocabulary. This previously produced Hebrew
+    display names ("בלמים") which are not values the column ever holds.
+    """
     v = (raw or "").strip()
     if not v:
         return ""
-    if v in CANONICAL_FILTER_CATEGORIES:
+    if v in CANONICAL_CATEGORY_SET:
         return v
-    low = v.lower()
-    if low in FILTER_CATEGORY_MAP:
-        return FILTER_CATEGORY_MAP[low]
-    for k, mapped in FILTER_CATEGORY_MAP.items():
-        if k and (k in low or low in k):
-            return mapped
-    return "כללי"
+    mapped = normalize_category_label(v)
+    if mapped:
+        return mapped
+    # Last resort: treat the filter text as a part description.
+    return categorize_on_ingest(name=v, name_he=v)
 
 
 def _is_probable_variant_submodel(value: Optional[str]) -> bool:

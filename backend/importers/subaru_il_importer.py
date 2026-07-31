@@ -157,67 +157,19 @@ def harvest_all() -> list:
 
 
 # ── Category mapping from Hebrew description ─────────────────────────────────
-CATEGORY_KEYWORDS = {
-    "בלם": "Brakes",
-    "רפידה": "Brakes",
-    "דיסק בלם": "Brakes",
-    "קליפר": "Brakes",
-    "מנוע": "Engine",
-    "מנוף": "Engine",
-    "בוכנה": "Engine",
-    "גל ארכובה": "Engine",
-    "שמן מנוע": "Engine",
-    "מסנן שמן": "Engine",
-    "מסנן אויר": "Engine",
-    "מסנן": "Filters",
-    "גיר": "Transmission",
-    "תיבת הילוכים": "Transmission",
-    "CVT": "Transmission",
-    "מצמד": "Transmission",
-    "הגה": "Steering",
-    "גל הגה": "Steering",
-    "משאבת הגה": "Steering",
-    "קפיץ": "Suspension",
-    "בולם": "Suspension",
-    "זרוע": "Suspension",
-    "חיישן": "Sensors & Electrical",
-    "ממסר": "Sensors & Electrical",
-    "נתיך": "Sensors & Electrical",
-    "מודול": "Sensors & Electrical",
-    "יחידת שליטה": "Sensors & Electrical",
-    "מצנן": "Cooling",
-    "מאוורר": "Cooling",
-    "מדחס": "Air Conditioning",
-    "מזגן": "Air Conditioning",
-    "פנס": "Lighting",
-    "נורה": "Lighting",
-    "מגב": "Wipers & Washers",
-    "משאבת מים": "Cooling",
-    "רדיאטור": "Cooling",
-    "שרשרת": "Engine",
-    "חגורה": "Engine",
-    "אטם": "Engine",
-    "מצבר": "Battery",
-    "גנרטור": "Electrical",
-    "גלגל": "Wheels & Tires",
-    "מראה": "Body & Trim",
-    "פגוש": "Body & Trim",
-    "מכסה": "Body & Trim",
-    "דלת": "Body & Trim",
-    "חלון": "Glass & Seals",
-    "שמשה": "Glass & Seals",
-    "צינור": "Fuel & Exhaust",
-    "מאבזר": "Accessories",
-    "אביזר": "Accessories",
-}
+# Category rules DELEGATED to category_map — the single source of truth.
+# Add keywords to category_map.py, never here.
+from category_map import CATCH_ALL, categorize_on_ingest, normalize_category_label
 
 
 def infer_category(name_he: str) -> str:
-    name_lower = name_he.lower()
-    for kw, cat in CATEGORY_KEYWORDS.items():
-        if kw in name_he:
-            return cat
-    return "Other Parts"
+    """
+    -> canonical category slug via category_map.
+    The private rules this replaces returned NON-CANONICAL values ("Other Parts"),
+    which parts_catalog.category may never hold — so every part they
+    classified got an unusable label. Fallback is now 'כללי'.
+    """
+    return categorize_on_ingest(name_he=name_he or "")
 
 
 # ── Subaru model names for fitment extraction ─────────────────────────────────
@@ -375,7 +327,10 @@ async def import_parts(parts: list) -> dict:
                        warranty_months, estimated_delivery_days, supplier_url,
                        created_at, updated_at)
                        VALUES(gen_random_uuid(),$1::uuid,$2::uuid,$3,$4,0.0,$5,$6,$7,$8,$9,NOW(),NOW())
-                       ON CONFLICT(part_id, supplier_id) DO UPDATE SET
+                       -- (part_id, supplier_id) is NOT the constraint that fires on re-import;
+                    -- the collision is on (supplier_id, supplier_sku). Targeting
+                    -- the wrong one silently discards price and stock updates.
+                    ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE SET
                        price_ils=EXCLUDED.price_ils,
                        is_available=EXCLUDED.is_available,
                        updated_at=NOW()""",

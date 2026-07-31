@@ -9,6 +9,10 @@ Import prices and fitment for:
 """
 import asyncio, gc, json, os, re, sys, time, uuid, asyncpg
 
+# ONE category source of truth — categorize at INGEST so parts never land
+# with a NULL category and depend on the self-healing task to find them.
+from category_map import categorize_on_ingest
+
 DB_URL = os.environ.get("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://")
 VAT = 0.18
 
@@ -115,19 +119,20 @@ async def import_voyah(conn):
         try:
             row = await conn.fetchrow("""
                 INSERT INTO parts_catalog (
-                    id, sku, oem_number, name_he, name, manufacturer, manufacturer_id,
+                    id, sku, oem_number, name_he, name, manufacturer, manufacturer_id, category,
                     importer_price_ils, max_price_ils, base_price,
                     is_active, specifications, created_at, updated_at
-                ) VALUES ($1::uuid, $2, $3, $4, $5, 'Voyah', $6::uuid,
+                ) VALUES ($1::uuid, $2, $3, $4, $5, 'Voyah', $6::uuid, $10,
                           $7, $8, round(($7 * 1.45)::numeric, 2), true, $9::jsonb, NOW(), NOW())
                 ON CONFLICT (sku) DO UPDATE SET
-                    importer_price_ils=$7, max_price_ils=$8,
+                    importer_price_ils = CASE WHEN $7 > 0 THEN $7 ELSE parts_catalog.importer_price_ils END, max_price_ils=$8,
                     base_price=round(($7 * 1.45)::numeric, 2),
                     specifications=COALESCE(parts_catalog.specifications,'{}')::jsonb || $9::jsonb,
                     updated_at=NOW()
                 RETURNING id
             """, part_id, f"VOYAH-{oem}", oem, name_he or name_en, name_en,
-                mfr_id, cost, retail, spec)
+                mfr_id, cost, retail, spec,
+                categorize_on_ingest(name=name_en, name_he=name_he))
             if row:
                 pid = str(row["id"])
                 inserted += 1

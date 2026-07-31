@@ -45,6 +45,9 @@ Last Updated: 2026-06-02
 
 import asyncio
 import asyncpg
+
+# Category rules DELEGATED to category_map — the single source of truth.
+from category_map import CATCH_ALL, categorize_on_ingest
 import json
 import logging
 import os
@@ -84,48 +87,6 @@ BMW_MODELS = [
     "i3", "i8", "Z4",
 ]
 
-# BMW series → CATEGORY_MAP mapping
-CATEGORY_MAP = {
-    "Engine": "Engine",
-    "Fuel-Preparation": "Fuel & Air",
-    "Fuel-Supply": "Fuel & Air",
-    "Fuel-System": "Fuel & Air",
-    "Air-Intake": "Air Intake",
-    "Cooling-System": "Engine Cooling",
-    "Belts-Cooling": "Belts & Chains",
-    "Exhaust": "Exhaust",
-    "Emission": "Exhaust",
-    "Clutch": "Clutch Kits",
-    "Transmission": "Transmission",
-    "Manual-Transmission": "Manual Transmission",
-    "Automatic-Transmission": "Automatic Transmission",
-    "Driveline": "Driveline & Axles",
-    "Front-Drive-Axle": "CV Axles",
-    "Rear-Drive-Axle": "Driveline & Axles",
-    "Brakes": "Brakes",
-    "Brake-Pads": "Brake Pads",
-    "Brake-Disc": "Brake Rotors",
-    "Suspension": "Suspension & Steering",
-    "Front-Axle": "Suspension & Steering",
-    "Rear-Axle": "Suspension & Steering",
-    "Steering": "Suspension & Steering",
-    "Body": "Body Parts",
-    "Door": "Doors",
-    "Hood": "Hoods",
-    "Bumper": "Bumpers",
-    "Fender": "Fenders",
-    "Electrical": "Audio & Electronics",
-    "Lights": "Lighting",
-    "Headlights": "Headlights",
-    "Interior": "Interior",
-    "HVAC": "A/C & Heating",
-    "Heater": "A/C & Heating",
-    "Air-Conditioning": "A/C & Heating",
-    "Wheels": "Wheels & Tires",
-    "Tires": "Tires",
-    "Wiper": "Wipers & Washers",
-    "Fuel-Tank": "Fuel Delivery",
-}
 
 HEADERS = {
     "User-Agent": (
@@ -269,17 +230,21 @@ def extract_diagram_links_from_category(model: str, year: int, variant: str, htm
 
 
 def guess_category_from_url(url: str) -> str:
-    """Map a diagram URL's category segment to CATEGORY_MAP key."""
+    """
+    Map a diagram URL's category segment to a CANONICAL category slug.
+
+    The private CATEGORY_MAP this replaces returned display LABELS
+    ("Fuel & Air", "Engine Cooling") which are not storable category values,
+    and fell back to "Engine" — so every unmatched BMW diagram was filed as an
+    engine part. Rules live in category_map; fallback is 'כללי'.
+    """
     parts = url.split("/")
     # Diagram URL: /bmw-cars/Model/Year/Variant/Category/Subcategory/...
-    # Category is at index 5 (0-indexed)
-    cat_raw = ""
-    if len(parts) >= 6:
-        cat_raw = parts[5].replace("-", " ")
-    for key, val in CATEGORY_MAP.items():
-        if key.lower().replace("-", " ") in cat_raw.lower():
-            return val
-    return "Engine"
+    # Category is at index 5 (0-indexed); index 6 is the subcategory.
+    if len(parts) < 6:
+        return CATCH_ALL
+    segment = " ".join(p.replace("-", " ") for p in parts[5:7] if p)
+    return categorize_on_ingest(name=segment)
 
 
 def guess_model_from_url(url: str) -> str:

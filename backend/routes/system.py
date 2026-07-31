@@ -52,6 +52,87 @@ async def unpriced_oems_preflight():
     return JSONResponse(content={}, headers=CORS_HEADERS)
 
 
+@router.options("/api/v1/system/asap-collect")
+async def asap_collect_preflight():
+    return JSONResponse(content={}, headers=CORS_HEADERS)
+
+
+@router.post("/api/v1/system/asap-collect")
+async def asap_collect(request: Request):
+    """Owner-browser relay for ASAP Network data sheets.
+
+    ASAP's CSV load sheets are behind the owner's asapnetwork.org login, so our server
+    (no session there) cannot fetch them directly. Instead the owner's browser — which
+    HAS the session cookie — fetches an approved brand's CSV and POSTs it here as a CORS
+    'simple request' (Content-Type text/plain, secret in the JSON body → no preflight,
+    which the global CORSMiddleware would otherwise reject). Same auth as /collect
+    (COLLECT_SECRET). We persist it to /app/state/asap/<brand_id>.csv, log the real
+    header (so the importer can be mapped to ASAP's exact columns), and — once
+    importers/asap_import.py exists — kick it off. Returns ACAO:* so the browser can
+    read the reply."""
+    import pathlib
+    import subprocess
+    raw = await request.body()
+    data = {}
+    try:
+        data = json.loads(raw)
+    except Exception:
+        data = {}
+    secret = request.headers.get("X-Collect-Secret", "") or (data.get("secret") if isinstance(data, dict) else "") or ""
+    nonce = str((data.get("nonce") if isinstance(data, dict) else "") or "").strip()
+
+    # AUTH: the long-lived COLLECT_SECRET, or a short-lived SINGLE-USE nonce.
+    # The nonce exists so an operator driving the owner's browser never has to
+    # paste the long-lived shared secret into a page context (where it would be
+    # readable by that page and by anything logging the session). Mint one with
+    # `python3 /app/maintenance/mint_asap_nonce.py`; it lives in Redis for 15
+    # minutes and is DELETED on first successful use.
+    authorized = False
+    if _COLLECT_SECRET and secret == _COLLECT_SECRET:
+        authorized = True
+    elif nonce:
+        try:
+            import redis.asyncio as _redis
+            _r = _redis.from_url(os.getenv("REDIS_URL", "redis://redis:6379/0"))
+            key = f"asap:upload_nonce:{nonce}"
+            if await _r.delete(key):      # delete returns 1 only if it existed
+                authorized = True
+            await _r.aclose()
+        except Exception as exc:
+            print(f"[asap-collect] nonce check failed: {exc}", flush=True)
+    elif not _COLLECT_SECRET:
+        authorized = True                 # no secret configured at all
+
+    if not authorized:
+        return JSONResponse(status_code=403, content={"error": "forbidden"}, headers=CORS_HEADERS)
+    brand_id = str((data.get("brand_id") if isinstance(data, dict) else "") or "unknown").strip()
+    brand_name = str((data.get("brand_name") if isinstance(data, dict) else "") or "").strip()
+    csv_text = (data.get("csv") if isinstance(data, dict) else "") or ""
+    if not csv_text or len(csv_text) < 20:
+        return JSONResponse(status_code=400, content={"error": "empty csv"}, headers=CORS_HEADERS)
+    d = pathlib.Path("/app/state/asap")
+    d.mkdir(parents=True, exist_ok=True)
+    fpath = d / f"{brand_id}.csv"
+    fpath.write_text(csv_text, encoding="utf-8")
+    header = csv_text.split("\n", 1)[0][:1500]
+    rows = csv_text.count("\n")
+    print(f"[asap-collect] brand={brand_name!r}({brand_id}) bytes={len(csv_text)} rows={rows}\n[asap-collect] header={header!r}", flush=True)
+    import_pid = None
+    importer = pathlib.Path("/app/importers/asap_import.py")
+    if importer.exists():
+        try:
+            logp = pathlib.Path("/app/state/logs"); logp.mkdir(parents=True, exist_ok=True)
+            proc = subprocess.Popen(
+                ["python3", str(importer), str(fpath), "--brand-id", brand_id, "--brand-name", brand_name],
+                stdout=open(logp / f"asap_import_{brand_id}.log", "a"), stderr=subprocess.STDOUT)
+            import_pid = proc.pid
+        except Exception as e:
+            print(f"[asap-collect] importer spawn failed: {e}", flush=True)
+    return JSONResponse(
+        content={"status": "ok", "brand_id": brand_id, "bytes": len(csv_text), "rows": rows, "import_pid": import_pid},
+        headers=CORS_HEADERS)
+
+
 # Rotating keyset cursor so repeated calls sweep the whole unpriced catalog
 # instead of returning the same first N every time (module-level, per-process).
 _UNPRICED_OEM_CURSOR: dict = {"last_id": "00000000-0000-0000-0000-000000000000"}
@@ -438,6 +519,79 @@ async def health_check():
 @router.get("/health")
 async def health_alias():
     return {"status": "ok"}
+
+
+@router.get("/api/v1/system/job-queue")
+async def system_job_queue():
+    """Status of the sequenced catalogue pipeline (job_queue.py).
+
+    The owner's "we only observe" view: which step is running, how much work is
+    genuinely LEFT (measured from the database, never self-reported), and how
+    old that measurement is. `remaining_at` matters — the counts are 60-90s
+    full scans, so they are refreshed periodically rather than every batch, and
+    a stale number must be visible AS stale.
+    """
+    try:
+        import job_queue as _jq
+        async with async_session_factory() as db:
+            st = await _jq.status(db)
+        st["text"] = _jq.render_status(st)
+        # The step rows carry timestamps (remaining_at/started_at/…). JSONResponse
+        # cannot serialise a datetime and answers 500 — which is how this endpoint
+        # failed while the queue underneath it was perfectly healthy. Stringify.
+        for s in st.get("steps", []):
+            for k, v in list(s.items()):
+                if isinstance(v, datetime):
+                    s[k] = v.isoformat()
+        return JSONResponse(st)
+    except Exception as exc:
+        return JSONResponse(
+            {"error": f"{type(exc).__name__}: {exc}", "enabled": False}, status_code=500)
+
+
+@router.get("/api/v1/system/tasks")
+async def system_tasks():
+    """Live state of every supervised background loop.
+
+    Why this exists: the ONLY way to tell a healthy quiet loop from a dead one was
+    to grep docker logs and guess — a loop with a long interval and a loop that
+    crashed look identical from the outside. Counting log lines is not proof
+    (verified 2026-07-29: 19 of 29 loops showed zero log hits, none of which meant
+    what a naive read would suggest). This reads the actual asyncio task registry.
+
+    `_SUPERVISED_TASKS` lives in BACKEND_API_ROUTES, which imports this module —
+    so the import is LAZY, inside the handler, to avoid a circular import at
+    module load.
+    """
+    try:
+        from BACKEND_API_ROUTES import _SUPERVISED_TASKS
+    except Exception as exc:      # pragma: no cover
+        return JSONResponse(status_code=503,
+                            content={"error": f"task registry unavailable: {exc}"})
+
+    out = []
+    for name, t in sorted(_SUPERVISED_TASKS.items()):
+        exc_txt = None
+        state = "running"
+        if t.cancelled():
+            state = "cancelled"
+        elif t.done():
+            state = "DEAD"
+            try:
+                e = t.exception()
+                exc_txt = f"{type(e).__name__}: {e}" if e else None
+            except Exception:
+                pass
+        out.append({"name": name, "state": state, "error": exc_txt})
+
+    dead = [x for x in out if x["state"] == "DEAD"]
+    return {
+        "total": len(out),
+        "running": sum(1 for x in out if x["state"] == "running"),
+        "dead": len(dead),
+        "dead_names": [x["name"] for x in dead],
+        "tasks": out,
+    }
 
 
 @router.get("/api/v1/system/settings")

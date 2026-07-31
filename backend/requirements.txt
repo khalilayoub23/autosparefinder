@@ -38,3 +38,17 @@ twilio>=9.0,<10.0
 boto3
 pytesseract
 qrcode>=8.0
+
+# Local multilingual embeddings (category_embed.py) — ONNX Runtime, NOT torch.
+# torch would add ~800MB to the image and ~1.5GB RSS; this box has 12GB and NO
+# SWAP, where an OOM is a hard kill. Weights are NOT baked in — they live in the
+# worker_state volume (maintenance/fetch_embed_model.py).
+#
+# These were previously added only to the REPO-ROOT requirements.txt, but the
+# backend image builds with `build: ./backend`, so the Dockerfile's
+# `COPY requirements.txt .` reads THIS file — the deps never made it into the
+# image and task3c logged "embedding model UNAVAILABLE" on every cycle.
+onnxruntime>=1.20
+tokenizers>=0.20
+numpy>=1.26
+huggingface-hub>=0.26

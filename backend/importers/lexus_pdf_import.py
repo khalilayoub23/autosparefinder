@@ -33,6 +33,10 @@ import time
 import asyncpg
 import pdfplumber
 
+# ONE category source of truth — the literal that used to sit in this
+# INSERT ('General Parts'/'Auto Parts') is not a category at all.
+from category_map import categorize_on_ingest
+
 PDF_PATH = os.getenv("LEXUS_PDF", "/app/uploads/LEXUS_20260612_082412.pdf")
 IMPORTER = "יוניון מוטורס בע\"מ"
 PRICE_DATE = "2026-05-03"
@@ -299,14 +303,15 @@ async def run(dry_run: bool = False):
                             ) VALUES (
                                 gen_random_uuid(), $1, $1, $2, $2,
                                 'Lexus', $3::uuid,
-                                'Auto Parts', 'new', 'original',
+                                $8, 'new', 'original',
                                 $4, $5, $4, $7,
                                 $6::jsonb, true,
                                 true, false,
                                 NOW(), NOW()
                             ) ON CONFLICT (sku) DO NOTHING
                         """, oem, r["desc"], mfr_id,
-                            price_excl, price_incl, specs, base_price)
+                            price_excl, price_incl, specs, base_price,
+                            categorize_on_ingest(name=r["desc"]))
                         inserted_new += 1
 
                     # Now insert fitment for matched parts

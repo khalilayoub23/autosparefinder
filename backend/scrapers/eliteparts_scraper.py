@@ -94,76 +94,19 @@ CHERY_MODELS = [
 ]
 
 # Category guessing from keywords
-CATEGORY_KEYWORDS = {
-    "mirror": "Body Parts",
-    "door": "Doors",
-    "bumper": "Bumpers",
-    "hood": "Hoods",
-    "fender": "Fenders",
-    "headlight": "Headlights",
-    "tail light": "Tail Lights",
-    "fog light": "Fog Lights",
-    "light": "Lighting",
-    "brake pad": "Brake Pads",
-    "brake rotor": "Brake Rotors",
-    "brake disc": "Brake Rotors",
-    "caliper": "Calipers",
-    "brake": "Brakes",
-    "shock": "Shocks & Struts",
-    "strut": "Shocks & Struts",
-    "control arm": "Control Arms",
-    "steering": "Suspension & Steering",
-    "tie rod": "Tie Rods & Joints",
-    "wheel bearing": "Wheel Bearings & Hubs",
-    "hub": "Wheel Bearings & Hubs",
-    "cv axle": "CV Axles",
-    "driveshaft": "Driveshafts",
-    "engine": "Engine",
-    "oil filter": "Oil Filters",
-    "air filter": "Air Filters",
-    "fuel pump": "Fuel Delivery",
-    "fuel": "Fuel & Air",
-    "alternator": "Alternators & Starters",
-    "starter": "Alternators & Starters",
-    "battery": "Batteries & Power",
-    "sensor": "Sensors",
-    "oxygen sensor": "Oxygen Sensors",
-    "a/c": "A/C & Heating",
-    "ac compressor": "A/C Compressors",
-    "condenser": "Condensers",
-    "radiator": "Radiators",
-    "water pump": "Water Pumps",
-    "thermostat": "Thermostats",
-    "cooling fan": "Cooling Fans",
-    "coolant": "Coolants & Antifreeze",
-    "transmission": "Transmission",
-    "clutch": "Clutch Kits",
-    "gearbox": "Manual Transmission",
-    "transfer case": "Driveline & Axles",
-    "seat": "Seats",
-    "wiper": "Wiper Blades",
-    "window": "Window Regulators",
-    "glass": "Auto Glass",
-    "key": "Audio & Electronics",
-    "ecu": "Audio & Electronics",
-    "module": "Audio & Electronics",
-    "camera": "Cameras & GPS",
-    "exhaust": "Exhaust",
-    "muffler": "Mufflers",
-    "catalytic": "Catalytic Converters",
-    "timing belt": "Timing Belts",
-    "timing chain": "Timing Chains",
-    "gasket": "Gaskets & Seals",
-}
+# Category rules DELEGATED to category_map — the single source of truth.
+# Add keywords to category_map.py, never here.
+from category_map import CATCH_ALL, categorize_on_ingest, normalize_category_label
 
 
 def guess_category(title: str, tags: list[str]) -> str:
-    """Guess category from title and tags."""
-    combined = (title + " " + " ".join(tags)).lower()
-    for kw, cat in CATEGORY_KEYWORDS.items():
-        if kw in combined:
-            return cat
-    return "Engine"
+    """
+    -> canonical category slug via category_map.
+    The private rules this replaces returned NON-CANONICAL values ("Engine" — capitalised, and used as the catch-all),
+    which parts_catalog.category may never hold — so every part they
+    classified got an unusable label. Fallback is now 'כללי'.
+    """
+    return categorize_on_ingest(name=title + " " + " ".join(tags))
 
 
 def detect_manufacturer(title: str, tags: list[str]) -> tuple[str, str]:

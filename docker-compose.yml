@@ -194,6 +194,8 @@ services:
       TELEGRAM_ADMIN_BOT_TOKEN: ${TELEGRAM_ADMIN_BOT_TOKEN}
       TELEGRAM_OWNER_CHAT_ID: ${TELEGRAM_OWNER_CHAT_ID}
       # NOA social publishers (see docs/SOCIAL_SETUP.md). Empty = platform stays draft.
+      # NOA engagement (read+reply) tunables:
+      NOA_ENGAGEMENT_MAX_REPLIES: ${NOA_ENGAGEMENT_MAX_REPLIES:-5}
       GRAPH_API_VERSION: ${GRAPH_API_VERSION:-v21.0}
       FACEBOOK_PAGE_ID: ${FACEBOOK_PAGE_ID:-}
       FACEBOOK_PAGE_TOKEN: ${FACEBOOK_PAGE_TOKEN:-}
@@ -204,12 +206,23 @@ services:
       X_ACCESS_TOKEN: ${X_ACCESS_TOKEN:-}
       X_ACCESS_SECRET: ${X_ACCESS_SECRET:-}
       DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
+      DISCORD_ENGAGE_CHANNELS: ${DISCORD_ENGAGE_CHANNELS:-}
       REDDIT_CLIENT_ID: ${REDDIT_CLIENT_ID:-}
       REDDIT_CLIENT_SECRET: ${REDDIT_CLIENT_SECRET:-}
       REDDIT_USERNAME: ${REDDIT_USERNAME:-}
       REDDIT_PASSWORD: ${REDDIT_PASSWORD:-}
       REDDIT_SUBREDDIT: ${REDDIT_SUBREDDIT:-}
       REDDIT_USER_AGENT: ${REDDIT_USER_AGENT:-autosparefinder:noa:v1}
+      GOOGLE_BUSINESS_CLIENT_ID: ${GOOGLE_BUSINESS_CLIENT_ID:-}
+      GOOGLE_BUSINESS_CLIENT_SECRET: ${GOOGLE_BUSINESS_CLIENT_SECRET:-}
+      GOOGLE_BUSINESS_REFRESH_TOKEN: ${GOOGLE_BUSINESS_REFRESH_TOKEN:-}
+      GOOGLE_BUSINESS_ACCOUNT: ${GOOGLE_BUSINESS_ACCOUNT:-}
+      GOOGLE_BUSINESS_LOCATION: ${GOOGLE_BUSINESS_LOCATION:-}
+      YOUTUBE_CLIENT_ID: ${YOUTUBE_CLIENT_ID:-}
+      YOUTUBE_CLIENT_SECRET: ${YOUTUBE_CLIENT_SECRET:-}
+      YOUTUBE_REFRESH_TOKEN: ${YOUTUBE_REFRESH_TOKEN:-}
+      YOUTUBE_CHANNEL_ID: ${YOUTUBE_CHANNEL_ID:-}
       NOA_MARKETING_INTERVAL_H: ${NOA_MARKETING_INTERVAL_H:-24}
       DEV_2FA_CODE: ${DEV_2FA_CODE}
       CORS_ORIGINS: ${CORS_ORIGINS:-https://autosparefinder.co.il,https://www.autosparefinder.co.il,https://www.car-parts.ie}
@@ -224,6 +237,35 @@ services:
       ENVIRONMENT: production
       REAL_DATA_ONLY: 'true'        # blocks synthetic/AI-generated data; real harvesting uses REX_HARVEST_ENABLED
       REX_HARVEST_ENABLED: 'true'  # allows REX to scrape and import real parts data through the pipeline
+      # LLM ASSIST for categorization — ON, but budgeted.
+      # It is a HELPER for a stuck worker, not the worker: it only sees parts the
+      # deterministic keyword matcher genuinely could not place, and every answer
+      # is mined into a permanent keyword rule (category_learning), so demand
+      # SHRINKS over time. The 2026-07-27 blowout was an unbounded caller
+      # (batch 500 every 30s, nothing learned) — the three limits below make that
+      # shape impossible. Raise them only after checking provider headroom.
+      # Local multilingual embedding assist (ONNX MiniLM). FREE — no per-call
+      # cost, so unlike the LLM it has no daily cap. Proposes keywords only;
+      # every suggestion still passes the blocklist, the consensus threshold and
+      # the owner approval gate before it can affect a single part.
+      EMBED_ASSIST_ENABLED: '1'
+      EMBED_LEARN_MIN_SCORE: '0.80'   # only high-confidence predictions may propose
+      EMBED_THREADS: '2'              # keep off the harvester's CPU
+      CLEANUP_LLM_ENABLED: '1'          # task3b LLM assist in db_cleanup_agent
+      CLEANUP_LLM_BATCH: '25'           # parts per prompt (NEVER 500)
+      CLEANUP_LLM_MIN_INTERVAL_S: '180' # ≥3 min between calls
+      CLEANUP_LLM_DAILY_MAX_CALLS: '150'# hard per-day ceiling
+      # ── Sequenced catalogue pipeline (job_queue.py) ──────────────────────
+      # Owner said "run the jobs" 2026-07-29. Runs ONE batch at a time in order:
+      # merge → categorize → thumbnails → reindex → parity. Observe with the
+      # WhatsApp `תור` command or GET /api/v1/system/job-queue; stop safely with
+      # `עצור` (finishes the current batch, never a kill).
+      JOB_QUEUE_ENABLED: '1'
+      JOB_QUEUE_COOLDOWN_S: '20'        # breathing room between batches
+      JOB_QUEUE_BATCH_TIMEOUT_S: '2400' # a batch that exceeds this is too big
+      JOB_QUEUE_IDLE_SLEEP_S: '300'
+      OEM_LOOKUP_ENABLED: '0'      # lookup_oem_spec in run_all_tasks — disabled by default (hits Cerebras per-row)
+      ENRICH_PARTS_ENABLED: '0'    # enrich_pending_parts loop + run_all_tasks wrapper — disabled by default
       DISCOVERY_TARGET: '500000'   # parts per brand before REX stops (default 200 was too low; goal is 10M parts)
       DISCOVERY_PER_RUN: '20'      # brands to process per REX cycle (default 5)
       DISCOVERY_INTERVAL_H: '3'    # run REX every 3h aligned with scraper cycle (default 24)
@@ -375,9 +417,19 @@ services:
     - ./whatsapp-bridge:/app
     environment:
     - BACKEND_URL=http://backend:8000/api/v1/webhooks/whatsapp
+    # The BUSINESS WhatsApp account this bridge must run as ("Autosparefinder.co.il").
+    # A QR scan links whatever phone scans it — on 2026-07-29 it was re-linked with
+    # the owner's PERSONAL number, which silently cut off every customer messaging
+    # the business line. The bridge now refuses to pretend that is fine.
+    - WHATSAPP_EXPECTED_NUMBER=972532426920
     command: sh -c "npm install --silent && node index.js"
     ports:
-    - 3001:3001
+    # LOCALHOST ONLY. POST /send has no authentication, so a 0.0.0.0 binding
+    # meant anyone able to reach this port could send WhatsApp messages AS the
+    # platform. The backend talks to it over the internal docker network
+    # (http://whatsapp-bridge:3001/send) and never needs the host mapping; this
+    # is kept bound to 127.0.0.1 purely for local debugging.
+    - 127.0.0.1:3001:3001
     restart: unless-stopped
     depends_on:
     - backend

@@ -30,7 +30,7 @@ import asyncpg
 import pandas as pd
 from dotenv import load_dotenv
 
-from categories import guess_category_by_text
+from category_map import CATCH_ALL, categorize_on_ingest, guess_category_by_text
 
 load_dotenv()
 
@@ -319,7 +319,7 @@ async def insert_missing_keys(
         existing_skus.add(sku.upper())
 
         name = src.name or f"{manufacturer.upper()} PART {key}"
-        category = src.category or guess_category_by_text(f"{name} {manufacturer}") or "general"
+        category = src.category or categorize_on_ingest(name=f"{name} {manufacturer}")
         base_price = src.base_price if src.base_price is not None else 0.0
 
         to_insert.append(
@@ -450,7 +450,7 @@ async def apply_quality_fixes(conn: asyncpg.Connection, manufacturer: str, dry_r
                 clean(row["description"]) or "",
             ]
         )
-        guessed = guess_category_by_text(blob) or "general"
+        guessed = guess_category_by_text(blob) or CATCH_ALL
         updates.append((guessed[:100], row["id"]))
 
     metrics["categories_fixed"] = len(updates)

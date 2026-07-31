@@ -44,6 +44,9 @@ import time
 import uuid
 from pathlib import Path
 
+# ONE category source of truth — never a private ruleset here.
+from category_map import categorize_on_ingest
+
 import asyncpg
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -178,40 +181,20 @@ def parse_model_entry(entry: str) -> list[dict]:
 
 
 def guess_category(name_he: str) -> str:
-    """Guess part category from Hebrew name."""
-    name = name_he.upper()
-    if any(k in name for k in ["בלם", "דיסק", "צלחת"]):
-        return "brakes"
-    if any(k in name for k in ["מנוע", "אטמים", "בוכנה", "גלגל תנופה"]):
-        return "engine"
-    if any(k in name for k in ["שמן", "פילטר", "מסנן"]):
-        return "filters"
-    if any(k in name for k in ["מצמד", "גיר", "תיבת"]):
-        return "transmission"
-    if any(k in name for k in ["מתלה", "קפיץ", "בולם", "מוט"]):
-        return "suspension"
-    if any(k in name for k in ["חשמל", "מצבר", "דינמו", "פתיל", "כבל"]):
-        return "electrical"
-    if any(k in name for k in ["קירור", "ראדיאטור", "תרמוסטט", "מאוורר"]):
-        return "cooling"
-    if any(k in name for k in ["דלק", "מזרק", "משאבת", "צינור"]):
-        return "fuel_system"
-    if any(k in name for k in ["הגה", "הכוון"]):
-        return "steering"
-    if any(k in name for k in ["מצמד", "סט דיסק"]):
-        return "clutch"
-    if any(k in name for k in ["כריות אוויר", "כרית אוויר", "חגורה"]):
-        return "safety"
-    if any(k in name for k in ["פנס", "נורה", "תאורה"]):
-        return "lighting"
-    if any(k in name for k in ["מזגן", "AC", "A/C"]):
-        return "air_conditioning"
-    if any(k in name for k in ["גוף", "פגוש", "דלת", "מכסה"]):
-        return "body_parts"
-    if any(k in name for k in ["גלגל", "צמיג", "רים"]):
-        return "wheels_tires"
-    return "other_parts"
+    """Categorize a Toyota IL part name.
 
+    DELEGATES to category_map — the single source of truth. This function used to
+    carry its OWN keyword ruleset returning a FOURTH vocabulary
+    ('transmission', 'suspension', 'electrical', 'fuel_system', 'steering',
+    'body_parts', 'air_conditioning', 'other_parts', 'safety', 'clutch') — none of
+    which are canonical. Every re-import injected those, and normalize_categories
+    then had to map them back (or flatten them into the catch-all). That is the
+    exact "private rule set" defect the category merge was supposed to end; this
+    importer and mazda_il_importer.py were missed by it.
+
+    Never re-add keyword rules here — add them to category_map.py.
+    """
+    return categorize_on_ingest(name=name_he, name_he=name_he)
 
 def is_safety_critical(name_he: str) -> bool:
     name = name_he.upper()
@@ -313,7 +296,7 @@ async def main():
                     part_id = str(row["id"])
                     await conn.execute("""
                         UPDATE parts_catalog SET
-                            base_price=$1, importer_price_ils=$2, min_price_ils=$3, max_price_ils=$3,
+                            base_price=$1, importer_price_ils = CASE WHEN $2 > 0 THEN $2 ELSE parts_catalog.importer_price_ils END, min_price_ils=$3, max_price_ils=$3,
                             specifications=$4::jsonb, compatible_vehicles=$5::jsonb,
                             is_safety_critical=$6, updated_at=NOW()
                         WHERE id=$7

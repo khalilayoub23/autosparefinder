@@ -4530,7 +4530,7 @@ async def import_parts_excel(
                     name=name_val,
                     category=_get(row, 'category'),
                     manufacturer=_get(row, 'manufacturer'),
-                    part_type=_get(row, 'part_type') or 'Aftermarket',
+                    part_type=_get(row, 'part_type') or 'aftermarket',
                     description=_get(row, 'description'),
                     base_price=price,
                     compatible_vehicles=compat,

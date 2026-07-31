@@ -47,6 +47,9 @@ from pathlib import Path
 import asyncpg
 import urllib.parse as up
 
+# ONE category source of truth — never a private ruleset here.
+from category_map import categorize_on_ingest
+
 INPUT_FILE   = os.getenv("CM_JSON", "/app/state/champion_motors_parts.json")
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
@@ -76,17 +79,16 @@ def norm_make(raw):
 def make_sku(oem):
     return f"{SKU_PREFIX}-{re.sub(r'[^A-Za-z0-9]','',oem).upper()[:50]}"
 
-def categorise(name_he, part_type_he):
-    text = f"{name_he} {part_type_he}".lower()
-    if any(w in text for w in ["מנוע","שמן","מסנן","filter"]): return "Engine Parts"
-    if any(w in text for w in ["ברקס","בלם","brake","disc","pad"]): return "Brakes"
-    if any(w in text for w in ["suspension","שלדה","קפיץ","מוט","bearing","מסב"]): return "Suspension"
-    if any(w in text for w in ["seal","אטם","gasket"]): return "Engine Parts"
-    if any(w in text for w in ["electrical","חשמל","sensor","חיישן"]): return "Electrical"
-    if any(w in text for w in ["gearbox","תיבת","clutch","מצמד"]): return "Transmission"
-    if any(w in text for w in ["body","פגוש","מכסה","דלת"]): return "Body Parts"
-    if any(w in text for w in ["cooling","קירור","radiator"]): return "Cooling System"
-    return "General Parts"
+def categorise(name_he, part_type_he) -> str:
+    """Delegates to category_map — the ONE source of truth.
+
+    This previously carried its own keyword ruleset returning a vocabulary
+    parts_catalog.category may never hold (Title-Case labels), so every part it
+    classified got an unusable label that normalize_categories then had to
+    map back or flatten into the catch-all.
+    Never re-add keyword rules here — add them to category_map.py.
+    """
+    return categorize_on_ingest(name_he=name_he, name=part_type_he)
 
 async def run_import():
     p = up.urlparse(DATABASE_URL)

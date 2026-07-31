@@ -31,6 +31,14 @@ from pathlib import Path
 
 import asyncpg
 
+# ONE category source of truth — categorize at INGEST so parts never land
+# with a NULL category and depend on the self-healing task to find them.
+from category_map import categorize_on_ingest
+
+# ONE warranty source of truth — resolve() returns (months, source);
+# never hardcode a warranty or drop its provenance. See warranty_policy.py.
+from warranty_policy import resolve as _warranty_resolve
+
 Path("/app/state/logs").mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
@@ -207,9 +215,9 @@ async def upsert_batch(
                 part_id = await conn.fetchval(
                     """INSERT INTO parts_catalog
                         (id, sku, oem_number, name, name_he, manufacturer, manufacturer_id,
-                         part_type, part_condition, importer_price_ils, max_price_ils,
+                         part_type, part_condition, category, importer_price_ils, max_price_ils,
                          base_price, is_active, specifications)
-                       VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,$6,'oem','new',$7,$8,$9,true,$10)
+                       VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,$6,'oem','new',$11,$7,$8,$9,true,$10)
                        ON CONFLICT (sku) DO UPDATE SET
                          importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0
                                                THEN EXCLUDED.importer_price_ils
@@ -232,6 +240,7 @@ async def upsert_batch(
                         "in_stock": p["is_available"],
                         "oem_ref": oem,
                     }),
+                categorize_on_ingest(name_he=p["name_he"]),
                 )
                 if part_id:
                     inserted += 1
@@ -249,8 +258,9 @@ async def upsert_batch(
             await conn.execute(
                 """INSERT INTO supplier_parts
                     (id, supplier_id, part_id, supplier_sku, price_usd, price_ils,
-                     is_available, supplier_url, updated_at)
-                   VALUES (gen_random_uuid(),$1,$2,$3,0,$4,$5,$6,NOW())
+                     is_available, supplier_url, warranty_months,
+                     warranty_source, updated_at)
+                   VALUES (gen_random_uuid(),$1,$2,$3,0,$4,$5,$6,$7,$8,NOW())
                    ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE SET
                      price_ils    = EXCLUDED.price_ils,
                      is_available = EXCLUDED.is_available,
@@ -260,6 +270,7 @@ async def upsert_batch(
                 p["max_price_ils"],
                 p["is_available"],
                 "https://updates.mct.co.il/parts/",
+                *_warranty_resolve(p.get("warranty_months"), p.get("warranty")),
             )
     return inserted, updated
 

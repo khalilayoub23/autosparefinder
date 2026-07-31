@@ -60,6 +60,9 @@ from pathlib import Path
 import asyncpg
 import httpx
 
+# ONE category source of truth — never a private ruleset here.
+from category_map import categorize_on_ingest
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Config
 # ──────────────────────────────────────────────────────────────────────────────
@@ -264,35 +267,15 @@ async def scrape_all() -> list[dict]:
 # Category mapper
 # ──────────────────────────────────────────────────────────────────────────────
 def categorise(name_he: str, catalog: str) -> str:
-    t = name_he.lower()
-    c = catalog.upper()
-    if any(w in t for w in ["מנוע", "שמן", "מסנן", "טורבו", "בוכנה", "שסתום", "קמה", "בוכנ", "בוכנ"]):
-        return "Engine Parts"
-    if any(w in t for w in ["בלם", "דיסק", "רפידה", "קליפר"]):
-        return "Brakes"
-    if any(w in t for w in ["קפיץ", "מוט", "זרוע", "מסב", "בולם", "מתלה", "היגוי", "הגה"]):
-        return "Suspension"
-    if any(w in t for w in ["חיישן", "חוטים", "כבל", "ממסר", "מתג", "לוח", "מודול", "בקר",
-                              "אינוורטר", "שנאי", "חשמל", "מצבר", "נורה", "מנורה", "פנס", "מצלמה", "תוכנה"]):
-        return "Electrical"
-    if any(w in t for w in ["פגוש", "כנף", "דלת", "זכוכית", "שמשה", "מגב", "מסגרת", "מרכב"]):
-        return "Body Parts"
-    if any(w in t for w in ["רדיאטור", "מאוורר", "קולר", "תרמוסטט", "נוזל", "מיזוג", "קומפרסור"]):
-        return "Cooling System"
-    if any(w in t for w in ["גיר", "מצמד", "ציר", "תיבה"]):
-        return "Transmission"
-    if any(w in t for w in ["דלק", "משאבה", "מכל", "צינור"]):
-        return "Fuel System"
-    if any(w in t for w in ["מגב", "שמשה", "מראה"]):
-        return "Body Parts"
-    if any(w in t for w in ["כריות", "חגורת", "חגורה"]):
-        return "Safety"
-    if any(w in t for w in ["טעינה", "עמדת"]):
-        return "Electrical"
-    if any(w in t for w in ["אטם", "גסקט", "אחיזה", "הדק", "מהדק", "בורג", "טבעת"]):
-        return "Engine Parts"
-    return "General Parts"
+    """Delegates to category_map — the ONE source of truth.
 
+    This previously carried its own keyword ruleset returning a vocabulary
+    parts_catalog.category may never hold (Title-Case labels), so every part it
+    classified got an unusable label that normalize_categories then had to
+    map back or flatten into the catch-all.
+    Never re-add keyword rules here — add them to category_map.py.
+    """
+    return categorize_on_ingest(name_he=name_he, name=catalog)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Model → fitment list mapper

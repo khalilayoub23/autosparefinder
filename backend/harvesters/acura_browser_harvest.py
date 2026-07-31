@@ -23,6 +23,10 @@ import os
 import sys
 import uuid
 
+# ONE category source of truth — categorize at INGEST so parts never land
+# with a NULL category and depend on the self-healing task to find them.
+from category_map import categorize_on_ingest
+
 sys.path.insert(0, '/app')
 
 DB_URL = os.environ.get("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://")
@@ -80,13 +84,20 @@ async def import_parts(parts: list, conn):
             new_id = str(uuid.uuid4())
             await conn.execute(
                 "INSERT INTO parts_catalog (id, sku, oem_number, name, manufacturer, "
-                "manufacturer_id, importer_price_ils, base_price, is_active, "
+                "manufacturer_id, category, specifications, importer_price_ils, base_price, is_active, "
                 "master_enriched, needs_oem_lookup, created_at, updated_at) "
-                "VALUES ($1,$2,$3,$4,'Acura',$5,$6,$7,TRUE,FALSE,FALSE,NOW(),NOW()) "
-                "ON CONFLICT (sku) DO UPDATE SET importer_price_ils=EXCLUDED.importer_price_ils, "
+                "VALUES ($1,$2,$3,$4,'Acura',$5,$8,$9::jsonb,$6,$7,TRUE,FALSE,FALSE,NOW(),NOW()) "
+                "ON CONFLICT (sku) DO UPDATE SET importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END, "
                 "base_price=EXCLUDED.base_price, updated_at=NOW()",
                 new_id, sku, oem, name, brand_id,
                 importer_price_ils, base_price,
+                # $8 — appended LAST so no existing $N shifts. Inserting it in the
+                # middle silently re-bound $6/$7/$8 and would have written
+                # base_price into the category column.
+                categorize_on_ingest(name=name),
+                json.dumps({"source": "acura_browser_harvest",
+                            "source_url": "acura.oempartsonline.com",
+                            "msrp_usd": msrp_usd, "price_usd": price_usd}),
             )
             inserted += 1
 

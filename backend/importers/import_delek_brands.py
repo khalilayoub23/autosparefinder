@@ -59,6 +59,9 @@ from pathlib import Path
 import asyncpg
 import urllib.parse as up
 
+# ONE category source of truth — never a private ruleset here.
+from category_map import categorize_on_ingest
+
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43@postgres_catalog:5432/autospare"
@@ -87,29 +90,16 @@ def make_sku(prefix, oem):
     return f"{prefix}-{clean}"
 
 
-def categorise(name_he):
-    t = (name_he or "").lower()
-    if any(w in t for w in ["מנוע","שמן","מסנן","מחזור","טורבו","בוכנה","שסתום"]):
-        return "Engine Parts"
-    if any(w in t for w in ["ברקס","בלם","brake","דיסק","pad","רפידה"]):
-        return "Brakes"
-    if any(w in t for w in ["suspension","שלדה","קפיץ","מוט","bearing","מסב","זרוע","מתלה"]):
-        return "Suspension"
-    if any(w in t for w in ["אטם","gasket","seal","צינור"]):
-        return "Engine Parts"
-    if any(w in t for w in ["חשמל","sensor","חיישן","electrical","מחשב","פתיל","חוטים"]):
-        return "Electrical"
-    if any(w in t for w in ["תיבת","מצמד","clutch","gearbox","גיר"]):
-        return "Transmission"
-    if any(w in t for w in ["פגוש","מכסה","דלת","body","מרכב","כנף","מגן"]):
-        return "Body Parts"
-    if any(w in t for w in ["קירור","radiator","מאוורר","מצנן","cooling"]):
-        return "Cooling System"
-    if any(w in t for w in ["היגוי","steering","הגה"]):
-        return "Steering"
-    if any(w in t for w in ["דלק","fuel","משאבת דלק","מכל"]):
-        return "Fuel System"
-    return "General Parts"
+def categorise(name_he) -> str:
+    """Delegates to category_map — the ONE source of truth.
+
+    This previously carried its own keyword ruleset returning a vocabulary
+    parts_catalog.category may never hold (Title-Case labels), so every part it
+    classified got an unusable label that normalize_categories then had to
+    map back or flatten into the catch-all.
+    Never re-add keyword rules here — add them to category_map.py.
+    """
+    return categorize_on_ingest(name_he=name_he)
 
 BRAND_URLS = {
     "BMW":   "https://www.bmw.co.il",

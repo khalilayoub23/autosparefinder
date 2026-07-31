@@ -183,31 +183,9 @@ BRAND_QUERIES: dict[str, dict] = {
 }
 
 # Category mapping from title keywords
-CAT_RULES: list[tuple[list[str], str]] = [
-    (["brake", "caliper", "disc", "pad", "servo", "abs", "handbrake"],       "brakes"),
-    (["suspension", "shock", "absorber", "spring", "strut", "arm", "bush",
-      "bearing", "ball joint", "tie rod", "track rod", "wishbone"],          "suspension-steering"),
-    (["steering", "rack", "pump", "column", "wheel"],                        "suspension-steering"),
-    (["engine", "timing", "piston", "valve", "gasket", "head", "crankshaft",
-      "camshaft", "flywheel", "sump", "rocker"],                             "engine"),
-    (["filter", "air filter", "oil filter", "fuel filter", "cabin"],         "filters"),
-    (["radiator", "coolant", "thermostat", "water pump", "cooling",
-      "intercooler", "fan"],                                                  "cooling"),
-    (["alternator", "starter", "battery", "sensor", "switch", "relay",
-      "ecu", "module", "harness", "cable"],                                  "electrical-sensors"),
-    (["lamp", "light", "bulb", "led", "fog", "headlight", "taillight"],      "lighting"),
-    (["bumper", "bonnet", "door", "wing", "panel", "grille", "spoiler",
-      "mirror", "glass", "seal", "sill"],                                    "body-exterior"),
-    (["exhaust", "silencer", "manifold", "catalytic", "dpf", "flexi"],       "exhaust"),
-    (["fuel pump", "injector", "throttle", "carburetor", "fuel rail"],       "fuel-air"),
-    (["gearbox", "clutch", "gear", "transmission", "differential",
-      "driveshaft", "propshaft"],                                            "gearbox"),
-    (["belt", "chain", "tensioner", "pulley", "timing"],                     "belts-chains"),
-    (["turbo", "supercharger", "boost"],                                     "engine"),
-    (["ac ", "air con", "climate", "hvac", "heater", "blower"],              "air-conditioning-heating"),
-    (["seat", "interior", "carpet", "trim", "dashboard"],                    "interior"),
-    (["wheel", "tyre", "hub", "axle"],                                       "suspension-steering"),
-]
+# Category rules DELEGATED to category_map — the single source of truth.
+# Add keywords to category_map.py, never here.
+from category_map import CATCH_ALL, categorize_on_ingest, normalize_category_label
 
 # Regex to extract OEM part numbers from eBay titles
 PART_NUM_RE = re.compile(
@@ -218,12 +196,8 @@ PART_NUM_RE = re.compile(
 
 
 def categorize(title: str) -> str:
-    t = title.lower()
-    for keywords, cat in CAT_RULES:
-        for kw in keywords:
-            if kw in t:
-                return cat
-    return "accessories"
+    """eBay listing title -> canonical slug via category_map."""
+    return categorize_on_ingest(name=title)
 
 
 def extract_part_number(title: str, aspects: list[dict] | None = None) -> str:

@@ -9,6 +9,9 @@ from __future__ import annotations
 import asyncio, logging, re
 import asyncpg
 
+# ONE category source of truth — never a private ruleset here.
+from category_map import categorize_on_ingest
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
@@ -1457,7 +1460,9 @@ async def import_parts(conn: asyncpg.Connection) -> dict:
                         updated_at = NOW()
                     RETURNING id
                 """, sku, pn, eng_name[:255], GEELY_BRAND_ID,
-                     category, desc[:500], il_retail)
+                     categorize_on_ingest(name=eng_name, name_he=heb_desc,
+                                          extra=category),
+                     desc[:500], il_retail)
                 if pid:
                     inserted += 1
         except Exception as e:

@@ -5,6 +5,12 @@ Prices are wholesale USD midpoints. ils = usd * 3.65.
 Run: python3 geely_seed_import.py
 """
 from __future__ import annotations
+
+# Category mapping DELEGATED to category_map — the single source of truth.
+# This importer used to keep its own CATEGORY_MAP (which contained real errors,
+# e.g. filters->engine, bearing->engine, 'interior accessories'->'interior').
+# Add keywords to category_map.py, never here.
+from category_map import CATCH_ALL, categorize_on_ingest, normalize_category_label
 import asyncio, logging, re, uuid
 import asyncpg
 
@@ -21,29 +27,11 @@ BRAND_IDS = {
     "Geely": "daf5256f-bfb9-415c-8540-f7b5e6643870",
 }
 
-CATEGORY_MAP = {
-    "engine": "engine", "engine systems": "engine", "engine components": "engine",
-    "engine control": "electrical-sensors", "engine parts": "engine", "engine assembly": "engine",
-    "fuel": "fuel-air", "fuel system": "fuel-air",
-    "cooling": "cooling", "cooling systems": "cooling",
-    "brake": "brakes", "brake system": "brakes",
-    "suspension": "suspension-steering", "steering": "suspension-steering",
-    "transmission": "gearbox", "transmission systems": "gearbox", "drivetrain": "clutch-drivetrain",
-    "electrical": "electrical-sensors", "auto electrical systems": "electrical-sensors",
-    "sensors": "electrical-sensors",
-    "body": "body-exterior", "auto body systems": "body-exterior", "body parts": "body-exterior",
-    "body hardware": "body-exterior",
-    "lighting": "lighting", "lighting accessories": "lighting",
-    "interior systems": "interior",
-    "safety components": "body-exterior",
-    "wheels": "wheels-bearings",
-    "hvac": "air-conditioning-heating",
-    "multi-category": "accessories",
-}
 
 
 def map_cat(raw: str) -> str:
-    return CATEGORY_MAP.get(raw.lower().strip(), "accessories")
+    """Supplier category label -> canonical slug (category_map is the truth)."""
+    return normalize_category_label(raw) or categorize_on_ingest(name=raw)
 
 
 def clean_oem(raw: str) -> str:

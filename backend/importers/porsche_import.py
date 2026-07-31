@@ -28,6 +28,10 @@ import time
 import asyncpg
 import pdfplumber
 
+# ONE category source of truth — the literal that used to sit in this
+# INSERT ('General Parts'/'Auto Parts') is not a category at all.
+from category_map import categorize_on_ingest
+
 PDF_PATH = os.getenv("PORSCHE_PDF", "/app/porsche_prices.pdf")
 IMPORTER = "אורכיד ספורטס קארס ישראל בע\"מ"
 PRICE_DATE = "2025-03-01"
@@ -253,12 +257,13 @@ async def import_pdf_prices(conn, parts: list[dict], mfr_id: str, dry_run: bool 
                         created_at, updated_at
                     ) VALUES (
                         gen_random_uuid(), $1, $1, $2, 'Porsche', $3::uuid,
-                        'Auto Parts', 'new', 'original',
+                        $8, 'new', 'original',
                         $4, $5, $4, $7,
                         $6::jsonb, true, true, false,
                         NOW(), NOW()
                     ) ON CONFLICT (sku) DO NOTHING
-                """, oem, r["desc"], mfr_id, price_excl, price_incl, specs, base_price)
+                """, oem, r["desc"], mfr_id, price_excl, price_incl, specs, base_price,
+                    categorize_on_ingest(name=r["desc"]))
                 inserted += 1
         except Exception as e:
             errors += 1

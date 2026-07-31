@@ -7,7 +7,7 @@ Each task is idempotent: re-running it is always safe.
 Tasks
 -----
 1.  clean_part_names          – strip trailing car-model suffixes from part names
-2.  normalize_part_types      – unify to "Original" / "OEM" / "Aftermarket"
+2.  normalize_part_types      – unify to lowercase: "original" / "oem" / "aftermarket"
 3.  normalize_categories      – map variants to shared canonical Hebrew categories
 4.  normalize_availability    – unify to "in_stock" / "out_of_stock" / "on_order"
 5.  fix_base_prices           – ensure base_price = supplier min + 18 % VAT markup
@@ -52,7 +52,12 @@ from resilience import job_registry_start, job_registry_finish, job_heartbeat
 from manufacturer_normalization import PARTS_BRANDS, canonicalize_vehicle_model_for_manufacturer
 from manufacturer_normalization import normalize_vehicle_model_name, normalize_vehicle_submodel_name
 from manufacturer_normalization import normalize_manufacturer_name
-from categories import CATEGORY_MAP as SHARED_CATEGORY_MAP
+from category_map import (
+    CANONICAL as CANONICAL_CATEGORY_SET,
+    CATCH_ALL as CATEGORY_CATCH_ALL,
+    VARIANT_MAP as CATEGORY_VARIANT_MAP,
+    normalize_category_label,
+)
 from agent_todo_utils import get_active_agent_todos, extract_todo_task_names
 
 logger = logging.getLogger("db_update_agent")
@@ -73,8 +78,18 @@ if not logging.root.handlers:
 VAT = 0.18          # Israeli VAT rate
 ILS_PER_USD = 3.72  # fallback – overridden at runtime from system_settings
 
-# Canonical categories come from the shared taxonomy module.
-CANONICAL_CATEGORIES: List[str] = list(SHARED_CATEGORY_MAP.keys()) + ["כללי"]
+# Canonical categories come from category_map — the SINGLE source of truth.
+# These are the English SLUGS actually stored in parts_catalog.category
+# ('brakes', 'body-exterior', …) plus 'כללי'.
+#
+# BUG THIS FIXES (2026-07-27): this list used to be
+# `list(categories.CATEGORY_MAP.keys())`, which were part_type_taxonomy LABELS
+# ('Air Filters', 'Timing Belts', 131 of them) — a vocabulary that shares ZERO
+# values with what the column stores. normalize_categories mapped raw→Hebrew
+# display names and then dropped every branch whose target wasn't in this set,
+# so almost every mapping was silently discarded and the only surviving branches
+# pushed parts INTO 'כללי'. That is why parts entered the catch-all and never left.
+CANONICAL_CATEGORIES: List[str] = sorted(CANONICAL_CATEGORY_SET)
 
 _HE_CHAR_RE = re.compile(r"[֐-׿]")
 _ALIAS_MIN_SCORE = float(os.getenv("HE_ALIAS_MIN_SCORE", "0.88"))
@@ -171,190 +186,54 @@ _TRANSPORT_FREQ_PATHS = [
 ]
 
 
-# Mapping of synonyms → canonical category
-CATEGORY_MAP: Dict[str, str] = {
-    # brakes
-    "brakes": "בלמים",
-    "brake": "בלמים",
-    "בלם": "בלמים",
-    # wheels / tyres
-    "wheels": "גלגלים וצמיגים",
-    "tyres": "גלגלים וצמיגים",
-    "tires": "גלגלים וצמיגים",
-    "גלגלים": "גלגלים וצמיגים",
-    "צמיגים": "גלגלים וצמיגים",
-    # fuel
-    "fuel": "דלק",
-    "fuel system": "דלק",
-    "מערכת דלק": "דלק",
-    # steering
-    "steering": "היגוי",
-    # electrical
-    "electrical": "חשמל רכב",
-    "electric": "חשמל רכב",
-    "electronics": "חשמל רכב",
-    "חשמל": "חשמל רכב",
-    # general / misc
-    "general": "כללי",
-    "misc": "כללי",
-    "miscellaneous": "כללי",
-    "other": "כללי",
-    "אחר": "כללי",
-    # wipers
-    "wipers": "מגבים",
-    "wiper": "מגבים",
-    "מגב": "מגבים",
-    # ac / climate
-    "ac": "מיזוג",
-    "air conditioning": "מיזוג",
-    "climate": "מיזוג",
-    "hvac": "מיזוג",
-    # engine
-    "engine": "מנוע",
-    "motor": "מנוע",
-    # suspension
-    "suspension": "מתלה",
-    "שוקים": "מתלה",
-    # body
-    "body": "פחיין ומרכב",
-    "bodywork": "פחיין ומרכב",
-    "מרכב": "פחיין ומרכב",
-    # interior
-    "interior": "ריפוד ופנים",
-    "upholstery": "ריפוד ופנים",
-    # chains / belts
-    "belts": "שרשראות ורצועות",
-    "chains": "שרשראות ורצועות",
-    "belt": "שרשראות ורצועות",
-    "timing": "שרשראות ורצועות",
-    "רצועות": "שרשראות ורצועות",
-    # lighting
-    "lighting": "תאורה",
-    "lights": "תאורה",
-    "light": "תאורה",
-    "lamps": "תאורה",
-    "תאור": "תאורה",
-
-    # reference taxonomy (Autodoc-like families)
-    "tyres and related products": "גלגלים וצמיגים",
-    "tires and related products": "גלגלים וצמיגים",
-    "brake system": "בלמים",
-    "filters": "כללי",
-    "oils and fluids": "כללי",
-    "body": "פחיין ומרכב",
-    "suspension and arms": "מתלה",
-    "turbocharger": "מנוע",
-    "air conditioning": "מיזוג",
-    "fuel supply system": "דלק",
-    "steering": "היגוי",
-    "transmission": "כללי",
-    "fasteners": "כללי",
-    "pipes and hoses": "מנוע",
-    "gaskets and sealing rings": "מנוע",
-    "damping": "מתלה",
-    "windscreen cleaning system": "מגבים",
-    "exhaust system": "כללי",
-    "accessories": "כללי",
-    "ignition and glowplug system": "חשמל רכב",
-    "tuning": "כללי",
-    "interior and comfort": "ריפוד ופנים",
-    "belts, chains, rollers": "שרשראות ורצועות",
-    "exhaust gas recirculation": "מנוע",
-    "towbar / parts": "פחיין ומרכב",
-    "towbar": "פחיין ומרכב",
-    "heater": "מיזוג",
-    "bearings": "מתלה",
-    "air suspension": "מתלה",
-    "sensors, relays, control units": "חשמל רכב",
-    "repair kits": "כללי",
-    "propshafts and differentials": "מתלה",
-    "electrics": "חשמל רכב",
-    "engine cooling system": "מנוע",
-    "clutch / parts": "מנוע",
-    "drive shaft and cv joint": "מתלה",
-    "auto detailing & car care": "כללי",
-    "tools": "כללי",
-
-    # non-car families -> keep out of core car categories
-    "motorcycle accessories": "כללי",
-    "motorcycle clothing": "כללי",
-    "motorcycle helmets": "כללי",
-
-    # car-parts.ie slug-style categories (from importer pipeline)
-    "service-general": "כללי",
-    "body-exterior": "גוף הרכב",
-    "electrical-sensors": "חשמל ואלקטרוניקה",
-    "air-conditioning-heating": "מזגן וחימום",
-    "suspension-steering": "מתלה",
-    "interior-comfort": "פנים הרכב",
-    "fuel-air": "מערכת דלק",
-    "wheels-bearings": "גלגלים וצמיגים",
-    "clutch-drivetrain": "מצמד",
-    "wipers-washers": "שמשות ומגבים",
-    "cooling": "מערכת קירור",
-    "exhaust": "מערכת פליטה",
-    "gearbox": "תיבת הילוכים",
-    "belts-chains": "רצועות תזמון",
-    "safety-systems": "בלמים",
-    "fluids": "כללי",
-    "filters": "כללי",
-
-    # title-case variants from oempartsonline / champion motors importers
-    "General Parts": "כללי",
-    "Body Parts": "גוף הרכב",
-    "Engine Parts": "מנוע",
-    "Electrical": "חשמל ואלקטרוניקה",
-    "Brakes": "בלמים",
-    "Suspension": "מתלה",
-    "Service & General": "כללי",
-    "Fuel System": "מערכת דלק",
-    "Accessories": "כללי",
-    "Steering": "היגוי",
-    "Transmission": "תיבת הילוכים",
-    "Cooling": "מערכת קירור",
-    "Exhaust": "מערכת פליטה",
-    "Interior": "פנים הרכב",
-    "Lighting": "תאורה",
-    "Filters": "כללי",
-    "Fluids": "כללי",
-    "Belts & Chains": "רצועות תזמון",
-    "Wheels & Bearings": "גלגלים וצמיגים",
-    "Air Conditioning": "מזגן וחימום",
-    "Body & Exterior": "גוף הרכב",
-    "Clutch & Drivetrain": "מצמד",
-    "Wipers & Washers": "שמשות ומגבים",
-    "Safety Systems": "בלמים",
-}
+# Category synonym map — DELEGATED to category_map (single source of truth).
+#
+# This used to be a private dict whose targets were Hebrew DISPLAY names
+# ('brakes' → 'בלמים'). Those are presentation strings, not storable values, and
+# they never matched CANONICAL_CATEGORIES, so every branch built from them was
+# discarded by normalize_categories. Hebrew names now live in
+# category_map.DISPLAY and are never written to the DB.
+CATEGORY_MAP: Dict[str, str] = CATEGORY_VARIANT_MAP
 
 # Legacy category aliases remapped to the shared 28-category taxonomy
-CATEGORY_NAME_REMAP: Dict[str, str] = {
-    "דלק": "מערכת דלק",
-    "חשמל רכב": "חשמל ואלקטרוניקה",
-    "מגבים": "שמשות ומגבים",
-    "מיזוג": "מזגן וחימום",
-    "פחיין ומרכב": "גוף הרכב",
-    "ריפוד ופנים": "פנים הרכב",
-    "שרשראות ורצועות": "רצועות תזמון",
-}
+# Legacy Hebrew-display → Hebrew-display remap. Obsolete after the 2026-07-27
+# merge: categories are stored as English slugs, and every legacy Hebrew label
+# is resolved by category_map.VARIANT_MAP directly to its canonical slug.
+CATEGORY_NAME_REMAP: Dict[str, str] = {}
 
 # Normalisation map for part_type
 PART_TYPE_MAP: Dict[str, str] = {
-    "original": "Original",
-    "oem_original": "Original",
-    "genuine": "Original",
-    "מקורי": "Original",
-    "מקורימקורי": "Original",
-    "oem": "OEM",
-    "oem_equivalent": "OEM",
-    "oe": "OEM",
-    "aftermarket": "Aftermarket",
-    "after market": "Aftermarket",
-    "generic": "Aftermarket",
-    "third party": "Aftermarket",
-    "תחליפי": "Aftermarket",
-    "חליפיחליפי": "Aftermarket",
-    "תחליפיתחליפי": "Aftermarket",
-    "שוק משני": "Aftermarket",
+    # LOWERCASE IS THE CONVENTION (owner decision 2026-07-28).
+    # The part name is unaffected by casing and the whole codebase is written
+    # lowercase, so every part_type normalizes to lowercase. This matches
+    # parts_catalog (already 3.28M 'oem' / 1.09M 'aftermarket') and the existing
+    # part_condition rule in CLAUDE.md. supplier_parts still holds capitalised
+    # values from older importers; they normalize here.
+    "original": "original",
+    "oem_original": "original",
+    "genuine": "original",
+    "מקורי": "original",
+    "מקורימקורי": "original",
+    "oem": "oem",
+    "oem_equivalent": "oem",
+    "oe": "oem",
+    "aftermarket": "aftermarket",
+    "after market": "aftermarket",
+    "generic": "aftermarket",
+    "third party": "aftermarket",
+    "תחליפי": "aftermarket",
+    "חליפי": "aftermarket",
+    "חליפיחליפי": "aftermarket",
+    "תחליפיתחליפי": "aftermarket",
+    "שוק משני": "aftermarket",
+    "alternative": "aftermarket",
+    "משופץ": "remanufactured",
+    "משופצמשופצ": "remanufactured",
+    "משופץמשופץ": "remanufactured",
+    "refurbished": "remanufactured",
+    "used": "used",
+    "new": "new",
+    "סוג מוצר": "unknown",
 }
 
 # Normalisation map for availability
@@ -592,15 +471,8 @@ def _normalize_part_type(raw: str) -> Optional[str]:
 
 
 def _normalize_category(raw: str) -> Optional[str]:
-    raw_stripped = raw.strip()
-    if raw_stripped in CANONICAL_CATEGORIES:
-        return None  # already canonical
-    if raw_stripped in CATEGORY_NAME_REMAP:
-        return CATEGORY_NAME_REMAP[raw_stripped]
-    mapped = CATEGORY_MAP.get(raw_stripped.lower())
-    if not mapped:
-        return None
-    return CATEGORY_NAME_REMAP.get(mapped, mapped)
+    """Map any category label → canonical slug. None = already canonical/unmappable."""
+    return normalize_category_label(raw)
 
 
 def _normalize_availability(raw: str) -> Optional[str]:
@@ -995,10 +867,20 @@ async def _get_task_checkpoint(db: AsyncSession, task_name: str) -> "datetime":
     return datetime.utcnow() - timedelta(hours=_DELTA_FALLBACK_HOURS)
 
 
-async def _save_task_checkpoint(db: AsyncSession, task_name: str) -> None:
-    """Persist the current UTC timestamp as the checkpoint for *task_name*."""
+async def _save_task_checkpoint(db: AsyncSession, task_name: str,
+                                at: "datetime | None" = None) -> None:
+    """Persist a checkpoint for *task_name* — by default 'now'.
+
+    `at` lets a long task save a HIGH-WATER MARK after each batch instead of only
+    on full completion. That distinction is what breaks the checkpoint death
+    spiral: a task that only saves at the end never saves at all once it is slow
+    enough to hit the statement timeout, so its delta window grows every cycle
+    and it can never recover. Measured live 2026-07-28: dedup_catalog_parts was
+    stuck at a 27-DAY window and refresh_min_max_prices at 5 days, both failing
+    on every single run.
+    """
     key = f"delta_checkpoint__{task_name}"
-    val = datetime.utcnow().isoformat()  # naive UTC matches updated_at column type
+    val = (at or datetime.utcnow()).isoformat()  # naive UTC matches updated_at column type
     await db.execute(text("""
         INSERT INTO system_settings (id, key, value, value_type, is_public, updated_at)
         VALUES (gen_random_uuid(), :k, :v, 'string', false, NOW())
@@ -1013,7 +895,9 @@ async def _save_task_checkpoint(db: AsyncSession, task_name: str) -> None:
 
 async def normalize_part_types(db: AsyncSession) -> Dict[str, Any]:
     """
-    Unify part_type values to one of: "Original", "OEM", "Aftermarket".
+    Unify part_type values to lowercase: "original", "oem", "aftermarket",
+    "remanufactured", "used", "new". Owner decision 2026-07-28 — casing does not
+    change the part, and the codebase is written lowercase throughout.
 
     Delta mode: only processes rows modified since the last successful run
     (stored in system_settings as 'delta_checkpoint__normalize_part_types').
@@ -1042,20 +926,72 @@ async def normalize_part_types(db: AsyncSession) -> Dict[str, Any]:
         # so no cursor is needed; locked rows are retried a few times then left for the
         # next cycle. Same lock-safe pattern as bmw_oem_dedup / categorize_parts_batch.
         BATCH = 5000
-        for table, counter_attr in (("parts_catalog", "catalog_updated"), ("supplier_parts", "supplier_updated")):
+        for table, counter_attr, order_col in (
+            ("parts_catalog", "catalog_updated", "id"),
+            ("supplier_parts", "supplier_updated", "part_id"),
+        ):
             total_n = 0
             empty_streak = 0
+
+            # DRIVE FROM THE SMALL SIDE (CLAUDE.md "scan-for-nothing" rule).
+            # The old predicate was `updated_at > :since AND LOWER(TRIM(part_type))
+            # = ANY(:keys)`. LOWER(TRIM(col)) is a function on the column, so no
+            # index can serve it, and after a large backfill the updated_at delta
+            # is millions of rows — the task timed out at 30s on EVERY cycle
+            # (confirmed in the live task tally 2026-07-28).
+            #
+            # The set of rows needing a fix is tiny and finite. Resolve the exact
+            # bad literals ONCE via a cheap DISTINCT on the indexed column, then
+            # batch on `part_type = ANY($list)`, which idx_parts_catalog_part_type
+            # can actually serve. It also converges: once fixed, the DISTINCT
+            # returns nothing and the task becomes a no-op.
+            await db.execute(text("SET LOCAL statement_timeout = '60s'"))
+            distinct_vals = [
+                r[0] for r in (await db.execute(text(
+                    f"SELECT DISTINCT part_type FROM {table} WHERE part_type IS NOT NULL"
+                ))).fetchall()
+            ]
+            # A value is only "bad" if normalizing it is a REAL change — not a
+            # pure case difference. parts_catalog holds 3.28M 'oem' + 1.09M
+            # 'aftermarket' (lowercase) and PART_TYPE_MAP targets the capitalised
+            # forms, so a naive check made this task try to rewrite 4.3M rows for
+            # a cosmetic case change. That query has never once completed inside
+            # the statement timeout — which is exactly why the task has been
+            # erroring forever. Nothing reads part_type case-sensitively, so a
+            # case-only difference is left alone and the task converges on the
+            # genuine garbage (Hebrew labels, doubled strings, 'סוג מוצר').
+            # Owner decision 2026-07-28: lowercase is the convention, so a
+            # case-only difference IS a real fix now (the earlier skip existed
+            # only because the map targeted the capitalised form and would have
+            # rewritten 4.3M rows the wrong way).
+            bad_vals = [
+                v for v in distinct_vals
+                if v.strip().lower() in PART_TYPE_MAP
+                and PART_TYPE_MAP[v.strip().lower()] != v
+            ]
+            if not bad_vals:
+                logger.info("normalize_part_types: %s already clean", table)
+                if counter_attr == "catalog_updated":
+                    catalog_updated = 0
+                else:
+                    supplier_updated = 0
+                continue
+            logger.info("normalize_part_types: %s bad values = %s", table, bad_vals[:12])
+
             for _ in range(20000):  # hard cap; normally exits on empty match set
                 await db.execute(text("SET LOCAL statement_timeout = '30s'"))
                 result = await db.execute(
                     text(f"""
                         WITH batch AS (
                             SELECT id FROM {table}
-                            WHERE updated_at > :since
-                              AND part_type IS NOT NULL
-                              AND LOWER(TRIM(part_type)) = ANY(:keys)
-                              AND part_type NOT IN ('Original', 'OEM', 'Aftermarket')
-                            ORDER BY id
+                            WHERE part_type = ANY(CAST(:bad AS varchar[]))
+                            -- ORDER BY must match idx_{table}_part_type_part_id,
+                            -- otherwise Postgres index-scans and then SORTS the
+                            -- whole match set by id (cost 79k, times out at 30s).
+                            -- Ordering on the index columns is a pure index scan
+                            -- (startup cost 0.43) and still gives the consistent
+                            -- lock order that keeps FOR UPDATE deadlock-free.
+                            ORDER BY part_type, {order_col}
                             LIMIT :batch
                             FOR UPDATE SKIP LOCKED
                         )
@@ -1063,7 +999,7 @@ async def normalize_part_types(db: AsyncSession) -> Dict[str, Any]:
                         SET part_type = {case_sql}, updated_at = NOW()
                         FROM batch WHERE t.id = batch.id
                     """),
-                    {"since": since, "keys": list(PART_TYPE_MAP.keys()), "batch": BATCH},
+                    {"bad": bad_vals, "batch": BATCH},
                 )
                 n = result.rowcount
                 await db.commit()  # release locks every batch
@@ -1148,22 +1084,33 @@ async def _normalize_categories_once(db: AsyncSession, since, t0) -> Dict[str, A
         canonical_set = set(CANONICAL_CATEGORIES)
         canonical_sql = ", ".join(f"'{c}'" for c in CANONICAL_CATEGORIES)
 
-        # Build CASE branches (same logic as before)
+        # Build CASE branches straight from category_map.VARIANT_MAP.
+        #
+        # Previously this went raw → Hebrew display name and then required the
+        # target to be in canonical_set — which held English Title-Case labels.
+        # A Hebrew string is never in an English-label set, so effectively every
+        # branch was dropped and only `general|misc|other|אחר → כללי` survived.
+        # Now every VARIANT_MAP target IS a canonical slug by construction
+        # (asserted below), so the mapping actually fires.
         branches: List[str] = []
         seen_raw: set = set()
-        combined: Dict[str, str] = {}
-        for raw, mid in CATEGORY_MAP.items():
-            target = CATEGORY_NAME_REMAP.get(mid, mid)
-            combined[raw.lower()] = target
-        for raw, target in CATEGORY_NAME_REMAP.items():
-            if raw not in canonical_set:
-                combined.setdefault(raw.lower(), target)
-        for raw_lower, target in combined.items():
-            if target in canonical_set and raw_lower not in seen_raw:
-                seen_raw.add(raw_lower)
-                escaped_raw = raw_lower.replace("'", "''")
-                escaped_tgt = target.replace("'", "''")
-                branches.append(f"WHEN TRIM(LOWER(category)) = '{escaped_raw}' THEN '{escaped_tgt}'")
+        for raw, target in CATEGORY_MAP.items():
+            raw_lower = (raw or "").strip().lower()
+            if not raw_lower or raw_lower in seen_raw:
+                continue
+            # A no-op branch (x → x) would just churn updated_at.
+            if raw_lower == target:
+                continue
+            if target not in canonical_set:
+                logger.warning(
+                    "normalize_categories: skipping non-canonical target %r for %r",
+                    target, raw_lower,
+                )
+                continue
+            seen_raw.add(raw_lower)
+            escaped_raw = raw_lower.replace("'", "''")
+            escaped_tgt = target.replace("'", "''")
+            branches.append(f"WHEN TRIM(LOWER(category)) = '{escaped_raw}' THEN '{escaped_tgt}'")
 
         rows_mapped = 0
         rows_fallback = 0
@@ -1193,37 +1140,51 @@ async def _normalize_categories_once(db: AsyncSession, since, t0) -> Dict[str, A
         # ── Pass 2: fallback → 'כללי' in small batches — delta scope ───────────
         # Capture the max id at pass-start so rows arriving mid-pass (which get
         # updated_at=NOW() and stay in scope) don't keep the loop alive indefinitely.
-        cutoff_row = await db.execute(text("SELECT MAX(id) FROM parts_catalog WHERE updated_at > :since"), {"since": since})
-        cutoff_id = cutoff_row.scalar()
-        batch_size = 5000
-        while cutoff_id:
-            # ORDER BY id + FOR UPDATE SKIP LOCKED: take row locks in a consistent
-            # order and skip rows another writer (harvester/importer) is holding,
-            # so this batch never forms a deadlock cycle and never blocks on a
-            # contended row. Skipped rows stay in delta scope (updated_at) and are
-            # picked up on a later pass/cycle.
-            result2 = await db.execute(text(f"""
-                WITH batch AS (
-                    SELECT id FROM parts_catalog
-                    WHERE  updated_at > :since
-                      AND  id <= :cutoff_id
-                      AND  category IS NOT NULL
-                      AND  TRIM(category) NOT IN ({canonical_sql})
-                    ORDER BY id
-                    LIMIT  {batch_size}
-                    FOR UPDATE SKIP LOCKED
-                )
-                UPDATE parts_catalog
-                SET    category   = 'כללי',
-                       updated_at = NOW()
-                FROM   batch
-                WHERE  parts_catalog.id = batch.id
-            """), {"since": since, "cutoff_id": cutoff_id})
-            n = result2.rowcount or 0
-            await db.commit()
-            rows_fallback += n
-            if n < batch_size:
-                break
+        # ── Pass 2: normalize any remaining non-canonical value ───────────────
+        # Resolve the CONCRETE bad values first (cheap DISTINCT on the indexed
+        # column). Previously this scanned the whole updated_at delta with
+        # `TRIM(category) NOT IN (...23 values...) ORDER BY id` — after a large
+        # backfill that is >1M rows, and it timed out while finding almost nothing.
+        #
+        # CRITICAL CORRECTNESS FIX (2026-07-28): pass 2 used to set EVERY
+        # non-canonical value to 'כללי'. That destroyed good information —
+        # measured live, 7 of the 8 remaining bad values map cleanly through
+        # VARIANT_MAP ('Brakes'->brakes, 'Body Parts'->body-exterior,
+        # 'Transmission'->gearbox). Blanket-collapsing them to the catch-all
+        # would have thrown away 1,775 correct classifications. Map first; the
+        # catch-all is only for values with genuinely no mapping.
+        await db.execute(text("SET LOCAL statement_timeout = '60s'"))
+        bad_cats = [
+            r[0] for r in (await db.execute(text(
+                "SELECT DISTINCT category FROM parts_catalog "
+                "WHERE category IS NOT NULL AND TRIM(category) <> ''"
+            ))).fetchall()
+            if r[0] and r[0].strip() not in CANONICAL_CATEGORY_SET
+        ]
+
+        if not bad_cats:
+            logger.info("normalize_categories pass2: no non-canonical values — skipped")
+        else:
+            # These sets are small (1,777 rows across 8 values when found), so a
+            # direct per-value UPDATE on the indexed column beats batching — no
+            # ORDER BY, hence no sort, hence no timeout.
+            for raw in bad_cats:
+                target = normalize_category_label(raw) or CATEGORY_CATCH_ALL
+                await db.execute(text("SET LOCAL statement_timeout = '120s'"))
+                res = await db.execute(text(
+                    "UPDATE parts_catalog SET category = :tgt, updated_at = NOW() "
+                    "WHERE category = :raw"
+                ), {"tgt": target, "raw": raw})
+                n = res.rowcount or 0
+                await db.commit()
+                if target == CATEGORY_CATCH_ALL:
+                    rows_fallback += n
+                    logger.info("normalize_categories pass2: %r -> %s (no mapping) rows=%d",
+                                raw, target, n)
+                else:
+                    rows_mapped += n
+                    logger.info("normalize_categories pass2: %r -> %s rows=%d",
+                                raw, target, n)
 
         await _save_task_checkpoint(db, "normalize_categories")
         logger.info("normalize_categories pass2 (delta): fallback=%d total_elapsed=%.1fs",
@@ -3223,90 +3184,108 @@ async def refresh_min_max_prices(db: AsyncSession) -> Dict[str, Any]:
     Recalculate parts_catalog.min_price_ils / max_price_ils from live
     supplier_parts prices (WITH 18% VAT applied).
 
-    DELTA-ONLY (rewritten 2026-07-07): the old version re-aggregated ALL 3.7M
-    supplier_parts and re-updated EVERY matching parts_catalog row every cycle —
-    a 26-30 min full-table pass that saturated the single virtual disk and made
-    the box fragile under any added load. Now it only recomputes parts whose
-    supplier_parts changed since the last successful run (checkpoint). A price
-    change touches a few thousand rows, not millions. A weekly full pass still
-    runs to catch anything missed (e.g. a part going fully unavailable).
+    BATCHED + PROGRESS-SAVING (rewritten 2026-07-28). Previously ONE unbounded
+    UPDATE joined against every supplier_parts row changed since the checkpoint.
+    Against the live harvester that timed out, and because the checkpoint was only
+    saved on SUCCESS it was never saved at all — so the delta window grew every
+    cycle and the task failed on EVERY run. Measured live: the window had reached
+    1,003,775 parts and the checkpoint was 5 days stale.
+
+    Three things make it converge now:
+      1. TWO STEPS, not one mega-CTE. Fetching the id window is an index scan on
+         ix_supplier_parts_updated_at (0.34s); the aggregate+update is driven by
+         `part_id = ANY(:ids)`. Combining them produced a plan that timed out.
+      2. BATCH SIZE 1000. Measured: 500 ids -> 3.8s, 1000 -> 5.5s, 2000 -> 53.3s.
+         The planner flips above ~1000, so bigger batches are dramatically slower.
+      3. HIGH-WATER-MARK checkpointing after every batch, so a run that stops on
+         its time budget still makes permanent progress.
     """
     t0 = time.monotonic()
     since = await _get_task_checkpoint(db, "refresh_min_max_prices")
+    rate = await _get_ils_rate(db)
 
-    # Weekly safety full pass: if the checkpoint is >7 days old (or first run),
-    # do the complete recompute once, then delta from there.
-    full_pass = (datetime.utcnow() - since) > timedelta(days=7)
+    batch = int(os.getenv("MINMAX_BATCH", "1000"))
+    max_seconds = float(os.getenv("MINMAX_MAX_SECONDS", "900"))
+
+    updated = batches = 0
+    stopped_early = False
 
     try:
-        await db.execute(text("SET LOCAL lock_timeout = '10min'"))
-        rate = await _get_ils_rate(db)
+        while True:
+            if time.monotonic() - t0 > max_seconds:
+                stopped_early = True
+                break
 
-        if full_pass:
-            await db.execute(
+            await db.execute(text("SET LOCAL statement_timeout = '120s'"))
+            win = (await db.execute(
                 text(
                     """
-                    WITH price_agg AS (
-                        SELECT part_id,
-                               MIN(COALESCE(price_ils, price_usd * :rate)) * :vat AS min_p,
-                               MAX(COALESCE(price_ils, price_usd * :rate)) * :vat AS max_p
-                        FROM supplier_parts WHERE is_available = TRUE
-                        GROUP BY part_id
-                    )
-                    UPDATE parts_catalog pc
-                    SET min_price_ils = pa.min_p, max_price_ils = pa.max_p, updated_at = NOW()
-                    FROM price_agg pa WHERE pc.id = pa.part_id
+                    SELECT part_id, updated_at FROM supplier_parts
+                    WHERE updated_at > :since
+                    ORDER BY updated_at
+                    LIMIT :lim
                     """
                 ),
-                {"rate": rate, "vat": 1 + VAT},
-            )
-            mode = "full"
-        else:
-            # Only parts whose supplier_parts changed since the checkpoint.
-            await db.execute(
+                {"since": since, "lim": batch},
+            )).mappings().all()
+            if not win:
+                break
+
+            ids = list({r["part_id"] for r in win})
+            hwm = max(r["updated_at"] for r in win)
+
+            n = (await db.execute(
                 text(
                     """
-                    WITH changed AS (
-                        SELECT DISTINCT part_id FROM supplier_parts
-                        WHERE updated_at > :since
-                    ),
-                    price_agg AS (
+                    WITH agg AS (
                         SELECT sp.part_id,
-                               MIN(COALESCE(sp.price_ils, sp.price_usd * :rate)) * :vat AS min_p,
-                               MAX(COALESCE(sp.price_ils, sp.price_usd * :rate)) * :vat AS max_p
+                               MIN(COALESCE(sp.price_ils, sp.price_usd * :rate)) * :vat AS mn,
+                               MAX(COALESCE(sp.price_ils, sp.price_usd * :rate)) * :vat AS mx
                         FROM supplier_parts sp
-                        JOIN changed c ON c.part_id = sp.part_id
-                        WHERE sp.is_available = TRUE
+                        WHERE sp.part_id = ANY(:ids) AND sp.is_available = TRUE
                         GROUP BY sp.part_id
+                    ), u AS (
+                        UPDATE parts_catalog pc
+                           SET min_price_ils = agg.mn,
+                               max_price_ils = agg.mx,
+                               updated_at = NOW()
+                          FROM agg
+                         WHERE pc.id = agg.part_id
+                        RETURNING 1
                     )
-                    UPDATE parts_catalog pc
-                    SET min_price_ils = pa.min_p, max_price_ils = pa.max_p, updated_at = NOW()
-                    FROM price_agg pa WHERE pc.id = pa.part_id
+                    SELECT COUNT(*) FROM u
                     """
                 ),
-                {"since": since, "rate": rate, "vat": 1 + VAT},
-            )
-            mode = "delta"
+                {"ids": ids, "rate": rate, "vat": 1 + VAT},
+            )).scalar_one()
+            await db.commit()
 
-        await db.commit()
-        await _save_task_checkpoint(db, "refresh_min_max_prices")
-        logger.info("refresh_min_max_prices: done (%s pass)", mode)
+            updated += int(n or 0)
+            batches += 1
+            # Advance PAST this window and persist it immediately — this is what
+            # makes a slow run recoverable instead of self-defeating.
+            since = hwm
+            await _save_task_checkpoint(db, "refresh_min_max_prices", at=hwm)
+
+        if not stopped_early:
+            await _save_task_checkpoint(db, "refresh_min_max_prices")
+
+        logger.info("refresh_min_max_prices: updated=%s batches=%s stopped_early=%s",
+                    updated, batches, stopped_early)
     except Exception as exc:
         await db.rollback()
         logger.error("refresh_min_max_prices failed: %s", exc)
-        return {"task": "refresh_min_max_prices", "status": "error", "error": str(exc)}
+        return {"task": "refresh_min_max_prices", "status": "error",
+                "updated": updated, "batches": batches, "error": str(exc)}
 
     return {
         "task": "refresh_min_max_prices",
         "status": "ok",
-        "mode": mode,
+        "updated": updated,
+        "batches": batches,
+        "stopped_early": stopped_early,
         "elapsed_s": round(time.monotonic() - t0, 2),
     }
-
-
-# =========================================================================
-# Task 9 – Seed system_settings
-# =========================================================================
 
 async def seed_system_settings(db: AsyncSession) -> Dict[str, Any]:
     """
@@ -3357,13 +3336,21 @@ async def seed_system_settings(db: AsyncSession) -> Dict[str, Any]:
 # Orchestrator – run_all_tasks
 # =========================================================================
 
+def _llm_cron_enabled(env_var: str) -> bool:
+    return os.getenv(env_var, "0").strip().lower() in ("1", "true", "yes")
+
+
 async def _lookup_oem_spec_task(db: AsyncSession) -> dict:
+    if not _llm_cron_enabled("OEM_LOOKUP_ENABLED"):
+        return {"task": "lookup_oem_spec", "status": "skipped", "reason": "OEM_LOOKUP_ENABLED=0"}
     from ai_catalog_builder import lookup_oem_spec
     return await lookup_oem_spec(db, limit=500)
 
 
 async def _enrich_pending_parts_task(db: AsyncSession) -> Dict[str, Any]:
     """Thin wrapper so enrich_pending_parts integrates with TASK_REGISTRY."""
+    if not _llm_cron_enabled("ENRICH_PARTS_ENABLED"):
+        return {"task": "enrich_pending_parts", "status": "skipped", "reason": "ENRICH_PARTS_ENABLED=0"}
     from ai_catalog_builder import enrich_pending_parts
     return await enrich_pending_parts(db, limit=2000)
 
@@ -3645,190 +3632,171 @@ async def _generate_image_embeddings_task(db: AsyncSession) -> Dict[str, Any]:
 
 async def dedup_catalog_parts(db: AsyncSession) -> Dict[str, Any]:
     """
-    Remove duplicate rows in parts_catalog.
+    Remove duplicate rows in parts_catalog (batched, progress-saving).
 
-    Delta mode: only examines SKUs / (name, manufacturer) pairs where at least
-    one row was modified since the last checkpoint. For those keys it checks the
-    full catalog for duplicates (a recently-imported part may duplicate an old one).
-    This turns a 60+ min full-table window-function scan into a <1 min targeted
-    check proportional to ingestion volume, not catalog size.
+    Step 1 — SKU dedup: for SKUs present in this batch, keep the newest row and
+             NULL the sku of the older ones.
+    Step 2 — (name, manufacturer) dedup: flag older duplicates for OEM review.
 
-    Steps:
-      1. SKU dedup: null out the older row for any SKU that appears in a recently
-         modified row and has a duplicate anywhere in the catalog.
-      2. Name/manufacturer dedup: flag older duplicates for OEM lookup review.
+    WHY BATCHED (rewritten 2026-07-28): the delta version ran ONE window-function
+    pass over every row changed since the checkpoint. Because the checkpoint was
+    saved only on SUCCESS, a run that hit the statement timeout saved nothing — so
+    the window grew every cycle and the task failed on EVERY run. Measured live:
+    checkpoint stuck at 2026-07-01 (27 days) with 4,500,766 rows in scope.
+
+    Now it walks `ix_parts_catalog_updated_at` in bounded batches (a 2,000-row
+    window costs 0.44s) and saves the high-water mark after each one, so a slow run
+    still makes permanent progress and the window can only shrink.
     """
     t0 = time.monotonic()
-    nulled_skus = 0
-    flagged_dupes = 0
-
     since = await _get_task_checkpoint(db, "dedup_catalog_parts")
 
+    batch = int(os.getenv("DEDUP_BATCH", "2000"))
+    max_seconds = float(os.getenv("DEDUP_MAX_SECONDS", "600"))
+
+    nulled_skus = flagged_dupes = batches = 0
+    name_disagree = 0
+    stopped_early = False
+
     try:
-        # ── Step 1: SKU dedup — only check SKUs touched since last run ──────────
-        dup_sku_ids = (await db.execute(text("""
-            WITH changed_skus AS (
-                SELECT DISTINCT sku FROM parts_catalog
-                WHERE updated_at > :since AND sku IS NOT NULL
-            )
-            SELECT id FROM (
-                SELECT id,
-                       ROW_NUMBER() OVER (PARTITION BY sku ORDER BY created_at DESC) AS rn
-                FROM parts_catalog
-                WHERE sku IN (SELECT sku FROM changed_skus)
-            ) ranked
-            WHERE rn > 1
-        """), {"since": since})).scalars().all()
+        while True:
+            if time.monotonic() - t0 > max_seconds:
+                stopped_early = True
+                break
 
-        if dup_sku_ids:
-            # Sort ids so the UPDATE takes row locks in a consistent (id) order —
-            # reduces deadlocks with concurrent writers that also touch these rows
-            # (the run_all_tasks central retry is the backstop). 2026-07-11.
-            dup_sku_ids = sorted(str(i) for i in dup_sku_ids)
-            r1 = await db.execute(
-                text("UPDATE parts_catalog SET sku = NULL, updated_at = NOW() WHERE id = ANY(:ids) RETURNING id"),
-                {"ids": dup_sku_ids},
-            )
-            await db.flush()
-            nulled_skus = len(r1.fetchall())
-
-        # ── Step 2: name/manufacturer dedup — only pairs touched recently ───────
-        has_manufacturer_id = bool((await db.execute(text("""
-            SELECT EXISTS (
-                SELECT 1 FROM information_schema.columns
-                WHERE table_name = 'parts_catalog' AND column_name = 'manufacturer_id'
-            )
-        """))).scalar())
-
-        if has_manufacturer_id:
-            manufacturer_partition = "manufacturer_id"
-            manufacturer_filter = "manufacturer_id IS NOT NULL"
-            changed_pairs_cte = """
-                WITH changed_pairs AS (
-                    SELECT DISTINCT lower(name) AS n, manufacturer_id AS m
+            await db.execute(text("SET LOCAL statement_timeout = '120s'"))
+            win = (await db.execute(
+                text(
+                    """
+                    SELECT id, sku, updated_at
                     FROM parts_catalog
-                    WHERE updated_at > :since AND name IS NOT NULL AND manufacturer_id IS NOT NULL
+                    WHERE updated_at > :since
+                    ORDER BY updated_at
+                    LIMIT :lim
+                    """
+                ),
+                {"since": since, "lim": batch},
+            )).mappings().all()
+            if not win:
+                break
+
+            hwm = max(r["updated_at"] for r in win)
+            skus = sorted({r["sku"] for r in win if r["sku"]})
+
+            # ── Step 1: SKU duplicates among the SKUs in this batch ────────────
+            if skus:
+                dup_ids = (await db.execute(
+                    text(
+                        """
+                        SELECT id FROM (
+                            SELECT id,
+                                   ROW_NUMBER() OVER (PARTITION BY sku
+                                                      ORDER BY created_at DESC) AS rn
+                            FROM parts_catalog
+                            WHERE sku = ANY(:skus)
+                        ) ranked
+                        WHERE rn > 1
+                        """
+                    ),
+                    {"skus": skus},
+                )).scalars().all()
+                if dup_ids:
+                    # sorted() so row locks are taken in a consistent order — cuts
+                    # deadlocks against the harvester writing the same rows.
+                    ids = sorted(str(i) for i in dup_ids)
+                    res = await db.execute(
+                        text("UPDATE parts_catalog SET sku = NULL, updated_at = NOW() "
+                             "WHERE id = ANY(:ids) RETURNING id"),
+                        {"ids": ids},
+                    )
+                    nulled_skus += len(res.fetchall())
+
+            # ── Step 2: TRUE duplicates = same manufacturer + same OEM ────────
+            # A part NAME is not an identity (owner decision 2026-07-29): generic
+            # names like 'key insert' (37,426 rows) or 'harness' (28,577) are
+            # shared by thousands of DIFFERENT parts, so the old name-based rule
+            # returned 265,774 false duplicates from a 2,000-row batch. The OEM
+            # number is the manufacturer's unique identifier.
+            #
+            # OEM is normalised the same way as idx_parts_catalog_norm_oem so the
+            # dashed/undashed IL-importer variants (`51759-2B300` vs `517592B300`)
+            # collapse to one key. `name` is only a soft cross-check, reported —
+            # never used to decide identity.
+            ids_in_batch = [str(r["id"]) for r in win]
+            dup_rows = (await db.execute(
+                text(
+                    """
+                    WITH keys AS (
+                        SELECT DISTINCT manufacturer_id AS m,
+                               replace(replace(upper(oem_number), ' ', ''), '-', '') AS o
+                        FROM parts_catalog
+                        WHERE id = ANY(:ids)
+                          AND manufacturer_id IS NOT NULL
+                          AND oem_number IS NOT NULL AND btrim(oem_number) <> ''
+                    )
+                    SELECT id, name_matches FROM (
+                        SELECT pc.id,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY pc.manufacturer_id,
+                                                replace(replace(upper(pc.oem_number), ' ', ''), '-', '')
+                                   ORDER BY pc.created_at DESC) AS rn,
+                               -- soft cross-check only. NOTE: COUNT(DISTINCT ...)
+                               -- OVER () is NOT supported by Postgres
+                               -- ("DISTINCT is not implemented for window
+                               -- functions") — compare against the surviving row
+                               -- with FIRST_VALUE instead.
+                               (lower(btrim(pc.name)) = FIRST_VALUE(lower(btrim(pc.name))) OVER (
+                                   PARTITION BY pc.manufacturer_id,
+                                                replace(replace(upper(pc.oem_number), ' ', ''), '-', '')
+                                   ORDER BY pc.created_at DESC)) AS name_matches
+                        FROM parts_catalog pc
+                        JOIN keys k
+                          ON pc.manufacturer_id = k.m
+                         AND replace(replace(upper(pc.oem_number), ' ', ''), '-', '') = k.o
+                    ) ranked
+                    WHERE rn > 1
+                    """
+                ),
+                {"ids": ids_in_batch},
+            )).mappings().all()
+            if dup_rows:
+                nids = sorted(str(r["id"]) for r in dup_rows)
+                name_disagree += sum(1 for r in dup_rows if not r["name_matches"])
+                res = await db.execute(
+                    text("UPDATE parts_catalog SET needs_oem_lookup = TRUE, "
+                         "updated_at = NOW() WHERE id = ANY(:ids) "
+                         "AND needs_oem_lookup = FALSE RETURNING id"),
+                    {"ids": nids},
                 )
-            """
-            dedup_filter = "(lower(name), manufacturer_id) IN (SELECT n, m FROM changed_pairs)"
-        else:
-            manufacturer_partition = "lower(COALESCE(manufacturer, ''))"
-            manufacturer_filter = "manufacturer IS NOT NULL"
-            changed_pairs_cte = """
-                WITH changed_pairs AS (
-                    SELECT DISTINCT lower(name) AS n, lower(COALESCE(manufacturer,'')) AS m
-                    FROM parts_catalog
-                    WHERE updated_at > :since AND name IS NOT NULL AND manufacturer IS NOT NULL
-                )
-            """
-            dedup_filter = "(lower(name), lower(COALESCE(manufacturer,''))) IN (SELECT n, m FROM changed_pairs)"
+                flagged_dupes += len(res.fetchall())
 
-        dup_name_ids = (await db.execute(text(f"""
-            {changed_pairs_cte}
-            SELECT id FROM (
-                SELECT id,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY lower(name), {manufacturer_partition}
-                           ORDER BY created_at DESC
-                       ) AS rn
-                FROM parts_catalog
-                WHERE name IS NOT NULL AND {manufacturer_filter}
-                  AND {dedup_filter}
-            ) ranked
-            WHERE rn > 1
-        """), {"since": since})).scalars().all()
+            await db.commit()
+            batches += 1
+            since = hwm
+            await _save_task_checkpoint(db, "dedup_catalog_parts", at=hwm)
 
-        if dup_name_ids:
-            r2 = await db.execute(
-                text("UPDATE parts_catalog SET needs_oem_lookup = TRUE, updated_at = NOW() WHERE id = ANY(:ids) RETURNING id"),
-                {"ids": dup_name_ids},
-            )
-            await db.flush()
-            flagged_dupes = len(r2.fetchall())
+        if not stopped_early:
+            await _save_task_checkpoint(db, "dedup_catalog_parts")
 
-        await db.commit()
-        await _save_task_checkpoint(db, "dedup_catalog_parts")
-        logger.info("dedup_catalog_parts (delta since %s): nulled_skus=%d flagged_dupes=%d elapsed=%.1fs",
-                    since.isoformat(), nulled_skus, flagged_dupes, time.monotonic() - t0)
-
+        logger.info("dedup_catalog_parts: nulled_skus=%s flagged=%s (name_disagree=%s) batches=%s early=%s",
+                    nulled_skus, flagged_dupes, name_disagree, batches, stopped_early)
     except Exception as exc:
         await db.rollback()
         logger.error("dedup_catalog_parts failed: %s", exc)
-        return {"task": "dedup_catalog_parts", "status": "error", "error": str(exc)}
+        return {"task": "dedup_catalog_parts", "status": "error",
+                "nulled_skus": nulled_skus, "flagged_dupes": flagged_dupes,
+                "batches": batches, "error": str(exc)}
 
     return {
         "task": "dedup_catalog_parts",
         "status": "ok",
         "nulled_skus": nulled_skus,
         "flagged_dupes": flagged_dupes,
-        "delta_since": since.isoformat(),
+        "name_disagree": name_disagree,
+        "batches": batches,
+        "stopped_early": stopped_early,
         "elapsed_s": round(time.monotonic() - t0, 2),
     }
-
-
-# ── populate_supplier_parts constants ───────────────────────────────────────
-_BATCH = 500  # rows per DB page when iterating parts_catalog
-
-_DEFAULT_PRICE = 80.0  # ILS fallback when part has no base_price
-
-_CATEGORY_FALLBACK_ILS: Dict[str, float] = {
-    "בלמים": 150.0,
-    "מתלה": 200.0,
-    "היגוי": 180.0,
-    "מנוע": 300.0,
-    "קירור": 120.0,
-    "מערכת דלק": 180.0,
-    "מערכת אוויר": 80.0,
-    "טורבו": 500.0,
-    "פליטה": 250.0,
-    "תיבת הילוכים וציר": 400.0,
-    "מצמד": 200.0,
-    "רצועות תזמון": 90.0,
-    "הצתה": 80.0,
-    "סינון": 60.0,
-    "חשמל ואלקטרוניקה": 120.0,
-    "חיישנים": 80.0,
-    "מצבר": 250.0,
-    "תאורה": 100.0,
-    "מזגן וחימום": 150.0,
-    "גוף הרכב": 200.0,
-    "שמשות ומגבים": 80.0,
-    "פנים הרכב": 100.0,
-    "גלגלים וצמיגים": 100.0,
-    "אטמים וצינורות": 60.0,
-    "מערכת בטיחות": 300.0,
-    "מערכת היברידית וחשמלי": 500.0,
-    "שמנים ונוזלים": 50.0,
-    "כלי עבודה ואביזרים": 60.0,
-    "כללי": 80.0,
-}
-
-_WARRANTY_MAP: Dict[str, int] = {
-    "original": 24, "Original": 24,
-    "oe_equivalent": 12, "OE Equivalent": 12,
-    "aftermarket": 12, "Aftermarket": 12,
-    "economy": 6, "Economy": 6,
-    "generic": 6,
-    "New": 12, "Used": 3, "Remanufactured": 6,
-}
-
-# REAL_DATA_ONLY: populate_supplier_parts only links suppliers that have REAL sourced data.
-# DO NOT add generic marketplace suppliers (eBay Motors, Motorstore IL) here — they produce
-# fabricated price rows that violate the pricing policy. Real eBay/Motorstore rows come from
-# ebay_brand_importer.py and scrape_motorstore() respectively.
-
-# Manufacturer-specific = official importers, linked only to their own-brand parts
-# price_mult = 1.0 means price_ils = base_price (our 45% margin already applied)
-_MANUFACTURER_SUPPLIERS: List[Any] = [
-    ("Inbar Group - Land Rover Israel", "LR-IL",  1.00, 0.0, 0.0, 7, "in_stock", True),
-    ("Geo Mobility - Zeekr Israel",     "ZEEKR",  1.00, 0.0, 0.0, 7, "in_stock", True),
-]
-
-# _UNIVERSAL_SUPPLIERS intentionally empty — no fake marketplace links allowed.
-# Rule: supplier_parts rows must come from real scrapers/importers only.
-_UNIVERSAL_SUPPLIERS: List[Any] = []
-# ────────────────────────────────────────────────────────────────────────────
-
 
 async def _populate_supplier_parts_task(db: AsyncSession) -> Dict[str, Any]:
     """
@@ -4979,6 +4947,29 @@ async def _agent_loop(get_db_fn, interval_hours: float = 6.0) -> None:
     while True:
         result: dict = {}
         try:
+            # DEFER to the job queue while it is driving a catalogue migration.
+            # Both this loop and the queue do heavy batched writes on
+            # parts_catalog. Run together they simply contend: measured
+            # 2026-07-29, the merge step fell from ~24,000 parts/hour to ~700
+            # while normalize_part_types and a full-table COUNT ran alongside it.
+            # This is periodic maintenance with its own backoff, so postponing a
+            # cycle costs nothing; the queue is a finite job the owner is waiting
+            # on. Same stand-down contract as the thumbnail supervisor.
+            try:
+                import job_queue as _jq
+                if os.getenv("JOB_QUEUE_ENABLED", "0").strip().lower() in ("1", "true", "yes") \
+                        and os.getenv("DB_AGENT_DEFER_TO_QUEUE", "1") == "1":
+                    async for _db in get_db_fn():
+                        _busy = await _jq.queue_busy(_db)
+                        break
+                    if _busy:
+                        logger.info("run_all_tasks deferred — job queue is running "
+                                    "a catalogue step (DB_AGENT_DEFER_TO_QUEUE=0 to override)")
+                        await asyncio.sleep(600)
+                        continue
+            except Exception as _dexc:      # never let the guard stop maintenance
+                logger.debug("queue-defer check skipped: %s", _dexc)
+
             async for db in get_db_fn():
                 result = await run_all_tasks(db)
         except Exception as exc:

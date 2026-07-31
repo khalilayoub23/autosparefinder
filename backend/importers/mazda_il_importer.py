@@ -45,6 +45,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import asyncpg
 
+# ONE category source of truth — never a private ruleset here.
+from category_map import categorize_on_ingest
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("mazda_il_importer")
 
@@ -131,35 +134,13 @@ def harvest_all() -> list:
 
 
 def guess_category(name_he: str, name_en: str) -> str:
-    text = (name_he + " " + name_en).upper()
-    if any(k in text for k in ["BRAKE", "DISC", "בלם", "דיסק"]):
-        return "brakes"
-    if any(k in text for k in ["ENGINE", "SEAL", "GASKET", "מנוע", "אטם"]):
-        return "engine"
-    if any(k in text for k in ["FILTER", "OIL FILTER", "פילטר", "מסנן"]):
-        return "filters"
-    if any(k in text for k in ["TRANSMISSION", "CLUTCH", "GEARBOX", "גיר", "מצמד"]):
-        return "transmission"
-    if any(k in text for k in ["SUSPENSION", "SPRING", "SHOCK", "מתלה", "קפיץ", "בולם"]):
-        return "suspension"
-    if any(k in text for k in ["ELECTRICAL", "SENSOR", "חיישן", "חשמל"]):
-        return "electrical"
-    if any(k in text for k in ["COOLING", "RADIATOR", "THERMOSTAT", "קירור", "ראדיאטור"]):
-        return "cooling"
-    if any(k in text for k in ["FUEL", "INJECTOR", "PUMP", "דלק", "מזרק"]):
-        return "fuel_system"
-    if any(k in text for k in ["STEERING", "הגה"]):
-        return "steering"
-    if any(k in text for k in ["AIRBAG", "BELT", "כרית", "חגורה"]):
-        return "safety"
-    if any(k in text for k in ["LIGHT", "LAMP", "BULB", "פנס", "נורה"]):
-        return "lighting"
-    if any(k in text for k in ["AC", "AIR CON", "CLIMATE", "מזגן"]):
-        return "air_conditioning"
-    if any(k in text for k in ["BODY", "BUMPER", "DOOR", "גוף", "פגוש", "דלת"]):
-        return "body_parts"
-    return "other_parts"
+    """Categorize a Mazda IL part name.
 
+    DELEGATES to category_map — see the note in toyota_il_importer.guess_category.
+    This previously returned a non-canonical vocabulary of its own.
+    Never re-add keyword rules here — add them to category_map.py.
+    """
+    return categorize_on_ingest(name=name_en or name_he, name_he=name_he)
 
 def parse_fitment(name_he: str, model_desc: str) -> list[dict]:
     """Extract model fitment from Hebrew name prefix and modelDescription."""
@@ -258,7 +239,7 @@ async def main():
                     part_id = str(row["id"])
                     await conn.execute("""
                         UPDATE parts_catalog SET
-                            base_price=$1, importer_price_ils=$2, min_price_ils=$2, max_price_ils=$3,
+                            base_price=$1, importer_price_ils = CASE WHEN $2 > 0 THEN $2 ELSE parts_catalog.importer_price_ils END, min_price_ils=$2, max_price_ils=$3,
                             specifications=$4::jsonb, compatible_vehicles=$5::jsonb,
                             is_safety_critical=$6, updated_at=NOW()
                         WHERE id=$7
@@ -318,7 +299,10 @@ async def main():
                         gen_random_uuid(), $1::uuid, $2::uuid, $3,
                         $4, 0.0, $5, $6, $7, $8, $9, NOW(), NOW()
                     )
-                    ON CONFLICT(part_id, supplier_id) DO UPDATE SET
+                    -- (part_id, supplier_id) is NOT the constraint that fires on re-import;
+                    -- the collision is on (supplier_id, supplier_sku). Targeting
+                    -- the wrong one silently discards price and stock updates.
+                    ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE SET
                         price_ils=EXCLUDED.price_ils,
                         availability=EXCLUDED.availability,
                         is_available=EXCLUDED.is_available,

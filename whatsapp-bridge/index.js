@@ -72,6 +72,19 @@ const logger = pino({ level: 'silent' })
 const MAX_MEDIA_BYTES = Math.max(256000, Number.parseInt(process.env.WA_MEDIA_MAX_BYTES || '6291456', 10) || 6291456)
 
 let waSocket = null
+// Raw payload of the pending link QR, or null once authenticated. Kept in
+// memory + /app/qr.txt so it can be rendered as an image; never served over
+// HTTP (scanning it links a phone to this bridge).
+let latestQR = null
+// The BUSINESS WhatsApp number this bridge is supposed to run as (digits only,
+// country code, no +). A QR scan links whatever phone scans it, so without this
+// the bridge will happily run as the wrong account and fail silently.
+const EXPECTED_NUMBER = (process.env.WHATSAPP_EXPECTED_NUMBER || '972532426920').replace(/\D/g, '')
+let accountMismatch = null
+// 'code' => link with an 8-char pairing code typed on the phone; anything else
+// keeps the classic QR flow.
+const PAIR_MODE = (process.env.WHATSAPP_PAIR_MODE || 'qr').toLowerCase()
+let latestPairCode = null
 
 const app = express()
 app.use(express.json({ limit: '20mb' }))
@@ -173,7 +186,21 @@ app.post('/send', async (req, res) => {
   }
 })
 
-app.get('/health', (_, res) => res.json({ ok: true, connected: waSocket !== null }))
+// `waSocket !== null` only proves a socket OBJECT exists — it is created before
+// authentication and stays non-null while the bridge sits at the QR screen. It
+// therefore reported {ok:true, connected:true} through a full logged-out outage,
+// which is why nothing alerted while every owner message failed. Baileys sets
+// sock.user only once the session is actually authenticated, so test THAT.
+app.get('/health', (_, res) => res.json({
+  ok: true,
+  connected: !!(waSocket && waSocket.user),
+  awaiting_qr_scan: latestQR !== null,
+  jid: waSocket?.user?.id || null,
+  expected_number: EXPECTED_NUMBER,
+  // Non-null => the bridge is linked to the WRONG WhatsApp account. Surfaced
+  // here so the backend health monitor can alert instead of it going unnoticed.
+  account_mismatch: accountMismatch,
+}))
 
 app.post('/typing', async (req, res) => {
   const { to, reply_jid } = req.body
@@ -238,6 +265,34 @@ async function startBot() {
     retryRequestDelayMs: 3000,
   })
 
+  // ── PAIRING CODE (alternative to scanning a QR) ────────────────────────────
+  // Baileys can link a companion device with an 8-character code typed on the
+  // phone instead of a scanned QR. That matters here because the QR is the
+  // fragile step: it is unreadable in some terminals, it rotates every ~20s,
+  // and it can be scanned by the WRONG phone (which is exactly what happened on
+  // 2026-07-29 — the owner's personal account got linked instead of the
+  // business one). A pairing code is requested FOR A SPECIFIC NUMBER, so it
+  // cannot silently link the wrong account.
+  // Opt in with WHATSAPP_PAIR_MODE=code.
+  if (PAIR_MODE === 'code' && !sock.authState.creds.registered) {
+    setTimeout(async () => {
+      try {
+        const code = await sock.requestPairingCode(EXPECTED_NUMBER)
+        const pretty = String(code).match(/.{1,4}/g).join('-')
+        latestPairCode = pretty
+        try { fs.writeFileSync('/app/pair_code.txt', pretty) } catch (e) {}
+        logEvent('PAIR_CODE', `issued for ${EXPECTED_NUMBER}`)
+        console.log(
+          `\n🔗 PAIRING CODE for ${EXPECTED_NUMBER}:  ${pretty}\n` +
+          `   On the BUSINESS phone: WhatsApp → Settings → Linked Devices →\n` +
+          `   Link a Device → "Link with phone number instead" → enter this code.\n` +
+          `   Valid for a few minutes; restart the bridge to get a new one.\n`)
+      } catch (e) {
+        console.error('[Bridge] requestPairingCode failed:', e?.message || e)
+      }
+    }, 4000)   // the socket must finish opening before a code can be requested
+  }
+
   waSocket = sock
 
   sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
@@ -245,6 +300,13 @@ async function startBot() {
       logEvent('QR_DISPLAYED', 'awaiting scan')
       console.log('\n📱 Scan QR with WhatsApp:\n')
       qrcode.generate(qr, { small: true })
+      // Also persist the raw payload so the link QR can be rendered as an IMAGE
+      // (the terminal blocks are unreadable in some clients). /app is the
+      // bind-mounted ./whatsapp-bridge, so this lands on the host filesystem —
+      // deliberately NOT an HTTP endpoint: whoever scans this QR links THEIR
+      // phone to this bridge, so it must never be reachable over the network.
+      latestQR = qr
+      try { fs.writeFileSync('/app/qr.txt', qr) } catch (e) { /* non-fatal */ }
     }
     if (connection === 'close') {
       const code = new Boom(lastDisconnect?.error)?.output?.statusCode
@@ -256,6 +318,32 @@ async function startBot() {
     if (connection === 'open') {
       logEvent('CONNECTED')
       console.log('✅ WhatsApp connected')
+      latestQR = null
+      latestPairCode = null
+      try { fs.existsSync('/app/qr.txt') && fs.unlinkSync('/app/qr.txt') } catch (e) {}
+      try { fs.existsSync('/app/pair_code.txt') && fs.unlinkSync('/app/pair_code.txt') } catch (e) {}
+
+      // WHICH ACCOUNT did we just link? A QR scan links whatever phone scanned
+      // it, and nothing here previously checked. On 2026-07-29 the bridge was
+      // re-linked with the owner's PERSONAL number instead of the business
+      // account: customers messaging the business line reached nobody, and
+      // every owner notification became a self-send. Both fail silently.
+      const jid = sock?.user?.id || ''
+      const num = jid.split(':')[0].split('@')[0]
+      if (EXPECTED_NUMBER && num && num !== EXPECTED_NUMBER) {
+        accountMismatch = { linked: num, expected: EXPECTED_NUMBER,
+                            name: sock?.user?.name || null }
+        logEvent('WRONG_ACCOUNT', `linked=${num} expected=${EXPECTED_NUMBER}`)
+        console.error(
+          `\n🚨 WRONG WHATSAPP ACCOUNT LINKED\n` +
+          `   linked   : ${num} (${sock?.user?.name || 'unknown'})\n` +
+          `   expected : ${EXPECTED_NUMBER}\n` +
+          `   Customers messaging ${EXPECTED_NUMBER} will NOT reach the platform.\n` +
+          `   Re-link by scanning with the BUSINESS phone.\n`)
+      } else {
+        accountMismatch = null
+        console.log(`   linked account: ${num} (${sock?.user?.name || ''})`)
+      }
       startLivenessWatchdog(sock)
     }
   })

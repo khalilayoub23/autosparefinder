@@ -80,7 +80,7 @@ import pdfplumber
 from dotenv import load_dotenv
 
 sys.path.insert(0, str(Path(__file__).parent))
-from categories import guess_category_by_text
+from category_map import BAD_FALLBACK_BUCKETS, CATCH_ALL, categorize_on_ingest, guess_category_by_text
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)s  %(message)s")
@@ -866,7 +866,7 @@ async def upsert_parts(conn, manufacturer, pdf_rows, db_rows, dry_run):
 
         if existing is None:
             sku = _make_sku(manufacturer, nk, existing_skus)
-            cat = guess_category_by_text(f"{pdf_row.name or ''} {pdf_row.name_he or ''} {manufacturer}") or "general"
+            cat = categorize_on_ingest(name=f"{pdf_row.name or ''} {manufacturer}", name_he=pdf_row.name_he or "")
             metrics["category_counts"][cat] = metrics["category_counts"].get(cat, 0) + 1
             # Build specifications JSONB
             # VAT logic — universal formula: base_price = max_price_ils × 1.45
@@ -935,8 +935,8 @@ async def upsert_parts(conn, manufacturer, pdf_rows, db_rows, dry_run):
                 new_cat = guess_category_by_text(
                     f"{pdf_row.name or ''} {pdf_row.name_he} {manufacturer}"
                 ) or None
-                cur_cat = existing.get("category") or "general"
-                upd_cat = new_cat if (new_cat and new_cat != "general" and cur_cat in ("general", "כללי", None)) else cur_cat
+                cur_cat = existing.get("category") or CATCH_ALL
+                upd_cat = new_cat if (new_cat and new_cat != CATCH_ALL and cur_cat in BAD_FALLBACK_BUCKETS) else cur_cat
                 to_ucatname.append((pdf_row.name_he[:255], upd_cat[:100], rid))
                 metrics["updated_desc"] = metrics.get("updated_desc", 0) + 1
 
@@ -959,7 +959,7 @@ async def upsert_parts(conn, manufacturer, pdf_rows, db_rows, dry_run):
                                   $12,$13,$14,$15,'new',false,false,false,$16,NOW(),NOW())
                            ON CONFLICT (sku) DO UPDATE SET
                              base_price=EXCLUDED.base_price,
-                             importer_price_ils=EXCLUDED.importer_price_ils,
+                             importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
                              max_price_ils=EXCLUDED.max_price_ils,
                              min_price_ils=CASE WHEN EXCLUDED.min_price_ils > 0
                                            THEN EXCLUDED.min_price_ils

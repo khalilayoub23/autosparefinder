@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import random
 import re
 import time
@@ -18,7 +19,13 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 from sqlalchemy import text
 
 from catalog_scraper import scraper_session_factory, scrape_motorstore
-from categories import guess_category_by_text
+import category_map
+from category_map import (
+    BAD_FALLBACK_BUCKETS,
+    CANONICAL,
+    CATCH_ALL,
+    guess_category_by_text,
+)
 from currency_rate import get_usd_to_ils_rate
 
 logger = logging.getLogger("db_cleanup_agent")
@@ -48,18 +55,14 @@ _PART_TYPE_FIX_VALUES = {
 
 
 def _guess_category(text: str) -> str | None:
-    # Prefer the comprehensive category_map (goal G6, 2026-07-13): richer keyword rules
-    # + car-parts.ie URL-slug + variant normalization. The blob is passed as BOTH name
-    # and name_he so category_map's Latin AND Hebrew keyword rules both see it. Falls
-    # back to the legacy matcher. This upgrades the live pipeline so NEW parts get the
-    # better categorization automatically (existing backlog handled by recategorize_backlog.py).
-    try:
-        from category_map import categorize as _cm_categorize
-        cat = _cm_categorize(name=text, name_he=text)
-        if cat:
-            return cat
-    except Exception:
-        pass
+    """
+    Keyword-classify a text blob → canonical slug, or None when nothing matches.
+
+    The None contract matters: task3 records a genuine no-match in
+    `_unclassifiable` so it stops rescanning parts that keyword rules can never
+    place. `category_map.categorize()` is the wrong call here — it always returns
+    a value ('כללי'), which would make every part look "classified".
+    """
     return guess_category_by_text(text)
 
 
@@ -168,17 +171,43 @@ async def task2_fill_oem_from_crossref() -> int:
     return updated
 
 
+# Scan scope, DERIVED from category_map so it can never drift from the rule file.
+# Covers: the historical fallback buckets AND anything that is not a canonical
+# value at all (e.g. 'Brakes', 'General Parts', 'Engine' written by importers
+# that used to carry their own maps).
+_BAD_BUCKETS_SQL = ", ".join("'" + b.replace("'", "''") + "'" for b in BAD_FALLBACK_BUCKETS)
+_CANONICAL_SQL = ", ".join("'" + c.replace("'", "''") + "'" for c in sorted(CANONICAL))
+
+
+# The index is held in the uvicorn process, so it MUST be bounded. Unbounded it
+# pulled every matching row — 1,617,345 parts as of 2026-07-27, several hundred MB
+# of Python dict inside a 4 GB container that also runs the API and the harvester
+# supervisors. task3 only ever samples 500 ids per pass, so a bounded window
+# behaves identically and just rebuilds more often.
+_UNCATEGORIZED_INDEX_LIMIT = int(os.getenv("CLEANUP_INDEX_LIMIT", "50000"))
+
+
 async def _build_uncategorized_index(db) -> int:
     global _uncategorized_index, _index_built
     rows = (await db.execute(text("""
         SELECT id::text,
-               COALESCE(name, '') || ' ' || COALESCE(name_he, '') AS blob
+               -- name first, then description/specifications as a LAST-RESORT
+               -- signal (guess_category_by_text is longest-match, and the name
+               -- terms come first so they win ties). 87.3% of stuck parts carry
+               -- specifications and it rescues 15.4% of them.
+               COALESCE(name, '') || ' ' || COALESCE(name_he, '') || ' ' ||
+               LEFT(COALESCE(description, '') || ' ' ||
+                    COALESCE(specifications::text, ''), 600) AS blob
         FROM parts_catalog
         WHERE (category IS NULL
                OR TRIM(COALESCE(category, '')) = ''
-               OR category = 'כללי')
+               OR category IN (:buckets)
+               OR category NOT IN (:canon))
           AND is_active = TRUE
-    """))).fetchall()
+        LIMIT :lim
+    """.replace(':buckets', _BAD_BUCKETS_SQL)
+       .replace(':canon', _CANONICAL_SQL)
+       .replace(':lim', str(_UNCATEGORIZED_INDEX_LIMIT))))).fetchall()
 
     # Exclude permanently unclassifiable parts.
     _uncategorized_index = {
@@ -270,37 +299,113 @@ async def task3_categorize_by_keywords() -> int:
 
 
 # ── LLM categories available for fallback ──────────────────────────────────────
-_VALID_CATEGORIES = [
-    "engine", "brakes", "suspension-steering", "electrical-sensors", "body-exterior",
-    "lighting", "cooling", "fuel-air", "exhaust", "filters", "clutch-drivetrain",
-    "gearbox", "wheels-bearings", "air-conditioning-heating", "interior-comfort",
-    "wipers-washers", "fluids", "accessories", "service-general", "כללי",
-]
+# Derived from category_map.CANONICAL — the hardcoded list this replaces was
+# missing safety-systems, belts-chains and hybrid-ev, so the LLM could never
+# choose them and parts in those families were pushed elsewhere.
+_VALID_CATEGORIES = sorted(CANONICAL)
 
 # Rolling cursor for LLM fallback — tracks which unclassifiable parts we've tried
 _llm_fallback_cursor: list[str] = []
 _llm_consecutive_failures: int = 0  # skip LLM when all providers are 429ing
 
+# ── LLM ASSIST BUDGET (the 2026-07-27 quota blowout guard) ───────────────────
+# The blowout was NOT "the LLM is too expensive" — it was an unbounded caller:
+# task3b ran with batch_size=500 inside a loop that ticks every 30s, so it burned
+# the entire free-tier TPM budget continuously and starved every other consumer
+# (Cerebras + Gemini + Groq all 429'd at once). Three independent limits now make
+# that shape impossible, and because answers are mined into permanent keywords
+# (category_learning), demand shrinks over time instead of being constant.
+_LLM_BATCH = int(os.getenv("CLEANUP_LLM_BATCH", "25"))            # parts per prompt
+_LLM_MIN_INTERVAL_S = float(os.getenv("CLEANUP_LLM_MIN_INTERVAL_S", "180"))
+_LLM_DAILY_MAX_CALLS = int(os.getenv("CLEANUP_LLM_DAILY_MAX_CALLS", "150"))
+_llm_last_call_ts: float = 0.0
+_llm_calls_today: int = 0
+_llm_call_day: str = ""
 
-async def task3b_llm_category_fallback(batch_size: int = 20) -> int:
-    """LLM fallback for parts the keyword matcher can't classify.
-    Takes up to batch_size parts from _unclassifiable, asks the LLM in one prompt,
-    writes results. Runs at most 20 parts per cleanup cycle to stay cheap."""
+
+def _llm_budget_check() -> tuple[bool, str]:
+    """(allowed, reason). Enforces min-interval + per-day cap + failure backoff."""
+    global _llm_calls_today, _llm_call_day
+    import datetime as _dt
+    today = _dt.date.today().isoformat()
+    if today != _llm_call_day:
+        _llm_call_day, _llm_calls_today = today, 0
+    if _llm_calls_today >= _LLM_DAILY_MAX_CALLS:
+        return False, f"daily cap reached ({_llm_calls_today}/{_LLM_DAILY_MAX_CALLS})"
+    waited = time.time() - _llm_last_call_ts
+    if waited < _LLM_MIN_INTERVAL_S:
+        return False, f"min interval ({waited:.0f}s < {_LLM_MIN_INTERVAL_S:.0f}s)"
+    if _llm_consecutive_failures >= 3:
+        return False, f"provider backoff ({_llm_consecutive_failures} consecutive failures)"
+    return True, ""
+
+
+async def task3b_llm_category_fallback(batch_size: int | None = None) -> int:
+    """
+    LLM ASSIST for parts the deterministic keyword matcher genuinely cannot place.
+
+    The LLM is a helper that guides a STUCK worker — not the thing that
+    categorizes the catalog. It only ever sees rows already proven unclassifiable
+    by `_guess_category`, in small rate-limited batches, and everything it teaches
+    is mined into permanent keyword rules (`category_learning`) so the matcher
+    handles that shape of name unaided next time. Demand therefore DECREASES.
+
+    `batch_size` defaults to CLEANUP_LLM_BATCH (25). Do not pass a large value —
+    a 500-part prompt every 30s is exactly what exhausted every provider on
+    2026-07-27.
+    """
     from hf_client import hf_text  # import here to avoid circular-import at module load
+    import category_learning
 
     global _unclassifiable, _llm_fallback_cursor, _llm_consecutive_failures
+    global _llm_last_call_ts, _llm_calls_today
+
+    batch_size = min(batch_size or _LLM_BATCH, _LLM_BATCH)
 
     if len(_unclassifiable) == 0:
         return 0
 
-    # Back off when all providers are rate-limited — skip every other cycle
-    if _llm_consecutive_failures >= 3:
-        _llm_consecutive_failures -= 1  # decay slowly
+    allowed, reason = _llm_budget_check()
+    if not allowed:
+        if _llm_consecutive_failures >= 3:
+            _llm_consecutive_failures -= 1  # decay slowly
         return 0
 
-    # Refill cursor from unclassifiable set when empty
+    # ── HIGHEST-LEVERAGE SAMPLING ────────────────────────────────────────────
+    # Do NOT sample stuck parts at random. One LLM call classifies 25 parts, but
+    # a keyword it teaches classifies EVERY part containing that word — measured
+    # 2026-07-27 over the real 403,327-part stuck population: the top 400 unknown
+    # tokens cover 73.6% of it (~297,000 parts). Random sampling would need ~107
+    # days at the daily budget; teaching the frequent tokens first gets the same
+    # coverage in a few hundred calls.
+    #
+    # So: rank the unknown tokens in the stuck set by frequency and pick parts
+    # that contain the most common one the matcher still cannot handle.
     if not _llm_fallback_cursor:
-        _llm_fallback_cursor = list(_unclassifiable)[:5000]  # cap to avoid OOM
+        import collections as _c
+        import category_learning as _cl
+        _WORD = re.compile(r"[a-zA-Z]{3,}|[֐-׿؀-ۿ]{2,}")
+
+        pool = list(_unclassifiable)[:20000]
+        blobs = {pid: _uncategorized_index.get(pid, "") for pid in pool}
+        freq: _c.Counter = _c.Counter()
+        for blob in blobs.values():
+            for w in set(_WORD.findall(blob.lower())):
+                if (guess_category_by_text(w) is None) and not _cl.is_blocked(w):
+                    freq[w] += 1
+
+        if freq:
+            target, hits = freq.most_common(1)[0]
+            _llm_fallback_cursor = [
+                pid for pid, blob in blobs.items() if target in blob.lower()
+            ][:5000]
+            print(f"[Cleanup] task3b: targeting unknown token {target!r} "
+                  f"({hits} parts in the stuck sample) — one keyword unlocks all of them")
+        else:
+            # Nothing teachable left (all remaining tokens are blocked or known);
+            # fall back to plain order so those parts still get a category.
+            _llm_fallback_cursor = pool[:5000]
+
     if not _llm_fallback_cursor:
         return 0
 
@@ -346,6 +451,8 @@ async def task3b_llm_category_fallback(batch_size: int = 20) -> int:
         "Choose from valid categories only. No other text."
     )
 
+    _llm_last_call_ts = time.time()
+    _llm_calls_today += 1
     try:
         raw = await hf_text(prompt, system=system)
         _llm_consecutive_failures = 0  # reset on success
@@ -408,7 +515,195 @@ async def task3b_llm_category_fallback(batch_size: int = 20) -> int:
             print(f"[Cleanup] task3b DB write error: {exc}")
             return 0
 
+    # ── TEACH THE MATCHER ────────────────────────────────────────────────────
+    # This is what makes the LLM a guide rather than the worker: mine the tokens
+    # that consistently predicted a category and promote them to permanent
+    # keyword rules. Next time a part with that token shows up, the free
+    # deterministic matcher places it and no LLM call happens at all.
+    try:
+        blob_by_id = {r[0]: r[1] for r in indexed_rows}
+        classified = [
+            (blob_by_id.get(u["id"], ""), u["category"])
+            for u in updates
+            if blob_by_id.get(u["id"])
+        ]
+        mined = category_learning.mine_tokens(classified)
+        if mined:
+            async with scraper_session_factory() as db2:
+                accepted = await category_learning.persist(db2, mined)
+            if accepted:
+                # An APPROVED keyword just went live — apply it in bulk.
+                # This is the multiplier: measured 2026-07-27, one frequent token
+                # covers thousands of stuck parts ('bolt' 16,541, 'rover' 13,068),
+                # so applying immediately is what makes this finish in days rather
+                # than the ~107 days per-part LLM classification would take.
+                _unclassifiable.clear()
+                _index_built = False
+                print(f"[Cleanup] task3b: {accepted} approved keyword(s) live "
+                      f"→ matcher {category_map.learned_stats()}")
+                bulk = await _bulk_apply_new_keywords()
+                if bulk:
+                    print(f"[Cleanup] task3b BULK-APPLIED → {bulk:,} parts categorized")
+
+        # Tokens that reached consensus wait for the owner (a single keyword can
+        # move thousands of parts). Ping once per day so they don't sit unseen.
+        async with scraper_session_factory() as db3:
+            pend = await category_learning.pending_for_owner(db3)
+        if pend:
+            await _notify_owner_pending_keywords(pend)
+    except Exception as exc:
+        # Learning is an optimisation — never fail the classification because of it.
+        print(f"[Cleanup] task3b keyword-learning skipped: {exc}")
+
     return len(updates)
+
+
+_embed_unavailable_logged: float = 0.0
+
+
+async def task3c_embed_assist(limit: int = 400) -> int:
+    """
+    Local-embedding keyword assist — INDEPENDENT of the LLM path.
+
+    This deliberately does NOT live inside task3b. It was placed there first and
+    sat behind eight early returns (LLM budget not met, no stuck rows, provider
+    failure, nothing parsed), so it almost never ran — which defeats the entire
+    point: the local model is FREE and has no daily cap, so it must keep working
+    exactly when the LLM cannot.
+
+    PHASE 1 CONTRACT: proposes classification RULES only. Nothing is written to a
+    part until the owner approves the keyword (`אשרמילה`). Per-type gating in
+    category_input_type drops identifiers, sizes, supersession placeholders and
+    brand-only names BEFORE the model sees them.
+    """
+    if os.environ.get("EMBED_ASSIST_ENABLED", "1").strip().lower() not in ("1", "true", "yes"):
+        return 0
+    # A MISSING MODEL MUST BE LOUD, NOT SILENT.
+    # This returned a bare 0 when onnxruntime/numpy were absent, so after a
+    # `docker compose up` recreated the container and wiped a runtime pip
+    # install, the task reported "0 proposals" every cycle and looked like a
+    # gating result rather than a broken dependency. Log it once per hour.
+    global _embed_unavailable_logged
+    try:
+        import category_embed as ce
+        import category_learning as _cl
+        if not ce.available():
+            now = time.time()
+            if now - _embed_unavailable_logged > 3600:
+                _embed_unavailable_logged = now
+                print("[Cleanup] task3c: embedding model UNAVAILABLE "
+                      "(missing onnxruntime/numpy/tokenizers, or weights absent at "
+                      f"{getattr(ce, 'MODEL_DIR', '?')}). Rebuild the image or run "
+                      "maintenance/fetch_embed_model.py — proposals are OFF.")
+            return 0
+    except ImportError as exc:
+        now = time.time()
+        if now - _embed_unavailable_logged > 3600:
+            _embed_unavailable_logged = now
+            print(f"[Cleanup] task3c: embedding deps missing ({exc}) — proposals OFF")
+        return 0
+
+    # Read the TEXT FROM THE DB, not from _uncategorized_index.
+    # task3 POPS each id out of that index as it processes it
+    # (`_uncategorized_index.pop(part_id, None)`), so by the time this task runs
+    # the ids in `_unclassifiable` have no blob left in memory — the first
+    # version looked them up there and silently got 0 texts every cycle.
+    pool = list(_unclassifiable)[:limit]
+    if not pool:
+        pool = list(_uncategorized_index.keys())[:limit]
+    if not pool:
+        return 0
+
+    try:
+        async with scraper_session_factory() as db:
+            rows = (await db.execute(text("""
+                SELECT COALESCE(name, '') || ' ' || COALESCE(name_he, '') AS blob
+                FROM parts_catalog
+                WHERE id = ANY(CAST(:ids AS uuid[]))
+            """), {"ids": pool})).fetchall()
+            texts = [r[0].strip() for r in rows if r[0] and r[0].strip()]
+            if not texts:
+                return 0
+            got = await _cl.suggest_from_embeddings(db, texts, limit=limit)
+        if got:
+            print(f"[Cleanup] task3c embed_assist: {got} keyword rule(s) proposed "
+                  f"from {len(texts)} stuck parts — PHASE 1, awaiting owner approval")
+        return got
+    except Exception as exc:
+        print(f"[Cleanup] task3c embed_assist error: {exc}")
+        return 0
+
+
+async def _notify_owner_pending_keywords(pending: list) -> None:
+    """
+    WhatsApp the owner (once/day) that learned keywords await approval.
+    Goes through the quiet-hours-safe sender — never a raw _wa_send.
+    """
+    try:
+        import redis.asyncio as _redis
+        r = _redis.from_url(os.getenv("REDIS_URL", "redis://redis:6379/0"))
+        if not await r.set("cleanup:kwpending:notified", "1", ex=86400, nx=True):
+            await r.aclose()
+            return
+        await r.aclose()
+    except Exception:
+        pass  # Redis down → still notify rather than stay silent
+    try:
+        from BACKEND_API_ROUTES import _wa_send_quiet
+        owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
+        if not owner:
+            return
+        top = ", ".join(f"{p['token']}→{p['category']}" for p in pending[:5])
+        await _wa_send_quiet(
+            to=owner,
+            text=(f"🔤 {len(pending)} מילות סיווג חדשות ממתינות לאישורך: {top}"
+                  f"\nכתוב *מילים* לרשימה ואישור."),
+        )
+    except Exception as exc:
+        logger.warning("owner keyword notification failed: %s", exc)
+
+
+async def _bulk_apply_new_keywords(limit: int = 20000) -> int:
+    """
+    Re-run the deterministic matcher over the catch-all bucket so a freshly
+    learned keyword is applied to EVERY part it matches, not just the sample
+    that taught it. Bounded per call; the loop calls it again next time a
+    keyword activates.
+    """
+    moved = 0
+    async with scraper_session_factory() as db:
+        try:
+            rows = (await db.execute(text("""
+                SELECT id::text, COALESCE(name,'') AS name, COALESCE(name_he,'') AS name_he
+                FROM parts_catalog
+                WHERE is_active AND category = :c
+                LIMIT :lim
+            """), {"c": CATCH_ALL, "lim": limit})).fetchall()
+
+            updates: dict[str, list] = {}
+            for pid, name, name_he in rows:
+                cat = category_map.categorize(name=name, name_he=name_he)
+                if cat != CATCH_ALL:
+                    updates.setdefault(cat, []).append(pid)
+
+            for cat, ids in updates.items():
+                for i in range(0, len(ids), 2000):
+                    chunk = ids[i:i + 2000]
+                    await db.execute(text("""
+                        UPDATE parts_catalog
+                        SET category = :cat, updated_at = NOW()
+                        WHERE id = ANY(CAST(:ids AS uuid[]))
+                    """), {"cat": cat, "ids": chunk})
+                    moved += len(chunk)
+            if moved:
+                await db.commit()
+            else:
+                await db.rollback()
+        except Exception as exc:
+            await db.rollback()
+            logger.error("_bulk_apply_new_keywords failed: %s", exc)
+            return 0
+    return moved
 
 
 async def task6_reorganize_categories_rollup(batch_size: int = 500) -> int:
@@ -1244,7 +1539,16 @@ async def run_cleanup_cycle_once(
     await asyncio.sleep(3)
     t3 = await task3_categorize_by_keywords()
     await asyncio.sleep(1)
-    t3b = await task3b_llm_category_fallback(batch_size=500)
+    if os.environ.get("CLEANUP_LLM_ENABLED", "0").strip().lower() in ("1", "true", "yes"):
+        # NO batch_size override — the default (CLEANUP_LLM_BATCH, 25) is the
+        # budgeted value. batch_size=500 here every 30s is what exhausted
+        # Cerebras+Gemini+Groq simultaneously on 2026-07-27.
+        t3b = await task3b_llm_category_fallback()
+    else:
+        t3b = 0
+    # Runs regardless of whether the LLM ran — free, local, no quota.
+    await asyncio.sleep(1)
+    t3c = await task3c_embed_assist()
     await asyncio.sleep(2)
     t6 = await task6_reorganize_categories_rollup()
     await asyncio.sleep(2)
@@ -1311,6 +1615,22 @@ async def run_cleanup_loop() -> None:
     cycle = 0
     state: Dict[str, Any] = {"task4_full_batch_cycles": 0, "task4_accelerated": False}
     print('[Cleanup] Background cleanup loop started')
+
+    # Rehydrate keywords the LLM assist taught in previous runs, so learning is
+    # cumulative across restarts and the LLM is never re-asked what it already
+    # answered. Non-fatal: a failure here only means the matcher runs on the
+    # hand-written rules alone.
+    try:
+        import category_learning
+        async with scraper_session_factory() as _db:
+            # Purge first: a token blocklisted after its votes were recorded must
+            # not be able to activate on this boot.
+            await category_learning.purge_blocklisted(_db)
+            await category_learning.load_rejected(_db)
+            await category_learning.load_into_matcher(_db)
+        print(f'[Cleanup] category matcher: {category_map.learned_stats()}')
+    except Exception as _exc:
+        print(f'[Cleanup] learned-keyword load skipped: {_exc}')
 
     while True:
         try:

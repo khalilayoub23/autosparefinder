@@ -8,3 +8,14 @@ rich>=13.9.0
 tqdm>=4.67.0
 httpx>=0.27.0
 langdetect>=1.0.9
+
+# ── Local multilingual embeddings for part categorization (2026-07-28) ────────
+# sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 run through ONNX
+# Runtime, NOT PyTorch: torch adds ~800MB to the image and ~1.5GB RSS, and this
+# box has 12GB with NO SWAP (an OOM is a hard kill). onnxruntime is ~50MB and
+# faster on CPU for this model size. Model weights are NOT in the image — they
+# live in the persistent worker_state volume at
+# /app/state/models/minilm-multilingual (see maintenance/fetch_embed_model.py).
+onnxruntime>=1.20
+tokenizers>=0.20
+numpy>=1.26

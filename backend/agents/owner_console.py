@@ -255,7 +255,16 @@ _HELP = (
     "• *שאיבה* — התקדמות שאיבת הקטלוג\n"
     "• *פוסטים* — פוסטים של NOA שממתינים לאישור\n"
     "• *אשר [מזהה]* / *דחה [מזהה]* — אשר/דחה פוסט\n"
+    "• *תגובות* — תגובות ברשתות שממתינות לתשובה (NOA כבר ניסחה)\n"
+    "• *ענה [מזהה]* / *דלג [מזהה]* — שלח את תשובת NOA / דלג\n"
     "• *הנחיות* — ההנחיות הקבועות שנתת ל-NOA\n"
+    "• *ספקים* — ספקים חדשים ש-NIR מצא וממתינים לאישור\n"
+    "• *מילים* — מילות סיווג חדשות שהמערכת למדה וממתינות לאישורך\n"
+    "• *מודל* — מצב מנוע הסיווג: אילו סוגי טקסט הוכיחו דיוק\n"
+    "• *תור* — תור המשימות הכבדות: מה רץ, כמה נותר (נמדד מה-DB)\n"
+    "• *עצור* / *המשך* — עצירה בטוחה של התור (בסוף המנה) והמשך\n"
+    "• *מקורות* — NIR יחפש ספקים חדשים ברשת עכשיו\n"
+    "• *אשרספק [מזהה]* / *דחהספק [מזהה]* — הפעל/דחה ספק\n"
     "• *עזרה* — התפריט הזה\n\n"
     "דוגמה: *@נועה תשמרי: 2 פוסטים ביום בשעות שיא, עם קריאה לפעולה* — "
     "וזה יישמר וייושם בפועל."
@@ -352,7 +361,23 @@ _WA_REPLY_RULES = (
     "(אסור 'Analyze', 'Draft', 'Step', '1. …', 'Internal Monologue', רשימת שלבים).\n"
     "• עיצוב וואטסאפ: הדגשה עם כוכבית *בודדת* בלבד — לעולם לא **. בלי כותרות markdown (#).\n"
     "• השתמש בנתוני המערכת החיים למטה; אל תמציא מספרים.\n"
+    "• *אסור להמציא קישורים.* הקישור היחיד המותר הוא https://autosparefinder.co.il "
+    "(או קישור שנמסר לך במפורש). לעולם אל תמציא נתיב כמו /oil-filters-corolla — "
+    "הוא לא קיים והלקוח יגיע לעמוד שגוי.\n"
+    "• *אסור להמציא מבצעים, הנחות, קופונים או תוכניות נאמנות.* אין קופונים פעילים. "
+    "אם אין מבצע אמיתי — אל תרמוז שיש.\n"
     "• אם צריך פעולה מובנית — הפנה לפקודה: סטטוס / שאיבה / פוסטים / אשר / דחה."
+)
+
+# When the owner ISSUES AN INSTRUCTION (rather than asking for output), the reply must
+# be an acknowledgement of what will change — not a freshly generated artefact.
+# Without this NOA answered "from now on always put a real price in every post" by
+# writing a post, which is what reads as bot-like: it responded to the topic instead of
+# to the intent. (owner, 2026-07-29: "act like agents not like bots")
+_DIRECTIVE_NOTE = (
+    "\n\n--- שים לב: ההודעה הזו היא הוראה/נוהל, לא בקשה לתוכן ---\n"
+    "הבעלים נותן לך הנחיה קבועה. אשר בקצרה שקלטת, ונסח במשפט אחד מה ישתנה בפועל מעכשיו. "
+    "אל תייצר פוסט, אל תבקש ממנו מידע שכבר יש לך במערכת, ואל תשאל שאלה מיותרת."
 )
 _OWNER_SYSTEM = {
     "router_agent": (
@@ -365,7 +390,11 @@ _OWNER_SYSTEM = {
         "את NOA — מנהלת השיווק והסושיאל של AutoSpareFinder, מדברת עם *חליל, הבעלים*. "
         "כשהוא מבקש פוסט — כתבי את הפוסט המוכן לפרסום בלבד (פתיח קולע, גוף קצר, וקריאה "
         "לפעולה), אנושי וחכם, בלי להסביר את התהליך. כשהוא שואל על שיווק — תני תשובה ממוקדת. "
-        "אל תמציאי מחירים או נתונים. לאישור/דחיית פוסטים ממתינים: 'פוסטים' ואז 'אשר'/'דחה'."
+        "כשהוא נותן לך *הוראה* — אשרי מה נקלט ומה ישתנה, אל תכתבי פוסט. "
+        "אל תמציאי מחירים או נתונים. "
+        "הקריאה לפעולה בפוסט היא תמיד חיפוש לפי מספר רישוי באתר — לא נתיב מוצר מומצא, "
+        "ולא מבצע/הנחה שלא קיימים. "
+        "לאישור/דחיית פוסטים ממתינים: 'פוסטים' ואז 'אשר'/'דחה'."
         + _ROSTER + _WA_REPLY_RULES
     ),
     "assistant_agent": (
@@ -411,8 +440,215 @@ def _clean_wa_reply(text: str) -> str:
     # 3) markdown → WhatsApp: **bold** → *bold*, drop markdown headers/list-star noise
     t = re.sub(r"\*\*+([^*\n]+?)\*\*+", r"*\1*", t)
     t = re.sub(r"(?m)^\s{0,3}#{1,6}\s*", "", t)
+    # 4) INVENTED LINKS. NOA produced `https://autosparefinder.co.il/oil-filters-corolla`
+    #    — a route that does not exist. A prompt rule alone does not hold under a
+    #    fallback model, and an owner who forwards that link sends a customer to a 404,
+    #    so the deep path is collapsed to the site root here as well. Only genuinely
+    #    routed prefixes survive (checkout, admin, the QR channel picker, search).
+    t = re.sub(
+        r"(https?://(?:www\.)?autosparefinder\.co\.il)/(?!(?:pay/|admin\b|api/v1/go\b|search\b))"
+        r"[^\s)\],.]*",
+        r"\1", t)
     t = re.sub(r"\n{3,}", "\n\n", t).strip()
     return t
+
+
+async def _engagement_inbox(db) -> str:
+    """List social comments/DMs NOA has drafted a reply for, awaiting owner approval."""
+    from social import engagement as _eng
+    try:
+        await _eng.ensure_inbox_table(db)
+        pend = await _eng.pending_for_owner(db)
+    except Exception as e:
+        return f"⚠️ שגיאה בקריאת התגובות: {str(e)[:120]}"
+    if not pend:
+        cfg = _eng.configured_platforms()
+        if not cfg:
+            return ("אין ערוץ חברתי מחובר לקריאת תגובות עדיין (חסר FACEBOOK_PAGE_TOKEN). "
+                    "ברגע שיחובר טוקן, NOA תתחיל לקרוא ולנסח תשובות אוטומטית.")
+        return "אין תגובות שממתינות לתשובה כרגע. ✅"
+    lines = ["💬 *תגובות ממתינות לתשובתך:*"]
+    for p in pend:
+        who = p.get("author") or "לקוח"
+        msg = (p.get("message") or "")[:90]
+        draft = (p.get("reply_text") or "")[:140]
+        lines.append(f"\n🆔 {_short(p['id'])} · {p['platform']} · {who}\n"
+                     f"   💬 {msg}\n   ✍️ טיוטת NOA: {draft}")
+    lines.append("\nלשליחה: *ענה <מזהה>* (או *ענה <מזהה> טקסט משלך*) · לדילוג: *דלג <מזהה>*")
+    return "\n".join(lines)
+
+
+async def _engagement_reply(db, token: str, override: str = "") -> str:
+    """Approve+send NOA's drafted reply (or the owner's own text) to a social comment."""
+    from social import engagement as _eng
+    item = await _eng.resolve_inbox(db, token)
+    if not item:
+        return "לא מצאתי תגובה ממתינה. כתוב *תגובות* לרשימה."
+    text = (override or item.get("reply_text") or "").strip()
+    if not text:
+        return "אין טקסט לשליחה. כתוב *ענה <מזהה> הטקסט שלך*."
+    res = await _eng.send_reply(item["platform"], str(item["external_id"]), text)
+    if not res.get("ok"):
+        return f"⚠️ שליחה נכשלה: {str(res.get('error'))[:140]}"
+    await _eng.mark_replied(db, item["id"], res.get("id"))
+    return f"✅ נשלחה תשובה ב-{item['platform']} ({_short(item['id'])})."
+
+
+async def _engagement_skip(db, token: str) -> str:
+    from social import engagement as _eng
+    item = await _eng.resolve_inbox(db, token)
+    if not item:
+        return "לא מצאתי תגובה ממתינה. כתוב *תגובות* לרשימה."
+    await _eng.mark_skipped(db, item["id"])
+    return f"⏭️ דילגתי על התגובה {_short(item['id'])}."
+
+
+# ── NIR supplier sourcing (discover sellers → onboard → owner approves) ────────
+
+# ── Category keyword learning (LLM assist) — owner approval gate ─────────────
+# One keyword can move thousands of parts ('bolt' matches 16,541), so a token the
+# LLM proposed does not go live until the owner approves it here.
+
+
+async def _embed_phase_report() -> str:
+    """Phase-1/2 scorecard: which input types have earned auto-write."""
+    from catalog_scraper import scraper_session_factory
+    import embed_policy as ep
+    import category_input_type as cit
+    try:
+        async with scraper_session_factory() as db:
+            card = await ep.type_scorecard(db)
+    except Exception as e:
+        return f"⚠️ שגיאה: {str(e)[:120]}"
+
+    lines = ["🧠 *מצב מנוע הסיווג (AI מקומי):*", "", ep.describe_phase(), ""]
+    if not card:
+        lines.append("עדיין לא נאספו הצעות מהמודל. ההיסטוריה תתחיל להיבנות בסבב הקרוב.")
+        lines.append("")
+        lines.append(f"תנאי מעבר לשלב 2: לפחות {ep.MIN_DECISIONS} החלטות שלך לכל סוג, "
+                     f"ואישור של {ep.MIN_APPROVAL_RATE:.0%} לפחות.")
+        return "\n".join(lines)
+
+    lines.append("*לפי סוג טקסט:*")
+    for ty, d in sorted(card.items(), key=lambda kv: -(kv[1]["decisions"])):
+        rate = f"{d['approval_rate']:.0%}" if d["approval_rate"] is not None else "—"
+        mark = "✅ מוכן לשלב 2" if d["meets_bar"] else (
+            "⏳ אוסף היסטוריה" if d["eligible"] else "🚫 לא מורשה לכתיבה")
+        lines.append(
+            f"• *{ty}* — אושרו {d['approved']} · נדחו {d['rejected']} · "
+            f"ממתינים {d['pending']}\n   ↳ אחוז אישור {rate} · {mark}")
+    lines.append("")
+    lines.append(f"תנאי מעבר: ≥{ep.MIN_DECISIONS} החלטות ו-≥{ep.MIN_APPROVAL_RATE:.0%} אישור.")
+    lines.append("כרגע: המודל *מציע חוקים בלבד* — שום חלק לא משתנה בלי אישורך (*מילים*).")
+    return "\n".join(lines)
+
+
+async def _keywords_list() -> str:
+    from catalog_scraper import scraper_session_factory
+    import category_learning as cl
+    try:
+        async with scraper_session_factory() as db:
+            pend = await cl.pending_for_owner(db)
+    except Exception as e:
+        return f"⚠️ שגיאה בקריאת המילים: {str(e)[:120]}"
+    if not pend:
+        return ("אין מילות־קטלוג חדשות שממתינות לאישור. ✅\n"
+                "המערכת לומדת מילים חדשות רק כשהיא נתקעת על חלק שהיא לא מזהה.")
+    lines = ["🔤 *מילים חדשות שהמערכת למדה וממתינות לאישורך:*", ""]
+    for k in pend:
+        he = cl.category_map.display_name(k["category"], "he")
+        lines.append(
+            f"• *{k['token']}* → {he} ({k['category']})\n"
+            f"   ↳ {k['observations']} חלקים הסכימו · {k['agreement']:.0%} הסכמה"
+        )
+    lines.append("")
+    lines.append("לאישור: *אשרמילה <מילה>* · לדחייה: *דחהמילה <מילה>*")
+    lines.append("אחרי אישור המילה תסווג *כל* החלקים שמכילים אותה.")
+    return "\n".join(lines)
+
+
+async def _keyword_approve(token: str) -> str:
+    from catalog_scraper import scraper_session_factory
+    import category_learning as cl
+    if not token:
+        return "צריך מילה. כתוב *מילים* לרשימה."
+    try:
+        async with scraper_session_factory() as db:
+            res = await cl.approve(db, token)
+    except Exception as e:
+        return f"⚠️ שגיאה: {str(e)[:120]}"
+    if not res.get("ok"):
+        if res.get("error") == "blocklisted":
+            return (f"❌ *{token}* חסומה לצמיתות (שם יצרן / בורג / מיקום) "
+                    "ולא תיהפך לכלל סיווג.")
+        return f"לא מצאתי מילה ממתינה בשם *{token}*. כתוב *מילים* לרשימה."
+    he = cl.category_map.display_name(res["category"], "he")
+    return (f"✅ *{res['token']}* אושרה → {he}.\n"
+            "הכלל פעיל עכשיו, וכל החלקים שמכילים את המילה יסווגו בסבב הקרוב.")
+
+
+async def _keyword_reject(token: str) -> str:
+    from catalog_scraper import scraper_session_factory
+    import category_learning as cl
+    if not token:
+        return "צריך מילה. כתוב *מילים* לרשימה."
+    try:
+        async with scraper_session_factory() as db:
+            res = await cl.reject(db, token)
+    except Exception as e:
+        return f"⚠️ שגיאה: {str(e)[:120]}"
+    if not res.get("ok"):
+        return f"לא מצאתי מילה בשם *{token}*."
+    return f"🚫 *{token}* נדחתה — לא תיטען ולא תוצע שוב."
+
+
+async def _sourcing_list() -> str:
+    from services import supplier_sourcing as ss
+    pending = await ss.list_pending()
+    if not pending:
+        return "אין ספקים חדשים שממתינים לאישור. כתוב *מקורות* כדי ש-NIR יחפש ספקים ברשת."
+    cred = [p for p in pending if p.get("status") == "pending_credentials"]
+    rev = [p for p in pending if p.get("status") != "pending_credentials"]
+    lines = ["🔌 *ספקים שממתינים לאישור (NIR):*"]
+    if rev:
+        lines.append("\n*מוכנים להפעלה:*")
+        for p in rev[:10]:
+            lines.append(f"🆔 {p['id'][:8]} · {p['name'][:30]} · {p.get('website','')} · ציון {p['reliability_score']}")
+    if cred:
+        lines.append("\n*ממתינים לפרטי חשבון/טוקן ממך:*")
+        for p in cred[:10]:
+            lines.append(f"🆔 {p['id'][:8]} · {p['name'][:30]}\n   ↳ {(p.get('needs') or '')[:150]}")
+    lines.append("\nלהפעלה: *אשרספק <מזהה>* · לדחייה: *דחהספק <מזהה>*")
+    return "\n".join(lines)
+
+
+async def _sourcing_run() -> str:
+    from services import supplier_sourcing as ss
+    res = await ss.run_sourcing_cycle()
+    ob = res.get("onboarded", [])
+    head = f"🔎 NIR סרק את הרשת ({len(res.get('queries',[]))} חיפושים): נמצאו {res.get('discovered',0)} מועמדים, צורפו {len(ob)} חדשים לאישור."
+    if ob:
+        head += "\n" + "\n".join(f"• {o['name'][:34]} ({o['domain']}) ציון {o['score']}" for o in ob[:8])
+    head += "\n\nכתוב *ספקים* לרשימה ואישור."
+    return head
+
+
+async def _sourcing_approve(token: str) -> str:
+    from services import supplier_sourcing as ss
+    if not token:
+        return "ציין מזהה ספק: *אשרספק <מזהה>*"
+    r = await ss.approve_supplier(token)
+    return (f"✅ הופעל הספק *{r['name']}* — יופיע בהשוואת המחירים ברגע שיהיו לו מחירים." if r.get("ok")
+            else "לא מצאתי ספק ממתין עם המזהה הזה. כתוב *ספקים* לרשימה.")
+
+
+async def _sourcing_reject(token: str) -> str:
+    from services import supplier_sourcing as ss
+    if not token:
+        return "ציין מזהה ספק: *דחהספק <מזהה>*"
+    r = await ss.reject_supplier(token)
+    return (f"🗑️ נדחה הספק *{r['name']}*." if r.get("ok")
+            else "לא מצאתי ספק ממתין עם המזהה הזה. כתוב *ספקים* לרשימה.")
 
 
 async def process_owner_message(message: str, source: str = "whatsapp") -> str:
@@ -464,6 +700,59 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp") -> 
         return ("📋 *הנחיות NOA (נשמרות ומיושמות):*\n" + g) if g else \
             "אין הנחיות שמורות ל-NOA עדיין. כתוב לה למשל: @נועה תשמרי: 2 פוסטים ביום בשעות שיא."
 
+    # ── NOA social engagement inbox (read + reply to comments/DMs) ────────────
+    if low in ("inbox", "תגובות", "תגובה", "comments", "engagement"):
+        return await _engagement_inbox(db)
+    m_rep = re.match(r"^(reply|ענה|תעני|ענו)\b\s*(\S+)?\s*(.*)?$", msg, re.I | re.S)
+    if m_rep:
+        return await _engagement_reply(db, m_rep.group(2) or "", (m_rep.group(3) or "").strip())
+    m_skip = re.match(r"^(skip|דלג|דלגי)\b\s*(\S+)?", msg, re.I)
+    if m_skip:
+        return await _engagement_skip(db, m_skip.group(2) or "")
+
+    # ── NIR supplier sourcing (discover sellers on the web → onboard → approve) ─
+    m_aps = re.match(r"^(approve[\-_ ]?supplier|אשרספק|אשר ספק)\b\s*(\S+)?", msg, re.I)
+    if m_aps:
+        return await _sourcing_approve(m_aps.group(2) or "")
+    m_rjs = re.match(r"^(reject[\-_ ]?supplier|דחהספק|דחה ספק)\b\s*(\S+)?", msg, re.I)
+    if m_rjs:
+        return await _sourcing_reject(m_rjs.group(2) or "")
+    # ── category keyword learning (approve/reject what the LLM taught) ────────
+    m_kwa = re.match(r"^(approve[\-_ ]?word|אשרמילה|אשר מילה)\b\s*(\S+)?", msg, re.I)
+    if m_kwa:
+        return await _keyword_approve((m_kwa.group(2) or "").strip())
+    m_kwr = re.match(r"^(reject[\-_ ]?word|דחהמילה|דחה מילה)\b\s*(\S+)?", msg, re.I)
+    if m_kwr:
+        return await _keyword_reject((m_kwr.group(2) or "").strip())
+    if low in ("ai", "מנוע", "מודל", "embed", "שלב"):
+        return await _embed_phase_report()
+    if low in ("words", "מילים", "מילה", "keywords", "מילות מפתח"):
+        return await _keywords_list()
+
+    # ── job queue: observe, stop, resume ─────────────────────────────────────
+    if low in ("queue", "תור", "משימות", "jobs", "pipeline"):
+        import job_queue as _jq
+        # live=True measures the running step RIGHT NOW (~10-20s) instead of
+        # reporting a periodic figure that can be hours old. The owner asked for
+        # status; handing back a stale number without saying so is worse than
+        # taking twenty seconds.
+        return _jq.render_status(await _jq.status(db, live=True))
+    if low in ("עצור", "stop", "עצירה"):
+        import job_queue as _jq
+        ok = await _jq.request_stop(True)
+        return ("🛑 בקשת עצירה נשלחה — התור ייעצר בסוף המנה הנוכחית "
+                "(לא באמצע כתיבה). להמשך: *המשך*." if ok else
+                "⚠️ לא הצלחתי לרשום את בקשת העצירה (Redis לא זמין).")
+    if low in ("המשך", "resume", "continue"):
+        import job_queue as _jq
+        await _jq.request_stop(False)
+        return "▶️ בקשת העצירה בוטלה — התור ימשיך מהמקום שבו עצר."
+
+    if low in ("suppliers", "ספקים", "מקורות ספקים"):
+        return await _sourcing_list()
+    if low in ("discover", "מקורות", "sourcing", "חפש ספקים"):
+        return await _sourcing_run()
+
     # ── conversational path (AVI / NOA in owner mode) ─────────────────────────
     # Call the LLM DIRECTLY (not via get_agent): the router_agent is a JSON classifier
     # and produces garbage on freeform chat. We just need a grounded conversational reply.
@@ -474,7 +763,8 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp") -> 
     # NOA's actual posting loop applies it — not just an ack in chat. (This is the fix for
     # "I told AVI guidelines for NOA — did NOA get them?": now she really does.)
     saved_note = ""
-    if is_noa and _SAVE_INTENT.search(clean):
+    is_directive = bool(_SAVE_INTENT.search(clean))
+    if is_noa and is_directive:
         await _noa_guidelines_save(db, clean)
         saved_note = "\n\n📋 שמרתי את ההנחיה ואפעל לפיה מעכשיו. (לצפייה: כתוב *הנחיות*)"
 
@@ -482,6 +772,9 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp") -> 
         from hf_client import hf_text
         status_block = await build_status_snapshot(db)
         system = _OWNER_SYSTEM[agent_key] + "\n\n--- מצב המערכת החי (עכשיו) ---\n" + status_block
+        # A directive is answered with an acknowledgement, by ANY agent — not just NOA.
+        if is_directive:
+            system += _DIRECTIVE_NOTE
         if is_noa:
             g = await _noa_guidelines_get(db)
             if g:

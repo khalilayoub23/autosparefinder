@@ -50,6 +50,9 @@ import json
 import logging
 import os
 import re
+
+# Category mapping DELEGATED to category_map — the single source of truth.
+from category_map import CATCH_ALL, categorize_on_ingest, normalize_category_label
 import subprocess
 import sys
 import uuid
@@ -79,32 +82,6 @@ MODEL_YEARS = {
 
 SAFETY_KEYWORDS_HE = ['בלמים', 'רפידות בלם', 'דיסק בלם', 'קליפר', 'כרית אוויר', 'חגורת בטיחות', 'הגה']
 
-CATEGORY_MAP_HE = [
-    (['רפידות בלם', 'דיסק בלם', 'קליפר', 'נוזל בלמים'], 'Brakes'),
-    (['פנס ראשי', 'פנס אחורי', 'תאורה', 'נורה', 'פנס ערפל', 'LED', 'רצועת לד'], 'Lighting'),
-    (['מתלה', 'בולם זעזועים', 'קפיץ', 'זרוע בקרה', 'מוט מייצב', 'סרן'], 'Suspension & Steering'),
-    (['גלגל הגה', 'הגה', 'ידית הגה'], 'Suspension & Steering'),
-    (['מנוע חשמלי', 'בית מנוע', 'גל הארכה', 'מנוע אחורי', 'מנוע קדמי'], 'Engine Components'),
-    (['בקר מנוע', 'יחידת בקרה', 'ADCU', 'VCU', 'ECU', 'מודול בקרה'], 'Wiring & Modules'),
-    (['חיישן', 'חיישן מהירות', 'חיישן לחץ'], 'Sensors'),
-    (['מזגן', 'מיזוג', 'מדחס', 'מעבה', 'מאיידה', 'HVAC', 'מפזר חום אוויר'], 'A/C & Heating'),
-    (['רדיאטור', 'מצנן', 'קירור', 'משאבת מים', 'תרמוסטט', 'מאוורר קירור'], 'Engine Cooling'),
-    (['מגב', 'מגבים', 'ספריי שמשה', 'משאבת שמשה'], 'Wipers & Washers'),
-    (['מכסה מנוע', 'פגוש', 'כנף', 'ויזר', 'גריל', 'מראה', 'ידית דלת', 'דלת', 'תא מטען'], 'Body Parts'),
-    (['פנל', 'לוח', 'חיפוי', 'כיסוי'], 'Body Parts'),
-    (['מושב', 'כרית', 'ריפוד', 'קונסולה', 'לוח מחוונים', 'שטיחי רצפה', 'שמשיה', 'אורגנייזר'], 'Interior'),
-    (['גג פנורמי', 'חלון', 'שמשה'], 'Auto Glass'),
-    (['גלגל', 'צמיג', 'חישוק'], 'Wheels & Tires'),
-    (['כרית אוויר', 'airbag', 'חגורת בטיחות'], 'Service & General'),
-    (['כבל טעינה', 'V2L', 'V2G', 'עמדת טעינה', 'מחבר טעינה'], 'EV Charging'),
-    (['מסנן אוויר', 'מסנן מזגן', 'מסנן שמן', 'מסנן דלק', 'פילטר'], 'Filters'),
-    (['שמן מנוע', 'נוזל בלמים', 'נוזל קירור'], 'Fluids & Lubricants'),
-    (['גיר', 'תיבת הילוכים', 'גלגל שיניים'], 'Transmission'),
-    (['גל הינע', 'ציר', 'קשר הדדי'], 'Driveline & Axles'),
-    (['בטריה', 'מצבר', 'חבילת סוללות', 'תא סוללה'], 'Batteries & Power'),
-    (['ניצוצן', 'מצת'], 'Service & General'),
-    (['ברגים', 'בורג', 'אום', 'קליפס', 'תושבת', 'סוגר'], 'Service & General'),
-]
 
 EN_HINT_MAP = [
     ('רפידות בלם', 'Brake Pad Set'), ('דיסק בלם', 'Brake Disc'), ('קליפר', 'Brake Caliper'),
@@ -134,10 +111,13 @@ def reverse_he(s: str) -> str:
 
 
 def infer_category(name_he: str) -> str:
-    for keywords, cat in CATEGORY_MAP_HE:
-        if any(kw in name_he for kw in keywords):
-            return cat
-    return 'Service & General'
+    """
+    Hebrew part name -> canonical slug. Rules live in category_map.
+    Previously returned 'Service & General' (a display LABEL, not a storable
+    category) for anything unmatched — that is why Zeekr parts landed in a
+    non-canonical bucket. The only fallback is now 'כללי'.
+    """
+    return categorize_on_ingest(name_he=name_he)
 
 
 def is_safety_critical(name_he: str) -> bool:

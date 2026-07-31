@@ -102,7 +102,50 @@ not when it's written down.**
 | 2026-07-26 | Misdiagnosed the Google-login failure as "just a missing Authorized JS origin" and handed it back to the owner to fix — TWICE — when the real cause was that the OAuth client was type **Desktop** (which cannot have JS origins or do browser sign-in at all) | Asserted a cause from the error string instead of inspecting the actual client in Cloud Console; also defaulted to delegating a config task I had the browser+creds to verify myself | When I have the tools/access, **inspect the live config BEFORE asserting a root cause or delegating**. An error message names a symptom, not the cause — open the console and look. (Fix: created a proper Web OAuth client, swapped ids, published to prod — all by me.) |
 | 2026-07-26 | Recommended Google Business Profile review-engagement for the platform and had the owner start GBP verification — but an **online-only marketplace can't pass GBP verification** (it's for real physical storefronts), so it was a dead end | Recommended a channel without checking its eligibility model against the business's actual nature (online platform, no physical location) | Before recommending/starting a channel, check its **eligibility/verification model against what the business actually is** (online vs physical, consumer-login vs business-asset). Don't send the owner down a verification path that structurally can't pass. |
 | 2026-07-26 | Built the YouTube OAuth client + API enablement under **khalilayoub23's** Google Cloud project ("My First Project"/`aesthetic-root-463607-q7`) instead of the business account **autosparefinder2024**'s project (`valid-moment-444021-r6`) — the owner caught it | The Cloud console + YouTube create-channel flows silently default to the browser session's PRIMARY signed-in account (khalilayoub23); I didn't confirm the active account/project before creating resources. (The channel/token DID land on autosparefinder2024 via `authuser=1`+`login_hint`, but the app/project did not.) | When operating across multiple Google accounts, **confirm the console's ACTIVE account AND project (read the account button + project pill) before creating any resource** — don't trust `authuser=` URL params or the session default. For a business, resources belong in the BUSINESS account's own project. |
+| 2026-07-27 | **3 duplicate category rule sets + 12 importers using wrong catch-alls → 1.67M parts stuck in non-canonical buckets ('general'/'service-general'/'accessories')** | `category_map.py`, `maintenance/categorize_parts_batch.py`, and `categories.py/part_type_taxonomy.py` each maintained their own independent RULES — none imported from each other. `categorize_parts_batch.py` line 258 moved unmatched parts to `'general'` (instead of `'כללי'`) — this one line created the entire 865K 'general' backlog on July 13. `task3_categorize_by_keywords`'s index only matched `category='כללי'` — the entire 1.67M 'general'+'service-general'+'accessories' backlog was invisible to the cleanup loop. `categorize()` returned `None` for unmatched, forcing every importer to hard-code its own fallback. `normalize_categories` was stuck in a checkpoint death spiral (timestamp frozen at 2026-07-03 → scanned 24+ days of delta → timed out → never saved checkpoint → repeated forever). | **Merged into ONE source of truth.** `category_map.py` has the comprehensive dual-array (HE+EN) RULES + VARIANT_MAP + CATEGORY_SLUG_MAP + `categorize_on_ingest()` + `categorize_slug()`. `categorize_parts_batch.py` imports from it. `categorize()` always returns `'כללי'` for unmatched (never `None`). All 12 importer fallbacks fixed → `'כללי'`. Task3 WHERE clause expanded to all 4 bad buckets. `normalize_categories` checkpoint reset. **Rule: there is ONE category file. If you add a keyword, add it to `category_map.py` only. If you write a new importer, call `categorize_on_ingest()` — never return a hard-coded fallback category.** | **Superseded by the 2026-07-27 "THREE incompatible VOCABULARIES" entry below — the real scope was 14 rule sets across 3 vocabularies, not 3 rule sets.**
+| 2026-07-27 | **Background cron loops continuously burning AI API quota (Cerebras/Gemini/Groq all 429'd simultaneously)** | `task3b_llm_category_fallback(batch_size=500)` fired 500 Cerebras calls every 30 seconds = the entire free-tier TPM budget consumed continuously. `lookup_oem_spec(limit=500)` was 500 sequential calls per run_all_tasks cycle. `enrich_pending_parts` was double-called (30-min loop AND run_all_tasks). All three piled on simultaneously → cascaded across all providers. | Three env-variable gates added — **all default to 0 (disabled)**: `CLEANUP_LLM_ENABLED` (task3b), `OEM_LOOKUP_ENABLED` (lookup_oem_spec), `ENRICH_PARTS_ENABLED` (enrich loop + run_all_tasks wrapper). **Rule: LLMs belong in on-demand customer chat, NOT in background cron loops. Any new cron task that calls an LLM MUST be gated by an env toggle that defaults to 0.** |
 | 2026-07-27 | `BaseAgent._offline_reply()` had NO branch for `social_media_manager_agent` (NOA) or `supplier_manager_agent` (Boaz) — discovered live when Cerebras+Gemini+Groq all 429'd simultaneously (real, sustained multi-provider quota exhaustion, not caused by this session's prompt edits) and NOA's exhausted-fallback silently returned a generic "send me your car model/year/OEM number" line (built for the parts-fitment agent) instead of anything sensible for a social-post-generation context | `_offline_reply()`'s per-agent branches were written for the original customer-chat agents (router/security/orders/finance/marketing/service) and never extended when `social_media_manager_agent`/`supplier_manager_agent` were added to `_fast_agents` — both silently fell through to the generic Hebrew "need more car details" branch | Any agent added to `_fast_agents` (or any agent whose `.think()` can raise) needs its OWN `_offline_reply` branch matching its actual context — a missing branch doesn't error, it silently returns a WRONG-context reply, which is worse than an explicit failure. Added branches for both; NOA's now says generation is temporarily unavailable (never publish generic filler), Boaz's is explicitly marked internal-only. Check `_fast_agents` membership against `_offline_reply` branches whenever either list changes. |
+| 2026-07-27 | **The category system had THREE incompatible VOCABULARIES and 14 private rule sets — `normalize_categories` was silently discarding nearly every mapping it built** | `db_update_agent` mapped raw labels → **Hebrew display names** (`'brakes'→'בלמים'`) but only kept CASE branches whose target was in `CANONICAL_CATEGORIES` — which was `list(categories.CATEGORY_MAP.keys())`, i.e. **131 Title-Case taxonomy labels** (`'Air Filters'`). A Hebrew string is never in an English-label set, so almost every branch was dropped; the only survivors pushed parts INTO `כללי`. Meanwhile `parts_catalog.category` stores a **third** vocabulary (English slugs). 14 files carried their own rule sets, several writing values that are not categories at all (`"General Parts"`, `"Auto Parts"`, `"Other Parts"`, `"Engine"`, `"Service & General"`, `"כלי עבודה ואביזרים"`), and the SEARCH API's filter compared user input against Hebrew names the column never holds. | **One file (`category_map.py`), one vocabulary (English slugs + `כללי`), derived not duplicated.** `CANONICAL` is derived from `part_type_taxonomy` family ids; taxonomy labels/aliases are folded into `VARIANT_MAP` programmatically; Hebrew/Arabic names are **display-only** (`DISPLAY`) and never stored; every scan scope and allowlist is derived from `CANONICAL`/`BAD_FALLBACK_BUCKETS` so it cannot drift. **Rules: (1) if a value can be STORED, there is exactly one vocabulary for it — display names are a separate, non-storable map; (2) never validate a mapping's output against a set built from a different vocabulary — assert that every map target is canonical, and log/skip the ones that aren't; (3) an enum-like set must be DERIVED from its source of truth, never re-typed.** Verified by an AST check that no file outside `category_map.py` defines a module-level category rule set. |
+| 2026-07-27 | Keyword categorization used **first-category-wins**, so a generic word in an early category shadowed a specific phrase in a later one (`'שמן'`→fluids beat `'מסנן שמן'`→filters; `'בולם'`→suspension beat `'בולם הגה'`) — and because generics were dangerous, the bare head-nouns were left out entirely, which was the single largest coverage gap (`engine` 765×, `door` 739×, `belt` 505×, `brake` 338× in unmatched rows with NO rule) | Ordering was being used as the disambiguation mechanism. That makes every addition risky, so the safest keywords (the common bare nouns) were never added, and category ORDER became load-bearing hidden state. | **Longest-matching keyword wins** (flat index sorted by keyword length DESC; list order only breaks ties). Specificity is now intrinsic to the keyword, not to where it sits in a file — which made it safe to add a bare-head-noun tier. Match rate on a real 20K live sample went **36.8% → 73.6%** with 15/15 specific-phrase regressions still passing. **Rule: when disambiguating overlapping patterns, rank by specificity of the pattern itself, never by declaration order.** |
+| 2026-07-27 | A 2-letter Hebrew keyword `'לד'` (LED) matched **inside** the unrelated word `'לדשבורט'` ("for the dashboard") and filed a dashboard bracket under `lighting` | Hebrew/Arabic have no casing and were matched as bare substrings, so short keywords collide inside longer words. A naive `\b` fix would have broken the legitimate case, because Hebrew glues one-letter proclitics (ה ו ב ל מ ש כ) onto nouns — `'הפנס'`/`'לפנס'` must still match `'פנס'`. | Short RTL keywords (≤3 chars) match via a pattern that allows one optional proclitic BEFORE the word and forbids another RTL letter AFTER it. **Rule: substring matching on an unspaced/agglutinative script needs explicit boundary handling for short tokens — and the boundary rule must be tested against the language's own prefixing behaviour, not just against the false positive you found.** |
+| 2026-07-27 | Rules were being tuned by guessing which keywords were missing | Guessing produced specific phrases nobody searches for while the highest-frequency gaps went unnoticed. | **Measure the failure population, don't guess it.** Ran token-frequency analysis over 24,845 real unmatched rows to rank the actual gaps, which is what surfaced the bare-head-noun problem, catalog truncations (`"Cover-cushio"`), reversed word order (`"absorber assembly shock"`), a Hebrew spelling variant (`חגורת ביטחון` vs `בטיחות`), and non-parts (workwear, owner's manuals). Also: **refusing to classify is a valid answer** — bare fasteners (`bolt`/`screw`/`בורג`) stay in `כללי` because a wrong category is worse than the catch-all; in context (`"Bolt Cylinder Head"`) they still classify correctly. |
+| 2026-07-27 | **A learned-keyword blocklist filtered only at WRITE time — tokens voted in BEFORE the blocklist existed still activated.** `bolt` and `washer` went live as `service-general`, and `rover`/`land` were one vote away from filing ~26,000 Land Rover parts under a single category | `is_blocked()` was called in `mine_tokens()` (the producer) but not in `load_into_matcher()` (the consumer). Rows already in `category_learned_keywords` from a pre-blocklist run bypassed the guard entirely on the next boot. | **A guard must run on the path that USES the data, not only the path that produces it.** Blocklist now enforced in `load_into_matcher()` as well, plus `purge_blocklisted()` at startup to delete pre-existing rows. Verified live: 14 tokens purged (`bolt, center, land, nut, piece, pin, ring, rover, shim, tank, washer, xxl`), 142 mis-filed parts reverted, `service-general` back to exactly its post-backfill 11,757. **Same class as the 2026-07-18 heal-task guard bug — when adding a filter, ask what already-persisted data predates it.** |
+| 2026-07-27 | An LLM-assist loop was going to take **107 days** to work through 403,327 stuck parts | Throughput was reasoned about per-PART (25 parts/call × 150 calls/day = 3,750/day) instead of per-KEYWORD. Sampling was `random.sample`, so each expensive call taught almost nothing reusable. | **Measure the leverage, then optimise the leverage — not the unit of work.** Token analysis of the real stuck population showed the top 400 unknown tokens cover **73.6% (~297,000 parts)**: `bolt` alone appears in 16,541, `rover` in 13,068. Fixes: (1) sample the parts containing the most FREQUENT unknown token so every call teaches a high-leverage rule; (2) `_bulk_apply_new_keywords()` re-runs the matcher over the whole catch-all the moment a keyword activates, so one keyword fixes thousands of parts at once rather than the 25 that taught it. **Rule: when an expensive oracle feeds a cheap rule engine, optimise for what the rule engine LEARNS per call, and apply each new rule in bulk immediately.** |
+| 2026-07-28 | **Two `run_all_tasks` tasks had been failing on EVERY cycle for weeks** — `normalize_categories` (`function max(uuid) does not exist`) and `normalize_part_types` (30s statement timeout). "The pipeline is running" was true; "the pipeline is working" was not. | Health was inferred from cycles COMPLETING, not from per-task `status=`. The loop logs `task X errored, continuing` and moves on, so a permanently-broken task is invisible unless you tally outcomes. Worse: `normalize_part_types` was trying to case-change **4.3M rows** (`'oem'→'OEM'`) — an operation that could never finish inside the timeout — and `ORDER BY id` forced a Sort (cost 79,218) because `id` is not in `idx_supplier_parts_part_type_part_id`. | **Tally per-task `status=` from the logs before declaring a pipeline healthy** (`grep -oE "done: [a-z_]+ status=[a-z]+" \| sort \| uniq -c`). **`EXPLAIN` a batch query that times out before assuming the predicate is at fault** — an `ORDER BY` that doesn't match the index turns an index scan into a sort over the whole match set. And **check whether the "wrong" value is actually the established convention** before mass-rewriting a column. |
+| 2026-07-28 | **`normalize_categories` pass 2 was silently DESTROYING good data — the timeout was the only thing protecting it** | Pass 2 set EVERY non-canonical category to `'כללי'`. Of the 8 values it would have hit, **7 mapped cleanly** through VARIANT_MAP (`'Brakes'→brakes`, `'Body Parts'→body-exterior`, `'Transmission'→gearbox`) — 1,775 of 1,777 rows would have been flattened into the catch-all. Fixing only the performance problem would have "made it work" and started the destruction. | **When a broken task is also a data-writing task, read what it WOULD have written before you fix the crash.** Pass 2 now maps through VARIANT_MAP first and reserves the catch-all for values with genuinely no mapping (verified live: `rows_mapped=1777, rows_fallback=0`). This is the same failure shape as the original category bug — a "normalizer" whose only working path pushes parts INTO `כללי`. |
+| 2026-07-28 | Told the owner ASAP had 0 approved brands and that its price sheets were empty. Both wrong — 4 brands were approved and the sheets carry `list_price`/`map_price` on 96.6% of rows | The claim was asserted from a stale DB note plus a hidden `price_level=0` form field, instead of generating a sheet and reading its header. `price_level=0` means no DEALER tier is exposed, not that there is no price. | **A stored note is a claim about the past; the live system is the fact.** Re-verify before repeating. Also: `importers/asap_import.py` had never been written, which was the real reason nothing imported — the relay endpoint's own comment said it would spawn "once the importer exists". **An integration is not "blocked by the vendor" until you have checked that our half of it exists.** |
+| 2026-07-28 | Reported "we are 20-90% ABOVE the Israeli market" for ASAP parts. The owner rejected it as guessing — correctly; SKU-level data showed we are **25-50% BELOW** | The figure came from dividing 4x4 **kit** prices (4 shocks + hardware) by an assumed shock count. An inference presented as a measurement, and the assumption inverted the conclusion. | **Find a source that publishes the same UNIT and the same PART NUMBER before comparing prices.** jeepland.co.il sells single shocks and lists the real Fox SKU, which made a direct match possible (`985-24-042`: IL ₪2,124 vs ours ₪1,051). Also: when two benchmarks disagree (US street vs Israeli retail), say so and name which market the customer actually buys in — don't average them or pick the flattering one. |
+| 2026-07-28 | **Curing the DATA orphaned the RULES that were keyed on the old form.** Expanding the gershayim abbreviations (`מחז"ש`→`מחזיר שמן`) silently broke categorization: the engine rule was keyed on the ABBREVIATION, so once the names were cured 402 oil seals stopped matching it and fell to `fluids` on the bare word `שמן` | A data-normalisation pass and a keyword ruleset that both key on the same string are coupled, but nothing links them. 13 category rules were keyed on abbreviations that the cure rewrote. | **When you normalise a value in the data, grep the rules for the OLD form and add the NEW one in the same change.** Verified by re-running the categorizer over all 15,779 cured rows BEFORE writing — which is what surfaced this. **Never apply a bulk recategorisation without first diffing what it WOULD write and eyeballing every transition group.** |
+| 2026-07-28 | A 16-char fluids keyword `שמן תיבת הילוכים` (gear OIL) outranked every hardware head, so the gearbox oil PUMP, PAN, DIPSTICK, COOLER and SEAL were all classified as a FLUID | Longest-match-wins is correct for specificity, but a long keyword describing a SUBSTANCE will always beat the short noun naming the PART that holds it. Measured live: of 700 rows carrying the phrase only 84 (12%) are actually oil — the rule was wrong 5 times out of 6. | **A substance keyword must not be longer than the hardware keywords that legitimately contain it.** Enumerated the real heads (`מצנן`/`משאבת`/`אגן`/`מדיד`/`אטם`/`צינור`/`מסנן`/`מחזיר` + the phrase) into gearbox/cooling/filters so hardware outranks the fluid. **Measure the population before trusting a keyword — don't assume the long match is the right one.** |
+| 2026-07-28 | ASAP fitment wrote **0 of 8,210** rows, and Fox Factory's 8,088 had failed the same way unnoticed | The upsert used `ON CONFLICT ON CONSTRAINT uix_pvf_part_mfr_model_year_from`, but that dedupe key is a bare **UNIQUE INDEX**, not a table CONSTRAINT — `ON CONSTRAINT` only accepts real constraints, so every row raised "constraint does not exist". The per-row savepoint turned a total failure into a quiet `skipped` tally. | **`ON CONFLICT ON CONSTRAINT` works only for CONSTRAINTS; target a unique INDEX by column inference** (`ON CONFLICT (part_id, manufacturer, model, year_from)`). Check `pg_constraint` vs `pg_indexes` before naming one. And **a per-row savepoint that counts failures must be read** — 8,210/8,210 skipped is not a warning, it is a total outage. |
+| 2026-07-28 | 566 **discontinued** ASAP parts (193 Banks + 373 Fox) were listed as buyable | The importer's own comment said discontinued rows "must not be advertised as in stock", but it read an `availability` column that **does not exist in the ACA sheet** — the real column is `discontinued_item`. Reading a missing column yields `""`, which passed the not-in-list test, so `in_stock` was True for every row. | **A field read from an absent column fails OPEN, silently.** Verify each mapped column actually exists in the real header before trusting a guard built on it. Fixed to read `discontinued_item` with `availability` as fallback; re-ran and confirmed 566 rows flipped to `is_available=false`. |
+| 2026-07-28 | **The live `GEMINI_API_KEY` was being written into `docker logs`** — a 429 from `gemini_web_search` printed the full request URL, key included | Google passes the API key as a URL **query parameter**, and httpx embeds the request URL in `HTTPStatusError`'s message. Every caller that logs `str(exc)` therefore logged the key. The standing rule "never print OAuth tokens to stdout" was written for headers and never extended to query-string credentials. | Added `_scrub_secrets()` + `raise_for_status_safe()` in `hf_client.py` and routed **all 16** `raise_for_status()` sites through it (`?key=/api_key=/access_token=/token=` → `<redacted>`). Verified against a REAL 429. **Rule: a credential in a URL leaks through every error path — scrub the URL, not just the header.** |
+| 2026-07-28 | The scrub helper shipped with an infinite self-recursion; `py_compile` passed and a unit-style check on the regex passed too | The bulk edit that rewrote `resp.raise_for_status()` → `raise_for_status_safe(resp)` also rewrote the call **inside the helper itself**, so it called itself forever. Only the end-to-end call against a real 429 surfaced it (`RecursionError` instead of `HTTPStatusError`). | **A mechanical find-and-replace must exclude the definition site of the thing it is replacing with.** And: compile + isolated-function tests prove nothing about a call path — the same session had already hit `re` vs `_re` this way. Exercise the REAL path (here: a genuine 429) before declaring a fix done. |
+| 2026-07-28 | **Hebrew stored in VISUAL (reversed) order** — 3,674 rows. `םימלבל 'חא קסיד` is `דיסק אח' לבלמים` (rear brake disc) but was filed under `electrical-sensors`; a door glass sat in `lighting`. The owner spotted it from a merch row he recognised as a real product | An importer wrote display-order text instead of logical order. A keyword scan found only 1,048; the exact test is linguistic — Hebrew FINAL forms (ךםןףץ) can only end a word, so a word STARTING with one proves visual order. That found 3,674. | Repaired in place (3,674 → 380). **Reverse the WHOLE string, then flip each Latin/digit run BACK** — a naive `s[::-1]` turns `24`→`42` and `GS330`→`033SG`, silently corrupting part identifiers. **Detect the defect with a rule from the language itself, not a keyword list.** |
+| 2026-07-28 | After the repair I ran a SECOND "corrective" pass that made 44 rows differently-wrong, and I had to revert it | ~380 rows are MIXED — half already correct, half reversed (`ןגמ RUETCELFED פלסטיק עליו`). No whole-string flip can fix those: it repairs one half and destroys the other. I knew the mixed-detector was imperfect and applied anyway, then tried to patch the result with another heuristic pass driven by a vocabulary SCORE that is meaningless on half-correct text. | **When a population is known to be unclassifiable by your detector, exclude it — do not run a second heuristic pass to clean up the first.** The mixed rows are now skipped and reported for a human. Also: `unreverse()` is its own inverse, which is the only reason the bad pass was fully revertible — **prefer an involutive transform for risky bulk edits so a mistake is undoable.** |
+| 2026-07-28 | Added the `merchandise` category, backfilled 6,521 parts — then watched the count DRIFT DOWN (6,521 → 6,517 → 6,516) while nothing was obviously wrong | The bind mount makes source edits live on DISK, but the RUNNING uvicorn had already imported `category_map`/`part_type_taxonomy` at boot. Its in-memory `CANONICAL` had no `merchandise`, so `normalize_categories` treated every new row as non-canonical and flattened it back toward the catch-all — the writer and the normaliser disagreed about what a valid category IS. | **Adding a value to an enum-like set that a LONG-RUNNING process holds in memory requires a restart before backfilling it** — the bind mount updates files, not the loaded module. Restarted (`pre_restart.sh` → `docker restart`), confirmed the new process reports `merchandise in CANONICAL: True`, then re-applied. **Watch a backfilled count for DRIFT afterwards; a silently self-reverting number means another actor disagrees with you.** |
+| 2026-07-28 | Owner asked why warranty "is not implemented and wired" — it IS: `supplier_parts.warranty_months`, already returned by the search/compare API, 88.9% populated | The impression came from 1,048 Porsche rows where the importer wrote the price list's warranty COLUMN into `name_he` — a column-misalignment that made warranty look absent when it was merely misplaced. | Answer the "is X implemented?" question by checking the SCHEMA and the API response shape, not the symptom that prompted it. Backfilled every row with a real source (36,136, 88.9%→89.8%) and **left 423,644 NULL because no warranty data exists for them anywhere** — the brand's vehicle warranty (`car_brands.warranty_years`) is NOT the part's warranty, and inventing one would fabricate a commercial promise the customer can hold us to. Real gap: REX's "Official Manufacturer Sites" scraper (293,263 rows) never captured the field. |
+| 2026-07-28 | Wrote `SELECT MAX(id) FROM b` on a uuid keyset cursor — `function max(uuid) does not exist`. **This exact error is already in this log** (normalize_categories, 2026-07-28) | I read the log's lesson as being about that one task rather than about uuid columns generally, and re-derived the same broken pattern from scratch in a new script. | Postgres has NO `max(uuid)` aggregate — take a cursor with **`ORDER BY id DESC LIMIT 1`**. And re-read the Mistake Log for the PATTERN before writing new code against the same column types, not just when touching the same file. |
+| 2026-07-28 | A batched `UPDATE` over `supplier_parts` ran to the statement timeout having written **0 rows**, twice | The batch CTE had no `FOR UPDATE SKIP LOCKED`, so it queued behind the car-parts.ie harvester's row locks and was killed before committing anything. The first version also re-`COUNT(*)`-ed the whole 4.1M table each iteration to decide when to stop. | **Any batched write to a table the harvester also writes MUST use `FOR UPDATE SKIP LOCKED`**, drive its cursor from an INDEXED column (keyset on the PK, or a selective indexed predicate like `supplier_id`), and decide termination from the batch's own returned row count — never from a fresh full-table COUNT. |
+| 2026-07-28 | Started rewriting all 3.7M warranty rows just to stamp `warranty_source='supplier'`; measured ~240 rows/s ⇒ **~4 hours** of UPDATEs contending with the live harvester, plus table bloat | Chose data-model purity (every row explicitly tagged) over cost, for a field whose value was already known and unambiguous. | Killed it at 21,521 rows and **defined NULL as 'legacy supplier data'** instead, writing provenance ONLY for the platform default (423,648 rows). Encoded the semantics in `warranty_policy.is_supplier_stated()` so no caller writes the subtly-wrong `warranty_source == 'supplier'`. **When a backfill is purely cosmetic, define the default meaning instead of rewriting the table.** |
+| 2026-07-29 | The owner got an "everything is fine" harvest report **every hour** (~13/day, ~91/week) and asked for it to stop — the one message that mattered (a stall) was identical in shape to the twelve that didn't | `_harvest_supervisor_loop` sent the report unconditionally whenever the hourly timer was due AND the notify window was open. The stall signal (`d_models == 0 and d_parts == 0`) was ALREADY being computed — it was just rendered as one line inside a routine progress message instead of being the thing that decided whether to send at all. | **Notify BY EXCEPTION. A routine success report is not information, it is camouflage** — it trains the reader to ignore the channel, which costs exactly the alert it exists to deliver. Now sends only on `stalled` / `idle` / one-shot `recovery`, with a 6h re-alert for a persistent stall. **"Idle" is a first-class reportable state, not the absence of one** — the owner explicitly wanted to hear when the import has nothing left to do. Policy extracted to a pure `_harvest_status_decision()` so it is testable (11/11), incl. a volume assertion: **0 messages across a healthy day.** |
+| 2026-07-29 | A test I wrote failed (3 vs 4 expected alerts) and the CODE was right — my harness was wrong | The simulation advanced its elapsed-time counter *after* each decision, adding an hour of lag per cycle. Production derives elapsed time from an absolute clock (`_now - _last_sent_utc`), so it fires at exactly 6h. | **When simulating a time-based policy, derive elapsed time from a clock the way the code does — never from a counter you bump after the fact.** And when a new test disagrees with new code, suspect the test's model of time before "fixing" the code to match it. |
+| 2026-07-29 | Hebrew on the QR channel-picker page looked reversed; the obvious "fix" would have been to reverse the strings | The stored Hebrew was in correct LOGICAL order. The browser's bidi algorithm was reordering **Latin runs** (`WhatsApp`, `AutoSpareFinder`, the domain) inside `dir="rtl"` and throwing punctuation to the wrong end. | **A reversal-looking defect in a BROWSER is a bidi RENDERING problem until proven otherwise — check the bytes before touching the data.** Fix is `<bdi dir="ltr">` around each Latin run. Reversing the stored strings would have created exactly the corruption the 3,674-row visual-order repair (same day) existed to undo. |
+| 2026-07-29 | NOA, in the owner console, invented `autosparefinder.co.il/oil-filters-corolla` (a 404) and a "special discount" that does not exist | `agents/owner_console.py` carried its OWN minimal copy of NOA's policy. It forbade invented *prices* and nothing else, because whoever copied it copied only the clause they were thinking about. The real NOA prompt's link/promo rules never made it across. | **A policy duplicated into a second prompt silently loses every clause nobody remembered to copy.** Added the prohibitions to the SHARED `_WA_REPLY_RULES` (all three owner agents inherit) **and** a deterministic post-processing guard (`_clean_wa_reply` collapses unrouted paths to the site root) — because a prompt rule does not hold under a fallback model, and a forwarded bad link reaches a real customer. Same defence-in-depth shape as `_sanitize_internal_pricing_disclosure`. |
+| 2026-07-29 | Told "from now on always include a real price", NOA replied by asking the OWNER for a price — answering the topic instead of the intent, which is what "acts like a bot" means | `_SAVE_INTENT` already detected the directive and PERSISTED it, but nothing told the model that this message was an instruction rather than a request for content. Detection changed the database and not the behaviour. | **Detecting an intent must change what the system DOES, not just what it records.** A recognised directive now injects an explicit note into the system prompt for any agent: acknowledge, state in one line what changes, produce no artefact. |
+| 2026-07-29 | Wrote a job-queue module whose docstring demanded "progress is MEASURED, never self-reported" — then implemented it by counting before AND after every batch, which is the `scan-for-nothing` anti-pattern the same file warns about | Stating a principle is not implementing it. I never measured what the measurement COST: the merge-group count is **81s** and the thumbnail count **66s** on this catalogue, i.e. ~150s of full-table scanning to learn what a 300-row batch did. | Each step declares `measure_every`; a count runs on the first batch then once per window, and `remaining_at` is surfaced so a stale number is visible AS stale. **When you add a correctness check to a hot path, TIME IT on real data — a check that costs more than the work is a bug, not rigour.** |
+| 2026-07-29 | The job queue marked a **FAILED** step as `done` and would have advanced to steps depending on it | Termination used "remaining did not decrease ⇒ finished". An ERRORED batch also leaves remaining unchanged, and `batches_run` is not incremented on error, so the next call re-measured and applied the rule to a broken step. | **"No progress" only means FINISHED when the previous attempt SUCCEEDED** — gate any no-progress termination on `attempts == 0`. Caught by a test using a throwaway step (`cmd="false"`), not in production; a control loop for destructive jobs must be tested against its FAILURE paths, not just its happy path. |
+| 2026-07-29 | Tried to speed up a RUNNING migration by building a 4.2M-row index on the table it was writing — the merge rate fell from ~24,000/h to ~15,000/h while the build ran, i.e. the "optimisation" slowed the exact job it was meant to help. Cancelled and dropped it. | Optimised mid-flight without measuring the cost of the optimisation, on a table under heavy write, without asking. `CREATE INDEX CONCURRENTLY` still competes for I/O and adds write amplification to every subsequent UPDATE. | **Do not add an index to a table a long-running job is actively writing.** Measure the contention before starting, do it in a quiet window, and remember an index built for one migration is dead weight afterwards. When someone says "why are you doing that now" — stop and re-derive the cost/benefit instead of finishing what you started. |
+| 2026-07-29 | Restarted the backend ~5× while the job queue was running; batch #35 was killed and restarted THREE times, discarding ~15 min of work each time | The queue's "one batch per iteration" design bounds restart loss to a single batch, which I treated as "restarts are cheap". At 15 min/batch they are not. | **A restart is only cheap if the unit of work is small.** Batch the deploys: collect several fixes, restart once. Check whether a long-running job is mid-batch before restarting. |
+| 2026-07-29 | The merge's own throughput DEGRADED as it progressed — discovery went 90s → 369s → past the 600s timeout, and batches began failing outright | The catalogue-wide discovery (`GROUP BY` + `LIMIT n`) stops early only while duplicates are DENSE. As they are merged away the survivors get sparse, so Postgres scans further and further to find n groups. **A job whose unit cost rises as it completes does not finish — it stalls.** | Scope discovery to ONE manufacturer at a time (77 of them, index-bounded, ~8s flat) with a persisted cursor. **When a batched job slows down as it progresses, suspect the SEARCH for work, not the work itself** — and check whether the cost is a function of what is left. |
+| 2026-07-29 | Two heavy catalogue writers ran concurrently — the job-queue merge and `run_all_tasks` — and the merge collapsed to ~700 parts/hour (from ~24,000) | I gave the thumbnail supervisor a stand-down contract but never asked what ELSE writes `parts_catalog` on a schedule. Two batched writers on one table contend; they do not share. | `job_queue.queue_busy()` — `run_all_tasks` now defers while the queue owns a write step (`DB_AGENT_DEFER_TO_QUEUE=0` overrides). **Before running a big migration, enumerate every scheduled writer of the same table and give each one a stand-down.** Verified: 696/h → 37,248/h, load 14.4 → 8.7. |
+| 2026-07-29 | `merge_master_parts` silently SKIPPED every duplicate group containing a NULL `created_at` — for the whole run | The canonical tie-break sorted on `created_at`, which is nullable; `None < datetime` raises TypeError. The per-group handler caught it, printed one line, and moved on, so the group stayed duplicated forever and the run still reported success. | Sort NULL as far-future so it never wins the canonical slot. **A per-item exception handler that logs and continues will hide a systematic defect — tally the failures and treat a non-zero count as a result, not noise.** Same shape as the 8,210/8,210 "skipped" fitment outage. |
+| 2026-07-29 | Ran a catalogue-wide merge with `--brand '%'`; the discovery query grouped by the normalised OEM **alone**, so it would have fused the same OEM number across DIFFERENT manufacturers — measured: **255,605 groups / 696,073 parts** | Grouping on OEM alone was harmless for as long as `--brand` pinned the query to a single manufacturer, so the missing `manufacturer_id` in the GROUP BY was invisible. Widening the filter silently changed the meaning of the key. | **A dedup/identity key must contain every column the identifier needs to be unique** — an OEM number is unique only WITHIN a manufacturer. Group by `(manufacturer_id, normalised_oem)` always, not just when it happens to matter. **And when you widen a filter, re-derive what the GROUP BY now means.** Caught by quantifying the damage BEFORE running, not after. |
+| 2026-07-29 | Fixed a broken command in `DEFAULT_PLAN`, redeployed, and the queue kept running the OLD command | `seed_default_plan` used `ON CONFLICT (step_key) DO NOTHING`, so the row seeded on first boot was authoritative forever. Source and running behaviour diverged with nothing to indicate it. | **Configuration mirrored from code into a table must be RE-SYNCED on every boot** (`DO UPDATE` on the definition columns, never on the progress columns) — otherwise code stops being the source of truth and a "fix" ships without shipping. |
+| 2026-07-29 | The job-queue status endpoint deadlocked the runner it was reporting on | `status()` called `ensure_table()`, and `CREATE INDEX IF NOT EXISTS` / `ALTER TABLE … ADD COLUMN IF NOT EXISTS` take an **AccessExclusiveLock** even when they change nothing — against the runner's row locks on the same table. | **Never issue DDL from a read/request path.** `IF NOT EXISTS` prevents an error, not a lock. Schema work belongs to startup/seed; make the helper short-circuit when the schema is already complete. |
+| 2026-07-29 | A progress counter showed **4,006,844** parts of thumbnail work while the worker reported `candidates=0` | The `count_sql` counted every active part lacking a thumbnail; the script can only process parts that HAVE a `parts_images` source row. The counter measured a population the worker never touches. | **A "remaining" figure must be derived from the WORKER's own candidate query.** A large confident number for work that cannot happen is worse than no number — it hides the real gap (here: image SOURCING, ~0.7% coverage, a different job entirely). |
+| 2026-07-29 | Put `--scope backlog` in the job-queue plan; that choice does not exist (`buckets`/`all`), so argparse would have aborted the categorize step on its first batch — **after** the merge step had already run for hours | Wrote a command line from memory instead of reading the target script's parser. The failure would have surfaced late and looked like a queue bug. | Added `devtests/job_queue_commands_test.py`: for EVERY step, assert the script exists, each flag is declared by that script's `add_argument`, each `choices=`-constrained value is legal, `{batch}` substitutes, and `--help` returns without doing work. **A plan made of command lines needs the command lines validated as data — the same way an importer's columns are validated against the live schema.** |
+| 2026-07-29 | The owner's WhatsApp replies sometimes never arrived, with nothing in the logs | Three independent silence paths in the same handler: (1) the reply was spawned as a bare `asyncio.create_task(...)` — the loop keeps only a WEAK reference, so an unreferenced task may be collected mid-await while the webhook still ACKs; (2) **no timeout** on the LLM call, so a hang waits forever; (3) `if r:` meant an EMPTY reply string sent nothing at all. | Hold a strong reference until done, `asyncio.wait_for(..., 120s)` with an honest "too slow" message, and answer even when the reply is blank or raises. **Silence is the one failure mode a user cannot diagnose — every background path that owes someone an answer needs a reference, a deadline, and a fallback message.** *Honest scope: a 200-task GC probe did not reproduce the collection on this CPython build — a documented hazard was removed, not a proven cause.* |
 
 ## PLATFORM GOALS (owner-set via /goal — MANDATORY LOG)
 
@@ -168,6 +211,24 @@ After finding the right part, the platform shows **prices from multiple sellers*
 - Every scraper/importer pipeline should be built for volume and variety of sources.
 
 ## MANDATORY: Before Writing Any Importer — Check These Patterns
+
+> **⇒ The full standard now lives in [`docs/IMPORTER_RULES.md`](docs/IMPORTER_RULES.md),
+> and it is ENFORCED by `backend/maintenance/audit_importers.py` (exit ≠ 0 on any
+> ERROR). Run the audit before shipping an importer AND before triggering any
+> import or backfill.** The section below is the quick reference; the doc is
+> authoritative and explains which real incident earned each rule.
+>
+> **The audit PROCESS itself is documented** in `docs/IMPORTER_RULES.md` §10 — how to
+> add a rule, how to validate it against reality before fixing anything (every rule
+> written that day produced false positives on its first run), and why a check that is
+> wrong more often than right is worse than no check. Read it before adding a rule.
+>
+> Written prose was never enough: on 2026-07-28 an audit of the existing 64
+> importers found **146 ERROR-level violations** of rules that had been documented
+> here for months — including SEVEN mutually-incompatible category vocabularies all
+> writing to the same column. If you add a rule to the doc, add a check to the
+> script in the same change.
+
 
 These bugs recurred multiple times because I wrote from memory instead of checking. Read this section before writing any importer or scraper SQL.
 
@@ -1234,6 +1295,202 @@ Every backend script keeps a top-of-file docstring: `Script:` / `Purpose:` / `Pr
 Delegation:` / `Last Updated:`. Update it when you change the script.
 
 ---
+
+## Category System — ONE file, ONE vocabulary, LLM as a GUIDE (2026-07-27)
+
+**`backend/category_map.py` is the single source of truth for part categorization.**
+If you add a keyword, add it THERE — nowhere else. `categories.py` is a deprecated
+re-export shim. An AST check enforces that no other file defines a module-level
+category rule set.
+
+**One storable vocabulary.** `parts_catalog.category` holds ENGLISH SLUGS
+(`brakes`, `body-exterior`) plus `כללי`. `CANONICAL` is DERIVED from
+`part_type_taxonomy` family ids so the two cannot drift. Hebrew/Arabic names are
+**display-only** (`category_map.DISPLAY`) and must never be written to the column.
+Before the merge, three vocabularies were in play and `normalize_categories` was
+validating a Hebrew-name mapping against an English-label set — so nearly every
+mapping branch was silently discarded and parts only ever flowed INTO `כללי`.
+
+**Matching is LONGEST-KEYWORD-WINS**, never declaration order. Specificity lives in
+the keyword itself, which is what makes it safe for the RULES list to carry bare
+head-nouns (`brake`, `door`, `belt`) as a lowest-precedence tier. Short RTL keywords
+(≤3 chars) match with a boundary pattern that permits one Hebrew proclitic
+(ה ו ב ל מ ש כ) before the word but forbids another RTL letter after it.
+
+**The only fallback is `כללי`.** Never return `general`, `service-general`,
+`accessories` or `tools-equipment` as a default — they are real categories reachable
+only by a genuine match. Every importer calls `categorize_on_ingest()`; none may
+hard-code a fallback. Bare fasteners (`bolt`/`screw`/`בורג`) deliberately stay in
+`כללי` — a wrong category is worse than the catch-all, and in context
+(`"Bolt Cylinder Head"`) they still classify correctly.
+
+### LLM assist — a helper for a STUCK worker, not the worker (owner rule)
+
+The deterministic keyword matcher does the work. The LLM is only consulted about
+parts it genuinely could not place, and **everything the LLM answers is mined back
+into permanent keyword rules**, so the matcher handles that shape of name unaided
+next time and LLM demand SHRINKS instead of being constant.
+
+| Layer | Role |
+|---|---|
+| `category_map` RULES | Deterministic, free. Handles ~74% of the backlog alone. |
+| `db_cleanup_agent.task3b` | Asks the LLM about a small, budgeted sample of genuinely-stuck rows. |
+| `category_learning.mine_tokens` | Extracts the token that predicted the category. |
+| `category_learned_keywords` | One row per (token, category) VOTE. Consensus accumulates ACROSS calls. |
+| `category_map.register_learned_keywords` | Activates a token once it clears the gates. |
+
+**OWNER APPROVAL GATE (added 2026-07-27).** A keyword the LLM proposes does **not**
+go live on its own — one token can move thousands of parts (`bolt` matches 16,541),
+so it waits for the owner exactly like NOA's post drafts. Lifecycle:
+`pending` → owner approves → `approved` (loaded + bulk-applied) or `rejected`
+(never loaded, never re-proposed; the rejected set is rehydrated at startup).
+WhatsApp console: **`מילים`** lists what's waiting · **`אשרמילה <word>`** approves ·
+**`דחהמילה <word>`** rejects. The owner is pinged once/day via `_wa_send_quiet`
+(quiet-hours-safe) when tokens are waiting. If the owner is away, learning pauses —
+the correct failure mode for something that can mis-file 16,000 parts.
+
+**NEVER-LEARN BLOCKLIST — enforced at THREE layers.** Four classes may never become a
+rule: **brand names** (164 entries loaded LIVE from `car_brands` +
+`parts_catalog.manufacturer`, split on spaces AND hyphens so "Mercedes-Benz" blocks
+`mercedes` and `benz`), **bare fasteners** (`bolt`/`washer`/`screw`/`בורג`/`shim`/
+`ring`/`nut`), **position words** (`front`/`rear`/`קד`/`אח`/`ימין` — they say *where*
+a part sits, not *what* it is), and **size/quantity codes** (anything with a digit,
+`xxl`, `pcs`). Enforced in `mine_tokens()` (producer), `load_into_matcher()`
+(consumer) **and** `purge_blocklisted()` at startup — because filtering only on write
+does not protect rows written before the filter existed (that hole went live on
+2026-07-27: `bolt`/`washer` activated as `service-general` and `rover`/`land` were one
+vote from mis-filing ~26,000 Land Rover parts).
+
+**THROUGHPUT — optimise the keyword, not the part.** Per-part LLM classification of
+the 403,327-part backlog would take **107 days** (25/call × 150 calls/day). Token
+analysis of the real stuck population shows the **top 400 unknown tokens cover 73.6%
+(~297,000 parts)**. So task3b samples the parts containing the most FREQUENT unknown
+token (every call teaches a high-leverage rule), and `_bulk_apply_new_keywords()`
+re-runs the matcher over the whole catch-all the moment a keyword is approved — one
+keyword fixes thousands of parts at once, not the 25 that taught it.
+
+**Guarantees (all verified live 2026-07-27):**
+1. A learned keyword **can never override a hand-written rule** — `_covered_by_handwritten`
+   rejects it, and on an equal-length tie the stable sort keeps hand-written first.
+   (Proved: 4 votes for `brake→cooling` left `"brake pad" → brakes` intact.)
+2. A token activates only at **`MIN_CONSENSUS = 3` cumulative observations** with
+   **`MIN_AGREEMENT = 0.8`**. Consensus must accumulate across calls — a 25-part
+   batch almost never repeats a token, so gating inside one batch would learn nothing.
+   (Proved: activated on the 3rd batch, not the 1st or 2nd.)
+3. Conflicting votes never activate. (Proved: engine/brakes/lighting ×1 each → stays `כללי`.)
+4. The LLM may only choose from `CANONICAL`; `_VALID_CATEGORIES` is derived from it.
+
+**Budget — why the 2026-07-27 quota blowout cannot recur.** That incident was not
+"the LLM is expensive", it was an unbounded caller: `batch_size=500` inside a loop
+ticking every 30s, with nothing ever learned, so demand was constant and infinite.
+Three independent limits now make that shape impossible (`docker-compose.yml`):
+`CLEANUP_LLM_BATCH=25` (never 500) · `CLEANUP_LLM_MIN_INTERVAL_S=180` ·
+`CLEANUP_LLM_DAILY_MAX_CALLS=150`, plus provider-failure backoff. **Any new
+background task that calls an LLM must have all three: a small batch, a minimum
+interval, and a daily ceiling — and should feed its output back into a
+deterministic rule so the LLM is needed less over time, not forever.**
+
+
+## Warranty — ONE policy module, provenance mandatory (2026-07-28)
+
+**`backend/warranty_policy.py` is the single source of truth for part warranty**,
+the same way `_customer_price_fields` is for price. Never re-implement the default
+or the parsing in an importer.
+
+- **Storage:** `supplier_parts.warranty_months` (+ `warranty_source`). Warranty
+  belongs to the SUPPLIER OFFER, not the part — two suppliers can warrant the
+  same part differently. Already returned by the search/compare API.
+- **`resolve(*candidates) -> (months, source)`** takes whatever fields a source
+  offers (numeric or free text, priority order) and always returns a usable
+  value. `parse_months()` handles the real catalog forms —
+  `אחריות לשנתיים כולל עבודה`→24, `ל 6 חודשים או 10000 ק"מ`→6, `24חודשים`→24,
+  `12 months / 100,000 km`→12, and the misspelled `חריות לשנה`→12. Anything it
+  does not recognise returns None rather than a guess.
+- **The default is EVIDENCE-BASED:** 12 months is the dominant real value in our
+  own catalog (2,919,823 of 3,734,378 populated rows, 78.2%). Override with
+  `PLATFORM_DEFAULT_WARRANTY_MONTHS`. It is a PLATFORM policy (we are the
+  seller), not a claim about the supplier.
+- **Provenance is mandatory.** `warranty_source` is `'platform_default'` when we
+  applied our own default and `'supplier'`/NULL when the figure came from the
+  source. **NULL means legacy supplier data** (3.7M rows predate the column and
+  were deliberately not rewritten). **Always test with
+  `warranty_policy.is_supplier_stated()`, never `== 'supplier'`** — the bare
+  comparison silently treats every legacy row as non-supplier. A surface that
+  says "supplier warranty" MUST check this, or it presents our default as the
+  manufacturer's promise.
+- **Captured at source:** `catalog_scraper.py` (REX) now calls `resolve()` on
+  every `supplier_parts` insert. It previously wrote no warranty at all, which
+  made "Official Manufacturer Sites" the single biggest gap (293,263 rows).
+- Coverage went 88.9% → **100.00%** (4,158,026 rows): 36,136 derived from real
+  source data, 423,648 platform default. Any NEW importer must call `resolve()`.
+
+
+## Local Embedding Model — Controlled Write Path (2026-07-28)
+
+`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` (117.7M params,
+Apache-2.0) runs LOCALLY via **ONNX Runtime, not PyTorch** — torch adds ~800MB to
+the image and ~1.5GB RSS, and this box has 12GB with **NO SWAP**, so an OOM is a
+hard kill. Weights live in the persistent `worker_state` volume
+(`/app/state/models/minilm-multilingual`, 458MB), NOT in the image; fetch with
+`maintenance/fetch_embed_model.py`. Deps in `requirements.txt`.
+
+**The old CLAUDE.md note rejecting local models ("~185 MB free") was STALE** — it
+predated the 2026-07-20 upgrade. Live check found 5.3 GiB available. *Re-verify a
+capacity claim against the live box before repeating it.*
+
+### EVALUATE BY INPUT TYPE, NOT ONLY BY LANGUAGE (owner insight)
+
+Scoring the model by language alone conflated two different failures: a part
+NUMBER or SIZE CODE scoring badly is not a language weakness, it is a **semantic
+limitation** — embeddings encode meaning and identifiers carry none. Language-only
+segmentation pointed at the wrong fix ("improve Hebrew") instead of the right one
+("route identifiers away from the model"). Measured precision, 11,110 ground-truth
+parts:
+
+| input type | n | fire@.75 | prec@.75 | fire@.85 | prec@.85 |
+|---|---|---|---|---|---|
+| english single-word | 267 | 94% | **99%** | 87% | **100%** |
+| english short descriptive | 3,603 | 83% | **94%** | 49% | 96% |
+| english long descriptive | 6,157 | 16% | 85% | 2% | 93% |
+| hebrew descriptive | 788 | 64% | 79% | 39% | 85% |
+| size/spec format | 217 | 3% | 100% | 0% | — |
+| part number / code | 18 | 17% | 100% | 0% | — |
+| supersession/placeholder | 59 | 5% | **33%** | 0% | — |
+
+Findings language-splitting had hidden: (1) **short names are the BEST case**
+(99-100%), long descriptive the weak English case — more words = more competing
+concepts for a nearest-exemplar match; (2) codes/sizes barely fire at all, so they
+were never the real danger — the earlier "it mis-files codes" claim came from a
+0.45 threshold; (3) the genuinely dangerous type is **supersession/placeholder,
+33% precision AND it fires** — it needs a hard pre-filter, not a threshold.
+
+### THE CONTROLLED WRITE PATH (owner directive — NOT an open write path)
+
+**PHASE 1 (active).** The model only sees types proven reliable, it **creates
+classification RULES rather than writing categories**, and bulk apply happens only
+after owner approval. `category_input_type.POLICY` blocks size/spec, part numbers,
+supersession and brand-only *before* the model runs. Everything else flows through
+the existing gates: blocklist → `MIN_CONSENSUS=3` cumulative + 80% agreement →
+**owner `אשרמילה`** → bulk apply.
+
+**PHASE 2 (earned, per type).** Auto-write may be enabled only for types that have
+**proven consistently accurate in recorded history**. Every proposal is stamped
+with its `input_type`, so every owner approve/reject is attributable evidence.
+`embed_policy.autowrite_enabled()` requires ALL of: type eligible on measured
+precision · ≥`EMBED_PROMOTE_MIN_DECISIONS` (50) owner decisions · ≥90% approval ·
+global `EMBED_AUTOWRITE_ENABLED` · type named in `EMBED_AUTOWRITE_TYPES`. Evidence
+makes promotion POSSIBLE; the owner still makes the call. Console: **`מודל`**
+shows the per-type scorecard.
+
+**Rule: never promote a model to autonomous writing on a benchmark alone — collect
+per-type approval history in production first, and make the gate refuse by default.**
+
+### What the model earned immediately
+It exposed a real pre-existing bug: `_TYRE_RE` allowed ONE letter (`[rz]`) but
+speed-rated tyres write TWO (`225/45ZR18`), so **every ZR tyre was invisible** to
+the wheels-bearings rule. Now `[rz]{1,2}`. It also solves word-order structurally
+(`Clamp Hose` ↔ `Hose Clamp`, 0.94) which keywords can only handle by enumeration.
+
 
 ## Digital Marketing Skills Department (`.claude/skills/dept-*`, added 2026-07-27)
 

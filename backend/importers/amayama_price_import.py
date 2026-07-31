@@ -36,6 +36,10 @@ from collections import defaultdict
 
 import asyncpg
 
+# ONE warranty source of truth — resolve() returns (months, source);
+# never hardcode a warranty or drop its provenance. See warranty_policy.py.
+from warranty_policy import resolve as _warranty_resolve
+
 DB = os.environ.get("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://")
 STATE = os.environ.get("AMAYAMA_PARTS_JSON", "/app/state/amayama_parts.json")
 
@@ -137,14 +141,21 @@ async def main(path: str) -> None:
                 """
                 INSERT INTO supplier_parts
                     (id, supplier_id, part_id, supplier_sku, price_ils, price_usd,
-                     availability, is_available, part_type, shipping_cost_ils, created_at, updated_at)
-                VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, 'in_stock', true, 'oem', $6, NOW(), NOW())
-                ON CONFLICT (part_id, supplier_id) DO UPDATE SET
+                     availability, is_available, part_type, shipping_cost_ils,
+                     warranty_months, warranty_source, created_at, updated_at)
+                VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, 'in_stock', true, 'oem', $6,
+                        $7, $8, NOW(), NOW())
+                -- (part_id, supplier_id) is NOT the constraint that fires on re-import;
+                -- when the same OEM arrives from several sources the collision is on
+                -- (supplier_id, supplier_sku). Targeting the wrong one silently
+                -- discarded price and stock updates.
+                ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE SET
                     supplier_sku=EXCLUDED.supplier_sku, price_ils=EXCLUDED.price_ils,
                     price_usd=EXCLUDED.price_usd, is_available=true, availability='in_stock',
                     shipping_cost_ils=EXCLUDED.shipping_cost_ils, updated_at=NOW()
                 """,
                 supplier_id, part_id, f"AMY-{norm}", cp_ils, best["price_usd"], ship_ils,
+                *_warranty_resolve(best.get("warranty_months"), best.get("warranty")),
             )
             supplier_offers += 1
 

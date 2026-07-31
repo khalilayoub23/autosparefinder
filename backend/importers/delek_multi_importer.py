@@ -42,6 +42,34 @@ from pathlib import Path
 
 import asyncpg
 
+# ONE category source of truth — categorize at INGEST so parts never land
+# with a NULL category and depend on the self-healing task to find them.
+from category_map import categorize_on_ingest
+
+# ONE warranty source of truth — resolve() returns (months, source).
+from warranty_policy import resolve as _warranty_resolve
+
+def _split_models(raw) -> list:
+    """Delek's modelDescription is free text, sometimes several models comma/slash
+    separated. Return real model tokens only — a placeholder like 'All Models' must
+    NEVER become a fitment row (it would make the part match every model of the make).
+    """
+    import re as _re
+    txt = (raw or "").strip()
+    if not txt:
+        return []
+    out = []
+    for tok in _re.split(r"[,/;]+", txt):
+        t = tok.strip()
+        if len(t) < 2:
+            continue
+        if t.lower() in ("all", "all models", "universal", "כל הדגמים"):
+            continue
+        out.append(t)
+    return out[:6]
+
+
+
 Path("/app/state/logs").mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
@@ -182,6 +210,7 @@ async def upsert_parts(
     batch_size: int = 50,
 ) -> tuple[int, int, int]:
     inserted = updated = errors = 0
+    fitment_rows = 0
     for i in range(0, len(parts), batch_size):
         batch = parts[i : i + batch_size]
         for p in batch:
@@ -210,9 +239,9 @@ async def upsert_parts(
                         part_id = await conn.fetchval(
                             """INSERT INTO parts_catalog
                                 (id,sku,oem_number,name,name_he,manufacturer,manufacturer_id,
-                                 part_type,part_condition,importer_price_ils,max_price_ils,
+                                 part_type,part_condition,category,importer_price_ils,max_price_ils,
                                  base_price,is_active,specifications)
-                               VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,$6,'oem','new',$7,$8,$9,true,$10)
+                               VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,$6,'oem','new',$11,$7,$8,$9,true,$10)
                                ON CONFLICT (sku) DO UPDATE SET
                                  importer_price_ils=CASE WHEN EXCLUDED.importer_price_ils>0
                                    THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
@@ -231,9 +260,31 @@ async def upsert_parts(
                                 "in_stock": p["is_available"],
                                 "oem_ref": oem,
                             }),
+                        categorize_on_ingest(name_he=p["name_he"] or p["name_en"]),
                         )
                         if part_id:
                             inserted += 1
+                            # RULE (fitment): fitment-first search JOINs this table —
+                            # a compatible_vehicles blob is not a substitute. Same
+                            # pattern as mazda_il_importer (same Delek API).
+                            for _vm in _split_models(p.get("vehicle_model")):
+                                try:
+                                    await conn.execute(
+                                        """
+                                        INSERT INTO part_vehicle_fitment
+                                            (id, part_id, manufacturer, model,
+                                             year_from, year_to, created_at)
+                                        VALUES (gen_random_uuid(), $1::uuid, $2::varchar,
+                                                $3::varchar, $4::int, NULL, NOW())
+                                        ON CONFLICT (part_id, manufacturer, model, year_from)
+                                        DO NOTHING
+                                        """,
+                                        part_id, mfr[:100], _vm[:150], 1990,
+                                    )
+                                    fitment_rows += 1
+                                except Exception as _fe:
+                                    if fitment_rows < 3:
+                                        print(f"  [fitment] {sku}: {str(_fe)[:90]}")
                         else:
                             part_id = await conn.fetchval(
                                 "SELECT id FROM parts_catalog WHERE sku=$1", sku
@@ -246,8 +297,10 @@ async def upsert_parts(
 
                     await conn.execute(
                         """INSERT INTO supplier_parts
-                            (id,supplier_id,part_id,supplier_sku,price_usd,price_ils,is_available,supplier_url,updated_at)
-                           VALUES (gen_random_uuid(),$1,$2,$3,0,$4,$5,'https://www.delek-motors.co.il/',NOW())
+                            (id,supplier_id,part_id,supplier_sku,price_usd,price_ils,is_available,supplier_url,
+                             warranty_months,warranty_source,updated_at)
+                           VALUES (gen_random_uuid(),$1,$2,$3,0,$4,$5,'https://www.delek-motors.co.il/',
+                                   $6,$7,NOW())
                            ON CONFLICT (supplier_id,supplier_sku) DO UPDATE SET
                              price_ils=EXCLUDED.price_ils,
                              is_available=EXCLUDED.is_available,
@@ -255,6 +308,7 @@ async def upsert_parts(
                         supplier_id, part_id, oem,
                         p["max_price_ils"],
                         p["is_available"],
+                        *_warranty_resolve(p.get("warranty_months"), p.get("warranty")),
                     )
             except Exception as exc:
                 log.warning("Row error %s: %s", oem, exc)

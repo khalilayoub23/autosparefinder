@@ -9,6 +9,9 @@ from __future__ import annotations
 import asyncio, logging, re
 import asyncpg
 
+# Category rules DELEGATED to category_map — the single source of truth.
+from category_map import CATCH_ALL, categorize_on_ingest
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
@@ -68,36 +71,18 @@ TERM_MAP = [
     ('אבטחה', 'Lock/Retention'), ('בורג ראש מנוע', 'Cylinder Head Bolt'),
 ]
 
-CAT_RULES = [
-    (['דיסק בלם', 'רפידות בלם', 'רפידת בלם', 'בלם', 'ABS'], 'brakes'),
-    (['בולם זעזועים', 'קפיץ', 'מיסב', 'זרוע', 'מתלה'], 'suspension-steering'),
-    (['הגה', 'תיבת הגה'], 'suspension-steering'),
-    (['פנס', 'מנורה', 'תאורה', 'LED', 'נורה'], 'lighting'),
-    (['רדיאטור', 'משאבת מים', 'תרמוסטט', 'קירור', 'מאוורר'], 'cooling'),
-    (['מסנן', 'פילטר', 'שמן מנוע'], 'engine'),
-    (['מנוע', 'בוכנה', 'גל ארכובה', 'ראש גליל', 'סליל הצתה'], 'engine'),
-    (['חיישן', 'ממסר', 'נתיך', 'כבל', 'צמת', 'ECU', 'יחידת בקרה', 'סוללה', 'מצבר', 'מעגל משולב'], 'electrical-sensors'),
-    (['פגוש', 'כנף', 'גג', 'פנל', 'גוף', 'כסוי', 'כיסוי'], 'body-exterior'),
-    (['שמשה', 'חלון', 'מגב'], 'body-exterior'),
-    (['מושב', 'ריפוד', 'שטיח'], 'interior'),
-    (['כרית אוויר', 'חגורת בטיחות'], 'body-exterior'),
-    (['תיבת הילוכים', 'גיר', 'מצמד', 'ציריה'], 'gearbox'),
-    (['מזגן', 'HVAC'], 'air-conditioning-heating'),
-    (['מצת', 'מזרק דלק', 'משאבת דלק'], 'fuel-air'),
-    (['רצועה', 'שרשרת', 'גלגלת'], 'belts-chains'),
-    (['חישוק', 'גלגל רזרבי', 'צמיג'], 'wheels-tyres'),
-    (['דלת'], 'body-exterior'),
-]
 
 HEBREW_RE = re.compile(r'[א-ת]')
 
 
 def categorize(desc: str) -> str:
-    for keywords, cat in CAT_RULES:
-        for kw in keywords:
-            if kw in desc:
-                return cat
-    return 'accessories'
+    """
+    Hebrew description -> canonical slug via category_map.
+    The private CAT_RULES this replaces sent 'מסנן'/'פילטר'/'אוויר' to
+    'engine' — filters are their own category, and bare 'אוויר' (air)
+    matched almost anything.
+    """
+    return categorize_on_ingest(name_he=desc)
 
 
 def translate_name(heb: str) -> str:
@@ -205,7 +190,7 @@ async def import_parts(conn: asyncpg.Connection, parts: list[dict]) -> dict:
 
         sku = build_sku(sku_prefix, part_num)
         eng_name = translate_name(heb_desc) if heb_desc else f"OEM Part {part_num}"
-        category = categorize(heb_desc) if heb_desc else 'accessories'
+        category = categorize(heb_desc) if heb_desc else 'כללי'
 
         desc = (
             f"{eng_name}. Hebrew: {heb_desc}. "

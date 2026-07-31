@@ -3,6 +3,9 @@
 import asyncio, asyncpg, urllib.request, urllib.parse
 from html.parser import HTMLParser
 
+# ONE category source of truth — never a private ruleset here.
+from category_map import categorize_on_ingest
+
 DB_URL   = "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43@postgres_catalog:5432/autospare"
 KIA_MFR  = "626947bf-be3f-4dd1-a52e-fbcff8168cfc"
 PARTS_URL= "https://kia-israel.co.il/%d7%9e%d7%97%d7%99%d7%a8%d7%95%d7%9f-%d7%97%d7%9c%d7%a4%d7%99%d7%9d"
@@ -48,19 +51,16 @@ class TableParser(HTMLParser):
     def handle_data(self,d):
         if self.in_c:self.cur_cell.append(d)
 
-def map_cat(desc):
-    if any(k in desc for k in ["בלם","קליפר","ABS"]): return "brakes-clutch"
-    if any(k in desc for k in ["מצמד","גלגל תנופה"]): return "brakes-clutch"
-    if any(k in desc for k in ["טורבו","מגדש","EGR"]): return "engine"
-    if any(k in desc for k in ["מים","קירור","רדיאטור","תרמוסטט"]): return "cooling-system"
-    if any(k in desc for k in ["דלק","מרסס","מזרק"]): return "fuel-system"
-    if any(k in desc for k in ["הגה","היגוי","מתלה","קפיץ","בולם"]): return "suspension-steering"
-    if any(k in desc for k in ["תיבת הילוכים","גיר","דיפרנציאל","גל ארכובה"]): return "gearbox"
-    if any(k in desc for k in ["סעפת","פליטה","אגזוז","קטליזטור"]): return "exhaust"
-    if any(k in desc for k in ["מנוע","אטם","שסתום","בוכנה","קמשאפ"]): return "engine"
-    if any(k in desc for k in ["פנס","אור","נורה","מראה","שמשה"]): return "electrical-lighting"
-    if any(k in desc for k in ["מסנן","שמן","אוויר"]): return "filters-oils"
-    return "engine"
+def map_cat(desc) -> str:
+    """Delegates to category_map — the ONE source of truth.
+
+    This previously carried its own keyword ruleset returning a vocabulary
+    parts_catalog.category may never hold (hyphenated slugs like brakes-clutch/filters-oils), so every part it
+    classified got an unusable label that normalize_categories then had to
+    map back or flatten into the catch-all.
+    Never re-add keyword rules here — add them to category_map.py.
+    """
+    return categorize_on_ingest(name=desc)
 
 def fetch_model(search_term):
     data = urllib.parse.urlencode({"catalogNum":"","partDesc": search_term}).encode("utf-8")
@@ -110,15 +110,17 @@ async def run():
                         INSERT INTO parts_catalog
                           (id, sku, name, category, base_price, oem_number,
                            manufacturer, manufacturer_id, is_active,
-                           part_condition, needs_oem_lookup)
-                        VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,'Kia',$6,TRUE,'new',FALSE)
+                           part_condition, needs_oem_lookup, specifications)
+                        VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,'Kia',$6,TRUE,'new',FALSE,$7::jsonb)
                         ON CONFLICT (sku) DO UPDATE
                           SET name=EXCLUDED.name,
                               base_price=EXCLUDED.base_price,
                               category=EXCLUDED.category,
                               updated_at=NOW()
                         RETURNING id
-                    """, sku, name, cat, p["price"], p["sku"], KIA_MFR)
+                    """, sku, name, cat, p["price"], p["sku"], KIA_MFR,
+                        json.dumps({"source": "kia_new_models_import",
+                                    "model": p.get("model")}))
 
                     if part_id:
                         parts_added += 1

@@ -13,7 +13,7 @@ from bs4 import BeautifulSoup
 from sqlalchemy import text
 
 from BACKEND_DATABASE_MODELS import async_session_factory
-from categories import guess_category_by_text
+from category_map import guess_category_by_text
 
 FEBEST_CATALOG_URL = "https://febest.de/en/catalog"
 USER_AGENT = "Mozilla/5.0 (compatible; REX-Febest-Enrichment/1.0)"

@@ -49,34 +49,18 @@ DB_URL   = os.getenv("DATABASE_URL",
 JSON_SRC = os.getenv("JSON_FILE", "/opt/autosparefinder/land_rover_parts.json")
 
 # ── Category guesser ────────────────────────────────────────
-CATEGORY_HINTS = {
-    "filter": "Filters", "oil": "Filters", "air filter": "Filters",
-    "brake": "Brakes", "pad": "Brakes", "disc": "Brakes", "rotor": "Brakes",
-    "suspension": "Suspension", "shock": "Suspension", "absorber": "Suspension",
-    "strut": "Suspension", "spring": "Suspension",
-    "engine": "Engine Parts", "piston": "Engine Parts", "gasket": "Engine Parts",
-    "timing": "Engine Parts", "camshaft": "Engine Parts",
-    "transmission": "Transmission", "gearbox": "Transmission", "clutch": "Transmission",
-    "steering": "Steering", "rack": "Steering", "tie rod": "Steering",
-    "electrical": "Electrical", "sensor": "Electrical", "switch": "Electrical",
-    "lamp": "Electrical", "light": "Electrical", "fuse": "Electrical",
-    "belt": "Belts & Chains", "chain": "Belts & Chains",
-    "bearing": "Bearings", "wheel bearing": "Bearings",
-    "seal": "Seals & Gaskets", "o-ring": "Seals & Gaskets",
-    "coolant": "Cooling System", "radiator": "Cooling System", "thermostat": "Cooling System",
-    "fuel": "Fuel System", "injector": "Fuel System",
-    "exhaust": "Exhaust System", "muffler": "Exhaust System",
-    "tyre": "Tyres & Wheels", "tire": "Tyres & Wheels", "rim": "Tyres & Wheels",
-    "wiper": "Wipers & Washers", "washer": "Wipers & Washers",
-    "door": "Body Parts", "bonnet": "Body Parts", "bumper": "Body Parts",
-}
+# Category rules DELEGATED to category_map — the single source of truth.
+# Add keywords to category_map.py, never here.
+from category_map import CATCH_ALL, categorize_on_ingest, normalize_category_label
 
 def guess_category(name: str, desc: str) -> str:
-    text = (name + " " + desc).lower()
-    for kw, cat in CATEGORY_HINTS.items():
-        if kw in text:
-            return cat
-    return "Auto Parts"
+    """
+    -> canonical category slug via category_map.
+    The private rules this replaces returned NON-CANONICAL values ("Auto Parts"),
+    which parts_catalog.category may never hold — so every part they
+    classified got an unusable label. Fallback is now 'כללי'.
+    """
+    return categorize_on_ingest(name=f"{name} {desc}")
 
 def make_sku(oem: str, name: str, idx: int) -> str:
     raw = (oem or re.sub(r'[^A-Z0-9]', '', name.upper())[:12] or str(idx))
@@ -200,6 +184,22 @@ async def main():
                     if row:
                         if row["was_inserted"]: inserted += 1
                         else: updated += 1
+
+                        # Part photo → parts_images. The scraper already captured
+                        # `image_url` (see `img` above) but it was never stored, so
+                        # these parts could never reach the thumbnail pipeline —
+                        # that pipeline reads parts_images and nothing else.
+                        # NOT EXISTS guard: there is no unique (part_id, url) index,
+                        # so ON CONFLICT is not available here. url is varchar →
+                        # cast, or asyncpg raises AmbiguousParameterError.
+                        if img and img.startswith("http"):
+                            await conn.execute("""
+                                INSERT INTO parts_images (id, part_id, url, is_primary, created_at)
+                                SELECT gen_random_uuid(), $1::uuid, $2::varchar, TRUE, NOW()
+                                WHERE NOT EXISTS (
+                                    SELECT 1 FROM parts_images
+                                    WHERE part_id = $1::uuid AND url = $2::varchar)
+                            """, row["id"], img)
                         # Upsert supplier_parts
                         if sup_id:
                             await conn.execute("""

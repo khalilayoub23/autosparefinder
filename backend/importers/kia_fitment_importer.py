@@ -203,7 +203,13 @@ def upsert_fitment(db, records, dry_run=False):
                     """INSERT INTO part_vehicle_fitment
                         (part_id, manufacturer, model, year_from, year_to, engine_type, notes, manufacturer_id, updated_at)
                        VALUES %s
-                       ON CONFLICT ON CONSTRAINT uix_pvf_part_mfr_model_year_from DO UPDATE
+                       -- uix_pvf_part_mfr_model_year_from is a bare UNIQUE INDEX,
+                       -- not a table CONSTRAINT, so `ON CONFLICT ON CONSTRAINT`
+                       -- raises "constraint does not exist" and EVERY row fails.
+                       -- ASAP fitment lost 8,210/8,210 rows to exactly this, and
+                       -- Fox Factory 8,088 before that. Target a unique index by
+                       -- COLUMN INFERENCE.
+                       ON CONFLICT (part_id, manufacturer, model, year_from) DO UPDATE
                          SET year_to = EXCLUDED.year_to, engine_type = EXCLUDED.engine_type,
                              notes = EXCLUDED.notes, updated_at = NOW()""",
                     [(r['part_id'], r['manufacturer'], r['model'], r['year_from'],

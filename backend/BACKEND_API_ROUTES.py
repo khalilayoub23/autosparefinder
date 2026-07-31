@@ -21,6 +21,7 @@ import uuid
 from uuid import UUID as _UUID
 import os
 import io
+import time
 import asyncio
 import httpx
 from dotenv import load_dotenv
@@ -964,21 +965,24 @@ async def _ebay_fitment_backfill_loop() -> None:
 
 async def _enrich_catalog_loop() -> None:
     """
-    Dedicated AI enrichment loop — runs every 30 minutes, 500 parts per cycle.
-    Uses Groq llama-3.1-8b-instant (~1.6 parts/sec) → ~24K parts/day.
-    Covers 3.24M pending parts over ~135 days.
-    Separate from run_all_tasks so enrichment is not bottlenecked by the 6h cycle.
+    Dedicated AI enrichment loop — runs every 30 minutes, 1000 parts per cycle.
+    Gated by ENRICH_PARTS_ENABLED env var (default 0 — disabled by default to
+    avoid burning Cerebras/Groq quota on background enrichment when providers are
+    already loaded by customer chat).  Set ENRICH_PARTS_ENABLED=1 to activate.
     """
     await asyncio.sleep(120)  # 2min startup delay
     while True:
-        try:
-            from ai_catalog_builder import enrich_pending_parts
-            async for db in get_db():
-                report = await enrich_pending_parts(db, limit=1000)
-                print(f"[EnrichLoop] {report}")
-                break
-        except Exception as exc:
-            print(f"[EnrichLoop] error: {exc}")
+        if os.environ.get("ENRICH_PARTS_ENABLED", "0").strip().lower() in ("1", "true", "yes"):
+            try:
+                from ai_catalog_builder import enrich_pending_parts
+                async for db in get_db():
+                    report = await enrich_pending_parts(db, limit=1000)
+                    print(f"[EnrichLoop] {report}")
+                    break
+            except Exception as exc:
+                print(f"[EnrichLoop] error: {exc}")
+        else:
+            print("[EnrichLoop] skipped — ENRICH_PARTS_ENABLED=0")
         await asyncio.sleep(1800)  # 30 minutes
 
 
@@ -1174,6 +1178,329 @@ async def _car_parts_ie_full_seed_loop() -> None:
 _THUMBNAIL_IMPORT_STATUS: dict = {"state": "starting", "total_ok": 0, "last_batch": None, "updated_at": None}
 
 
+async def _whatsapp_link_monitor_loop() -> None:
+    """Watch the WhatsApp bridge link and alert OUT-OF-BAND when it breaks.
+
+    Owner concern 2026-07-29: "the business device is not used by a human — if
+    its battery dies the link breaks and I can't reconnect until I recharge."
+
+    The reassuring part (verified against current sources): WhatsApp multi-device
+    keeps a linked device working while the phone is OFF. The phone only has to
+    come online once every ~14 days or WhatsApp expires the session. So a flat
+    battery for hours or days is not the failure mode.
+
+    The real failure mode is the one that actually bit us: on 2026-07-29 the
+    session was logged out at 03:25 and NOBODY KNEW for eleven hours, because
+    /health reported {"ok":true,"connected":true} the whole time (it only tested
+    that a socket object existed). Every owner message failed silently.
+
+    Hence this loop, and hence its most important property:
+
+        IT MUST NOT ALERT OVER WHATSAPP.
+
+    An outage notification that travels over the broken channel is worthless.
+    Alerts go to Telegram and email, which are independent of WhatsApp.
+    """
+    interval = int(os.getenv("WA_LINK_CHECK_INTERVAL_S", "300"))
+    await asyncio.sleep(180)
+    last_state: str | None = None
+    last_alert = 0.0
+    realert_s = int(os.getenv("WA_LINK_REALERT_S", "21600"))   # 6h while broken
+
+    async def _alert(subject: str, body: str) -> None:
+        sent = []
+        tg_token = os.getenv("TELEGRAM_ADMIN_BOT_TOKEN", "")
+        tg_chat = os.getenv("TELEGRAM_OWNER_CHAT_ID", "")
+        if tg_token and tg_chat:
+            try:
+                await _noa_send_telegram(tg_token, tg_chat, f"{subject}\n\n{body}")
+                sent.append("telegram")
+            except Exception as exc:
+                logger.warning("[wa_link] telegram alert failed: %s", exc)
+        to = os.getenv("OWNER_EMAIL", "") or os.getenv("SMTP_FROM", "")
+        if to:
+            try:
+                from routes.email_utils import send_email
+                await send_email(to, "AutoSpareFinder", subject,
+                                 f"<pre>{body}</pre>", body)
+                sent.append("email")
+            except Exception as exc:
+                logger.warning("[wa_link] email alert failed: %s", exc)
+        logger.error("[wa_link] %s | %s | delivered via: %s",
+                     subject, body.replace("\n", " ")[:200], sent or "NOTHING")
+
+    while True:
+        try:
+            url = (os.getenv("WHATSAPP_BRIDGE_URL",
+                             "http://whatsapp-bridge:3001/send")
+                   .replace("/send", "/health"))
+            state, detail = "unknown", ""
+            try:
+                async with httpx.AsyncClient(timeout=15) as cx:
+                    h = (await cx.get(url)).json()
+                if h.get("account_mismatch"):
+                    am = h["account_mismatch"]
+                    state = "wrong_account"
+                    detail = (f"מחובר: {am.get('linked')} ({am.get('name') or '—'})\n"
+                              f"אמור להיות: {am.get('expected')}")
+                elif h.get("connected"):
+                    state = "ok"
+                elif h.get("awaiting_qr_scan"):
+                    state = "awaiting_qr"
+                else:
+                    state = "disconnected"
+            except Exception as exc:
+                state = "unreachable"
+                detail = f"{type(exc).__name__}: {exc}"
+
+            now = time.time()
+            changed = state != last_state
+            stale = (now - last_alert) >= realert_s
+
+            if state != "ok" and (changed or stale):
+                msgs = {
+                    "awaiting_qr": ("🔴 WhatsApp מנותק — ממתין לסריקת QR",
+                                    "הקשר לוואטסאפ נותק והמערכת ממתינה לסריקה מחדש.\n"
+                                    "לקוחות שכותבים לעסק לא מגיעים אלינו כרגע.\n\n"
+                                    "לתיקון, הרץ בשרת:\n"
+                                    "bash /opt/autosparefinder/whatsapp-bridge/show_qr.sh\n"
+                                    "וסרוק מהטלפון של העסק (972532426920)."),
+                    "disconnected": ("🔴 WhatsApp מנותק",
+                                     "הגשר פועל אך אינו מחובר לוואטסאפ."),
+                    "wrong_account": ("🚨 WhatsApp מחובר לחשבון הלא נכון",
+                                      "לקוחות שכותבים למספר העסקי לא מגיעים אלינו."),
+                    "unreachable": ("🔴 גשר הוואטסאפ אינו מגיב",
+                                    "לא ניתן לפנות לשירות הגשר."),
+                }
+                subj, body = msgs.get(state, ("🔴 WhatsApp — מצב לא ידוע", state))
+                await _alert(subj, (body + ("\n\n" + detail if detail else "")))
+                last_alert = now
+
+            if state == "ok" and last_state not in (None, "ok"):
+                await _alert("✅ WhatsApp חזר לפעול",
+                             "הקשר לוואטסאפ שוחזר. הודעות נשלחות שוב כרגיל.")
+                last_alert = 0.0
+
+            if changed:
+                logger.info("[wa_link] state %s -> %s %s", last_state, state, detail[:120])
+            last_state = state
+
+            # ── the 14-day clock ──────────────────────────────────────────────
+            # WhatsApp expires a linked device if the HOST phone has not been
+            # online for ~14 days. Nothing in the Baileys session exposes when
+            # the phone was last seen, so this cannot be measured — only
+            # pre-empted. A reminder every N days (default 10) costs one message
+            # and prevents the one outage that needs physical access to fix.
+            try:
+                from BACKEND_AUTH_SECURITY import get_redis as _gr_wa
+                _r = await _gr_wa()
+                if _r and state == "ok":
+                    days = int(os.getenv("WA_PHONE_REMINDER_DAYS", "10"))
+                    if await _r.set("autospare:wa:phone_reminder", "1",
+                                    ex=days * 86400, nx=True):
+                        await _alert(
+                            "🔋 הדליקו את טלפון העסק לדקה",
+                            "וואטסאפ מנתק מכשיר מקושר אם טלפון העסק לא היה מחובר "
+                            f"לאינטרנט כ-14 יום.\n\n"
+                            f"מספר: {os.getenv('WHATSAPP_EXPECTED_NUMBER','972532426920')}\n"
+                            "הדליקו אותו לדקה עם אינטרנט — זה מאפס את השעון "
+                            "ל-14 יום נוספים. הכי פשוט: להשאיר אותו על המטען.\n\n"
+                            f"(תזכורת אוטומטית כל {days} ימים)")
+            except Exception:
+                pass
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error("[wa_link] monitor error: %s", exc)
+        await asyncio.sleep(interval)
+
+
+async def _job_queue_report_loop() -> None:
+    """Hourly WhatsApp progress report on the job queue, while it is ACTIVE.
+
+    Owner request 2026-07-29: "supervise the jobs and check each hour and send
+    my update to my whatsapp."
+
+    This is deliberately NOT the pattern that was just removed from the harvest
+    supervisor. That one reported "still working, nothing changed" forever, on a
+    process with no end. This one:
+      • only exists while a FINITE migration is running — it goes silent the
+        moment the queue is idle or finished, with no further reminders;
+      • reports NUMBERS THAT MOVE (work done in the last hour, remaining, ETA),
+        which is information rather than reassurance;
+      • sends the completion summary once, including the parity verdict — the
+        message the owner actually needs.
+
+    Quiet hours: routine reports at night are SKIPPED, not queued, so the owner
+    never wakes to a stack of stale hourly updates (the failure mode called out
+    in the harvest loop). A failure or the final summary is sent as critical.
+    """
+    import job_queue as _jq
+
+    interval = int(os.getenv("JOB_QUEUE_REPORT_INTERVAL_S", "3600"))
+    await asyncio.sleep(300)                       # let the queue actually start
+    last_sent = 0.0
+    prev: dict = {}                                # step_key -> remaining
+    announced_done = False
+
+    while True:
+        try:
+            owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
+            enabled = os.getenv("JOB_QUEUE_ENABLED", "0").strip().lower() in ("1", "true", "yes")
+            if not owner or not enabled:
+                await asyncio.sleep(interval)
+                continue
+
+            async with async_session_factory() as db:
+                st = await _jq.status(db)
+
+            steps = st["steps"]
+            active = [s for s in steps if s["status"] in ("pending", "running")]
+            failed = [s for s in steps if s["status"] == "failed"]
+            finished = not active
+
+            # ── the queue finished: say so ONCE, with the parity verdict ──────
+            if finished and not announced_done:
+                verdict = "—"
+                par = next((s for s in steps if s["step_key"] == "parity_check"), None)
+                if par:
+                    verdict = ("✅ עבר" if par["status"] == "done"
+                               else f"❌ {par['status']}")
+                lines = [
+                    "🏁 *תור המשימות הסתיים*",
+                    f"{st['done']}/{st['total']} שלבים הושלמו"
+                    + (f" · {len(failed)} נכשלו" if failed else ""),
+                    f"בדיקת התאמה סופית: {verdict}",
+                ]
+                for s in failed:
+                    lines.append(f"❌ {s['title'] or s['step_key']}: "
+                                 f"{str(s['error'] or '')[:110]}")
+                await _wa_send_quiet(to=owner, text="\n".join(lines), critical=True)
+                announced_done = True
+                await asyncio.sleep(interval)
+                continue
+            if active:
+                announced_done = False              # a new run re-arms the summary
+
+            # ── a FAILED step is not a routine update — send it immediately ───
+            newly_failed = [s for s in failed
+                            if prev.get("failed::" + s["step_key"]) != s["status"]]
+            for s in newly_failed:
+                prev["failed::" + s["step_key"]] = s["status"]
+                await _wa_send_quiet(to=owner, critical=True, text=(
+                    f"❌ *שלב נכשל בתור המשימות*\n"
+                    f"{s['title'] or s['step_key']}\n"
+                    f"{str(s['error'] or '')[:220]}\n"
+                    f"לצפייה: כתוב *תור*"))
+
+            if not active:
+                await asyncio.sleep(interval)
+                continue
+
+            # ── routine hourly progress ──────────────────────────────────────
+            due = (time.time() - last_sent) >= interval - 60
+            open_window, _ = _notify_window_open()
+            if not (due and open_window):
+                # Skipped at night ON PURPOSE — not queued. A stale 03:00 progress
+                # report delivered at 09:00 is noise; the 09:00 one is current.
+                await asyncio.sleep(min(interval, 600))
+                continue
+
+            cur = next((s for s in steps if s["status"] == "running"), active[0])
+            key, rem = cur["step_key"], cur["remaining"]
+            done_last_hour = None
+            if rem is not None and prev.get(key) is not None:
+                done_last_hour = max(0, int(prev[key]) - int(rem))
+            if rem is not None:
+                prev[key] = int(rem)
+
+            age = ""
+            if cur["remaining_at"]:
+                try:
+                    _ra = cur["remaining_at"]
+                    _ra = _ra.replace(tzinfo=None) if _ra.tzinfo else _ra
+                    mins = int((datetime.utcnow() - _ra).total_seconds() / 60)
+                    if mins > 5:
+                        age = f" (נמדד לפני {mins} דק')"
+                except Exception:
+                    pass
+
+            lines = [f"🧵 *תור המשימות — עדכון שעתי*",
+                     f"▶️ {cur['title'] or key}"]
+            if rem is not None:
+                lines.append(f"נותרו: {int(rem):,}{age}")
+            if done_last_hour:
+                lines.append(f"בשעה האחרונה: {done_last_hour:,} טופלו")
+                if rem:
+                    hrs = int(rem) / done_last_hour
+                    lines.append(f"הערכת סיום לשלב: ~{hrs:.1f} שעות")
+            elif done_last_hour == 0:
+                lines.append("⚠️ אין התקדמות מדודה בשעה האחרונה")
+            lines.append(f"מנות שהורצו: {cur['batches_run']}")
+            lines.append(f"— {st['done']}/{st['total']} שלבים הושלמו · לעצירה: *עצור*")
+
+            await _wa_send_quiet(to=owner, text="\n".join(lines))
+            last_sent = time.time()
+            logger.info("[job_queue_report] sent: step=%s remaining=%s delta=%s",
+                        key, rem, done_last_hour)
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error("[job_queue_report] error: %s", exc)
+        await asyncio.sleep(min(interval, 600))
+
+
+async def _job_queue_loop() -> None:
+    """Drive the sequenced catalogue pipeline (job_queue.py) one batch at a time.
+
+    DISABLED BY DEFAULT (`JOB_QUEUE_ENABLED=0`). The owner's standing gate is
+    that infrastructure is verified BEFORE anything is triggered, so the runner
+    existing must not mean the runner is running. Flipping the env var and
+    restarting is the deliberate "go".
+
+    One batch per iteration: a stop request or a container restart can never
+    interrupt more than a single batch, and every batch commits before the next
+    is considered.
+    """
+    import job_queue as _jq
+
+    await asyncio.sleep(120)  # let startup settle before touching the catalogue
+    # Make sure the table and the plan exist even while disabled, so the owner
+    # can inspect the queue and its measured counters before starting it.
+    try:
+        async with async_session_factory() as db:
+            await _jq.seed_default_plan(db)
+    except Exception as exc:
+        logger.warning("[job_queue] seed failed: %s", exc)
+
+    idle_sleep = int(os.getenv("JOB_QUEUE_IDLE_SLEEP_S", "300"))
+    while True:
+        try:
+            if os.getenv("JOB_QUEUE_ENABLED", "0").strip().lower() not in ("1", "true", "yes"):
+                await asyncio.sleep(idle_sleep)
+                continue
+            async with async_session_factory() as db:
+                res = await _jq.run_once(db)
+            act = res.get("action")
+            logger.info("[job_queue] %s", res)
+            if act in ("idle", "stopped"):
+                await asyncio.sleep(idle_sleep)
+            elif act == "error" and res.get("final"):
+                # A step that exhausted its retries must not be retried in a hot
+                # loop — it needs the owner, so back off and let the status view
+                # (and the WhatsApp `תור` command) surface it.
+                await asyncio.sleep(idle_sleep)
+            else:
+                await asyncio.sleep(_jq.COOLDOWN_S)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error("[job_queue] loop error: %s", exc)
+            await asyncio.sleep(120)
+
+
 async def _thumbnail_import_loop() -> None:
     """Supervisor for the part-thumbnail cleanup pipeline (maintenance/build_part_thumbnails.py).
 
@@ -1203,6 +1530,20 @@ async def _thumbnail_import_loop() -> None:
     idle_backoff = 300
 
     while True:
+        # Stand down while the JOB QUEUE owns the thumbnail step — otherwise two
+        # processes run the SAME script against the same candidate query and
+        # simply contend. The queue hands the work back (status 'done') and this
+        # loop resumes for parts imported afterwards.
+        try:
+            import job_queue as _jq
+            async with async_session_factory() as _qdb:
+                if await _jq.owns_step(_qdb, "part_thumbnails"):
+                    _THUMBNAIL_IMPORT_STATUS["state"] = "deferred_to_job_queue"
+                    await asyncio.sleep(idle_backoff)
+                    continue
+        except Exception:
+            pass  # cannot tell => keep working rather than stall silently
+
         # gate — only run when the bucket is actually configured
         try:
             import s3_storage as _S
@@ -1294,6 +1635,38 @@ async def _amayama_fs_harvester_loop() -> None:
         await asyncio.sleep(backoff)
 
 
+def _harvest_status_decision(
+    *, first_sample: bool, d_models: int, d_parts: int, in_progress: int, pending: int,
+    prev_state: "str | None", secs_since_alert: "float | None",
+    realert_s: int, mode: str = "exceptions",
+) -> "tuple[str, bool]":
+    """Decide the harvest state and whether the owner should hear about it.
+
+    Pulled out of `_harvest_supervisor_loop` so the notification policy can be
+    tested directly instead of only by watching a 30-minute loop for a day.
+
+    Returns (state, should_send). state ∈ {ok, stalled, idle}.
+
+    Policy (owner, 2026-07-29): silence while healthy; speak on stall/idle and
+    once on recovery. A persistent stall re-alerts only every `realert_s`.
+    """
+    if first_sample:
+        # No measured window yet — never alert on a delta we did not observe.
+        return "ok", mode == "hourly"
+    if d_models == 0 and d_parts == 0:
+        state = "idle" if (in_progress == 0 and pending == 0) else "stalled"
+    else:
+        state = "ok"
+    bad = state in ("stalled", "idle")
+    stale = secs_since_alert is not None and secs_since_alert >= realert_s
+    should_send = (
+        mode == "hourly"
+        or (bad and (prev_state != state or stale))
+        or (not bad and prev_state in ("stalled", "idle"))
+    )
+    return state, should_send
+
+
 async def _harvest_supervisor_loop() -> None:
     """
     Smart harvest supervisor (goal 2026-07-07). The harvester itself is now
@@ -1302,20 +1675,25 @@ async def _harvest_supervisor_loop() -> None:
     vehicles) and auto-advances. This loop is the OVERSIGHT layer:
       • Reports coverage progress toward the full catalogue (all brands+models).
       • Re-seeds the queue if it's ever empty (never lets the harvester idle).
-      • Sends the owner an HOURLY WhatsApp progress report (coverage + last-hour delta +
-        a stall warning if no progress), quiet-hours aware (skipped, not queued, at night).
+      • Notifies the owner BY EXCEPTION only — when the harvest stalls or goes idle,
+        and once when it recovers. A progressing harvester is silent (owner directive
+        2026-07-29: routine "still working" reports are noise that hides real alerts).
       • Sends the owner a weekly harvest digest (Sunday ~09:00 IL).
     """
     await asyncio.sleep(900)  # let startup settle
     _last_digest_date: str | None = None
-    # Hourly WhatsApp progress report state (owner asked for hourly harvester updates,
-    # 2026-07-23). Reports the delta since the last SENT report; only sent inside the
-    # notify window (skipped — not queued — at night so the owner isn't dumped a stack
-    # of stale hourly reports at 09:00). Interval override: HARVEST_REPORT_INTERVAL_S.
+    # Progress is SAMPLED every _report_interval_s and judged; it is not announced.
+    # HARVEST_REPORT_MODE=hourly restores the old unconditional hourly report.
     _report_interval_s = int(os.getenv("HARVEST_REPORT_INTERVAL_S", "3600"))
+    _report_mode = os.getenv("HARVEST_REPORT_MODE", "exceptions").strip().lower()
+    # How long a PERSISTENT stall waits before re-alerting (default 6h) — so a stuck
+    # harvester is chased up, but never once an hour.
+    _realert_s = int(os.getenv("HARVEST_STALL_REALERT_S", "21600"))
     _last_report_utc: "datetime | None" = None
     _prev_done: int | None = None
     _prev_parts: int | None = None
+    _harvest_alert_state: str | None = None      # ok | stalled | idle
+    _harvest_alert_sent_utc: "datetime | None" = None
     while True:
         try:
             async with async_session_factory() as db:
@@ -1343,51 +1721,81 @@ async def _harvest_supervisor_loop() -> None:
 
                 _now = datetime.now(timezone.utc)
 
-                # ── Hourly harvester progress report to the owner's WhatsApp ──────────
+                # ── Harvest status → owner WhatsApp, BY EXCEPTION ────────────────────
+                # Owner directive 2026-07-29: "the messages about tasks that is done
+                # should not be sent — I asked to be notified about the STATUS of the
+                # import if it's idle, so I don't have to get reminders."
+                #
+                # So a healthy, progressing harvester is SILENT. The owner hears from
+                # this loop only when the import is not moving (stalled / idle), and
+                # once when it recovers. The stall signal was already being computed
+                # here — it was just buried inside an unconditional hourly send, so the
+                # one message that mattered arrived looking like 23 that didn't.
                 _open, _local = _notify_window_open()
                 _due = (_last_report_utc is None
                         or (_now - _last_report_utc).total_seconds() >= _report_interval_s - 60)
-                if _open and _due:
-                    owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
-                    if owner:
-                        if _last_report_utc is None:
-                            mins = 0
-                            d_models = d_parts = 0
-                        else:
-                            mins = int((_now - _last_report_utc).total_seconds() / 60)
-                            d_models = done - (_prev_done or 0)
-                            d_parts = parts - (_prev_parts or 0)
-                        # current models being harvested (nice-to-have context)
-                        try:
-                            async with async_session_factory() as db3:
-                                cur = (await db3.execute(text("""
-                                    SELECT brand_en, model_name FROM harvest_queue
-                                    WHERE status='in_progress'
-                                    ORDER BY updated_at DESC LIMIT 3
-                                """))).fetchall()
-                            cur_txt = "\n".join(f"• {r[0]} {r[1]}" for r in cur) or "—"
-                        except Exception:
-                            cur_txt = "—"
-                        if _last_report_utc is None:
-                            delta_line = "📈 דוח ראשון מאז ההפעלה"
-                        elif d_models == 0 and d_parts == 0:
-                            delta_line = (f"⚠️ אין התקדמות ב-{mins} הדק' האחרונות — "
-                                          f"ייתכן שהשואב תקוע")
-                        else:
-                            delta_line = (f"📈 ב-{mins} הדק' האחרונות: "
-                                          f"+{d_models} דגמים, +{d_parts:,} חלקים")
-                        msg = (
-                            f"🔧 *דוח שאיבת קטלוג (שעתי)*\n"
-                            f"כיסוי: {done:,}/{total:,} דגמים ({pct}%) · {bdone}/{btot} מותגים\n"
-                            f"{delta_line}\n"
-                            f"⏳ בתהליך: {in_progress} · ממתינים: {pending:,}\n"
-                            f"סה\"כ חלקים שנאספו: {parts:,}\n"
-                            f"נשאבים כעת:\n{cur_txt}"
-                        )
-                        try:
-                            await _wa_send_quiet(to=owner, text=msg)
-                        except Exception as _rex:
-                            print(f"[harvest_supervisor] hourly report send failed: {_rex}", flush=True)
+                if _due:
+                    _first = _last_report_utc is None
+                    mins = 0 if _first else int((_now - _last_report_utc).total_seconds() / 60)
+                    d_models = 0 if _first else done - (_prev_done or 0)
+                    d_parts = 0 if _first else parts - (_prev_parts or 0)
+                    _state, _should_send = _harvest_status_decision(
+                        first_sample=_first, d_models=d_models, d_parts=d_parts,
+                        in_progress=in_progress, pending=pending,
+                        prev_state=_harvest_alert_state,
+                        secs_since_alert=(None if _harvest_alert_sent_utc is None
+                                          else (_now - _harvest_alert_sent_utc).total_seconds()),
+                        realert_s=_realert_s, mode=_report_mode,
+                    )
+                    _bad = _state in ("stalled", "idle")
+
+                    if _should_send and _open:
+                        owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
+                        if owner:
+                            try:
+                                async with async_session_factory() as db3:
+                                    cur = (await db3.execute(text("""
+                                        SELECT brand_en, model_name FROM harvest_queue
+                                        WHERE status='in_progress'
+                                        ORDER BY updated_at DESC LIMIT 3
+                                    """))).fetchall()
+                                cur_txt = "\n".join(f"• {r[0]} {r[1]}" for r in cur) or "—"
+                            except Exception:
+                                cur_txt = "—"
+                            if _state == "stalled":
+                                head = "⚠️ *שאיבת הקטלוג תקועה*"
+                                delta_line = (f"אין התקדמות ב-{mins} הדק' האחרונות "
+                                              f"(בתהליך: {in_progress} · ממתינים: {pending:,})")
+                            elif _state == "idle":
+                                head = "💤 *שאיבת הקטלוג בטלה*"
+                                delta_line = "התור ריק — אין דגמים ממתינים לשאיבה."
+                            else:
+                                head = "✅ *שאיבת הקטלוג חזרה לפעול*"
+                                delta_line = (f"ב-{mins} הדק' האחרונות: "
+                                              f"+{d_models} דגמים, +{d_parts:,} חלקים")
+                            msg = (
+                                f"{head}\n"
+                                f"כיסוי: {done:,}/{total:,} דגמים ({pct}%) · {bdone}/{btot} מותגים\n"
+                                f"{delta_line}\n"
+                                f"סה\"כ חלקים שנאספו: {parts:,}\n"
+                                f"נשאבים כעת:\n{cur_txt}"
+                            )
+                            try:
+                                await _wa_send_quiet(to=owner, text=msg)
+                                _harvest_alert_sent_utc = _now
+                            except Exception as _rex:
+                                print(f"[harvest_supervisor] status send failed: {_rex}", flush=True)
+                        # Recovery is a one-shot: clear the cooldown so the NEXT stall
+                        # alerts immediately instead of waiting out the re-alert window.
+                        if not _bad:
+                            _harvest_alert_sent_utc = None
+
+                    # Track state even when the notify window is closed, so a stall that
+                    # begins at night is still recognised as ONE event at 09:00 — not
+                    # re-announced as new.
+                    _harvest_alert_state = _state
+                    print(f"[harvest_supervisor] status={_state} d_models={d_models} "
+                          f"d_parts={d_parts} sent={_should_send and _open}", flush=True)
                     _last_report_utc = _now
                     _prev_done = done
                     _prev_parts = parts
@@ -1717,6 +2125,32 @@ async def _meili_sync_loop() -> None:
             )
             rc = await proc.wait()
             print(f"[meili_sync_loop] sync finished rc={rc}", flush=True)
+
+            # PURGE DEACTIVATED PARTS (added 2026-07-28).
+            # meili_sync only ever ADDS/UPDATES — every source query carries
+            # `WHERE is_active = TRUE` — so nothing ever removed a document when
+            # a part was later deactivated. Measured live: 4,419,309 index docs
+            # against 4,350,159 active parts = 69,150 phantom documents, 81% of
+            # them 'כללי' (deactivated parts skew to the catch-all). Customers
+            # don't see them (routes/parts.py filters pc.is_active at the DB
+            # join) but the Meilisearch FACET COUNTS were wrong and the drift
+            # grew with every deactivation. Runs after each sync so it cannot
+            # silently accumulate again.
+            try:
+                purge = os.path.join(
+                    os.path.dirname(os.path.abspath(__file__)),
+                    "maintenance", "meili_purge_inactive.py")
+                if os.path.exists(purge):
+                    pproc = await asyncio.create_subprocess_exec(
+                        _sys.executable, purge,
+                        stdout=asyncio.subprocess.DEVNULL,
+                        stderr=asyncio.subprocess.DEVNULL,
+                    )
+                    prc = await pproc.wait()
+                    print(f"[meili_sync_loop] inactive purge rc={prc}", flush=True)
+            except Exception as pexc:
+                print(f"[meili_sync_loop] purge skipped: {pexc}", flush=True)
+
             await _meili_verify_parity()
         except Exception as exc:
             print(f"[meili_sync_loop] error: {exc}", flush=True)
@@ -1888,6 +2322,8 @@ async def startup():
     start_db_agent(get_db, 3.0)   # ← DB cleaning / normalisation agent (every 3h, staggered from scraper)
     _supervised_task("cleanup_loop",                run_cleanup_loop())
     _supervised_task("noa_marketing_loop",          _noa_marketing_loop())
+    _supervised_task("noa_engagement_loop",         _noa_engagement_loop())
+    _supervised_task("supplier_sourcing_loop",      _supplier_sourcing_loop())
     _supervised_task("ebay_fitment_backfill_loop",  _ebay_fitment_backfill_loop())
     _supervised_task("enrich_catalog_loop",         _enrich_catalog_loop())
     _supervised_task("status_update_loop",          _status_update_loop())
@@ -1896,6 +2332,9 @@ async def startup():
     _supervised_task("car_parts_ie_harvester_loop",  _car_parts_ie_harvester_loop())
     _supervised_task("car_parts_ie_full_seed",       _car_parts_ie_full_seed_loop())
     _supervised_task("thumbnail_import_loop",        _thumbnail_import_loop())
+    _supervised_task("job_queue_loop",               _job_queue_loop())
+    _supervised_task("job_queue_report",             _job_queue_report_loop())
+    _supervised_task("whatsapp_link_monitor",        _whatsapp_link_monitor_loop())
     _supervised_task("car_parts_ie_stall_watchdog",  _car_parts_ie_stall_watchdog_loop())
     _supervised_task("car_parts_ie_healthcheck",     _car_parts_ie_harvester_healthcheck_loop())
     _supervised_task("meili_sync_loop",              _meili_sync_loop())
@@ -2163,12 +2602,37 @@ async def _noa_featured_thumbnail(car: str, eng_part: str) -> "str | None":
 
 
 async def _noa_enqueue_social_post(caption: str, platforms: list, media_url: "str | None",
-                                   topic: str) -> "str | None":
+                                   topic: str, part_text: str = "") -> "str | None":
     """Create a pending_approval SocialPost so NOA's drafts flow through the SAME
-    approval→publish queue the admin endpoints + social/registry consume. Returns the id."""
+    approval→publish queue the admin endpoints + social/registry consume. Returns the id.
+
+    SEMANTIC GUARD (2026-07-29): before queueing, the local multilingual embedding
+    model checks that the caption actually describes the part it claims to. NOA
+    published fluent Hebrew claiming windscreen WIPERS give "sun protection, fuel
+    savings and a cooler cabin" — the benefits of a SUNSHADE. That is a grounding
+    failure, not a language failure, so it is caught by MEANING not by wording.
+    The guard fails OPEN (see social/post_guard) — a scoring outage must never
+    stop NOA posting.
+    """
+    guard_score = None
+    try:
+        from social.post_guard import check as _guard_check
+        if part_text:
+            ok, guard_score = _guard_check(caption, part_text,
+                                           context=f"topic={topic!r} platforms={platforms}")
+            if not ok:
+                logger.warning(
+                    "noa_marketing_loop: caption REJECTED by semantic guard "
+                    "(sim=%.3f) — not queued. topic=%r", guard_score or -1, topic)
+                return None
+    except Exception as exc:      # guard must never break the posting path
+        logger.warning("noa semantic guard skipped: %s", exc)
+
     try:
         from BACKEND_DATABASE_MODELS import SocialPost
         meta = {"source": "noa_marketing_loop", "topic": topic}
+        if guard_score is not None:
+            meta["guard_sim"] = round(float(guard_score), 3)
         if media_url:
             meta["media_url"] = media_url
         async with async_session_factory() as cat_db:
@@ -2188,6 +2652,87 @@ async def _noa_enqueue_social_post(caption: str, platforms: list, media_url: "st
     except Exception as exc:
         logger.error("noa enqueue social_post failed: %s", exc)
         return None
+
+
+async def _noa_engagement_loop():
+    """
+    NOA's inbound-engagement loop (the read+reply half; the marketing loop only PUBLISHES).
+
+    Every NOA_ENGAGEMENT_INTERVAL_S (default 900s) it polls every configured social
+    platform (Facebook/Instagram — others degrade to no-op), records new comments/mentions
+    to `social_inbox`, has NOA draft a reply, and moves each to `pending_approval`. The owner
+    reviews/approves from the WhatsApp console (*תגובות* → *ענה <id>*). Set
+    NOA_ENGAGEMENT_AUTOREPLY=1 to auto-send drafts without owner approval. Toggle off with
+    NOA_ENGAGEMENT_ENABLED=0. Never raises out of a cycle; backs off when nothing is
+    configured so it stays silent until a token is added.
+    """
+    from BACKEND_DATABASE_MODELS import async_session_factory
+    from social import engagement as _eng
+
+    interval = int(os.getenv("NOA_ENGAGEMENT_INTERVAL_S", "900"))
+    autoreply = os.getenv("NOA_ENGAGEMENT_AUTOREPLY", "0") == "1"
+    await asyncio.sleep(30)  # let startup settle
+    while True:
+        if os.getenv("NOA_ENGAGEMENT_ENABLED", "1") != "1":
+            await asyncio.sleep(interval)
+            continue
+        configured = _eng.configured_platforms()
+        if not configured:
+            logger.info("[noa_engagement] no social platform configured (need FACEBOOK_PAGE_TOKEN); idling")
+            await asyncio.sleep(max(interval, 3600))
+            continue
+        try:
+            async with async_session_factory() as db:
+                summary = await _eng.poll_once(db, autoreply=autoreply)
+                # draft items recorded by a webhook (Telegram) rather than polled
+                wsum = await _eng.draft_new_items(db, autoreply=autoreply)
+            logger.info("[noa_engagement] %s webhook=%s", summary, wsum)
+            drafted = summary.get("drafted", 0) + wsum.get("drafted", 0)
+            if drafted and not autoreply:
+                owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
+                if owner:
+                    await _wa_send_quiet(to=owner, text=(
+                        f"💬 NOA: {drafted} תגובות חדשות ברשתות ממתינות לתשובה.\n"
+                        f"לצפייה: כתוב *תגובות* · לאישור: *ענה <מזהה>*"))
+        except Exception as exc:
+            logger.error("[noa_engagement] cycle failed: %s", exc)
+        await asyncio.sleep(interval)
+
+
+async def _supplier_sourcing_loop():
+    """
+    NIR's supplier-sourcing "superpower" (see services/supplier_sourcing.py).
+
+    Every SUPPLIER_SOURCING_INTERVAL_S (default weekly) NIR searches the web for new
+    sellers that fill catalog gaps (derived from recent search_misses), evaluates them,
+    and onboards the good ones into `suppliers` as is_active=FALSE / pending_review — then
+    WhatsApps the owner so he can approve activation from the console (*ספקים* → *אשרספק
+    <id>*). Nothing goes live in customer-facing compare without owner approval. Discovery
+    uses Gemini Google-Search grounding (real), falling back to LLM-propose + live-verify
+    when Gemini is rate-limited. Toggle off with SUPPLIER_SOURCING_ENABLED=0.
+    """
+    from services import supplier_sourcing as _ss
+
+    interval = int(os.getenv("SUPPLIER_SOURCING_INTERVAL_S", str(7 * 24 * 3600)))
+    await asyncio.sleep(120)  # let startup settle
+    while True:
+        if os.getenv("SUPPLIER_SOURCING_ENABLED", "1") != "1":
+            await asyncio.sleep(interval)
+            continue
+        try:
+            summary = await _ss.run_sourcing_cycle()
+            onboarded = summary.get("onboarded", [])
+            logger.info("[supplier_sourcing] %s", summary)
+            if onboarded:
+                owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
+                if owner:
+                    lines = "\n".join(f"• {o['name'][:34]} ({o['domain']})" for o in onboarded[:6])
+                    await _wa_send_quiet(to=owner, text=(
+                        f"🔌 NIR מצא {len(onboarded)} ספקים חדשים אפשריים:\n{lines}\n"
+                        f"לצפייה/אישור: כתוב *ספקים*"))
+        except Exception as exc:
+            logger.error("[supplier_sourcing] cycle failed: %s", exc)
+        await asyncio.sleep(interval)
 
 
 async def _noa_marketing_loop():
@@ -2600,9 +3145,18 @@ async def _noa_marketing_loop():
                     # ENQUEUE into the social_posts approval queue → owner approves →
                     # the registry publishes to the real platform. This is the single
                     # source of truth the admin endpoints + Telegram approval consume.
+                    # Give the guard the part this post is SUPPOSED to be about,
+                    # so it can reject copy that drifted onto a different product.
+                    try:
+                        from social.post_guard import part_text_for as _ptf
+                        _guard_part = _ptf(name=eng_part, name_he=heb_part)
+                    except Exception:
+                        _guard_part = f"{heb_part} {eng_part}".strip()
+
                     social_post_id = await _noa_enqueue_social_post(
                         caption=caption, platforms=_configured, media_url=media_url,
                         topic=f"{heb_part} — {car}",
+                        part_text=_guard_part,
                     )
 
                     pending_payload = {

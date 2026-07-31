@@ -103,48 +103,11 @@ MANUFACTURER_IDS: dict[str, str] = {
     "ssangyong":    "588b0288-fb17-499e-83a8-750e3be2d318",
 }
 
-# category slug → system category id
-CATEGORY_SLUG_MAP: dict[str, str] = {
-    "brake-discs": "brakes", "brake-pads": "brakes", "brake-drums": "brakes",
-    "brake-calipers": "brakes", "brake-hoses": "brakes", "brake-master-cylinder": "brakes",
-    "wheel-cylinders": "brakes", "handbrake-cables": "brakes",
-    "shock-absorbers": "suspension-steering", "springs": "suspension-steering",
-    "control-arms": "suspension-steering", "ball-joints": "suspension-steering",
-    "tie-rod-ends": "suspension-steering", "steering-rack": "suspension-steering",
-    "anti-roll-bar": "suspension-steering", "suspension-bushes": "suspension-steering",
-    "wheel-bearings": "wheels-bearings", "wheel-hub": "wheels-bearings",
-    "drive-shafts": "clutch-drivetrain", "cv-joints": "clutch-drivetrain",
-    "clutch-kit": "clutch-drivetrain", "flywheel": "clutch-drivetrain",
-    "gearbox-oil": "gearbox", "manual-gearbox": "gearbox", "automatic-gearbox": "gearbox",
-    "engine-oil": "fluids", "coolant": "fluids", "brake-fluid": "fluids",
-    "oil-filter": "filters", "air-filter": "filters", "fuel-filter": "filters",
-    "pollen-filter": "filters", "cabin-filter": "filters",
-    "alternator": "electrical-sensors", "starter-motor": "electrical-sensors",
-    "sensors": "electrical-sensors", "lambda-sensor": "electrical-sensors",
-    "abs-sensor": "electrical-sensors", "camshaft-sensor": "electrical-sensors",
-    "battery": "electrical-sensors",
-    "radiator": "cooling", "thermostat": "cooling", "water-pump": "cooling",
-    "cooling-fan": "cooling", "coolant-pipe": "cooling",
-    "control-valve-coolant": "cooling", "heater-valve": "cooling",
-    "fuel-pump": "fuel-air", "injectors": "fuel-air", "carburettor": "fuel-air",
-    "intake-manifold": "fuel-air", "throttle-body": "fuel-air",
-    "catalytic-converter": "exhaust", "exhaust-pipe": "exhaust",
-    "muffler": "exhaust", "dpf": "exhaust", "egr-valve": "exhaust",
-    "timing-belt": "engine", "timing-chain": "engine", "camshaft": "engine",
-    "crankshaft": "engine", "pistons": "engine", "engine-mount": "engine",
-    "cylinder-head-gasket": "engine", "rocker-cover-gasket": "engine",
-    "spark-plug": "engine", "glow-plugs": "engine",
-    "headlights": "lighting", "tail-lights": "lighting", "fog-lights": "lighting",
-    "bulbs": "lighting", "indicators": "lighting",
-    "wiper-blades": "wipers-washers", "wiper-motor": "wipers-washers",
-    "washer-pump": "wipers-washers", "washer-reservoir": "wipers-washers",
-    "bonnet": "body-exterior", "bumper": "body-exterior", "wing": "body-exterior",
-    "door": "body-exterior", "boot-lid": "body-exterior", "mirror": "body-exterior",
-    "windscreen": "body-exterior", "window-regulator": "body-exterior",
-    "air-conditioning": "air-conditioning-heating", "ac-compressor": "air-conditioning-heating",
-    "heater-matrix": "air-conditioning-heating",
-    "seat": "interior-comfort", "interior-trim": "interior-comfort",
-}
+from category_map import CATCH_ALL, categorize_on_ingest, categorize_slug
+
+# Category slug -> canonical id: see category_map.CATEGORY_SLUG_MAP.
+# The local copy removed here was already dead (nothing read it after
+# _map_category switched to categorize_slug) and had drifted out of sync.
 
 
 def _clean(s: str | None) -> str:
@@ -176,39 +139,8 @@ def _resolve_manufacturer_id(brand_key: str) -> str:
 
 
 def _map_category(slug: str) -> str:
-    if not slug:
-        return "service-general"
-    slug_clean = slug.lower().replace("_", "-")
-    if slug_clean in CATEGORY_SLUG_MAP:
-        return CATEGORY_SLUG_MAP[slug_clean]
-    # Comprehensive fallback (goal G6): category_map covers all 186 car-parts.ie slugs
-    # via keyword rules on the slug — fixes the plural/singular mismatches (this local
-    # map had "shock-absorbers" but URLs use "shock-absorber") that dropped parts to
-    # service-general. Runs before the legacy prefix/word fallbacks.
-    try:
-        from category_map import categorize as _cm_categorize
-        _cat = _cm_categorize(name=slug_clean.replace("-", " "))
-        if _cat:
-            return _cat
-    except Exception:
-        pass
-    # Try prefix match
-    for key, cat in CATEGORY_SLUG_MAP.items():
-        if slug_clean.startswith(key[:6]):
-            return cat
-    # Try word in slug
-    for word, cat in [
-        ("brake", "brakes"), ("shock", "suspension-steering"), ("spring", "suspension-steering"),
-        ("steering", "suspension-steering"), ("bearing", "wheels-bearings"),
-        ("clutch", "clutch-drivetrain"), ("gear", "gearbox"), ("filter", "filters"),
-        ("engine", "engine"), ("exhaust", "exhaust"), ("fuel", "fuel-air"),
-        ("cool", "cooling"), ("electric", "electrical-sensors"), ("sensor", "electrical-sensors"),
-        ("light", "lighting"), ("wiper", "wipers-washers"), ("body", "body-exterior"),
-        ("air-con", "air-conditioning-heating"), ("interior", "interior-comfort"),
-    ]:
-        if word in slug_clean:
-            return cat
-    return "service-general"
+    """car-parts.ie URL slug -> canonical category (category_map is the truth)."""
+    return categorize_slug(slug or "")
 
 
 async def _ensure_supplier(conn: asyncpg.Connection) -> str:
@@ -330,6 +262,8 @@ async def import_file(
                 sku_raw = "CP-" + hashlib.sha1(url.encode()).hexdigest()[:10].upper()
 
             sku = f"{sku_prefix}-{sku_raw}"
+            # RULE 7: an SKU is an identifier, not a name — flag the row.
+            name_missing = not _clean(product.get("name") or "")
             name = _clean(product.get("name") or sku_raw)
             category = _map_category(product.get("category") or "")
             url = _clean(product.get("product_url") or product.get("source_url") or "")
@@ -389,7 +323,7 @@ async def import_file(
                         $6, $12, $7::jsonb, $8::jsonb,
                         'aftermarket', 'new', 'OE_equivalent',
                         $10, $11, $9, $9, $9,
-                        FALSE, FALSE, FALSE,
+                        FALSE, $13, FALSE,
                         TRUE, NOW(), NOW()
                     )
                     ON CONFLICT (sku) DO UPDATE SET
@@ -421,6 +355,7 @@ async def import_file(
                     json.dumps(compatible_vehicles),
                     price_ils, cost_ils, base_price_ils,
                     description_text or None,
+                    name_missing,   # $13 -> needs_oem_lookup (RULE 7)
                 )
             except Exception as e:
                 print(f"  [warn] skip {sku}: {e}", flush=True)

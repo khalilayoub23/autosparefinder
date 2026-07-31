@@ -31,6 +31,15 @@ TELEGRAM_OWNER_ID = os.getenv("TELEGRAM_OWNER_CHAT_ID", "")
 
 router = APIRouter()
 
+# Owner-console background replies. The event loop keeps only a WEAK reference to a
+# task, so anything spawned with `asyncio.create_task` and not stored can be collected
+# mid-flight — the owner gets no answer and no error. Hold a strong reference until the
+# task completes. See the owner-console block in the WhatsApp webhook below.
+_OWNER_REPLY_TASKS: set = set()
+# Ceiling for one owner reply. Cerebras 429-fallbacks can legitimately take ~60-90s;
+# beyond that the owner should get an honest "too slow" instead of silence.
+_OWNER_REPLY_TIMEOUT_S = int(os.getenv("OWNER_REPLY_TIMEOUT_S", "120"))
+
 
 @router.post("/api/v1/webhooks/telegram-admin")
 @router.post("/webhooks/telegram-admin")
@@ -171,6 +180,18 @@ async def telegram_admin_webhook(request: Request):
                 f"https://api.telegram.org/bot{TELEGRAM_ADMIN_TOKEN}/answerCallbackQuery",
                 json={"callback_query_id": query["id"]}
             )
+
+    # Inbound engagement: a plain message to NOA's bot (DM, or a group mention/reply).
+    # Record it into NOA's engagement inbox; the engagement loop drafts a reply for the
+    # owner to approve. Additive + fully guarded — never affects the approval flow above.
+    elif "message" in data:
+        try:
+            from social import engagement as _eng
+            from BACKEND_DATABASE_MODELS import async_session_factory
+            async with async_session_factory() as _edb:
+                await _eng.ingest_telegram_update(_edb, data, owner_chat_id=TELEGRAM_OWNER_ID)
+        except Exception as _ie:
+            print(f"[telegram-admin] engagement ingest skipped: {_ie}", flush=True)
 
     return {"ok": True}
 
@@ -485,13 +506,38 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_pii_
             async def _owner_reply_bg():
                 try:
                     from social.whatsapp_provider import send_message as _send
-                    r = await process_owner_message(_body, source="whatsapp")
-                    if r:
-                        await _send(to=_dest, text=r)
+                    try:
+                        # A hung provider call must not turn into SILENCE. Without a
+                        # deadline the task waits forever and the owner simply never
+                        # hears back — indistinguishable from "the agent ignored me".
+                        r = await asyncio.wait_for(
+                            process_owner_message(_body, source="whatsapp"),
+                            timeout=_OWNER_REPLY_TIMEOUT_S,
+                        )
+                    except asyncio.TimeoutError:
+                        r = ("⚠️ לקח לי יותר מדי זמן לענות (עומס על מנוע ה-AI). "
+                             "נסה שוב, או כתוב *סטטוס* לנתונים מיידיים.")
+                    # An empty reply is also silence — say something rather than nothing.
+                    if not (r or "").strip():
+                        r = "לא הצלחתי לנסח תשובה. כתוב *עזרה* לרשימת הפקודות."
+                    await _send(to=_dest, text=r)
                 except Exception as _e:
-                    print(f"[owner_console] bg reply failed: {_e}")
+                    print(f"[owner_console] bg reply failed: {_e}", flush=True)
+                    try:
+                        from social.whatsapp_provider import send_message as _send2
+                        await _send2(to=_dest,
+                                     text=f"⚠️ שגיאה בעיבוד ההודעה: {str(_e)[:100]}")
+                    except Exception:
+                        pass
 
-            asyncio.create_task(_owner_reply_bg())
+            # STRONG REFERENCE REQUIRED. The event loop holds only a WEAK reference to
+            # a task, so a bare `create_task(...)` can be garbage-collected mid-await —
+            # the owner's message is accepted, no reply is ever sent, and nothing is
+            # logged. That is the intermittent "some agents didn't respond" the owner
+            # reported (2026-07-29). Keep it alive until it finishes.
+            _t = asyncio.create_task(_owner_reply_bg())
+            _OWNER_REPLY_TASKS.add(_t)
+            _t.add_done_callback(_OWNER_REPLY_TASKS.discard)
             return Response(content="<Response/>", media_type="text/xml")
     except Exception as _oe:
         print(f"[owner_console] error, falling through: {_oe}")

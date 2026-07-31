@@ -35,34 +35,9 @@ HEADERS = {
 
 # Hebrew keywords → DB category
 # Checked against real descriptions from kgm.co.il
-CAT_RULES: list[tuple[list[str], str]] = [
-    # brakes
-    (["בלם", "קליפר", "ABS", "abs", "דיסק בלם", "רפידת"], "brakes"),
-    # gearbox / transmission
-    (["תיבת הילוכים", "תי'ה", "גיר", "הילוך", "מצמד", "A/T", "M/T", "CVT", "טרנסאקסל"], "gearbox"),
-    # suspension / steering
-    (["הגה", "בולם זעזועים", "קפיץ", "מסב", "מיסב", "זרוע", "מנהרה", "סרן", "ג'וינט", "פלנג'"], "suspension-steering"),
-    # engine
-    (["מנוע", "בוכנה", "שסתום", "אטם ראש", "גלגל שיניים", "פין", "קשת", "גל ארכובה"], "engine"),
-    # cooling
-    (["קירור", "נוזל קירור", "מקרן", "ת'רמוסטט", "משאבת מים", "תרמוסטט"], "cooling"),
-    # filters
-    (["מסנן", "פילטר", "אוויר", "שמן מנוע"], "filters"),
-    # electrical / sensors
-    (["חישן", "חיישן", "מתג", "חשמל", "פיוז", "ממסר", "רלה", "פנס", "תאורה", "מנוע מקפיא"], "electrical-sensors"),
-    # body / exterior
-    (["פגוש", "גוף", "ספוילר", "דלת", "זכוכית", "מראה", "מכסה", "ידית"], "body-exterior"),
-    # exhaust
-    (["פליטה", "אגזוז", "קטליזטור", "מנקאי פליטה"], "exhaust"),
-    # fuel / air
-    (["משאבת דלק", "מזרק", "מייצב לחץ", "דלק", "צינור דלק"], "fuel-air"),
-    # belts / chains
-    (["רצועה", "שרשרת תזמון", "מתח רצועה", "תזמון", "מותח"], "belts-chains"),
-    # AC / heating
-    (["מזגן", "קומפרסור", "אוורור", "מפוח", "תנור"], "air-conditioning-heating"),
-    # steering fluid / oil  (after gearbox to not conflict)
-    (["שמן הגה", "שמן הילוכים"], "suspension-steering"),
-]
+# Category rules DELEGATED to category_map — the single source of truth.
+# Add keywords to category_map.py, never here.
+from category_map import CATCH_ALL, categorize_on_ingest, normalize_category_label
 
 # Model name hints extracted from Hebrew abbreviations in descriptions
 MODEL_MAP: list[tuple[list[str], str]] = [
@@ -83,11 +58,8 @@ def strip_tags(s: str) -> str:
 
 
 def categorize(desc: str) -> str:
-    for keywords, cat in CAT_RULES:
-        for kw in keywords:
-            if kw in desc:
-                return cat
-    return "accessories"
+    """KGM part description -> canonical slug via category_map."""
+    return categorize_on_ingest(name=desc, name_he=desc)
 
 
 def extract_model(desc: str) -> str:
@@ -215,7 +187,7 @@ async def upsert_parts(
                         online_price_ils   = EXCLUDED.online_price_ils,
                         min_price_ils      = EXCLUDED.min_price_ils,
                         max_price_ils      = EXCLUDED.max_price_ils,
-                        importer_price_ils = EXCLUDED.importer_price_ils,
+                        importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
                         base_price         = EXCLUDED.base_price,
                         name               = EXCLUDED.name,
                         description        = EXCLUDED.description,

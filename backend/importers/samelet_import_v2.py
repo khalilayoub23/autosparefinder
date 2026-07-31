@@ -81,43 +81,18 @@ SAMELET_BRAND_URLS = {
 API_CAP = 29
 HEBREW = list("אבגדהוזחטיכלמנסעפצקרשתךםןףץ")
 
-CATEGORY_KW = [
-    ("filter","Filters"),("oil filter","Filters"),("air filter","Filters"),("fuel filter","Filters"),
-    ("brake","Brakes"),("disc","Brakes"),(" pad","Brakes"),("caliper","Brakes"),("rotor","Brakes"),
-    ("spark","Engine"),("engine","Engine"),("camshaft","Engine"),("crankshaft","Engine"),
-    ("timing","Engine"),("piston","Engine"),("valve","Engine"),("belt","Engine"),
-    ("chain","Engine"),("gasket","Engine"),("seal","Engine"),("pump","Engine"),
-    ("hose","Engine"),("pipe","Engine"),("pulley","Engine"),("injector","Fuel System"),
-    ("sensor","Electronics"),("ecu","Electronics"),("module","Electronics"),("telematic","Electronics"),
-    ("airbag","Safety"),("seatbelt","Safety"),(" abs","Safety"),
-    ("suspension","Suspension"),("shock","Suspension"),("strut","Suspension"),
-    ("spring","Suspension"),("arm","Suspension"),("bearing","Suspension"),("bush","Suspension"),
-    ("steering","Steering"),("rack","Steering"),("tie rod","Steering"),
-    ("exhaust","Exhaust"),("muffler","Exhaust"),("catalytic","Exhaust"),("dpf","Exhaust"),
-    ("radiator","Cooling"),("coolant","Cooling"),("thermostat","Cooling"),("fan","Cooling"),
-    ("intercooler","Cooling"),
-    ("transmission","Transmission"),("clutch","Transmission"),("gearbox","Transmission"),
-    ("axle","Drivetrain"),("driveshaft","Drivetrain"),("cv joint","Drivetrain"),
-    ("light","Lighting"),("lamp","Lighting"),("headlight","Lighting"),("bulb","Lighting"),
-    ("indicator","Lighting"),("fog","Lighting"),
-    ("mirror","Body"),("door","Body"),("bumper","Body"),("hood","Body"),("bonnet","Body"),
-    ("fender","Body"),("windshield","Body"),("window","Body"),("glass","Body"),
-    ("wiper","Body"),("panel","Body"),("cover","Body"),("grille","Body"),
-    ("fuel","Fuel System"),("tank","Fuel System"),
-    ("battery","Electrical"),("alternator","Electrical"),("starter","Electrical"),
-    ("fuse","Electrical"),("relay","Electrical"),("cable","Electrical"),("switch","Electrical"),
-    ("wheel","Wheels & Tires"),("tire","Wheels & Tires"),("rim","Wheels & Tires"),
-    ("seat","Interior"),("carpet","Interior"),("trim","Interior"),
-    ("compressor","HVAC"),("air condition","HVAC"),("evaporator","HVAC"),
-    ("tool","Tools & Accessories"),("oil","Engine"),
-]
+# Category rules DELEGATED to category_map — the single source of truth.
+# Add keywords to category_map.py, never here.
+from category_map import CATCH_ALL, categorize_on_ingest, normalize_category_label
 
 def classify_part(en, he):
-    text = (en + " " + he).lower()
-    for kw, cat in CATEGORY_KW:
-        if kw in text:
-            return cat
-    return "General Parts"
+    """
+    -> canonical category slug via category_map.
+    The private rules this replaces returned NON-CANONICAL values ("General Parts"),
+    which parts_catalog.category may never hold — so every part they
+    classified got an unusable label. Fallback is now 'כללי'.
+    """
+    return categorize_on_ingest(name=en or "", name_he=he or "")
 
 def get_token(slug):
     try:
@@ -251,6 +226,9 @@ async def import_brand(conn, slug, brand_name, prefix):
             sku = f"{prefix}-{raw_sku}"
             name_en = (p.get("MatDescEn","") or "").strip()
             name_he = (p.get("MatDescHe","") or "").strip()
+            # RULE 7: an SKU is an identifier, not a name. Still create the
+            # part, but flag it so enrichment fills a real name.
+            name_missing = not (name_en or name_he)
             name = name_en or name_he or sku
             try:
                 il_retail = float(p.get("PriceWithVat","0") or "0")  # consumer retail incl. VAT
@@ -277,7 +255,7 @@ async def import_brand(conn, slug, brand_name, prefix):
             tier = 'OE_equivalent' if part_type == 'aftermarket' else None
             batch.append((sku, name, name_he, category, brand_name, manufacturer_id,
                           part_type, base_price_val, cost, max_price, mid, specs,
-                          max_price, tier))
+                          max_price, tier, name_missing))
         except Exception as e:
             err += 1
             if err <= 3: print(f"  [ERR] prep {mid}: {e}")
@@ -294,7 +272,7 @@ async def import_brand(conn, slug, brand_name, prefix):
                     part_condition, needs_oem_lookup, master_enriched,
                     created_at, updated_at)
                 VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6::uuid,$7,$8,$9,$10,$13,$11,$12::jsonb,$14,TRUE,
-                       'new',FALSE,FALSE,NOW(),NOW())
+                       'new',$15,FALSE,NOW(),NOW())
                 ON CONFLICT(sku) DO UPDATE SET
                     name=EXCLUDED.name,
                     name_he=COALESCE(EXCLUDED.name_he, parts_catalog.name_he),
@@ -329,7 +307,7 @@ async def import_brand(conn, slug, brand_name, prefix):
                             part_condition, needs_oem_lookup, master_enriched,
                             created_at, updated_at)
                         Values(gen_random_uuid(),$1,$2,$3,$4,$5,$6::uuid,$7,$8,$9,$10,$13,$11,$12::jsonb,$14,TRUE,
-                               'new',FALSE,FALSE,NOW(),NOW())
+                               'new',$15,FALSE,NOW(),NOW())
                         ON CONFLICT(sku) DO UPDATE SET
                             name=EXCLUDED.name,
                             name_he=COALESCE(EXCLUDED.name_he, parts_catalog.name_he),

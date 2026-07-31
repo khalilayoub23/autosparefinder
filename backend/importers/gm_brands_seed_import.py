@@ -7,6 +7,12 @@ across GM platforms: Yukon/Escalade/Tahoe/Suburban/Enclave/Traverse/Acadia).
 Run: python3 gm_brands_seed_import.py
 """
 from __future__ import annotations
+
+# Category mapping DELEGATED to category_map — the single source of truth.
+# This importer used to keep its own CATEGORY_MAP (which contained real errors,
+# e.g. filters->engine, bearing->engine, 'interior accessories'->'interior').
+# Add keywords to category_map.py, never here.
+from category_map import CATCH_ALL, categorize_on_ingest, normalize_category_label
 import asyncio, logging, re
 import asyncpg
 
@@ -25,32 +31,11 @@ BRAND_IDS = {
     "Buick":    "2447c5a2-9494-45ed-a8b9-754caa8aff95",
 }
 
-CATEGORY_MAP = {
-    "engine": "engine", "engine mount": "engine", "engine filter": "engine",
-    "ignition": "engine", "fuel injector": "fuel-air", "fuel system": "fuel-air",
-    "cooling": "cooling", "radiator": "cooling", "water pump": "cooling",
-    "brake": "brakes", "brakes": "brakes",
-    "suspension": "suspension-steering", "control arm": "suspension-steering",
-    "steering": "suspension-steering", "air suspension": "suspension-steering",
-    "transmission": "gearbox", "gearbox": "gearbox",
-    "electrical": "electrical-sensors", "sensor": "electrical-sensors",
-    "tpms": "electrical-sensors", "ignition coil": "electrical-sensors",
-    "body": "body-exterior", "bumper": "body-exterior", "fender": "body-exterior",
-    "door": "body-exterior", "headlamp": "lighting", "lighting": "lighting",
-    "exhaust": "exhaust",
-    "window": "body-exterior", "mirror": "body-exterior",
-    "running board": "body-exterior",
-    "air conditioning": "air-conditioning-heating",
-    "oxygen sensor": "electrical-sensors",
-}
 
 
 def map_cat(raw: str) -> str:
-    raw_lower = raw.lower()
-    for key, cat in CATEGORY_MAP.items():
-        if key in raw_lower:
-            return cat
-    return "accessories"
+    """Supplier category label -> canonical slug (category_map is the truth)."""
+    return normalize_category_label(raw) or categorize_on_ingest(name=raw)
 
 
 def mid(price_usd) -> float:

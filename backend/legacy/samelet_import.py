@@ -1,3 +1,8 @@
+"""SUPERSEDED by importers/samelet_import_v2.py (moved to legacy 2026-07-28).
+Nothing references this module. It predates the current import rules
+(no needs_oem_lookup, no specifications provenance) — do not resurrect it;
+extend samelet_import_v2.py instead. See docs/IMPORTER_RULES.md.
+"""
 #!/usr/bin/env python3
 """Samelet.com importer — flat 2-char coverage, no deep recursion."""
 import asyncio, asyncpg, requests, time, re, os, string
@@ -22,37 +27,18 @@ UPPER   = string.ascii_uppercase
 ALPHANUM= string.ascii_letters + string.digits
 HEBREW  = list("אבגדהוזחטיכלמנסעפצקרשתךםןףץ")
 
-CATEGORY_KW = [
-    ("oil filter","Filters"),("air filter","Filters"),("fuel filter","Filters"),("cabin filter","Filters"),("filter","Filters"),
-    ("brake pad","Brakes"),("brake disc","Brakes"),("caliper","Brakes"),("brake","Brakes"),("disc brake","Brakes"),
-    ("spark plug","Engine"),("camshaft","Engine"),("crankshaft","Engine"),("timing belt","Engine"),
-    ("timing chain","Engine"),("piston","Engine"),("valve","Engine"),("gasket","Engine"),
-    ("engine mount","Engine"),("engine","Engine"),("belt","Engine"),("chain","Engine"),("seal","Engine"),
-    ("oil pump","Engine"),("water pump","Engine"),("hose","Engine"),("pipe","Engine"),("pulley","Engine"),
-    ("sensor","Electronics"),("ecu","Electronics"),("module","Electronics"),
-    ("airbag","Safety"),("seat belt","Safety"),("abs sensor","Safety"),
-    ("shock absorber","Suspension"),("strut","Suspension"),("spring","Suspension"),
-    ("control arm","Suspension"),("wishbone","Suspension"),("ball joint","Suspension"),("bearing","Suspension"),
-    ("steering","Steering"),("rack","Steering"),("track rod","Steering"),
-    ("exhaust","Exhaust"),("muffler","Exhaust"),("catalytic","Exhaust"),
-    ("radiator","Cooling"),("coolant","Cooling"),("thermostat","Cooling"),("fan","Cooling"),
-    ("transmission","Transmission"),("clutch","Transmission"),("gearbox","Transmission"),
-    ("axle","Drivetrain"),("driveshaft","Drivetrain"),("cv joint","Drivetrain"),
-    ("headlight","Lighting"),("tail light","Lighting"),("fog light","Lighting"),("lamp","Lighting"),("bulb","Lighting"),
-    ("mirror","Body"),("door handle","Body"),("bumper","Body"),("bonnet","Body"),("hood","Body"),
-    ("fender","Body"),("windshield","Body"),("wiper","Body"),("panel","Body"),("spoiler","Body"),
-    ("fuel pump","Fuel System"),("injector","Fuel System"),("fuel rail","Fuel System"),
-    ("battery","Electrical"),("alternator","Electrical"),("starter","Electrical"),("fuse","Electrical"),("relay","Electrical"),
-    ("wheel","Wheels & Tires"),("rim","Wheels & Tires"),
-    ("seat","Interior"),("trim","Interior"),("dashboard","Interior"),
-    ("compressor","HVAC"),("air conditioning","HVAC"),
-]
+# Category rules DELEGATED to category_map — the single source of truth.
+# Add keywords to category_map.py, never here.
+from category_map import CATCH_ALL, categorize_on_ingest, normalize_category_label
 
 def classify_part(en, he):
-    text = (en+" "+he).lower()
-    for kw, cat in CATEGORY_KW:
-        if kw in text: return cat
-    return "General Parts"
+    """
+    -> canonical category slug via category_map.
+    The private rules this replaces returned NON-CANONICAL values ("General Parts"),
+    which parts_catalog.category may never hold — so every part they
+    classified got an unusable label. Fallback is now 'כללי'.
+    """
+    return categorize_on_ingest(name=en or "", name_he=he or "")
 
 def get_token(slug):
     for attempt in range(3):
@@ -197,7 +183,7 @@ async def import_brand(conn, slug, brand_name, prefix):
                        VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,$9,$8,$10,TRUE,NOW(),NOW())
                        ON CONFLICT(sku) DO UPDATE SET name=EXCLUDED.name,name_he=EXCLUDED.name_he,
                        category=EXCLUDED.category,manufacturer=EXCLUDED.manufacturer,
-                       base_price=EXCLUDED.base_price,importer_price_ils=EXCLUDED.importer_price_ils,
+                       base_price=EXCLUDED.base_price,importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
                        max_price_ils=EXCLUDED.max_price_ils,min_price_ils=EXCLUDED.min_price_ils,
                        part_type=EXCLUDED.part_type,updated_at=NOW()""",
                     sku,name,name_he,category,brand_name,part_type,il_selling,il_cost,il_retail,mid)

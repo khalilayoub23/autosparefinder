@@ -13,6 +13,11 @@ Usage:
 import asyncio, os, sys, time, json, argparse
 import asyncpg
 
+# ONE category source of truth. This INSERT used to hardcode 'accessories'
+# positionally, which is a REAL category — so the self-healing categorizer
+# (which only re-processes 'כללי') would never revisit those parts.
+from category_map import categorize_on_ingest
+
 try:
     import openpyxl
 except ImportError:
@@ -145,19 +150,20 @@ async def run(brand, xlsx_path):
                         needs_oem_lookup, master_enriched, specifications,
                         created_at, updated_at
                     ) VALUES(
-                        gen_random_uuid(),$1,$2,$3,$3,$4,'accessories',
+                        gen_random_uuid(),$1,$2,$3,$3,$4,$9,
                         $5,$6,$7,$7,
                         'Original','new',true,
                         true,false,$8::jsonb,
                         NOW(),NOW()
                     )
                     ON CONFLICT (sku) DO UPDATE SET
-                        importer_price_ils=EXCLUDED.importer_price_ils,
+                        importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
                         max_price_ils=EXCLUDED.max_price_ils,
                         base_price=EXCLUDED.base_price,
                         specifications=EXCLUDED.specifications,
                         updated_at=NOW()
-                """, oem, oem, p["name"], brand, selling, cost, retail, spec)
+                """, oem, oem, p["name"], brand, selling, cost, retail, spec,
+                    categorize_on_ingest(name=p["name"]))
                 inserted += 1
             except Exception:
                 skipped += 1

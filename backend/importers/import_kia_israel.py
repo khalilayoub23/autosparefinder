@@ -26,6 +26,10 @@ from pathlib import Path
 
 import asyncpg
 
+# ONE category source of truth — the literal that used to sit in this
+# INSERT ('General Parts'/'Auto Parts') is not a category at all.
+from category_map import categorize_on_ingest
+
 INPUT_FILE = os.getenv("KIA_JSON", "/app/state/kia_israel_parts.json")
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
@@ -156,13 +160,14 @@ async def run_import():
                             is_active, specifications,
                             needs_oem_lookup, master_enriched, updated_at
                         ) VALUES(
-                            $1,$2,$3,$4,'Kia',$5,$6,'General Parts','oem','new',
+                            $1,$2,$3,$4,'Kia',$5,$6,$11,'oem','new',
                             $7,$8,$8,$9,
                             TRUE,$10::jsonb,FALSE,FALSE,NOW()
                         )
                     """,
                         new_id, sku, name_he, name_he, kia_id, oem,
-                        base_price, importer_price_ils, max_price_ils, specs
+                        base_price, importer_price_ils, max_price_ils, specs,
+                        categorize_on_ingest(name=name_he, name_he=name_he),
                     )
                     part_id = new_id
                     stats["inserted"] += 1

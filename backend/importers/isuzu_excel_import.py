@@ -8,6 +8,10 @@ import uuid
 import asyncpg
 import openpyxl
 
+# ONE category source of truth — categorize at INGEST so parts never land
+# with a NULL category and depend on the self-healing task to find them.
+from category_map import categorize_on_ingest
+
 DB_DSN = (
     "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43"
     "@postgres_catalog:5432/autospare"
@@ -123,29 +127,30 @@ async def main() -> None:
 
     conn = await asyncpg.connect(DB_DSN)
     inserted = updated = errors = 0
+    fitment_rows = 0
 
     try:
         for r in rows:
             try:
-                result = await conn.execute(
+                part_id = await conn.fetchval(
                     """
                     INSERT INTO parts_catalog (
                         id, sku, oem_number, name, name_he, manufacturer, manufacturer_id,
                         part_type, part_condition, base_price, importer_price_ils,
                         max_price_ils, min_price_ils,
                         is_active, compatible_vehicles, is_safety_critical, needs_oem_lookup,
-                        master_enriched
+                        master_enriched, category, specifications
                     ) VALUES (
                         $1::uuid, $2, $3, $4, $5, $6, $7::uuid,
                         $8, $9, $10, $11, $12, $12,
-                        $13, $14::jsonb, $15, $16, $17
+                        $13, $14::jsonb, $15, $16, $17, $18, $19::jsonb
                     )
                     ON CONFLICT (sku) DO UPDATE SET
                         oem_number         = EXCLUDED.oem_number,
                         name_he            = COALESCE(EXCLUDED.name_he, parts_catalog.name_he),
                         manufacturer_id    = EXCLUDED.manufacturer_id,
                         base_price         = EXCLUDED.base_price,
-                        importer_price_ils = EXCLUDED.importer_price_ils,
+                        importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
                         max_price_ils      = EXCLUDED.max_price_ils,
                         min_price_ils      = EXCLUDED.min_price_ils,
                         is_active          = TRUE,
@@ -154,6 +159,7 @@ async def main() -> None:
                             ELSE parts_catalog.compatible_vehicles
                         END,
                         updated_at         = NOW()
+                    RETURNING id
                     """,
                     r["id"], r["sku"], r["oem_number"], r["name"], r["name_he"],
                     r["manufacturer"], r["manufacturer_id"],
@@ -161,9 +167,40 @@ async def main() -> None:
                     r["base_price"], r["importer_price_ils"], r["max_price_ils"],
                     r["is_active"], json.dumps(r["compatible_vehicles"]),
                     r["is_safety_critical"], r["needs_oem_lookup"], r["master_enriched"],
+                    categorize_on_ingest(name=r["name"], name_he=r["name_he"]),
+                    json.dumps({"source": "isuzu_excel_import",
+                                "sheet": r.get("source_sheet")}),
                 )
-                if "INSERT 0 1" in result:
+                if part_id:
                     inserted += 1
+                    # RULE (fitment): the parsed vehicles must reach the TABLE the
+                    # fitment-first search joins — a compatible_vehicles JSONB blob
+                    # is not a substitute.
+                    for v in r["compatible_vehicles"]:
+                        if not v.get("model"):
+                            continue
+                        try:
+                            await conn.execute(
+                                """
+                                INSERT INTO part_vehicle_fitment
+                                    (id, part_id, manufacturer, model,
+                                     year_from, year_to, created_at)
+                                VALUES (gen_random_uuid(), $1::uuid, $2::varchar,
+                                        $3::varchar, $4::int, $5::int, NOW())
+                                ON CONFLICT (part_id, manufacturer, model, year_from)
+                                DO UPDATE SET year_to = GREATEST(
+                                    COALESCE(part_vehicle_fitment.year_to, 0),
+                                    COALESCE(EXCLUDED.year_to, 0))
+                                """,
+                                part_id,
+                                (v.get("manufacturer") or MANUFACTURER)[:100],
+                                v["model"][:150],
+                                int(v.get("year_from") or 1990),
+                                int(v["year_to"]) if v.get("year_to") else None,
+                            )
+                            fitment_rows += 1
+                        except Exception as fe:
+                            print(f"  [fitment] {r['sku']}: {str(fe)[:90]}")
                 else:
                     updated += 1
             except Exception as e:
@@ -172,7 +209,7 @@ async def main() -> None:
     finally:
         await conn.close()
 
-    print(f"\nDone: inserted={inserted}  updated={updated}  errors={errors}")
+    print(f"\nDone: inserted={inserted}  updated={updated}  fitment={fitment_rows}  errors={errors}")
     print(f"Total Isuzu parts in DB now: running query...")
 
     conn2 = await asyncpg.connect(DB_DSN)

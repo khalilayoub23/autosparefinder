@@ -114,9 +114,9 @@ async def run():
             part_type, part_condition, is_active, needs_oem_lookup, master_enriched,
             specifications, created_at, updated_at
         )
-        SELECT gen_random_uuid(), j.sku, j.oem, j.title, j.title, 'Jaguar', 'accessories',
+        SELECT gen_random_uuid(), j.sku, j.oem, j.title, j.title, 'Jaguar', 'כללי',
                j.selling, j.cost, j.retail, j.cost,
-               'OE_Equivalent', 'new', true, true, false,
+               'oe_equivalent', 'new', true, true, false,
                j.spec::jsonb, NOW(), NOW()
         FROM _jag_prices j
         WHERE NOT EXISTS (SELECT 1 FROM parts_catalog WHERE sku = j.sku)

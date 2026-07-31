@@ -8,6 +8,11 @@ Pricing policy: importer_price_ils=price_gbp*GBP_ILS, base_price=cost*1.45, max_
 import asyncio, json, os, sys, time
 import asyncpg
 
+# ONE category source of truth. This INSERT hardcoded 'accessories' —
+# a REAL category, so the self-healing categorizer (which only revisits
+# 'כללי') would never correct those parts.
+from category_map import categorize_on_ingest
+
 DB = os.environ.get("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://")
 GBP_ILS = 4.8   # approximate GBP/ILS exchange rate
 VAT = 0.18
@@ -46,7 +51,7 @@ async def run():
         cost    = round(price_gbp * GBP_ILS, 2)
         retail  = round(cost * (1 + VAT), 2)
         selling = round(cost * 1.45, 2)
-        part_type = "Original" if part_origin == "original" else "OE_Equivalent"
+        part_type = "original" if part_origin == "original" else "oe_equivalent"
 
         part_spec = json.dumps({
             "source": "sng_barratt", "brand_name": brand_name,
@@ -89,19 +94,20 @@ async def run():
                             needs_oem_lookup, master_enriched, specifications,
                             compatible_vehicles, created_at, updated_at
                         ) VALUES(
-                            gen_random_uuid(), $1, $2, $3, $3, 'Jaguar', 'accessories',
+                            gen_random_uuid(), $1, $2, $3, $3, 'Jaguar', $10,
                             $4, $5, $6, $6,
                             $7, 'new', true,
                             true, false, $8::jsonb,
                             $9::jsonb, NOW(), NOW()
                         )
                         ON CONFLICT (sku) DO UPDATE SET
-                            importer_price_ils = EXCLUDED.importer_price_ils,
+                            importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
                             max_price_ils      = EXCLUDED.max_price_ils,
                             base_price         = EXCLUDED.base_price,
                             specifications     = EXCLUDED.specifications,
                             updated_at         = NOW()
-                    """, sku, oem, title, selling, cost, retail, part_type, part_spec, compat)
+                    """, sku, oem, title, selling, cost, retail, part_type, part_spec, compat,
+                        categorize_on_ingest(name=title))
                     inserted += 1
                 except Exception:
                     skipped += 1

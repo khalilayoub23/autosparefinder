@@ -21,7 +21,7 @@ import asyncpg
 from sqlalchemy.ext.asyncio import AsyncSession
 from dotenv import load_dotenv
 from hf_client import hf_text, hf_router_text, groq_text
-from categories import CATEGORY_MAP
+from category_map import CANONICAL, CATCH_ALL
 
 load_dotenv()
 
@@ -57,9 +57,12 @@ THIN_BRANDS = [
 # Keep for backward compat
 MISSING_BRANDS = NEW_BRANDS
 
-# Shared category list from the single source of truth.
-CATEGORIES = list(CATEGORY_MAP.keys())
-DEFAULT_CATEGORY = "כלי עבודה ואביזרים"
+# Shared category list from the single source of truth (category_map).
+# These are the canonical SLUGS actually stored in parts_catalog.category.
+CATEGORIES = sorted(CANONICAL)
+# Was "כלי עבודה ואביזרים" — a Hebrew display string that is not a storable
+# category value, so any part taking the default got an uncategorizable label.
+DEFAULT_CATEGORY = CATCH_ALL
 
 CATALOG_UPSERT = """
 INSERT INTO parts_catalog
@@ -315,7 +318,7 @@ async def enrich_pending_parts(db: AsyncSession, limit: int = 200) -> Dict[str, 
                     "cname":     canonical_name,
                     "cname_he":  canonical_name_he,
                     "category":  row.category or "כללי",
-                    "part_type": row.part_type or "Aftermarket",
+                    "part_type": row.part_type or "aftermarket",
                 },
             )).fetchone()
 

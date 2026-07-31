@@ -65,7 +65,7 @@ def _category_from_name(name: str) -> str:
         return "wipers-washers"
     if "valve" in n or "coolant" in n or "heater" in n:
         return "cooling"
-    return "service-general"
+    return "כללי"
 
 
 async def _ensure_supplier(conn: asyncpg.Connection) -> str:

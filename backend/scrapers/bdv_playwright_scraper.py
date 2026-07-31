@@ -17,6 +17,9 @@ import httpx
 import asyncpg
 from playwright.async_api import async_playwright
 
+# ONE warranty source of truth — resolve() returns (months, source).
+from warranty_policy import resolve as _warranty_resolve
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 log = logging.getLogger(__name__)
 
@@ -258,11 +261,13 @@ async def import_to_db(conn: asyncpg.Connection, parts: list[dict]):
 
             await conn.execute("""
                 INSERT INTO supplier_parts
-                    (id, part_id, supplier_id, sku, price_ils, currency, in_stock, created_at, updated_at)
-                VALUES (gen_random_uuid(), $1, $2, $3, $4, 'ILS', $5, NOW(), NOW())
+                    (id, part_id, supplier_id, supplier_sku, price_ils, is_available,
+                     warranty_months, warranty_source, created_at, updated_at)
+                VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
                 ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE
-                SET price_ils = EXCLUDED.price_ils, in_stock = EXCLUDED.in_stock, updated_at = NOW()
-            """, str(m["id"]), str(supplier_id), sku, price_with_vat, in_stock)
+                SET price_ils = EXCLUDED.price_ils, is_available = EXCLUDED.is_available, updated_at = NOW()
+            """, str(m["id"]), str(supplier_id), sku, price_with_vat, in_stock,
+                *_warranty_resolve(None))
             supplier_rows += 1
 
     log.info(f"DB import: catalog_updated={updated_catalog}, supplier_rows={supplier_rows}, not_matched={not_matched}")

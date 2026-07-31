@@ -8,6 +8,9 @@ Run inside container: python3 /app/importers/saab_partsforsaabs_importer.py
 from __future__ import annotations
 import asyncio, logging, re, time
 import asyncpg
+
+# Category rules DELEGATED to category_map — the single source of truth.
+from category_map import CATCH_ALL, categorize_on_ingest
 import httpx
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -36,35 +39,11 @@ CROSS_REF_RE = re.compile(
 HTML_TAG_RE = re.compile(r'<[^>]+>')
 SAAB_MODEL_RE = re.compile(r'\b(9-[135]\w*|9000|900|600|99|96|95)\b', re.IGNORECASE)
 
-CAT_RULES = [
-    (['brake', 'disc', 'pad', 'caliper', 'abs', 'handbrake'],             'brakes'),
-    (['suspension', 'shock', 'spring', 'strut', 'arm', 'bush', 'mount'],  'suspension-steering'),
-    (['steering', 'rack', 'tie rod', 'track rod', 'ball joint'],          'suspension-steering'),
-    (['filter', 'oil filter', 'air filter', 'fuel filter', 'cabin'],      'filters'),
-    (['lamp', 'light', 'bulb', 'led', 'fog'],                             'lighting'),
-    (['radiator', 'coolant', 'thermostat', 'water pump', 'cooling'],      'cooling'),
-    (['engine', 'timing', 'piston', 'valve', 'gasket', 'head'],           'engine'),
-    (['sensor', 'switch', 'relay', 'fuse', 'cable', 'harness', 'ecu'],   'electrical-sensors'),
-    (['bumper', 'body', 'wing', 'door', 'panel', 'bonnet', 'boot',
-      'grille', 'mirror', 'wiper', 'glass', 'seal'],                      'body-exterior'),
-    (['seat', 'interior', 'carpet', 'trim', 'dashboard', 'airbag'],       'interior'),
-    (['gearbox', 'clutch', 'gear', 'transmission', 'differential'],       'gearbox'),
-    (['exhaust', 'silencer', 'manifold', 'catalytic'],                    'exhaust'),
-    (['fuel pump', 'injector', 'throttle', 'carburetor'],                 'fuel-air'),
-    (['belt', 'chain', 'tensioner', 'pulley'],                            'belts-chains'),
-    (['turbo', 'intercooler', 'compressor'],                               'engine'),
-    (['battery', 'alternator', 'starter'],                                 'electrical-sensors'),
-    (['wheel', 'tyre', 'hub', 'bearing', 'axle'],                        'suspension-steering'),
-    (['ac ', 'air con', 'climate', 'hvac', 'heater'],                     'air-conditioning-heating'),
-]
 
 
 def categorize(name: str, cat_names: list[str]) -> str:
-    combined = (name + ' ' + ' '.join(cat_names)).lower()
-    for keywords, cat in CAT_RULES:
-        if any(kw in combined for kw in keywords):
-            return cat
-    return 'accessories'
+    """Part name + supplier category names -> canonical slug (category_map)."""
+    return categorize_on_ingest(name=name + ' ' + ' '.join(cat_names))
 
 
 def clean_html(s: str) -> str:

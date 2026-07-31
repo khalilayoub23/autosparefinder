@@ -505,6 +505,34 @@ PART_TYPE_FAMILIES: Tuple[PartTypeFamily, ...] = (
             PartSubcategory("ev-charging", "EV Charging", aliases=("ev", "charging", "טעינה")),
         ),
     ),
+    # Branded merchandise — apparel, lifestyle and gift items sold by the vehicle
+    # importers alongside real parts (owner directive 2026-07-28). These are NOT
+    # automotive parts and must not sit in `כללי` or in a parts family: a Porsche
+    # polo shirt was categorised as `engine` and a women's t-shirt as `כללי`.
+    # Keeping them in their own family leaves the parts catalog clean while the
+    # items stay searchable and correctly labelled.
+    PartTypeFamily(
+        id="merchandise",
+        label="Merchandise",
+        group_id="merchandise",
+        group_label="Merchandise",
+        badge="MRC",
+        icon_key="merchandise",
+        palette=("#7c3aed", "#c4b5fd"),
+        aliases=("merchandise", "merch", "lifestyle", "apparel",
+                 "מרצ'נדייז", "מוצרי מיתוג", "ביגוד"),
+        keywords=("t-shirt", "polo", "cap", "jacket", "hoodie", "keychain",
+                  "mug", "model car", "חולצה", "כובע", "מעיל", "גרביים",
+                  "מחזיק מפתחות", "ספל", "דגם מוקטן"),
+        subcategories=(
+            PartSubcategory("apparel", "Apparel", aliases=("shirt", "polo", "jacket", "ביגוד", "חולצה")),
+            PartSubcategory("headwear", "Headwear", aliases=("cap", "hat", "beanie", "כובע")),
+            PartSubcategory("bags-luggage", "Bags & Luggage", aliases=("bag", "backpack", "תיק")),
+            PartSubcategory("gifts-collectibles", "Gifts & Collectibles",
+                            aliases=("model car", "keychain", "mug", "דגם מוקטן", "מחזיק מפתחות", "ספל")),
+            PartSubcategory("kids", "Kids", aliases=("kids", "baby", "ילדים", "תינוק")),
+        ),
+    ),
 )
 
 

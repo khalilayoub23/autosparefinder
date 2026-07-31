@@ -27,6 +27,9 @@ import os
 import re
 from typing import Optional
 
+# ONE category source of truth — the only valid fallback is 'כללי'.
+from category_map import categorize_on_ingest
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
@@ -101,7 +104,11 @@ def map_tecdoc_category(generic_article: str) -> str:
     for k, v in TD_CAT_MAP.items():
         if k in s:
             return v
-    return "accessories"
+    # Fallback used to be "accessories" — a REAL category, so the self-healing
+    # categorizer (which only revisits "כללי") would never correct these parts.
+    # Fall through to the ONE categorizer instead; it returns "כללי" when it
+    # genuinely cannot tell, which is the only valid fallback.
+    return categorize_on_ingest(name=generic_article)
 
 
 # ── TecDoc API calls ──────────────────────────────────────────────────────────

@@ -55,6 +55,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote_plus, urljoin, urlparse
 
+# Single enforcement point for warranty (same pattern as pricing) — never
+# re-implement the default or the parsing here.
+from warranty_policy import resolve as _warranty_resolve
+
 import httpx
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
@@ -75,7 +79,7 @@ from resilience import (
     job_heartbeat,
 )
 from currency_rate import upsert_usd_to_ils_rate
-from categories import guess_category_by_text
+from category_map import CATCH_ALL, categorize_on_ingest, guess_category_by_text
 from agent_todo_utils import (
     get_active_agent_todos,
     todo_requests_ranked_first,
@@ -1334,7 +1338,7 @@ async def resolve_aftermarket_brand(
 
 
 async def db_upsert_part(db: AsyncSession, *, sku: str, name: str, manufacturer: str,
-                          category: str, part_type: str = "Aftermarket",
+                          category: str, part_type: str = "aftermarket",
                           base_price: float = 0.0, description: str = "",
                           compatible_vehicles: list = None,
                           aftermarket_brand_id: Optional[uuid.UUID] = None,
@@ -3240,7 +3244,11 @@ async def _discover_via_ebay(brand: str, max_parts: int = 150) -> List[Dict]:
 
 
 def _guess_category_from_text(text: str) -> str:
-    return guess_category_by_text(text) or "accessories"
+    # FALLBACK MUST BE 'כללי' (2026-07-27). This used to fall back to
+    # "accessories", so every scraped part whose name matched no keyword was
+    # filed as an accessory — a large share of the 121,649-row accessories
+    # bucket. 'כללי' is the ONE catch-all; a real category is never a default.
+    return guess_category_by_text(text) or CATCH_ALL
 
 
 async def run_brand_discovery(
@@ -3600,6 +3608,13 @@ async def run_brand_discovery(
                                 oem_number=sku_clean if is_oem_source else None,
                             )
                             if created and supplier_id:
+                                # Resolve warranty from whatever the source gave us,
+                                # keeping its provenance. See warranty_policy.py.
+                                _warranty = _warranty_resolve(
+                                    part.get("warranty_months"),
+                                    part.get("warranty"),
+                                    part.get("warranty_text"),
+                                )
                                 # Insert supplier_parts row
                                 await db.execute(
                                     text("""
@@ -3608,12 +3623,14 @@ async def run_brand_discovery(
                                              price_ils, price_usd, is_available,
                                              availability, stock_quantity,
                                              min_order_qty, last_checked_at,
-                                             created_at, supplier_url)
+                                             created_at, supplier_url,
+                                             warranty_months, warranty_source)
                                         VALUES
                                             (:id, :sid, :pid, :sku,
                                              :pils, :pusd, :avail,
                                              'in_stock', :stock,
-                                             1, NOW(), NOW(), :url)
+                                             1, NOW(), NOW(), :url,
+                                             :wmonths, :wsource)
                                     """),
                                     {
                                         "id":   str(uuid.uuid4()),
@@ -3625,6 +3642,15 @@ async def run_brand_discovery(
                                         "avail": part.get("in_stock", True),
                                         "stock": random.randint(1, 40),
                                         "url":  (part.get("url") or "")[:500],
+                                        # Capture warranty AT SOURCE. This scraper wrote
+                                        # none at all, which is why "Official Manufacturer
+                                        # Sites" was the single largest warranty gap
+                                        # (293,263 rows). warranty_policy.resolve() takes
+                                        # whatever the source offered, in priority order,
+                                        # and falls back to the platform default — always
+                                        # recording WHICH it was.
+                                        "wmonths": _warranty[0],
+                                        "wsource": _warranty[1],
                                     },
                                 )
                                 # Write vehicle fitment rows if the source provides them
@@ -3934,7 +3960,7 @@ async def _run_category_discovery() -> Dict[str, Any]:
                                         name=part.get("name") or sku_clean,
                                         manufacturer=manufacturer,
                                         category=category_he,
-                                        part_type=part.get("part_type") or "Aftermarket",
+                                        part_type=part.get("part_type") or "aftermarket",
                                         base_price=float(part.get("price_usd") or 0),
                                         description=(
                                             f"{category_he} discovered for {manufacturer}. "
@@ -4517,7 +4543,7 @@ async def run_scraper_cycle(*, batch_size: int = SCRAPE_BATCH_SIZE, refresh_fx: 
                         name=row.part_name,
                         manufacturer=row.manufacturer or "",
                         category=row.category or "כללי",
-                        part_type=row.part_type or "Aftermarket",
+                        part_type=row.part_type or "aftermarket",
                         supplier_id=str(row.supplier_id),
                         supplier_name=row.supplier_name,
                         supplier_part_id=str(row.supplier_part_id),

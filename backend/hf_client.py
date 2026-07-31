@@ -220,6 +220,35 @@ def _clean_response(text: str) -> str:
 
 
 # ── Retry wrapper ─────────────────────────────────────────────────────────────
+_SECRET_QS_RE = _re.compile(r"([?&](?:key|api_key|access_token|token)=)[^&\s\'\"]+", _re.I)
+
+
+def _scrub_secrets(text: str) -> str:
+    """Redact `?key=…` style credentials out of a string.
+
+    Google's endpoints carry the API key as a URL QUERY PARAMETER, and httpx puts
+    the full URL into HTTPStatusError's message. So `str(exc)` — which callers log
+    — contained the live GEMINI_API_KEY, writing it into `docker logs` forever
+    (found 2026-07-28 when a 429 printed the key). Same class as the standing rule
+    "never print OAuth tokens to stdout".
+    """
+    return _SECRET_QS_RE.sub(r"\1<redacted>", text or "")
+
+
+def raise_for_status_safe(resp: "httpx.Response") -> None:
+    """`resp.raise_for_status()` with the credential scrubbed from the message.
+
+    Call httpx's method on the RESPONSE OBJECT here — never this helper, or it
+    recurses into itself (RecursionError, caught by a live 429 test 2026-07-28).
+    """
+    try:
+        httpx.Response.raise_for_status(resp)
+    except httpx.HTTPStatusError as exc:
+        raise httpx.HTTPStatusError(
+            _scrub_secrets(str(exc)), request=exc.request, response=exc.response
+        ) from None
+
+
 async def _post_with_retry(
     url: str,
     headers: dict,
@@ -227,7 +256,11 @@ async def _post_with_retry(
     timeout: float,
     label: str,
 ) -> httpx.Response:
-    """POST with bounded back-off on 503 (cold-start) and 429 (rate-limit)."""
+    """POST with bounded back-off on 503 (cold-start) and 429 (rate-limit).
+
+    NOTE: callers must use `raise_for_status_safe(resp)`, never
+    `raise_for_status_safe(resp)` — see that helper for why.
+    """
     client = _get_http()
     attempt = 0
     t0 = time.monotonic()
@@ -332,7 +365,7 @@ async def _cerebras_call(
     finally:
         if _acquire:
             _BG_SEMAPHORE.release()
-    resp.raise_for_status()
+    raise_for_status_safe(resp)
     return _clean_response(_extract_cerebras_content(resp.json()))
 
 
@@ -420,7 +453,7 @@ async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority
         if GROQ_API_KEY:
             logger.warning("hf_text: falling back to GROQ llama-3.3-70b-versatile")
             return await groq_text(prompt=prompt, system=system, timeout=timeout)
-    resp.raise_for_status()
+    raise_for_status_safe(resp)
     result: str = _extract_cerebras_content(resp.json())
     result = _clean_response(result)
     await _cache_set(cache_key, result, _TEXT_CACHE_TTL)
@@ -479,9 +512,9 @@ async def hf_router_text(prompt: str, system: str = "", timeout: float = 45.0, m
             logger.warning("hf_router_text: HF Router 429 — falling back to Groq")
             return await groq_text(prompt=prompt, system=system, timeout=timeout,
                                    model="llama-3.1-8b-instant")
-        resp.raise_for_status()
+        raise_for_status_safe(resp)
 
-    resp.raise_for_status()
+    raise_for_status_safe(resp)
     result: str = resp.json()["choices"][0]["message"]["content"]
     result = _clean_response(result)
     await _cache_set(cache_key, result, _TEXT_CACHE_TTL)
@@ -737,7 +770,7 @@ async def hf_embed(text: str, timeout: float = 10.0) -> list[float]:
             ),
             timeout=timeout,
         )
-        resp.raise_for_status()
+        raise_for_status_safe(resp)
         result: list[float] = resp.json().get("embedding", {}).get("values", [])
         logger.debug("hf_client [embed] latency_ms=%d dims=%d",
                      round((time.monotonic() - t0) * 1000), len(result))
@@ -779,7 +812,7 @@ async def groq_vision(
         timeout,
         "groq_vision",
     )
-    resp.raise_for_status()
+    raise_for_status_safe(resp)
     result: str = resp.json()["choices"][0]["message"]["content"]
     return _clean_response(result)
 
@@ -812,7 +845,7 @@ async def hf_vision(
         )
 
         try:
-            resp.raise_for_status()
+            raise_for_status_safe(resp)
             result = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
             return _clean_response(result)
         except Exception as gemini_err:
@@ -884,7 +917,7 @@ async def gemini_text(
         timeout,
         "gemini_text",
     )
-    resp.raise_for_status()
+    raise_for_status_safe(resp)
     result = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
     result = _clean_response(result)
     await _cache_set(cache_key, result, _TEXT_CACHE_TTL)
@@ -916,11 +949,62 @@ async def whatsapp_gemini_text(prompt: str, system: str = "", timeout: float = 6
         timeout,
         "whatsapp_gemini",
     )
-    resp.raise_for_status()
+    raise_for_status_safe(resp)
     result = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
     result = _clean_response(result)
     await _cache_set(cache_key, result, _TEXT_CACHE_TTL)
     return result
+
+
+async def gemini_web_search(
+    query: str,
+    system: str = "",
+    timeout: float = 60.0,
+    model: str = "gemini-2.0-flash",
+) -> dict:
+    """
+    REAL web search grounded via Gemini's Google Search tool.
+
+    The server IP is Cloudflare/anti-bot blocked for direct HTTP to most sites, so
+    this is how backend agents (NIR sourcing, REX) "search the web": Gemini runs the
+    Google Search itself and returns an answer grounded in live results, plus the
+    source URLs it used (groundingMetadata). Returns:
+        {"text": <grounded answer>, "sources": [{"title","url"}...]}
+    Not cached — web results must stay fresh.
+    """
+    if not GEMINI_API_KEY:
+        raise RuntimeError("GEMINI_API_KEY not set in .env")
+    parts = []
+    if system:
+        parts.append({"text": f"[System]: {system}\n\n[Query]: {query}"})
+    else:
+        parts.append({"text": query})
+    payload = _json.dumps({
+        "contents": [{"parts": parts}],
+        "tools": [{"google_search": {}}],
+        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 2000},
+    }, ensure_ascii=False).encode()
+    resp = await _post_with_retry(
+        f"{GEMINI_BASE}/{model}:generateContent?key={GEMINI_API_KEY}",
+        {"Content-Type": "application/json"},
+        payload,
+        timeout,
+        "gemini_web_search",
+    )
+    raise_for_status_safe(resp)
+    data = resp.json()
+    cand = (data.get("candidates") or [{}])[0]
+    text = ""
+    for p in (cand.get("content", {}).get("parts") or []):
+        if p.get("text"):
+            text += p["text"]
+    sources = []
+    gm = cand.get("groundingMetadata", {}) or {}
+    for ch in (gm.get("groundingChunks") or []):
+        web = ch.get("web") or {}
+        if web.get("uri"):
+            sources.append({"title": web.get("title", ""), "url": web["uri"]})
+    return {"text": _clean_response(text), "sources": sources}
 
 
 async def groq_text(prompt: str, system: str = "", timeout: float = 60.0, model: str = "") -> str:
@@ -947,7 +1031,7 @@ async def groq_text(prompt: str, system: str = "", timeout: float = 60.0, model:
         timeout,
         "groq_text",
     )
-    resp.raise_for_status()
+    raise_for_status_safe(resp)
     result: str = resp.json()["choices"][0]["message"]["content"]
     return _clean_response(result)
 
@@ -985,7 +1069,7 @@ async def hf_audio(audio_bytes: bytes, timeout: float = 60.0) -> str:
         timeout,
         "audio",
     )
-    resp.raise_for_status()
+    raise_for_status_safe(resp)
     result = resp.json().get("text", "")
     return _clean_response(result)
 
@@ -1052,6 +1136,39 @@ async def hf_normalize_query(query: str, timeout: float = 10.0) -> str:
     return query
 
 
+HF_IMAGE_MODEL = os.getenv("HF_IMAGE_MODEL", "black-forest-labs/FLUX.1-schnell")
+
+
+async def hf_image(prompt: str, model: str | None = None, width: int = 1024, height: int = 1024,
+                   steps: int = 4, timeout: float = 90.0) -> bytes | None:
+    """
+    Generate an image from text via the HF Inference API.
+    Returns raw JPEG/PNG bytes, or None on any failure (quota, timeout, content filter).
+    Model defaults to FLUX.1-schnell (fast, good quality, free on HF PRO).
+    """
+    mdl = model or HF_IMAGE_MODEL
+    url = f"{INFER_BASE}/{mdl}"
+    payload = _json.dumps({
+        "inputs": prompt,
+        "parameters": {"width": width, "height": height, "num_inference_steps": steps},
+    }, ensure_ascii=False).encode()
+    headers = {"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json",
+               "Accept": "image/jpeg,image/png,*/*"}
+    client = _get_http()
+    try:
+        resp = await client.post(url, content=payload, headers=headers, timeout=timeout)
+        if resp.status_code == 200:
+            ctype = resp.headers.get("content-type", "")
+            if "image" in ctype or len(resp.content) > 1000:
+                logger.info("hf_image [%s] generated %d bytes", mdl.split("/")[-1], len(resp.content))
+                return resp.content
+        logger.warning("hf_image [%s] status=%s len=%d", mdl, resp.status_code, len(resp.content))
+        return None
+    except Exception as exc:
+        logger.warning("hf_image failed: %s", exc)
+        return None
+
+
 async def hf_clip(image_b64: str, timeout: float = 15.0) -> list[float]:
     payload = _json.dumps({"inputs": {"image": image_b64}}, ensure_ascii=False).encode()
     resp = await _post_with_retry(
@@ -1061,5 +1178,5 @@ async def hf_clip(image_b64: str, timeout: float = 15.0) -> list[float]:
         timeout,
         "clip",
     )
-    resp.raise_for_status()
+    raise_for_status_safe(resp)
     return resp.json()[0]

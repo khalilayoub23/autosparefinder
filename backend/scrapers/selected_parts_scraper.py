@@ -9,6 +9,9 @@ Run inside container: python3 /app/scrapers/selected_parts_scraper.py
 from __future__ import annotations
 import asyncio, logging, re, time
 import asyncpg
+
+# Category rules DELEGATED to category_map — the single source of truth.
+from category_map import CATCH_ALL, categorize_on_ingest
 import requests
 from urllib.parse import urljoin
 
@@ -71,36 +74,15 @@ TERM_MAP = [
     ('עם', 'with'), ('ל', 'for'), ('קטגוריות', 'categories'),
 ]
 
-CAT_RULES = [
-    (['בלם', 'רפידות', 'צלחת', 'כבל התראת'], 'brakes'),
-    (['קפיץ', 'בולם', 'מתלה', 'מתלים'], 'suspension-steering'),
-    (['הגה'], 'suspension-steering'),
-    (['פנס', 'נורה', 'תאורה', 'ערפל'], 'lighting'),
-    (['קירור', 'רדיאטור'], 'cooling'),
-    (['מסנן שמן', 'פילטר'], 'engine'),
-    (['חיישן', 'מתג', 'שלט רחוק'], 'electrical-sensors'),
-    (['פגוש', 'גריל', 'מכסה', 'מראה', 'דלת', 'כנף'], 'body-exterior'),
-    (['מגב', 'שמשה'], 'body-exterior'),
-    (['מושב', 'ריפוד', 'תא נוסעים'], 'interior'),
-    (['מצמד', 'תיבת הילוכים', 'גיר'], 'gearbox'),
-    (['דלק', 'הזרקה'], 'fuel-air'),
-    (['רצועה', 'שרשרת', 'מותחן'], 'belts-chains'),
-    (['טורבו', 'וואקום'], 'engine'),
-    (['חלון', 'מנגנון חלון'], 'body-exterior'),
-    (['ידית', 'מנעול'], 'body-exterior'),
-    (['אביזר', 'כננת', 'גלגל רזרבי'], 'accessories'),
-    (['TERRAFIRMA'], 'accessories'),
-    (['ARNOTT', 'מתלה אוויר', 'suspension air'], 'suspension-steering'),
-    (['MEYLE'], 'accessories'),
-]
 
 
 def categorize(text: str) -> str:
-    for keywords, cat in CAT_RULES:
-        for kw in keywords:
-            if kw.lower() in text.lower():
-                return cat
-    return 'accessories'
+    """
+    Text -> canonical slug via category_map.
+    The replaced rules fell back to 'accessories' (a real category used as a
+    dumping ground) and mapped 'פילטר' to 'engine'. Fallback is now 'כללי'.
+    """
+    return categorize_on_ingest(name=text, name_he=text)
 
 
 def translate_name(heb: str) -> str:

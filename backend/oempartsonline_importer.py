@@ -44,6 +44,9 @@ import asyncio
 import json
 import logging
 import re
+
+# Category mapping DELEGATED to category_map — the single source of truth.
+from category_map import CATCH_ALL, categorize_on_ingest, normalize_category_label
 import signal
 import sys
 import time
@@ -263,53 +266,25 @@ SUPPLIER_MAP = {
 
 # Map oempartsonline URL path segments → system category IDs
 # oempartsonline category is first segment before '--' in subcategory path
-CATEGORY_MAP = {
-    "accessories": "accessories",
-    "accessories-audio-video": "accessories",
-    "air-and-fuel-delivery": "fuel-air",
-    "automatic-transaxle": "gearbox",
-    "automatic-transmission": "gearbox",
-    "belts-and-cooling": "belts-chains",
-    "body": "body-exterior",
-    "brakes": "brakes",
-    "clutch": "clutch-drivetrain",
-    "cooling": "cooling",
-    "drivetrain": "clutch-drivetrain",
-    "electrical": "electrical-sensors",
-    "engine": "engine",
-    "engine-mechanical": "engine",
-    "engine-oil-cooling": "cooling",
-    "exhaust": "exhaust",
-    "fuel-system": "fuel-air",
-    "heating-and-air-conditioning": "air-conditioning-heating",
-    "hvac": "air-conditioning-heating",
-    "ignition": "engine",
-    "interior": "interior-comfort",
-    "interior-accessories": "interior-comfort",
-    "lighting": "lighting",
-    "manual-transmission": "gearbox",
-    "safety": "body-exterior",
-    "sensors": "electrical-sensors",
-    "steering": "suspension-steering",
-    "suspension": "suspension-steering",
-    "transfer-case": "clutch-drivetrain",
-    "wheel": "wheels-bearings",
-    "wheels": "wheels-bearings",
-    "wipers-and-washers": "wipers-washers",
-}
 
 # Safety-critical category paths
 SAFETY_CRITICAL_CATS = {"brakes", "steering", "suspension", "safety"}
 
 
 def map_category(category_path: str) -> str:
-    """Map oempartsonline subcategory URL path to system category ID."""
+    """
+    Map an oempartsonline subcategory URL path to a canonical category.
+    e.g. "brakes--disc-pads-and-brake-shoes" -> "brakes".
+    Rules live in category_map; the full path (not just the head segment)
+    is fed to the keyword pass so subcategory words still classify.
+    """
     if not category_path:
-        return "service-general"
-    # category_path is like "brakes--disc-pads-and-brake-shoes"
-    # OR just "brakes" for the main category
+        return CATCH_ALL
     main_cat = category_path.split("--")[0].lower().strip()
-    return CATEGORY_MAP.get(main_cat, "service-general")
+    mapped = normalize_category_label(main_cat)
+    if mapped:
+        return mapped
+    return categorize_on_ingest(name=category_path.replace("--", " ").replace("-", " "))
 
 
 def is_safety_critical(category_path: str) -> bool:
@@ -468,7 +443,13 @@ async def import_products(
                         continue
 
                     name = (product.get("name") or "").strip()
-                    if not name:
+                    # RULE 7: the OEM number is NOT a name. We still create the part
+                    # (never exclude a part from search) but we must FLAG it, or it
+                    # sits forever with a part code as its name and a category
+                    # guessed from that code. 21,795 rows reached that state because
+                    # needs_oem_lookup was hard-coded FALSE here.
+                    name_missing = not name
+                    if name_missing:
                         name = oem_raw
 
                     msrp_usd = float(product.get("msrp") or 0)
@@ -547,7 +528,7 @@ async def import_products(
                                 $10, $13,
                                 $10, $10, $11,
                                 'original', NULL,
-                                $12, FALSE, FALSE,
+                                $12, $14, FALSE,
                                 TRUE, NOW(), NOW()
                             )
                             ON CONFLICT (sku) DO UPDATE SET
@@ -579,6 +560,7 @@ async def import_products(
                             max_price,
                             safety_critical,
                             base_price_ils,
+                            name_missing,
                         )
 
                         # Insert fitment row

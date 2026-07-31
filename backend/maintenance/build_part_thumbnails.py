@@ -148,6 +148,12 @@ async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=500)
     ap.add_argument("--dry-run", action="store_true")
+    # Target a specific slice (e.g. a newly-imported brand) instead of taking
+    # whatever the general backlog happens to surface. Without this there is no
+    # way to PROVE a fresh import's images reach the bucket — you can only wait
+    # for the background supervisor to eventually reach them.
+    ap.add_argument("--sku-like", default=None,
+                    help="only parts whose sku matches this SQL LIKE pattern, e.g. '%%-BKQC'")
     a = ap.parse_args()
 
     if not S.s3_enabled():
@@ -161,9 +167,10 @@ async def main():
         WHERE pc.is_active
           AND NOT EXISTS (SELECT 1 FROM part_thumbnails t WHERE t.part_id = pc.id)
           AND pi.url IS NOT NULL AND pi.url <> ''
+          AND ($2::text IS NULL OR pc.sku LIKE $2)
         ORDER BY pc.id, pi.is_primary DESC, pi.sort_order ASC
         LIMIT $1
-    """, a.limit)
+    """, a.limit, a.sku_like)
     print(f"candidates: {len(rows)}")
 
     ok = rejected = no_source = failed = deduped = 0

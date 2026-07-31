@@ -7,6 +7,12 @@ Handles multi-OEM-number parts (splits on comma/slash, uses first as primary).
 Skips parts with no OEM number (N/A).
 """
 from __future__ import annotations
+
+# Category mapping DELEGATED to category_map — the single source of truth.
+# This importer used to keep its own CATEGORY_MAP (which contained real errors,
+# e.g. filters->engine, bearing->engine, 'interior accessories'->'interior').
+# Add keywords to category_map.py, never here.
+from category_map import CATCH_ALL, categorize_on_ingest, normalize_category_label
 import asyncio, hashlib, json, logging, re, sys, uuid
 import asyncpg
 
@@ -24,42 +30,11 @@ BRAND_IDS = {
     "Isuzu": "a5f0f44e-814d-4fa2-b6b6-dd1b3175d855",
 }
 
-CATEGORY_MAP = {
-    "engine": "engine", "engine components": "engine", "engine parts": "engine",
-    "engine rebuild": "engine", "engine block": "engine", "engine bearings": "engine",
-    "engine fasteners": "engine", "engine gaskets": "engine", "cylinder head": "engine",
-    "fuel system": "fuel-air", "fuel pump": "fuel-air", "fuel pumps": "fuel-air",
-    "fuel injectors": "fuel-air", "fuel injector": "fuel-air", "carburetors": "fuel-air",
-    "filters": "engine", "filtration": "engine", "filter": "engine",
-    "cooling": "cooling", "cooling system": "cooling", "cooling kits": "cooling",
-    "turbo system": "engine", "turbocharger": "engine", "turbocharging": "engine",
-    "turbo components": "engine",
-    "electrical": "electrical-sensors", "sensors": "electrical-sensors",
-    "sensor": "electrical-sensors", "engine control": "electrical-sensors",
-    "emissions": "electrical-sensors",
-    "brakes": "brakes", "brake system": "brakes", "braking system": "brakes",
-    "suspension": "suspension-steering", "suspension/brakes": "suspension-steering",
-    "suspension/wheels": "wheels-bearings",
-    "steering": "suspension-steering",
-    "transmission": "gearbox", "clutch": "clutch-drivetrain",
-    "gaskets": "engine", "gasket": "engine", "gasket kit": "engine",
-    "rebuild kits": "engine", "timing components": "engine",
-    "belts": "belts-chains", "belt & pulley": "belts-chains",
-    "vacuum system": "engine",
-    "hvac": "air-conditioning-heating", "climate control": "air-conditioning-heating",
-    "body parts": "body-exterior", "accessories": "accessories",
-    "wheels": "wheels-bearings", "solenoids": "electrical-sensors",
-    "bearing": "engine", "bearings": "engine",
-    "bolt": "engine", "liner": "engine", "gear": "engine",
-    "nozzle": "fuel-air", "valve": "engine",
-    "lock set": "body-exterior", "pump": "fuel-air",
-    "crankshaft": "engine",
-}
 
 
 def map_cat(raw: str) -> str:
-    k = raw.lower().strip()
-    return CATEGORY_MAP.get(k, "accessories")
+    """Supplier category label -> canonical slug (category_map is the truth)."""
+    return normalize_category_label(raw) or categorize_on_ingest(name=raw)
 
 
 def clean_oem(raw: str) -> str:
@@ -227,6 +202,7 @@ async def import_brand(conn: asyncpg.Connection, manufacturer: str, raw_parts: l
     mfr_id = BRAND_IDS.get(manufacturer) or stable_uuid(manufacturer)
     seen_oem: set = set()
     inserted = 0
+    fitment_rows = 0
     skipped = 0
 
     for raw in raw_parts:
@@ -237,6 +213,8 @@ async def import_brand(conn: asyncpg.Connection, manufacturer: str, raw_parts: l
         seen_oem.add(oem)
 
         sku = build_sku(manufacturer, oem)
+        # RULE 7: an OEM is an identifier, not a name — flag the row.
+        name_missing = not (raw.get("name") or "").strip()
         name = (raw.get("name") or oem).strip()[:255]
         price_usd = float(raw.get("price_usd") or 0)
         price_ils = round(price_usd * USD_TO_ILS, 2)
@@ -256,7 +234,7 @@ async def import_brand(conn: asyncpg.Connection, manufacturer: str, raw_parts: l
                         gen_random_uuid(), $1, $2, $3, $4, $5::uuid,
                         $6, $7, '{}'::jsonb,
                         $8, $8, $9,
-                        'original', FALSE, FALSE,
+                        'original', FALSE, $10,
                         FALSE, TRUE, NOW(), NOW()
                     )
                     ON CONFLICT (sku) DO UPDATE SET
@@ -266,9 +244,30 @@ async def import_brand(conn: asyncpg.Connection, manufacturer: str, raw_parts: l
                         updated_at = NOW()
                     RETURNING id
                 """, sku, oem, name, manufacturer, mfr_id,
-                     category, desc, price_ils, round(price_ils * 1.18, 2))
+                     category, desc, price_ils, round(price_ils * 1.18, 2),
+                     name_missing)   # $10 -> needs_oem_lookup (RULE 7)
                 if part_id:
                     inserted += 1
+                    # RULE (fitment): the seed rows carry fits_model — write the
+                    # TABLE the fitment-first search joins.
+                    for _vm in _split_models(raw.get("fits_model")):
+                        try:
+                            await conn.execute(
+                                """
+                                INSERT INTO part_vehicle_fitment
+                                    (id, part_id, manufacturer, model,
+                                     year_from, year_to, created_at)
+                                VALUES (gen_random_uuid(), $1::uuid, $2::varchar,
+                                        $3::varchar, $4::int, NULL, NOW())
+                                ON CONFLICT (part_id, manufacturer, model, year_from)
+                                DO NOTHING
+                                """,
+                                part_id, manufacturer[:100], _vm[:150], 1990,
+                            )
+                            fitment_rows += 1
+                        except Exception as _fe:
+                            if fitment_rows < 3:
+                                log.warning("fitment %s: %s", sku, str(_fe)[:90])
         except Exception as e:
             log.warning("Failed to insert %s: %s", sku, e)
             skipped += 1

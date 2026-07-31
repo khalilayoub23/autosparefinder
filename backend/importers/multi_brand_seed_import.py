@@ -5,6 +5,12 @@ OEM data collected from accio.com.
 Run: python3 multi_brand_seed_import.py
 """
 from __future__ import annotations
+
+# Category mapping DELEGATED to category_map — the single source of truth.
+# This importer used to keep its own CATEGORY_MAP (which contained real errors,
+# e.g. filters->engine, bearing->engine, 'interior accessories'->'interior').
+# Add keywords to category_map.py, never here.
+from category_map import CATCH_ALL, categorize_on_ingest, normalize_category_label
 import asyncio, logging, re
 import asyncpg
 
@@ -22,31 +28,11 @@ BRAND_IDS = {
     "SsangYong": "588b0288-fb17-499e-83a8-750e3be2d318",
 }
 
-CATEGORY_MAP = {
-    "engine": "engine", "engine components": "engine", "engine support": "engine",
-    "engine exhaust": "engine",
-    "fuel system": "fuel-air", "fuel injection": "fuel-air", "fuel injectors": "fuel-air",
-    "filters": "engine", "engine filters": "engine", "air filters": "engine",
-    "cooling": "cooling", "cooling systems": "cooling",
-    "braking system": "brakes", "brake systems": "brakes",
-    "suspension": "suspension-steering", "steering systems": "suspension-steering",
-    "steering": "suspension-steering",
-    "transmission": "gearbox",
-    "electrical": "electrical-sensors", "electronics": "electrical-sensors",
-    "sensors": "electrical-sensors", "electrical components": "electrical-sensors",
-    "body": "body-exterior",
-    "turbocharging": "engine",
-    "air conditioning": "air-conditioning-heating", "climate control": "air-conditioning-heating",
-    "window components": "body-exterior",
-    "interior accessories": "interior",
-    "bearings": "wheels-bearings",
-    "gaskets & seals": "engine", "gaskets": "engine",
-    "belts & pulleys": "belts-chains",
-}
 
 
 def map_cat(raw: str) -> str:
-    return CATEGORY_MAP.get(raw.lower().strip(), "accessories")
+    """Supplier category label -> canonical slug (category_map is the truth)."""
+    return normalize_category_label(raw) or categorize_on_ingest(name=raw)
 
 
 def clean_oem(raw: str) -> str:

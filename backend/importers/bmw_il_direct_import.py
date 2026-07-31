@@ -7,6 +7,11 @@ Pricing policy: importer_price_ils=price_ils (excl. VAT), base_price=price_ils*1
 import asyncio, json, os, sys, time
 import asyncpg
 
+# ONE category source of truth. This INSERT used to hardcode 'accessories'
+# positionally, which is a REAL category — so the self-healing categorizer
+# (which only re-processes 'כללי') would never revisit those parts.
+from category_map import categorize_on_ingest
+
 DB = os.environ.get("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://")
 VAT = 0.18
 
@@ -65,19 +70,20 @@ async def run():
                         needs_oem_lookup, master_enriched, specifications,
                         created_at, updated_at
                     ) VALUES(
-                        gen_random_uuid(), $1, $1, $2, $2, 'BMW', 'accessories',
+                        gen_random_uuid(), $1, $1, $2, $2, 'BMW', $7,
                         $3, $4, $5, $5,
-                        'Original', 'new', true,
+                        'original', 'new', true,
                         true, false, $6::jsonb,
                         NOW(), NOW()
                     )
                     ON CONFLICT (sku) DO UPDATE SET
-                        importer_price_ils = EXCLUDED.importer_price_ils,
+                        importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
                         max_price_ils      = EXCLUDED.max_price_ils,
                         base_price         = EXCLUDED.base_price,
                         specifications     = EXCLUDED.specifications,
                         updated_at         = NOW()
-                """, oem, name_he, selling, cost, retail, part_spec)
+                """, oem, name_he, selling, cost, retail, part_spec,
+                    categorize_on_ingest(name_he=name_he))
                 inserted += 1
             except Exception:
                 skipped += 1

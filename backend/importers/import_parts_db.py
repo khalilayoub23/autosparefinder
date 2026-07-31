@@ -36,6 +36,9 @@ from datetime import datetime
 from manufacturer_normalization import normalize_manufacturer_name
 from workbook_normalizer import build_normalized_workbook, iter_normalized_rows, NORMALIZED_XLSX_FILE
 
+# ONE category source of truth.
+from category_map import categorize_on_ingest
+
 XLSX_FILE = Path(__file__).parent.parent / "data" / "parts_database.xlsx"
 _raw_url = os.getenv("DATABASE_URL", "postgresql://autospare:autospare_dev@localhost:5432/autospare")
 DB_URL = _raw_url.replace("postgresql+asyncpg://", "postgresql://").replace("+asyncpg", "")
@@ -420,7 +423,10 @@ async def import_parts(selected_sheets: list[str] | None = None):
                 uuid.uuid4(),
                 str(record.get("sku", "")),
                 str(record.get("name", "")),
-                str(record.get("category", "")),
+                # RAW spreadsheet label — map it through the ONE categorizer;
+                # the source string is only a hint, never the stored value.
+                categorize_on_ingest(name=str(record.get("name", "")),
+                                     extra=str(record.get("category", ""))),
                 str(record.get("manufacturer", "")),
                 manufacturer_id,
                 str(record.get("part_type", "unknown")),
@@ -435,7 +441,10 @@ async def import_parts(selected_sheets: list[str] | None = None):
                 uuid.uuid4(),
                 str(record.get("sku", "")),
                 str(record.get("name", "")),
-                str(record.get("category", "")),
+                # RAW spreadsheet label — map it through the ONE categorizer;
+                # the source string is only a hint, never the stored value.
+                categorize_on_ingest(name=str(record.get("name", "")),
+                                     extra=str(record.get("category", ""))),
                 str(record.get("manufacturer", "")),
                 str(record.get("part_type", "unknown")),
                 str(record.get("description", "")),

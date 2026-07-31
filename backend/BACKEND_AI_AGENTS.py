@@ -1114,6 +1114,19 @@ _REASONING_LINE = re.compile(
     re.IGNORECASE,
 )
 
+# Tell-tale signs a model is thinking out loud rather than writing the post:
+# character/letter counting, self-questioning, and English meta-commentary that
+# has no business in a Hebrew/Arabic social caption.
+_REASONING_TELL = re.compile(
+    r"(?:\b\d+\s*(?:letters?|characters?|chars?|words?)\b"          # "5 letters"
+    r"|\b(?:maybe|perhaps|hmm|wait|actually|let me|I should|I will|we need)\b"
+    r"|\b(?:count|counting|rewrite|revise|draft|option\s*\d)\b"
+    r"|[֐-׿]\s*\(\s*\d+\s*\)"                                    # "ה (1)"
+    r"|\b(?:plus|and|or)\s+initial\b"
+    r"|^\s*(?:option|draft|version|final|note)\s*\d*\s*[:\-]"
+    r")", re.I)
+
+
 def _strip_leaked_reasoning(text: str, user_msg: str = "") -> str:
     """Remove chain-of-thought / system-prompt leakage that fallback models
     (zai-glm, groq) sometimes emit instead of a clean reply (found 2026-07-09:
@@ -5211,8 +5224,47 @@ class SocialMediaManagerAgent(BaseAgent):
     def _extract_post_from_reasoning(cls, text: str) -> str:
         """Pull the actual post out of a raw LLM response that contains chain-of-thought reasoning.
         Models sometimes count characters, write analysis, then produce the final post.
-        We extract the shortest coherent Hebrew block that looks publishable."""
-        if len(text) <= 600:
+        We extract the shortest coherent Hebrew block that looks publishable.
+
+        NEVER gate this on LENGTH. It used to `return text` unchanged whenever the
+        response was <= 600 chars, so a SHORT leak sailed straight through — which
+        is exactly what published this on 2026-07-28 (322 chars):
+
+            "5 letters? Hebrew letters: ה (1), ר (2), ע (3), ד (4) maybe 4 letters?"
+
+        A guard that only inspects long output is no guard at all: reasoning leaks
+        are often terse. Detect the reasoning by its CONTENT and always strip it.
+        """
+        text = text or ""
+        if not _REASONING_TELL.search(text):
+            return text          # nothing that looks like thinking-out-loud
+
+        # Remove the reasoning SENTENCES and keep the rest. Picking "the first
+        # paragraph containing Hebrew" is not enough — the leaked line itself ends
+        # in Hebrew ("... maybe 4 letters? plus initial ה? אנחנו מוכרים חלקי חילוף
+        # בלבד."), so a paragraph-level choice returns the leak verbatim.
+        kept = []
+        for line in text.split("\n"):
+            parts = re.split(r"(?<=[.!?])\s+|(?<=\?)\s*", line)
+            clean = []
+            for seg in parts:
+                if not seg.strip():
+                    continue
+                # A meta PREFIX ("Option 1:", "Final:", "Draft -") must be cut off
+                # without discarding the real caption that follows it.
+                seg = re.sub(r"^\s*(?:option|draft|version|final|note)\s*\d*\s*[:\-]\s*",
+                             "", seg, flags=re.I)
+                if seg.strip() and not _REASONING_TELL.search(seg):
+                    clean.append(seg)
+            if clean:
+                kept.append(" ".join(seg.strip() for seg in clean))
+            elif not line.strip():
+                kept.append("")
+        stripped = "\n".join(kept).strip()
+        # Only accept the cleaned version if something publishable survived.
+        if len(re.findall(r"[֐-׿]", stripped)) >= 10:
+            text = stripped
+        if not _REASONING_TELL.search(text):
             return text
         # Prefer the last quoted block — models often put final version in quotes
         quoted = re.findall(r'"([^"]{30,350})"', text)
