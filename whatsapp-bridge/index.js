@@ -91,7 +91,12 @@ app.use(express.json({ limit: '20mb' }))
 
 function normalizeTargetJid(to, replyJid = '') {
   if (replyJid && replyJid.trim()) return replyJid.trim()
-  const digits = String(to || '').replace(/\D/g, '')
+  const raw = String(to || '').trim()
+  // Already a full JID (group "…@g.us" or user "…@s.whatsapp.net") — pass through
+  // unchanged. The digit-strip below would otherwise mangle a group JID. This is how
+  // outbound messages reach the owner's "updates" group (2026-08-04).
+  if (raw.includes('@')) return raw
+  const digits = raw.replace(/\D/g, '')
   const e164 = digits.startsWith('0') ? '972' + digits.slice(1) : digits
   return e164 + '@s.whatsapp.net'
 }
@@ -201,6 +206,25 @@ app.get('/health', (_, res) => res.json({
   // here so the backend health monitor can alert instead of it going unnoticed.
   account_mismatch: accountMismatch,
 }))
+
+// List the WhatsApp groups this account participates in — so the owner can pick which
+// one receives system/agent updates (2026-08-04). Returns [{jid, subject, size}].
+app.get('/groups', async (_, res) => {
+  if (!waSocket || !waSocket.user) {
+    return res.status(503).json({ ok: false, error: 'not connected' })
+  }
+  try {
+    const groups = await waSocket.groupFetchAllParticipating()
+    const list = Object.values(groups || {}).map((g) => ({
+      jid: g.id,
+      subject: g.subject || '',
+      size: Array.isArray(g.participants) ? g.participants.length : 0,
+    }))
+    res.json({ ok: true, groups: list })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String(err && err.message || err) })
+  }
+})
 
 app.post('/typing', async (req, res) => {
   const { to, reply_jid } = req.body

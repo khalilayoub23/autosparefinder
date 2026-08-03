@@ -131,7 +131,7 @@ def _supervised_task(name: str, coro) -> "asyncio.Task":
                 msg_parts.append(f"Error: {type(exc).__name__}: {exc}")
             msg_parts.append("⚠️ This task will NOT restart automatically — check the server.")
             asyncio.get_event_loop().create_task(
-                _wa_send_quiet(to=owner, text="\n".join(msg_parts))
+                _wa_send_update("\n".join(msg_parts))
             )
         print(f"[TaskMonitor] DIED: {name} exc={exc}")
 
@@ -919,12 +919,12 @@ async def _status_update_loop() -> None:
 
             if is_digest_time:
                 lines[0] = f"\U0001f4c5 *AutoSpareFinder — דוח יומי* ({_now.strftime('%H:%M UTC')})"
-                await _wa_send_quiet(to=_owner_phone, text="\n".join(lines))
+                await _wa_send_update("\n".join(lines))
                 _last_digest_date = _today
                 print("[StatusUpdate] Sent daily digest to owner")
             elif has_problem and problem_sig != _last_problem_sig:
                 lines[0] = f"⚠️ *AutoSpareFinder — בעיה במערכת* ({_now.strftime('%H:%M UTC')})"
-                await _wa_send_quiet(to=_owner_phone, text="\n".join(lines))
+                await _wa_send_update("\n".join(lines))
                 _last_problem_sig = problem_sig
                 print(f"[StatusUpdate] Sent PROBLEM alert to owner: {problem_sig[:120]}")
             else:
@@ -1376,7 +1376,7 @@ async def _job_queue_report_loop() -> None:
                 for s in failed:
                     lines.append(f"❌ {s['title'] or s['step_key']}: "
                                  f"{str(s['error'] or '')[:110]}")
-                await _wa_send_quiet(to=owner, text="\n".join(lines), critical=True)
+                await _wa_send_update("\n".join(lines), critical=True)
                 announced_done = True
                 await asyncio.sleep(interval)
                 continue
@@ -1388,7 +1388,7 @@ async def _job_queue_report_loop() -> None:
                             if prev.get("failed::" + s["step_key"]) != s["status"]]
             for s in newly_failed:
                 prev["failed::" + s["step_key"]] = s["status"]
-                await _wa_send_quiet(to=owner, critical=True, text=(
+                await _wa_send_update(critical=True, text=(
                     f"❌ *שלב נכשל בתור המשימות*\n"
                     f"{s['title'] or s['step_key']}\n"
                     f"{str(s['error'] or '')[:220]}\n"
@@ -1440,7 +1440,7 @@ async def _job_queue_report_loop() -> None:
             lines.append(f"מנות שהורצו: {cur['batches_run']}")
             lines.append(f"— {st['done']}/{st['total']} שלבים הושלמו · לעצירה: *עצור*")
 
-            await _wa_send_quiet(to=owner, text="\n".join(lines))
+            await _wa_send_update("\n".join(lines))
             last_sent = time.time()
             logger.info("[job_queue_report] sent: step=%s remaining=%s delta=%s",
                         key, rem, done_last_hour)
@@ -1791,7 +1791,7 @@ async def _harvest_supervisor_loop() -> None:
                                 f"נשאבים כעת:\n{cur_txt}"
                             )
                             try:
-                                await _wa_send_quiet(to=owner, text=msg)
+                                await _wa_send_update(msg)
                                 _harvest_alert_sent_utc = _now
                             except Exception as _rex:
                                 print(f"[harvest_supervisor] status send failed: {_rex}", flush=True)
@@ -1831,7 +1831,7 @@ async def _harvest_supervisor_loop() -> None:
                             f"הבאים בתור (עדיפות עליונה):\n{nxt}"
                         )
                         try:
-                            await _wa_send_quiet(to=owner, text=msg)
+                            await _wa_send_update(msg)
                         except Exception:
                             pass
                     _last_digest_date = _today
@@ -2271,7 +2271,7 @@ async def _amayama_harvest_monitor_loop() -> None:
                 owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
                 if owner:
                     try:
-                        await _wa_send_quiet(to=owner, text=(
+                        await _wa_send_update((
                             "🈁 SERVER Amayama harvester (FlareSolverr) is DOWN — no feed "
                             "activity ~25 min. ~{:,} Japanese-brand parts still unpriced. "
                             "Most likely the Amayama login cookie expired: refresh "
@@ -2461,6 +2461,35 @@ async def _wa_send_quiet(to: str, text: str, critical: bool = False) -> dict:
         # Redis down — better to deliver late-night than to lose the alert entirely.
         print(f"[QuietHours] queue failed ({exc}) — sending immediately")
         return await _wa_send(to=to, text=text, reply_jid=rjid)
+
+
+async def _updates_group_jid() -> str:
+    """The WhatsApp group JID that receives system/agent UPDATES, separated from the
+    owner's 1:1 conversational chat (owner request 2026-08-04). Set via the console
+    (`קבוצת עדכונים <n>`, stored in Redis) or the OWNER_UPDATES_GROUP_JID env. Empty =
+    not configured yet → updates fall back to the owner's 1:1 number."""
+    try:
+        _r = await get_redis()
+        v = await _r.get("owner:updates_group_jid")
+        if v:
+            return v.decode() if isinstance(v, (bytes, bytearray)) else str(v)
+    except Exception:
+        pass
+    return os.getenv("OWNER_UPDATES_GROUP_JID", "").strip()
+
+
+async def _wa_send_update(text: str, critical: bool = False) -> dict:
+    """Send a SYSTEM/AGENT update. Goes to the dedicated updates group if one is
+    configured, otherwise to the owner's 1:1 number — both through the quiet-hours gate
+    so nothing lands at 03:00. This keeps alerts/digests/approvals out of the
+    conversational thread the owner uses to talk to the agents."""
+    jid = await _updates_group_jid()
+    if jid:
+        return await _wa_send_quiet(to=jid, text=text, critical=critical)
+    owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
+    if owner:
+        return await _wa_send_quiet(to=owner, text=text, critical=critical)
+    return {"ok": False, "error": "no updates destination"}
 
 
 async def _flush_wa_quiet_queue() -> int:
@@ -2701,7 +2730,7 @@ async def _noa_engagement_loop():
             if drafted and not autoreply:
                 owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
                 if owner:
-                    await _wa_send_quiet(to=owner, text=(
+                    await _wa_send_update((
                         f"💬 NOA: {drafted} תגובות חדשות ברשתות ממתינות לתשובה.\n"
                         f"לצפייה: כתוב *תגובות* · לאישור: *ענה <מזהה>*"))
         except Exception as exc:
@@ -2737,7 +2766,7 @@ async def _supplier_sourcing_loop():
                 owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
                 if owner:
                     lines = "\n".join(f"• {o['name'][:34]} ({o['domain']})" for o in onboarded[:6])
-                    await _wa_send_quiet(to=owner, text=(
+                    await _wa_send_update((
                         f"🔌 NIR מצא {len(onboarded)} ספקים חדשים אפשריים:\n{lines}\n"
                         f"לצפייה/אישור: כתוב *ספקים*"))
         except Exception as exc:
@@ -3052,7 +3081,7 @@ async def _noa_marketing_loop():
                     wa_msg = "\n".join(wa_lines)
 
                     if OWNER_PHONE:
-                        await _wa_send_quiet(to=OWNER_PHONE, text=wa_msg)
+                        await _wa_send_update(wa_msg)
                     if NOA_TELEGRAM_MIRROR and TELEGRAM_OWNER_ID and TELEGRAM_ADMIN_TOKEN:
                         await _noa_send_telegram(TELEGRAM_ADMIN_TOKEN, TELEGRAM_OWNER_ID, wa_msg)
 
@@ -3195,7 +3224,7 @@ async def _noa_marketing_loop():
                             + f"✅ לאישור ופרסום: {_site}/admin (תור הפוסטים)\n"
                             + f"🆔 {social_post_id or '—'}"
                         )
-                        await _wa_send_quiet(to=OWNER_PHONE, text=wa_post_msg)
+                        await _wa_send_update(wa_post_msg)
                     if NOA_TELEGRAM_MIRROR and TELEGRAM_OWNER_ID and TELEGRAM_ADMIN_TOKEN:
                         tg_msg = f"🎯 NOA — {platform.title()} post ready\n\n📝 {caption}"
                         tg_msg = noa._append_noa_links(noa._normalize_noa_symbols(tg_msg))
@@ -3396,7 +3425,7 @@ async def _health_monitor_loop():
             except Exception:
                 pass  # Redis unavailable — allow alert through
         try:
-            result = await _wa_send_quiet(to=_OWNER_PHONE, text=f"{title}\n{msg}")
+            result = await _wa_send_update(f"{title}\n{msg}")
             if not result.get("ok"):
                 print(f"[HealthMonitor] Owner WhatsApp failed ({alert_key}): {result.get('error')}")
         except Exception as _exc:

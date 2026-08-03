@@ -10,6 +10,10 @@ DELETE_URL = BRIDGE_URL.replace("/send", "/delete")
 
 def _normalize_bridge_phone(to: str) -> str:
     phone = to.replace("whatsapp:", "").strip()
+    # A full JID (group "…@g.us" / user "…@s.whatsapp.net" / "…@lid") passes through
+    # untouched — the bridge sends to it directly. Used for the owner updates group.
+    if "@" in phone:
+        return phone
     if phone.startswith("+972"):
         return "0" + phone[4:]
     if phone.startswith("972"):

@@ -283,6 +283,62 @@ async def _clear_active_agent() -> None:
         pass
 
 
+# ── Updates group (system/agent updates → a dedicated WhatsApp group) ─────────
+_UPDATES_GROUP_KEY = "owner:updates_group_jid"
+_UPDATES_GROUP_LIST_KEY = "owner:updates_group_choices"  # index → jid, for "קבוצת עדכונים <n>"
+
+
+async def _bridge_groups() -> list:
+    """Fetch the WhatsApp groups this account is in, from the Baileys bridge."""
+    import httpx
+    base = os.getenv("WHATSAPP_BRIDGE_URL", "http://whatsapp-bridge:3001/send").rsplit("/", 1)[0]
+    async with httpx.AsyncClient(timeout=15.0) as c:
+        r = await c.get(f"{base}/groups")
+        data = r.json()
+    return data.get("groups", []) if data.get("ok") else []
+
+
+async def _list_updates_groups() -> str:
+    try:
+        groups = await _bridge_groups()
+    except Exception as e:
+        return f"⚠️ לא הצלחתי לקרוא את רשימת הקבוצות מהגשר: {str(e)[:100]}"
+    if not groups:
+        return ("לא נמצאו קבוצות. צור קבוצת וואטסאפ (למשל \"AutoSpareFinder עדכונים\"), "
+                "הוסף אליה את המספר של הפלטפורמה, ואז כתוב שוב *קבוצות*.")
+    from BACKEND_AUTH_SECURITY import get_redis
+    r = await get_redis()
+    current = await r.get(_UPDATES_GROUP_KEY)
+    current = (current.decode() if isinstance(current, (bytes, bytearray)) else current) or ""
+    idx_map = {}
+    lines = ["📋 *קבוצות וואטסאפ:*"]
+    for i, g in enumerate(groups, 1):
+        idx_map[str(i)] = g["jid"]
+        mark = " ✅ (קבוצת העדכונים הנוכחית)" if g["jid"] == current else ""
+        lines.append(f"{i}. {g.get('subject') or '(ללא שם)'} · {g.get('size', 0)} חברים{mark}")
+    await r.set(_UPDATES_GROUP_LIST_KEY, json.dumps(idx_map), ex=1800)
+    lines.append("\nלהגדרת קבוצת העדכונים: *קבוצת עדכונים <מספר>*")
+    return "\n".join(lines)
+
+
+async def _set_updates_group(arg: str) -> str:
+    arg = (arg or "").strip()
+    if not arg:
+        return "כתוב *קבוצת עדכונים <מספר>* (מספר מהרשימה ב*קבוצות*)."
+    from BACKEND_AUTH_SECURITY import get_redis
+    r = await get_redis()
+    jid = arg
+    if "@" not in arg:  # an index from the last listing
+        raw = await r.get(_UPDATES_GROUP_LIST_KEY)
+        idx_map = json.loads(raw) if raw else {}
+        jid = idx_map.get(arg, "")
+        if not jid:
+            return "מספר לא מוכר. כתוב *קבוצות* לרשימה מעודכנת ואז *קבוצת עדכונים <מספר>*."
+    await r.set(_UPDATES_GROUP_KEY, jid)
+    return (f"✅ עדכוני המערכת והסוכנים יישלחו מעכשיו לקבוצה הזו.\n"
+            f"(השיחה איתך כאן נשארת לצ׳אט עם הסוכנים בלבד.)\n🆔 {jid}")
+
+
 _HELP = (
     "🎛️ *מרכז הבקרה שלך* (WhatsApp)\n\n"
     "*לפנות לסוכן — עם @:*\n"
@@ -307,6 +363,8 @@ _HELP = (
     "• *עצור* / *המשך* — עצירה בטוחה של התור (בסוף המנה) והמשך\n"
     "• *מקורות* — NIR יחפש ספקים חדשים ברשת עכשיו\n"
     "• *אשרספק [מזהה]* / *דחהספק [מזהה]* — הפעל/דחה ספק\n"
+    "• *קבוצות* — הצג קבוצות וואטסאפ · *קבוצת עדכונים <מספר>* — "
+    "הפנה את כל עדכוני המערכת/הסוכנים לקבוצה נפרדת (כדי שהצ׳אט כאן יישאר לשיחה בלבד)\n"
     "• *עזרה* — התפריט הזה\n\n"
     "דוגמה: *@נועה תשמרי: 2 פוסטים ביום בשעות שיא, עם קריאה לפעולה* — "
     "וזה יישמר וייושם בפועל."
@@ -838,6 +896,13 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp") -> 
         import job_queue as _jq
         await _jq.request_stop(False)
         return "▶️ בקשת העצירה בוטלה — התור ימשיך מהמקום שבו עצר."
+
+    # ── updates group: list groups / set which one receives system updates ────
+    if low in ("groups", "קבוצות", "קבוצה"):
+        return await _list_updates_groups()
+    m_ug = re.match(r"^(קבוצת עדכונים|updates group|עדכונים לקבוצה)\s*(\S+)?", msg, re.I)
+    if m_ug:
+        return await _set_updates_group(m_ug.group(2) or "")
 
     if low in ("suppliers", "ספקים", "מקורות ספקים"):
         return await _sourcing_list()
