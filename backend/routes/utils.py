@@ -1044,27 +1044,50 @@ async def trigger_supplier_fulfillment(paid_orders: list, db: AsyncSession) -> N
                     ))
                     asyncio.create_task(_guarded_task(publish_notification(str(admin.id), {"type": "supplier_order", "title": _title_admin, "message": _msg_admin})))
             elif supplier_payment.status == "failed":
-                for admin in admins:
-                    _title_fail = f"⚠️ תשלום לספק נכשל עבור {order_db.order_number}"
-                    _msg_fail = (
-                        f"נכשל תשלום לספק {supplier_name} עבור הזמנה {order_db.order_number}.\n"
-                        f"שגיאה: {supplier_payment.failure_reason or 'Unknown error'}"
-                    )
-                    db.add(Notification(
-                        user_id=admin.id,
-                        type="supplier_order",
-                        title=_title_fail,
-                        message=_msg_fail,
-                        data={
-                            "order_id": str(order_db.id),
-                            "order_number": order_db.order_number,
-                            "supplier_name": supplier_name,
-                            "supplier_payment_id": str(supplier_payment.id),
-                            "status": "failed",
-                            "failure_reason": supplier_payment.failure_reason,
-                        },
-                    ))
-                    asyncio.create_task(_guarded_task(publish_notification(str(admin.id), {"type": "supplier_order", "title": _title_fail, "message": _msg_fail})))
+                # NOTIFY BY EXCEPTION (fix 2026-08-04): the stuck-orders monitor re-calls
+                # this every 30 min for the same unfulfillable orders, so an identical
+                # "supplier payment failed" alert was firing ~100×/day per order (310 rows
+                # over 3 days for one order) — the "template that keeps sending without a
+                # real update" the owner reported. Dedup per (order, failure_reason) with a
+                # 24h Redis cooldown so a persistent failure alerts ONCE/day, while a NEW
+                # failure or a changed reason still alerts immediately.
+                _fail_reason = supplier_payment.failure_reason or "Unknown error"
+                _notify_fail = True
+                try:
+                    from BACKEND_AUTH_SECURITY import get_redis as _gr
+                    import hashlib as _hl
+                    _sig = _hl.sha256(f"{order_db.id}|{_fail_reason}".encode()).hexdigest()[:16]
+                    _rk = f"autospare:supplier_fail_notified:{_sig}"
+                    _r = await _gr()
+                    if _r is not None:
+                        if await _r.exists(_rk):
+                            _notify_fail = False
+                        else:
+                            await _r.set(_rk, "1", ex=86400)
+                except Exception:
+                    _notify_fail = True  # Redis down → don't suppress a real alert
+                if _notify_fail:
+                    for admin in admins:
+                        _title_fail = f"⚠️ תשלום לספק נכשל עבור {order_db.order_number}"
+                        _msg_fail = (
+                            f"נכשל תשלום לספק {supplier_name} עבור הזמנה {order_db.order_number}.\n"
+                            f"שגיאה: {_fail_reason}"
+                        )
+                        db.add(Notification(
+                            user_id=admin.id,
+                            type="supplier_order",
+                            title=_title_fail,
+                            message=_msg_fail,
+                            data={
+                                "order_id": str(order_db.id),
+                                "order_number": order_db.order_number,
+                                "supplier_name": supplier_name,
+                                "supplier_payment_id": str(supplier_payment.id),
+                                "status": "failed",
+                                "failure_reason": supplier_payment.failure_reason,
+                            },
+                        ))
+                        asyncio.create_task(_guarded_task(publish_notification(str(admin.id), {"type": "supplier_order", "title": _title_fail, "message": _msg_fail})))
 
         # Continue supplier purchase cycle through OrdersAgent after successful supplier spend.
         if suppliers_ready_for_purchase:

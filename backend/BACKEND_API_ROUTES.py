@@ -3265,30 +3265,54 @@ async def _stuck_orders_monitor_loop():
                     print(f"[OrderMonitor] Found {len(stuck)} order(s) stuck > {STUCK_ORDER_HOURS}h — triggering fulfillment...")
                     await trigger_supplier_fulfillment(stuck, db)
 
-                    admins_res = await db.execute(select(User).where(User.is_admin == True))
-                    admins = admins_res.scalars().all()
                     order_list = ", ".join(o.order_number for o in stuck)
-                    _stuck_title = f"🤖 סוכן הזמנות: {len(stuck)} הזמנות תקועות טופלו אוטומטית"
-                    _stuck_msg = (
-                        f"הסוכן זיהה {len(stuck)} הזמנה/ות שתקועות מעל {STUCK_ORDER_HOURS} שעות "
-                        f"במצב 'ממתין לספק' ופעל אוטומטית להמשך הטיפול.\n"
-                        f"הזמנות: {order_list}"
-                    )
-                    for admin in admins:
-                        db.add(Notification(
-                            user_id=admin.id,
-                            type="system",
-                            title=_stuck_title,
-                            message=_stuck_msg,
-                            data={
-                                "stuck_orders": [o.order_number for o in stuck],
-                                "stuck_hours": STUCK_ORDER_HOURS,
-                                "auto_handled": True,
-                            },
-                        ))
-                        asyncio.create_task(_guarded_task(publish_notification(str(admin.id), {"type": "system", "title": _stuck_title, "message": _stuck_msg})))
-                    await db.commit()
-                    print(f"[OrderMonitor] ✅ Auto-fulfilled: {order_list}")
+                    # NOTIFY BY EXCEPTION (fix 2026-08-04): this loop re-triggers the SAME
+                    # unfulfillable orders every cycle (their supplier payment keeps failing),
+                    # and it used to send an identical "N orders auto-handled" notification to
+                    # every admin EACH cycle — 310 identical rows over 3 days. That is the
+                    # "template that keeps sending without a real update" the owner reported.
+                    # Only notify when the STUCK-ORDER SET actually changes (Redis signature,
+                    # 24h TTL); a re-alert after 24h still surfaces a persistent problem.
+                    import hashlib as _hl
+                    _stuck_sig = _hl.sha256(",".join(sorted(o.order_number for o in stuck)).encode()).hexdigest()[:16]
+                    _notify_stuck = True
+                    try:
+                        _r = await get_redis()
+                        _sk = f"autospare:stuck_orders_notified:{_stuck_sig}"
+                        if _r is not None:
+                            if await _r.exists(_sk):
+                                _notify_stuck = False
+                            else:
+                                await _r.set(_sk, "1", ex=86400)
+                    except Exception:
+                        _notify_stuck = True
+                    if _notify_stuck:
+                        admins_res = await db.execute(select(User).where(User.is_admin == True))
+                        admins = admins_res.scalars().all()
+                        _stuck_title = f"🤖 סוכן הזמנות: {len(stuck)} הזמנות תקועות טופלו אוטומטית"
+                        _stuck_msg = (
+                            f"הסוכן זיהה {len(stuck)} הזמנה/ות שתקועות מעל {STUCK_ORDER_HOURS} שעות "
+                            f"במצב 'ממתין לספק' ופעל אוטומטית להמשך הטיפול.\n"
+                            f"הזמנות: {order_list}"
+                        )
+                        for admin in admins:
+                            db.add(Notification(
+                                user_id=admin.id,
+                                type="system",
+                                title=_stuck_title,
+                                message=_stuck_msg,
+                                data={
+                                    "stuck_orders": [o.order_number for o in stuck],
+                                    "stuck_hours": STUCK_ORDER_HOURS,
+                                    "auto_handled": True,
+                                },
+                            ))
+                            asyncio.create_task(_guarded_task(publish_notification(str(admin.id), {"type": "system", "title": _stuck_title, "message": _stuck_msg})))
+                        await db.commit()
+                        print(f"[OrderMonitor] ✅ Auto-fulfilled + notified (new set): {order_list}")
+                    else:
+                        await db.commit()
+                        print(f"[OrderMonitor] ✅ Auto-fulfilled (same set, notify suppressed): {order_list}")
                 else:
                     print(f"[OrderMonitor] Pass 1: no stuck orders (threshold: {STUCK_ORDER_HOURS}h).")
         except Exception as e:

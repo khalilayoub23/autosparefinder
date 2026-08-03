@@ -243,13 +243,55 @@ async def _save_history(hist: List[Dict[str, str]]) -> None:
         pass
 
 
+# ── Sticky agent session (owner request 2026-08-04) ──────────────────────────
+# The console used to route EVERY unprefixed message to AVI, so "@נועה ..." then a
+# follow-up without the prefix was answered by AVI — "I call NOA and AVI answers".
+# We now remember the active agent per owner in Redis: once you address an agent you
+# STAY with them until you @-switch or type יציאה. Idle-expires so a stale session
+# never traps you.
+_ACTIVE_AGENT_KEY = "owner:console:active_agent"
+_ACTIVE_AGENT_TTL_S = int(os.getenv("OWNER_ACTIVE_AGENT_TTL_S", "3600"))  # 60 min idle
+
+
+async def _get_active_agent() -> "str | None":
+    try:
+        from BACKEND_AUTH_SECURITY import get_redis
+        r = await get_redis()
+        v = await r.get(_ACTIVE_AGENT_KEY)
+        if v is None:
+            return None
+        return v.decode() if isinstance(v, (bytes, bytearray)) else str(v)
+    except Exception:
+        return None
+
+
+async def _set_active_agent(agent_key: str) -> None:
+    try:
+        from BACKEND_AUTH_SECURITY import get_redis
+        r = await get_redis()
+        await r.set(_ACTIVE_AGENT_KEY, agent_key, ex=_ACTIVE_AGENT_TTL_S)
+    except Exception:
+        pass
+
+
+async def _clear_active_agent() -> None:
+    try:
+        from BACKEND_AUTH_SECURITY import get_redis
+        r = await get_redis()
+        await r.delete(_ACTIVE_AGENT_KEY)
+    except Exception:
+        pass
+
+
 _HELP = (
     "🎛️ *מרכז הבקרה שלך* (WhatsApp)\n\n"
     "*לפנות לסוכן — עם @:*\n"
     "• *@אבי <הודעה>* — AVI, מנהל/מתאם המערכת\n"
     "• *@נועה <הודעה>* — NOA, שיווק וסושיאל\n"
     "• *@עוזר <הודעה>* — עוזר אישי כללי (חכם ומועיל)\n"
-    "(בלי @ — פונה ל-AVI כברירת מחדל)\n\n"
+    "אחרי שפנית לסוכן — *נשארים בשיחה איתו* וכל ההודעות הבאות אליו, "
+    "בלי צורך ב-@ כל פעם. למעבר לסוכן אחר: *@<שם>*. ליציאה: *יציאה*.\n"
+    "(בלי @ ובלי שיחה פעילה — פונה ל-AVI כברירת מחדל)\n\n"
     "*פקודות מהירות:*\n"
     "• *סטטוס* — סקירת מערכת חיה\n"
     "• *שאיבה* — התקדמות שאיבת הקטלוג\n"
@@ -700,8 +742,18 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp") -> 
     msg = (message or "").strip()
     low = msg.lower()
 
+    # ── leave the current agent session → back to neutral console ─────────────
+    if low in ("יציאה", "צא", "exit", "quit", "סיום", "חזרה", "back"):
+        prev = await _get_active_agent()
+        await _clear_active_agent()
+        if prev:
+            tag = _AGENT_TAG.get(prev, "AVI")
+            return f"✅ יצאת משיחה עם *{tag}*. חזרת למרכז הבקרה.\nכתוב *עזרה* לתפריט או *@נועה* / *@אבי* לפנייה לסוכן."
+        return _HELP
+
     # ── deterministic commands ────────────────────────────────────────────────
     if low in ("help", "menu", "עזרה", "תפריט", "?", "start", "היי", "hi"):
+        await _clear_active_agent()   # opening the menu leaves any agent session
         return _HELP
     if low in ("status", "סטטוס", "review", "סקירה", "מצב"):
         return "📊 *סטטוס מערכת*\n" + await build_status_snapshot(db)
@@ -796,6 +848,19 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp") -> 
     # Call the LLM DIRECTLY (not via get_agent): the router_agent is a JSON classifier
     # and produces garbage on freeform chat. We just need a grounded conversational reply.
     agent_key, clean, explicit = _pick_agent(msg)
+
+    # STICKY SESSION: an explicit @agent switches AND pins the agent; an unprefixed
+    # message continues with whoever you're already talking to (not a forced fall to AVI).
+    switched = False
+    active = await _get_active_agent()
+    if explicit:
+        switched = (active != agent_key)
+        await _set_active_agent(agent_key)
+    elif active:
+        agent_key = active                 # keep talking to the current agent
+        await _set_active_agent(agent_key)  # refresh idle TTL
+    # else: no prefix and no active session → default (AVI), stay unpinned.
+
     is_noa = agent_key == "social_media_manager_agent"
 
     # If the owner gives NOA a DIRECTIVE (save/always/from-now/guideline …), persist it so
@@ -828,6 +893,9 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp") -> 
                         {"role": "assistant", "content": reply}]
         await _save_history(hist2)
         tag = _AGENT_TAG.get(agent_key, "AVI")
+        # On an explicit switch, confirm who you're now talking to (and how to leave).
+        if switched:
+            return f"🔀 עכשיו בשיחה עם *{tag}* (ליציאה: *יציאה*)\n\n[{tag}] {reply}"
         return f"[{tag}] {reply}"
     except Exception as e:
         return f"⚠️ שגיאה בעיבוד ההודעה: {str(e)[:120]}"
