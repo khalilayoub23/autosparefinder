@@ -344,7 +344,7 @@ _HELP = (
     "*לפנות לסוכן — עם @:*\n"
     "• *@אבי <הודעה>* — AVI, מנהל/מתאם המערכת\n"
     "• *@נועה <הודעה>* — NOA, שיווק וסושיאל\n"
-    "• *@עוזר <הודעה>* — עוזר אישי כללי (חכם ומועיל)\n"
+    "• *@Bone <הודעה>* — Bone, עוזר אישי כללי (חכם ומועיל; גם @בון / @עוזר)\n"
     "אחרי שפנית לסוכן — *נשארים בשיחה איתו* וכל ההודעות הבאות אליו, "
     "בלי צורך ב-@ כל פעם. למעבר לסוכן אחר: *@<שם>*. ליציאה: *יציאה*.\n"
     "(בלי @ ובלי שיחה פעילה — פונה ל-AVI כברירת מחדל)\n\n"
@@ -375,8 +375,10 @@ _HELP = (
 _AGENT_TOKENS = {
     "noa": "social_media_manager_agent", "נועה": "social_media_manager_agent",
     "avi": "router_agent", "אבי": "router_agent",
-    # A general-purpose owner assistant you can @-call (owner request 2026-07-25). It is an
-    # assistant agent running on the platform's own LLM — not the external dev tool.
+    # Bone — a general-purpose owner assistant you can @-call (renamed from "עוזר" on
+    # owner request 2026-08-04). Runs on the platform's own LLM — not the external dev
+    # tool. The old aliases (עוזר/קלוד/assistant/claude) still resolve so nothing breaks.
+    "bone": "assistant_agent", "בון": "assistant_agent", "בונ": "assistant_agent",
     "claude": "assistant_agent", "קלוד": "assistant_agent",
     "assistant": "assistant_agent", "עוזר": "assistant_agent",
 }
@@ -469,6 +471,21 @@ _WA_REPLY_RULES = (
     "• אם צריך פעולה מובנית — הפנה לפקודה: סטטוס / שאיבה / פוסטים / אשר / דחה."
 )
 
+# Human voice — the "way NOA talks" applied to EVERY console agent (owner request
+# 2026-08-04: AVI and Bone should talk like humans, not bots). Warmth + a light wit,
+# never templated. Kept SEPARATE from the compliance rules above so the personality is
+# explicit. The role stays each agent's own (AVI=ops, Bone=general help, NOA=marketing) —
+# this only changes the TONE.
+_HUMAN_VOICE = (
+    "\n\nאיך לדבר (חובה — כמו בן אדם, לא כמו בוט):\n"
+    "• דבר עם חליל כמו חבר-צוות אנושי: עברית מדוברת וזורמת, גוף ראשון, משפטים קצרים.\n"
+    "• קצת אישיות: קריצה חכמה או הערה קלילה כשמתאים — בלי להגזים, בלי ליצנות, בלי בדיחות דחוקות.\n"
+    "• פנה אליו בשמו לפעמים ('חליל, …'). אמוג'י — 1 עד 2 לכל היותר, רק כשזה מוסיף.\n"
+    "• בלי ניסוחים תבניתיים ('אני כאן כדי לעזור', 'שאלה מצוינת', 'להלן'), בלי חזרתיות, "
+    "בלי אותו פתיח כל פעם. תשובה אחת — טבעית וישירה — לא ניתוח.\n"
+    "• תישאר מדויק: אם אתה לא בטוח, אמור זאת בפשטות במקום להמציא."
+)
+
 # When the owner ISSUES AN INSTRUCTION (rather than asking for output), the reply must
 # be an acknowledgement of what will change — not a freshly generated artefact.
 # Without this NOA answered "from now on always put a real price in every post" by
@@ -483,8 +500,8 @@ _OWNER_SYSTEM = {
     "router_agent": (
         "אתה AVI — המתאם הראשי של AutoSpareFinder, מדבר עם *חליל, הבעלים* (לא לקוח). "
         "תפקידך: לתת לו תמונת מצב מדויקת של המערכת, המלצות תפעוליות, ולנתב משימות. "
-        "היה ישיר, מקצועי ומועיל. אל תמכור לו ואל תתייחס אליו כלקוח."
-        + _ROSTER + _WA_REPLY_RULES
+        "היה ישיר, מקצועי ומועיל — אבל אנושי, לא יבש. אל תמכור לו ואל תתייחס אליו כלקוח."
+        + _ROSTER + _WA_REPLY_RULES + _HUMAN_VOICE
     ),
     "social_media_manager_agent": (
         "את NOA — מנהלת השיווק והסושיאל של AutoSpareFinder, מדברת עם *חליל, הבעלים*. "
@@ -495,17 +512,17 @@ _OWNER_SYSTEM = {
         "הקריאה לפעולה בפוסט היא תמיד חיפוש לפי מספר רישוי באתר — לא נתיב מוצר מומצא, "
         "ולא מבצע/הנחה שלא קיימים. "
         "לאישור/דחיית פוסטים ממתינים: 'פוסטים' ואז 'אשר'/'דחה'."
-        + _ROSTER + _WA_REPLY_RULES
+        + _ROSTER + _WA_REPLY_RULES + _HUMAN_VOICE
     ),
     "assistant_agent": (
-        "אתה *העוזר האישי* של חליל, הבעלים של AutoSpareFinder (הוא קורא לך גם 'קלוד'). "
-        "אתה עוזר כללי, חכם ומועיל — עונה על כל שאלה, מסביר, מתכנן, ונותן עצה טכנית ועסקית "
-        "על המערכת והעסק. יש לך גישה למצב המערכת החי למטה. אתה עוזר תפעולי, לא סוכן שירות "
-        "לקוחות ולא מוכר. אם צריך פעולה מובנית — הפנה לפקודה."
-        + _ROSTER + _WA_REPLY_RULES
+        "אתה *Bone* — העוזר האישי של חליל, הבעלים של AutoSpareFinder (הוא קורא לך Bone, "
+        "בון, או עוזר). אתה עוזר כללי, חכם ומועיל — עונה על כל שאלה, מסביר, מתכנן, ונותן "
+        "עצה טכנית ועסקית על המערכת והעסק. יש לך גישה למצב המערכת החי למטה. אתה עוזר "
+        "תפעולי, לא סוכן שירות לקוחות ולא מוכר. אם צריך פעולה מובנית — הפנה לפקודה."
+        + _ROSTER + _WA_REPLY_RULES + _HUMAN_VOICE
     ),
 }
-_AGENT_TAG = {"social_media_manager_agent": "NOA", "assistant_agent": "עוזר"}
+_AGENT_TAG = {"social_media_manager_agent": "NOA", "assistant_agent": "Bone", "router_agent": "AVI"}
 
 
 def _clean_wa_reply(text: str) -> str:
@@ -951,7 +968,14 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp") -> 
         hist = await _load_history()
         convo = "\n".join(f"{m['role']}: {m['content']}" for m in hist[-8:])
         prompt = (convo + "\n" if convo else "") + f"user: {clean}"
-        reply = await hf_text(prompt, system=system, priority=True, max_tokens=600)
+        # Low temperature so the console agents (AVI / NOA / Bone) write clean, human,
+        # idiomatic Hebrew — the same fix proven for NOA (owner request 2026-08-04: "make
+        # AVI and Bone talk like NOA"). The console calls hf_text DIRECTLY (not .think()),
+        # so it wasn't covered by the earlier think()-layer temperature fix and ran at the
+        # Cerebras default ~1.0 → garbled Hebrew. Env-tunable.
+        _console_temp = float(os.getenv("OWNER_CONSOLE_TEMPERATURE", "0.4"))
+        reply = await hf_text(prompt, system=system, priority=True, max_tokens=600,
+                              temperature=_console_temp)
         reply = _clean_wa_reply(reply) or "בסדר, קיבלתי."
         reply += saved_note
         hist2 = hist + [{"role": "user", "content": clean},
