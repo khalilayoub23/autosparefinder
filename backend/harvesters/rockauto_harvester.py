@@ -60,7 +60,7 @@ CAT_MAP = {
     "brake": "brakes", "brakes": "brakes",
     "suspension": "suspension-steering", "steering": "suspension-steering",
     "engine": "engine", "cooling": "cooling",
-    "electrical": "electrical-sensors", "sensors": "electrical-sensors",
+    "electrical": "electrical", "sensors": "electrical",
     "filter": "filters", "filters": "filters",
     "lighting": "lighting", "body": "body-exterior",
     "exhaust": "exhaust", "fuel": "fuel-air",

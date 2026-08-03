@@ -366,25 +366,67 @@ PART_TYPE_FAMILIES: Tuple[PartTypeFamily, ...] = (
         ),
     ),
     PartTypeFamily(
-        id="electrical-sensors",
-        label="Audio & Electronics",
-        group_id="audio-electronics",
-        group_label="Audio & Electronics",
+        # RENAMED 2026-08-02 (owner): 'electrical' -> 'electrical'.
+        # 402,551 parts sat here and only 60,047 (15%) were sensors — the rest
+        # are fuse boxes, relay housings, wiring, switches, alternators. Calling
+        # a fuse box a "sensor" was simply wrong. The OLD id is kept as an alias
+        # so any stored value, external caller or cached document still resolves
+        # while the migration runs.
+        id="electrical",
+        # Label is "Electrical" ONLY. The owner approved merging SENSORS into
+        # ELECTRICAL — a two-way merge. "Electronics" is a separate concept
+        # (ECUs, modules, amplifiers) and must not be folded into the name.
+        label="Electrical",
+        # This group wraps ONLY the electrical family, so it carried the word
+        # "Electronics" into the UI for no reason. Renamed with the family.
+        group_id="electrical",
+        group_label="Electrical",
         badge="ELE",
         icon_key="electrical",
         palette=("#1d4ed8", "#93c5fd"),
-        aliases=("electrical", "electronics", "sensors", "wiring", "חשמל וחיישנים", "חשמל ואלקטרוניקה"),
+        # Aliases route INCOMING values here, so an alias IS a merge. Only the
+        # ones the owner approved are listed: the old id (back-compat) and
+        # SENSORS. "electronics" / "חשמל ואלקטרוניקה" were removed — merging
+        # them was never approved, and an unmatched value going to כללי is
+        # better than a wrong category (the standing rule in this codebase).
+        aliases=("electrical-sensors", "sensors", "wiring", "חשמל וחיישנים"),
         legacy_categories=("חשמל רכב",),
-        keywords=("sensor", "switch", "starter", "alternator", "ignition", "relay", "module", "harness", "wiring loom", "connector", "amplifier", "ecu", "control unit", "potentiometer", "horn", "fuse", "solenoid", "actuator", "resistor", "rectifier", "voltage regulator", "חשמל", "חיישן", "אלטרנטור", "סטרטר", "ממסר", "צמה", "חיווט", "פוטנציומטר", "צופר", "נתיך", "סולנואיד", "מפעיל"),
+        keywords=("sensor", "switch", "starter", "alternator", "ignition", "relay", "module", "harness", "wiring loom", "connector", "ecu", "control unit", "potentiometer", "horn", "fuse", "solenoid", "actuator", "resistor", "rectifier", "voltage regulator", "חשמל", "חיישן", "אלטרנטור", "סטרטר", "ממסר", "צמה", "חיווט", "פוטנציומטר", "צופר", "נתיך", "סולנואיד", "מפעיל"),
         subcategories=(
             PartSubcategory("sensors", "Sensors", aliases=("sensor", "חיישן")),
             PartSubcategory("alternators-starters", "Alternators & Starters", aliases=("alternator", "starter", "אלטרנטור", "סטרטר")),
             PartSubcategory("batteries-power", "Batteries & Power", aliases=("battery", "מצבר")),
             PartSubcategory("wiring-modules", "Wiring & Modules", aliases=("wiring", "module", "צמה", "מודול")),
             PartSubcategory("tpms-sensors", "TPMS Sensors", aliases=("tpms", "חיישן לחץ אוויר")),
-            PartSubcategory("cameras-gps", "Cameras & GPS", aliases=("camera", "gps", "מצלמה", "ניווט")),
+            PartSubcategory("tpms-sensors", "TPMS Sensors", aliases=("tpms", "חיישן לחץ אוויר")),
+        ),
+    ),
+    PartTypeFamily(
+        # AUDIO & ELECTRONICS — owner decision 2026-08-02. Electronics is NOT
+        # electrical: wiring, fuses, relays and sensors are electrical; ECUs,
+        # amplifiers, stereos, screens and connectivity are electronics. They
+        # were previously fused into one family, which is what made a fuse box
+        # look like a sensor. Sensors merged INTO electrical; electronics lands
+        # HERE instead of in the catch-all.
+        id="audio-electronics",
+        label="Audio & Electronics",
+        group_id="audio-electronics",
+        group_label="Audio & Electronics",
+        badge="AUD",
+        icon_key="electrical",
+        palette=("#7c3aed", "#c4b5fd"),
+        aliases=("electronics", "audio", "infotainment", "multimedia",
+                 "audio & electronics", "אלקטרוניקה", "מולטימדיה", "שמע"),
+        keywords=("stereo", "speaker", "amplifier", "subwoofer", "head unit",
+                  "infotainment", "navigation", "gps", "screen", "display",
+                  "bluetooth", "usb", "aux", "antenna", "radio", "dashcam",
+                  "מסך", "רדיו", "רמקול", "מגבר", "ניווט", "אנטנה", "מולטימדיה"),
+        subcategories=(
             PartSubcategory("stereos-audio", "Stereos & Audio", aliases=("stereo", "speaker", "מערכת שמע")),
+            PartSubcategory("screens-infotainment", "Screens & Infotainment", aliases=("screen", "display", "מסך")),
+            PartSubcategory("cameras-gps", "Cameras & GPS", aliases=("camera", "gps", "מצלמה", "ניווט")),
             PartSubcategory("bluetooth-connectivity", "Bluetooth & Connectivity", aliases=("bluetooth", "usb", "aux")),
+            PartSubcategory("antennas", "Antennas", aliases=("antenna", "אנטנה")),
         ),
     ),
     PartTypeFamily(

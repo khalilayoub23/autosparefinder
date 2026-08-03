@@ -32,7 +32,7 @@ RULES = [
     ("exhaust",          ["פליטה", "מאיין", "צינור פליטה", "קטליסט", "ממיר קטליטי"],
                          ["exhaust", "muffler", "catalytic converter", "manifold exhaust",
                           "dpf", "egr", "lambda sensor", "oxygen sensor"]),
-    ("electrical-sensors", ["חיישן", "חשמל", "נתיך", "ממסר", "בוקסה", "כבל", "חישן"],
+    ("electrical", ["חיישן", "חשמל", "נתיך", "ממסר", "בוקסה", "כבל", "חישן"],
                             ["sensor", "switch", "module", "relay", "fuse", "wire harness",
                              "connector", "ecu", "control unit", "abs module", "speed sensor",
                              "temperature sensor", "pressure sensor"]),

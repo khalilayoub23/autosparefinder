@@ -555,32 +555,67 @@ async def _keywords_list() -> str:
         return ("אין מילות־קטלוג חדשות שממתינות לאישור. ✅\n"
                 "המערכת לומדת מילים חדשות רק כשהיא נתקעת על חלק שהיא לא מזהה.")
     lines = ["🔤 *מילים חדשות שהמערכת למדה וממתינות לאישורך:*", ""]
-    for k in pend:
-        he = cl.category_map.display_name(k["category"], "he")
-        lines.append(
-            f"• *{k['token']}* → {he} ({k['category']})\n"
-            f"   ↳ {k['observations']} חלקים הסכימו · {k['agreement']:.0%} הסכמה"
-        )
+    # Show the EVIDENCE next to the vote. "96% agreement" only means the votes
+    # were consistent with each other, and the votes come from parts nobody has
+    # classified correctly yet — so it can be 96% consistent and still wrong
+    # (קופסת→gearbox was 98%, and the real parts are storage/relay/control
+    # boxes). The evidence line is measured against parts that ARE already
+    # filed in a real category, which is independent of the votes.
+    async with scraper_session_factory() as db:
+        for k in pend:
+            he = cl.category_map.display_name(k["category"], "he")
+            row = [f"• *{k['token']}* → {he} ({k['category']})",
+                   f"   ↳ {k['observations']} חלקים הסכימו · {k['agreement']:.0%} הסכמה"]
+            try:
+                p = await cl.evidence_profile(db, k["token"], proposed=k["category"])
+                if p["verdict"] == "ok":
+                    row.append(f"   ✅ נתוני אמת תומכים (פי {p['margin']} מהשנייה)")
+                elif p["verdict"] == "category_mismatch":
+                    top_he = cl.category_map.display_name(p["top"], "he") if p["top"] else "?"
+                    row.append(f"   ⚠️ נתוני אמת מצביעים על *{top_he}* — לא על מה שהוצע")
+                elif p["verdict"] == "ambiguous":
+                    row.append(f"   ⚠️ מילה כללית מדי (פי {p['margin']} בלבד מהקטגוריה השנייה)")
+                else:
+                    row.append("   ⚠️ אין מספיק נתוני אמת להחליט")
+            except Exception:
+                pass
+            lines.append("\n".join(row))
     lines.append("")
     lines.append("לאישור: *אשרמילה <מילה>* · לדחייה: *דחהמילה <מילה>*")
+    lines.append("מילה עם ⚠️ תיחסם — לאישור בכל זאת: *אשרמילה <מילה> בכוח*")
     lines.append("אחרי אישור המילה תסווג *כל* החלקים שמכילים אותה.")
     return "\n".join(lines)
 
 
-async def _keyword_approve(token: str) -> str:
+async def _keyword_approve(token: str, force: bool = False) -> str:
     from catalog_scraper import scraper_session_factory
     import category_learning as cl
     if not token:
         return "צריך מילה. כתוב *מילים* לרשימה."
     try:
         async with scraper_session_factory() as db:
-            res = await cl.approve(db, token)
+            res = await cl.approve(db, token, force=force)
     except Exception as e:
         return f"⚠️ שגיאה: {str(e)[:120]}"
     if not res.get("ok"):
         if res.get("error") == "blocklisted":
             return (f"❌ *{token}* חסומה לצמיתות (שם יצרן / בורג / מיקום) "
                     "ולא תיהפך לכלל סיווג.")
+        # The evidence gate refused. Show WHY, with the real numbers, and offer
+        # the override — the owner has domain knowledge the catalogue does not.
+        ev = res.get("evidence") or {}
+        if res.get("error") in ("category_mismatch", "ambiguous", "insufficient_evidence"):
+            top_he = (cl.category_map.display_name(ev.get("top"), "he")
+                      if ev.get("top") else "—")
+            spread = " · ".join(f"{c}:{n:,}" for c, n in (ev.get("spread") or [])[:3])
+            why = {
+                "category_mismatch": f"נתוני האמת מצביעים על *{top_he}*, לא על מה שהוצע",
+                "ambiguous": f"מילה כללית מדי — פי {ev.get('margin')} בלבד מהקטגוריה השנייה",
+                "insufficient_evidence": "אין מספיק חלקים מסווגים כדי להחליט",
+            }[res["error"]]
+            return (f"⛔ *{token}* לא אושרה — {why}.\n"
+                    f"פילוח אמיתי: {spread}\n"
+                    f"אם את/ה בטוח/ה בכל זאת: *אשרמילה {token} בכוח*")
         return f"לא מצאתי מילה ממתינה בשם *{token}*. כתוב *מילים* לרשימה."
     he = cl.category_map.display_name(res["category"], "he")
     return (f"✅ *{res['token']}* אושרה → {he}.\n"
@@ -720,7 +755,11 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp") -> 
     # ── category keyword learning (approve/reject what the LLM taught) ────────
     m_kwa = re.match(r"^(approve[\-_ ]?word|אשרמילה|אשר מילה)\b\s*(\S+)?", msg, re.I)
     if m_kwa:
-        return await _keyword_approve((m_kwa.group(2) or "").strip())
+        _kw_arg = (m_kwa.group(2) or "").strip()
+        # "אשרמילה <word> בכוח" / "... force" = owner override of the evidence gate
+        _rest = msg[m_kwa.end():].strip().lower()
+        _force = bool(re.search(r"\b(בכוח|force|בכל מקרה)\b", _rest))
+        return await _keyword_approve(_kw_arg, force=_force)
     m_kwr = re.match(r"^(reject[\-_ ]?word|דחהמילה|דחה מילה)\b\s*(\S+)?", msg, re.I)
     if m_kwr:
         return await _keyword_reject((m_kwr.group(2) or "").strip())

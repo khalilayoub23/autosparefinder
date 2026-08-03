@@ -68,6 +68,12 @@ async def main() -> None:
     # Same trap already recorded in the CLAUDE.md mistake log for
     # normalize_part_types / normalize_categories / dedup.
     ap = argparse.ArgumentParser()
+    ap.add_argument("--improve-only", action="store_true",
+                    help="with --scope all: only ever move a part OUT of a "
+                         "fallback bucket into a real category. A part that "
+                         "already has a real category is never touched, so a "
+                         "full-catalogue pass can add information but cannot "
+                         "lose any.")
     ap.add_argument("--max-seconds", type=int, default=0,
                     help="soft time budget: stop cleanly (exit 0) after N seconds "
                          "and leave the rest for the next run. 0 = run to completion. "
@@ -177,10 +183,25 @@ async def main() -> None:
                         # vehicle or literally "OEM Part".
                         extra=r["extra"] or "",
                     )
+                    _cur = (r["category"] or "")
                     if args.scope == "all" and cat == CATCH_ALL and \
-                            (r["category"] or "") not in BAD_FALLBACK_BUCKETS:
+                            _cur not in BAD_FALLBACK_BUCKETS:
                         # Never demote a real category to the catch-all just
                         # because the rules have no opinion on this name.
+                        continue
+                    if args.improve_only and _cur in CANONICAL and \
+                            _cur not in BAD_FALLBACK_BUCKETS and cat != _cur:
+                        # IMPROVE-ONLY: a part that already has a real category
+                        # keeps it. Re-deriving a category from the part NAME is
+                        # strictly weaker than what an importer/TecDoc supplied,
+                        # so a lateral move between two real categories is a
+                        # coin flip, not an improvement. Measured on a 5% sample
+                        # before this flag existed: air-conditioning-heating ->
+                        # body-exterior 3,741, body-exterior <-> interior-comfort
+                        # 1,984/1,978 (the rules churn BOTH ways), and
+                        # audio-electronics -> electrical 855, which would have
+                        # silently undone the split the owner had just approved.
+                        # Only catch-all -> real is a guaranteed gain.
                         continue
                     if cat and cat != CATCH_ALL:
                         updates.setdefault(cat, []).append(r["id"])

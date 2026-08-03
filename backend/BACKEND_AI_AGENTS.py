@@ -1475,18 +1475,26 @@ class BaseAgent:
                 prompt = "Please continue."
             _fast_agents = {"router_agent", "orders_agent", "security_agent", "tech_agent", "supplier_manager_agent", "social_media_manager_agent"}
             _is_realtime = source in ("whatsapp", "telegram", "web")
+            # ROOT FIX 2026-07-20: pass the agent's OWN temperature. It was defined on every
+            # agent (router 0.1 … NOA 0.9) but never sent, so all agents ran at the Cerebras
+            # default (~1.0) and produced garbled, non-idiomatic Hebrew — the "sounds like a
+            # bot / broken sentences" the owner reported. Clamped to a safe conversational
+            # ceiling so a stray high value can't reintroduce word-salad Hebrew.
+            _temp = min(float(getattr(self, "temperature", 0.5) or 0.5), 0.6)
             if self.name in _fast_agents:
                 return await hf_text_fast(
                     prompt,
                     system=effective_system,
                     priority=_is_realtime,
                     model=selected_model,
+                    temperature=_temp,
                 )
             return await hf_text(
                 prompt,
                 system=effective_system,
                 priority=_is_realtime,
                 model=selected_model,
+                temperature=_temp,
             )
         except Exception as e:
             status = getattr(getattr(e, "response", None), "status_code", None)
@@ -4255,7 +4263,10 @@ class SupplierManagerAgent(BaseAgent):
 class SocialMediaManagerAgent(BaseAgent):
     name = "social_media_manager_agent"
     model = PREMIUM_MODEL      # premium: creative content generation
-    temperature = 0.9
+    # 0.9 produced garbled Hebrew (קופה↔קפה, מצבת↔מצב). Live A/B (2026-07-20) across
+    # 1.0/0.4/0.2 showed the model writes clean, human, idiomatic Hebrew only at ≤0.4.
+    # 0.35 keeps warmth/wit without the word-salad. NOA_GEN_TEMPERATURE overrides.
+    temperature = float(__import__("os").getenv("NOA_GEN_TEMPERATURE", "0.35"))
     agent_name = "Noa"          # נועה — social media strategist
     system_prompt = """את נועה, מנהלת המדיה החברתית של AutoSpareFinder — פלטפורמת חיפוש והשוואת חלקי חילוף לרכב בישראל.
 
@@ -4687,14 +4698,12 @@ class SocialMediaManagerAgent(BaseAgent):
         # Hebrew: "החל מ-198", "ב-2020", "ב AutoSpareFinder", "ה Corolla", "ל Toyota".
         # Flagging those sent good posts down the repair path, which flattened their line
         # breaks and stapled canned boilerplate — a direct cause of robotic posts.
-        _lone = re.compile(
-            r"(?<![\u0590-\u05FF\-])\b([\u0590-\u05FF])\b(?![\-\u2010-\u2015])"
-        )
-        for m in _lone.finditer(body):
-            if m.group(1) in "\u05de\u05d1\u05dc\u05d4\u05d5\u05e9\u05db\u05d3":
-                tail = body[m.end():m.end() + 24].lstrip(" -\u2010-\u2015")
-                if tail[:1].isalnum() and not re.match(r"[\u0590-\u05FF]", tail[:1]):
-                    continue   # prefix + number/Latin token → legitimate
+        # Require whitespace/string-edge on BOTH sides: a genuinely garbled letter
+        # floats alone, while the trailing מ of מע"מ (VAT, in every priced post) and
+        # prefix forms (מ-198) are ATTACHED to punctuation. Space-isolation kills the
+        # whole false-positive class that was sending priced posts to the boilerplate-
+        # stapling repair path — the recurring "robotic / wrong sentence build" cause.
+        if re.search(r"(?<!\S)[֐-׿](?!\S)", body):
             return True
         return False
 
@@ -5127,7 +5136,11 @@ class SocialMediaManagerAgent(BaseAgent):
         msg = re.sub(r"[`*_~]+", "", msg)
         for i, t in enumerate(_held):
             msg = msg.replace(f"\x00TAG{i}\x00", t)
-        msg = "".join(ch for ch in msg if ch == "\n" or unicodedata.category(ch)[0] != "C")
+        # Strip control/format chars EXCEPT newline, ZWJ (U+200D) and emoji variation
+        # selector (U+FE0F) — those glue compound emoji together. Stripping ZWJ turned
+        # 👩\u200d💻 into two separate glyphs (👩💻) in published posts.
+        _keep = {"\n", "\u200d", "\ufe0f"}
+        msg = "".join(ch for ch in msg if ch in _keep or unicodedata.category(ch)[0] != "C")
 
         # Normalize odd unicode dashes frequently produced by LLMs in Hebrew+English mixes.
         msg = msg.replace("‐", "-").replace("‑", "-")
@@ -5311,7 +5324,7 @@ class SocialMediaManagerAgent(BaseAgent):
             "הנחיות פלט חובה: החזירי את טקסט הפוסט בלבד — ללא הסבר, "
             "ללא ספירת תווים, ללא חשיבה בקול רם. רק הפוסט הסופי המוכן לפרסום."
         )
-        raw = await hf_text(prompt=prompt, system=self.system_prompt)
+        raw = await hf_text(prompt=prompt, system=self.system_prompt, temperature=self.temperature)
         return self._finalize_noa_post(raw, platforms=[platform] if platform else [])
 
     async def process(self, message: str, conversation_history: List[Dict], db: AsyncSession, **kwargs) -> str:

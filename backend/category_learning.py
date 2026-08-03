@@ -131,8 +131,14 @@ def is_blocked(token: str) -> bool:
     t = (token or "").strip().lower()
     if not t or t in _STATIC_BLOCKLIST or t in _brand_blocklist:
         return True
-    # Pure digits / alphanumeric codes carry no category meaning.
-    if any(ch.isdigit() for ch in t):
+    # Digit-bearing tokens are usually codes/sizes ('4xl', 'ME10', part numbers)
+    # and carry no category meaning — but the test must not be "contains a
+    # digit", because that silently refuses legitimate MULTI-WORD phrases too:
+    # 'upf 50' (car cover), '12v socket', 'r134a hose'. The owner hit exactly
+    # this and it failed with no error, which is the worst kind of guard.
+    # A phrase is specific BECAUSE it has context, so only a bare single token
+    # with digits is treated as a code.
+    if any(ch.isdigit() for ch in t) and " " not in t:
         return True
     return False
 
@@ -192,17 +198,29 @@ async def load_into_matcher(db) -> int:
         await load_brand_blocklist(db)
     rows = (await db.execute(text(f"""
         SELECT token, category FROM (
-            SELECT token, category, observations, status,
-                   SUM(observations) OVER (PARTITION BY token)    AS total,
+            SELECT token, category, observations,
                    ROW_NUMBER() OVER (PARTITION BY token
                                       ORDER BY observations DESC) AS rn
             FROM category_learned_keywords
+            WHERE status = 'approved'          -- filter BEFORE ranking
         ) v
         WHERE rn = 1
-          AND status = 'approved'
-          AND observations >= {MIN_CONSENSUS}
-          AND observations::float / total >= {MIN_AGREEMENT}
     """))).fetchall()
+    # NO CONSENSUS FILTER HERE. MIN_CONSENSUS / MIN_AGREEMENT decide what gets
+    # PROPOSED to the owner; `status='approved'` is the owner's decision, and
+    # re-applying the vote thresholds on load silently overrides it. That is not
+    # theoretical: when the owner corrects a category (`camera`→accessories,
+    # `note`→electrical-sensors) the chosen row is by definition the MINORITY
+    # vote, so it failed `observations >= MIN_CONSENSUS` and 5 of 15 approvals
+    # never reached the matcher — approved in the table, absent in behaviour.
+    # `rn = 1` still ranks within a token, and approve()/approve_as() demote the
+    # siblings to 'rejected', so exactly one approved row survives per token.
+    #
+    # THE STATUS FILTER MUST SIT INSIDE THE SUBQUERY. Ranking over ALL rows and
+    # filtering to 'approved' afterwards silently DROPS a token whenever a
+    # rejected sibling has more observations — which is exactly the case for
+    # every owner correction, since the owner's category is the minority vote.
+    # Symptom: approved in the table, missing from the matcher, no error.
     # BLOCKLIST IS ENFORCED HERE TOO, NOT ONLY AT MINE TIME.
     # Filtering only on write does not protect rows written BEFORE the filter
     # existed — proved live 2026-07-27: 'bolt' and 'washer' had already been
@@ -351,6 +369,89 @@ async def purge_blocklisted(db) -> int:
 # like NOA's post drafts. If the owner is away, learning pauses — which is the
 # correct failure mode for something that can mis-file 16,000 parts.
 
+# A token may only become a rule if, ACROSS THE PARTS THAT ARE ALREADY
+# CORRECTLY CATEGORISED, it points overwhelmingly at one category.
+AMBIGUITY_MIN_SHARE = float(os.getenv("LEARN_AMBIGUITY_MIN_SHARE", "0.70"))
+# Top category must beat the runner-up by at least this factor.
+AMBIGUITY_MIN_MARGIN = float(os.getenv("LEARN_AMBIGUITY_MIN_MARGIN", "1.8"))
+AMBIGUITY_MIN_SAMPLE = int(os.getenv("LEARN_AMBIGUITY_MIN_SAMPLE", "12"))
+_CATCH_ALL = ("כללי", "general", "service-general", "accessories", "tools-equipment")
+
+
+async def evidence_profile(db, token: str, proposed: str | None = None) -> dict:
+    """How does `token` actually distribute over REAL, already-classified parts?
+
+    WHY THIS EXISTS (owner review, 2026-08-02). The consensus gate measures
+    agreement AMONG VOTES, and the votes come from parts sitting in the
+    catch-all — i.e. parts nobody has classified correctly yet. So a token can
+    reach 96-99% "agreement" and still be plainly wrong. Real examples caught by
+    hand that hour:
+
+        קופסת  -> gearbox   98%   really: קופסת אחסון / ממסרים / בקרה
+        note   -> service   99%   really: "Low Note Horn"
+        קליפס  -> brakes    85%   really: mostly headlight clips
+        control-> electrical 88%  really: Control Stalk AND Wing mirror Control
+        master -> electrical 96%  really: "Key Master" but also master cylinder
+
+    Agreement measures CONSISTENCY, not CORRECTNESS. This function asks a
+    different question: of the parts containing this token that are ALREADY
+    filed in a real category, what do they actually say? That is evidence
+    independent of the votes, and it is what separates `lens` (99% lighting)
+    from `קופסת` (spread across storage, relays and control units).
+
+    The owner's rule for `master` — "it's general and needs more context to
+    decide" — is exactly this: a token whose evidence is split is not a rule on
+    its own; it needs a longer phrase.
+    """
+    rows = (await db.execute(text("""
+        SELECT category, COUNT(*) AS n
+        FROM parts_catalog
+        WHERE is_active
+          AND category IS NOT NULL
+          AND NOT (category = ANY(:catch))
+          AND (name ILIKE :pat OR name_he ILIKE :pat)
+        GROUP BY category
+        ORDER BY n DESC
+        LIMIT 12
+    """), {"catch": list(_CATCH_ALL), "pat": f"%{token}%"})).fetchall()
+    total = sum(int(r[1]) for r in rows)
+    if not rows or total < AMBIGUITY_MIN_SAMPLE:
+        # Not enough classified evidence either way — cannot clear it, and
+        # must not silently pass it.
+        return {"token": token, "sample": total, "top": None, "share": 0.0,
+                "margin": None, "proposed": proposed,
+                "verdict": "insufficient_evidence",
+                "spread": [(r[0], int(r[1])) for r in rows]}
+    top_cat, top_n = rows[0][0], int(rows[0][1])
+    second_n = int(rows[1][1]) if len(rows) > 1 else 0
+    share = top_n / total
+    margin = (top_n / second_n) if second_n else float("inf")
+
+    # ABSOLUTE SHARE IS THE WRONG TEST, and measuring it proved that: it blocked
+    # `lens` (48.6% lighting) which is a good rule, because a part name contains
+    # MANY words and its stored category reflects whichever word won. "Headlight
+    # Lens Bracket" can legitimately sit in body-exterior.
+    # Two tests that do work on this data:
+    #   1. MISMATCH — the proposed category is not even the top of the evidence.
+    #      This alone catches קופסת(gearbox vs electrical), note(service vs
+    #      electrical), קליפס(brakes vs body), control(electrical vs suspension),
+    #      master(electrical vs a/c), כונס(filters vs cooling).
+    #   2. MARGIN — the top category must clearly beat the runner-up. `control`
+    #      is 25,007 suspension vs 20,659 electrical (1.21x) — a coin flip, not
+    #      a rule. `lens` is 1,887 vs 788 (2.4x) — a real signal.
+    verdict = "ok"
+    if proposed and top_cat and proposed != top_cat:
+        verdict = "category_mismatch"
+    elif margin < AMBIGUITY_MIN_MARGIN:
+        verdict = "ambiguous"
+    return {
+        "token": token, "sample": total, "top": top_cat, "share": share,
+        "margin": (None if margin == float("inf") else round(margin, 2)),
+        "proposed": proposed, "verdict": verdict,
+        "spread": [(r[0], int(r[1])) for r in rows[:5]],
+    }
+
+
 async def pending_for_owner(db, limit: int = 15) -> list:
     """Tokens that reached consensus and await the owner's approve/reject."""
     await ensure_table(db)
@@ -377,7 +478,7 @@ async def pending_for_owner(db, limit: int = 15) -> list:
     return out
 
 
-async def approve(db, token: str) -> dict:
+async def approve(db, token: str, *, force: bool = False) -> dict:
     """Approve a learned keyword → it goes live in the matcher."""
     await ensure_table(db)
     tok = (token or "").strip().lower()
@@ -389,13 +490,105 @@ async def approve(db, token: str) -> dict:
         return {"ok": False, "error": "not_found"}
     if is_blocked(tok):
         return {"ok": False, "error": "blocklisted"}
+    # AMBIGUITY GATE — enforced HERE, on the path that actually activates a
+    # keyword, not only where the list is rendered. Filtering the display alone
+    # is the same hole that let `bolt`/`washer` go live in July: a guard has to
+    # run on the path that USES the data. `force=True` records the owner's
+    # explicit override.
+    prof = await evidence_profile(db, tok, proposed=row[0])
+    if prof["verdict"] != "ok" and not force:
+        return {"ok": False, "error": prof["verdict"], "evidence": prof,
+                "proposed": row[0]}
+    # Approve ONLY the winning (token, category) row. The table holds one row
+    # per VOTE, so a token typically has several rows with competing categories
+    # — `משולש` had six. A bare `WHERE token = :t` marked every one of them
+    # 'approved', including categories the consensus REJECTED, leaving the
+    # active ruleset dependent on whichever row happened to rank first later.
+    # The losers are marked 'rejected' so they can never be re-proposed or
+    # silently promoted by a future ranking change.
     await db.execute(text(
         "UPDATE category_learned_keywords SET status='approved', updated_at=NOW() "
-        "WHERE token = :t"
-    ), {"t": tok})
+        "WHERE token = :t AND category = :c"
+    ), {"t": tok, "c": row[0]})
+    await db.execute(text(
+        "UPDATE category_learned_keywords SET status='rejected', updated_at=NOW() "
+        "WHERE token = :t AND category <> :c"
+    ), {"t": tok, "c": row[0]})
     await db.commit()
     await load_into_matcher(db)
     return {"ok": True, "token": tok, "category": row[0]}
+
+
+async def approve_as(db, token: str, category: str) -> dict:
+    """Approve a keyword under a category the OWNER chose, not the one voted.
+
+    The LLM often finds a genuinely useful word and files it wrongly — the vote
+    and the evidence disagree. Measured examples: `applique`→suspension when the
+    catalogue says body-exterior 5.7x; `note`→service-general when the parts are
+    "Low Note Horn" (electrical 3.7x); `camera`→electrical-sensors, which the
+    owner corrected to accessories. Without this, the only options were to
+    accept a wrong category or throw away a good keyword.
+
+    The owner's choice is authoritative, so no evidence gate here — but the
+    category must be CANONICAL, or we would reintroduce the multi-vocabulary
+    problem the whole category system exists to prevent.
+    """
+    await ensure_table(db)
+    tok = (token or "").strip().lower()
+    cat = (category or "").strip()
+    if cat not in category_map.CANONICAL:
+        return {"ok": False, "error": "not_canonical", "category": cat}
+    if is_blocked(tok):
+        return {"ok": False, "error": "blocklisted"}
+    # A token with no prior vote is allowed: this is also how the owner adds a
+    # DISAMBIGUATING PHRASE. `מטען` means both "cargo/trunk" and "charger", so
+    # the bare token can never be a rule — but `תא מטען` → body-exterior and
+    # `כבל מטען` → hybrid-ev both are. The LLM never proposes phrases, so
+    # requiring a pre-existing vote would make the only correct fix impossible.
+    # Upsert the owner's category as the approved one; demote every sibling.
+    await db.execute(text(
+        "UPDATE category_learned_keywords SET status='rejected', updated_at=NOW() "
+        "WHERE token = :t AND category <> :c"), {"t": tok, "c": cat})
+    res = await db.execute(text(
+        "UPDATE category_learned_keywords SET status='approved', updated_at=NOW() "
+        "WHERE token = :t AND category = :c"), {"t": tok, "c": cat})
+    if not res.rowcount:
+        await db.execute(text("""
+            INSERT INTO category_learned_keywords
+                   (token, category, observations, source, status)
+            VALUES (:t, :c, :o, 'owner_override', 'approved')
+        """), {"t": tok, "c": cat, "o": MIN_CONSENSUS})
+    await db.commit()
+    await load_into_matcher(db)
+    return {"ok": True, "token": tok, "category": cat, "source": "owner"}
+
+
+async def undo_keyword(db, token: str) -> int:
+    """Put every part this keyword moved back where it came from.
+
+    Exists because a gate can only reduce the chance of a bad rule, never
+    eliminate it — and one approved keyword moves thousands of rows. Without
+    this, discovering a mistake a week later means untangling it by hand, which
+    is the "wrong parts sitting in wrong categories" outcome the owner has been
+    trying to avoid since before the backfill.
+
+    Relies on the provenance written by `_bulk_apply_new_keywords`
+    (`specifications->>'category_by'`), so it reverses EXACTLY the rows this
+    keyword touched and nothing else.
+    """
+    tok = (token or "").strip().lower()
+    res = await db.execute(text("""
+        UPDATE parts_catalog
+        SET category = COALESCE(specifications->>'category_prev', 'כללי'),
+            specifications = (specifications - 'category_by') - 'category_prev',
+            updated_at = NOW()
+        WHERE is_active
+          AND specifications->>'category_by' = :t
+    """), {"t": tok})
+    await db.commit()
+    n = res.rowcount or 0
+    logger.info("undo_keyword %s: reverted %d parts", tok, n)
+    return n
 
 
 async def reject(db, token: str) -> dict:
@@ -409,6 +602,9 @@ async def reject(db, token: str) -> dict:
     await db.commit()
     _rejected_tokens.add(tok)
     category_map.LEARNED.pop(tok, None)
+    # If this keyword had already been approved and applied, put its parts back.
+    # Rejecting a live rule must undo its effect, not merely stop future ones.
+    reverted = await undo_keyword(db, tok)
     category_map._build_flat_rules()
     return {"ok": bool(res.rowcount), "token": tok}
 

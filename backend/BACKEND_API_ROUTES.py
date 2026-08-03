@@ -1616,6 +1616,16 @@ async def _amayama_fs_harvester_loop() -> None:
     backoff = 60
     while True:
         started = _time.time()
+        # KILL SWITCH. The supervisor's restart-backoff only helps when the
+        # harvester EXITS; this one stays alive and retries Cloudflare inside
+        # its own loop, so a permanently-failing session burns CPU forever with
+        # no supervisor signal. Measured 2026-08-02: 29 challenge timeouts and
+        # ZERO successful solves in 24h, zero parts written, while its
+        # FlareSolverr instance spiked to ~283% CPU. Off until the Cloudflare
+        # path actually works again.
+        if os.getenv("AMAYAMA_HARVEST_ENABLED", "1").strip().lower() not in ("1", "true", "yes"):
+            await asyncio.sleep(3600)
+            continue
         if not os.path.exists(cookie):
             # no login cookie yet — don't spin; check again in 30 min
             await asyncio.sleep(1800)
@@ -2972,7 +2982,7 @@ async def _noa_marketing_loop():
                         "google_ads: {ad_group, keywords_exact, keywords_phrase, negatives, headlines, descriptions}\n"
                     )
 
-                    raw_plan = await _hf_text(prompt=campaign_prompt, system=_noa_system, timeout=180.0, max_tokens=6000)
+                    raw_plan = await _hf_text(prompt=campaign_prompt, system=_noa_system, timeout=180.0, max_tokens=6000, temperature=noa.temperature)
 
                     plan: dict = {}
                     try:
@@ -3113,7 +3123,7 @@ async def _noa_marketing_loop():
                         "החזירי: טקסט הפוסט הסופי בלבד — ללא הסבר, ללא כותרת, ללא ספירה."
                     )
 
-                    raw_post = await _hf_text(prompt=post_prompt, system=_noa_system, timeout=90.0, max_tokens=1500)
+                    raw_post = await _hf_text(prompt=post_prompt, system=_noa_system, timeout=90.0, max_tokens=1500, temperature=noa.temperature)
                     caption = noa._finalize_noa_post(raw_post, platforms=_configured)
                     # UTM attribution (added 2026-07-05): every post link carries
                     # utm_source=<platform> so clicks are measurable per channel —

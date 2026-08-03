@@ -59,6 +59,10 @@ PARALLEL_SESSIONS = int(os.environ.get("HARVESTER_PARALLEL_SESSIONS", "1"))
 BATCH_SIZE       = 50
 PAGE_TIMEOUT     = 20000   # ms per page request
 INTER_MODEL      = int(os.environ.get("HARVESTER_INTER_MODEL_S", "20"))
+# Ceiling for the drained-queue backoff below (default 1h). The queue only
+# refills when a model ages past the 14-day refresh window, so polling it every
+# 120s once the market is fully harvested is pure waste.
+IDLE_MAX_REST_S  = int(os.environ.get("HARVESTER_IDLE_MAX_REST_S", "3600"))
                            # seconds a worker pauses between models. Raised 5→20 on 2026-07-23:
                            # with the 6,000-model full-catalogue backlog the harvester runs
                            # flat-out, and CF solving is CPU-heavy — a real gap between models
@@ -768,8 +772,24 @@ def main():
         for t in threads:
             t.join()
 
-        log.info(f"Cycle {state['cycles']} done. Total parts: {state['total_parts']}. Resting 120s...")
-        time.sleep(120)
+        # IDLE BACKOFF. When the whole market has been harvested inside the
+        # 14-day refresh window there is genuinely nothing to do: the refresh
+        # requeues nothing, `pending` stays 0, and every cycle wakes all the
+        # workers to find an empty queue. Measured 2026-08-02: cycle 1912, zero
+        # new parts in 24h, ~126% CPU and 9 Chrome processes burnt on nothing.
+        # A drained queue must SLEEP, not poll every two minutes.
+        if pending == 0:
+            _idle_cycles = state.get("idle_cycles", 0) + 1
+            state["idle_cycles"] = _idle_cycles
+            rest = min(120 * (2 ** min(_idle_cycles, 5)), IDLE_MAX_REST_S)
+            log.info(f"Cycle {state['cycles']} done — queue drained "
+                     f"(idle x{_idle_cycles}). Resting {rest}s...")
+        else:
+            state["idle_cycles"] = 0
+            rest = 120
+            log.info(f"Cycle {state['cycles']} done. Total parts: "
+                     f"{state['total_parts']}. Resting {rest}s...")
+        time.sleep(rest)
 
 
 if __name__ == "__main__":

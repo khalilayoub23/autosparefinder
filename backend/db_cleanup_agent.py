@@ -680,20 +680,38 @@ async def _bulk_apply_new_keywords(limit: int = 20000) -> int:
                 LIMIT :lim
             """), {"c": CATCH_ALL, "lim": limit})).fetchall()
 
-            updates: dict[str, list] = {}
+            # PROVENANCE. Record WHICH learned keyword moved each part, so a
+            # keyword that turns out to be wrong can be undone EXACTLY instead
+            # of being untangled by hand. One approved keyword can move
+            # thousands of rows (`מים` matches 1,277), and the owner's standing
+            # concern is precisely "wrong parts sitting in wrong categories".
+            # A gate reduces that risk; provenance makes it reversible.
+            learned = getattr(category_map, "LEARNED", {}) or {}
+            updates: dict[tuple, list] = {}
             for pid, name, name_he in rows:
                 cat = category_map.categorize(name=name, name_he=name_he)
-                if cat != CATCH_ALL:
-                    updates.setdefault(cat, []).append(pid)
+                if cat == CATCH_ALL:
+                    continue
+                blob = f"{name} {name_he}".lower()
+                # Which learned keyword (if any) is responsible for this move.
+                src = next((tok for tok, c in learned.items()
+                            if c == cat and tok in blob), None)
+                updates.setdefault((cat, src), []).append(pid)
 
-            for cat, ids in updates.items():
+            for (cat, src), ids in updates.items():
                 for i in range(0, len(ids), 2000):
                     chunk = ids[i:i + 2000]
                     await db.execute(text("""
                         UPDATE parts_catalog
-                        SET category = :cat, updated_at = NOW()
+                        SET category = :cat,
+                            specifications = COALESCE(specifications, '{}'::jsonb)
+                                             || jsonb_build_object(
+                                                  'category_by',
+                                                  COALESCE(:src, 'rules'),
+                                                  'category_prev', :prev),
+                            updated_at = NOW()
                         WHERE id = ANY(CAST(:ids AS uuid[]))
-                    """), {"cat": cat, "ids": chunk})
+                    """), {"cat": cat, "ids": chunk, "src": src, "prev": CATCH_ALL})
                     moved += len(chunk)
             if moved:
                 await db.commit()

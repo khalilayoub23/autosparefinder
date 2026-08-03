@@ -650,7 +650,12 @@ def render_status(st: Dict[str, Any]) -> str:
             bits.append(f"נותרו {int(s['remaining']):,}{_age_str(s.get('remaining_at'))}")
         if s["batches_run"]:
             bits.append(f"{s['batches_run']} מנות")
-        if s["status"] == "running" and s.get("last_batch_at"):
+        # Only meaningful once THIS run has actually completed a batch.
+        # last_batch_at survives a counter reset, so after re-queueing a step it
+        # reported a "last batch" from the previous run — e.g. "41 hours ago" on
+        # a step that had just started. A timestamp from a different run is not
+        # status, it is noise.
+        if s["status"] == "running" and s.get("last_batch_at") and s["batches_run"]:
             a = _age_str(s["last_batch_at"])
             bits.append(f"מנה אחרונה{a or ' — כרגע'}")
         tail = (" · " + " · ".join(bits)) if bits else ""

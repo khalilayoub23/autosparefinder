@@ -264,6 +264,15 @@ services:
       JOB_QUEUE_COOLDOWN_S: '20'        # breathing room between batches
       JOB_QUEUE_BATCH_TIMEOUT_S: '2400' # a batch that exceeds this is too big
       JOB_QUEUE_IDLE_SLEEP_S: '300'
+      # Amayama server-side harvester. OFF 2026-08-02: measured 29 Cloudflare
+      # challenge timeouts and 0 successful solves in 24h, 0 parts written, while
+      # its FlareSolverr instance burned ~283% CPU. Re-enable only after proving
+      # a solve succeeds — it is pure waste until then.
+      AMAYAMA_HARVEST_ENABLED: '0'
+      # Drained-queue backoff for the car-parts.ie harvester (see the harvester's
+      # IDLE_MAX_REST_S). The IL market is fully harvested; the queue only refills
+      # as models age past the 14-day refresh window.
+      HARVESTER_IDLE_MAX_REST_S: '3600'
       OEM_LOOKUP_ENABLED: '0'      # lookup_oem_spec in run_all_tasks — disabled by default (hits Cerebras per-row)
       ENRICH_PARTS_ENABLED: '0'    # enrich_pending_parts loop + run_all_tasks wrapper — disabled by default
       DISCOVERY_TARGET: '500000'   # parts per brand before REX stops (default 200 was too low; goal is 10M parts)

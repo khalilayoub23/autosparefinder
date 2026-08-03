@@ -92,7 +92,13 @@ DISPLAY: Dict[str, Dict[str, str]] = {
     "wheels-bearings":          {"he": "גלגלים ומיסבים",    "ar": "العجلات والرولمان",    "en": "Wheels & Bearings"},
     "body-exterior":            {"he": "גוף הרכב",          "ar": "الهيكل الخارجي",       "en": "Body & Exterior"},
     "lighting":                 {"he": "תאורה",             "ar": "الإضاءة",              "en": "Lighting"},
-    "electrical-sensors":       {"he": "חשמל וחיישנים",     "ar": "الكهرباء والحساسات",   "en": "Electrical & Sensors"},
+    # Renamed 2026-08-02 (owner): SENSORS were merged INTO electrical, and the
+    # label is plain "electrical" — nothing else. Do NOT reintroduce
+    # "electronics" here: electronics (ECUs, modules, amplifiers, infotainment)
+    # is a DIFFERENT thing from electrical (wiring, fuses, relays, switches),
+    # and the owner approved a two-way merge, not a three-way one.
+    "electrical":       {"he": "חשמל",              "ar": "الكهرباء",              "en": "Electrical"},
+    "audio-electronics":{"he": "שמע ואלקטרוניקה",   "ar": "الصوتيات والإلكترونيات", "en": "Audio & Electronics"},
     "air-conditioning-heating": {"he": "מזגן וחימום",       "ar": "التكييف والتدفئة",     "en": "A/C & Heating"},
     "wipers-washers":           {"he": "שמשות ומגבים",      "ar": "المساحات والغسيل",     "en": "Wipers & Washers"},
     "safety-systems":           {"he": "מערכות בטיחות",     "ar": "أنظمة الأمان",         "en": "Safety Systems"},
@@ -133,12 +139,12 @@ CATEGORY_SLUG_MAP: Dict[str, str] = {
     "oil-filter": "filters", "air-filter": "filters", "fuel-filter": "filters",
     "pollen-filter": "filters", "cabin-filter": "filters",
     "particle-filter": "filters", "dpf-filter": "filters",
-    "alternator": "electrical-sensors", "starter-motor": "electrical-sensors",
-    "sensors": "electrical-sensors", "lambda-sensor": "electrical-sensors",
-    "abs-sensor": "electrical-sensors", "camshaft-sensor": "electrical-sensors",
-    "crankshaft-sensor": "electrical-sensors", "battery": "electrical-sensors",
-    "relay": "electrical-sensors", "fuse-box": "electrical-sensors",
-    "ecu": "electrical-sensors", "control-module": "electrical-sensors",
+    "alternator": "electrical", "starter-motor": "electrical",
+    "sensors": "electrical", "lambda-sensor": "electrical",
+    "abs-sensor": "electrical", "camshaft-sensor": "electrical",
+    "crankshaft-sensor": "electrical", "battery": "electrical",
+    "relay": "electrical", "fuse-box": "electrical",
+    "ecu": "electrical", "control-module": "electrical",
     "radiator": "cooling", "thermostat": "cooling", "water-pump": "cooling",
     "cooling-fan": "cooling", "coolant-pipe": "cooling",
     "intercooler": "cooling", "expansion-tank": "cooling",
@@ -281,18 +287,27 @@ VARIANT_MAP: Dict[str, str] = {
     "manual transmission": "gearbox", "gearbox": "gearbox", "gear": "gearbox",
     "תיבת הילוכים": "gearbox", "גיר": "gearbox",
 
-    # ── electrical & sensors ─────────────────────────────────────────────────
-    "electrical": "electrical-sensors", "electric": "electrical-sensors",
-    "electronics": "electrical-sensors", "electrical components": "electrical-sensors",
-    "auto electrical systems": "electrical-sensors", "engine control": "electrical-sensors",
-    "sensor": "electrical-sensors", "sensors": "electrical-sensors",
-    "solenoids": "electrical-sensors", "tpms": "electrical-sensors",
-    "ignition coil": "electrical-sensors", "oxygen sensor": "electrical-sensors",
-    "wiring & modules": "electrical-sensors", "audio & electronics": "electrical-sensors",
-    "cameras & gps": "electrical-sensors", "batteries & power": "electrical-sensors",
-    "alternators & starters": "electrical-sensors", "electrical-lighting": "electrical-sensors",
-    "חשמל": "electrical-sensors", "חשמל רכב": "electrical-sensors",
-    "חשמל ואלקטרוניקה": "electrical-sensors",
+    # ── electrical (SENSORS merged in — owner decision 2026-08-02) ───────────
+    # sensors -> electrical. ELECTRONICS is a separate destination
+    # (audio-electronics) — see the block below.
+    "electrical": "electrical", "electric": "electrical",
+    "electrical components": "electrical",
+    "auto electrical systems": "electrical", "engine control": "electrical",
+    "sensor": "electrical", "sensors": "electrical",
+    "solenoids": "electrical", "tpms": "electrical",
+    "ignition coil": "electrical", "oxygen sensor": "electrical",
+    "wiring & modules": "electrical",
+    # ── audio & electronics (owner decision 2026-08-02) ──────────────────────
+    # Electronics is NOT electrical and must not be folded into it, but it also
+    # must not fall to the catch-all — it has its own family.
+    "electronics": "audio-electronics", "audio": "audio-electronics",
+    "audio & electronics": "audio-electronics", "infotainment": "audio-electronics",
+    "multimedia": "audio-electronics", "stereos & audio": "audio-electronics",
+    "אלקטרוניקה": "audio-electronics", "מולטימדיה": "audio-electronics",
+    "cameras & gps": "audio-electronics", "batteries & power": "electrical",
+    "alternators & starters": "electrical", "electrical-lighting": "electrical",
+    "חשמל": "electrical", "חשמל רכב": "electrical",
+    "חשמל ואלקטרוניקה": "electrical",
 
     # ── lighting ─────────────────────────────────────────────────────────────
     "lighting": "lighting", "lighting accessories": "lighting",
@@ -703,8 +718,24 @@ RULES: List[Tuple[str, List[str], List[str]]] = [
       "cylinder liner", "piston ring", "big end bearing", "oil strainer",
       "vvt actuator", "camshaft adjuster", "balance shaft"]),
 
+    # ── audio & electronics (owner split 2026-08-02) ─────────────────────────
+    # Declared BEFORE electrical so that when both could match, the more
+    # specific entertainment term is the one considered. These keywords used to
+    # live in the electrical block; sharing them between two families is what
+    # pulled 1,565 freshly-split parts back into electrical.
+    ("audio-electronics",
+     ["רדיו", "רמקול", "רמקולים", "מגבר", "מסך", "מסך מגע", "מולטימדיה",
+      "מערכת שמע", "ניווט", "אנטנה", "אנטנת רדיו", "מצלמת רוורס",
+      "راديو", "سماعة", "مكبر صوت", "شاشة", "هوائي", "ملاحة"],
+     ["stereo", "speaker", "subwoofer", "amplifier", " amp ", "head unit",
+      "infotainment", "multimedia", "navigation", "sat nav", "satnav",
+      "antenna", "aerial", "radio", "dashcam", "dash cam",
+      "touchscreen", "touch screen", "lcd", "monitor",
+      "head-up display", "heads up display", "display screen",
+      "bluetooth", "usb hub", "aux input", "cd changer", "dvd player"]),
+
     # ── electrical & sensors ─────────────────────────────────────────────────
-    ("electrical-sensors",
+    ("electrical",
      ["חיישן טמפרטורה", "חיישן מהירות", "חיישן חניה", "חיישן לחץ",
       # 'טמפרטורה' alone had no rule, so temperature actuators/controllers
       # scored nothing and would have dropped to כללי.
@@ -735,12 +766,20 @@ RULES: List[Tuple[str, List[str], List[str]]] = [
       "crankshaft sensor", "camshaft sensor", "knock sensor",
       "throttle position sensor", "tps", "coolant temp sensor", "speed sensor",
       "parking sensor", "reverse sensor", "horn", "relay box", "fuse link",
-      "central locking", "aerial", "antenna", "solenoid", "actuator",
+      "central locking", "solenoid", "actuator",
+      # 'housing' is a hand-written ENGINE keyword (thermostat housing etc.), and
+      # a hand-written rule always beats a learned one regardless of length — so
+      # the learned `relay housing` could never win. These need to be
+      # hand-written to take effect.
+      "relay housing", "fuse housing", "fusebox housing", "connector housing",
       "abs sensor", "lambda probe",
       "immobilizer", "spark plug wire", "harness",
-      "speaker", "multimedia", "head unit", "display",
-      "head-up display", "heads up display", "instrument cluster",
-      "digital cluster", "lcd", "monitor", "amplifier", "amp",
+      # Audio/infotainment terms MOVED to the audio-electronics block below
+      # (owner split 2026-08-02). Leaving them here is what silently dragged
+      # 1,565 already-split parts back into electrical: two families claiming
+      # the same keyword means whichever rule wins the match decides, and the
+      # split loses. A keyword belongs to exactly ONE family.
+      "instrument cluster", "digital cluster",
       "door actuator", "lock actuator", "window actuator",
       "sunroof motor", "seat motor", "mirror motor",
       "alarm", "immobiliser", "transponder", "key fob",
@@ -932,7 +971,7 @@ RULES: List[Tuple[str, List[str], List[str]]] = [
     # NOT listed. They have no category on their own, and a wrong category is
     # worse than 'כללי'. In context they still classify: "Bolt Cylinder Head"
     # matches the longer 'cylinder head' and lands in engine correctly.
-    ("electrical-sensors",
+    ("electrical",
      ["חיישנים", "מתגים", "כבל", "כבלים", "צמת חוטים"],
      ["sensor", "wire", "wiring", "lead", "cable", "electric", "electronic",
       "starter", "ignition", "instrument", "gauge", "meter", "unit",
@@ -1274,7 +1313,7 @@ def categorize_slug(slug: str) -> str:
         ("bearing", "wheels-bearings"), ("clutch", "clutch-drivetrain"),
         ("gear", "gearbox"), ("filter", "filters"), ("engine", "engine"),
         ("exhaust", "exhaust"), ("fuel", "fuel-air"), ("cool", "cooling"),
-        ("electric", "electrical-sensors"), ("sensor", "electrical-sensors"),
+        ("electric", "electrical"), ("sensor", "electrical"),
         ("light", "lighting"), ("wiper", "wipers-washers"),
         ("body", "body-exterior"), ("air-con", "air-conditioning-heating"),
         ("interior", "interior-comfort"), ("belt", "belts-chains"),

@@ -30,7 +30,7 @@ RULES = [
     ("exhaust",          [("name","exhaust"),("name","muffler"),("name","catalytic"),("name","dpf"),("name","egr"),
                           ("name","lambda"),("name","oxygen sensor"),
                           ("name_he","פליטה"),("name_he","מאיין"),("name_he","ממיר")]),
-    ("electrical-sensors",[("name","sensor"),("name","switch"),("name","relay"),("name","fuse"),("name","control unit"),
+    ("electrical",[("name","sensor"),("name","switch"),("name","relay"),("name","fuse"),("name","control unit"),
                             ("name","module"),("name","ecu"),("name","abs module"),("name","wire harness"),
                             ("name_he","חיישן"),("name_he","ממסר"),("name_he","נתיך"),("name_he","בקרה")]),
     ("lighting",         [("name","headlight"),("name","tail light"),("name","fog light"),("name","bulb"),

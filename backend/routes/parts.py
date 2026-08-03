@@ -467,7 +467,7 @@ FILTER_CATEGORY_KEYWORDS: Dict[str, List[str]] = {
     "engine": ["מנוע", "אטם", "שסתום", "محرك", "engine", "gasket", "valve", "piston", "camshaft"],
     "filters": ["מסנן", "פילטר", "فلتر", "filter", "oil filter", "air filter", "cabin filter"],
     "air-conditioning-heating": ["מזגן", "מדחס", "מעבה", "מאייד", "مكيف", "ac", "a/c", "compressor", "condenser", "evaporator"],
-    "electrical-sensors": ["חשמל", "אלטרנטור", "סטרטר", "חיישן", "מצת", "حساس", "alternator", "starter", "sensor", "spark plug"],
+    "electrical": ["חשמל", "אלטרנטור", "סטרטר", "חיישן", "מצת", "حساس", "alternator", "starter", "sensor", "spark plug"],
     "suspension-steering": ["בולם", "זרוע", "תפוח", "הגה", "מסרק", "ممتص الصدمات", "مقود", "suspension", "shock", "strut", "arm", "steering", "rack", "tie rod"],
     "wheels-bearings": ["צמיג", "גלגל", "גנט", "מיסב", "جنط", "tire", "tyre", "wheel", "rim", "bearing", "hub"],
     "lighting": ["פנס", "תאורה", "נורה", "مصباح", "lamp", "light", "headlight", "tail light", "bulb"],
