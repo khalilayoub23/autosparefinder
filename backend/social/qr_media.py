@@ -54,11 +54,20 @@ def build_qr_png(src: str) -> bytes:
 
 def _find_font(size: int):
     from PIL import ImageFont
+    # RTL FIX 2026-07-20: load with the RAQM layout engine. Pillow here is built WITH
+    # libraqm (features.check('raqm')=True), which does the Unicode bidi algorithm +
+    # HarfBuzz shaping — so logical-order Hebrew renders correctly right-to-left and
+    # embedded Latin/digits keep their order. The previous code used the BASIC engine
+    # plus a manual _shape_hebrew() reversal, which produced the reversed word-salad the
+    # owner saw on the QR image ("יקלח ףוליח" for "חלקי חילוף"). Pass logical order now.
+    _raqm = getattr(getattr(ImageFont, "Layout", None), "RAQM", None)
     for path in (
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     ):
         try:
+            if _raqm is not None:
+                return ImageFont.truetype(path, size, layout_engine=_raqm)
             return ImageFont.truetype(path, size)
         except Exception:
             continue
@@ -66,9 +75,10 @@ def _find_font(size: int):
 
 
 def _shape_hebrew(text: str) -> str:
-    # PIL draws LTR; reversing the whole RTL string renders readable Hebrew.
-    # Words are space-separated so reversing word order + each word works for pure-Hebrew.
-    return " ".join(w[::-1] for w in reversed(text.split(" ")))
+    # No-op: with the RAQM layout engine (see _find_font) Pillow renders logical-order
+    # RTL text correctly. Manual reversal here is what broke it. Kept as an identity
+    # function so existing call sites don't need touching.
+    return text
 
 
 def _compose(thumb_bytes: "bytes | None", src: str) -> bytes:
