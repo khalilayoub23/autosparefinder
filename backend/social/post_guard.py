@@ -55,9 +55,17 @@ from typing import Optional, Tuple
 
 logger = logging.getLogger("post_guard")
 
-# Measured gap is 0.390 -> 0.487; 0.40 sits inside it. Env-tunable so the number
-# can move on evidence without a code change.
-MIN_SIM = float(os.getenv("NOA_GUARD_MIN_SIM", "0.40"))
+# RECALIBRATED 2026-07-20 on real NOA marketing captions (the original 0.40 came from
+# n=12 short synthetic pairs and REJECTED legitimate posts). Measured on real captions:
+#   • correct part  → 0.227, 0.252, 0.372, 0.483  (min 0.227)
+#   • gross grounding failure (the class this guard exists to catch, e.g. wiper-blade
+#     copy sold as a SUNSHADE) → 0.076, 0.099
+# A long emoji/price/CTA caption vs a short part label is inherently low-cosine, so there
+# is NO clean cut for SUBTLE same-domain mixups (battery-vs-wiper scored 0.384) — and the
+# guard is explicitly fail-OPEN (a rare wrong post beats halting all posting). 0.15 sits
+# below every legitimate post and above the gross-failure band: it catches the
+# sunshade-class error without silently killing real posts. Env-tunable.
+MIN_SIM = float(os.getenv("NOA_GUARD_MIN_SIM", "0.15"))
 ENABLED = os.getenv("NOA_GUARD_ENABLED", "1").strip().lower() in ("1", "true", "yes")
 
 
