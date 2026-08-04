@@ -4287,6 +4287,9 @@ class SocialMediaManagerAgent(BaseAgent):
   אין "פוסט מודעות מותג" ריק שלא מוביל לפעולה
 - מעורר אינטראקציה: סיימי בשאלה שקל וכיף לענות עליה בתגובה ("איזה רעש הרכב שלכם עושה הבוקר?")
 - ציוני שמות רכב ספציפיים ושמות חלקים ספציפיים — אין כאב בלי פרטים
+- כתבי עברית בלבד. אנגלית מותרת אך ורק לשמות מותג/דגם (BREMBO, Kia, BOSCH, VARTA).
+  אסור לשלב מילים כלליות באנגלית — לא "brake", לא "performance", לא "set", לא "power".
+  שם החלק תמיד בעברית ("רפידות בלם", "מסנן שמן") ולעולם לא גם עברית וגם אנגלית לאותו חלק
 - הימנעי מטענות לא מבוססות; עדיף מדויק על פני מרשים
 - כל פוסט חייב להיות שונה בזווית, בפתיחה, בטון — אין תבניות חוזרות, אין אותו משפט פעמיים
 
@@ -4375,7 +4378,15 @@ class SocialMediaManagerAgent(BaseAgent):
     _NOA_COMPARE_RE = re.compile(r"(השווא|משווה|להשוות|מחיר)", re.IGNORECASE)
     _NOA_BUY_RE = re.compile(r"(קנייה|קניה|רכיש|רוכש|לקנות|הזמנ)", re.IGNORECASE)
     _NOA_RELIEF_RE = re.compile(r"(חוסכ|בלי\s+חיפוש|בלי\s+כאב\s+ראש|בלי\s+התעסקות\s+טכנית)", re.IGNORECASE)
-    _NOA_GARBLED_RE = re.compile(r"(isNotEmpty|matchCondition|[_]{2,}|_\s*_|\b[א-ת]\.)", re.IGNORECASE)
+    # Lone-Hebrew-letter-then-period signals garble ONLY when the letter is space-isolated
+    # (a floating "מ. ל. ק."). It must NOT match the מ of מע"מ. (VAT, ending a sentence with
+    # a period), where the מ is preceded by a gershayim quote — that legitimate abbreviation
+    # was sending every priced post to the boilerplate-stapling repair path (2026-08-04).
+    _NOA_GARBLED_RE = re.compile(r"(isNotEmpty|matchCondition|[_]{2,}|_\s*_|(?<!\S)[א-ת]\.(?=\s|$))", re.IGNORECASE)
+    # One-letter Hebrew proclitics/particles that legitimately stand alone — especially
+    # before a Latin brand ("ה Toyota", "ב AutoSpareFinder", "ל BOSCH"): מ ב ל ה ו ש כ ד.
+    # They must be EXEMPT from the space-isolated lone-letter garble check below.
+    _NOA_HE_PROCLITICS = set("מבלהושכד")
     _NOA_NON_SOCIAL_PATTERNS = (
         "אני כאן לעזור",
         "כדי להתקדם מהר",
@@ -4703,8 +4714,14 @@ class SocialMediaManagerAgent(BaseAgent):
         # prefix forms (מ-198) are ATTACHED to punctuation. Space-isolation kills the
         # whole false-positive class that was sending priced posts to the boilerplate-
         # stapling repair path — the recurring "robotic / wrong sentence build" cause.
-        if re.search(r"(?<!\S)[֐-׿](?!\S)", body):
-            return True
+        # …and even a space-isolated single Hebrew letter is fine when it is a proclitic
+        # (מ/ב/ל/ה/ו/ש/כ/ד) — "ה Toyota", "ב AutoSpareFinder", "ל BOSCH" are ordinary
+        # Hebrew (the definite article / a preposition standing before a Latin brand, which
+        # _normalize_noa_symbols also produces from "ה-Toyota"). Only a NON-proclitic lone
+        # letter is a garble signal.
+        for _m in re.finditer(r"(?<!\S)([֐-׿])(?!\S)", body):
+            if _m.group(1) not in cls._NOA_HE_PROCLITICS:
+                return True
         return False
 
     @classmethod
@@ -5149,6 +5166,15 @@ class SocialMediaManagerAgent(BaseAgent):
         # correct Hebrew, and stripping that hyphen mangled exactly the price/year phrasing
         # that selling posts are built on.
         msg = re.sub(r"([\u0590-\u05FF])-(?=[A-Za-z])", r"\1 ", msg)
+
+        # Repair the brand name when the model splits/transliterates it (seen 2026-08-04:
+        # "אוטו Spare-Finder", "אוטו ספייר פיינדר"). It must always read AutoSpareFinder.
+        # Fully-transliterated form → the brand:
+        msg = re.sub(r"אוטו\s*[- ]?\s*ספייר\s*[- ]?\s*פיינדר", "AutoSpareFinder", msg)
+        # "אוטו" standing in for "Auto" before a Latin "Spare…" → real "Auto":
+        msg = re.sub(r"אוטו\s*[- ]?\s*(?=Spare)", "Auto", msg, flags=re.I)
+        # Collapse any spaced/hyphenated Latin form → one token:
+        msg = re.sub(r"\bAuto\s*[-\s]*Spare\s*[-\s]*Finder\b", "AutoSpareFinder", msg, flags=re.I)
 
         msg = re.sub(r"[ \t\r\f\v]+", " ", msg)
         msg = re.sub(r"\n{3,}", "\n\n", msg).strip()

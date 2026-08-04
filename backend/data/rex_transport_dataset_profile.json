@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-24T17:23:26.489133+00:00",
+  "generated_at": "2026-08-04T14:59:51.734484+00:00",
   "resource_ids": [
     "142afde2-6228-49f9-8a29-9b6c3a0cbe40",
     "5e87a7a1-2f6f-41c1-8aec-7216d52a6cf6"
@@ -8,28 +8,28 @@
   "source_profiles": [
     {
       "resource_id": "142afde2-6228-49f9-8a29-9b6c3a0cbe40",
-      "source_total_records": 100487,
-      "fetched_records": 100487,
+      "source_total_records": 100660,
+      "fetched_records": 100660,
       "field_count": 95
     },
     {
       "resource_id": "5e87a7a1-2f6f-41c1-8aec-7216d52a6cf6",
-      "source_total_records": 100487,
-      "fetched_records": 100487,
+      "source_total_records": 100660,
+      "fetched_records": 100660,
       "field_count": 12
     }
   ],
   "summary": {
-    "fetched_records": 200974,
-    "source_total_records": 200974,
+    "fetched_records": 201320,
+    "source_total_records": 201320,
     "field_count": 97,
     "distinct_manufacturers_raw": 133,
     "distinct_manufacturers_canonical": 132,
-    "distinct_models": 12052,
+    "distinct_models": 12068,
     "distinct_years": 31,
     "distinct_engine_variants": 565,
     "distinct_fuel_types": 7,
-    "distinct_trim_values": 6587
+    "distinct_trim_values": 6612
   },
   "quality_issues": {
     "missing_manufacturer_records": 0,
