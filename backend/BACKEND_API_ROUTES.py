@@ -1537,7 +1537,11 @@ async def _thumbnail_import_loop() -> None:
         try:
             import job_queue as _jq
             async with async_session_factory() as _qdb:
-                if await _jq.owns_step(_qdb, "part_thumbnails"):
+                # Match on the SCRIPT, not the step name — the same script gets
+                # queued under different step keys (part_thumbnails,
+                # thumbnails_retry_blocked) and a key-based check let both the
+                # queue step and this supervisor run it simultaneously.
+                if await _jq.owns_script(_qdb, "build_part_thumbnails"):
                     _THUMBNAIL_IMPORT_STATUS["state"] = "deferred_to_job_queue"
                     await asyncio.sleep(idle_backoff)
                     continue

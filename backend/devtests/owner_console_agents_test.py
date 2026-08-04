@@ -13,7 +13,7 @@ bug. The real defects were in NOA's answers:
      exist. The owner-console kept a PRIVATE, minimal copy of NOA's policy that
      forbade invented prices but said nothing about invented links or
      promotions. (Same class as the repeated "one policy, many private copies"
-     entries in the Mistake Log.)
+     entries in docs/POSTMORTEMS.md.)
   2. Told "from now on always put a real price in every post", she replied by
      asking the OWNER for a price. She answered the topic instead of the intent
      — which is precisely what reads as a bot rather than an agent.

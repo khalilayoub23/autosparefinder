@@ -268,6 +268,13 @@ services:
       # challenge timeouts and 0 successful solves in 24h, 0 parts written, while
       # its FlareSolverr instance burned ~283% CPU. Re-enable only after proving
       # a solve succeeds — it is pure waste until then.
+      # Parallel parts in the thumbnail builder. Measured 2026-08-04 on 300
+      # images: serial 176s, c=8 102s, c=16 161s, c=24 100s (load 14). Past 8 it
+      # stops paying — the ceiling is CPU (tesseract OCR), not the network. At c=8 the
+      # backend hit 561% CPU / load 27 (8 tesseract procs at ~55% each), which is the
+      # same oversubscription that caused the DB statement timeouts. 3 keeps headroom.
+      # extra threads just contend for 6 shared cores.
+      THUMB_CONCURRENCY: '3'
       AMAYAMA_HARVEST_ENABLED: '0'
       # Drained-queue backoff for the car-parts.ie harvester (see the harvester's
       # IDLE_MAX_REST_S). The IL market is fully harvested; the queue only refills

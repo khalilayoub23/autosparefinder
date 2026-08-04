@@ -1,14 +1,11 @@
 # AutoSpareFinder — Claude Code Instructions
 
-> **Start here:** this is the single authoritative instruction file (the old `claude.md`
-> was merged into it on 2026-07-18 — do not recreate a second lowercase copy). Jump to
-> **[Repository & Backend File Map](#repository--backend-file-map-2026-07-18-reorg)** to
-> find where any script lives, and **[Agent Core Rules & Shared Architecture](#agent-core-rules--shared-architecture-merged-from-claudemd-2026-07-18)**
-> for the agent roster, memory/alerting/lock/job-registry model, and golden rules.
-> Topical docs live in `docs/` (`docs/skills.md`, `docs/phases.md`, `docs/UI_UX.md`,
-> `docs/roadmap.md`, `docs/SUPPLIERS.md`, `docs/schema/`).
+> **Single authoritative instruction file.** Jump to any section by heading number.
+> Topical docs: `docs/skills.md`, `docs/phases.md`, `docs/UI_UX.md`,
+> `docs/roadmap.md`, `docs/SUPPLIERS.md`, `docs/POSTMORTEMS.md` (full incident log).
 
-## ⭐ OWNER OPERATING DIRECTIVE — ACT, DON'T ASK (HIGH PRIORITY, owner-set 2026-07-26)
+## 1. Critical Directives
+
 
 **The owner (Khalil) has granted full working access: credentials in `.env`, the web/browser
 tool, direct server + container (`docker exec`) access, and the live DB. When the owner asks
@@ -35,7 +32,7 @@ Rules:
 This directive is high priority: when in doubt, act on the owner's instruction using the access
 provided.
 
-## ⭐ CANONICAL GOOGLE ACCOUNT — autosparefinder2024@gmail.com (HIGH PRIORITY, owner-set 2026-07-26)
+
 
 **Every account, API, OAuth client, Cloud project, channel, or third-party site connected to
 the platform MUST be created under / owned by the business Google account
@@ -60,97 +57,205 @@ How to apply:
 4. If a resource already exists under the wrong account, migrate it to
    `autosparefinder2024@gmail.com` and document the migration in FIXES_TRACKER.
 
-## Mistake Log — Document Every Error & Never Repeat It (MANDATORY)
+---
 
-**Rule (owner-set 2026-07-18):** when a mistake is found — mine or a recurring system bug —
-I MUST (1) record it in the **Mistake Log table below** (what went wrong, the ROOT cause, and
-the concrete lesson), and (2) **apply the lesson everywhere the pattern exists, not just where
-it surfaced.** The lesson is not learned until the log entry is written AND the fix is verified
-across every affected file/surface. Before closing any task, re-read this log and check the
-work against it.
+**Contents**
+[1. Critical Directives](#1-critical-directives) · [2. Critical Lessons Learned](#2-critical-lessons-learned) · [3. Platform Vision & Goals](#3-platform-vision-goals) · [4. Repository & Agent Architecture](#4-repository-agent-architecture) · [5. Hard Constraints](#5-hard-constraints) · [6. Mandatory Importer Patterns](#6-mandatory-importer-patterns) · [7. IL Importer Site Reference](#7-il-importer-site-reference) · [8. Business Rules](#8-business-rules) · [9. Feature Modules](#9-feature-modules) · [10. Operations Reference](#10-operations-reference)
 
-**Why this rule exists (the triggering incident):** the pricing policy was *documented* but not
-*fully implemented in the according files* — the conditional-VAT rule and the "importer must
-carry a real cost, never 0" rule lived in the docs while individual importers / the search
-display / NOA still applied flat VAT or left `importer_price_ils=0`. The owner had to catch it
-twice. **A policy is only "done" when it is enforced in code on EVERY surface that touches it —
-not when it's written down.**
+---
 
-**Operating rules distilled from past mistakes:**
-1. **Fix all layers, not the first one.** When a rule/policy is wrong in one file, `grep` the
-   whole codebase for the same pattern and fix every occurrence (importers, search, agents,
-   marketing, checkout). "Fixed where it was reported" ≠ fixed.
-2. **A policy needs a single enforcement point + a guard.** Prefer one server-side function
-   (e.g. `_customer_price_fields` / `get_supplier_vat_rate`) that every surface calls, plus a
-   self-healing task that corrects drift — never re-implement the rule per file.
-3. **Verify against the LIVE system and the exact failing sample**, not the code's self-report
-   or a `.md` file. A goal isn't done until an end-to-end check proves the outcome.
-4. **Watch for the same class of bug** the log already names before writing new code.
+## 2. Critical Lessons Learned
 
-| Date | Mistake / bug | Root cause | Lesson applied (everywhere) |
-|---|---|---|---|
-| 2026-07-14 | Search DISPLAY + NOA showed foreign parts ~18% too high | Flat `×1.18` VAT instead of conditional (IL-only) VAT | One `get_supplier_vat_rate` used by search, chat agents, NOA, checkout — 18% LOCAL only, 0% foreign. Verified on every surface. |
-| 2026-07-18 | 3,627 IL parts stuck at `importer_price_ils=0` with margin-less `base_price` | Heal task's `AND base_price=0` guard skipped already-based parts | Removed the guard, heal from IL supplier cost (`base=cost×1.45`), `SKIP LOCKED`; gap→0; re-verified 18% VAT for IL importers end-to-end. |
-| 2026-07-18 | Renamed `CLAUDE.md`→`claude.md` would silently stop instruction-loading | Case-sensitive Linux FS; harness loads exact `CLAUDE.md` | Keep the filename exactly `CLAUDE.md`; never a second lowercase copy. |
-| 2026-07-18 | Import-testing modules ran real work (bulk_harvest / colmobil started harvesting/importing) | Some scripts do work at module import / ignore `--help` | Never bulk-`import` script modules to test them; use `py_compile` + AST import-resolution, and only actually-import the import-safe library modules. |
-| 2026-07-20 | "Max 3 cart reminders" was violated for months — one cart got **48** | The cap counted sends inside a **rolling 3-day window**, so the same cart earned 3 more every 3 days, forever. A rolling window is not a cap. | Caps on customer-facing messaging are **LIFETIME per entity** (+ a minimum gap between sends). Audited and fixed the same class of bug in the pending-payment loop, which had no cap at all. |
-| 2026-07-20 | A quality guard silently destroyed the BEST content: every NOA post quoting a real price was flattened + boiler-plated | `\b[א-ת]\b` (lone-Hebrew-letter garble check) matched the ordinary price form `מ-198` → post judged low-quality → repair path collapsed newlines and stapled canned text | A validity/quality heuristic must be tested against **real, correct input** before it can reject anything — especially input the business depends on (real prices). Exempted Hebrew one-letter prefixes; kept genuine-garble detection and proved both with tests. |
-| 2026-07-20 | Arabic hashtags were silently dropped, and `#قطع_غيار` was mangled to `#قطعغيار` | `_NOA_HASHTAG_RE` charset omitted Arabic, and `_normalize_noa_symbols` stripped `_` as markdown emphasis | Filters that allowlist a charset must enumerate **every language the product serves** (HE/AR/EN here); a "cleanup" regex must never run over user-visible tokens without protecting them first. |
-| 2026-07-25 | `social_inbox` UPDATE/skip crashed with `syntax error at or near ":"` (engagement `set_draft`/`mark_replied`/`mark_skipped`) | Wrote `WHERE id = :id::uuid` in a SQLAlchemy `text()` query — the `::` Postgres cast collides with the `:name` bound-param parser, so `:id` was emitted literally and never bound | In any SQLAlchemy `text()`, cast a bound param with **`CAST(:id AS uuid)`**, NEVER `:id::uuid` (the `::` breaks param binding). Fixed all 3 sites and proved the record→draft→skip lifecycle against the LIVE DB before closing — a compile pass would NOT have caught this (it's a runtime SQL error). |
-| 2026-07-25 | Told the owner that reading/replying to comments+DMs "needs app review / is blocked" on most platforms — overstated the limit | Asserted third-party platform-API capabilities from training memory (knowledge cutoff Jan-2026); the owner pushed back, and a live web recheck showed unified partner APIs (Ayrshare/Blotato) already do cross-platform comments+DMs today | External/third-party API capabilities **drift over time — verify against live sources before stating a limitation** (same spirit as "verify from real data, not .md", extended to the outside world). Separate what's genuinely walled (Facebook Groups API retired 2024-04-22 — re-verified) from what I merely assumed. When challenged on a fact, recheck rather than defend. |
-| 2026-07-25 | Kept planning/testing around a Facebook Graph API Explorer token that expired within hours (the owner-pasted token was already dead on validation) | Explorer USER tokens are short-lived; without the **app secret** they cannot be exchanged for a long-lived → non-expiring **page** token | For any OAuth integration, design for the DURABLE credential path FIRST (`app_id`+`app_secret` → `fb_exchange_token` → long-lived → page token that doesn't expire); never build/verify on a throwaway token that breaks in hours. Validate a pasted credential IMMEDIATELY (it may already be expired) before building on it. |
-| 2026-07-26 | Misdiagnosed the Google-login failure as "just a missing Authorized JS origin" and handed it back to the owner to fix — TWICE — when the real cause was that the OAuth client was type **Desktop** (which cannot have JS origins or do browser sign-in at all) | Asserted a cause from the error string instead of inspecting the actual client in Cloud Console; also defaulted to delegating a config task I had the browser+creds to verify myself | When I have the tools/access, **inspect the live config BEFORE asserting a root cause or delegating**. An error message names a symptom, not the cause — open the console and look. (Fix: created a proper Web OAuth client, swapped ids, published to prod — all by me.) |
-| 2026-07-26 | Recommended Google Business Profile review-engagement for the platform and had the owner start GBP verification — but an **online-only marketplace can't pass GBP verification** (it's for real physical storefronts), so it was a dead end | Recommended a channel without checking its eligibility model against the business's actual nature (online platform, no physical location) | Before recommending/starting a channel, check its **eligibility/verification model against what the business actually is** (online vs physical, consumer-login vs business-asset). Don't send the owner down a verification path that structurally can't pass. |
-| 2026-07-26 | Built the YouTube OAuth client + API enablement under **khalilayoub23's** Google Cloud project ("My First Project"/`aesthetic-root-463607-q7`) instead of the business account **autosparefinder2024**'s project (`valid-moment-444021-r6`) — the owner caught it | The Cloud console + YouTube create-channel flows silently default to the browser session's PRIMARY signed-in account (khalilayoub23); I didn't confirm the active account/project before creating resources. (The channel/token DID land on autosparefinder2024 via `authuser=1`+`login_hint`, but the app/project did not.) | When operating across multiple Google accounts, **confirm the console's ACTIVE account AND project (read the account button + project pill) before creating any resource** — don't trust `authuser=` URL params or the session default. For a business, resources belong in the BUSINESS account's own project. |
-| 2026-07-27 | **3 duplicate category rule sets + 12 importers using wrong catch-alls → 1.67M parts stuck in non-canonical buckets ('general'/'service-general'/'accessories')** | `category_map.py`, `maintenance/categorize_parts_batch.py`, and `categories.py/part_type_taxonomy.py` each maintained their own independent RULES — none imported from each other. `categorize_parts_batch.py` line 258 moved unmatched parts to `'general'` (instead of `'כללי'`) — this one line created the entire 865K 'general' backlog on July 13. `task3_categorize_by_keywords`'s index only matched `category='כללי'` — the entire 1.67M 'general'+'service-general'+'accessories' backlog was invisible to the cleanup loop. `categorize()` returned `None` for unmatched, forcing every importer to hard-code its own fallback. `normalize_categories` was stuck in a checkpoint death spiral (timestamp frozen at 2026-07-03 → scanned 24+ days of delta → timed out → never saved checkpoint → repeated forever). | **Merged into ONE source of truth.** `category_map.py` has the comprehensive dual-array (HE+EN) RULES + VARIANT_MAP + CATEGORY_SLUG_MAP + `categorize_on_ingest()` + `categorize_slug()`. `categorize_parts_batch.py` imports from it. `categorize()` always returns `'כללי'` for unmatched (never `None`). All 12 importer fallbacks fixed → `'כללי'`. Task3 WHERE clause expanded to all 4 bad buckets. `normalize_categories` checkpoint reset. **Rule: there is ONE category file. If you add a keyword, add it to `category_map.py` only. If you write a new importer, call `categorize_on_ingest()` — never return a hard-coded fallback category.** | **Superseded by the 2026-07-27 "THREE incompatible VOCABULARIES" entry below — the real scope was 14 rule sets across 3 vocabularies, not 3 rule sets.**
-| 2026-07-27 | **Background cron loops continuously burning AI API quota (Cerebras/Gemini/Groq all 429'd simultaneously)** | `task3b_llm_category_fallback(batch_size=500)` fired 500 Cerebras calls every 30 seconds = the entire free-tier TPM budget consumed continuously. `lookup_oem_spec(limit=500)` was 500 sequential calls per run_all_tasks cycle. `enrich_pending_parts` was double-called (30-min loop AND run_all_tasks). All three piled on simultaneously → cascaded across all providers. | Three env-variable gates added — **all default to 0 (disabled)**: `CLEANUP_LLM_ENABLED` (task3b), `OEM_LOOKUP_ENABLED` (lookup_oem_spec), `ENRICH_PARTS_ENABLED` (enrich loop + run_all_tasks wrapper). **Rule: LLMs belong in on-demand customer chat, NOT in background cron loops. Any new cron task that calls an LLM MUST be gated by an env toggle that defaults to 0.** |
-| 2026-07-27 | `BaseAgent._offline_reply()` had NO branch for `social_media_manager_agent` (NOA) or `supplier_manager_agent` (Boaz) — discovered live when Cerebras+Gemini+Groq all 429'd simultaneously (real, sustained multi-provider quota exhaustion, not caused by this session's prompt edits) and NOA's exhausted-fallback silently returned a generic "send me your car model/year/OEM number" line (built for the parts-fitment agent) instead of anything sensible for a social-post-generation context | `_offline_reply()`'s per-agent branches were written for the original customer-chat agents (router/security/orders/finance/marketing/service) and never extended when `social_media_manager_agent`/`supplier_manager_agent` were added to `_fast_agents` — both silently fell through to the generic Hebrew "need more car details" branch | Any agent added to `_fast_agents` (or any agent whose `.think()` can raise) needs its OWN `_offline_reply` branch matching its actual context — a missing branch doesn't error, it silently returns a WRONG-context reply, which is worse than an explicit failure. Added branches for both; NOA's now says generation is temporarily unavailable (never publish generic filler), Boaz's is explicitly marked internal-only. Check `_fast_agents` membership against `_offline_reply` branches whenever either list changes. |
-| 2026-07-27 | **The category system had THREE incompatible VOCABULARIES and 14 private rule sets — `normalize_categories` was silently discarding nearly every mapping it built** | `db_update_agent` mapped raw labels → **Hebrew display names** (`'brakes'→'בלמים'`) but only kept CASE branches whose target was in `CANONICAL_CATEGORIES` — which was `list(categories.CATEGORY_MAP.keys())`, i.e. **131 Title-Case taxonomy labels** (`'Air Filters'`). A Hebrew string is never in an English-label set, so almost every branch was dropped; the only survivors pushed parts INTO `כללי`. Meanwhile `parts_catalog.category` stores a **third** vocabulary (English slugs). 14 files carried their own rule sets, several writing values that are not categories at all (`"General Parts"`, `"Auto Parts"`, `"Other Parts"`, `"Engine"`, `"Service & General"`, `"כלי עבודה ואביזרים"`), and the SEARCH API's filter compared user input against Hebrew names the column never holds. | **One file (`category_map.py`), one vocabulary (English slugs + `כללי`), derived not duplicated.** `CANONICAL` is derived from `part_type_taxonomy` family ids; taxonomy labels/aliases are folded into `VARIANT_MAP` programmatically; Hebrew/Arabic names are **display-only** (`DISPLAY`) and never stored; every scan scope and allowlist is derived from `CANONICAL`/`BAD_FALLBACK_BUCKETS` so it cannot drift. **Rules: (1) if a value can be STORED, there is exactly one vocabulary for it — display names are a separate, non-storable map; (2) never validate a mapping's output against a set built from a different vocabulary — assert that every map target is canonical, and log/skip the ones that aren't; (3) an enum-like set must be DERIVED from its source of truth, never re-typed.** Verified by an AST check that no file outside `category_map.py` defines a module-level category rule set. |
-| 2026-07-27 | Keyword categorization used **first-category-wins**, so a generic word in an early category shadowed a specific phrase in a later one (`'שמן'`→fluids beat `'מסנן שמן'`→filters; `'בולם'`→suspension beat `'בולם הגה'`) — and because generics were dangerous, the bare head-nouns were left out entirely, which was the single largest coverage gap (`engine` 765×, `door` 739×, `belt` 505×, `brake` 338× in unmatched rows with NO rule) | Ordering was being used as the disambiguation mechanism. That makes every addition risky, so the safest keywords (the common bare nouns) were never added, and category ORDER became load-bearing hidden state. | **Longest-matching keyword wins** (flat index sorted by keyword length DESC; list order only breaks ties). Specificity is now intrinsic to the keyword, not to where it sits in a file — which made it safe to add a bare-head-noun tier. Match rate on a real 20K live sample went **36.8% → 73.6%** with 15/15 specific-phrase regressions still passing. **Rule: when disambiguating overlapping patterns, rank by specificity of the pattern itself, never by declaration order.** |
-| 2026-07-27 | A 2-letter Hebrew keyword `'לד'` (LED) matched **inside** the unrelated word `'לדשבורט'` ("for the dashboard") and filed a dashboard bracket under `lighting` | Hebrew/Arabic have no casing and were matched as bare substrings, so short keywords collide inside longer words. A naive `\b` fix would have broken the legitimate case, because Hebrew glues one-letter proclitics (ה ו ב ל מ ש כ) onto nouns — `'הפנס'`/`'לפנס'` must still match `'פנס'`. | Short RTL keywords (≤3 chars) match via a pattern that allows one optional proclitic BEFORE the word and forbids another RTL letter AFTER it. **Rule: substring matching on an unspaced/agglutinative script needs explicit boundary handling for short tokens — and the boundary rule must be tested against the language's own prefixing behaviour, not just against the false positive you found.** |
-| 2026-07-27 | Rules were being tuned by guessing which keywords were missing | Guessing produced specific phrases nobody searches for while the highest-frequency gaps went unnoticed. | **Measure the failure population, don't guess it.** Ran token-frequency analysis over 24,845 real unmatched rows to rank the actual gaps, which is what surfaced the bare-head-noun problem, catalog truncations (`"Cover-cushio"`), reversed word order (`"absorber assembly shock"`), a Hebrew spelling variant (`חגורת ביטחון` vs `בטיחות`), and non-parts (workwear, owner's manuals). Also: **refusing to classify is a valid answer** — bare fasteners (`bolt`/`screw`/`בורג`) stay in `כללי` because a wrong category is worse than the catch-all; in context (`"Bolt Cylinder Head"`) they still classify correctly. |
-| 2026-07-27 | **A learned-keyword blocklist filtered only at WRITE time — tokens voted in BEFORE the blocklist existed still activated.** `bolt` and `washer` went live as `service-general`, and `rover`/`land` were one vote away from filing ~26,000 Land Rover parts under a single category | `is_blocked()` was called in `mine_tokens()` (the producer) but not in `load_into_matcher()` (the consumer). Rows already in `category_learned_keywords` from a pre-blocklist run bypassed the guard entirely on the next boot. | **A guard must run on the path that USES the data, not only the path that produces it.** Blocklist now enforced in `load_into_matcher()` as well, plus `purge_blocklisted()` at startup to delete pre-existing rows. Verified live: 14 tokens purged (`bolt, center, land, nut, piece, pin, ring, rover, shim, tank, washer, xxl`), 142 mis-filed parts reverted, `service-general` back to exactly its post-backfill 11,757. **Same class as the 2026-07-18 heal-task guard bug — when adding a filter, ask what already-persisted data predates it.** |
-| 2026-07-27 | An LLM-assist loop was going to take **107 days** to work through 403,327 stuck parts | Throughput was reasoned about per-PART (25 parts/call × 150 calls/day = 3,750/day) instead of per-KEYWORD. Sampling was `random.sample`, so each expensive call taught almost nothing reusable. | **Measure the leverage, then optimise the leverage — not the unit of work.** Token analysis of the real stuck population showed the top 400 unknown tokens cover **73.6% (~297,000 parts)**: `bolt` alone appears in 16,541, `rover` in 13,068. Fixes: (1) sample the parts containing the most FREQUENT unknown token so every call teaches a high-leverage rule; (2) `_bulk_apply_new_keywords()` re-runs the matcher over the whole catch-all the moment a keyword activates, so one keyword fixes thousands of parts at once rather than the 25 that taught it. **Rule: when an expensive oracle feeds a cheap rule engine, optimise for what the rule engine LEARNS per call, and apply each new rule in bulk immediately.** |
-| 2026-07-28 | **Two `run_all_tasks` tasks had been failing on EVERY cycle for weeks** — `normalize_categories` (`function max(uuid) does not exist`) and `normalize_part_types` (30s statement timeout). "The pipeline is running" was true; "the pipeline is working" was not. | Health was inferred from cycles COMPLETING, not from per-task `status=`. The loop logs `task X errored, continuing` and moves on, so a permanently-broken task is invisible unless you tally outcomes. Worse: `normalize_part_types` was trying to case-change **4.3M rows** (`'oem'→'OEM'`) — an operation that could never finish inside the timeout — and `ORDER BY id` forced a Sort (cost 79,218) because `id` is not in `idx_supplier_parts_part_type_part_id`. | **Tally per-task `status=` from the logs before declaring a pipeline healthy** (`grep -oE "done: [a-z_]+ status=[a-z]+" \| sort \| uniq -c`). **`EXPLAIN` a batch query that times out before assuming the predicate is at fault** — an `ORDER BY` that doesn't match the index turns an index scan into a sort over the whole match set. And **check whether the "wrong" value is actually the established convention** before mass-rewriting a column. |
-| 2026-07-28 | **`normalize_categories` pass 2 was silently DESTROYING good data — the timeout was the only thing protecting it** | Pass 2 set EVERY non-canonical category to `'כללי'`. Of the 8 values it would have hit, **7 mapped cleanly** through VARIANT_MAP (`'Brakes'→brakes`, `'Body Parts'→body-exterior`, `'Transmission'→gearbox`) — 1,775 of 1,777 rows would have been flattened into the catch-all. Fixing only the performance problem would have "made it work" and started the destruction. | **When a broken task is also a data-writing task, read what it WOULD have written before you fix the crash.** Pass 2 now maps through VARIANT_MAP first and reserves the catch-all for values with genuinely no mapping (verified live: `rows_mapped=1777, rows_fallback=0`). This is the same failure shape as the original category bug — a "normalizer" whose only working path pushes parts INTO `כללי`. |
-| 2026-07-28 | Told the owner ASAP had 0 approved brands and that its price sheets were empty. Both wrong — 4 brands were approved and the sheets carry `list_price`/`map_price` on 96.6% of rows | The claim was asserted from a stale DB note plus a hidden `price_level=0` form field, instead of generating a sheet and reading its header. `price_level=0` means no DEALER tier is exposed, not that there is no price. | **A stored note is a claim about the past; the live system is the fact.** Re-verify before repeating. Also: `importers/asap_import.py` had never been written, which was the real reason nothing imported — the relay endpoint's own comment said it would spawn "once the importer exists". **An integration is not "blocked by the vendor" until you have checked that our half of it exists.** |
-| 2026-07-28 | Reported "we are 20-90% ABOVE the Israeli market" for ASAP parts. The owner rejected it as guessing — correctly; SKU-level data showed we are **25-50% BELOW** | The figure came from dividing 4x4 **kit** prices (4 shocks + hardware) by an assumed shock count. An inference presented as a measurement, and the assumption inverted the conclusion. | **Find a source that publishes the same UNIT and the same PART NUMBER before comparing prices.** jeepland.co.il sells single shocks and lists the real Fox SKU, which made a direct match possible (`985-24-042`: IL ₪2,124 vs ours ₪1,051). Also: when two benchmarks disagree (US street vs Israeli retail), say so and name which market the customer actually buys in — don't average them or pick the flattering one. |
-| 2026-07-28 | **Curing the DATA orphaned the RULES that were keyed on the old form.** Expanding the gershayim abbreviations (`מחז"ש`→`מחזיר שמן`) silently broke categorization: the engine rule was keyed on the ABBREVIATION, so once the names were cured 402 oil seals stopped matching it and fell to `fluids` on the bare word `שמן` | A data-normalisation pass and a keyword ruleset that both key on the same string are coupled, but nothing links them. 13 category rules were keyed on abbreviations that the cure rewrote. | **When you normalise a value in the data, grep the rules for the OLD form and add the NEW one in the same change.** Verified by re-running the categorizer over all 15,779 cured rows BEFORE writing — which is what surfaced this. **Never apply a bulk recategorisation without first diffing what it WOULD write and eyeballing every transition group.** |
-| 2026-07-28 | A 16-char fluids keyword `שמן תיבת הילוכים` (gear OIL) outranked every hardware head, so the gearbox oil PUMP, PAN, DIPSTICK, COOLER and SEAL were all classified as a FLUID | Longest-match-wins is correct for specificity, but a long keyword describing a SUBSTANCE will always beat the short noun naming the PART that holds it. Measured live: of 700 rows carrying the phrase only 84 (12%) are actually oil — the rule was wrong 5 times out of 6. | **A substance keyword must not be longer than the hardware keywords that legitimately contain it.** Enumerated the real heads (`מצנן`/`משאבת`/`אגן`/`מדיד`/`אטם`/`צינור`/`מסנן`/`מחזיר` + the phrase) into gearbox/cooling/filters so hardware outranks the fluid. **Measure the population before trusting a keyword — don't assume the long match is the right one.** |
-| 2026-07-28 | ASAP fitment wrote **0 of 8,210** rows, and Fox Factory's 8,088 had failed the same way unnoticed | The upsert used `ON CONFLICT ON CONSTRAINT uix_pvf_part_mfr_model_year_from`, but that dedupe key is a bare **UNIQUE INDEX**, not a table CONSTRAINT — `ON CONSTRAINT` only accepts real constraints, so every row raised "constraint does not exist". The per-row savepoint turned a total failure into a quiet `skipped` tally. | **`ON CONFLICT ON CONSTRAINT` works only for CONSTRAINTS; target a unique INDEX by column inference** (`ON CONFLICT (part_id, manufacturer, model, year_from)`). Check `pg_constraint` vs `pg_indexes` before naming one. And **a per-row savepoint that counts failures must be read** — 8,210/8,210 skipped is not a warning, it is a total outage. |
-| 2026-07-28 | 566 **discontinued** ASAP parts (193 Banks + 373 Fox) were listed as buyable | The importer's own comment said discontinued rows "must not be advertised as in stock", but it read an `availability` column that **does not exist in the ACA sheet** — the real column is `discontinued_item`. Reading a missing column yields `""`, which passed the not-in-list test, so `in_stock` was True for every row. | **A field read from an absent column fails OPEN, silently.** Verify each mapped column actually exists in the real header before trusting a guard built on it. Fixed to read `discontinued_item` with `availability` as fallback; re-ran and confirmed 566 rows flipped to `is_available=false`. |
-| 2026-07-28 | **The live `GEMINI_API_KEY` was being written into `docker logs`** — a 429 from `gemini_web_search` printed the full request URL, key included | Google passes the API key as a URL **query parameter**, and httpx embeds the request URL in `HTTPStatusError`'s message. Every caller that logs `str(exc)` therefore logged the key. The standing rule "never print OAuth tokens to stdout" was written for headers and never extended to query-string credentials. | Added `_scrub_secrets()` + `raise_for_status_safe()` in `hf_client.py` and routed **all 16** `raise_for_status()` sites through it (`?key=/api_key=/access_token=/token=` → `<redacted>`). Verified against a REAL 429. **Rule: a credential in a URL leaks through every error path — scrub the URL, not just the header.** |
-| 2026-07-28 | The scrub helper shipped with an infinite self-recursion; `py_compile` passed and a unit-style check on the regex passed too | The bulk edit that rewrote `resp.raise_for_status()` → `raise_for_status_safe(resp)` also rewrote the call **inside the helper itself**, so it called itself forever. Only the end-to-end call against a real 429 surfaced it (`RecursionError` instead of `HTTPStatusError`). | **A mechanical find-and-replace must exclude the definition site of the thing it is replacing with.** And: compile + isolated-function tests prove nothing about a call path — the same session had already hit `re` vs `_re` this way. Exercise the REAL path (here: a genuine 429) before declaring a fix done. |
-| 2026-07-28 | **Hebrew stored in VISUAL (reversed) order** — 3,674 rows. `םימלבל 'חא קסיד` is `דיסק אח' לבלמים` (rear brake disc) but was filed under `electrical-sensors`; a door glass sat in `lighting`. The owner spotted it from a merch row he recognised as a real product | An importer wrote display-order text instead of logical order. A keyword scan found only 1,048; the exact test is linguistic — Hebrew FINAL forms (ךםןףץ) can only end a word, so a word STARTING with one proves visual order. That found 3,674. | Repaired in place (3,674 → 380). **Reverse the WHOLE string, then flip each Latin/digit run BACK** — a naive `s[::-1]` turns `24`→`42` and `GS330`→`033SG`, silently corrupting part identifiers. **Detect the defect with a rule from the language itself, not a keyword list.** |
-| 2026-07-28 | After the repair I ran a SECOND "corrective" pass that made 44 rows differently-wrong, and I had to revert it | ~380 rows are MIXED — half already correct, half reversed (`ןגמ RUETCELFED פלסטיק עליו`). No whole-string flip can fix those: it repairs one half and destroys the other. I knew the mixed-detector was imperfect and applied anyway, then tried to patch the result with another heuristic pass driven by a vocabulary SCORE that is meaningless on half-correct text. | **When a population is known to be unclassifiable by your detector, exclude it — do not run a second heuristic pass to clean up the first.** The mixed rows are now skipped and reported for a human. Also: `unreverse()` is its own inverse, which is the only reason the bad pass was fully revertible — **prefer an involutive transform for risky bulk edits so a mistake is undoable.** |
-| 2026-07-28 | Added the `merchandise` category, backfilled 6,521 parts — then watched the count DRIFT DOWN (6,521 → 6,517 → 6,516) while nothing was obviously wrong | The bind mount makes source edits live on DISK, but the RUNNING uvicorn had already imported `category_map`/`part_type_taxonomy` at boot. Its in-memory `CANONICAL` had no `merchandise`, so `normalize_categories` treated every new row as non-canonical and flattened it back toward the catch-all — the writer and the normaliser disagreed about what a valid category IS. | **Adding a value to an enum-like set that a LONG-RUNNING process holds in memory requires a restart before backfilling it** — the bind mount updates files, not the loaded module. Restarted (`pre_restart.sh` → `docker restart`), confirmed the new process reports `merchandise in CANONICAL: True`, then re-applied. **Watch a backfilled count for DRIFT afterwards; a silently self-reverting number means another actor disagrees with you.** |
-| 2026-07-28 | Owner asked why warranty "is not implemented and wired" — it IS: `supplier_parts.warranty_months`, already returned by the search/compare API, 88.9% populated | The impression came from 1,048 Porsche rows where the importer wrote the price list's warranty COLUMN into `name_he` — a column-misalignment that made warranty look absent when it was merely misplaced. | Answer the "is X implemented?" question by checking the SCHEMA and the API response shape, not the symptom that prompted it. Backfilled every row with a real source (36,136, 88.9%→89.8%) and **left 423,644 NULL because no warranty data exists for them anywhere** — the brand's vehicle warranty (`car_brands.warranty_years`) is NOT the part's warranty, and inventing one would fabricate a commercial promise the customer can hold us to. Real gap: REX's "Official Manufacturer Sites" scraper (293,263 rows) never captured the field. |
-| 2026-07-28 | Wrote `SELECT MAX(id) FROM b` on a uuid keyset cursor — `function max(uuid) does not exist`. **This exact error is already in this log** (normalize_categories, 2026-07-28) | I read the log's lesson as being about that one task rather than about uuid columns generally, and re-derived the same broken pattern from scratch in a new script. | Postgres has NO `max(uuid)` aggregate — take a cursor with **`ORDER BY id DESC LIMIT 1`**. And re-read the Mistake Log for the PATTERN before writing new code against the same column types, not just when touching the same file. |
-| 2026-07-28 | A batched `UPDATE` over `supplier_parts` ran to the statement timeout having written **0 rows**, twice | The batch CTE had no `FOR UPDATE SKIP LOCKED`, so it queued behind the car-parts.ie harvester's row locks and was killed before committing anything. The first version also re-`COUNT(*)`-ed the whole 4.1M table each iteration to decide when to stop. | **Any batched write to a table the harvester also writes MUST use `FOR UPDATE SKIP LOCKED`**, drive its cursor from an INDEXED column (keyset on the PK, or a selective indexed predicate like `supplier_id`), and decide termination from the batch's own returned row count — never from a fresh full-table COUNT. |
-| 2026-07-28 | Started rewriting all 3.7M warranty rows just to stamp `warranty_source='supplier'`; measured ~240 rows/s ⇒ **~4 hours** of UPDATEs contending with the live harvester, plus table bloat | Chose data-model purity (every row explicitly tagged) over cost, for a field whose value was already known and unambiguous. | Killed it at 21,521 rows and **defined NULL as 'legacy supplier data'** instead, writing provenance ONLY for the platform default (423,648 rows). Encoded the semantics in `warranty_policy.is_supplier_stated()` so no caller writes the subtly-wrong `warranty_source == 'supplier'`. **When a backfill is purely cosmetic, define the default meaning instead of rewriting the table.** |
-| 2026-07-29 | The owner got an "everything is fine" harvest report **every hour** (~13/day, ~91/week) and asked for it to stop — the one message that mattered (a stall) was identical in shape to the twelve that didn't | `_harvest_supervisor_loop` sent the report unconditionally whenever the hourly timer was due AND the notify window was open. The stall signal (`d_models == 0 and d_parts == 0`) was ALREADY being computed — it was just rendered as one line inside a routine progress message instead of being the thing that decided whether to send at all. | **Notify BY EXCEPTION. A routine success report is not information, it is camouflage** — it trains the reader to ignore the channel, which costs exactly the alert it exists to deliver. Now sends only on `stalled` / `idle` / one-shot `recovery`, with a 6h re-alert for a persistent stall. **"Idle" is a first-class reportable state, not the absence of one** — the owner explicitly wanted to hear when the import has nothing left to do. Policy extracted to a pure `_harvest_status_decision()` so it is testable (11/11), incl. a volume assertion: **0 messages across a healthy day.** |
-| 2026-07-29 | A test I wrote failed (3 vs 4 expected alerts) and the CODE was right — my harness was wrong | The simulation advanced its elapsed-time counter *after* each decision, adding an hour of lag per cycle. Production derives elapsed time from an absolute clock (`_now - _last_sent_utc`), so it fires at exactly 6h. | **When simulating a time-based policy, derive elapsed time from a clock the way the code does — never from a counter you bump after the fact.** And when a new test disagrees with new code, suspect the test's model of time before "fixing" the code to match it. |
-| 2026-07-29 | Hebrew on the QR channel-picker page looked reversed; the obvious "fix" would have been to reverse the strings | The stored Hebrew was in correct LOGICAL order. The browser's bidi algorithm was reordering **Latin runs** (`WhatsApp`, `AutoSpareFinder`, the domain) inside `dir="rtl"` and throwing punctuation to the wrong end. | **A reversal-looking defect in a BROWSER is a bidi RENDERING problem until proven otherwise — check the bytes before touching the data.** Fix is `<bdi dir="ltr">` around each Latin run. Reversing the stored strings would have created exactly the corruption the 3,674-row visual-order repair (same day) existed to undo. |
-| 2026-07-29 | NOA, in the owner console, invented `autosparefinder.co.il/oil-filters-corolla` (a 404) and a "special discount" that does not exist | `agents/owner_console.py` carried its OWN minimal copy of NOA's policy. It forbade invented *prices* and nothing else, because whoever copied it copied only the clause they were thinking about. The real NOA prompt's link/promo rules never made it across. | **A policy duplicated into a second prompt silently loses every clause nobody remembered to copy.** Added the prohibitions to the SHARED `_WA_REPLY_RULES` (all three owner agents inherit) **and** a deterministic post-processing guard (`_clean_wa_reply` collapses unrouted paths to the site root) — because a prompt rule does not hold under a fallback model, and a forwarded bad link reaches a real customer. Same defence-in-depth shape as `_sanitize_internal_pricing_disclosure`. |
-| 2026-07-29 | Told "from now on always include a real price", NOA replied by asking the OWNER for a price — answering the topic instead of the intent, which is what "acts like a bot" means | `_SAVE_INTENT` already detected the directive and PERSISTED it, but nothing told the model that this message was an instruction rather than a request for content. Detection changed the database and not the behaviour. | **Detecting an intent must change what the system DOES, not just what it records.** A recognised directive now injects an explicit note into the system prompt for any agent: acknowledge, state in one line what changes, produce no artefact. |
-| 2026-07-29 | Wrote a job-queue module whose docstring demanded "progress is MEASURED, never self-reported" — then implemented it by counting before AND after every batch, which is the `scan-for-nothing` anti-pattern the same file warns about | Stating a principle is not implementing it. I never measured what the measurement COST: the merge-group count is **81s** and the thumbnail count **66s** on this catalogue, i.e. ~150s of full-table scanning to learn what a 300-row batch did. | Each step declares `measure_every`; a count runs on the first batch then once per window, and `remaining_at` is surfaced so a stale number is visible AS stale. **When you add a correctness check to a hot path, TIME IT on real data — a check that costs more than the work is a bug, not rigour.** |
-| 2026-07-29 | The job queue marked a **FAILED** step as `done` and would have advanced to steps depending on it | Termination used "remaining did not decrease ⇒ finished". An ERRORED batch also leaves remaining unchanged, and `batches_run` is not incremented on error, so the next call re-measured and applied the rule to a broken step. | **"No progress" only means FINISHED when the previous attempt SUCCEEDED** — gate any no-progress termination on `attempts == 0`. Caught by a test using a throwaway step (`cmd="false"`), not in production; a control loop for destructive jobs must be tested against its FAILURE paths, not just its happy path. |
-| 2026-08-02 | The learned-keyword consensus reached **96-99% agreement on tokens that were plainly WRONG** — `קופסת`→gearbox 98% (really storage/relay/control boxes), `note`→service-general 99% (really "Low Note Horn"), `קליפס`→brakes 85% (really headlight clips), `control`→electrical 88% (25,007 suspension vs 20,659 electrical) | The gate measured agreement **among the votes**, and the votes come from parts sitting in the catch-all — i.e. parts nobody has classified correctly yet. The LLM agrees with the existing error and consensus amplifies it. **Agreement measures CONSISTENCY, not CORRECTNESS.** | New `evidence_profile()` checks each candidate against parts **already filed in a real category** — evidence independent of the votes. Two tests that work: **(1) MISMATCH** — proposal is not even the evidence's top category; **(2) MARGIN** — top must beat the runner-up ≥1.8×. Enforced in `approve()` (the path that ACTIVATES), not just the display. Owner can override with `אשרמילה <word> בכוח`, with the real spread shown first. **Absolute share was the WRONG test and measuring it proved so** — it blocked `lens` (48.6% lighting) which is a good rule, because a part name has many words and its stored category reflects whichever word won. |
-| 2026-08-02 | `approve()` marked **every** vote row for a token 'approved' — `משולש` went live simultaneously as suspension-steering, accessories, service-general, safety-systems, body-exterior AND merchandise | The table holds one row per (token, category) VOTE, but the UPDATE was `WHERE token = :t` with no category predicate. The active rule then depended on whichever row happened to rank first later. | Approve ONLY the winning `(token, category)`; mark the siblings 'rejected' so a future ranking change cannot silently promote a category the consensus rejected. Repaired 19 already-corrupted rows. **When a table stores one row per vote, every write must name the winning row — `WHERE token = :t` is a bug, not a shortcut.** |
-| 2026-08-02 | Two harvesters burned ~409% CPU across two FlareSolverr containers while producing **zero** output — for weeks | **car-parts.ie**: the IL market is fully harvested, and `requeue_completed_for_refresh(14d)` requeues nothing until models age past 14 days, so `pending` stayed 0 while the cycle still woke every worker every 120s (cycle 1912, 0 new parts/24h). **amayama**: 29 Cloudflare challenge timeouts and 0 successes in 24h; the supervisor's restart-backoff never fired because the harvester never EXITS — it retries inside its own loop, so a permanently-broken session is invisible to the supervisor. | **A drained work queue must SLEEP, not poll** — added exponential idle backoff (120s → `HARVESTER_IDLE_MAX_REST_S`, 1h). **A restart-backoff only supervises processes that DIE; a long-lived worker that fails internally needs its own productivity kill switch** (`AMAYAMA_HARVEST_ENABLED=0` until a solve actually succeeds). **Judge a background job by OUTPUT, not by whether it is running** — both looked healthy in `ps` and in their own logs. Verified: FlareSolverr 283%/126% → 0.02%/0.02%, chrome procs → 0. |
-| 2026-07-29 | Tried to speed up a RUNNING migration by building a 4.2M-row index on the table it was writing — the merge rate fell from ~24,000/h to ~15,000/h while the build ran, i.e. the "optimisation" slowed the exact job it was meant to help. Cancelled and dropped it. | Optimised mid-flight without measuring the cost of the optimisation, on a table under heavy write, without asking. `CREATE INDEX CONCURRENTLY` still competes for I/O and adds write amplification to every subsequent UPDATE. | **Do not add an index to a table a long-running job is actively writing.** Measure the contention before starting, do it in a quiet window, and remember an index built for one migration is dead weight afterwards. When someone says "why are you doing that now" — stop and re-derive the cost/benefit instead of finishing what you started. |
-| 2026-07-29 | Restarted the backend ~5× while the job queue was running; batch #35 was killed and restarted THREE times, discarding ~15 min of work each time | The queue's "one batch per iteration" design bounds restart loss to a single batch, which I treated as "restarts are cheap". At 15 min/batch they are not. | **A restart is only cheap if the unit of work is small.** Batch the deploys: collect several fixes, restart once. Check whether a long-running job is mid-batch before restarting. |
-| 2026-07-29 | The merge's own throughput DEGRADED as it progressed — discovery went 90s → 369s → past the 600s timeout, and batches began failing outright | The catalogue-wide discovery (`GROUP BY` + `LIMIT n`) stops early only while duplicates are DENSE. As they are merged away the survivors get sparse, so Postgres scans further and further to find n groups. **A job whose unit cost rises as it completes does not finish — it stalls.** | Scope discovery to ONE manufacturer at a time (77 of them, index-bounded, ~8s flat) with a persisted cursor. **When a batched job slows down as it progresses, suspect the SEARCH for work, not the work itself** — and check whether the cost is a function of what is left. |
-| 2026-07-29 | Two heavy catalogue writers ran concurrently — the job-queue merge and `run_all_tasks` — and the merge collapsed to ~700 parts/hour (from ~24,000) | I gave the thumbnail supervisor a stand-down contract but never asked what ELSE writes `parts_catalog` on a schedule. Two batched writers on one table contend; they do not share. | `job_queue.queue_busy()` — `run_all_tasks` now defers while the queue owns a write step (`DB_AGENT_DEFER_TO_QUEUE=0` overrides). **Before running a big migration, enumerate every scheduled writer of the same table and give each one a stand-down.** Verified: 696/h → 37,248/h, load 14.4 → 8.7. |
-| 2026-07-29 | `merge_master_parts` silently SKIPPED every duplicate group containing a NULL `created_at` — for the whole run | The canonical tie-break sorted on `created_at`, which is nullable; `None < datetime` raises TypeError. The per-group handler caught it, printed one line, and moved on, so the group stayed duplicated forever and the run still reported success. | Sort NULL as far-future so it never wins the canonical slot. **A per-item exception handler that logs and continues will hide a systematic defect — tally the failures and treat a non-zero count as a result, not noise.** Same shape as the 8,210/8,210 "skipped" fitment outage. |
-| 2026-07-29 | Ran a catalogue-wide merge with `--brand '%'`; the discovery query grouped by the normalised OEM **alone**, so it would have fused the same OEM number across DIFFERENT manufacturers — measured: **255,605 groups / 696,073 parts** | Grouping on OEM alone was harmless for as long as `--brand` pinned the query to a single manufacturer, so the missing `manufacturer_id` in the GROUP BY was invisible. Widening the filter silently changed the meaning of the key. | **A dedup/identity key must contain every column the identifier needs to be unique** — an OEM number is unique only WITHIN a manufacturer. Group by `(manufacturer_id, normalised_oem)` always, not just when it happens to matter. **And when you widen a filter, re-derive what the GROUP BY now means.** Caught by quantifying the damage BEFORE running, not after. |
-| 2026-07-29 | Fixed a broken command in `DEFAULT_PLAN`, redeployed, and the queue kept running the OLD command | `seed_default_plan` used `ON CONFLICT (step_key) DO NOTHING`, so the row seeded on first boot was authoritative forever. Source and running behaviour diverged with nothing to indicate it. | **Configuration mirrored from code into a table must be RE-SYNCED on every boot** (`DO UPDATE` on the definition columns, never on the progress columns) — otherwise code stops being the source of truth and a "fix" ships without shipping. |
-| 2026-07-29 | The job-queue status endpoint deadlocked the runner it was reporting on | `status()` called `ensure_table()`, and `CREATE INDEX IF NOT EXISTS` / `ALTER TABLE … ADD COLUMN IF NOT EXISTS` take an **AccessExclusiveLock** even when they change nothing — against the runner's row locks on the same table. | **Never issue DDL from a read/request path.** `IF NOT EXISTS` prevents an error, not a lock. Schema work belongs to startup/seed; make the helper short-circuit when the schema is already complete. |
-| 2026-07-29 | A progress counter showed **4,006,844** parts of thumbnail work while the worker reported `candidates=0` | The `count_sql` counted every active part lacking a thumbnail; the script can only process parts that HAVE a `parts_images` source row. The counter measured a population the worker never touches. | **A "remaining" figure must be derived from the WORKER's own candidate query.** A large confident number for work that cannot happen is worse than no number — it hides the real gap (here: image SOURCING, ~0.7% coverage, a different job entirely). |
-| 2026-07-29 | Put `--scope backlog` in the job-queue plan; that choice does not exist (`buckets`/`all`), so argparse would have aborted the categorize step on its first batch — **after** the merge step had already run for hours | Wrote a command line from memory instead of reading the target script's parser. The failure would have surfaced late and looked like a queue bug. | Added `devtests/job_queue_commands_test.py`: for EVERY step, assert the script exists, each flag is declared by that script's `add_argument`, each `choices=`-constrained value is legal, `{batch}` substitutes, and `--help` returns without doing work. **A plan made of command lines needs the command lines validated as data — the same way an importer's columns are validated against the live schema.** |
-| 2026-07-29 | The owner's WhatsApp replies sometimes never arrived, with nothing in the logs | Three independent silence paths in the same handler: (1) the reply was spawned as a bare `asyncio.create_task(...)` — the loop keeps only a WEAK reference, so an unreferenced task may be collected mid-await while the webhook still ACKs; (2) **no timeout** on the LLM call, so a hang waits forever; (3) `if r:` meant an EMPTY reply string sent nothing at all. | Hold a strong reference until done, `asyncio.wait_for(..., 120s)` with an honest "too slow" message, and answer even when the reply is blank or raises. **Silence is the one failure mode a user cannot diagnose — every background path that owes someone an answer needs a reference, a deadline, and a fallback message.** *Honest scope: a 200-task GC probe did not reproduce the collection on this CPython build — a documented hazard was removed, not a proven cause.* |
+> The full chronological incident log lives in [`docs/POSTMORTEMS.md`](docs/POSTMORTEMS.md).
+> These are the distilled, topic-grouped rules — optimized for AI retrieval.
+> **Before closing any task, re-read this section and check the work against it.**
 
-## PLATFORM GOALS (owner-set via /goal — MANDATORY LOG)
+**Meta-rules (how to apply):**
+1. **Fix all layers, not the first one.** When a rule is wrong in one file, `grep` the whole
+   codebase and fix every occurrence. "Fixed where it was reported" ≠ fixed.
+2. **A policy needs a single enforcement point + a guard.** Prefer one function every surface
+   calls over re-implementing per file.
+3. **Verify against the LIVE system**, not self-reports or `.md` files.
+4. **When a new incident surfaces a new rule**, append a row to `POSTMORTEMS.md` AND update the
+   relevant topic group below. The lesson is not learned until both are done.
+
+---
+
+### Pricing & VAT
+- **Conditional VAT**: `get_supplier_vat_rate()` returns 18% for IL/local suppliers only, 0% for
+  foreign (car-parts.ie/IE, SNG/UK, eBay/US). Never flat ×1.18 across the board.
+- **`importer_price_ils` guard**: in every ON CONFLICT DO UPDATE use
+  `CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END`.
+  Never hardcode `importer_price_ils = 0` or `= EXCLUDED.importer_price_ils` without the guard.
+- **One canonical price function**: `_customer_price_fields` (routes/parts.py). Every surface —
+  search, chat, checkout, NOA — consumes it. No per-channel price formulas.
+  Formula: `sell = cost × 1.45`, `vat = sell × 0.18 (IL only)`, `total = sell + vat + ship`.
+- **Import formula**: `cost = consumer_price / 1.18` → `importer_price_ils = cost`,
+  `base_price = cost × 1.45`, `max_price_ils = consumer_price`. Never reverse this.
+
+### Database & SQL
+- **`MAX(uuid)` does not exist in Postgres.** Use `ORDER BY id DESC LIMIT 1` for keyset cursors.
+- **Never `:id::uuid` in SQLAlchemy `text()`.** The `::` cast collides with `:name` param binding.
+  Use `CAST(:id AS uuid)`.
+- **ON CONFLICT for `supplier_parts` importers**: use
+  `ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key` — never
+  `ON CONFLICT (part_id, supplier_id)` (wrong constraint, fires silently).
+- **No DDL from read/request paths.** `CREATE INDEX IF NOT EXISTS` / `ALTER TABLE ADD COLUMN IF
+  NOT EXISTS` take AccessExclusiveLock even when they change nothing. Schema work belongs in startup.
+- **Batched writes on harvested tables**: always `FOR UPDATE SKIP LOCKED`. Tables the harvester
+  also writes will deadlock otherwise; per-row savepoints (`async with conn.transaction()`) prevent
+  cascade aborts.
+- **Config seeded with `ON CONFLICT DO NOTHING` stops being the source of truth.** Use `DO UPDATE`
+  on definition columns (never on progress/status columns) so source code stays authoritative.
+- **An absent column fails open silently.** A guard built on a column that doesn't exist passes
+  every row. Verify column names against the real header before trusting any guard.
+- **Tally per-task `status=` from logs**, not cycle completion. A task that errors and lets the
+  cycle continue looks healthy from the outside. `8,210/8,210 skipped` is a total outage.
+- **When a data-writing task is broken, read what it WOULD write before fixing the crash.**
+  A "normalizer" whose only working path pushes data into the catch-all destroys good data.
+
+### Background Jobs
+- **No LLMs in background cron loops.** Every background LLM task must be gated by an env toggle
+  defaulting to 0. Three mandatory limits: small batch (`CLEANUP_LLM_BATCH=25`), minimum interval,
+  daily ceiling (`CLEANUP_LLM_DAILY_MAX_CALLS=150`).
+- **A drained queue must sleep** (exponential backoff up to `HARVESTER_IDLE_MAX_REST_S`), not poll
+  every N seconds. An idle loop at full speed burns CPU without output.
+- **"No progress ≠ finished"** unless the previous attempt SUCCEEDED. Gate no-progress termination
+  on `attempts == 0` — an errored batch also leaves remaining unchanged.
+- **A guard must run on the path that USES data, not only the path that produces it.** A blocklist
+  applied only at write time doesn't protect rows written before the filter existed.
+- **A job whose unit cost rises as it completes will stall.** When a batched job slows, suspect the
+  SEARCH for work — scope discovery to a bounded index range, not catalogue-wide.
+- **Two heavy writers on one table contend.** Before a big migration, enumerate every scheduled
+  writer of the same table and give each a stand-down. Use `job_queue.queue_busy()`.
+- **Notify by exception.** A routine success report is camouflage — it trains the reader to ignore
+  the channel. Only send on stall / idle / recovery.
+
+### Categorization
+- **One file, one vocabulary.** `category_map.py` is the only file that defines category rules.
+  `parts_catalog.category` stores English slugs + `כללי`. Display names (`DISPLAY`) are never
+  stored. Any new keyword goes in `category_map.py` only.
+- **Longest-keyword-wins, never declaration order.** Specificity is intrinsic to the keyword.
+  Short RTL tokens (≤3 chars) use a boundary pattern: one Hebrew proclitic (ה ו ב ל מ ש כ) may
+  precede the word; no RTL letter may follow.
+- **The only fallback is `כללי`.** Never return `general`/`service-general`/`accessories` as
+  defaults. Every importer calls `categorize_on_ingest()`.
+- **Blocklist enforced at LOAD time** (`load_into_matcher()` + `purge_blocklisted()` at startup).
+  Write-only filtering misses rows written before the filter existed.
+- **Approve only the winning `(token, category)` pair.** `WHERE token = :t` without a category
+  predicate marks all vote-siblings approved; a future ranking change silently promotes a rejected
+  category.
+- **Consensus measures consistency, not correctness.** Validate against parts already filed in real
+  categories (evidence profile). Two tests: MISMATCH (proposal ≠ evidence's top category) and
+  MARGIN (top must beat runner-up ≥1.8×). A substance keyword must not outrank the hardware
+  keywords that contain it.
+
+### Social / NOA
+- **Sanitization is structure-preserving and subtractive.** Never collapse `\s+` across newlines.
+  Never staple boilerplate. Never re-add a multi-link footer.
+- **Garble check must exempt Hebrew price prefixes** (`מ-198`, `ב-2020`, `ב AutoSpareFinder`).
+  `\b[א-ת]\b` matches these and flags every real-price post as low-quality.
+- **All outbound owner/customer WhatsApp goes through `_wa_send_quiet`** (09:00–21:00 IL).
+  A new send site that calls `_wa_send` directly reintroduces 03:00 messages.
+- **Reminder caps are LIFETIME per entity, never a rolling window.** A rolling window is not a cap.
+- **Arabic chars (؀-ۿ) must be in `_NOA_HASHTAG_RE`.** Underscore must be preserved inside
+  hashtags (`#قطع_غيار` must not become `#قطعغيار`).
+- **Detecting an owner directive must change what the system DOES**, not just what it records.
+  A recognised directive injects an explicit acknowledgement note and produces no artefact.
+
+### Agent Behavior
+- **Every agent in `_fast_agents` needs its own `_offline_reply` branch.** A missing branch
+  silently returns a wrong-context reply (worse than an explicit failure). Check `_fast_agents`
+  membership against `_offline_reply` branches whenever either list changes.
+- **A policy duplicated into a second prompt silently loses every clause nobody copied.** Use
+  `_WA_REPLY_RULES` (shared) + a deterministic post-processing guard (`_clean_wa_reply`) as
+  defense-in-depth — a prompt rule does not hold under a fallback model.
+- **Silence is the one failure mode a user cannot diagnose.** Every background path that owes an
+  answer needs: a strong reference, a deadline (`asyncio.wait_for(..., 120s)`), and a fallback.
+
+### Deployment & Config
+- **Bind mount `./backend:/app`** — code changes are live on disk after `docker restart`. No
+  `docker cp` needed. `docker compose up -d backend` is now safe (the mount means no stale image
+  code). Only use `compose up -d` when `docker-compose.yml` itself changed.
+- **A find-and-replace must exclude the definition site** of the thing it replaces — or the
+  function calls itself recursively.
+- **Scrub URL secrets**, not just headers. `?key=`/`?api_key=`/`?token=` → `<redacted>` via
+  `_scrub_secrets()` + `raise_for_status_safe()`. A credential in a URL leaks through every error
+  path that logs `str(exc)`.
+- **nginx single-file mounts need a container RESTART, not reload.** Editing the host file changes
+  the inode; the running container holds the old inode until `docker restart autospare_nginx`.
+- **Adding a value to an in-memory enum requires a restart before backfilling.** The bind mount
+  updates files, not the loaded module. Watch a backfilled count for drift afterwards.
+
+### External APIs & OAuth
+- **External API capabilities drift — verify live before stating a limitation.** Training-era
+  knowledge of what a platform API can do is a hint, not fact. When challenged on a capability,
+  recheck rather than defend.
+- **Design for the durable credential path first.** `app_secret` → `fb_exchange_token` →
+  long-lived → non-expiring page token. Never build or verify on a throwaway token that expires
+  in hours.
+- **GBP verification requires a physical storefront.** An online-only marketplace cannot pass it —
+  don't start verification flows that structurally can't complete.
+- **Confirm Google account AND project before creating any resource.** Read the account button in
+  the console (not `authuser=` URL param — it lies). Business assets → `autosparefinder2024@gmail.com`
+  / project `valid-moment-444021-r6`.
+- **OAuth client type matters.** A Desktop client cannot have JS origins or do browser sign-in.
+  Inspect the live client config before asserting a root cause — error messages name symptoms.
+
+### Data Quality
+- **A reversal-looking defect in a browser is a bidi rendering problem until proven otherwise.**
+  Fix with `<bdi dir="ltr">` around Latin runs, not string reversal of stored data.
+- **Hebrew final forms (ךםןףץ) can only end a word.** A word STARTING with one proves visual
+  (reversed) storage order. When reversing: flip the whole string, then flip each Latin/digit run
+  back — a naive `s[::-1]` turns `GS330` → `033SG` and `24` → `42`.
+- **When normalizing a stored value, grep the rules for the OLD form and add the NEW form in the
+  same change.** Rules keyed on abbreviations break silently when the data is cured.
+- **Never chain heuristic passes on a population your detector cannot classify.** Exclude
+  unclassifiable rows and report them — don't run a second pass to clean up the first.
+
+### Performance
+- **`EXPLAIN` a timed-out query before assuming the predicate is at fault.** An `ORDER BY` that
+  doesn't match an index forces a full-match-set sort.
+- **A "remaining" figure must come from the WORKER's own candidate query**, not a table-wide count
+  of a broader population the worker cannot touch.
+- **Optimize the leverage, not the unit of work.** When an LLM feeds a rule engine, sample for
+  the highest-frequency unknown token — one approved keyword fixes thousands of parts at once.
+- **Do not build an index on a table a long-running job is actively writing.** `CREATE INDEX
+  CONCURRENTLY` adds write amplification. Build indexes in a quiet window, not mid-migration.
+
+## 3. Platform Vision & Goals
+
+
+AutoSpareFinder is a **global car parts comparison and sales marketplace** — the model is eBay/AliExpress for car parts, enhanced with AI capabilities. NOT a simple Israeli importer catalog.
+
+### Core Customer Journey (confirmed 2026-06-26)
+A customer finds a part for their specific car through **3 search paths**:
+1. **Enter car details** (make/model/year) → backend finds fitment-matched parts
+2. **Enter plate number** → resolves to car via NHTSA/IL plate lookup → fitment match
+3. **Ask AI agent** (WhatsApp/Telegram/Web chat) → natural language → part + fitment match
+
+After finding the right part, the platform shows **prices from multiple sellers** (eBay, AliExpress, Car-Parts.ie, Autodoc, PartSouq, Amayama, etc.) side by side. Customer picks, pays on platform. Platform purchases from supplier and ships to customer.
+
+**Each part has 3 barcode types:**
+- Barcode 1: **Original OEM** part number
+- Barcode 2: **OEM equivalent** (same spec, manufacturer brand)
+- Barcode 3: **Aftermarket** (alternative brand, same function)
+
+**Seller visibility rules**: Supplier names/details are masked from customers (`_mask_supplier` in search API). Customer sees price + shipping only.
+
+- **ALL parts must be searchable** — unpriced parts are real and will receive pricing. Never exclude.
+- **Fitment is the core differentiator** — every part must be linked to vehicles it fits via `part_vehicle_fitment`. Harvest pipeline now writes fitment rows on every cycle.
+- **Search must handle 10M+ parts** at <100ms.
+- **AI is core** — semantic search, price comparison, recommendations.
+- Target: 10M+ parts covering all major aftermarket brands globally.
+
+**Implications for every technical decision:**
+- Do NOT design for IL-only. Design for global.
+- Do NOT exclude parts from search because they lack IL price. Missing price = opportunity.
+- Search infrastructure must be chosen for 10M+ scale from the start.
+- Every scraper/importer pipeline should be built for volume and variety of sources.
+
+
 
 **Standing rules:**
 1. Every time Khalil sets a goal with the `/goal` command, add or update an entry
@@ -182,38 +287,209 @@ not when it's written down.**
 
 **Never regress:** price/margin math lives ONLY in the backend (`_customer_price_fields` + `create_whatsapp_checkout`). No client-side or per-channel price formulas. Any new channel/surface must consume the same fields. **VAT is CONDITIONAL, not flat ×1.18** — `get_supplier_vat_rate` applies 18% ONLY to LOCAL (IL) suppliers and 0% to foreign-sourced parts (most of the catalog: Car-Parts.ie/IE, SNG/UK, eBay/US). Any price ANY surface displays (incl. NOA's advertised/marketing prices) must be `cheapest-supplier cost × 1.45 + conditional VAT` — NEVER a flat ×1.18, and NEVER `base_price` (unreliable on some rows; can land near raw cost). NOA fixed 2026-07-14 (`_noa_real_catalog_fact`). Customer-facing agents may only claim programs/discounts that actually exist in code+DB. Chat agents: free-text car capture + query-strip + fitment-verified fallback must stay (a category/vocab miss must never discard a `part_vehicle_fitment` match); customer replies pass through `_strip_leaked_reasoning` + `_sanitize_internal_pricing_disclosure` (never leak chain-of-thought, draft options, or internal state under 429 fallback).
 
-## Platform Vision (CRITICAL — read before suggesting anything)
 
-AutoSpareFinder is a **global car parts comparison and sales marketplace** — the model is eBay/AliExpress for car parts, enhanced with AI capabilities. NOT a simple Israeli importer catalog.
+## 4. Repository & Agent Architecture
 
-### Core Customer Journey (confirmed 2026-06-26)
-A customer finds a part for their specific car through **3 search paths**:
-1. **Enter car details** (make/model/year) → backend finds fitment-matched parts
-2. **Enter plate number** → resolves to car via NHTSA/IL plate lookup → fitment match
-3. **Ask AI agent** (WhatsApp/Telegram/Web chat) → natural language → part + fitment match
 
-After finding the right part, the platform shows **prices from multiple sellers** (eBay, AliExpress, Car-Parts.ie, Autodoc, PartSouq, Amayama, etc.) side by side. Customer picks, pays on platform. Platform purchases from supplier and ships to customer.
+The repo was reorganized so the file tree matches how the system actually runs. **The
+container only mounts `backend/` → `/app`**, so anything outside `backend/` is host-side
+only (docs, archives) and can never affect runtime.
 
-**Each part has 3 barcode types:**
-- Barcode 1: **Original OEM** part number
-- Barcode 2: **OEM equivalent** (same spec, manufacturer brand)
-- Barcode 3: **Aftermarket** (alternative brand, same function)
+### How the runtime finds moved scripts (READ before moving/renaming any backend file)
+The 4 core app modules + all imported library modules stay at `/app` root; standalone
+scripts live in subfolders. Imports still work by **bare name** because
+`backend/sitecustomize.py` (auto-loaded via `PYTHONPATH=/app` set in `docker-compose.yml`)
+appends every script subfolder to `sys.path`. So `import samelet_import_v2` resolves even
+though the file is in `importers/`, for uvicorn **and** every `python3 /app/.../X.py`
+subprocess. **Rules when touching backend files:**
+- Add a new script → drop it in the right subfolder; no path config needed (sitecustomize
+  covers imports). Invoke it as `python3 /app/<subfolder>/<name>.py` (or `python3 -m <name>`).
+- Move/rename a script → also fix (a) any `python3 /app/<old>` subprocess string, (b) any
+  `Path(__file__).parent …` that reaches app-root resources (`state/`, `data/`, sibling
+  scripts) — a file one level deep uses `Path(__file__).parent.parent` to reach `/app`.
+- A file **imported by the app** (`from X import …` in BACKEND_*/routes/services/agents)
+  must stay at `/app` root (or be added to sitecustomize).
+- `state/` (the `worker_state` volume) is always `/app/state`; `data/`, `uploads/`,
+  `test_images/` are always at `/app`. Never anchor them off a subfolder's `__file__`.
 
-**Seller visibility rules**: Supplier names/details are masked from customers (`_mask_supplier` in search API). Customer sees price + shipping only.
+### Creating a NEW file — place it right AND wire it in, in the same change (MANDATORY)
 
-- **ALL parts must be searchable** — unpriced parts are real and will receive pricing. Never exclude.
-- **Fitment is the core differentiator** — every part must be linked to vehicles it fits via `part_vehicle_fitment`. Harvest pipeline now writes fitment rows on every cycle.
-- **Search must handle 10M+ parts** at <100ms.
-- **AI is core** — semantic search, price comparison, recommendations.
-- Target: 10M+ parts covering all major aftermarket brands globally.
+The 2026-07-18 reorg happened because new files had been written to the flat root and left
+loosely connected. **Do not repeat that.** A new file is not "done" until it is (a) in the
+correct folder and (b) actually reachable/active in the system — never "write to root now,
+move/wire later."
 
-**Implications for every technical decision:**
-- Do NOT design for IL-only. Design for global.
-- Do NOT exclude parts from search because they lack IL price. Missing price = opportunity.
-- Search infrastructure must be chosen for 10M+ scale from the start.
-- Every scraper/importer pipeline should be built for volume and variety of sources.
+**Where each new file goes (decide BEFORE writing it):**
+| New file is… | Put it in | And wire it by… |
+|---|---|---|
+| an importer (writes catalog/prices) | `backend/importers/` | invoke as `python3 /app/importers/<name>.py`; follow the Import Data Standard + SQL patterns; add the top-of-file docstring |
+| a site harvester | `backend/harvesters/` | if it should run continuously, register a supervised loop in `BACKEND_API_ROUTES.startup()` via `_supervised_task(...)`; anchor state at `/app/state` (`Path(__file__).resolve().parent.parent`) |
+| a playwright/html scraper | `backend/scrapers/` | called by its importer/`catalog_scraper` with the `scrapers/` path |
+| a run_/build_/categorize_/backfill_ pipeline or cleanup job | `backend/maintenance/` | add it to `db_update_agent`/`db_cleanup_agent` task list or schedule it; use bounded batches + `SKIP LOCKED` |
+| a shared library module (imported by the app) | `backend/` root | just `import <name>` — it's on the path |
+| an API route group | `backend/routes/` | **`app.include_router(...)` in `BACKEND_API_ROUTES.py`** — an unregistered router is dead code |
+| a supplier/price-sync service | `backend/services/` | wire into the aggregator / sync loop that consumes it |
+| a customer-agent skill | `backend/agents/` or `BACKEND_AI_AGENTS.py` | reachable from `process_user_message` (the one shared brain) |
+| an ad-hoc test/debug harness | `backend/devtests/` | — |
+| a superseded one-off | `backend/legacy/` or `archive/` | — |
+| a data dump / fixture | `backend/data/` (runtime) or `archive/data/` (host artifact) | never the repo root |
+| a doc | `docs/` (topical) or root (only `CLAUDE.md`/`README.md`/`FIXES_TRACKER.md`/`ROADMAP.md`) | link it from `CLAUDE.md` if agents need it |
 
-## MANDATORY: Before Writing Any Importer — Check These Patterns
+**Wiring checklist before closing (an orphan file is a bug):**
+1. Placed in the correct folder above — never the flat root as a parking spot.
+2. Connected to its trigger: router registered / supervised-task added / scheduler entry /
+   caller updated — and invoked with the correct `/app/<subfolder>/…` path.
+3. Top-of-file docstring (Script Documentation Standard).
+4. **Proven active**, not just present: hit the route, run one cycle, or confirm the loop
+   logs — a file that exists but nothing calls is not done.
+5. If it makes a public-facing surface, it returns only masked/right-sized data (see the
+   Partner API rules) — never raw cost/margin/supplier internals.
+
+### backend/ layout
+| Path | Contents |
+|---|---|
+| `/app/*.py` (33) | **Core + imported library modules** — `BACKEND_API_ROUTES` (uvicorn entrypoint), `BACKEND_AI_AGENTS`, `BACKEND_AUTH_SECURITY`, `BACKEND_DATABASE_MODELS`, `db_update_agent`, `db_cleanup_agent`, `catalog_scraper`, `meili_sync`, `email_templates`, `hf_client`, `resilience`, `watchdog_state`, `distributed_lock`, `currency_rate`, `manufacturer_normalization`, `categories`, `category_map`, `part_type_taxonomy`, `agent_todo_utils`, `invoice_generator`, `external_fitment_providers`, `ai_catalog_builder`, `auto_backup`, `harvest_heartbeat`, `workbook_normalizer`, `oempartsonline_importer`, `opel_car_parts_ie_import`, `run_rex_transport_office_pipeline`, `run_fitment_enrichment_pass`, `run_targeted_external_fitment_pass`, `build_full_car_database`, `clean_manufacturers_registry`, `ebay_fitment_backfill`, `sitecustomize` |
+| `/app/importers/` (64) | One-shot & scheduled catalog/price importers (samelet, colmobil, delek, mct, kia/toyota IL, champion, car_parts_ie, rockauto, etc.) |
+| `/app/harvesters/` (11) | Site harvesters — `car_parts_ie_flaresolverr_harvester` & `amayama_flaresolverr_harvester` (both supervised from `BACKEND_API_ROUTES`), champion/toyota/kia IL, rockauto, spareto, tecdoc |
+| `/app/scrapers/` (15) | Playwright / HTML scrapers (`oem_parts_online_scraper` spawned by `catalog_scraper`, febest, gm/audi/bmw/lr playwright, etc.) |
+| `/app/maintenance/` (30) | `run_*/build_*/categorize_*/backfill_*/seed_*` pipeline & cleanup jobs, fitment passes, dedup, vat/margin fixes |
+| `/app/devtests/` (6) | Ad-hoc test/debug harnesses (`_*_test.py`, `test_*.py`) — NOT the pytest suite |
+| `/app/legacy/` (1) | Superseded one-off scripts kept for reference |
+| `/app/routes/` `services/` `social/` `agents/` | App packages (API routes, supplier/price-sync services, whatsapp/telegram providers, agent memory) — unchanged |
+| `/app/tests/` | pytest suite (unchanged) |
+| `/app/data/` `state/` `uploads/` `test_images/` `alembic*/` `scripts/` | Data files, persistent worker state (volume), uploads, migrations, shell scripts — unchanged |
+
+### repo root layout
+| Path | Contents |
+|---|---|
+| `CLAUDE.md` `README.md` `FIXES_TRACKER.md` `ROADMAP.md` | Canonical docs (kept at root) |
+| `docker-compose.yml` `.env` `.gitignore` `requirements.txt` | Config |
+| `backend/` `frontend/` `whatsapp-bridge/` `deploy/` `database/` | Services |
+| `docs/` | Topical docs (`skills.md`, `phases.md`, `UI_UX.md`, `roadmap.md`, `SUPPLIERS.md`, import guides) + `docs/schema/` DB schema dumps |
+| `archive/scripts/` | Host-side one-off dev scripts (fix_/patch/cm_/update_ … — never run by the container) |
+| `archive/data/` | Old JSON/xlsx/pdf data dumps + compose backups (host-side artifacts) |
+
+---
+
+
+
+> Merged from the former `claude.md`. Where the two disagreed, the **rest of this file wins**
+> — it is newer. In particular the OLD claude.md pricing/import-SQL specifics are SUPERSEDED
+> and must NOT be reintroduced: VAT is **conditional** (`get_supplier_vat_rate`: 18% LOCAL/IL
+> only, 0% foreign — see the Never-regress note under G2), `part_condition` is **lowercase**
+> (`'new'`, never `'New'`), and `supplier_parts` upserts use
+> **`ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key`** (never
+> `(part_id, supplier_id)` in importers). See "MANDATORY: Before Writing Any Importer".
+
+### Web scraping — always use the browser/FlareSolverr path
+The server IP is Cloudflare/anti-bot blocked; direct `urllib`/`requests`/`httpx` to external
+sites will fail. Use the browser tool / FlareSolverr harvesters. **Two-step pattern:** (1)
+extractor scrapes → JSON on disk; (2) a separate importer reads the JSON → Postgres. Internal
+calls (localhost, inter-container) may use plain HTTP.
+
+### The two agent layers
+**Layer A — AI customer agents** (`BACKEND_AI_AGENTS.py`, all on Cerebras gpt-oss-120b, one
+shared brain `process_user_message`): AVI (router), NIR (parts/fitment/OEM), MAYA (sales/
+pricing), LIOR (orders), TAL (finance/VAT/invoices), DANA (support/returns/warranty), OREN
+(security/fraud), SHIRA (marketing), BOAZ (supplier B2B + daily price sync), NOA (social),
+REX (scraper coordinator). Full skills → `docs/skills.md`.
+**Owner WhatsApp console** (`agents/owner_console.py`, added 2026-07-23): the OWNER's WhatsApp
+messages (`OWNER_WHATSAPP_PHONE`) are intercepted in `routes/webhooks.py` BEFORE the customer
+brain and routed here — a private ops console. Two-way owner-mode chat with AVI (default) / NOA
+(prefix "נועה"/"noa") via a DIRECT `hf_text` call (NOT `get_agent("router_agent")` — that's a
+JSON classifier and emits garbage on freeform chat) seeded with a live system-status block +
+rolling Redis history. Deterministic commands: `סטטוס`/status, `שאיבה`/harvester, `פוסטים`/posts,
+`אשר <id>`/approve (marks approved + publishes via `social/registry.dispatch`), `דחה`/reject,
+`עזרה`/help — so the owner acts on NOA's approval notifications by replying. Uses its own
+CATALOG-DB session (those tables aren't in the PII DB the webhook passes).
+**Layer B — pipeline workers**: `catalog_scraper` (ingest), `db_cleanup_agent` (30s self-heal),
+`db_update_agent` (`run_all_tasks` every 3h), `ai_catalog_builder` (enrichment), `meili_sync`
+(indexing, 2h loop), `run_rex_transport_office_pipeline` (vehicle registry), REX harvest queue,
+`services/ebay_price_sync` + `aliexpress_price_sync`, `auto_backup` (24h). Phase order →
+`docs/phases.md`.
+
+### Shared infrastructure
+- **Memory** (`agents/memory.py`): in-process → Redis → Postgres. Agent-scoped keys are plain;
+  cross-agent shared keys are `shared:{key}`. Workers MUST `write_worker_heartbeat()` at the
+  start and end of every cycle — it's how agents know a worker is alive.
+- **Alerting** (`_health_monitor_loop`, every 5 min): Redis-backed cooldowns survive restarts;
+  container-lifetime guard suppresses restart-orphan false alerts (see the FIXES_TRACKER
+  "Worker failed / Zombie" root-fix). Never alert on a job whose last activity predates the
+  current container.
+- **Zombie auto-fix** (health check 5b): a `running` job silent >30 min gets its Redis lock
+  cleared, `job_registry` marked terminal, owner alerted once (24h cooldown). No manual
+  `redis-cli DEL` needed.
+- **Todos** (`agent_todo_utils.py`): read active todos at the start of every cycle.
+- **Resilience** (`resilience.py`): wrap all external calls in `@retry_with_backoff`
+  (retry 429/503/504; skip 401/403/404).
+- **Distributed lock** (`distributed_lock.py`): acquire `autospare:lock:{job_name}` before any
+  write-heavy job; never run two instances of the same job at once.
+- **Job registry**: `job_registry_start/heartbeat/finish` around every job.
+
+### Golden rules (every task, every session)
+1. **Todo list first** — split into a numbered checklist, work in order, don't skip.
+2. **Root-fix only** — no patch-as-final; if an emergency guard is needed, mark it temporary
+   and land the root fix in the same cycle. Apply the fix in source first, then rebuild/redeploy
+   (never a running-container hotfix as the permanent fix).
+3. **Verify from real data, not .md files** — read the live container/DB/source; docs can be
+   stale. A goal is not done until an end-to-end check against the LIVE system proves the
+   *outcome* (see the PLATFORM GOALS "not Done until VERIFIED" rule).
+4. **Check breaking points** — auth, payment, data path, API/route contracts — before closing.
+   Before wiring any CTA/nav link, confirm the target route exists in the served app (don't
+   point at paths that silently fall back to the landing page).
+5. **Document every fix** in `FIXES_TRACKER.md`; update `docs/roadmap.md` / `docs/phases.md` /
+   `docs/PRE_LAUNCH_CHECKLIST.md` as relevant.
+6. **Never fabricate data** — counts/metrics/statuses come from live queries, never invented.
+
+### Conflict resolution / confidence tiers (never overwrite higher with lower)
+`1.00` official manufacturer/importer · `0.90` OEM cross-reference · `0.85` known aftermarket
+(`manufacturer_normalization.py`) · `0.65` marketplace APIs (eBay/AliExpress) · `0.50` scraped web.
+
+### Standard job result JSON
+`{"task","status":"ok|error|skipped","scanned","updated","flagged","elapsed_s","errors":[]}`
+
+### Script documentation standard
+Every backend script keeps a top-of-file docstring: `Script:` / `Purpose:` / `Process:` steps /
+`Data Imported/Modified:` (which tables/fields) / `Data Sources:` (URLs) / `Missing Data
+Delegation:` / `Last Updated:`. Update it when you change the script.
+
+---
+
+
+## 5. Hard Constraints
+
+
+Goal: our own catalog cannot be scraped the way we scrape others, and no single expensive endpoint can take the box down.
+
+- **DB network isolation (verified secure)**: `postgres_catalog`/`postgres_pii` bind to `127.0.0.1` only; Meilisearch + Redis have NO host port mapping (internal docker network only). Never add a `0.0.0.0` or public port mapping to any data service.
+- **Real client IP behind Cloudflare** — nginx MUST restore the true client IP from `CF-Connecting-IP` via `set_real_ip_from <CF ranges>` + `real_ip_header CF-Connecting-IP`. Without it, `$remote_addr`/`X-Real-IP` is the Cloudflare EDGE IP, so every per-IP rate limit keys on the wrong address (real users share buckets → false 429s; attackers get no throttle). The CF ranges are listed in `deploy/nginx.conf`; refresh from https://www.cloudflare.com/ips/ if they change.
+- **nginx rate limit** — `limit_req_zone $binary_remote_addr zone=catalog_api rate=20r/s` + `limit_req zone=catalog_api burst=40 nodelay` on `/api/`. 20r/s sustained + 40 burst = generous for real page loads (which fire several calls at once), trips a catalog scraper. Depends on the real-IP fix above to be meaningful.
+- **Backend per-endpoint limits still apply** (keyed on the now-correct IP): search 30/min, autocomplete 30/min, plate 20/min, VIN 10/min. Any NEW public catalog-read endpoint must add `check_rate_limit`.
+- **Expensive enumeration endpoints MUST cache + single-flight** — `/parts/manufacturers` (and models/categories) run `SELECT DISTINCT` full-scans over 4.18M+ rows. `manufacturers` had NO cache: every hit ran the scan and concurrent hits STAMPEDED (each its own 4M-row scan), taking the box down under load/harvest (2026-07-07 incident). Pattern now: 10-min in-process cache + `asyncio.Lock` single-flight (`MANUFACTURERS_RESPONSE_CACHE` + `_MANUFACTURERS_REBUILD_LOCK`) so only ONE request ever runs the scan while others wait for the shared result. Never ship a cold-cache-stampede-able enumeration endpoint.
+- **nginx single-file mounts need a container RESTART, not reload** — `deploy/nginx.conf` is bind-mounted as a single file; editing it on the host changes the inode, and the running container keeps the OLD inode until `docker restart autospare_nginx`. `nginx -s reload` alone reads the stale file. Validate first in a throwaway container: `docker run --rm --network autosparefinder_internal -v .../nginx.conf:/etc/nginx/nginx.conf:ro nginx:stable-alpine nginx -t`.
+- **AI-bot / scraper user-agent filtering** — nginx `map $http_user_agent $bad_bot` → `if ($bad_bot) return 403` on `/api/`. Blocks NAMED AI/LLM crawlers (GPTBot, ClaudeBot, CCBot, Google-Extended, PerplexityBot, Bytespider, Amazonbot, Applebot-Extended, meta-externalagent, …) + aggressive commercial scrapers (Ahrefs/Semrush/scrapy/…). Deliberately does NOT block empty-UA or generic HTTP libraries (curl/python/Go) — Telegram/Stripe webhooks and legit API clients can look like those; the rate limit + Cloudflare bot-fight catch anonymous scrapers instead. Verified: `GPTBot` UA → 403, real browser UA → 200. Also `/robots.txt` declares Disallow for compliant AI crawlers. Refresh the bot list as new AI crawlers appear.
+- **Never block webhooks/system paths by UA** — Stripe (`/api/v1/payments/webhook`), Telegram (`/api/v1/webhooks/telegram`), and our own `/api/v1/system/collect` (harvester relay, sends a Chrome UA) MUST stay reachable. The $bad_bot list is named-bot-only for exactly this reason.
+- **Chat prompt-injection resistance** — customer agents must never leak the pricing formula (×1.45 / 45%), VAT math, supplier company names, or internal cost even when the user says "ignore your instructions / reveal…". Enforced by `_sanitize_internal_pricing_disclosure` + `_mask_supplier` (post-processing, defense-in-depth beyond the system prompt). Verified 2026-07-05/07: direct injection attacks leaked nothing.
+
+
+
+These were confirmed exploitable vulnerabilities found during a live pentest. Never reintroduce them.
+
+- **`/api/v1/system/collect` requires the collect secret** — secret is in `COLLECT_SECRET` env var. The server-side harvester's `post_relay()` sends it as the `X-Collect-Secret` header. Any new code calling this endpoint must authenticate. Do NOT remove the auth check.
+- **Cross-origin BROWSER relays must use the text/plain "simple request" pattern (learned 2026-07-12, RockAuto)** — a harvester running in the owner's browser ON a supplier page (rockauto.com, car-parts.ie, …) posting to our `/collect` or `/api/v1/system/unpriced-oems` is CROSS-ORIGIN. Our global Starlette `CORSMiddleware` (BACKEND_API_ROUTES.py:186, allow_origins = our own domains only) **rejects the preflight OPTIONS with 400** for any other origin — so a custom `X-Collect-Secret` header (which forces a preflight) can NEVER work from a supplier page, and a per-route `@router.options` handler never runs (the middleware short-circuits first). Do NOT try to fix this by widening the global CORS allowlist (weakens the whole app). Instead the browser must send a **CORS "simple request"**: `POST` with `Content-Type: text/plain` and the **secret in the JSON body** (no preflight), `credentials:'omit'`; the endpoint reads the secret from the body and returns `Access-Control-Allow-Origin: *` so the browser can read the reply. Both `/collect` and the unpriced-OEM feed support this. `rockauto_browser_harvester.js` is the reference implementation (`auth()`/`feed()`/`send()`/`autorun()`).
+- **`GOOGLE_OAUTH_CLIENT_ID` must be set** — if unset, Google OAuth login returns HTTP 500. The audience check must NEVER be conditional on whether the env var is set. Pattern: `if not client_id: raise 500; if aud != client_id: raise 401`.
+- **Rate limits use `X-Real-IP`, not `X-Forwarded-For`** — nginx sets `X-Real-IP` to `$remote_addr` (unspoof-able). `X-Forwarded-For` is client-controlled and must never be used for rate limiting or IP-based security decisions.
+- **Webhook secrets always fail CLOSED** — pattern: `if not secret or header != secret: raise 403`. Never `if secret and header != secret` (passes when secret is unset).
+- **Never print OAuth tokens to stdout** — they go to `docker logs` forever. Store tokens in DB or env; never log them.
+- **Rate limit return values must be checked** — `allowed = await check_rate_limit(...)` then `if not allowed: raise 429`. Discarding the return value = no rate limit.
+- **All new internal-only endpoints** (harvest relay, import triggers, admin actions) must be authenticated. Options: (1) `X-Collect-Secret` style shared secret, (2) `Depends(get_current_admin_user)`, (3) nginx internal-only restriction.
+- **`supplier_parts` ON CONFLICT for re-harvest importers must include `price_ils` and `is_available`** — omitting them means price changes and stock-outs are silently discarded.
+- **`task_normalize_base_price_batched` formula**: `supplier_parts.price_ils` = ex-VAT cost → `base_price = cost × 1.45`, `importer_price_ils = cost`. Never reverse this.
+- **Batched loops with `updated_at=NOW()` must be bounded** — use `cutoff_id = MAX(id) WHERE updated_at > :since` at loop start; add `AND id <= :cutoff_id` to the batch query. Otherwise the loop perpetually refreshes rows back into scope and never terminates.
+- **Multithreaded state dicts need a `threading.Lock()`** — any dict shared across threads (harvester `state`, etc.) must protect all read-modify-write operations and file writes with a lock.
+
+
+## 6. Mandatory Importer Patterns
 
 > **⇒ The full standard now lives in [`docs/IMPORTER_RULES.md`](docs/IMPORTER_RULES.md),
 > and it is ENFORCED by `backend/maintenance/audit_importers.py` (exit ≠ 0 on any
@@ -288,144 +564,8 @@ The 2.1M OEMPartsOnline parts with 0% IL price exist because:
 
 ---
 
-## System Review Format
 
-When the user asks "give me a review / review the system / check everything", always query live data and fill in this exact table format:
-
-### Active Processes
-| Process | Status | Details |
-|---|---|---|
-| `uvicorn` | ✅/❌ | CPU% MEM% |
-| `run_all_tasks` | ✅/⏳/❌ | Current task, elapsed time |
-| `meili_sync` | ✅/⏳/❌ | N/M docs (%), ETA |
-| `freesbe_importer` | ✅/⏳/❌ | page N/total |
-
-### Memory
-| Container | Used | Limit | % |
-|---|---|---|---|
-| Backend | X GB | 2 GB | % |
-| Meilisearch | X GB | 1.5 GB | % |
-| Postgres | X MB | 2 GB | % |
-| Redis | X MB | 256 MB | % |
-
-### Catalog Health
-| Metric | Count |
-|---|---|
-| Total active parts | N |
-| With IL importer price | N (%) |
-| With base_price | N (%) |
-| With fitment data | N rows |
-| Categorized | N |
-
-### Agent Todos
-| Agent | Status | Count |
-|---|---|---|
-| `db_update_agent` | ✅/⏳ completed | N pending |
-| `rex` | ✅ | N pending |
-| `db_cleanup_agent` | ⏳/✅ | N pending |
-| `scraper` | ⏳/⚠️ | N pending |
-| `NIR` | ⏳ human | N manual tasks |
-
-### Job History (today)
-| Job | Result | Duration |
-|---|---|---|
-| last run_all_tasks | ✅/❌ | elapsed |
-| last scraper_cycle | ✅/❌ | elapsed |
-
-### Open Issues
-List any blockers, errors, or pending decisions.
-
----
-
-## Data to collect for system review
-
-```bash
-# Memory per container
-docker stats --no-stream --format "{{.Name}} {{.MemUsage}} {{.MemPerc}}" 2>/dev/null
-
-# Running processes in backend
-docker exec autospare_backend ps aux | grep python | grep -v grep
-
-# Meili progress
-docker exec autospare_backend tail -3 /app/state/logs/meili_sync.log 2>/dev/null
-
-# Catalog health
-docker exec autospare_backend python3 -c "
-import asyncio, asyncpg, os
-DB = os.environ.get('DATABASE_URL','').replace('postgresql+asyncpg://','postgresql://')
-async def main():
-    conn = await asyncpg.connect(DB)
-    row = await conn.fetchrow('''
-        SELECT
-            COUNT(*) FILTER (WHERE is_active) as total,
-            COUNT(*) FILTER (WHERE is_active AND importer_price_ils > 0) as with_il_price,
-            COUNT(*) FILTER (WHERE is_active AND base_price > 0) as with_base_price
-        FROM parts_catalog
-    ''')
-    print(f'total={row[\"total\"]} il_price={row[\"with_il_price\"]} base={row[\"with_base_price\"]}')
-    await conn.close()
-asyncio.run(main())
-"
-
-# Agent todos
-docker exec autospare_backend python3 -c "
-import asyncio, asyncpg, os
-DB = os.environ.get('DATABASE_URL','').replace('postgresql+asyncpg://','postgresql://')
-async def main():
-    conn = await asyncpg.connect(DB)
-    rows = await conn.fetch(\"SELECT assigned_to_agent, status, COUNT(*) FROM agent_todos GROUP BY 1,2 ORDER BY 1,2\")
-    for r in rows: print(f'  {r[0]} {r[1]}: {r[2]}')
-    await conn.close()
-asyncio.run(main())
-"
-
-# Job registry
-docker exec autospare_backend python3 -c "
-import asyncio, asyncpg, os
-DB = os.environ.get('DATABASE_URL','').replace('postgresql+asyncpg://','postgresql://')
-async def main():
-    conn = await asyncpg.connect(DB)
-    rows = await conn.fetch(\"SELECT job_id, status, started_at, last_heartbeat_at FROM job_registry WHERE started_at > NOW()-INTERVAL '24h' ORDER BY started_at DESC LIMIT 10\")
-    for r in rows: print(f'  {r[\"job_id\"]} | {r[\"status\"]} | {r[\"last_heartbeat_at\"]}')
-    await conn.close()
-asyncio.run(main())
-"
-```
-
----
-
-## Anti-Harvest / DB Protection (added 2026-07-07 — MANDATORY)
-
-Goal: our own catalog cannot be scraped the way we scrape others, and no single expensive endpoint can take the box down.
-
-- **DB network isolation (verified secure)**: `postgres_catalog`/`postgres_pii` bind to `127.0.0.1` only; Meilisearch + Redis have NO host port mapping (internal docker network only). Never add a `0.0.0.0` or public port mapping to any data service.
-- **Real client IP behind Cloudflare** — nginx MUST restore the true client IP from `CF-Connecting-IP` via `set_real_ip_from <CF ranges>` + `real_ip_header CF-Connecting-IP`. Without it, `$remote_addr`/`X-Real-IP` is the Cloudflare EDGE IP, so every per-IP rate limit keys on the wrong address (real users share buckets → false 429s; attackers get no throttle). The CF ranges are listed in `deploy/nginx.conf`; refresh from https://www.cloudflare.com/ips/ if they change.
-- **nginx rate limit** — `limit_req_zone $binary_remote_addr zone=catalog_api rate=20r/s` + `limit_req zone=catalog_api burst=40 nodelay` on `/api/`. 20r/s sustained + 40 burst = generous for real page loads (which fire several calls at once), trips a catalog scraper. Depends on the real-IP fix above to be meaningful.
-- **Backend per-endpoint limits still apply** (keyed on the now-correct IP): search 30/min, autocomplete 30/min, plate 20/min, VIN 10/min. Any NEW public catalog-read endpoint must add `check_rate_limit`.
-- **Expensive enumeration endpoints MUST cache + single-flight** — `/parts/manufacturers` (and models/categories) run `SELECT DISTINCT` full-scans over 4.18M+ rows. `manufacturers` had NO cache: every hit ran the scan and concurrent hits STAMPEDED (each its own 4M-row scan), taking the box down under load/harvest (2026-07-07 incident). Pattern now: 10-min in-process cache + `asyncio.Lock` single-flight (`MANUFACTURERS_RESPONSE_CACHE` + `_MANUFACTURERS_REBUILD_LOCK`) so only ONE request ever runs the scan while others wait for the shared result. Never ship a cold-cache-stampede-able enumeration endpoint.
-- **nginx single-file mounts need a container RESTART, not reload** — `deploy/nginx.conf` is bind-mounted as a single file; editing it on the host changes the inode, and the running container keeps the OLD inode until `docker restart autospare_nginx`. `nginx -s reload` alone reads the stale file. Validate first in a throwaway container: `docker run --rm --network autosparefinder_internal -v .../nginx.conf:/etc/nginx/nginx.conf:ro nginx:stable-alpine nginx -t`.
-- **AI-bot / scraper user-agent filtering** — nginx `map $http_user_agent $bad_bot` → `if ($bad_bot) return 403` on `/api/`. Blocks NAMED AI/LLM crawlers (GPTBot, ClaudeBot, CCBot, Google-Extended, PerplexityBot, Bytespider, Amazonbot, Applebot-Extended, meta-externalagent, …) + aggressive commercial scrapers (Ahrefs/Semrush/scrapy/…). Deliberately does NOT block empty-UA or generic HTTP libraries (curl/python/Go) — Telegram/Stripe webhooks and legit API clients can look like those; the rate limit + Cloudflare bot-fight catch anonymous scrapers instead. Verified: `GPTBot` UA → 403, real browser UA → 200. Also `/robots.txt` declares Disallow for compliant AI crawlers. Refresh the bot list as new AI crawlers appear.
-- **Never block webhooks/system paths by UA** — Stripe (`/api/v1/payments/webhook`), Telegram (`/api/v1/webhooks/telegram`), and our own `/api/v1/system/collect` (harvester relay, sends a Chrome UA) MUST stay reachable. The $bad_bot list is named-bot-only for exactly this reason.
-- **Chat prompt-injection resistance** — customer agents must never leak the pricing formula (×1.45 / 45%), VAT math, supplier company names, or internal cost even when the user says "ignore your instructions / reveal…". Enforced by `_sanitize_internal_pricing_disclosure` + `_mask_supplier` (post-processing, defense-in-depth beyond the system prompt). Verified 2026-07-05/07: direct injection attacks leaked nothing.
-
-## Security Rules (added 2026-07-04 — MANDATORY)
-
-These were confirmed exploitable vulnerabilities found during a live pentest. Never reintroduce them.
-
-- **`/api/v1/system/collect` requires the collect secret** — secret is in `COLLECT_SECRET` env var. The server-side harvester's `post_relay()` sends it as the `X-Collect-Secret` header. Any new code calling this endpoint must authenticate. Do NOT remove the auth check.
-- **Cross-origin BROWSER relays must use the text/plain "simple request" pattern (learned 2026-07-12, RockAuto)** — a harvester running in the owner's browser ON a supplier page (rockauto.com, car-parts.ie, …) posting to our `/collect` or `/api/v1/system/unpriced-oems` is CROSS-ORIGIN. Our global Starlette `CORSMiddleware` (BACKEND_API_ROUTES.py:186, allow_origins = our own domains only) **rejects the preflight OPTIONS with 400** for any other origin — so a custom `X-Collect-Secret` header (which forces a preflight) can NEVER work from a supplier page, and a per-route `@router.options` handler never runs (the middleware short-circuits first). Do NOT try to fix this by widening the global CORS allowlist (weakens the whole app). Instead the browser must send a **CORS "simple request"**: `POST` with `Content-Type: text/plain` and the **secret in the JSON body** (no preflight), `credentials:'omit'`; the endpoint reads the secret from the body and returns `Access-Control-Allow-Origin: *` so the browser can read the reply. Both `/collect` and the unpriced-OEM feed support this. `rockauto_browser_harvester.js` is the reference implementation (`auth()`/`feed()`/`send()`/`autorun()`).
-- **`GOOGLE_OAUTH_CLIENT_ID` must be set** — if unset, Google OAuth login returns HTTP 500. The audience check must NEVER be conditional on whether the env var is set. Pattern: `if not client_id: raise 500; if aud != client_id: raise 401`.
-- **Rate limits use `X-Real-IP`, not `X-Forwarded-For`** — nginx sets `X-Real-IP` to `$remote_addr` (unspoof-able). `X-Forwarded-For` is client-controlled and must never be used for rate limiting or IP-based security decisions.
-- **Webhook secrets always fail CLOSED** — pattern: `if not secret or header != secret: raise 403`. Never `if secret and header != secret` (passes when secret is unset).
-- **Never print OAuth tokens to stdout** — they go to `docker logs` forever. Store tokens in DB or env; never log them.
-- **Rate limit return values must be checked** — `allowed = await check_rate_limit(...)` then `if not allowed: raise 429`. Discarding the return value = no rate limit.
-- **All new internal-only endpoints** (harvest relay, import triggers, admin actions) must be authenticated. Options: (1) `X-Collect-Secret` style shared secret, (2) `Depends(get_current_admin_user)`, (3) nginx internal-only restriction.
-- **`supplier_parts` ON CONFLICT for re-harvest importers must include `price_ils` and `is_available`** — omitting them means price changes and stock-outs are silently discarded.
-- **`task_normalize_base_price_batched` formula**: `supplier_parts.price_ils` = ex-VAT cost → `base_price = cost × 1.45`, `importer_price_ils = cost`. Never reverse this.
-- **Batched loops with `updated_at=NOW()` must be bounded** — use `cutoff_id = MAX(id) WHERE updated_at > :since` at loop start; add `AND id <= :cutoff_id` to the batch query. Otherwise the loop perpetually refreshes rows back into scope and never terminates.
-- **Multithreaded state dicts need a `threading.Lock()`** — any dict shared across threads (harvester `state`, etc.) must protect all read-modify-write operations and file writes with a lock.
-
-## Key Rules
+## 7. IL Importer Site Reference
 
 - **Pricing**: UNIFORM 45% margin on ALL parts. base_price = cost × 1.45. No exceptions.
 - **VAT**: Israeli VAT = **18%** (0.18). All scripts must use VAT = 0.18. Never 0.17.
@@ -615,7 +755,9 @@ These were confirmed exploitable vulnerabilities found during a live pentest. Ne
 
 ---
 
-## MANDATORY PIPELINE RULES — Every Scraper & Importer MUST Follow
+
+## 8. Business Rules
+
 
 **Rule 1 — All data must flow through the pipeline, not directly to DB in isolation**
 Every scraper/importer must write to these 3 tables together (atomically):
@@ -665,357 +807,7 @@ These tasks are the **safety net** — even if an importer bug writes wrong data
 
 ---
 
-## Known Blockers (updated 2026-06-18)
 
-| Issue | Status | Fix |
-|---|---|---|
-| Acura scraping | ✅ Solved | Browser harvest (5741 parts) + oem-relay → oempartsonline_importer. |
-| OOM crash loop (meili rebuild) | ✅ Fixed | `REBUILD_DEFAULT="0"`, checkpoint saved at offset=total |
-| OOM crash loop (run_all_tasks) | ✅ Fixed | 6 tasks disabled: merge_catalog_fitment, fix_base_prices, normalize_base_price, backfill_bmw/ford/jaguar fitment |
-| auto_backup silent failure | ✅ Fixed | `db_url.replace("+asyncpg","")` added to auto_backup.py:31 |
-| VAT 0.17 wrong pricing | ✅ Fixed | 389,750 parts corrected |
-| Wrong 45% margin | ✅ Fixed | 196,501 parts corrected |
-| כללי (uncategorized) 74% | ⚠️ DRIFTED (re-running 2026-07-13) | categorize_parts_batch.py hit 99.8% at ~570K parts, but the catalog grew to 4.1M (car-parts.ie harvest) and new parts arrive as `כללי` faster than they're processed — **~1.14M `כללי` + 724K `general` uncategorized as of 2026-07-13**. Categorizer re-run on the backlog. NOTE: new imports must categorize on ingest, or this drifts again. |
-| part_condition `New`→`new` | ✅ Fixed | All 3M+ rows corrected; importers now use `'new'` |
-| **samelet importer_price_ils=0 bug** | ✅ Fixed 2026-06-18 | samelet_import_v2.py was hardcoding `importer_price_ils=0`. Fixed: cost=max_price/1.18, base=cost×1.45, importer=cost |
-| **car_parts_ie_import_generic importer_price=0** | ✅ Fixed 2026-06-18 | EUR prices now converted: cost=price_eur×3.9/1.18, base=cost×1.45 |
-| Zombie processes accumulation | ✅ Fixed 2026-06-18 | `_zombie_reaper_loop()` added to BACKEND_API_ROUTES.py startup — reaps every 60s |
-| Postgres OOM near-misses | ✅ Fixed 2026-06-18 | postgres_catalog mem_limit: 3GB→4.5GB; idx_parts_catalog_part_type created |
-| part_type non-standard values | ✅ Fixed 2026-06-18 | 178K rows normalized; future imports use PART_TYPE_MAP index |
-| Price comparison not surfaced | ❌ Todo | supplier_parts has 2.3M records — need API + search wiring |
-| Chrysler/Jeep/RAM price list | ✅ Auto-resolved 2026-07-01 | Jeep/RAM: ✅ samelet (98%). Chrysler brand discontinued in IL (chrysler.co.il = Jeep Israel). 3,973 priced from car-parts.ie is the realistic IL ceiling. NIR todo dismissed. |
-| WEY price list | ✅ Auto-resolved 2026-07-01 | wey.co.il/services-pricing embeds iframe from samelet.com/form/parts-prices/wey — samelet_import_v2.py already covers WEY. 33% priced = actual samelet coverage ceiling. NIR todo dismissed. |
-| Opel price list | ✅ Auto-resolved 2026-07-01 | Already 100% priced (60,145/60,161) via samelet. NIR todo dismissed. |
-| NIR todos (business partnerships) | 👤 Human — Khalil only | ASAP Network, AliExpress platform, Meyer/ATD/Turn14/Keystone dropship accounts, Autodoc B2B — require business registration/contract. Cannot be automated. |
-| Backend image drift (docker compose up wipes docker cp) | ✅ Fixed 2026-06-30, **regressed & re-fixed 2026-07-13** | Bind-mount `./backend:/app` in docker-compose.yml — source always live, docker cp no longer needed, compose up is now safe. **2026-07-13: found the mount had gone MISSING from `docker-compose.yml`** (only `upload_files`/`worker_state` remained); a `docker compose up -d backend` recreate silently reverted code to the stale image. Long-running containers still worked because they were created back when the mount existed — so `docker restart` masked the problem. **Restored `- ./backend:/app` to the backend `volumes:`.** ALWAYS verify the mount is present (`docker exec autospare_backend grep <recent-edit> /app/<file>` == host) before trusting a recreate to carry live edits. |
-| car-parts.ie harvester no supervisor / stopped | ✅ Fixed 2026-06-30 | Added 3-loop supervisor: crash-restart + stall-watchdog (every 3 min) + 30-min healthcheck; session leak fix (fs_cleanup_stale_sessions on startup) |
-| Meilisearch index drifting stale (no scheduler) | ✅ Fixed 2026-06-30 | `_meili_sync_loop()` supervised task — runs incremental sync every 2h automatically |
-| run_all_tasks tasks killed by over-aggressive Postgres/watchdog settings | ✅ Fixed 2026-06-30 | Watchdog redesigned from a single fixed threshold to a **context-aware two-tier system**: orphaned connections (backend_start before current container start) killed after 60s; active-backend connections (db_update_agent maintenance tasks) never killed — warning logged if blocking >30 min. `idle_in_transaction_session_timeout` raised to 30 min. This makes run_all_tasks immune to watchdog interference regardless of how long maintenance UPDATEs take. |
-| False "🔴 Worker failed: run_all_tasks / run_brand_discovery — no heartbeat within TTL" alerts | ✅ Fixed 2026-07-10/11 | Not a real failure — a backend restart (deploy/`compose up` recreate/OOM/crash) orphans in-flight cycles; their `job_registry` rows stay `running` with frozen heartbeat and the 2h zombie watchdog reaps them as `failed` → owner alert (fired on EVERY restart). **Why `pre_restart.sh` didn't prevent it:** it only SIGTERMs importer SUBPROCESSES; run_all_tasks / run_brand_discovery are **asyncio tasks INSIDE uvicorn**, never touched. **Root fix — 3 layers:** (1) **shutdown handler** `@app.on_event("shutdown")` marks all `running` rows `superseded` (terminal, non-alerting) + frees locks on every GRACEFUL SIGTERM — primary, automatic. (2) `_reconcile_orphaned_jobs()` at `startup()` (before schedulers) — safety net for UNGRACEFUL OOM/SIGKILL where the shutdown handler can't run. (3) HealthMonitor 5a `NOT EXISTS` guard — don't alert a `failed` job if a newer run of the same task (`split_part(job_name,':',1)`) is `running`/`completed`/`superseded`; genuine stalls still alert. `pre_restart.sh` also now closes the rows (belt & suspenders). Verified live: `docker restart` with a running job → `[Shutdown] closed 1 in-flight job(s) → superseded` then `[Startup] no orphaned running jobs`; 0 stale-running rows. **Never mark restart-orphaned jobs `failed`; in-process asyncio jobs are closed by the shutdown handler, not pre_restart.sh.** **4th layer (2026-07-13):** added a **container-lifetime guard** to ALL alert senders — HealthMonitor 5a (failed/dead) and 5b (zombie sweep) require `COALESCE(last_heartbeat_at, started_at) >= _BACKEND_START_UTC`, and the status-loop `failed_jobs` filter does the same. A job whose last activity predates the current container is a restart-orphan (silent); one that failed WITHIN this container still alerts. Covers the ungraceful-kill window the NOT EXISTS guard alone missed. Verified live: a `dead` `sync_prices` restart-orphan is now SUPPRESSED. |
-| Watchdog anomaly false alerts (legit zombie kills flagged) | ✅ Fixed 2026-07-13 | The stall-watchdog kills a genuinely-stuck **same-container** query (legit) but recorded it as action `kill_orphan` with `"zombie:…"` details; `validate_watchdog_actions` only accepts `kill_orphan` whose details say `"predates"` → every legit zombie kill was WhatsApp'd as an anomaly. Fix: distinct action **`kill_zombie`** (BACKEND_API_ROUTES.py `_car_parts_ie_stall_watchdog_loop`), validated on its own terms (dur_s ≥ 2400s) in db_update_agent `validate_watchdog_actions`, added to `watchdog_state.py`. **Never reuse `kill_orphan` for a same-container kill — the validator's orphan rule ("predates") will false-flag it.** |
-| Cart/order WhatsApp payment link not pressable | ✅ Fixed 2026-07-13 | Abandoned-cart + pending-payment reminders embedded the bare string `/api/v1/customers/cart` (not a URL, not tappable). Now emit a full `https://…/pay/XXX` link via `create_checkout_link` (abandoned, single-item) / `regenerate_order_pay_link` (pending order) — canonical server-side pricing, NEVER the raw cart `unit_price` (that's supplier COST). Multi-item abandoned carts fall back to the full cart URL. **Any customer-facing "go pay" message must be a full https URL, never an API path; and must price via the canonical checkout, never cart.unit_price.** |
-| NOA posts robotic/incoherent | ✅ Fixed 2026-07-13 | Cause was post-processing, not the prompt: `_enforce_sales_only`/`_enforce_tiktok_ads_policy` flattened newlines into one run-on line, blanket-replaced `מוסך`/`תיקון` (broke legit pain copy), and stapled 2-3 canned boilerplate sentences on every post. Fix: sanitizers now preserve line structure, only rewrite genuine FIRST-PERSON "we repair cars" claims (`_NOA_FIRST_PERSON_SERVICE_RE`), append the parts-only disclosure ≤1× and only when a claim was stripped, no forced value-point stapling (advisory only), low-quality floor 14→8 words. **NOA sanitization must be structure-preserving + subtractive — never flatten newlines or staple boilerplate onto every post.** |
-| `normalize_part_types/categories/dedup` crash with timezone error | ✅ Fixed 2026-07-01 | `_get_task_checkpoint()` returned tz-aware datetime; `parts_catalog.updated_at` is `timestamp without time zone` — asyncpg refused to bind. Fixed: both return paths use `datetime.utcnow()` / `.replace(tzinfo=None)`. Delta tasks now complete successfully. |
-| `refresh_min_max_prices` blocks for full 60-min task timeout | ✅ Fixed 2026-07-01 | Added `SET LOCAL lock_timeout = '10min'` — fails fast if importer row locks are held, retries next cycle instead of stalling. |
-| Meilisearch index 580K docs behind catalog | ✅ Fixed 2026-07-01 | `_meili_sync_loop()` catch-up completed — index now 4,124,452 docs = 100% of active catalog. |
-| `sync_models_from_catalog` NULL manufacturer_id for "Vw" | ✅ Fixed 2026-07-11 | `vehicles.manufacturer_id` is a NOT NULL FK to `car_brands(id)`; the insert omitted it → NotNullViolationError aborted the whole task every cycle. Fixed: resolve manufacturer→`car_brands.id` (case-insensitive, by name OR alias, per-run cached) and set it; skip rows whose brand isn't registered yet instead of aborting. Verified live: status=ok, inserted 44 vehicles, skipped 0. |
-| `sync_manufacturer_registries` duplicate brand "Gms"/"gms" | ✅ Fixed 2026-07-11 | `_upsert_car`/`_upsert_truck` (clean_manufacturers_registry.py) checked existence with a CASE-SENSITIVE `name == 'Gms'` but the unique index `ux_car_brands_name_ci_active` is on `lower(btrim(name))` — so the existing 'gms' row was missed and a duplicate INSERT was attempted → UniqueViolationError every cycle. Fixed: case-insensitive `lower(btrim(name))` lookup (prefers active) → updates the existing row. Verified live: status=ok. |
-| Volvo importer_price_ils discrepancy (143K parts, only 20K priced) | ✅ Fixed 2026-07-01 | `mct_importer.py` — MCT (Mayer Group) API reverse-engineered; ~32K Volvo parts with IL prices imported. Also covers Honda (MCT), Polestar, Lynk & Co. |
-| SEAT thin coverage (4.2K parts, 20% IL-priced) | ✅ Fixed 2026-07-01 | Champion Motors NOT anti-bot. It's a WordPress site with `admin-ajax.php?action=check_mehiron_action` endpoint. `champion_motors_harvester.py` scrapes by description seeds — finding 30K+ VW/Audi/SEAT/Skoda/Cupra parts with IL prices. |
-| Mazda IL prices stale | ✅ Fixed 2026-07-01 | Delek Motors API (`serviceforms.delek-motors.co.il`) confirmed working; `mazda_il_importer.py` re-run: 7,513 parts + 3,274 fitment rows. |
-| Ford/Voyah/MAXUS Delek brands not imported | ✅ Fixed 2026-07-01 | `delek_multi_importer.py` — Delek API has Ford USA (37K parts), MAXUS M-Hero (1.2K), Voyah (1.9K). All imported. |
-| Kia IL prices thin (21%, 104K of 499K) | ✅ Fixed 2026-07-01 | `kia_israel_harvester.py` — kia-israel.co.il WordPress PHP-POST form, no auth needed. Seeds: 95 Hebrew part-name words. Returns ex-VAT prices. ~30K+ Kia OEM parts imported. |
-| Toyota IL prices thin (15%, 66K of 434K) | ✅ Fixed 2026-07-01 | toyota.co.il behind Akamai, but WORKAROUND FOUND: `union-motors.toyota.co.il/replacement_parts.php` is accessible directly (no Cloudflare/Akamai on subdomain). 18,704 parts EX-VAT, updated daily. `toyota_il_harvester.py` created. Price formula: importer=price, base=price×1.45, max=price×1.18. |
-| Hyundai/Colmobil brands IL prices | ✅ Fixed 2026-07-02 | prodmedia.colmobil.co.il PDFs auto-downloadable (no auth). `colmobil_import_v2.py` imports all 6 brands. Results: Hyundai 67.2% (75,987/113,098), Genesis 99.6% (4,772/4,791), Mitsubishi 41.0% (32,148/78,327), ORA 100% (1,434/1,434). Run monthly to refresh. |
-| BMW IL prices (Delek API) | ✅ Fixed 2026-07-01 | `delek_multi_importer.py --brands 3` — Delek API brandId=3=BMW. ~16K BMW parts with IL prices (priceWithTax incl. VAT). Fixed ON CONFLICT to use (supplier_id,supplier_sku) to eliminate cascading transaction errors. |
-| NIO IL prices (new brand) | ✅ Fixed 2026-07-01 | `delek_multi_importer.py --brands 6` — Delek API brandId=6=NIO. 2,265 parts, 100% priced! NIO added to BRAND_CONFIG. |
-
-## IL Price Coverage Explanation (2026-06-18)
-**30% of catalog has IL importer price — this is EXPECTED, not a bug.**
-
-| Brand | Unpriced | Why |
-|---|---|---|
-| Kia/Toyota/BMW/Porsche | Millions | Global eBay/Febest catalog — IL importer only stocks a fraction |
-| Porsche | 2,512 priced | Porsche IL official price list 2025-03-01 (uploaded PDF) ✅ |
-| Lexus | 2,571 priced | Union Motors price list 2026-05-03 (uploaded PDF) ✅ |
-| Jeep/RAM | 97% priced | samelet.com ✅ |
-| Chrysler | 3,895 priced | car-parts.ie EUR→ILS conversion (partial); Carasso Motors list needed |
-| Renault/Mercedes/Nissan/Ford | 75-86% priced | samelet.com ✅ |
-| Volvo | 20%→22%+ priced | MCT (Mayer Group) API — `mct_importer.py` — 32K OEM parts with IL prices. Added 2026-07-01. |
-| Honda | MCT coverage | MCT (Mayer Group) API — `mct_importer.py` — Honda IL OEM parts. Added 2026-07-01. |
-| Polestar | Full MCT | MCT (Mayer Group) API — `mct_importer.py` — Polestar IL OEM parts. Added 2026-07-01. |
-| Lynk & Co | Full MCT | MCT (Mayer Group) API — `mct_importer.py` — Lynk & Co IL OEM parts. Added 2026-07-01. |
-| Mazda | Updated 2026-07-01 | Delek API re-run: 7,513 parts + 3,274 fitment rows. |
-| Ford USA (F-150/F-250/Mustang) | New 2026-07-01 | `delek_multi_importer.py` — brandId=2,4 in Delek API: 37K Ford parts. |
-| MAXUS M-Hero | New 2026-07-01 | `delek_multi_importer.py` — brandId=7 in Delek API: 1,206 parts. |
-| Voyah (FREE, DREAM) | New 2026-07-01 | `delek_multi_importer.py` — brandId=8 in Delek API: 1,898 parts. |
-| VW, Audi, SEAT, Skoda, Cupra | New 2026-07-01 | `champion_motors_harvester.py` — Champion Motors WordPress admin-ajax.php action=check_mehiron_action. Scrapes 30K+ parts with IL consumer prices. Harvester writes JSON → `import_champion_motors.py` imports to DB. |
-| Kia | New 2026-07-01 | `kia_israel_harvester.py` — kia-israel.co.il WordPress PHP-POST (no admin-ajax). Prices EX-VAT. ~30K+ parts. Run: `docker exec autospare_backend python3 /app/harvesters/kia_israel_harvester.py` |
-| Toyota | 15.4% (434K parts, 18.7K w/ IL price) | WORKAROUND: `union-motors.toyota.co.il/replacement_parts.php` accessible. 18,704 parts EX-VAT (updated daily). `toyota_il_harvester.py` created. toyota.co.il main site still Akamai-blocked. |
-| BMW | 44% (339K parts) | Delek API brandId=3: ~16K BMW IL parts with consumer prices incl. VAT. `delek_multi_importer.py --brands 3`. Added 2026-07-01. |
-| NIO | 100% (2.3K parts) | Delek API brandId=6: 2,265 NIO IL parts. All priced. Added 2026-07-01. |
-| Hyundai | 67.2% (113K parts) | `colmobil_import_v2.py` auto-downloads HYU.PDF from prodmedia.colmobil.co.il. 19,955 updated + 1,965 inserted 2026-07-02. Refresh monthly. |
-| Genesis | 99.6% (4,791 parts) | `colmobil_import_v2.py` — GEN.PDF. 4,184 updated + 330 inserted 2026-07-02. |
-| Mitsubishi | 41.0% (78K parts) | `colmobil_import_v2.py` — MIT.PDF. 6,963 updated + 62 inserted 2026-07-02. Low % = most parts from eBay global catalog without IL equivalent. |
-| ORA | 100% (1,434 parts) | `colmobil_import_v2.py` — ORA.PDF. 1,328 updated + 58 inserted 2026-07-02. |
-| Smart | 99.1% (1,867 parts) | `colmobil_import_v2.py` — SMART.PDF. 1,795 updated + 30 inserted 2026-07-02. |
-| JAECOO | 98.7% (5,024 parts) | `colmobil_import_v2.py` — JAECOO.PDF. 1,122 updated + 3,676 inserted 2026-07-02. Mostly new parts added. |
-| Lexus | 1.2% (221K parts) | Union Motors IL — site times out. 2,571 parts from uploaded PDF only. |
-| Porsche | 1.3% (265K parts) | 3,412 parts from uploaded PDF only. porsche.co.il not scraped yet. |
-| Land Rover | 11.6% (51K parts) | JLR Israel site not scraped. SNG Barratt covers partial via `lr_import.py`. |
-
-The 70% without IL price = parts from eBay/Febest/OEM-global sources. IL importers only distribute a subset of global catalogs.
-
-## Importer Pipeline — ALL sources must write importer_price_ils correctly
-| Importer | importer_price_ils formula | Status |
-|---|---|---|
-| `samelet_import_v2.py` | `cost = max_price_ils / 1.18`, `base = cost × 1.45` | ✅ Fixed 2026-06-18 |
-| `car_parts_ie_import_generic.py` | `cost = price_eur × 3.9 / 1.18`, `base = cost × 1.45` | ✅ Fixed 2026-06-18 |
-| `import_from_excel.py` / PDF importers | `cost = consumer_price / 1.18`, `base = cost × 1.45` | ✅ Pre-existing |
-| `ebay_brand_importer.py` | No IL importer price — eBay is global source | ℹ️ By design |
-| `mct_importer.py` | `price_no_vat` (ex-VAT from MCT API), `base = price×1.45`, `max = price×1.18` | ✅ Added 2026-07-01 (Volvo, Honda, Polestar, Lynk & Co) |
-| `mazda_il_importer.py` | `cost = priceWithTax/1.18`, `base = cost×1.45` | ✅ Re-run 2026-07-01 — Delek Motors API confirmed working |
-| `delek_multi_importer.py` | `cost = priceWithTax/1.18`, `base = cost×1.45` | ✅ Updated 2026-07-01 (Ford+MAXUS+Voyah+BMW brandId=3+NIO brandId=6). ON CONFLICT fixed to (supplier_id,supplier_sku). |
-| `oempartsonline_importer.py` | USD price → no IL importer price | ℹ️ By design |
-| `champion_motors_harvester.py` | `cost = consumer_price / 1.18`, `base = cost × 1.45` | ✅ Added 2026-07-01 (VW, Audi, SEAT, Skoda, Cupra) |
-| `kia_israel_harvester.py` | `price_no_vat` (already ex-VAT), `base = price×1.45`, `max = price×1.18` | ✅ Added 2026-07-01 (Kia — official IL price ex-VAT) |
-| `toyota_il_harvester.py` | `price_no_vat` (EX-VAT from union-motors.toyota.co.il), `base = price×1.45`, `max = price×1.18` | ✅ Added 2026-07-01 (Toyota — union-motors subdomain, 18,704 parts) |
-| `toyota_il_importer.py` | `price` (ex-VAT), `base = price×1.45`, `max = price×1.18` | ✅ Fixed 2026-07-01: ON CONFLICT changed to (supplier_id,supplier_sku) |
-| `colmobil_import_v2.py` | `cost = consumer_price / 1.18`, `base = cost × 1.45`, `max = consumer_price` | ✅ Added 2026-07-02 (Hyundai, Mitsubishi, Genesis, ORA, Smart, JAECOO — auto PDF download) |
-
----
-
-## Critical Technical Fixes — 2026-06-26 (MUST READ)
-
-### 1. Backend deploys via bind mount — Fixed 2026-06-30 (no more `docker cp`)
-**Old problem (2026-06-15 → 2026-06-30):** the backend image baked source code in via the Dockerfile's `COPY . .`. The standard hotfix workflow was `docker cp` a changed file into the running container, then `docker restart`. This worked *until* the container got recreated (e.g. `docker compose up -d` after editing `docker-compose.yml`, which compose treats as a config change requiring recreation) — recreation rebuilds the container FROM THE IMAGE, silently discarding every `docker cp` patch that was never baked into a rebuilt image. This actually happened: the container ran a 2026-06-15 image for two weeks while ~40 files were hotfixed on disk and never landed in a rebuilt image. Confirmed live regressions: OOM-disabled `db_update_agent` tasks running again, 4 supplier modules missing entirely (broke the price-comparison aggregator).
-
-**Root fix:** `docker-compose.yml` backend service now bind-mounts the source directory — `./backend:/app` — instead of relying solely on the image's baked-in copy. The Dockerfile's `COPY . .` still matters for the one-time image build (installing deps, Playwright/Chromium), but the running container's `/app` is now always the live `backend/` directory on host disk.
-
-**Practical effect:**
-- `docker cp` is no longer needed for code changes. Edit the file on disk, then just restart.
-- `docker compose up -d` can no longer revert code to a stale image — there's nothing image-side to revert to for source files.
-- Scripts under `backend/scripts/*.sh` must stay executable on the **host** now (`chmod +x`), since the image's build-time `chmod` no longer applies once that path is bind-mounted over.
-
-Deploy sequence (now just two steps):
-```bash
-bash /opt/autosparefinder/backend/scripts/pre_restart.sh
-# edit file(s) directly under /opt/autosparefinder/backend/ — no docker cp needed
-docker restart autospare_backend
-```
-
-Only use `docker compose up -d backend` when `docker-compose.yml` itself changed (env vars, volumes, mem limits, etc.) — that's now safe to run, since the bind mount means there's no stale-image code to fall back to. Scope it with `--no-deps` to avoid touching other services' pending changes: `docker compose up -d --no-deps backend`.
-
-### 2. Fitment pipeline — Fixed 2026-06-26
-The `car-parts.ie` harvester was sending `vehicle` slug but it was being IGNORED by the collect endpoint. Root cause: relay extracted `brand = data.get("brand", "unknown")` instead of parsing from `vehicle` slug.
-
-**Fixed in `routes/system.py`**:
-```python
-# Extract brand from vehicle slug — browser harvester sends vehicle not brand
-if not brand and _vehicle_slug:
-    brand = _vehicle_slug.split("/")[0]
-```
-
-**Fixed in `car_parts_ie_import_generic.py`**:
-- Added `_parse_vehicle_slug()` function
-- Added `--vehicle-slug` CLI arg
-- Changed `if model_name and year_from:` → `if model_name:` (uses year_from=1990 fallback)
-- Fixed: every harvest cycle now writes fitment rows to `part_vehicle_fitment`
-
-Result: +2,270 fitment rows on 2026-06-26 alone, growing at ~800-1000 rows per 10 min.
-
-### 3. Uvicorn workers — 1 worker (not 4)
-Changed back to 1 worker because 4 workers × pool_size causes Postgres `max_connections` overflow (50 limit).
-`docker-compose.yml`: `${API_WORKERS:-1}` (changed back from 4)
-
-### 4. Search performance — Fixed 2026-06-26
-- **External suppliers**: now run in background task, results cached in Redis 30 min. Non-blocking.
-- **Meilisearch semaphore**: max 8 concurrent queries (was unlimited, caused saturation under load)
-- **Meilisearch results**: cached in Redis 30 min, shared across workers
-- **Single worker**: search returns in ~2s under realistic load
-
-### 5. WhatsApp/Telegram Stripe link — Fixed 2026-06-26
-The WhatsApp handler was short-circuiting purchase intent to a generic cart URL. Fixed by removing the bypass — all messages (including "אני רוצה להזמין") now go through the AI agent which calls `create_checkout_link()` and sends a real Stripe URL back.
-File: `routes/webhooks.py` — removed the `_is_purchase_intent` bypass block.
-
-### 6. Post-payment notifications — Added 2026-06-26
-`_send_post_payment_notification()` added to `routes/utils.py` — fires after `trigger_supplier_fulfillment()`:
-- WhatsApp: sends tracking link back to the phone that placed the order
-- Telegram: sends to the chat_id from conversation context
-- Web: sends SendGrid email with order confirmation + tracking button
-File: `routes/email_utils.py` — new file with `send_order_confirmation_email()`
-
-### 7. Supplier aggregator — Wired 2026-06-26
-17 suppliers now wired in `services/supplier_aggregator.py`:
-- Tier 1 (API): eBay, AliExpress DS, Autodoc
-- Tier 2 (batch): RockAuto, Spareto
-- Tier 3 (affiliate): PartSouq, Amayama, Alvadi, Cars245, FCP Euro, Summit Racing, Fitinpart, Pelican, ECS Tuning, Toyota/Ford/Hyundai Parts
-All env flags added to `docker-compose.yml` as `EXTERNAL_ENABLE_*=1`
-Search endpoint returns `external_suppliers` array (from Redis cache, non-blocking).
-
----
-
-## Last Monitoring Run — 2026-07-02 07:10 UTC
-
-### Active Processes
-| Process | Status | Details |
-|---|---|---|
-| `uvicorn` | ✅ Running | stable, 1 worker |
-| `car_parts_ie_harvester` | ✅ Running | 3 sessions, supervisor active |
-| `car_parts_ie_stall_watchdog` | ✅ Running | every 3 min |
-| `car_parts_ie_healthcheck` | ✅ Running | every 30 min |
-| `meili_sync` | ✅ Running | 2h auto-loop active |
-| `colmobil_import_v2.py` | ✅ Done | All 6 brands complete 2026-07-02: Hyundai 67.2%, Genesis 99.6%, MIT 41.0%, ORA 100%, Smart 99.1%, JAECOO 98.7% |
-
-### Catalog Health
-| Metric | Count |
-|---|---|
-| Total active parts | 4,171,856 |
-| With IL importer price | 1,923,016 (46.1%) |
-| With base_price | ~1,927,371 |
-
-### IL Price Coverage (post 2026-07-02 Colmobil session)
-| Brand | Priced | Total | % | Notes |
-|---|---|---|---|---|
-| NIO | 2,287 | 2,287 | **100%** | ✅ Delek API brandId=6 — fully priced |
-| ORA | 1,434 | 1,434 | **100%** | ✅ colmobil_import_v2.py ORA.PDF — 2026-07-02 |
-| GENESIS | 4,772 | 4,791 | **99.6%** | ✅ colmobil_import_v2.py GEN.PDF — 2026-07-02 |
-| SMART | 1,851 | 1,867 | **99.1%** | ✅ colmobil_import_v2.py SMART.PDF — 2026-07-02 |
-| JAECOO | 4,960 | 5,024 | **98.7%** | ✅ colmobil_import_v2.py JAECOO.PDF — 2026-07-02 (3,676 new parts inserted) |
-| SEAT | 10,356 | 13,779 | 75.2% | ✅ Champion Motors |
-| VOLKSWAGEN | 21,619 | 29,315 | 73.7% | ✅ Champion Motors |
-| FORD | 93,173 | 129,481 | 72.0% | ✅ Delek API (Ford USA HD + standard) |
-| HYUNDAI | 75,987 | 113,098 | 67.2% | ✅ colmobil_import_v2.py (auto PDF download) |
-| HONDA | 64,873 | 99,537 | 65.2% | ✅ MCT API |
-| AUDI | 45,220 | 82,331 | 54.9% | ✅ Champion Motors |
-| BMW | 150,345 | 339,970 | 44.2% | ✅ Delek API brandId=3 — 16,209 OEM parts |
-| MITSUBISHI | 32,148 | 78,327 | 41.0% | ✅ colmobil_import_v2.py MIT.PDF — 2026-07-02 |
-| SUBARU | 13,364 | 32,668 | 40.9% | ✅ samelet (ceiling) |
-| VOLVO | 45,624 | 144,037 | 31.7% | ✅ MCT API |
-| WEY | 4,372 | 13,124 | 33.3% | ✅ samelet (ceiling) |
-| KIA | 109,799 | 498,552 | 22.0% | ✅ kia-israel.co.il harvester |
-| MAZDA | 40,090 | 212,739 | 18.8% | ✅ Delek API brandId=1 |
-| TOYOTA | 71,923 | 434,804 | 16.5% | ✅ union-motors.toyota.co.il (structural ceiling) |
-| LEXUS | 2,666 | 220,880 | 1.2% | ❌ union-motors.co.il times out; PDF only |
-
-### Agent Todos
-| Agent | Status |
-|---|---|
-| `rex` | ~170 completed |
-| `db_update_agent` | running cycles |
-| `db_cleanup_agent` | healthy |
-| `NIR` | ~5 not_started (human/Khalil tasks) |
-
-### Open Issues
-1. `sync_models_from_catalog` fails every cycle — NULL `manufacturer_id` for brand "Vw". Pre-existing, low severity.
-2. `sync_manufacturer_registries` fails every cycle — duplicate brand "Gms"/"gms". Pre-existing, low severity.
-3. `lookup_oem_spec` ran for 42+ min and blocked BMW import (no Postgres statement_timeout for this query). Fix: add `SET LOCAL statement_timeout = '20min'` inside `lookup_oem_spec` task.
-4. ClamAV container DOWN (health monitor). Non-critical.
-5. ~~BMW 36,729 duplicate OEM catalog entries~~ ✅ RESOLVED 2026-07-12 — `bmw_oem_dedup.py` merged 36,760 groups / 69,063 duplicate rows (FK-safe soft-delete; supplier_parts + fitment repointed to canonicals, 0 orphans verified). See FIXES_TRACKER.
-
----
-
-## Architecture Quick Reference
-
-- **Backend container**: `autospare_backend` — uvicorn + supervised background tasks
-- **Persistent volume**: `worker_state:/app/state` — survives OOM restarts
-- **Meili checkpoint**: `/app/state/meili_sync_checkpoint.json` — resume after crash
-- **Freesbe checkpoint**: `/app/state/freesbe_import_progress.json`
-- **Worker logs**: `/app/state/logs/`
-- **DB**: PostgreSQL via `DATABASE_URL` env var
-- **Search**: Meilisearch at `MEILI_URL` (http://meilisearch:7700)
-
----
-
-## Server Specs (Contabo VPS) — upgraded 2026-07-20
-
-| Resource | Spec |
-|---|---|
-| **CPU** | **6 vCPUs** — AMD EPYC @ 2.0 GHz (1 thread/core, QEMU/KVM virtualised) |
-| **RAM** | **12 GB** (11.68 GiB) — **no swap configured** |
-| **Disk** | 145 GB virtual disk (QEMU, SSD-backed by Contabo), 109 GB used / 36 GB free |
-| **OS** | Ubuntu 24.04 LTS, kernel 6.8.0-136 |
-| **Hosting** | Contabo standard VPS |
-| **IP / SSH** | 161.97.158.177, port 63159 |
-
-**Container memory limits (post-upgrade 2026-07-20)**:
-| Container | Limit | Notes |
-|---|---|---|
-| postgres_catalog | 5120m | Up from 3072m |
-| postgres_pii | 1024m | Up from 768m |
-| redis | 512m | Up from 256m |
-| backend | 4096m | Unchanged |
-| meilisearch | 2560m | Up from 1536m |
-| frontend / nginx | 128m | Unchanged |
-
-**Postgres tuning (applied 2026-07-20 via docker-compose.yml command)**:
-- `shared_buffers=2GB` (was 256MB) · `work_mem=32MB` (was 8MB) · `maintenance_work_mem=256MB` (was 64MB) · `effective_cache_size=8GB` (was 512MB) · `shm_size=512m` (was 256m)
-
-**Capacity reality check** — 11 containers run concurrently (3× Postgres, Meilisearch, Redis, backend, frontend, Nginx, FlareSolverr, WhatsApp bridge, 2× backup). Load average normally sits 8-12 on 6 CPUs (~1.5-2 per core); above 18 is oversubscription. Key constraints:
-- No swap → RAM exhaustion = immediate OOM kills, no graceful degradation.
-- **6 vCPUs → `PARALLEL_SESSIONS = 2`** (env `HARVESTER_PARALLEL_SESSIONS`; lowered 4→2 on 2026-07-23). 4 was fine when the IL-market queue drained fast and the harvester idled between bursts; after the full-catalogue seeding (6,000-model backlog) the harvester runs FLAT-OUT and 4 sessions pinned flaresolverr at ~577% CPU / load 18.7 (oversubscribed) → DB statement-timeouts failed heal/parity tasks + starved sync_prices' heartbeat. Also `INTER_MODEL = 20 s` (env `HARVESTER_INTER_MODEL_S`, was 5) for duty-cycle headroom. The box is 6 vCPU (the 4→6 upgrade, active); raise sessions back toward 4 ONLY after re-measuring load. **FlareSolverr Chrome LEAK — root-fixed 2026-07-23 (FlareSolverr is no longer the fetch engine):** FlareSolverr orphans LIVE Chrome on `sessions.destroy` and accumulates renderers within a session (leaked chromium are running procs reparented to PID 1, NOT zombies). The harvester used to route EVERY page (~80/model) through FlareSolverr's browser → constant churn → 577% CPU / load 18.7 → DB statement-timeouts. **Fix:** car-parts.ie is server-rendered (proven by the full-catalogue seeder's plain-`urllib` fetches), so the harvester now uses FlareSolverr **ONLY to mint a `cf_clearance` cookie (~2×/hour, `_solve_clearance` → destroys the session immediately)** and fetches every page via **plain `urllib` + that cookie** (`http_get`; re-mints on 403/503). `fs_get` is now a thin shim over `http_get`; the session pool / per-cycle create-destroy / worker `session_id` are all gone; workers are cheap HTTP threads. Verified: FS chrome dropped 40-52→~9 and held, load 21→10, full parts still harvested. **Never reintroduce a per-page FlareSolverr call** — that is the leak. If chrome ever climbs, check `docker exec flaresolverr ps -e | grep -c chrom` (should be a handful, spiking only during a ~2×/hour solve). Env: `HARVESTER_CLEARANCE_TTL_S` (cookie refresh, default 1500s).
-- `idle_in_transaction_session_timeout = 30min` (set via ALTER SYSTEM 2026-06-30).
-- Watchdog `BLOCKER_S = 2700s` (45 min) — moot for active-backend connections (never killed), relevant only for orphan-detection fallback.
-- `DB_AGENT_TASK_TIMEOUT_S = 3600` — per-task timeout inside `run_all_tasks`. Set in `docker-compose.yml`.
-
----
-
-## Meilisearch Sync — automated via supervised loop (fixed 2026-06-30, rewritten 2026-07-02)
-
-`meili_sync.py` previously had **no automated scheduling** — it ran once manually (2026-06-24) and silently drifted 6 days / ~580K docs behind the catalog. Added `_meili_sync_loop()` in `BACKEND_API_ROUTES.py`, registered at startup via `_supervised_task("meili_sync_loop", ...)`. Runs `python3 /app/meili_sync.py` every **2 hours** in incremental mode (`MEILI_REBUILD=0` env already set, no full rebuild).
-
-**2026-07-02 rewrite — three root-caused bugs in meili_sync.py (do not reintroduce):**
-1. **Incremental resume by id-position was broken by design.** Parts get random UUIDv4 ids; the old resume (`offset=total`, `ORDER BY id`) only saw rows sorted past the previous end position — new parts land at *random* id positions and were silently skipped every incremental run. This is what created the 620K-doc gap while the checkpoint claimed complete. Fix: a completed checkpoint (offset==total, no last_id) now triggers **updated_at-based incremental mode** — `WHERE updated_at > (last run start − 1h margin)`. The completed checkpoint's `updated_at` is the run's START time so mid-run changes are re-checked next cycle.
-2. **`OFFSET N` pagination is O(N·logN) per batch** — measured ~100s/batch at offset 195K (full pass ≈ 23h). Fix: keyset pagination `WHERE id > $last_id::uuid ORDER BY id LIMIT batch` — PK index scan, constant per batch. Checkpoint stores `last_id` (and `cutoff` if an incremental run is interrupted, so resume keeps the same cutoff).
-3. **No single-instance guard** — the 2h supervised loop spawned a sync while a manual catch-up was mid-pass; the two clobbered each other's checkpoint file. Fix: `fcntl.flock` on `/tmp/meili_sync.lock` at entry — a second instance prints a notice and exits 0.
-
-- To check sync status: `docker exec autospare_backend cat /app/state/meili_sync_checkpoint.json` (shows offset, total, updated_at)
-- Index doc count vs catalog: query Meilisearch `/indexes/parts/stats` and compare `numberOfDocuments` to `SELECT COUNT(*) FROM parts_catalog WHERE is_active`
-- If index is significantly behind and you need an immediate catch-up: `docker exec -d autospare_backend python3 /app/meili_sync.py` (runs incremental sync in background, can take 30-90 min for millions of docs)
-- `lookup_oem_spec` task times out at 1800s by design (`DB_AGENT_TASK_TIMEOUT_S` env, default 30 min) — also hits Cerebras/HF API rate limits; this is a pre-existing ceiling, not a new bug.
-
-## Pre-existing bugs in run_all_tasks — ✅ FIXED 2026-07-11
-
-| Task | Error | Fix (verified live) |
-|---|---|---|
-| `sync_models_from_catalog` | `NotNullViolationError: null value in column "manufacturer_id"` | `vehicles.manufacturer_id` is a NOT NULL FK to `car_brands(id)` never set by the insert. Now resolves manufacturer→id (case-insensitive, name OR alias, per-run cache), skips rows whose brand isn't registered yet. → status=ok, inserted 44, skipped 0. |
-| `sync_manufacturer_registries` | `UniqueViolationError: duplicate key on ux_car_brands_name_ci_active` | `_upsert_car`/`_upsert_truck` used a case-SENSITIVE existence check against a case-INSENSITIVE unique index, so 'Gms' missed the existing 'gms' and re-inserted. Now uses `lower(btrim(name))` lookup → updates the existing row. → status=ok. |
-
-**Operational-resilience rules for run_all_tasks (2026-07-11 audit):**
-- **Deadlocks are transient — retry, don't abort.** Batched-UPDATE tasks on `parts_catalog` (normalize_*, dedup, backfill) deadlock against the concurrent harvester. `run_all_tasks` now has a **central deadlock-retry** (up to 3× per task, on a raised OR self-reported `DeadlockDetectedError`; timeouts are NOT retried). Any NEW batched-UPDATE task is covered automatically — but should ALSO use `ORDER BY id … FOR UPDATE SKIP LOCKED` in its batch CTE so it never waits on rows another writer holds (see normalize_categories Pass 2).
-- **Rate-limited LLM tasks need a soft time-budget, not the hard timeout.** `lookup_oem_spec` (per-row LLM call) must stop after `max_seconds` (1500s) and return `status=ok, stopped_early=True`, finishing the rest next cycle — never let it get killed at the 3600s hard timeout (that logs status=error every cycle).
-- **"Scan-for-nothing" anti-pattern (recurred 3× — `task_recover_priced_inactive`, `task_normalize_base_price_batched`, manufacturers stampede).** A frequent cleanup task that scans a huge table to find the rare/zero rows needing work is a chronic bottleneck (holds snapshots, deadlocks the harvester, spikes load) even with a `LIMIT`. Two mandatory guards: (1) **exponential backoff** (30s→30min) when it finds 0 — AND on timeout/error, via a shared `_bump_*_backoff()`; reset to eager the moment work appears. (2) **Drive from the small/recent side, not the huge side** — e.g. base_price fixes come only from newly-priced parts, so scan `supplier_parts WHERE updated_at > NOW()-INTERVAL '35 min'` (indexed) instead of all 2.24M `base_price=0` rows: 90s → 0.21s. Always add `SET LOCAL statement_timeout` so a slow run can't hold a snapshot for 30 min. Window must exceed the max backoff so nothing is missed between runs.
-- **Startup search warmup**: one DB session PER case (a shared one lets a timeout-cancellation poison later cases); the heavy empty-query+vehicle-fitment case is slow cold / 0s warm and needs `timeout_s≥120` to actually prime the Redis cache (else the first real customer eats the cold time). Warmup `category` values must be English DB slugs, not Hebrew.
-- **Fitment-search indexing (2026-07-11)**: the `part_vehicle_fitment` EXISTS in `_build_strict_vehicle_match_clause` (routes/parts.py) is now index-usable — do NOT reintroduce the un-indexable `:q LIKE '%'||column||'%'` **reverse-substring** branch (it forced a 57s scan). Indexes: `idx_pvf_mfr_trgm` / `idx_pvf_model_trgm` (pg_trgm GIN on `lower(btrim(...))` for `LIKE '%x%'`) + `idx_pvf_model_norm` (btree for `model = ANY(...)`). Model hierarchy recall ("Corolla Verso" → general "Corolla") is preserved by matching `lower(btrim(model)) = ANY(<model + its word-prefixes>)` — an indexable IN, NOT a reverse LIKE. Fitment filter went 56s→6s. **Still-slow residual:** the empty-query "browse all parts for my car" is dominated by `ORDER BY price_ils` over the ~42K parts that fit a car (+ the JSONB `compatible_vehicles` OR-branch which isn't GIN-indexable) — mitigated by warmup+cache; a full fix (materialized per-vehicle price view) is a deferred architectural change.
-
----
-
-## AI Stack — 3-Option Upgrade (2026-06-17)
-
-The system uses three complementary AI approaches tuned to the server constraints
-(8 GB RAM, 4-core AMD EPYC VPS, NO GPU, no swap):
-
-### Option 1: Phi-3-mini via HF Router (enrichment/generation)
-- **Model**: `microsoft/Phi-3-mini-4k-instruct:featherless-ai`
-- **Provider suffix required**: HF Router uses `{model}:{provider}` format. Featherless AI hosts Phi-3-mini.
-- **Config**: `HF_ENRICH_MODEL` in `hf_client.py:69` + `docker-compose.yml`
-- **Use cases**: `enrich_pending_parts` (Hebrew→English translation, part naming),
-  search query normalization, chatbot Hebrew responses
-- **Server cost**: 0 RAM — pure API call via existing HF PRO Router
-- **Previous model**: `Qwen/Qwen2.5-7B-Instruct` (less Hebrew-capable)
-- **Why not local**: 3.8B params needs ~8 GB RAM — server has 12 GB total but containers leave ~2-3 GB free; still risky under load
-
-### Option 2: Expanded keyword rules (bulk categorization)
-- **Script**: `categorize_parts_batch.py` — massively expanded RULES list
-- **Coverage**: 18 categories × 15-30 rules each = 400+ Hebrew + English keywords
-- **New additions**: window glass, fender/splash shield, seat recliner, shock absorber variants,
-  exhaust components, fuel tank/cap/sender, transmission details, body pillars/moldings, connectors
-- **Performance**: 2000+ parts/sec, 0 RAM overhead, no API calls
-- **Match rate target**: 22% → **55-65%** with expanded rules
-- **Why not DistilBERT locally**: CPU-only inference = 486 hours for 2.5M parts (impractical)
-
-### Option 3: HF zero-shot + Hebrew expansion (search quality)
-- **Functions added to `hf_client.py`**:
-  - `hf_classify_query(query)` — calls `facebook/bart-large-mnli` via HF Inference API,
-    classifies search queries into 17 auto-part categories, cached 1h
-  - `expand_hebrew_query(query)` — static dict of 40+ Hebrew→English automotive expansions,
-    zero latency, e.g. `"רפידות לקורולה"` → `"brake pads corolla"`
-- **Config**: `HF_ZSC_MODEL` env var (default: `facebook/bart-large-mnli`)
-- **Server cost**: 0 RAM — API call, cached
-- **Integration point**: Hook into `BACKEND_AI_AGENTS.py` search path where
-  `SEARCH_ENABLE_HF_QUERY_NORMALIZATION=1` is checked
-
-### Why NOT run models locally on this server
-| Model | RAM needed | Server has | Verdict |
-|---|---|---|---|
-| DistilBERT + PyTorch CPU | ~600 MB + 1.5 GB for torch | ~185 MB free | ❌ OOM risk |
-| Phi-3-mini local | ~8 GB (int8) | 12 GB total but ~2-3 GB free under load | ❌ too risky |
-| mBERT uncased | ~600 MB + torch | ~185 MB free | ❌ OOM + wrong for Hebrew |
-| Zero-shot 2.5M items CPU | 486 hours | — | ❌ impractical |
-
----
-
-## Data Pipeline Requirements — Every Scraper/Import MUST capture all 5 fields
 
 Every time REX, the scraper, or any importer runs, it MUST collect and store:
 
@@ -1058,248 +850,9 @@ Every time REX, the scraper, or any importer runs, it MUST collect and store:
 4. **eBay** — fallback, broad coverage, no fitment
 5. **RockAuto** — fallback, US prices, some fitment
 
-## Pipeline Audit — 2026-06-18 (All Scrapers Verified)
 
-| Importer | importer_price_ils | base_price | part_condition | supplier_parts | Status |
-|---|---|---|---|---|---|
-| `samelet_import_v2.py` | ✅ cost=max/1.18 | ✅ cost×1.45 | 'new' ✅ | ✅ | Fixed 2026-06-18 |
-| `car_parts_ie_import_generic.py` | ✅ cost=eur×3.9/1.18 | ✅ cost×1.45 | 'new' ✅ | ✅ | Fixed 2026-06-18 |
-| `catalog_scraper.py` (REX) | N/A (scrapes reference) | ✅ price×1.45 | 'new'/'oem' ✅ | ✅ | Fixed 2026-06-18 (was 'New') |
-| `import_from_excel.py` | ✅ preserves existing | ✅ preserves | varies | ✅ | Fixed 2026-06-18 (was reset to 0) |
-| `freesbe_importer.py` | ✅ ex-vat from retail | ✅ ex-vat×1.45 | pre-existing | ✅ | ✅ OK |
-| `il_importer_pdf_import.py` | ✅ compute_price_triple | ✅ brand-specific | pre-existing | ✅ | ✅ OK |
-| `oempartsonline_importer.py` | ✅ from USD price | ✅ price_ils×1.45 | pre-existing | ✅ | ✅ OK |
-| `ebay_brand_importer.py` | N/A — global source | ✅ (normalize_base_price) | pre-existing | ✅ | ℹ️ By design — no IL importer price |
+## 9. Feature Modules
 
-### Bugs fixed in this audit
-1. `samelet_import_v2.py:305` — `importer_price_ils=0` hardcoded on every upsert → cost formula
-2. `car_parts_ie_import_generic.py` — EUR price not flowing to importer_price_ils → added
-3. `catalog_scraper.py:1414` — `part_condition="New"` (uppercase) → `"new"`
-4. `import_from_excel.py:308` — `importer_price_ils=0` reset on UPDATE → CASE WHEN preserve
-
-### IL Price Coverage (post-fixes)
-total=3,467,068 · il_priced=1,056,046 (30.5%)
-- 30% is STRUCTURAL: 70% from eBay/global sources have no IL importer equivalent
-- Porsche (2,512) + Lexus (2,571) from uploaded PDFs ✅
-- Jeep/RAM: 97% priced via samelet ✅
-- Chrysler: 3,895 from car-parts.ie EUR conversion
-
-## Complete Pipeline Audit — 2026-06-18 (ALL importers verified & fixed)
-
-### Bug pattern 1: `importer_price_ils=0` hardcoded in ON CONFLICT UPDATE
-Causes every importer re-run to wipe the IL price back to 0.
-**Fix**: `CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END`
-
-### Bug pattern 2: `part_condition='New'` (uppercase) in INSERT VALUES
-Causes bad_cond counter to keep growing after every import run.
-**Fix**: Always use lowercase `'new'` or `'oem'`
-
-### Files fixed (2026-06-18) — both bugs
-| File | Bug 1 (price_ils=0) | Bug 2 (cond='New') |
-|---|---|---|
-| `samelet_import_v2.py` | ✅ Fixed | ✅ (was 'new' already) |
-| `car_parts_ie_import_generic.py` | ✅ Added EUR→ILS formula | ✅ (was 'new') |
-| `catalog_scraper.py` | N/A | ✅ Fixed (was "OEM"/"New") |
-| `import_from_excel.py` | ✅ Fixed (preserve existing) | N/A |
-| `import_champion_motors.py` | ✅ Fixed | ✅ Fixed |
-| `kia_import.py` | ✅ Fixed ($6 = ex-VAT cost) | N/A |
-| `kia_new_models_import.py` | N/A | ✅ Fixed |
-| `toyota_il_importer.py` | N/A (was correct) | ✅ Fixed |
-| `mazda_il_importer.py` | N/A (was correct) | ✅ Fixed |
-| `subaru_il_importer.py` | ✅ Fixed | ✅ Fixed |
-| `geely_israel_import.py` | ✅ Fixed | N/A |
-| `bydil_scraper.py` | ✅ Fixed | ✅ Fixed |
-| `eliteparts_scraper.py` | ✅ Fixed | ✅ Fixed |
-| `gmc_buick_umi_import.py` | ✅ Fixed | N/A |
-| `lr_import.py` | ✅ Fixed | N/A |
-| `selected_parts_scraper.py` | ✅ Fixed | N/A |
-| `sng_barratt_jaguar_import.py` | ✅ Fixed | ✅ Fixed |
-| `supplier_pdf_import.py` | N/A | ✅ Fixed |
-| `zeekr_full_import.py` | ✅ Fixed | ✅ Fixed |
-| `import_delek_brands.py` | N/A | ✅ Fixed |
-
-### Files verified clean (no bugs found)
-`freesbe_importer.py`, `il_importer_pdf_import.py`, `oempartsonline_importer.py`,
-`ebay_brand_importer.py` (by design — global source, no IL importer price)
-
-### Scraper/importer formula reference (CLAUDE.md policy)
-```
-IL consumer price (incl. VAT) → cost = price / 1.18
-importer_price_ils = cost         # ex-VAT cost
-max_price_ils = price             # consumer reference price
-base_price = cost × 1.45         # our selling price (45% margin)
-part_condition = 'new'            # always lowercase
-```
-
----
-
-## Repository & Backend File Map (2026-07-18 reorg)
-
-The repo was reorganized so the file tree matches how the system actually runs. **The
-container only mounts `backend/` → `/app`**, so anything outside `backend/` is host-side
-only (docs, archives) and can never affect runtime.
-
-### How the runtime finds moved scripts (READ before moving/renaming any backend file)
-The 4 core app modules + all imported library modules stay at `/app` root; standalone
-scripts live in subfolders. Imports still work by **bare name** because
-`backend/sitecustomize.py` (auto-loaded via `PYTHONPATH=/app` set in `docker-compose.yml`)
-appends every script subfolder to `sys.path`. So `import samelet_import_v2` resolves even
-though the file is in `importers/`, for uvicorn **and** every `python3 /app/.../X.py`
-subprocess. **Rules when touching backend files:**
-- Add a new script → drop it in the right subfolder; no path config needed (sitecustomize
-  covers imports). Invoke it as `python3 /app/<subfolder>/<name>.py` (or `python3 -m <name>`).
-- Move/rename a script → also fix (a) any `python3 /app/<old>` subprocess string, (b) any
-  `Path(__file__).parent …` that reaches app-root resources (`state/`, `data/`, sibling
-  scripts) — a file one level deep uses `Path(__file__).parent.parent` to reach `/app`.
-- A file **imported by the app** (`from X import …` in BACKEND_*/routes/services/agents)
-  must stay at `/app` root (or be added to sitecustomize).
-- `state/` (the `worker_state` volume) is always `/app/state`; `data/`, `uploads/`,
-  `test_images/` are always at `/app`. Never anchor them off a subfolder's `__file__`.
-
-### Creating a NEW file — place it right AND wire it in, in the same change (MANDATORY)
-
-The 2026-07-18 reorg happened because new files had been written to the flat root and left
-loosely connected. **Do not repeat that.** A new file is not "done" until it is (a) in the
-correct folder and (b) actually reachable/active in the system — never "write to root now,
-move/wire later."
-
-**Where each new file goes (decide BEFORE writing it):**
-| New file is… | Put it in | And wire it by… |
-|---|---|---|
-| an importer (writes catalog/prices) | `backend/importers/` | invoke as `python3 /app/importers/<name>.py`; follow the Import Data Standard + SQL patterns; add the top-of-file docstring |
-| a site harvester | `backend/harvesters/` | if it should run continuously, register a supervised loop in `BACKEND_API_ROUTES.startup()` via `_supervised_task(...)`; anchor state at `/app/state` (`Path(__file__).resolve().parent.parent`) |
-| a playwright/html scraper | `backend/scrapers/` | called by its importer/`catalog_scraper` with the `scrapers/` path |
-| a run_/build_/categorize_/backfill_ pipeline or cleanup job | `backend/maintenance/` | add it to `db_update_agent`/`db_cleanup_agent` task list or schedule it; use bounded batches + `SKIP LOCKED` |
-| a shared library module (imported by the app) | `backend/` root | just `import <name>` — it's on the path |
-| an API route group | `backend/routes/` | **`app.include_router(...)` in `BACKEND_API_ROUTES.py`** — an unregistered router is dead code |
-| a supplier/price-sync service | `backend/services/` | wire into the aggregator / sync loop that consumes it |
-| a customer-agent skill | `backend/agents/` or `BACKEND_AI_AGENTS.py` | reachable from `process_user_message` (the one shared brain) |
-| an ad-hoc test/debug harness | `backend/devtests/` | — |
-| a superseded one-off | `backend/legacy/` or `archive/` | — |
-| a data dump / fixture | `backend/data/` (runtime) or `archive/data/` (host artifact) | never the repo root |
-| a doc | `docs/` (topical) or root (only `CLAUDE.md`/`README.md`/`FIXES_TRACKER.md`/`ROADMAP.md`) | link it from `CLAUDE.md` if agents need it |
-
-**Wiring checklist before closing (an orphan file is a bug):**
-1. Placed in the correct folder above — never the flat root as a parking spot.
-2. Connected to its trigger: router registered / supervised-task added / scheduler entry /
-   caller updated — and invoked with the correct `/app/<subfolder>/…` path.
-3. Top-of-file docstring (Script Documentation Standard).
-4. **Proven active**, not just present: hit the route, run one cycle, or confirm the loop
-   logs — a file that exists but nothing calls is not done.
-5. If it makes a public-facing surface, it returns only masked/right-sized data (see the
-   Partner API rules) — never raw cost/margin/supplier internals.
-
-### backend/ layout
-| Path | Contents |
-|---|---|
-| `/app/*.py` (33) | **Core + imported library modules** — `BACKEND_API_ROUTES` (uvicorn entrypoint), `BACKEND_AI_AGENTS`, `BACKEND_AUTH_SECURITY`, `BACKEND_DATABASE_MODELS`, `db_update_agent`, `db_cleanup_agent`, `catalog_scraper`, `meili_sync`, `email_templates`, `hf_client`, `resilience`, `watchdog_state`, `distributed_lock`, `currency_rate`, `manufacturer_normalization`, `categories`, `category_map`, `part_type_taxonomy`, `agent_todo_utils`, `invoice_generator`, `external_fitment_providers`, `ai_catalog_builder`, `auto_backup`, `harvest_heartbeat`, `workbook_normalizer`, `oempartsonline_importer`, `opel_car_parts_ie_import`, `run_rex_transport_office_pipeline`, `run_fitment_enrichment_pass`, `run_targeted_external_fitment_pass`, `build_full_car_database`, `clean_manufacturers_registry`, `ebay_fitment_backfill`, `sitecustomize` |
-| `/app/importers/` (64) | One-shot & scheduled catalog/price importers (samelet, colmobil, delek, mct, kia/toyota IL, champion, car_parts_ie, rockauto, etc.) |
-| `/app/harvesters/` (11) | Site harvesters — `car_parts_ie_flaresolverr_harvester` & `amayama_flaresolverr_harvester` (both supervised from `BACKEND_API_ROUTES`), champion/toyota/kia IL, rockauto, spareto, tecdoc |
-| `/app/scrapers/` (15) | Playwright / HTML scrapers (`oem_parts_online_scraper` spawned by `catalog_scraper`, febest, gm/audi/bmw/lr playwright, etc.) |
-| `/app/maintenance/` (30) | `run_*/build_*/categorize_*/backfill_*/seed_*` pipeline & cleanup jobs, fitment passes, dedup, vat/margin fixes |
-| `/app/devtests/` (6) | Ad-hoc test/debug harnesses (`_*_test.py`, `test_*.py`) — NOT the pytest suite |
-| `/app/legacy/` (1) | Superseded one-off scripts kept for reference |
-| `/app/routes/` `services/` `social/` `agents/` | App packages (API routes, supplier/price-sync services, whatsapp/telegram providers, agent memory) — unchanged |
-| `/app/tests/` | pytest suite (unchanged) |
-| `/app/data/` `state/` `uploads/` `test_images/` `alembic*/` `scripts/` | Data files, persistent worker state (volume), uploads, migrations, shell scripts — unchanged |
-
-### repo root layout
-| Path | Contents |
-|---|---|
-| `CLAUDE.md` `README.md` `FIXES_TRACKER.md` `ROADMAP.md` | Canonical docs (kept at root) |
-| `docker-compose.yml` `.env` `.gitignore` `requirements.txt` | Config |
-| `backend/` `frontend/` `whatsapp-bridge/` `deploy/` `database/` | Services |
-| `docs/` | Topical docs (`skills.md`, `phases.md`, `UI_UX.md`, `roadmap.md`, `SUPPLIERS.md`, import guides) + `docs/schema/` DB schema dumps |
-| `archive/scripts/` | Host-side one-off dev scripts (fix_/patch/cm_/update_ … — never run by the container) |
-| `archive/data/` | Old JSON/xlsx/pdf data dumps + compose backups (host-side artifacts) |
-
----
-
-## Agent Core Rules & Shared Architecture (merged from claude.md 2026-07-18)
-
-> Merged from the former `claude.md`. Where the two disagreed, the **rest of this file wins**
-> — it is newer. In particular the OLD claude.md pricing/import-SQL specifics are SUPERSEDED
-> and must NOT be reintroduced: VAT is **conditional** (`get_supplier_vat_rate`: 18% LOCAL/IL
-> only, 0% foreign — see the Never-regress note under G2), `part_condition` is **lowercase**
-> (`'new'`, never `'New'`), and `supplier_parts` upserts use
-> **`ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key`** (never
-> `(part_id, supplier_id)` in importers). See "MANDATORY: Before Writing Any Importer".
-
-### Web scraping — always use the browser/FlareSolverr path
-The server IP is Cloudflare/anti-bot blocked; direct `urllib`/`requests`/`httpx` to external
-sites will fail. Use the browser tool / FlareSolverr harvesters. **Two-step pattern:** (1)
-extractor scrapes → JSON on disk; (2) a separate importer reads the JSON → Postgres. Internal
-calls (localhost, inter-container) may use plain HTTP.
-
-### The two agent layers
-**Layer A — AI customer agents** (`BACKEND_AI_AGENTS.py`, all on Cerebras gpt-oss-120b, one
-shared brain `process_user_message`): AVI (router), NIR (parts/fitment/OEM), MAYA (sales/
-pricing), LIOR (orders), TAL (finance/VAT/invoices), DANA (support/returns/warranty), OREN
-(security/fraud), SHIRA (marketing), BOAZ (supplier B2B + daily price sync), NOA (social),
-REX (scraper coordinator). Full skills → `docs/skills.md`.
-**Owner WhatsApp console** (`agents/owner_console.py`, added 2026-07-23): the OWNER's WhatsApp
-messages (`OWNER_WHATSAPP_PHONE`) are intercepted in `routes/webhooks.py` BEFORE the customer
-brain and routed here — a private ops console. Two-way owner-mode chat with AVI (default) / NOA
-(prefix "נועה"/"noa") via a DIRECT `hf_text` call (NOT `get_agent("router_agent")` — that's a
-JSON classifier and emits garbage on freeform chat) seeded with a live system-status block +
-rolling Redis history. Deterministic commands: `סטטוס`/status, `שאיבה`/harvester, `פוסטים`/posts,
-`אשר <id>`/approve (marks approved + publishes via `social/registry.dispatch`), `דחה`/reject,
-`עזרה`/help — so the owner acts on NOA's approval notifications by replying. Uses its own
-CATALOG-DB session (those tables aren't in the PII DB the webhook passes).
-**Layer B — pipeline workers**: `catalog_scraper` (ingest), `db_cleanup_agent` (30s self-heal),
-`db_update_agent` (`run_all_tasks` every 3h), `ai_catalog_builder` (enrichment), `meili_sync`
-(indexing, 2h loop), `run_rex_transport_office_pipeline` (vehicle registry), REX harvest queue,
-`services/ebay_price_sync` + `aliexpress_price_sync`, `auto_backup` (24h). Phase order →
-`docs/phases.md`.
-
-### Shared infrastructure
-- **Memory** (`agents/memory.py`): in-process → Redis → Postgres. Agent-scoped keys are plain;
-  cross-agent shared keys are `shared:{key}`. Workers MUST `write_worker_heartbeat()` at the
-  start and end of every cycle — it's how agents know a worker is alive.
-- **Alerting** (`_health_monitor_loop`, every 5 min): Redis-backed cooldowns survive restarts;
-  container-lifetime guard suppresses restart-orphan false alerts (see the FIXES_TRACKER
-  "Worker failed / Zombie" root-fix). Never alert on a job whose last activity predates the
-  current container.
-- **Zombie auto-fix** (health check 5b): a `running` job silent >30 min gets its Redis lock
-  cleared, `job_registry` marked terminal, owner alerted once (24h cooldown). No manual
-  `redis-cli DEL` needed.
-- **Todos** (`agent_todo_utils.py`): read active todos at the start of every cycle.
-- **Resilience** (`resilience.py`): wrap all external calls in `@retry_with_backoff`
-  (retry 429/503/504; skip 401/403/404).
-- **Distributed lock** (`distributed_lock.py`): acquire `autospare:lock:{job_name}` before any
-  write-heavy job; never run two instances of the same job at once.
-- **Job registry**: `job_registry_start/heartbeat/finish` around every job.
-
-### Golden rules (every task, every session)
-1. **Todo list first** — split into a numbered checklist, work in order, don't skip.
-2. **Root-fix only** — no patch-as-final; if an emergency guard is needed, mark it temporary
-   and land the root fix in the same cycle. Apply the fix in source first, then rebuild/redeploy
-   (never a running-container hotfix as the permanent fix).
-3. **Verify from real data, not .md files** — read the live container/DB/source; docs can be
-   stale. A goal is not done until an end-to-end check against the LIVE system proves the
-   *outcome* (see the PLATFORM GOALS "not Done until VERIFIED" rule).
-4. **Check breaking points** — auth, payment, data path, API/route contracts — before closing.
-   Before wiring any CTA/nav link, confirm the target route exists in the served app (don't
-   point at paths that silently fall back to the landing page).
-5. **Document every fix** in `FIXES_TRACKER.md`; update `docs/roadmap.md` / `docs/phases.md` /
-   `docs/PRE_LAUNCH_CHECKLIST.md` as relevant.
-6. **Never fabricate data** — counts/metrics/statuses come from live queries, never invented.
-
-### Conflict resolution / confidence tiers (never overwrite higher with lower)
-`1.00` official manufacturer/importer · `0.90` OEM cross-reference · `0.85` known aftermarket
-(`manufacturer_normalization.py`) · `0.65` marketplace APIs (eBay/AliExpress) · `0.50` scraped web.
-
-### Standard job result JSON
-`{"task","status":"ok|error|skipped","scanned","updated","flagged","elapsed_s","errors":[]}`
-
-### Script documentation standard
-Every backend script keeps a top-of-file docstring: `Script:` / `Purpose:` / `Process:` steps /
-`Data Imported/Modified:` (which tables/fields) / `Data Sources:` (URLs) / `Missing Data
-Delegation:` / `Last Updated:`. Update it when you change the script.
-
----
-
-## Category System — ONE file, ONE vocabulary, LLM as a GUIDE (2026-07-27)
 
 **`backend/category_map.py` is the single source of truth for part categorization.**
 If you add a keyword, add it THERE — nowhere else. `categories.py` is a deprecated
@@ -1418,7 +971,7 @@ interval, and a daily ceiling — and should feed its output back into a
 deterministic rule so the LLM is needed less over time, not forever.**
 
 
-## Warranty — ONE policy module, provenance mandatory (2026-07-28)
+
 
 **`backend/warranty_policy.py` is the single source of truth for part warranty**,
 the same way `_customer_price_fields` is for price. Never re-implement the default
@@ -1452,7 +1005,7 @@ or the parsing in an importer.
   source data, 423,648 platform default. Any NEW importer must call `resolve()`.
 
 
-## Local Embedding Model — Controlled Write Path (2026-07-28)
+
 
 `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` (117.7M params,
 Apache-2.0) runs LOCALLY via **ONNX Runtime, not PyTorch** — torch adds ~800MB to
@@ -1519,7 +1072,7 @@ the wheels-bearings rule. Now `[rz]{1,2}`. It also solves word-order structurall
 (`Clamp Hose` ↔ `Hose Clamp`, 0.94) which keywords can only handle by enumeration.
 
 
-## Digital Marketing Skills Department (`.claude/skills/dept-*`, added 2026-07-27)
+
 
 A **third category**, distinct from the two agent layers above — do not confuse it with
 either. 23 Claude Code Skills (`.claude/skills/dept-*`, git-tracked, project-scoped) built
@@ -1588,7 +1141,7 @@ running container (confirmed new content present + all original guardrail text u
 no regression), then a REAL live generation call through the full pipeline for SHIRA
 succeeded end-to-end (Cerebras→fallback model→Gemini all 429'd that day; correctly fell
 through to Groq and produced a real, on-policy Hebrew reply, Truth Rule intact). That same
-test surfaced a genuine pre-existing bug (see Mistake Log 2026-07-27 above) — fixed and
+test surfaced a genuine pre-existing bug (see `docs/POSTMORTEMS.md`, 2026-07-27 entry) — fixed and
 re-verified live before restart. `pre_restart.sh` run, container restarted clean, zero errors
 in startup logs, `HealthMonitor` pass complete. Did NOT route a synthetic test through
 `process_user_message` (writes real rows to the live PII DB) since nothing in that layer was
@@ -1603,7 +1156,7 @@ weaken the existing Truth Rule enforcement already in that prompt.
 
 ---
 
-## Partner / Public API (routes/public_api.py) — added 2026-07-18
+
 
 A small, API-key-authenticated surface for external sites/devs. **Right-sized by design: it
 exposes only what a partner needs and NEVER internal data** (supplier names, our cost, the 45%
@@ -1632,7 +1185,7 @@ margin, `base_price`, `importer_price_ils`/`online_price_ils`, or any internal f
 
 ---
 
-## NOA Social Engagement — read + reply (social/engagement.py, added 2026-07-25)
+
 
 NOA's publishers (`social/*_publisher.py`) only PUBLISH. `social/engagement.py` adds the
 other half: **READ** comments/mentions/DMs on our own social pages and **REPLY** to them,
@@ -1733,7 +1286,7 @@ owner-approval-gated.
   adapter is BUILT** — lights up when a free script app's creds are added. X/TikTok/Meta-DMs/FB-Groups
   stay walled (see FIXES_TRACKER 2026-07-25b). Test: `devtests/engagement_lifecycle_test.py`.
 
-## NIR Supplier Sourcing — discover + onboard sellers (services/supplier_sourcing.py, added 2026-07-26)
+
 
 NIR's "superpower": find new sellers on the web, vet them, and onboard them so their offers
 enrich search + the price **compare**, and orders route to them e2e.
@@ -1765,7 +1318,7 @@ enrich search + the price **compare**, and orders route to them e2e.
   owner supplies its account/token. **ASAP Network is the highest leverage** (one token = a whole
   network of suppliers + millions of ACA-standard SKUs w/ fitment).
 
-## Part Thumbnails — Contabo Object Storage (S3) + cleanup pipeline (added 2026-07-18)
+
 
 Part images are re-hosted as clean thumbnails in a **Contabo Object Storage (S3-compatible)**
 bucket and served from our own domain. Source supplier images are often contaminated with
@@ -1848,3 +1401,172 @@ image + the part name only — never a supplier link/ad).
   so a flood of random keys is absorbed at the edge (the un-rate-limited location's only DoS
   vector). **Residual:** Contabo access keys are ACCOUNT-WIDE (can reach every bucket) — if the
   key is ever exposed, rotate it in the Contabo panel and update `.env`.
+
+## 10. Operations Reference
+
+
+When the user asks "give me a review / review the system / check everything", always query live data and fill in this exact table format:
+
+### Active Processes
+| Process | Status | Details |
+|---|---|---|
+| `uvicorn` | ✅/❌ | CPU% MEM% |
+| `run_all_tasks` | ✅/⏳/❌ | Current task, elapsed time |
+| `meili_sync` | ✅/⏳/❌ | N/M docs (%), ETA |
+| `freesbe_importer` | ✅/⏳/❌ | page N/total |
+
+### Memory
+| Container | Used | Limit | % |
+|---|---|---|---|
+| Backend | X GB | 2 GB | % |
+| Meilisearch | X GB | 1.5 GB | % |
+| Postgres | X MB | 2 GB | % |
+| Redis | X MB | 256 MB | % |
+
+### Catalog Health
+| Metric | Count |
+|---|---|
+| Total active parts | N |
+| With IL importer price | N (%) |
+| With base_price | N (%) |
+| With fitment data | N rows |
+| Categorized | N |
+
+### Agent Todos
+| Agent | Status | Count |
+|---|---|---|
+| `db_update_agent` | ✅/⏳ completed | N pending |
+| `rex` | ✅ | N pending |
+| `db_cleanup_agent` | ⏳/✅ | N pending |
+| `scraper` | ⏳/⚠️ | N pending |
+| `NIR` | ⏳ human | N manual tasks |
+
+### Job History (today)
+| Job | Result | Duration |
+|---|---|---|
+| last run_all_tasks | ✅/❌ | elapsed |
+| last scraper_cycle | ✅/❌ | elapsed |
+
+### Open Issues
+List any blockers, errors, or pending decisions.
+
+---
+
+### System Review Commands
+
+```bash
+# Memory per container
+docker stats --no-stream --format "{{.Name}} {{.MemUsage}} {{.MemPerc}}" 2>/dev/null
+
+# Running processes in backend
+docker exec autospare_backend ps aux | grep python | grep -v grep
+
+# Meili progress
+docker exec autospare_backend tail -3 /app/state/logs/meili_sync.log 2>/dev/null
+
+# Catalog health
+docker exec autospare_backend python3 -c "
+import asyncio, asyncpg, os
+DB = os.environ.get('DATABASE_URL','').replace('postgresql+asyncpg://','postgresql://')
+async def main():
+    conn = await asyncpg.connect(DB)
+    row = await conn.fetchrow('''
+        SELECT
+            COUNT(*) FILTER (WHERE is_active) as total,
+            COUNT(*) FILTER (WHERE is_active AND importer_price_ils > 0) as with_il_price,
+            COUNT(*) FILTER (WHERE is_active AND base_price > 0) as with_base_price
+        FROM parts_catalog
+    ''')
+    print(f'total={row[\"total\"]} il_price={row[\"with_il_price\"]} base={row[\"with_base_price\"]}')
+    await conn.close()
+asyncio.run(main())
+"
+
+# Agent todos
+docker exec autospare_backend python3 -c "
+import asyncio, asyncpg, os
+DB = os.environ.get('DATABASE_URL','').replace('postgresql+asyncpg://','postgresql://')
+async def main():
+    conn = await asyncpg.connect(DB)
+    rows = await conn.fetch(\"SELECT assigned_to_agent, status, COUNT(*) FROM agent_todos GROUP BY 1,2 ORDER BY 1,2\")
+    for r in rows: print(f'  {r[0]} {r[1]}: {r[2]}')
+    await conn.close()
+asyncio.run(main())
+"
+
+# Job registry
+docker exec autospare_backend python3 -c "
+import asyncio, asyncpg, os
+DB = os.environ.get('DATABASE_URL','').replace('postgresql+asyncpg://','postgresql://')
+async def main():
+    conn = await asyncpg.connect(DB)
+    rows = await conn.fetch(\"SELECT job_id, status, started_at, last_heartbeat_at FROM job_registry WHERE started_at > NOW()-INTERVAL '24h' ORDER BY started_at DESC LIMIT 10\")
+    for r in rows: print(f'  {r[\"job_id\"]} | {r[\"status\"]} | {r[\"last_heartbeat_at\"]}')
+    await conn.close()
+asyncio.run(main())
+"
+```
+
+---
+
+### Architecture Quick Reference
+
+- **Backend container**: `autospare_backend` — uvicorn + supervised background tasks
+- **Persistent volume**: `worker_state:/app/state` — survives OOM restarts
+- **Meili checkpoint**: `/app/state/meili_sync_checkpoint.json` — resume after crash
+- **Freesbe checkpoint**: `/app/state/freesbe_import_progress.json`
+- **Worker logs**: `/app/state/logs/`
+- **DB**: PostgreSQL via `DATABASE_URL` env var
+- **Search**: Meilisearch at `MEILI_URL` (http://meilisearch:7700)
+
+---
+
+### Server Specs (Contabo VPS — upgraded 2026-07-20)
+
+| Resource | Spec |
+|---|---|
+| **CPU** | **6 vCPUs** — AMD EPYC @ 2.0 GHz (1 thread/core, QEMU/KVM virtualised) |
+| **RAM** | **12 GB** (11.68 GiB) — **no swap configured** |
+| **Disk** | 145 GB virtual disk (QEMU, SSD-backed by Contabo), 109 GB used / 36 GB free |
+| **OS** | Ubuntu 24.04 LTS, kernel 6.8.0-136 |
+| **Hosting** | Contabo standard VPS |
+| **IP / SSH** | 161.97.158.177, port 63159 |
+
+**Container memory limits (post-upgrade 2026-07-20)**:
+| Container | Limit | Notes |
+|---|---|---|
+| postgres_catalog | 5120m | Up from 3072m |
+| postgres_pii | 1024m | Up from 768m |
+| redis | 512m | Up from 256m |
+| backend | 4096m | Unchanged |
+| meilisearch | 2560m | Up from 1536m |
+| frontend / nginx | 128m | Unchanged |
+
+**Postgres tuning (applied 2026-07-20 via docker-compose.yml command)**:
+- `shared_buffers=2GB` (was 256MB) · `work_mem=32MB` (was 8MB) · `maintenance_work_mem=256MB` (was 64MB) · `effective_cache_size=8GB` (was 512MB) · `shm_size=512m` (was 256m)
+
+**Capacity reality check** — 11 containers run concurrently (3× Postgres, Meilisearch, Redis, backend, frontend, Nginx, FlareSolverr, WhatsApp bridge, 2× backup). Load average normally sits 8-12 on 6 CPUs (~1.5-2 per core); above 18 is oversubscription. Key constraints:
+- No swap → RAM exhaustion = immediate OOM kills, no graceful degradation.
+- **6 vCPUs → `PARALLEL_SESSIONS = 2`** (env `HARVESTER_PARALLEL_SESSIONS`; lowered 4→2 on 2026-07-23). 4 was fine when the IL-market queue drained fast and the harvester idled between bursts; after the full-catalogue seeding (6,000-model backlog) the harvester runs FLAT-OUT and 4 sessions pinned flaresolverr at ~577% CPU / load 18.7 (oversubscribed) → DB statement-timeouts failed heal/parity tasks + starved sync_prices' heartbeat. Also `INTER_MODEL = 20 s` (env `HARVESTER_INTER_MODEL_S`, was 5) for duty-cycle headroom. The box is 6 vCPU (the 4→6 upgrade, active); raise sessions back toward 4 ONLY after re-measuring load. **FlareSolverr Chrome LEAK — root-fixed 2026-07-23 (FlareSolverr is no longer the fetch engine):** FlareSolverr orphans LIVE Chrome on `sessions.destroy` and accumulates renderers within a session (leaked chromium are running procs reparented to PID 1, NOT zombies). The harvester used to route EVERY page (~80/model) through FlareSolverr's browser → constant churn → 577% CPU / load 18.7 → DB statement-timeouts. **Fix:** car-parts.ie is server-rendered (proven by the full-catalogue seeder's plain-`urllib` fetches), so the harvester now uses FlareSolverr **ONLY to mint a `cf_clearance` cookie (~2×/hour, `_solve_clearance` → destroys the session immediately)** and fetches every page via **plain `urllib` + that cookie** (`http_get`; re-mints on 403/503). `fs_get` is now a thin shim over `http_get`; the session pool / per-cycle create-destroy / worker `session_id` are all gone; workers are cheap HTTP threads. Verified: FS chrome dropped 40-52→~9 and held, load 21→10, full parts still harvested. **Never reintroduce a per-page FlareSolverr call** — that is the leak. If chrome ever climbs, check `docker exec flaresolverr ps -e | grep -c chrom` (should be a handful, spiking only during a ~2×/hour solve). Env: `HARVESTER_CLEARANCE_TTL_S` (cookie refresh, default 1500s).
+- `idle_in_transaction_session_timeout = 30min` (set via ALTER SYSTEM 2026-06-30).
+- Watchdog `BLOCKER_S = 2700s` (45 min) — moot for active-backend connections (never killed), relevant only for orphan-detection fallback.
+- `DB_AGENT_TASK_TIMEOUT_S = 3600` — per-task timeout inside `run_all_tasks`. Set in `docker-compose.yml`.
+
+---
+
+### Meilisearch Sync
+
+`meili_sync.py` previously had **no automated scheduling** — it ran once manually (2026-06-24) and silently drifted 6 days / ~580K docs behind the catalog. Added `_meili_sync_loop()` in `BACKEND_API_ROUTES.py`, registered at startup via `_supervised_task("meili_sync_loop", ...)`. Runs `python3 /app/meili_sync.py` every **2 hours** in incremental mode (`MEILI_REBUILD=0` env already set, no full rebuild).
+
+**2026-07-02 rewrite — three root-caused bugs in meili_sync.py (do not reintroduce):**
+1. **Incremental resume by id-position was broken by design.** Parts get random UUIDv4 ids; the old resume (`offset=total`, `ORDER BY id`) only saw rows sorted past the previous end position — new parts land at *random* id positions and were silently skipped every incremental run. This is what created the 620K-doc gap while the checkpoint claimed complete. Fix: a completed checkpoint (offset==total, no last_id) now triggers **updated_at-based incremental mode** — `WHERE updated_at > (last run start − 1h margin)`. The completed checkpoint's `updated_at` is the run's START time so mid-run changes are re-checked next cycle.
+2. **`OFFSET N` pagination is O(N·logN) per batch** — measured ~100s/batch at offset 195K (full pass ≈ 23h). Fix: keyset pagination `WHERE id > $last_id::uuid ORDER BY id LIMIT batch` — PK index scan, constant per batch. Checkpoint stores `last_id` (and `cutoff` if an incremental run is interrupted, so resume keeps the same cutoff).
+3. **No single-instance guard** — the 2h supervised loop spawned a sync while a manual catch-up was mid-pass; the two clobbered each other's checkpoint file. Fix: `fcntl.flock` on `/tmp/meili_sync.lock` at entry — a second instance prints a notice and exits 0.
+
+- To check sync status: `docker exec autospare_backend cat /app/state/meili_sync_checkpoint.json` (shows offset, total, updated_at)
+- Index doc count vs catalog: query Meilisearch `/indexes/parts/stats` and compare `numberOfDocuments` to `SELECT COUNT(*) FROM parts_catalog WHERE is_active`
+- If index is significantly behind and you need an immediate catch-up: `docker exec -d autospare_backend python3 /app/meili_sync.py` (runs incremental sync in background, can take 30-90 min for millions of docs)
+- `lookup_oem_spec` task times out at 1800s by design (`DB_AGENT_TASK_TIMEOUT_S` env, default 30 min) — also hits Cerebras/HF API rate limits; this is a pre-existing ceiling, not a new bug.
+
+
+

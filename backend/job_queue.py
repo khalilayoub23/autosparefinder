@@ -439,7 +439,17 @@ async def run_once(db) -> Dict[str, Any]:
             # as done and let the queue move on to steps that depend on it.
             # `attempts > 0` means the last batch failed and is pending a retry.
             last_errored = int(step.get("attempts") or 0) > 0
-            if prev is not None and before >= int(prev) and not last_errored:
+            # ALSO require that at least one batch has actually COMPLETED.
+            # `attempts` only rises when a batch EXITS non-zero; a batch killed
+            # mid-flight (container restart) leaves attempts=0 AND batches_run=0,
+            # so "remaining didn't move" was read as "finished" and the step was
+            # marked done having done nothing. Observed live on
+            # recheck_all_improve_only: status=done, batches_run=0,
+            # remaining=336,987. No-progress is only meaningful once we have
+            # seen progress be possible.
+            never_ran = ran == 0
+            if prev is not None and before >= int(prev) and not last_errored \
+                    and not never_ran:
                 # A whole measurement window produced no reduction — the step
                 # cannot make further progress. Believe the measurement.
                 await _finish(db, step["id"], "done")
@@ -519,6 +529,27 @@ async def queue_busy(db) -> bool:
             WHERE status IN ('pending','running')
               AND step_key NOT IN ('meili_reindex','parity_check')
         """))).scalar()
+        return bool(n)
+    except Exception:
+        return False
+
+
+async def owns_script(db, script_fragment: str) -> bool:
+    """True when the queue has a pending/running step that RUNS this script.
+
+    Matching on the step KEY was too brittle: the thumbnail supervisor deferred
+    only for a step literally called `part_thumbnails`, so when the same script
+    was queued as `thumbnails_retry_blocked` both ran build_part_thumbnails.py
+    at once and contended for the same candidate rows. What matters is which
+    SCRIPT is about to run, not what the step was named.
+    """
+    if os.getenv("JOB_QUEUE_ENABLED", "0").strip().lower() not in ("1", "true", "yes"):
+        return False
+    try:
+        n = (await db.execute(text("""
+            SELECT COUNT(*) FROM pipeline_queue
+            WHERE status IN ('pending','running') AND cmd LIKE :frag
+        """), {"frag": f"%{script_fragment}%"})).scalar()
         return bool(n)
     except Exception:
         return False

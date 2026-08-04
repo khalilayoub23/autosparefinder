@@ -27,6 +27,7 @@ Last Updated:  2026-07-27 — scope + rules unified onto category_map.
 Note: RULES live in category_map.py. Do NOT add a keyword here.
 """
 import argparse
+import json
 import asyncio
 import os
 import time
@@ -37,6 +38,9 @@ from category_map import BAD_FALLBACK_BUCKETS, CANONICAL, CATCH_ALL, categorize
 
 DB = os.environ.get("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://")
 BATCH = int(os.getenv("CATEGORIZE_BATCH", "5000"))
+# Keyset cursor for --improve-only (see the comment at claim_sql).
+CURSOR_PATH = os.getenv("CATEGORIZE_CURSOR",
+                        "/app/state/categorize_improve_cursor.json")
 
 _BUCKETS_SQL = ", ".join("'" + b.replace("'", "''") + "'" for b in BAD_FALLBACK_BUCKETS)
 _CANONICAL_SQL = ", ".join("'" + c.replace("'", "''") + "'" for c in sorted(CANONICAL))
@@ -123,6 +127,28 @@ async def main() -> None:
     claim_sql = "category = ANY($3) AND updated_at < $2"
     in_scope_arr = in_scope
 
+    # ── improve-only needs its own CURSOR ────────────────────────────────────
+    # The claim above relies on `updated_at < run_start` to stop re-reading rows
+    # it has already handled: a processed row is WRITTEN, its updated_at moves
+    # past the cutoff, and it leaves the scope. That contract breaks in
+    # improve-only mode, where a part that already has a real category is
+    # skipped WITHOUT being written — so it stays claimable forever, and with no
+    # ORDER BY the scan keeps returning the same head of the table. The
+    # catch-all rescues still land (those do get written), which masks the
+    # problem: `remaining` drops while the full-catalogue recheck never
+    # actually advances. A keyset cursor on the PK makes progress real and
+    # survives restarts.
+    cursor_id = None
+    if args.improve_only:
+        try:
+            with open(CURSOR_PATH) as fh:
+                cursor_id = json.load(fh).get("last_id")
+        except Exception:
+            cursor_id = None
+        claim_sql = ("category = ANY($3) AND ($4::uuid IS NULL OR id > $4) "
+                     "AND updated_at < $2")
+        print(f"[catbatch] improve-only cursor: {cursor_id or '(start)'}", flush=True)
+
     total = await conn.fetchval(
         "SELECT COUNT(*) FROM parts_catalog WHERE is_active "
         "AND category = ANY($2) AND updated_at < $1",
@@ -159,8 +185,11 @@ async def main() -> None:
                     f"            COALESCE(specifications::text,''), 800) AS extra "
                     f"FROM parts_catalog "
                     f"WHERE is_active AND {claim_sql} "
-                    f"LIMIT $1 FOR UPDATE SKIP LOCKED",
-                    BATCH, run_start, in_scope_arr,
+                    + ("ORDER BY id " if args.improve_only else "")
+                    + f"LIMIT $1 FOR UPDATE SKIP LOCKED",
+                    *( (BATCH, run_start, in_scope_arr, cursor_id)
+                       if args.improve_only else
+                       (BATCH, run_start, in_scope_arr) ),
                 )
                 n = len(rows)
                 for r in rows:
@@ -184,6 +213,16 @@ async def main() -> None:
                         extra=r["extra"] or "",
                     )
                     _cur = (r["category"] or "")
+                    # NO-OP WRITE GUARD. If the rules agree with what the row
+                    # already says, writing it again changes nothing but still
+                    # costs a row version and bumps updated_at. Measured on a
+                    # 90s improve-only run: 4,362 rows written to achieve 217
+                    # real changes — a 20:1 waste that, across 4M parts, rebuilds
+                    # exactly the dead-tuple bloat that had just been vacuumed
+                    # away (and which was what broke normalize_categories and
+                    # refresh_min_max_prices in the first place).
+                    if cat == _cur:
+                        continue
                     if args.scope == "all" and cat == CATCH_ALL and \
                             _cur not in BAD_FALLBACK_BUCKETS:
                         # Never demote a real category to the catch-all just
@@ -245,6 +284,17 @@ async def main() -> None:
                 continue
             break
         empty_streak = 0
+        if args.improve_only and rows:
+            # Advance past the LAST row of this batch. Persisted so the
+            # next invocation resumes instead of rescanning from zero.
+            cursor_id = max(str(r["id"]) for r in rows)
+            try:
+                os.makedirs(os.path.dirname(CURSOR_PATH), exist_ok=True)
+                with open(CURSOR_PATH, "w") as fh:
+                    json.dump({"last_id": cursor_id}, fh)
+            except Exception:
+                pass
+
         batch_num += 1
 
         if batch_num % 20 == 0 or batch_num <= 5:

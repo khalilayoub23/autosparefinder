@@ -6,7 +6,7 @@ Purpose: Machine-check every importer/harvester against the platform's hard-won
 
 Why this exists: every rule below was earned by a REAL production bug, most of
 them found more than once because the rule lived only in a .md file. A written
-policy is not enforcement — this script is (see the CLAUDE.md Mistake Log).
+policy is not enforcement — this script is (see docs/POSTMORTEMS.md for the incident log).
 
     RULE                              THE BUG IT PREVENTS
     ON CONFLICT ON CONSTRAINT         `uix_pvf_part_mfr_model_year_from` is a bare

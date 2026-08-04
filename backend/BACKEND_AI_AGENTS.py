@@ -5175,6 +5175,10 @@ class SocialMediaManagerAgent(BaseAgent):
         msg = re.sub(r"אוטו\s*[- ]?\s*(?=Spare)", "Auto", msg, flags=re.I)
         # Collapse any spaced/hyphenated Latin form → one token:
         msg = re.sub(r"\bAuto\s*[-\s]*Spare\s*[-\s]*Finder\b", "AutoSpareFinder", msg, flags=re.I)
+        # Repair misspellings of the DOMAIN → the canonical one. The model has produced
+        # "autosparfinder.co.il" (missing the e) — a dead link on a live post. Normalise any
+        # autospa…finder host to autosparefinder (2026-08-04, caught on a launch post).
+        msg = re.sub(r"\bautospa\w*?finder(?=\.co\.il|\.com|\.co|/|\b)", "autosparefinder", msg, flags=re.I)
 
         msg = re.sub(r"[ \t\r\f\v]+", " ", msg)
         msg = re.sub(r"\n{3,}", "\n\n", msg).strip()

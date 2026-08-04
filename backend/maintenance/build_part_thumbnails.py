@@ -28,6 +28,7 @@ Author: AutoSpareFinder Agent
 Last Updated: 2026-07-18
 """
 import argparse
+import threading
 import asyncio
 import io
 import os
@@ -43,6 +44,13 @@ DB = os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://"
 UA = {"User-Agent": "Mozilla/5.0 (compatible; AutoSpareFinderBot/1.0)"}
 MAX_BYTES = 150 * 1024
 BOX = 500
+# Parallel parts in flight. The work is network-bound (a fetch idles ~0.5s),
+# so concurrency collapses wall time without adding CPU. Kept modest on
+# purpose: the main image host already 403s this IP, and too many parallel
+# streams risk invalidating the clearance cookie.
+CONCURRENCY = int(os.getenv("THUMB_CONCURRENCY", "3"))
+# Seconds a single OCR may take before it is abandoned.
+_OCR_TIMEOUT = int(os.getenv("THUMB_OCR_TIMEOUT_S", "20"))
 
 # Supplier / promotional text that must NEVER appear on a served thumbnail → reject the image.
 _PROMO = [
@@ -84,6 +92,52 @@ _MAX_WORDS = int(os.getenv("THUMB_MAX_OCR_WORDS", "3"))
 _WORD_RE = re.compile(r"[A-Za-z֐-׿؀-ۿ]{3,}")
 
 
+# ── Cloudflare-protected image CDNs ───────────────────────────────────────────
+# media.autoteile-meile.de (the car-parts.ie image CDN) returns 403 to this
+# server's IP for ANY plain request — browser UA and Referer make no difference.
+# It accounted for 96,714 of the 97,590 parts written off as `no_source`, i.e.
+# 99% of the entire image gap was ONE blocked host, not missing pictures.
+#
+# Same fix the harvester already uses for car-parts.ie itself: FlareSolverr is
+# used ONLY to MINT a cf_clearance cookie (verified: sessionless request.get →
+# 200 + cf_clearance), then the image is fetched with plain urllib carrying that
+# cookie (verified: 200 image/jpeg 99,466 bytes). FlareSolverr never fetches the
+# images themselves — routing every image through a headless browser is the leak
+# that pinned the box at ~409% CPU in August.
+_FS_HOSTS = [h for h in (os.getenv("FLARESOLVERR_URL", "http://flaresolverr:8191/v1"),
+                         os.getenv("FLARESOLVERR_URL_2", "")) if h]
+_CLEARANCE_TTL = int(os.getenv("THUMB_CLEARANCE_TTL_S", "1500"))
+_clearance: dict = {}          # host -> {"cookie": str, "ua": str, "ts": float}
+
+
+def _mint_clearance(url: str) -> dict | None:
+    """Mint a cf_clearance cookie for this URL's host. Cached per host, TTL-bounded."""
+    import json as _json
+    import time as _time
+    from urllib.parse import urlsplit
+    host = urlsplit(url).netloc
+    got = _clearance.get(host)
+    if got and (_time.time() - got["ts"]) < _CLEARANCE_TTL:
+        return got
+    for fs in _FS_HOSTS:
+        try:
+            req = urllib.request.Request(
+                fs, data=_json.dumps({"cmd": "request.get", "url": url,
+                                      "maxTimeout": 60000}).encode(),
+                headers={"Content-Type": "application/json"})
+            sol = _json.load(urllib.request.urlopen(req, timeout=120)).get("solution", {})
+            if sol.get("cookies"):
+                got = {"cookie": "; ".join(c["name"] + "=" + c["value"] for c in sol["cookies"]),
+                       "ua": sol.get("userAgent") or UA["User-Agent"],
+                       "ts": _time.time()}
+                _clearance[host] = got
+                print(f"  cf_clearance minted for {host}")
+                return got
+        except Exception:
+            continue
+    return None
+
+
 def _fetch_source(url: str) -> bytes:
     """Fetch the best (largest) source variant, falling back to the smaller one if the CDN
     has no such size. Large matters: the OCR ad-filter can only reject text it can READ."""
@@ -99,6 +153,19 @@ def _fetch_source(url: str) -> bytes:
             return urllib.request.urlopen(urllib.request.Request(cand, headers=UA), timeout=25).read()
         except Exception as exc:
             last = exc
+            # 403/503 => the host is blocking this IP, not a missing image.
+            # Mint a clearance cookie once per host and retry before giving up.
+            code = getattr(exc, "code", None)
+            if code in (403, 503):
+                cl = _mint_clearance(cand)
+                if cl:
+                    try:
+                        return urllib.request.urlopen(urllib.request.Request(
+                            cand, headers={"User-Agent": cl["ua"], "Cookie": cl["cookie"],
+                                           "Referer": "https://www.car-parts.ie/"}),
+                            timeout=30).read()
+                    except Exception as exc2:
+                        last = exc2
     raise last if last else RuntimeError("no source candidate")
 
 
@@ -107,9 +174,14 @@ def _is_promo(pil_img) -> bool:
     label/box/brand-dominated shot (too much text to be a clean part picture)."""
     try:
         import pytesseract
-        text = pytesseract.image_to_string(pil_img)
+        # HARD TIMEOUT. Observed 2026-08-04: individual tesseract processes stuck
+        # on one image for 3+ minutes at ~55% CPU each, so a handful of
+        # pathological images can hold whole cores hostage and starve the rest
+        # of the box. A slow OCR is not worth a core — treat it as "cannot read"
+        # and fall through to the size/word checks.
+        text = pytesseract.image_to_string(pil_img, timeout=_OCR_TIMEOUT)
     except Exception:
-        return False  # OCR unavailable → don't over-reject
+        return False  # OCR unavailable/too slow → don't over-reject
     low = text.lower()
     if _PROMO_RE.search(low):
         return True
@@ -147,6 +219,8 @@ def _standardize(pil_img) -> bytes:
 async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=500)
+    ap.add_argument("--retry-no-source", action="store_true",
+                help="also re-process parts previously written off as no_source. They were judged on their PRIMARY image alone, so a dead primary hid working alternates.")
     ap.add_argument("--dry-run", action="store_true")
     # Target a specific slice (e.g. a newly-imported brand) instead of taking
     # whatever the general backlog happens to surface. Without this there is no
@@ -160,55 +234,122 @@ async def main():
         print("S3 not configured"); return
 
     conn = await asyncpg.connect(DB)
-    rows = await conn.fetch("""
-        SELECT DISTINCT ON (pc.id) pc.id, pc.name, pi.url
+    # ALL of a part's images, not just the first.
+    #
+    # This used to be `DISTINCT ON (pc.id)`, i.e. the primary image only. If that
+    # single URL was dead the part was written off as `no_source` — and because
+    # the candidate query excludes any part that already has a verdict row, its
+    # OTHER images were never tried. Measured 2026-08-03: 97,590 parts sat in
+    # no_source, and a sampled one had a dead `imgfoto.synology.me` primary
+    # alongside a perfectly good `new.egomotors.lt` image (HTTP 200, 660KB).
+    # Now every URL is attempted, in priority order, until one yields a usable
+    # image; only if they ALL fail is the part `no_source`.
+    retry = " OR t.status = 'no_source'" if a.retry_no_source else ""
+    rows = await conn.fetch(f"""
+        SELECT pc.id, pc.name,
+               array_agg(pi.url ORDER BY pi.is_primary DESC, pi.sort_order ASC) AS urls
         FROM parts_catalog pc
         JOIN parts_images pi ON pi.part_id = pc.id
+        LEFT JOIN part_thumbnails t ON t.part_id = pc.id
         WHERE pc.is_active
-          AND NOT EXISTS (SELECT 1 FROM part_thumbnails t WHERE t.part_id = pc.id)
+          AND (t.part_id IS NULL{retry})
           AND pi.url IS NOT NULL AND pi.url <> ''
           AND ($2::text IS NULL OR pc.sku LIKE $2)
-        ORDER BY pc.id, pi.is_primary DESC, pi.sort_order ASC
+        GROUP BY pc.id, pc.name
         LIMIT $1
     """, a.limit, a.sku_like)
-    print(f"candidates: {len(rows)}")
+    print(f"candidates: {len(rows)} parts "
+          f"({sum(len(r['urls']) for r in rows)} images){' [retrying no_source]' if a.retry_no_source else ''}")
 
     ok = rejected = no_source = failed = deduped = 0
     src_cache: dict = {}  # source-url → (status, url) so an identical source in this run isn't re-fetched/re-OCR'd
-    for r in rows:
-        pid, name, url = str(r["id"]), r["name"] or "", r["url"]
-        status, thumb = None, None
-        try:
-            if url in src_cache:                       # same source url already processed this run
-                status, thumb = src_cache[url]
-                if status == "ok":
-                    deduped += 1
-            else:
-                raw = _fetch_source(url)
-                src = Image.open(io.BytesIO(raw))
-                if _is_promo(src):
-                    status = "rejected_ad"; rejected += 1
+    _cache_lock = threading.Lock()
+
+    def _resolve(urls, pid):
+        """Resolve ONE part to a verdict. Runs in a worker thread.
+
+        Returns (status, thumb_url, last_error, was_dedup).
+        """
+        nonlocal_dedup = False
+        last_err = ""
+        for url in (urls or []):
+            if not url:
+                continue
+            try:
+                with _cache_lock:
+                    cached = src_cache.get(url)
+                if cached is not None:
+                    status, thumb = cached
                 else:
-                    data = _standardize(src)
-                    key = S.content_key(data)          # content-addressed → automatic dedup
-                    if a.dry_run:
-                        status, thumb = "ok", S.url_for_key(key); ok += 1
-                    elif S.object_exists(key):          # identical image already in the bucket → reuse
-                        status, thumb = "ok", S.url_for_key(key); ok += 1; deduped += 1
-                    elif S.upload_bytes(key, data):
-                        status, thumb = "ok", S.url_for_key(key); ok += 1
+                    raw = _fetch_source(url)
+                    src = Image.open(io.BytesIO(raw))
+                    if _is_promo(src):
+                        status, thumb = "rejected_ad", None
                     else:
-                        status = "failed"; failed += 1
-                src_cache[url] = (status, thumb)
-        except Exception as exc:
-            status = "no_source"; no_source += 1
+                        data = _standardize(src)
+                        key = S.content_key(data)      # content-addressed → dedup
+                        if a.dry_run:
+                            status, thumb = "ok", S.url_for_key(key)
+                        elif S.object_exists(key):     # identical image already stored
+                            status, thumb = "ok", S.url_for_key(key); nonlocal_dedup = True
+                        elif S.upload_bytes(key, data):
+                            status, thumb = "ok", S.url_for_key(key)
+                        else:
+                            status, thumb = "failed", None
+                    with _cache_lock:
+                        src_cache[url] = (status, thumb)
+                if status == "ok":
+                    return status, thumb, "", nonlocal_dedup
+                last_status, last_thumb = status, thumb
+            except Exception as exc:
+                last_err = str(exc)[:60]
+                continue                               # this URL is dead, try the next
+        try:
+            return last_status, last_thumb, last_err, nonlocal_dedup
+        except UnboundLocalError:
+            return None, None, last_err, nonlocal_dedup
+
+    # CONCURRENCY. Each part costs ~0.59s, and almost all of that is the network
+    # fetch sitting idle — measured 176s for 300 images, serially. The work is
+    # I/O-bound, so running several parts at once collapses the wall time
+    # without adding CPU (OCR is the only CPU cost and it is the smaller half).
+    # Deliberately modest: media.autoteile-meile.de already blocks this server's
+    # IP by default, so hammering it with dozens of parallel streams risks
+    # getting the clearance cookie invalidated. THUMB_CONCURRENCY tunes it.
+    sem = asyncio.Semaphore(CONCURRENCY)
+
+    async def _one(r):
+        async with sem:
+            return r, await asyncio.to_thread(_resolve, r["urls"], str(r["id"]))
+
+    results = await asyncio.gather(*[_one(r) for r in rows], return_exceptions=True)
+
+    writes = []
+    for res in results:
+        if isinstance(res, Exception):
+            failed += 1
+            continue
+        r, (status, thumb, last_err, was_dedup) = res
+        if was_dedup:
+            deduped += 1
+        if status == "ok":
+            ok += 1
+        elif status == "rejected_ad":
+            rejected += 1                              # a promo image is a real verdict
+        elif status == "failed":
+            failed += 1
+        else:
+            status = "no_source"; no_source += 1       # every URL failed
             if no_source <= 3:
-                print(f"  src fail {pid}: {str(exc)[:60]}")
-        if not a.dry_run:
-            await conn.execute(
-                "INSERT INTO part_thumbnails(part_id, url, status, updated_at) VALUES($1,$2,$3,NOW()) "
-                "ON CONFLICT (part_id) DO UPDATE SET url=EXCLUDED.url, status=EXCLUDED.status, updated_at=NOW()",
-                r["id"], thumb, status)
+                print(f"  src fail {r['id']} ({len(r['urls'] or [])} urls): {last_err}")
+        writes.append((r["id"], thumb, status))
+
+    if not a.dry_run and writes:
+        # One executemany instead of a round-trip per part.
+        await conn.executemany(
+            "INSERT INTO part_thumbnails(part_id, url, status, updated_at) VALUES($1,$2,$3,NOW()) "
+            "ON CONFLICT (part_id) DO UPDATE SET url=EXCLUDED.url, status=EXCLUDED.status, updated_at=NOW()",
+            writes)
 
     await conn.close()
     print(f"\nDONE — ok={ok} (deduped_reuse={deduped}) rejected_ad={rejected} no_source={no_source} failed={failed}")
