@@ -13,7 +13,9 @@ else
     echo "=== Nikto — SANDBOX target: $TARGET ==="
 fi
 
-nikto \
+NIKTO_BIN=$(which nikto 2>/dev/null || which nikto.pl 2>/dev/null || echo "/usr/bin/nikto.pl")
+
+perl "$NIKTO_BIN" \
     -host "$TARGET" \
     -output "$RESULTS/nikto_$(date +%Y%m%d_%H%M).txt" \
     -Format txt \

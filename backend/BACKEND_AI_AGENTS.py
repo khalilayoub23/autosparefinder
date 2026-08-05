@@ -1124,6 +1124,13 @@ _REASONING_TELL = re.compile(
     r"|[֐-׿]\s*\(\s*\d+\s*\)"                                    # "ה (1)"
     r"|\b(?:plus|and|or)\s+initial\b"
     r"|^\s*(?:option|draft|version|final|note)\s*\d*\s*[:\-]"
+    # English PLANNING/INSTRUCTION leak (2026-08-05): gpt-oss sometimes emits its own
+    # brief back as the "post" — "Must include hook first line… Must be in Hebrew only…
+    # Must include price…". These imperative meta-instructions are never a real caption.
+    r"|\b(?:must|should|make sure to|ensure|remember to|needs? to)\s+"
+    r"(?:include|mention|be|have|start|end|contain|use|add|write|keep)\b"
+    r"|\b(?:hook first line|hashtags line|first line|the post should|the caption should)\b"
+    r"|\b(?:in hebrew only|except brand names?)\b"
     r")", re.I)
 
 
@@ -5398,9 +5405,31 @@ class SocialMediaManagerAgent(BaseAgent):
         # Last resort: first 280 chars
         return text[:280]
 
+    # English imperative meta-instructions the model sometimes echoes back AS the post
+    # ("Must include hook first line… Must be in Hebrew only… Must include price…").
+    _NOA_INSTRUCTION_LEAK_RE = re.compile(
+        r"(?:must|should|make sure to|ensure|needs? to)\s+"
+        r"(?:include|mention|be|have|start|end|contain|use|add|write|keep)\b"
+        r"|hook first line|hashtags? line|first line\b|in hebrew only|except brand names?"
+        r"|the (?:post|caption) should", re.I)
+
+    @classmethod
+    def _looks_like_instruction_leak(cls, text: str) -> bool:
+        """True if the text reads like the model echoing its own brief rather than a post.
+        Two or more imperative meta-instruction markers ⇒ a leak (2026-08-05: NOA published
+        'Must include hook first line… Must be in Hebrew only…' as a real post)."""
+        return len(cls._NOA_INSTRUCTION_LEAK_RE.findall(text or "")) >= 2
+
     @classmethod
     def _finalize_noa_post(cls, text: str, platforms: Optional[List[str]] = None) -> str:
         platform_set = {(p or "").strip().lower() for p in (platforms or []) if (p or "").strip()}
+
+        # A hard instruction-leak (the model echoing its brief) is NOT salvageable by the
+        # sentence-level extractor — it would keep the embedded Hebrew fragments. Discard it
+        # outright; the low-quality → repair path below then produces a clean post, and it
+        # still flows through restructure + RTL like any other (2026-08-05).
+        if cls._looks_like_instruction_leak(text or ""):
+            text = ""
 
         # Strip model reasoning / character-counting before any further processing
         cleaned = cls._extract_post_from_reasoning(text or "")

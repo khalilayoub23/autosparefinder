@@ -1,0 +1,31 @@
+{
+  "scanned_at": "2026-08-05T11:03:46.939645",
+  "target": "http://sandbox_backend:8000",
+  "findings": [
+    [
+      "HIGH",
+      "/health leaks sensitive keys",
+      "['key']"
+    ],
+    [
+      "LOW",
+      "/health exposes stack info",
+      "{\"status\":\"healthy\",\"timestamp\":\"2026-08-05t11:03:46.654987\",\"version\":\"1.0.0\",\"services\":{\"postgres_catalog\":{\"status\":\"ok\",\"latency_ms\":11.4},\"postgres_pii\":{\"status\":\"ok\",\"latency_ms\":7.3},\"redis\":"
+    ],
+    [
+      "LOW",
+      "Missing header: Referrer-Policy",
+      ""
+    ],
+    [
+      "HIGH",
+      "Search leaks internal pricing fields",
+      "['cost']"
+    ],
+    [
+      "LOW",
+      "No robots.txt (AI crawlers unguided)",
+      ""
+    ]
+  ]
+}

@@ -1,0 +1,1 @@
+http://sandbox_backend:8000/api/v1/parts/search?q=brake&limit=10 (GET)  # /usr/bin/sqlmap -u http://sandbox_backend:8000/api/v1/parts/search?q=brake&limit=10 --level=2 --risk=1 --batch --output-dir=/workspace/results/sqlmap/search --technique=BEU --timeout=10 --retries=1

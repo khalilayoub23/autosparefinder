@@ -21,9 +21,10 @@ console = Console()
 results = []
 
 def check(name, resp, expected_status, extra_check=None):
-    ok = resp.status_code == expected_status
-    if extra_check and ok:
-        ok = extra_check(resp)
+    if extra_check:
+        ok = extra_check(resp)  # lambda is the authority when provided
+    else:
+        ok = resp.status_code == expected_status
     status = "✅ PASS" if ok else "❌ FAIL"
     results.append((name, status, resp.status_code, expected_status))
     console.print(f"  {status}  [{resp.status_code}]  {name}")
@@ -44,14 +45,16 @@ REG_URL = f"{BASE}/api/v1/auth/register"
 
 # Valid registration
 ts = int(time.time())
-test_email = f"pentest_{ts}@sandbox.local"
-r = requests.post(REG_URL, json={"email": test_email, "password": "TestPass2024!", "name": "Pentest User"})
+test_email = f"pentest_{ts}@example.com"
+# phone is required; generate a valid-format IL number using the timestamp
+test_phone = f"+9725{str(ts % 10000000).zfill(7)}"
+r = requests.post(REG_URL, json={"email": test_email, "password": "TestPass2024!", "full_name": "Pentest User", "phone": test_phone})
 check("Valid registration returns 200/201", r, r.status_code if r.status_code in (200,201) else 400,
       lambda resp: resp.status_code in (200, 201))
 
 # Duplicate email
 check("Duplicate email returns 4xx",
-      requests.post(REG_URL, json={"email": test_email, "password": "TestPass2024!", "name": "Dup"}),
+      requests.post(REG_URL, json={"email": test_email, "password": "TestPass2024!", "full_name": "Dup", "phone": test_phone}),
       400, lambda r: r.status_code in (400, 409, 422))
 
 # No password
@@ -70,15 +73,12 @@ section("3. Login")
 LOGIN_URL = f"{BASE}/api/v1/auth/login"
 token = None
 
-# Valid login (only if registration succeeded)
+# Valid login — 200 means direct token (no 2FA); 202 means 2FA code sent (also correct)
 r_login = requests.post(LOGIN_URL, json={"email": test_email, "password": "TestPass2024!"})
-if r_login.status_code == 200:
-    data = r_login.json()
-    token = data.get("access_token") or data.get("token")
-    check("Valid login returns 200 + token", r_login, 200,
-          lambda r: bool(token))
-else:
-    check("Login attempt", r_login, 200)  # will fail/show real status
+data = r_login.json() if r_login.status_code in (200, 202) else {}
+token = data.get("access_token") or data.get("token")
+check("Login attempt (200 direct or 202 2FA-sent)",
+      r_login, 200, lambda r: r.status_code in (200, 202))
 
 # Wrong password
 check("Wrong password → 401",
@@ -158,7 +158,7 @@ import threading
 
 hits_429 = []
 def _hit():
-    r = requests.post(LOGIN_URL, json={"email": "ratelimit@test.com", "password": "Test!"})
+    r = requests.post(LOGIN_URL, json={"email": "ratelimit@example.com", "password": "WrongPass!"})
     hits_429.append(r.status_code)
 
 threads = [threading.Thread(target=_hit) for _ in range(40)]

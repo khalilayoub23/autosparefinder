@@ -16,14 +16,17 @@ echo "--- 1. XSS reflection check ---"
 XSS_PAYLOADS=(
     '<script>alert(1)</script>'
     '"><img src=x onerror=alert(1)>'
-    "javascript:alert(1)"
-    "${7*7}"
-    "{{7*7}}"
+    'javascript:alert(1)'
+    '$((7*7))'
+    '{{7*7}}'
 )
 for payload in "${XSS_PAYLOADS[@]}"; do
-    response=$(curl -sf "$TARGET/api/v1/parts/search?q=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$payload")" 2>/dev/null)
-    if echo "$response" | grep -q "$payload"; then
-        echo "  ❌ XSS reflected: $payload"
+    encoded=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$payload")
+    response=$(wget -qO- "$TARGET/api/v1/parts/search?q=$encoded" 2>/dev/null)
+    ct=$(wget -qS --spider "$TARGET/api/v1/parts/search?q=$encoded" 2>&1 | grep -i "content-type" | head -1)
+    if echo "$response" | grep -qF "$payload"; then
+        echo "  ⚠️  REFLECTED in JSON (Content-Type: $ct): ${payload:0:40}"
+        echo "      Check: does the frontend render external_suppliers URLs unescaped?"
     else
         echo "  ✅ Not reflected: ${payload:0:40}"
     fi
@@ -38,25 +41,24 @@ sqlmap -u "$TARGET/api/v1/parts/search?q=brake&limit=10" \
     --level=2 --risk=1 \
     --batch \
     --output-dir="$RESULTS/sqlmap/search" \
-    --forms=0 \
     --technique=BEU \
     --timeout=10 \
     --retries=1 \
-    -q 2>&1 | tail -20
+    2>&1 | tail -20
 echo ""
 
 # ── 3. SQLmap against login (JSON body) ───────────────────────────────────────
 echo "--- 3. SQLmap scan on /auth/login (POST JSON) ---"
 sqlmap -u "$TARGET/api/v1/auth/login" \
-    --data='{"email":"*","password":"test"}' \
-    --content-type="application/json" \
+    --data='{"email":"*","password":"testpass1"}' \
+    -H 'Content-Type: application/json' \
     --level=2 --risk=1 \
     --batch \
     --output-dir="$RESULTS/sqlmap/login" \
     --technique=BEU \
     --timeout=10 \
     --retries=1 \
-    -q 2>&1 | tail -20
+    2>&1 | tail -20
 echo ""
 
 # ── 4. Manual SSTI probes ─────────────────────────────────────────────────────

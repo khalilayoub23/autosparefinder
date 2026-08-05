@@ -22,6 +22,7 @@ from uuid import UUID as _UUID
 import os
 import io
 import time
+import subprocess
 import asyncio
 import httpx
 from dotenv import load_dotenv
@@ -1176,6 +1177,94 @@ async def _car_parts_ie_full_seed_loop() -> None:
 # ── Part-thumbnail import supervisor ──────────────────────────────────────────
 # Module-level status so a healthcheck / /system endpoint can read the last cycle.
 _THUMBNAIL_IMPORT_STATUS: dict = {"state": "starting", "total_ok": 0, "last_batch": None, "updated_at": None}
+
+
+async def _weekly_maintenance_loop() -> None:
+    """Weekly catalogue maintenance: re-merge new duplicates, then verify.
+
+    WHY (owner, 2026-08-05). The big cleanups were ONE-SHOT jobs for a finite
+    backlog — merge collapsed 272,152 duplicate groups to zero and was marked
+    done forever. But harvesters and importers keep adding parts, and whenever
+    two sources supply the same manufacturer+OEM a NEW duplicate is created.
+    Measured the week after the merge: **107 new groups, 60 of them in 24h** —
+    roughly 15/day, i.e. ~5,500/year if nothing ever runs again. Each duplicate
+    splits a part's prices, fitment and images across two records, which is the
+    exact defect the merge existed to remove.
+
+    Nothing was watching in between either, because the parity gate is a ~6
+    minute full-table suite that in practice only ran after a pipeline. So the
+    drift was invisible until someone happened to look.
+
+    This loop closes both gaps: a SMALL merge pass (the daily inflow is tiny, so
+    it finishes in minutes rather than the hours the original backlog took),
+    then the parity check to prove the outcome.
+
+    Reports BY EXCEPTION — a clean week is silent. A routine "all good" weekly
+    message is the camouflage that trains the owner to ignore the channel.
+    """
+    interval = int(os.getenv("WEEKLY_MAINT_INTERVAL_S", str(7 * 24 * 3600)))
+    merge_limit = int(os.getenv("WEEKLY_MAINT_MERGE_LIMIT", "2000"))
+    await asyncio.sleep(int(os.getenv("WEEKLY_MAINT_FIRST_DELAY_S", "3600")))
+    while True:
+        try:
+            if os.getenv("WEEKLY_MAINT_ENABLED", "1").strip().lower() not in ("1", "true", "yes"):
+                await asyncio.sleep(interval)
+                continue
+            # Never fight the job queue — same stand-down contract the other
+            # heavy writers use.
+            try:
+                import job_queue as _jq
+                async with async_session_factory() as _db:
+                    if await _jq.queue_busy(_db):
+                        logger.info("[weekly_maint] deferred — job queue is running")
+                        await asyncio.sleep(3600)
+                        continue
+            except Exception:
+                pass
+
+            problems: list[str] = []
+
+            # 1. Merge whatever duplicates arrived since last week.
+            m = await asyncio.to_thread(
+                subprocess.run,
+                ["python3", "/app/maintenance/merge_master_parts.py",
+                 "--all-brands", "--limit", str(merge_limit)],
+                capture_output=True, text=True, timeout=5400)
+            mout = ((m.stdout or "") + (m.stderr or ""))[-1500:]
+            merged = 0
+            _mm = re.search(r"ALL-BRANDS DONE groups=(\d+)", mout)
+            if _mm:
+                merged = int(_mm.group(1))
+            logger.info("[weekly_maint] merge rc=%s groups=%s", m.returncode, merged)
+            if m.returncode != 0:
+                problems.append(f"מיזוג כפילויות נכשל: {mout[-200:]}")
+
+            # 2. Verify the outcome (full suite — this is the weekly gate).
+            p = await asyncio.to_thread(
+                subprocess.run,
+                ["python3", "/app/maintenance/pipeline_parity_check.py"],
+                capture_output=True, text=True, timeout=1800)
+            pout = ((p.stdout or "") + (p.stderr or ""))[-2000:]
+            logger.info("[weekly_maint] parity rc=%s", p.returncode)
+            if p.returncode != 0:
+                fails = [ln.strip() for ln in pout.splitlines() if "[FAIL]" in ln]
+                problems.append("בדיקת התאמה נכשלה:\n" + "\n".join(fails[:5]))
+
+            if problems:
+                owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
+                if owner:
+                    await _wa_send_quiet(to=owner, text=(
+                        "🧰 *תחזוקה שבועית — נדרשת תשומת לב*\n"
+                        + (f"מוזגו {merged:,} כפילויות חדשות.\n" if merged else "")
+                        + "\n".join(problems)[:900]))
+            else:
+                logger.info("[weekly_maint] clean (merged=%s) — no owner message", merged)
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error("[weekly_maint] error: %s", exc)
+        await asyncio.sleep(interval)
 
 
 async def _whatsapp_link_monitor_loop() -> None:
@@ -2349,6 +2438,7 @@ async def startup():
     _supervised_task("job_queue_loop",               _job_queue_loop())
     _supervised_task("job_queue_report",             _job_queue_report_loop())
     _supervised_task("whatsapp_link_monitor",        _whatsapp_link_monitor_loop())
+    _supervised_task("weekly_maintenance",           _weekly_maintenance_loop())
     _supervised_task("car_parts_ie_stall_watchdog",  _car_parts_ie_stall_watchdog_loop())
     _supervised_task("car_parts_ie_healthcheck",     _car_parts_ie_harvester_healthcheck_loop())
     _supervised_task("meili_sync_loop",              _meili_sync_loop())
@@ -3158,14 +3248,11 @@ async def _noa_marketing_loop():
 
                     raw_post = await _hf_text(prompt=post_prompt, system=_noa_system, timeout=90.0, max_tokens=1500, temperature=noa.temperature)
                     caption = noa._finalize_noa_post(raw_post, platforms=_configured)
-                    # UTM attribution (added 2026-07-05): every post link carries
-                    # utm_source=<platform> so clicks are measurable per channel —
-                    # "success_metrics" mean nothing without attribution.
-                    caption = re.sub(
-                        r"(?<![/\w.])autosparefinder\.co\.il(?![/\w])",
-                        _noa_utm_link(platform, week_num).replace("https://", ""),
-                        caption,
-                    )
+                    # NO UTM re-injection (fix 2026-08-05, owner "fix the long link"): the
+                    # finalizer deliberately produces a CLEAN bare "autosparefinder.co.il".
+                    # Re-adding "?utm_source=…&utm_medium=…&utm_campaign=…" here put the long
+                    # ugly link straight back into the visible caption. Attribution rides on
+                    # the QR (?src=qr_<platform>_w<week>) + per-platform posting instead.
 
                     hashtags = [f"#{m.group(1)}" for m in noa._NOA_HASHTAG_RE.finditer(caption)]
 

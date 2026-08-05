@@ -35,6 +35,13 @@ MEILI_KEY = os.environ.get("MEILI_MASTER_KEY", "")
 MAX_INDEX_LAG = int(os.getenv("PARITY_MAX_INDEX_LAG", "50000"))
 
 rows = []
+# Which checks are CHEAP enough to run often. The expensive ones are full-table
+# aggregates over 4M rows (~6 min for the whole suite), so in practice the gate
+# ran only after a pipeline — and drift accumulated unseen between runs (107
+# duplicate OEM groups arrived in a week without anyone noticing). --fast keeps
+# the indexed/bounded checks so a monitor can run cheaply and often; the full
+# suite stays the post-pipeline gate.
+FAST = "--fast" in sys.argv
 
 
 def record(name, ok, found, detail="", warn=False):
@@ -57,15 +64,17 @@ async def main() -> int:
     record("active parts", True, active)
 
     # 1. No duplicate (manufacturer, normalised OEM) group should remain active.
-    dupes = await c.fetchval("""
+    #    EXPENSIVE: a GROUP BY aggregate over every active row (~90s).
+    dupes = None if FAST else await c.fetchval("""
         SELECT COUNT(*) FROM (
             SELECT 1 FROM parts_catalog
             WHERE is_active AND oem_number IS NOT NULL AND btrim(oem_number) <> ''
             GROUP BY manufacturer_id, upper(replace(replace(oem_number,' ',''),'-',''))
             HAVING COUNT(*) > 1
         ) g""")
-    record("duplicate OEM groups remaining", dupes == 0, dupes,
-           "same manufacturer + OEM should be ONE master record")
+    if dupes is not None:
+        record("duplicate OEM groups remaining", dupes == 0, dupes,
+               "same manufacturer + OEM should be ONE master record")
 
     # 2. A merged loser must never still be active — that would double-list it.
     stranded = await c.fetchval("""
@@ -74,13 +83,14 @@ async def main() -> int:
     record("merged losers still active", stranded == 0, stranded,
            "soft-deleted rows must stay inactive")
 
-    # 3. Catch-all bucket should be drained.
-    catchall = await c.fetchval("""
+    # 3. Catch-all bucket should be drained.  EXPENSIVE: full scan.
+    catchall = None if FAST else await c.fetchval("""
         SELECT COUNT(*) FROM parts_catalog
         WHERE is_active AND category IN
               ('כללי','general','service-general','accessories')""")
-    record("parts in catch-all category", catchall == 0, catchall,
-           "unclassified parts are invisible to category filters", warn=True)
+    if catchall is not None:
+        record("parts in catch-all category", catchall == 0, catchall,
+               "unclassified parts are invisible to category filters", warn=True)
 
     # 4. Non-canonical categories must not exist at all (a vocabulary leak).
     try:
@@ -110,12 +120,14 @@ async def main() -> int:
 
     # 6. Thumbnails: every active part should have a VERDICT (ok/rejected/none),
     #    not merely a successful one — an unprocessed part is the gap.
-    unprocessed = await c.fetchval("""
+    #    EXPENSIVE: full scan + anti-join over 4M rows.
+    unprocessed = None if FAST else await c.fetchval("""
         SELECT COUNT(*) FROM parts_catalog p
         WHERE p.is_active
           AND NOT EXISTS (SELECT 1 FROM part_thumbnails t WHERE t.part_id = p.id)""")
-    record("parts with no thumbnail verdict", unprocessed == 0, unprocessed,
-           "every part should be processed, even if rejected", warn=True)
+    if unprocessed is not None:
+        record("parts with no thumbnail verdict", unprocessed == 0, unprocessed,
+               "every part should be processed, even if rejected", warn=True)
 
     # 7. Pricing invariant: an available offer must carry a price.
     priceless = await c.fetchval("""
@@ -139,7 +151,7 @@ async def main() -> int:
     # ── report ────────────────────────────────────────────────────────────────
     width = max(len(r["name"]) for r in rows)
     fails = warns = 0
-    print("\n=== PIPELINE PARITY CHECK ===")
+    print(f"\n=== PIPELINE PARITY CHECK{' (FAST)' if FAST else ''} ===")
     for r in rows:
         if r["ok"]:
             tag = "PASS"
@@ -164,7 +176,8 @@ if __name__ == "__main__":
     # real scan instead of getting a usage line.
     if "--help" in sys.argv or "-h" in sys.argv:
         print(__doc__)
-        print("usage: pipeline_parity_check.py   (no arguments; read-only)")
+        print("usage: pipeline_parity_check.py [--fast]   (read-only)")
+        print("  --fast  skip the 4M-row aggregates; keep the cheap indexed checks")
         print("env: PARITY_MAX_INDEX_LAG (default 50000)")
         sys.exit(0)
     sys.exit(asyncio.run(main()))

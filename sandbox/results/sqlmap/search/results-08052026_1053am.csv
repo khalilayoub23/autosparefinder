@@ -1,0 +1,2 @@
+Target URL,Place,Parameter,Technique(s),Note(s)
+http://sandbox_backend:8000/api/v1/parts/search?q=brake&limit=10,GET,q,B,false positive or unexploitable

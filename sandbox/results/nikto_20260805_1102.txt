@@ -1,0 +1,5 @@
+- Nikto v2.1.6/2.1.5
++ Target Host: sandbox_backend
++ Target Port: 8000
++ GET The X-XSS-Protection header is not defined. This header can hint to the user agent to protect against some forms of XSS
++ GET The site uses SSL and the Strict-Transport-Security HTTP header is not defined.

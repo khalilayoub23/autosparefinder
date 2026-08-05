@@ -57,7 +57,7 @@ table.add_row("/parts/autocomplete", "50", str(c429),
 
 # ── Login (should rate limit hard) ────────────────────────────────────────────
 codes = burst("POST", "/api/v1/auth/login", n=40,
-              json_body={"email": "x@x.com", "password": "Test!"})
+              json_body={"email": "ratelimit@example.com", "password": "WrongPass!"})
 c429 = sum(1 for c,_ in codes if c==429)
 table.add_row("/auth/login", "40", str(c429),
               "✅" if c429 > 0 else "❌ NO LIMIT",
