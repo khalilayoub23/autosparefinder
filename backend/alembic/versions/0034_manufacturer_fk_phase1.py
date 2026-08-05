@@ -15,6 +15,22 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # vehicle_hierarchy_xls is normally created by db_update_agent at runtime,
+    # but migrations need it to exist. Create it here for fresh installs.
+    op.execute("""
+        CREATE TABLE IF NOT EXISTS public.vehicle_hierarchy_xls (
+            id BIGSERIAL PRIMARY KEY,
+            manufacturer TEXT NOT NULL,
+            model TEXT NOT NULL,
+            sub_model TEXT NOT NULL DEFAULT '',
+            year_from INTEGER NOT NULL DEFAULT 0,
+            year_to INTEGER NOT NULL DEFAULT 0,
+            year_hint INTEGER NOT NULL DEFAULT 0,
+            source_sheet TEXT,
+            source_tag TEXT NOT NULL DEFAULT 'parts_database.xlsx',
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
     # Add nullable FK-ready columns (additive, no behavior break)
     op.execute("ALTER TABLE public.part_cross_reference ADD COLUMN IF NOT EXISTS manufacturer_id UUID")
     op.execute("ALTER TABLE public.part_variants ADD COLUMN IF NOT EXISTS manufacturer_id UUID")

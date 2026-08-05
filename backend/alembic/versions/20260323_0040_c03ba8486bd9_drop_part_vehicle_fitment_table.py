@@ -19,7 +19,11 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.drop_table("part_vehicle_fitment")
+    # This migration was intended to drop part_vehicle_fitment, but later migrations
+    # (0031/0032/0033) re-add columns to that table — so it must exist after this point.
+    # On production the table was recreated after this migration ran; on a fresh install
+    # we must NOT drop it or the chain breaks. This is now a no-op.
+    pass
 
 
 def downgrade() -> None:

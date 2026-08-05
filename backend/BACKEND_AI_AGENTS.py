@@ -5178,7 +5178,21 @@ class SocialMediaManagerAgent(BaseAgent):
         # Repair misspellings of the DOMAIN → the canonical one. The model has produced
         # "autosparfinder.co.il" (missing the e) — a dead link on a live post. Normalise any
         # autospa…finder host to autosparefinder (2026-08-04, caught on a launch post).
-        msg = re.sub(r"\bautospa\w*?finder(?=\.co\.il|\.com|\.co|/|\b)", "autosparefinder", msg, flags=re.I)
+        # DOMAIN CONTEXT ONLY (followed by a TLD or a path) — must NOT touch the brand word
+        # "AutoSpareFinder" or "#AutoSpareFinder", which keep their CamelCase.
+        msg = re.sub(r"\bautospa\w*?finder(?=\.co\.il|\.com|\.co\b|/)", "autosparefinder", msg, flags=re.I)
+        # Flatten markdown links [text](url) the model sometimes emits when it tries to make
+        # a pressable link — plain-text platforms (FB/IG/TikTok) render the brackets
+        # literally. Keep the URL/domain (the pressable part; Telegram re-anchors it).
+        msg = re.sub(r"\[([^\]]{1,40})\]\s*\(\s*((?:https?://)?[^\s)]+)\s*\)", r"\2", msg)
+        # Clean link DISPLAY (owner 2026-08-04: "fix the long link"). A bare domain reads
+        # clean and STILL auto-linkifies (pressable) on WhatsApp/Facebook/Telegram. Drop the
+        # long ?utm_… query from the ROOT link (the QR carries attribution — this is exactly
+        # the long tail to remove), then the scheme, then a lone trailing slash. A path link
+        # like /pay/<token>?… is left intact (the query sits after a path, not the root).
+        msg = re.sub(r"(https?://)?(autosparefinder\.co\.il)/?\?[^\s)]*", r"\2", msg, flags=re.I)
+        msg = re.sub(r"https?://(autosparefinder\.co\.il)", r"\1", msg, flags=re.I)
+        msg = re.sub(r"\b(autosparefinder\.co\.il)/(?=[\s)]|$)", r"\1", msg)
 
         msg = re.sub(r"[ \t\r\f\v]+", " ", msg)
         msg = re.sub(r"\n{3,}", "\n\n", msg).strip()
@@ -5230,12 +5244,69 @@ class SocialMediaManagerAgent(BaseAgent):
 
     @classmethod
     def _noa_links_footer(cls) -> str:
-        """G8 2026-07-20 (owner directive): the old 7-line footer (5 platform links + 2
-        slogans) stapled onto EVERY post is gone — it made all posts look identical and
-        spammy. Posts now carry a QR code in the media that lands on the channel-picker
-        hub (/api/v1/go); the text keeps at most ONE link (the website)."""
-        site = cls._short_noa_link(NOA_WEBSITE_URL)
-        return f"🌐 {site}" if site else ""
+        """ONE clean CTA line (owner 2026-08-04: "fix the long link", cleaner structure).
+        A short bare-domain CTA instead of a raw "🌐 https://…/" — it reads like a call to
+        action, is pressable (auto-linkifies) on WhatsApp/Facebook/Telegram, and the QR in
+        the media carries the per-channel attribution. G8 rule still holds: at most one
+        link line, never the old multi-link footer."""
+        return "👈 חיפוש חלק לפי מספר רישוי: autosparefinder.co.il"
+
+    # Marks the CTA/link line so _restructure can place it as its own block.
+    _NOA_CTA_RE = re.compile(r"(autosparefinder\.co\.il|קישור בביו|בביו|👈)", re.IGNORECASE)
+
+    @classmethod
+    def _restructure_post(cls, text: str) -> str:
+        """Reorganise the post into clean, scannable BLOCKS separated by a blank line
+        (owner 2026-08-04: "the structure should be reorganized"):
+            [body — hook + content + question]
+            (blank)
+            [CTA / link line]
+            (blank)
+            [hashtags line]
+        The body keeps its own single-newline rhythm; only the CTA and hashtags are lifted
+        out and given breathing room, so every post has the same clean shape."""
+        raw = (text or "").strip()
+        if not raw:
+            return raw
+        body_lines: list[str] = []
+        cta_line = ""
+        tag_line = ""
+        for ln in raw.splitlines():
+            s = ln.strip()
+            if not s:
+                continue
+            if s.startswith("#"):
+                tag_line = s if not tag_line else tag_line + " " + s
+            elif cls._NOA_CTA_RE.search(s) and len(s) <= 80 and cls._NOA_HEBREW_CHAR_RE.search(s):
+                # a short line that is the CTA/link (not a long body sentence that merely
+                # mentions the domain) — lift it out as its own block
+                cta_line = s if not cta_line else cta_line
+            else:
+                body_lines.append(ln.rstrip())
+        body = re.sub(r"\n{3,}", "\n\n", "\n".join(body_lines)).strip()
+        parts = [body]
+        if cta_line:
+            parts.append(cta_line)
+        if tag_line:
+            parts.append(tag_line)
+        return cls._rtl_bidi_fix("\n\n".join(p for p in parts if p).strip())
+
+    @classmethod
+    def _rtl_bidi_fix(cls, text: str) -> str:
+        """Force RTL base direction per line (owner 2026-08-04: "posts start with ? instead
+        of text"). A line that begins with a NEUTRAL char (emoji 🚀/❓/👉, a 1️⃣ digit,
+        or a Latin brand) makes the platform's bidi algorithm mis-detect the line as LTR,
+        which throws the trailing Hebrew "?" / "!" to the visual start. Prepending U+200F
+        (RIGHT-TO-LEFT MARK — a strong RTL character) to every line that contains Hebrew or
+        Arabic fixes the base direction; it's invisible and a no-op on Hebrew-first lines."""
+        RLM = "‏"
+        out = []
+        for ln in (text or "").split("\n"):
+            if ln and not ln.startswith(RLM) and cls._NOA_RTL_TAG_RE.search(ln):
+                out.append(RLM + ln)
+            else:
+                out.append(ln)
+        return "\n".join(out)
     @classmethod
     def _force_noa_hashtags(cls, text: str, tags: Optional[str] = None) -> str:
         msg = (text or "").strip()
@@ -5344,7 +5415,9 @@ class SocialMediaManagerAgent(BaseAgent):
             normalized = cls._enforce_tiktok_ads_policy(normalized)
         # Broaden reach: keep the model's own tags, top up from the HE/AR/EN pools (G8).
         normalized = cls._enrich_hashtags(normalized)
-        return cls._append_noa_links(normalized)
+        normalized = cls._append_noa_links(normalized)
+        # Final pass: organise into clean blocks (body / CTA / hashtags) with breathing room.
+        return cls._restructure_post(normalized)
 
     async def generate_post(self, topic: str, platform: str, tone: str = "professional") -> str:
         prompt = (

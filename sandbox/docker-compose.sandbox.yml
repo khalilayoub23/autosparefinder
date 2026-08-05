@@ -1,0 +1,233 @@
+# =============================================================================
+# AutoSpareFinder — SANDBOX / PENTEST ENVIRONMENT
+# =============================================================================
+# Completely isolated from production. Zero routes to autosparefinder_internal
+# or autosparefinder_public. All ports are localhost-only (127.0.0.1:1xxxx).
+#
+# Start:   ./scripts/start.sh
+# Stop:    ./scripts/stop.sh
+# Shell:   ./scripts/shell.sh            (drops into the pentest toolbox)
+# Status:  ./scripts/status.sh
+#
+# Backend API : http://127.0.0.1:18000
+# Meilisearch : http://127.0.0.1:17700
+# Toolbox     : docker exec -it sandbox_tools bash
+# =============================================================================
+
+name: autospare_sandbox
+
+services:
+
+  # ── Postgres catalog DB (fresh schema via Alembic migrations) ──────────────
+  sandbox_postgres:
+    image: pgvector/pgvector:pg16
+    container_name: sandbox_postgres
+    restart: unless-stopped
+    mem_limit: 1024m
+    shm_size: 128m
+    command: ["postgres",
+      "-c", "shared_buffers=256MB",
+      "-c", "work_mem=8MB",
+      "-c", "max_connections=30",
+      "-c", "log_min_duration_statement=2000"]
+    environment:
+      POSTGRES_DB: autospare
+      POSTGRES_USER: autospare
+      POSTGRES_PASSWORD: ${SB_DB_PASSWORD}
+    volumes:
+      - sandbox_postgres_data:/var/lib/postgresql/data
+      # reuse same init.sql that creates the PII DB + uuid-ossp
+      - ../database/init.sql:/docker-entrypoint-initdb.d/:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U autospare -d autospare"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - sandbox_net
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options: {max-size: 5m, max-file: '2'}
+
+  # ── Redis ──────────────────────────────────────────────────────────────────
+  sandbox_redis:
+    image: redis:7-alpine
+    container_name: sandbox_redis
+    restart: unless-stopped
+    mem_limit: 128m
+    command: redis-server --appendonly yes --requirepass ${SB_REDIS_PASSWORD}
+    volumes:
+      - sandbox_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${SB_REDIS_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - sandbox_net
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options: {max-size: 5m, max-file: '2'}
+
+  # ── Meilisearch ────────────────────────────────────────────────────────────
+  sandbox_meili:
+    image: getmeili/meilisearch:v1.7
+    container_name: sandbox_meili
+    restart: unless-stopped
+    mem_limit: 512m
+    environment:
+      MEILI_MASTER_KEY: ${SB_MEILI_MASTER_KEY}
+      MEILI_ENV: development
+    volumes:
+      - sandbox_meili_data:/meili_data
+    ports:
+      - "127.0.0.1:17700:7700"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:7700/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - sandbox_net
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options: {max-size: 5m, max-file: '2'}
+
+  # ── Backend (same codebase, isolated env, all background tasks off) ────────
+  sandbox_backend:
+    image: autosparefinder-backend:latest
+    container_name: sandbox_backend
+    restart: unless-stopped
+    mem_limit: 2048m
+    # Run Alembic migrations on fresh DB, then start uvicorn with 1 worker
+    command: >
+      bash -c "
+        echo '=== Sandbox backend starting ===' &&
+        sleep 8 &&
+        cd /app &&
+        echo '--- Running catalog DB migrations ---' &&
+        alembic -c alembic.ini upgrade head 2>&1 | tail -10 &&
+        echo '--- Running PII DB migrations ---' &&
+        alembic -c alembic_pii.ini upgrade head 2>&1 | tail -10 &&
+        echo '--- Starting uvicorn ---' &&
+        exec uvicorn BACKEND_API_ROUTES:app --host 0.0.0.0 --port 8000 --workers 1
+      "
+    volumes:
+      # Live code mount — same as production
+      - ../backend:/app
+      - sandbox_worker_state:/app/state
+    environment:
+      # ── Database ───────────────────────────────────────────────────────────
+      DATABASE_URL: postgresql+asyncpg://autospare:${SB_DB_PASSWORD}@sandbox_postgres:5432/autospare
+      DATABASE_PII_URL: postgresql+asyncpg://autospare:${SB_DB_PASSWORD}@sandbox_postgres:5432/autospare_pii
+
+      # ── Redis ──────────────────────────────────────────────────────────────
+      REDIS_URL: redis://:${SB_REDIS_PASSWORD}@sandbox_redis:6379
+
+      # ── Meilisearch ────────────────────────────────────────────────────────
+      MEILI_URL: http://sandbox_meili:7700
+      MEILI_MASTER_KEY: ${SB_MEILI_MASTER_KEY}
+
+      # ── Auth / Security ────────────────────────────────────────────────────
+      JWT_SECRET_KEY: ${SB_JWT_SECRET}
+      JWT_ALGORITHM: HS256
+      ENCRYPTION_KEY: ${SB_ENCRYPTION_KEY}
+      COLLECT_SECRET: ${SB_COLLECT_SECRET}
+
+      # ── Disable ALL background tasks (no noise, no external calls) ─────────
+      CPIE_HARVEST_ENABLED: "0"
+      CPIE_FULL_SEED_ENABLED: "0"
+      THUMBNAIL_IMPORT_ENABLED: "0"
+      NOA_POST_ENABLED: "0"
+      NOA_ENGAGEMENT_ENABLED: "0"
+      SUPPLIER_SOURCING_ENABLED: "0"
+      MEILI_SYNC_ENABLED: "0"
+      CLEANUP_LLM_ENABLED: "0"
+      HARVESTER_ENABLED: "0"
+
+      # ── Misc ───────────────────────────────────────────────────────────────
+      PYTHONUNBUFFERED: "1"
+      PYTHONPATH: /app
+      REAL_DATA_ONLY: "0"
+      SANDBOX_MODE: "1"
+
+      # ── AI keys (left blank — AI calls fail gracefully, auth/API routes work) ──
+      CEREBRAS_API_KEY: ""
+      HF_API_KEY: ""
+      GEMINI_API_KEY: ""
+      GROQ_API_KEY: ""
+
+      # ── Infra not present in sandbox ───────────────────────────────────────
+      FLARESOLVERR_URL: "http://localhost:8191/v1"
+      WHATSAPP_URL: "http://localhost:3001/send"
+
+    ports:
+      - "127.0.0.1:18000:8000"
+    depends_on:
+      sandbox_postgres:
+        condition: service_healthy
+      sandbox_redis:
+        condition: service_healthy
+      sandbox_meili:
+        condition: service_healthy
+    networks:
+      - sandbox_net
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: '3'}
+
+  # ── Security / Pentest Toolbox ─────────────────────────────────────────────
+  sandbox_tools:
+    build:
+      context: .
+      dockerfile: Dockerfile.tools
+    image: autospare_sandbox_tools:latest
+    container_name: sandbox_tools
+    restart: unless-stopped
+    mem_limit: 512m
+    volumes:
+      # Persist test scripts and scan results across restarts
+      - ./tests:/workspace/tests
+      - ./wordlists:/workspace/wordlists
+      - ./results:/workspace/results
+    environment:
+      # Convenience: target URL pre-set so scripts can use $TARGET
+      TARGET: "http://sandbox_backend:8000"
+      TARGET_EXTERNAL: "https://autosparefinder.co.il"
+      SB_JWT_SECRET: ${SB_JWT_SECRET}
+      SB_COLLECT_SECRET: ${SB_COLLECT_SECRET}
+    networks:
+      - sandbox_net
+    # Stays alive so you can `docker exec -it sandbox_tools bash`
+    command: tail -f /dev/null
+    depends_on:
+      - sandbox_backend
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options: {max-size: 5m, max-file: '2'}
+
+networks:
+  sandbox_net:
+    # Completely separate from production networks.
+    # autosparefinder_internal and autosparefinder_public are NOT joined.
+    driver: bridge
+    name: sandbox_net
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+volumes:
+  sandbox_postgres_data:
+  sandbox_redis_data:
+  sandbox_meili_data:
+  sandbox_worker_state:

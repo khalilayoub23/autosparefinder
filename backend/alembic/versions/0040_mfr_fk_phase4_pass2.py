@@ -69,8 +69,8 @@ def upgrade() -> None:
     # Pass 2B: resolve remaining part_cross_reference unknown value into aftermarket domain.
     op.execute(
         """
-        INSERT INTO public.aftermarket_brands(name, is_active)
-        VALUES ('Motorstore IL', true)
+        INSERT INTO public.aftermarket_brands(id, name, is_active)
+        VALUES (gen_random_uuid(), 'Motorstore IL', true)
         ON CONFLICT (name) DO NOTHING;
         """
     )
