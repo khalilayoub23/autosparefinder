@@ -178,7 +178,9 @@ async def unpriced_oems_feed(request: Request, db: AsyncSession = Depends(get_db
     # the harvester is genuinely stopped, not merely idle-output.
     try:
         import harvest_heartbeat
-        harvest_heartbeat.record(_param("source") or "unknown")
+        _hb_source = _param("source") or "unknown"
+        harvest_heartbeat.record(_hb_source)
+        print(f"[unpriced-oems] source={_hb_source} limit={_param('limit','200')}", flush=True)
     except Exception:
         pass
 

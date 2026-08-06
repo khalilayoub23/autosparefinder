@@ -456,6 +456,9 @@ app.include_router(profile_router)
 from routes.marketing import router as marketing_router
 app.include_router(marketing_router)
 
+from routes.campaigns import router as campaigns_router
+app.include_router(campaigns_router)
+
 
 # ==============================================================================
 # 12. NOTIFICATIONS  /api/v1/notifications  (6 endpoints)
@@ -1738,6 +1741,82 @@ async def _amayama_fs_harvester_loop() -> None:
         await asyncio.sleep(backoff)
 
 
+async def _amayama_server_browser_loop() -> None:
+    """Supervises the SERVER-SIDE real-browser Amayama harvester (2026-08-06 —
+    replaces the FlareSolverr path above, which is permanently blocked by
+    Cloudflare's CDP-remote-debugging-protocol fingerprint: verified live that
+    BOTH FlareSolverr's internal browser and a fresh vanilla Playwright
+    instance hang forever on Cloudflare's Managed Challenge on every page past
+    the homepage, 100% reproducible. See FIXES_TRACKER 2026-08-06 for the full
+    diagnosis).
+
+    This runs a genuine, NON-CDP headful Chrome under Xvfb — launched as a
+    plain subprocess with no --remote-debugging-port, so there is no CDP
+    connection at any point, which is the exact thing Cloudflare fingerprints.
+    A small unpacked extension (state/amayama_ext/) sets the account's login
+    cookie via the chrome.cookies API (no profile-file/SQLite hacking) and
+    auto-runs the harvest loop as a content script on amayama.com — proven
+    live: a real browser session sails through the identical URLs that hang
+    FlareSolverr/Playwright indefinitely.
+
+    Ensures Xvfb + Chrome are alive; ONE combined process tree — if Chrome
+    dies for any reason (crash, OOM, container restart) this relaunches it
+    with backoff. Skips fast (checks every 30 min) if amayama_session.json or
+    the extension dir is missing — costs nothing until those exist."""
+    import time as _time
+    await asyncio.sleep(90)
+    root = os.path.dirname(os.path.abspath(__file__))
+    cookie_file = os.path.join(root, "amayama_session.json")
+    ext_dir = "/app/state/amayama_ext"
+    profile_dir = "/app/state/amayama_chrome_profile"
+    chrome_bin = "/root/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome"
+    display = ":99"
+    backoff = 60
+    while True:
+        if os.getenv("AMAYAMA_SERVER_BROWSER_ENABLED", "1").strip().lower() not in ("1", "true", "yes"):
+            await asyncio.sleep(3600)
+            continue
+        if not (os.path.exists(cookie_file) and os.path.isdir(ext_dir) and os.path.exists(chrome_bin)):
+            await asyncio.sleep(1800)
+            continue
+        started = _time.time()
+        try:
+            xvfb_alive = subprocess.run(["pgrep", "-f", f"Xvfb {display}"], capture_output=True).returncode == 0
+            if not xvfb_alive:
+                print("[amayama_server_browser] starting Xvfb", flush=True)
+                subprocess.Popen(
+                    ["setsid", "Xvfb", display, "-screen", "0", "1366x768x24", "-nolisten", "tcp"],
+                    stdout=open("/app/state/logs/xvfb.log", "a"), stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                )
+                await asyncio.sleep(2)
+            env = dict(os.environ)
+            env["DISPLAY"] = display
+            print("[amayama_server_browser] launching Chrome", flush=True)
+            proc = await asyncio.create_subprocess_exec(
+                chrome_bin,
+                f"--user-data-dir={profile_dir}",
+                f"--load-extension={ext_dir}",
+                f"--disable-extensions-except={ext_dir}",
+                "--no-first-run", "--no-default-browser-check",
+                "--disable-background-networking",
+                "--no-sandbox", "--disable-dev-shm-usage",
+                "--window-size=1366,768", "--start-maximized",
+                "about:blank",
+                env=env,
+                stdout=open("/app/state/logs/amayama_chrome.log", "a"),
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            rc = await proc.wait()
+            uptime = _time.time() - started
+            print(f"[amayama_server_browser] chrome exited rc={rc} after {uptime:.0f}s — restarting", flush=True)
+        except Exception as exc:
+            uptime = 0.0
+            print(f"[amayama_server_browser] failed to launch: {exc}", flush=True)
+        backoff = 60 if uptime > 300 else min(backoff * 2, 1800)
+        await asyncio.sleep(backoff)
+
+
 def _harvest_status_decision(
     *, first_sample: bool, d_models: int, d_parts: int, in_progress: int, pending: int,
     prev_state: "str | None", secs_since_alert: "float | None",
@@ -2328,15 +2407,15 @@ async def _amayama_harvest_monitor_loop() -> None:
     and permanently blocks ANY CDP-driven browser — verified 2026-08-06 that this
     catches BOTH FlareSolverr's internal browser AND a fresh vanilla Playwright
     instance (100% reproducible "Performing security verification" hang, never
-    resolves). A REAL, non-CDP, already-logged-in browser tab goes around it clean
-    (proven live: 14 + 10 real offer rows via plain same-origin fetch(), zero
-    interstitial) — so the harvester is now `amayama_browser_harvester.js`, pasted
-    into a real Chrome tab on amayama.com (see that file's docstring for usage).
-    Unlike car-parts.ie we CANNOT auto-restart a browser tab server-side. Instead
-    this monitors throughput: every 30 min it logs the Amayama supplier_parts
-    count + delta, and if the harvest has stalled (no feed activity ~25 min) WHILE
-    Japanese-brand OEMs are still unpriced, it WhatsApps the owner once (with
-    cooldown) to reopen the tab and re-run `AMAYAMA.autorun(...)`."""
+    resolves). A REAL, non-CDP browser goes around it clean (proven live: real
+    offer tables via plain same-origin fetch(), zero interstitial). TWO harvesters
+    now implement that: `amayama_server_browser` (primary — a headful Chrome the
+    backend itself launches+supervises under Xvfb via `_amayama_server_browser_loop`,
+    no owner PC needed) and `amayama_browser` (fallback — `amayama_browser_harvester.js`
+    pasted into the owner's own Chrome tab). This loop monitors throughput: every
+    30 min it logs the Amayama supplier_parts count + delta, and if BOTH harvesters
+    have stalled (no feed activity ~25 min) WHILE Japanese-brand OEMs are still
+    unpriced, it WhatsApps the owner once (with cooldown)."""
     import harvest_heartbeat
     import time as _time
     await asyncio.sleep(600)
@@ -2359,16 +2438,16 @@ async def _amayama_harvest_monitor_loop() -> None:
                     "AND LOWER(manufacturer) = ANY(:b)"
                 ), {"b": list(JP_BRANDS)})).scalar() or 0
             delta = None if last_count is None else cnt - last_count
-            # Watch the ACTIVE harvester (source 'amayama_browser' — feed
-            # heartbeat, recorded every time the browser tab calls /unpriced-oems).
-            # 'amayama_fs' (FlareSolverr) is retained read-only as a fallback signal
-            # in case that path is ever restored, but is not expected to be alive.
+            # Watch ALL THREE possible sources — server (primary, self-hosted),
+            # browser (fallback, owner's PC), fs (retired, kept read-only in case
+            # the FlareSolverr path is ever restored).
+            server_hb_age = harvest_heartbeat.age_seconds("amayama_server_browser")
             hb_age = harvest_heartbeat.age_seconds("amayama_browser")
             fs_hb_age = harvest_heartbeat.age_seconds("amayama_fs")
-            best_age = min([a for a in (hb_age, fs_hb_age) if a is not None], default=None)
+            best_age = min([a for a in (server_hb_age, hb_age, fs_hb_age) if a is not None], default=None)
             harvester_down = (best_age is None) or (best_age > DOWN_S)
             print(f"[amayama_monitor] amayama_parts={cnt} delta={delta} jp_unpriced={pending} "
-                  f"browser_heartbeat_age_s={int(hb_age) if hb_age is not None else None} "
+                  f"server_heartbeat_age_s={int(server_hb_age) if server_hb_age is not None else None} "
                   f"harvester={'DOWN' if harvester_down else 'alive'}", flush=True)
             if harvester_down and pending > 1000 and (_time.time() - last_alert_ts) > ALERT_COOLDOWN_S:
                 last_alert_ts = _time.time()
@@ -2376,11 +2455,12 @@ async def _amayama_harvest_monitor_loop() -> None:
                 if owner:
                     try:
                         await _wa_send_update((
-                            "🈁 Amayama browser harvester is DOWN — no feed activity "
-                            "~25 min. ~{:,} Japanese-brand parts still unpriced. Reopen "
-                            "amayama.com in a real tab (make sure you're logged in), "
-                            "paste amayama_browser_harvester.js, and run "
-                            "AMAYAMA.autorun(20, 40).".format(pending)))
+                            "🈁 Amayama harvester is DOWN (both server + browser paths) "
+                            "— no feed activity ~25 min. ~{:,} Japanese-brand parts "
+                            "still unpriced. Check `docker exec autospare_backend "
+                            "pgrep -af 'chrome-linux64/chrome'` on the server, or "
+                            "reopen amayama.com in a real tab and run "
+                            "AMAYAMA.autorun(20, 40) as a fallback.".format(pending)))
                     except Exception:
                         pass
             last_count = cnt
@@ -2438,6 +2518,8 @@ async def startup():
     _supervised_task("noa_marketing_loop",          _noa_marketing_loop())
     _supervised_task("noa_engagement_loop",         _noa_engagement_loop())
     _supervised_task("supplier_sourcing_loop",      _supplier_sourcing_loop())
+    _supervised_task("social_feedback_loop",        _social_feedback_loop())
+    _supervised_task("group_scan_loop",             _group_scan_loop())
     _supervised_task("ebay_fitment_backfill_loop",  _ebay_fitment_backfill_loop())
     _supervised_task("enrich_catalog_loop",         _enrich_catalog_loop())
     _supervised_task("status_update_loop",          _status_update_loop())
@@ -2455,9 +2537,83 @@ async def startup():
     _supervised_task("meili_sync_loop",              _meili_sync_loop())
     _supervised_task("amayama_harvest_monitor",      _amayama_harvest_monitor_loop())
     _supervised_task("amayama_fs_harvester",         _amayama_fs_harvester_loop())
+    _supervised_task("amayama_server_browser",       _amayama_server_browser_loop())
     _supervised_task("harvest_supervisor",           _harvest_supervisor_loop())
     await _warm_search_paths()
     print("✅ All systems ready — price-sync + catalog-scraper + db-agent schedulers started")
+
+
+# ── Social Feedback Loop ───────────────────────────────────────────────────────
+# Collects engagement metrics from published posts every SOCIAL_FEEDBACK_INTERVAL_S
+# seconds (default 6h). Writes to engagement_events and updates campaign totals.
+# Toggle off with SOCIAL_FEEDBACK_ENABLED=0.
+
+async def _social_feedback_loop():
+    """Supervised loop: collect post engagement metrics and update campaigns."""
+    interval = int(os.getenv("SOCIAL_FEEDBACK_INTERVAL_S", "21600"))  # 6h default
+    enabled = os.getenv("SOCIAL_FEEDBACK_ENABLED", "1").strip() == "1"
+    if not enabled:
+        logger.info("[social_feedback] disabled (SOCIAL_FEEDBACK_ENABLED=0)")
+        return
+
+    # Stagger start: offset from noa_marketing_loop by 30 min
+    await asyncio.sleep(1800)
+
+    while True:
+        try:
+            async with async_session_factory() as db:
+                from social.feedback_analyzer import collect_all_platforms
+                summary = await collect_all_platforms(db)
+                logger.info("[social_feedback] cycle complete: %s", summary)
+        except Exception as exc:
+            logger.error("[social_feedback] error: %s", exc)
+        await asyncio.sleep(interval)
+
+
+# ── Group Scan Loop ────────────────────────────────────────────────────────────
+# Scans approved Facebook groups every SOCIAL_GROUP_SCAN_INTERVAL_S (default 86400 = daily).
+# Drafts comment proposals and queues them for owner WhatsApp approval.
+# Toggle off with SOCIAL_GROUP_SCAN_ENABLED=0.
+
+async def _group_scan_loop():
+    """Supervised loop: daily FB group scan → draft comment proposals → owner approval."""
+    interval = int(os.getenv("SOCIAL_GROUP_SCAN_INTERVAL_S", "86400"))  # 24h default
+    enabled = os.getenv("SOCIAL_GROUP_SCAN_ENABLED", "1").strip() == "1"
+    if not enabled:
+        logger.info("[group_scan] disabled (SOCIAL_GROUP_SCAN_ENABLED=0)")
+        return
+
+    # Stagger: offset 2h after startup so it doesn't compete with harvester warmup
+    await asyncio.sleep(7200)
+
+    while True:
+        try:
+            async with async_session_factory() as db:
+                from social.tools import facebook_group_scan
+                result = await facebook_group_scan(db=db)
+
+                discoveries = result.data.get("discoveries", [])
+                if not discoveries:
+                    logger.info("[group_scan] no relevant group discussions found")
+                elif os.getenv("OWNER_WHATSAPP_PHONE"):
+                    # Summarise discoveries and send to owner for comment approval
+                    lines = ["🔍 *Group Scan Results*\n"]
+                    for i, d in enumerate(discoveries[:5], 1):
+                        lines.append(
+                            f"{i}. *{d.get('group_name','')}*\n"
+                            f"   {d.get('post_text','')[:80]}...\n"
+                            f"   Relevance: {d.get('relevance_score',0):.0%}\n"
+                            f"   💬 Draft: {d.get('draft_comment','(none)')[:100]}"
+                        )
+                    lines.append("\nReply 'אשר X' to approve comment #X")
+                    await _wa_send_quiet(
+                        os.getenv("OWNER_WHATSAPP_PHONE", ""),
+                        "\n".join(lines),
+                    )
+                    logger.info("[group_scan] sent %d discoveries to owner", len(discoveries))
+        except Exception as exc:
+            logger.error("[group_scan] error: %s", exc)
+        await asyncio.sleep(interval)
 
 
 @app.on_event("shutdown")

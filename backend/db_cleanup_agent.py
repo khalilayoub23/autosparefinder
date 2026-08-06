@@ -720,7 +720,7 @@ async def _bulk_apply_new_keywords(limit: int = 20000) -> int:
                             specifications = COALESCE(specifications, '{}'::jsonb)
                                              || jsonb_build_object(
                                                   'category_by',
-                                                  COALESCE(:src, 'rules'),
+                                                  COALESCE(CAST(:src AS text), 'rules'),
                                                   'category_prev', :prev),
                             updated_at = NOW()
                         WHERE id = ANY(CAST(:ids AS uuid[]))
