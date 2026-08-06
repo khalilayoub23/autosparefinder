@@ -106,6 +106,7 @@ DISPLAY: Dict[str, Dict[str, str]] = {
     "interior-comfort":         {"he": "פנים הרכב",         "ar": "المقصورة الداخلية",    "en": "Interior & Comfort"},
     "accessories":              {"he": "אביזרים",           "ar": "الإكسسوارات",          "en": "Accessories"},
     "merchandise":              {"he": "מוצרי מיתוג",       "ar": "منتجات دعائية",        "en": "Merchandise"},
+    "fasteners":                {"he": "ברגים ומחברים",     "ar": "البراغي والمثبتات",    "en": "Fasteners & Hardware"},
     CATCH_ALL:                  {"he": "כללי",              "ar": "عام",                  "en": "General"},
 }
 
@@ -406,6 +407,26 @@ RULES: List[Tuple[str, List[str], List[str]]] = [
       "roll cage", "airbag module", "airbag clock spring",
       "clock spring", "belt buckle", "belt tensioner assy"]),
 
+    # ── fasteners ────────────────────────────────────────────────────────────
+    # Owner directive 2026-08-06: a fastener now has its OWN home instead of
+    # living in the catch-all, so that כללי means exactly one thing — "not yet
+    # organized" — and can be worked as a queue.
+    #
+    # These keywords stay SHORT and BARE on purpose, and that is safe only
+    # because matching is longest-keyword-wins: 'Bolt Cylinder Head' still
+    # matches the longer engine keyword, 'brake caliper bolt' still matches
+    # brakes. A bare 'Bolt' has nothing longer to beat it, so it lands here.
+    # Do NOT add compound keywords ('brake bolt', 'engine screw') to this block —
+    # those belong to the SYSTEM they serve, not to hardware.
+    ("fasteners",
+     ["בורג", "ברגים", "אום", "אומים", "דיסקית", "שייבה", "מסמרת",
+      "טבעת קיבוע", "אטם בורג", "בורגי", "פקק אום"],
+     ["bolt", "screw", "nut", "washer", "rivet", "shim", "stud",
+      "grommet", "circlip", "snap ring", "cotter pin", "split pin",
+      "retaining ring", "self-tapping", "hex nut", "hexagon bolt",
+      "lock washer", "flange nut", "wing nut", "set screw", "grub screw",
+      "threaded rod", "spring washer", "collared bolt"]),
+
     # ── merchandise ──────────────────────────────────────────────────────────
     # Branded apparel / lifestyle goods the importers sell next to real parts.
     # Placed FIRST so that on an exact length tie a merch term wins over a parts
@@ -416,6 +437,10 @@ RULES: List[Tuple[str, List[str], List[str]]] = [
      ["חולצת טריקו", "חולצת פולו", "מחזיק מפתחות", "דגם מוקטן", "מארז גרביים",
       "חולצת נשים", "חולצת גברים", "חולצת ילדים", "בגד ים", "תיק גב",
       "סווטשירט", "מכנסיים", "גרביים", "כובע מצחייה", "חולצה", "פולו",
+      # Hebrew CONSTRUCT form: the IL importers write 'חולצת אלגנט נשים', which
+      # 'חולצה' can never match. Same for the sweatshirt/print vocabulary that
+      # arrives with branded apparel in the Kia IL price list.
+      "חולצת", "פוטר", "סווטשרט צווארון", "הדפס משי", "רקמה", "מארז מתנה",
       "מעיל", "ג'קט", "סווטשרט", "כובע", "צעיף", "כפפות צמר", "מטריה",
       "ספל", "כוס תרמית", "בקבוק מים", "עט", "מחברת", "מגנט למקרר",
       "דובון", "בובה", "משחק", "פאזל", "תיק", "ארנק", "שעון יד",

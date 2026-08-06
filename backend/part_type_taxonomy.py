@@ -575,6 +575,40 @@ PART_TYPE_FAMILIES: Tuple[PartTypeFamily, ...] = (
             PartSubcategory("kids", "Kids", aliases=("kids", "baby", "ילדים", "תינוק")),
         ),
     ),
+    # FASTENERS — added 2026-08-06 on the owner's directive. These parts were
+    # deliberately left in the catch-all because a bolt has no SYSTEM (it is not
+    # a brake part or an engine part), and mis-filing one is worse than leaving
+    # it. But "no system" is not "no category": a fastener IS a coherent thing a
+    # customer shops for, and 28,469 of them sitting in כללי made the catch-all
+    # unusable as a work queue. Giving them their own family means the catch-all
+    # can mean ONE thing again — "not yet organized" — instead of two.
+    PartTypeFamily(
+        id="fasteners",
+        label="Fasteners & Hardware",
+        group_id="maintenance",
+        group_label="Maintenance",
+        badge="FST",
+        icon_key="service",
+        palette=("#64748b", "#cbd5e1"),
+        aliases=("fasteners", "hardware", "fixings", "מחברים", "ברגים ואומים",
+                 "ברגים", "חומרה"),
+        keywords=("bolt", "screw", "nut", "washer", "rivet", "shim", "stud",
+                  "grommet", "circlip", "cotter pin", "split pin", "spacer",
+                  "retaining ring", "snap ring", "self-tapping",
+                  "בורג", "ברגים", "אום", "אומים", "דיסקית", "שייבה",
+                  "מסמרת", "פין", "טבעת קיבוע", "אטם בורג"),
+        subcategories=(
+            PartSubcategory("bolts-screws", "Bolts & Screws",
+                            aliases=("bolt", "screw", "stud", "בורג", "ברגים")),
+            PartSubcategory("nuts-washers", "Nuts & Washers",
+                            aliases=("nut", "washer", "shim", "אום", "דיסקית", "שייבה")),
+            PartSubcategory("clips-retainers", "Clips & Retainers",
+                            aliases=("clip", "circlip", "snap ring", "retainer",
+                                     "קליפס", "טבעת קיבוע")),
+            PartSubcategory("rivets-pins", "Rivets & Pins",
+                            aliases=("rivet", "pin", "cotter pin", "מסמרת", "פין")),
+        ),
+    ),
 )
 
 

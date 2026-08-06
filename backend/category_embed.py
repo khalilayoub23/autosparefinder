@@ -141,6 +141,26 @@ def build_centroids(force: bool = False) -> int:
     if not _load():
         return 0
 
+    # LOCALLY TRAINED BANK (maintenance/train_embed_exemplars.py) wins when
+    # present. Keyword phrases describe a category; real part names ARE the
+    # category — and nearest-exemplar accuracy is dominated by what it compares
+    # against, not by the weights. The bank is only written after it beats the
+    # keyword exemplars on held-out rows, so preferring it is safe by
+    # construction. Delete the file to fall back.
+    local_bank = os.path.join(MODEL_DIR, "exemplars_local.npz")
+    if os.path.exists(local_bank):
+        try:
+            data = np.load(local_bank, allow_pickle=False)
+            _centroids = data["vecs"]
+            _centroid_labels = [str(x) for x in data["labels"]]
+            logger.info("loaded LOCAL exemplar bank: %d real part names across "
+                        "%d categories", len(_centroid_labels),
+                        len(set(_centroid_labels)))
+            return len(_centroid_labels)
+        except Exception as exc:
+            logger.warning("local exemplar bank unreadable (%s) — "
+                           "falling back to keyword exemplars", exc)
+
     phrases: Dict[str, List[str]] = {}
     for cat, rtl_kws, en_kws in cm.RULES:
         if cat == cm.CATCH_ALL:

@@ -192,6 +192,18 @@ async def _classify(items, attempts: int = 4):
     aborts on the first one would need babysitting for its whole run, and the
     work already done would look like a stall rather than a pause.
     """
+    # The shared daily ceiling. This job is the one that proved a per-process
+    # counter is not a ceiling — it spent 400+ calls against the same provider
+    # key while db_cleanup_agent believed the budget was untouched.
+    try:
+        import llm_budget
+        allowed, why = await llm_budget.try_spend("llm_categorize_catchall")
+        if not allowed:
+            print(f"[llmcat] {why} — stopping; rerun tomorrow resumes from cursor")
+            return None
+    except ImportError:
+        pass
+
     prompt = PROMPT_HEAD + json.dumps(items, ensure_ascii=False)
     out = None
     for attempt in range(attempts):

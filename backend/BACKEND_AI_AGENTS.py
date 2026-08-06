@@ -5412,13 +5412,32 @@ class SocialMediaManagerAgent(BaseAgent):
         r"(?:include|mention|be|have|start|end|contain|use|add|write|keep)\b"
         r"|hook first line|hashtags? line|first line\b|in hebrew only|except brand names?"
         r"|the (?:post|caption) should", re.I)
+    # A DIFFERENT leak shape from a reasoning model: a structured analysis dump —
+    # "1. **Analyze the Request:** * **Role:** … * **Platform:** … * **Topic:** …"
+    # (caught live 2026-08-05, missed by the pattern above — that gap let it publish once).
+    # Two independent signals, either one is sufficient: (a) an explicit "thinking" phrase,
+    # or (b) 3+ markdown bold field-labels ("**Role:**"), which a real post never has.
+    _NOA_ANALYSIS_DUMP_RE = re.compile(
+        r"analyz(?:e|ing) the request|drafting[\s—-]|internal monologue|"
+        r"constructing the final|let'?s (?:draft|go with)|step \d\s*[:\-]",
+        re.I)
+    _NOA_BOLD_LABEL_RE = re.compile(r"\*\*[A-Za-z][\w /]{1,20}:\*\*")
 
     @classmethod
     def _looks_like_instruction_leak(cls, text: str) -> bool:
-        """True if the text reads like the model echoing its own brief rather than a post.
-        Two or more imperative meta-instruction markers ⇒ a leak (2026-08-05: NOA published
-        'Must include hook first line… Must be in Hebrew only…' as a real post)."""
-        return len(cls._NOA_INSTRUCTION_LEAK_RE.findall(text or "")) >= 2
+        """True if the text reads like the model echoing its own brief/reasoning rather
+        than a post (2026-08-05: two DIFFERENT leak shapes both published live —
+        'Must include hook first line…' and a structured '**Analyze the Request:** *
+        **Role:** …' dump). Any of: 2+ imperative markers, an explicit thinking-out-loud
+        phrase, or 3+ bold field-labels (no real post has that many)."""
+        t = text or ""
+        if len(cls._NOA_INSTRUCTION_LEAK_RE.findall(t)) >= 2:
+            return True
+        if cls._NOA_ANALYSIS_DUMP_RE.search(t):
+            return True
+        if len(cls._NOA_BOLD_LABEL_RE.findall(t)) >= 3:
+            return True
+        return False
 
     @classmethod
     def _finalize_noa_post(cls, text: str, platforms: Optional[List[str]] = None) -> str:

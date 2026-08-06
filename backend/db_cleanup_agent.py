@@ -451,6 +451,19 @@ async def task3b_llm_category_fallback(batch_size: int | None = None) -> int:
         "Choose from valid categories only. No other text."
     )
 
+    # SHARED durable budget (llm_budget) on top of this module's in-process
+    # counters. The in-process ones still enforce min-interval and failure
+    # backoff, which are per-caller concerns; the DAILY ceiling is a property of
+    # the provider key, which every process shares — see llm_budget.py.
+    try:
+        import llm_budget
+        allowed, why = await llm_budget.try_spend("db_cleanup_task3b")
+        if not allowed:
+            logger.info("[cleanup] LLM skipped — %s", why)
+            return {}
+    except ImportError:
+        pass
+
     _llm_last_call_ts = time.time()
     _llm_calls_today += 1
     try:
