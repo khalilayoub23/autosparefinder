@@ -36,6 +36,8 @@ import pdfplumber
 # ONE category source of truth — the literal that used to sit in this
 # INSERT ('General Parts'/'Auto Parts') is not a category at all.
 from category_map import categorize_on_ingest
+# ONE warranty source of truth — resolve() returns (months, source).
+from warranty_policy import resolve as _warranty_resolve
 
 PDF_PATH = os.getenv("LEXUS_PDF", "/app/uploads/LEXUS_20260612_082412.pdf")
 IMPORTER = "יוניון מוטורס בע\"מ"
@@ -226,6 +228,18 @@ async def run(dry_run: bool = False):
         mfr_id = str(mfr["id"])
         print(f"\nLexus manufacturer_id: {mfr_id}")
 
+        # Ensure supplier record exists
+        sup = await conn.fetchrow("SELECT id FROM suppliers WHERE name=$1 LIMIT 1", IMPORTER)
+        if not sup:
+            import uuid as _uuid
+            _sid = str(_uuid.uuid4())
+            await conn.execute(
+                "INSERT INTO suppliers(id,name,country,is_active,created_at) VALUES($1,$2,'IL',TRUE,NOW()) ON CONFLICT DO NOTHING",
+                _sid, IMPORTER)
+            sup = await conn.fetchrow("SELECT id FROM suppliers WHERE name=$1 LIMIT 1", IMPORTER)
+        supplier_id = str(sup["id"])
+        print(f"Supplier: {IMPORTER} ({supplier_id})")
+
         # Existing counts
         before_price = await conn.fetchval(
             "SELECT COUNT(*) FROM parts_catalog WHERE manufacturer='Lexus' AND importer_price_ils > 0"
@@ -247,14 +261,21 @@ async def run(dry_run: bool = False):
             price_incl = round(price_excl * (1 + VAT), 2)  # incl. 17% VAT
             base_price = round(price_excl * 1.45, 2)       # 45% margin over cost
 
+            _wmonths, _wsource = _warranty_resolve(None)  # Lexus PDF has no warranty column
+            vehicle_models_str = ", ".join(r["models"]) if r.get("models") else ""
             specs = json.dumps({
                 "vat_included": False,
                 "vat_rate": VAT,
                 "importer": IMPORTER,
+                "source_url": "https://union-motors.toyota.co.il",
                 "price_date": PRICE_DATE,
                 "in_stock": r["in_stock"],
                 "part_type": "original",
+                "category_hint": "original",
+                "vehicle_models": vehicle_models_str,
+                "name_he": r["desc"],
                 "source": "Union Motors official Lexus price list 2026-05-03",
+                "warranty_months": _wmonths,
             }, ensure_ascii=False)
 
             try:
@@ -262,9 +283,9 @@ async def run(dry_run: bool = False):
                     # Try update by oem_number match
                     res = await conn.execute("""
                         UPDATE parts_catalog SET
-                            importer_price_ils = $1,
+                            importer_price_ils = CASE WHEN $1 > 0 THEN $1 ELSE importer_price_ils END,
                             max_price_ils      = $2,
-                            base_price         = $3,
+                            base_price         = CASE WHEN $3 > 0 THEN $3 ELSE base_price END,
                             is_active          = true,
                             specifications     = COALESCE(specifications, '{}')::jsonb || $4::jsonb,
                             updated_at         = NOW()
@@ -276,9 +297,9 @@ async def run(dry_run: bool = False):
                         # Try matching by sku
                         res2 = await conn.execute("""
                             UPDATE parts_catalog SET
-                                importer_price_ils = $1,
+                                importer_price_ils = CASE WHEN $1 > 0 THEN $1 ELSE importer_price_ils END,
                                 max_price_ils      = $2,
-                                base_price         = $3,
+                                base_price         = CASE WHEN $3 > 0 THEN $3 ELSE base_price END,
                                 oem_number         = $5,
                                 is_active          = true,
                                 specifications     = COALESCE(specifications, '{}')::jsonb || $4::jsonb,
@@ -343,6 +364,33 @@ async def run(dry_run: bool = False):
                                     inserted_fitment += 1
                                 except Exception:
                                     pass
+
+                    # Upsert supplier_parts (was missing entirely before 2026-08-06)
+                    if part_id:
+                        try:
+                            await conn.execute("""
+                                INSERT INTO supplier_parts(
+                                    id, supplier_id, part_id, supplier_sku,
+                                    price_ils, price_usd, availability, is_available,
+                                    warranty_months, warranty_source,
+                                    estimated_delivery_days, supplier_url,
+                                    created_at, updated_at)
+                                VALUES(gen_random_uuid(),$1::uuid,$2::uuid,$3,
+                                       $4,0.0,$5,$6,$7,$8,5,$9,NOW(),NOW())
+                                ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE SET
+                                    price_ils=EXCLUDED.price_ils,
+                                    is_available=EXCLUDED.is_available,
+                                    warranty_months=EXCLUDED.warranty_months,
+                                    warranty_source=EXCLUDED.warranty_source,
+                                    updated_at=NOW()
+                            """, supplier_id, str(part_id), oem,
+                                price_excl,
+                                "in_stock" if r["in_stock"] else "out_of_stock",
+                                r["in_stock"],
+                                _wmonths, _wsource,
+                                "https://union-motors.toyota.co.il")
+                        except Exception:
+                            pass
 
             except Exception as e:
                 errors += 1

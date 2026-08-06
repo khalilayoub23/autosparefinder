@@ -49,6 +49,7 @@ from html.parser import HTMLParser
 
 # ONE category source of truth — never a private ruleset here.
 from category_map import categorize_on_ingest
+from warranty_policy import resolve as _warranty_resolve
 
 DB_URL = "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43@postgres_catalog:5432/autospare"
 KIA_MFR_ID = "626947bf-be3f-4dd1-a52e-fbcff8168cfc"
@@ -202,7 +203,8 @@ async def run():
                     'source':          'kia-israel.co.il official importer price list',
                     'shipping_to_il':  True,
                     'importer':        'Kia Official Importer Israel',
-                    'warranty_months': 24,
+                    'warranty_months': _warranty_resolve(None)[0],
+                    'category_hint':   'original',
                 }, ensure_ascii=False)
                 try:
                     async with conn.transaction():
@@ -217,14 +219,18 @@ async def run():
                                 INSERT INTO supplier_parts (
                                     id, supplier_id, part_id, supplier_sku,
                                     price_ils, price_usd, availability, is_available,
-                                    warranty_months, estimated_delivery_days, supplier_url,
+                                    warranty_months, warranty_source,
+                                    estimated_delivery_days, supplier_url,
                                     created_at, updated_at)
                                 VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3, $4, 0.0,
-                                        'in_stock', TRUE, 24, 14, $5, NOW(), NOW())
+                                        'in_stock', TRUE, $5, $6, 14, $7, NOW(), NOW())
                                 ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE SET
-                                    price_ils=EXCLUDED.price_ils, updated_at=NOW()
+                                    price_ils=EXCLUDED.price_ils,
+                                    warranty_months=EXCLUDED.warranty_months,
+                                    warranty_source=EXCLUDED.warranty_source,
+                                    updated_at=NOW()
                             """, supplier_id, str(r['id']), p['sku'],
-                                 float(p['price']), KIA_SUPPLIER_URL)
+                                 float(p['price']), *_warranty_resolve(None), KIA_SUPPLIER_URL)
                 except Exception as e:
                     err+=1;errs.append(f"sku={p['sku']}:{type(e).__name__}:{e}")
             print(f"  Batch {i//BATCH+1}/{-(-len(parts)//BATCH)} done (+{ins}ins ~{upd}upd {err}err)")

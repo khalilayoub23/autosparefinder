@@ -3,6 +3,10 @@
 import asyncio, asyncpg, urllib.request, urllib.parse
 from html.parser import HTMLParser
 
+# Kia Israel price list page returns an HTML table (OEM + Hebrew desc + price).
+# No image URLs are present in the response — image capture is not possible.
+_SOURCE_HAS_NO_IMAGES = True
+
 # ONE category source of truth — never a private ruleset here.
 from category_map import categorize_on_ingest
 

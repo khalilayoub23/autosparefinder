@@ -49,6 +49,8 @@ import urllib.parse as up
 
 # ONE category source of truth — never a private ruleset here.
 from category_map import categorize_on_ingest
+# ONE warranty source of truth — resolve() returns (months, source).
+from warranty_policy import resolve as _warranty_resolve
 
 INPUT_FILE   = os.getenv("CM_JSON", "/app/state/champion_motors_parts.json")
 DATABASE_URL = os.getenv(
@@ -198,7 +200,8 @@ async def run_import():
         name_he = (raw_part.get("name_he") or raw_part.get("name") or oem).strip()
         model_str = (raw_part.get("model") or "").strip()
         warranty_str = (raw_part.get("warranty") or "").strip()
-        warranty_months = 12  # Champion Motors standard; text warranty stored in specs
+        _wmonths, _wsource = _warranty_resolve(warranty_str or None)
+        part_type_he = (raw_part.get("part_type_he") or "").strip()
         batch.append({
             "id": str(uuid.uuid4()),
             "sku": make_sku(oem),
@@ -208,21 +211,27 @@ async def run_import():
             "manufacturer_id": str(mfr_id),
             "oem_number": oem,
             "model": model_str,
-            "category": categorise(name_he, raw_part.get("part_type_he","")),
+            "category": categorise(name_he, part_type_he),
             "part_type": "original" if is_orig else "oe_equivalent",
             "part_condition": "new",
             "base_price": raw_part.get("price_ils") or 0.0,
             "aftermarket_tier": None if is_orig else "OE_equivalent",
+            "warranty_months": _wmonths,
+            "warranty_source": _wsource,
             "specifications": json.dumps({
-                'vat_included':  True,
-                'vat_rate':      0.18,
-                'currency':      'ILS',
-                'source':        f'Champion Motors official importer - {brand_name}',
-                'shipping_to_il': True,
-                'importer':      'Champion Motors Israel',
-                'warranty_months': warranty_months,
-                'warranty_text': warranty_str,
-                'model':         model_str,
+                'vat_included':      True,
+                'vat_rate':          0.18,
+                'currency':          'ILS',
+                'source':            f'Champion Motors official importer - {brand_name}',
+                'source_url':        'https://www.championmotors.co.il',
+                'shipping_to_il':    True,
+                'importer':          'Champion Motors Israel',
+                'warranty_months':   _wmonths,
+                'warranty_text':     warranty_str,
+                'part_type_text':    part_type_he,
+                'category_hint':     'original' if is_orig else 'oe_equivalent',
+                'model':             model_str,
+                'name_he':           name_he,
             }, ensure_ascii=False),
         })
         if len(batch) >= BATCH_SIZE:
@@ -232,25 +241,34 @@ async def run_import():
 
     # Upsert supplier_parts for all successfully-inserted CM parts
     sp_count = 0
+    # Pull warranty from stored specs so each row carries the supplier-stated value.
     cm_parts = await conn.fetch(
-        "SELECT id, oem_number, base_price FROM parts_catalog "
+        "SELECT id, oem_number, base_price, specifications FROM parts_catalog "
         "WHERE sku LIKE 'CM-%' AND is_active = TRUE"
     )
     cm_url = 'https://www.championmotors.co.il'
     for part in cm_parts:
         try:
+            _sp = json.loads(part['specifications'] or '{}') if part['specifications'] else {}
+            _wm = _sp.get('warranty_months') or 12
+            _ws = _sp.get('warranty_source', 'platform_default')
             await conn.execute("""
                 INSERT INTO supplier_parts (
                     id, supplier_id, part_id, supplier_sku,
                     price_ils, price_usd, availability, is_available,
-                    warranty_months, estimated_delivery_days, supplier_url,
+                    warranty_months, warranty_source,
+                    estimated_delivery_days, supplier_url,
                     created_at, updated_at)
                 VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3, $4, 0.0,
-                        'in_stock', TRUE, 12, 14, $5, NOW(), NOW())
+                        'in_stock', TRUE, $5, $6, 14, $7, NOW(), NOW())
                 ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE SET
-                    price_ils=EXCLUDED.price_ils, is_available=true, updated_at=NOW()
+                    price_ils=EXCLUDED.price_ils, is_available=TRUE,
+                    warranty_months=EXCLUDED.warranty_months,
+                    warranty_source=EXCLUDED.warranty_source,
+                    updated_at=NOW()
             """, str(supplier_id), str(part['id']),
-                 str(part['oem_number'] or ''), float(part['base_price'] or 0), cm_url)
+                 str(part['oem_number'] or ''), float(part['base_price'] or 0),
+                 _wm, _ws, cm_url)
             sp_count += 1
         except Exception:
             pass

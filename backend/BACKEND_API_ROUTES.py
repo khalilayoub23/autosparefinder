@@ -3105,7 +3105,7 @@ async def _noa_marketing_loop():
                         "google_ads: {ad_group, keywords_exact, keywords_phrase, negatives, headlines, descriptions}\n"
                     )
 
-                    raw_plan = await _hf_text(prompt=campaign_prompt, system=_noa_system, timeout=180.0, max_tokens=6000, temperature=noa.temperature)
+                    raw_plan = await _hf_text(prompt=campaign_prompt, system=_noa_system, timeout=180.0, max_tokens=6000, temperature=noa.temperature, reasoning_effort="low")
 
                     plan: dict = {}
                     try:
@@ -3246,7 +3246,7 @@ async def _noa_marketing_loop():
                         "החזירי: טקסט הפוסט הסופי בלבד — ללא הסבר, ללא כותרת, ללא ספירה."
                     )
 
-                    raw_post = await _hf_text(prompt=post_prompt, system=_noa_system, timeout=90.0, max_tokens=1500, temperature=noa.temperature)
+                    raw_post = await _hf_text(prompt=post_prompt, system=_noa_system, timeout=90.0, max_tokens=1500, temperature=noa.temperature, reasoning_effort="low")
                     caption = noa._finalize_noa_post(raw_post, platforms=_configured)
                     # NO UTM re-injection (fix 2026-08-05, owner "fix the long link"): the
                     # finalizer deliberately produces a CLEAN bare "autosparefinder.co.il".

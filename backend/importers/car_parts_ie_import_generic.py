@@ -104,6 +104,7 @@ MANUFACTURER_IDS: dict[str, str] = {
 }
 
 from category_map import CATCH_ALL, categorize_on_ingest, categorize_slug
+from warranty_policy import resolve as _warranty_resolve
 
 # Category slug -> canonical id: see category_map.CATEGORY_SLUG_MAP.
 # The local copy removed here was already dead (nothing read it after
@@ -265,13 +266,25 @@ async def import_file(
             # RULE 7: an SKU is an identifier, not a name — flag the row.
             name_missing = not _clean(product.get("name") or "")
             name = _clean(product.get("name") or sku_raw)
-            category = _map_category(product.get("category") or "")
             url = _clean(product.get("product_url") or product.get("source_url") or "")
             price_eur = product.get("price_eur") or 0.0
             brand_part = _clean(product.get("brand") or "")
             description_text = _clean(product.get("description") or "")
             image_url = _clean(product.get("image_url") or "")
             in_stock = bool(product.get("in_stock", True))
+
+            # Category: the URL slug is car-parts.ie's OWN taxonomy, so it is the
+            # most reliable signal — but MANY harvested blocks carry no slug (or one
+            # we do not map), and this used to fall straight to the catch-all while
+            # the name said "brake pads" in plain English. Measured 2026-08-05:
+            # 49.3% of parts harvested in the previous 2 days landed in כללי that way.
+            # Fall back to the NAME (the same categorize_on_ingest every other
+            # importer calls) before giving up on the catch-all.
+            category = _map_category(product.get("category") or "")
+            if category == CATCH_ALL:
+                category = categorize_on_ingest(
+                    name=name, url=url, extra=description_text
+                )
             # EUR→ILS: 1 EUR ≈ 3.9 ILS; treat as reference market price (incl. VAT equiv)
             # cost = price_ils / 1.18, base_price = cost * 1.45 (CLAUDE.md: 45% margin)
             price_ils = round(float(price_eur) * 3.9, 2) if price_eur else None
@@ -393,25 +406,28 @@ async def import_file(
                     pass
 
             try:
+                _wmonths, _wsource = _warranty_resolve(None)
                 await conn.execute(
                     """
                     INSERT INTO supplier_parts(
                         id, supplier_id, part_id, supplier_sku,
                         price_usd, price_ils, availability, is_available,
-                        estimated_delivery_days, warranty_months,
+                        estimated_delivery_days, warranty_months, warranty_source,
                         supplier_url, created_at, updated_at
                     ) VALUES(
                         gen_random_uuid(), $1::uuid, $2::uuid, $3,
-                        0.0, $4, 'in_stock', TRUE, 10, 12, $5, NOW(), NOW()
+                        0.0, $4, 'in_stock', TRUE, 10, $5, $6, $7, NOW(), NOW()
                     )
-                    ON CONFLICT (supplier_id, supplier_sku)
+                    ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key
                     DO UPDATE SET
                         price_ils=EXCLUDED.price_ils,
                         is_available=EXCLUDED.is_available,
+                        warranty_months=EXCLUDED.warranty_months,
+                        warranty_source=EXCLUDED.warranty_source,
                         supplier_url=EXCLUDED.supplier_url,
                         updated_at=NOW()
                     """,
-                    supplier_id, part_id, sku_raw, price_ils, url,
+                    supplier_id, part_id, sku_raw, price_ils, _wmonths, _wsource, url,
                 )
                 supplier_rows += 1
             except Exception:

@@ -47,6 +47,7 @@ import asyncpg
 
 # ONE category source of truth — never a private ruleset here.
 from category_map import categorize_on_ingest
+from warranty_policy import resolve as _warranty_resolve
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("mazda_il_importer")
@@ -217,16 +218,23 @@ async def main():
             for f in fitments
         ]
 
+        _wmonths, _wsource = _warranty_resolve(p.get("warranty") if isinstance(p, dict) else None)
+        vehicle_model_list = ", ".join(f["model_en"] for f in fitments) if fitments else model_desc
         specs = json.dumps({
             "vat_included": False,
             "vat_rate": VAT_RATE,
             "price_with_tax_ils": price_with_tax,
             "currency": "ILS",
             "source": "delek-motors.co.il",
+            "source_url": "https://serviceforms.delek-motors.co.il",
             "importer": "Delek Motors Israel",
-            "warranty_months": WARRANTY_MONTHS,
+            "warranty_months": _wmonths,
             "shipping_to_il": True,
             "model_description": model_desc,
+            "vehicle_models": vehicle_model_list,
+            "name_he": name_he,
+            "category_hint": "original" if is_original else "oe_equivalent",
+            "part_type_text": "מקורי" if is_original else "חליפי",
         })
 
         try:
@@ -293,23 +301,23 @@ async def main():
                     INSERT INTO supplier_parts(
                         id, supplier_id, part_id, supplier_sku,
                         price_ils, price_usd, availability, is_available,
-                        warranty_months, estimated_delivery_days, supplier_url,
+                        warranty_months, warranty_source,
+                        estimated_delivery_days, supplier_url,
                         created_at, updated_at
                     ) VALUES(
                         gen_random_uuid(), $1::uuid, $2::uuid, $3,
-                        $4, 0.0, $5, $6, $7, $8, $9, NOW(), NOW()
+                        $4, 0.0, $5, $6, $7, $8, $9, $10, NOW(), NOW()
                     )
-                    -- (part_id, supplier_id) is NOT the constraint that fires on re-import;
-                    -- the collision is on (supplier_id, supplier_sku). Targeting
-                    -- the wrong one silently discards price and stock updates.
                     ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE SET
                         price_ils=EXCLUDED.price_ils,
                         availability=EXCLUDED.availability,
                         is_available=EXCLUDED.is_available,
+                        warranty_months=EXCLUDED.warranty_months,
+                        warranty_source=EXCLUDED.warranty_source,
                         updated_at=NOW()
                 """, supplier_id, part_id, sku,
                     price_with_tax, avail, price_with_tax > 0,
-                    WARRANTY_MONTHS, DELIVERY_DAYS, SUPPLIER_URL)
+                    _wmonths, _wsource, DELIVERY_DAYS, SUPPLIER_URL)
 
         except Exception as e:
             errors_count += 1

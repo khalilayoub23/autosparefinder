@@ -40,6 +40,7 @@ import urllib.request
 import urllib.parse
 import re
 from pathlib import Path
+from warranty_policy import resolve as _warranty_resolve
 
 # ── Config ────────────────────────────────────────────────────────────────────
 DSN = "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43@postgres_catalog:5432/autospare"
@@ -273,13 +274,18 @@ async def import_parts(parts: list) -> dict:
         max_price = il_retail
         min_price = il_retail
 
+        _wmonths, _wsource = _warranty_resolve(p.get("Warranty") or None)
         specs = {
             "vat_included": False,
             "vat_rate": VAT_RATE,
             "currency": "ILS",
             "source": "samelet.com",
+            "source_url": "https://samelet.com/form/parts-prices/subaru",
             "importer": SUPPLIER_NAME,
-            "warranty_months": WARRANTY_MONTHS,
+            "warranty_months": _wmonths,
+            "part_type_text": mat_type_desc,
+            "category_hint": "original" if is_original else "oe_equivalent",
+            "name_he": name_he,
         }
 
         fitments = parse_fitment(name_he)
@@ -324,21 +330,21 @@ async def import_parts(parts: list) -> dict:
                     """INSERT INTO supplier_parts(
                        id, supplier_id, part_id, supplier_sku,
                        price_ils, price_usd, availability, is_available,
-                       warranty_months, estimated_delivery_days, supplier_url,
+                       warranty_months, warranty_source,
+                       estimated_delivery_days, supplier_url,
                        created_at, updated_at)
-                       VALUES(gen_random_uuid(),$1::uuid,$2::uuid,$3,$4,0.0,$5,$6,$7,$8,$9,NOW(),NOW())
-                       -- (part_id, supplier_id) is NOT the constraint that fires on re-import;
-                    -- the collision is on (supplier_id, supplier_sku). Targeting
-                    -- the wrong one silently discards price and stock updates.
+                       VALUES(gen_random_uuid(),$1::uuid,$2::uuid,$3,$4,0.0,$5,$6,$7,$8,$9,$10,NOW(),NOW())
                     ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE SET
                        price_ils=EXCLUDED.price_ils,
                        is_available=EXCLUDED.is_available,
+                       warranty_months=EXCLUDED.warranty_months,
+                       warranty_source=EXCLUDED.warranty_source,
                        updated_at=NOW()""",
                     supplier_id, part_id, material,
                     importer_price,
                     "in_stock" if in_stock else "on_order",
                     in_stock,
-                    WARRANTY_MONTHS, DELIVERY_DAYS, SUPPLIER_URL,
+                    _wmonths, _wsource, DELIVERY_DAYS, SUPPLIER_URL,
                 )
 
                 # Fitment rows

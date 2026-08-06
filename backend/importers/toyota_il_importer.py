@@ -46,6 +46,8 @@ from pathlib import Path
 
 # ONE category source of truth — never a private ruleset here.
 from category_map import categorize_on_ingest
+# ONE warranty source of truth — resolve() returns (months, source).
+from warranty_policy import resolve as _warranty_resolve
 
 import asyncpg
 
@@ -275,14 +277,22 @@ async def main():
                 })
                 fitment_rows.append(p_entry)
 
+        type_text = part.get("type", "")  # מקורי / חליפי
+        vehicle_model_list = ", ".join(p_entry["model_en"] for p_entry in fitment_rows) if fitment_rows else ""
+        _wmonths, _wsource = _warranty_resolve(part.get("warranty"))
         specs = json.dumps({
             "vat_included": False,
             "vat_rate": VAT_RATE,
             "currency": "ILS",
             "source": "union-motors.toyota.co.il",
+            "source_url": "https://union-motors.toyota.co.il/replacement_parts.php",
             "importer": "Union Motors Israel",
-            "warranty_months": WARRANTY_MONTHS,
+            "warranty_months": _wmonths,
             "shipping_to_il": True,
+            "part_type_text": type_text,
+            "vehicle_models": vehicle_model_list,
+            "name_he": name_he,
+            "category_hint": "original" if "מקורי" in type_text else ("aftermarket" if "חליפי" in type_text else ""),
         })
 
         try:
@@ -350,22 +360,27 @@ async def main():
                     INSERT INTO supplier_parts(
                         id, supplier_id, part_id, supplier_sku,
                         price_ils, price_usd, availability, is_available,
-                        warranty_months, estimated_delivery_days, supplier_url,
+                        warranty_months, warranty_source,
+                        estimated_delivery_days, supplier_url,
                         created_at, updated_at
                     ) VALUES(
                         gen_random_uuid(), $1::uuid, $2::uuid, $3,
                         $4, 0.0, $5, $6,
-                        $7, $8, $9,
+                        $7, $8,
+                        $9, $10,
                         NOW(), NOW()
                     )
                     ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE SET
                         price_ils=EXCLUDED.price_ils,
                         availability=EXCLUDED.availability,
                         is_available=EXCLUDED.is_available,
+                        warranty_months=EXCLUDED.warranty_months,
+                        warranty_source=EXCLUDED.warranty_source,
                         updated_at=NOW()
                 """, supplier_id, part_id, sku,
                     price, avail, in_stock,
-                    WARRANTY_MONTHS, DELIVERY_DAYS, SUPPLIER_URL)
+                    _wmonths, _wsource,
+                    DELIVERY_DAYS, SUPPLIER_URL)
 
         except Exception as e:
             errors.append({"oem": oem, "error": str(e)})

@@ -338,6 +338,7 @@ async def _cerebras_call(
     timeout: float,
     priority: bool,
     temperature: "float | None" = None,
+    reasoning_effort: "str | None" = None,
 ) -> str:
     """Single Cerebras chat completion call — does NOT cache or fall back."""
     if not CEREBRAS_API_KEY:
@@ -354,6 +355,8 @@ async def _cerebras_call(
     }
     if temperature is not None:
         _body["temperature"] = float(temperature)
+    if reasoning_effort:
+        _body["reasoning_effort"] = reasoning_effort
     payload = _json.dumps(_body, ensure_ascii=False).encode()
     _acquire = not priority
     if _acquire:
@@ -375,7 +378,7 @@ async def _cerebras_call(
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority: bool = False, model: str | None = None, max_tokens: int = 2000, temperature: "float | None" = None) -> str:
+async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority: bool = False, model: str | None = None, max_tokens: int = 2000, temperature: "float | None" = None, reasoning_effort: "str | None" = None) -> str:
     """Chat completion via HF Router. Cached in Redis for _TEXT_CACHE_TTL seconds.
     priority=True bypasses the background-job semaphore (use for webhook/realtime calls).
     max_tokens: raise for large structured outputs — reasoning models (gpt-oss)
@@ -391,7 +394,7 @@ async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority
     # (wrong words: קופה for קפה, מצבת for מצב). That is the "agents don't sound human /
     # wrong sentence build" the owner reported repeatedly. It flows from .think() now, and
     # MUST be in the cache key so a 0.35 result can't be served for a 0.9 request.
-    cache_key = _cache_key("txt", selected_model, str(temperature), system, prompt)
+    cache_key = _cache_key("txt", selected_model, str(temperature), str(reasoning_effort), system, prompt)
     cached = await _cache_get(cache_key)
     if cached is not None:
         logger.debug("hf_client [text] cache hit")
@@ -413,6 +416,8 @@ async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority
     }
     if temperature is not None:
         _body["temperature"] = float(temperature)
+    if reasoning_effort:
+        _body["reasoning_effort"] = reasoning_effort
     payload = _json.dumps(_body, ensure_ascii=False).encode()
 
     _acquire = not priority
@@ -441,7 +446,7 @@ async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority
         if CEREBRAS_FALLBACK_MODEL and CEREBRAS_FALLBACK_MODEL != selected_model:
             logger.warning("hf_text: Cerebras primary 429 — trying fallback model %s", CEREBRAS_FALLBACK_MODEL)
             try:
-                result = await _cerebras_call(prompt, system, CEREBRAS_FALLBACK_MODEL, timeout, priority, temperature)
+                result = await _cerebras_call(prompt, system, CEREBRAS_FALLBACK_MODEL, timeout, priority, temperature, reasoning_effort)
                 await _cache_set(cache_key, result, _TEXT_CACHE_TTL)
                 return result
             except Exception as fb_err:
@@ -472,9 +477,9 @@ async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority
     return result
 
 
-async def hf_text_fast(prompt: str, system: str = "", timeout: float = 90.0, priority: bool = False, model: str | None = None, temperature: "float | None" = None) -> str:
+async def hf_text_fast(prompt: str, system: str = "", timeout: float = 90.0, priority: bool = False, model: str | None = None, temperature: "float | None" = None, reasoning_effort: "str | None" = None) -> str:
     """Compatibility wrapper used by agents code-paths."""
-    return await hf_text(prompt=prompt, system=system, timeout=timeout, priority=priority, model=model, temperature=temperature)
+    return await hf_text(prompt=prompt, system=system, timeout=timeout, priority=priority, model=model, temperature=temperature, reasoning_effort=reasoning_effort)
 
 
 async def hf_router_text(prompt: str, system: str = "", timeout: float = 45.0, model: str | None = None) -> str:

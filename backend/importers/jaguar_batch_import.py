@@ -8,6 +8,8 @@ Usage:
 """
 import asyncio, json, os, sys, time
 import asyncpg
+from category_map import categorize_on_ingest
+from warranty_policy import resolve as _warranty_resolve
 
 DB = os.environ.get("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://")
 GBP_ILS = 4.8
@@ -28,11 +30,15 @@ def prepare_part(p: dict):
     retail  = round(cost * (1 + VAT), 2)
     selling = round(cost * 1.45, 2)
     sku     = f"JAG-{oem[:58]}"
+    _wmonths, _wsource = _warranty_resolve(None)
+    cat     = categorize_on_ingest(name=title)
     spec    = json.dumps({
         "source": "sng_barratt", "price_gbp": price_gbp,
-        "gbp_ils_rate": GBP_ILS, "vat_rate": VAT
+        "gbp_ils_rate": GBP_ILS, "vat_rate": VAT,
+        "warranty_months": _wmonths,
+        "category_hint": "oe_equivalent",
     })
-    return (oem, part_num, title, selling, cost, retail, sku, spec)
+    return (oem, part_num, title, selling, cost, retail, sku, spec, cat)
 
 
 async def run():
@@ -45,7 +51,7 @@ async def run():
         CREATE TEMP TABLE _jag_prices (
             oem TEXT, part_num TEXT, title TEXT,
             selling NUMERIC, cost NUMERIC, retail NUMERIC,
-            sku TEXT, spec TEXT
+            sku TEXT, spec TEXT, category TEXT
         )
     """)
 
@@ -67,12 +73,12 @@ async def run():
                 valid += 1
             if len(batch) >= BATCH:
                 await conn.executemany(
-                    "INSERT INTO _jag_prices VALUES ($1,$2,$3,$4,$5,$6,$7,$8)", batch
+                    "INSERT INTO _jag_prices VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)", batch
                 )
                 batch = []
     if batch:
         await conn.executemany(
-            "INSERT INTO _jag_prices VALUES ($1,$2,$3,$4,$5,$6,$7,$8)", batch
+            "INSERT INTO _jag_prices VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)", batch
         )
 
     print(f"Loaded {total_in:,} NDJSON lines, {valid:,} valid into temp table ({time.monotonic()-t0:.1f}s)")
@@ -114,7 +120,7 @@ async def run():
             part_type, part_condition, is_active, needs_oem_lookup, master_enriched,
             specifications, created_at, updated_at
         )
-        SELECT gen_random_uuid(), j.sku, j.oem, j.title, j.title, 'Jaguar', 'כללי',
+        SELECT gen_random_uuid(), j.sku, j.oem, j.title, j.title, 'Jaguar', j.category,
                j.selling, j.cost, j.retail, j.cost,
                'oe_equivalent', 'new', true, true, false,
                j.spec::jsonb, NOW(), NOW()

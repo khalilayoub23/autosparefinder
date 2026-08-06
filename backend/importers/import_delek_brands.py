@@ -61,6 +61,7 @@ import urllib.parse as up
 
 # ONE category source of truth — never a private ruleset here.
 from category_map import categorize_on_ingest
+from warranty_policy import resolve as _warranty_resolve
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
@@ -197,6 +198,7 @@ async def import_brand(conn, make, sku_prefix, json_file, supplier_name):
                         retail_excl  = row["retail_price_ils"]
                         il_retail    = round(retail_excl * 1.18, 2) if retail_excl > 0 else 0.0
                         base_price_v = round(retail_excl * 1.45, 2) if retail_excl > 0 else 0.0
+                        _wmonths, _wsource = _warranty_resolve(None)
                         specs = json.dumps({
                             'vat_included':       False,
                             'vat_rate':           0.18,
@@ -204,7 +206,8 @@ async def import_brand(conn, make, sku_prefix, json_file, supplier_name):
                             'source':             f'Delek Motors official importer - {make}',
                             'shipping_to_il':     True,
                             'importer':           f'{make} Delek Motors Israel',
-                            'warranty_months':    24,
+                            'warranty_months':    _wmonths,
+                            'category_hint':      'original',
                             'il_retail_excl_vat': retail_excl,
                             'il_retail_incl_vat': il_retail,
                         }, ensure_ascii=False)
@@ -286,14 +289,18 @@ async def import_brand(conn, make, sku_prefix, json_file, supplier_name):
                                 INSERT INTO supplier_parts (
                                     id, supplier_id, part_id, supplier_sku,
                                     price_ils, price_usd, availability, is_available,
-                                    warranty_months, estimated_delivery_days, supplier_url,
+                                    warranty_months, warranty_source,
+                                    estimated_delivery_days, supplier_url,
                                     created_at, updated_at)
                                 VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3, $4, 0.0,
-                                        'in_stock', TRUE, 24, 14, $5, NOW(), NOW())
+                                        'in_stock', TRUE, $5, $6, 14, $7, NOW(), NOW())
                                 ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE SET
-                                    price_ils=EXCLUDED.price_ils, is_available=true, updated_at=NOW()
+                                    price_ils=EXCLUDED.price_ils, is_available=true,
+                                    warranty_months=EXCLUDED.warranty_months,
+                                    warranty_source=EXCLUDED.warranty_source,
+                                    updated_at=NOW()
                             """, supplier_id, pid, row["oem_number"],
-                                 float(retail_excl or 0), url)
+                                 float(retail_excl or 0), _wmonths, _wsource, url)
 
                         # part_vehicle_fitment
                         if catalog_id and row.get("models"):

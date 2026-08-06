@@ -35,6 +35,8 @@ import pdfplumber
 # ONE category source of truth — this INSERT used to hardcode
 # 'Parts & Accessories', which is not a category at all.
 from category_map import categorize_on_ingest
+# ONE warranty source of truth — resolve() returns (months, source).
+from warranty_policy import resolve as _warranty_resolve
 
 
 MARGIN = 1.45
@@ -186,11 +188,11 @@ def parse_row(cells: list[str]) -> Optional[dict]:
     if "תחליפי" in all_text or "T." in str(cells[0] if cells else ""):
         part_type = "aftermarket"
 
-    # --- Detect warranty ---
-    warranty_months = 24 if part_type == "oem" else 6
+    # --- Detect warranty (raw text from PDF; warranty_policy.resolve() normalises) ---
+    warranty_text = None
     m = re.search(r"(\d+)\s*חודשים", all_text)
     if m:
-        warranty_months = int(m.group(1))
+        warranty_text = m.group(0)
 
     return {
         "oem_number": part_num,
@@ -198,7 +200,7 @@ def parse_row(cells: list[str]) -> Optional[dict]:
         "price": price,
         "in_stock": in_stock,
         "part_type": part_type,
-        "warranty_months": warranty_months,
+        "warranty_text": warranty_text,
     }
 
 
@@ -285,13 +287,18 @@ async def import_prices(
             # MANDATORY VAT CHECK — always use compute_price_triple
             price_excl, price_incl, base = compute_price_triple(price_raw, brand)
 
+            _wmonths, _wsource = _warranty_resolve(row.get("warranty_text"))
             specs = json.dumps({
                 "vat_included": PRICES_INCL_VAT.get(brand, 0.0) > 0,
                 "vat_rate": 0.18,
-                "warranty_months": row["warranty_months"],
+                "warranty_months": _wmonths,
+                "warranty_source": _wsource,
                 "in_stock": row["in_stock"],
                 "importer": importer_name,
                 "price_date": price_date,
+                "category_hint": row["part_type"],
+                "part_type_text": row["part_type"],
+                "name_he": row["name"] if any("֐" <= c <= "׿" for c in row["name"]) else "",
             })
 
             try:

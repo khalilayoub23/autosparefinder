@@ -53,6 +53,7 @@ import re
 
 # Category mapping DELEGATED to category_map — the single source of truth.
 from category_map import CATCH_ALL, categorize_on_ingest, normalize_category_label
+from warranty_policy import resolve as _warranty_resolve
 import subprocess
 import sys
 import uuid
@@ -251,6 +252,9 @@ async def ensure_supplier(conn) -> str:
 
 async def upsert_part(conn, p: dict, supplier_id: str) -> tuple[str | None, bool]:
     """Returns (part_id, was_inserted)."""
+    _wmonths, _wsource = _warranty_resolve(p.get("warranty") or None)
+    p["_wmonths"] = _wmonths
+    p["_wsource"] = _wsource
     specs = json.dumps({
         'vat_included':      False,
         'vat_rate':          0.18,
@@ -259,7 +263,10 @@ async def upsert_part(conn, p: dict, supplier_id: str) -> tuple[str | None, bool
         'compatible_models': p['models'],
         'shipping_to_il':    True,
         'importer':          'גיאו מוביליטי בע"מ',
-        'warranty_months':   12,
+        'warranty_months':   _wmonths,
+        'category_hint':     'original',
+        'name_he':           p.get('name_he', ''),
+        'vehicle_models':    ', '.join(p.get('models', [])),
     })
     row = await conn.fetchrow("""
         INSERT INTO parts_catalog (
@@ -334,26 +341,29 @@ async def upsert_fitment(conn, part_id: str, models: list[str]) -> int:
     return count
 
 
-async def upsert_supplier_part(conn, part_id: str, supplier_id: str, raw_sku: str, price: float):
+async def upsert_supplier_part(conn, part_id: str, supplier_id: str, raw_sku: str,
+                               price: float, wmonths: int = 12, wsource: str = "platform_default"):
     await conn.execute("""
         INSERT INTO supplier_parts (
             id, supplier_id, part_id, supplier_sku,
             price_ils, price_usd,
-            availability, is_available, warranty_months,
+            availability, is_available, warranty_months, warranty_source,
             estimated_delivery_days, supplier_url,
             created_at, updated_at
         ) VALUES (
             gen_random_uuid(), $1::uuid, $2::uuid, $3,
             $4, 0.0,
-            'in_stock', true, 12,
-            14, $5,
+            'in_stock', true, $5, $6,
+            14, $7,
             NOW(), NOW()
         )
         ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE SET
-            price_ils    = EXCLUDED.price_ils,
-            is_available = true,
-            updated_at   = NOW()
-    """, supplier_id, part_id, raw_sku, price, GEO_MOBILITY_URL)
+            price_ils       = EXCLUDED.price_ils,
+            is_available    = true,
+            warranty_months = EXCLUDED.warranty_months,
+            warranty_source = EXCLUDED.warranty_source,
+            updated_at      = NOW()
+    """, supplier_id, part_id, raw_sku, price, wmonths, wsource, GEO_MOBILITY_URL)
 
 
 async def create_rex_todo(conn, title: str, description: str):
@@ -415,7 +425,8 @@ async def run():
                         updated += 1
 
                     fitment_count += await upsert_fitment(conn, part_id, p['models'])
-                    await upsert_supplier_part(conn, part_id, supplier_id, p['raw_sku'], p['price_ils'])
+                    await upsert_supplier_part(conn, part_id, supplier_id, p['raw_sku'], p['price_ils'],
+                                               p.get('_wmonths', 12), p.get('_wsource', 'platform_default'))
 
             except Exception as e:
                 log.warning(f"Error on {p.get('sku', '?')}: {e}")

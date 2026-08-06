@@ -49,6 +49,7 @@ import asyncpg
 
 # ONE category source of truth — never a private ruleset here.
 from category_map import categorize_on_ingest
+from warranty_policy import resolve as _warranty_resolve
 
 INPUT    = Path("/opt/autosparefinder/jaguar_parts_raw.ndjson")
 LOGS_DIR = Path("/opt/autosparefinder/logs")
@@ -145,7 +146,8 @@ async def import_batch(conn, supplier_id, batch, skip_fitment):
                     'source':          'SNG Barratt UK catalog',
                     'shipping_to_il':  True,
                     'importer':        'SNG Barratt',
-                    'warranty_months': 12,
+                    'warranty_months': _warranty_resolve(None)[0],
+                    'category_hint':   'oe_equivalent',
                     'stock_status':    stock,
                 })
 
@@ -190,18 +192,21 @@ async def import_batch(conn, supplier_id, batch, skip_fitment):
                 await conn.execute("""
                     INSERT INTO supplier_parts(
                         id,supplier_id,part_id,supplier_sku,
-                        price_usd,price_ils,availability,warranty_months,
+                        price_usd,price_ils,availability,warranty_months,warranty_source,
                         estimated_delivery_days,is_available,supplier_url,
                         part_type,created_at,updated_at)
                     VALUES(gen_random_uuid(),$1,$2,$3,
-                           $4,$5,$6,12,21,$7,$8,$9,NOW(),NOW())
+                           $4,$5,$6,$7,$8,21,$9,$10,$11,NOW(),NOW())
                     ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE SET
                         price_usd=EXCLUDED.price_usd,
                         price_ils=EXCLUDED.price_ils,
                         is_available=EXCLUDED.is_available,
+                        warranty_months=EXCLUDED.warranty_months,
+                        warranty_source=EXCLUDED.warranty_source,
                         updated_at=NOW()""",
                     supplier_id, part_id, pn,
                     pusd, pils, "In Stock" if stock=="in_stock" else "Pre-order",
+                    *_warranty_resolve(None),
                     avail, surl, pt)
 
                 if not skip_fitment:

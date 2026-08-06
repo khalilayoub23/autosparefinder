@@ -25,6 +25,9 @@ policy is not enforcement — this script is (see docs/POSTMORTEMS.md for the in
                                       Online family has images on 0.0-0.4% of
                                       ~1.55M parts.
     warranty_policy.resolve           REX captured no warranty at all — 293,263 rows.
+    warranty_source written           11 importers hardcoded warranty_months and
+                                      never wrote warranty_source, making supplier
+                                      warranty statements unverifiable at runtime.
     SKIP LOCKED on batched writes     Batched UPDATEs queued behind the harvester and
                                       died on the statement timeout having written 0.
     no MAX(uuid)                      Postgres has no max(uuid) aggregate; this error
@@ -343,8 +346,10 @@ def rule_image_capture(path, src, f):
     # HARDCODED SEED DATA: rows written into the file itself, with no HTTP/DOM call
     # anywhere. There is no page to read a photo from, so demanding one is asking
     # for the impossible. Measured: 4 of the 17 hits were exactly this.
-    fetches = re.search(r"urlopen|httpx|requests\.|aiohttp|playwright|BeautifulSoup"
-                        r"|fetch\(|session\.get", src)
+    # DB client calls (.fetch / .fetchrow / .execute) must not match here.
+    # Only real HTTP client calls count: urlopen, httpx, requests, aiohttp, playwright, etc.
+    fetches = re.search(r"urlopen|httpx\b|requests\.|aiohttp|playwright|BeautifulSoup"
+                        r"|session\.get\b", src)
     if not fetches:
         f.append(Finding(path, "image-no-live-source", INFO,
                          "Hardcoded seed data with no HTTP/DOM call — no page exists to "
@@ -365,7 +370,7 @@ def rule_image_capture(path, src, f):
 # gets ignored — which is worse than having no rule.
 _NO_IMAGE_SOURCE = re.compile(
     r"pdfplumber|pymupdf|fitz\b|openpyxl|load_workbook|read_excel|\.pdf\b|\.xlsx\b"
-    r"|csv\.DictReader|price[_ ]list", re.I)
+    r"|csv\.DictReader|price[_ ]list|_SOURCE_HAS_NO_IMAGES", re.I)
 
 
 def rule_parts_images(path, src, f):
@@ -408,11 +413,23 @@ def rule_parts_images(path, src, f):
 def rule_warranty(path, src, f):
     if "INSERT INTO supplier_parts" not in src:
         return
-    if "warranty" not in src:
+    # Rule 1: warranty_policy must be imported when supplier_parts is written.
+    if "warranty_policy" not in src:
         f.append(Finding(path, "warranty-capture", WARN,
-                         "Writes supplier_parts without warranty — call "
+                         "Writes supplier_parts without importing warranty_policy — call "
                          "warranty_policy.resolve() so the offer carries a warranty "
-                         "and its provenance."))
+                         "and its provenance (`warranty_months` + `warranty_source`)."))
+        return   # no point checking warranty_source if the import is absent
+    # Rule 2: warranty_source must be written alongside warranty_months.
+    # Provenance is what distinguishes "supplier stated 24 months" from "we applied
+    # the platform default". A surface that says "supplier warranty" relies on this.
+    if "warranty_months" in src and "warranty_source" not in src:
+        f.append(Finding(path, "warranty-source-missing", WARN,
+                         "Writes `warranty_months` to supplier_parts but omits "
+                         "`warranty_source`. Always write both — `warranty_source` "
+                         "is how a surface can tell 'supplier stated' from "
+                         "'platform default'. Call _warranty_resolve() and store "
+                         "both return values."))
 
 
 def rule_skip_locked(path, src, f):

@@ -333,7 +333,7 @@ async def import_fitment(conn: asyncpg.Connection, rows: List[Dict[str, str]]) -
                     -- INFERENCE instead.
                     INSERT INTO part_vehicle_fitment
                         (id, part_id, manufacturer, model, year_from, year_to, created_at)
-                    VALUES (gen_random_uuid(), $1::uuid, $2::varchar, $3::varchar,
+                    VALUES (gen_random_uuid(), $1::uuid, $2, $3,
                             $4::int, $5::int, NOW())
                     ON CONFLICT (part_id, manufacturer, model, year_from)
                     DO UPDATE SET year_to = GREATEST(

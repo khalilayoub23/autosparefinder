@@ -5456,7 +5456,7 @@ class SocialMediaManagerAgent(BaseAgent):
             "הנחיות פלט חובה: החזירי את טקסט הפוסט בלבד — ללא הסבר, "
             "ללא ספירת תווים, ללא חשיבה בקול רם. רק הפוסט הסופי המוכן לפרסום."
         )
-        raw = await hf_text(prompt=prompt, system=self.system_prompt, temperature=self.temperature)
+        raw = await hf_text(prompt=prompt, system=self.system_prompt, temperature=self.temperature, reasoning_effort="low")
         return self._finalize_noa_post(raw, platforms=[platform] if platform else [])
 
     async def process(self, message: str, conversation_history: List[Dict], db: AsyncSession, **kwargs) -> str:

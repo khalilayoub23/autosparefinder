@@ -1929,15 +1929,32 @@ async def search_parts(
                 continue
             identifier_base_conditions.append(clause)
 
+        # Resolve the matching part ids FIRST, as a UNION of independently
+        # indexed lookups, then filter by primary key.
+        #
+        # This used to be an inline `A OR B OR EXISTS(C)` on pc, and it was the
+        # slowest thing in the product: measured 2026-08-05, a part-number search
+        # took 12-31s and sometimes exceeded a 180s client timeout. Two reasons,
+        # and the second is the non-obvious one:
+        #   1. Wrapping a column in regexp_replace/UPPER makes a plain index
+        #      unusable, so every branch was a full scan of 4.5M rows running two
+        #      regex replacements per row.
+        #   2. Adding matching expression indexes was NOT enough. With an OR the
+        #      planner must BitmapOr both branches, and combined with `LIMIT` it
+        #      decided a seq scan would find rows sooner — measured: seq scan
+        #      12.4s, forcing the index path 20.0s (worse), UNION ALL 0.00s.
+        # An OR across two expressions is the problem; two separate lookups are
+        # each a plain index probe. Same rows, ~4 orders of magnitude faster.
         identifier_match_sql = (
-            "("
-            "regexp_replace(UPPER(COALESCE(pc.sku, '')), '[^A-Z0-9]', '', 'g') = :identifier_token "
-            "OR regexp_replace(UPPER(COALESCE(pc.oem_number, '')), '[^A-Z0-9]', '', 'g') = :identifier_token "
-            "OR EXISTS ("
-            "SELECT 1 FROM part_cross_reference pcr_exact "
-            "WHERE pcr_exact.part_id = pc.id "
-            "AND regexp_replace(UPPER(COALESCE(pcr_exact.ref_number, '')), '[^A-Z0-9]', '', 'g') = :identifier_token"
-            ")"
+            "pc.id IN ("
+            "SELECT id FROM parts_catalog "
+            "WHERE is_active AND regexp_replace(UPPER(COALESCE(sku, '')), '[^A-Z0-9]', '', 'g') = :identifier_token "
+            "UNION "
+            "SELECT id FROM parts_catalog "
+            "WHERE is_active AND regexp_replace(UPPER(COALESCE(oem_number, '')), '[^A-Z0-9]', '', 'g') = :identifier_token "
+            "UNION "
+            "SELECT part_id FROM part_cross_reference "
+            "WHERE regexp_replace(UPPER(COALESCE(ref_number, '')), '[^A-Z0-9]', '', 'g') = :identifier_token"
             ")"
         )
         identifier_base_conditions.append(identifier_match_sql)

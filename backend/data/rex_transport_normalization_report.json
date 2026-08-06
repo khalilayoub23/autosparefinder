@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-04T14:59:51.734484+00:00",
+  "generated_at": "2026-08-06T00:00:33.074422+00:00",
   "resource_ids": [
     "142afde2-6228-49f9-8a29-9b6c3a0cbe40",
     "5e87a7a1-2f6f-41c1-8aec-7216d52a6cf6"
@@ -13,19 +13,43 @@
   },
   "alias_groups": [
     {
+      "canonical_key": "ב מ וו",
+      "canonical_name": "ב מ וו",
+      "aliases": [
+        "ב מ וו אנגליה"
+      ],
+      "total_records": 64987
+    },
+    {
+      "canonical_key": "אאודי",
+      "canonical_name": "אאודי גרמניה",
+      "aliases": [
+        "אאודי"
+      ],
+      "total_records": 53971
+    },
+    {
+      "canonical_key": "אופל",
+      "canonical_name": "אופל",
+      "aliases": [
+        "אופל גרמניה"
+      ],
+      "total_records": 36288
+    },
+    {
       "canonical_key": "די אס",
-      "canonical_name": "די.אס",
+      "canonical_name": "די אס צרפת",
       "aliases": [
         "די אס"
       ],
-      "total_records": 1288
+      "total_records": 1289
     }
   ],
   "quality_issues": {
     "missing_manufacturer_records": 0,
     "missing_model_records": 0,
     "missing_year_records": 0,
-    "duplicate_or_alias_manufacturer_groups": 1,
+    "duplicate_or_alias_manufacturer_groups": 4,
     "blank_or_corrupted_manufacturer_tokens": 0
   }
 }

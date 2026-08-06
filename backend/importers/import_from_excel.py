@@ -25,6 +25,7 @@ from dotenv import load_dotenv
 
 from manufacturer_normalization import normalize_manufacturer_name
 from workbook_normalizer import build_normalized_workbook, iter_normalized_rows
+from warranty_policy import resolve as _warranty_resolve
 
 load_dotenv()
 
@@ -148,6 +149,7 @@ def build_supplier_insert_sql(column_names):
 
 
 def build_supplier_insert_payload(column_names, supplier_id, part_id, rec, now, price, price_usd, is_av, av_code):
+    _wmonths, _wsource = _warranty_resolve(rec.get("warranty") if isinstance(rec, dict) else None)
     values = {
         "id": uuid.uuid4(),
         "supplier_id": supplier_id,
@@ -159,7 +161,8 @@ def build_supplier_insert_payload(column_names, supplier_id, part_id, rec, now, 
         "shipping_cost_ils": 0.0,
         "is_available": is_av,
         "availability": av_code,
-        "warranty_months": 12,
+        "warranty_months": _wmonths,
+        "warranty_source": _wsource,
         "estimated_delivery_days": 7 if is_av else 14,
         "last_checked_at": now,
         "stock_quantity": 10 if is_av else 0,

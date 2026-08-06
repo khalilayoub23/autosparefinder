@@ -81,6 +81,7 @@ from dotenv import load_dotenv
 
 sys.path.insert(0, str(Path(__file__).parent))
 from category_map import BAD_FALLBACK_BUCKETS, CATCH_ALL, categorize_on_ingest, guess_category_by_text
+from warranty_policy import resolve as _warranty_resolve
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)s  %(message)s")
@@ -736,7 +737,7 @@ async def _ensure_supplier(conn, manufacturer: str) -> str:
 
 async def _upsert_supplier_part(conn, part_id: str, supplier_id: str,
                                  oem: str, price: float,
-                                 warranty_months: int, available: bool,
+                                 warranty_months: int, warranty_source: str, available: bool,
                                  supplier_url: str):
     """Insert/update supplier_parts record."""
     try:
@@ -744,24 +745,26 @@ async def _upsert_supplier_part(conn, part_id: str, supplier_id: str,
             INSERT INTO supplier_parts (
                 id, supplier_id, part_id, supplier_sku,
                 price_ils, price_usd,
-                availability, is_available, warranty_months,
+                availability, is_available, warranty_months, warranty_source,
                 estimated_delivery_days, supplier_url,
                 created_at, updated_at
             ) VALUES (
                 gen_random_uuid(), $1::uuid, $2::uuid, $3,
                 $4, 0.0,
-                $5, $6, $7,
-                21, $8,
+                $5, $6, $7, $8,
+                21, $9,
                 NOW(), NOW()
             )
             ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE SET
-                price_ils    = EXCLUDED.price_ils,
-                is_available = EXCLUDED.is_available,
-                availability = EXCLUDED.availability,
-                updated_at   = NOW()
+                price_ils       = EXCLUDED.price_ils,
+                is_available    = EXCLUDED.is_available,
+                availability    = EXCLUDED.availability,
+                warranty_months = EXCLUDED.warranty_months,
+                warranty_source = EXCLUDED.warranty_source,
+                updated_at      = NOW()
         """, supplier_id, part_id, oem, price,
              'in_stock' if available else 'out_of_stock', available,
-             warranty_months, supplier_url)
+             warranty_months, warranty_source, supplier_url)
     except Exception as e:
         log.debug(f'supplier_parts upsert skip: {e}')
 
@@ -872,7 +875,8 @@ async def upsert_parts(conn, manufacturer, pdf_rows, db_rows, dry_run):
             # VAT logic — universal formula: base_price = max_price_ils × 1.45
             #   max_price_ils = incl-VAT price (market price)
             #   importer_price_ils = excl-VAT cost
-            warranty_months = (pdf_row.warranty_years or 1) * 12
+            _raw_warranty = f"{pdf_row.warranty_years} years" if pdf_row.warranty_years else None
+            warranty_months, warranty_source = _warranty_resolve(_raw_warranty)
             raw_price       = float(pdf_row.price or 0.0)
             # MANDATORY VAT CHECK — use compute_price_triple (never inline)
             importer_price, max_price, base_price = compute_price_triple(raw_price, manufacturer)
@@ -897,12 +901,13 @@ async def upsert_parts(conn, manufacturer, pdf_rows, db_rows, dry_run):
                              "year_from":2020,"year_to":datetime.utcnow().year,
                              "source":"supplier_pdf_import"}],ensure_ascii=False),
                 pdf_row.oem_number[:100],
-                base_price,     # base_price = max_price_ils × 1.45
-                importer_price, # importer_price_ils = excl-VAT cost
-                max_price,      # max_price_ils = incl-VAT retail price
-                pdf_row.available,
-                warranty_months,
-                importer_price, # min_price_ils = excl-VAT cost
+                base_price,     # base_price = max_price_ils × 1.45   [11]
+                importer_price, # importer_price_ils = excl-VAT cost   [12]
+                max_price,      # max_price_ils = incl-VAT retail price [13]
+                pdf_row.available,  # [14]
+                warranty_months,    # [15]
+                importer_price, # min_price_ils = excl-VAT cost         [16]
+                warranty_source,    # [17]
             ))
             metrics["inserted"] += 1
         else:
@@ -975,15 +980,15 @@ async def upsert_parts(conn, manufacturer, pdf_rows, db_rows, dry_run):
                     )
                     if result:
                         inserted_ids.append((str(result['id']), row[10], row[11],
-                                             row[15], row[14], supplier_id, supplier_url))
+                                             row[15], row[17], row[14], supplier_id, supplier_url))
                 except Exception as e:
                     log.debug(f'Insert skip: {e}')
         # Write supplier_parts for every inserted/updated part
         # price in inserted_ids is importer_price_ils (excl. VAT) — correct cost basis
         # calculate_customer_price_from_ils() will apply × 1.45 margin + IL VAT on top
-        for pid, oem, price, warranty_months, available, sid, surl in inserted_ids:
+        for pid, oem, price, warranty_months, warranty_source, available, sid, surl in inserted_ids:
             await _upsert_supplier_part(conn, pid, sid, oem, price,
-                                        warranty_months, available, surl)
+                                        warranty_months, warranty_source, available, surl)
         # Delegate fitment to REX
         if inserted_ids:
             await _create_rex_fitment_todo(conn, manufacturer, len(inserted_ids),

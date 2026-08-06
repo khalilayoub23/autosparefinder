@@ -217,6 +217,8 @@ async def import_brand(conn, brand_en: str, parts: list[dict], supplier_id: str,
         "source_url": "https://www.colmobil.co.il/spareparts/",
         "vat_included": True,
         "vat_rate": VAT,
+        "category_hint": "original",
+        "part_type_text": "מקורי",
     }, ensure_ascii=False)
 
     updated = inserted = errors = 0
@@ -288,7 +290,10 @@ async def import_brand(conn, brand_en: str, parts: list[dict], supplier_id: str,
                             warranty_source,created_at,updated_at)
                         VALUES(gen_random_uuid(),$1,$2::uuid,$3,$4,0,'in_stock',true,$5,$6,$7,NOW(),NOW())
                         ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE SET
-                            price_ils=EXCLUDED.price_ils, is_available=true, updated_at=NOW()
+                            price_ils=EXCLUDED.price_ils, is_available=true,
+                            warranty_months=EXCLUDED.warranty_months,
+                            warranty_source=EXCLUDED.warranty_source,
+                            updated_at=NOW()
                     """, supplier_id, part_id, oem, retail, "https://www.colmobil.co.il/spareparts/",
                         *_warranty_resolve(None))
 

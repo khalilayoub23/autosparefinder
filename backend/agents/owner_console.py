@@ -975,7 +975,7 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp") -> 
         # Cerebras default ~1.0 → garbled Hebrew. Env-tunable.
         _console_temp = float(os.getenv("OWNER_CONSOLE_TEMPERATURE", "0.4"))
         reply = await hf_text(prompt, system=system, priority=True, max_tokens=600,
-                              temperature=_console_temp)
+                              temperature=_console_temp, reasoning_effort="low")
         reply = _clean_wa_reply(reply) or "בסדר, קיבלתי."
         reply += saved_note
         hist2 = hist + [{"role": "user", "content": clean},

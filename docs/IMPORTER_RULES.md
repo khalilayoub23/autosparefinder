@@ -43,7 +43,8 @@ but undocumented (or documented but unimplemented).
 | `fitment-not-written` | ERROR/WARN | §8b — write the fitment TABLE, not just a JSONB blob |
 | `fitment-placeholder-only` | INFO | §8b — `'All Models'` must NOT be written as fitment |
 | `specifications-missing` | ERROR/WARN | §8c — provenance is mandatory |
-| `warranty-capture` | WARN | §5 — `warranty_policy.resolve()` |
+| `warranty-capture` | WARN | §5 — `warranty_policy.resolve()` not imported |
+| `warranty-source-missing` | WARN | §5 — `warranty_source` omitted from supplier_parts |
 | `absent-column-guard` | WARN | §6 — a missing column fails OPEN |
 | `column-does-not-exist` | ERROR | §3 — an INSERT names a column the table does not have |
 | `syntax` | ERROR | file does not parse |
@@ -181,6 +182,27 @@ then normalized:
 WHERE REPLACE(REPLACE(UPPER(oem_number),' ',''),'-','') = $1
 ```
 
+### Per-row savepoints (asyncpg)
+Wrap every row's INSERT inside its own transaction savepoint so one bad row does not
+abort the whole batch:
+
+```python
+for row in rows:
+    try:
+        async with conn.transaction():       # creates a SAVEPOINT
+            await conn.execute(INSERT_SQL, *params)
+    except Exception as e:
+        errors += 1
+        print(f"ERR row {row['sku']}: {e}")
+```
+
+Without this, a single constraint violation rolls back every row that came before it
+in the same `async with conn.transaction()` block, and the importer prints "3,000
+rows processed" with 2,999 silently discarded.
+
+*Earned by:* cascading aborts in the Colmobil and SNG importers when a single
+malformed row cleared the entire batch buffer.
+
 ---
 
 ## 4. Price guards
@@ -202,15 +224,37 @@ The same guard applies to a direct `UPDATE … SET importer_price_ils = $n` — 
 ## 5. Warranty
 
 ```python
-from warranty_policy import resolve
-months, source = resolve(row.get("warranty_months"), row.get("warranty"))
+from warranty_policy import resolve as _warranty_resolve
+warranty_months, warranty_source = _warranty_resolve(row.get("warranty") or None)
 ```
-`resolve()` always returns a usable `(months, source)`. Write **both** —
-`warranty_source` records whether the supplier stated it (`'supplier'`) or we applied
-the platform default (`'platform_default'`). Never collapse the two: a surface that
-says "supplier warranty" must call `warranty_policy.is_supplier_stated()`.
 
-*Earned by:* REX capturing no warranty at all — 293,263 rows.
+`_warranty_resolve()` always returns a usable `(months, source)`. Write **both
+columns** in every `supplier_parts` INSERT and DO UPDATE:
+
+```sql
+-- INSERT columns list must include both
+warranty_months, warranty_source,
+
+-- DO UPDATE must refresh both
+warranty_months = EXCLUDED.warranty_months,
+warranty_source = EXCLUDED.warranty_source,
+```
+
+- `warranty_source = 'supplier'` — the supplier's own text stated the term.
+- `warranty_source = 'platform_default'` — we applied the platform default (12 months).
+- `warranty_source = NULL` — legacy row written before the column existed.
+
+**Never collapse the two.** A surface displaying "supplier warranty" MUST call
+`warranty_policy.is_supplier_stated()` — comparing `== 'supplier'` silently treats
+every legacy NULL row as non-supplier.
+
+**Never hardcode** `warranty_months = 12` or `warranty_months = 24`.
+The platform default is `PLATFORM_DEFAULT_WARRANTY_MONTHS` in the env; it can change.
+Call `_warranty_resolve(None)` when the source gives no warranty term — it applies
+the env-configured default and tags it `'platform_default'`.
+
+*Earned by:* REX capturing no warranty at all (293,263 rows); 11 importers hardcoding
+`12` or `24` months and no source column, making supplier statements unverifiable.
 
 ---
 
@@ -312,24 +356,64 @@ gap stays visible without pushing anyone into corrupting search.
 
 ## 8c. Specifications — enforced by `specifications-missing`
 
-Every created part carries a `specifications` JSONB with its provenance. Minimum
-`{"source": "<importer or site>"}`; add `source_url`, `part_brand`, `discovered_at`
-where available.
+Every created part carries a `specifications` JSONB with its provenance. **Mandatory
+minimum** — without this the row is untraceable:
 
-This is what makes a bad row traceable months later — it is how today's audit could
-attribute 21,795 bad names to oempartsonline and 6,033 to colmobil. Without it you
-cannot tell which importer to fix or which source to re-harvest.
+```json
+{ "source": "<importer name or site URL>" }
+```
+
+**Recommended enrichment fields** — include any the source provides:
+
+| Field | Value | Purpose |
+|---|---|---|
+| `source` | importer file name or site URL | traceability (mandatory) |
+| `source_url` | direct URL for the part | re-harvest anchor |
+| `importer` | human-readable supplier name | display provenance |
+| `vat_included` | `true` / `false` | price transparency |
+| `vat_rate` | `0.18` | audit trail |
+| `currency` | `"ILS"` / `"USD"` / `"EUR"` | price transparency |
+| `warranty_months` | resolved value | duplicated here for search |
+| `category_hint` | `"original"` / `"aftermarket"` / raw source label | classification aid |
+| `name_he` | Hebrew part description | multilingual search |
+| `vehicle_models` | list of compatible model strings | enriches fitment context |
+| `part_type_text` | raw source type label (`"מקורי"` / `"חליפי"`) | classification audit |
+| `discovered_at` | ISO timestamp | staleness detection |
+
+Pass raw source labels as `category_hint` / `part_type_text` — never as the stored
+`category` column value (which must come from `categorize_on_ingest()`).
+
+This is what makes a bad row traceable months later — it is how the 2026-07-28 audit
+attributed 21,795 bad names to oempartsonline and 6,033 to colmobil. Without `source`
+you cannot tell which importer to fix or which source to re-harvest. Without
+`category_hint` / `name_he` the categorizer runs blind when the English name is sparse.
 
 ---
 
 ## 9. Before you ship — checklist
 
+**Compliance (automated):**
 - [ ] `python3 /app/maintenance/audit_importers.py` exits **0**
 - [ ] `python3 -m py_compile <file>` passes
-- [ ] **Every SQL statement's highest `$N` equals the number of arguments passed**,
-      and the numbering is contiguous — a mismatch fails only at RUNTIME. If you add
-      a parameter, append it **last**; inserting mid-list silently rebinds every
-      following `$N` (this nearly wrote `base_price` into `category`).
+
+**SQL correctness (manual — compile cannot catch these):**
+- [ ] `supplier_parts` upsert uses `ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key`
+- [ ] `importer_price_ils` DO UPDATE has the `CASE WHEN EXCLUDED… > 0` guard
+- [ ] Every `$N` is contiguous and the argument count matches — off-by-one at N=8 means
+      `$9` never gets its value (RUNTIME error only). Append new params **last**.
+- [ ] `warranty_months` AND `warranty_source` are in every `supplier_parts` INSERT and
+      DO UPDATE SET — both or neither; never one without the other.
+- [ ] Per-row `async with conn.transaction()` savepoints on row-level loops.
+
+**Data quality (manual):**
+- [ ] `categorize_on_ingest()` called for every `parts_catalog` INSERT (or `'כללי'` for
+      INSERT…SELECT that cannot call Python per-row).
+- [ ] `part_condition` is lowercase (`'new'`, `'oem'`, `'aftermarket'`).
+- [ ] `specifications` JSONB contains at minimum `"source"` + `"source_url"` + `"category_hint"`.
+- [ ] If source provides image URL → `parts_images` row written.
+- [ ] If source provides vehicle data → `part_vehicle_fitment` rows written.
+
+**Verification (runtime):**
 - [ ] Ran against a real sample and **read the tallies** — `inserted`, `updated`,
       `skipped`, `errors`. A 100% skip rate is an outage, not a no-op.
 - [ ] Verified the outcome in the DB, not the script's self-report.

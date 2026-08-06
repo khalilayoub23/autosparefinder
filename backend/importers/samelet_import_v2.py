@@ -48,6 +48,7 @@ Author: AutoSpareFinder Agent
 Last Updated: 2026-06-01
 """
 import asyncio, asyncpg, requests, time, re, os, string, json, uuid, sys
+from warranty_policy import resolve as _warranty_resolve
 
 DB_URL = os.environ.get("DATABASE_URL", "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43@postgres_catalog:5432/autospare").replace("postgresql+asyncpg://", "postgresql://")
 # Run a single brand: python3 samelet_import_v2.py Hongqi  (or 'hongqi')
@@ -239,17 +240,22 @@ async def import_brand(conn, slug, brand_name, prefix):
             base_price_val = round(cost * 1.45, 2) if cost > 0 else 0.0
             max_price = il_retail
             category  = classify_part(name_en, name_he)
-            part_type = "original" if p.get("MaterialType","01") == "01" else "aftermarket"
+            mat_type = p.get("MaterialType", "01")
+            part_type = "original" if mat_type == "01" else "aftermarket"
+            _wmonths, _wsource = _warranty_resolve(p.get("Warranty") or p.get("warranty"))
             specs = json.dumps({
                 "vat_included":       True,
                 "vat_rate":           0.18,
                 "currency":           "ILS",
                 "source":             f"samelet.com official importer - {brand_name}",
+                "source_url":         f"https://samelet.com/form/parts-prices/{slug}",
                 "shipping_to_il":     True,
                 "importer":           supplier_name,
-                "warranty_months":    12,
+                "warranty_months":    _wmonths,
                 "samelet_slug":       slug,
-                "material_type":      p.get("MaterialType",""),
+                "material_type":      mat_type,
+                "category_hint":      "original" if mat_type == "01" else "aftermarket",
+                "name_he":            name_he,
                 "il_retail_incl_vat": il_retail,
             }, ensure_ascii=False)
             tier = 'OE_equivalent' if part_type == 'aftermarket' else None
@@ -339,19 +345,25 @@ async def import_brand(conn, slug, brand_name, prefix):
         sp_count = 0
         for part in existing_parts:
             try:
+                _sp = json.loads(part.get("specifications") or "{}") if isinstance(part.get("specifications"), str) else {}
+                _wm = _sp.get("warranty_months", 12)
+                _ws = _sp.get("warranty_source", "platform_default")
                 await conn.execute("""
                     INSERT INTO supplier_parts (
                         id, supplier_id, part_id, supplier_sku,
                         price_ils, price_usd, availability, is_available,
-                        warranty_months, estimated_delivery_days, supplier_url,
+                        warranty_months, warranty_source,
+                        estimated_delivery_days, supplier_url,
                         created_at, updated_at)
                     VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3, $4, 0.0,
-                            'in_stock', TRUE, 12, 21, $5, NOW(), NOW())
+                            'in_stock', TRUE, $5, $6, 21, $7, NOW(), NOW())
                     ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE SET
                         price_ils=EXCLUDED.price_ils,
+                        warranty_months=EXCLUDED.warranty_months,
+                        warranty_source=EXCLUDED.warranty_source,
                         updated_at=NOW()
                 """, supplier_id, str(part["id"]), str(part["oem_number"]),
-                     float(part["base_price"] or 0), supplier_url)
+                     float(part["base_price"] or 0), _wm, _ws, supplier_url)
                 sp_count += 1
             except Exception:
                 pass

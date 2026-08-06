@@ -1,5 +1,75 @@
 # AutoSpareFinder — Bug & Breaking Points Fix Tracker
-> Last scan: 2026-07-29 09:40 UTC | Total issues found: 390 | Fixed: 377 | In Progress: 0 | Open: 13 (all in UNWIRED importers — see Session 2026-07-28d)
+> Last scan: 2026-08-06 | Total issues found: 421 | Fixed: 408 | In Progress: 0 | Open: 13
+
+---
+
+## Session — 2026-08-06 (ASAP Network — 4 approved sellers imported)
+
+ASAP Network is an auto-parts aggregator that supplies ACA-standard CSVs (products + ACES fitment) for approved brands. Four brands were approved by the owner and harvested via the browser → `/api/v1/system/asap-collect` relay → `backend/importers/asap_import.py`.
+
+**Transport pattern (CORS simple-request, learned 2026-07-12 rule confirmed):** The browser JS posts to the relay with `Content-Type: text/plain` and auth in the JSON body (15-min single-use Redis nonce from `maintenance/mint_asap_nonce.py`) — no CORS preflight, so our global `CORSMiddleware` passes it through from any origin. Fire-and-forget async IIFE stores CSV to `window._var`; relay posted in a separate JS call to avoid the CDP 45s timeout.
+
+**Shared ACES fitment file:** Datasheet 1878444 is a single file covering all 4 brands. Importing it once links fitment for whichever brands' products are in the DB at that point — re-importing after new brands are added backfills those automatically.
+
+**`asyncpg ::varchar` fix (root cause of 0-linked fitment in a prior session):** `$2::varchar` in the fitment INSERT conflicted with asyncpg inferring Python `str` as `text`. Removed explicit `::varchar` from `$2` and `$3` in `import_fitment()` — all fitment rows linked on the second attempt.
+
+| Brand | Brand ID | Products | Fitment rows | Notes |
+|---|---|---|---|---|
+| Fox Factory | 130108 | **1,298** | **4,199** (8,088 fitment CSV rows → 4,199 in DB; shared file) | Fox shocks/forks/bike/moto parts |
+| Banks Power | 11701 | **423** | **3,342** | Performance exhaust/air intake/intercoolers |
+| BDS Suspension | 130085 | **92** | **443** | Suspension lift kits, control arms |
+| Adams Driveshaft | 1467 | **93** | **336** | CV driveshafts (Jeep/Ram/truck spec) |
+| **Total** | | **1,906** | **8,320** | |
+
+**DB verification (2026-08-06):**
+```
+Adams Driveshaft: 93 supplier_parts, 336 fitment (highest: $5,028 Gladiator rear 2-piece 1350 CV)
+Banks Power:      423 supplier_parts, 3,342 fitment
+BDS Suspension:   92 supplier_parts, 443 fitment
+Fox Factory:      1,298 supplier_parts, 4,199 fitment
+```
+
+**Files:** `backend/importers/asap_import.py` (importer), `backend/routes/system.py` (`/asap-collect` endpoint), `backend/maintenance/mint_asap_nonce.py` (nonce tool). Logs at `/app/state/logs/asap_import_<brand_id>.log`.
+
+**Supplier row:** `suppliers.name = 'ASAP Network'`, `is_active = TRUE`, sourced as `pending_credentials` initially → approved by owner. Supplier parts carry the ASAP SKU as `supplier_sku`, USD price converted to ILS at live rate, `warranty_months = 12 / warranty_source = 'platform_default'`.
+
+---
+
+## Session — 2026-08-06 (Importer rules compliance sweep)
+
+| # | Item | Status | Detail |
+|---|------|--------|--------|
+| 1 | **13 importers missing `warranty_source` in `supplier_parts`** | ✅ fixed | `car_parts_ie_import_generic`, `lr_import`, `supplier_pdf_import`, `sng_barratt_jaguar_import`, `kia_import`, `import_delek_brands`, `import_from_excel`, `lexus_pdf_import`, `isuzu_excel_import`, `zeekr_full_import`, `jaguar_batch_import`, `colmobil_import_v2`, `mazda_il_importer` — all now call `warranty_policy.resolve()` and write `warranty_source` alongside `warranty_months`. Never hardcode `12` — provenance is mandatory. |
+| 2 | **`warranty_months` hardcoded in specs and INSERT** | ✅ fixed | All files that hardcoded `'warranty_months': 12` or `warranty_months, 12` in SQL now compute via `_warranty_resolve(None)` → `(12, 'platform_default')`. Provenance is now set correctly. |
+| 3 | **`delek_multi_importer.py` ON CONFLICT used column form** | ✅ fixed | `ON CONFLICT (supplier_id,supplier_sku)` → `ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key`. Also added `warranty_months/warranty_source` to DO UPDATE SET. |
+| 4 | **`mazda_il_importer.py` variable name bug** | ✅ fixed | `_warranty_resolve(part.get("warranty") ...)` used the wrong variable name `part` instead of `p` (the loop variable). |
+| 5 | **`isuzu_excel_import.py` missing supplier_parts entirely** | ✅ fixed | Added `ensure_supplier()`, full `supplier_parts` upsert block, and fixed specs to use the enriched `r["specs"]` dict instead of the hardcoded minimal dict. |
+| 6 | **`isuzu_excel_import.py` specs not wired to catalog INSERT** | ✅ fixed | The rich specs dict (with `category_hint`, `name_he`, `vehicle_context`, `warranty_months`) was built but the catalog INSERT was writing a different hardcoded minimal dict. Now unified. |
+| 7 | **`jaguar_batch_import.py` hardcoded `'כללי'` category** | ✅ fixed | Temp table now includes a `category` column pre-computed via `categorize_on_ingest(name=title)` per row in `prepare_part()`. |
+| 8 | **`zeekr_full_import.py` specs missing `category_hint`/`name_he`/`vehicle_models`** | ✅ fixed | Enriched specs dict + `upsert_supplier_part` now accepts and writes `warranty_months`/`warranty_source` parameters. |
+| 9 | **`colmobil_import_v2.py` DO UPDATE missing warranty fields** | ✅ fixed | Added `warranty_months=EXCLUDED.warranty_months, warranty_source=EXCLUDED.warranty_source` + `category_hint`/`part_type_text` to spec_base. |
+| 10 | **`supplier_pdf_import.py` hardcoded warranty computation** | ✅ fixed | `warranty_months = (pdf_row.warranty_years or 1) * 12` → `_warranty_resolve(_raw_warranty)`. Source is now `'supplier'` when the PDF contains a warranty figure, `'platform_default'` otherwise. `warranty_source` threaded through the tuple and the function signature. |
+| 11 | All 13 modified files pass `python3 -m py_compile` and container import checks | ✅ verified | `warranty_policy.resolve(None)` = `(12, 'platform_default')`, `resolve('12 months')` = `(12, 'supplier')`, `resolve('אחריות לשנתיים')` = `(24, 'supplier')`. |
+
+**Rules reinforced:** (1) `warranty_source` is mandatory whenever `warranty_months` is written — `platform_default` vs `supplier` is the only way a surface can reliably say "this is a manufacturer promise, not our default." (2) Always grep the CALL SITE, not the import line — `from warranty_policy import resolve` is not the same as calling it. (3) Per-row savepoints (`async with conn.transaction():`) on supplier_parts upserts prevent cascade aborts. (4) `ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key` is the ONLY correct form — column-pair syntax silently fails when the constraint names don't match.
+
+---
+
+## Session — 2026-08-05 (Part-number search 300×, and the catch-all's real cause)
+
+| # | Item | Status | Detail |
+|---|------|--------|--------|
+| 1 | **A part-number search TIMED OUT — the most valuable query we serve** | ✅ verified | `NGK 91106` never returned (180s cap). `EXPLAIN`: `Seq Scan on parts_catalog`, cost 484,438, `Rows Removed by Filter: 4,550,915`. Cause: the predicate wrapped the column in a function — `regexp_replace(UPPER(COALESCE(sku,'')),'[^A-Z0-9]','','g') = $1` — and **a function on a column makes every index on that column unusable**. A customer holding the part in their hand, typing the number printed on it, got nothing. |
+| 2 | Adding the right index was **not** enough | ✅ verified | Built `idx_pc_search_norm_sku` / `idx_pc_search_norm_oem` (expression indexes matching the predicate byte-for-byte, 136 MB, 21s each). The planner **still** chose the seq scan: the three branches were `OR`-ed under a `LIMIT`, and it estimated 20,321 matches per branch (actual ~1), so "scan until the limit fills" looked cheap. Forcing the index made it **worse**. Measured: seq scan **12.4s** · forced index **20.0s** · `UNION` **0.00s**. |
+| 3 | Root fix — restructure the query, don't fight the estimate | ✅ deployed | `identifier_match_sql` is now `pc.id IN (SELECT … UNION SELECT … UNION SELECT …)` — three separately-indexed lookups instead of one `OR`-ed scan. Each branch can use its own index, and the fix does not depend on the planner's row estimate being good. Results proven **identical** before deploying (`identical=True` on every probe), because a faster query that returns different rows is not a fix. |
+| 4 | Live verification (post-restart, cold module) | ✅ verified | `NGK 91106` **180s+ → 0.33s** (44 parts, 3 with images) · `0986424815` 30.7s → **0.24s** · `1K0615301AA` 33.3s → **0.34s** · `brake pad` 0.25s (never used this path, unchanged). **~300–600×**, same rows. |
+| 5 | The index build failed twice and left **INVALID** indexes | ✅ fixed | `CREATE INDEX CONCURRENTLY` hit `LockNotAvailableError` during autovacuum. It leaves an INVALID index behind, and a retry with `IF NOT EXISTS` then **silently skips forever** — search stays slow while the index appears to exist. Fixed by drop-then-build with a 15-min `lock_timeout`, and verified via `indisvalid`, not by mere presence. |
+| 6 | **Owner asked why ~298K parts are still in `כללי`** — bucketed by CAUSE, not guessed | ✅ measured | 298,019 parts, every one replayed through the LIVE matcher and the LIVE blocklist: **7.6% (22,683)** the matcher classifies *now* — a real drift gap · **9.6% (28,469)** bare fasteners, blocklisted on purpose · **4.0% (11,993)** brand/position/generic words only · **1.6% (4,794)** pure codes, no words at all · the rest carry only ambiguous head-nouns (`support`, `holder`, `duct`, `insert`, `retainer`). So **~15% is deliberate** — the standing rule is that a wrong category is worse than the catch-all. |
+| 7 | **ROOT CAUSE of the drift: car-parts.ie ingest never looked at the part NAME** | ✅ root-fixed | `car_parts_ie_import_generic.py` imported `categorize_on_ingest` **but never called it** — line 268 categorized from the URL slug alone (`_map_category`). Blocks with no slug, or a slug we don't map, fell straight to the catch-all while the name said `"BOSCH … AUDI Q3 Sportback (F3N) brake pads"` in plain English. Measured: **49.3% of parts harvested in the previous 2 days landed in `כללי`** this way. Fix keeps the slug as the primary signal (it is the site's own taxonomy) and falls back to the name only when the slug yields the catch-all. |
+| 8 | Proven on the rows that actually failed | ✅ verified | Replayed OLD path vs NEW path over the 561 real catch-all rows created in the last 2 days: **550 rescued (98.0%)**, 11 genuinely unclassifiable. Examples: `… fuel pump`→fuel-air · `… suspension ball joint`→suspension-steering · `… wiper motor`→wipers-washers · `… timing chain`→belts-chains · `… electric system`→electrical. |
+| 9 | Duplicate OEM groups re-accumulated → parity FAIL, now cleared | ✅ verified | The parity gate failed on **106 duplicate groups** that arrived from ongoing harvesting since the last merge. Ran `merge_master_parts.py --all-brands` → `groups=0` in 790s, and confirmed independently in the DB: **duplicate OEM groups remaining: 0**. This is drift, not regression — exactly what the weekly maintenance loop exists to absorb. |
+
+**Rules reinforced:** (1) *A function on a column makes every index on that column unusable* — index the expression, or don't wrap the column. (2) *An expression index only matches if the expression is byte-identical to the predicate*, `COALESCE` included. (3) *`CREATE INDEX CONCURRENTLY` leaves an INVALID index on failure, and `IF NOT EXISTS` then skips it forever* — always check `indisvalid`, never presence. (4) *`OR` across expressions under a `LIMIT` defeats expression indexes* — `UNION` the branches so each gets its own index, and the plan stops depending on a row estimate. (5) *Prove a rewritten query returns IDENTICAL rows before deploying it* — faster and wrong is not faster. (6) *An importer that imports the shared helper is not an importer that CALLS it* — grep the call site, not the import line. (7) *Bucket a backlog by CAUSE before proposing a cure*: most of this catch-all is there by design, and only the measured 7.6% was a real bug.
 
 ---
 

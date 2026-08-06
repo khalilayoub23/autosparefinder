@@ -52,6 +52,7 @@ JSON_SRC = os.getenv("JSON_FILE", "/opt/autosparefinder/land_rover_parts.json")
 # Category rules DELEGATED to category_map — the single source of truth.
 # Add keywords to category_map.py, never here.
 from category_map import CATCH_ALL, categorize_on_ingest, normalize_category_label
+from warranty_policy import resolve as _warranty_resolve
 
 def guess_category(name: str, desc: str) -> str:
     """
@@ -142,6 +143,7 @@ async def main():
                     if m_name.upper() in name_upper:
                         fitment_models.append(m_name)
                         break  # take the most specific match (list is ordered longest-first)
+                _wmonths, _wsource = _warranty_resolve(None)
                 specs = json_mod.dumps({
                     'vat_included':    False,
                     'vat_rate':        0.18,
@@ -149,7 +151,8 @@ async def main():
                     'source':          'landrover.co.il official parts',
                     'shipping_to_il':  True,
                     'importer':        sup_name,
-                    'warranty_months': 24,
+                    'warranty_months': _wmonths,
+                    'category_hint':   'original',
                     'available':       in_stock,
                 }, ensure_ascii=False)
                 max_price = round(price * 1.18, 2) if price else None
@@ -206,18 +209,21 @@ async def main():
                                 INSERT INTO supplier_parts (
                                     id, supplier_id, part_id, supplier_sku,
                                     price_ils, price_usd, availability, is_available,
-                                    warranty_months, estimated_delivery_days, supplier_url,
+                                    warranty_months, warranty_source,
+                                    estimated_delivery_days, supplier_url,
                                     created_at, updated_at)
                                 VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3, $4, 0.0,
-                                        $5, $6, 24, 21, $7, NOW(), NOW())
+                                        $5, $6, $7, $8, 21, $9, NOW(), NOW())
                                 ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE SET
                                     price_ils=EXCLUDED.price_ils,
                                     is_available=EXCLUDED.is_available,
+                                    warranty_months=EXCLUDED.warranty_months,
+                                    warranty_source=EXCLUDED.warranty_source,
                                     updated_at=NOW()
                             """, sup_id, str(row['id']), sku,
                                  price or 0.0,
                                  'in_stock' if in_stock else 'out_of_stock',
-                                 in_stock, LR_SUPPLIER_URL)
+                                 in_stock, _wmonths, _wsource, LR_SUPPLIER_URL)
                         # Fitment: insert extracted model from name
                         for fit_model in fitment_models:
                             try:

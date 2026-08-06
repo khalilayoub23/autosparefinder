@@ -29,6 +29,8 @@ import asyncpg
 # ONE category source of truth — the literal that used to sit in this
 # INSERT ('General Parts'/'Auto Parts') is not a category at all.
 from category_map import categorize_on_ingest
+# ONE warranty source of truth — resolve() returns (months, source).
+from warranty_policy import resolve as _warranty_resolve
 
 INPUT_FILE = os.getenv("KIA_JSON", "/app/state/kia_israel_parts.json")
 DATABASE_URL = os.getenv(
@@ -114,6 +116,7 @@ async def run_import():
         max_price_ils = round(price_no_vat * 1.18, 2)
 
         sku = make_sku(oem)
+        _wmonths, _wsource = _warranty_resolve(raw_part.get("warranty"))
         specs = json.dumps({
             "source": "Kia Israel official price list",
             "source_url": KIA_PRICE_URL,
@@ -124,6 +127,9 @@ async def run_import():
             "vat_rate": 0.18,
             "oem_suffix": suffix,
             "in_stock": in_stock,
+            "name_he": name_he,
+            "warranty_months": _wmonths,
+            "category_hint": "original",
         }, ensure_ascii=False)
 
         try:
@@ -177,18 +183,20 @@ async def run_import():
                     INSERT INTO supplier_parts(
                         id, supplier_id, part_id, supplier_sku,
                         price_ils, price_usd, availability, is_available,
-                        warranty_months, estimated_delivery_days, supplier_url,
+                        warranty_months, warranty_source,
+                        estimated_delivery_days, supplier_url,
                         created_at, updated_at)
                     VALUES(gen_random_uuid(),$1::uuid,$2::uuid,$3,
-                           $4,0.0,'in_stock',$5,12,7,$6,NOW(),NOW())
-                    -- price_ils = max_price_ils (consumer reference), consistent with other IL importers
-                    ON CONFLICT(supplier_id,supplier_sku) DO UPDATE SET
+                           $4,0.0,'in_stock',$5,$6,$7,7,$8,NOW(),NOW())
+                    ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE SET
                         price_ils=EXCLUDED.price_ils,
                         is_available=EXCLUDED.is_available,
+                        warranty_months=EXCLUDED.warranty_months,
+                        warranty_source=EXCLUDED.warranty_source,
                         updated_at=NOW()
                 """,
                     supplier_id, part_id, oem,
-                    max_price_ils, in_stock, KIA_PRICE_URL
+                    max_price_ils, in_stock, _wmonths, _wsource, KIA_PRICE_URL
                 )
                 stats["sp_upserted"] += 1
 

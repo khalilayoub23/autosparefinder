@@ -44,6 +44,10 @@ import asyncpg
 
 # ONE category source of truth — categorize at INGEST so parts never land
 # with a NULL category and depend on the self-healing task to find them.
+# The Delek API returns an HTML price table (part number + description + price).
+# No image URLs are present in any API response — image capture is not possible.
+_SOURCE_HAS_NO_IMAGES = True
+
 from category_map import categorize_on_ingest
 
 # ONE warranty source of truth — resolve() returns (months, source).
@@ -301,9 +305,11 @@ async def upsert_parts(
                              warranty_months,warranty_source,updated_at)
                            VALUES (gen_random_uuid(),$1,$2,$3,0,$4,$5,'https://www.delek-motors.co.il/',
                                    $6,$7,NOW())
-                           ON CONFLICT (supplier_id,supplier_sku) DO UPDATE SET
+                           ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE SET
                              price_ils=EXCLUDED.price_ils,
                              is_available=EXCLUDED.is_available,
+                             warranty_months=EXCLUDED.warranty_months,
+                             warranty_source=EXCLUDED.warranty_source,
                              updated_at=NOW()""",
                         supplier_id, part_id, oem,
                         p["max_price_ils"],
