@@ -2323,12 +2323,20 @@ async def _reconcile_orphaned_jobs() -> None:
 
 
 async def _amayama_harvest_monitor_loop() -> None:
-    """Supervisor for the Amayama harvest. Amayama is browser-driven (its Cloudflare
-    blocks FlareSolverr AND it needs the owner's login for IL shipping), so unlike
-    car-parts.ie we CANNOT auto-restart it server-side. Instead this monitors
-    throughput: every 30 min it logs the Amayama supplier_parts count + delta, and
-    if the harvest has stalled (0 growth for ~1h) WHILE Japanese-brand OEMs are still
-    unpriced, it WhatsApps the owner once (with cooldown) to reopen the Amayama tab."""
+    """Supervisor for the Amayama harvest. Amayama gates every non-homepage page
+    (search/find/product) behind a Cloudflare Managed Challenge that fingerprints
+    and permanently blocks ANY CDP-driven browser — verified 2026-08-06 that this
+    catches BOTH FlareSolverr's internal browser AND a fresh vanilla Playwright
+    instance (100% reproducible "Performing security verification" hang, never
+    resolves). A REAL, non-CDP, already-logged-in browser tab goes around it clean
+    (proven live: 14 + 10 real offer rows via plain same-origin fetch(), zero
+    interstitial) — so the harvester is now `amayama_browser_harvester.js`, pasted
+    into a real Chrome tab on amayama.com (see that file's docstring for usage).
+    Unlike car-parts.ie we CANNOT auto-restart a browser tab server-side. Instead
+    this monitors throughput: every 30 min it logs the Amayama supplier_parts
+    count + delta, and if the harvest has stalled (no feed activity ~25 min) WHILE
+    Japanese-brand OEMs are still unpriced, it WhatsApps the owner once (with
+    cooldown) to reopen the tab and re-run `AMAYAMA.autorun(...)`."""
     import harvest_heartbeat
     import time as _time
     await asyncio.sleep(600)
@@ -2351,25 +2359,28 @@ async def _amayama_harvest_monitor_loop() -> None:
                     "AND LOWER(manufacturer) = ANY(:b)"
                 ), {"b": list(JP_BRANDS)})).scalar() or 0
             delta = None if last_count is None else cnt - last_count
-            # Watch the SERVER-SIDE harvester (source 'amayama_fs' — feed heartbeat).
-            # It's supervised (auto-restarts), so a stale heartbeat means it can't run —
-            # almost always the login cookie (ama_ssid_s) expired, sometimes FlareSolverr.
-            hb_age = harvest_heartbeat.age_seconds("amayama_fs")
-            harvester_down = (hb_age is None) or (hb_age > DOWN_S)
+            # Watch the ACTIVE harvester (source 'amayama_browser' — feed
+            # heartbeat, recorded every time the browser tab calls /unpriced-oems).
+            # 'amayama_fs' (FlareSolverr) is retained read-only as a fallback signal
+            # in case that path is ever restored, but is not expected to be alive.
+            hb_age = harvest_heartbeat.age_seconds("amayama_browser")
+            fs_hb_age = harvest_heartbeat.age_seconds("amayama_fs")
+            best_age = min([a for a in (hb_age, fs_hb_age) if a is not None], default=None)
+            harvester_down = (best_age is None) or (best_age > DOWN_S)
             print(f"[amayama_monitor] amayama_parts={cnt} delta={delta} jp_unpriced={pending} "
-                  f"fs_heartbeat_age_s={int(hb_age) if hb_age is not None else None} "
-                  f"server_harvester={'DOWN' if harvester_down else 'alive'}", flush=True)
+                  f"browser_heartbeat_age_s={int(hb_age) if hb_age is not None else None} "
+                  f"harvester={'DOWN' if harvester_down else 'alive'}", flush=True)
             if harvester_down and pending > 1000 and (_time.time() - last_alert_ts) > ALERT_COOLDOWN_S:
                 last_alert_ts = _time.time()
                 owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
                 if owner:
                     try:
                         await _wa_send_update((
-                            "🈁 SERVER Amayama harvester (FlareSolverr) is DOWN — no feed "
-                            "activity ~25 min. ~{:,} Japanese-brand parts still unpriced. "
-                            "Most likely the Amayama login cookie expired: refresh "
-                            "backend/amayama_session.json (ama_ssid_s). It auto-restarts "
-                            "once fixed.".format(pending)))
+                            "🈁 Amayama browser harvester is DOWN — no feed activity "
+                            "~25 min. ~{:,} Japanese-brand parts still unpriced. Reopen "
+                            "amayama.com in a real tab (make sure you're logged in), "
+                            "paste amayama_browser_harvester.js, and run "
+                            "AMAYAMA.autorun(20, 40).".format(pending)))
                     except Exception:
                         pass
             last_count = cnt
@@ -3371,6 +3382,28 @@ async def _stuck_orders_monitor_loop():
                     )
                     .distinct()
                 )
+                # ROOT FIX 2026-08-06: automated Issuing authorization is DELIBERATELY
+                # blocked outside Stripe sandbox mode (routes/utils.py raises "Automated
+                # Issuing authorization is supported in sandbox mode only" — this platform
+                # runs a LIVE key). 4 real customer orders had been retried on this EXACT
+                # doomed path every 30 min since APRIL, each retry logged as "🤖 N orders
+                # auto-handled" — false progress on something that cannot succeed without
+                # either live-mode support being built or the owner fulfilling manually.
+                # Exclude orders whose most recent stripe_issuing failure in the last 24h
+                # is this structural (non-transient) guard from the auto-retry loop.
+                _nonretryable_recent_ids = (
+                    select(SupplierPayment.order_id)
+                    .where(
+                        SupplierPayment.status == "failed",
+                        SupplierPayment.provider == "stripe_issuing",
+                        or_(
+                            SupplierPayment.failure_reason.ilike("%sandbox mode only%"),
+                            SupplierPayment.failure_reason.ilike("%not configured%"),
+                        ),
+                        SupplierPayment.created_at > now - timedelta(hours=24),
+                    )
+                    .distinct()
+                )
                 result = await db.execute(
                     select(Order).where(
                         Order.status.in_(["confirmed", "paid", "processing"]),
@@ -3378,9 +3411,58 @@ async def _stuck_orders_monitor_loop():
                             Order.updated_at <= cutoff,
                             Order.id.in_(issuing_retry_order_ids),
                         ),
+                        ~Order.id.in_(_nonretryable_recent_ids),
                     )
                 )
                 stuck = result.scalars().all()
+
+                # Orders EXCLUDED above because they're known-doomed right now — these need
+                # the OWNER, not another retry. Honest framing (never "auto-handled"),
+                # deduped weekly (the underlying state won't change without owner action).
+                manual_result = await db.execute(
+                    select(Order).where(
+                        Order.status.in_(["confirmed", "paid", "processing"]),
+                        Order.updated_at <= cutoff,
+                        Order.id.in_(_nonretryable_recent_ids),
+                    )
+                )
+                manual_orders = manual_result.scalars().all()
+                if manual_orders:
+                    import hashlib as _hl2
+                    _manual_sig = _hl2.sha256(
+                        ",".join(sorted(o.order_number for o in manual_orders)).encode()
+                    ).hexdigest()[:16]
+                    _notify_manual = True
+                    try:
+                        _rm = await get_redis()
+                        _mk = f"autospare:manual_orders_notified:{_manual_sig}"
+                        if _rm is not None:
+                            if await _rm.exists(_mk):
+                                _notify_manual = False
+                            else:
+                                await _rm.set(_mk, "1", ex=7 * 86400)  # weekly reminder
+                    except Exception:
+                        _notify_manual = True
+                    if _notify_manual:
+                        _manual_list = ", ".join(o.order_number for o in manual_orders)
+                        _manual_title = f"🛠️ {len(manual_orders)} הזמנות דורשות טיפול ידני שלך"
+                        _manual_msg = (
+                            f"התשלום ללקוח התקבל, אבל התשלום האוטומטי לספק (Stripe Issuing) "
+                            f"חסום ב-live mode — לא ינסה אוטומטית שוב. יש לטפל ידנית בהזמנות: "
+                            f"{_manual_list}"
+                        )
+                        await _wa_send_update(f"{_manual_title}\n{_manual_msg}")
+                        admins_res0 = await db.execute(select(User).where(User.is_admin == True))
+                        for admin in admins_res0.scalars().all():
+                            db.add(Notification(
+                                user_id=admin.id, type="system",
+                                title=_manual_title, message=_manual_msg,
+                                data={"manual_orders": [o.order_number for o in manual_orders],
+                                      "reason": "stripe_issuing_live_mode_blocked"},
+                            ))
+                        await db.commit()
+                        print(f"[OrderMonitor] manual-action alert sent for {_manual_list}")
+
                 if stuck:
                     print(f"[OrderMonitor] Found {len(stuck)} order(s) stuck > {STUCK_ORDER_HOURS}h — triggering fulfillment...")
                     await trigger_supplier_fulfillment(stuck, db)
@@ -3833,23 +3915,31 @@ async def _health_monitor_loop():
                                     await _r2.set(_awk_ws, "1", ex=3600)
                             except Exception:
                                 pass
-                            for admin in admins:
-                                _pii_db.add(Notification(
-                                    user_id=admin.id,
-                                    type="threshold_alert",
-                                    title=_alert_title,
-                                    message=_alert_msg,
-                                    channel="whatsapp",
-                                    data={"threshold_type": "worker_silence", "silence_minutes": silence_mins},
-                                ))
-                                asyncio.create_task(_guarded_task(publish_notification(str(admin.id), {
-                                    "type": "threshold_alert",
-                                    "title": _alert_title,
-                                    "message": _alert_msg,
-                                })))
-                                if _send_admin_wa_ws and admin.phone and str(admin.id) != str(WHATSAPP_ANON_USER_ID):
-                                    await _wa_send_quiet(to=admin.phone, text=f"{_alert_title}\n{_alert_msg}")
-                            await _pii_db.commit()
+                            # ROOT FIX 2026-08-06: this Notification row used to be created for
+                            # every admin on EVERY 5-min health-check cycle the worker stayed
+                            # stalled — 18 near-identical "worker stuck" rows over one ~90-min
+                            # incident, even though the WhatsApp send itself was already capped
+                            # to 1/hour by _awk_ws. That's the "templated notification, same
+                            # task shown over and over" the owner reported. Persist a row on the
+                            # SAME cadence as the actual WhatsApp send, not every health check.
+                            if _send_admin_wa_ws:
+                                for admin in admins:
+                                    _pii_db.add(Notification(
+                                        user_id=admin.id,
+                                        type="threshold_alert",
+                                        title=_alert_title,
+                                        message=_alert_msg,
+                                        channel="whatsapp",
+                                        data={"threshold_type": "worker_silence", "silence_minutes": silence_mins},
+                                    ))
+                                    asyncio.create_task(_guarded_task(publish_notification(str(admin.id), {
+                                        "type": "threshold_alert",
+                                        "title": _alert_title,
+                                        "message": _alert_msg,
+                                    })))
+                                    if admin.phone and str(admin.id) != str(WHATSAPP_ANON_USER_ID):
+                                        await _wa_send_quiet(to=admin.phone, text=f"{_alert_title}\n{_alert_msg}")
+                                await _pii_db.commit()
             except Exception as _e:
                 print(f"[HealthMonitor] Threshold check 3 error: {_e}")
 

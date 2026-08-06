@@ -339,6 +339,187 @@ async def _set_updates_group(arg: str) -> str:
             f"(השיחה איתך כאן נשארת לצ׳אט עם הסוכנים בלבד.)\n🆔 {jid}")
 
 
+# ── 3 control-panel menus (owner request 2026-08-06) ──────────────────────────
+# Every list here is DETERMINISTIC (a dict's insertion order / a sorted directory
+# listing / a sorted dict of live tasks), so numbering needs no Redis round-trip —
+# "משימה 7" always means the same task on every call, this session or the next.
+from pathlib import Path as _Path
+
+_BACKEND_ROOT = _Path(__file__).resolve().parent.parent  # /app
+_HARVESTERS_DIR = _BACKEND_ROOT / "harvesters"
+_IMPORTERS_DIR = _BACKEND_ROOT / "importers"
+
+
+def _task_names() -> List[str]:
+    import db_update_agent as _dua
+    return list(_dua.TASK_REGISTRY.keys())
+
+
+def _harvester_names() -> List[str]:
+    return sorted(p.stem for p in _HARVESTERS_DIR.glob("*.py") if not p.stem.startswith("_"))
+
+
+def _importer_names() -> List[str]:
+    return sorted(p.stem for p in _IMPORTERS_DIR.glob("*.py") if not p.stem.startswith("_"))
+
+
+
+
+def _resolve_token(token: str, names: List[str]) -> "str | None":
+    """token is either a 1-based index into `names`, or an exact/prefix name match."""
+    token = (token or "").strip()
+    if not token:
+        return None
+    if token.isdigit():
+        i = int(token)
+        return names[i - 1] if 1 <= i <= len(names) else None
+    low = token.lower()
+    for n in names:
+        if n.lower() == low:
+            return n
+    hits = [n for n in names if n.lower().startswith(low)]
+    return hits[0] if len(hits) == 1 else None
+
+
+# ── Menu 1 — data-quality TASKS (db_update_agent.TASK_REGISTRY) ───────────────
+def _menu_tasks_text() -> str:
+    names = _task_names()
+    lines = ["📋 *משימות איכות נתונים* (32):"]
+    for i, n in enumerate(names, 1):
+        lines.append(f"{i}. {n}")
+    lines.append("\nלהרצת משימה בודדת: *הרץ משימה <מספר או שם>*")
+    return "\n".join(lines)
+
+
+async def _trigger_task(token: str) -> str:
+    names = _task_names()
+    name = _resolve_token(token, names)
+    if not name:
+        return "לא זיהיתי את המשימה. כתוב *משימות* לרשימה, ואז *הרץ משימה <מספר>*."
+    import db_update_agent as _dua
+    from BACKEND_DATABASE_MODELS import async_session_factory
+    try:
+        async with async_session_factory() as db:
+            report = await asyncio.wait_for(_dua.run_task(name, db), timeout=600)
+    except asyncio.TimeoutError:
+        return f"⏳ *{name}* עדיין רצה אחרי 10 דקות — ממשיכה ברקע, בדוק *סטטוס* בהמשך."
+    except Exception as exc:
+        return f"❌ *{name}* נכשלה: {str(exc)[:200]}"
+    status = report.get("status", "?")
+    icon = "✅" if status == "ok" else ("⏭️" if status == "skipped" else "❌")
+    extra = ", ".join(
+        f"{k}={v}" for k, v in report.items()
+        if k not in ("task", "status", "error") and not isinstance(v, (list, dict))
+    )
+    msg = f"{icon} *{name}*: {status}"
+    if extra:
+        msg += f"\n{extra}"
+    if report.get("error"):
+        msg += f"\n⚠️ {str(report['error'])[:200]}"
+    return msg
+
+
+# ── Menu 2 — HARVESTERS + IMPORTERS ────────────────────────────────────────────
+def _menu_harvesters_importers_text() -> str:
+    hv, im = _harvester_names(), _importer_names()
+    lines = [f"🌐 *שאיבות* ({len(hv)}):"]
+    for i, n in enumerate(hv, 1):
+        lines.append(f"h{i}. {n}")
+    lines.append(f"\n📥 *ייבואים* ({len(im)}) — 10 ראשונים, כתוב *ייבואים הכל* לרשימה מלאה:")
+    for i, n in enumerate(im[:10], 1):
+        lines.append(f"i{i}. {n}")
+    lines.append(
+        "\nלהרצה: *הרץ שאיבה <h-מספר או שם>* / *הרץ ייבוא <i-מספר או שם>*"
+    )
+    return "\n".join(lines)
+
+
+def _menu_importers_full_text() -> str:
+    im = _importer_names()
+    lines = [f"📥 *כל הייבואים* ({len(im)}):"]
+    for i, n in enumerate(im, 1):
+        lines.append(f"i{i}. {n}")
+    lines.append("\nלהרצה: *הרץ ייבוא <i-מספר או שם>*")
+    return "\n".join(lines)
+
+
+def _strip_prefix(token: str, prefix: str) -> str:
+    t = (token or "").strip()
+    return t[len(prefix):] if t.lower().startswith(prefix) else t
+
+
+async def _process_running(script_stem: str) -> bool:
+    """True if a process for this exact script is already running (avoid piling up
+    duplicate harvester/importer runs when the owner re-triggers impatiently)."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "pgrep", "-f", f"{script_stem}.py",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+        )
+        out, _ = await proc.communicate()
+        return bool(out.strip())
+    except Exception:
+        return False
+
+
+async def _launch_script(subdir: str, script_stem: str) -> str:
+    """Fire-and-forget launch of /app/<subdir>/<script_stem>.py — does not await
+    completion (a harvester/importer run can take hours); reports what happened."""
+    if await _process_running(script_stem):
+        return f"⏳ *{script_stem}* כבר רץ ברקע — לא הפעלתי מופע כפול."
+    script = str(_BACKEND_ROOT / subdir / f"{script_stem}.py")
+    if not os.path.exists(script):
+        return f"❌ לא נמצא הקובץ {subdir}/{script_stem}.py"
+    try:
+        import sys as _sys
+        env = dict(os.environ)
+        await asyncio.create_subprocess_exec(
+            _sys.executable, script,
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+            env=env,
+        )
+        return f"🚀 הפעלתי את *{script_stem}* ברקע. מעקב: `docker logs autospare_backend`."
+    except Exception as exc:
+        return f"❌ הפעלת {script_stem} נכשלה: {str(exc)[:200]}"
+
+
+async def _trigger_harvester(token: str) -> str:
+    names = _harvester_names()
+    name = _resolve_token(_strip_prefix(token, "h"), names)
+    if not name:
+        return "לא זיהיתי את השאיבה. כתוב *שאיבות* לרשימה, ואז *הרץ שאיבה <h-מספר>*."
+    return await _launch_script("harvesters", name)
+
+
+async def _trigger_importer(token: str) -> str:
+    names = _importer_names()
+    name = _resolve_token(_strip_prefix(token, "i"), names)
+    if not name:
+        return "לא זיהיתי את הייבוא. כתוב *ייבואים הכל* לרשימה, ואז *הרץ ייבוא <i-מספר>*."
+    return await _launch_script("importers", name)
+
+
+# ── Menu 3 — AUTOMATED WORKERS (live status of every supervised background loop) ─
+# Reuses routes/system.py's system_tasks() — the SAME live asyncio-task registry read
+# already used by GET /api/v1/system/tasks — instead of re-deriving it, so the two
+# never drift (2026-07-29 postmortem: log-grepping for "is it alive" was proven wrong
+# for 19/29 loops; the registry read is the only correct source).
+async def _menu_workers_text() -> str:
+    from routes.system import system_tasks
+    data = await system_tasks()
+    if isinstance(data, dict) and "tasks" not in data:
+        return "⚠️ לא הצלחתי לקרוא את מרשם העובדים כרגע."
+    lines = [f"⚙️ *עובדים אוטומטיים* ({data['running']}/{data['total']} פעילים):"]
+    icon = {"running": "🟢", "DEAD": "🔴", "cancelled": "⚪"}
+    for i, t in enumerate(data["tasks"], 1):
+        ln = f"{i}. {icon.get(t['state'], '❓')} {t['name']}"
+        if t.get("error"):
+            ln += f" — {str(t['error'])[:60]}"
+        lines.append(ln)
+    lines.append("\nאלו לולאות רקע קבועות (לא ניתן להריץ ידנית) — 🔴 = מתה, בדוק לוגים.")
+    return "\n".join(lines)
+
+
 _HELP = (
     "🎛️ *מרכז הבקרה שלך* (WhatsApp)\n\n"
     "*לפנות לסוכן — עם @:*\n"
@@ -364,7 +545,13 @@ _HELP = (
     "• *מקורות* — NIR יחפש ספקים חדשים ברשת עכשיו\n"
     "• *אשרספק [מזהה]* / *דחהספק [מזהה]* — הפעל/דחה ספק\n"
     "• *קבוצות* — הצג קבוצות וואטסאפ · *קבוצת עדכונים <מספר>* — "
-    "הפנה את כל עדכוני המערכת/הסוכנים לקבוצה נפרדת (כדי שהצ׳אט כאן יישאר לשיחה בלבד)\n"
+    "הפנה את כל עדכוני המערכת/הסוכנים לקבוצה נפרדת (כדי שהצ׳אט כאן יישאר לשיחה בלבד)\n\n"
+    "*3 תפריטי בקרה:*\n"
+    "• *משימות ניקוי* — 32 משימות איכות נתונים · *הרץ משימה <מספר>* להרצה בודדת "
+    "(שונה מ*תור* — זה תור המשימות הכבד)\n"
+    "• *שאיבות* — שאיבות (harvesters) + ייבואים (importers) · *ייבואים הכל* לרשימה מלאה · "
+    "*הרץ שאיבה <h-מספר>* / *הרץ ייבוא <i-מספר>* להפעלה\n"
+    "• *עובדים* — סטטוס חי של כל לולאות הרקע האוטומטיות (🟢/🔴)\n\n"
     "• *עזרה* — התפריט הזה\n\n"
     "דוגמה: *@נועה תשמרי: 2 פוסטים ביום בשעות שיא, עם קריאה לפעולה* — "
     "וזה יישמר וייושם בפועל."
@@ -920,6 +1107,30 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp") -> 
     m_ug = re.match(r"^(קבוצת עדכונים|updates group|עדכונים לקבוצה)\s*(\S+)?", msg, re.I)
     if m_ug:
         return await _set_updates_group(m_ug.group(2) or "")
+
+    # ── 3 control-panel menus (owner request 2026-08-06) ───────────────────────
+    # NOTE: bare "משימות" is already claimed above (job-QUEUE status, a different
+    # concept — the heavy background pipeline, not this data-cleaning TASK REGISTRY).
+    # Use a distinct multi-word phrase here so the two never collide.
+    if low in ("משימות ניקוי", "רשימת משימות", "tasks", "task list"):
+        return _menu_tasks_text()
+    m_rt = re.match(r"^(הרץ משימה|run task)\s+(\S+)", msg, re.I)
+    if m_rt:
+        return await _trigger_task(m_rt.group(2))
+
+    if low in ("שאיבות", "harvesters", "שאיבות וייבוא", "importers"):
+        return _menu_harvesters_importers_text()
+    if low in ("ייבואים הכל", "importers all", "כל הייבואים"):
+        return _menu_importers_full_text()
+    m_rh = re.match(r"^(הרץ שאיבה|run harvester)\s+(\S+)", msg, re.I)
+    if m_rh:
+        return await _trigger_harvester(m_rh.group(2))
+    m_ri = re.match(r"^(הרץ ייבוא|run importer)\s+(\S+)", msg, re.I)
+    if m_ri:
+        return await _trigger_importer(m_ri.group(2))
+
+    if low in ("עובדים", "workers", "עובדים אוטומטיים"):
+        return await _menu_workers_text()
 
     if low in ("suppliers", "ספקים", "מקורות ספקים"):
         return await _sourcing_list()
