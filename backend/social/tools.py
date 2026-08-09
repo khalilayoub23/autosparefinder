@@ -321,15 +321,38 @@ async def facebook_group_comment(
     tracking = _tracking_id()
     inp = {"task_id": task_id, "post_url": post_url[:100]}
 
-    # Verify approval in DB
+    # APPROVAL GATE — fail closed on any error or non-approved status.
+    # This is the last programmatic safety check before the browser agent
+    # executes a real Facebook action. It must NEVER be bypassed.
     try:
         import sqlalchemy as sa
         row = (await db.execute(
             sa.text("SELECT status FROM group_targets WHERE id = CAST(:id AS uuid)"),
             {"id": task_id}
         )).fetchone()
-    except Exception:
-        row = None  # group_targets lookup is best-effort
+    except Exception as exc:
+        log.error("facebook_group_comment: approval DB lookup failed — blocking action: %s", exc)
+        return ToolResult(
+            status="error", analytics_tracking_id=tracking,
+            error=f"approval gate: DB lookup failed ({exc!s:.80}) — comment blocked"
+        )
+
+    if row is None:
+        log.warning("facebook_group_comment: task_id %r not found in group_targets — blocking", task_id)
+        return ToolResult(
+            status="error", analytics_tracking_id=tracking,
+            error=f"approval gate: group_target {task_id!r} not found"
+        )
+
+    if row.status != "approved":
+        log.warning(
+            "facebook_group_comment: task %r has status=%r — blocking (must be 'approved')",
+            task_id, row.status
+        )
+        return ToolResult(
+            status="pending_approval", analytics_tracking_id=tracking,
+            error=f"approval gate: group_target status={row.status!r} — owner must approve first"
+        )
 
     from social.facebook_browser import GroupAgent
     agent = GroupAgent()
@@ -463,7 +486,8 @@ async def whatsapp_send_message(
 # Convenience: call any tool by name (used by campaign_manager)
 # ---------------------------------------------------------------------------
 
-_TOOL_MAP = {
+from types import MappingProxyType
+_TOOL_MAP: MappingProxyType = MappingProxyType({
     "facebook_publish_page_post": facebook_publish_page_post,
     "facebook_reply_comment": facebook_reply_comment,
     "facebook_get_insights": facebook_get_insights,
@@ -473,7 +497,7 @@ _TOOL_MAP = {
     "facebook_group_publish": facebook_group_publish,
     "telegram_publish": telegram_publish,
     "whatsapp_send_message": whatsapp_send_message,
-}
+})
 
 
 async def run_tool(name: str, *, db: Any, **kwargs: Any) -> ToolResult:

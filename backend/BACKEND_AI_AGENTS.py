@@ -5574,12 +5574,60 @@ class SocialMediaManagerAgent(BaseAgent):
         Returns:
           dict with posts_queued, posts_published, errors, dry_run
         """
+        import sqlalchemy as sa
         from social.campaign_manager import get_campaign, update_campaign_status, link_post_to_campaign
         from social.tools import run_tool
 
+        # Per-platform hard limits: content longer than these causes silent FB/IG failures.
+        _PLATFORM_MAX_CHARS = {
+            "facebook": 63206,
+            "instagram": 2200,
+            "telegram": 4096,
+            "whatsapp": 1024,
+        }
+
         campaign = await get_campaign(db, campaign_id=campaign_id)
         if not campaign:
-            return {"error": f"campaign {campaign_id!r} not found", "posts_queued": 0}
+            return {"error": f"campaign {campaign_id!r} not found", "posts_queued": 0,
+                    "posts_published": 0, "platforms_attempted": [], "results": [], "errors": []}
+
+        # ── Idempotency guard ──────────────────────────────────────────────────
+        # Atomically claim the campaign for execution by moving draft/paused → active.
+        # If another call already moved the campaign out of draft/paused, rowcount=0
+        # and we refuse to double-publish.  dry_run skips this because it produces
+        # no real posts and is safe to call multiple times.
+        if not dry_run:
+            claim = await db.execute(
+                sa.text("""
+                    UPDATE campaigns
+                    SET updated_at = NOW()
+                    WHERE id = CAST(:id AS uuid)
+                      AND status IN ('draft', 'paused')
+                """),
+                {"id": campaign_id},
+            )
+            await db.commit()
+            if (claim.rowcount or 0) == 0:
+                current_status = campaign.get("status", "unknown")
+                logger.warning(
+                    "NOA execute_campaign %s: cannot execute — status=%r "
+                    "(already active, completed, or concurrent call claimed it)",
+                    campaign_id, current_status,
+                )
+                return {
+                    "error": (
+                        f"campaign status={current_status!r}: only 'draft' or 'paused' campaigns "
+                        "can be executed. If a concurrent call is in progress, wait for it to finish."
+                    ),
+                    "campaign_id": campaign_id,
+                    "posts_queued": 0,
+                    "posts_published": 0,
+                    "platforms_attempted": [],
+                    "results": [],
+                    "errors": [],
+                    "dry_run": False,
+                }
+        # ── End idempotency guard ──────────────────────────────────────────────
 
         platforms: List[str] = campaign.get("platforms") or []
         goal: str = campaign.get("goal") or campaign.get("name") or "חלקי חילוף לרכב"
@@ -5596,13 +5644,27 @@ class SocialMediaManagerAgent(BaseAgent):
                     errors.append(f"{platform}: empty content generated")
                     continue
 
+                # Enforce per-platform content length limits
+                max_chars = _PLATFORM_MAX_CHARS.get(platform, 2000)
+                if len(content) > max_chars:
+                    logger.warning(
+                        "NOA execute_campaign %s/%s: content truncated %d→%d chars",
+                        campaign_id, platform, len(content), max_chars,
+                    )
+                    content = content[:max_chars]
+
                 logger.info(
                     "SocialMediaManagerAgent.execute_campaign: campaign=%s platform=%s len=%d dry_run=%s",
                     campaign_id, platform, len(content), dry_run,
                 )
 
                 if dry_run:
-                    results.append({"platform": platform, "status": "dry_run", "content_len": len(content)})
+                    results.append({
+                        "platform": platform,
+                        "status": "dry_run",
+                        "content_len": len(content),
+                        "content_preview": content[:200],
+                    })
                     continue
 
                 # Route to the appropriate tool
@@ -5624,7 +5686,7 @@ class SocialMediaManagerAgent(BaseAgent):
                     campaign_id=campaign_id,
                 )
 
-                if tool_result.status == "ok" and tool_result.post_id:
+                if tool_result.status in ("success", "ok") and tool_result.post_id:
                     await link_post_to_campaign(db, campaign_id=campaign_id, post_id=tool_result.post_id)
                     results.append({
                         "platform": platform,
@@ -5640,7 +5702,7 @@ class SocialMediaManagerAgent(BaseAgent):
                 errors.append(f"{platform}: {exc!s:.120}")
 
         published = [r for r in results if r.get("status") == "published"]
-        if published:
+        if published and not dry_run:
             await update_campaign_status(db, campaign_id=campaign_id, status="active")
 
         return {

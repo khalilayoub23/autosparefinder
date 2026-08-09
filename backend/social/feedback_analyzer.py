@@ -390,10 +390,18 @@ async def _synthesise_insights(raw_data: dict, *, period_days: int) -> dict:
     )
     try:
         raw = await hf_text_fast(prompt, timeout=45.0)
-        import re
-        m = re.search(r"\{.*\}", raw, re.DOTALL)
-        if m:
-            return json.loads(m.group(0))
+        # Parse the first valid JSON object in the response.
+        # We scan from every '{' position so prose before/after the object is ignored.
+        # This is more robust than a greedy regex which captures text between the
+        # first '{' and the LAST '}' (often invalid JSON when prose follows the object).
+        for i, ch in enumerate(raw):
+            if ch == "{":
+                try:
+                    obj, _ = json.JSONDecoder().raw_decode(raw[i:])
+                    if isinstance(obj, dict):
+                        return obj
+                except (json.JSONDecodeError, ValueError):
+                    continue
     except Exception as exc:
         log.warning("feedback_analyzer: LLM insights failed: %s", exc)
     return {

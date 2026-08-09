@@ -58,11 +58,22 @@ def _load_cookies() -> list[dict]:
     return []
 
 
+_MAX_FAILURE_SCREENSHOTS = 50
+
+
 async def _save_failure_screenshot(page: Any, label: str) -> None:
     try:
         _SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+        # Rotate: keep at most _MAX_FAILURE_SCREENSHOTS files on disk
+        existing = sorted(_SCREENSHOT_DIR.glob("*.png"), key=lambda p: p.stat().st_mtime)
+        while len(existing) >= _MAX_FAILURE_SCREENSHOTS:
+            try:
+                existing.pop(0).unlink(missing_ok=True)
+            except Exception:
+                break
         ts = int(time.time())
         path = str(_SCREENSHOT_DIR / f"{label}_{ts}.png")
+        # full_page=False: avoids capturing potentially large pages with sensitive DOM
         await page.screenshot(path=path, full_page=False)
         log.info("fb_browser: failure screenshot saved → %s", path)
     except Exception as exc:

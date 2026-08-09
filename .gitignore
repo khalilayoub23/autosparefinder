@@ -73,3 +73,8 @@ backend/alembic/__pycache__/
 .venv-ci/
 whatsapp-bridge/auth_info/
 jaguar_parts_raw.ndjson
+
+# Facebook browser session — contains authentication cookies, never commit
+**/fb_browser_session/
+**/fb_browser_session/cookies.json
+state/fb_browser_session/

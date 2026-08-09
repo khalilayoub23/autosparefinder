@@ -142,24 +142,58 @@ async def update_campaign_status(
     campaign_id: str,
     status: str,
 ) -> bool:
-    """Transition campaign lifecycle state. Returns True if found+updated."""
-    valid = {"draft", "active", "paused", "completed", "archived"}
-    if status not in valid:
-        raise ValueError(f"invalid status '{status}'; must be one of {valid}")
+    """Transition campaign lifecycle state. Returns True if found+updated.
+
+    Enforces valid forward-only transitions:
+      draft   → active | archived
+      active  → paused | completed | archived
+      paused  → active | completed | archived
+      completed → archived   (terminal except for archiving)
+      archived  → (none)     (fully terminal)
+    """
+    # Valid values (DB CHECK constraint also enforces this)
+    _VALID = {"draft", "active", "paused", "completed", "archived"}
+    # Forward-only transition table
+    _ALLOWED_FROM: dict[str, set[str]] = {
+        "active":    {"draft", "paused"},
+        "paused":    {"active"},
+        "completed": {"active", "paused"},
+        "archived":  {"draft", "active", "paused", "completed"},
+    }
+    if status not in _VALID:
+        raise ValueError(f"invalid status '{status}'; must be one of {_VALID}")
+
+    allowed_from = _ALLOWED_FROM.get(status)
+    if allowed_from is None:
+        raise ValueError(f"status '{status}' cannot be set directly; it is a terminal state")
+
     now = datetime.utcnow()
-    # Compute completed_at in Python to avoid repeating the same named param
-    # in a CASE expression (asyncpg raises AmbiguousParameterError on duplicates).
     completed_at = now if status == "completed" else None
+
     result = await db.execute(
         sa.text("""
             UPDATE campaigns
             SET status=:s, updated_at=:now, completed_at=:completed_at
             WHERE id = CAST(:id AS uuid)
+              AND status = ANY(:from_states)
         """),
-        {"s": status, "now": now, "completed_at": completed_at, "id": campaign_id},
+        {
+            "s": status,
+            "now": now,
+            "completed_at": completed_at,
+            "id": campaign_id,
+            "from_states": list(allowed_from),
+        },
     )
     await db.commit()
-    return (result.rowcount or 0) > 0
+    updated = (result.rowcount or 0) > 0
+    if not updated:
+        log.warning(
+            "campaign_manager: update_campaign_status %s → %r rejected "
+            "(not found or invalid transition from current status)",
+            campaign_id, status
+        )
+    return updated
 
 
 async def link_post_to_campaign(db: Any, *, campaign_id: str, post_id: str) -> bool:
