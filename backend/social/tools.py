@@ -139,8 +139,16 @@ async def facebook_publish_page_post(
     inp = {"campaign_id": campaign_id, "content_id": content_id, "platform": platform,
            "approval_required": approval_required}
 
-    from social.facebook_pages import publish_post
-    raw = await publish_post(content, media_url=media_url, link=link)
+    try:
+        from social.facebook_pages import publish_post
+        raw = await publish_post(content, media_url=media_url, link=link)
+    except Exception as exc:
+        res = ToolResult(
+            status="error", analytics_tracking_id=tracking,
+            error=f"publish_post raised {type(exc).__name__}: {exc!s:.200}",
+        )
+        asyncio.create_task(_log_action(db, "facebook_publish_page_post", inp, res))
+        return res
 
     if raw.get("not_configured"):
         res = ToolResult(status="not_configured", analytics_tracking_id=tracking,

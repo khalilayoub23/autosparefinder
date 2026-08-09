@@ -93,18 +93,18 @@ async def test_meta_token_errors():
         record("expired token → ToolResult(error) with OAuthException detail", PASS)
 
     # Simulate network timeout (publish_post raises asyncio.TimeoutError)
+    # The tool must catch the exception internally and return ToolResult(error)
+    # rather than propagating a raw exception to the caller.
     with patch("social.facebook_pages.publish_post", new_callable=AsyncMock) as mock_pub:
         mock_pub.side_effect = asyncio.TimeoutError("connection timed out")
         db = _make_mock_db()
-        try:
-            res = await facebook_publish_page_post(content="test", db=db)
-            # Tools should not propagate raw exceptions — but this one doesn't have
-            # a catch-all. Document as a known gap.
-            record("timeout propagates through tool (known gap — no inner try/except)", SKIP,
-                   "facebook_publish_page_post has no timeout catch; raises to caller")
-        except asyncio.TimeoutError:
-            record("timeout propagates through tool (known gap — no inner try/except)", SKIP,
-                   "facebook_publish_page_post has no timeout catch; raises to caller")
+        res = await facebook_publish_page_post(content="test", db=db)
+        assert res.status == "error", (
+            f"expected ToolResult(error) on timeout, got status={res.status!r}; "
+            "tools must not propagate raw exceptions to callers"
+        )
+        assert "TimeoutError" in (res.error or "")
+        record("network timeout → ToolResult(error) with TimeoutError detail (no raw propagation)", PASS)
 
 
 # ---------------------------------------------------------------------------
@@ -471,23 +471,37 @@ async def test_input_validation():
     print("\n=== Phase 8: Input Validation ===")
     from social.campaign_manager import create_campaign
 
-    # Empty name should succeed at DB level (validation is caller's responsibility)
-    # but we document the gap
+    # create_campaign must validate required fields at the service layer so that
+    # agent calls (which bypass the HTTP/Pydantic layer) cannot silently create
+    # useless campaigns with empty names or no platforms.
+    db = AsyncMock()
+
+    # Empty name → ValueError
     try:
-        db = AsyncMock()
-        execute_result = MagicMock()
-        execute_result.rowcount = 1
-        db.execute.return_value = execute_result
-        db.commit = AsyncMock()
-        with patch("social.campaign_manager.get_campaign", new_callable=AsyncMock) as mock_get:
-            mock_get.return_value = {"id": str(uuid.uuid4()), "name": "", "status": "draft",
-                                     "goal": "", "platforms": [], "tone": "professional",
-                                     "created_by": "test"}
-            c = await create_campaign(db, name="", goal="", platforms=[])
-            record("create_campaign: empty name accepted (no server-side validation)", SKIP,
-                   "Input validation is at the HTTP layer (Pydantic), not campaign_manager")
-    except Exception as exc:
-        record(f"create_campaign: empty name raises {type(exc).__name__}", PASS, str(exc)[:80])
+        await create_campaign(db, name="", goal="test goal", platforms=["facebook"])
+        record("create_campaign: empty name raises ValueError", FAIL,
+               "ValueError expected but function returned without raising")
+    except ValueError as exc:
+        assert "name" in str(exc).lower()
+        record("create_campaign: empty name → ValueError('campaign name is required')", PASS)
+
+    # Whitespace-only name → ValueError
+    try:
+        await create_campaign(db, name="   ", goal="test goal", platforms=["facebook"])
+        record("create_campaign: whitespace name raises ValueError", FAIL,
+               "ValueError expected but function returned without raising")
+    except ValueError as exc:
+        assert "name" in str(exc).lower()
+        record("create_campaign: whitespace-only name → ValueError", PASS)
+
+    # Empty platforms list → ValueError
+    try:
+        await create_campaign(db, name="Valid Name", goal="test goal", platforms=[])
+        record("create_campaign: empty platforms raises ValueError", FAIL,
+               "ValueError expected but function returned without raising")
+    except ValueError as exc:
+        assert "platform" in str(exc).lower()
+        record("create_campaign: empty platforms → ValueError('at least one platform required')", PASS)
 
     # content_id parameter in facebook_publish_page_post is not validated (any string accepted)
     from social.tools import facebook_publish_page_post

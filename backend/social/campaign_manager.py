@@ -54,6 +54,10 @@ async def create_campaign(
     created_by: str | None = None,
 ) -> dict:
     """Insert a new campaign row. Returns the created campaign dict."""
+    if not name or not name.strip():
+        raise ValueError("campaign name is required")
+    if not platforms:
+        raise ValueError("at least one platform is required")
     cid = uuid.uuid4()
     now = datetime.utcnow()
     await db.execute(
