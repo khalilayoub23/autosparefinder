@@ -340,7 +340,7 @@ async def generate_analytics_report(
                 (:id, :cid, :type, :ps, :pe, :platform,
                  :tp, :tr, :ti, :te, :tc, :tl, :er, :ctr,
                  :top_post, :top_plat,
-                 :insights::jsonb, :raw::jsonb, :now)
+                 CAST(:insights AS jsonb), CAST(:raw AS jsonb), :now)
         """),
         {
             "id": rid,
@@ -359,8 +359,8 @@ async def generate_analytics_report(
             "ctr": ctr,
             "top_post": top_row.external_post_id if top_row else None,
             "top_plat": top_row.platform if top_row else None,
-            "insights": json.dumps(insights),
-            "raw": json.dumps(raw_data),
+            "insights": json.dumps(insights, ensure_ascii=False),
+            "raw": json.dumps(raw_data, ensure_ascii=False),
             "now": now,
         },
     )

@@ -93,7 +93,7 @@ async def _log_action(db: Any, tool: str, input_data: dict, result: ToolResult) 
                      action_data, result, created_at)
                 VALUES
                     (gen_random_uuid(), NULL, NULL, 'social_media_manager_agent',
-                     :tool, :inp::jsonb, :res::jsonb, NOW())
+                     :tool, CAST(:inp AS jsonb), CAST(:res AS jsonb), NOW())
             """),
             {
                 "tool": tool,
@@ -486,5 +486,18 @@ async def run_tool(name: str, *, db: Any, **kwargs: Any) -> ToolResult:
 
 def list_tools() -> list[dict]:
     """Return metadata for all registered tools (for agent introspection)."""
-    return [{"name": k, "description": v.__doc__.split("\n")[1].strip() if v.__doc__ else ""}
-            for k, v in _TOOL_MAP.items()]
+    results = []
+    for k, v in _TOOL_MAP.items():
+        doc = v.__doc__ or ""
+        # First non-empty line of the docstring is the short description
+        description = next((ln.strip() for ln in doc.splitlines() if ln.strip()), "")
+        # Extract 'Input schema:' and 'Output schema:' sections
+        lines = doc.splitlines()
+        inputs = [ln.strip() for ln in lines if ":" in ln and ln.strip().startswith(("campaign_id", "content", "media", "post_id", "message", "channel", "group"))]
+        results.append({
+            "name": k,
+            "description": description,
+            "requires_approval": "approval" in doc.lower() and "approval_required" in doc,
+            "inputs_preview": inputs[:5],
+        })
+    return results

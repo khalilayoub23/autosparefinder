@@ -75,6 +75,10 @@ class RunToolRequest(BaseModel):
     kwargs: dict = {}
 
 
+class ExecuteCampaignRequest(BaseModel):
+    dry_run: bool = False
+
+
 # ---------------------------------------------------------------------------
 # Campaign endpoints
 # ---------------------------------------------------------------------------
@@ -248,6 +252,30 @@ async def trigger_group_scan(
     if result.status == "error":
         raise HTTPException(status_code=502, detail=result.error or "scan failed")
     return result.dict()
+
+
+# ---------------------------------------------------------------------------
+# Campaign execution endpoint (Phase 3: SHIRA → NOA → Tools)
+# ---------------------------------------------------------------------------
+
+@router.post("/api/v1/campaigns/{campaign_id}/execute")
+async def execute_campaign(
+    campaign_id: str,
+    data: ExecuteCampaignRequest = ExecuteCampaignRequest(),
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Execute a campaign: generate content for each platform and publish via NOA.
+
+    Architecture: this endpoint → SocialMediaManagerAgent.execute_campaign()
+                                                    ↓
+                                          social/tools.run_tool()
+
+    Pass dry_run=true to preview generated content without publishing.
+    """
+    from BACKEND_AI_AGENTS import get_agent
+    noa = get_agent("social_media_manager_agent")
+    return await noa.execute_campaign(campaign_id, db, dry_run=data.dry_run)
 
 
 # ---------------------------------------------------------------------------

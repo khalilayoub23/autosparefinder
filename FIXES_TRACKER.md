@@ -1,5 +1,113 @@
 # AutoSpareFinder — Bug & Breaking Points Fix Tracker
-> Last scan: 2026-08-06 | Total issues found: 426 | Fixed: 421 | In Progress: 0 | Open: 5
+> Last scan: 2026-08-07 | Total issues found: 434 | Fixed: 434 | In Progress: 0 | Open: 5
+
+---
+
+## Session — 2026-08-07 (Social Campaign Architecture — Phases 2–9 complete)
+
+Completed the full 9-phase Facebook Social Media Automation Architecture over the prior session (Phases 1–8) and this session (Phase 9). All phases delivered against the "AI Digital Marketing Department" goal — not a standalone posting bot, but a layered system integrated into the existing multi-agent platform.
+
+**Phase 2 — API test suite (`devtests/campaign_api_test.py`, 33 tests)**
+
+Covers: auth gate (401 on all 8 protected endpoints), campaign CRUD, group target lifecycle, engagement events, analytics, tool registry, response schema validation, error handling (non-existent IDs, invalid status, malformed UUIDs). All 33 pass.
+
+**Phase 3 — Agent hierarchy wired (`BACKEND_AI_AGENTS.py`)**
+
+AVI (RouterAgent) → SHIRA (MarketingAgent) → NOA (SocialMediaManagerAgent) → `social/tools.run_tool()`.
+
+- `SHIRA.delegate_to_social_campaign()` — takes a marketing objective from the Department Manager layer, calls NOA to generate a plan, creates a `campaigns` DB record, and calls `NOA.execute_campaign()`.
+- `NOA.execute_campaign()` — loads the campaign plan, generates per-platform content via `generate_post()`, dispatches to `run_tool()` for each platform. Supports `dry_run=True` (generates + previews content without publishing). Campaign status promoted to `active` on first successful publish.
+- `/api/v1/campaigns/{id}/execute` endpoint wired to `NOA.execute_campaign()` for REST callers.
+
+**Phase 4 — Tool layer (`social/tools.py`)**
+
+3 bug fixes applied:
+
+| Bug | Fix |
+|---|---|
+| `CAST(:inp AS jsonb)` / `CAST(:res AS jsonb)` — `::jsonb` casts collided with SQLAlchemy `:name` param parser | Replaced with `CAST(:param AS type)` in `_log_action` |
+| `list_tools()` returned blank descriptions — `split("\n")[1]` was the empty line | Fixed to `next(ln.strip() for ln in doc.splitlines() if ln.strip(), "")` |
+| `list_tools()` missing metadata fields | Added `requires_approval` and `inputs_preview` to each tool dict |
+
+**Phase 5 — Meta integration façade (`integrations/meta/`)**
+
+6 modules as a structured namespace over the existing `social/meta_client.py` and `social/facebook_pages.py` (no code duplication — thin re-exports + net-new functionality):
+
+| Module | Role |
+|---|---|
+| `auth_manager.py` | `is_configured()`, `validate_token()`, `exchange_for_long_lived_token()` (full token exchange chain) |
+| `graph_client.py` | Re-export of `graph_get`/`graph_post` from `meta_client` |
+| `facebook_pages.py` | Re-export of all FB page ops |
+| `instagram.py` | NEW: `publish_image_post()` (2-step container→publish), `get_media_insights()`, `get_recent_media()` |
+| `webhook_handler.py` | NEW: `verify_signature()` (HMAC-SHA256, fails closed), `parse_event()`, `extract_page_comments()`, `extract_ig_comments()` |
+| `rate_limiter.py` | `check_rate_limit()`, `rate_limit_status()` — reads from `meta_client`'s rolling window state |
+
+**Phase 6 — Browser integration façade (`integrations/facebook_browser/`)**
+
+- `__init__.py` — re-exports `GroupAgent` + `FacebookSession` from `social/facebook_browser/`; documents `APPROVAL_REQUIRED = True` safety invariant
+- `task_queue.py` — NEW: `BrowserTaskQueue` singleton that serializes all Playwright actions (one session at a time, `_MAX_CONCURRENT = 1`, `_MAX_RETRIES = 2`, 180s timeout per task). Prevents concurrent FB sessions corrupting each other's DOM state.
+
+**Phase 7 — Feedback loop**
+
+`social/feedback_analyzer.py` was implemented in the prior session. Two SQL `::jsonb` casts fixed (same pattern as Phase 4). Verified end-to-end: engagement events insert → `generate_analytics_report()` reads them → `analytics_reports` row created → `get_top_performers()` for NOA's weekly brief.
+
+**Phase 8 — Cerebras gating (`integrations/meta/cerebras_gate.py`)**
+
+`needs_llm(action)` classifies every social action:
+- **Required** (LLM must run): `generate_campaign_plan`, `generate_post`, `synthesise_analytics_insights`, `draft_group_comment`, `route_message`
+- **Forbidden** (raises `ValueError`): `schedule_post`, `execute_api_call`, `db_read`, `db_write`, `rate_limit_check`, `signature_verify`, `filter_list`, `sort_results`, `update_status`
+- Unknown actions → `False` (safe default: no LLM)
+
+`llm_budget_context()` returns current `CLEANUP_LLM_BATCH`/`CLEANUP_LLM_MIN_INTERVAL_S`/`CLEANUP_LLM_DAILY_MAX_CALLS` values — callers log these for budget traceability.
+
+**Phase 9 — End-to-end test (`devtests/e2e_campaign_test.py`, 32 tests)**
+
+Exercises the full campaign flow with campaign "Toyota Brake Parts Israel":
+
+```
+NOA.generate_campaign_plan()  →  7-day plan (Hebrew summary, LLM-generated)
+  ↓
+create_campaign()             →  DB record (id=..., status=draft)
+  ↓
+NOA.generate_post() ×2        →  Facebook content (730 chars), Instagram content (598 chars)
+  ↓
+NOA.execute_campaign(dry_run) →  2 platforms queued, 0 real posts, dry_run previews confirmed
+  ↓
+engagement_events INSERT      →  reach=4200, engagement=181 linked to campaign
+  ↓
+generate_analytics_report()  →  analytics_reports row created, LLM insights generated
+  ↓
+DB audit                      →  campaigns/engagement_events/analytics_reports: 1 row each ✅
+```
+
+**All 32 tests pass. Total across both test suites: 65/65.**
+
+**Bug fixes applied this session:**
+
+| Bug | File | Fix |
+|---|---|---|
+| `CAST(:plan AS jsonb)` — `:plan::jsonb` caused `ProgrammingError: syntax error at or near ":"` | `social/campaign_manager.py` | Replaced `::jsonb` with `CAST(:plan AS jsonb)` |
+| `create_campaign` hardcoded `'active'` status | `social/campaign_manager.py` | Changed to `'draft'` (matches schema server_default) |
+| `update_campaign_status` AmbiguousParameterError — `:s` and `:now` appeared twice in CASE expression | `social/campaign_manager.py` | Compute `completed_at` in Python, pass as separate param |
+| `generate_analytics_report` `:insights::jsonb` / `:raw::jsonb` casts | `social/feedback_analyzer.py` | `CAST(:insights AS jsonb)` / `CAST(:raw AS jsonb)` |
+| `campaigns.created_by` / `group_targets.approved_by` were UUID columns — agent name strings caused DataError | `alembic/versions/0056_social_audit_cols.py` | Migration to change both to TEXT |
+| Migration revision ID 34 chars > varchar(32) limit | migration file | Shortened to `0056_social_audit_cols` |
+| `_log_action` `::jsonb` casts in `tools.py` | `social/tools.py` | `CAST(:inp AS jsonb)` / `CAST(:res AS jsonb)` |
+| `list_tools()` blank descriptions | `social/tools.py` | Use first non-empty docstring line |
+| `log.info` / `log.warning` in new methods — file uses `logger` | `BACKEND_AI_AGENTS.py` | Replaced all 3 bare `log.*` calls with `logger.*` |
+| Nested event loop in test (sync fn calling `run_until_complete` inside `asyncio.run`) | `devtests/e2e_campaign_test.py` | Split into `test_tool_registry_sync()` + `async test_tool_registry_async()` |
+
+**Migration state:**
+- `0055_social_campaign_tables` — 5 tables: `campaigns`, `group_targets`, `engagement_events`, `platform_accounts`, `analytics_reports` (applied prior session)
+- `0056_social_audit_cols` — `campaigns.created_by` + `group_targets.approved_by` → TEXT (applied this session)
+
+**Architecture invariants (never regress):**
+- `APPROVAL_REQUIRED = True` in `social/facebook_browser/group_agent.py` is hardcoded — cannot be env-toggled
+- All browser actions serialize through `BrowserTaskQueue` singleton (`_MAX_CONCURRENT = 1`)
+- Cerebras is only called for the 5 creative/strategic actions in `LLM_REQUIRED_ACTIONS`; the 9 `LLM_FORBIDDEN_ACTIONS` raise `ValueError` if LLM is attempted
+- Campaign status starts at `draft`; only `NOA.execute_campaign()` promotes it to `active`
+
+---
 
 ---
 

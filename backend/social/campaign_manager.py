@@ -65,7 +65,7 @@ async def create_campaign(
                  created_by, created_at, updated_at)
             VALUES
                 (:id, :name, :goal, :platforms, :target, :tone,
-                 :days, :budget, 'active', :plan::jsonb, '{}',
+                 :days, :budget, 'draft', CAST(:plan AS jsonb), '{}',
                  0, 0, 0, 0, 0,
                  :created_by, :now, :now)
         """),
@@ -147,14 +147,16 @@ async def update_campaign_status(
     if status not in valid:
         raise ValueError(f"invalid status '{status}'; must be one of {valid}")
     now = datetime.utcnow()
+    # Compute completed_at in Python to avoid repeating the same named param
+    # in a CASE expression (asyncpg raises AmbiguousParameterError on duplicates).
     completed_at = now if status == "completed" else None
     result = await db.execute(
         sa.text("""
-            UPDATE campaigns SET status=:s, updated_at=:now,
-                completed_at = CASE WHEN :s='completed' THEN :now ELSE completed_at END
+            UPDATE campaigns
+            SET status=:s, updated_at=:now, completed_at=:completed_at
             WHERE id = CAST(:id AS uuid)
         """),
-        {"s": status, "now": now, "id": campaign_id},
+        {"s": status, "now": now, "completed_at": completed_at, "id": campaign_id},
     )
     await db.commit()
     return (result.rowcount or 0) > 0

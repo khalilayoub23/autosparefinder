@@ -3750,6 +3750,52 @@ LANGUAGE: ALWAYS respond in Hebrew (עברית). If the customer writes in Arabi
             source=kwargs.get("source"),
         )
 
+    async def delegate_to_social_campaign(
+        self,
+        objective: str,
+        platforms: List[str],
+        db: "AsyncSession",
+        tone: str = "professional",
+        duration_days: int = 7,
+        budget_ils: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """
+        Digital Dept Manager entry point. Creates a campaign via campaign_manager,
+        then hands execution to the SocialMediaManagerAgent (NOA).
+
+        Architecture: AVI → SHIRA (MarketingAgent) → delegate_to_social_campaign()
+                                        ↓
+                              campaign_manager.create_campaign()
+                                        ↓
+                              NOA.execute_campaign()
+        """
+        noa: SocialMediaManagerAgent = get_agent("social_media_manager_agent")
+        plan = await noa.generate_campaign_plan(
+            topic=objective,
+            platforms=platforms,
+            tone=tone,
+            duration_days=duration_days,
+            proposed_budget_ils=budget_ils,
+        )
+        from social.campaign_manager import create_campaign
+        campaign = await create_campaign(
+            db,
+            name=plan.get("summary", objective)[:200],
+            goal=objective,
+            platforms=platforms,
+            tone=tone,
+            duration_days=duration_days,
+            budget_ils=budget_ils,
+            plan=plan,
+            created_by="marketing_agent_shira",
+        )
+        result = await noa.execute_campaign(campaign["id"], db)
+        logger.info(
+            "MarketingAgent.delegate_to_social_campaign: campaign=%s posts_queued=%d",
+            campaign["id"], result.get("posts_queued", 0),
+        )
+        return {"campaign": campaign, "execution": result}
+
 
 class TechAgent(BaseAgent):
     name = "tech_agent"
@@ -5495,6 +5541,117 @@ class SocialMediaManagerAgent(BaseAgent):
             source=kwargs.get("source"),
         )
         return self._finalize_noa_post(raw)
+
+    # ------------------------------------------------------------------
+    # Campaign Execution — Phase 3 wiring: NOA → social/tools.py
+    # ------------------------------------------------------------------
+
+    async def execute_campaign(
+        self,
+        campaign_id: str,
+        db: "AsyncSession",
+        *,
+        dry_run: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Execute a campaign stored in the DB: generate content for each platform,
+        publish via social/tools.run_tool(), and link posts back to the campaign.
+
+        Architecture:
+          SHIRA.delegate_to_social_campaign()
+                  ↓
+          NOA.execute_campaign()     ← this method
+                  ↓
+          social/tools.run_tool()   ← tools dispatcher
+                  ↓
+          social/meta_client.py / social/facebook_pages.py / …
+
+        Args:
+          campaign_id: UUID of the campaign record
+          db:          Catalog DB session (AsyncSession)
+          dry_run:     If True, generate content but do NOT publish
+
+        Returns:
+          dict with posts_queued, posts_published, errors, dry_run
+        """
+        from social.campaign_manager import get_campaign, update_campaign_status, link_post_to_campaign
+        from social.tools import run_tool
+
+        campaign = await get_campaign(db, campaign_id=campaign_id)
+        if not campaign:
+            return {"error": f"campaign {campaign_id!r} not found", "posts_queued": 0}
+
+        platforms: List[str] = campaign.get("platforms") or []
+        goal: str = campaign.get("goal") or campaign.get("name") or "חלקי חילוף לרכב"
+        tone: str = campaign.get("tone") or "professional"
+
+        results: List[Dict] = []
+        errors: List[str] = []
+
+        for platform in platforms:
+            try:
+                # Generate platform-specific content via NOA's existing method
+                content = await self.generate_post(topic=goal, platform=platform, tone=tone)
+                if not content or len(content.strip()) < 10:
+                    errors.append(f"{platform}: empty content generated")
+                    continue
+
+                logger.info(
+                    "SocialMediaManagerAgent.execute_campaign: campaign=%s platform=%s len=%d dry_run=%s",
+                    campaign_id, platform, len(content), dry_run,
+                )
+
+                if dry_run:
+                    results.append({"platform": platform, "status": "dry_run", "content_len": len(content)})
+                    continue
+
+                # Route to the appropriate tool
+                tool_map = {
+                    "facebook": "facebook_publish_page_post",
+                    "instagram": "instagram_publish_post",
+                    "telegram": "telegram_publish",
+                    "whatsapp": "whatsapp_send_message",
+                }
+                tool_name = tool_map.get(platform)
+                if not tool_name:
+                    errors.append(f"{platform}: no tool mapping")
+                    continue
+
+                tool_result = await run_tool(
+                    tool_name,
+                    db=db,
+                    content=content,
+                    campaign_id=campaign_id,
+                )
+
+                if tool_result.status == "ok" and tool_result.post_id:
+                    await link_post_to_campaign(db, campaign_id=campaign_id, post_id=tool_result.post_id)
+                    results.append({
+                        "platform": platform,
+                        "status": "published",
+                        "post_id": tool_result.post_id,
+                        "tracking_id": tool_result.analytics_tracking_id,
+                    })
+                else:
+                    errors.append(f"{platform}: {tool_result.error or 'publish failed'}")
+
+            except Exception as exc:
+                logger.warning("NOA execute_campaign %s/%s error: %s", campaign_id, platform, exc)
+                errors.append(f"{platform}: {exc!s:.120}")
+
+        published = [r for r in results if r.get("status") == "published"]
+        if published:
+            await update_campaign_status(db, campaign_id=campaign_id, status="active")
+
+        return {
+            "campaign_id": campaign_id,
+            "posts_queued": len(results),
+            "posts_published": len(published),
+            "platforms_attempted": platforms,
+            "results": results,
+            "errors": errors,
+            "dry_run": dry_run,
+        }
 
 
 # ==============================================================================
