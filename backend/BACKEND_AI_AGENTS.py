@@ -1435,6 +1435,9 @@ class BaseAgent:
         if self.name == "supplier_manager_agent":
             return "[internal] supplier_manager_agent offline fallback — all providers exhausted, no customer-facing output should reach this path."
 
+        if self.name == "tech_agent":
+            return "[internal] tech_agent offline — all AI providers exhausted, bug report received but cannot be classified right now."
+
         if self.name == "service_agent":
             return _human_recovery_reply(user_msg)
 
@@ -5848,11 +5851,11 @@ class SocialMediaManagerAgent(BaseAgent):
                     _post_ids = [str(p.get("id", "?"))[:8] for p in pending[:5]]
                     _platform_names = ", ".join(platforms[:4])
                     _msg_lines = [
-                        f"📋 קמפיין חדש מחכה לאישור: {_campaign_name}",
+                        f"📋 *קמפיין חדש מחכה לאישורך:* {_campaign_name}",
                         f"פוסטים: {len(pending)} | פלטפורמות: {_platform_names}",
-                        f"IDs: {', '.join(_post_ids)}{'...' if len(pending) > 5 else ''}",
-                        "אשר כל פוסט: PATCH /api/v1/social-posts/{id}/approve",
-                        "לאחר האישור — הפעל שוב את execute.",
+                        f"מזהים: {', '.join(_post_ids)}{'...' if len(pending) > 5 else ''}",
+                        "לאישור פוסטים: כנס ל-admin ואשר, או השתמש בקונסול:",
+                        "כתוב *פוסטים* לרשימת הפוסטים הממתינים · *אשר <מזהה>* לאישור",
                     ]
                     _owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
                     if _owner:

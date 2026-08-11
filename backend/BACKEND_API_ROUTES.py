@@ -127,10 +127,10 @@ def _supervised_task(name: str, coro) -> "asyncio.Task":
             pass
         owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
         if owner:
-            msg_parts = [f"🔴 Background task died: *{name}*"]
+            msg_parts = [f"🔴 *משימת רקע קרסה: {name}*"]
             if exc:
-                msg_parts.append(f"Error: {type(exc).__name__}: {exc}")
-            msg_parts.append("⚠️ This task will NOT restart automatically — check the server.")
+                msg_parts.append(f"שגיאה: {type(exc).__name__}: {str(exc)[:200]}")
+            msg_parts.append("⚠️ המשימה לא תאותחל אוטומטית — יש לבדוק את השרת.")
             asyncio.get_event_loop().create_task(
                 _wa_send_update("\n".join(msg_parts))
             )
@@ -796,8 +796,9 @@ async def _status_update_loop() -> None:
             _today = _now.strftime("%Y-%m-%d")
             is_digest_time = _il_hour == 9 and _last_digest_date != _today
 
+            _il_time = (_now + timedelta(hours=3)).strftime("%H:%M")
             lines: list[str] = [
-                f"\U0001f4ca *AutoSpareFinder — Status Update* ({_now.strftime('%H:%M UTC')})"
+                f"📊 *AutoSpareFinder — עדכון מצב* ({_il_time} ישראל)"
             ]
 
             async with async_session_factory() as _db:
@@ -826,11 +827,7 @@ async def _status_update_loop() -> None:
                     SELECT COUNT(*) FROM parts_catalog WHERE is_active = TRUE
                 """))).scalar() or 0
 
-                # Harvest-queue progress (fix 2026-07-08): the daily report
-                # looked "the same every day" because it showed only total_parts
-                # (4.19M, barely moves) and never the harvesters' actual work.
-                # Add live IL-queue coverage + a 24h delta so the report visibly
-                # reflects what the harvesters accomplished.
+                # Harvest-queue progress: add live IL-queue coverage + 24h delta.
                 _hq = (await _db.execute(text("""
                     SELECT
                         COUNT(*) FILTER (WHERE status IN ('done','empty')) AS done,
@@ -841,52 +838,64 @@ async def _status_update_loop() -> None:
                     FROM harvest_queue
                 """))).fetchone()
 
-            lines.append("\n*Workers:*")
+            # Hebrew status labels — lead each line with Hebrew so WhatsApp
+            # renders the whole line RTL (English job name embeds LTR naturally).
+            _JOB_STATUS_HE = {
+                "running":    "🟢 פועל",
+                "completed":  "✅ הושלם",
+                "failed":     "🔴 נכשל",
+                "dead":       "💀 מת",
+                "superseded": "⏩ הוחלף",
+            }
+            _TODO_STATUS_HE = {
+                "pending":    "ממתין",
+                "in_progress": "בתהליך",
+                "completed":  "הושלם",
+                "dismissed":  "נדחה",
+            }
+
+            lines.append("\n*עובדים:*")
             if jobs:
                 for job in jobs:
                     age_min = (
                         int((_now - job.started_at.replace(tzinfo=timezone.utc) if job.started_at.tzinfo is None else _now - job.started_at).total_seconds() / 60)
                         if job.started_at else 0
                     )
-                    hb_ago = ""
+                    hb_txt = ""
                     if job.last_heartbeat_at:
                         hb_ts = job.last_heartbeat_at if job.last_heartbeat_at.tzinfo else job.last_heartbeat_at.replace(tzinfo=timezone.utc)
                         hb_min = int((_now - hb_ts).total_seconds() / 60)
-                        hb_ago = f" hb={hb_min}m"
-                    icon = (
-                        "\U0001f7e2" if job.status == "running" else
-                        "\U0001f534" if job.status in ("failed", "dead") else
-                        "⏳"
-                    )
-                    lines.append(f"  {icon} {job.job_name}: {job.status} (+{age_min}m{hb_ago})")
+                        hb_txt = f" · פ.{hb_min}′"
+                    status_he = _JOB_STATUS_HE.get(job.status, f"⏳ {job.status}")
+                    lines.append(f"  {status_he}: {job.job_name} (+{age_min}′{hb_txt})")
             else:
-                lines.append("  (no recent jobs)")
+                lines.append("  (אין משימות אחרונות)")
 
             dead_tasks = [n for n, t in _SUPERVISED_TASKS.items() if t.done() and not t.cancelled()]
             running_cnt = sum(1 for t in _SUPERVISED_TASKS.values() if not t.done())
-            dead_suffix = f", {len(dead_tasks)} dead ❌" if dead_tasks else " ✅"
-            lines.append(f"\n*Background tasks:* {running_cnt} running{dead_suffix}")
+            dead_suffix = f", {len(dead_tasks)} קרסו ❌" if dead_tasks else " ✅"
+            lines.append(f"\n*משימות רקע:* {running_cnt} פעילות{dead_suffix}")
             if dead_tasks:
-                lines.append(f"  Dead: {', '.join(dead_tasks[:5])}")
+                lines.append(f"  קרסו: {', '.join(dead_tasks[:5])}")
 
-            lines.append("\n*REX catalog todos:*")
+            lines.append("\n*משימות REX לקטלוג:*")
             if todos:
                 for row in todos:
-                    lines.append(f"  {row.status}: {row.cnt}")
+                    lines.append(f"  {_TODO_STATUS_HE.get(row.status, row.status)}: {row.cnt}")
             else:
-                lines.append("  (none)")
+                lines.append("  (אין)")
 
-            lines.append(f"\n*Catalog:* {total_parts:,} active parts")
-            lines.append(f"  +{new_parts} added in last 30m")
+            lines.append(f"\n*קטלוג:* {total_parts:,} חלקים פעילים")
+            lines.append(f"  +{new_parts} נוספו ב-30 דקות האחרונות")
 
             # Harvest coverage — the moving number that shows daily progress.
             if _hq and _hq[1]:
                 _hq_done, _hq_total, _hq_brands, _hq_parts, _hq_24h = _hq
                 _hq_pct = round(_hq_done * 100.0 / _hq_total, 1) if _hq_total else 0
                 lines.append(
-                    f"\n*Harvest (IL market):* {_hq_done:,}/{_hq_total:,} models ({_hq_pct}%)"
+                    f"\n*שאיבה (שוק ישראל):* {_hq_done:,}/{_hq_total:,} דגמים ({_hq_pct}%)"
                 )
-                lines.append(f"  {_hq_brands} brands · {_hq_parts:,} parts found · +{_hq_24h} models in 24h")
+                lines.append(f"  {_hq_brands} מותגים · {_hq_parts:,} חלקים · +{_hq_24h} דגמים ב-24 שעות")
 
             # Decide whether to actually send: problems, or the daily digest.
             # A dead/failed job only counts if NOT superseded by a newer
@@ -922,12 +931,12 @@ async def _status_update_loop() -> None:
             has_problem = bool(dead_tasks or failed_jobs)
 
             if is_digest_time:
-                lines[0] = f"\U0001f4c5 *AutoSpareFinder — דוח יומי* ({_now.strftime('%H:%M UTC')})"
+                lines[0] = f"📅 *AutoSpareFinder — דוח יומי* ({_il_time} ישראל)"
                 await _wa_send_update("\n".join(lines))
                 _last_digest_date = _today
                 print("[StatusUpdate] Sent daily digest to owner")
             elif has_problem and problem_sig != _last_problem_sig:
-                lines[0] = f"⚠️ *AutoSpareFinder — בעיה במערכת* ({_now.strftime('%H:%M UTC')})"
+                lines[0] = f"⚠️ *AutoSpareFinder — בעיה במערכת* ({_il_time} ישראל)"
                 await _wa_send_update("\n".join(lines))
                 _last_problem_sig = problem_sig
                 print(f"[StatusUpdate] Sent PROBLEM alert to owner: {problem_sig[:120]}")
@@ -2455,12 +2464,12 @@ async def _amayama_harvest_monitor_loop() -> None:
                 if owner:
                     try:
                         await _wa_send_update((
-                            "🈁 Amayama harvester is DOWN (both server + browser paths) "
-                            "— no feed activity ~25 min. ~{:,} Japanese-brand parts "
-                            "still unpriced. Check `docker exec autospare_backend "
-                            "pgrep -af 'chrome-linux64/chrome'` on the server, or "
-                            "reopen amayama.com in a real tab and run "
-                            "AMAYAMA.autorun(20, 40) as a fallback.".format(pending)))
+                            f"⚠️ *שאיבת Amayama לא פעילה (~25 דקות)*\n"
+                            f"שני הנתיבים (שרת + דפדפן) לא מגיבים.\n"
+                            f"~{pending:,} חלקים ממותגים יפניים עדיין ללא מחיר.\n"
+                            f"לפתרון: פתח amayama.com בטאב ורץ AMAYAMA.autorun(20,40) — "
+                            f"או בדוק את השרת."
+                        ))
                     except Exception:
                         pass
             last_count = cnt
@@ -2596,16 +2605,18 @@ async def _group_scan_loop():
                 if not discoveries:
                     logger.info("[group_scan] no relevant group discussions found")
                 elif os.getenv("OWNER_WHATSAPP_PHONE"):
-                    # Summarise discoveries and send to owner for comment approval
-                    lines = ["🔍 *Group Scan Results*\n"]
+                    lines = [f"🔍 *סריקת קבוצות פייסבוק — {len(discoveries)} תגובות ממתינות*\n"]
                     for i, d in enumerate(discoveries[:5], 1):
+                        score_pct = int(d.get("relevance_score", 0) * 100)
                         lines.append(
-                            f"{i}. *{d.get('group_name','')}*\n"
-                            f"   {d.get('post_text','')[:80]}...\n"
-                            f"   Relevance: {d.get('relevance_score',0):.0%}\n"
-                            f"   💬 Draft: {d.get('draft_comment','(none)')[:100]}"
+                            f"{i}. *{d.get('group_name', '')}*\n"
+                            f"   📝 {d.get('post_text', '')[:80]}...\n"
+                            f"   רלוונטיות: {score_pct}%\n"
+                            f"   💬 טיוטה: {d.get('draft_comment', '(אין)')[:120]}"
                         )
-                    lines.append("\nReply 'אשר X' to approve comment #X")
+                    lines.append(
+                        "\nלאישור ושליחה: *תגובות-גרופ* לרשימה · *אשרתגובה <מזהה>*"
+                    )
                     await _wa_send_quiet(
                         os.getenv("OWNER_WHATSAPP_PHONE", ""),
                         "\n".join(lines),
@@ -2721,7 +2732,7 @@ async def _wa_send_quiet(to: str, text: str, critical: bool = False) -> dict:
     except Exception as exc:
         # Redis down — better to deliver late-night than to lose the alert entirely.
         print(f"[QuietHours] queue failed ({exc}) — sending immediately")
-        return await _wa_send(to=to, text=text, reply_jid=rjid)
+        return await _wa_send(to=to, text=text)
 
 
 async def _updates_group_jid() -> str:
@@ -3508,13 +3519,13 @@ async def _noa_marketing_loop():
                     # Send to WHATSAPP for approval (owner directive G8 2026-07-20 —
                     # WhatsApp instead of Telegram). Telegram only mirrors if enabled.
                     if OWNER_PHONE:
-                        _site = os.getenv("FRONTEND_URL", "https://autosparefinder.co.il").rstrip("/")
+                        _post_short_id = (social_post_id or "")[:8] or "—"
                         wa_post_msg = (
-                            f"🎯 *NOA — פוסט {platform.title()} מוכן לאישור*\n\n"
+                            f"🎯 *NOA — פוסט {platform.title()} מוכן לאישורך*\n\n"
                             f"{caption}\n\n"
                             + (f"🖼️ מדיה (עם QR): {media_url}\n" if media_url else "")
-                            + f"✅ לאישור ופרסום: {_site}/admin (תור הפוסטים)\n"
-                            + f"🆔 {social_post_id or '—'}"
+                            + f"לאישור ופרסום: כתוב *אשר {_post_short_id}*\n"
+                            + f"לדחייה: כתוב *דחה {_post_short_id}*"
                         )
                         await _wa_send_update(wa_post_msg)
                     if NOA_TELEGRAM_MIRROR and TELEGRAM_OWNER_ID and TELEGRAM_ADMIN_TOKEN:
@@ -3797,14 +3808,14 @@ async def _health_monitor_loop():
     _prev_states: dict = {}  # service_name → "ok" | "error"
 
     SERVICE_LABELS = {
-        "postgres_catalog": "PostgreSQL Catalog",
-        "postgres_pii":     "PostgreSQL PII",
-        "redis":            "Redis",
-        "meilisearch":      "Meilisearch",
-        "huggingface":      "Hugging Face",
+        "postgres_catalog": "מסד נתונים — קטלוג",
+        "postgres_pii":     "מסד נתונים — לקוחות",
+        "redis":            "Redis (תור/מטמון)",
+        "meilisearch":      "מנוע חיפוש",
+        "huggingface":      "Hugging Face AI",
         # clamav DECOMMISSIONED 2026-07-12 (RAM-incompatible with this no-swap box;
         # uploads fail-open). Removed from health probes so it no longer alerts.
-        "stripe":           "Stripe",
+        "stripe":           "Stripe (תשלומים)",
     }
 
     async def _probe() -> dict:
@@ -4176,10 +4187,10 @@ async def _health_monitor_loop():
                         _dlq_new = unprocessed_count >= JOB_FAILURES_ALERT_THRESHOLD
 
                     if _dlq_new:
-                        _alert_title = f"🔴 DLQ Alert: {unprocessed_count} unprocessed failures"
+                        _alert_title = f"🔴 תור כשלונות: {unprocessed_count} משימות ממתינות לטיפול"
                         _alert_msg = (
-                            f"Dead Letter Queue has {unprocessed_count} unprocessed job failures "
-                            f"(threshold: {JOB_FAILURES_ALERT_THRESHOLD}). Review failures in admin dashboard."
+                            f"יש {unprocessed_count} משימות שנכשלו ב-48 השעות האחרונות "
+                            f"(סף התראה: {JOB_FAILURES_ALERT_THRESHOLD}). בדוק בלוח הבקרה."
                         )
                         print(f"[HealthMonitor] ALERT: job_failures={unprocessed_count} >= {JOB_FAILURES_ALERT_THRESHOLD}")
                         await _alert_owner(_alert_title, _alert_msg, alert_key="job_failures_dlq", cooldown_s=21600)
