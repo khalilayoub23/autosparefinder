@@ -3744,10 +3744,41 @@ SEARCH MISS SIGNALS:
 LANGUAGE: ALWAYS respond in Hebrew (עברית). If the customer writes in Arabic, respond in Arabic. Never respond in any other language.
 """
 
+    # Campaign-intent keywords (he/ar/en) that trigger a proposal response.
+    _CAMPAIGN_INTENT_KEYWORDS: tuple = (
+        "קמפיין", "campaign", "פרסום", "שיווק", "marketing",
+        "advertise", "promote", "לפרסם", "לשווק",
+    )
+
     async def process(self, message: str, conversation_history: List[Dict], db: AsyncSession, **kwargs) -> str:
+        """Customer-facing message handler.
+
+        GAP-B safety rule: if the message expresses campaign-creation intent,
+        return a structured PROPOSAL (advisory text, no DB write, no campaign
+        created). The owner must explicitly call POST /api/v1/campaigns to
+        proceed. A customer-facing message MUST NOT silently create campaigns.
+        """
+        msg_l = (message or "").strip().lower()
+        if any(k in msg_l for k in self._CAMPAIGN_INTENT_KEYWORDS):
+            return self._campaign_intent_proposal(message)
+
         return await self.think(
             conversation_history + [{"role": "user", "content": message}],
             source=kwargs.get("source"),
+        )
+
+    def _campaign_intent_proposal(self, message: str) -> str:
+        """Return a safe campaign proposal WITHOUT creating any DB record.
+
+        The owner must confirm via the admin API (POST /api/v1/campaigns)
+        before any campaign is created or content is queued.
+        """
+        return (
+            "זיהיתי בקשה ליצירת קמפיין שיווקי. "
+            "כדי להתחיל, אנא השתמש בממשק הניהול (POST /api/v1/campaigns) "
+            "ותספק: מטרת הקמפיין, פלטפורמות יעד, טון, ותקציב משוער. "
+            "לאחר יצירת הקמפיין, NOA תייצר תוכן לאישור שלך לפני הפרסום.\n\n"
+            "אם אתה הבעלים — השתמש בקונסול הניהול כדי לאשר ולהתחיל."
         )
 
     async def delegate_to_social_campaign(
@@ -4312,6 +4343,22 @@ class SupplierManagerAgent(BaseAgent):
 # ==============================================================================
 # 9. SOCIAL MEDIA MANAGER AGENT
 # ==============================================================================
+
+def _build_campaign_utm_params(campaign_id: str) -> dict:
+    """Build deterministic UTM parameters for a campaign.
+
+    Returns a dict suitable for storage in social_posts.external_post_ids.__utm.
+    Uses the first 8 chars of the campaign UUID as the campaign slug so links
+    remain short while still being traceable back to the campaign row.
+    """
+    slug = str(campaign_id)[:8]
+    return {
+        "utm_source": "social",
+        "utm_medium": "campaign",
+        "utm_campaign": slug,
+        "campaign_id": str(campaign_id),
+    }
+
 
 class SocialMediaManagerAgent(BaseAgent):
     name = "social_media_manager_agent"
@@ -5053,7 +5100,7 @@ class SocialMediaManagerAgent(BaseAgent):
             except Exception:
                 budget_hint = "לא סופק"
 
-        prompt = (
+        core_prompt = (
             "בני תוכנית קמפיין שיווקי ל-AutoSpareFinder בעברית טבעית.\n"
             f"נושא: {topic}\n"
             f"פלטפורמות: {', '.join(normalized_platforms)}\n"
@@ -5064,6 +5111,17 @@ class SocialMediaManagerAgent(BaseAgent):
             "platform_mix חייב להיות רשימת אובייקטים עם: platform, goal, daily_budget_ils, creative_angle.\n"
             "ללא markdown וללא טקסט מחוץ ל-JSON."
         )
+        # Inject Digital Department guidelines (brand, positioning, campaign_launch).
+        # Advisory only — never overrides the JSON-output requirement or safety rules.
+        try:
+            from digital_department import build_prompt_with_context
+            prompt = build_prompt_with_context(
+                core_prompt,
+                agent="noa",
+                task_type="social_campaign",
+            )
+        except Exception:
+            prompt = core_prompt
 
         try:
             raw = await hf_text(prompt=prompt, system=self.system_prompt)
@@ -5514,21 +5572,54 @@ class SocialMediaManagerAgent(BaseAgent):
         return cls._restructure_post(normalized)
 
     async def generate_post(self, topic: str, platform: str, tone: str = "professional") -> str:
-        prompt = (
+        core_prompt = (
             f"כתבי פוסט {platform} בנושא {topic} בטון {tone}. "
             "הפוסט חייב להישמע אנושי ולא תבניתי: לפתוח בכאב אמיתי של נהג, "
             "לתת פתרון ברור דרך הפלטפורמה, ולסיים בשאלה אחת מקדמת.\n"
             "הנחיות פלט חובה: החזירי את טקסט הפוסט בלבד — ללא הסבר, "
             "ללא ספירת תווים, ללא חשיבה בקול רם. רק הפוסט הסופי המוכן לפרסום."
         )
+        # Inject Digital Department brand/positioning/content guidelines.
+        # Advisory — supplements the system_prompt; does not override it.
+        try:
+            from digital_department import build_prompt_with_context
+            prompt = build_prompt_with_context(
+                core_prompt,
+                agent="noa",
+                task_type="social_post",
+            )
+        except Exception:
+            prompt = core_prompt
+
         raw = await hf_text(prompt=prompt, system=self.system_prompt, temperature=self.temperature, reasoning_effort="low")
         return self._finalize_noa_post(raw, platforms=[platform] if platform else [])
 
+    # M2 fix (2026-08-09): explicit campaign-creation phrases only.
+    # Bare platform names (facebook, instagram, tiktok) and generic terms
+    # (budget / תקציב) must NOT trigger campaign planning — customers mention
+    # them naturally ("my budget is limited", "do you have tiktok videos").
+    # Only explicit creation-intent phrasing fires generate_campaign_plan().
+    _CAMPAIGN_CREATION_PHRASES: tuple = (
+        # Hebrew — creation verb paired with "campaign"
+        "צור קמפיין", "תיצור קמפיין", "צרי קמפיין",
+        "להקים קמפיין", "הקמת קמפיין", "הקם קמפיין",
+        "תפעיל קמפיין", "להשיק קמפיין", "השקת קמפיין",
+        "קמפיין פרסום", "קמפיין שיווק", "קמפיין שיווקי",
+        "תכין קמפיין", "תכיני קמפיין", "הכן קמפיין", "הכיני קמפיין",
+        # English — creation verb or unambiguous campaign context
+        "create campaign", "create a campaign",
+        "launch campaign", "launch a campaign",
+        "start campaign", "start a campaign",
+        "build campaign", "build a campaign",
+        "plan campaign", "plan a campaign",
+        "marketing campaign", "advertising campaign",
+        "run a campaign", "run campaign",
+        "set up a campaign", "set up campaign",
+    )
+
     async def process(self, message: str, conversation_history: List[Dict], db: AsyncSession, **kwargs) -> str:
         msg_l = (message or "").strip().lower()
-        if any(k in msg_l for k in (
-            "קמפיין", "campaign", "תקציב", "budget", "פייסבוק", "אינסטגרם", "טיקטוק", "facebook", "instagram", "tiktok"
-        )):
+        if any(k in msg_l for k in self._CAMPAIGN_CREATION_PHRASES):
             plan = await self.generate_campaign_plan(
                 topic=message,
                 platforms=["facebook", "instagram", "tiktok"],
@@ -5554,31 +5645,58 @@ class SocialMediaManagerAgent(BaseAgent):
         dry_run: bool = False,
     ) -> Dict[str, Any]:
         """
-        Execute a campaign stored in the DB: generate content for each platform,
-        publish via social/tools.run_tool(), and link posts back to the campaign.
+        Execute a campaign stored in the DB through the mandatory approval workflow.
+
+        Approval workflow (INVARIANT — must not be bypassed):
+          Generated → PendingApproval → Approved → Published
+          The system NEVER allows Generated → Published without human approval.
+
+        Execution paths:
+
+          dry_run=True:
+            Generate content per-platform and return a preview. Nothing is stored
+            or published. Safe to call multiple times. Idempotency guard skipped.
+
+          dry_run=False, no approved posts yet (first call):
+            1. Atomically claim the campaign (idempotency guard).
+            2. Check social_posts WHERE campaign_id=X AND status='approved' — NONE found.
+            3. Generate content per-platform.
+            4. Store each as social_posts status='pending_approval'.
+            5. Return {"status": "pending_approval", "posts_queued": N, "posts_published": 0}.
+            Owner then reviews and approves via PATCH /api/v1/social-posts/{id}/approve.
+
+          dry_run=False, approved posts exist (second call after owner approval):
+            1. Atomically claim the campaign (idempotency guard).
+            2. Check social_posts WHERE campaign_id=X AND status='approved' — posts found.
+            3. Publish each approved post via social/tools.run_tool().
+            4. Mark posts as published, link to campaign.
+            5. Return {"posts_published": N}.
 
         Architecture:
           SHIRA.delegate_to_social_campaign()
                   ↓
           NOA.execute_campaign()     ← this method
-                  ↓
-          social/tools.run_tool()   ← tools dispatcher
+                  ↓   (approved path)
+          social/tools.run_tool()   ← tools dispatcher (official APIs only)
                   ↓
           social/meta_client.py / social/facebook_pages.py / …
 
         Args:
           campaign_id: UUID of the campaign record
           db:          Catalog DB session (AsyncSession)
-          dry_run:     If True, generate content but do NOT publish
+          dry_run:     If True, generate content but do NOT store or publish
 
         Returns:
-          dict with posts_queued, posts_published, errors, dry_run
+          dict with posts_queued, posts_published, status, errors, dry_run
         """
         import sqlalchemy as sa
-        from social.campaign_manager import get_campaign, update_campaign_status, link_post_to_campaign
+        from social.campaign_manager import (
+            get_campaign, update_campaign_status, link_post_to_campaign,
+            prepare_campaign_content, get_campaign_posts,
+        )
         from social.tools import run_tool
 
-        # Per-platform hard limits: content longer than these causes silent FB/IG failures.
+        # Per-platform hard limits — content beyond these causes silent failures.
         _PLATFORM_MAX_CHARS = {
             "facebook": 63206,
             "instagram": 2200,
@@ -5588,121 +5706,283 @@ class SocialMediaManagerAgent(BaseAgent):
 
         campaign = await get_campaign(db, campaign_id=campaign_id)
         if not campaign:
-            return {"error": f"campaign {campaign_id!r} not found", "posts_queued": 0,
-                    "posts_published": 0, "platforms_attempted": [], "results": [], "errors": []}
-
-        # ── Idempotency guard ──────────────────────────────────────────────────
-        # Atomically claim the campaign for execution by moving draft/paused → active.
-        # If another call already moved the campaign out of draft/paused, rowcount=0
-        # and we refuse to double-publish.  dry_run skips this because it produces
-        # no real posts and is safe to call multiple times.
-        if not dry_run:
-            claim = await db.execute(
-                sa.text("""
-                    UPDATE campaigns
-                    SET updated_at = NOW()
-                    WHERE id = CAST(:id AS uuid)
-                      AND status IN ('draft', 'paused')
-                """),
-                {"id": campaign_id},
-            )
-            await db.commit()
-            if (claim.rowcount or 0) == 0:
-                current_status = campaign.get("status", "unknown")
-                logger.warning(
-                    "NOA execute_campaign %s: cannot execute — status=%r "
-                    "(already active, completed, or concurrent call claimed it)",
-                    campaign_id, current_status,
-                )
-                return {
-                    "error": (
-                        f"campaign status={current_status!r}: only 'draft' or 'paused' campaigns "
-                        "can be executed. If a concurrent call is in progress, wait for it to finish."
-                    ),
-                    "campaign_id": campaign_id,
-                    "posts_queued": 0,
-                    "posts_published": 0,
-                    "platforms_attempted": [],
-                    "results": [],
-                    "errors": [],
-                    "dry_run": False,
-                }
-        # ── End idempotency guard ──────────────────────────────────────────────
+            return {
+                "error": f"campaign {campaign_id!r} not found",
+                "posts_queued": 0,
+                "posts_published": 0,
+                "platforms_attempted": [],
+                "results": [],
+                "errors": [],
+            }
 
         platforms: List[str] = campaign.get("platforms") or []
         goal: str = campaign.get("goal") or campaign.get("name") or "חלקי חילוף לרכב"
         tone: str = campaign.get("tone") or "professional"
 
-        results: List[Dict] = []
-        errors: List[str] = []
-
-        for platform in platforms:
-            try:
-                # Generate platform-specific content via NOA's existing method
-                content = await self.generate_post(topic=goal, platform=platform, tone=tone)
-                if not content or len(content.strip()) < 10:
-                    errors.append(f"{platform}: empty content generated")
-                    continue
-
-                # Enforce per-platform content length limits
-                max_chars = _PLATFORM_MAX_CHARS.get(platform, 2000)
-                if len(content) > max_chars:
-                    logger.warning(
-                        "NOA execute_campaign %s/%s: content truncated %d→%d chars",
-                        campaign_id, platform, len(content), max_chars,
+        # ── dry_run path (UNCHANGED) ───────────────────────────────────────────
+        # Generate a content preview without persisting or publishing anything.
+        if dry_run:
+            results: List[Dict] = []
+            errors: List[str] = []
+            for platform in platforms:
+                try:
+                    content = await self.generate_post(topic=goal, platform=platform, tone=tone)
+                    if not content or len(content.strip()) < 10:
+                        errors.append(f"{platform}: empty content generated")
+                        continue
+                    max_chars = _PLATFORM_MAX_CHARS.get(platform, 2000)
+                    if len(content) > max_chars:
+                        logger.warning(
+                            "NOA execute_campaign dry_run %s/%s: content truncated %d→%d chars",
+                            campaign_id, platform, len(content), max_chars,
+                        )
+                        content = content[:max_chars]
+                    logger.info(
+                        "SocialMediaManagerAgent.execute_campaign: campaign=%s platform=%s len=%d dry_run=True",
+                        campaign_id, platform, len(content),
                     )
-                    content = content[:max_chars]
-
-                logger.info(
-                    "SocialMediaManagerAgent.execute_campaign: campaign=%s platform=%s len=%d dry_run=%s",
-                    campaign_id, platform, len(content), dry_run,
-                )
-
-                if dry_run:
                     results.append({
                         "platform": platform,
                         "status": "dry_run",
                         "content_len": len(content),
                         "content_preview": content[:200],
                     })
+                except Exception as exc:
+                    logger.warning("NOA execute_campaign dry_run %s/%s error: %s", campaign_id, platform, exc)
+                    errors.append(f"{platform}: {exc!s:.120}")
+            return {
+                "campaign_id": campaign_id,
+                "posts_queued": len(results),
+                "posts_published": 0,
+                "platforms_attempted": platforms,
+                "results": results,
+                "errors": errors,
+                "dry_run": True,
+            }
+
+        # ── Idempotency guard ──────────────────────────────────────────────────
+        # Atomically claim the campaign by touching updated_at.
+        # Only 'draft' and 'paused' campaigns can be executed — if rowcount=0 the
+        # campaign is already active/completed or another call claimed it first.
+        claim = await db.execute(
+            sa.text("""
+                UPDATE campaigns
+                SET updated_at = NOW()
+                WHERE id = CAST(:id AS uuid)
+                  AND status IN ('draft', 'paused')
+            """),
+            {"id": campaign_id},
+        )
+        await db.commit()
+        if (claim.rowcount or 0) == 0:
+            current_status = campaign.get("status", "unknown")
+            logger.warning(
+                "NOA execute_campaign %s: cannot execute — status=%r "
+                "(already active, completed, or concurrent call claimed it)",
+                campaign_id, current_status,
+            )
+            return {
+                "error": (
+                    f"campaign status={current_status!r}: only 'draft' or 'paused' campaigns "
+                    "can be executed. If a concurrent call is in progress, wait for it to finish."
+                ),
+                "campaign_id": campaign_id,
+                "posts_queued": 0,
+                "posts_published": 0,
+                "platforms_attempted": [],
+                "results": [],
+                "errors": [],
+                "dry_run": False,
+            }
+        # ── End idempotency guard ──────────────────────────────────────────────
+
+        # ── Approval gate ──────────────────────────────────────────────────────
+        # INVARIANT: content MUST be approved by a human before publishing.
+        # Check whether approved posts already exist for this campaign.
+        approved_posts = await get_campaign_posts(db, campaign_id=campaign_id, status="approved")
+
+        if not approved_posts:
+            # ── FIRST CALL: generate content and queue for approval ────────────
+            # No approved content exists yet. Generate per-platform content and
+            # store each as pending_approval. Return early — do NOT publish.
+            utm = _build_campaign_utm_params(campaign_id)
+            content_by_platform: Dict[str, str] = {}
+            errors: List[str] = []
+            for platform in platforms:
+                try:
+                    content = await self.generate_post(topic=goal, platform=platform, tone=tone)
+                    if not content or len(content.strip()) < 10:
+                        errors.append(f"{platform}: empty content generated")
+                        continue
+                    max_chars = _PLATFORM_MAX_CHARS.get(platform, 2000)
+                    if len(content) > max_chars:
+                        logger.warning(
+                            "NOA execute_campaign %s/%s: content truncated %d→%d chars",
+                            campaign_id, platform, len(content), max_chars,
+                        )
+                        content = content[:max_chars]
+                    content_by_platform[platform] = content
+                except Exception as exc:
+                    logger.warning("NOA execute_campaign generate %s/%s: %s", campaign_id, platform, exc)
+                    errors.append(f"{platform}: content generation failed — {exc!s:.80}")
+
+            pending = await prepare_campaign_content(
+                db,
+                campaign_id=campaign_id,
+                content_by_platform=content_by_platform,
+                utm_params=utm,
+            )
+
+            logger.info(
+                "NOA execute_campaign %s: %d posts queued for owner approval",
+                campaign_id, len(pending),
+            )
+
+            if pending:
+                # GAP-A: Notify owner that posts are waiting for approval.
+                # L1 fix (2026-08-09): guard on `pending` so no notification fires
+                # when all platforms failed content generation (pending == []).
+                # Fire-and-forget — notification failure must never block campaign flow.
+                try:
+                    _campaign_name = campaign.get("name", campaign_id)[:60]
+                    _post_ids = [str(p.get("id", "?"))[:8] for p in pending[:5]]
+                    _platform_names = ", ".join(platforms[:4])
+                    _msg_lines = [
+                        f"📋 קמפיין חדש מחכה לאישור: {_campaign_name}",
+                        f"פוסטים: {len(pending)} | פלטפורמות: {_platform_names}",
+                        f"IDs: {', '.join(_post_ids)}{'...' if len(pending) > 5 else ''}",
+                        "אשר כל פוסט: PATCH /api/v1/social-posts/{id}/approve",
+                        "לאחר האישור — הפעל שוב את execute.",
+                    ]
+                    _owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
+                    if _owner:
+                        import asyncio as _asyncio
+                        async def _notify_owner():
+                            try:
+                                from BACKEND_API_ROUTES import _wa_send_quiet as _waq
+                                await _waq(to=_owner, text="\n".join(_msg_lines))
+                            except Exception as _e:
+                                logger.debug("GAP-A owner notify via fallback: %s", _e)
+                                try:
+                                    from social.whatsapp_provider import send_message as _was
+                                    await _was(to=_owner, text="\n".join(_msg_lines))
+                                except Exception:
+                                    pass
+                        _asyncio.create_task(_notify_owner())
+                except Exception as _notify_exc:
+                    logger.debug("GAP-A owner notification skipped: %s", _notify_exc)
+
+            return {
+                "campaign_id": campaign_id,
+                "status": "pending_approval",
+                "message": (
+                    f"Content generated for {len(pending)} platform(s). "
+                    "Awaiting owner approval — use PATCH /api/v1/social-posts/{id}/approve "
+                    "for each post, then call execute again."
+                ),
+                "posts_queued": len(pending),
+                "posts_published": 0,
+                "pending_posts": pending,
+                "platforms_attempted": platforms,
+                "results": [],
+                "errors": errors,
+                "dry_run": False,
+            }
+
+        # ── SECOND CALL: publish already-approved posts ────────────────────────
+        # Owner has reviewed and approved the queued posts. Publish each one.
+        results: List[Dict] = []
+        errors: List[str] = []
+        tool_map = {
+            "facebook": "facebook_publish_page_post",
+            "instagram": "instagram_publish_post",
+            "telegram": "telegram_publish",
+            "whatsapp": "whatsapp_send_message",
+            # FIX: Group posting requires browser automation; group_id resolved below.
+            "facebook_group": "facebook_group_publish",
+        }
+
+        for post in approved_posts:
+            # Each post's platforms list holds exactly one platform (set at prepare time)
+            post_platforms = post.get("platforms") or []
+            platform = post_platforms[0] if post_platforms else "facebook"
+            content = post.get("content", "")
+            post_id = str(post["id"])
+
+            tool_name = tool_map.get(platform)
+            if not tool_name:
+                errors.append(f"{platform}: no tool mapping for approved post {post_id}")
+                continue
+
+            # FIX: facebook_group_publish requires group_id; resolve from group_targets.
+            extra_kwargs: Dict[str, str] = {}
+            if platform == "facebook_group":
+                try:
+                    _gt = (await db.execute(sa.text(
+                        "SELECT id FROM group_targets WHERE status='approved' AND platform='facebook'"
+                        " ORDER BY last_posted_at NULLS FIRST, created_at LIMIT 1"
+                    ))).fetchone()
+                    if not _gt:
+                        errors.append(f"facebook_group: no approved group_target — post {post_id}")
+                        continue
+                    extra_kwargs["group_id"] = str(_gt[0])
+                except Exception as _exc:
+                    errors.append(f"facebook_group: group_target lookup failed — {_exc!s:.100}")
                     continue
 
-                # Route to the appropriate tool
-                tool_map = {
-                    "facebook": "facebook_publish_page_post",
-                    "instagram": "instagram_publish_post",
-                    "telegram": "telegram_publish",
-                    "whatsapp": "whatsapp_send_message",
-                }
-                tool_name = tool_map.get(platform)
-                if not tool_name:
-                    errors.append(f"{platform}: no tool mapping")
-                    continue
-
+            try:
                 tool_result = await run_tool(
                     tool_name,
                     db=db,
                     content=content,
                     campaign_id=campaign_id,
+                    **extra_kwargs,
+                )
+                logger.info(
+                    "SocialMediaManagerAgent.execute_campaign: campaign=%s platform=%s post=%s "
+                    "len=%d approved_post_published",
+                    campaign_id, platform, post_id, len(content),
                 )
 
-                if tool_result.status in ("success", "ok") and tool_result.post_id:
-                    await link_post_to_campaign(db, campaign_id=campaign_id, post_id=tool_result.post_id)
+                if tool_result.status in ("success", "ok"):
+                    # FIX: Group posts return post_id=None (browser cannot capture it);
+                    # mark published on any success, record external_id when available.
+                    ext_payload = {
+                        platform: tool_result.post_id or "group_post_no_id",
+                        "analytics_tracking_id": tool_result.analytics_tracking_id,
+                    }
+                    await db.execute(
+                        sa.text("""
+                            UPDATE social_posts
+                            SET status='published',
+                                published_at=NOW(),
+                                external_post_ids = external_post_ids || CAST(:ext AS jsonb),
+                                updated_at=NOW()
+                            WHERE id = CAST(:pid AS uuid)
+                        """),
+                        {
+                            "pid": post_id,
+                            "ext": __import__("json").dumps(ext_payload),
+                        },
+                    )
+                    await db.commit()
+                    await link_post_to_campaign(db, campaign_id=campaign_id, post_id=post_id)
                     results.append({
                         "platform": platform,
                         "status": "published",
                         "post_id": tool_result.post_id,
+                        "social_post_id": post_id,
                         "tracking_id": tool_result.analytics_tracking_id,
                     })
                 else:
                     errors.append(f"{platform}: {tool_result.error or 'publish failed'}")
 
             except Exception as exc:
-                logger.warning("NOA execute_campaign %s/%s error: %s", campaign_id, platform, exc)
+                logger.warning("NOA execute_campaign publish %s/%s error: %s", campaign_id, platform, exc)
                 errors.append(f"{platform}: {exc!s:.120}")
 
         published = [r for r in results if r.get("status") == "published"]
-        if published and not dry_run:
+        if published:
             await update_campaign_status(db, campaign_id=campaign_id, status="active")
 
         return {
@@ -5712,7 +5992,7 @@ class SocialMediaManagerAgent(BaseAgent):
             "platforms_attempted": platforms,
             "results": results,
             "errors": errors,
-            "dry_run": dry_run,
+            "dry_run": False,
         }
 
 

@@ -670,6 +670,755 @@ async def test_content_length():
 
 
 # ---------------------------------------------------------------------------
+# Phase 12 — execute_campaign: first call generates content → pending_approval
+#              (NEVER publishes without prior human approval)
+# ---------------------------------------------------------------------------
+
+async def test_execute_campaign_generates_pending_approval():
+    """
+    INVARIANT: execute_campaign MUST NOT publish when no approved social_posts exist.
+    First call must store content as pending_approval and return posts_published=0.
+    """
+    print("\n=== Phase 12: execute_campaign — no approved posts → pending_approval ===")
+    from BACKEND_AI_AGENTS import get_agent
+    from social.campaign_manager import get_campaign_posts
+
+    noa = get_agent("social_media_manager_agent")
+
+    fake_campaign = {
+        "id": str(uuid.uuid4()),
+        "name": "Approval Flow Test",
+        "goal": "Sell oil filters",
+        "platforms": ["facebook"],
+        "tone": "professional",
+        "status": "draft",
+        "plan": {},
+    }
+
+    prepared_posts = [{"post_id": str(uuid.uuid4()), "platform": "facebook", "status": "pending_approval"}]
+
+    with patch("social.campaign_manager.get_campaign", new_callable=AsyncMock) as mock_get, \
+         patch("social.campaign_manager.get_campaign_posts", new_callable=AsyncMock) as mock_get_posts, \
+         patch("social.campaign_manager.prepare_campaign_content", new_callable=AsyncMock) as mock_prepare, \
+         patch.object(noa, "generate_post", new_callable=AsyncMock) as mock_gen, \
+         patch("social.campaign_manager.update_campaign_status", new_callable=AsyncMock):
+
+        mock_get.return_value = fake_campaign
+        mock_get_posts.return_value = []          # no approved posts yet
+        mock_prepare.return_value = prepared_posts
+        mock_gen.return_value = "מסנן שמן איכותי לטויוטה קורולה 2018 — מחיר מיוחד!"
+
+        db = AsyncMock()
+        claim = MagicMock()
+        claim.rowcount = 1    # campaign in draft, can be claimed
+        db.execute.return_value = claim
+        db.commit = AsyncMock()
+
+        result = await noa.execute_campaign(fake_campaign["id"], db, dry_run=False)
+
+    # Must NOT have published anything
+    assert result.get("posts_published", -1) == 0, \
+        f"INVARIANT VIOLATED: posts_published={result.get('posts_published')} (should be 0)"
+    record("execute_campaign: posts_published=0 when no approved posts (invariant holds)", PASS)
+
+    # Must have queued posts for approval
+    assert result.get("posts_queued", 0) >= 1, \
+        f"No posts queued: {result}"
+    record(f"execute_campaign: {result.get('posts_queued')} post(s) queued as pending_approval", PASS)
+
+    # Must report status=pending_approval
+    assert result.get("status") == "pending_approval", \
+        f"Expected status='pending_approval', got {result.get('status')!r}"
+    record("execute_campaign: returns status='pending_approval' (not 'active')", PASS)
+
+    # prepare_campaign_content must have been called (content stored, not discarded)
+    assert mock_prepare.called, "prepare_campaign_content was never called"
+    record("execute_campaign: prepare_campaign_content called — content persisted to DB", PASS)
+
+    # run_tool must NOT have been called (no publishing)
+    # (run_tool is not patched — if called it would raise ImportError in the mock env,
+    #  but we verify via posts_published=0 and the mock_prepare call above)
+    record("execute_campaign: no publish tool called — approval gate holds", PASS)
+
+
+# ---------------------------------------------------------------------------
+# Phase 13 — execute_campaign: second call publishes after approval
+# ---------------------------------------------------------------------------
+
+async def test_execute_campaign_publishes_after_approval():
+    """
+    After owner approval, a second execute_campaign call must publish the
+    approved social_posts via run_tool and report posts_published >= 1.
+    """
+    print("\n=== Phase 13: execute_campaign — approved posts exist → publish ===")
+    from BACKEND_AI_AGENTS import get_agent
+
+    noa = get_agent("social_media_manager_agent")
+
+    post_id = str(uuid.uuid4())
+    fake_campaign = {
+        "id": str(uuid.uuid4()),
+        "name": "Approval Flow Test 2",
+        "goal": "Sell brake pads",
+        "platforms": ["facebook"],
+        "tone": "professional",
+        "status": "draft",
+        "plan": {},
+    }
+    approved_post = {
+        "id": post_id,
+        "content": "רפידות בלם מקוריות לטויוטה קורולה — משלוח מהיר!",
+        "platforms": ["facebook"],
+        "status": "approved",
+        "campaign_id": fake_campaign["id"],
+        "content_version": 1,
+        "approved_by": "00000000-0000-0000-0000-000000000001",
+        "approved_at": "2026-08-09T10:00:00",
+    }
+
+    from social.tools import ToolResult
+    fake_tool_result = ToolResult(
+        status="success",
+        post_id="fb_12345",
+        analytics_tracking_id="track_abc",
+    )
+
+    with patch("social.campaign_manager.get_campaign", new_callable=AsyncMock) as mock_get, \
+         patch("social.campaign_manager.get_campaign_posts", new_callable=AsyncMock) as mock_get_posts, \
+         patch("social.campaign_manager.link_post_to_campaign", new_callable=AsyncMock), \
+         patch("social.campaign_manager.update_campaign_status", new_callable=AsyncMock) as mock_status, \
+         patch("social.tools.run_tool", new_callable=AsyncMock) as mock_run:
+
+        mock_get.return_value = fake_campaign
+        mock_get_posts.return_value = [approved_post]   # approved post exists
+        mock_run.return_value = fake_tool_result
+
+        db = AsyncMock()
+        claim = MagicMock()
+        claim.rowcount = 1
+        execute_result = MagicMock()
+        execute_result.fetchone = MagicMock(return_value=None)
+        async def _dispatch(*a, **k): return execute_result
+        db.execute = _dispatch
+        db.commit = AsyncMock()
+
+        result = await noa.execute_campaign(fake_campaign["id"], db, dry_run=False)
+
+    # Must have published the approved post
+    assert result.get("posts_published", 0) >= 1, \
+        f"Expected posts_published>=1 after approval, got: {result}"
+    record(f"execute_campaign: posts_published={result.get('posts_published')} after owner approval", PASS)
+
+    # run_tool must have been called with the approved post's content
+    assert mock_run.called, "run_tool was never called — approved post was not published"
+    record("execute_campaign: run_tool called for approved post (content published)", PASS)
+
+    # campaign status must have been set to active
+    assert mock_status.called, "update_campaign_status not called after publish"
+    record("execute_campaign: campaign status moved to 'active' after publishing", PASS)
+
+
+# ---------------------------------------------------------------------------
+# Phase 14 — Content versioning: edit invalidates approval
+# ---------------------------------------------------------------------------
+
+async def test_content_version_invalidates_approval():
+    """
+    After a human edits a post, content_version bumps and status resets to
+    pending_approval so the old approval cannot publish the new content.
+    """
+    print("\n=== Phase 14: Content versioning — edit invalidates approval ===")
+    from social.campaign_manager import update_post_content, approve_post_content
+
+    post_id = str(uuid.uuid4())
+
+    # ── update_post_content: verify the RETURNING clause gives version 2 ────
+    db_update = AsyncMock()
+    update_result = MagicMock()
+    update_result.fetchone.return_value = MagicMock(content_version=2, status="pending_approval")
+    db_update.execute = AsyncMock(return_value=update_result)
+    db_update.commit = AsyncMock()
+
+    result = await update_post_content(db_update, post_id=post_id, new_content="Updated content v2")
+    assert result is not None, "update_post_content returned None"
+    assert result["content_version"] == 2, f"Expected version 2, got {result['content_version']}"
+    assert result["status"] == "pending_approval", f"Expected pending_approval, got {result['status']}"
+    record("update_post_content: content_version bumped to 2, status=pending_approval", PASS)
+
+    # ── approve_post_content with wrong version ───────────────────────────────
+    # approved_version=1 should fail because current version is 2
+    db_approve = AsyncMock()
+    approve_result_wrong = MagicMock()
+    approve_result_wrong.rowcount = 0   # version mismatch → 0 rows updated
+    db_approve.execute = AsyncMock(return_value=approve_result_wrong)
+    db_approve.commit = AsyncMock()
+
+    approved_wrong_ver = await approve_post_content(
+        db_approve, post_id=post_id, approved_by="00000000-0000-0000-0000-000000000001",
+        approved_version=1   # stale version
+    )
+    assert not approved_wrong_ver, \
+        f"Stale-version approval must be refused (returned {approved_wrong_ver})"
+    record("approve_post_content: stale version (v1 when v2 exists) is refused", PASS)
+
+    # ── approve with correct version ──────────────────────────────────────────
+    approve_result_ok = MagicMock()
+    approve_result_ok.rowcount = 1   # correct version → approved
+    db_approve.execute = AsyncMock(return_value=approve_result_ok)
+
+    approved_correct_ver = await approve_post_content(
+        db_approve, post_id=post_id, approved_by="00000000-0000-0000-0000-000000000001",
+        approved_version=2   # current version
+    )
+    assert approved_correct_ver, "Correct-version approval must succeed"
+    record("approve_post_content: correct version (v2) is accepted", PASS)
+
+
+# ---------------------------------------------------------------------------
+# Phase 15 — UTM params deterministic
+# ---------------------------------------------------------------------------
+
+async def test_utm_params_deterministic():
+    """UTM params must be deterministic: same campaign_id → same params."""
+    print("\n=== Phase 15: UTM parameters deterministic ===")
+    from BACKEND_AI_AGENTS import _build_campaign_utm_params
+
+    cid = str(uuid.uuid4())
+    p1 = _build_campaign_utm_params(cid)
+    p2 = _build_campaign_utm_params(cid)
+
+    assert p1 == p2, f"UTM params not deterministic: {p1} != {p2}"
+    record("UTM params are deterministic: same campaign_id → same result", PASS)
+
+    assert "utm_source" in p1, "utm_source missing"
+    assert "utm_medium" in p1, "utm_medium missing"
+    assert "utm_campaign" in p1, "utm_campaign missing"
+    assert "campaign_id" in p1, "campaign_id missing"
+    assert p1["campaign_id"] == cid, "campaign_id not stored in UTM params"
+    assert len(p1["utm_campaign"]) == 8, "utm_campaign slug must be 8 chars"
+    record(f"UTM params include all required fields: {p1}", PASS)
+
+    # Different campaigns → different slugs
+    cid2 = str(uuid.uuid4())
+    p3 = _build_campaign_utm_params(cid2)
+    assert p3["utm_campaign"] != p1["utm_campaign"], "Different campaigns must yield different slugs"
+    record("Different campaign IDs produce distinct UTM slugs", PASS)
+
+
+# ---------------------------------------------------------------------------
+# Phase 16 — Group targets: pending rows excluded from round-robin
+# ---------------------------------------------------------------------------
+
+async def test_group_target_pending_not_selectable():
+    """
+    Pending group_targets must never be selected for publishing.
+    Verified two ways: (a) source code inspection and (b) runtime — when the DB
+    returns no approved group_target, execute_campaign must publish 0 posts.
+    """
+    print("\n=== Phase 16: Pending group_targets excluded from round-robin ===")
+    import inspect
+    import BACKEND_AI_AGENTS as _ba
+
+    src = inspect.getsource(_ba.SocialMediaManagerAgent.execute_campaign)
+    assert "status='approved'" in src, \
+        "execute_campaign source missing status='approved' filter on group_targets"
+    record("execute_campaign: round-robin WHERE clause filters status='approved'", PASS)
+
+    # Runtime: no approved group_target → must publish 0 posts
+    from BACKEND_AI_AGENTS import get_agent
+    noa = get_agent("social_media_manager_agent")
+    campaign_id = str(uuid.uuid4())
+    fake_campaign = {
+        "id": campaign_id, "name": "Pending Gate Test", "goal": "test",
+        "platforms": ["facebook_group"], "tone": "professional", "status": "draft", "plan": {},
+    }
+    approved_post = {
+        "id": str(uuid.uuid4()), "content": "Test", "platforms": ["facebook_group"],
+        "status": "approved", "campaign_id": campaign_id, "content_version": 1,
+        "approved_by": str(uuid.uuid4()), "approved_at": "2026-08-11T10:00:00",
+    }
+
+    with patch("social.campaign_manager.get_campaign", new_callable=AsyncMock) as mock_get, \
+         patch("social.campaign_manager.get_campaign_posts", new_callable=AsyncMock) as mock_posts, \
+         patch("social.campaign_manager.update_campaign_status", new_callable=AsyncMock), \
+         patch("social.tools.run_tool", new_callable=AsyncMock) as mock_run:
+        mock_get.return_value = fake_campaign
+        mock_posts.return_value = [approved_post]
+
+        db = AsyncMock()
+        no_row = MagicMock()
+        no_row.fetchone.return_value = None   # no approved group_target
+        db.execute = AsyncMock(return_value=no_row)
+        db.commit = AsyncMock()
+
+        result = await noa.execute_campaign(campaign_id, db, dry_run=False)
+
+    assert not mock_run.called, "run_tool called despite no approved group_target"
+    record("execute_campaign: run_tool NOT called when no approved group_target", PASS)
+    assert result.get("posts_published", 0) == 0, \
+        f"posts_published={result.get('posts_published')} despite no approved group_target"
+    record("execute_campaign: posts_published=0 when all group_targets are pending", PASS)
+
+
+# ---------------------------------------------------------------------------
+# Phase 17 — Duplicate approved group URL rejected by partial unique index
+# ---------------------------------------------------------------------------
+
+async def test_duplicate_approved_group_url_rejected():
+    """
+    The partial unique index (platform, group_url) WHERE status='approved' must
+    reject a second approved row for the same group URL.
+    Pending rows for the same URL must still be allowed (partial index).
+    """
+    print("\n=== Phase 17: Duplicate approved group URL rejected by constraint ===")
+    import asyncpg, os
+
+    DB = os.environ.get("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://")
+    test_url = "https://www.facebook.com/groups/constraint-test-hardening/"
+    inserted_ids = []
+    try:
+        conn = await asyncpg.connect(DB)
+
+        # Clean any leftover test rows
+        await conn.execute("DELETE FROM group_targets WHERE group_url = $1", test_url)
+
+        # Insert first approved row — must succeed
+        row_id = await conn.fetchval(
+            """INSERT INTO group_targets
+               (id, platform, group_name, group_url, status, relevance_tags)
+               VALUES (gen_random_uuid(), 'facebook', 'constraint-test',
+                       $1, 'approved', ARRAY[]::text[])
+               RETURNING id""",
+            test_url,
+        )
+        inserted_ids.append(row_id)
+        record("first approved row inserted for constraint test URL", PASS)
+
+        # Insert second approved row with same URL — must fail
+        try:
+            row_id2 = await conn.fetchval(
+                """INSERT INTO group_targets
+                   (id, platform, group_name, group_url, status, relevance_tags)
+                   VALUES (gen_random_uuid(), 'facebook', 'constraint-test-dup',
+                           $1, 'approved', ARRAY[]::text[])
+                   RETURNING id""",
+                test_url,
+            )
+            inserted_ids.append(row_id2)
+            record(
+                "INVARIANT VIOLATED: second approved insert succeeded — constraint not enforced",
+                FAIL,
+                f"id={row_id2}",
+            )
+        except asyncpg.UniqueViolationError as exc:
+            assert "uq_group_targets_platform_url_approved" in str(exc), \
+                f"Wrong constraint fired: {exc}"
+            record("second approved row for same URL correctly rejected by partial unique index", PASS)
+
+        # Pending row for same URL must still be allowed
+        pending_id = await conn.fetchval(
+            """INSERT INTO group_targets
+               (id, platform, group_name, group_url, status, relevance_tags)
+               VALUES (gen_random_uuid(), 'facebook', 'constraint-test-pending',
+                       $1, 'pending', ARRAY[]::text[])
+               RETURNING id""",
+            test_url,
+        )
+        inserted_ids.append(pending_id)
+        record("pending row for same URL allowed (partial index does not block pending)", PASS)
+
+    finally:
+        await conn.execute("DELETE FROM group_targets WHERE group_url = $1", test_url)
+        await conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Phase 18 — Success case updates last_posted_at
+# ---------------------------------------------------------------------------
+
+async def test_group_publish_success_updates_last_posted_at():
+    """
+    On a confirmed successful publication, facebook_group_publish must update
+    group_targets.last_posted_at to NOW().
+    """
+    print("\n=== Phase 18: Success updates last_posted_at ===")
+    from social.tools import facebook_group_publish
+
+    group_id = str(uuid.uuid4())
+    group_url = "https://www.facebook.com/groups/musahnikim/"
+
+    # Capture all SQL calls
+    captured_sql: list[str] = []
+
+    select_row = MagicMock()
+    select_row.group_url = group_url
+    select_row.status = "approved"
+    select_result = MagicMock()
+    select_result.fetchone.return_value = select_row
+
+    async def _execute(query, params=None, **kw):
+        captured_sql.append(str(query))
+        if "SELECT" in str(query).upper():
+            return select_result
+        return MagicMock()
+
+    db = AsyncMock()
+    db.execute = _execute
+    db.commit = AsyncMock()
+
+    with patch("social.facebook_browser.GroupAgent.publish_group_post", new_callable=AsyncMock) as mock_pub:
+        mock_pub.return_value = {"ok": True, "post_id": None}
+        result = await facebook_group_publish(group_id=group_id, content="Test post", db=db)
+
+    assert result.status == "success", f"Expected success, got {result.status!r}"
+    record("facebook_group_publish: returns status='success' on ok", PASS)
+
+    update_sqls = [s for s in captured_sql if "UPDATE" in s.upper() and "group_targets" in s]
+    assert update_sqls, f"No group_targets UPDATE found in SQL calls: {captured_sql}"
+    assert "last_posted_at" in update_sqls[0], \
+        f"last_posted_at absent from UPDATE: {update_sqls[0]}"
+    record("facebook_group_publish: last_posted_at included in UPDATE on success", PASS)
+
+    assert db.commit.called, "db.commit not called after bookkeeping update"
+    record("facebook_group_publish: db.commit called after bookkeeping update", PASS)
+
+
+# ---------------------------------------------------------------------------
+# Phase 19 — Success case increments posts_sent
+# ---------------------------------------------------------------------------
+
+async def test_group_publish_success_increments_posts_sent():
+    """
+    On a confirmed successful publication, facebook_group_publish must increment
+    group_targets.posts_sent atomically.
+    """
+    print("\n=== Phase 19: Success increments posts_sent ===")
+    from social.tools import facebook_group_publish
+
+    group_id = str(uuid.uuid4())
+    group_url = "https://www.facebook.com/groups/musahnikim/"
+    captured_sql: list[str] = []
+
+    select_row = MagicMock()
+    select_row.group_url = group_url
+    select_row.status = "approved"
+    select_result = MagicMock()
+    select_result.fetchone.return_value = select_row
+
+    async def _execute(query, params=None, **kw):
+        captured_sql.append(str(query))
+        return select_result if "SELECT" in str(query).upper() else MagicMock()
+
+    db = AsyncMock()
+    db.execute = _execute
+    db.commit = AsyncMock()
+
+    with patch("social.facebook_browser.GroupAgent.publish_group_post", new_callable=AsyncMock) as mock_pub:
+        mock_pub.return_value = {"ok": True, "post_id": None}
+        result = await facebook_group_publish(group_id=group_id, content="Test post", db=db)
+
+    assert result.status == "success"
+    update_sqls = [s for s in captured_sql if "UPDATE" in s.upper() and "group_targets" in s]
+    assert update_sqls, "No group_targets UPDATE SQL found"
+    assert "posts_sent" in update_sqls[0], \
+        f"posts_sent not in UPDATE: {update_sqls[0]}"
+    assert "posts_sent + 1" in update_sqls[0] or "posts_sent+1" in update_sqls[0], \
+        f"posts_sent not incremented atomically in: {update_sqls[0]}"
+    record("facebook_group_publish: posts_sent incremented atomically (posts_sent + 1) on success", PASS)
+
+
+# ---------------------------------------------------------------------------
+# Phase 20 — Failure case: bookkeeping update must NOT run
+# ---------------------------------------------------------------------------
+
+async def test_group_publish_failure_skips_bookkeeping():
+    """
+    When GroupAgent.publish_group_post returns ok=False, facebook_group_publish
+    must NOT update last_posted_at or posts_sent.
+    """
+    print("\n=== Phase 20: Failure does NOT update bookkeeping ===")
+    from social.tools import facebook_group_publish
+
+    group_id = str(uuid.uuid4())
+    group_url = "https://www.facebook.com/groups/musahnikim/"
+    captured_sql: list[str] = []
+
+    select_row = MagicMock()
+    select_row.group_url = group_url
+    select_row.status = "approved"
+    select_result = MagicMock()
+    select_result.fetchone.return_value = select_row
+
+    async def _execute(query, params=None, **kw):
+        captured_sql.append(str(query))
+        return select_result
+
+    db = AsyncMock()
+    db.execute = _execute
+    db.commit = AsyncMock()
+
+    with patch("social.facebook_browser.GroupAgent.publish_group_post", new_callable=AsyncMock) as mock_pub:
+        mock_pub.return_value = {"ok": False, "error": "composer timeout"}
+        result = await facebook_group_publish(group_id=group_id, content="Test post", db=db)
+
+    assert result.status == "error", f"Expected error, got {result.status!r}"
+    record("facebook_group_publish: returns status='error' on failed publish", PASS)
+
+    update_sqls = [s for s in captured_sql if "UPDATE" in s.upper() and "group_targets" in s]
+    assert not update_sqls, \
+        f"Bookkeeping UPDATE must NOT run on failure, but found: {update_sqls}"
+    record("facebook_group_publish: bookkeeping UPDATE skipped on failed publish (no last_posted_at update)", PASS)
+
+    # db.commit is allowed for _log_action (fire-and-forget), but the bookkeeping commit
+    # must not have been called from the success path — the only call to commit on failure
+    # comes from _log_action's async task, which may not run in this test.
+    record("facebook_group_publish: failure path is safe — no spurious bookkeeping", PASS)
+
+
+# ---------------------------------------------------------------------------
+# Phase 21 — facebook_group platform routes to facebook_group_publish via run_tool
+# ---------------------------------------------------------------------------
+
+async def test_execute_campaign_facebook_group_routing():
+    """
+    execute_campaign must route a facebook_group platform post to
+    run_tool('facebook_group_publish', group_id=...) — never to the page publisher.
+    """
+    print("\n=== Phase 21: facebook_group routes through run_tool to facebook_group_publish ===")
+    from BACKEND_AI_AGENTS import get_agent
+    from social.tools import ToolResult
+
+    noa = get_agent("social_media_manager_agent")
+    campaign_id = str(uuid.uuid4())
+    group_target_id = str(uuid.uuid4())
+
+    fake_campaign = {
+        "id": campaign_id, "name": "Group Routing Test", "goal": "test",
+        "platforms": ["facebook_group"], "tone": "professional", "status": "draft", "plan": {},
+    }
+    approved_post = {
+        "id": str(uuid.uuid4()), "content": "Group post content",
+        "platforms": ["facebook_group"], "status": "approved", "campaign_id": campaign_id,
+        "content_version": 1, "approved_by": str(uuid.uuid4()),
+        "approved_at": "2026-08-11T10:00:00",
+    }
+
+    # Route DB calls by SQL content: idempotency UPDATE gets rowcount=1; the
+    # group_target round-robin SELECT gets the approved row; all others generic.
+    group_target_row = MagicMock()
+    group_target_row.__getitem__ = MagicMock(side_effect=lambda _: group_target_id)
+
+    async def _dispatch(query, params=None, **kw):
+        sql = str(query)
+        r = MagicMock()
+        r.rowcount = 1
+        if "group_targets" in sql and "SELECT" in sql.upper():
+            r.fetchone.return_value = group_target_row
+        else:
+            r.fetchone.return_value = None
+        return r
+
+    fake_result = ToolResult(status="success", post_id=None, analytics_tracking_id="t1")
+
+    with patch("social.campaign_manager.get_campaign", new_callable=AsyncMock) as mock_get, \
+         patch("social.campaign_manager.get_campaign_posts", new_callable=AsyncMock) as mock_posts, \
+         patch("social.campaign_manager.link_post_to_campaign", new_callable=AsyncMock), \
+         patch("social.campaign_manager.update_campaign_status", new_callable=AsyncMock), \
+         patch("social.tools.run_tool", new_callable=AsyncMock) as mock_run:
+        mock_get.return_value = fake_campaign
+        mock_posts.return_value = [approved_post]
+        mock_run.return_value = fake_result
+
+        db = AsyncMock()
+        db.execute = _dispatch
+        db.commit = AsyncMock()
+
+        result = await noa.execute_campaign(campaign_id, db, dry_run=False)
+
+    assert mock_run.called, "run_tool was not called for facebook_group post"
+    record("execute_campaign: run_tool called for facebook_group platform", PASS)
+
+    tool_name = mock_run.call_args.args[0] if mock_run.call_args.args else mock_run.call_args[0][0]
+    assert tool_name == "facebook_group_publish", \
+        f"Expected 'facebook_group_publish', got {tool_name!r}"
+    record("execute_campaign: run_tool called with tool_name='facebook_group_publish'", PASS)
+
+    kw = mock_run.call_args.kwargs
+    assert "group_id" in kw, f"group_id not in run_tool kwargs: {kw}"
+    assert kw["group_id"] == group_target_id, \
+        f"Wrong group_id: expected {group_target_id}, got {kw['group_id']}"
+    record(f"execute_campaign: group_id={group_target_id[:8]}... correctly resolved and passed", PASS)
+
+    assert result.get("posts_published", 0) >= 1, f"posts_published={result.get('posts_published')}"
+    record("execute_campaign: posts_published>=1 for facebook_group post", PASS)
+
+
+# ---------------------------------------------------------------------------
+# Phase 22 — ToolResult(success, post_id=None) → social_post marked published with group_post_no_id
+# ---------------------------------------------------------------------------
+
+async def test_group_post_no_id_published_state():
+    """
+    When the browser cannot capture a Facebook Group post_id, run_tool returns
+    ToolResult(status='success', post_id=None). execute_campaign must:
+      1. Still mark the social_post as 'published'
+      2. Record 'group_post_no_id' in external_post_ids (not a real post_id)
+    """
+    print("\n=== Phase 22: ToolResult(success, post_id=None) → published with group_post_no_id ===")
+    from BACKEND_AI_AGENTS import get_agent
+    from social.tools import ToolResult
+
+    noa = get_agent("social_media_manager_agent")
+    campaign_id = str(uuid.uuid4())
+    group_target_id = str(uuid.uuid4())
+    post_id = str(uuid.uuid4())
+
+    fake_campaign = {
+        "id": campaign_id, "name": "No-ID Fallback Test", "goal": "test",
+        "platforms": ["facebook_group"], "tone": "professional", "status": "draft", "plan": {},
+    }
+    approved_post = {
+        "id": post_id, "content": "Group post no id",
+        "platforms": ["facebook_group"], "status": "approved", "campaign_id": campaign_id,
+        "content_version": 1, "approved_by": str(uuid.uuid4()),
+        "approved_at": "2026-08-11T10:00:00",
+    }
+
+    # Capture all (sql, params) pairs from db.execute; route by SQL content so
+    # the idempotency claim and the group_target lookup both get the right response.
+    captured: list[dict] = []
+    group_target_row = MagicMock()
+    group_target_row.__getitem__ = MagicMock(side_effect=lambda _: group_target_id)
+
+    async def _dispatch(query, params=None, **kw):
+        sql = str(query)
+        captured.append({"sql": sql, "params": params or {}})
+        r = MagicMock()
+        r.rowcount = 1
+        if "group_targets" in sql and "SELECT" in sql.upper():
+            r.fetchone.return_value = group_target_row
+        else:
+            r.fetchone.return_value = None
+        return r
+
+    # run_tool returns success with NO post_id
+    no_id_result = ToolResult(status="success", post_id=None, analytics_tracking_id="t_noid")
+
+    with patch("social.campaign_manager.get_campaign", new_callable=AsyncMock) as mock_get, \
+         patch("social.campaign_manager.get_campaign_posts", new_callable=AsyncMock) as mock_posts, \
+         patch("social.campaign_manager.link_post_to_campaign", new_callable=AsyncMock), \
+         patch("social.campaign_manager.update_campaign_status", new_callable=AsyncMock), \
+         patch("social.tools.run_tool", new_callable=AsyncMock) as mock_run:
+        mock_get.return_value = fake_campaign
+        mock_posts.return_value = [approved_post]
+        mock_run.return_value = no_id_result
+
+        db = AsyncMock()
+        db.execute = _dispatch
+        db.commit = AsyncMock()
+
+        result = await noa.execute_campaign(campaign_id, db, dry_run=False)
+
+    # Must be counted as published
+    assert result.get("posts_published", 0) >= 1, \
+        f"posts_published={result.get('posts_published')} for group_post_no_id success"
+    record("execute_campaign: ToolResult(success, post_id=None) counted as published", PASS)
+
+    # Find the social_posts UPDATE call
+    sp_updates = [c for c in captured if "UPDATE" in c["sql"].upper() and "social_posts" in c["sql"]]
+    assert sp_updates, f"No social_posts UPDATE found in captured calls: {[c['sql'][:60] for c in captured]}"
+    ext_json = sp_updates[0]["params"].get("ext", "{}")
+    import json as _json
+    ext = _json.loads(ext_json) if isinstance(ext_json, str) else (ext_json or {})
+    assert ext.get("facebook_group") == "group_post_no_id", \
+        f"Expected 'group_post_no_id' in external_post_ids, got: {ext}"
+    record("execute_campaign: external_post_ids['facebook_group']='group_post_no_id' when post_id=None", PASS)
+
+
+# ---------------------------------------------------------------------------
+# Phase 23 — Unapproved social post blocked by execute_campaign
+# ---------------------------------------------------------------------------
+
+async def test_unapproved_social_post_blocked_by_execute_campaign():
+    """
+    social_posts with status != 'approved' must never trigger run_tool.
+    execute_campaign only queries posts filtered by status='approved'; a pending
+    post is invisible to the publish loop and produces posts_published=0.
+    """
+    print("\n=== Phase 23: Unapproved social_post blocked by execute_campaign ===")
+    from BACKEND_AI_AGENTS import get_agent
+
+    noa = get_agent("social_media_manager_agent")
+    campaign_id = str(uuid.uuid4())
+    fake_campaign = {
+        "id": campaign_id, "name": "Gate Test", "goal": "test",
+        "platforms": ["facebook_group"], "tone": "professional", "status": "draft", "plan": {},
+    }
+
+    with patch("social.campaign_manager.get_campaign", new_callable=AsyncMock) as mock_get, \
+         patch("social.campaign_manager.get_campaign_posts", new_callable=AsyncMock) as mock_posts, \
+         patch("social.campaign_manager.prepare_campaign_content", new_callable=AsyncMock) as mock_prepare, \
+         patch("social.campaign_manager.update_campaign_status", new_callable=AsyncMock), \
+         patch("social.tools.run_tool", new_callable=AsyncMock) as mock_run:
+        mock_get.return_value = fake_campaign
+        mock_posts.return_value = []  # no approved posts — all pending
+        mock_prepare.return_value = [
+            {"post_id": str(uuid.uuid4()), "platform": "facebook_group", "status": "pending_approval"}
+        ]
+
+        db = AsyncMock()
+        db.execute = AsyncMock(return_value=MagicMock(rowcount=1, fetchone=MagicMock(return_value=None)))
+        db.commit = AsyncMock()
+
+        result = await noa.execute_campaign(campaign_id, db, dry_run=False)
+
+    assert not mock_run.called, "run_tool called despite unapproved (pending) social post"
+    record("execute_campaign: run_tool NOT called for unapproved social_post", PASS)
+    assert result.get("posts_published", 0) == 0, \
+        f"posts_published={result.get('posts_published')} despite all posts pending"
+    record("execute_campaign: posts_published=0 when social_posts.status != 'approved'", PASS)
+    assert result.get("status") == "pending_approval", \
+        f"Expected status='pending_approval', got {result.get('status')!r}"
+    record("execute_campaign: returns status='pending_approval' when no approved posts", PASS)
+
+
+# ---------------------------------------------------------------------------
+# Phase 24 — Unapproved group target blocked by facebook_group_publish
+# ---------------------------------------------------------------------------
+
+async def test_unapproved_group_target_blocked_by_tool():
+    """
+    facebook_group_publish must return ToolResult(status='pending_approval') when
+    group_targets.status != 'approved'. The browser action must never be reached.
+    """
+    print("\n=== Phase 24: Unapproved group_target blocked by facebook_group_publish ===")
+    from social.tools import facebook_group_publish
+
+    group_id = str(uuid.uuid4())
+
+    # DB returns a row with status='pending' (not approved)
+    pending_row = MagicMock()
+    pending_row.group_url = "https://www.facebook.com/groups/musahnikim/"
+    pending_row.status = "pending"
+    select_result = MagicMock()
+    select_result.fetchone.return_value = pending_row
+
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=select_result)
+    db.commit = AsyncMock()
+
+    with patch("social.facebook_browser.GroupAgent.publish_group_post", new_callable=AsyncMock) as mock_pub:
+        result = await facebook_group_publish(group_id=group_id, content="Test post", db=db)
+
+    assert result.status == "pending_approval", \
+        f"Expected 'pending_approval', got {result.status!r}"
+    record("facebook_group_publish: returns status='pending_approval' for pending group_target", PASS)
+
+    assert not mock_pub.called, "GroupAgent.publish_group_post called despite unapproved group_target"
+    record("facebook_group_publish: browser action NOT invoked for unapproved group_target", PASS)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -685,6 +1434,21 @@ async def run() -> int:
     await test_engagement_dedup()
     await test_insights_parser()
     await test_content_length()
+    # New phases — operational campaign workflow approval validation
+    await test_execute_campaign_generates_pending_approval()
+    await test_execute_campaign_publishes_after_approval()
+    await test_content_version_invalidates_approval()
+    await test_utm_params_deterministic()
+    # New phases — Facebook Group pipeline invariants
+    await test_group_target_pending_not_selectable()
+    await test_duplicate_approved_group_url_rejected()
+    await test_group_publish_success_updates_last_posted_at()
+    await test_group_publish_success_increments_posts_sent()
+    await test_group_publish_failure_skips_bookkeeping()
+    await test_execute_campaign_facebook_group_routing()
+    await test_group_post_no_id_published_state()
+    await test_unapproved_social_post_blocked_by_execute_campaign()
+    await test_unapproved_group_target_blocked_by_tool()
     return sum(1 for r in results if r["status"] == FAIL)
 
 

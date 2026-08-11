@@ -609,7 +609,12 @@ class SocialPost(Base):
     created_by        = Column(UUID(as_uuid=True), nullable=False,
                                comment="User UUID from autospare_pii — no FK (cross-DB)")
     approved_by       = Column(UUID(as_uuid=True), nullable=True)
+    approved_at       = Column(DateTime, nullable=True)
     rejection_reason  = Column(Text, nullable=True)
+    campaign_id       = Column(UUID(as_uuid=True), nullable=True, index=True,
+                               comment="Campaign that originated this post — no FK enforced")
+    content_version   = Column(Integer, nullable=False, default=1, server_default="1",
+                               comment="Incremented on each edit; edit invalidates prior approval")
     created_at        = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at        = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

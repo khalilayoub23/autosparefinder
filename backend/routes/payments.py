@@ -2190,8 +2190,24 @@ async def create_whatsapp_checkout(
             # Customer-facing line-item name: prefer Hebrew, fall back through
             # name/SKU, strip stray quotes — some catalog names are mangled
             # (e.g. `'רמקול אח`) and this is what appears on the payment page.
+            #
+            # ROOT FIX 2026-08-11 (same class of bug found in NOA's post generation):
+            # `name_he or ""` is truthy whenever the column is non-empty — but measured
+            # live, a large share of catalog rows have name_he POPULATED with the raw
+            # ENGLISH supplier title (an importer wrote the English name into the Hebrew
+            # column when no translation existed), e.g. name_he =
+            # "BOSCH 3 397 007 462 Wiper blade Beam, Length: 600mm, Front". Emptiness
+            # alone doesn't catch that. Only accept name_he as the "Hebrew" candidate when
+            # it actually CONTAINS Hebrew characters; otherwise skip straight to the
+            # existing name/SKU fallback (English there is fine — it was never claimed to
+            # be Hebrew).
             _display_name = ""
-            for _cand in ((part.name_he or ""), (part.name or ""), (part.sku or "")):
+            _name_he_raw = (part.name_he or "").strip()
+            _candidates = (
+                ([_name_he_raw] if re.search(r"[א-ת]", _name_he_raw) else [])
+                + [(part.name or ""), (part.sku or "")]
+            )
+            for _cand in _candidates:
                 _cand = _cand.strip().strip("'\"׳״")
                 if len(_cand) >= 3:
                     _display_name = _cand[:120]

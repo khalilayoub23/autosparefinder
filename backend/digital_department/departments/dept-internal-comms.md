@@ -1,0 +1,84 @@
+---
+name: dept-internal-comms
+description: Formats internal status reports to the owner (system reviews, weekly briefs, incident reports) consistently — standardizes what NOA's Monday brief and the health-monitor alerts already do ad hoc.
+---
+
+# AutoSpareFinder Internal Comms
+
+Adapted from the general "internal-comms" pattern (3P updates, newsletters,
+FAQs, incident reports) to this project's actual internal-reporting
+surfaces, which already exist but aren't formally templated:
+
+- The **System Review** format already mandated in `CLAUDE.md` (Active
+  Processes / Memory / Catalog Health / Agent Todos / Job History / Open
+  Issues table).
+- **NOA's Monday brief** to the owner's WhatsApp (coverage %, brands
+  covered, parts collected).
+- **Health-monitor incident alerts** (`_health_monitor_loop`, failed/zombie
+  job notifications).
+- **Owner status updates** during long-running work (the 30-min wakeup checks).
+
+## When to Use
+
+- Writing any owner-facing status update, incident report, or weekly brief.
+- Standardizing an ad-hoc report into one of the formats below rather than
+  inventing a new layout each time.
+
+## Formats
+
+**System Review** — use the exact table format already specified in
+`CLAUDE.md` § System Review Format. Never restructure it; consistency is
+the point.
+
+**Incident Report** (for anything the health monitor or a manual check
+surfaces): What broke → root cause (if known) → what was done → what's
+still open → evidence it's actually fixed (not self-reported). Matches the
+`feedback_verify_destination` principle: no incident is "resolved" without
+a live-system check proving the outcome.
+
+**Weekly/Monday Brief** — coverage numbers, what shipped, what's blocked,
+next priorities. Keep it to what NOA's existing brief already does; don't
+pad with content-free status filler. Template (adapted from
+`ceo-advisor`'s monthly board-update email — the one genuinely reusable
+piece from that reference; the rest of that file is board-of-directors/
+public-company machinery that doesn't apply here and was deliberately
+left out, see `dept-cmo`):
+
+```
+Headlines:
+- [Real achievement/number this period]
+- [Real metric that moved]
+
+Challenges:
+- [Real issue] — [what's being done about it]
+
+Looking Ahead:
+- [Real next milestone]
+```
+
+Keep every line real and short — this is a compression format, not a
+place to pad with status filler.
+
+**Delivering a problem/incident to the owner** (adapted from the same
+source — a genuinely board-agnostic discipline, not board-specific):
+1. Don't delay — report promptly, not after it's "cleaned up."
+2. Lead with facts, not a defensive framing.
+3. Own it — don't attribute blame to "the system" if it was a real gap.
+4. Present the action plan, not just the problem.
+5. Give a realistic timeline, not an optimistic one.
+
+## Truth-Only Guardrail (MANDATORY)
+
+Every number in any of these reports (catalog counts, coverage %, job
+success rates) must come from a live query at report time — this is
+literally the platform's own Golden Rule #3 ("Verify from real data, not
+.md files") and R#6 ("Never fabricate data — counts/metrics/statuses come
+from live queries, never invented"). This skill exists to make reports
+*consistent in format*, never to make them faster to write by skipping the
+live check.
+
+## Output
+
+Match tone to audience: terse and table-based for the owner's WhatsApp
+(per `feedback_task_completion` — owner prefers terse, no trailing
+summaries), fuller prose only when explicitly asked for a written report.

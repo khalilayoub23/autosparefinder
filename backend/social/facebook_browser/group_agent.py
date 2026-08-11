@@ -95,6 +95,98 @@ class GroupAgent:
     from the WhatsApp console.
     """
 
+    # ── Account group discovery ────────────────────────────────────────────────
+
+    async def discover_account_groups(self) -> list[dict]:
+        """Browse facebook.com/groups/joins/ to enumerate every group the account belongs to.
+
+        Uses the canonical joined-groups page (as confirmed by the owner's browser screenshot).
+        Scrolls until the count stabilises across 3 consecutive checks — handles 129+ groups.
+
+        Returns a list of dicts:  {"name": str, "url": str}
+        """
+        found: list[dict] = []
+        try:
+            async with FacebookSession() as page:
+                if not page:
+                    log.warning("fb_browser: discover_account_groups — session not authenticated")
+                    return []
+
+                # The correct joined-groups URL (confirmed from owner's browser)
+                await page.goto(
+                    "https://www.facebook.com/groups/joins/",
+                    wait_until="domcontentloaded",
+                    timeout=30_000,
+                )
+                await _random_delay(2.5, 4.0)
+
+                # Scroll until the discovered count stabilises (handles 129+ groups lazily loaded)
+                _JS_EXTRACT = """() => {
+                    const results = [];
+                    const seen = new Set();
+                    const allLinks = document.querySelectorAll('a[href*="/groups/"]');
+                    for (const a of allLinks) {
+                        let href = (a.href || '').split('?')[0].replace(/\\/$/, '');
+                        // Must be /groups/<slug_or_id> — exclude meta pages
+                        if (!/\\/groups\\/[^/]{3,}$/.test(href)) continue;
+                        if (/\\/groups\\/(joins|discover|feed|create|search|requests|pending|notifications|see_all_groups)/.test(href)) continue;
+                        if (seen.has(href)) continue;
+                        seen.add(href);
+
+                        // Name: prefer the group card heading text over the link's own text
+                        // FB renders group names in a nearby <span> or as aria-label
+                        let name = '';
+                        // Walk up to find a card container, then look for the name element
+                        let el = a.parentElement;
+                        for (let i = 0; i < 6 && el; i++) {
+                            const heading = el.querySelector('[dir="auto"] > span, [role="heading"]');
+                            if (heading && heading.innerText && heading.innerText.length > 1) {
+                                name = heading.innerText.trim();
+                                break;
+                            }
+                            el = el.parentElement;
+                        }
+                        if (!name) {
+                            name = (a.getAttribute('aria-label') || a.innerText || '').trim();
+                        }
+                        name = name.replace(/\\s+/g, ' ').slice(0, 120);
+                        // Skip very short names (likely icon/button links, not group cards)
+                        if (name.length < 3) continue;
+                        // Skip generic UI strings
+                        if (/^(view group|see all|more|create new group)$/i.test(name)) continue;
+                        results.push({name, url: href + '/'});
+                    }
+                    return results;
+                }"""
+
+                prev_count = 0
+                stable_rounds = 0
+                for _scroll in range(40):  # up to 40 scrolls = ~240 groups at 6/scroll
+                    await page.evaluate("window.scrollBy(0, window.innerHeight * 1.5)")
+                    await _random_delay(1.5, 2.5)
+                    current = await page.evaluate("() => document.querySelectorAll('a[href*=\"/groups/\"]').length")
+                    if current == prev_count:
+                        stable_rounds += 1
+                        if stable_rounds >= 3:
+                            break  # no new content for 3 consecutive scrolls → done
+                    else:
+                        stable_rounds = 0
+                    prev_count = current
+                    log.debug("fb_browser: discover scroll %d — %d group links visible", _scroll + 1, current)
+
+                groups_data = await page.evaluate(_JS_EXTRACT)
+                for g in groups_data:
+                    url = (g.get("url") or "").strip()
+                    name = (g.get("name") or "").strip()
+                    if url and name:
+                        found.append({"name": name, "url": url})
+
+        except Exception as exc:
+            log.error("fb_browser: discover_account_groups error: %s", exc)
+
+        log.info("fb_browser: discover_account_groups found %d groups", len(found))
+        return found
+
     # ── Scanning ───────────────────────────────────────────────────────────────
 
     async def scan_groups(
@@ -126,7 +218,10 @@ class GroupAgent:
         try:
             async with FacebookSession() as page:
                 if not page:
-                    log.warning("fb_browser: session invalid — skipping group scan")
+                    log.warning(
+                        "fb_browser: Facebook session not authenticated — "
+                        "re-login required (run fb_browser_login.py once)"
+                    )
                     return []
 
                 for group in approved_groups:
@@ -277,7 +372,10 @@ class GroupAgent:
         try:
             async with FacebookSession() as page:
                 if not page:
-                    return {"ok": False, "error": "browser session invalid"}
+                    return {
+                        "ok": False,
+                        "error": "Facebook session not authenticated — re-login required",
+                    }
 
                 # Navigate to the specific post
                 await page.goto(post_url, wait_until="domcontentloaded", timeout=30_000)
@@ -352,54 +450,160 @@ class GroupAgent:
         try:
             async with FacebookSession() as page:
                 if not page:
-                    return {"ok": False, "error": "browser session invalid"}
+                    return {
+                        "ok": False,
+                        "error": "Facebook session not authenticated — re-login required",
+                    }
 
                 await page.goto(group_url, wait_until="domcontentloaded", timeout=30_000)
                 await _random_delay(2.5, 5.0)
 
-                # Look for "Write something…" / post composer
-                composer = None
-                for sel in [
+                # Scroll to top so the group post composer (not a comment box) is first
+                await page.evaluate("window.scrollTo(0, 0)")
+                await asyncio.sleep(1.0)
+
+                # Step 1: Find and click the group post composer TRIGGER (a button/div at top
+                # of feed that OPENS the writing modal). Do NOT target [role="textbox"] here —
+                # that matches comment boxes lower in the feed.
+                composer_trigger = None
+                trigger_selectors = [
+                    # Hebrew Facebook locale
+                    '[aria-label="כתוב משהו לקבוצה…"]',
+                    '[aria-label*="כתוב משהו"]',
+                    '[aria-label*="כתוב"]',
+                    # English locale
+                    '[aria-label="Write something to the group…"]',
                     '[aria-label="Write something…"]',
-                    '[aria-label*="Write"]',
+                    '[aria-label*="Write something"]',
+                    # testid
                     '[data-testid="status-attachment-mentions-input"]',
-                    '[role="textbox"]',
-                ]:
+                    # Generic: the first role=button that contains the composer placeholder text
+                    'div[role="button"] span:has-text("Write something")',
+                    'div[role="button"] span:has-text("כתוב")',
+                ]
+                for sel in trigger_selectors:
                     try:
-                        composer = await page.wait_for_selector(sel, timeout=6_000)
-                        if composer:
+                        el = await page.wait_for_selector(sel, timeout=4_000)
+                        if el:
+                            composer_trigger = el
+                            log.info("fb_browser: composer trigger found via: %s", sel)
                             break
                     except Exception:
                         continue
 
-                if not composer:
+                if not composer_trigger:
                     await _save_failure_screenshot(page, "group_composer_not_found")
                     return {"ok": False, "error": "post composer not found (FB DOM changed?)"}
 
-                await composer.click()
-                await _random_delay(1.0, 2.0)
+                await composer_trigger.click()
+                await _random_delay(1.5, 3.0)
 
+                # Step 2: The click should have opened a MODAL DIALOG. Wait for it.
+                # Then locate the textbox INSIDE the dialog (not a comment box in the feed).
+                dialog = None
+                try:
+                    dialog = await page.wait_for_selector('[role="dialog"]', timeout=8_000)
+                    log.info("fb_browser: composer dialog opened")
+                except Exception:
+                    log.warning("fb_browser: no dialog appeared after composer click — trying textbox fallback")
+
+                # Find the textbox to type into (prefer inside the dialog)
+                typing_box = None
+                if dialog:
+                    for sel in [
+                        '[role="dialog"] [role="textbox"]',
+                        '[role="dialog"] [contenteditable="true"]',
+                        '[role="dialog"] [data-lexical-editor="true"]',
+                    ]:
+                        try:
+                            typing_box = await page.wait_for_selector(sel, timeout=5_000)
+                            if typing_box:
+                                log.info("fb_browser: typing box found in dialog via: %s", sel)
+                                break
+                        except Exception:
+                            continue
+
+                if not typing_box:
+                    # Fallback: first visible textbox on page (must be visible)
+                    try:
+                        typing_box = await page.wait_for_selector('[role="textbox"]', timeout=5_000)
+                        log.info("fb_browser: typing box via fallback [role=textbox]")
+                    except Exception:
+                        pass
+
+                if not typing_box:
+                    await _save_failure_screenshot(page, "group_composer_not_found")
+                    return {"ok": False, "error": "post composer textbox not found after dialog open"}
+
+                # Use force=True to bypass Facebook's __fb-light-mode intercept div
+                try:
+                    await typing_box.click(force=True)
+                except Exception:
+                    await typing_box.dispatch_event("click")
+                await asyncio.sleep(0.5)
+
+                # Type the content character by character (human-like)
                 for char in content:
                     await page.keyboard.type(char)
                     await asyncio.sleep(random.uniform(0.03, 0.10))
 
                 await _random_delay(1.5, 3.0)
 
-                # Click Post button
+                # Step 3: Find the Post button — prefer inside dialog; try Hebrew aria-label first
                 post_btn = None
-                for sel in ['[aria-label="Post"]', 'button[type="submit"]']:
+                post_btn_selectors = [
+                    # Hebrew locale (facebook.com in he-IL)
+                    '[role="dialog"] [aria-label="פרסם"]',
+                    '[role="dialog"] [aria-label*="פרסם"]',
+                    # English locale
+                    '[role="dialog"] [aria-label="Post"]',
+                    '[role="dialog"] [aria-label*="Post"]',
+                    # Generic inside dialog
+                    '[role="dialog"] button[type="submit"]',
+                    # Broader: any visible enabled button/div with Post label
+                    '[aria-label="פרסם"]',
+                    '[aria-label="Post"]',
+                    'div[role="button"][aria-label="פרסם"]',
+                    'div[role="button"][aria-label="Post"]',
+                    # Last resort: text-based (Playwright CSS :has-text)
+                    'div[role="button"]:has-text("פרסם")',
+                    'div[role="button"]:has-text("Post")',
+                ]
+                for sel in post_btn_selectors:
                     try:
-                        post_btn = await page.wait_for_selector(sel, timeout=5_000)
-                        if post_btn:
+                        btn = await page.wait_for_selector(sel, timeout=4_000)
+                        if btn and await btn.is_visible():
+                            post_btn = btn
+                            log.info("fb_browser: Post button found via: %s", sel)
                             break
                     except Exception:
                         continue
 
                 if not post_btn:
                     await _save_failure_screenshot(page, "group_post_btn_not_found")
+                    # Log aria-labels of all role=button elements for debugging
+                    try:
+                        btns = await page.eval_on_selector_all(
+                            '[role="button"],[role="dialog"] button',
+                            "els => els.map(e => e.ariaLabel || e.textContent.trim().slice(0,40))"
+                        )
+                        log.error("fb_browser: visible buttons: %s", btns[:30])
+                    except Exception:
+                        pass
                     return {"ok": False, "error": "Post button not found"}
 
-                await post_btn.click()
+                # Take a screenshot to verify the page state before clicking
+                await _save_failure_screenshot(page, "group_pre_post_click")
+
+                # Use dispatch_event to bypass Playwright's pointer-intercept hit-test.
+                # Facebook wraps the page in __fb-light-mode div which otherwise blocks clicks.
+                try:
+                    await post_btn.dispatch_event("click")
+                    log.info("fb_browser: Post button clicked via dispatch_event")
+                except Exception:
+                    # If dispatch_event fails, try force=True as last resort
+                    await post_btn.click(force=True)
+                    log.info("fb_browser: Post button clicked via force=True")
                 await _random_delay(3.0, 6.0)
 
                 _record_rate(group_url)

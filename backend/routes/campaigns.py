@@ -2,26 +2,42 @@
 routes/campaigns.py — Campaign management API.
 
 Endpoints:
-  POST   /api/v1/campaigns               create a campaign
-  GET    /api/v1/campaigns               list campaigns
-  GET    /api/v1/campaigns/{id}          get one campaign
-  PATCH  /api/v1/campaigns/{id}/status   change status
-  GET    /api/v1/campaigns/{id}/analytics analytics for one campaign
+  POST   /api/v1/campaigns                           create a campaign
+  GET    /api/v1/campaigns                           list campaigns
+  GET    /api/v1/campaigns/{id}                      get one campaign
+  PATCH  /api/v1/campaigns/{id}/status               change status
+  POST   /api/v1/campaigns/{id}/execute              execute (approval-gated)
+  GET    /api/v1/campaigns/{id}/posts                list social_posts for campaign
+  GET    /api/v1/campaigns/{id}/analytics            analytics for one campaign
 
-  POST   /api/v1/campaigns/groups        add a group target
-  GET    /api/v1/campaigns/groups        list group targets
-  POST   /api/v1/campaigns/groups/{id}/approve  approve a group target
-  POST   /api/v1/campaigns/groups/scan   trigger a group scan
+  Group targets:
+  POST   /api/v1/campaigns/groups                    add a group target
+  GET    /api/v1/campaigns/groups                    list group targets
+  POST   /api/v1/campaigns/groups/{id}/approve       approve a group target
+  POST   /api/v1/campaigns/groups/scan               trigger a group scan
 
-  POST   /api/v1/campaigns/tools/run     call any social tool by name
+  Social post content approval (human-in-the-loop, Phase 5-7):
+  PATCH  /api/v1/social-posts/{id}/approve           approve a pending post
+  PATCH  /api/v1/social-posts/{id}/reject            reject a post
+  PATCH  /api/v1/social-posts/{id}/content           edit content (bumps version, resets to pending)
+
+  Tool dispatcher:
+  POST   /api/v1/campaigns/tools/run                 call any social tool by name
+
+Approval invariant:
+  execute_campaign() generates content → stores as pending_approval → returns early.
+  Owner calls PATCH /approve for each post.
+  A second execute_campaign() call publishes only the approved posts.
+  An edit (PATCH /content) bumps content_version and resets to pending_approval,
+  preventing a stale-approved post from being published after the owner edits it.
 
 All endpoints require admin auth. Integrates with:
-  - social/campaign_manager.py  (persistence)
+  - social/campaign_manager.py  (persistence + approval workflow)
   - social/tools.py             (social actions)
   - social/feedback_analyzer.py (analytics)
-  - BACKEND_AI_AGENTS.SocialMediaManagerAgent (LLM plan generation)
+  - BACKEND_AI_AGENTS.SocialMediaManagerAgent (LLM plan generation + execute)
 
-Author: AutoSpareFinder — 2026-08-06
+Author: AutoSpareFinder — 2026-08-09
 """
 
 from __future__ import annotations
@@ -77,6 +93,19 @@ class RunToolRequest(BaseModel):
 
 class ExecuteCampaignRequest(BaseModel):
     dry_run: bool = False
+
+
+class ApprovePostRequest(BaseModel):
+    approved_version: Optional[int] = None   # if set, must match current content_version
+
+
+class RejectPostRequest(BaseModel):
+    reason: str = ""
+
+
+class UpdatePostContentRequest(BaseModel):
+    content: str = Field(..., min_length=10)
+    scheduled_at: Optional[datetime] = None
 
 
 # ---------------------------------------------------------------------------
@@ -344,6 +373,122 @@ async def get_platform_status(
                 )
 
     return {"platforms": platforms, "facebook_token": fb_token_info}
+
+
+# ---------------------------------------------------------------------------
+# Campaign post listing (Phase 6 — human-in-the-loop review)
+# ---------------------------------------------------------------------------
+
+@router.get("/api/v1/campaigns/{campaign_id}/posts")
+async def list_campaign_posts(
+    campaign_id: str,
+    status: Optional[str] = None,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List social_posts associated with a campaign.
+
+    Use status filter to see e.g. posts awaiting approval (status=pending_approval)
+    or already published (status=published).
+    """
+    from social.campaign_manager import get_campaign_posts
+    posts = await get_campaign_posts(db, campaign_id=campaign_id, status=status)
+    return {"campaign_id": campaign_id, "posts": posts, "total": len(posts)}
+
+
+# ---------------------------------------------------------------------------
+# Social post content approval (Phase 5-7 — human-in-the-loop)
+# ---------------------------------------------------------------------------
+
+@router.patch("/api/v1/social-posts/{post_id}/approve")
+async def approve_social_post(
+    post_id: str,
+    data: ApprovePostRequest = ApprovePostRequest(),
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Approve a pending social post for publishing.
+
+    Records: approver UUID, timestamp, and optionally validates content_version
+    to prevent approving a stale version (if the post was edited since you read it).
+
+    After approval, call POST /api/v1/campaigns/{id}/execute again to publish.
+    """
+    from social.campaign_manager import approve_post_content
+    approved = await approve_post_content(
+        db,
+        post_id=post_id,
+        approved_by=str(current_user.id),
+        approved_version=data.approved_version,
+    )
+    if not approved:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Post not found, not in pending_approval status, "
+                "or content_version mismatch (post was edited after you read it)."
+            )
+        )
+    return {
+        "post_id": post_id,
+        "status": "approved",
+        "approved_by": str(current_user.id),
+    }
+
+
+@router.patch("/api/v1/social-posts/{post_id}/reject")
+async def reject_social_post(
+    post_id: str,
+    data: RejectPostRequest = RejectPostRequest(),
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Reject a pending or approved social post.
+
+    Sets status='rejected' and records the rejection reason.
+    To regenerate content, call POST /api/v1/campaigns/{id}/execute again.
+    """
+    from social.campaign_manager import reject_post_content
+    rejected = await reject_post_content(
+        db,
+        post_id=post_id,
+        reason=data.reason,
+        rejected_by=str(current_user.id),
+    )
+    if not rejected:
+        raise HTTPException(
+            status_code=404,
+            detail="Post not found or already published (cannot reject published posts)."
+        )
+    return {"post_id": post_id, "status": "rejected", "reason": data.reason}
+
+
+@router.patch("/api/v1/social-posts/{post_id}/content")
+async def update_post_content(
+    post_id: str,
+    data: UpdatePostContentRequest,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Edit a post's content.
+
+    Content version is bumped and status is reset to pending_approval, so a
+    prior approval cannot publish the old version. The owner must re-approve
+    after editing.
+    """
+    from social.campaign_manager import update_post_content as _update
+    result = await _update(
+        db,
+        post_id=post_id,
+        new_content=data.content,
+        scheduled_at=data.scheduled_at,
+    )
+    if not result:
+        raise HTTPException(
+            status_code=404,
+            detail="Post not found or already published (cannot edit published posts)."
+        )
+    return result
 
 
 # ---------------------------------------------------------------------------

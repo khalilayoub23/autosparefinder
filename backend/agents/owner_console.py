@@ -544,6 +544,9 @@ _HELP = (
     "• *עצור* / *המשך* — עצירה בטוחה של התור (בסוף המנה) והמשך\n"
     "• *מקורות* — NIR יחפש ספקים חדשים ברשת עכשיו\n"
     "• *אשרספק [מזהה]* / *דחהספק [מזהה]* — הפעל/דחה ספק\n"
+    "• *גרופים* — קבוצות פייסבוק (ממתינות/מאושרות) · *אשרגרופ / דחהגרופ <מזהה>* — אשר/דחה קבוצה\n"
+    "• *סרוק קבוצות* — NOA תגלה קבוצות + תנסח תגובות על פוסטים רלוונטיים\n"
+    "• *תגובות-גרופ* — תגובות שנוסחו ממתינות לאישור · *אשרתגובה / דלגתגובה <מזהה>*\n"
     "• *קבוצות* — הצג קבוצות וואטסאפ · *קבוצת עדכונים <מספר>* — "
     "הפנה את כל עדכוני המערכת/הסוכנים לקבוצה נפרדת (כדי שהצ׳אט כאן יישאר לשיחה בלבד)\n\n"
     "*3 תפריטי בקרה:*\n"
@@ -990,6 +993,189 @@ async def _sourcing_reject(token: str) -> str:
             else "לא מצאתי ספק ממתין עם המזהה הזה. כתוב *ספקים* לרשימה.")
 
 
+async def _fb_groups_list(db) -> str:
+    import sqlalchemy as sa
+    res = await db.execute(sa.text("""
+        SELECT id::text, group_name, group_url, status, posts_sent
+        FROM group_targets WHERE platform='facebook'
+        ORDER BY status='approved' DESC, created_at DESC
+    """))
+    rows = res.fetchall()
+    if not rows:
+        return "אין קבוצות פייסבוק עדיין. כתוב *סרוק קבוצות* כדי שנגלה את הקבוצות שלך."
+    lines = ["📋 *קבוצות פייסבוק:*", ""]
+    approved = [r for r in rows if r[3] == "approved"]
+    pending = [r for r in rows if r[3] == "pending"]
+    if approved:
+        lines.append("✅ *מאושרות (פעילות):*")
+        for r in approved:
+            lines.append(f"🆔 {r[0][:8]} · {r[1][:35]} · פוסטים: {r[4]}")
+    if pending:
+        lines.append("\n⏳ *ממתינות לאישורך:*")
+        for r in pending[:12]:
+            lines.append(f"🆔 {r[0][:8]} · {r[1][:40]}")
+    lines.append("\nלאישור: *אשרגרופ <מזהה>* · לדחייה: *דחהגרופ <מזהה>*")
+    lines.append("לסריקה + ניסוח תגובות: *סרוק קבוצות*")
+    return "\n".join(lines)
+
+
+async def _fb_group_approve(db, token: str) -> str:
+    import sqlalchemy as sa
+    if not token:
+        return "ציין מזהה קבוצה: *אשרגרופ <מזהה>*"
+    res = await db.execute(sa.text("""
+        SELECT id::text, group_name, group_url FROM group_targets
+        WHERE platform='facebook' AND status='pending'
+          AND (id::text LIKE :tok OR id::text = :full)
+        LIMIT 1
+    """), {"tok": f"{token}%", "full": token})
+    row = res.fetchone()
+    if not row:
+        return "לא מצאתי קבוצה ממתינה עם המזהה הזה. כתוב *גרופים* לרשימה."
+    gid, name, url = row
+    # Enforce partial-unique index: cannot approve if already an approved row for same URL
+    try:
+        await db.execute(sa.text("""
+            UPDATE group_targets SET status='approved' WHERE id=CAST(:id AS uuid)
+        """), {"id": gid})
+        await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        if "uq_group_targets_platform_url_approved" in str(exc):
+            return f"⚠️ יש כבר קבוצה מאושרת עם אותה כתובת ({url[:60]}). לא ניתן לאשר כפילות."
+        return f"⚠️ שגיאה: {str(exc)[:120]}"
+    return f"✅ הקבוצה *{name}* אושרה — תיכלל בסריקה הבאה.\nכתוב *סרוק קבוצות* להרצה מיידית."
+
+
+async def _fb_group_reject(db, token: str) -> str:
+    import sqlalchemy as sa
+    if not token:
+        return "ציין מזהה קבוצה: *דחהגרופ <מזהה>*"
+    res = await db.execute(sa.text("""
+        SELECT id::text, group_name FROM group_targets
+        WHERE platform='facebook'
+          AND (id::text LIKE :tok OR id::text = :full)
+        LIMIT 1
+    """), {"tok": f"{token}%", "full": token})
+    row = res.fetchone()
+    if not row:
+        return "לא מצאתי קבוצה עם המזהה הזה."
+    await db.execute(sa.text("DELETE FROM group_targets WHERE id=CAST(:id AS uuid)"), {"id": row[0]})
+    await db.commit()
+    return f"🗑️ הקבוצה *{row[1]}* נמחקה."
+
+
+async def _fb_comment_drafts_list(db) -> str:
+    import sqlalchemy as sa
+    res = await db.execute(sa.text("""
+        SELECT d.id::text, t.group_name, d.post_text, d.draft_comment, d.relevance_score
+        FROM group_comment_drafts d
+        JOIN group_targets t ON t.id = d.group_target_id
+        WHERE d.status='pending_approval'
+        ORDER BY d.relevance_score DESC, d.created_at DESC
+        LIMIT 10
+    """))
+    rows = res.fetchall()
+    if not rows:
+        return "אין תגובות ממתינות לאישור. כתוב *סרוק קבוצות* כדי לנסח תגובות חדשות."
+    lines = ["✍️ *תגובות שנוסחו ע\"י NOA — ממתינות לאישורך:*", ""]
+    for r in rows:
+        did, gname, post, draft, score = r
+        lines.append(f"🆔 {did[:8]} [{gname[:25]}] ציון {score:.2f}")
+        lines.append(f"   📝 *פוסט:* {post[:80]}...")
+        lines.append(f"   💬 *תגובה:* {draft[:120]}")
+        lines.append("")
+    lines.append("לאישור ושליחה: *אשרתגובה <מזהה>* · לדילוג: *דלגתגובה <מזהה>*")
+    return "\n".join(lines)
+
+
+async def _fb_comment_approve(db, token: str) -> str:
+    import sqlalchemy as sa
+    if not token:
+        return "ציין מזהה: *אשרתגובה <מזהה>*"
+    res = await db.execute(sa.text("""
+        SELECT d.id::text, d.group_target_id::text, d.post_url, d.draft_comment, t.group_url
+        FROM group_comment_drafts d
+        JOIN group_targets t ON t.id = d.group_target_id
+        WHERE d.status='pending_approval'
+          AND (d.id::text LIKE :tok OR d.id::text = :full)
+        LIMIT 1
+    """), {"tok": f"{token}%", "full": token})
+    row = res.fetchone()
+    if not row:
+        return "לא מצאתי תגובה ממתינה עם המזהה הזה. כתוב *תגובות-גרופ* לרשימה."
+    did, group_target_id, post_url, draft, group_url = row
+    # Mark as approved immediately (fire-and-forget the actual browser post)
+    await db.execute(sa.text("""
+        UPDATE group_comment_drafts
+        SET status='approved', approved_at=NOW()
+        WHERE id=CAST(:id AS uuid)
+    """), {"id": did})
+    await db.commit()
+    # Submit the comment via browser in background
+    async def _post_comment():
+        try:
+            from social.facebook_browser.group_agent import GroupAgent
+            agent = GroupAgent()
+            result = await agent.submit_approved_comment(
+                post_url=post_url,
+                comment_text=draft,
+                group_url=group_url,
+            )
+            status = "posted" if result.get("ok") else "pending_approval"
+            from BACKEND_DATABASE_MODELS import async_session_factory
+            async with async_session_factory() as _db:
+                import sqlalchemy as _sa
+                await _db.execute(_sa.text(
+                    "UPDATE group_comment_drafts SET status=:s WHERE id=CAST(:id AS uuid)"
+                ), {"s": status, "id": did})
+                await _db.commit()
+        except Exception as exc:
+            log.error("_fb_comment_approve background post failed: %s", exc)
+    import asyncio as _aio
+    _aio.create_task(_post_comment())
+    return f"✅ אישרת את התגובה — NOA שולחת אותה עכשיו ל-Facebook.\n\n💬 _{draft[:150]}_"
+
+
+async def _fb_comment_skip(db, token: str) -> str:
+    import sqlalchemy as sa
+    if not token:
+        return "ציין מזהה: *דלגתגובה <מזהה>*"
+    res = await db.execute(sa.text("""
+        SELECT id::text FROM group_comment_drafts
+        WHERE status='pending_approval'
+          AND (id::text LIKE :tok OR id::text = :full)
+        LIMIT 1
+    """), {"tok": f"{token}%", "full": token})
+    row = res.fetchone()
+    if not row:
+        return "לא מצאתי תגובה ממתינה."
+    await db.execute(sa.text(
+        "UPDATE group_comment_drafts SET status='skipped' WHERE id=CAST(:id AS uuid)"
+    ), {"id": row[0]})
+    await db.commit()
+    return "⏭️ דילגתי על התגובה."
+
+
+async def _fb_scan_groups_trigger() -> str:
+    """Fire group_scanner pipeline in background, return immediate ack."""
+    async def _run():
+        try:
+            from social.facebook_browser.group_scanner import run_group_scanner
+            await run_group_scanner()
+        except Exception as exc:
+            log.error("owner_console: fb_scan_groups_trigger error: %s", exc)
+    import asyncio as _aio
+    _aio.create_task(_run())
+    return (
+        "🔍 מתחיל לסרוק את הקבוצות שלך בפייסבוק...\n\n"
+        "שלב 1 — גילוי קבוצות מהחשבון\n"
+        "שלב 2 — סריקת פוסטים בקבוצות מאושרות\n"
+        "שלב 3 — ניסוח תגובות (NOA)\n\n"
+        "אשלח לך סיכום בסיום (כ-2-5 דקות). תוכל להמשיך לעבוד."
+    )
+
+
 async def process_owner_message(message: str, source: str = "whatsapp") -> str:
     """Entry point for owner WhatsApp messages. Returns the reply text.
 
@@ -1136,6 +1322,26 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp") -> 
         return await _sourcing_list()
     if low in ("discover", "מקורות", "sourcing", "חפש ספקים"):
         return await _sourcing_run()
+
+    # ── Facebook group targets (approve groups → scan → draft comments) ────────
+    if low in ("גרופים", "fb-groups", "fb groups", "קבוצות פייסבוק", "קבוצות-fb"):
+        return await _fb_groups_list(db)
+    m_ag = re.match(r"^(approve[\-_ ]?group|אשרגרופ|אשר גרופ)\b\s*(\S+)?", msg, re.I)
+    if m_ag:
+        return await _fb_group_approve(db, m_ag.group(2) or "")
+    m_rg = re.match(r"^(reject[\-_ ]?group|דחהגרופ|דחה גרופ)\b\s*(\S+)?", msg, re.I)
+    if m_rg:
+        return await _fb_group_reject(db, m_rg.group(2) or "")
+    if low in ("תגובות-גרופ", "group-drafts", "group drafts", "תגובות גרופ", "דראפטים"):
+        return await _fb_comment_drafts_list(db)
+    m_acd = re.match(r"^(approve[\-_ ]?comment|אשרתגובה|אשר תגובה)\b\s*(\S+)?", msg, re.I)
+    if m_acd:
+        return await _fb_comment_approve(db, m_acd.group(2) or "")
+    m_scd = re.match(r"^(skip[\-_ ]?comment|דלגתגובה|דלג תגובה)\b\s*(\S+)?", msg, re.I)
+    if m_scd:
+        return await _fb_comment_skip(db, m_scd.group(2) or "")
+    if low in ("סרוק קבוצות", "scan groups", "scan-groups", "סריקת קבוצות"):
+        return await _fb_scan_groups_trigger()
 
     # ── conversational path (AVI / NOA in owner mode) ─────────────────────────
     # Call the LLM DIRECTLY (not via get_agent): the router_agent is a JSON classifier

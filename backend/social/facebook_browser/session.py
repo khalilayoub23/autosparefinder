@@ -35,7 +35,11 @@ _STATE_DIR = Path(os.getenv("STATE_DIR", "/app/state")) / "fb_browser_session"
 _COOKIES_FILE = _STATE_DIR / "cookies.json"
 _SCREENSHOT_DIR = Path(os.getenv("STATE_DIR", "/app/state")) / "logs" / "fb_browser_failures"
 _HEALTH_URL = "https://www.facebook.com/"
-_LOGIN_INDICATOR = "marketplace"  # text present on FB home when logged in
+# "marketplace" appears even on the public (logged-out) homepage — unreliable.
+# Instead: when logged OUT the home page contains the login form (#email / #loginbutton).
+# When logged IN those elements are absent and the news-feed compositor is present.
+# Use the ABSENCE of the login form as the primary signal; fall back to a JS DOM check.
+_LOGIN_INDICATOR = "marketplace"  # kept for legacy compat — not used in _health_check
 
 
 async def _random_delay(min_s: float = 0.8, max_s: float = 3.5) -> None:
@@ -98,6 +102,13 @@ class FacebookSession:
 
     async def __aenter__(self):
         await self._start()
+        # Return None if unauthenticated — callers do `if not page: return error` checks.
+        # This makes the guard pattern work: unauthenticated → None → caller sees it
+        # immediately instead of receiving a truthy Page object that will fail later
+        # inside the group with "post composer not found" (actually: login wall).
+        if not self._valid:
+            await self._stop()
+            return None
         return self._page
 
     async def __aexit__(self, *_):
@@ -154,18 +165,48 @@ class FacebookSession:
             await self._playwright.stop()
 
     async def _health_check(self) -> bool:
-        """Navigate to FB home and verify we're logged in (not on the login wall)."""
+        """Navigate to FB home and verify the session is AUTHENTICATED.
+
+        Reliable signal: the Facebook login form (id="email" / name="login") is
+        present ONLY when the user is NOT logged in.  The old "marketplace" check
+        was a false positive — that text appears on the public home page too.
+        Secondary DOM check via JS: profile/avatar link only exists when logged in.
+        """
         try:
             await self._page.goto(_HEALTH_URL, wait_until="domcontentloaded", timeout=20_000)
             await _random_delay(1.0, 2.5)
             content = await self._page.content()
-            logged_in = _LOGIN_INDICATOR in content.lower()
-            if logged_in:
-                log.info("fb_browser: session healthy (logged in)")
-            else:
+
+            # Login form present ⟹ NOT logged in
+            login_form_present = 'id="email"' in content or 'name="login"' in content
+
+            if login_form_present:
                 await _save_failure_screenshot(self._page, "session_health_fail")
-                log.warning("fb_browser: not logged in — session invalid")
-            return logged_in
+                log.warning("fb_browser: login form detected — session not authenticated")
+                return False
+
+            # JS cross-check: profile nav link only exists when authenticated
+            try:
+                has_profile = await self._page.evaluate("""() => {
+                    return !!(
+                        document.querySelector('[aria-label="Your profile"]') ||
+                        document.querySelector('a[href*="/me/"]') ||
+                        document.querySelector('[data-testid="blue_bar_profile_link"]')
+                    );
+                }""")
+            except Exception:
+                has_profile = False
+
+            if has_profile:
+                log.info("fb_browser: session healthy (authenticated — profile link found)")
+                return True
+
+            # Fallback: no login form AND no profile link — ambiguous but likely a
+            # redirect/error page; treat as invalid and let the caller retry.
+            await _save_failure_screenshot(self._page, "session_health_ambiguous")
+            log.warning("fb_browser: health-check ambiguous (no login form, no profile link)")
+            return False
+
         except Exception as exc:
             log.warning("fb_browser: health-check error: %s", exc)
             return False

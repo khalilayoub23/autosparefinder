@@ -415,12 +415,28 @@ async def facebook_group_publish(
     from social.facebook_browser import GroupAgent
     agent = GroupAgent()
     raw = await agent.publish_group_post(group_url, content)
-    res = (
-        ToolResult(status="success", analytics_tracking_id=tracking,
-                   data={"group_id": group_id, "campaign_id": campaign_id})
-        if raw.get("ok")
-        else ToolResult(status="error", analytics_tracking_id=tracking, error=raw.get("error"))
-    )
+    if raw.get("ok"):
+        # Update round-robin bookkeeping ONLY on confirmed publication success.
+        # A failed update must not suppress the success result — log and continue.
+        try:
+            await db.execute(
+                sa.text(
+                    "UPDATE group_targets SET last_posted_at = NOW(),"
+                    " posts_sent = posts_sent + 1 WHERE id = CAST(:id AS uuid)"
+                ),
+                {"id": group_id},
+            )
+            await db.commit()
+        except Exception as _bk_exc:
+            log.warning("facebook_group_publish: bookkeeping update failed for %s: %s", group_id, _bk_exc)
+        res = ToolResult(
+            status="success",
+            analytics_tracking_id=tracking,
+            post_id=raw.get("post_id"),
+            data={"group_id": group_id, "campaign_id": campaign_id},
+        )
+    else:
+        res = ToolResult(status="error", analytics_tracking_id=tracking, error=raw.get("error"))
     asyncio.create_task(_log_action(db, "facebook_group_publish", inp, res))
     return res
 

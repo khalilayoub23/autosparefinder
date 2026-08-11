@@ -41451,3 +41451,241 @@ sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) <class
                 ]
 [parameters: ('NGK91106', ['aftermarket', 'after market', 'generic', 'third party', 'third_party', 'refurbished', 'remanufactured', 'תחליפי', 'חליפיחליפי', 'תחליפיתחליפי', 'שוק משני'], 24)]
 (Background on this error at: https://sqlalche.me/e/20/dbapi)
+
+ERROR: (sqlalchemy.dialects.postgresql.asyncpg.InterfaceError) <class 'asyncpg.exceptions._base.InterfaceError'>: cannot perform operation: another operation is in progress
+(Background on this error at: https://sqlalche.me/e/20/rvf5)
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 892, in commit
+    self.await_(self._commit_and_discard())
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 871, in _commit_and_discard
+    await self._transaction.commit()
+  File "/usr/local/lib/python3.11/site-packages/asyncpg/transaction.py", line 219, in commit
+    await self.__commit()
+  File "/usr/local/lib/python3.11/site-packages/asyncpg/transaction.py", line 187, in __commit
+    await self._connection.execute(query)
+  File "/usr/local/lib/python3.11/site-packages/asyncpg/connection.py", line 354, in execute
+    result = await self._protocol.query(query, timeout)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "asyncpg/protocol/protocol.pyx", line 354, in query
+  File "asyncpg/protocol/protocol.pyx", line 735, in asyncpg.protocol.protocol.BaseProtocol._check_state
+asyncpg.exceptions._base.InterfaceError: cannot perform operation: another operation is in progress
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py", line 1147, in _commit_impl
+    self.engine.dialect.do_commit(self.connection)
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/default.py", line 715, in do_commit
+    dbapi_connection.commit()
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 898, in commit
+    self._handle_exception(error)
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 797, in _handle_exception
+    raise translated_error from error
+sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.InterfaceError: <class 'asyncpg.exceptions._base.InterfaceError'>: cannot perform operation: another operation is in progress
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/starlette/middleware/errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/middleware/base.py", line 198, in __call__
+    raise app_exc
+  File "/usr/local/lib/python3.11/site-packages/starlette/middleware/base.py", line 144, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/usr/local/lib/python3.11/site-packages/starlette/middleware/cors.py", line 88, in __call__
+    await self.app(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/middleware/exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/usr/local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/usr/local/lib/python3.11/site-packages/fastapi/middleware/asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/routing.py", line 660, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 2697, in app
+    await route.handle(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 1778, in handle
+    await self.original_router.handle(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 2752, in handle
+    await included_router._handle_selected(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 1798, in _handle_selected
+    await original_route.handle(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 1277, in handle
+    await app(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 156, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/usr/local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 138, in app
+    async with AsyncExitStack() as request_stack:
+  File "/usr/local/lib/python3.11/contextlib.py", line 745, in __aexit__
+    raise exc_details[1]
+  File "/usr/local/lib/python3.11/contextlib.py", line 728, in __aexit__
+    cb_suppress = await cb(*exc_details)
+                  ^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/contextlib.py", line 217, in __aexit__
+    await anext(self.gen)
+  File "/app/BACKEND_DATABASE_MODELS.py", line 108, in get_db
+    await session.commit()
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/ext/asyncio/session.py", line 999, in commit
+    await greenlet_spawn(self.sync_session.commit)
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 201, in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/session.py", line 2035, in commit
+    trans.commit(_to_root=True)
+  File "<string>", line 2, in commit
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+                ^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/session.py", line 1323, in commit
+    trans.commit()
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py", line 2642, in commit
+    self._do_commit()
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py", line 2747, in _do_commit
+    self._connection_commit_impl()
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py", line 2718, in _connection_commit_impl
+    self.connection._commit_impl()
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py", line 1149, in _commit_impl
+    self._handle_dbapi_exception(e, None, None, None, None)
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py", line 2365, in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py", line 1147, in _commit_impl
+    self.engine.dialect.do_commit(self.connection)
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/default.py", line 715, in do_commit
+    dbapi_connection.commit()
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 898, in commit
+    self._handle_exception(error)
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 797, in _handle_exception
+    raise translated_error from error
+sqlalchemy.exc.InterfaceError: (sqlalchemy.dialects.postgresql.asyncpg.InterfaceError) <class 'asyncpg.exceptions._base.InterfaceError'>: cannot perform operation: another operation is in progress
+(Background on this error at: https://sqlalche.me/e/20/rvf5)
+
+ERROR: (sqlalchemy.dialects.postgresql.asyncpg.InterfaceError) <class 'asyncpg.exceptions._base.InterfaceError'>: cannot perform operation: another operation is in progress
+(Background on this error at: https://sqlalche.me/e/20/rvf5)
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 892, in commit
+    self.await_(self._commit_and_discard())
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 871, in _commit_and_discard
+    await self._transaction.commit()
+  File "/usr/local/lib/python3.11/site-packages/asyncpg/transaction.py", line 219, in commit
+    await self.__commit()
+  File "/usr/local/lib/python3.11/site-packages/asyncpg/transaction.py", line 187, in __commit
+    await self._connection.execute(query)
+  File "/usr/local/lib/python3.11/site-packages/asyncpg/connection.py", line 354, in execute
+    result = await self._protocol.query(query, timeout)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "asyncpg/protocol/protocol.pyx", line 354, in query
+  File "asyncpg/protocol/protocol.pyx", line 735, in asyncpg.protocol.protocol.BaseProtocol._check_state
+asyncpg.exceptions._base.InterfaceError: cannot perform operation: another operation is in progress
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py", line 1147, in _commit_impl
+    self.engine.dialect.do_commit(self.connection)
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/default.py", line 715, in do_commit
+    dbapi_connection.commit()
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 898, in commit
+    self._handle_exception(error)
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 797, in _handle_exception
+    raise translated_error from error
+sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.InterfaceError: <class 'asyncpg.exceptions._base.InterfaceError'>: cannot perform operation: another operation is in progress
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/starlette/middleware/errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/middleware/base.py", line 198, in __call__
+    raise app_exc
+  File "/usr/local/lib/python3.11/site-packages/starlette/middleware/base.py", line 144, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/usr/local/lib/python3.11/site-packages/starlette/middleware/cors.py", line 88, in __call__
+    await self.app(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/middleware/exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/usr/local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/usr/local/lib/python3.11/site-packages/fastapi/middleware/asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/routing.py", line 660, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 2697, in app
+    await route.handle(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 1778, in handle
+    await self.original_router.handle(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 2752, in handle
+    await included_router._handle_selected(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 1798, in _handle_selected
+    await original_route.handle(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 1277, in handle
+    await app(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 156, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/usr/local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/usr/local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/usr/local/lib/python3.11/site-packages/fastapi/routing.py", line 138, in app
+    async with AsyncExitStack() as request_stack:
+  File "/usr/local/lib/python3.11/contextlib.py", line 745, in __aexit__
+    raise exc_details[1]
+  File "/usr/local/lib/python3.11/contextlib.py", line 728, in __aexit__
+    cb_suppress = await cb(*exc_details)
+                  ^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/contextlib.py", line 217, in __aexit__
+    await anext(self.gen)
+  File "/app/BACKEND_DATABASE_MODELS.py", line 108, in get_db
+    await session.commit()
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/ext/asyncio/session.py", line 999, in commit
+    await greenlet_spawn(self.sync_session.commit)
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 201, in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/session.py", line 2035, in commit
+    trans.commit(_to_root=True)
+  File "<string>", line 2, in commit
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+                ^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/session.py", line 1323, in commit
+    trans.commit()
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py", line 2642, in commit
+    self._do_commit()
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py", line 2747, in _do_commit
+    self._connection_commit_impl()
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py", line 2718, in _connection_commit_impl
+    self.connection._commit_impl()
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py", line 1149, in _commit_impl
+    self._handle_dbapi_exception(e, None, None, None, None)
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py", line 2365, in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py", line 1147, in _commit_impl
+    self.engine.dialect.do_commit(self.connection)
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/default.py", line 715, in do_commit
+    dbapi_connection.commit()
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 898, in commit
+    self._handle_exception(error)
+  File "/usr/local/lib/python3.11/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 797, in _handle_exception
+    raise translated_error from error
+sqlalchemy.exc.InterfaceError: (sqlalchemy.dialects.postgresql.asyncpg.InterfaceError) <class 'asyncpg.exceptions._base.InterfaceError'>: cannot perform operation: another operation is in progress
+(Background on this error at: https://sqlalche.me/e/20/rvf5)

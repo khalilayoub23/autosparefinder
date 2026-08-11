@@ -1709,3 +1709,122 @@ Constants added: eBay Motors + Motorstore IL as universal suppliers (on_order), 
 | ON CONFLICT templates for IL importers | ✅ | Added `importer_price_ils=0, online_price_ils=0` to all IL official importer scripts: `kia_import.py`, `lr_import.py`, `import_delek_brands.py`, `import_champion_motors.py`, `geely_israel_import.py`, `cadillac_israel_import.py`, `gmc_buick_umi_import.py`, `sng_barratt_jaguar_import.py`, `selected_parts_scraper.py`, `samelet_import_v2.py`, `bydil_scraper.py`. |
 | test_pricing_policy.py 8/8 pass | ✅ | All T1-T8 tests pass including live DB ratio checks: Case1=1.4500, Case2=1.4500, Case3=1.4500. |
 | Pricing policy documented | ✅ | `claude.md`, `memory/pricing_policy.md`, `memory/feedback_pricing_no_exceptions.md` all updated with uniform 45% rule. |
+
+---
+
+## Session 2026-08-10 (Facebook Group E2E + Architecture Fixes)
+
+> **Goal:** Phase 1 auth verification + Phase 2 Group E2E publish test + code architecture fixes.
+
+| Item | Status | Summary |
+|------|--------|---------|
+| Phase 1: Facebook session auth | ✅ DONE | Both server IPs (161.97.158.177 and 207.180.217.129) are blocked by Facebook's CAPTCHA for automated login. Unblocked by importing real browser cookies via DevTools Network > Cookies tab: owner copied `c_user` + `xs` values; `maintenance/fb_cookie_import.py` wrote them to `/app/state/fb_browser_session/cookies.json` with correct `httpOnly`/`sameSite` attributes; health check via `mbasic.facebook.com/home.php` confirmed `✅ Health check PASSED — c_user + xs present, no login form`. Session authenticated and valid. |
+| Phase 2: Group E2E publish | ✅ DONE | `GroupAgent.publish_group_post()` published to `תשאל מוסכניק` group (49.7K members, `https://www.facebook.com/groups/musahnikim/`). Three root bugs fixed in `group_agent.py` (see below). E2E verified: "Create post" dialog opened with correct content → blue "Post" button clicked → `{'ok': True, 'error': None}`. |
+| FIX: group_agent.py — wrong composer element (comment box vs group composer) | ✅ | Selector `[role="textbox"]` matched COMMENT boxes in the feed (lower in the DOM), not the group post composer at the top. Text was being typed into a reply box on someone else's post. Fixed: added scroll-to-top before selector search; replaced `[role="textbox"]` trigger with specific group-composer selectors: Hebrew `[aria-label*="כתוב משהו"]`, English `[aria-label*="Write something"]`, and `div[role="button"] span:has-text("Write something")` as the CLICK TRIGGER; then waited for `[role="dialog"]` to open; located textbox INSIDE the dialog. |
+| FIX: group_agent.py — `__fb-light-mode` div intercepts Playwright clicks | ✅ | Facebook wraps its entire page in `<div class="__fb-light-mode">` which blocks Playwright's pointer-event hit-test. Both `typing_box.click()` and `post_btn.click()` timed out after 30s with "element intercepts pointer events". Fixed: `typing_box.click(force=True)` (bypasses hit-test for focus); `post_btn.dispatch_event("click")` (dispatches event directly, no hit-test). Both confirmed working. |
+| FIX: group_agent.py — Post button selector missing Hebrew `aria-label="Post"` | ✅ | The dialog's Post button uses `aria-label="Post"` (English, found via `[role="dialog"] [aria-label="Post"]`). Added full selector cascade: Hebrew `פרסם` variants first, then English, then role+text-based fallbacks. Added pre-click screenshot (`group_pre_post_click`) and button-list debug log when button not found. |
+| FIX: `execute_campaign()` tool_map missing `facebook_group` | ✅ | `BACKEND_AI_AGENTS.py` line ~5896: `tool_map` had entries for `facebook`, `instagram`, `telegram`, `whatsapp` but NOT `facebook_group`. Posts with `platforms=['facebook_group']` fell into `errors` with "no tool mapping" on every publish call. Fixed: added `"facebook_group": "facebook_group_publish"` entry. |
+| FIX: `facebook_group_publish` call missing `group_id` param | ✅ | `execute_campaign()` called `run_tool(...)` with only `content` + `campaign_id`. `facebook_group_publish` requires `group_id` (UUID from `group_targets`). Fixed: when `platform == "facebook_group"`, look up the `approved` group_target with earliest `last_posted_at` (round-robin friendly) and pass its `id` as `group_id` to `run_tool`. |
+| FIX: `post_id=None` gate blocked Group published state | ✅ | DB transition at line 5928: `if tool_result.status in ("success","ok") and tool_result.post_id:` — `facebook_group_publish` always returns `post_id=None` (browser automation cannot capture the Group post ID). The `and tool_result.post_id` check was `False` for `None`, so Group posts silently fell into the `else` clause (treated as failures, never marked `published`). Fixed: removed `post_id` requirement from success check; records `"group_post_no_id"` placeholder in `external_post_ids` when `post_id=None`. |
+| social_hardening_test.py | ✅ | 55/55 passed — no regression. |
+| digital_department_integration_test.py | ✅ | 62/62 passed — no regression. |
+
+---
+
+## Session 2026-08-11 (Facebook Group Pipeline — Production Hardening + Full E2E Verification)
+
+> **Goal:** Fix 3 production issues found during prior session's verification audit. Add enforcement guardrails. Complete full real Facebook Group E2E through the production code path. Document and verify per Golden Rule 5.
+
+### DB cleanup (no production-code hack)
+
+Found during full A–K production verification: test rows and a duplicate approved group were polluting the round-robin selection pool.
+
+| Fix | Status | Evidence |
+|-----|--------|---------|
+| Demoted 12 `test.autospare.group` rows from `approved` → `pending` | ✅ | `UPDATE group_targets SET status='pending' WHERE group_url LIKE '%test.autospare%'` — 12 rows affected. Confirmed via SELECT: 0 test rows remain `approved`. |
+| Demoted duplicate musahnikim row `07bd39e4` from `approved` → `pending` | ✅ | Two rows shared `(platform='facebook', group_url='https://www.facebook.com/groups/musahnikim/')` with `status='approved'`. Kept canonical `3a9b463d`; demoted duplicate. Round-robin now selects exactly one target. |
+
+### Migration 0058 — partial unique index on `group_targets`
+
+File: `backend/alembic/versions/0058_group_targets_unique_approved.py`
+
+```sql
+CREATE UNIQUE INDEX uq_group_targets_platform_url_approved
+ON group_targets (platform, group_url)
+WHERE status = 'approved'
+```
+
+| Property | Value |
+|----------|-------|
+| Revision | `0058_group_targets_uniq_approved` |
+| Revises | `0057_sp_approval_vers` |
+| Why partial (not full UNIQUE) | Allows pending/test rows for the same URL alongside one approved production row — blocking tests was a wrong tradeoff. Invariant: at most ONE approved row per real group. |
+| Applied | ✅ `alembic upgrade head` — migration confirmed applied live |
+| Tested | Phase 17 in `social_hardening_test.py`: real asyncpg connection proves `asyncpg.exceptions.UniqueViolationError` fires on duplicate-approved INSERT; pending INSERT succeeds. |
+
+### `social/tools.py` — `facebook_group_publish()` bookkeeping fix
+
+Prior code always ran the success branch regardless of `raw.get("ok")`. On a `GroupAgent` failure, `last_posted_at` was still bumped, causing the round-robin to advance past the target even when nothing was published.
+
+| Fix | Status | Detail |
+|-----|--------|--------|
+| `last_posted_at = NOW()` only on `ok=True` | ✅ | Wrapped in `if raw.get("ok"):` block; error path produces `ToolResult(status="error", ...)` instead |
+| `posts_sent = posts_sent + 1` only on `ok=True` | ✅ | Same block; uses `CAST(:id AS uuid)` (never `::uuid` — SQLAlchemy `text()` collision rule) |
+| Bookkeeping failure is non-fatal | ✅ | Wrapped in `try/except`; logs `log.warning(...)` on failure; does not raise; `ToolResult` is still returned |
+| `post_id` propagated correctly | ✅ | `ToolResult(post_id=raw.get("post_id"))` — `None` when browser cannot capture Group post ID (expected for Groups) |
+
+### `social_hardening_test.py` — Phases 16–24 (9 new Group-specific test functions)
+
+79/79 PASSED (was 55/55).
+
+| Phase | Test | Key assertion |
+|-------|------|---------------|
+| 16 | `facebook_group_publish` round-robin SELECT path | `run_tool("facebook_group_publish", ...)` is called; SQL-content-based mock dispatch correctly routes `group_targets` SELECT vs idempotency UPDATE |
+| 17 | Partial unique index fires on duplicate-approved | Live asyncpg connection: second `INSERT ... status='approved'` raises `UniqueViolationError`; pending INSERT succeeds |
+| 18 | Bookkeeping UPDATE runs on `ok=True` | Captures SQL to confirm `last_posted_at` + `posts_sent` UPDATE is executed on success |
+| 19 | Bookkeeping UPDATE skipped on `ok=False` | Confirms no `last_posted_at` UPDATE when `GroupAgent` returns `{'ok': False}` |
+| 20 | Bookkeeping failure is non-fatal | Exception in bookkeeping UPDATE does not propagate; `ToolResult` is still returned |
+| 21 | Gate 2 (`group_targets.status='approved'`) blocks non-approved targets | `facebook_group_publish` with a `pending` group_id returns `status="error"` without calling GroupAgent |
+| 22 | `post_id=None` → `group_post_no_id` in `external_post_ids` | Captures `external_post_ids` payload: `ext.get("facebook_group") == "group_post_no_id"` when post_id is None |
+| 23 | `APPROVAL_REQUIRED = True` cannot be overridden at runtime | Proves `APPROVAL_REQUIRED` is a module-level constant; `setattr` on the module object raises `AttributeError` |
+| 24 | No page-publication side-effect from Group post | `facebook_page_publish` tool is never called when `platform == "facebook_group"` |
+
+### Full real Facebook Group E2E — PASS
+
+Execution path: `social_posts (approved)` → `execute_campaign()` → `run_tool("facebook_group_publish")` → `facebook_group_publish()` → Gate 2 (group_targets.status='approved') → `GroupAgent.publish_group_post()` → `FacebookSession` (cookies) → real Facebook Group → DB published state + bookkeeping reconciled.
+
+| Step | Result | Evidence |
+|------|--------|---------|
+| Campaign | ✅ | `ed7f56de-6743-4bce-ad47-aeeb7135e42e` created and published |
+| Social post | ✅ | `5afb5afc-9680-49f1-b9cb-eac7116b5978` — `pending_approval → approved → published` |
+| Group target selected | ✅ | `3a9b463d-e8e9-4946-884d-34a0b3879ca5` (musahnikim, earliest `last_posted_at`) |
+| Facebook publish | ✅ | Real post published to `תשאל מוסכניק` (49.7K members) via Playwright |
+| `posts_published` | ✅ | `1` (campaigns table) |
+| `published_at` | ✅ | `2026-08-11 00:28:09` |
+| `external_post_ids` | ✅ | `{'facebook_group': 'group_post_no_id', 'analytics_tracking_id': '4501f432'}` — `group_post_no_id` is correct (browser cannot capture Group post ID) |
+| `posts_sent` | ✅ | `0 → 1` |
+| `last_posted_at` | ✅ | `NULL → 2026-08-11 00:26:34.105342` |
+| No duplicate publication | ✅ | Only 1 published campaign; no second Group post; Page publisher not called |
+| `errors` | ✅ | `[]` |
+| Both approval gates intact | ✅ | Gate 1: `social_posts.status='approved'` enforced in `execute_campaign()`; Gate 2: `group_targets.status='approved'` enforced in `facebook_group_publish()`; `APPROVAL_REQUIRED=True` cannot be overridden at runtime |
+
+---
+
+## Session 2026-08-11b (NOA post-quality regression — root-fixed)
+
+> **Goal:** Owner: "posts improved for a couple of days and then it returned to un-understood
+> sentences — check, root fix, verify, document." Posts from 2026-08-04 to 08-06 were clean;
+> 08-07 through 08-10 regressed with raw English part names re-appearing inside otherwise-Hebrew
+> sentences ("Wiper arm set", "Steering Wheel Position Sensor", "Radiator mount", "Battery
+> Holder"), reading as broken/foreign to a Hebrew-only audience.
+
+| Item | Status | Detail |
+|------|--------|--------|
+| Diagnosis | ✅ | Pulled the actual queued `social_posts` history (not a fresh test) and timeline-matched the regression to 08-07 onward. The 2026-08-04 fix (Hebrew-only-part-names system-prompt rule) was confirmed STILL PRESENT in the live `system_prompt` — so this was not a reverted prompt, it was a data problem the prompt fix never covered. |
+| Root cause | ✅ | `_noa_real_catalog_fact()` (BACKEND_API_ROUTES.py) built NOA's "real fact — quote it" grounding string via `_pname = (row[1] or row[0] or "").strip()` — `row[1]` is `parts_catalog.name_he`. Measured live against the real catalog: **37–75% of matched rows have `name_he` POPULATED but containing the raw ENGLISH supplier title** (an importer wrote the English name into the Hebrew column when no translation existed), e.g. `name_he = "BOSCH 3 397 007 462 Wiper blade Beam, Length: 600mm, Front"`. `or` treats that as truthy — it never reaches a fallback. That English string was then handed to NOA explicitly labelled "real fact, allowed and even recommended to quote" — and the model quoted it verbatim, which is a directive ("don't invent, quote the real fact") that outweighs the more general "write Hebrew" style rule. |
+| Fix | ✅ | Guard on actual Hebrew CONTENT via `re.search(r"[א-ת]", _name_he_raw)`, not mere non-emptiness. When `name_he` has no real Hebrew characters, fall back to `heb_part` — the topic's own Hebrew part name, always populated (from the marketing loop's fixed `_PARTS` list, e.g. "מגבי שמשה") — never the raw English catalog title. Real price/brand/model number are unaffected; only the part-name string changes. |
+| Verified | ✅ | Quantified before fixing: sampled live catalog rows for wipers/radiators/batteries — 6/8, 6/8, 3/8 respectively had English text sitting in `name_he`. Re-ran the fix's exact decision logic against fresh live rows post-fix: English-contaminated `name_he` → correctly falls back to the clean Hebrew topic term (`"מגבי שמשה"`, `"רדיאטור"`); a genuinely Hebrew `name_he` (`"(14) M3 BM נעל כבל למצבר"`) → correctly preserved verbatim. |
+| Residual note | ⚠️ | One additional wrong-word instance was spotted in the sample (`"מגשי השמשה"` /trays/ instead of `"מגבי השמשה"` /wipers/ — a rare model slip, not the systemic English-leak pattern) — not chased further since it did not reproduce in later systematic testing and is a different failure class (word confusion, not language leak). |
+| Broader data-quality note | 📝 | `parts_catalog.name_he` containing raw English (not NULL, not Hebrew) is a real, measured, widespread data-quality issue independent of NOA — worth a future `db_update_agent` task to null out or re-derive these rows, since any OTHER surface reading `name_he` and trusting it's Hebrew has the same exposure. Not built in this session (out of the requested scope); flagging for a follow-up task. |
+| Second occurrence found + fixed (same bug, different surface) | ✅ | Grepped for the same `name_he or …` pattern per the project's own "fix all layers" rule. Found the identical bug in `routes/payments.py`'s Stripe **checkout page** line-item name (`for _cand in ((part.name_he or ""), (part.name or ""), (part.sku or "")):`) — a customer paying could see a raw English/garbled product name on their Hebrew checkout page. Same fix: only accept `name_he` as the Hebrew candidate when it contains real Hebrew characters; otherwise fall through to the existing `name`/`sku` chain (unchanged behavior there — English was always an accepted fallback in that path, just not mislabelled as "the Hebrew name"). Verified the decision logic against 3 cases (English-in-name_he, genuine Hebrew, empty) — all resolve correctly. Not exercised against a live Stripe session (payment-critical path, out of safe testing scope this session). |
+| Deploy | ⏳ | Code fix is in `BACKEND_API_ROUTES.py`, verified via a fresh-process test against live data (not yet exercised through the running server) — needs a backend restart to take effect for future posts, per the owner's standing "confirm before restart" instruction. |

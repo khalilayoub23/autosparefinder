@@ -3160,7 +3160,23 @@ async def _noa_marketing_loop():
             if not row:
                 row = (await db.execute(text(_sql.format(mfr_clause="")), params)).fetchone()
             if row:
-                _pname = (row[1] or row[0] or "").strip()[:70]
+                # ROOT FIX 2026-08-11 ("posts improved for a couple of days then went back
+                # to un-understood sentences"): `row[1] or row[0]` picks name_he whenever it's
+                # non-EMPTY — but measured live, 37-75% of matched rows have name_he POPULATED
+                # with the raw English catalog title (an importer wrote the English name into
+                # the Hebrew column when no translation existed), e.g. name_he=
+                # "BOSCH 3 397 007 462 Wiper blade Beam, Length: 600mm, Front". `or` never
+                # catches that — it's truthy. That English string was then handed to NOA
+                # labelled "real fact — quote it", and the model quoted it verbatim, which is
+                # exactly the raw-English-part-name regression despite the Hebrew-only prompt
+                # rule (a data problem, not a prompt problem — the earlier fix addressed the
+                # prompt but not this). Guard on actual Hebrew CONTENT, not emptiness, and fall
+                # back to the topic's own Hebrew part name (heb_part — always populated, from
+                # the loop's fixed _PARTS list) — never the raw English catalog title.
+                _name_he_raw = (row[1] or "").strip()
+                _pname = _name_he_raw if re.search(r"[֐-׿]", _name_he_raw) \
+                    else (heb_part or (row[0] or "").strip())
+                _pname = _pname[:70]
                 cost = float(row[3])
                 sell_net = cost * PROFIT_MARGIN                      # cost × 1.45
                 vat_rate = get_supplier_vat_rate(                     # 18% local, 0% foreign
@@ -3271,6 +3287,15 @@ async def _noa_marketing_loop():
                         "ad_pack: [{variant, headline, primary_text, cta}],\n"
                         "google_ads: {ad_group, keywords_exact, keywords_phrase, negatives, headlines, descriptions}\n"
                     )
+
+                    # L3 fix (2026-08-09): inject Digital Department context so the
+                    # Monday weekly brief receives the same brand/positioning/campaign_launch
+                    # guidelines as generate_campaign_plan(). Advisory only — the JSON
+                    # schema requirement in campaign_prompt still dominates output shape.
+                    try:
+                        from digital_department import build_prompt_with_context as _bpwc
+                        campaign_prompt = _bpwc(campaign_prompt, agent="noa", task_type="social_campaign")
+                    except Exception: pass  # preserve original campaign_prompt on any loader failure
 
                     raw_plan = await _hf_text(prompt=campaign_prompt, system=_noa_system, timeout=180.0, max_tokens=6000, temperature=noa.temperature, reasoning_effort="low")
 
@@ -3412,6 +3437,15 @@ async def _noa_marketing_loop():
                         "• האשטאגים בשורה אחרונה בלבד — עברית, ערבית ואנגלית מעולם הרכב\n\n"
                         "החזירי: טקסט הפוסט הסופי בלבד — ללא הסבר, ללא כותרת, ללא ספירה."
                     )
+
+                    # H1 fix (2026-08-09): inject Digital Department context so daily
+                    # organic posts receive the same brand/positioning/content guidelines
+                    # as campaign-workflow posts (generate_post / execute_campaign).
+                    try:
+                        from digital_department import build_prompt_with_context as _bpwc
+                        post_prompt = _bpwc(post_prompt, agent="noa", task_type="social_post")
+                    except Exception:
+                        pass  # preserve original prompt on any loader failure
 
                     raw_post = await _hf_text(prompt=post_prompt, system=_noa_system, timeout=90.0, max_tokens=1500, temperature=noa.temperature, reasoning_effort="low")
                     caption = noa._finalize_noa_post(raw_post, platforms=_configured)

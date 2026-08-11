@@ -10,19 +10,33 @@ Purpose: Campaign lifecycle management for the Social Media Department.
          persistence and orchestration only.
 
 Process:
-  create_campaign()       — create a campaigns row from NOA's plan
-  link_post_to_campaign() — associate a social_posts row with a campaign
-  get_campaign_status()   — aggregate status: posts published, engagement totals
-  list_campaigns()        — paginated list with performance summaries
-  update_campaign_status()— change lifecycle state
-  create_group_task()     — draft a group comment/post for owner approval
-  approve_group_task()    — mark approved → trigger browser agent execution
-  list_pending_group_tasks() — what awaits owner review
+  create_campaign()           — create a campaigns row from NOA's plan
+  link_post_to_campaign()     — associate a social_posts row with a campaign
+  get_campaign()              — fetch one campaign by id
+  list_campaigns()            — paginated list with performance summaries
+  update_campaign_status()    — change lifecycle state (forward-only)
+  prepare_campaign_content()  — generate+store posts as pending_approval (NO publish)
+  approve_post_content()      — record human approval with approver identity + timestamp
+  reject_post_content()       — record rejection with reason; post returns to draft
+  update_post_content()       — edit content → content_version++, approval invalidated
+  get_campaign_posts()        — list social_posts for a campaign (optionally by status)
+  create_group_task()         — draft a group comment/post for owner approval
+  approve_group_task()        — mark approved → trigger browser agent execution
+  list_pending_group_tasks()  — what awaits owner review
+
+Approval invariant (Phase 5 & 6 requirement):
+  Generated → PendingApproval → Approved → ReadyForScheduling → Published
+  The system NEVER allows Generated → Published without the Approved state.
+  This is enforced in execute_campaign (BACKEND_AI_AGENTS.py) by checking
+  for approved social_posts rows BEFORE calling any publish tool.
+
+  An edit (update_post_content) bumps content_version and resets status to
+  pending_approval so a stale-approval cannot publish a newer version of a post.
 
 Data Imported/Modified:
-  campaigns, group_targets, social_posts (link only), engagement_events (read)
+  campaigns, group_targets, social_posts, engagement_events (read)
 Data Sources: internal DB only
-Last Updated: 2026-08-06
+Last Updated: 2026-08-09
 """
 
 from __future__ import annotations
@@ -245,6 +259,224 @@ async def update_campaign_performance(
 
 
 # ---------------------------------------------------------------------------
+# Social post content management — approval workflow (Phase 5-8)
+# ---------------------------------------------------------------------------
+
+async def prepare_campaign_content(
+    db: Any,
+    *,
+    campaign_id: str,
+    content_by_platform: dict[str, str],
+    created_by: str | None = None,
+    scheduled_at: datetime | None = None,
+    utm_params: dict | None = None,
+) -> list[dict]:
+    """Store LLM-generated content as social_posts with status='pending_approval'.
+
+    DOES NOT publish anything. Returns list of created post summaries.
+    Each platform gets its own row so it can be approved/rejected independently.
+
+    content_by_platform: {"facebook": "...", "instagram": "...", ...}
+    utm_params: stored in external_post_ids.__utm as metadata for the publisher.
+    """
+    now = datetime.utcnow()
+    created = []
+    _system_uuid = "00000000-0000-0000-0000-000000000000"
+    actor = created_by or _system_uuid
+    if not _is_valid_uuid(actor):
+        actor = _system_uuid
+
+    for platform, content in content_by_platform.items():
+        if not content or not content.strip():
+            continue
+        pid = uuid.uuid4()
+        ext_ids: dict = {"__campaign_id__": campaign_id}
+        if utm_params:
+            ext_ids["__utm"] = utm_params
+        if scheduled_at:
+            ext_ids["__scheduled_at__"] = scheduled_at.isoformat()
+
+        await db.execute(
+            sa.text("""
+                INSERT INTO social_posts
+                    (id, content, platforms, status, scheduled_at, published_at,
+                     external_post_ids, created_by, approved_by, approved_at,
+                     rejection_reason, campaign_id, content_version,
+                     created_at, updated_at)
+                VALUES
+                    (:id, :content, ARRAY[:platform]::text[], 'pending_approval',
+                     :sched, NULL,
+                     CAST(:ext AS jsonb), CAST(:created_by AS uuid), NULL, NULL,
+                     NULL, CAST(:campaign_id AS uuid), 1,
+                     :now, :now)
+            """),
+            {
+                "id": str(pid),
+                "content": content.strip(),
+                "platform": platform,
+                "sched": scheduled_at,
+                "ext": __import__("json").dumps(ext_ids),
+                "created_by": actor,
+                "campaign_id": campaign_id,
+                "now": now,
+            },
+        )
+        created.append({"post_id": str(pid), "platform": platform, "status": "pending_approval"})
+
+    await db.commit()
+    log.info(
+        "campaign_manager: prepared %d pending_approval posts for campaign %s",
+        len(created), campaign_id
+    )
+    return created
+
+
+async def approve_post_content(
+    db: Any,
+    *,
+    post_id: str,
+    approved_by: str,
+    approved_version: int | None = None,
+) -> bool:
+    """Record human approval for a social post.
+
+    Sets status='approved', approved_by, approved_at=NOW().
+    If approved_version is supplied and differs from the current content_version,
+    the approval is refused (prevents approving a stale version after an edit).
+    Returns True if approved, False if not found / wrong version / wrong status.
+    """
+    now = datetime.utcnow()
+    _system_uuid = "00000000-0000-0000-0000-000000000000"
+    actor = approved_by or _system_uuid
+    if not _is_valid_uuid(actor):
+        actor = _system_uuid
+
+    version_clause = ""
+    params: dict = {"id": post_id, "by": actor, "now": now}
+    if approved_version is not None:
+        version_clause = " AND content_version = :ver"
+        params["ver"] = approved_version
+
+    result = await db.execute(
+        sa.text(f"""
+            UPDATE social_posts
+            SET status='approved', approved_by=CAST(:by AS uuid), approved_at=:now,
+                updated_at=:now
+            WHERE id = CAST(:id AS uuid)
+              AND status = 'pending_approval'
+              {version_clause}
+        """),
+        params,
+    )
+    await db.commit()
+    approved = (result.rowcount or 0) > 0
+    if not approved:
+        log.warning(
+            "campaign_manager: approve_post_content %s — not found, wrong status, or version mismatch",
+            post_id
+        )
+    else:
+        log.info("campaign_manager: post %s approved by %s", post_id, approved_by)
+    return approved
+
+
+async def reject_post_content(
+    db: Any,
+    *,
+    post_id: str,
+    reason: str = "",
+    rejected_by: str | None = None,
+) -> bool:
+    """Mark a social post as rejected. Returns True if updated."""
+    now = datetime.utcnow()
+    result = await db.execute(
+        sa.text("""
+            UPDATE social_posts
+            SET status='rejected', rejection_reason=:reason, updated_at=:now
+            WHERE id = CAST(:id AS uuid)
+              AND status IN ('pending_approval', 'approved')
+        """),
+        {"id": post_id, "reason": reason or "", "now": now},
+    )
+    await db.commit()
+    return (result.rowcount or 0) > 0
+
+
+async def update_post_content(
+    db: Any,
+    *,
+    post_id: str,
+    new_content: str,
+    scheduled_at: datetime | None = None,
+) -> dict | None:
+    """Edit post content and bump content_version.
+
+    Bumping content_version INVALIDATES any prior approval (resets status to
+    pending_approval). This prevents a stale-approved version being published
+    after the owner edits it. Returns the updated post row or None if not found.
+    """
+    if not new_content or not new_content.strip():
+        raise ValueError("new_content must not be empty")
+    now = datetime.utcnow()
+    sched_clause = ""
+    params: dict = {"id": post_id, "content": new_content.strip(), "now": now}
+    if scheduled_at is not None:
+        sched_clause = ", scheduled_at=:sched"
+        params["sched"] = scheduled_at
+
+    result = await db.execute(
+        sa.text(f"""
+            UPDATE social_posts
+            SET content=:content,
+                content_version = content_version + 1,
+                status = 'pending_approval',
+                approved_by = NULL,
+                approved_at = NULL,
+                updated_at = :now
+                {sched_clause}
+            WHERE id = CAST(:id AS uuid)
+              AND status NOT IN ('published')
+            RETURNING id, content_version, status
+        """),
+        params,
+    )
+    await db.commit()
+    row = result.fetchone()
+    if not row:
+        return None
+    return {"post_id": post_id, "content_version": row.content_version, "status": row.status}
+
+
+async def get_campaign_posts(
+    db: Any,
+    *,
+    campaign_id: str,
+    status: str | None = None,
+) -> list[dict]:
+    """Return social_posts rows that belong to a campaign.
+
+    Optionally filtered by status ('pending_approval', 'approved', 'published', …).
+    """
+    where_parts = ["campaign_id = CAST(:cid AS uuid)"]
+    params: dict = {"cid": campaign_id}
+    if status:
+        where_parts.append("status = :status")
+        params["status"] = status
+    where = "WHERE " + " AND ".join(where_parts)
+    rows = (await db.execute(
+        sa.text(f"""
+            SELECT id, content, platforms, status, scheduled_at, published_at,
+                   external_post_ids, created_by, approved_by, approved_at,
+                   rejection_reason, campaign_id, content_version, created_at, updated_at
+            FROM social_posts {where}
+            ORDER BY created_at ASC
+        """),
+        params,
+    )).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
 # Group target management
 # ---------------------------------------------------------------------------
 
@@ -381,3 +613,11 @@ def _row_to_dict(row: Any) -> dict:
         elif isinstance(v, uuid.UUID):
             d[k] = str(v)
     return d
+
+
+def _is_valid_uuid(s: str) -> bool:
+    try:
+        uuid.UUID(str(s))
+        return True
+    except (ValueError, AttributeError):
+        return False
