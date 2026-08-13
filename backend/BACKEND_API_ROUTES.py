@@ -2821,6 +2821,45 @@ async def _noa_marketing_loop():
         ("מיסבי גלגל", "wheel bearings", "רעש זמזום מהגלגל במהירות"),
     ]
 
+    # POST FORMS (2026-08-13). Until now every post was assembled from ONE checklist —
+    # hook → wink → fact → price → CTA → closing question → hashtags — twice a day,
+    # forever. Even when every sentence was correct Hebrew, the POST was recognisably
+    # machine-made, because a human writer does not reach for the same skeleton every
+    # single time. That fixed shape is what "acts like a bot" means at the paragraph
+    # level, and no amount of grammar polishing reaches it.
+    #
+    # Each form changes WHAT IS PRESENT and IN WHAT ORDER, not just the wording — and
+    # several of them explicitly forbid the closing question, so consecutive posts differ
+    # structurally and not only topically. The form rotates deterministically by date+slot
+    # so it walks the whole list instead of re-rolling the same one by chance.
+    _POST_FORMS = [
+        ("סצנה מהחיים",
+         "פתחי בסצנה אחת קונקרטית (רמזור אדום, חניון תת-קרקעי, בוקר קר) בשתי שורות — "
+         "בלי להזכיר את המותג. רק אחר כך חברי לחלק ולמחיר. "
+         "אל תסיימי בשאלה — סיימי במשפט סגירה שקט."),
+        ("וידוי של מכונאי",
+         "כתבי כמו מי שראתה את זה קורה מאה פעמים: 'רוב האנשים מגלים את זה מאוחר מדי'. "
+         "משפט אחד על מה שקורה בפועל לרכב, ואז החלק והמחיר. סיימי בשאלה אחת."),
+        ("ניפוץ מיתוס",
+         "פתחי באמונה נפוצה ושגויה של נהגים, סתרי אותה בעובדה קצרה ואמיתית, "
+         "ורק בסוף חברי לחלק. בלי אמוג'י בפתיחה."),
+        ("מה הרעש הזה אומר",
+         "תארי צליל או תחושה אחת מדויקת ברכב, הסבירי בשורה מה זה בדרך כלל, "
+         "ואז מה עושים. סיימי בשאלה על הרעש שלהם."),
+        ("מספרים",
+         "בני את הפוסט סביב מספר אחד אמיתי (מחיר, קילומטראז' להחלפה, כמה זה עולה "
+         "כשמזניחים). קצר, כמעט יבש, בלי הומור מאולץ. בלי שאלה בסוף."),
+        ("אזהרה עונתית",
+         "קשרי את החלק לעונה ולמה שהיא עושה לרכב דווקא עכשיו. טון של מי שמזהירה חבר, "
+         "לא של פרסומת. סיימי בשאלה אחת."),
+        ("תשובה ללקוח",
+         "פתחי בשאלה אמיתית שלקוח שואל ('אפשר להתקין חליפי במקום מקורי?'), "
+         "ענתי עליה ישר וביושר, כולל מה שלא מתאים לכולם. בלי שאלה בסוף."),
+        ("שתי אפשרויות",
+         "העמידי שתי אפשרויות מול הקורא (מקורי מול חליפי, עכשיו מול בעוד חצי שנה) "
+         "בשתי שורות קצרות, ואמרי מתי כל אחת נכונה. סיימי בשאלה איזו מהן הם היו בוחרים."),
+    ]
+
     async def _noa_real_catalog_fact(db, eng_part: str, heb_part: str, car: str) -> str:
         """Marketing grounding (added 2026-07-05): pull a REAL priced part from
         the catalog matching today's topic so NOA advertises true facts —
@@ -2921,16 +2960,29 @@ async def _noa_marketing_loop():
                 # Load recent history — inject as "do not repeat" context
                 history_raw = await mem.get("post_history") or []
                 recent_topics: list[str] = []
+                recent_openers: list[str] = []
                 if isinstance(history_raw, list):
                     for h in history_raw[-6:]:
                         if isinstance(h, dict):
                             t = h.get("topic") or h.get("caption", "")[:70]
                             if t:
                                 recent_topics.append(str(t))
-                no_repeat = (
-                    f"\nנושאים שכבר כוסו לאחרונה — אל תחזרי עליהם:\n" +
-                    "\n".join(f"• {t}" for t in recent_topics)
-                ) if recent_topics else ""
+                            # The OPENING LINE is what a reader recognises first, and
+                            # repeating its shape is what made a stream of posts feel
+                            # generated. Topic-level de-duplication alone never saw it.
+                            cap = str(h.get("caption") or "").strip()
+                            if cap:
+                                first = next((ln.strip() for ln in cap.splitlines()
+                                              if ln.strip() and not ln.strip().startswith("#")), "")
+                                if first:
+                                    recent_openers.append(first[:90])
+                no_repeat = ""
+                if recent_topics:
+                    no_repeat += ("\nנושאים שכבר כוסו לאחרונה — אל תחזרי עליהם:\n" +
+                                  "\n".join(f"• {t}" for t in recent_topics))
+                if recent_openers:
+                    no_repeat += ("\n\nשורות פתיחה שכבר השתמשת בהן — אסור לפתוח בהן או בווריאציה שלהן:\n" +
+                                  "\n".join(f"• {o}" for o in recent_openers))
 
                 real_fact = await _noa_real_catalog_fact(db, eng_part, heb_part, car)
 
@@ -3090,6 +3142,13 @@ async def _noa_marketing_loop():
                     week_theme = week_plan.get("week_theme") or ""
                     theme_hint = f"\nנושא השבוע: {week_theme}" if week_theme else ""
 
+                    # Rotate the FORM of the post, not just its topic (2026-08-13).
+                    # Deterministic by day + slot so the list is walked in order instead of
+                    # re-rolling the same shape by chance two days running.
+                    _slot = 0 if now.hour < 14 else 1
+                    _form_name, _form_rule = _POST_FORMS[
+                        (now.timetuple().tm_yday * 2 + _slot) % len(_POST_FORMS)]
+
                     post_prompt = (
                         f"כתבי פוסט {platform_desc} בעברית עבור AutoSpareFinder.\n\n"
                         f"הקשר:\n"
@@ -3100,107 +3159,128 @@ async def _noa_marketing_loop():
                         f"{real_fact}\n"
                         f"{theme_hint}{plan_hint}\n"
                         f"{no_repeat}\n\n"
-                        "כתיבה (חכם + מצחיק + אנושי + מוכר — הוראת בעלים):\n"
-                        "• פתחי עם ה-hook בשורה ראשונה — קצרה, חדה, לא שאלה גנרית\n"
-                        "• שלבי קריצה אחת חכמה — אירוניה עדינה או סיטואציה שכל נהג מכיר (בלי בדיחות דחוקות)\n"
-                        "• למדי את הקורא משהו קטן ואמיתי על הרכב/החלק — שירגיש חכם יותר אחרי הקריאה\n"
-                        "• כתבי כמו בן אדם: גוף ראשון, משפטים קצרים, עברית מדוברת, 1-3 אמוג'י\n"
+                        f"צורת הפוסט היום — *{_form_name}* (חובה, זו לא הצעה):\n"
+                        f"{_form_rule}\n\n"
+                        "עברית — כללים שנבדקים אוטומטית לפני פרסום:\n"
+                        "• משפטים שלמים ותקינים. אות שימוש נצמדת במקף למילה לועזית או למספר "
+                        "(ה-Bosch, מ-198, ב-2020) — אות בודדת לא עומדת כמילה\n"
+                        "• רווח אחרי כל סימן פיסוק; בלי מילה כפולה; בלי משפט שנגמר במילת חיבור\n"
+                        "• עברית מדוברת של בן אדם, לא עברית של תרגום: משפטים קצרים, גוף ראשון, "
+                        "בלי מבנה של 'בנוסף, הפלטפורמה מאפשרת...'\n"
+                        "• אל תכתבי משפטי גילוי נאות או הסתייגות משלך — המערכת מוסיפה אותם בשורה נפרדת\n\n"
+                        "תוכן:\n"
                         "• ציוני את שם הרכב ואת שם החלק הספציפי\n"
-                        "• זה פוסט מכירה: אם ניתנה עובדה אמיתית מהקטלוג — שלבי את המחיר האמיתי (זה מה שמוכר); אסור להמציא מחיר\n"
-                        "• פתרון: חיפוש לפי מספר רישוי ב-autosparefinder.co.il — CTA אחד ברור\n"
-                        "• סיימי בשאלה שקל וכיף לענות עליה בתגובה\n"
+                        "• אם ניתנה עובדה אמיתית מהקטלוג — שלבי את המחיר האמיתי; אסור להמציא מחיר\n"
+                        "• CTA אחד בלבד: חיפוש לפי מספר רישוי ב-autosparefinder.co.il\n"
+                        "• 1-3 אמוג'י לכל היותר, ולא בכל שורה\n"
                         "• האשטאגים בשורה אחרונה בלבד — עברית, ערבית ואנגלית מעולם הרכב\n\n"
                         "החזירי: טקסט הפוסט הסופי בלבד — ללא הסבר, ללא כותרת, ללא ספירה."
                     )
 
-                    raw_post = await _hf_text(prompt=post_prompt, system=_noa_system, timeout=90.0, max_tokens=1500)
-                    caption = noa._finalize_noa_post(raw_post, platforms=_configured)
-                    # UTM attribution (added 2026-07-05): every post link carries
-                    # utm_source=<platform> so clicks are measurable per channel —
-                    # "success_metrics" mean nothing without attribution.
-                    caption = re.sub(
-                        r"(?<![/\w.])autosparefinder\.co\.il(?![/\w])",
-                        _noa_utm_link(platform, week_num).replace("https://", ""),
-                        caption,
+                    caption, _gen_problems = await noa.write_post(
+                        prompt=post_prompt, system=_noa_system, platforms=_configured,
+                        timeout=90.0, max_tokens=1500,
                     )
-
-                    hashtags = [f"#{m.group(1)}" for m in noa._NOA_HASHTAG_RE.finditer(caption)]
-
-                    # Attach a clean part thumbnail (from the thumbnail pipeline) so
-                    # image-required platforms (instagram/tiktok) have media.
-                    media_url = await _noa_featured_thumbnail(car, eng_part)
-
-                    # G8 2026-07-20: EVERY post gets media with a QR code (thumbnail+QR
-                    # composite, or brand-canvas+QR when no clean thumbnail matches).
-                    # The QR lands on /api/v1/go where the customer picks their channel —
-                    # replacing the old 5-link text footer.
-                    try:
-                        from social.qr_media import build_post_media
-                        media_url = await build_post_media(media_url, f"qr_{platform}_w{week_num}")
-                    except Exception as _qre:
-                        logger.warning("noa_marketing_loop: QR media failed: %s", _qre)
-                    if media_url and "/thumbs/qr/" in media_url:
-                        caption = f"{caption}\n📲 סרקו את הקוד בתמונה — ובחרו איפה נוח לכם לדבר איתנו"
-
-                    # ENQUEUE into the social_posts approval queue → owner approves →
-                    # the registry publishes to the real platform. This is the single
-                    # source of truth the admin endpoints + Telegram approval consume.
-                    # Give the guard the part this post is SUPPOSED to be about,
-                    # so it can reject copy that drifted onto a different product.
-                    try:
-                        from social.post_guard import part_text_for as _ptf
-                        _guard_part = _ptf(name=eng_part, name_he=heb_part)
-                    except Exception:
-                        _guard_part = f"{heb_part} {eng_part}".strip()
-
-                    social_post_id = await _noa_enqueue_social_post(
-                        caption=caption, platforms=_configured, media_url=media_url,
-                        topic=f"{heb_part} — {car}",
-                        part_text=_guard_part,
-                    )
-
-                    pending_payload = {
-                        "caption": caption,
-                        "hashtags": hashtags,
-                        "platform": platform,
-                        "topic": f"{heb_part} — {car}",
-                        "post_type": platform,
-                        "status": "awaiting_approval",
-                        "social_post_id": social_post_id,
-                        "media_url": media_url,
-                        "created_at": now.isoformat(),
-                    }
-
-                    await mem.set("pending_post", pending_payload, ttl_hours=72)
-                    await mem.append_event("post_history", pending_payload)
-
-                    # Send to WHATSAPP for approval (owner directive G8 2026-07-20 —
-                    # WhatsApp instead of Telegram). Telegram only mirrors if enabled.
-                    if OWNER_PHONE:
-                        _site = os.getenv("FRONTEND_URL", "https://autosparefinder.co.il").rstrip("/")
-                        wa_post_msg = (
-                            f"🎯 *NOA — פוסט {platform.title()} מוכן לאישור*\n\n"
-                            f"{caption}\n\n"
-                            + (f"🖼️ מדיה (עם QR): {media_url}\n" if media_url else "")
-                            + f"✅ לאישור ופרסום: {_site}/admin (תור הפוסטים)\n"
-                            + f"🆔 {social_post_id or '—'}"
+                    # A draft that fails the language/policy gate is REWRITTEN by NOA
+                    # inside write_post. If every attempt still fails we publish NOTHING
+                    # and say so — the old path fell back to a canned four-line advert,
+                    # which is precisely the "robotic post" the owner kept receiving.
+                    if not caption:
+                        logger.error("noa_marketing_loop: no publishable post after retries — %s",
+                                     "; ".join(_gen_problems)[:400])
+                        if OWNER_PHONE:
+                            await _wa_send_quiet(
+                                to=OWNER_PHONE,
+                                text=("⚠️ *NOA* — לא הצלחתי לכתוב פוסט תקין לסבב הזה, "
+                                      "אז לא פרסמתי כלום (עדיף בלי פוסט מאשר פוסט תבניתי).\n"
+                                      "סיבות: " + "; ".join(_gen_problems)[:300]))
+                    else:
+                        # UTM attribution (added 2026-07-05): every post link carries
+                        # utm_source=<platform> so clicks are measurable per channel —
+                        # "success_metrics" mean nothing without attribution.
+                        caption = re.sub(
+                            r"(?<![/\w.])autosparefinder\.co\.il(?![/\w])",
+                            _noa_utm_link(platform, week_num).replace("https://", ""),
+                            caption,
                         )
-                        await _wa_send_quiet(to=OWNER_PHONE, text=wa_post_msg)
-                    if NOA_TELEGRAM_MIRROR and TELEGRAM_OWNER_ID and TELEGRAM_ADMIN_TOKEN:
-                        tg_msg = f"🎯 NOA — {platform.title()} post ready\n\n📝 {caption}"
-                        tg_msg = noa._append_noa_links(noa._normalize_noa_symbols(tg_msg))
-                        await _noa_send_telegram(
-                            TELEGRAM_ADMIN_TOKEN, TELEGRAM_OWNER_ID, tg_msg,
-                            keyboard=[
-                                [
-                                    {"text": f"✅ אשר ({platform})", "callback_data": f"approve_{platform}"},
-                                    {"text": "✏️ ערוך", "callback_data": "edit_post"},
-                                    {"text": "❌ דחה", "callback_data": "reject_post"},
+
+                        hashtags = [f"#{m.group(1)}" for m in noa._NOA_HASHTAG_RE.finditer(caption)]
+
+                        # Attach a clean part thumbnail (from the thumbnail pipeline) so
+                        # image-required platforms (instagram/tiktok) have media.
+                        media_url = await _noa_featured_thumbnail(car, eng_part)
+
+                        # G8 2026-07-20: EVERY post gets media with a QR code (thumbnail+QR
+                        # composite, or brand-canvas+QR when no clean thumbnail matches).
+                        # The QR lands on /api/v1/go where the customer picks their channel —
+                        # replacing the old 5-link text footer.
+                        try:
+                            from social.qr_media import build_post_media
+                            media_url = await build_post_media(media_url, f"qr_{platform}_w{week_num}")
+                        except Exception as _qre:
+                            logger.warning("noa_marketing_loop: QR media failed: %s", _qre)
+                        if media_url and "/thumbs/qr/" in media_url:
+                            caption = f"{caption}\n📲 סרקו את הקוד בתמונה — ובחרו איפה נוח לכם לדבר איתנו"
+
+                        # ENQUEUE into the social_posts approval queue → owner approves →
+                        # the registry publishes to the real platform. This is the single
+                        # source of truth the admin endpoints + Telegram approval consume.
+                        # Give the guard the part this post is SUPPOSED to be about,
+                        # so it can reject copy that drifted onto a different product.
+                        try:
+                            from social.post_guard import part_text_for as _ptf
+                            _guard_part = _ptf(name=eng_part, name_he=heb_part)
+                        except Exception:
+                            _guard_part = f"{heb_part} {eng_part}".strip()
+
+                        social_post_id = await _noa_enqueue_social_post(
+                            caption=caption, platforms=_configured, media_url=media_url,
+                            topic=f"{heb_part} — {car}",
+                            part_text=_guard_part,
+                        )
+
+                        pending_payload = {
+                            "caption": caption,
+                            "hashtags": hashtags,
+                            "platform": platform,
+                            "topic": f"{heb_part} — {car}",
+                            "post_type": platform,
+                            "status": "awaiting_approval",
+                            "social_post_id": social_post_id,
+                            "media_url": media_url,
+                            "created_at": now.isoformat(),
+                        }
+
+                        await mem.set("pending_post", pending_payload, ttl_hours=72)
+                        await mem.append_event("post_history", pending_payload)
+
+                        # Send to WHATSAPP for approval (owner directive G8 2026-07-20 —
+                        # WhatsApp instead of Telegram). Telegram only mirrors if enabled.
+                        if OWNER_PHONE:
+                            _site = os.getenv("FRONTEND_URL", "https://autosparefinder.co.il").rstrip("/")
+                            wa_post_msg = (
+                                f"🎯 *NOA — פוסט {platform.title()} מוכן לאישור*\n\n"
+                                f"{caption}\n\n"
+                                + (f"🖼️ מדיה (עם QR): {media_url}\n" if media_url else "")
+                                + f"✅ לאישור ופרסום: {_site}/admin (תור הפוסטים)\n"
+                                + f"🆔 {social_post_id or '—'}"
+                            )
+                            await _wa_send_quiet(to=OWNER_PHONE, text=wa_post_msg)
+                        if NOA_TELEGRAM_MIRROR and TELEGRAM_OWNER_ID and TELEGRAM_ADMIN_TOKEN:
+                            tg_msg = f"🎯 NOA — {platform.title()} post ready\n\n📝 {caption}"
+                            tg_msg = noa._append_noa_links(noa._normalize_noa_symbols(tg_msg))
+                            await _noa_send_telegram(
+                                TELEGRAM_ADMIN_TOKEN, TELEGRAM_OWNER_ID, tg_msg,
+                                keyboard=[
+                                    [
+                                        {"text": f"✅ אשר ({platform})", "callback_data": f"approve_{platform}"},
+                                        {"text": "✏️ ערוך", "callback_data": "edit_post"},
+                                        {"text": "❌ דחה", "callback_data": "reject_post"},
+                                    ],
                                 ],
-                            ],
-                        )
+                            )
 
-                    logger.info("noa_marketing_loop: %s post generated topic=%s — %s", platform, heb_part, car)
+                        logger.info("noa_marketing_loop: %s post generated topic=%s — %s", platform, heb_part, car)
 
         except Exception as exc:
             logger.error("noa_marketing_loop error: %s", exc)

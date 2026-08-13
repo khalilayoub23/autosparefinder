@@ -1,5 +1,46 @@
 # AutoSpareFinder — Bug & Breaking Points Fix Tracker
-> Last scan: 2026-07-29 09:40 UTC | Total issues found: 390 | Fixed: 377 | In Progress: 0 | Open: 13 (all in UNWIRED importers — see Session 2026-07-28d)
+> Last scan: 2026-08-13 | Total issues found: 399 | Fixed: 386 | In Progress: 0 | Open: 13 (all in UNWIRED importers — see Session 2026-07-28d)
+
+---
+
+## Session — 2026-08-13 (NOA language: the POST-PROCESSOR was breaking the Hebrew, not the model)
+
+Owner, 4th report: *"recheck the NOA language style and the wrong sentence build — I want a
+root fix, I want the agents to act like humans."* Four reports on one symptom means the
+previous three fixes addressed the wrong layer, so this session started by running the real
+publishing chain over **hand-written, correct Hebrew posts** and diffing what came out. Every
+defect below was produced by our own code, on input that was already right.
+
+| # | Item | Status | Detail |
+|---|------|--------|--------|
+| 1 | **Compliance regexes rewrote words inside sentences** | ✅ root-fixed | `_NOA_TIKTOK_COMPLIANCE_REWRITES` substituted phrases in live text: `"מצאנו את הרפידות הכי זול בארץ"` → `"מצאנו את הרפידות מחירים תחרותיים"`, `"ללא סיכון"` → `"ברכישה בטוחה וברורה באתר"` mid-clause. A regex cannot see the grammar around the span it replaces, so each "compliance fix" was a coin flip on the sentence. They are now `_NOA_RISKY_CLAIM_RULES` — pattern + **guidance**, reported by `_policy_violations` and handed back to NOA to rewrite the sentence herself. |
+| 2 | **We deleted the maqaf and created a one-letter word** | ✅ root-fixed | `_normalize_noa_symbols` converted `ה-Bosch` → `ה Bosch`. Hebrew binds a one-letter proclitic to a following Latin token WITH a maqaf; removing it leaves a word that cannot stand alone. The identical lesson had been learned for digits (`מ-198`, `ב-2020`) in G8 2026-07-20 and simply was never extended to Latin tokens. Removed; `hebrew_style` now reports `ה Bosch` as the defect. |
+| 3 | **`מק"ט` made every parts post "low quality"** | ✅ root-fixed | The lone-Hebrew-letter garble check treated the gershayim in `מק"ט` / `ק"מ` / `ש"ח` as a word boundary, so `ט` looked stranded. **The single most common term in an auto-parts post** therefore sent every such post down `_repair_low_quality_caption`, which stapled `"אנחנו מוכרים חלקי חילוף בלבד."` onto the closing question and replaced NOA's hashtags. Same false-positive family as the `מ-198` bug — fixed for one form, not for the class. The check now masks abbreviations and maqaf-bound prefixes first. |
+| 4 | **The reasoning stripper deleted a real priced sentence** | ✅ root-fixed | `_REASONING_TELL` matched *any* Hebrew char before `(n)`, so an ordinary quantity — `"רפידות קדמיות (2) לקורולה 2017 — מ-198 ₪"` — was classified as character-counting and the whole sentence was **deleted**. Tightened to a LONE letter indexed by a number (`ה (1)`), which is what the real leak looks like. Both directions proven in the test. |
+| 5 | **Canned fallback captions WERE the bot voice** | ✅ removed | `_sales_template_caption` and the fallback bodies in `_sanitize_caption` / `_repair_low_quality_caption` published a fixed four-line advert whenever a check failed — opening with `"מחפשים חלקי חילוף לרכב?"`, the exact worn-out opener NOA's own prompt bans. Deleted. When NOA cannot write a good post we now publish **nothing** and WhatsApp the owner why. Every one of those sentences is listed in `hebrew_style.BOILERPLATE` so a model that memorised them cannot bring them back. |
+| 6 | **Nothing ever checked the Hebrew was well-formed** | ✅ added | New `social/hebrew_style.py` — the FORM counterpart to `social/post_guard.py`'s MEANING gate. Deterministic, no LLM, reports only: stranded letter, broken maqaf, doubled word, glued sentences, cut-off clause, duplicated sentence, our own boilerplate, unbalanced parens (+ advisories: run-on, clichéd opener, latin-heavy). |
+| 7 | **A flawed draft is now REWRITTEN, not patched** | ✅ added | `SocialMediaManagerAgent.write_post()` — write → check → **rewrite with the problems named back to the writer**, up to `NOA_MAX_WRITE_ATTEMPTS` (3). `_finalize_noa_post` now returns `""` for an unpublishable draft instead of always returning something. Grammar is a writing problem, so it is solved by writing. |
+| 8 | **Every post had the same skeleton** | ✅ root-fixed | The prompt asked for hook → wink → fact → price → CTA → closing question, twice a day, forever — so even correct posts read as generated. Added 8 rotating `_POST_FORMS` that change **what is present and in what order** (several forbid the closing question), rotated deterministically by date+slot. Recent **opening lines** now join recent topics in the do-not-repeat context. |
+| 9 | Concrete Hebrew register rules in the prompt | ✅ added | Replaced adjectives ("human", "funny") with testable mechanics — maqaf binding, spacing after punctuation, no self-written disclaimers — plus an explicit "how a person writes vs how a bot writes" contrast tied to the same checks the gate enforces. |
+
+**Verification** — `devtests/noa_language_test.py`, 44 checks, all passing, in this order:
+**A** the gate is silent on five hand-written correct posts (incl. `מ-198`, `מק"ט`, `ק"מ`, `ש"ח`,
+`ה-Bosch`, garage pain copy) — *a checker not proven silent on good input may not reject
+anything*; **B** every broken construct is caught; **B2** the reasoning stripper deletes only
+reasoning; **C** the real chain returns correct bodies **byte-for-byte unchanged** across
+facebook/instagram/tiktok/x, and returns `""` (never filler) for a bad draft; **D** the rewrite
+loop driven on its real code path with a stubbed model — bad draft → defect named back →
+rewritten → accepted, and gives up after the budget rather than publishing filler.
+No regressions: `owner_console_agents_test`, `social_publishers_test`,
+`harvest_notify_policy_test`, `test_pricing_policy` all still pass.
+
+**Deliberately unchanged:** the HE/AR/EN hashtag mix stays at 9 tags — that is an explicit
+owner directive (G8: *"add more automotive hashtags, also Arabic, so it becomes popular"*),
+and tag lines are formatting, not sentences.
+
+**The rule this session establishes:** *a post-processor may VALIDATE, and may add or drop a
+WHOLE LINE — it may never rewrite words inside a sentence.* Everything else was a symptom of
+breaking it.
 
 ---
 

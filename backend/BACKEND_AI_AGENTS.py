@@ -1121,7 +1121,11 @@ _REASONING_TELL = re.compile(
     r"(?:\b\d+\s*(?:letters?|characters?|chars?|words?)\b"          # "5 letters"
     r"|\b(?:maybe|perhaps|hmm|wait|actually|let me|I should|I will|we need)\b"
     r"|\b(?:count|counting|rewrite|revise|draft|option\s*\d)\b"
-    r"|[֐-׿]\s*\(\s*\d+\s*\)"                                    # "ה (1)"
+    # A LONE Hebrew letter indexed by a number — "ה (1), ר (2)" — which is what the
+    # character-counting leak looks like. It used to be any Hebrew char before "(n)",
+    # so an ordinary quantity ("רפידות קדמיות (2)") matched and this function DELETED
+    # the whole sentence, price included. Calibrated in devtests/noa_language_test.py.
+    r"|(?<![֐-׿])[֐-׿](?![֐-׿])\s*\(\s*\d+\s*\)"
     r"|\b(?:plus|and|or)\s+initial\b"
     r"|^\s*(?:option|draft|version|final|note)\s*\d*\s*[:\-]"
     r")", re.I)
@@ -4294,6 +4298,24 @@ class SocialMediaManagerAgent(BaseAgent):
 - Google Business Profile: פוסט עדכון קצר וענייני (עד 1500 תווים) עם CTA "בקר באתר" — טוב ל-SEO מקומי
 - X/Twitter: משפט אחד חד + לינק, בלי האשטאגים מיותרים
 
+עברית — מכניקה של משפט (נבדק אוטומטית לפני פרסום, פוסט שנכשל נכתב מחדש):
+- אות שימוש (ה/ב/ל/מ/ו/ש/כ) נצמדת במקף למילה לועזית או למספר: ה-Bosch, מ-198, ב-2020.
+  אות עברית בודדת לעולם לא עומדת כמילה נפרדת
+- רווח אחרי כל נקודה/פסיק/סימן שאלה; בלי מילה כפולה ברצף; בלי משפט שנגמר
+  במילת חיבור ("ו", "של", "את", "בין") — זה משפט קטוע
+- קיצורים נכתבים כרגיל: מק"ט, ק"מ, ש"ח — הם מילה אחת
+
+איך כותב בן אדם ואיך כותב בוט (זה ההבדל שהבעלים מזהה מיד):
+- בן אדם כותב משפטים קצרים ולא אחידים באורכם; בוט כותב משפטים באותו אורך בדיוק
+- בן אדם לא פותח כל פוסט באותו מבנה. אם הפוסט הקודם נפתח בשאלה — זה לא ייפתח בשאלה
+- בוט כותב "בנוסף, הפלטפורמה מאפשרת להשוות אפשרויות ומחירים במקום אחד". בן אדם כותב
+  "בדקתי, ההפרש בין הספקים היה 140 שקל". תמיד הצורה השנייה
+- בן אדם לא מסביר את עצמו ולא מוסיף הסתייגויות משפטיות. אל תכתבי משפטי גילוי נאות —
+  המערכת מוסיפה אותם בשורה נפרדת כשצריך
+- לא כל פוסט חייב שאלה בסוף, לא כל פוסט חייב בדיחה, ולא כל פוסט חייב אמוג'י.
+  משפט סגירה שקט הוא לפעמים החזק ביותר
+- אם משפט נשמע כאילו נכתב לתבנית — מחקי אותו וכתבי מה היית אומרת לחבר על הרכב שלו
+
 אסור בהחלט:
 - תווים סיניים, יפנים, קוריאנים או שפה שאינה עברית/אנגלית/ערבית
 - לטעון שאנחנו מוסך, מתקנים רכובים, מתקינים חלקים — אנחנו פלטפורמת חיפוש בלבד
@@ -4364,7 +4386,11 @@ class SocialMediaManagerAgent(BaseAgent):
     _NOA_COMPARE_RE = re.compile(r"(השווא|משווה|להשוות|מחיר)", re.IGNORECASE)
     _NOA_BUY_RE = re.compile(r"(קנייה|קניה|רכיש|רוכש|לקנות|הזמנ)", re.IGNORECASE)
     _NOA_RELIEF_RE = re.compile(r"(חוסכ|בלי\s+חיפוש|בלי\s+כאב\s+ראש|בלי\s+התעסקות\s+טכנית)", re.IGNORECASE)
-    _NOA_GARBLED_RE = re.compile(r"(isNotEmpty|matchCondition|[_]{2,}|_\s*_|\b[א-ת]\.)", re.IGNORECASE)
+    # NOTE: the old pattern also matched `\b[Hebrew-letter]\.` as a garble signal. That
+    # fires on every Hebrew abbreviation that ends a sentence (ק"מ. ש"ח. מק"ט.) — the same
+    # false-positive family as the מק"ט bug. Stranded letters are detected properly by
+    # social/hebrew_style, which masks abbreviations and maqaf-bound prefixes first.
+    _NOA_GARBLED_RE = re.compile(r"(isNotEmpty|matchCondition|[_]{2,}|_\s*_)", re.IGNORECASE)
     _NOA_NON_SOCIAL_PATTERNS = (
         "אני כאן לעזור",
         "כדי להתקדם מהר",
@@ -4372,16 +4398,23 @@ class SocialMediaManagerAgent(BaseAgent):
         "דגם רכב + שנה + מנוע",
     )
     _NOA_TIKTOK_PRICE_PROMO_RE = re.compile(r"(מחיר|מבצע|הנחה|%|₪|משלוח\s+חינם|חינם)", re.IGNORECASE)
-    _NOA_TIKTOK_DISCLOSURE_MARKERS = ("כפוף", "תנאי", "זמינות", "באתר")
-    _NOA_TIKTOK_COMPLIANCE_REWRITES: Tuple[Tuple[str, str], ...] = (
-        (r"100%\s*מובטח", "בכפוף לזמינות ולתנאי האתר"),
-        (r"ללא\s*סיכון", "ברכישה בטוחה וברורה באתר"),
-        (r"בלי\s*סיכון", "ברכישה בטוחה וברורה באתר"),
-        (r"הכי\s*זול\s*בארץ", "מחירים תחרותיים"),
-        (r"הזול\s*ביותר", "מחיר תחרותי"),
-        (r"תוצאה\s*מיידית", "מענה מהיר"),
-        (r"רק\s*היום", "לזמן מוגבל"),
-        (r"חינם\s*לחלוטין", "בכפוף לתנאי ההטבה"),
+    _NOA_TIKTOK_DISCLOSURE = "המחירים, המבצעים והזמינות כפופים לתנאי האתר."
+    # Only a real conditions statement counts. "באתר"/"זמינות" are ordinary words in our
+    # copy, so they used to suppress the disclosure at random.
+    _NOA_TIKTOK_DISCLOSURE_MARKERS = ("כפוף", "בכפוף", "תנאי האתר")
+    # Risky advertising claims. These used to be regex SUBSTITUTIONS applied to the live
+    # text, which is how "מצאנו את הרפידות הכי זול בארץ" became the ungrammatical
+    # "מצאנו את הרפידות מחירים תחרותיים". Each is now paired with guidance that is handed
+    # back to NOA so she rewrites the SENTENCE (see `_policy_violations` / `write_post`).
+    _NOA_RISKY_CLAIM_RULES: Tuple[Tuple[str, str], ...] = (
+        (r"100%\s*מובטח", "אסור להבטיח 100% — נסחי מחדש כטענה מסויגת (בכפוף לזמינות ולתנאי האתר)"),
+        (r"ללא\s*סיכון", "אסור להבטיח 'ללא סיכון' — נסחי מחדש את המשפט בלי ההבטחה"),
+        (r"בלי\s*סיכון", "אסור להבטיח 'בלי סיכון' — נסחי מחדש את המשפט בלי ההבטחה"),
+        (r"הכי\s*זול\s*בארץ", "אסור סופרלטיב 'הכי זול בארץ' — כתבי את המשפט מחדש עם מחיר אמיתי במקום"),
+        (r"הזול\s*ביותר", "אסור סופרלטיב 'הזול ביותר' — כתבי את המשפט מחדש עם מחיר אמיתי במקום"),
+        (r"תוצאה\s*מיידית", "אסור להבטיח תוצאה מיידית — נסחי מחדש"),
+        (r"רק\s*היום", "אסור דחיפות מזויפת ('רק היום') — נסחי מחדש בלי מועד מומצא"),
+        (r"חינם\s*לחלוטין", "אסור 'חינם לחלוטין' — נסחי מחדש"),
     )
     _NOA_TIKTOK_PERSONAL_ATTRIBUTE_RE = re.compile(
         r"(אם\s+אתה\s+לא|אם\s+את\s+לא|אתה\s+לא\s+מבין|את\s+לא\s+מבינה|אתה\s+בבעיה|את\s+בבעיה)",
@@ -4468,83 +4501,163 @@ class SocialMediaManagerAgent(BaseAgent):
         msg = re.sub(r"#[^\s#]+", " ", (text or "").lower())
         return bool(cls._NOA_SERVICE_CLAIM_RE.search(msg))
 
+    # ================================================================== #
+    # POLICY AND LANGUAGE ARE DETECTED — NEVER PATCHED (root fix 2026-08-13)
+    #
+    # Owner, 4th report: "recheck the NOA language style and the wrong sentence
+    # build — I want a root fix, I want the agents to act like humans."
+    #
+    # The three previous rounds all kept this architecture:
+    #     generate -> REWRITE the text with regexes -> publish
+    # and each round narrowed one regex. That architecture IS the bug. A regex
+    # that swaps a phrase inside a sentence cannot see the grammar around it, so
+    # every "compliance fix" is a coin flip on whether the sentence survives.
+    # Measured on hand-written CORRECT Hebrew before this change:
+    #     "מצאנו את הרפידות הכי זול בארץ" -> "מצאנו את הרפידות מחירים תחרותיים"
+    #     "פילטר מקורי ה-Bosch"           -> "פילטר מקורי ה Bosch"
+    #     "...להזמין לבד?"                -> "...להזמין לבד? אנחנו מוכרים חלקי חילוף בלבד."
+    # None of those were model errors. We wrote them.
+    #
+    # The rule now: a post-processor may VALIDATE, and may add or drop a WHOLE
+    # LINE. It may never rewrite words inside a sentence. A draft that violates
+    # policy or grammar is REGENERATED by the writer (see `write_post`), or held
+    # for the owner. It is never patched, and it is never replaced by canned
+    # filler — a template post is exactly what "acts like a bot" means.
+    # ================================================================== #
+
     @classmethod
-    def _ensure_platform_value_points(cls, body: str) -> str:
-        text = (body or "").strip()
-        if not text:
-            return text
+    def _language_issues(cls, text: str, platforms: Optional[List[str]] = None) -> list:
+        """Findings from the ONE Hebrew language gate (social/hebrew_style).
 
-        has_plate = bool(cls._NOA_PLATE_RE.search(text))
-        has_compare = bool(cls._NOA_COMPARE_RE.search(text))
-        has_buy = bool(cls._NOA_BUY_RE.search(text))
-        has_relief = bool(cls._NOA_RELIEF_RE.search(text))
+        Fails OPEN: if the gate cannot be imported, a post is not blocked by its
+        absence — same contract as the semantic guard in social/post_guard.
+        """
+        try:
+            from social import hebrew_style as _hs
+        except Exception as exc:                      # pragma: no cover
+            logger.warning("noa: hebrew_style gate unavailable (%s) — language check skipped", exc)
+            return []
+        plat = next(iter(platforms or []), "") or ""
+        try:
+            return _hs.lint(text or "", platform=plat)
+        except Exception as exc:                      # pragma: no cover
+            logger.warning("noa: hebrew_style lint failed (%s)", exc)
+            return []
 
-        if all((has_plate, has_compare, has_buy, has_relief)):
-            return text
+    @classmethod
+    def _policy_violations(cls, text: str, platforms: Optional[List[str]] = None) -> List[str]:
+        """Compliance problems, phrased as REASONS TO REWRITE rather than applied
+        as substitutions. Each entry goes straight into the rewrite prompt."""
+        msg = (text or "")
+        if not msg.strip():
+            return []
+        plats = {(p or "").strip().lower() for p in (platforms or []) if (p or "").strip()}
+        out: List[str] = []
 
-        value_line = (
-            "הפלטפורמה שלנו מאתרת חלקים לפי מספר רישוי, מאפשרת להשוות אפשרויות ומחירים במקום אחד, "
-            "וחוסכת חיפוש מיותר והתעסקות טכנית עד הקנייה."
-        )
-        return f"{text} {value_line}".strip()
+        if cls._NOA_FIRST_PERSON_SERVICE_RE.search(msg):
+            out.append("יש טענה שאנחנו מתקנים/מתקינים רכבים — אנחנו פלטפורמת חלפים בלבד. "
+                       "נסחי את המשפט מחדש בלי הטענה הזו")
+
+        for pattern, guidance in cls._NOA_RISKY_CLAIM_RULES:
+            if re.search(pattern, msg, flags=re.IGNORECASE):
+                out.append(guidance)
+
+        if "tiktok" in plats and cls._NOA_TIKTOK_PERSONAL_ATTRIBUTE_RE.search(msg):
+            out.append("יש ניסוח אישי-שיפוטי כלפי הקורא שאסור במדיניות TikTok — "
+                       "כתבי את אותו רעיון בלי לפנות אל חסרונות של הקורא")
+
+        return list(dict.fromkeys(out))
+
+    @classmethod
+    def _draft_problems(cls, text: str, platforms: Optional[List[str]] = None,
+                        require_hebrew: bool = True) -> List[str]:
+        """Everything wrong with a draft that must be fixed BY REWRITING IT.
+        Empty list == publishable.
+
+        `require_hebrew` is False for content a human submitted through the admin
+        gate — NOA writes Hebrew, but an owner-written English post for X/Reddit is
+        a deliberate choice, not a defect.
+        """
+        problems: List[str] = []
+        try:
+            from social import hebrew_style as _hs
+            problems += [str(i) for i in _hs.errors(cls._language_issues(text, platforms))]
+        except Exception:
+            pass
+        problems += cls._policy_violations(text, platforms)
+        if require_hebrew and cls._needs_hebrew_rewrite(text):
+            problems.append("הפוסט לא בעברית תקינה או מכיל כתב לא נתמך — כתבי אותו בעברית")
+        if any(p in (text or "") for p in cls._NOA_NON_SOCIAL_PATTERNS):
+            problems.append("זה נשמע כמו תשובת צ'אט שירות ולא כמו פוסט — כתבי פוסט")
+        if cls._NOA_GARBLED_RE.search(text or ""):
+            problems.append("יש שאריות קוד/חשיבה בטקסט — החזירי רק את הפוסט עצמו")
+        return list(dict.fromkeys(problems))
+
+    @classmethod
+    def _post_body(cls, text: str) -> str:
+        """The prose of a post, with its line structure INTACT: hashtag lines and
+        the link/QR lines are formatting and get re-attached by `_compose_post`."""
+        lines: List[str] = []
+        for ln in (text or "").splitlines():
+            s = ln.strip()
+            if not s or s.startswith("#"):
+                continue
+            if s.startswith(("🌐", "📲")) or re.fullmatch(r"https?://\S+", s):
+                continue
+            lines.append(ln.rstrip())
+        return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+    @classmethod
+    def _compose_post(cls, body: str, source_text: str, platforms: Optional[List[str]] = None) -> str:
+        """Assemble the published post from an UNMODIFIED body plus whole extra
+        lines. Nothing here reaches inside a sentence."""
+        plats = {(p or "").strip().lower() for p in (platforms or []) if (p or "").strip()}
+        body = (body or "").strip()
+        if not body:
+            return ""
+        lines = [body]
+
+        # TikTok ad policy needs a conditions disclosure next to a promo claim. It
+        # goes on its OWN line at the end — never glued onto the closing sentence,
+        # which is how it used to read like a machine finished NOA's paragraph.
+        if "tiktok" in plats and cls._NOA_TIKTOK_PRICE_PROMO_RE.search(body) \
+                and not any(m in body for m in cls._NOA_TIKTOK_DISCLOSURE_MARKERS):
+            lines.append(cls._NOA_TIKTOK_DISCLOSURE)
+
+        tags = cls._filter_hashtags(source_text or body)
+        if not tags:
+            tags = cls._noa_hashtag_mix()
+        lines.append(tags)
+        return "\n".join(lines).strip()
 
     @classmethod
     def _enforce_tiktok_ads_policy(cls, text: str) -> str:
-        msg = (text or "").strip()
-        if not msg:
+        """Kept for the admin preview path. Composition only — the word-level
+        `_NOA_TIKTOK_COMPLIANCE_REWRITES` substitutions that used to run here are
+        gone; those patterns are now reported by `_policy_violations`."""
+        body = cls._post_body(text)
+        if not body:
             return ""
-
-        lines = [ln.strip() for ln in msg.splitlines() if ln.strip()]
-        body_lines: list[str] = []
-        hashtag_lines: list[str] = []
-        for ln in lines:
-            if ln.startswith("#"):
-                hashtag_lines.append(ln)
-                continue
-            if cls._NOA_TIKTOK_PERSONAL_ATTRIBUTE_RE.search(ln):
-                continue
-            body_lines.append(ln)
-
-        # Preserve the line structure — TikTok posts LIVE on the hook-line + short-body
-        # rhythm. The old code flattened every newline into one run-on sentence (a top
-        # cause of the robotic feel); we only collapse intra-line whitespace and apply the
-        # compliance rewrites per line.
-        cleaned_lines: list[str] = []
-        for ln in body_lines:
-            ln = re.sub(r"[ \t]+", " ", ln).strip()
-            for pattern, repl in cls._NOA_TIKTOK_COMPLIANCE_REWRITES:
-                ln = re.sub(pattern, repl, ln, flags=re.IGNORECASE)
-            if ln:
-                cleaned_lines.append(ln)
-        body = "\n".join(cleaned_lines).strip()
-
-        has_promo_claim = bool(cls._NOA_TIKTOK_PRICE_PROMO_RE.search(body))
-        has_disclosure = any(marker in body for marker in cls._NOA_TIKTOK_DISCLOSURE_MARKERS)
-        if has_promo_claim and not has_disclosure:
-            body = f"{body}\nהמחירים, המבצעים והזמינות כפופים לתנאי האתר."
-
-        tags = cls._filter_hashtags("\n".join(hashtag_lines))
-        if not tags:
-            tags = cls._noa_hashtag_mix()
-        return f"{body}\n{tags}".strip()
+        return cls._compose_post(body, source_text=text or "", platforms=["tiktok"])
 
     @classmethod
     def _normalize_for_platforms(cls, content: str, platforms: Optional[List[str]] = None) -> str:
-        platform_set = {(p or "").strip().lower() for p in (platforms or []) if (p or "").strip()}
-        normalized = cls._sanitize_caption(content or "")
-        normalized = cls._enforce_sales_only(normalized)
-        if cls._is_low_quality_caption(normalized):
-            normalized = cls._repair_low_quality_caption(normalized, platforms=list(platform_set))
-        if "tiktok" in platform_set:
-            normalized = cls._enforce_tiktok_ads_policy(normalized)
-        return normalized
+        """Whitespace/script/link tidying + re-composition. NEVER rewrites words."""
+        cleaned = cls._normalize_noa_symbols(content or "")
+        cleaned = cls._strip_malformed_links(cleaned)
+        body = cls._post_body(cleaned)
+        if not body:
+            return ""
+        return cls._compose_post(body, source_text=cleaned, platforms=platforms)
 
     @classmethod
     def review_post_policy(cls, content: str, platforms: Optional[List[str]] = None) -> Dict[str, Any]:
         """Policy gate for admin pre-approval/pre-publish checks.
 
-        Blocks only hard compliance violations. Style/readability issues are
-        returned as advisories with a suggested auto-fixed caption.
+        `suggested_content` is a re-COMPOSED version (same sentences, tidied
+        whitespace, tags re-attached) — it is no longer an auto-"fixed" rewrite,
+        because auto-fixing sentences is what broke them. Anything that needs
+        different words is returned as a reason for NOA to rewrite it.
         """
         raw = (content or "").strip()
         platform_set = {(p or "").strip().lower() for p in (platforms or []) if (p or "").strip()}
@@ -4555,176 +4668,45 @@ class SocialMediaManagerAgent(BaseAgent):
             blocking_reasons.append("תוכן הפוסט ריק")
         if cls._contains_service_claim(raw):
             blocking_reasons.append("נמצא ניסוח של מוסך/תיקון/התקנה שאינו מותר")
-
-        body_no_tags = re.sub(r"#[^\s#]+", " ", raw)
         if cls._NOA_BAD_SCRIPT_RE.search(raw):
             blocking_reasons.append("הפוסט מכיל תווים/כתב לא נתמך")
-        elif cls._contains_non_hebrew_word(body_no_tags):
-            advisories.append("מומלץ לצמצם ערבוב שפות ולשמור על עברית נקיה")
 
-        ensured_value = cls._ensure_platform_value_points(body_no_tags)
-        if re.sub(r"\s+", " ", ensured_value).strip() != re.sub(r"\s+", " ", body_no_tags).strip():
-            advisories.append("מומלץ להדגיש יתרונות פלטפורמה: איתור לפי מספר רישוי, השוואת מחירים/אפשרויות ורכישה פשוטה")
-
-        if "מוכרים חלקי חילוף בלבד" not in raw:
-            advisories.append("מומלץ להוסיף ניסוח ברור: אנחנו מוכרים חלקי חילוף בלבד")
-
-        if cls._is_low_quality_caption(raw):
-            advisories.append("מומלץ לשפר את הנוסח כדי לחזק קריאות ואמון")
+        # Language defects block: a broken sentence is the thing the owner sees.
+        blocking_reasons += cls._draft_problems(raw, list(platform_set), require_hebrew=False)
+        advisories += [str(i) for i in cls._language_issues(raw, list(platform_set))
+                       if getattr(i, "severity", "") == "warn"]
 
         if "tiktok" in platform_set:
-            for pattern, _ in cls._NOA_TIKTOK_COMPLIANCE_REWRITES:
-                if re.search(pattern, raw, flags=re.IGNORECASE):
-                    blocking_reasons.append("נמצאה טענת פרסום מסוכנת ל-TikTok (הבטחה מוחלטת/סופרלטיב לא מבוסס)")
-                    break
-            if cls._NOA_TIKTOK_PERSONAL_ATTRIBUTE_RE.search(raw):
-                blocking_reasons.append("נמצא ניסוח אישי-שיפוטי שאינו מותר במדיניות TikTok")
             has_promo_claim = bool(cls._NOA_TIKTOK_PRICE_PROMO_RE.search(raw))
-            has_disclosure = any(marker in raw for marker in cls._NOA_TIKTOK_DISCLOSURE_MARKERS)
+            has_disclosure = any(m in raw for m in cls._NOA_TIKTOK_DISCLOSURE_MARKERS)
             if has_promo_claim and not has_disclosure:
-                blocking_reasons.append("תוכן מבצעי ל-TikTok חייב לכלול גילוי נאות על תנאים וזמינות")
+                advisories.append("יתווסף גילוי נאות על תנאים וזמינות בשורה נפרדת (מדיניות TikTok)")
 
-        normalized = cls._normalize_for_platforms(raw, platforms=list(platform_set))
-        compact_raw = re.sub(r"\s+", " ", raw).strip()
-        compact_norm = re.sub(r"\s+", " ", normalized).strip()
-        if compact_norm != compact_raw:
-            advisories.append("בוצעו התאמות ניסוח אוטומטיות לשיפור תאימות הפוסט")
-
-        # Deduplicate while preserving order
         dedup_blocking = list(dict.fromkeys(blocking_reasons))
         dedup_advisories = list(dict.fromkeys(advisories))
         return {
             "ok": len(dedup_blocking) == 0,
             "reasons": dedup_blocking,
             "advisories": dedup_advisories,
-            "suggested_content": normalized,
+            "suggested_content": cls._normalize_for_platforms(raw, platforms=list(platform_set)),
             "platforms": sorted(platform_set),
         }
 
     @classmethod
-    def _enforce_sales_only(cls, text: str) -> str:
-        msg = (text or "").strip()
-        if not msg:
-            return ""
-
-        # Compliance rewrites — only FIRST-PERSON claims that we service/repair/install
-        # cars (we're a parts marketplace, not a garage). Targeted and grammar-safe.
-        # We deliberately do NOT blanket-replace bare words like "מוסך"/"תיקון"/"התקנה":
-        # the old code did, turning legit pain copy ("בלי לרוץ בין מוסכים") into broken
-        # Hebrew ("בין חנות חלקים") — a top cause of the robotic, incoherent posts.
-        replacements = (
-            (r"אנחנו\s+מתקנים", "אנחנו מוכרים ומספקים"),
-            (r"אנחנו\s+נתקן", "אנחנו נתאים את החלק הנכון"),
-            (r"אנחנו\s+מתקינים", "אנחנו מספקים"),
-            (r"נחליף\s+לך", "נספק לך את החלק המתאים"),
-            (r"נתקין\s+לך", "נתאים לך"),
-        )
-        claim_rewritten = False
-        for pattern, repl in replacements:
-            msg, n = re.subn(pattern, repl, msg, flags=re.IGNORECASE)
-            if n:
-                claim_rewritten = True
-
-        # Keep the model's structure. Drop ONLY lines that still assert we operate as a
-        # garage (narrow first-person regex), and strip hashtag lines (re-added below).
-        # Preserve line breaks — they ARE the platform formatting (hook line, short body).
-        kept_lines: list[str] = []
-        for ln in msg.splitlines():
-            s = ln.strip()
-            if s.startswith("#"):
-                continue
-            if s and cls._NOA_FIRST_PERSON_SERVICE_RE.search(s):
-                claim_rewritten = True
-                continue
-            kept_lines.append(ln.rstrip())
-
-        body = re.sub(r"\n{3,}", "\n\n", "\n".join(kept_lines)).strip()
-
-        # Append the "parts only" disclosure at most ONCE, on its own line, and ONLY when
-        # we actually had to neutralise a service claim. Normal posts are left as the model
-        # wrote them — no stapled value-point boilerplate on every post.
-        if claim_rewritten and body and "מוכרים חלקי חילוף בלבד" not in body:
-            body = f"{body}\nאנחנו מוכרים חלקי חילוף בלבד ומתאימים את החלק לפי פרטי הרכב."
-
-        tags = cls._filter_hashtags(msg)
-        if not tags:
-            tags = cls._noa_hashtag_mix()
-        if not body:
-            body = "מחפשים חלק לרכב? שלחו דגם, שנה ומנוע ונחזיר התאמה מהירה ומדויקת."
-        return f"{body}\n{tags}".strip()
-
-    @classmethod
     def _is_low_quality_caption(cls, text: str) -> bool:
-        msg = (text or "").strip()
-        if not msg:
-            return True
-        if any(p in msg for p in cls._NOA_NON_SOCIAL_PATTERNS):
-            return True
-        if cls._NOA_GARBLED_RE.search(msg):
-            return True
-        body = re.sub(r"#[^\s#]+", " ", msg)
-        body = re.sub(r"\s+", " ", body).strip()
-        words = body.split()
-        # 8-word floor (was 14): short, punchy TikTok/X posts are BY DESIGN brief (the
-        # system prompt asks for a strong one-line hook + a short body). A 14-word minimum
-        # was flagging good short posts as "low quality" and replacing them with a canned
-        # generic fallback — a direct cause of the templated, robotic feel. The garble and
-        # single-letter checks below still catch genuinely broken output.
-        if len(words) < 8:
-            return True
-        stripped_words = [re.sub(r"[^\u0590-\u05FF0-9]", "", w) for w in words]
-        short_count = sum(1 for w in stripped_words if 0 < len(w) <= 2)
-        if words and (short_count / len(words)) > 0.30:
-            return True
-        # A lone Hebrew letter is a garble signal \u2014 BUT the one-letter prefixes
-        # (\u05DE/\u05D1/\u05DC/\u05D4/\u05D5/\u05E9/\u05DB/\u05D3) bound by a hyphen to a number or Latin word are normal
-        # Hebrew: "\u05D4\u05D7\u05DC \u05DE-198 \u05E9\u05E7\u05DC", "\u05D1-2020", "\u05DC-Bosch". The old unguarded \b[\u05D0-\u05EA]\b
-        # matched those, so EVERY post quoting a real price was judged low-quality and
-        # sent to the repair path \u2014 which flattened its line breaks and stapled canned
-        # boilerplate. That was a direct cause of robotic posts (root-fixed G8 2026-07-20).
-        # A lone Hebrew letter signals garble — EXCEPT the one-letter prefixes
-        # (מ/ב/ל/ה/ו/ש/כ/ד) bound to a number or a Latin brand token, which is ordinary
-        # Hebrew: "החל מ-198", "ב-2020", "ב AutoSpareFinder", "ה Corolla", "ל Toyota".
-        # Flagging those sent good posts down the repair path, which flattened their line
-        # breaks and stapled canned boilerplate — a direct cause of robotic posts.
-        _lone = re.compile(
-            r"(?<![\u0590-\u05FF\-])\b([\u0590-\u05FF])\b(?![\-\u2010-\u2015])"
-        )
-        for m in _lone.finditer(body):
-            if m.group(1) in "\u05de\u05d1\u05dc\u05d4\u05d5\u05e9\u05db\u05d3":
-                tail = body[m.end():m.end() + 24].lstrip(" -\u2010-\u2015")
-                if tail[:1].isalnum() and not re.match(r"[\u0590-\u05FF]", tail[:1]):
-                    continue   # prefix + number/Latin token → legitimate
-            return True
-        return False
+        """One definition of 'not publishable', shared with the language gate.
 
-    @classmethod
-    def _repair_low_quality_caption(cls, text: str, platforms: Optional[List[str]] = None) -> str:
-        platform_set = {(p or "").strip().lower() for p in (platforms or []) if (p or "").strip()}
-        normalized = cls._sanitize_caption(text or "")
-        body = re.sub(r"#[^\s#]+", " ", normalized)
-        # PRESERVE line structure (G8 2026-07-20). The old `\s+`→" " collapse turned a
-        # well-formed multi-line post into one run-on paragraph whenever repair fired —
-        # the same structure-destroying bug already fixed in _enforce_sales_only /
-        # _enforce_tiktok_ads_policy. Only intra-line whitespace is collapsed here.
-        body = "\n".join(
-            ln for ln in (re.sub(r"[ \t]+", " ", l).strip() for l in body.splitlines()) if ln
-        ).strip()
-        if len(body.split()) < 8:
-            body = (
-                "מחפשים חלק לרכב בלי לרוץ בין מוסכים? מזינים מספר רישוי ומקבלים התאמה מהירה "
-                "והשוואת מחירים במקום אחד."
-            )
-        # Single clean disclosure only — no stacked value-point boilerplate (that stapling
-        # is what made repaired posts read like a filled-in template).
-        if "מוכרים חלקי חילוף בלבד" not in body:
-            body = f"{body} אנחנו מוכרים חלקי חילוף בלבד."
+        The hand-rolled heuristics that used to live here were the source of the
+        worst failures: the lone-Hebrew-letter check treated the gershayim in
+        `מק"ט` / `ק"מ` / `ש"ח` as a word boundary, so the single most common term
+        in an auto-parts post made EVERY such post 'low quality' and sent it down
+        a repair path that stapled boilerplate onto it. social/hebrew_style masks
+        abbreviations and maqaf-bound prefixes before looking for a stranded
+        letter, and is calibrated against real correct posts in
+        devtests/noa_language_test.py.
+        """
+        return bool(cls._draft_problems(text))
 
-        tags = cls._noa_hashtag_mix()
-        repaired = f"{body}\n{tags}".strip()
-        if "tiktok" in platform_set:
-            return cls._enforce_tiktok_ads_policy(repaired)
-        return repaired
 
     @classmethod
     def _normalize_campaign_platforms(cls, platforms: Optional[List[str]]) -> List[str]:
@@ -5006,43 +4988,33 @@ class SocialMediaManagerAgent(BaseAgent):
                 proposed_budget_ils=proposed_budget_ils,
             )
 
-    @classmethod
-    def _sales_template_caption(cls, topic: str, platform: str = "") -> str:
-        caption = (
-            "מחפשים חלקי חילוף לרכב?\n"
-            "הפלטפורמה החכמה שלנו מאתרת חלקים לפי מספר רישוי, או לפי דגם, שנה ומנוע, או לפי תמונה של הרכיב בעזרת AI.\n"
-            "בנוסף, הפלטפורמה מאפשרת להשוות אפשרויות ומחירים במקום אחד, וחוסכת חיפוש מיותר והתעסקות טכנית עד הרכישה.\n"
-            "אנחנו משווקים חלקי חילוף בעזרת AI בלבד. המחירים, המבצעים והזמינות כפופים לתנאי האתר.\n"
-            "#חלקיחילוף #התאמתחלקים #חלפיםלרכב #משלוחמהיר #AutoSpareFinder #TikTok"
-        )
-        if (platform or "").strip().lower() == "tiktok":
-            return cls._enforce_tiktok_ads_policy(caption)
-        return caption
+    # `_sales_template_caption` was DELETED (2026-08-13). It was a fixed four-line advert
+    # used as a fallback whenever generation was judged poor — and it opened with
+    # "מחפשים חלקי חילוף לרכב?", the exact worn-out opener NOA's own system prompt bans.
+    # A canned post IS the bot voice the owner keeps recognising. When NOA cannot produce a
+    # good post we now produce NO post and tell the owner, which is the same decision
+    # already taken for her offline reply (Mistake Log 2026-07-27: "never publish generic
+    # filler"). Its sibling fallbacks in `_sanitize_caption` and in the deleted
+    # `_repair_low_quality_caption` are gone for the same reason, and every one of those
+    # sentences is listed in social/hebrew_style.BOILERPLATE so it can never come back in
+    # through a model that memorised it.
 
     @classmethod
     def _sanitize_caption(cls, text: str) -> str:
+        """Tidy whitespace/unsupported scripts and re-attach the tag line. Returns ""
+        when nothing publishable is left — the caller regenerates; it does not invent
+        replacement copy."""
         msg = (text or "").strip()
         if not msg:
             return ""
-
-        # Keep Hebrew+English mixed copy (brand/model terms), only strip unsupported scripts.
         msg = cls._NOA_BAD_SCRIPT_RE.sub("", msg)
         msg = re.sub(r"[ \t]+", " ", msg)
         msg = re.sub(r"\n{3,}", "\n\n", msg).strip()
-
-        tags = cls._filter_hashtags(msg)
-        if not tags:
-            tags = cls._noa_hashtag_mix()
-
-        body_lines = [ln for ln in msg.splitlines() if not ln.strip().startswith("#")]
-        body = "\n".join([ln.rstrip() for ln in body_lines if ln.strip()]).strip()
+        body = cls._post_body(msg)
         if not body:
-            body = (
-                "מחפשים חלקי חילוף לרכב? אנחנו מאתרים חלקים מהר, "
-                "עוזרים בהתאמה לפי רכב, ומרכזים אפשרויות במקום אחד."
-            )
+            return ""
+        return cls._compose_post(body, source_text=msg)
 
-        return f"{body}\n{tags}".strip()
 
     @classmethod
     def _needs_hebrew_rewrite(cls, text: str) -> bool:
@@ -5131,11 +5103,14 @@ class SocialMediaManagerAgent(BaseAgent):
 
         # Normalize odd unicode dashes frequently produced by LLMs in Hebrew+English mixes.
         msg = msg.replace("‐", "-").replace("‑", "-")
-        # Convert Hebrew-letter + dash + LATIN token into natural spacing (ה-Bosch -> ה Bosch).
-        # Digits are deliberately EXCLUDED (G8 2026-07-20): "החל מ-198 שקל" and "ב-2020" are
-        # correct Hebrew, and stripping that hyphen mangled exactly the price/year phrasing
-        # that selling posts are built on.
-        msg = re.sub(r"([\u0590-\u05FF])-(?=[A-Za-z])", r"\1 ", msg)
+        # 2026-08-13: this used to convert "ה-Bosch" -> "ה Bosch". That was never a
+        # normalisation — it is a grammar error we introduced ourselves. Hebrew binds a
+        # one-letter proclitic to a following Latin token WITH a maqaf; deleting it leaves a
+        # one-letter word that cannot stand alone, which is exactly the "wrong sentence
+        # build" the owner kept reporting. The identical lesson had already been learned for
+        # digits ("מ-198", "ב-2020") in G8 2026-07-20 and simply was not extended to Latin
+        # tokens. The maqaf now stays in both cases, and social/hebrew_style reports
+        # "ה Bosch" as the defect it is instead of us creating it.
 
         msg = re.sub(r"[ \t\r\f\v]+", " ", msg)
         msg = re.sub(r"\n{3,}", "\n\n", msg).strip()
@@ -5285,23 +5260,103 @@ class SocialMediaManagerAgent(BaseAgent):
         return text[:280]
 
     @classmethod
-    def _finalize_noa_post(cls, text: str, platforms: Optional[List[str]] = None) -> str:
-        platform_set = {(p or "").strip().lower() for p in (platforms or []) if (p or "").strip()}
+    def _finalize_noa_post_ex(cls, text: str, platforms: Optional[List[str]] = None):
+        """Finalize a draft and say what is wrong with it.
 
-        # Strip model reasoning / character-counting before any further processing
+        Returns (post, problems). `post` is "" whenever `problems` is non-empty —
+        there is no half-published state and no auto-patched sentence. The caller
+        either regenerates with `problems` as feedback (see `write_post`) or holds
+        the draft for the owner.
+        """
+        platform_set = [p.strip().lower() for p in (platforms or []) if (p or "").strip()]
+
         cleaned = cls._extract_post_from_reasoning(text or "")
+        cleaned = cls._normalize_noa_symbols(cleaned)
+        cleaned = cls._strip_malformed_links(cleaned)
 
-        normalized = cls._normalize_for_platforms(cleaned, platforms=list(platform_set))
-        if cls._needs_hebrew_rewrite(normalized) or cls._is_low_quality_caption(normalized):
-            normalized = cls._repair_low_quality_caption(normalized, platforms=list(platform_set))
+        body = cls._post_body(cleaned)
+        if not body:
+            return "", ["לא התקבל טקסט פוסט"]
 
-        normalized = cls._normalize_noa_symbols(normalized)
-        normalized = cls._strip_malformed_links(normalized)
-        if "tiktok" in platform_set:
-            normalized = cls._enforce_tiktok_ads_policy(normalized)
-        # Broaden reach: keep the model's own tags, top up from the HE/AR/EN pools (G8).
-        normalized = cls._enrich_hashtags(normalized)
-        return cls._append_noa_links(normalized)
+        problems = cls._draft_problems(body, platform_set)
+        if problems:
+            return "", problems
+
+        composed = cls._compose_post(body, source_text=cleaned, platforms=platform_set)
+        # Broaden reach: keep NOA's own tags, top up from the HE/AR/EN pools (owner
+        # directive G8 2026-07-20). Tag lines are formatting — this touches no sentence.
+        composed = cls._enrich_hashtags(composed)
+        return cls._append_noa_links(composed), []
+
+    @classmethod
+    def _finalize_noa_post(cls, text: str, platforms: Optional[List[str]] = None) -> str:
+        """Publishable post, or "" when the draft is not publishable.
+
+        BREAKING CHANGE 2026-08-13 — this used to always return SOMETHING, falling
+        back to canned filler when the draft failed a check. Returning "" is the
+        point: it forces the caller to regenerate or escalate instead of publishing
+        a template in NOA's name.
+        """
+        post, _problems = cls._finalize_noa_post_ex(text, platforms=platforms)
+        return post
+
+    # Rewrite budget. A post goes out twice a day, so at most 3 model calls per post —
+    # well inside the "small batch + minimum interval + daily ceiling" rule that every
+    # background LLM caller here must satisfy (CLAUDE.md, 2026-07-27 quota blowout).
+    NOA_MAX_WRITE_ATTEMPTS = int(os.getenv("NOA_MAX_WRITE_ATTEMPTS", "3"))
+
+    @classmethod
+    async def write_post(
+        cls,
+        *,
+        prompt: str,
+        system: str,
+        platforms: Optional[List[str]] = None,
+        timeout: float = 90.0,
+        max_tokens: int = 1500,
+        max_attempts: Optional[int] = None,
+    ):
+        """Write → check → REWRITE. The single entry point for producing a NOA post.
+
+        This is the root fix in one function. Previously a flawed draft was repaired
+        by regexes that spliced words into NOA's sentences; now the flaws are named
+        and handed back to the writer, who rewrites the sentence herself. Grammar is
+        a writing problem, so it is solved by writing — not by string surgery.
+
+        Returns (post, problems). A non-empty `problems` with an empty `post` means
+        every attempt failed: publish NOTHING and tell the owner.
+        """
+        attempts = max_attempts or cls.NOA_MAX_WRITE_ATTEMPTS
+        problems: List[str] = []
+        last_raw = ""
+        for attempt in range(1, attempts + 1):
+            attempt_prompt = prompt
+            if problems:
+                try:
+                    from social import hebrew_style as _hs
+                    feedback = _hs.feedback_prompt(
+                        [_hs.Issue("prev", "error", p) for p in problems])
+                except Exception:
+                    feedback = "תקני את הבעיות הבאות וכתבי את הפוסט מחדש:\n" + \
+                               "\n".join(f"• {p}" for p in problems)
+                attempt_prompt = f"{prompt}\n\n--- {feedback}\n\nהטקסט הקודם היה:\n{last_raw.strip()[:900]}"
+
+            try:
+                last_raw = await hf_text(prompt=attempt_prompt, system=system,
+                                         timeout=timeout, max_tokens=max_tokens)
+            except Exception as exc:
+                logger.warning("noa.write_post: generation attempt %d failed: %s", attempt, exc)
+                problems = [f"שגיאת יצירה: {str(exc)[:120]}"]
+                continue
+
+            post, problems = cls._finalize_noa_post_ex(last_raw, platforms=platforms)
+            if post:
+                if attempt > 1:
+                    logger.info("noa.write_post: accepted on attempt %d", attempt)
+                return post, []
+            logger.info("noa.write_post: attempt %d rejected — %s", attempt, "; ".join(problems)[:300])
+
+        return "", problems
 
     async def generate_post(self, topic: str, platform: str, tone: str = "professional") -> str:
         prompt = (
@@ -5311,8 +5366,15 @@ class SocialMediaManagerAgent(BaseAgent):
             "הנחיות פלט חובה: החזירי את טקסט הפוסט בלבד — ללא הסבר, "
             "ללא ספירת תווים, ללא חשיבה בקול רם. רק הפוסט הסופי המוכן לפרסום."
         )
-        raw = await hf_text(prompt=prompt, system=self.system_prompt)
-        return self._finalize_noa_post(raw, platforms=[platform] if platform else [])
+        post, problems = await self.write_post(
+            prompt=prompt, system=self.system_prompt,
+            platforms=[platform] if platform else [],
+        )
+        if not post:
+            # Surface the real reason instead of returning a template that looks like
+            # a successful generation.
+            raise RuntimeError("NOA could not produce a publishable post: " + "; ".join(problems)[:300])
+        return post
 
     async def process(self, message: str, conversation_history: List[Dict], db: AsyncSession, **kwargs) -> str:
         msg_l = (message or "").strip().lower()
@@ -5330,7 +5392,13 @@ class SocialMediaManagerAgent(BaseAgent):
             conversation_history + [{"role": "user", "content": message}],
             source=kwargs.get("source"),
         )
-        return self._finalize_noa_post(raw)
+        post, problems = self._finalize_noa_post_ex(raw)
+        if post:
+            return post
+        # Chat context: say honestly that the draft was not good enough rather than
+        # returning canned filler (the old fallback) or an empty message.
+        return ("לא יצא לי פוסט תקין הפעם — " + "; ".join(problems)[:200] +
+                "\nתני לי לנסות שוב או תגידי לי איזו זווית את רוצה.")
 
 
 # ==============================================================================
