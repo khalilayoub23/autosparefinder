@@ -22,6 +22,7 @@ them here means a future skill reads ONE file instead of five, and a fact
 that changes (e.g. a new supplier count) gets updated once.
 
 ## Product Overview
+<!-- priority: high -->
 
 - **What it is**: global auto-parts marketplace — price/fitment comparison
   across suppliers, not a single-shop storefront. Model: eBay/AliExpress
@@ -36,6 +37,7 @@ that changes (e.g. a new supplier count) gets updated once.
   2026-07-26); we can, because it's backed by real data.
 
 ## Target Audience — TWO distinct segments, don't conflate them
+<!-- priority: high -->
 
 **B2C (primary, existing)**: individual car owners searching by
 VIN/plate/part name via web, WhatsApp, or Telegram chat. Trilingual —
@@ -49,6 +51,7 @@ tier, NET-30 terms, dedicated account manager) unless it actually exists**
 — none is documented as built yet.
 
 ## What NOT to claim (ruled out, don't re-propose)
+<!-- priority: critical -->
 
 - **Google Business Profile / local SEO for our own listing** — an
   online-only marketplace cannot pass GBP verification (owner decision,
@@ -60,12 +63,14 @@ tier, NET-30 terms, dedicated account manager) unless it actually exists**
 - **Flat VAT** — never ×1.18 flat; conditional per `get_supplier_vat_rate`.
 
 ## Competitive Set (verified, not assumed)
+<!-- priority: normal -->
 
 RockAuto, AutoDoc, eBay Motors, AliExpress car parts — see
 `dept-competitor-intel` for the live-verified research process and
 current findings.
 
 ## Voice & Brand
+<!-- priority: low -->
 
 See `dept-brand` for colors/fonts/tone in full. Short version:
 professional, trustworthy, benefit-first, no filler adjectives, matches

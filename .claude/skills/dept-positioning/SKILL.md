@@ -12,6 +12,7 @@ technical buyer personas, ARR targets) are dropped as not applicable to a
 consumer/marketplace business.
 
 ## Process
+<!-- priority: high -->
 
 1. **List competitive alternatives** — direct (RockAuto, AutoDoc, eBay
    Motors, AliExpress car parts — see `dept-competitor-intel`),
@@ -31,6 +32,7 @@ consumer/marketplace business.
    logs / `search_misses` rather than inventing it.
 
 ## Positioning Statement Template
+<!-- priority: high -->
 
 ```
 FOR [car owners searching for a specific part across languages/regions]
@@ -45,6 +47,7 @@ Treat this as a draft, not a final claim — validate against real customer
 interviews/chat transcripts before publishing anywhere customer-facing.
 
 ## Truth-Only Guardrail (MANDATORY)
+<!-- priority: critical -->
 
 Every attribute used in a positioning claim must be something currently
 **true and verifiable**, not aspirational roadmap language. "Verified

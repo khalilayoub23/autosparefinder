@@ -11,6 +11,7 @@ original architecture proposal — re-scoped from generic SaaS/enterprise
 KPIs to a marketplace model.
 
 ## KPI Framework (marketplace-specific, not SaaS)
+<!-- priority: low -->
 
 | Category | Real metric | Query source, never estimate |
 |---|---|---|
@@ -21,6 +22,7 @@ KPIs to a marketplace model.
 | Revenue | Real revenue, real margin (fixed at cost×1.45 + conditional VAT — there is no "pricing optimization" experiment to run here, this isn't a SaaS tier problem) | Real query |
 
 ## AEO / GA4 AI Assistant channel (new, current, genuinely important)
+<!-- priority: low -->
 
 Google Analytics 4 added a **default "AI Assistant" channel group on 13
 May 2026** — when a referrer matches a recognized AI assistant (ChatGPT,
@@ -44,6 +46,7 @@ channel regardless of how good our traditional SEO is. Worth cross-
 referencing with `dept-seo-programmatic`'s schema work.
 
 ## Anomaly Investigation Process
+<!-- priority: low -->
 
 1. Get the specific metric, timeframe, and any known recent change
    (deploy, price-sync run, harvest cycle) — check `job_registry` for
@@ -57,6 +60,7 @@ referencing with `dept-seo-programmatic`'s schema work.
    out with a live check.
 
 ## Truth-Only Guardrail (MANDATORY)
+<!-- priority: high -->
 
 Every number in a report — traffic, conversion, revenue, "top customers,"
 anomaly magnitude — comes from a live query at report time. This is the

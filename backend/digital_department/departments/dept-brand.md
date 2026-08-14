@@ -13,25 +13,8 @@ the two drift (the 2026-07 design-review already caught one drift: the doc
 said "Inter" but the site renders Rubik/Heebo — always trust the LIVE
 render over the doc when they disagree, and fix the doc).
 
-## Colors
-
-| Token | Value | Usage |
-|---|---|---|
-| `--blue-primary` | `#2563eb` | CTAs, active states, links |
-| `--blue-hover` | `#1d4ed8` | Hover on primary buttons |
-| `--blue-highlight` | `#3b82f6` / `#7fb2ff` | Accent text on dark backgrounds |
-| `--hero-bg` | `#070e1d` → `#0d1b35` gradient | Hero / dark sections |
-| `--footer-bg` | `#021737` | Footer, dark cards |
-| `--page-bg` | `#ffffff` | Light section backgrounds |
-| `--green-whatsapp` | `#25D366` | WhatsApp CTA only — don't reuse this green elsewhere, it signals "chat" specifically |
-
-## Typography
-
-- **Rendered font** (verified live, 2026-07-26 audit): Rubik, Heebo, system-ui — Hebrew-capable, matches the platform's Hebrew/Arabic/English trilingual requirement (G7).
-- **Do not default to Inter/Roboto/Open Sans/Poppins** for new marketing assets — those are the "potentially generic" fonts flagged in gstack's own design-review checklist, and more importantly they don't have the Hebrew glyph coverage this platform needs.
-- Headline weight: 800 (extrabold). Body: 400–600.
-
 ## Voice
+<!-- priority: critical -->
 
 Professional, trustworthy, global auto-parts marketplace — not a hobbyist
 shop. Confident but never salesy-exaggerated. Match the tone already
@@ -45,6 +28,7 @@ policy (see `docs/skills.md` LANGUAGE RULES), and apply the same rule to
 any new marketing asset aimed at a specific-language audience.
 
 ## Truth-Only Guardrail (MANDATORY — read before writing any marketing copy)
+<!-- priority: critical -->
 
 This is the specific, already-logged failure mode this skill exists to
 prevent (see `CLAUDE.md` Mistake Log, 2026-07-05 SHIRA entry): **never
@@ -62,6 +46,36 @@ Before any brand asset ships, check the claim against what's actually true:
 - If a number can't be verified in the time available, use qualitative
   language ("thousands of parts", "trusted global suppliers") instead of a
   specific false-precision figure.
+
+<!-- 2026-08-15 root-fix: a 2026-08-14 patch moved Voice+Truth-Only Guardrail
+     ABOVE Colors/Typography, relying on file POSITION to survive truncation
+     — a follow-up audit proved this still silently dropped Truth-Only
+     Guardrail (it only bought Voice's first paragraph, budget ran out before
+     reaching Guardrail). Position is no longer what protects these sections:
+     each is now marked `<!-- priority: critical -->` and the allocator
+     (digital_department/context.py) guarantees every CRITICAL section across
+     every loaded department is fully included before ANY lower-priority
+     section anywhere gets a single character — regardless of file order. -->
+
+## Colors
+<!-- priority: low -->
+
+| Token | Value | Usage |
+|---|---|---|
+| `--blue-primary` | `#2563eb` | CTAs, active states, links |
+| `--blue-hover` | `#1d4ed8` | Hover on primary buttons |
+| `--blue-highlight` | `#3b82f6` / `#7fb2ff` | Accent text on dark backgrounds |
+| `--hero-bg` | `#070e1d` → `#0d1b35` gradient | Hero / dark sections |
+| `--footer-bg` | `#021737` | Footer, dark cards |
+| `--page-bg` | `#ffffff` | Light section backgrounds |
+| `--green-whatsapp` | `#25D366` | WhatsApp CTA only — don't reuse this green elsewhere, it signals "chat" specifically |
+
+## Typography
+<!-- priority: low -->
+
+- **Rendered font** (verified live, 2026-07-26 audit): Rubik, Heebo, system-ui — Hebrew-capable, matches the platform's Hebrew/Arabic/English trilingual requirement (G7).
+- **Do not default to Inter/Roboto/Open Sans/Poppins** for new marketing assets — those are the "potentially generic" fonts flagged in gstack's own design-review checklist, and more importantly they don't have the Hebrew glyph coverage this platform needs.
+- Headline weight: 800 (extrabold). Body: 400–600.
 
 ## Applying This Skill
 

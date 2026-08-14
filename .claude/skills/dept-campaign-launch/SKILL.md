@@ -12,6 +12,7 @@ missing "Campaign Launch" step in the Market Research → SEO → Content →
 Brand Review → Analytics → **Campaign Launch** workflow.
 
 ## Single-brand scope (re-scaled from the source)
+<!-- priority: low -->
 
 The source skill is agency tooling (multi-client budget allocation,
 account-based marketing for enterprise sales). **We have one brand.**
@@ -23,6 +24,7 @@ against; `dept-b2b-leads` is the closer analog for B2B, and it's
 research, not enterprise ABM orchestration).
 
 ## Campaign Brief (the missing "Campaign Launch" step)
+<!-- priority: low -->
 
 Every campaign — a new vehicle-brand catalog push, a seasonal parts
 category promotion, a real product launch (see below) — gets a real
@@ -43,6 +45,7 @@ brief before any section starts work:
 ```
 
 ## Budget Allocation Frameworks (kept, all three genuinely apply at any scale)
+<!-- priority: low -->
 
 - **70/20/10**: 70% proven channels (whatever's already shown real ROI
   in `dept-analytics`), 20% promising, 10% experimental. Good default
@@ -57,6 +60,7 @@ already exists in `dept-analytics` — that's exactly the "vibes not
 evidence" mistake this whole department exists to prevent.
 
 ## UTM Standardization
+<!-- priority: normal -->
 
 Reuse the existing pattern already live in the platform (NOA's posts are
 already UTM-tagged per project memory) — don't invent a second taxonomy.
@@ -65,6 +69,7 @@ Standard structure: `utm_source` (platform), `utm_medium` (channel type),
 `dept-analytics`' attribution real instead of guessed.
 
 ## Product Launch (adapted from `marketing-strategy-pmm`'s launch-tier
+<!-- priority: low -->
 system, alirezarezvani/claude-skills, 23.2k★ — verified clean, this is
 the piece `dept-positioning` deliberately left out)
 
@@ -83,6 +88,7 @@ UTM plan in place, `dept-analytics` baseline captured *before* launch so
 the after-comparison is real.
 
 ## Post-Mortem (kept — real discipline, low effort)
+<!-- priority: low -->
 
 After any Tier 1/2 campaign: what was the real objective vs. real
 outcome (from `dept-analytics`, not a self-report), what worked, what
@@ -91,6 +97,7 @@ Boost Decision — a campaign post-mortem is exactly the kind of real
 evidence that check-in process needs.
 
 ## Truth-Only Guardrail (MANDATORY)
+<!-- priority: high -->
 
 Every claim in a campaign brief or post-mortem (budget, objective number,
 outcome) must be real. A post-mortem that reports a "successful launch"
