@@ -159,14 +159,167 @@ async def _resolve_post(db, token: str):
     return None
 
 
+async def _resolve_campaign(db, token: str):
+    """Find a campaign by short-id token, or the newest campaign if token empty.
+    Mirrors _resolve_post's convention so owner-console commands stay uniform."""
+    token = (token or "").strip()
+    rows = (await db.execute(_sql(
+        "SELECT id FROM campaigns ORDER BY created_at DESC LIMIT 25"
+    ))).fetchall()
+    if not rows:
+        return None
+    if not token:
+        return str(rows[0].id)
+    for r in rows:
+        cid = str(r.id)
+        if _short(cid).startswith(token.lower()) or cid.startswith(token.lower()):
+            return cid
+    return None
+
+
+async def _create_campaign_via_shira(db, topic: str) -> str:
+    """Owner-console command: 'קמפיין <topic>' / 'campaign <topic>'.
+
+    2026-08-15d (Digital Department merge audit): the ONLY existing path that
+    could create a real campaign was the admin HTTP API
+    (routes/campaigns.py POST /api/v1/campaigns, routes/admin.py), which calls
+    SocialMediaManagerAgent.generate_campaign_plan() directly — bypassing
+    MarketingAgent (SHIRA) and her real, tested, previously-orphaned
+    delegate_to_social_campaign() entirely. The owner console had ZERO
+    campaign-creation command at all (only approve/reject of ALREADY
+    generated content). This is a genuine missing connection, not a
+    cosmetic one: it's the one place SHIRA's real delegation method can run
+    without touching the customer-facing safety boundary that deliberately
+    keeps it unreachable from chat (see delegate_to_social_campaign's own
+    docstring, BACKEND_AI_AGENTS.py).
+
+    Why this is safe: this command only fires inside the owner's own
+    authenticated WhatsApp console (never reachable by a customer). It does
+    NOT bypass the SocialPost approval gate — delegate_to_social_campaign()
+    -> NOA.execute_campaign() stores generated posts as
+    status='pending_approval' (never publishes), so the existing *פוסטים*/
+    *אשר*/*דחה* review flow is still the only way anything actually
+    publishes. No approval gate is weakened.
+    """
+    topic = (topic or "").strip()
+    if not topic:
+        return ("כתוב נושא לקמפיין, למשל: *קמפיין בלמים לחורף*\n"
+                "SHIRA תבנה תוכנית קמפיין, NOA תייצר תוכן, ותקבל אותו לאישור "
+                "כמו כל פוסט אחר (*פוסטים*).")
+    try:
+        from BACKEND_AI_AGENTS import get_agent
+        from social import registry as _reg
+        platforms = _reg.configured_platforms() or ["facebook", "telegram"]
+        shira = get_agent("marketing_agent")
+        result = await shira.delegate_to_social_campaign(
+            objective=topic, platforms=platforms, db=db,
+        )
+        campaign = result.get("campaign") or {}
+        execution = result.get("execution") or {}
+        cid = str(campaign.get("id") or "")
+        queued = execution.get("posts_queued", 0)
+        return (
+            f"✅ SHIRA בנתה קמפיין: *{topic}*\n"
+            f"🆔 {_short(cid)} · פלטפורמות: {', '.join(platforms)}\n"
+            f"📝 NOA ייצרה {queued} פוסטים — ממתינים לאישורך.\n"
+            f"לצפייה: כתוב *פוסטים*"
+        )
+    except Exception as exc:
+        return f"⚠️ יצירת הקמפיין נכשלה: {str(exc)[:150]}"
+
+
+async def _evaluate_campaign_via_shira(db, token: str) -> str:
+    """Owner-console command: 'ביצועים [מזהה]' / 'performance [id]'.
+
+    2026-08-15e (SHIRA-management acceptance audit): the real, missing
+    connection in the SHIRA -> NOA -> Feedback -> SHIRA loop. Real
+    engagement data was already collected (engagement_events) and already
+    fed NOA's own topic weighting, but never reached a SHIRA-owned
+    decision anywhere in the codebase. This command is the owner-facing
+    entry point to MarketingAgent.evaluate_campaign_performance() — the one
+    method that closes that loop, reusing the existing
+    feedback_analyzer.generate_analytics_report() for real numbers and
+    SHIRA's own persona for the resulting decision. Read-only against
+    campaign content: it does not create, modify, approve, or publish
+    anything — only evaluates and reports.
+    """
+    cid = await _resolve_campaign(db, token)
+    if not cid:
+        return "לא מצאתי קמפיין. צור אחד קודם עם *קמפיין [נושא]*."
+    try:
+        from BACKEND_AI_AGENTS import get_agent
+        shira = get_agent("marketing_agent")
+        result = await shira.evaluate_campaign_performance(cid, db)
+        raw = result["raw_data"]
+        return (
+            f"📊 *ניתוח ביצועים — SHIRA* ({_short(cid)})\n"
+            f"טווח הגעה: {raw['total_reach']} · מעורבות: {raw['total_engagement']} · "
+            f"קליקים: {raw['total_clicks']} · לידים: {raw['total_leads']}\n\n"
+            f"🎯 *החלטה:* {result['decision']}\n"
+            f"💬 {result['reasoning']}"
+        )
+    except Exception as exc:
+        return f"⚠️ ניתוח הביצועים נכשל: {str(exc)[:150]}"
+
+
+async def _tiktok_auth_status(db) -> str:
+    """Owner-console command: 'טוקן טיקטוק' / 'tiktok auth'.
+
+    2026-08-16 (deep TikTok capability verification): the ONLY missing piece
+    for real TikTok engagement collection is the owner's one-time consent
+    click — the OAuth infrastructure (routes/webhooks.py's tiktok-oauth
+    callback, already registered with TikTok's Developer Portal) and token
+    persistence (tiktok_publisher.store_user_token, fixed this pass) are
+    both real and wired. Reports current status honestly and, if not yet
+    authorized, returns the exact real consent URL to open — never
+    simulates or invents having done this step.
+    """
+    from social.tiktok_publisher import get_stored_user_token, get_authorize_url
+    tok = await get_stored_user_token(db)
+    if tok:
+        return (
+            f"✅ טיקטוק מאושר לניתוח ביצועים (open_id: {tok.get('open_id','?')[:12]}…)\n"
+            f"scope: {tok.get('scope','')}\n"
+            f"איסוף ביצועים אמיתי פעיל במחזור הבא."
+        )
+    url = get_authorize_url(state="owner_console")
+    return (
+        "⚠️ טיקטוק עדיין לא מאושר לאיסוף נתוני ביצועים (פרסום כן עובד — זה נפרד).\n"
+        "כדי להפעיל, פתח את הקישור הזה ואשר בטיקטוק:\n"
+        f"{url}\n\n"
+        "לאחר האישור, המערכת תתחיל לאסוף צפיות/לייקים/תגובות אוטומטית."
+    )
+
+
 async def _approve_and_publish(db, post: Dict[str, Any]) -> str:
     """Mark approved + publish to each platform via the registry (same path the admin
-    panel uses). Honest per-platform result back to the owner."""
+    panel uses). Honest per-platform result back to the owner.
+
+    2026-08-16 (operational readiness audit): this used to hand-roll its own
+    UPDATE with approved_by=:who bound to the plain string "owner_whatsapp" —
+    but social_posts.approved_by is a UUID column (unlike campaigns.created_by
+    and group_targets.approved_by, which were migrated UUID->TEXT in
+    0056_social_campaign_audit_columns.py for exactly this reason;
+    social_posts was missed). Every real owner-console "אשר <id>" approval
+    crashed with asyncpg.exceptions.DataError before ever reaching the
+    publish step below — the human approval mechanism itself was broken.
+    Fixed by reusing the EXISTING, already-correct
+    campaign_manager.approve_post_content() (validates approved_by as a real
+    UUID, falls back to a system placeholder UUID otherwise, also sets
+    approved_at and guards status='pending_approval' so a second approval
+    attempt is a safe no-op rather than a duplicate write) instead of
+    reinventing the SQL.
+    """
+    from social.campaign_manager import approve_post_content
     pid = post["id"]
-    await db.execute(_sql("""UPDATE social_posts SET status='approved',
-                             approved_by=:who, updated_at=NOW() WHERE id=:id"""),
-                     {"who": "owner_whatsapp", "id": pid})
-    await db.commit()
+    was_approved = await approve_post_content(db, post_id=pid, approved_by="owner_whatsapp")
+    if not was_approved:
+        # approve_post_content only updates rows still in 'pending_approval' —
+        # a False return means this post was already approved/published/rejected
+        # since _resolve_post's list was fetched. Report the real state instead
+        # of blindly re-dispatching to the live platforms (would double-publish).
+        cur = (await db.execute(_sql("SELECT status FROM social_posts WHERE id=:id"), {"id": pid})).scalar()
+        return f"⚠️ הפוסט ({_short(pid)}) כבר במצב '{cur}' — לא בוצע פרסום כפול."
     content = post["content"]
     platforms = post.get("platforms") or []
     # media/link best-effort from the app's meta helper (image-required platforms need it)
@@ -202,8 +355,20 @@ async def _approve_and_publish(db, post: Dict[str, Any]) -> str:
             results.append(f"• {p}: ❌ {str(e)[:80]}")
     if published:
         try:
+            # JSONB MERGE (2026-08-16, operational-loop audit), not overwrite:
+            # a plain `external_post_ids=:ext` destroyed the "__campaign_id__"
+            # (and "__utm"/"__scheduled_at__") keys prepare_campaign_content()
+            # sets at creation — silently orphaning campaign attribution for
+            # every post approved through this, the REAL owner "אשר <id>"
+            # command. social_posts.campaign_id (the FK column) was never
+            # affected and is now the authoritative source
+            # (feedback_analyzer._collect_facebook reads it directly), but
+            # this merge also protects any other __-prefixed metadata from
+            # the same class of loss going forward.
             await db.execute(_sql("""UPDATE social_posts SET status='published',
-                                     published_at=NOW(), external_post_ids=:ext, updated_at=NOW()
+                                     published_at=NOW(),
+                                     external_post_ids = external_post_ids || CAST(:ext AS jsonb),
+                                     updated_at=NOW()
                                      WHERE id=:id"""),
                              {"ext": json.dumps(published), "id": pid})
             await db.commit()
@@ -214,12 +379,16 @@ async def _approve_and_publish(db, post: Dict[str, Any]) -> str:
 
 
 async def _reject_post(db, post: Dict[str, Any], reason: str = "") -> str:
-    await db.execute(_sql("""UPDATE social_posts SET status='rejected',
-                             rejection_reason=:r, approved_by=:who, updated_at=NOW()
-                             WHERE id=:id"""),
-                     {"r": reason or "נדחה ע\"י הבעלים ב-WhatsApp", "who": "owner_whatsapp",
-                      "id": post["id"]})
-    await db.commit()
+    """2026-08-16: same approved_by/uuid defect as _approve_and_publish (this
+    function bound the string "owner_whatsapp" to social_posts.approved_by,
+    a UUID column) — every real owner-console "דחה <id>" also crashed. Fixed
+    the same way: reuse the existing campaign_manager.reject_post_content()."""
+    from social.campaign_manager import reject_post_content
+    await reject_post_content(
+        db, post_id=post["id"],
+        reason=reason or "נדחה ע\"י הבעלים ב-WhatsApp",
+        rejected_by="owner_whatsapp",
+    )
     return f"🚫 הפוסט נדחה ({_short(post['id'])})."
 
 
@@ -524,8 +693,9 @@ _HELP = (
     "🎛️ *מרכז הבקרה שלך* (WhatsApp)\n\n"
     "*לפנות לסוכן — עם @:*\n"
     "• *@אבי <הודעה>* — AVI, מנהל/מתאם המערכת\n"
-    "• *@נועה <הודעה>* — NOA, שיווק וסושיאל\n"
-    "• *@Bone <הודעה>* — Bone, עוזר אישי כללי (חכם ומועיל; גם @בון / @עוזר)\n"
+    "• *@שירה <הודעה>* — SHIRA, ראש המחלקה הדיגיטלית (אסטרטגיה, קמפיינים, SEO, PPC, CRO)\n"
+    "• *@נועה <הודעה>* — NOA, שיווק וסושיאל (פוסטים, engagement)\n"
+    "• *@Bone <הודעה>* — Bone, עוזר אישי כללי (חכם ומועיל; גם @בון / @בוני / @עוזר)\n"
     "אחרי שפנית לסוכן — *נשארים בשיחה איתו* וכל ההודעות הבאות אליו, "
     "בלי צורך ב-@ כל פעם. למעבר לסוכן אחר: *@<שם>*. ליציאה: *יציאה*.\n"
     "(בלי @ ובלי שיחה פעילה — פונה ל-AVI כברירת מחדל)\n\n"
@@ -534,6 +704,9 @@ _HELP = (
     "• *שאיבה* — התקדמות שאיבת הקטלוג\n"
     "• *פוסטים* — פוסטים של NOA שממתינים לאישור\n"
     "• *אשר [מזהה]* / *דחה [מזהה]* — אשר/דחה פוסט\n"
+    "• *קמפיין [נושא]* — SHIRA בונה קמפיין, NOA מייצרת תוכן לאישורך\n"
+    "• *ביצועים [מזהה]* — SHIRA מנתחת נתוני ביצועים אמיתיים ומחליטה על צעד המשך\n"
+    "• *טוקן טיקטוק* — מצב אישור טיקטוק לאיסוף ביצועים, ואם צריך — קישור לאישור\n"
     "• *תגובות* — תגובות ברשתות שממתינות לתשובה (NOA כבר ניסחה)\n"
     "• *ענה [מזהה]* / *דלג [מזהה]* — שלח את תשובת NOA / דלג\n"
     "• *הנחיות* — ההנחיות הקבועות שנתת ל-NOA\n"
@@ -565,20 +738,33 @@ _HELP = (
 _AGENT_TOKENS = {
     "noa": "social_media_manager_agent", "נועה": "social_media_manager_agent",
     "avi": "router_agent", "אבי": "router_agent",
+    # SHIRA — head of Digital Department (MarketingAgent). Wire into console so the
+    # owner can talk directly to her about strategy, campaigns, and digital channels.
+    # Root-wired 2026-08-11 per owner request: "shira is head of digital department,
+    # wire to owner chat".
+    "shira": "marketing_agent", "שירה": "marketing_agent",
     # Bone — a general-purpose owner assistant you can @-call (renamed from "עוזר" on
     # owner request 2026-08-04). Runs on the platform's own LLM — not the external dev
     # tool. The old aliases (עוזר/קלוד/assistant/claude) still resolve so nothing breaks.
+    # Also added "בוני" — common diminutive the owner uses (was missing, causing @בוני
+    # to fall through to AVI instead of Bone — root-fixed 2026-08-11).
     "bone": "assistant_agent", "בון": "assistant_agent", "בונ": "assistant_agent",
+    "בוני": "assistant_agent",  # diminutive the owner actually types
     "claude": "assistant_agent", "קלוד": "assistant_agent",
     "assistant": "assistant_agent", "עוזר": "assistant_agent",
 }
 
 # Shared roster context so an agent doesn't hallucinate who the others are.
 _ROSTER = (
-    "\n\nצוות הסוכנים של AutoSpareFinder (לידיעתך): AVI (מתאם/מנהל מערכת), "
-    "NOA (שיווק וסושיאל), NIR (חלקים/התאמה/OEM), MAYA (מכירות/תמחור), LIOR (הזמנות), "
+    "\n\nצוות הסוכנים של AutoSpareFinder (לידיעתך — קונסול הבעלים): "
+    "AVI (מתאם/מנהל מערכת), "
+    "SHIRA (ראש המחלקה הדיגיטלית — אסטרטגיה, קמפיינים, SEO, CRO, B2B), "
+    "NOA (שיווק וסושיאל — יצירת פוסטים, engagement, קבוצות), "
+    "NIR (חלקים/התאמה/OEM), MAYA (מכירות/תמחור), LIOR (הזמנות), "
     "TAL (כספים/מע\"מ/חשבוניות), DANA (תמיכה/החזרות), OREN (אבטחה/הונאות), "
-    "BOAZ (ספקים/סנכרון מחירים), REX (שאיבת קטלוג)."
+    "BOAZ (ספקים/סנכרון מחירים), REX (שאיבת קטלוג), Bone (עוזר אישי כללי).\n"
+    "כשהסוכן הנוכחי מוזכר בהיסטוריה — ההודעות מסומנות [AVI]/[NOA]/[SHIRA]/[Bone] "
+    "כדי שתוכל לקרוא מה כל סוכן אמר."
 )
 
 
@@ -598,6 +784,47 @@ def _pick_agent(message: str) -> tuple[str, str, bool]:
         rest = m[mm.end():].strip()
         return key, (rest or m), True
     return "router_agent", m, False
+
+
+# NATURAL-LANGUAGE "connect/switch me to <agent>" intent (root-fixed 2026-08-12).
+# Real bug found in production: the owner asked "מע עם שירה ונועה" (switch/connect with
+# SHIRA and NOA) WITHOUT the @-prefix syntax. That fell through to AVI (the only agent
+# without an explicit @-mention), and AVI HALLUCINATED a capability that doesn't exist —
+# "I'll connect you to SHIRA and NOA... I'll forward the message, they'll answer soon" —
+# TWICE, even after the owner explicitly said "I don't need you to forward it, I need them
+# to answer me". There is no cross-agent message-relay mechanism; the ONLY way to reach
+# another agent is the owner typing @agent themselves, which switches the sticky session.
+# Real fix: detect this exact intent in plain language and DO the switch directly — the
+# owner's request was clear, so make it work instead of teaching a new syntax or (worse)
+# leaving AVI free to promise something impossible.
+_CONNECT_INTENT_RE = re.compile(
+    # מע(בר)? עם/ל — tolerates the owner's real-world typo'd shorthand ("מע עם שירה"
+    # for "מעבר עם שירה"), which the first version of this regex missed entirely.
+    r"(מע(בר)?\s*(ל|עם)|תחבר(י)?\s*אותי\s*(ל|עם)|תעביר(י)?\s*אותי\s*(ל|עם)|"
+    r"רוצה\s*לדבר\s*עם|תדבר(י)?\s*עם|לחבר\s*אותי\s*(ל|עם)|"
+    r"switch\s*(me\s*)?to|connect\s*me\s*(to|with)|talk\s*to)",
+    re.I,
+)
+
+
+def _detect_connect_intent(message: str) -> "tuple[str, list[str]] | None":
+    """If the message expresses 'connect/switch me to <agent(s)>' in plain language
+    (no @-prefix), return (first_agent_key, [all_agent_names_mentioned]). None otherwise."""
+    m = (message or "").strip()
+    if not _CONNECT_INTENT_RE.search(m):
+        return None
+    _toks = "|".join(re.escape(t) for t in sorted(_AGENT_TOKENS, key=len, reverse=True))
+    # optional leading "ו" (attached "and", no space — "ונועה" = "and-NOA"): same lesson as
+    # the gendered-verb fix above — Hebrew attaches this conjunction directly to the word.
+    mentions = re.findall(rf"(?<![א-תA-Za-z])ו?({_toks})(?![א-תA-Za-z])", m, re.I)
+    if not mentions:
+        return None
+    seen: list[str] = []
+    for name in mentions:
+        low = name.lower()
+        if low not in seen:
+            seen.append(low)
+    return _AGENT_TOKENS[seen[0]], seen
 
 
 # ── NOA owner-guidelines (persisted so NOA's posting loop actually applies them) ──
@@ -658,7 +885,15 @@ _WA_REPLY_RULES = (
     "הוא לא קיים והלקוח יגיע לעמוד שגוי.\n"
     "• *אסור להמציא מבצעים, הנחות, קופונים או תוכניות נאמנות.* אין קופונים פעילים. "
     "אם אין מבצע אמיתי — אל תרמוז שיש.\n"
-    "• אם צריך פעולה מובנית — הפנה לפקודה: סטטוס / שאיבה / פוסטים / אשר / דחה."
+    "• אם צריך פעולה מובנית — הפנה לפקודה: סטטוס / שאיבה / פוסטים / אשר / דחה.\n"
+    "• *אסור להבטיח 'אעביר הודעה לסוכן אחר' / 'אקשר אותך ל...' / 'הם יענו בקרוב'* — "
+    "אין מנגנון להעברת הודעות בין סוכנים. הדרך היחידה לדבר עם סוכן אחר היא שחליל עצמו "
+    "יכתוב @שם-הסוכן (למשל @שירה, @נועה) — זה מחליף מי עונה לו מיד, באותה שיחה. "
+    "אם חליל מבקש לדבר עם סוכן אחר, אמור לו בפשטות לכתוב @שם-הסוכן — אל תבטיח שתעביר בעצמך.\n"
+    "• *אל תניח — תבדוק לפני שאתה עונה.* כל עובדה שאתה נותן לחליל (מספר, סטטוס, "
+    "האם משהו מחובר/רץ/עובד) חייבת להגיע מנתוני המערכת החיים שסופקו לך בשיחה הזו, "
+    "לא מזיכרון של 'מה שבדרך כלל נכון'. אם אין לך את הנתון האמיתי — תגיד את זה "
+    "בפשטות והצע לבדוק (למשל: 'סטטוס' / 'שאיבה'), אל תמלא את הפער בניחוש שנשמע סביר."
 )
 
 # Human voice — the "way NOA talks" applied to EVERY console agent (owner request
@@ -690,29 +925,56 @@ _OWNER_SYSTEM = {
     "router_agent": (
         "אתה AVI — המתאם הראשי של AutoSpareFinder, מדבר עם *חליל, הבעלים* (לא לקוח). "
         "תפקידך: לתת לו תמונת מצב מדויקת של המערכת, המלצות תפעוליות, ולנתב משימות. "
-        "היה ישיר, מקצועי ומועיל — אבל אנושי, לא יבש. אל תמכור לו ואל תתייחס אליו כלקוח."
+        "היה ישיר, מקצועי ומועיל — אבל אנושי, לא יבש. אל תמכור לו ואל תתייחס אליו כלקוח. "
+        "כשהוא מזכיר סוכן ספציפי בשם — אשר שאתה יכול להעביר אליו, אבל אל תדמה להיות אותו סוכן. "
+        "כשאתה קורא היסטוריה — ההודעות מסומנות [NOA]/[SHIRA]/[Bone] כדי שתדע מי אמר מה."
         + _ROSTER + _WA_REPLY_RULES + _HUMAN_VOICE
     ),
     "social_media_manager_agent": (
-        "את NOA — מנהלת השיווק והסושיאל של AutoSpareFinder, מדברת עם *חליל, הבעלים*. "
+        "את NOA — מנהלת הסושיאל של AutoSpareFinder, מדברת עם *חליל, הבעלים*. "
         "כשהוא מבקש פוסט — כתבי את הפוסט המוכן לפרסום בלבד (פתיח קולע, גוף קצר, וקריאה "
         "לפעולה), אנושי וחכם, בלי להסביר את התהליך. כשהוא שואל על שיווק — תני תשובה ממוקדת. "
         "כשהוא נותן לך *הוראה* — אשרי מה נקלט ומה ישתנה, אל תכתבי פוסט. "
         "אל תמציאי מחירים או נתונים. "
         "הקריאה לפעולה בפוסט היא תמיד חיפוש לפי מספר רישוי באתר — לא נתיב מוצר מומצא, "
         "ולא מבצע/הנחה שלא קיימים. "
-        "לאישור/דחיית פוסטים ממתינים: 'פוסטים' ואז 'אשר'/'דחה'."
+        "לאישור/דחיית פוסטים ממתינים: 'פוסטים' ואז 'אשר'/'דחה'. "
+        "כשאתה קורא היסטוריה — ההודעות מסומנות [AVI]/[SHIRA]/[Bone] כדי שתדעי מי אמר מה."
         + _ROSTER + _WA_REPLY_RULES + _HUMAN_VOICE
     ),
     "assistant_agent": (
         "אתה *Bone* — העוזר האישי של חליל, הבעלים של AutoSpareFinder (הוא קורא לך Bone, "
-        "בון, או עוזר). אתה עוזר כללי, חכם ומועיל — עונה על כל שאלה, מסביר, מתכנן, ונותן "
+        "בון, בוני, או עוזר). אתה עוזר כללי, חכם ומועיל — עונה על כל שאלה, מסביר, מתכנן, ונותן "
         "עצה טכנית ועסקית על המערכת והעסק. יש לך גישה למצב המערכת החי למטה. אתה עוזר "
-        "תפעולי, לא סוכן שירות לקוחות ולא מוכר. אם צריך פעולה מובנית — הפנה לפקודה."
+        "תפעולי, לא סוכן שירות לקוחות ולא מוכר. אם צריך פעולה מובנית — הפנה לפקודה. "
+        "CRITICAL: אסור לך להעביר משימות לסוכנים אחרים (NOA, SHIRA וכו') — אתה עונה ישירות. "
+        "אם השאלה מחוץ לתחומך — אמור זאת בפשטות ותמליץ לחליל לפנות ל-@שירה / @נועה / @אבי. "
+        "כשאתה קורא היסטוריה — ההודעות מסומנות [AVI]/[NOA]/[SHIRA] כדי שתדע מי אמר מה."
+        + _ROSTER + _WA_REPLY_RULES + _HUMAN_VOICE
+    ),
+    # SHIRA — head of Digital Department, wired into owner console 2026-08-11.
+    # Strategic peer: discusses marketing strategy, digital campaigns, department
+    # OKRs, budget, ROI, channel mix, SEO/PPC/CRO, B2B leads. NOT a content generator
+    # (NOA does that). NOT a customer-facing agent. Speaks directly to Khalil as a
+    # CMO-level colleague who also has eyes on the live system data.
+    "marketing_agent": (
+        "את *SHIRA* — ראש המחלקה הדיגיטלית של AutoSpareFinder, מדברת עם *חליל, הבעלים*. "
+        "תפקידך: אסטרטגיית שיווק דיגיטלי — קמפיינים, SEO, PPC, CRO, B2B לידים, "
+        "ניתוח ביצועים, תקציב ו-ROI. אתה המנהל הדיגיטלי שלו, לא מוכרת ולא בוטית. "
+        "NOA היא הזרוע הביצועית שלך לסושיאל — את מנחה אותה ואחראית על האסטרטגיה. "
+        "כשהוא שואל על שיווק — תני ניתוח ממוקד עם המלצה ברורה. "
+        "כשהוא נותן הוראה — אשרי מה ייעשה ועל ידי מי. "
+        "אל תמציאי נתוני ROI, מכירות, או תנועה — השתמשי רק במה שיש במצב המערכת החי. "
+        "כשאתה קורא היסטוריה — ההודעות מסומנות [AVI]/[NOA]/[Bone] כדי שתדעי מי אמר מה."
         + _ROSTER + _WA_REPLY_RULES + _HUMAN_VOICE
     ),
 }
-_AGENT_TAG = {"social_media_manager_agent": "NOA", "assistant_agent": "Bone", "router_agent": "AVI"}
+_AGENT_TAG = {
+    "social_media_manager_agent": "NOA",
+    "assistant_agent": "Bone",
+    "router_agent": "AVI",
+    "marketing_agent": "SHIRA",
+}
 
 
 def _clean_wa_reply(text: str) -> str:
@@ -779,7 +1041,8 @@ async def _engagement_inbox(db) -> str:
         who = p.get("author") or "לקוח"
         msg = (p.get("message") or "")[:90]
         draft = (p.get("reply_text") or "")[:140]
-        lines.append(f"\n🆔 {_short(p['id'])} · {p['platform']} · {who}\n"
+        returning = "⭐ " if p.get("is_returning_engager") else ""
+        lines.append(f"\n🆔 {_short(p['id'])} · {p['platform']} · {returning}{who}\n"
                      f"   💬 {msg}\n   ✍️ טיוטת NOA: {draft}")
     lines.append("\nלשליחה: *ענה <מזהה>* (או *ענה <מזהה> טקסט משלך*) · לדילוג: *דלג <מזהה>*")
     return "\n".join(lines)
@@ -1230,6 +1493,14 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp") -> 
         if not post:
             return "לא מצאתי פוסט ממתין. כתוב *פוסטים* לרשימה."
         return await _reject_post(db, post)
+    m_camp = re.match(r"^(campaign|קמפיין)\b\s*(.*)$", msg, re.I | re.S)
+    if m_camp:
+        return await _create_campaign_via_shira(db, (m_camp.group(2) or "").strip())
+    m_perf = re.match(r"^(performance|ביצועים)\b\s*(\S+)?", msg, re.I)
+    if m_perf:
+        return await _evaluate_campaign_via_shira(db, m_perf.group(2) or "")
+    if low in ("טוקן טיקטוק", "tiktok auth", "tiktok token", "אישור טיקטוק"):
+        return await _tiktok_auth_status(db)
     if low in ("הנחיות", "guidelines", "נהלים", "כללים"):
         g = await _noa_guidelines_get(db)
         return ("📋 *הנחיות NOA (נשמרות ומיושמות):*\n" + g) if g else \
@@ -1346,7 +1617,15 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp") -> 
     # ── conversational path (AVI / NOA in owner mode) ─────────────────────────
     # Call the LLM DIRECTLY (not via get_agent): the router_agent is a JSON classifier
     # and produces garbage on freeform chat. We just need a grounded conversational reply.
-    agent_key, clean, explicit = _pick_agent(msg)
+    _other_agents_mentioned: list[str] = []
+    _connect = _detect_connect_intent(msg)
+    if _connect:
+        agent_key, _mentioned = _connect
+        clean = msg
+        explicit = True
+        _other_agents_mentioned = _mentioned[1:]  # anyone besides the one we're switching to
+    else:
+        agent_key, clean, explicit = _pick_agent(msg)
 
     # STICKY SESSION: an explicit @agent switches AND pins the agent; an unprefixed
     # message continues with whoever you're already talking to (not a forced fall to AVI).
@@ -1383,7 +1662,12 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp") -> 
             if g:
                 system += ("\n\n--- הנחיות קבועות מהבעלים (חובה לפעול לפיהן) ---\n" + g)
         hist = await _load_history()
-        convo = "\n".join(f"{m['role']}: {m['content']}" for m in hist[-8:])
+        def _fmt_turn(m):
+            if m["role"] == "assistant":
+                atag = _AGENT_TAG.get(m.get("agent", ""), m.get("agent", "AGENT"))
+                return f"assistant [{atag}]: {m['content']}"
+            return f"user: {m['content']}"
+        convo = "\n".join(_fmt_turn(m) for m in hist[-8:])
         prompt = (convo + "\n" if convo else "") + f"user: {clean}"
         # Low temperature so the console agents (AVI / NOA / Bone) write clean, human,
         # idiomatic Hebrew — the same fix proven for NOA (owner request 2026-08-04: "make
@@ -1396,12 +1680,18 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp") -> 
         reply = _clean_wa_reply(reply) or "בסדר, קיבלתי."
         reply += saved_note
         hist2 = hist + [{"role": "user", "content": clean},
-                        {"role": "assistant", "content": reply}]
+                        {"role": "assistant", "content": reply, "agent": agent_key}]
         await _save_history(hist2)
         tag = _AGENT_TAG.get(agent_key, "AVI")
         # On an explicit switch, confirm who you're now talking to (and how to leave).
         if switched:
-            return f"🔀 עכשיו בשיחה עם *{tag}* (ליציאה: *יציאה*)\n\n[{tag}] {reply}"
+            note = ""
+            if _other_agents_mentioned:
+                _other_tags = ", ".join(
+                    "@" + n for n in _other_agents_mentioned
+                )
+                note = f"\n(גם ל-{_other_tags} — פני אליהם בנפרד באותה שיטה)"
+            return f"🔀 עכשיו בשיחה עם *{tag}* (ליציאה: *יציאה*){note}\n\n[{tag}] {reply}"
         return f"[{tag}] {reply}"
     except Exception as e:
         return f"⚠️ שגיאה בעיבוד ההודעה: {str(e)[:120]}"

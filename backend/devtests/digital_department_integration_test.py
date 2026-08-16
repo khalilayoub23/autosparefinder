@@ -561,6 +561,56 @@ def test_priority_social_post_departments_correct() -> None:
     print(f"  PASS: social_post departments = {depts}")
 
 
+def test_social_reply_departments_correct_and_narrower_than_social_post() -> None:
+    """2026-08-15d merge audit: social_reply (Community Engagement) gets
+    brand+context — the same Truth-Only/voice grounding social_post gets —
+    but deliberately NOT positioning/campaign_launch/analytics, which don't
+    fit a 1-2 sentence reactive reply. Guards against "connect skills just
+    to raise the count" by asserting the set is a strict subset."""
+    from digital_department.registry import TASK_DEPARTMENTS
+    reply_depts = set(TASK_DEPARTMENTS["social_reply"])
+    post_depts = set(TASK_DEPARTMENTS["social_post"])
+    assert reply_depts == {"brand", "context"}, f"expected exactly brand+context, got {reply_depts}"
+    assert reply_depts < post_depts, (
+        "social_reply's departments must be a strict SUBSET of social_post's — "
+        "no department should be added to engagement that social_post itself doesn't use"
+    )
+    assert "positioning" not in reply_depts, (
+        "positioning's differentiation angle does not fit a reactive 1-2 sentence reply"
+    )
+    print(f"  PASS: social_reply departments = {sorted(reply_depts)} (strict subset of social_post)")
+
+
+def test_engagement_draft_reply_wires_digital_department_context() -> None:
+    """Source-level check (same style as the _noa_marketing_loop wiring test):
+    confirms social/engagement.py's draft_reply_text() actually calls
+    build_prompt_with_context with task_type="social_reply" BEFORE the real
+    LLM call — not just that both symbols exist somewhere in the file."""
+    import inspect
+    import sys
+    if "/app" not in sys.path:
+        sys.path.insert(0, "/app")
+    from social import engagement as eng
+    src = inspect.getsource(eng.draft_reply_text)
+    # Skip the docstring before searching for CODE — the docstring itself
+    # discusses task_type="social_reply" in prose (explaining why it's
+    # narrower than social_post's set), which would otherwise be found
+    # before the real call and falsely fail the ordering check below.
+    doc_end = src.find('"""', src.find('"""') + 3) + 3
+    code = src[doc_end:]
+
+    bpwc_pos = code.find("build_prompt_with_context")
+    task_pos = code.find('_bpwc(prompt, agent="noa", task_type="social_reply")')
+    hf_pos = code.find("await hf_text(prompt")
+    assert bpwc_pos != -1, "draft_reply_text must call build_prompt_with_context"
+    assert task_pos != -1, 'draft_reply_text must pass task_type="social_reply" to the real _bpwc() call'
+    assert hf_pos != -1, "draft_reply_text must still call hf_text with the (possibly augmented) prompt"
+    assert bpwc_pos < task_pos < hf_pos, (
+        "digital_department context must be built BEFORE the real LLM call uses the prompt"
+    )
+    print("  PASS: draft_reply_text wires build_prompt_with_context(task_type='social_reply') before hf_text")
+
+
 def test_per_task_budget_override() -> None:
     """2026-08-15b finding: social_campaign pulls from 5 departments (2 more
     than social_post's 3), so the same global budget left real HIGH content
@@ -1426,6 +1476,76 @@ def test_m1_allowlist_reachability_audit() -> None:
     print(f"  PASS: M1 — all {len(_ALLOWLIST)} allowlisted departments are either task-mapped or intentionally documented as unmapped")
 
 
+def test_m4_reachability_matches_verified_production_callers() -> None:
+    """M4 (2026-08-15d, 13-department audit): test_m1_allowlist_reachability_audit
+    above checks CONFIGURATION reachability (is this department's name present
+    in some TASK_DEPARTMENTS/AGENT_DEPARTMENTS dict?) — that is a different,
+    weaker claim than PRODUCTION reachability. A department listed only under
+    AGENT_DEPARTMENTS['shira'] passes M1's check even though MarketingAgent
+    (SHIRA) never calls build_prompt_with_context/build_context anywhere in
+    the codebase (verified: zero `agent="shira"` call sites exist). Likewise
+    every department in AGENT_DEPARTMENTS['noa'] beyond the 5 real ones passes
+    M1 even though the agent-fallback selection path in
+    build_context_with_report() is NEVER exercised — all 4 real call sites
+    always pass an explicit task_type, which takes priority over the agent
+    fallback. Without this test, M1 alone could read as "these departments
+    work," which is false confidence — the exact failure class this audit
+    was asked to hunt for.
+
+    This test greps the real caller files for every actual task_type=/agent=
+    literal passed to build_prompt_with_context()/its _bpwc alias, and pins
+    today's verified-live set. A future new real caller (or the removal of
+    an existing one) will fail this test loudly, forcing a deliberate update
+    instead of silently invalidating the reachability finding this audit is
+    built on.
+
+    UPDATED 2026-08-15d (Digital Department merge audit): a 5th real call
+    site was deliberately added — social/engagement.py's draft_reply_text()
+    now injects task_type="social_reply" so Community Engagement replies
+    get the same brand/context grounding as scheduled posts. This is
+    exactly the scenario this test's own docstring predicted ("a future 5th
+    real caller... will fail this test loudly, forcing a deliberate
+    update") — updated consciously, not silently.
+    """
+    import re
+
+    routes_src = Path(_APP / "BACKEND_API_ROUTES.py").read_text(encoding="utf-8")
+    agents_src = Path(_APP / "BACKEND_AI_AGENTS.py").read_text(encoding="utf-8")
+    engagement_src = Path(_APP / "social" / "engagement.py").read_text(encoding="utf-8")
+    combined = routes_src + "\n" + agents_src + "\n" + engagement_src
+
+    calls = []
+    for m in re.finditer(r"(build_prompt_with_context|_bpwc)\(", combined):
+        window = combined[m.end():m.end() + 300]
+        tt = re.search(r'task_type=["\'](\w+)["\']', window)
+        ag = re.search(r'agent=["\'](\w+)["\']', window)
+        calls.append((tt.group(1) if tt else None, ag.group(1) if ag else None))
+
+    VERIFIED_LIVE_TASK_TYPES = {"social_post", "social_campaign", "social_reply"}
+    VERIFIED_LIVE_AGENTS = {"noa"}
+
+    assert len(calls) == 5, (
+        f"M4: expected exactly 5 real call sites (2 in BACKEND_API_ROUTES.py, "
+        f"2 in BACKEND_AI_AGENTS.py, 1 in social/engagement.py), found "
+        f"{len(calls)}: {calls} — a caller was added or removed, update this "
+        f"test's expectations deliberately"
+    )
+    task_types_used = {tt for tt, _ag in calls}
+    agents_used = {ag for _tt, ag in calls}
+    assert task_types_used == VERIFIED_LIVE_TASK_TYPES, (
+        f"M4: real callers now use task_type set {task_types_used}, expected "
+        f"exactly {VERIFIED_LIVE_TASK_TYPES} — a new task_type went live; the "
+        f"departments it pulls in are no longer part of the unreachable set"
+    )
+    assert agents_used == VERIFIED_LIVE_AGENTS, (
+        f"M4: real callers now pass agent set {agents_used}, expected exactly "
+        f"{VERIFIED_LIVE_AGENTS} — SHIRA (or another agent) now has a real "
+        f"caller; her AGENT_DEPARTMENTS list is no longer unexercised fallback code"
+    )
+    print(f"  PASS: M4 — all 5 real call sites verified live: task_types={sorted(task_types_used)}, "
+          f"agents={sorted(agents_used)} (matches the 2026-08-15d merge audit's reachability finding)")
+
+
 # ---------------------------------------------------------------------------
 # M3 — Drift detection
 # ---------------------------------------------------------------------------
@@ -1807,6 +1927,8 @@ def run() -> int:
         ("Priority: critical_budget_exceeded flag", test_priority_critical_budget_exceeded_flag),
         ("Priority: backward compatible unmarked sections", test_priority_backward_compatible_unmarked_sections),
         ("Priority: social_post departments correct", test_priority_social_post_departments_correct),
+        ("Merge: social_reply departments correct+narrower", test_social_reply_departments_correct_and_narrower_than_social_post),
+        ("Merge: engagement draft_reply wires digital_department", test_engagement_draft_reply_wires_digital_department_context),
         ("Priority: per-task budget override", test_per_task_budget_override),
         ("Priority: real container all tiers represented", test_priority_real_container_output_has_all_tiers_represented),
         # Adversarial suite (2026-08-15b, letters A-L)
@@ -1859,6 +1981,7 @@ def run() -> int:
         ("M1: context dept now reachable", test_m1_context_department_reachable),
         ("M1: unmapped depts documented", test_m1_intentionally_unmapped_documented),
         ("M1: allowlist reachability audit", test_m1_allowlist_reachability_audit),
+        ("M4: reachability matches verified production callers", test_m4_reachability_matches_verified_production_callers),
         # Remediation — M3 (drift detection)
         ("M3: audit script exists with correct logic", test_m3_drift_audit_script_exists),
         ("M3: drift detected with temp fixtures", test_m3_drift_detection_with_temp_files),

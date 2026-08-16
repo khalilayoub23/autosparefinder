@@ -37,6 +37,26 @@ AGENT_DEPARTMENTS: Dict[str, List[str]] = {
     ],
 }
 
+# CONFIGURATION reachability vs. PRODUCTION reachability (2026-08-15d,
+# updated in the Digital Department merge audit — was "exactly 4" as of the
+# 13-department audit, now 5 after social/engagement.py's draft_reply_text()
+# was deliberately wired in): being listed above is NOT proof a department
+# ever reaches an LLM call. Verified by grepping every real call site of
+# build_prompt_with_context()/build_context() in the whole backend (pinned by
+# devtests/digital_department_integration_test.py::test_m4_..., which fails
+# loudly if this goes stale): there are exactly 5 real call sites, ALL with
+# agent="noa", ALL with an explicit task_type of "social_post",
+# "social_campaign", or "social_reply". Two consequences still hold:
+# (1) AGENT_DEPARTMENTS["shira"] above has ZERO real callers — MarketingAgent
+# never calls this module; her brand/positioning grounding is a separate
+# hand-folded block in her own system_prompt (see BACKEND_AI_AGENTS.py,
+# "2026-07-27" comments). (2) The AGENT_DEPARTMENTS fallback path itself
+# (used only when a caller omits task_type) is never exercised for "noa"
+# either, since every real "noa" caller always passes an explicit task_type,
+# which build_context_with_report() always prefers over the agent fallback.
+# Do not treat dict membership here as evidence a department is live — check
+# TASK_DEPARTMENTS's live task types (currently "social_post"/
+# "social_campaign"/"social_reply") instead.
 # ---------------------------------------------------------------------------
 # Task type → relevant departments (task-specific, not agent-wide)
 # Order does NOT affect budget or survival. context.py's allocator (2026-08-15
@@ -65,6 +85,20 @@ TASK_DEPARTMENTS: Dict[str, List[str]] = {
     # anti-invention rule but never named these specific programs).
     "social_post":          ["positioning", "brand", "context"],
     "social_campaign":      ["positioning", "brand", "context", "campaign_launch", "analytics"],
+    # social_reply (2026-08-15d merge audit): Community Engagement's
+    # draft_reply_text() (social/engagement.py) previously called the LLM
+    # with a standalone hardcoded system prompt, completely bypassing this
+    # module — brand voice and the specific Truth-Only facts in dept-context
+    # (e.g. "no loyalty/referral/coupon program exists") never reached it,
+    # even though replies are branded as NOA the same way social_post is.
+    # Deliberately NARROWER than social_post: positioning (differentiation
+    # angle) and campaign_launch/analytics (campaign-planning guardrails) are
+    # not relevant to a 1-2 sentence reactive reply — only brand (voice
+    # consistency) and context (the Truth-Only facts a commenter could
+    # plausibly ask about) are. Do not add more departments here just to
+    # raise the connection count — see the same discipline applied to
+    # social_post's own department list above.
+    "social_reply":         ["brand", "context"],
     "campaign_analysis":    ["analytics", "content"],
     "b2b_campaign":         ["b2b_leads", "brand", "positioning", "content"],
     "ppc_campaign":         ["ppc", "brand", "positioning", "analytics"],

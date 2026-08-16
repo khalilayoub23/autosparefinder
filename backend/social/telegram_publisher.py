@@ -151,10 +151,22 @@ async def send_telegram_chat_action(chat_id: Union[int, str], action: str = "typ
 
 
 async def set_telegram_webhook(webhook_url: str, secret_token: Optional[str] = None) -> dict:
-    """Configure Telegram webhook URL for this bot token."""
+    """Configure Telegram webhook URL for this bot token.
+
+    allowed_updates extended 2026-08-16 (deep Telegram capability
+    verification): added "message_reaction_count" so campaign-post
+    reactions become a real, collectible engagement signal — previously
+    ONLY message/edited_message were subscribed, so a channel post's
+    reactions were invisible to the bot no matter how many accumulated.
+    Safe, standard, idempotent Telegram operation (re-registering the same
+    URL with a wider update set); the existing webhook handler
+    (routes/webhooks.py::telegram_webhook) already gracefully ignores any
+    update shape it doesn't recognise (returns ignored=unsupported_update),
+    so this cannot break existing message handling.
+    """
     payload = {
         "url": webhook_url,
-        "allowed_updates": ["message", "edited_message"],
+        "allowed_updates": ["message", "edited_message", "message_reaction_count"],
     }
     if secret_token:
         payload["secret_token"] = secret_token

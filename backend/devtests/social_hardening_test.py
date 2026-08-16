@@ -1419,6 +1419,141 @@ async def test_unapproved_group_target_blocked_by_tool():
 
 
 # ---------------------------------------------------------------------------
+# Phase 17 — Analytics -> decision link (2026-08-15 architecture completion)
+# ---------------------------------------------------------------------------
+# compute_topic_performance() is the one place real engagement data actually
+# changes what NOA generates next (BACKEND_API_ROUTES.py's _noa_marketing_loop
+# topic selection). It is pure, deterministic aggregation — no LLM call, no
+# invented numbers, fail-open on any error or lack of data.
+
+async def test_topic_performance_no_data_returns_empty():
+    from social.feedback_analyzer import compute_topic_performance
+    db = _make_mock_db()
+    db.execute.return_value.fetchall.return_value = []
+    out = await compute_topic_performance(db)
+    assert out == {}, "No engagement_events rows must yield {} (neutral weight for every topic)"
+    record("compute_topic_performance: no data -> {} (never invents a weight)", PASS)
+
+
+async def test_topic_performance_below_min_samples_excluded():
+    from social.feedback_analyzer import compute_topic_performance, _MIN_SAMPLES_FOR_SIGNAL
+    db = _make_mock_db()
+    row = MagicMock()
+    row.topic = "בלמי דיסק"
+    row.sample_size = _MIN_SAMPLES_FOR_SIGNAL - 1  # one below the real-signal threshold
+    row.avg_engagement = 500.0  # a huge average that would otherwise dominate
+    db.execute.return_value.fetchall.return_value = [row]
+    out = await compute_topic_performance(db)
+    assert out == {}, (
+        f"A topic with fewer than {_MIN_SAMPLES_FOR_SIGNAL} measured posts must not "
+        f"produce a weight — one lucky early post is noise, not signal"
+    )
+    record("compute_topic_performance: below MIN_SAMPLES_FOR_SIGNAL -> excluded, not weighted", PASS)
+
+
+async def test_topic_performance_computes_clamped_weights():
+    from social.feedback_analyzer import (
+        compute_topic_performance, _MIN_TOPIC_WEIGHT, _MAX_TOPIC_WEIGHT, _MIN_SAMPLES_FOR_SIGNAL,
+    )
+    db = _make_mock_db()
+
+    def _row(topic, n, avg_eng):
+        r = MagicMock()
+        r.topic, r.sample_size, r.avg_engagement = topic, n, avg_eng
+        return r
+
+    # Pool average = (100 + 10) / 2 = 55. "high" should get weight > 1, "low" < 1,
+    # both within the real, computed clamp — never an invented specific number.
+    rows = [
+        _row("בלמי דיסק", _MIN_SAMPLES_FOR_SIGNAL, 100.0),   # above pool average
+        _row("מגבי שמשה", _MIN_SAMPLES_FOR_SIGNAL, 10.0),    # below pool average
+    ]
+    db.execute.return_value.fetchall.return_value = rows
+    out = await compute_topic_performance(db)
+
+    assert "בלמי דיסק" in out and "מגבי שמשה" in out
+    high, low = out["בלמי דיסק"], out["מגבי שמשה"]
+    assert high.weight > low.weight, "Higher real engagement must yield a higher weight"
+    assert _MIN_TOPIC_WEIGHT <= high.weight <= _MAX_TOPIC_WEIGHT
+    assert _MIN_TOPIC_WEIGHT <= low.weight <= _MAX_TOPIC_WEIGHT
+    assert high.sample_size == _MIN_SAMPLES_FOR_SIGNAL and high.avg_engagement == 100.0
+    record(
+        f"compute_topic_performance: real data -> clamped weights "
+        f"(high={high.weight:.2f}, low={low.weight:.2f}, range=[{_MIN_TOPIC_WEIGHT},{_MAX_TOPIC_WEIGHT}])",
+        PASS,
+    )
+
+
+async def test_topic_performance_fails_open_on_db_error():
+    from social.feedback_analyzer import compute_topic_performance
+    db = AsyncMock()
+    db.execute.side_effect = Exception("connection reset")
+    out = await compute_topic_performance(db)
+    assert out == {}, "A broken query must fail open ({}), never raise and never block topic selection"
+    record("compute_topic_performance: DB error -> fails open, does not raise", PASS)
+
+
+async def test_noa_loop_wires_topic_performance_before_generation():
+    """Source-level check (matches the L3/M4-style checks already used in this
+    project for prompt/context wiring): confirms _noa_marketing_loop actually
+    calls compute_topic_performance() and uses its output to weight the
+    random topic choice, in that order — not just that both symbols exist
+    somewhere in the file."""
+    import inspect
+    import BACKEND_API_ROUTES as routes
+    src = inspect.getsource(routes._noa_marketing_loop)
+
+    perf_pos = src.find("compute_topic_performance")
+    weights_pos = src.find("_part_weights")
+    choice_pos = src.find("random.choices(_part_pool")
+    assert perf_pos != -1, "_noa_marketing_loop must call compute_topic_performance"
+    assert weights_pos != -1, "_noa_marketing_loop must build _part_weights from it"
+    assert choice_pos != -1, "topic selection must use a WEIGHTED choice, not uniform random.choice"
+    assert perf_pos < weights_pos < choice_pos, (
+        "compute_topic_performance must run BEFORE the weighted choice uses its output"
+    )
+    # The old unconditional uniform call must be gone from THIS specific selection —
+    # confirms this is a real replacement, not an addition alongside the old code.
+    assert "heb_part, eng_part, _pain_options = random.choice(_part_pool)" not in src, (
+        "Uniform random.choice for part selection must have been replaced, not left dead alongside it"
+    )
+    record("_noa_marketing_loop: compute_topic_performance wired before the weighted topic choice", PASS)
+
+
+# ---------------------------------------------------------------------------
+# Phase 18 — Community Engagement Department (2026-08-15c): returning-engager
+# priority feedback loop. Same fail-open discipline as Phase 17's analytics.
+# ---------------------------------------------------------------------------
+
+async def test_engagement_priority_fails_open_on_query_error():
+    """A bug/regression in the EXISTS-subquery priority ordering (e.g. a bad
+    column reference) must not stop the owner from seeing pending items —
+    pending_for_owner must fall back to the plain-recency query. Simulated by
+    failing only the FIRST db.execute call (the priority query) and letting
+    the SECOND (the fallback query) succeed, distinct from a total DB outage
+    where nothing could work regardless."""
+    from social import engagement as eng
+
+    fallback_result = MagicMock()
+    fallback_row = MagicMock()
+    fallback_row._mapping = {
+        "id": "fallback-id", "platform": "facebook", "kind": "comment",
+        "author": "X", "message": "m", "reply_text": "r", "permalink": "p", "external_id": "e",
+    }
+    fallback_result.fetchall.return_value = [fallback_row]
+
+    db = AsyncMock()
+    db.execute.side_effect = [Exception("bad column reference"), fallback_result]
+
+    out = await eng.pending_for_owner(db)
+    assert out and out[0]["id"] == "fallback-id", (
+        "pending_for_owner must return the FALLBACK query's real results, not raise, "
+        "when only the priority query itself is broken"
+    )
+    record("pending_for_owner: priority query failure falls back to plain-recency results (fails open)", PASS)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -1449,6 +1584,14 @@ async def run() -> int:
     await test_group_post_no_id_published_state()
     await test_unapproved_social_post_blocked_by_execute_campaign()
     await test_unapproved_group_target_blocked_by_tool()
+    # Phase 17 — analytics -> decision link
+    await test_topic_performance_no_data_returns_empty()
+    await test_topic_performance_below_min_samples_excluded()
+    await test_topic_performance_computes_clamped_weights()
+    await test_topic_performance_fails_open_on_db_error()
+    await test_noa_loop_wires_topic_performance_before_generation()
+    # Phase 18 — engagement department feedback loop
+    await test_engagement_priority_fails_open_on_query_error()
     return sum(1 for r in results if r["status"] == FAIL)
 
 

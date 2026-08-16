@@ -510,21 +510,73 @@ _MAKE_ALIAS_MAP: Dict[str, List[str]] = {
 # Highest-volume IL model names (Hebrew + English) → canonical model token.
 # Keeps fitment-first search precise when the customer names a model in free text.
 _MODEL_LEXICON: Dict[str, List[str]] = {
+    # Toyota
     "corolla": ["corolla", "קורולה", "كورولا"], "yaris": ["yaris", "יאריס", "يارس", "ياريس"],
     "camry": ["camry", "קאמרי", "كامري"], "rav4": ["rav4", "rav 4", "ראב4", "ראב 4", "راف فور", "راف4"],
+    "hilux": ["hilux", "הילוקס", "هايلكس"], "land cruiser": ["land cruiser", "לנד קרוזר", "لاند كروزر"],
+    "chr": ["c-hr", "chr", "סי אייץ' אר"], "auris": ["auris", "אוריס", "أوريس"],
+    # Honda / Nissan
     "civic": ["civic", "סיוויק", "סיביק", "سيفيك"], "accord": ["accord", "אקורד", "أكورد"],
+    "crv": ["cr-v", "crv", "סי אר וי", "سي آر في"],
+    "qashqai": ["qashqai", "קשקאי", "قاشقاي"], "juke": ["juke", "ג'וק", "جوك"], "micra": ["micra", "מיקרה", "ميكرا"],
+    "tiida": ["tiida", "טיידה", "تيدا"], "leaf": ["leaf", "ליף", "ليف"], "x-trail": ["x-trail", "xtrail", "אקס טרייל"],
+    # Kia / Hyundai
     "sportage": ["sportage", "ספורטאז'", "ספורטג'", "سبورتاج"], "picanto": ["picanto", "פיקנטו", "بيكانتو"],
     "rio": ["rio", "ריו", "ريو"], "niro": ["niro", "נירו", "نيرو"],
+    "stonic": ["stonic", "סטוניק"], "soul": ["soul", "סול", "سول"],
     "i10": ["i10"], "i20": ["i20"], "i25": ["i25"], "i30": ["i30"], "i35": ["i35"],
     "tucson": ["tucson", "טוסון", "توسان"], "elantra": ["elantra", "אלנטרה", "النترا", "إلنترا"],
+    "santa fe": ["santa fe", "סנטה פה", "سانتا في"], "kona": ["kona", "קונה", "كونا"],
+    # BMW — critical: "3 series"/"5 series" etc. were silently lost (root-fixed 2026-08-11)
+    "3 series": ["3 series", "series 3", "bmw 3", "סדרה 3", "الفئة 3", "سلسلة 3"],
+    "5 series": ["5 series", "series 5", "bmw 5", "סדרה 5", "الفئة 5"],
+    "7 series": ["7 series", "series 7", "bmw 7", "סדרה 7", "الفئة 7"],
+    "1 series": ["1 series", "series 1", "bmw 1", "סדרה 1"],
+    "2 series": ["2 series", "series 2", "bmw 2", "סדרה 2"],
+    "x1": ["bmw x1", "x1 bmw", "x 1 bmw"], "x3": ["bmw x3", "x3 bmw", "x 3 bmw", "اكس3"],
+    "x5": ["bmw x5", "x5 bmw", "x 5 bmw", "اكس5"], "x6": ["bmw x6", "x6 bmw"],
+    "m3": ["bmw m3", "m3 bmw", "m 3 bmw"], "m5": ["bmw m5", "m5 bmw"],
+    # Mercedes
+    "c class": ["c class", "c-class", "סי קלאס", "الفئة c", "مرسيدس c"],
+    "e class": ["e class", "e-class", "אי קלאס", "الفئة e", "مرسيدس e"],
+    "a class": ["a class", "a-class", "אי קלאס", "الفئة a"],
+    "s class": ["s class", "s-class", "אס קלאס"],
+    "glc": ["glc", "mercedes glc"], "gle": ["gle", "mercedes gle"],
+    "cla": ["cla", "mercedes cla"], "gla": ["gla", "mercedes gla"],
+    "sprinter": ["sprinter", "ספרינטר", "سبرينتر"],
+    # Audi
+    "a3": ["audi a3", "a3 audi", " a3 "], "a4": ["audi a4", "a4 audi", " a4 "],
+    "a6": ["audi a6", "a6 audi", " a6 "], "a1": ["audi a1", "a1 audi"],
+    "q3": ["audi q3", "q3 audi"], "q5": ["audi q5", "q5 audi"],
+    "q7": ["audi q7", "q7 audi"], "tt": ["audi tt", "tt audi"],
+    # VW / Skoda / Seat
     "golf": ["golf", "גולף", "جولف"], "polo": ["polo", "פולו", "بولو"], "passat": ["passat", "פאסאט", "باسات"],
+    "tiguan": ["tiguan", "טיגואן", "تيجوان"], "touareg": ["touareg", "טוארג", "توارج"],
+    "t-roc": ["t-roc", "troc", "טי רוק"], "t-cross": ["t-cross", "tcross"],
     "octavia": ["octavia", "אוקטביה", "أوكتافيا"], "fabia": ["fabia", "פאביה", "فابيا"],
-    "3": ["mazda 3", "מאזדה 3", "מזדה 3", "مازدا 3"], "6": ["mazda 6", "מאזדה 6", "مازدا 6"],
-    "cx5": ["cx-5", "cx5", "סי אקס 5"], "cx30": ["cx-30", "cx30"],
-    "qashqai": ["qashqai", "קשקאי", "قاشقاي"], "juke": ["juke", "ג'וק", "جوك"], "micra": ["micra", "מיקרה", "ميكرا"],
-    "clio": ["clio", "קליאו", "كليو"], "captur": ["captur", "קפצ'ור", "كابتور"], "megane": ["megane", "מגאן", "ميجان"],
+    "superb": ["superb", "סופרב", "سوبرب"], "kodiaq": ["kodiaq", "קודיאק"],
+    "leon": ["seat leon", "leon", "לאון"], "ibiza": ["seat ibiza", "ibiza", "איביזה"],
+    # Mazda / Ford
+    "mazda 3": ["mazda 3", "מאזדה 3", "מזדה 3", "مازدا 3"],
+    "mazda 6": ["mazda 6", "מאזדה 6", "מזדה 6", "مازدا 6"],
+    "cx5": ["cx-5", "cx5", "סי אקס 5", "سي اكس 5"], "cx30": ["cx-30", "cx30"],
+    "mx5": ["mx-5", "mx5", "miata", "מיאטה"],
     "focus": ["focus", "פוקוס", "فوكس"], "fiesta": ["fiesta", "פיאסטה", "فييستا"],
-    "sprinter": ["sprinter", "ספרינטר", "سبرينتر"], "transit": ["transit", "טרנזיט", "ترانزيت"],
+    "transit": ["transit", "טרנזיט", "ترانزيت"], "ranger": ["ranger", "ריינג'ר", "رينجر"],
+    "kuga": ["kuga", "קוגה", "كوغا"], "puma": ["ford puma", "פומה"],
+    # Renault / Citroen / Peugeot
+    "clio": ["clio", "קליאו", "كليو"], "captur": ["captur", "קפצ'ור", "كابتور"],
+    "megane": ["megane", "מגאן", "ميجان"], "duster": ["duster", "דאסטר", "داستر"],
+    "berlingo": ["berlingo", "ברלינגו", "برلينغو"], "c3": ["citroen c3", "c3 citroen", " c3 "],
+    "c4": ["citroen c4", "c4 citroen", " c4 "], "c5": ["citroen c5", "c5 citroen"],
+    "208": ["peugeot 208", " 208 "], "308": ["peugeot 308", " 308 "],
+    "2008": ["peugeot 2008", "פיז'ו 2008"], "3008": ["peugeot 3008", "פיז'ו 3008"],
+    # Subaru / Mitsubishi / Suzuki
+    "impreza": ["impreza", "אימפרזה", "إمبريزا"], "forester": ["forester", "פורסטר", "فوريستر"],
+    "outback": ["outback", "אאוטבק", "أوتباك"], "xv": ["subaru xv", "xv subaru"],
+    "outlander": ["outlander", "אאוטלנדר", "أوتلاندر"], "eclipse cross": ["eclipse cross", "אקליפס"],
+    "swift": ["swift", "סוויפט", "سويفت"], "vitara": ["vitara", "ויטרה", "فيتارا"],
+    "jimny": ["jimny", "ג'ימני", "جيمني"],
 }
 
 
@@ -854,6 +906,14 @@ PROHIBITED:
 - Never ask more than ONE question per message
 - Never send walls of text — keep it short and scannable
 - Never use markdown headers (##, **bold**) on WhatsApp
+- Never promise a SYSTEM ACTION that has no real mechanism behind it — e.g. "I'll
+  forward this to a specialist," "I'll connect you with someone," "I'll escalate
+  this and they'll call you back," "let me check with the warehouse." There is no
+  message-relay, escalation queue, or callback system. If something is truly
+  outside what you can resolve, say so honestly and tell the customer the real
+  way to reach a human (the business's real contact channel) — never invent a
+  handoff that will not actually happen. A promised action nobody performs is a
+  lie the customer discovers later, which is worse than an honest "I can't do that."
 
 SHIPPING TRUTH (MANDATORY — no invented policies):
 - There is NO free-shipping threshold, NO "free over ₪300", NO flat delivery
@@ -864,6 +924,19 @@ SHIPPING TRUTH (MANDATORY — no invented policies):
   time appear at checkout for the chosen part, and offer to find the part so
   they can see real figures. Only cite a delivery window that came from actual
   supplier/order data for a specific part — never a generic made-up one.
+
+VERIFY, DON'T ASSUME (MANDATORY — applies to every fact in every reply):
+- Never state a price, fitment, brand, stock status, policy, program, or delivery
+  estimate from memory of a "typical" answer or what's probably true. Every fact
+  you give must come from the real system data/tools available to you in THIS
+  conversation (search results, catalog data, order data) at the moment you
+  answer — not a plausible-sounding guess.
+- If you don't have the real data to answer accurately, say so honestly and take
+  the next real step to find out (search the part, ask for the plate/VIN/order
+  number) — never fill the gap with an assumption dressed up as an answer.
+- This is the same discipline as PROHIBITED and SHIPPING TRUTH above, generalized:
+  those are specific instances of one rule — verify before you say it, for
+  anything, not only price.
 
 PROFESSIONAL SKILLS & TRAITS (how a great human agent behaves — apply these, don't announce them):
 - LISTEN & REMEMBER: Read what the customer actually wrote, reflect one concrete
@@ -893,8 +966,10 @@ PROFESSIONAL SKILLS & TRAITS (how a great human agent behaves — apply these, d
   scannable on WhatsApp/Telegram; a returning customer should feel remembered.
 - KNOW WHEN TO HAND OFF: If the issue is beyond parts/sales (payment dispute,
   account lockout, complex complaint) or the customer explicitly asks for a human,
-  route it to the right specialist instead of guessing — a smooth handoff beats a
-  wrong answer.
+  say so plainly and give the real way to reach a person — do NOT claim you are
+  personally forwarding/escalating/connecting them to someone, since no such
+  mechanism exists. An honest "I can't resolve this myself, here's how to reach
+  us directly" beats a confident promise nothing will fulfill.
 - CONSISTENCY: Same honesty, same prices, same quality of help on every channel
   and every turn. The customer gets the same trustworthy experience each time.
 """
@@ -1313,13 +1388,13 @@ def _human_recovery_reply(
             return f"מעולה, ממשיכים עם {vehicle_summary}. איזה חלק מדויק תרצה עכשיו? אם יש מספר OEM, אפשר לשלוח אותו."
         return "מעולה, ממשיכים. איזה חלק מדויק תרצה עכשיו? אם יש מספר OEM, אפשר לשלוח אותו."
     if has_plate and not has_part:
-        return "קיבלתי את מספר הרישוי. איזה חלק תרצה שאבדוק עבורך עכשיו?"
+        return "קיבלתי את מספר הרישוי 👍 איזה חלק תרצה שאבדוק עבורך?"
     if has_part and not has_plate:
         item = focus or "את החלק הזה"
-        return f"מעולה, הבנתי שאתה מחפש {item}. כדי לדייק התאמה, שלח מספר רישוי או דגם + שנה."
+        return f"הבנתי — אתה מחפש {item}. כדי שאתאים בדיוק, שלח דגם רכב + שנה (או מספר רישוי)."
     if is_noise:
-        return "אני איתך. כתוב לי שם חלק + דגם רכב + שנה, ואני אכוון מיד."
-    return "כדי להתקדם מהר, כתוב שם חלק מדויק יחד עם דגם ושנת הרכב. לדוגמה: רפידות בלם מאזדה 3 2017."
+        return "אני כאן! כתוב שם חלק + דגם רכב + שנה, ואני אמצא לך מיד."
+    return "כדי למצוא את החלק הנכון לרכב שלך, כתוב: שם חלק + דגם + שנה. לדוגמה: רפידות בלם קורולה 2019."
 
 
 # ==============================================================================
@@ -1409,22 +1484,28 @@ class BaseAgent:
 
         if self.name == "security_agent":
             return (
-                "אני כאן לעזור בנושא התחברות ואבטחה. "
-                "כתוב מה הבעיה: התחברות, קוד 2FA, סיסמה, או חשבון נעול."
+                "היי, אני כאן בשבילך! 🔐 "
+                "נשמע שיש משהו עם ההתחברות — ספר לי מה קורה: "
+                "בעיה עם סיסמה, קוד אימות, או חשבון נעול?"
             )
 
         if self.name == "orders_agent":
             return (
-                "כדי לעזור במצב הזמנה, שלח מספר הזמנה או מספר טלפון שמופיע בהזמנה."
+                "היי! אני ליאור, האחראי על ההזמנות שלנו. "
+                "שלח לי את מספר ההזמנה ואני בודק מיד איפה הכול עומד 📦"
             )
 
         if self.name == "finance_agent":
             return (
-                "כדי לטפל בחשבונית/חיוב, שלח מספר הזמנה וציין בדיוק אם צריך חשבונית, זיכוי או בירור חיוב."
+                "שמחים לעזור בנושא חשבונית או חיוב! "
+                "שלח מספר הזמנה וציין מה בדיוק תרצה — חשבונית, בירור חיוב, או החזר כספי."
             )
 
         if self.name == "marketing_agent":
-            return "אפשר לעזור בקופונים, מבצעים והטבות. כתוב מה בדיוק תרצה לבדוק."
+            return (
+                "שלום! אשמח לעזור עם מבצעים ומידע על הפלטפורמה. "
+                "מה תרצה לבדוק?"
+            )
 
         if self.name == "social_media_manager_agent":
             return (
@@ -1492,12 +1573,19 @@ class BaseAgent:
             # ceiling so a stray high value can't reintroduce word-salad Hebrew.
             _temp = min(float(getattr(self, "temperature", 0.5) or 0.5), 0.6)
             if self.name in _fast_agents:
-                return await hf_text_fast(
-                    prompt,
-                    system=effective_system,
-                    priority=_is_realtime,
-                    model=selected_model,
-                    temperature=_temp,
+                # Hard 28s cap for customer-facing fast agents — the full fallback chain
+                # (Cerebras → zai-glm-4.7 → Gemini → GROQ) was taking 50+ seconds, causing
+                # customer-visible timeouts (2026-08-11 audit). On timeout, fall through to
+                # _offline_reply instead of holding the customer connection open.
+                return await asyncio.wait_for(
+                    hf_text_fast(
+                        prompt,
+                        system=effective_system,
+                        priority=_is_realtime,
+                        model=selected_model,
+                        temperature=_temp,
+                    ),
+                    timeout=28.0,
                 )
             return await hf_text(
                 prompt,
@@ -1506,6 +1594,9 @@ class BaseAgent:
                 model=selected_model,
                 temperature=_temp,
             )
+        except asyncio.TimeoutError:
+            print(f"[WARN] {self.name} think() timed out after 28s — returning offline reply")
+            return self._offline_reply(messages)
         except Exception as e:
             status = getattr(getattr(e, "response", None), "status_code", None)
             print(f"[ERROR] {self.name} API call failed: status={status} error={e}")
@@ -3802,6 +3893,24 @@ LANGUAGE: ALWAYS respond in Hebrew (עברית). If the customer writes in Arabi
                               campaign_manager.create_campaign()
                                         ↓
                               NOA.execute_campaign()
+
+        STATUS (2026-08-15d merge audit — supersedes the 2026-08-15 note
+        below, kept for history): this method is now REACHABLE from exactly
+        one real caller — agents/owner_console.py's "קמפיין <topic>" /
+        "campaign <topic>" deterministic command
+        (_create_campaign_via_shira), owner-WhatsApp-console-only. It
+        remains UNREACHABLE from customer-facing chat: process() below still
+        routes campaign-creation INTENT from a customer message to
+        _campaign_intent_proposal() (a safe, DB-non-writing text reply — see
+        its "GAP-B safety rule" docstring), never to this method — that
+        safety boundary was not touched by wiring the owner-console command.
+        The admin HTTP path (routes/campaigns.py POST /api/v1/campaigns,
+        routes/admin.py) still also exists and still bypasses SHIRA by
+        calling SocialMediaManagerAgent.generate_campaign_plan() directly —
+        both paths are legitimate, parallel owner-only entry points into the
+        same underlying campaign_manager/NOA machinery; neither publishes
+        anything without passing through the unchanged SocialPost
+        pending_approval gate.
         """
         noa: SocialMediaManagerAgent = get_agent("social_media_manager_agent")
         plan = await noa.generate_campaign_plan(
@@ -3829,6 +3938,140 @@ LANGUAGE: ALWAYS respond in Hebrew (עברית). If the customer writes in Arabi
             campaign["id"], result.get("posts_queued", 0),
         )
         return {"campaign": campaign, "execution": result}
+
+    # Closed decision set evaluate_campaign_performance() must choose from —
+    # never freeform, so the result is always one concrete, actionable step.
+    _PERFORMANCE_DECISIONS: tuple = (
+        "continue", "change_topic", "change_platform_mix", "change_creative",
+        "change_audience", "change_cta", "stop", "request_another_cycle",
+    )
+
+    async def evaluate_campaign_performance(
+        self,
+        campaign_id: str,
+        db: "AsyncSession",
+        *,
+        period_days: int = 7,
+    ) -> Dict[str, Any]:
+        """
+        Digital Dept Manager FEEDBACK entry point — closes the
+        SHIRA -> NOA -> Feedback -> SHIRA loop from the department's own
+        architecture (SHIRA manages; NOA executes; results feed back up).
+
+        Reuses the EXISTING, real feedback_analyzer.generate_analytics_report()
+        (already the deterministic source of truth for campaign metrics —
+        engagement_events aggregated, no invented numbers) to get real,
+        campaign-scoped data, then makes ONE genuine decision call using
+        SHIRA's OWN persona (self.system_prompt) — distinct from
+        generate_analytics_report's separate generic-analyst
+        _synthesise_insights call, and distinct from NOA's persona used in
+        generate_campaign_plan — constrained to a closed decision set
+        (_PERFORMANCE_DECISIONS) so the output is always one concrete next
+        step grounded in the supplied numbers, never free-form commentary.
+
+        No new table, no new agent, no new department: found 2026-08-15
+        (SHIRA-management acceptance audit) that feedback was collected
+        (engagement_events -> analytics_reports) and already fed NOA's own
+        topic weighting (feedback_analyzer.compute_topic_performance), but
+        never reached a SHIRA-owned decision anywhere in the codebase. This
+        method is that one missing connection — nothing else was rebuilt.
+        """
+        import sqlalchemy as sa
+        from social.feedback_analyzer import generate_analytics_report
+
+        report = await generate_analytics_report(db, period_days=period_days, campaign_id=campaign_id)
+        raw = report["raw_data"]
+
+        # P2 fix (2026-08-16, production closure): generate_analytics_report()
+        # already computes "insights" (best_times/top_content_types/
+        # recommendations/summary, via its own separate generic-analyst LLM
+        # call) and persists them to analytics_reports — but until now nothing
+        # ever read them back, so every real call paid that extra LLM call for
+        # zero benefit. Folded in below as clearly-labeled ADVISORY context
+        # only: the prompt keeps the real numbers as the sole authoritative
+        # input, explicitly instructs that insights may never override them or
+        # the closed decision set, and _parse_performance_decision still
+        # rejects anything outside _PERFORMANCE_DECISIONS regardless of what
+        # either section says — an insight can influence which decision looks
+        # more reasonable, it can never invent a decision outside the set or
+        # cause any execution/publish action (this method never publishes).
+        insights = report.get("insights") or {}
+        insight_lines = []
+        if insights.get("summary"):
+            insight_lines.append(f"- סיכום: {insights['summary']}")
+        if insights.get("recommendations"):
+            insight_lines.append(f"- המלצות: {'; '.join(str(r) for r in insights['recommendations'][:3])}")
+        if insights.get("top_content_types"):
+            insight_lines.append(f"- סוגי תוכן שעבדו: {', '.join(str(t) for t in insights['top_content_types'][:5])}")
+        insight_block = "\n".join(insight_lines)
+
+        camp_row = (await db.execute(
+            sa.text("SELECT name, goal, platforms, tone, status FROM campaigns WHERE id = CAST(:id AS uuid)"),
+            {"id": campaign_id},
+        )).fetchone()
+        campaign_context = (
+            f"goal={camp_row.goal!r} platforms={camp_row.platforms} tone={camp_row.tone!r} status={camp_row.status!r}"
+            if camp_row else f"campaign_id={campaign_id} (not found in campaigns — evaluate on metrics alone)"
+        )
+
+        decisions = ", ".join(self._PERFORMANCE_DECISIONS)
+        prompt = (
+            f"קמפיין: {campaign_context}\n\n"
+            f"נתוני ביצועים אמיתיים מהמערכת (המקור היחיד הסמכותי — "
+            f"אין להמציא מספרים) על פני {period_days} הימים האחרונים:\n"
+            f"{json.dumps(raw, ensure_ascii=False, indent=2)}\n\n"
+            + (
+                f"מידע ייעוצי נוסף מהניתוח האוטומטי (הקשר בלבד — אינו גובר על "
+                f"הנתונים המספריים למעלה ואינו יכול להוסיף החלטה מחוץ לרשימה "
+                f"הסגורה למטה):\n{insight_block}\n\n"
+                if insight_block else ""
+            )
+            + f"בהתבסס בעיקר על הנתונים המספריים (והמידע הייעוצי כהקשר משני "
+            f"בלבד אם רלוונטי), קבע צעד המשך אחד לקמפיין. "
+            f"עליך לבחור החלטה אחת בלבד מתוך הרשימה הסגורה הזו: {decisions}.\n"
+            f"החזר JSON בלבד (ללא טקסט נוסף לפני או אחרי): "
+            f'{{"decision": "<אחת מהרשימה בדיוק>", "reasoning": "<משפט אחד '
+            f'בעברית, המתייחס במפורש למספרים שסופקו למעלה>"}}'
+        )
+        raw_reply = await hf_text(prompt=prompt, system=self.system_prompt)
+        decision, reasoning = self._parse_performance_decision(raw_reply)
+
+        logger.info(
+            "MarketingAgent.evaluate_campaign_performance: campaign=%s decision=%s "
+            "reach=%d engagement=%d leads=%d",
+            campaign_id, decision, raw.get("total_reach", 0),
+            raw.get("total_engagement", 0), raw.get("total_leads", 0),
+        )
+        return {
+            "campaign_id": campaign_id,
+            "report_id": report["report_id"],
+            "raw_data": raw,
+            "insights": insights,
+            "decision": decision,
+            "reasoning": reasoning,
+        }
+
+    def _parse_performance_decision(self, raw: str) -> Tuple[str, str]:
+        """Extract a constrained (decision, reasoning) pair from SHIRA's reply.
+
+        Falls back to a safe 'continue' default if the reply is unparsable or
+        names a decision outside the closed set — a malformed LLM reply must
+        never propagate as an invalid/free-form decision to the caller.
+        """
+        if raw:
+            for i, ch in enumerate(raw):
+                if ch != "{":
+                    continue
+                try:
+                    obj, _ = json.JSONDecoder().raw_decode(raw[i:])
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                if isinstance(obj, dict):
+                    d = str(obj.get("decision", "")).strip().lower()
+                    if d in self._PERFORMANCE_DECISIONS:
+                        return d, str(obj.get("reasoning", "")).strip()
+                break
+        return "continue", "לא ניתן היה לפרש החלטה תקפה — ברירת מחדל: המשך."
 
 
 class TechAgent(BaseAgent):
@@ -4390,10 +4633,27 @@ class SocialMediaManagerAgent(BaseAgent):
   אין "פוסט מודעות מותג" ריק שלא מוביל לפעולה
 - מעורר אינטראקציה: סיימי בשאלה שקל וכיף לענות עליה בתגובה ("איזה רעש הרכב שלכם עושה הבוקר?")
 - ציוני שמות רכב ספציפיים ושמות חלקים ספציפיים — אין כאב בלי פרטים
+- פנייה לקוראים — חובה, ברבים בלבד, לעולם לא ביחיד: הקהל כולל גברים ונשים כאחד, ואת (נועה)
+  אישה — אבל זה לא אומר לפנות לקורא בלשון נקבה. כל פועל/ציווי שמכוון לקורא חייב להיות
+  בצורת רבים ("בדקו", "חפשו", "לחצו", "הזינו", "קבלו", "תהיו בטוחים") — לעולם לא ביחיד זכר
+  ("תבדוק", "תחליף") ולעולם לא ביחיד נקבה ("בדקי", "לחצי", "הזיני", "קבלי", "היי בטוחה").
+  זו טעות שחוזרת — תמיד בדקי את עצמך: כל פועל שפונה לקורא, האם הוא ברבים?
 - כתבי עברית בלבד. אנגלית מותרת אך ורק לשמות מותג/דגם (BREMBO, Kia, BOSCH, VARTA).
   אסור לשלב מילים כלליות באנגלית — לא "brake", לא "performance", לא "set", לא "power".
   שם החלק תמיד בעברית ("רפידות בלם", "מסנן שמן") ולעולם לא גם עברית וגם אנגלית לאותו חלק
 - הימנעי מטענות לא מבוססות; עדיף מדויק על פני מרשים
+- אסור להמציא מילים, שמות, כינויים, או פרטים שלא ניתנו לך. אם קיבלת "עובדה אמיתית
+  מהקטלוג" עם שם חלק ויצרן — צטטי אותם בדיוק כפי שניתנו, אסור להחליף אותם במילה
+  נרדפת, תרגום, או כינוי שהמצאת (זו אותה עקרון אמת כמו איסור המצאת מחיר — הוא חל
+  על כל פרט עובדתי, לא רק על המחיר). אם משהו לא ידוע לך, אל תמציאי אותו — כתבי
+  בלעדיו
+- הפתיחה/הקריצה החכמה חייבת להיות ביטוי טבעי וברור בעברית מדוברת אמיתית — לא
+  מטאפורה או דימוי שהמצאת ושלא בטוח שקיים בשפה. אם יש ספק אם ביטוי טבעי וברור
+  לקורא ישראלי ממוצע (למשל דימוי בין חלק רכב לתופעת טבע/עונה שלא ממש מתקשרת),
+  עדיפה תמיד המשפט הפשוט והברור על פני "חוכמה" שיוצאת מבולבלת
+- דקדוק סמיכות: בהפיכת צירוף כמו "מוט ייצוב" או "פח אוויר" ליידוע, ה' היידוע
+  מתווספת למילה השנייה ("מוט הייצוב", "פח האוויר") — לעולם לא לראשונה
+  ("המוט ייצוב" שגוי דקדוקית)
 - כל פוסט חייב להיות שונה בזווית, בפתיחה, בטון — אין תבניות חוזרות, אין אותו משפט פעמיים
 
 מיצוב מותג (מ-dept-positioning, נוסף 2026-07-27) — זווית מרכזית שאפשר לחזור אליה
@@ -4490,6 +4750,69 @@ class SocialMediaManagerAgent(BaseAgent):
     # before a Latin brand ("ה Toyota", "ב AutoSpareFinder", "ל BOSCH"): מ ב ל ה ו ש כ ד.
     # They must be EXEMPT from the space-isolated lone-letter garble check below.
     _NOA_HE_PROCLITICS = set("מבלהושכד")
+
+    # Defense-in-depth for the reader-address rule above (2026-08-12): a prompt rule alone
+    # doesn't reliably hold — found live in production that NOA's own established feminine
+    # persona ("את נועה") bleeds into reader-directed verbs, producing posts that address
+    # the audience as one specific woman ("לחצי", "הזיני", "קבלי", "החליפי", "חפשי", "היי
+    # בטוחה") or inconsistently as one man ("תחליף").
+    #
+    # DELIBERATELY FEMININE-SINGULAR ONLY, and only entries individually tested against
+    # adversarial sentences. Two collision classes killed most of the original candidate
+    # list and are worth remembering before adding more:
+    #   1. Bare MASCULINE-singular imperatives collide constantly with (a) 3rd-person-past
+    #      ("הוא דאג/גלה/נסה" — same unvocalized spelling as the imperative) and (b) common
+    #      nouns/adjectives (לחץ=pressure, הזמן=the-time, כתוב=written, ספר=book,
+    #      שמור=reserved, תחליף=substitute/aftermarket-part — the LAST one is exactly this
+    #      business's own vocabulary). Every bare-masculine form was dropped for this reason,
+    #      even תחליף, the one masculine form directly observed in the regression — the
+    #      prompt-level rule above is the defense against that one, not this regex.
+    #   2. Even feminine-singular forms can collide: לחצי is also "at half-" (לחצי מחיר =
+    #      "at half price" — a real risk in THIS business's pricing copy), גלי is "waves",
+    #      כתבי is "כתבי עת" (journals/periodicals), ספרי is "ספרי הילדים" (children's
+    #      books). All four dropped despite לחצי being in the original regression text.
+    # singular feminine -> plural, applied with Hebrew word-boundaries.
+    _NOA_GENDERED_VERB_MAP = {
+        # observed live in the regression (לחצי excluded — see collision note above)
+        "הזיני": "הזינו",
+        "קבלי": "קבלו",
+        "החליפי": "החליפו", "תחליפי": "תחליפו",
+        "חפשי": "חפשו",
+        "היי": "היו",
+        # tested clean against adversarial sentences (preventive coverage)
+        "בדקי": "בדקו", "תבדקי": "תבדקו",
+        "הזמיני": "הזמינו",
+        "נסי": "נסו",
+        "שמרי": "שמרו",
+        "דאגי": "דאגו",
+        "תני": "תנו",
+        "קחי": "קחו",
+        "שתפי": "שתפו",
+        "בואי": "בואו",
+    }
+    # Allow ONE leading "ו" (vav — "and") directly attached with no space, e.g. "וקבלי"
+    # ("and-[you-f]-receive") — extremely common Hebrew conjunction attachment. Without
+    # this, "וקבלי"/"והיי" were silently skipped because the lookbehind saw the attached ו
+    # as "part of a different word" (bug found in this fix's own first version — testing
+    # against the real regression text, not synthetic examples, caught it).
+    # Deliberately NOT ל here even though it's the same class of proclitic: ל+verb forms
+    # the Hebrew INFINITIVE ("לחפש"=to search, "לבדוק"=to check, "לכתוב"=to write,
+    # "לספר"=to tell, "לשתף"=to share, "לשמור"=to guard) — a correct, already gender-
+    # neutral form that must never be rewritten. Found this collision while reviewing the
+    # fix, not in production; excluding ל avoids it entirely rather than special-casing it.
+    _NOA_GENDERED_VERB_RE = re.compile(
+        r"(?<![א-ת])(ו?)(" + "|".join(sorted(_NOA_GENDERED_VERB_MAP, key=len, reverse=True)) + r")(?![א-ת])"
+    )
+
+    @classmethod
+    def _fix_reader_address_plural(cls, text: str) -> str:
+        """Rewrite singular (masculine or feminine) imperative verbs directed at the reader
+        into plural form. See _NOA_GENDERED_VERB_MAP for why this exists."""
+        if not text:
+            return text
+        return cls._NOA_GENDERED_VERB_RE.sub(
+            lambda m: m.group(1) + cls._NOA_GENDERED_VERB_MAP[m.group(2)], text
+        )
     _NOA_NON_SOCIAL_PATTERNS = (
         "אני כאן לעזור",
         "כדי להתקדם מהר",
@@ -5565,6 +5888,8 @@ class SocialMediaManagerAgent(BaseAgent):
             normalized = cls._repair_low_quality_caption(normalized, platforms=list(platform_set))
 
         normalized = cls._normalize_noa_symbols(normalized)
+        # Safety net for the reader-address rule (2026-08-12) — see _NOA_GENDERED_VERB_MAP.
+        normalized = cls._fix_reader_address_plural(normalized)
         normalized = cls._strip_malformed_links(normalized)
         if "tiktok" in platform_set:
             normalized = cls._enforce_tiktok_ads_policy(normalized)
@@ -5574,9 +5899,23 @@ class SocialMediaManagerAgent(BaseAgent):
         # Final pass: organise into clean blocks (body / CTA / hashtags) with breathing room.
         return cls._restructure_post(normalized)
 
-    async def generate_post(self, topic: str, platform: str, tone: str = "professional") -> str:
+    async def generate_post(
+        self, topic: str, platform: str, tone: str = "professional",
+        creative_angle: Optional[str] = None,
+    ) -> str:
+        """creative_angle (2026-08-15e handoff-completion fix): the specific
+        per-platform strategic direction generate_campaign_plan() produced
+        for THIS platform (Campaign.plan["platform_mix"][platform].creative_angle).
+        Optional and backward-compatible — every pre-existing caller (the
+        daily _noa_marketing_loop, NOA's own chat process(), dry_run previews
+        without a plan) omits it and behaves exactly as before. When present,
+        it constrains the actual generation prompt, not just a log line —
+        see the assertion below and test_creative_angle_reaches_generation_input.
+        """
+        angle_line = f"זווית קריאייטיב שהוגדרה מראש לפלטפורמה הזו (חובה להשתמש בה): {creative_angle}\n" if creative_angle else ""
         core_prompt = (
             f"כתבי פוסט {platform} בנושא {topic} בטון {tone}. "
+            f"{angle_line}"
             "הפוסט חייב להישמע אנושי ולא תבניתי: לפתוח בכאב אמיתי של נהג, "
             "לתת פתרון ברור דרך הפלטפורמה, ולסיים בשאלה אחת מקדמת.\n"
             "הנחיות פלט חובה: החזירי את טקסט הפוסט בלבד — ללא הסבר, "
@@ -5695,9 +6034,10 @@ class SocialMediaManagerAgent(BaseAgent):
         import sqlalchemy as sa
         from social.campaign_manager import (
             get_campaign, update_campaign_status, link_post_to_campaign,
-            prepare_campaign_content, get_campaign_posts,
+            prepare_campaign_content, get_campaign_posts, reject_post_content,
         )
         from social.tools import run_tool
+        from social import coherence_guard
 
         # Per-platform hard limits — content beyond these causes silent failures.
         _PLATFORM_MAX_CHARS = {
@@ -5722,14 +6062,50 @@ class SocialMediaManagerAgent(BaseAgent):
         goal: str = campaign.get("goal") or campaign.get("name") or "חלקי חילוף לרכב"
         tone: str = campaign.get("tone") or "professional"
 
-        # ── dry_run path (UNCHANGED) ───────────────────────────────────────────
+        # Handoff-completion fix (2026-08-15e): read the PERSISTED strategy
+        # (Campaign.plan.platform_mix[].creative_angle) — not a fresh in-memory
+        # object — so the real architecture (SHIRA -> Campaign -> later
+        # execution) is what's actually consumed, matching this method's own
+        # documented "dry_run=False, no approved posts yet" real path. Keyed
+        # by platform name (the only real identifier platform_mix carries —
+        # array position is not guaranteed stable/meaningful). Missing plan,
+        # missing platform_mix, or a platform absent from it all safely yield
+        # "" -> generate_post's creative_angle stays None -> unchanged
+        # pre-existing behavior (backward compatible by construction, not by
+        # a separate code branch).
+        plan_data = campaign.get("plan")
+        if isinstance(plan_data, str):
+            try:
+                plan_data = json.loads(plan_data)
+            except Exception:
+                plan_data = {}
+        if not isinstance(plan_data, dict):
+            plan_data = {}
+        _platform_mix = plan_data.get("platform_mix")
+        creative_angle_by_platform: Dict[str, str] = {}
+        if isinstance(_platform_mix, list):
+            for _item in _platform_mix:
+                if not isinstance(_item, dict):
+                    continue
+                _p = str(_item.get("platform") or "").strip().lower()
+                _angle = str(_item.get("creative_angle") or "").strip()
+                if _p and _angle:
+                    creative_angle_by_platform[_p] = _angle
+
+        # ── dry_run path ────────────────────────────────────────────────────────
         # Generate a content preview without persisting or publishing anything.
+        # Also receives creative_angle (2026-08-15e) so a preview genuinely
+        # previews what real execution below would produce, not a mismatched
+        # generic version of it.
         if dry_run:
             results: List[Dict] = []
             errors: List[str] = []
             for platform in platforms:
                 try:
-                    content = await self.generate_post(topic=goal, platform=platform, tone=tone)
+                    content = await self.generate_post(
+                        topic=goal, platform=platform, tone=tone,
+                        creative_angle=creative_angle_by_platform.get(platform.strip().lower()),
+                    )
                     if not content or len(content.strip()) < 10:
                         errors.append(f"{platform}: empty content generated")
                         continue
@@ -5805,15 +6181,50 @@ class SocialMediaManagerAgent(BaseAgent):
         approved_posts = await get_campaign_posts(db, campaign_id=campaign_id, status="approved")
 
         if not approved_posts:
-            # ── FIRST CALL: generate content and queue for approval ────────────
-            # No approved content exists yet. Generate per-platform content and
-            # store each as pending_approval. Return early — do NOT publish.
+            # ── Idempotency fix (2026-08-15f): before generating, find any
+            # NON-TERMINAL post (pending_approval / approved / published)
+            # already on record per platform. A prior execute_campaign() call
+            # may have already queued content for some or all platforms —
+            # regenerating unconditionally silently duplicated SocialPost rows
+            # (confirmed: repeated calls took a 4-post campaign to 8, then
+            # 12...). REJECTED posts deliberately do NOT block regeneration —
+            # the owner explicitly said no to that specific content
+            # (reject_post_content, social/campaign_manager.py, sets
+            # status='rejected' — a real, distinct, non-blocking state), so a
+            # fresh attempt for that platform is the correct, intended
+            # behavior, not a duplicate.
+            _existing_rows = (await db.execute(
+                sa.text("""
+                    SELECT id, platforms, status FROM social_posts
+                    WHERE campaign_id = CAST(:cid AS uuid)
+                      AND status IN ('pending_approval', 'approved', 'published')
+                """),
+                {"cid": campaign_id},
+            )).fetchall()
+            existing_platform_posts: Dict[str, Dict[str, Any]] = {}
+            for _row in _existing_rows:
+                for _p in (_row.platforms or []):
+                    _pn = str(_p).strip().lower()
+                    if _pn:
+                        existing_platform_posts[_pn] = {
+                            "post_id": str(_row.id), "platform": _pn, "status": _row.status,
+                        }
+
+            # ── Generate content and queue for approval — ONLY for platforms ───
+            # that don't already have a non-terminal post. Return early — do
+            # NOT publish.
             utm = _build_campaign_utm_params(campaign_id)
             content_by_platform: Dict[str, str] = {}
+            flagged_by_platform: Dict[str, Tuple[str, str]] = {}
             errors: List[str] = []
             for platform in platforms:
+                if platform.strip().lower() in existing_platform_posts:
+                    continue  # already queued/approved/published — do not duplicate
                 try:
-                    content = await self.generate_post(topic=goal, platform=platform, tone=tone)
+                    content = await self.generate_post(
+                        topic=goal, platform=platform, tone=tone,
+                        creative_angle=creative_angle_by_platform.get(platform.strip().lower()),
+                    )
                     if not content or len(content.strip()) < 10:
                         errors.append(f"{platform}: empty content generated")
                         continue
@@ -5824,21 +6235,67 @@ class SocialMediaManagerAgent(BaseAgent):
                             campaign_id, platform, len(content), max_chars,
                         )
                         content = content[:max_chars]
+                    # Pre-publish truth guard (2026-08-16 — TikTok BREMBO/
+                    # free-shipping incident): this generation path has no
+                    # mechanism to ground a price/shipping/discount claim in
+                    # real data, so any such claim is flagged rather than
+                    # offered as approvable content — conservative by design
+                    # (see social/coherence_guard.no_fabricated_commercial_claims).
+                    ok, reason = coherence_guard.no_fabricated_commercial_claims(content)
+                    if not ok:
+                        logger.warning(
+                            "NOA execute_campaign %s/%s: TRUTH GUARD FLAGGED — %s",
+                            campaign_id, platform, reason,
+                        )
+                        flagged_by_platform[platform] = (content, reason)
+                        continue
                     content_by_platform[platform] = content
                 except Exception as exc:
                     logger.warning("NOA execute_campaign generate %s/%s: %s", campaign_id, platform, exc)
                     errors.append(f"{platform}: content generation failed — {exc!s:.80}")
 
-            pending = await prepare_campaign_content(
-                db,
-                campaign_id=campaign_id,
-                content_by_platform=content_by_platform,
-                utm_params=utm,
+            pending = (
+                await prepare_campaign_content(
+                    db,
+                    campaign_id=campaign_id,
+                    content_by_platform=content_by_platform,
+                    utm_params=utm,
+                )
+                if content_by_platform else []
             )
 
+            # Flagged content is inserted, then immediately transitioned to
+            # 'rejected' via the EXISTING reject_post_content — the closest
+            # existing safe state (never blocks a future regeneration attempt
+            # for that platform, matches this method's own rejected-does-not-
+            # block-regeneration behavior above) and it never appears in
+            # _list_pending_posts / _resolve_post, so it can never be offered
+            # to the owner as approvable content.
+            if flagged_by_platform:
+                flagged_content = {p: c for p, (c, _r) in flagged_by_platform.items()}
+                flagged_created = await prepare_campaign_content(
+                    db, campaign_id=campaign_id,
+                    content_by_platform=flagged_content, utm_params=utm,
+                )
+                for created in flagged_created:
+                    _p = created.get("platform")
+                    _reason = flagged_by_platform.get(_p, ("", "flagged by truth guard"))[1]
+                    await reject_post_content(
+                        db, post_id=created["post_id"],
+                        reason=f"אוטומטי (בדיקת אמינות): {_reason}",
+                    )
+                    errors.append(f"{_p}: rejected by truth guard — {_reason}")
+
+            # Total queued state for this campaign = pre-existing (untouched,
+            # not regenerated) + newly generated this call. The RESPONSE must
+            # reflect the campaign's real total, even though only genuinely
+            # new platforms were generated above.
+            all_pending = list(existing_platform_posts.values()) + pending
+
             logger.info(
-                "NOA execute_campaign %s: %d posts queued for owner approval",
-                campaign_id, len(pending),
+                "NOA execute_campaign %s: %d posts queued for owner approval "
+                "(%d newly generated, %d already existed)",
+                campaign_id, len(all_pending), len(pending), len(existing_platform_posts),
             )
 
             if pending:
@@ -5851,7 +6308,6 @@ class SocialMediaManagerAgent(BaseAgent):
                     _post_ids = [str(p.get("id", "?"))[:8] for p in pending[:5]]
                     _platform_names = ", ".join(platforms[:4])
                     _msg_lines = [
-                        f"📋 *קמפיין חדש מחכה לאישורך:* {_campaign_name}",
                         f"פוסטים: {len(pending)} | פלטפורמות: {_platform_names}",
                         f"מזהים: {', '.join(_post_ids)}{'...' if len(pending) > 5 else ''}",
                         "לאישור פוסטים: כנס ל-admin ואשר, או השתמש בקונסול:",
@@ -5860,18 +6316,18 @@ class SocialMediaManagerAgent(BaseAgent):
                     _owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
                     if _owner:
                         import asyncio as _asyncio
-                        async def _notify_owner():
+                        async def _notify_owner_of_campaign():
                             try:
-                                from BACKEND_API_ROUTES import _wa_send_quiet as _waq
-                                await _waq(to=_owner, text="\n".join(_msg_lines))
+                                from BACKEND_API_ROUTES import notify_owner as _notify
+                                await _notify(
+                                    "social",
+                                    f"קמפיין חדש מחכה לאישורך: {_campaign_name}",
+                                    "\n".join(_msg_lines),
+                                    severity="info",
+                                )
                             except Exception as _e:
-                                logger.debug("GAP-A owner notify via fallback: %s", _e)
-                                try:
-                                    from social.whatsapp_provider import send_message as _was
-                                    await _was(to=_owner, text="\n".join(_msg_lines))
-                                except Exception:
-                                    pass
-                        _asyncio.create_task(_notify_owner())
+                                logger.debug("GAP-A owner notify failed: %s", _e)
+                        _asyncio.create_task(_notify_owner_of_campaign())
                 except Exception as _notify_exc:
                     logger.debug("GAP-A owner notification skipped: %s", _notify_exc)
 
@@ -5879,13 +6335,19 @@ class SocialMediaManagerAgent(BaseAgent):
                 "campaign_id": campaign_id,
                 "status": "pending_approval",
                 "message": (
-                    f"Content generated for {len(pending)} platform(s). "
+                    f"Content generated for {len(pending)} new platform(s) "
+                    f"({len(all_pending)} total queued for this campaign). "
                     "Awaiting owner approval — use PATCH /api/v1/social-posts/{id}/approve "
                     "for each post, then call execute again."
                 ),
-                "posts_queued": len(pending),
+                # Idempotency fix (2026-08-15f): reflects the campaign's real
+                # TOTAL queued state (pre-existing + newly generated this call),
+                # not just this call's newly-generated subset — a second call
+                # with nothing new to generate must not under-report what the
+                # campaign already has pending.
+                "posts_queued": len(all_pending),
                 "posts_published": 0,
-                "pending_posts": pending,
+                "pending_posts": all_pending,
                 "platforms_attempted": platforms,
                 "results": [],
                 "errors": errors,
@@ -5896,6 +6358,41 @@ class SocialMediaManagerAgent(BaseAgent):
         # Owner has reviewed and approved the queued posts. Publish each one.
         results: List[Dict] = []
         errors: List[str] = []
+
+        def _notify_publish_failure(platform: str, post_id: str, reason: str) -> None:
+            """P2 fix (2026-08-16, production closure): a publish failure here
+            used to be visible ONLY in this method's return dict — silent
+            unless whoever called execute_campaign() happened to read the
+            HTTP/console response. Reuses the EXISTING owner-alert channel
+            (BACKEND_API_ROUTES.notify_owner -> _wa_send_update, quiet-hours-
+            safe, owner-only) — no new notification mechanism. Redis-backed
+            alert_key dedupes repeat failures of the SAME post+platform within
+            the cooldown window (a stuck integration retried every cycle
+            wouldn't spam); a distinct post/platform, or the same one after
+            the cooldown expires (an intentional retry), gets a fresh alert.
+            Fire-and-forget: notification failure must never block/alter the
+            publish flow or post state."""
+            import asyncio as _asyncio
+
+            async def _send():
+                try:
+                    from BACKEND_API_ROUTES import notify_owner as _notify
+                    await _notify(
+                        "social",
+                        f"פרסום נכשל — {platform}",
+                        f"קמפיין {campaign_id[:8]} · פוסט {post_id[:8]} · פלטפורמה: {platform}\n"
+                        f"סיבה: {reason[:200]}\n"
+                        f"הפוסט לא פורסם — נשאר במצב 'approved' (לא אבד, לא פורסם בטעות).\n"
+                        f"אפשר לנסות שוב ע\"י הרצת execute_campaign שוב, או לבדוק את הגדרות הפלטפורמה.",
+                        severity="warning",
+                        alert_key=f"campaign_publish_fail:{post_id}:{platform}",
+                        cooldown_s=3600,
+                    )
+                except Exception as _e:
+                    logger.debug("execute_campaign publish-failure notify skipped: %s", _e)
+
+            _asyncio.create_task(_send())
+
         tool_map = {
             "facebook": "facebook_publish_page_post",
             "instagram": "instagram_publish_post",
@@ -5978,11 +6475,14 @@ class SocialMediaManagerAgent(BaseAgent):
                         "tracking_id": tool_result.analytics_tracking_id,
                     })
                 else:
-                    errors.append(f"{platform}: {tool_result.error or 'publish failed'}")
+                    _reason = tool_result.error or "publish failed"
+                    errors.append(f"{platform}: {_reason}")
+                    _notify_publish_failure(platform, post_id, _reason)
 
             except Exception as exc:
                 logger.warning("NOA execute_campaign publish %s/%s error: %s", campaign_id, platform, exc)
                 errors.append(f"{platform}: {exc!s:.120}")
+                _notify_publish_failure(platform, post_id, str(exc))
 
         published = [r for r in results if r.get("status") == "published"]
         if published:

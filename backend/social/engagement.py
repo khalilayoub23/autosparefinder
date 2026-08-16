@@ -141,15 +141,49 @@ async def mark_skipped(db, item_id: str) -> None:
 
 
 async def pending_for_owner(db, limit: int = 8) -> List[Dict[str, Any]]:
-    """Items NOA has drafted a reply for and is waiting on the owner to approve."""
-    res = await db.execute(_sql("""
-        SELECT id::text, platform, kind, author, message, reply_text, permalink, external_id
-          FROM social_inbox
-         WHERE status = 'pending_approval'
-         ORDER BY created_at DESC
-         LIMIT :lim
-    """), {"lim": limit})
-    return [dict(r._mapping) for r in res.fetchall()]
+    """Items NOA has drafted a reply for and is waiting on the owner to approve.
+
+    PRIORITY (2026-08-15c, feedback loop): a real, deterministic signal — has
+    this exact (platform, author) engaged with us before and gotten a reply
+    (status='replied') — surfaces returning engagers first, ahead of
+    first-time commenters, ahead of pure recency. This is the department's
+    execution -> measurement -> decision -> changed future behavior loop:
+    a REAL past reply (execution) is OBSERVED as the same author coming back
+    (measurement, computed here from social_inbox itself, no new table) and
+    CHANGES which pending item the owner sees and acts on first (decision).
+    Deliberately does NOT touch the reply cap / hand-off logic
+    (NOA_ENGAGEMENT_MAX_REPLIES) — that is an existing, deliberately
+    conservative safety boundary and is out of scope for a queue-ordering
+    signal. Fails open to plain recency ordering if the priority computation
+    itself errors — never blocks the owner from seeing pending items.
+    """
+    try:
+        res = await db.execute(_sql("""
+            SELECT si.id::text, si.platform, si.kind, si.author, si.message,
+                   si.reply_text, si.permalink, si.external_id,
+                   EXISTS (
+                       SELECT 1 FROM social_inbox prior
+                        WHERE prior.platform = si.platform
+                          AND prior.author = si.author
+                          AND prior.status = 'replied'
+                          AND prior.id != si.id
+                   ) AS is_returning_engager
+              FROM social_inbox si
+             WHERE si.status = 'pending_approval'
+             ORDER BY is_returning_engager DESC, si.created_at DESC
+             LIMIT :lim
+        """), {"lim": limit})
+        return [dict(r._mapping) for r in res.fetchall()]
+    except Exception as exc:
+        log("pending_for_owner: priority query failed, falling back to plain recency:", str(exc)[:150])
+        res = await db.execute(_sql("""
+            SELECT id::text, platform, kind, author, message, reply_text, permalink, external_id
+              FROM social_inbox
+             WHERE status = 'pending_approval'
+             ORDER BY created_at DESC
+             LIMIT :lim
+        """), {"lim": limit})
+        return [dict(r._mapping) for r in res.fetchall()]
 
 
 async def resolve_inbox(db, token: str) -> Dict[str, Any] | None:
@@ -787,7 +821,20 @@ _REPLY_SYS = {
 
 
 async def draft_reply_text(item: Dict[str, Any]) -> str:
-    """Draft NOA's reply to one inbound item. Returns '' if it can't (caller skips)."""
+    """Draft NOA's reply to one inbound item. Returns '' if it can't (caller skips).
+
+    Digital Department grounding (2026-08-15d merge audit): this call used to
+    be entirely standalone — _REPLY_SYS below is NOA's persona, but nothing
+    connected it to the same brand/positioning/context skills that ground
+    her scheduled posts (task_type="social_post" in _noa_marketing_loop).
+    A commenter can ask exactly the kind of question those skills guard
+    against ("do you have a loyalty program?", "why should I trust you?"),
+    and this path had zero access to those real facts. Now injects
+    task_type="social_reply" (registry.py: ["brand","context"] — narrower
+    than social_post's 3, since positioning's differentiation angle doesn't
+    fit a 1-2 sentence reactive reply). Fails open exactly like every other
+    real caller of this module — a loader problem must never block a reply.
+    """
     text = (item.get("text") or "").strip()
     if not text:
         return ""
@@ -801,6 +848,11 @@ async def draft_reply_text(item: Dict[str, Any]) -> str:
               f"Commenter: {author}\n"
               f"Their comment: {text}\n\n"
               "Write ONLY the reply text, nothing else.")
+    try:
+        from digital_department import build_prompt_with_context as _bpwc
+        prompt = _bpwc(prompt, agent="noa", task_type="social_reply")
+    except Exception as _dde:
+        log("draft_reply digital_department context skipped:", str(_dde)[:120])
     try:
         out = await hf_text(prompt, system=_REPLY_SYS[lang], max_tokens=220, timeout=60.0)
     except Exception as e:

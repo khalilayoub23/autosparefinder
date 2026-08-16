@@ -106,6 +106,27 @@ out = _clean_wa_reply("1. Analyze the Request\n2. Drafting the Post\n"
 check("no CoT leak", bool(re.search(r"Analyze|Drafting|Final Output", out)), False)
 check("keeps the answer", "מסנן שמן לקורולה" in out, True)
 
+print("\nA9. campaign command routes to SHIRA's real delegate_to_social_campaign()")
+print("    (2026-08-15d merge audit — the owner console's ONLY campaign-creation path,")
+print("    previously zero; must not be confused with the deterministic post approve/")
+print("    reject commands or accidentally caught by an unrelated pattern)")
+import agents.owner_console as _oc  # noqa: E402
+_CAMP_RE = re.compile(r"^(campaign|קמפיין)\b\s*(.*)$", re.I | re.S)
+for msg, expect_topic in [
+    ("קמפיין רפידות בלם לחורף", "רפידות בלם לחורף"),
+    ("campaign winter brake pads", "winter brake pads"),
+    ("קמפיין", ""),  # no topic given — handler must ask for one, not crash
+]:
+    m = _CAMP_RE.match(msg)
+    check(f"campaign regex matches {msg[:26]!r}", bool(m), True)
+    if m:
+        check(f"campaign topic parsed from {msg[:26]!r}", m.group(2).strip(), expect_topic)
+# must not collide with the existing approve/reject/post patterns
+for msg in ["אשר abc123", "approve abc123", "דחה abc123", "פוסטים", "תגובות"]:
+    check(f"campaign regex does NOT match {msg!r}", bool(_CAMP_RE.match(msg)), False)
+check("_create_campaign_via_shira exists", hasattr(_oc, "_create_campaign_via_shira"), True)
+check("help text documents the command", "*קמפיין [נושא]*" in _oc._HELP, True)
+
 if "--live" in sys.argv:
     print("\nB. LIVE — driving the real LLM path")
     from agents.owner_console import process_owner_message as P

@@ -10,6 +10,18 @@ verified clean). Fills the "Analytics & Revenue Manager" gap from the
 original architecture proposal — re-scoped from generic SaaS/enterprise
 KPIs to a marketplace model.
 
+**Not the same thing as `backend/social/feedback_analyzer.py`** (2026-08-15
+architecture audit): this file is the KNOWLEDGE/GUARDRAIL layer — how to
+think about KPIs, when to trust a number, how to investigate an anomaly.
+It never computes a real number itself. `feedback_analyzer.py` is the real,
+deterministic data service — it actually collects engagement from real
+platforms (scheduled every 6h) and actually computes real aggregates,
+including `compute_topic_performance()`, which is the one place real social
+analytics currently change what NOA generates next (a deterministic
+weighting of `_noa_marketing_loop`'s topic choice — not an LLM reading
+numbers in a prompt). If you need a real number, read that module or its
+`analytics_reports`/`engagement_events` tables — never estimate one here.
+
 ## KPI Framework (marketplace-specific, not SaaS)
 <!-- priority: low -->
 

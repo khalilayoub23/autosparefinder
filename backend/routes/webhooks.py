@@ -2,12 +2,18 @@
 Webhooks — /api/v1/webhooks/* endpoints extracted from BACKEND_API_ROUTES.py.
 
 Endpoints:
-  POST /api/v1/webhooks/whatsapp  (no JWT auth — Twilio calls this directly)
-    POST /api/v1/webhooks/telegram  (no JWT auth — Telegram calls this directly)
+  POST /api/v1/webhooks/whatsapp      (no JWT auth — Twilio calls this directly)
+  POST /api/v1/webhooks/telegram      (no JWT auth — Telegram calls this directly)
+  GET  /api/v1/webhooks/tiktok        (TikTok URL verification challenge)
+  POST /api/v1/webhooks/tiktok        (TikTok event notifications)
+  GET  /api/v1/webhooks/tiktok-oauth  (TikTok OAuth callback for Content Posting API)
 """
 import os
 import json
 import asyncio
+import hmac
+import hashlib
+import logging
 from datetime import datetime, timezone, timedelta
 from uuid import UUID as _UUID
 from typing import Dict, Any
@@ -26,10 +32,141 @@ from BACKEND_DATABASE_MODELS import (
 )
 from BACKEND_AI_AGENTS import process_user_message
 
+logger = logging.getLogger("webhooks")
+
 TELEGRAM_ADMIN_TOKEN = os.getenv("TELEGRAM_ADMIN_BOT_TOKEN", "")
 TELEGRAM_OWNER_ID = os.getenv("TELEGRAM_OWNER_CHAT_ID", "")
+TIKTOK_CLIENT_KEY    = os.getenv("TIKTOK_CLIENT_KEY", "")
+TIKTOK_CLIENT_SECRET = os.getenv("TIKTOK_CLIENT_SECRET", "")
+# Optional: TIKTOK_WEBHOOK_SECRET for HMAC verification of event payloads
+TIKTOK_WEBHOOK_SECRET = os.getenv("TIKTOK_WEBHOOK_SECRET", "")
 
 router = APIRouter()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TikTok webhook — URL verification (GET) + event handler (POST)
+# Registered in TikTok Developer Portal as callback URL:
+#   https://www.autosparefinder.co.il/api/v1/webhooks/tiktok
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/api/v1/webhooks/tiktok")
+async def tiktok_webhook_verify(request: Request):
+    """
+    TikTok sends a GET with ?challenge=<token> to verify the endpoint.
+    We must return {"challenge": <token>} with HTTP 200.
+    """
+    challenge = request.query_params.get("challenge", "")
+    logger.info("tiktok_webhook verify challenge=%s", challenge[:40] if challenge else "(none)")
+    # Return the challenge to complete URL verification
+    return {"challenge": challenge}
+
+
+@router.post("/api/v1/webhooks/tiktok")
+async def tiktok_webhook_event(request: Request):
+    """
+    Receives TikTok event notifications (video.publish.complete, etc.).
+    Verifies HMAC signature if TIKTOK_WEBHOOK_SECRET is set.
+    """
+    body = await request.body()
+
+    # Optional HMAC verification (TikTok sends X-TikTok-Signature header)
+    if TIKTOK_WEBHOOK_SECRET:
+        sig_header = request.headers.get("X-TikTok-Signature", "")
+        if sig_header.startswith("sha256="):
+            expected = "sha256=" + hmac.new(
+                TIKTOK_WEBHOOK_SECRET.encode(),
+                body,
+                hashlib.sha256,
+            ).hexdigest()
+            if not hmac.compare_digest(expected, sig_header):
+                logger.warning("tiktok_webhook invalid HMAC signature")
+                raise HTTPException(status_code=403, detail="invalid signature")
+
+    try:
+        payload = json.loads(body)
+    except Exception:
+        payload = {}
+
+    event = payload.get("event", "")
+    publish_id = payload.get("publish_id", "") or payload.get("data", {}).get("publish_id", "")
+    status = payload.get("status", "") or payload.get("data", {}).get("status", "")
+
+    logger.info("tiktok_event event=%s publish_id=%s status=%s", event, publish_id, status)
+
+    # Handle video.publish.complete
+    if event in ("video.publish.complete", "video.upload.complete"):
+        if status == "success":
+            logger.info("tiktok_event: video published successfully publish_id=%s", publish_id)
+        else:
+            logger.warning("tiktok_event: video publish failed publish_id=%s status=%s", publish_id, status)
+
+    return {"received": True, "event": event}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TikTok OAuth callback — handles redirect after user grants video.publish scope
+# Redirect URI registered in TikTok Developer Portal:
+#   https://www.autosparefinder.co.il/api/v1/webhooks/tiktok-oauth
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/api/v1/webhooks/tiktok-oauth")
+async def tiktok_oauth_callback(request: Request):
+    """
+    TikTok redirects here after the user authorises the app.
+    Exchanges the ?code= for an access token and stores it.
+    """
+    code  = request.query_params.get("code", "")
+    state = request.query_params.get("state", "")
+    error = request.query_params.get("error", "")
+
+    if error:
+        logger.error("tiktok_oauth error=%s", error)
+        return {"ok": False, "error": error}
+
+    if not code:
+        raise HTTPException(status_code=400, detail="missing code")
+
+    logger.info("tiktok_oauth code received state=%s", state)
+
+    # Exchange code for access token
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.post(
+                "https://open.tiktokapis.com/v2/oauth/token/",
+                data={
+                    "client_key":     TIKTOK_CLIENT_KEY,
+                    "client_secret":  TIKTOK_CLIENT_SECRET,
+                    "code":           code,
+                    "grant_type":     "authorization_code",
+                    "redirect_uri":   "https://www.autosparefinder.co.il/api/v1/webhooks/tiktok-oauth",
+                },
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+        data = r.json()
+        access_token  = data.get("access_token", "")
+        refresh_token = data.get("refresh_token", "")
+        open_id       = data.get("open_id", "")
+        scope         = data.get("scope", "")
+        logger.info("tiktok_oauth token obtained open_id=%s scope=%s", open_id, scope)
+
+        if access_token:
+            # 2026-08-16 fix: this used to be a bare "# TODO: persist" — the
+            # token was exchanged correctly then thrown away, so even a
+            # completed owner consent left nothing usable for an analytics
+            # collector. Persisted via the EXISTING SystemSetting table (no
+            # new table) through tiktok_publisher.store_user_token().
+            from social.tiktok_publisher import store_user_token
+            async with async_session_factory() as db:
+                await store_user_token(
+                    db, access_token=access_token, refresh_token=refresh_token,
+                    open_id=open_id, expires_in=data.get("expires_in", 0), scope=scope,
+                )
+
+        return {"ok": True, "open_id": open_id, "scope": scope}
+    except Exception as exc:
+        logger.error("tiktok_oauth token exchange failed: %s", exc)
+        raise HTTPException(status_code=500, detail="token exchange failed")
 
 # Owner-console background replies. The event loop keeps only a WEAK reference to a
 # task, so anything spawned with `asyncio.create_task` and not stored can be collected
@@ -105,7 +242,9 @@ async def telegram_admin_webhook(request: Request):
                           #    facebook/instagram/x/discord/reddit/tiktok. not_configured
                           #    (no token yet) → hand back copy-paste-ready text.
                           for p in ([plat] if plat not in ("post", "", "telegram") else []):
-                              if p in registry.MEDIA_REQUIRED and not media_url:
+                              # TikTok: registry auto-generates a video when no media_url —
+                              # never skip it for "media required" (registry handles it).
+                              if p in registry.MEDIA_REQUIRED and not media_url and p != "tiktok":
                                   notes.append(f"⚠️ {p}: דרושה תמונה/וידאו (אין מדיה לפוסט)")
                                   results[p] = {"ok": False, "error": "media required"}
                                   continue
@@ -966,6 +1105,45 @@ async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_pii_
         except Exception as exc:
             print(f"[Telegram] Dedup check skipped: {exc}")
             return {"ok": True, "ignored": True, "reason": "redis_unavailable"}
+
+    # message_reaction_count (2026-08-16 — deep Telegram capability
+    # verification): campaign-post reaction totals, a real engagement signal
+    # previously invisible to the bot (not in allowed_updates). Handled here
+    # rather than in feedback_analyzer.py's poll-based collectors because
+    # Telegram only PUSHES this data via webhook — there is no read-only
+    # "get reaction count for message X" call to poll. Correlates via
+    # social_posts.external_post_ids['telegram'] == message_id (set at
+    # publish time by registry.dispatch) and uses social_posts.campaign_id
+    # (the FK) for attribution — same principle as every other collector
+    # this pass, just event-driven instead of scheduled.
+    reaction_update = update.get("message_reaction_count")
+    if isinstance(reaction_update, dict):
+        try:
+            r_chat = reaction_update.get("chat") or {}
+            r_message_id = reaction_update.get("message_id")
+            reactions = reaction_update.get("reactions") or []
+            total = sum(int(r.get("total_count") or 0) for r in reactions)
+            if r_message_id is not None:
+                import sqlalchemy as sa
+                from social.feedback_analyzer import _insert_engagement_event
+                async with async_session_factory() as cat_db:
+                    row = (await cat_db.execute(sa.text("""
+                        SELECT id, campaign_id FROM social_posts
+                        WHERE external_post_ids->>'telegram' = :mid
+                          AND 'telegram' = ANY(platforms)
+                        LIMIT 1
+                    """), {"mid": str(r_message_id)})).fetchone()
+                    if row:
+                        await _insert_engagement_event(
+                            cat_db, post_id=str(row.id), platform="telegram",
+                            external_post_id=str(r_message_id),
+                            campaign_id=str(row.campaign_id) if row.campaign_id else None,
+                            likes=total,
+                        )
+                        await cat_db.commit()
+        except Exception as exc:
+            logger.warning("telegram_webhook: message_reaction_count handling failed: %s", exc)
+        return {"ok": True, "handled": "message_reaction_count"}
 
     message = update.get("message") or update.get("edited_message")
     if not isinstance(message, dict):

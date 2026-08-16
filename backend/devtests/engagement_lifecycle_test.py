@@ -64,6 +64,72 @@ async def main():
         assert not any(p["id"] == iid for p in pend2), "skipped item must leave pending"
         print("mark_skipped: OK")
 
+        # --- Feedback loop: returning-engager priority (2026-08-15c) ---
+        from sqlalchemy import text as _t2
+        await db.execute(_t2(
+            "DELETE FROM social_inbox WHERE external_id IN "
+            "('TEST_LIFECYCLE_HIST','TEST_LIFECYCLE_RETURN','TEST_LIFECYCLE_FRESH')"
+        ))
+        await db.commit()
+
+        # A prior REPLIED item from "Returning Customer" — real past execution.
+        hist_id = await eng.record_item(db, {
+            "platform": "facebook", "kind": "comment",
+            "external_id": "TEST_LIFECYCLE_HIST", "parent_id": "TEST_POST_HIST",
+            "author": "Returning Customer", "text": "תודה על העזרה הקודמת!",
+            "permalink": "https://example.com/c/hist",
+        })
+        await db.commit()
+        await eng.mark_replied(db, hist_id, "fake_reply_id")
+
+        # A NEW pending item from the SAME returning author.
+        return_id = await eng.record_item(db, {
+            "platform": "facebook", "kind": "comment",
+            "external_id": "TEST_LIFECYCLE_RETURN", "parent_id": "TEST_POST_RETURN",
+            "author": "Returning Customer", "text": "שאלה נוספת בבקשה",
+            "permalink": "https://example.com/c/return",
+        })
+        await db.commit()
+        await eng.set_draft(db, return_id, "בטח, איך אפשר לעזור?")
+
+        # A NEWER pending item (created after) from a first-time, non-returning author.
+        await asyncio.sleep(0.05)
+        fresh_id = await eng.record_item(db, {
+            "platform": "facebook", "kind": "comment",
+            "external_id": "TEST_LIFECYCLE_FRESH", "parent_id": "TEST_POST_FRESH",
+            "author": "First Time Commenter", "text": "יש לכם מצבר לקורולה?",
+            "permalink": "https://example.com/c/fresh",
+        })
+        await db.commit()
+        await eng.set_draft(db, fresh_id, "כן! נבדוק זמינות עבורך")
+
+        pend3 = await eng.pending_for_owner(db, limit=20)
+        by_id = {p["id"]: p for p in pend3}
+        assert return_id in by_id and fresh_id in by_id, "both new pending items must be listed"
+        assert by_id[return_id]["is_returning_engager"] is True, (
+            "an author with a prior REPLIED item must be flagged is_returning_engager"
+        )
+        assert by_id[fresh_id]["is_returning_engager"] is False, (
+            "a first-time author must NOT be flagged is_returning_engager"
+        )
+        idx_return = next(i for i, p in enumerate(pend3) if p["id"] == return_id)
+        idx_fresh = next(i for i, p in enumerate(pend3) if p["id"] == fresh_id)
+        assert idx_return < idx_fresh, (
+            "the RETURNING engager must be surfaced before the more-recent first-time "
+            "commenter — real prior execution (a sent reply) must change ordering, "
+            "not just recency"
+        )
+        print("pending_for_owner: returning-engager correctly prioritized over more-recent first-timer")
+
+        await eng.mark_skipped(db, return_id)
+        await eng.mark_skipped(db, fresh_id)
+        await db.execute(_t2(
+            "DELETE FROM social_inbox WHERE external_id IN "
+            "('TEST_LIFECYCLE_HIST','TEST_LIFECYCLE_RETURN','TEST_LIFECYCLE_FRESH')"
+        ))
+        await db.commit()
+        print("returning-engager test cleanup: OK")
+
         # poll_once must not raise with nothing configured
         summ = await eng.poll_once(db)
         print("poll_once (no creds):", summ)
