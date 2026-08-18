@@ -4,265 +4,266 @@
     "canonical_name": "טויוטה",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 584001
+    "total_records": 584762
   },
   {
     "canonical_key": "יונדאי",
     "canonical_name": "יונדאי",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 566881
+    "total_records": 566839
   },
   {
     "canonical_key": "קיה",
     "canonical_name": "קיה",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 433957
+    "total_records": 434153
   },
   {
     "canonical_key": "מזדה",
     "canonical_name": "מזדה",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 283464
+    "total_records": 283050
   },
   {
     "canonical_key": "סקודה",
     "canonical_name": "סקודה",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 251278
-  },
-  {
-    "canonical_key": "סוזוקי",
-    "canonical_name": "סוזוקי",
-    "aliases": [],
-    "variant_count": 1,
-    "total_records": 182741
+    "total_records": 251308
   },
   {
     "canonical_key": "מיצובישי",
     "canonical_name": "מיצובישי",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 179240
+    "total_records": 178980
+  },
+  {
+    "canonical_key": "סוזוקי",
+    "canonical_name": "סוזוקי",
+    "aliases": [],
+    "variant_count": 1,
+    "total_records": 158553
   },
   {
     "canonical_key": "ניסאן",
     "canonical_name": "ניסאן",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 146536
+    "total_records": 146376
   },
   {
     "canonical_key": "פולקסווגן",
     "canonical_name": "פולקסווגן",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 115989
+    "total_records": 115859
   },
   {
     "canonical_key": "סיאט",
     "canonical_name": "סיאט",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 115304
+    "total_records": 115323
   },
   {
     "canonical_key": "רנו",
     "canonical_name": "רנו",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 96639
+    "total_records": 96379
   },
   {
     "canonical_key": "הונדה",
     "canonical_name": "הונדה",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 94684
+    "total_records": 94538
   },
   {
     "canonical_key": "שברולט",
     "canonical_name": "שברולט",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 89220
+    "total_records": 88926
   },
   {
     "canonical_key": "סיטרואן",
     "canonical_name": "סיטרואן",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 85431
+    "total_records": 85347
   },
   {
     "canonical_key": "סובארו",
     "canonical_name": "סובארו",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 84581
+    "total_records": 84603
   },
   {
     "canonical_key": "מרצדס",
     "canonical_name": "מרצדס",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 81851
+    "total_records": 80766
   },
   {
     "canonical_key": "פיג ו",
     "canonical_name": "פיג'ו",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 76436
+    "total_records": 76260
   },
   {
     "canonical_key": "פורד",
     "canonical_name": "פורד",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 74658
+    "total_records": 74285
   },
   {
     "canonical_key": "צ רי",
     "canonical_name": "צ'רי",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 72817
+    "total_records": 73205
   },
   {
     "canonical_key": "ב מ וו",
     "canonical_name": "ב מ וו",
-    "aliases": [
-      "ב מ וו אנגליה"
-    ],
-    "variant_count": 2,
-    "total_records": 64987
+    "aliases": [],
+    "variant_count": 1,
+    "total_records": 65084
   },
   {
     "canonical_key": "בי ווי די",
     "canonical_name": "בי ווי די",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 61454
+    "total_records": 61898
   },
   {
     "canonical_key": "אאודי",
-    "canonical_name": "אאודי גרמניה",
-    "aliases": [
-      "אאודי"
-    ],
-    "variant_count": 2,
-    "total_records": 53971
-  },
-  {
-    "canonical_key": "מ ג",
-    "canonical_name": "מ.ג",
+    "canonical_name": "אאודי",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 40779
+    "total_records": 50292
   },
   {
     "canonical_key": "ג אקו",
     "canonical_name": "ג'אקו",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 40334
+    "total_records": 41514
+  },
+  {
+    "canonical_key": "מ ג",
+    "canonical_name": "מ.ג",
+    "aliases": [],
+    "variant_count": 1,
+    "total_records": 41326
   },
   {
     "canonical_key": "טסלה",
     "canonical_name": "טסלה",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 38638
+    "total_records": 38650
   },
   {
     "canonical_key": "אופל",
     "canonical_name": "אופל",
-    "aliases": [
-      "אופל גרמניה"
-    ],
-    "variant_count": 2,
-    "total_records": 36288
+    "aliases": [],
+    "variant_count": 1,
+    "total_records": 36275
   },
   {
     "canonical_key": "איסוזו",
     "canonical_name": "איסוזו",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 28988
-  },
-  {
-    "canonical_key": "דאציה",
-    "canonical_name": "דאציה",
-    "aliases": [],
-    "variant_count": 1,
-    "total_records": 28337
+    "total_records": 28982
   },
   {
     "canonical_key": "וולבו",
     "canonical_name": "וולבו",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 27116
+    "total_records": 27122
   },
   {
     "canonical_key": "גילי",
     "canonical_name": "גילי",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 25817
+    "total_records": 25999
   },
   {
     "canonical_key": "פיאט",
     "canonical_name": "פיאט",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 25568
+    "total_records": 25491
+  },
+  {
+    "canonical_key": "דאצ יה",
+    "canonical_name": "דאצ'יה",
+    "aliases": [],
+    "variant_count": 1,
+    "total_records": 24440
+  },
+  {
+    "canonical_key": "מרוטי סוזוקי",
+    "canonical_name": "מרוטי סוזוקי",
+    "aliases": [],
+    "variant_count": 1,
+    "total_records": 24049
   },
   {
     "canonical_key": "לקסוס",
     "canonical_name": "לקסוס",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 23676
+    "total_records": 23720
   },
   {
     "canonical_key": "דייהטסו",
     "canonical_name": "דייהטסו",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 22578
+    "total_records": 22501
   },
   {
     "canonical_key": "קרייזלר",
     "canonical_name": "קרייזלר",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 16824
+    "total_records": 16803
   },
   {
     "canonical_key": "אקספנג",
     "canonical_name": "אקספנג",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 14547
+    "total_records": 14652
   },
   {
     "canonical_key": "ג יפ",
     "canonical_name": "ג'יפ",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 11493
+    "total_records": 11543
   },
   {
     "canonical_key": "רובר",
     "canonical_name": "רובר",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 9022
+    "total_records": 9016
   },
   {
     "canonical_key": "אלפא רומיאו",
@@ -276,140 +277,154 @@
     "canonical_name": "קאדילאק",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 6656
+    "total_records": 6669
   },
   {
     "canonical_key": "לינק אנד קו",
     "canonical_name": "לינק אנד קו",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 6497
+    "total_records": 6571
   },
   {
     "canonical_key": "זיקר",
     "canonical_name": "זיקר",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 6047
+    "total_records": 6075
   },
   {
     "canonical_key": "פורשה",
     "canonical_name": "פורשה",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 5771
+    "total_records": 5784
   },
   {
     "canonical_key": "לנדרובר",
     "canonical_name": "לנדרובר",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 5426
+    "total_records": 5546
   },
   {
     "canonical_key": "סאנגיונג",
     "canonical_name": "סאנגיונג",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 5246
+    "total_records": 5234
   },
   {
     "canonical_key": "סרס",
     "canonical_name": "סרס",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 4963
+    "total_records": 4960
   },
   {
     "canonical_key": "דיפאל",
     "canonical_name": "דיפאל",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 4597
+    "total_records": 4686
   },
   {
     "canonical_key": "קיי גי מוביליט",
     "canonical_name": "קיי גי מוביליט",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 4584
+    "total_records": 4605
+  },
+  {
+    "canonical_key": "דאציה",
+    "canonical_name": "דאציה",
+    "aliases": [],
+    "variant_count": 1,
+    "total_records": 3903
+  },
+  {
+    "canonical_key": "אודי",
+    "canonical_name": "אודי",
+    "aliases": [],
+    "variant_count": 1,
+    "total_records": 3692
   },
   {
     "canonical_key": "סמארט",
     "canonical_name": "סמארט",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 3646
+    "total_records": 3647
   },
   {
     "canonical_key": "מקסוס",
     "canonical_name": "מקסוס",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 3612
+    "total_records": 3614
   },
   {
     "canonical_key": "אורה",
     "canonical_name": "אורה",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 3468
+    "total_records": 3576
   },
   {
     "canonical_key": "אומודה",
     "canonical_name": "אומודה",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 3334
+    "total_records": 3478
   },
   {
     "canonical_key": "ליפמוטור",
     "canonical_name": "ליפמוטור",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 3200
-  },
-  {
-    "canonical_key": "ביואיק",
-    "canonical_name": "ביואיק",
-    "aliases": [],
-    "variant_count": 1,
-    "total_records": 3139
+    "total_records": 3236
   },
   {
     "canonical_key": "קופרה",
     "canonical_name": "קופרה",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 3134
+    "total_records": 3190
+  },
+  {
+    "canonical_key": "ביואיק",
+    "canonical_name": "ביואיק",
+    "aliases": [],
+    "variant_count": 1,
+    "total_records": 3116
   },
   {
     "canonical_key": "דונגפנג",
     "canonical_name": "דונגפנג",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 2770
+    "total_records": 2821
   },
   {
     "canonical_key": "יגואר",
     "canonical_name": "יגואר",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 2545
+    "total_records": 2542
   },
   {
     "canonical_key": "סקיוול",
     "canonical_name": "סקיוול",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 2513
+    "total_records": 2502
   },
   {
     "canonical_key": "איווייס",
     "canonical_name": "איווייס",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 2078
+    "total_records": 2076
   },
   {
     "canonical_key": "איויאיסי",
@@ -423,65 +438,70 @@
     "canonical_name": "גי.אי.סי",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 1622
+    "total_records": 1621
   },
   {
     "canonical_key": "אף אי דאבל יו",
     "canonical_name": "אף אי דאבל יו",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 1581
+    "total_records": 1596
   },
   {
     "canonical_key": "וויה",
     "canonical_name": "וויה",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 1391
+    "total_records": 1424
   },
   {
     "canonical_key": "די אס",
-    "canonical_name": "די אס צרפת",
-    "aliases": [
-      "די אס"
-    ],
-    "variant_count": 2,
-    "total_records": 1289
+    "canonical_name": "די אס",
+    "aliases": [],
+    "variant_count": 1,
+    "total_records": 1290
   },
   {
     "canonical_key": "פורתינג",
     "canonical_name": "פורתינג",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 1183
+    "total_records": 1181
+  },
+  {
+    "canonical_key": "מרצדס בנץ",
+    "canonical_name": "מרצדס בנץ",
+    "aliases": [],
+    "variant_count": 1,
+    "total_records": 1173
   },
   {
     "canonical_key": "וואי",
     "canonical_name": "וואי",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 1027
+    "total_records": 1025
   },
   {
     "canonical_key": "מזארטי",
     "canonical_name": "מזארטי",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 919
+    "total_records": 918
   },
   {
     "canonical_key": "ג אק",
     "canonical_name": "ג'אק",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 836
+    "total_records": 834
   },
   {
     "canonical_key": "פוטון",
     "canonical_name": "פוטון",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 823
+    "total_records": 825
   },
   {
     "canonical_key": "פולסטאר",
@@ -491,25 +511,25 @@
     "total_records": 590
   },
   {
-    "canonical_key": "ג י אמ סי",
-    "canonical_name": "ג'י.אמ.סי",
-    "aliases": [],
-    "variant_count": 1,
-    "total_records": 508
-  },
-  {
     "canonical_key": "איון",
     "canonical_name": "איון",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 507
+    "total_records": 519
+  },
+  {
+    "canonical_key": "ג י אמ סי",
+    "canonical_name": "ג'י.אמ.סי",
+    "aliases": [],
+    "variant_count": 1,
+    "total_records": 509
   },
   {
     "canonical_key": "ניאו רכב",
     "canonical_name": "ניאו רכב",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 476
+    "total_records": 477
   },
   {
     "canonical_key": "אוואטר",
@@ -544,14 +564,14 @@
     "canonical_name": "איי אם",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 298
+    "total_records": 309
   },
   {
     "canonical_key": "לנצ יה",
     "canonical_name": "לנצ'יה",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 285
+    "total_records": 284
   },
   {
     "canonical_key": "סאאב",
@@ -575,13 +595,6 @@
     "total_records": 244
   },
   {
-    "canonical_key": "האמר",
-    "canonical_name": "האמר",
-    "aliases": [],
-    "variant_count": 1,
-    "total_records": 225
-  },
-  {
     "canonical_key": "גרייט וול",
     "canonical_name": "גרייט וול",
     "aliases": [],
@@ -593,7 +606,14 @@
     "canonical_name": "יודו",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 167
+    "total_records": 168
+  },
+  {
+    "canonical_key": "האמר ג מ",
+    "canonical_name": "האמר ג.מ",
+    "aliases": [],
+    "variant_count": 1,
+    "total_records": 139
   },
   {
     "canonical_key": "נטע",
@@ -603,11 +623,11 @@
     "total_records": 107
   },
   {
-    "canonical_key": "לאמבורגיני",
-    "canonical_name": "לאמבורגיני",
+    "canonical_key": "למבורגיני",
+    "canonical_name": "למבורגיני",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 98
+    "total_records": 100
   },
   {
     "canonical_key": "פיאג ו",
@@ -617,11 +637,18 @@
     "total_records": 97
   },
   {
+    "canonical_key": "האמר",
+    "canonical_name": "האמר",
+    "aliases": [],
+    "variant_count": 1,
+    "total_records": 87
+  },
+  {
     "canonical_key": "פאריזון",
     "canonical_name": "פאריזון",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 81
+    "total_records": 86
   },
   {
     "canonical_key": "טלקו",
@@ -631,15 +658,15 @@
     "total_records": 72
   },
   {
-    "canonical_key": "באייק",
-    "canonical_name": "באייק",
-    "aliases": [],
-    "variant_count": 1,
-    "total_records": 69
-  },
-  {
     "canonical_key": "רולס רויס",
     "canonical_name": "רולס-רויס",
+    "aliases": [],
+    "variant_count": 1,
+    "total_records": 71
+  },
+  {
+    "canonical_key": "באייק",
+    "canonical_name": "באייק",
     "aliases": [],
     "variant_count": 1,
     "total_records": 69
@@ -649,7 +676,7 @@
     "canonical_name": "מאן",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 67
+    "total_records": 68
   },
   {
     "canonical_key": "ארקפוקס",
@@ -663,7 +690,7 @@
     "canonical_name": "דאבל יו אם איי",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 58
+    "total_records": 60
   },
   {
     "canonical_key": "אל אי וי סי",
@@ -673,6 +700,13 @@
     "total_records": 56
   },
   {
+    "canonical_key": "אלפין",
+    "canonical_name": "אלפין",
+    "aliases": [],
+    "variant_count": 1,
+    "total_records": 50
+  },
+  {
     "canonical_key": "די אף אס קיי",
     "canonical_name": "די.אף.אס.קיי",
     "aliases": [],
@@ -680,11 +714,11 @@
     "total_records": 47
   },
   {
-    "canonical_key": "אלפין",
-    "canonical_name": "אלפין",
+    "canonical_key": "קוואן",
+    "canonical_name": "קוואן",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 46
+    "total_records": 47
   },
   {
     "canonical_key": "ניאו",
@@ -703,13 +737,6 @@
   {
     "canonical_key": "סנטרו",
     "canonical_name": "סנטרו",
-    "aliases": [],
-    "variant_count": 1,
-    "total_records": 36
-  },
-  {
-    "canonical_key": "קוואן",
-    "canonical_name": "קוואן",
     "aliases": [],
     "variant_count": 1,
     "total_records": 36
@@ -736,13 +763,6 @@
     "total_records": 25
   },
   {
-    "canonical_key": "אמ סי סי",
-    "canonical_name": "אמ.סי.סי.",
-    "aliases": [],
-    "variant_count": 1,
-    "total_records": 24
-  },
-  {
     "canonical_key": "ג יי אמ סי",
     "canonical_name": "ג'יי.אמ.סי",
     "aliases": [],
@@ -757,18 +777,18 @@
     "total_records": 24
   },
   {
+    "canonical_key": "אמ סי סי",
+    "canonical_name": "אמ.סי.סי",
+    "aliases": [],
+    "variant_count": 1,
+    "total_records": 23
+  },
+  {
     "canonical_key": "לוטוס",
     "canonical_name": "לוטוס",
     "aliases": [],
     "variant_count": 1,
     "total_records": 13
-  },
-  {
-    "canonical_key": "לינקסיס",
-    "canonical_name": "לינקסיס",
-    "aliases": [],
-    "variant_count": 1,
-    "total_records": 12
   },
   {
     "canonical_key": "מיני",
@@ -778,11 +798,11 @@
     "total_records": 12
   },
   {
-    "canonical_key": "פולקסוגן",
-    "canonical_name": "פולקסוגן",
+    "canonical_key": "לינקסיס",
+    "canonical_name": "לינקסיס",
     "aliases": [],
     "variant_count": 1,
-    "total_records": 12
+    "total_records": 11
   },
   {
     "canonical_key": "אינאוס",
@@ -841,6 +861,13 @@
     "total_records": 8
   },
   {
+    "canonical_key": "פונטיאק",
+    "canonical_name": "פונטיאק",
+    "aliases": [],
+    "variant_count": 1,
+    "total_records": 8
+  },
+  {
     "canonical_key": "צ אנג יאנג",
     "canonical_name": "צ'אנג יאנג",
     "aliases": [],
@@ -883,8 +910,8 @@
     "total_records": 4
   },
   {
-    "canonical_key": "ט אי סי",
-    "canonical_name": "ט אי סי",
+    "canonical_key": "טי אי סי",
+    "canonical_name": "טי אי סי",
     "aliases": [],
     "variant_count": 1,
     "total_records": 4
@@ -904,20 +931,6 @@
     "total_records": 4
   },
   {
-    "canonical_key": "פונטיאק ארה ב",
-    "canonical_name": "פונטיאק ארה\"ב",
-    "aliases": [],
-    "variant_count": 1,
-    "total_records": 4
-  },
-  {
-    "canonical_key": "פונטיאק",
-    "canonical_name": "פונטיאק ארהב\"",
-    "aliases": [],
-    "variant_count": 1,
-    "total_records": 4
-  },
-  {
     "canonical_key": "אקס אי וי",
     "canonical_name": "אקס אי וי",
     "aliases": [],
@@ -927,6 +940,13 @@
   {
     "canonical_key": "דה טומאסו",
     "canonical_name": "דה טומאסו",
+    "aliases": [],
+    "variant_count": 1,
+    "total_records": 2
+  },
+  {
+    "canonical_key": "דימלרקריזלר",
+    "canonical_name": "דימלרקריזלר",
     "aliases": [],
     "variant_count": 1,
     "total_records": 2

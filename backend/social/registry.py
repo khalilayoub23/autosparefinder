@@ -10,9 +10,19 @@ platform — they just call dispatch(platform, ...). Adding a platform = add its
 
 telegram/tiktok keep their existing module APIs and are adapted to the uniform contract.
 
-Author: AutoSpareFinder Agent — Last Updated: 2026-07-19
+TikTok video auto-generation: when dispatch("tiktok") is called without a media_url, a
+branded product video is composed on-the-fly (video_gen.make_stitch_product_video, which
+falls back to the CPU template). This means TikTok posts NEVER silently fail for "media
+required" — they always produce a video.
+
+Author: AutoSpareFinder Agent — Last Updated: 2026-08-13
 """
+import logging
+import os
 import re
+import tempfile
+
+logger = logging.getLogger("social.registry")
 
 from social import (discord_publisher, facebook_publisher, instagram_publisher,
                     reddit_publisher, x_publisher)
@@ -68,10 +78,46 @@ async def dispatch(platform: str, content: str, *, media_url: str | None = None,
                 "error": None if r.get("ok") else str(r.get("description") or r.get("error"))[:180],
                 "not_configured": "not configured" in str(r.get("description", "")).lower()}
     if p == "tiktok":
-        from social.tiktok_publisher import post_text_content
         caption, tags = _split_caption_hashtags(content)
-        r = await post_text_content(caption=caption, hashtags=hashtags or tags)
-        return {"ok": bool(r.get("ok")), "id": r.get("post_id") or r.get("publish_id"),
+        all_tags = hashtags or tags
+
+        # If caller supplies a ready-made video URL, download and publish it directly.
+        if media_url:
+            try:
+                import urllib.request as _ur
+                video_bytes = _ur.urlopen(media_url, timeout=30).read()
+                from social.tiktok_publisher import publish_video
+                r = await publish_video(video_bytes, caption=caption, hashtags=all_tags)
+                return {"ok": bool(r.get("ok")), "id": r.get("publish_id"),
+                        "error": None if r.get("ok") else str(r.get("error"))[:180],
+                        "not_configured": str(r.get("error", "")).lower().startswith("no access token")}
+            except Exception as exc:
+                logger.warning("tiktok: media_url download failed (%s), generating video", exc)
+
+        # Auto-generate a branded product video from the post caption.
+        tmp_mp4 = tempfile.mktemp(suffix=".mp4")
+        try:
+            from social.video_gen import make_stitch_product_video
+            await make_stitch_product_video(
+                tmp_mp4,
+                headline=caption[:60] if caption else "AutoSpareFinder",
+                caption=content,
+            )
+            with open(tmp_mp4, "rb") as f:
+                video_bytes = f.read()
+        except Exception as exc:
+            logger.error("tiktok: video generation failed: %s", exc)
+            return {"ok": False, "id": None, "not_configured": False,
+                    "error": f"video generation failed: {exc}"}
+        finally:
+            try:
+                os.remove(tmp_mp4)
+            except Exception:
+                pass
+
+        from social.tiktok_publisher import publish_video
+        r = await publish_video(video_bytes, caption=caption, hashtags=all_tags)
+        return {"ok": bool(r.get("ok")), "id": r.get("publish_id"),
                 "error": None if r.get("ok") else str(r.get("error"))[:180],
                 "not_configured": str(r.get("error", "")).lower().startswith("no access token")}
 

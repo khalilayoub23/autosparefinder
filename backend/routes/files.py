@@ -2,8 +2,10 @@
 
 import os
 import uuid
+from pathlib import Path
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi.responses import Response, HTMLResponse
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +14,75 @@ from BACKEND_AUTH_SECURITY import get_current_user, get_current_verified_user
 from routes.utils import _scan_bytes_for_virus
 
 router = APIRouter()
+
+_UPLOADS_DIR = Path("/app/uploads")
+
+# ── WhatsApp QR code live page (temp, no auth — for device pairing) ──
+# wa_qr_raw.txt is synced from the whatsapp-bridge container by the host-side qr_sync loop
+_WA_QR_TXT = _UPLOADS_DIR / "wa_qr_raw.txt"
+_WA_QR_PNG = _UPLOADS_DIR / "wa_qr.png"
+
+def _refresh_wa_qr_png() -> bool:
+    """Regenerate wa_qr.png from the bridge's current qr.txt. Returns True on success."""
+    try:
+        import qrcode as _qrcode
+        data = _WA_QR_TXT.read_text().strip()
+        if not data:
+            return False
+        qr = _qrcode.QRCode(version=None, error_correction=_qrcode.constants.ERROR_CORRECT_L, box_size=12, border=4)
+        qr.add_data(data)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        img.save(str(_WA_QR_PNG))
+        return True
+    except Exception:
+        return False
+
+@router.get("/api/v1/whatsapp-qr")
+async def whatsapp_qr_page():
+    """Auto-refreshing QR page for WhatsApp device pairing. Remove after pairing."""
+    _refresh_wa_qr_png()
+    html = """<!doctype html><html><head><meta charset=utf-8>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WhatsApp QR — AutoSpareFinder</title>
+<meta http-equiv="refresh" content="18">
+<style>body{background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;margin:0;font-family:sans-serif}
+img{max-width:360px;width:90vw;border:4px solid #25D366;border-radius:8px}
+p{color:#555;margin-top:16px;font-size:14px;text-align:center}</style>
+</head><body>
+<h2 style="color:#25D366">WhatsApp Pairing QR</h2>
+<img src="/api/v1/whatsapp-qr-img" alt="QR Code">
+<p>Refreshes automatically every 18 seconds.<br>Open WhatsApp → Linked Devices → Link a Device → scan this QR.</p>
+</body></html>"""
+    return HTMLResponse(html)
+
+@router.get("/api/v1/whatsapp-qr-img")
+async def whatsapp_qr_img():
+    """Serve the current WhatsApp QR as a PNG image."""
+    _refresh_wa_qr_png()
+    if not _WA_QR_PNG.exists():
+        raise HTTPException(status_code=503, detail="QR not ready yet")
+    data = _WA_QR_PNG.read_bytes()
+    return Response(content=data, media_type="image/png",
+                    headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"})
+
+# ── Public demo video download (no auth — used for TikTok review submission) ──
+@router.get("/api/v1/download/tiktok-demo")
+async def download_tiktok_demo():
+    """Serve the TikTok integration demo video for review submission."""
+    path = _UPLOADS_DIR / "tiktok_demo.mp4"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Demo video not found")
+    data = path.read_bytes()
+    return Response(
+        content=data,
+        media_type="video/mp4",
+        headers={
+            "Content-Disposition": 'attachment; filename="autosparefinder_tiktok_demo.mp4"',
+            "Cache-Control": "public, max-age=3600",
+            "Content-Length": str(len(data)),
+        },
+    )
 
 @router.post("/api/v1/files/upload")
 async def upload_file(

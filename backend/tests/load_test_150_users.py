@@ -31,6 +31,14 @@ BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
 TIMEOUT  = 20.0
 CONCURRENCY_LIMIT = 30
 
+# Total simulated users, split web/whatsapp/telegram in the same 60/20/20 ratio as
+# the original 90/30/30 150-user run. Override with NUM_USERS env (2026-08-13,
+# added so the same script can run a 100-user pass without a second file).
+NUM_USERS = int(os.getenv("NUM_USERS", "150"))
+N_WEB = round(NUM_USERS * 0.6)
+N_WA  = round(NUM_USERS * 0.2)
+N_TG  = NUM_USERS - N_WEB - N_WA
+
 # ── Real Israeli customer personas ───────────────────────────────────────────
 PERSONAS = [
     # (name, car_make, car_model, car_year, part_en, part_he, budget_ils)
@@ -80,11 +88,11 @@ def get_persona(user_id: int) -> dict:
         "is_hebrew": any('֐' <= c <= '׿' for c in p[0]),
     }
 
-PLATFORMS = (["web"] * 90 + ["whatsapp"] * 30 + ["telegram"] * 30)
+PLATFORMS = (["web"] * N_WEB + ["whatsapp"] * N_WA + ["telegram"] * N_TG)
 random.shuffle(PLATFORMS)
 
-WA_PHONES   = [f"+9725{random.randint(10000000, 99999999)}" for _ in range(30)]
-TG_CHAT_IDS = [str(random.randint(100000000, 999999999)) for _ in range(30)]
+WA_PHONES   = [f"+9725{random.randint(10000000, 99999999)}" for _ in range(N_WA)]
+TG_CHAT_IDS = [str(random.randint(100000000, 999999999)) for _ in range(N_TG)]
 
 
 # ── Per-user event log ────────────────────────────────────────────────────────
@@ -237,13 +245,12 @@ async def web_user_journey(session: UserSession, client: httpx.AsyncClient, shar
     session.log("checkout", ok, ms, code,
                 f"order={'ok' if session.order_id else 'fail'}")
 
-    # Payment
+    # Payment — order_id is a QUERY param here (route has no request-body model),
+    # not a JSON body; the old json= call 422'd every time (found 2026-08-13).
     if session.order_id:
         data, ms, code = await timed_request(
             client, "POST", f"{BASE_URL}/api/v1/payments/create-checkout",
-            json={"order_id": str(session.order_id),
-                  "success_url": f"{BASE_URL}/success",
-                  "cancel_url": f"{BASE_URL}/cancel"},
+            params={"order_id": str(session.order_id)},
             headers=auth
         )
         session.log("payment", code in (200, 201), ms, code,
@@ -284,19 +291,21 @@ async def whatsapp_user_journey(session: UserSession, client: httpx.AsyncClient,
         ]
 
     for i, msg_text in enumerate(messages):
+        # Payload shape matches social/whatsapp_provider.parse_incoming() — the
+        # current Baileys-bridge JSON format. The old Twilio-style form payload
+        # (From/To/Body/MessageSid) predates the 2026-07-29 move off Twilio; the
+        # webhook now does `await request.json()` and would silently no-op on
+        # form data (caught by a bare except → fake 200), producing a false
+        # "pass" that never touched the chat brain. Fixed 2026-08-13.
         payload = {
-            "From": f"whatsapp:{phone}",
-            "To": "whatsapp:+14155238886",
-            "Body": msg_text,
-            "MessageSid": f"SM{uuid.uuid4().hex[:32]}",
-            "AccountSid": "AC_test",
-            "NumMedia": "0",
-            "ProfileName": p["name"],
+            "from": phone,
+            "body": msg_text,
+            "profile_name": p["name"],
+            "message_id": f"LOADTEST{uuid.uuid4().hex[:24]}",
         }
         data, ms, code = await timed_request(
             client, "POST", f"{BASE_URL}/api/v1/webhooks/whatsapp",
-            data=payload,
-            headers={"Content-Type": "application/x-www-form-urlencoded"}
+            json=payload,
         )
         session.log(f"wa_msg_{i+1}", code in (200, 204), ms, code,
                     msg_text[:30].strip())
@@ -391,7 +400,7 @@ async def run_user(user_id: int, platform: str, sem: asyncio.Semaphore,
 def generate_report(sessions: List[UserSession]) -> str:
     lines = [
         "", "=" * 75,
-        "  AUTOSPAREFINDER — 150-USER REALISTIC LOAD TEST REPORT",
+        f"  AUTOSPAREFINDER — {NUM_USERS}-USER REALISTIC LOAD TEST REPORT",
         f"  Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         "=" * 75, "",
     ]
@@ -461,11 +470,11 @@ def generate_report(sessions: List[UserSession]) -> str:
 # ── MAIN ──────────────────────────────────────────────────────────────────────
 async def main():
     print("\n" + "=" * 75)
-    print("  AutoSpareFinder — 150-User Realistic Load Test")
+    print(f"  AutoSpareFinder — {NUM_USERS}-User Realistic Load Test")
     print(f"  Target  : {BASE_URL}")
     print(f"  Started : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 75)
-    print(f"  90 Web | 30 WhatsApp | 30 Telegram  |  cap={CONCURRENCY_LIMIT} concurrent")
+    print(f"  {N_WEB} Web | {N_WA} WhatsApp | {N_TG} Telegram  |  cap={CONCURRENCY_LIMIT} concurrent")
     print(f"  Users have real personas, car details, Hebrew+English queries")
     print("=" * 75 + "\n")
 
@@ -476,16 +485,35 @@ async def main():
         try:
             import uuid as _uuid
             sys.path.insert(0, "/app")
-            from BACKEND_AUTH_SECURITY import create_access_token
+            from BACKEND_AUTH_SECURITY import create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES
             import asyncpg
             PII_DB = os.environ["DATABASE_PII_URL"].replace("postgresql+asyncpg://", "postgresql://")
             async def _get_token():
                 conn = await asyncpg.connect(PII_DB)
                 user = await conn.fetchrow("SELECT id FROM users WHERE email='test@autosparefinder.com' LIMIT 1")
+                if not user:
+                    await conn.close()
+                    return ""
+                session_id = str(_uuid.uuid4())
+                token = create_access_token(str(user["id"]), session_id)
+                # A bare JWT isn't enough — /customers/* routes check a REAL
+                # `user_sessions` row (session-revocation check), which only a real
+                # login normally creates. Insert one directly so this pre-auth token
+                # validates the same way a genuine login-issued token would (found
+                # 2026-08-13: every cart/checkout call 401'd "Session has been
+                # revoked" until this row existed).
+                await conn.execute(
+                    """INSERT INTO user_sessions
+                       (id, user_id, token, device_fingerprint, ip_address, user_agent,
+                        is_trusted_device, expires_at, last_used_at, created_at)
+                       VALUES ($1, $2, $3, 'loadtest', '127.0.0.1', 'load_test_150_users',
+                               false, NOW() + make_interval(mins => $4), NOW(), NOW())""",
+                    _uuid.uuid4(), user["id"], token, ACCESS_TOKEN_EXPIRE_MINUTES,
+                )
                 await conn.close()
-                return create_access_token(str(user["id"]), str(_uuid.uuid4())) if user else ""
+                return token
             shared_token = await _get_token()
-            print(f"  ✅ Token generated (user=test@autosparefinder.com)")
+            print(f"  ✅ Token generated + session registered (user=test@autosparefinder.com)")
         except Exception as e:
             print(f"  ❌ Token generation failed: {e}")
             print("  Set PRE_AUTH_TOKEN env var manually")
@@ -516,7 +544,7 @@ async def main():
     web_ok = sum(1 for s in sessions if s.platform == "web" and s.completed)
     wa_ok = sum(1 for s in sessions if s.platform == "whatsapp" and s.completed)
     tg_ok = sum(1 for s in sessions if s.platform == "telegram" and s.completed)
-    print(f"\n  Final: {total_ok}/150  (Web {web_ok}/90 | WhatsApp {wa_ok}/30 | Telegram {tg_ok}/30)\n")
+    print(f"\n  Final: {total_ok}/{NUM_USERS}  (Web {web_ok}/{N_WEB} | WhatsApp {wa_ok}/{N_WA} | Telegram {tg_ok}/{N_TG})\n")
 
 
 if __name__ == "__main__":

@@ -40,7 +40,7 @@ CEREBRAS_FALLBACK_MODEL = os.getenv("CEREBRAS_FALLBACK_MODEL", "zai-glm-4.7")
 CEREBRAS_BASE         = "https://api.cerebras.ai/v1"
 GEMINI_API_KEY      = os.getenv("GEMINI_API_KEY", "")
 WHATSAPP_GEMINI_KEY = os.getenv("WHATSAPP_GEMINI_API_KEY", GEMINI_API_KEY)  # dedicated key for webhook
-GEMINI_VIS_MODEL    = os.getenv("GEMINI_VIS_MODEL", "gemini-2.0-flash")
+GEMINI_VIS_MODEL    = os.getenv("GEMINI_VIS_MODEL", "gemini-2.5-flash")
 GEMINI_BASE         = "https://generativelanguage.googleapis.com/v1beta/models"
 GROQ_API_KEY        = os.getenv("GROQ_API_KEY", "")
 GROQ_AUDIO_MODEL    = os.getenv("GROQ_AUDIO_MODEL", "whisper-large-v3-turbo")
@@ -68,7 +68,7 @@ INFER_BASE   = "https://router.huggingface.co/hf-inference/models"
 # Model used for background enrichment tasks (part naming, Hebrew translation, category suggestions).
 # Phi-3-mini via Featherless AI provider — use :featherless-ai suffix to route to the correct provider.
 # Confirmed on HF Router inference providers page (huggingface.co/{model}?inference_provider=featherless-ai)
-# Fallback chain: Phi-3-mini → Groq llama-3.1-8b-instant (configured in hf_router_text).
+# Fallback chain: Phi-3-mini → Groq (model from GROQ_MODEL env, configured in hf_router_text).
 HF_ENRICH_MODEL = os.getenv("HF_ENRICH_MODEL", "microsoft/Phi-3-mini-4k-instruct:featherless-ai")
 
 # Cache TTL (seconds).  0 = disabled.
@@ -378,7 +378,7 @@ async def _cerebras_call(
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority: bool = False, model: str | None = None, max_tokens: int = 2000, temperature: "float | None" = None, reasoning_effort: "str | None" = None) -> str:
+async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority: bool = False, model: str | None = None, max_tokens: int = 2000, temperature: "float | None" = None, reasoning_effort: "str | None" = None, skip_fallback_model: bool = False) -> str:
     """Chat completion via HF Router. Cached in Redis for _TEXT_CACHE_TTL seconds.
     priority=True bypasses the background-job semaphore (use for webhook/realtime calls).
     max_tokens: raise for large structured outputs — reasoning models (gpt-oss)
@@ -442,8 +442,11 @@ async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority
         else:
             _PRIORITY_SEMAPHORE.release()
     if resp.status_code == 429:
-        # Try Cerebras fallback model (reasoning model zai-glm-4.7) before external providers
-        if CEREBRAS_FALLBACK_MODEL and CEREBRAS_FALLBACK_MODEL != selected_model:
+        # Try Cerebras fallback model (reasoning model zai-glm-4.7) before external providers.
+        # SKIP for customer-facing fast agents (skip_fallback_model=True) — zai-glm-4.7 is a
+        # reasoning model that ignores customer-service system prompts and produces wrong-context
+        # replies (e.g. parts-finder response inside orders_agent, 2026-08-11 audit).
+        if CEREBRAS_FALLBACK_MODEL and CEREBRAS_FALLBACK_MODEL != selected_model and not skip_fallback_model:
             logger.warning("hf_text: Cerebras primary 429 — trying fallback model %s", CEREBRAS_FALLBACK_MODEL)
             try:
                 result = await _cerebras_call(prompt, system, CEREBRAS_FALLBACK_MODEL, timeout, priority, temperature, reasoning_effort)
@@ -451,6 +454,8 @@ async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority
                 return result
             except Exception as fb_err:
                 logger.warning("hf_text: Cerebras fallback also failed: %s", fb_err)
+        elif skip_fallback_model and CEREBRAS_FALLBACK_MODEL != selected_model:
+            logger.warning("hf_text: Cerebras primary 429 — skip_fallback_model=True, going directly to Gemini/GROQ")
         if GEMINI_API_KEY and not _gemini_cb_is_open():
             logger.warning("hf_text: Cerebras 429 — falling back to Gemini")
             async with _GEMINI_SEMAPHORE:
@@ -478,8 +483,11 @@ async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority
 
 
 async def hf_text_fast(prompt: str, system: str = "", timeout: float = 90.0, priority: bool = False, model: str | None = None, temperature: "float | None" = None, reasoning_effort: "str | None" = None) -> str:
-    """Compatibility wrapper used by agents code-paths."""
-    return await hf_text(prompt=prompt, system=system, timeout=timeout, priority=priority, model=model, temperature=temperature, reasoning_effort=reasoning_effort)
+    """Customer-facing fast path — skips the reasoning model fallback (zai-glm-4.7).
+    Reasoning models ignore customer-service system prompts and produce wrong-context replies
+    for orders/security/marketing agents. Goes directly to Gemini/GROQ on 429 (faster + correct).
+    Root-fixed 2026-08-11."""
+    return await hf_text(prompt=prompt, system=system, timeout=timeout, priority=priority, model=model, temperature=temperature, reasoning_effort=reasoning_effort, skip_fallback_model=True)
 
 
 async def hf_router_text(prompt: str, system: str = "", timeout: float = 45.0, model: str | None = None) -> str:
@@ -527,8 +535,7 @@ async def hf_router_text(prompt: str, system: str = "", timeout: float = 45.0, m
         # Router quota hit — fall back to Groq as last resort
         if GROQ_API_KEY:
             logger.warning("hf_router_text: HF Router 429 — falling back to Groq")
-            return await groq_text(prompt=prompt, system=system, timeout=timeout,
-                                   model="llama-3.1-8b-instant")
+            return await groq_text(prompt=prompt, system=system, timeout=timeout)
         raise_for_status_safe(resp)
 
     raise_for_status_safe(resp)
@@ -897,7 +904,7 @@ async def gemini_text(
     prompt: str,
     system: str = "",
     timeout: float = 60.0,
-    model: str = "gemini-2.0-flash",
+    model: str = "gemini-2.5-flash",
 ) -> str:
     """
     Creative text generation via Gemini Flash.
@@ -943,7 +950,7 @@ async def gemini_text(
 
 async def whatsapp_gemini_text(prompt: str, system: str = "", timeout: float = 60.0) -> str:
     """Gemini call using the dedicated WHATSAPP_GEMINI_API_KEY — isolated from background job quota."""
-    model = "gemini-2.0-flash"
+    model = "gemini-2.5-flash"
     if not WHATSAPP_GEMINI_KEY:
         raise RuntimeError("WHATSAPP_GEMINI_API_KEY not set")
     cache_key = _cache_key("wagem", model, system, prompt)
@@ -977,7 +984,7 @@ async def gemini_web_search(
     query: str,
     system: str = "",
     timeout: float = 60.0,
-    model: str = "gemini-2.0-flash",
+    model: str = "gemini-2.5-flash",
 ) -> dict:
     """
     REAL web search grounded via Gemini's Google Search tool.

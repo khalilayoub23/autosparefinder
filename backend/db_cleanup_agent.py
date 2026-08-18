@@ -662,15 +662,16 @@ async def _notify_owner_pending_keywords(pending: list) -> None:
     except Exception:
         pass  # Redis down → still notify rather than stay silent
     try:
-        from BACKEND_API_ROUTES import _wa_send_quiet
+        from BACKEND_API_ROUTES import notify_owner
         owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
         if not owner:
             return
         top = ", ".join(f"{p['token']}→{p['category']}" for p in pending[:5])
-        await _wa_send_quiet(
-            to=owner,
-            text=(f"🔤 {len(pending)} מילות סיווג חדשות ממתינות לאישורך: {top}"
-                  f"\nכתוב *מילים* לרשימה ואישור."),
+        await notify_owner(
+            "harvest",
+            f"{len(pending)} מילות סיווג חדשות ממתינות לאישורך",
+            f"{top}\nכתוב *מילים* לרשימה ואישור.",
+            severity="info",
         )
     except Exception as exc:
         logger.warning("owner keyword notification failed: %s", exc)

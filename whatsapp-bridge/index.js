@@ -226,6 +226,32 @@ app.get('/groups', async (_, res) => {
   }
 })
 
+// Create a new WhatsApp group from THIS account and add the given participant(s) —
+// added 2026-08-13 so the owner's "updates group" (see /groups above) can be
+// provisioned automatically instead of asking the owner to create it by hand on
+// his phone. Body: { subject, participants: ["9725XXXXXXXX", ...] }.
+// Returns { ok, jid, subject }.
+app.post('/group/create', async (req, res) => {
+  if (!waSocket || !waSocket.user) {
+    return res.status(503).json({ ok: false, error: 'not connected' })
+  }
+  const { subject, participants } = req.body || {}
+  if (!subject || !Array.isArray(participants) || participants.length === 0) {
+    return res.status(400).json({ ok: false, error: 'Missing subject or participants[]' })
+  }
+  try {
+    const jids = participants.map((p) => {
+      const digits = String(p).replace(/\D/g, '')
+      return (digits.startsWith('0') ? '972' + digits.slice(1) : digits) + '@s.whatsapp.net'
+    })
+    const meta = await waSocket.groupCreate(subject, jids)
+    console.log('[Bridge] Created group', meta.id, subject)
+    res.json({ ok: true, jid: meta.id, subject: meta.subject || subject })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String(err && err.message || err) })
+  }
+})
+
 app.post('/typing', async (req, res) => {
   const { to, reply_jid } = req.body
   if (!waSocket || (!to && !reply_jid)) {

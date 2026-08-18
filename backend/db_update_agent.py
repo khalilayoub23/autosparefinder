@@ -4849,7 +4849,7 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
                 _ck = f"autospare:alert_cooldown:dbagent_task_errors:{_sig}"
                 if not await _r.exists(_ck):
                     await _r.set(_ck, "1", ex=86400)
-                    _lines = [f"🛠️ *db_update_agent — {err_count} משימות נכשלו במחזור האחרון*"]
+                    _lines = []
                     for r in _err_tasks[:8]:
                         _lines.append(f"• {r.get('task','?')}: {str(r.get('error',''))[:120]}")
                     if len(_err_tasks) > 8:
@@ -4858,11 +4858,15 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
                     _owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
                     if _owner:
                         try:
-                            from BACKEND_API_ROUTES import _wa_send_quiet as _waq
-                            await _waq(to=_owner, text="\n".join(_lines))
-                        except Exception:
-                            from social.whatsapp_provider import send_message as _was
-                            await _was(to=_owner, text="\n".join(_lines))
+                            from BACKEND_API_ROUTES import notify_owner as _notify
+                            await _notify(
+                                "health",
+                                f"db_update_agent — {err_count} משימות נכשלו במחזור האחרון",
+                                "\n".join(_lines),
+                                severity="warning",
+                            )
+                        except Exception as _ne:
+                            logger.warning("run_all_tasks error-alert notify_owner failed: %s", _ne)
             except Exception as _alert_exc:
                 logger.warning("run_all_tasks error-alert failed: %s", _alert_exc)
         # Publish final stats to shared memory

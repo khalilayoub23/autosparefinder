@@ -398,7 +398,7 @@ async def enrich_pending_parts(db: AsyncSession, limit: int = 200) -> Dict[str, 
         prompt = _build_batch_prompt(batch)
         async with _ai_sem:
             for provider_fn, kwargs in [
-                (groq_text,      {"model": "llama-3.1-8b-instant", "timeout": 30.0}),
+                (groq_text,      {"timeout": 30.0}),
                 (hf_router_text, {"timeout": 60.0}),
                 (hf_text,        {"timeout": 60.0}),
             ]:

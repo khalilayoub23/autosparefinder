@@ -1086,24 +1086,93 @@ async def _rex_dispatch_loop() -> None:
         await asyncio.sleep(900)  # 15 min
 
 
+_PLAYWRIGHT_MAX_CONCURRENT = int(os.getenv("PLAYWRIGHT_MAX_CONCURRENT", "2"))
+# Each Chrome instance spawns ~12–15 OS processes (main, zygote×2, GPU, network,
+# storage, renderer×N, crashpad×2). Alert if headless Chrome count exceeds:
+_CHROME_PROC_ALERT_THRESHOLD = _PLAYWRIGHT_MAX_CONCURRENT * 18
+
+
+def _count_chrome_headless_procs() -> tuple[int, list[int]]:
+    """Return (count_of_running_headless_chrome_main_procs, list_of_pids)."""
+    pids: list[int] = []
+    try:
+        for entry in os.scandir("/proc"):
+            if not entry.name.isdigit():
+                continue
+            try:
+                cmdline = open(f"/proc/{entry.name}/cmdline", "rb").read().replace(b"\x00", b" ").decode(errors="replace")
+                if "chrome" in cmdline and "--headless" in cmdline and "--type=" not in cmdline:
+                    pids.append(int(entry.name))
+            except (PermissionError, FileNotFoundError):
+                pass
+    except Exception:
+        pass
+    return len(pids), pids
+
+
 async def _zombie_reaper_loop() -> None:
-    """Periodically reap zombie child processes (from subprocess.Popen imports)."""
+    """
+    Supervised loop — two jobs every 60 s:
+    1. Reap zombie child processes left by Playwright/subprocess (waitpid WNOHANG).
+    2. Monitor headless Chrome main-process count. If it exceeds
+       PLAYWRIGHT_MAX_CONCURRENT × 18, kill the oldest instance (longest-running)
+       and alert the owner — a safety net for leaked scraper browsers.
+    """
     import os as _os
+    import signal as _signal
+
     while True:
-        try:
-            reaped = 0
-            while True:
-                pid, _ = _os.waitpid(-1, _os.WNOHANG)
-                if pid == 0:
-                    break
-                reaped += 1
-            if reaped:
-                print(f"[zombie_reaper] reaped {reaped} child processes", flush=True)
-        except ChildProcessError:
-            pass
-        except Exception:
-            pass
         await asyncio.sleep(60)
+        try:
+            # ── 1. Zombie reaping ──────────────────────────────────────────────
+            reaped = 0
+            try:
+                while True:
+                    pid, _ = _os.waitpid(-1, _os.WNOHANG)
+                    if pid <= 0:
+                        break
+                    reaped += 1
+            except ChildProcessError:
+                pass
+            if reaped:
+                print(f"[zombie_reaper] reaped {reaped} child process(es)", flush=True)
+
+            # ── 2. Chrome headless watchdog ────────────────────────────────────
+            running_count, headless_pids = _count_chrome_headless_procs()
+            if running_count > _CHROME_PROC_ALERT_THRESHOLD:
+                print(
+                    f"[zombie_reaper] WARNING: {running_count} headless Chrome main procs "
+                    f"(threshold {_CHROME_PROC_ALERT_THRESHOLD}) — killing oldest",
+                    flush=True,
+                )
+                # Kill the oldest (by /proc mtime — earliest create time)
+                try:
+                    oldest = min(headless_pids, key=lambda p: os.stat(f"/proc/{p}").st_ctime)
+                    _os.kill(oldest, _signal.SIGKILL)
+                    print(f"[zombie_reaper] killed orphaned headless Chrome PID {oldest}", flush=True)
+                except Exception as kill_exc:
+                    print(f"[zombie_reaper] kill failed: {kill_exc}", flush=True)
+
+                # Alert owner once per 6h. Was previously `from agents.owner_console import
+                # _wa_send_quiet` — that name doesn't exist in that module (ImportError),
+                # so this alert had never once reached the owner; the surrounding bare
+                # `except: pass` swallowed it silently every time. Fixed 2026-08-13 by
+                # routing through the shared notify_owner (module-level, Redis-backed
+                # cooldown — also drops the in-memory _WA_COOLDOWN dict that reset on
+                # every restart).
+                await notify_owner(
+                    "harvest",
+                    f"Chrome watchdog: {running_count} תהליכים headless זוהו",
+                    f"חריגה מהמגבלה ({_PLAYWRIGHT_MAX_CONCURRENT}). התהליך הישן ביותר נהרג אוטומטית. בדוק לוגים של הסקרייפר.",
+                    severity="warning",
+                    alert_key="chrome_watchdog",
+                    cooldown_s=21600,
+                )
+            elif running_count > 0:
+                print(f"[zombie_reaper] Chrome headless: {running_count} main proc(s) running (ok)", flush=True)
+
+        except Exception as exc:
+            print(f"[zombie_reaper] error: {exc}", flush=True)
 
 
 async def _car_parts_ie_harvester_loop() -> None:
@@ -1263,12 +1332,13 @@ async def _weekly_maintenance_loop() -> None:
                 problems.append("בדיקת התאמה נכשלה:\n" + "\n".join(fails[:5]))
 
             if problems:
-                owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
-                if owner:
-                    await _wa_send_quiet(to=owner, text=(
-                        "🧰 *תחזוקה שבועית — נדרשת תשומת לב*\n"
-                        + (f"מוזגו {merged:,} כפילויות חדשות.\n" if merged else "")
-                        + "\n".join(problems)[:900]))
+                await notify_owner(
+                    "harvest",
+                    "תחזוקה שבועית — נדרשת תשומת לב",
+                    (f"מוזגו {merged:,} כפילויות חדשות.\n" if merged else "")
+                    + "\n".join(problems)[:900],
+                    severity="warning",
+                )
             else:
                 logger.info("[weekly_maint] clean (merged=%s) — no owner message", merged)
 
@@ -1792,6 +1862,18 @@ async def _amayama_server_browser_loop() -> None:
         try:
             xvfb_alive = subprocess.run(["pgrep", "-f", f"Xvfb {display}"], capture_output=True).returncode == 0
             if not xvfb_alive:
+                # ROOT FIX 2026-08-12: an Xvfb killed without a clean exit (container
+                # restart, OOM) leaves /tmp/.X{N}-lock behind. pgrep correctly reports
+                # "not running", but the NEXT Xvfb refuses to bind: "Server is already
+                # active for display 99 ... remove /tmp/.X99-lock". Safe to remove — we
+                # just confirmed via pgrep that nothing is actually holding it.
+                _x_lock = f"/tmp/.X{display.lstrip(':')}-lock"
+                if os.path.exists(_x_lock):
+                    try:
+                        os.remove(_x_lock)
+                        print(f"[amayama_server_browser] removed stale {_x_lock}", flush=True)
+                    except Exception as _xe:
+                        print(f"[amayama_server_browser] could not remove {_x_lock}: {_xe}", flush=True)
                 print("[amayama_server_browser] starting Xvfb", flush=True)
                 subprocess.Popen(
                     ["setsid", "Xvfb", display, "-screen", "0", "1366x768x24", "-nolisten", "tcp"],
@@ -1799,6 +1881,23 @@ async def _amayama_server_browser_loop() -> None:
                     start_new_session=True,
                 )
                 await asyncio.sleep(2)
+            # ROOT FIX 2026-08-12: this is the actual, CONTINUOUSLY recurring failure
+            # (chrome exited rc=21 every ~30 min, all day, zero successful launches).
+            # Chrome's own crash-recovery lock (SingletonLock/SingletonCookie/
+            # SingletonSocket in the profile dir) survives a killed process — Chrome then
+            # refuses to start against what it thinks is a profile "in use by another
+            # process (808) on another computer" (a stale PID+hostname from before a past
+            # restart). This loop's own structure (`await proc.wait()` before ever
+            # looping back) guarantees it never runs two Chrome instances against this
+            # profile concurrently, so it is always safe to clear these immediately
+            # before every launch attempt.
+            for _lock_name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+                _lock_path = os.path.join(profile_dir, _lock_name)
+                if os.path.exists(_lock_path) or os.path.islink(_lock_path):
+                    try:
+                        os.remove(_lock_path)
+                    except Exception as _ce:
+                        print(f"[amayama_server_browser] could not remove {_lock_path}: {_ce}", flush=True)
             env = dict(os.environ)
             env["DISPLAY"] = display
             print("[amayama_server_browser] launching Chrome", flush=True)
@@ -2277,18 +2376,19 @@ async def _meili_verify_parity() -> None:
         print(f"[meili_parity] index={meili_docs:,} catalog={db_count:,} gap={gap:,}", flush=True)
 
         if gap > 100_000:
-            owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
-            if owner:
-                msg = (
-                    "⚠️ *Meilisearch drift detected*\n"
-                    f"Index: {meili_docs:,} docs\nCatalog: {db_count:,} active parts\n"
-                    f"Gap: {gap:,} docs — sync is falling behind or skipping rows."
-                )
-                try:
-                    from social.whatsapp_provider import send_message as _wa_alert
-                    await _wa_alert(owner, msg)
-                except Exception:
-                    pass
+            # Was calling social.whatsapp_provider.send_message directly — bypasses
+            # BOTH quiet hours and the updates-group routing (a real regression against
+            # the documented "all outbound owner WhatsApp goes through _wa_send_quiet"
+            # rule). Fixed 2026-08-13 via the shared notify_owner.
+            await notify_owner(
+                "harvest",
+                "זוהה פער סנכרון ב-Meilisearch",
+                f"אינדקס: {meili_docs:,} מסמכים\nקטלוג: {db_count:,} חלקים פעילים\n"
+                f"פער: {gap:,} מסמכים — הסנכרון מפגר או מדלג על שורות.",
+                severity="warning",
+                alert_key="meili_parity_drift",
+                cooldown_s=10800,
+            )
     except Exception as exc:
         print(f"[meili_parity] check failed (non-fatal): {exc}", flush=True)
 
@@ -2429,8 +2529,6 @@ async def _amayama_harvest_monitor_loop() -> None:
     import time as _time
     await asyncio.sleep(600)
     last_count = None
-    last_alert_ts = 0.0
-    ALERT_COOLDOWN_S = 4 * 3600  # nudge at most every 4h while down
     DOWN_S = 1500  # ~25 min with no feed activity = harvester genuinely stopped
     JP_BRANDS = ("toyota", "lexus", "honda", "nissan", "mazda", "subaru",
                  "mitsubishi", "infiniti", "acura", "suzuki", "daihatsu")
@@ -2458,20 +2556,18 @@ async def _amayama_harvest_monitor_loop() -> None:
             print(f"[amayama_monitor] amayama_parts={cnt} delta={delta} jp_unpriced={pending} "
                   f"server_heartbeat_age_s={int(server_hb_age) if server_hb_age is not None else None} "
                   f"harvester={'DOWN' if harvester_down else 'alive'}", flush=True)
-            if harvester_down and pending > 1000 and (_time.time() - last_alert_ts) > ALERT_COOLDOWN_S:
-                last_alert_ts = _time.time()
-                owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
-                if owner:
-                    try:
-                        await _wa_send_update((
-                            f"⚠️ *שאיבת Amayama לא פעילה (~25 דקות)*\n"
-                            f"שני הנתיבים (שרת + דפדפן) לא מגיבים.\n"
-                            f"~{pending:,} חלקים ממותגים יפניים עדיין ללא מחיר.\n"
-                            f"לפתרון: פתח amayama.com בטאב ורץ AMAYAMA.autorun(20,40) — "
-                            f"או בדוק את השרת."
-                        ))
-                    except Exception:
-                        pass
+            if harvester_down and pending > 1000:
+                await notify_owner(
+                    "harvest",
+                    "שאיבת Amayama לא פעילה (~25 דקות)",
+                    f"שני הנתיבים (שרת + דפדפן) לא מגיבים.\n"
+                    f"~{pending:,} חלקים ממותגים יפניים עדיין ללא מחיר.\n"
+                    f"לפתרון: פתח amayama.com בטאב ורץ AMAYAMA.autorun(20,40) — "
+                    f"או בדוק את השרת.",
+                    severity="warning",
+                    alert_key="amayama_harvester_down",
+                    cooldown_s=4 * 3600,
+                )
             last_count = cnt
         except Exception as e:
             print(f"[amayama_monitor] error: {e}", flush=True)
@@ -2605,7 +2701,7 @@ async def _group_scan_loop():
                 if not discoveries:
                     logger.info("[group_scan] no relevant group discussions found")
                 elif os.getenv("OWNER_WHATSAPP_PHONE"):
-                    lines = [f"🔍 *סריקת קבוצות פייסבוק — {len(discoveries)} תגובות ממתינות*\n"]
+                    lines = []
                     for i, d in enumerate(discoveries[:5], 1):
                         score_pct = int(d.get("relevance_score", 0) * 100)
                         lines.append(
@@ -2617,9 +2713,11 @@ async def _group_scan_loop():
                     lines.append(
                         "\nלאישור ושליחה: *תגובות-גרופ* לרשימה · *אשרתגובה <מזהה>*"
                     )
-                    await _wa_send_quiet(
-                        os.getenv("OWNER_WHATSAPP_PHONE", ""),
+                    await notify_owner(
+                        "social",
+                        f"סריקת קבוצות פייסבוק — {len(discoveries)} תגובות ממתינות",
                         "\n".join(lines),
+                        severity="info",
                     )
                     logger.info("[group_scan] sent %d discoveries to owner", len(discoveries))
         except Exception as exc:
@@ -2787,6 +2885,70 @@ async def _flush_wa_quiet_queue() -> int:
         print(f"[QuietHours] flush error: {exc}")
     return sent
 
+
+# ── Owner notification taxonomy (2026-08-13 — "organize the notifications") ────
+# Before this, ~20 different background loops each invented their own alert
+# format: some Hebrew, some English, different emoji with no severity meaning,
+# some with a Redis-backed cooldown, some with an in-memory one that resets on
+# every restart, and at least one that called the WhatsApp provider directly —
+# bypassing BOTH quiet hours AND the owner's dedicated updates-group routing
+# (see _wa_send_update / _updates_group_jid, added 2026-08-04 specifically to
+# separate system/agent noise from the owner's conversational chat). One import
+# in the mix was flat-out broken (ImportError swallowed by a bare except), so
+# that alert had never once reached the owner. This is the single enforcement
+# point every proactive owner alert now goes through instead.
+_NOTIFY_CATEGORIES = {
+    "health":   "🏥 בריאות המערכת",
+    "harvest":  "🛰️ קטלוג וקצירה",
+    "orders":   "📦 הזמנות",
+    "social":   "📣 סושיאל",
+    "supplier": "🔌 ספקים",
+}
+_NOTIFY_SEVERITY_ICON = {
+    "critical": "🔴",
+    "warning":  "🟡",
+    "info":     "ℹ️",
+    "success":  "✅",
+}
+
+
+async def notify_owner(
+    category: str,
+    title: str,
+    body: str = "",
+    *,
+    severity: str = "info",
+    alert_key: str = "",
+    cooldown_s: int = 3600,
+) -> None:
+    """The one function every proactive owner alert must call — health, harvest,
+    orders, social, supplier. Gives every message a consistent
+    "{severity icon} [{category}] {title}" header, a Redis-backed cooldown
+    (survives restarts, unlike a module-level dict) when alert_key is given, and
+    always routes through _wa_send_update() — never a raw send to the 1:1 number
+    — so every alert respects BOTH quiet hours and the dedicated updates-group
+    setting the moment one is configured. Never raises; a failed alert is logged,
+    never fatal to the calling loop."""
+    if alert_key:
+        try:
+            _r = await get_redis()
+            _rk = f"autospare:alert_cooldown:{alert_key}"
+            if await _r.exists(_rk):
+                return
+            await _r.set(_rk, "1", ex=cooldown_s)
+        except Exception:
+            pass  # Redis unavailable — allow the alert through rather than lose it
+    cat_label = _NOTIFY_CATEGORIES.get(category, category)
+    sev_icon = _NOTIFY_SEVERITY_ICON.get(severity, "ℹ️")
+    header = f"{sev_icon} [{cat_label}] {title}"
+    text = f"{header}\n\n{body}" if body else header
+    try:
+        result = await _wa_send_update(text)
+        if not result.get("ok"):
+            print(f"[notify_owner] send failed ({alert_key or category}): {result.get('error')}")
+    except Exception as exc:
+        print(f"[notify_owner] error ({alert_key or category}): {exc}")
+
 # How often the pending-payment reminder runs (default: every 30 min)
 PAYMENT_REMINDER_INTERVAL_S = int(os.getenv("PAYMENT_REMINDER_INTERVAL_S", "1800"))
 # Minimum age of a pending_payment order before first reminder (default: 1 hour)
@@ -2913,7 +3075,8 @@ async def _noa_featured_thumbnail(car: str, eng_part: str) -> "str | None":
 
 
 async def _noa_enqueue_social_post(caption: str, platforms: list, media_url: "str | None",
-                                   topic: str, part_text: str = "") -> "str | None":
+                                   topic: str, part_text: str = "",
+                                   topic_performance: "object | None" = None) -> "str | None":
     """Create a pending_approval SocialPost so NOA's drafts flow through the SAME
     approval→publish queue the admin endpoints + social/registry consume. Returns the id.
 
@@ -2924,6 +3087,12 @@ async def _noa_enqueue_social_post(caption: str, platforms: list, media_url: "st
     failure, not a language failure, so it is caught by MEANING not by wording.
     The guard fails OPEN (see social/post_guard) — a scoring outage must never
     stop NOA posting.
+
+    topic_performance (2026-08-15, observability for the analytics->decision
+    link): the feedback_analyzer.TopicPerformance that was actually applied
+    when this topic was chosen (or None if no real signal existed yet for it).
+    Recorded into external_post_ids so "why was this topic picked" is always
+    answerable from the row itself, not just from a log line.
     """
     guard_score = None
     try:
@@ -2946,6 +3115,9 @@ async def _noa_enqueue_social_post(caption: str, platforms: list, media_url: "st
             meta["guard_sim"] = round(float(guard_score), 3)
         if media_url:
             meta["media_url"] = media_url
+        if topic_performance is not None:
+            meta["topic_weight_applied"] = round(float(topic_performance.weight), 3)
+            meta["topic_weight_sample_size"] = int(topic_performance.sample_size)
         async with async_session_factory() as cat_db:
             sp = SocialPost(
                 id=uuid.uuid4(),
@@ -3000,11 +3172,12 @@ async def _noa_engagement_loop():
             logger.info("[noa_engagement] %s webhook=%s", summary, wsum)
             drafted = summary.get("drafted", 0) + wsum.get("drafted", 0)
             if drafted and not autoreply:
-                owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
-                if owner:
-                    await _wa_send_update((
-                        f"💬 NOA: {drafted} תגובות חדשות ברשתות ממתינות לתשובה.\n"
-                        f"לצפייה: כתוב *תגובות* · לאישור: *ענה <מזהה>*"))
+                await notify_owner(
+                    "social",
+                    f"NOA: {drafted} תגובות חדשות ברשתות ממתינות לתשובה",
+                    "לצפייה: כתוב *תגובות* · לאישור: *ענה <מזהה>*",
+                    severity="info",
+                )
         except Exception as exc:
             logger.error("[noa_engagement] cycle failed: %s", exc)
         await asyncio.sleep(interval)
@@ -3035,12 +3208,13 @@ async def _supplier_sourcing_loop():
             onboarded = summary.get("onboarded", [])
             logger.info("[supplier_sourcing] %s", summary)
             if onboarded:
-                owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
-                if owner:
-                    lines = "\n".join(f"• {o['name'][:34]} ({o['domain']})" for o in onboarded[:6])
-                    await _wa_send_update((
-                        f"🔌 NIR מצא {len(onboarded)} ספקים חדשים אפשריים:\n{lines}\n"
-                        f"לצפייה/אישור: כתוב *ספקים*"))
+                lines = "\n".join(f"• {o['name'][:34]} ({o['domain']})" for o in onboarded[:6])
+                await notify_owner(
+                    "supplier",
+                    f"NIR מצא {len(onboarded)} ספקים חדשים אפשריים",
+                    f"{lines}\nלצפייה/אישור: כתוב *ספקים*",
+                    severity="info",
+                )
         except Exception as exc:
             logger.error("[supplier_sourcing] cycle failed: %s", exc)
         await asyncio.sleep(interval)
@@ -3112,27 +3286,61 @@ async def _noa_marketing_loop():
         "Hyundai i20", "Toyota C-HR", "Kia Niro", "Honda Civic",
         "Mitsubishi Outlander", "Renault Kadjar", "Suzuki Vitara",
         "Peugeot 3008", "Nissan Qashqai", "Ford Fiesta", "Toyota RAV4",
+        "Hyundai i10", "Kia Picanto", "Toyota Yaris", "Skoda Fabia",
+        "Mazda CX-5", "Hyundai Ioniq", "Kia Ceed", "Renault Clio",
+        "Chevrolet Captiva", "Toyota Camry", "Mercedes C-Class",
     ]
 
-    # Part topics — (Hebrew name, English name, common pain point)
+    # Part topics — (Hebrew name, English name, [pain-point variants]).
+    # ROOT-FIXED 2026-08-14 (owner: "NOA keeps repeating the same posts idea").
+    # Two compounding causes, both fixed here:
+    #  (1) "מוט ייצוב (שלדג)" — שלדג (kingfisher, the bird) was a hardcoded typo in
+    #      THIS list, not an LLM hallucination as originally (wrongly) diagnosed —
+    #      every earlier "fix" for that bug tested a hand-typed heb_part that never
+    #      matched what production actually fed the model. Removed here.
+    #  (2) Only 14 parts, each with exactly ONE fixed pain phrase, guaranteed the
+    #      same hook resurfaced every ~1-2 weeks at 2 posts/day. Expanded to 34
+    #      parts spanning the real category distribution (parts_catalog, live
+    #      query 2026-08-14) with 2-3 pain-point variants each — the loop below
+    #      picks a random variant per generation, not just a random part.
     _PARTS = [
-        ("בלמי דיסק", "brake pads", "קול חריקה בבלימה"),
-        ("מסנן שמן", "oil filter", "שמן שחור, מנוע כבד"),
-        ("מצבר", "battery", "הרכב לא עולה בבוקר"),
-        ("חגורת תזמון", "timing belt", "תחזוקה מניעתית שמונעת קטסטרופה"),
-        ("מנורות LED קדמיות", "LED headlights", "תאורה חלשה בלילה"),
-        ("מגבי שמשה", "wiper blades", "שריטות על השמשה בגשם"),
-        ("מסנן מזגן (קבינה)", "cabin AC filter", "ריח עובש מהמזגן"),
-        ("סלילי הצתה", "ignition coils", "רעד במנוע, תאוצה גרועה"),
-        ("חיישני ABS", "ABS sensor", "נורת ABS דולקת"),
-        ("מוט ייצוב (שלדג)", "stabilizer bar link", "קשקוש מהשלדה"),
-        ("רדיאטור", "radiator", "רכב מתחמם מעבר"),
-        ("נרות הצתה", "spark plugs", "צריכת דלק גבוהה"),
-        ("פחי אוויר", "air filter", "תאוצה איטית, מנוע חנוק"),
-        ("מיסבי גלגל", "wheel bearings", "רעש זמזום מהגלגל במהירות"),
+        ("בלמי דיסק", "brake pads", ["קול חריקה בבלימה", "רעד בהגה בבלימה", "מרחק בלימה ארוך מהרגיל"]),
+        ("מסנן שמן", "oil filter", ["שמן שחור, מנוע כבד", "נורת שמן נדלקת בזמן נסיעה"]),
+        ("מצבר", "battery", ["הרכב לא עולה בבוקר", "אורות חלשים כשהמנוע כבוי", "המצבר מתרוקן תוך יומיים"]),
+        ("חגורת תזמון", "timing belt", ["תחזוקה מניעתית שמונעת קטסטרופה", "קליק קליק קל מהמנוע בסיבובים נמוכים"]),
+        ("מנורות LED קדמיות", "LED headlights", ["תאורה חלשה בלילה", "פנס אחד חלש מהשני"]),
+        ("מגבי שמשה", "wiper blades", ["שריטות על השמשה בגשם", "רעש חריקה כשהמגבים עובדים", "פס מים שנשאר אחרי כל מעבר"]),
+        ("מסנן מזגן (קבינה)", "cabin AC filter", ["ריח עובש מהמזגן", "אוויר חלש מהפתחים"]),
+        ("סלילי הצתה", "ignition coils", ["רעד במנוע, תאוצה גרועה", "נורת מנוע נדלקת בכביש מהיר"]),
+        ("חיישני ABS", "ABS sensor", ["נורת ABS דולקת", "רעד בדוושת הבלם בבלימה חזקה"]),
+        ("מוט ייצוב", "stabilizer bar link", ["קשקוש מהשלדה על פסי האטה", "רעש דפיקה בסיבוב חד"]),
+        ("רדיאטור", "radiator", ["רכב מתחמם מעבר", "נוזל קירור שיורד בלי סיבה"]),
+        ("נרות הצתה", "spark plugs", ["צריכת דלק גבוהה", "מנוע מגמגם בהתנעה קרה"]),
+        ("פחי אוויר", "air filter", ["תאוצה איטית, מנוע חנוק", "צריכת דלק שעולה בלי סיבה ברורה"]),
+        ("מיסבי גלגל", "wheel bearings", ["רעש זמזום מהגלגל במהירות", "הרעש מתחזק כשפונים"]),
+        ("צמיגים", "tires", ["רעד בהגה במהירות גבוהה", "שחיקה לא אחידה בצמיג"]),
+        ("בולמי זעזועים", "shock absorbers", ["הרכב קופץ בבור בכביש", "גלגול צד בפניות"]),
+        ("משאבת מים", "water pump", ["מד חום עולה בפקקים", "כתם נוזל ירוק מתחת לרכב"]),
+        ("תרמוסטט", "thermostat", ["מד החום לא זז בכלל", "המזגן חם כשהמנוע קר"]),
+        ("מצמד", "clutch kit", ["דוושת מצמד כבדה", "ריח שריפה קל בעליות"]),
+        ("משאבת דלק", "fuel pump", ["הרכב מגמגם בהתחלת נסיעה", "קושי בהתנעה אחרי תדלוק"]),
+        ("חיישן חמצן", "oxygen sensor", ["נורת מנוע קבועה", "ריח דלק חזק מהפליטה"]),
+        ("צינור פליטה", "exhaust pipe", ["רעש גובר מתחת לרכב", "רעד בסרק שלא היה קודם"]),
+        ("דסקיות בלם", "brake discs", ["רעד בהגה בבלימה חזקה", "קול מתכתי כבד בבלימה"]),
+        ("קפיצים", "coil springs", ["הרכב נוטה לצד אחד", "גובה הרכב ירד מצד אחד"]),
+        ("משאבת הגה", "power steering pump", ["ההגה כבד בפניות איטיות", "רעש שריקה כשמסובבים הגה"]),
+        ("תושבת מנוע", "engine mount", ["רעד חזק בסרק", "טלטלה בהחלפת הילוכים"]),
+        ("רצועת מצמד מזגן", "AC compressor belt", ["חריקה כשמדליקים מזגן", "מזגן שמפסיק לקרר לפתע"]),
+        ("פילטר דלק", "fuel filter", ["מנוע מאבד כוח בעליות", "גמגום במהירות גבוהה בכביש"]),
+        ("מגן בוץ", "mud flap", ["רעש חבטות בנסיעה על אבנים", "שריטות בסף הדלת מבוץ מתעופף"]),
+        ("פנס אחורי", "tail light", ["פנס בלימה לא נדלק", "עמימות באור האחורי"]),
+        ("זרוע תחתונה", "control arm", ["הגה רועד בכביש לא חלק", "רעש דפיקה מהחזית בפניות"]),
+        ("חיישן חניה", "parking sensor", ["צפצוף חנייה לא עובד", "החיישן מצפצף גם בלי מכשול"]),
+        ("מצת חימום (דיזל)", "glow plug", ["קושי בהתנעה קרה בבוקר", "עשן לבן קל מהאגזוז בהתנעה"]),
+        ("רפידות מגב אחוריות", "rear wiper blade", ["שמשה אחורית מטושטשת בגשם", "רעש גירוד מהמגב האחורי"]),
     ]
 
-    async def _noa_real_catalog_fact(db, eng_part: str, heb_part: str, car: str) -> str:
+    async def _noa_real_catalog_fact(db, eng_part: str, heb_part: str, car: str) -> tuple[str, str]:
         """Marketing grounding (added 2026-07-05): pull a REAL priced part from
         the catalog matching today's topic so NOA advertises true facts —
         real part, real price, real fit — never invented claims.
@@ -3194,11 +3402,14 @@ async def _noa_marketing_loop():
                     supplier_name=row[4], supplier_country=row[5])
                 price = round(sell_net + sell_net * vat_rate)         # pre-shipping "from"
                 vat_note = "כולל מע\"מ" if vat_rate > 0 else "ללא מע\"מ (יבוא)"
+                # Manufacturer returned alongside the text (not just embedded in it) so
+                # the coherence gate can deterministically verify it survived the LLM's
+                # rewrite into prose — see social/coherence_guard.manufacturer_preserved.
                 return (f"\nעובדה אמיתית מהקטלוג (מותר ואף רצוי לצטט): "
-                        f"{_pname} ({row[2]}) — החל מ‑₪{price} {vat_note} באתר.")
+                        f"{_pname} ({row[2]}) — החל מ‑₪{price} {vat_note} באתר.", str(row[2] or ""))
         except Exception as exc:
             logger.warning("noa_marketing_loop: catalog fact lookup failed: %s", exc)
-        return ""
+        return "", ""
 
     def _noa_utm_link(platform: str, week_num: int) -> str:
         return (f"https://autosparefinder.co.il/?utm_source={platform}"
@@ -3224,8 +3435,6 @@ async def _noa_marketing_loop():
             month = now.month
             week_num = now.isocalendar()[1]
             season = _SEASONAL.get(month, "")
-            car = random.choice(_CARS)
-            heb_part, eng_part, pain = random.choice(_PARTS)
 
             async with async_session_factory() as db:
                 await ensure_memory_table(db)
@@ -3245,21 +3454,61 @@ async def _noa_marketing_loop():
                     ("\n\n=== הנחיות קבועות מהבעלים (חובה לפעול לפיהן בכל פוסט) ===\n"
                      + _owner_guidelines) if _owner_guidelines else "")
 
-                # Load recent history — inject as "do not repeat" context
+                # Load recent history — used for BOTH the deterministic topic-pool
+                # exclusion below and the soft "don't repeat" prompt instruction.
                 history_raw = await mem.get("post_history") or []
                 recent_topics: list[str] = []
+                recent_parts_seen: list[str] = []
+                recent_cars_seen: list[str] = []
                 if isinstance(history_raw, list):
                     for h in history_raw[-6:]:
                         if isinstance(h, dict):
                             t = h.get("topic") or h.get("caption", "")[:70]
                             if t:
                                 recent_topics.append(str(t))
+                    # Deeper lookback (10 posts = 5 days at 2/post) for the actual
+                    # pool exclusion — a prompt instruction alone doesn't reliably
+                    # stop repetition (owner report 2026-08-14: same hooks kept
+                    # resurfacing despite "don't repeat" already being in the prompt).
+                    # Excluding recently-used topics from the RANDOM CHOICE itself is
+                    # a guarantee, not a request.
+                    for h in history_raw[-10:]:
+                        if isinstance(h, dict):
+                            topic_str = str(h.get("topic") or "")
+                            if " — " in topic_str:
+                                p, c = topic_str.split(" — ", 1)
+                                recent_parts_seen.append(p.strip())
+                                recent_cars_seen.append(c.strip())
                 no_repeat = (
                     f"\nנושאים שכבר כוסו לאחרונה — אל תחזרי עליהם:\n" +
                     "\n".join(f"• {t}" for t in recent_topics)
                 ) if recent_topics else ""
 
-                real_fact = await _noa_real_catalog_fact(db, eng_part, heb_part, car)
+                _car_pool = [c for c in _CARS if c not in recent_cars_seen] or _CARS
+                _part_pool = [p for p in _PARTS if p[0] not in recent_parts_seen] or _PARTS
+                car = random.choice(_car_pool)
+
+                # Analytics -> decision link (2026-08-15): weight the topic
+                # choice by REAL historical engagement instead of pure uniform
+                # random. compute_topic_performance() is a deterministic
+                # aggregation over real engagement_events (no LLM call, no
+                # invented numbers) — a topic with no measured data yet gets
+                # a neutral weight of 1.0, never penalized. This is the only
+                # place real analytics actually change what NOA generates
+                # next; everywhere else analytics reaches only a human
+                # dashboard (routes/campaigns.py analytics endpoints).
+                try:
+                    from social.feedback_analyzer import compute_topic_performance
+                    _topic_perf = await compute_topic_performance(db)
+                except Exception as _tpe:
+                    logger.warning("noa_marketing_loop: compute_topic_performance failed, using uniform weights: %s", _tpe)
+                    _topic_perf = {}
+                _part_weights = [_topic_perf[p[0]].weight if p[0] in _topic_perf else 1.0 for p in _part_pool]
+                heb_part, eng_part, _pain_options = random.choices(_part_pool, weights=_part_weights, k=1)[0]
+                _applied_weight = _topic_perf.get(heb_part)
+                pain = random.choice(_pain_options)
+
+                real_fact, real_fact_manufacturer = await _noa_real_catalog_fact(db, eng_part, heb_part, car)
 
                 if weekday == 0 and now.hour <= _post_hours[0]:
                     # ── Monday: generate weekly campaign brief + ad pack ─────────
@@ -3279,7 +3528,9 @@ async def _noa_marketing_loop():
                         "• תכנני 6 פוסטים יומיים: ב׳=TikTok, ג׳=Instagram, ד׳=Facebook, ה׳=WhatsApp, ו׳=TikTok, שבת=Instagram\n"
                         "• כל פוסט — זווית שונה לגמרי, לא וריאציה של אותו טקסט\n"
                         "• כתבי copy_hebrew מלא לכל יום — טקסט מוכן לפרסום, לא תיאור של הטקסט\n"
-                        "• אם ניתנה עובדה אמיתית מהקטלוג — שלבי את המחיר האמיתי; אסור להמציא מחירים אחרים\n\n"
+                        "• אם ניתנה עובדה אמיתית מהקטלוג — שלבי את המחיר האמיתי; אסור להמציא מחירים אחרים\n"
+                        "• שם החלק והיצרן/המותג בעובדה האמיתית מהקטלוג הם מדויקים — צטטי אותם בדיוק, אסור "
+                        "להמציא מילה נרדפת, תרגום, או כינוי חלופי להם בשום copy_hebrew\n\n"
                         "בנוסף — חבילת מודעות ממומנות (Facebook/Instagram Ads):\n"
                         "• 3 וריאציות מודעה לבדיקת A/B — כל אחת בזווית אחרת (כאב / מחיר / קלות שימוש)\n"
                         "• headline עד 40 תווים; primary_text עד 125 תווים; cta קצר\n"
@@ -3328,8 +3579,6 @@ async def _noa_marketing_loop():
                     kpi = plan.get("success_metrics") or "engagement + reach"
 
                     wa_lines = [
-                        f"📅 *NOA — קמפיין שבוע {week_num}*",
-                        "",
                         f"🎯 *נושא:* {theme}",
                         f"💬 *מסר מרכזי:* {core_msg}",
                         f"👤 *קהל יעד:* {persona}",
@@ -3376,11 +3625,14 @@ async def _noa_marketing_loop():
                             wa_lines.append(f"  • {str(d)[:90]}")
                         wa_lines.append(f"🔗 Final URL: {_noa_utm_link('google_ads', week_num)}")
                     wa_msg = "\n".join(wa_lines)
+                    _brief_title = f"NOA — קמפיין שבוע {week_num}"
 
                     if OWNER_PHONE:
-                        await _wa_send_update(wa_msg)
+                        # The title used to be baked into wa_lines itself; now notify_owner
+                        # supplies it via the [category] header, so it isn't duplicated here.
+                        await notify_owner("social", _brief_title, wa_msg, severity="info")
                     if NOA_TELEGRAM_MIRROR and TELEGRAM_OWNER_ID and TELEGRAM_ADMIN_TOKEN:
-                        await _noa_send_telegram(TELEGRAM_ADMIN_TOKEN, TELEGRAM_OWNER_ID, wa_msg)
+                        await _noa_send_telegram(TELEGRAM_ADMIN_TOKEN, TELEGRAM_OWNER_ID, f"📅 *{_brief_title}*\n\n{wa_msg}")
 
                     await mem.append_event("post_history", {
                         "type": "campaign_brief", "topic": theme,
@@ -3443,6 +3695,9 @@ async def _noa_marketing_loop():
                         "• כתבי כמו בן אדם: גוף ראשון, משפטים קצרים, עברית מדוברת, 1-3 אמוג'י\n"
                         "• ציוני את שם הרכב ואת שם החלק הספציפי\n"
                         "• זה פוסט מכירה: אם ניתנה עובדה אמיתית מהקטלוג — שלבי את המחיר האמיתי (זה מה שמוכר); אסור להמציא מחיר\n"
+                        "• שם החלק והיצרן/המותג בעובדה האמיתית מהקטלוג הם מדויקים — צטטי אותם בדיוק, מותר לשלב "
+                        "אותם בזרימה טבעית של המשפט אבל אסור להמציא מילה נרדפת, תרגום, או כינוי חלופי להם "
+                        "(לדוגמה: אם היצרן הוא Toyota, אל תכתבי מילה אחרת בסוגריים במקומו — לא ניחוש, לא תרגום)\n"
                         "• פתרון: חיפוש לפי מספר רישוי ב-autosparefinder.co.il — CTA אחד ברור\n"
                         "• סיימי בשאלה שקל וכיף לענות עליה בתגובה\n"
                         "• האשטאגים בשורה אחרונה בלבד — עברית, ערבית ואנגלית מעולם הרכב\n\n"
@@ -3458,8 +3713,51 @@ async def _noa_marketing_loop():
                     except Exception:
                         pass  # preserve original prompt on any loader failure
 
-                    raw_post = await _hf_text(prompt=post_prompt, system=_noa_system, timeout=90.0, max_tokens=1500, temperature=noa.temperature, reasoning_effort="low")
-                    caption = noa._finalize_noa_post(raw_post, platforms=_configured)
+                    # Coherence gate (added 2026-08-14): a stochastic generator at any
+                    # temperature can still occasionally invent a word/nonsensical
+                    # metaphor despite the prompt rules above — those reduce the failure
+                    # rate, they don't guarantee zero. Deterministic manufacturer check +
+                    # LLM judge run BEFORE finalization; on failure, regenerate with the
+                    # concrete reason fed back (cheap, and usually self-corrects). If it
+                    # still fails after retries, skip this cycle rather than enqueue a
+                    # draft that will just look broken to the owner again — see
+                    # social/coherence_guard.py for the full rationale + calibration.
+                    from social import coherence_guard as _cguard
+                    _gen_prompt = post_prompt
+                    caption = ""
+                    _gate_failed = True
+                    for _attempt in range(3):
+                        raw_post = await _hf_text(prompt=_gen_prompt, system=_noa_system, timeout=90.0, max_tokens=1500, temperature=noa.temperature, reasoning_effort="low")
+                        _candidate = noa._finalize_noa_post(raw_post, platforms=_configured)
+                        _mfr_ok = _cguard.manufacturer_preserved(_candidate, real_fact_manufacturer)
+                        _coh_ok, _coh_reason = await _cguard.check(_candidate)
+                        if _mfr_ok and _coh_ok:
+                            caption = _candidate
+                            _gate_failed = False
+                            break
+                        _reason = _coh_reason or (
+                            f"שם היצרן '{real_fact_manufacturer}' לא נשמר בדיוק בטקסט"
+                            if not _mfr_ok else "בעיית עריכה לא ידועה"
+                        )
+                        logger.warning("noa_marketing_loop: coherence gate FAIL attempt=%d reason=%s", _attempt + 1, _reason[:150])
+                        _gen_prompt = (
+                            f"{post_prompt}\n\n"
+                            f"⚠️ הניסיון הקודם שלך נדחה: {_reason}\n"
+                            f"כתבי גרסה חדשה שמתקנת את הבעיה הזו במדויק."
+                        )
+                    if _gate_failed:
+                        logger.error("noa_marketing_loop: coherence gate failed 3/3 attempts — skipping this cycle")
+                        await notify_owner(
+                            "social",
+                            "NOA — פוסט נפסל 3 פעמים ולא פורסם המחזור הזה",
+                            f"נושא: {heb_part} ({eng_part}) — {car}. שער הבדיקה (מילה מומצאת/דימוי לא הגיוני) "
+                            f"דחה 3 ניסיונות ברצף. אין פעולה נדרשת — המחזור הבא ינסה נושא אחר.",
+                            severity="warning",
+                            alert_key="noa_coherence_gate_exhausted",
+                            cooldown_s=3600,
+                        )
+                        await asyncio.sleep(_secs_until_next_post())
+                        continue
                     # NO UTM re-injection (fix 2026-08-05, owner "fix the long link"): the
                     # finalizer deliberately produces a CLEAN bare "autosparefinder.co.il".
                     # Re-adding "?utm_source=…&utm_medium=…&utm_campaign=…" here put the long
@@ -3499,6 +3797,7 @@ async def _noa_marketing_loop():
                         caption=caption, platforms=_configured, media_url=media_url,
                         topic=f"{heb_part} — {car}",
                         part_text=_guard_part,
+                        topic_performance=_applied_weight,
                     )
 
                     pending_payload = {
@@ -3520,14 +3819,18 @@ async def _noa_marketing_loop():
                     # WhatsApp instead of Telegram). Telegram only mirrors if enabled.
                     if OWNER_PHONE:
                         _post_short_id = (social_post_id or "")[:8] or "—"
-                        wa_post_msg = (
-                            f"🎯 *NOA — פוסט {platform.title()} מוכן לאישורך*\n\n"
+                        wa_post_body = (
                             f"{caption}\n\n"
                             + (f"🖼️ מדיה (עם QR): {media_url}\n" if media_url else "")
                             + f"לאישור ופרסום: כתוב *אשר {_post_short_id}*\n"
                             + f"לדחייה: כתוב *דחה {_post_short_id}*"
                         )
-                        await _wa_send_update(wa_post_msg)
+                        await notify_owner(
+                            "social",
+                            f"NOA — פוסט {platform.title()} מוכן לאישורך",
+                            wa_post_body,
+                            severity="info",
+                        )
                     if NOA_TELEGRAM_MIRROR and TELEGRAM_OWNER_ID and TELEGRAM_ADMIN_TOKEN:
                         tg_msg = f"🎯 NOA — {platform.title()} post ready\n\n📝 {caption}"
                         tg_msg = noa._append_noa_links(noa._normalize_noa_symbols(tg_msg))
@@ -3646,13 +3949,13 @@ async def _stuck_orders_monitor_loop():
                         _notify_manual = True
                     if _notify_manual:
                         _manual_list = ", ".join(o.order_number for o in manual_orders)
-                        _manual_title = f"🛠️ {len(manual_orders)} הזמנות דורשות טיפול ידני שלך"
+                        _manual_title = f"{len(manual_orders)} הזמנות דורשות טיפול ידני שלך"
                         _manual_msg = (
                             f"התשלום ללקוח התקבל, אבל התשלום האוטומטי לספק (Stripe Issuing) "
                             f"חסום ב-live mode — לא ינסה אוטומטית שוב. יש לטפל ידנית בהזמנות: "
                             f"{_manual_list}"
                         )
-                        await _wa_send_update(f"{_manual_title}\n{_manual_msg}")
+                        await notify_owner("orders", _manual_title, _manual_msg, severity="warning")
                         admins_res0 = await db.execute(select(User).where(User.is_admin == True))
                         for admin in admins_res0.scalars().all():
                             db.add(Notification(
@@ -3785,25 +4088,13 @@ async def _health_monitor_loop():
     # only created in-app Notification rows without sending WhatsApp.
     _OWNER_PHONE = os.getenv("OWNER_WHATSAPP_PHONE", "")
 
-    async def _alert_owner(title: str, msg: str, alert_key: str = "", cooldown_s: int = 3600) -> None:
-        """Send WhatsApp to the owner phone with Redis-backed cooldown (survives restarts)."""
+    async def _alert_owner(title: str, msg: str, alert_key: str = "", cooldown_s: int = 3600,
+                            severity: str = "warning") -> None:
+        """Thin wrapper over notify_owner (category="health") — kept so the ~8 call
+        sites below don't all need touching; only the severity varies per alert."""
         if not _OWNER_PHONE:
             return
-        if alert_key:
-            try:
-                _r = await get_redis()
-                _rkey = f"autospare:alert_cooldown:{alert_key}"
-                if await _r.exists(_rkey):
-                    return  # still within cooldown window
-                await _r.set(_rkey, "1", ex=cooldown_s)
-            except Exception:
-                pass  # Redis unavailable — allow alert through
-        try:
-            result = await _wa_send_update(f"{title}\n{msg}")
-            if not result.get("ok"):
-                print(f"[HealthMonitor] Owner WhatsApp failed ({alert_key}): {result.get('error')}")
-        except Exception as _exc:
-            print(f"[HealthMonitor] Owner WhatsApp error ({alert_key}): {_exc}")
+        await notify_owner("health", title, msg, severity=severity, alert_key=alert_key, cooldown_s=cooldown_s)
 
     _prev_states: dict = {}  # service_name → "ok" | "error"
 
@@ -3889,13 +4180,15 @@ async def _health_monitor_loop():
 
                 label = SERVICE_LABELS.get(svc, svc)
                 if state == "error":
-                    _title = f"\U0001f534 שירות {label} נפל!"
+                    _title = f"שירות {label} נפל!"
                     _msg   = f"שירות {label} אינו זמין. בדוק את המערכת בהקדם."
                     _notif_type = "service_down"
+                    _severity = "critical"
                     print(f"[HealthMonitor] \u26a0\ufe0f  {svc} went DOWN")
                 else:
-                    _title = f"\u2705 שירות {label} חזר לעבוד"
+                    _title = f"שירות {label} חזר לעבוד"
                     _msg   = f"שירות {label} חזר לפעול נורמלית."
+                    _severity = "success"
                     _notif_type = "service_restored"
                     print(f"[HealthMonitor] \u2705  {svc} RESTORED")
 
@@ -3929,7 +4222,7 @@ async def _health_monitor_loop():
                         await db.commit()
                         # Send directly to owner phone (no cooldown — service state changes are already deduplicated)
                         if _OWNER_PHONE and _OWNER_PHONE not in admin_phones:
-                            await _alert_owner(_title, _msg, alert_key="")
+                            await _alert_owner(_title, _msg, alert_key="", severity=_severity)
                 except Exception as _e:
                     print(f"[HealthMonitor] Notify error for {svc}: {_e}")
 
@@ -3952,13 +4245,13 @@ async def _health_monitor_loop():
                     )).scalar() or 0
 
                     if parts_updated_6h < 50:
-                        _alert_title = "⚠️  קטלוג: עדכונים נמוכים בשעות האחרונות"
+                        _alert_title = "קטלוג: עדכונים נמוכים בשעות האחרונות"
                         _alert_msg = (
                             f"רק {parts_updated_6h} חלקים עודכנו ב-6 השעות האחרונות (יעד: 50+). "
                             f"הסקרייפר אולי תקוע."
                         )
                         print(f"[HealthMonitor] ALERT: parts_updated={parts_updated_6h} < 100 in 6h")
-                        await _alert_owner(_alert_title, _alert_msg, alert_key="catalog_stagnation")
+                        await _alert_owner(_alert_title, _alert_msg, alert_key="catalog_stagnation", severity="warning")
                         async with pii_session_factory() as _pii_db:
                             admins_res = await _pii_db.execute(select(User).where(User.is_admin == True))
                             admins = admins_res.scalars().all()
@@ -4011,13 +4304,13 @@ async def _health_monitor_loop():
                     error_rate = (errors / total * 100) if total > 0 else 0
                     
                     if error_rate > 5.0:
-                        _alert_title = f"🚨 שגיאות גבוהות: {error_rate:.1f}% בשעה האחרונה"
+                        _alert_title = f"שגיאות גבוהות: {error_rate:.1f}% בשעה האחרונה"
                         _alert_msg = (
                             f"שיעור שגיאות {error_rate:.1f}% עולה על הסף (5%). "
                             f"בדוק לוגים: {errors}/{total} שגיאות בשעה האחרונה."
                         )
                         print(f"[HealthMonitor] ALERT: error_rate={error_rate:.1f}% > 5%")
-                        await _alert_owner(_alert_title, _alert_msg, alert_key="high_error_rate")
+                        await _alert_owner(_alert_title, _alert_msg, alert_key="high_error_rate", severity="critical")
                         async with pii_session_factory() as _pii_db:
                             admins_res = await _pii_db.execute(select(User).where(User.is_admin == True))
                             admins = admins_res.scalars().all()
@@ -4098,10 +4391,10 @@ async def _health_monitor_loop():
 
                 if _stall_reason:
                     if True:
-                        _alert_title = "⏱️  Worker db_update_agent: תקוע באמת"
+                        _alert_title = "Worker db_update_agent: תקוע באמת"
                         _alert_msg = f"db_update_agent: {_stall_reason}."
                         print(f"[HealthMonitor] ALERT: worker stalled — {_stall_reason}")
-                        await _alert_owner(_alert_title, _alert_msg, alert_key="worker_silence")
+                        await _alert_owner(_alert_title, _alert_msg, alert_key="worker_silence", severity="warning")
 
                         async with pii_session_factory() as _pii_db:
                             admins_res = await _pii_db.execute(select(User).where(User.is_admin == True))
@@ -4187,13 +4480,13 @@ async def _health_monitor_loop():
                         _dlq_new = unprocessed_count >= JOB_FAILURES_ALERT_THRESHOLD
 
                     if _dlq_new:
-                        _alert_title = f"🔴 תור כשלונות: {unprocessed_count} משימות ממתינות לטיפול"
+                        _alert_title = f"תור כשלונות: {unprocessed_count} משימות ממתינות לטיפול"
                         _alert_msg = (
                             f"יש {unprocessed_count} משימות שנכשלו ב-48 השעות האחרונות "
                             f"(סף התראה: {JOB_FAILURES_ALERT_THRESHOLD}). בדוק בלוח הבקרה."
                         )
                         print(f"[HealthMonitor] ALERT: job_failures={unprocessed_count} >= {JOB_FAILURES_ALERT_THRESHOLD}")
-                        await _alert_owner(_alert_title, _alert_msg, alert_key="job_failures_dlq", cooldown_s=21600)
+                        await _alert_owner(_alert_title, _alert_msg, alert_key="job_failures_dlq", cooldown_s=21600, severity="critical")
 
                         admins_res = await _pii_db.execute(select(User).where(User.is_admin == True))
                         admins = admins_res.scalars().all()
@@ -4265,14 +4558,14 @@ async def _health_monitor_loop():
                             await _r.set(_rk, "1", ex=86400)
                         except Exception:
                             pass
-                        _jt = f"🔴 Worker failed: {_jr.job_name}"
+                        _jt = f"משימה נכשלה: {_jr.job_name}"
                         _jm = (
-                            f"Job *{_jr.job_name}* finished with status={_jr.status}.\n"
-                            + (f"Error: {(_jr.error_message or '')[:200]}\n" if _jr.error_message else "")
-                            + f"Started: {str(_jr.started_at)[:19]}"
+                            f"המשימה *{_jr.job_name}* הסתיימה עם status={_jr.status}.\n"
+                            + (f"שגיאה: {(_jr.error_message or '')[:200]}\n" if _jr.error_message else "")
+                            + f"התחילה: {str(_jr.started_at)[:19]}"
                         )
                         print(f"[HealthMonitor] ALERT: job {_jr.job_name} ({_jr.job_id}) {_jr.status}")
-                        await _alert_owner(_jt, _jm, alert_key="")  # no cooldown — each job_id is unique
+                        await _alert_owner(_jt, _jm, alert_key="", severity="critical")  # no cooldown — each job_id is unique
 
                     # 5b: Zombie jobs — running but heartbeat silent beyond their TTL.
                     # Respects ttl_seconds from job_registry (same logic as task_zombie_watchdog).
@@ -4339,14 +4632,14 @@ async def _health_monitor_loop():
                             await _r.set(_rk, "1", ex=86400)
                         except Exception:
                             pass
-                        _zt = f"⏱️ Zombie auto-killed: {_zr.job_name}"
+                        _zt = f"תהליך זומבי טופל אוטומטית: {_zr.job_name}"
                         _zm = (
-                            f"Job *{_zr.job_name}* was silent for {_silence_min} min — "
-                            f"Redis lock cleared and status set to failed automatically.\n"
-                            f"Next scheduled run will start fresh."
+                            f"המשימה *{_zr.job_name}* הייתה שקטה {_silence_min} דקות — "
+                            f"ה-lock ב-Redis נוקה והסטטוס עודכן לנכשל אוטומטית.\n"
+                            f"הריצה המתוזמנת הבאה תתחיל מחדש."
                         )
                         print(f"[HealthMonitor] ALERT: zombie {_zr.job_name} ({_zr.job_id}) silent={_silence_min}min — auto-fixed")
-                        await _alert_owner(_zt, _zm, alert_key="")
+                        await _alert_owner(_zt, _zm, alert_key="", severity="success")
 
                     # 5c: Supervised asyncio tasks that are no longer running
                     for _tname, _task in list(_SUPERVISED_TASKS.items()):
@@ -4367,14 +4660,14 @@ async def _health_monitor_loop():
                                     _exc = _task.exception()
                                 except Exception:
                                     pass
-                                _tt = f"💀 asyncio task stopped: {_tname}"
+                                _tt = f"תהליך רקע הפסיק לרוץ: {_tname}"
                                 _tm = (
-                                    f"Background loop *{_tname}* is no longer running.\n"
-                                    + (f"Exception: {_exc}\n" if _exc else "")
-                                    + "System will NOT auto-restart — manual intervention needed."
+                                    f"הלולאה *{_tname}* כבר לא רצה.\n"
+                                    + (f"שגיאה: {_exc}\n" if _exc else "")
+                                    + "המערכת לא תפעיל אותה מחדש אוטומטית — נדרש טיפול ידני."
                                 )
                                 print(f"[HealthMonitor] ALERT: task {_tname} stopped exc={_exc}")
-                                await _alert_owner(_tt, _tm, alert_key="")
+                                await _alert_owner(_tt, _tm, alert_key="", severity="critical")
 
             except Exception as _e:
                 print(f"[HealthMonitor] Check 5 (job_registry/tasks) error: {_e}")

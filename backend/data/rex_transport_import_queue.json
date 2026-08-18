@@ -4,7 +4,7 @@
     "tier": "tier1_dominant",
     "manufacturer": "טויוטה",
     "canonical_key": "טויוטה",
-    "estimated_records": 584001,
+    "estimated_records": 584762,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -15,7 +15,7 @@
     "tier": "tier1_dominant",
     "manufacturer": "יונדאי",
     "canonical_key": "יונדאי",
-    "estimated_records": 566881,
+    "estimated_records": 566839,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -26,7 +26,7 @@
     "tier": "tier1_dominant",
     "manufacturer": "קיה",
     "canonical_key": "קיה",
-    "estimated_records": 433957,
+    "estimated_records": 434153,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -37,7 +37,7 @@
     "tier": "tier1_dominant",
     "manufacturer": "מזדה",
     "canonical_key": "מזדה",
-    "estimated_records": 283464,
+    "estimated_records": 283050,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -48,7 +48,7 @@
     "tier": "tier1_dominant",
     "manufacturer": "סקודה",
     "canonical_key": "סקודה",
-    "estimated_records": 251278,
+    "estimated_records": 251308,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -57,9 +57,9 @@
   {
     "queue_id": 6,
     "tier": "tier1_dominant",
-    "manufacturer": "סוזוקי",
-    "canonical_key": "סוזוקי",
-    "estimated_records": 182741,
+    "manufacturer": "מיצובישי",
+    "canonical_key": "מיצובישי",
+    "estimated_records": 178980,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -68,9 +68,9 @@
   {
     "queue_id": 7,
     "tier": "tier1_dominant",
-    "manufacturer": "מיצובישי",
-    "canonical_key": "מיצובישי",
-    "estimated_records": 179240,
+    "manufacturer": "סוזוקי",
+    "canonical_key": "סוזוקי",
+    "estimated_records": 158553,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -81,7 +81,7 @@
     "tier": "tier1_dominant",
     "manufacturer": "ניסאן",
     "canonical_key": "ניסאן",
-    "estimated_records": 146536,
+    "estimated_records": 146376,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -92,7 +92,7 @@
     "tier": "tier1_dominant",
     "manufacturer": "פולקסווגן",
     "canonical_key": "פולקסווגן",
-    "estimated_records": 115989,
+    "estimated_records": 115859,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -103,7 +103,7 @@
     "tier": "tier1_dominant",
     "manufacturer": "סיאט",
     "canonical_key": "סיאט",
-    "estimated_records": 115304,
+    "estimated_records": 115323,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -114,7 +114,7 @@
     "tier": "tier1_dominant",
     "manufacturer": "רנו",
     "canonical_key": "רנו",
-    "estimated_records": 96639,
+    "estimated_records": 96379,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -125,7 +125,7 @@
     "tier": "tier1_dominant",
     "manufacturer": "הונדה",
     "canonical_key": "הונדה",
-    "estimated_records": 94684,
+    "estimated_records": 94538,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -136,7 +136,7 @@
     "tier": "tier1_dominant",
     "manufacturer": "שברולט",
     "canonical_key": "שברולט",
-    "estimated_records": 89220,
+    "estimated_records": 88926,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -147,7 +147,7 @@
     "tier": "tier1_dominant",
     "manufacturer": "סיטרואן",
     "canonical_key": "סיטרואן",
-    "estimated_records": 85431,
+    "estimated_records": 85347,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -158,7 +158,7 @@
     "tier": "tier1_dominant",
     "manufacturer": "סובארו",
     "canonical_key": "סובארו",
-    "estimated_records": 84581,
+    "estimated_records": 84603,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -169,7 +169,7 @@
     "tier": "tier1_dominant",
     "manufacturer": "מרצדס",
     "canonical_key": "מרצדס",
-    "estimated_records": 81851,
+    "estimated_records": 80766,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -180,7 +180,7 @@
     "tier": "tier2_mid_volume",
     "manufacturer": "פיג'ו",
     "canonical_key": "פיג ו",
-    "estimated_records": 76436,
+    "estimated_records": 76260,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -191,7 +191,7 @@
     "tier": "tier2_mid_volume",
     "manufacturer": "פורד",
     "canonical_key": "פורד",
-    "estimated_records": 74658,
+    "estimated_records": 74285,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -202,7 +202,7 @@
     "tier": "tier2_mid_volume",
     "manufacturer": "צ'רי",
     "canonical_key": "צ רי",
-    "estimated_records": 72817,
+    "estimated_records": 73205,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -213,7 +213,7 @@
     "tier": "tier2_mid_volume",
     "manufacturer": "ב מ וו",
     "canonical_key": "ב מ וו",
-    "estimated_records": 64987,
+    "estimated_records": 65084,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -224,7 +224,7 @@
     "tier": "tier2_mid_volume",
     "manufacturer": "בי ווי די",
     "canonical_key": "בי ווי די",
-    "estimated_records": 61454,
+    "estimated_records": 61898,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -233,9 +233,9 @@
   {
     "queue_id": 22,
     "tier": "tier2_mid_volume",
-    "manufacturer": "אאודי גרמניה",
+    "manufacturer": "אאודי",
     "canonical_key": "אאודי",
-    "estimated_records": 53971,
+    "estimated_records": 50292,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -244,9 +244,9 @@
   {
     "queue_id": 23,
     "tier": "tier2_mid_volume",
-    "manufacturer": "מ.ג",
-    "canonical_key": "מ ג",
-    "estimated_records": 40779,
+    "manufacturer": "ג'אקו",
+    "canonical_key": "ג אקו",
+    "estimated_records": 41514,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -255,9 +255,9 @@
   {
     "queue_id": 24,
     "tier": "tier2_mid_volume",
-    "manufacturer": "ג'אקו",
-    "canonical_key": "ג אקו",
-    "estimated_records": 40334,
+    "manufacturer": "מ.ג",
+    "canonical_key": "מ ג",
+    "estimated_records": 41326,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -268,7 +268,7 @@
     "tier": "tier2_mid_volume",
     "manufacturer": "טסלה",
     "canonical_key": "טסלה",
-    "estimated_records": 38638,
+    "estimated_records": 38650,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -279,7 +279,7 @@
     "tier": "tier2_mid_volume",
     "manufacturer": "אופל",
     "canonical_key": "אופל",
-    "estimated_records": 36288,
+    "estimated_records": 36275,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -290,7 +290,7 @@
     "tier": "tier2_mid_volume",
     "manufacturer": "איסוזו",
     "canonical_key": "איסוזו",
-    "estimated_records": 28988,
+    "estimated_records": 28982,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -299,9 +299,9 @@
   {
     "queue_id": 28,
     "tier": "tier2_mid_volume",
-    "manufacturer": "דאציה",
-    "canonical_key": "דאציה",
-    "estimated_records": 28337,
+    "manufacturer": "וולבו",
+    "canonical_key": "וולבו",
+    "estimated_records": 27122,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -310,9 +310,9 @@
   {
     "queue_id": 29,
     "tier": "tier2_mid_volume",
-    "manufacturer": "וולבו",
-    "canonical_key": "וולבו",
-    "estimated_records": 27116,
+    "manufacturer": "גילי",
+    "canonical_key": "גילי",
+    "estimated_records": 25999,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -321,9 +321,9 @@
   {
     "queue_id": 30,
     "tier": "tier2_mid_volume",
-    "manufacturer": "גילי",
-    "canonical_key": "גילי",
-    "estimated_records": 25817,
+    "manufacturer": "פיאט",
+    "canonical_key": "פיאט",
+    "estimated_records": 25491,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -331,10 +331,10 @@
   },
   {
     "queue_id": 31,
-    "tier": "tier3_long_tail",
-    "manufacturer": "פיאט",
-    "canonical_key": "פיאט",
-    "estimated_records": 25568,
+    "tier": "tier2_mid_volume",
+    "manufacturer": "דאצ'יה",
+    "canonical_key": "דאצ יה",
+    "estimated_records": 24440,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -342,10 +342,10 @@
   },
   {
     "queue_id": 32,
-    "tier": "tier3_long_tail",
-    "manufacturer": "לקסוס",
-    "canonical_key": "לקסוס",
-    "estimated_records": 23676,
+    "tier": "tier2_mid_volume",
+    "manufacturer": "מרוטי סוזוקי",
+    "canonical_key": "מרוטי סוזוקי",
+    "estimated_records": 24049,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -354,9 +354,9 @@
   {
     "queue_id": 33,
     "tier": "tier3_long_tail",
-    "manufacturer": "דייהטסו",
-    "canonical_key": "דייהטסו",
-    "estimated_records": 22578,
+    "manufacturer": "לקסוס",
+    "canonical_key": "לקסוס",
+    "estimated_records": 23720,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -365,9 +365,9 @@
   {
     "queue_id": 34,
     "tier": "tier3_long_tail",
-    "manufacturer": "קרייזלר",
-    "canonical_key": "קרייזלר",
-    "estimated_records": 16824,
+    "manufacturer": "דייהטסו",
+    "canonical_key": "דייהטסו",
+    "estimated_records": 22501,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -376,9 +376,9 @@
   {
     "queue_id": 35,
     "tier": "tier3_long_tail",
-    "manufacturer": "אקספנג",
-    "canonical_key": "אקספנג",
-    "estimated_records": 14547,
+    "manufacturer": "קרייזלר",
+    "canonical_key": "קרייזלר",
+    "estimated_records": 16803,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -387,9 +387,9 @@
   {
     "queue_id": 36,
     "tier": "tier3_long_tail",
-    "manufacturer": "ג'יפ",
-    "canonical_key": "ג יפ",
-    "estimated_records": 11493,
+    "manufacturer": "אקספנג",
+    "canonical_key": "אקספנג",
+    "estimated_records": 14652,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -398,9 +398,9 @@
   {
     "queue_id": 37,
     "tier": "tier3_long_tail",
-    "manufacturer": "רובר",
-    "canonical_key": "רובר",
-    "estimated_records": 9022,
+    "manufacturer": "ג'יפ",
+    "canonical_key": "ג יפ",
+    "estimated_records": 11543,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -408,6 +408,17 @@
   },
   {
     "queue_id": 38,
+    "tier": "tier3_long_tail",
+    "manufacturer": "רובר",
+    "canonical_key": "רובר",
+    "estimated_records": 9016,
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "last_run_at": null
+  },
+  {
+    "queue_id": 39,
     "tier": "tier3_long_tail",
     "manufacturer": "אלפא רומיאו",
     "canonical_key": "אלפא רומיאו",
@@ -418,22 +429,11 @@
     "last_run_at": null
   },
   {
-    "queue_id": 39,
+    "queue_id": 40,
     "tier": "tier3_long_tail",
     "manufacturer": "קאדילאק",
     "canonical_key": "קאדילאק",
-    "estimated_records": 6656,
-    "status": "pending",
-    "attempts": 0,
-    "last_error": null,
-    "last_run_at": null
-  },
-  {
-    "queue_id": 40,
-    "tier": "tier3_long_tail",
-    "manufacturer": "לינק אנד קו",
-    "canonical_key": "לינק אנד קו",
-    "estimated_records": 6497,
+    "estimated_records": 6669,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -442,9 +442,9 @@
   {
     "queue_id": 41,
     "tier": "tier3_long_tail",
-    "manufacturer": "זיקר",
-    "canonical_key": "זיקר",
-    "estimated_records": 6047,
+    "manufacturer": "לינק אנד קו",
+    "canonical_key": "לינק אנד קו",
+    "estimated_records": 6571,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -453,9 +453,9 @@
   {
     "queue_id": 42,
     "tier": "tier3_long_tail",
-    "manufacturer": "פורשה",
-    "canonical_key": "פורשה",
-    "estimated_records": 5771,
+    "manufacturer": "זיקר",
+    "canonical_key": "זיקר",
+    "estimated_records": 6075,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -464,9 +464,9 @@
   {
     "queue_id": 43,
     "tier": "tier3_long_tail",
-    "manufacturer": "לנדרובר",
-    "canonical_key": "לנדרובר",
-    "estimated_records": 5426,
+    "manufacturer": "פורשה",
+    "canonical_key": "פורשה",
+    "estimated_records": 5784,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -475,9 +475,9 @@
   {
     "queue_id": 44,
     "tier": "tier3_long_tail",
-    "manufacturer": "סאנגיונג",
-    "canonical_key": "סאנגיונג",
-    "estimated_records": 5246,
+    "manufacturer": "לנדרובר",
+    "canonical_key": "לנדרובר",
+    "estimated_records": 5546,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -486,9 +486,9 @@
   {
     "queue_id": 45,
     "tier": "tier3_long_tail",
-    "manufacturer": "סרס",
-    "canonical_key": "סרס",
-    "estimated_records": 4963,
+    "manufacturer": "סאנגיונג",
+    "canonical_key": "סאנגיונג",
+    "estimated_records": 5234,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -497,9 +497,9 @@
   {
     "queue_id": 46,
     "tier": "tier3_long_tail",
-    "manufacturer": "דיפאל",
-    "canonical_key": "דיפאל",
-    "estimated_records": 4597,
+    "manufacturer": "סרס",
+    "canonical_key": "סרס",
+    "estimated_records": 4960,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -508,9 +508,9 @@
   {
     "queue_id": 47,
     "tier": "tier3_long_tail",
-    "manufacturer": "קיי גי מוביליט",
-    "canonical_key": "קיי גי מוביליט",
-    "estimated_records": 4584,
+    "manufacturer": "דיפאל",
+    "canonical_key": "דיפאל",
+    "estimated_records": 4686,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -519,9 +519,9 @@
   {
     "queue_id": 48,
     "tier": "tier3_long_tail",
-    "manufacturer": "סמארט",
-    "canonical_key": "סמארט",
-    "estimated_records": 3646,
+    "manufacturer": "קיי גי מוביליט",
+    "canonical_key": "קיי גי מוביליט",
+    "estimated_records": 4605,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -530,9 +530,9 @@
   {
     "queue_id": 49,
     "tier": "tier3_long_tail",
-    "manufacturer": "מקסוס",
-    "canonical_key": "מקסוס",
-    "estimated_records": 3612,
+    "manufacturer": "דאציה",
+    "canonical_key": "דאציה",
+    "estimated_records": 3903,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -541,9 +541,9 @@
   {
     "queue_id": 50,
     "tier": "tier3_long_tail",
-    "manufacturer": "אורה",
-    "canonical_key": "אורה",
-    "estimated_records": 3468,
+    "manufacturer": "אודי",
+    "canonical_key": "אודי",
+    "estimated_records": 3692,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -552,9 +552,9 @@
   {
     "queue_id": 51,
     "tier": "tier3_long_tail",
-    "manufacturer": "אומודה",
-    "canonical_key": "אומודה",
-    "estimated_records": 3334,
+    "manufacturer": "סמארט",
+    "canonical_key": "סמארט",
+    "estimated_records": 3647,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -563,9 +563,9 @@
   {
     "queue_id": 52,
     "tier": "tier3_long_tail",
-    "manufacturer": "ליפמוטור",
-    "canonical_key": "ליפמוטור",
-    "estimated_records": 3200,
+    "manufacturer": "מקסוס",
+    "canonical_key": "מקסוס",
+    "estimated_records": 3614,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -574,9 +574,9 @@
   {
     "queue_id": 53,
     "tier": "tier3_long_tail",
-    "manufacturer": "ביואיק",
-    "canonical_key": "ביואיק",
-    "estimated_records": 3139,
+    "manufacturer": "אורה",
+    "canonical_key": "אורה",
+    "estimated_records": 3576,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -585,9 +585,9 @@
   {
     "queue_id": 54,
     "tier": "tier3_long_tail",
-    "manufacturer": "קופרה",
-    "canonical_key": "קופרה",
-    "estimated_records": 3134,
+    "manufacturer": "אומודה",
+    "canonical_key": "אומודה",
+    "estimated_records": 3478,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -596,9 +596,9 @@
   {
     "queue_id": 55,
     "tier": "tier3_long_tail",
-    "manufacturer": "דונגפנג",
-    "canonical_key": "דונגפנג",
-    "estimated_records": 2770,
+    "manufacturer": "ליפמוטור",
+    "canonical_key": "ליפמוטור",
+    "estimated_records": 3236,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -607,9 +607,9 @@
   {
     "queue_id": 56,
     "tier": "tier3_long_tail",
-    "manufacturer": "יגואר",
-    "canonical_key": "יגואר",
-    "estimated_records": 2545,
+    "manufacturer": "קופרה",
+    "canonical_key": "קופרה",
+    "estimated_records": 3190,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -618,9 +618,9 @@
   {
     "queue_id": 57,
     "tier": "tier3_long_tail",
-    "manufacturer": "סקיוול",
-    "canonical_key": "סקיוול",
-    "estimated_records": 2513,
+    "manufacturer": "ביואיק",
+    "canonical_key": "ביואיק",
+    "estimated_records": 3116,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -629,9 +629,9 @@
   {
     "queue_id": 58,
     "tier": "tier3_long_tail",
-    "manufacturer": "איווייס",
-    "canonical_key": "איווייס",
-    "estimated_records": 2078,
+    "manufacturer": "דונגפנג",
+    "canonical_key": "דונגפנג",
+    "estimated_records": 2821,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -639,6 +639,39 @@
   },
   {
     "queue_id": 59,
+    "tier": "tier3_long_tail",
+    "manufacturer": "יגואר",
+    "canonical_key": "יגואר",
+    "estimated_records": 2542,
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "last_run_at": null
+  },
+  {
+    "queue_id": 60,
+    "tier": "tier3_long_tail",
+    "manufacturer": "סקיוול",
+    "canonical_key": "סקיוול",
+    "estimated_records": 2502,
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "last_run_at": null
+  },
+  {
+    "queue_id": 61,
+    "tier": "tier3_long_tail",
+    "manufacturer": "איווייס",
+    "canonical_key": "איווייס",
+    "estimated_records": 2076,
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "last_run_at": null
+  },
+  {
+    "queue_id": 62,
     "tier": "tier3_long_tail",
     "manufacturer": "איויאיסי",
     "canonical_key": "איויאיסי",
@@ -649,44 +682,11 @@
     "last_run_at": null
   },
   {
-    "queue_id": 60,
+    "queue_id": 63,
     "tier": "tier3_long_tail",
     "manufacturer": "גי.אי.סי",
     "canonical_key": "גי אי סי",
-    "estimated_records": 1622,
-    "status": "pending",
-    "attempts": 0,
-    "last_error": null,
-    "last_run_at": null
-  },
-  {
-    "queue_id": 61,
-    "tier": "tier3_long_tail",
-    "manufacturer": "אף אי דאבל יו",
-    "canonical_key": "אף אי דאבל יו",
-    "estimated_records": 1581,
-    "status": "pending",
-    "attempts": 0,
-    "last_error": null,
-    "last_run_at": null
-  },
-  {
-    "queue_id": 62,
-    "tier": "tier3_long_tail",
-    "manufacturer": "וויה",
-    "canonical_key": "וויה",
-    "estimated_records": 1391,
-    "status": "pending",
-    "attempts": 0,
-    "last_error": null,
-    "last_run_at": null
-  },
-  {
-    "queue_id": 63,
-    "tier": "tier3_long_tail",
-    "manufacturer": "די אס צרפת",
-    "canonical_key": "די אס",
-    "estimated_records": 1289,
+    "estimated_records": 1621,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -695,9 +695,9 @@
   {
     "queue_id": 64,
     "tier": "tier3_long_tail",
-    "manufacturer": "פורתינג",
-    "canonical_key": "פורתינג",
-    "estimated_records": 1183,
+    "manufacturer": "אף אי דאבל יו",
+    "canonical_key": "אף אי דאבל יו",
+    "estimated_records": 1596,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -706,9 +706,9 @@
   {
     "queue_id": 65,
     "tier": "tier3_long_tail",
-    "manufacturer": "וואי",
-    "canonical_key": "וואי",
-    "estimated_records": 1027,
+    "manufacturer": "וויה",
+    "canonical_key": "וויה",
+    "estimated_records": 1424,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -717,9 +717,9 @@
   {
     "queue_id": 66,
     "tier": "tier3_long_tail",
-    "manufacturer": "מזארטי",
-    "canonical_key": "מזארטי",
-    "estimated_records": 919,
+    "manufacturer": "די אס",
+    "canonical_key": "די אס",
+    "estimated_records": 1290,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -728,9 +728,9 @@
   {
     "queue_id": 67,
     "tier": "tier3_long_tail",
-    "manufacturer": "ג'אק",
-    "canonical_key": "ג אק",
-    "estimated_records": 836,
+    "manufacturer": "פורתינג",
+    "canonical_key": "פורתינג",
+    "estimated_records": 1181,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -739,9 +739,9 @@
   {
     "queue_id": 68,
     "tier": "tier3_long_tail",
-    "manufacturer": "פוטון",
-    "canonical_key": "פוטון",
-    "estimated_records": 823,
+    "manufacturer": "מרצדס בנץ",
+    "canonical_key": "מרצדס בנץ",
+    "estimated_records": 1173,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
@@ -749,6 +749,50 @@
   },
   {
     "queue_id": 69,
+    "tier": "tier3_long_tail",
+    "manufacturer": "וואי",
+    "canonical_key": "וואי",
+    "estimated_records": 1025,
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "last_run_at": null
+  },
+  {
+    "queue_id": 70,
+    "tier": "tier3_long_tail",
+    "manufacturer": "מזארטי",
+    "canonical_key": "מזארטי",
+    "estimated_records": 918,
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "last_run_at": null
+  },
+  {
+    "queue_id": 71,
+    "tier": "tier3_long_tail",
+    "manufacturer": "ג'אק",
+    "canonical_key": "ג אק",
+    "estimated_records": 834,
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "last_run_at": null
+  },
+  {
+    "queue_id": 72,
+    "tier": "tier3_long_tail",
+    "manufacturer": "פוטון",
+    "canonical_key": "פוטון",
+    "estimated_records": 825,
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "last_run_at": null
+  },
+  {
+    "queue_id": 73,
     "tier": "tier3_long_tail",
     "manufacturer": "פולסטאר",
     "canonical_key": "פולסטאר",
@@ -759,40 +803,40 @@
     "last_run_at": null
   },
   {
-    "queue_id": 70,
-    "tier": "tier3_long_tail",
-    "manufacturer": "ג'י.אמ.סי",
-    "canonical_key": "ג י אמ סי",
-    "estimated_records": 508,
-    "status": "pending",
-    "attempts": 0,
-    "last_error": null,
-    "last_run_at": null
-  },
-  {
-    "queue_id": 71,
+    "queue_id": 74,
     "tier": "tier3_long_tail",
     "manufacturer": "איון",
     "canonical_key": "איון",
-    "estimated_records": 507,
+    "estimated_records": 519,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
     "last_run_at": null
   },
   {
-    "queue_id": 72,
+    "queue_id": 75,
+    "tier": "tier3_long_tail",
+    "manufacturer": "ג'י.אמ.סי",
+    "canonical_key": "ג י אמ סי",
+    "estimated_records": 509,
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "last_run_at": null
+  },
+  {
+    "queue_id": 76,
     "tier": "tier3_long_tail",
     "manufacturer": "ניאו רכב",
     "canonical_key": "ניאו רכב",
-    "estimated_records": 476,
+    "estimated_records": 477,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
     "last_run_at": null
   },
   {
-    "queue_id": 73,
+    "queue_id": 77,
     "tier": "tier3_long_tail",
     "manufacturer": "אוואטר",
     "canonical_key": "אוואטר",
@@ -803,7 +847,7 @@
     "last_run_at": null
   },
   {
-    "queue_id": 74,
+    "queue_id": 78,
     "tier": "tier3_long_tail",
     "manufacturer": "בנטלי",
     "canonical_key": "בנטלי",
@@ -814,7 +858,7 @@
     "last_run_at": null
   },
   {
-    "queue_id": 75,
+    "queue_id": 79,
     "tier": "tier3_long_tail",
     "manufacturer": "פרארי",
     "canonical_key": "פרארי",
@@ -825,7 +869,7 @@
     "last_run_at": null
   },
   {
-    "queue_id": 76,
+    "queue_id": 80,
     "tier": "tier3_long_tail",
     "manufacturer": "דייהו",
     "canonical_key": "דייהו",
@@ -836,29 +880,29 @@
     "last_run_at": null
   },
   {
-    "queue_id": 77,
+    "queue_id": 81,
     "tier": "tier3_long_tail",
     "manufacturer": "איי אם",
     "canonical_key": "איי אם",
-    "estimated_records": 298,
+    "estimated_records": 309,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
     "last_run_at": null
   },
   {
-    "queue_id": 78,
+    "queue_id": 82,
     "tier": "tier3_long_tail",
     "manufacturer": "לנצ'יה",
     "canonical_key": "לנצ יה",
-    "estimated_records": 285,
+    "estimated_records": 284,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
     "last_run_at": null
   },
   {
-    "queue_id": 79,
+    "queue_id": 83,
     "tier": "tier3_long_tail",
     "manufacturer": "סאאב",
     "canonical_key": "סאאב",
@@ -869,7 +913,7 @@
     "last_run_at": null
   },
   {
-    "queue_id": 80,
+    "queue_id": 84,
     "tier": "tier3_long_tail",
     "manufacturer": "דודג'",
     "canonical_key": "דודג",
@@ -880,7 +924,7 @@
     "last_run_at": null
   },
   {
-    "queue_id": 81,
+    "queue_id": 85,
     "tier": "tier3_long_tail",
     "manufacturer": "אסטון מרטין",
     "canonical_key": "אסטון מרטין",
@@ -891,18 +935,7 @@
     "last_run_at": null
   },
   {
-    "queue_id": 82,
-    "tier": "tier3_long_tail",
-    "manufacturer": "האמר",
-    "canonical_key": "האמר",
-    "estimated_records": 225,
-    "status": "pending",
-    "attempts": 0,
-    "last_error": null,
-    "last_run_at": null
-  },
-  {
-    "queue_id": 83,
+    "queue_id": 86,
     "tier": "tier3_long_tail",
     "manufacturer": "גרייט וול",
     "canonical_key": "גרייט וול",
@@ -913,18 +946,29 @@
     "last_run_at": null
   },
   {
-    "queue_id": 84,
+    "queue_id": 87,
     "tier": "tier3_long_tail",
     "manufacturer": "יודו",
     "canonical_key": "יודו",
-    "estimated_records": 167,
+    "estimated_records": 168,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
     "last_run_at": null
   },
   {
-    "queue_id": 85,
+    "queue_id": 88,
+    "tier": "tier3_long_tail",
+    "manufacturer": "האמר ג.מ",
+    "canonical_key": "האמר ג מ",
+    "estimated_records": 139,
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "last_run_at": null
+  },
+  {
+    "queue_id": 89,
     "tier": "tier3_long_tail",
     "manufacturer": "נטע",
     "canonical_key": "נטע",
@@ -935,18 +979,18 @@
     "last_run_at": null
   },
   {
-    "queue_id": 86,
+    "queue_id": 90,
     "tier": "tier3_long_tail",
-    "manufacturer": "לאמבורגיני",
-    "canonical_key": "לאמבורגיני",
-    "estimated_records": 98,
+    "manufacturer": "למבורגיני",
+    "canonical_key": "למבורגיני",
+    "estimated_records": 100,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
     "last_run_at": null
   },
   {
-    "queue_id": 87,
+    "queue_id": 91,
     "tier": "tier3_long_tail",
     "manufacturer": "פיאג'ו",
     "canonical_key": "פיאג ו",
@@ -957,18 +1001,29 @@
     "last_run_at": null
   },
   {
-    "queue_id": 88,
+    "queue_id": 92,
     "tier": "tier3_long_tail",
-    "manufacturer": "פאריזון",
-    "canonical_key": "פאריזון",
-    "estimated_records": 81,
+    "manufacturer": "האמר",
+    "canonical_key": "האמר",
+    "estimated_records": 87,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
     "last_run_at": null
   },
   {
-    "queue_id": 89,
+    "queue_id": 93,
+    "tier": "tier3_long_tail",
+    "manufacturer": "פאריזון",
+    "canonical_key": "פאריזון",
+    "estimated_records": 86,
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "last_run_at": null
+  },
+  {
+    "queue_id": 94,
     "tier": "tier3_long_tail",
     "manufacturer": "טלקו",
     "canonical_key": "טלקו",
@@ -979,7 +1034,18 @@
     "last_run_at": null
   },
   {
-    "queue_id": 90,
+    "queue_id": 95,
+    "tier": "tier3_long_tail",
+    "manufacturer": "רולס-רויס",
+    "canonical_key": "רולס רויס",
+    "estimated_records": 71,
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "last_run_at": null
+  },
+  {
+    "queue_id": 96,
     "tier": "tier3_long_tail",
     "manufacturer": "באייק",
     "canonical_key": "באייק",
@@ -990,29 +1056,18 @@
     "last_run_at": null
   },
   {
-    "queue_id": 91,
-    "tier": "tier3_long_tail",
-    "manufacturer": "רולס-רויס",
-    "canonical_key": "רולס רויס",
-    "estimated_records": 69,
-    "status": "pending",
-    "attempts": 0,
-    "last_error": null,
-    "last_run_at": null
-  },
-  {
-    "queue_id": 92,
+    "queue_id": 97,
     "tier": "tier3_long_tail",
     "manufacturer": "מאן",
     "canonical_key": "מאן",
-    "estimated_records": 67,
+    "estimated_records": 68,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
     "last_run_at": null
   },
   {
-    "queue_id": 93,
+    "queue_id": 98,
     "tier": "tier3_long_tail",
     "manufacturer": "ארקפוקס",
     "canonical_key": "ארקפוקס",
@@ -1023,18 +1078,18 @@
     "last_run_at": null
   },
   {
-    "queue_id": 94,
+    "queue_id": 99,
     "tier": "tier3_long_tail",
     "manufacturer": "דאבל יו אם איי",
     "canonical_key": "דאבל יו אם איי",
-    "estimated_records": 58,
+    "estimated_records": 60,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
     "last_run_at": null
   },
   {
-    "queue_id": 95,
+    "queue_id": 100,
     "tier": "tier3_long_tail",
     "manufacturer": "אל אי וי סי",
     "canonical_key": "אל אי וי סי",
@@ -1045,7 +1100,18 @@
     "last_run_at": null
   },
   {
-    "queue_id": 96,
+    "queue_id": 101,
+    "tier": "tier3_long_tail",
+    "manufacturer": "אלפין",
+    "canonical_key": "אלפין",
+    "estimated_records": 50,
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "last_run_at": null
+  },
+  {
+    "queue_id": 102,
     "tier": "tier3_long_tail",
     "manufacturer": "די.אף.אס.קיי",
     "canonical_key": "די אף אס קיי",
@@ -1056,18 +1122,18 @@
     "last_run_at": null
   },
   {
-    "queue_id": 97,
+    "queue_id": 103,
     "tier": "tier3_long_tail",
-    "manufacturer": "אלפין",
-    "canonical_key": "אלפין",
-    "estimated_records": 46,
+    "manufacturer": "קוואן",
+    "canonical_key": "קוואן",
+    "estimated_records": 47,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
     "last_run_at": null
   },
   {
-    "queue_id": 98,
+    "queue_id": 104,
     "tier": "tier3_long_tail",
     "manufacturer": "ניאו",
     "canonical_key": "ניאו",
@@ -1078,7 +1144,7 @@
     "last_run_at": null
   },
   {
-    "queue_id": 99,
+    "queue_id": 105,
     "tier": "tier3_long_tail",
     "manufacturer": "אס דאבל יו אמ",
     "canonical_key": "אס דאבל יו אמ",
@@ -1089,7 +1155,7 @@
     "last_run_at": null
   },
   {
-    "queue_id": 100,
+    "queue_id": 106,
     "tier": "tier3_long_tail",
     "manufacturer": "סנטרו",
     "canonical_key": "סנטרו",
@@ -1100,18 +1166,7 @@
     "last_run_at": null
   },
   {
-    "queue_id": 101,
-    "tier": "tier3_long_tail",
-    "manufacturer": "קוואן",
-    "canonical_key": "קוואן",
-    "estimated_records": 36,
-    "status": "pending",
-    "attempts": 0,
-    "last_error": null,
-    "last_run_at": null
-  },
-  {
-    "queue_id": 102,
+    "queue_id": 107,
     "tier": "tier3_long_tail",
     "manufacturer": "קארמה",
     "canonical_key": "קארמה",
@@ -1122,7 +1177,7 @@
     "last_run_at": null
   },
   {
-    "queue_id": 103,
+    "queue_id": 108,
     "tier": "tier3_long_tail",
     "manufacturer": "ואז",
     "canonical_key": "ואז",
@@ -1133,7 +1188,7 @@
     "last_run_at": null
   },
   {
-    "queue_id": 104,
+    "queue_id": 109,
     "tier": "tier3_long_tail",
     "manufacturer": "איווקו",
     "canonical_key": "איווקו",
@@ -1144,18 +1199,7 @@
     "last_run_at": null
   },
   {
-    "queue_id": 105,
-    "tier": "tier3_long_tail",
-    "manufacturer": "אמ.סי.סי.",
-    "canonical_key": "אמ סי סי",
-    "estimated_records": 24,
-    "status": "pending",
-    "attempts": 0,
-    "last_error": null,
-    "last_run_at": null
-  },
-  {
-    "queue_id": 106,
+    "queue_id": 110,
     "tier": "tier3_long_tail",
     "manufacturer": "ג'יי.אמ.סי",
     "canonical_key": "ג יי אמ סי",
@@ -1166,7 +1210,7 @@
     "last_run_at": null
   },
   {
-    "queue_id": 107,
+    "queue_id": 111,
     "tier": "tier3_long_tail",
     "manufacturer": "גיאיוואן",
     "canonical_key": "גיאיוואן",
@@ -1177,7 +1221,18 @@
     "last_run_at": null
   },
   {
-    "queue_id": 108,
+    "queue_id": 112,
+    "tier": "tier3_long_tail",
+    "manufacturer": "אמ.סי.סי",
+    "canonical_key": "אמ סי סי",
+    "estimated_records": 23,
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "last_run_at": null
+  },
+  {
+    "queue_id": 113,
     "tier": "tier3_long_tail",
     "manufacturer": "לוטוס",
     "canonical_key": "לוטוס",
@@ -1188,18 +1243,7 @@
     "last_run_at": null
   },
   {
-    "queue_id": 109,
-    "tier": "tier3_long_tail",
-    "manufacturer": "לינקסיס",
-    "canonical_key": "לינקסיס",
-    "estimated_records": 12,
-    "status": "pending",
-    "attempts": 0,
-    "last_error": null,
-    "last_run_at": null
-  },
-  {
-    "queue_id": 110,
+    "queue_id": 114,
     "tier": "tier3_long_tail",
     "manufacturer": "מיני",
     "canonical_key": "מיני",
@@ -1210,18 +1254,18 @@
     "last_run_at": null
   },
   {
-    "queue_id": 111,
+    "queue_id": 115,
     "tier": "tier3_long_tail",
-    "manufacturer": "פולקסוגן",
-    "canonical_key": "פולקסוגן",
-    "estimated_records": 12,
+    "manufacturer": "לינקסיס",
+    "canonical_key": "לינקסיס",
+    "estimated_records": 11,
     "status": "pending",
     "attempts": 0,
     "last_error": null,
     "last_run_at": null
   },
   {
-    "queue_id": 112,
+    "queue_id": 116,
     "tier": "tier3_long_tail",
     "manufacturer": "אינאוס",
     "canonical_key": "אינאוס",
@@ -1232,7 +1276,7 @@
     "last_run_at": null
   },
   {
-    "queue_id": 113,
+    "queue_id": 117,
     "tier": "tier3_long_tail",
     "manufacturer": "ג'.מ",
     "canonical_key": "ג מ",
@@ -1243,7 +1287,7 @@
     "last_run_at": null
   },
   {
-    "queue_id": 114,
+    "queue_id": 118,
     "tier": "tier3_long_tail",
     "manufacturer": "לינקולן",
     "canonical_key": "לינקולן",
@@ -1254,7 +1298,7 @@
     "last_run_at": null
   },
   {
-    "queue_id": 115,
+    "queue_id": 119,
     "tier": "tier3_long_tail",
     "manufacturer": "ריהיי",
     "canonical_key": "ריהיי",
@@ -1265,7 +1309,7 @@
     "last_run_at": null
   },
   {
-    "queue_id": 116,
+    "queue_id": 120,
     "tier": "tier3_long_tail",
     "manufacturer": "אל.טי.איי.",
     "canonical_key": "אל טי איי",
@@ -1276,7 +1320,7 @@
     "last_run_at": null
   },
   {
-    "queue_id": 117,
+    "queue_id": 121,
     "tier": "tier3_long_tail",
     "manufacturer": "אקסלנטיקס",
     "canonical_key": "אקסלנטיקס",
@@ -1287,7 +1331,7 @@
     "last_run_at": null
   },
   {
-    "queue_id": 118,
+    "queue_id": 122,
     "tier": "tier3_long_tail",
     "manufacturer": "גופל",
     "canonical_key": "גופל",
@@ -1298,7 +1342,7 @@
     "last_run_at": null
   },
   {
-    "queue_id": 119,
+    "queue_id": 123,
     "tier": "tier3_long_tail",
     "manufacturer": "דאיון",
     "canonical_key": "דאיון",
@@ -1309,7 +1353,18 @@
     "last_run_at": null
   },
   {
-    "queue_id": 120,
+    "queue_id": 124,
+    "tier": "tier3_long_tail",
+    "manufacturer": "פונטיאק",
+    "canonical_key": "פונטיאק",
+    "estimated_records": 8,
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "last_run_at": null
+  },
+  {
+    "queue_id": 125,
     "tier": "tier3_long_tail",
     "manufacturer": "צ'אנג יאנג",
     "canonical_key": "צ אנג יאנג",
@@ -1320,7 +1375,7 @@
     "last_run_at": null
   },
   {
-    "queue_id": 121,
+    "queue_id": 126,
     "tier": "tier3_long_tail",
     "manufacturer": "גמס",
     "canonical_key": "גמס",
@@ -1331,7 +1386,7 @@
     "last_run_at": null
   },
   {
-    "queue_id": 122,
+    "queue_id": 127,
     "tier": "tier3_long_tail",
     "manufacturer": "מודרן",
     "canonical_key": "מודרן",
@@ -1342,7 +1397,7 @@
     "last_run_at": null
   },
   {
-    "queue_id": 123,
+    "queue_id": 128,
     "tier": "tier3_long_tail",
     "manufacturer": "בורג",
     "canonical_key": "בורג",
@@ -1353,7 +1408,7 @@
     "last_run_at": null
   },
   {
-    "queue_id": 124,
+    "queue_id": 129,
     "tier": "tier3_long_tail",
     "manufacturer": "מובימטיק",
     "canonical_key": "מובימטיק",
@@ -1364,7 +1419,7 @@
     "last_run_at": null
   },
   {
-    "queue_id": 125,
+    "queue_id": 130,
     "tier": "tier3_long_tail",
     "manufacturer": "בואו",
     "canonical_key": "בואו",
@@ -1375,10 +1430,10 @@
     "last_run_at": null
   },
   {
-    "queue_id": 126,
+    "queue_id": 131,
     "tier": "tier3_long_tail",
-    "manufacturer": "ט אי סי",
-    "canonical_key": "ט אי סי",
+    "manufacturer": "טי אי סי",
+    "canonical_key": "טי אי סי",
     "estimated_records": 4,
     "status": "pending",
     "attempts": 0,
@@ -1386,7 +1441,7 @@
     "last_run_at": null
   },
   {
-    "queue_id": 127,
+    "queue_id": 132,
     "tier": "tier3_long_tail",
     "manufacturer": "מ א ן",
     "canonical_key": "מ א ן",
@@ -1397,7 +1452,7 @@
     "last_run_at": null
   },
   {
-    "queue_id": 128,
+    "queue_id": 133,
     "tier": "tier3_long_tail",
     "manufacturer": "מורגן",
     "canonical_key": "מורגן",
@@ -1408,29 +1463,7 @@
     "last_run_at": null
   },
   {
-    "queue_id": 129,
-    "tier": "tier3_long_tail",
-    "manufacturer": "פונטיאק ארה\"ב",
-    "canonical_key": "פונטיאק ארה ב",
-    "estimated_records": 4,
-    "status": "pending",
-    "attempts": 0,
-    "last_error": null,
-    "last_run_at": null
-  },
-  {
-    "queue_id": 130,
-    "tier": "tier3_long_tail",
-    "manufacturer": "פונטיאק ארהב\"",
-    "canonical_key": "פונטיאק",
-    "estimated_records": 4,
-    "status": "pending",
-    "attempts": 0,
-    "last_error": null,
-    "last_run_at": null
-  },
-  {
-    "queue_id": 131,
+    "queue_id": 134,
     "tier": "tier3_long_tail",
     "manufacturer": "אקס אי וי",
     "canonical_key": "אקס אי וי",
@@ -1441,7 +1474,7 @@
     "last_run_at": null
   },
   {
-    "queue_id": 132,
+    "queue_id": 135,
     "tier": "tier3_long_tail",
     "manufacturer": "דה טומאסו",
     "canonical_key": "דה טומאסו",
@@ -1452,7 +1485,18 @@
     "last_run_at": null
   },
   {
-    "queue_id": 133,
+    "queue_id": 136,
+    "tier": "tier3_long_tail",
+    "manufacturer": "דימלרקריזלר",
+    "canonical_key": "דימלרקריזלר",
+    "estimated_records": 2,
+    "status": "pending",
+    "attempts": 0,
+    "last_error": null,
+    "last_run_at": null
+  },
+  {
+    "queue_id": 137,
     "tier": "tier3_long_tail",
     "manufacturer": "מקלארין",
     "canonical_key": "מקלארין",

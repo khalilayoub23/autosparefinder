@@ -69,6 +69,32 @@ How to apply:
 4. If a resource already exists under the wrong account, migrate it to
    `autosparefinder2024@gmail.com` and document the migration in FIXES_TRACKER.
 
+
+
+**Never assume — check and verify before answering. No claim ships on memory, a doc's stated
+intent, or a prior session's conclusion alone.**
+
+Why: the 2026-08-15 Digital Department audit chain repeatedly found confident claims that were
+false on inspection — `AGENT_DEPARTMENTS` "gives SHIRA her departments" (she has zero real
+callers, verified by grep), `may_inject()` "enforces the security boundary" (defined, tested,
+never called on the production path), `dept-cmo`'s "check-ins run whichever the owner or NOA
+triggers" (NOA has no host-filesystem access — structurally impossible). Each read as true from
+the file/comment/prompt alone and was only caught by tracing the actual execution path.
+
+Rules:
+1. **Before stating a fact about the codebase, system behavior, or data, verify it fresh in this
+   turn** — grep/read/query the real thing. Don't answer from memory of a prior session's
+   conclusion, a doc's stated intent, or how a system "should" work.
+2. **A file existing, a function being defined, a dict/config entry being present, a test
+   passing, or a comment saying something works is NOT evidence it is connected, live, or used
+   in production.** Trace to a real caller, a real trigger, or a real live check before asserting
+   reachability — see the BUILT/CONNECTED/LIVE/VERIFIED distinction used throughout the Digital
+   Department audits.
+3. **This applies to my own prior answers in the same conversation, too.** An earlier audit's or
+   earlier turn's conclusion is a hint to re-check, not ground truth to repeat.
+4. **If verification is out of scope or too costly for the current ask, say "unverified"
+   explicitly** rather than presenting an unchecked assumption as a finding.
+
 ---
 
 **Contents**
@@ -142,6 +168,31 @@ How to apply:
   writer of the same table and give each a stand-down. Use `job_queue.queue_busy()`.
 - **Notify by exception.** A routine success report is camouflage — it trains the reader to ignore
   the channel. Only send on stall / idle / recovery.
+- **`browser.close()` must be called INSIDE the `async_playwright()` context manager** (root-fixed
+  2026-08-11). An outer `finally` that calls it AFTER `async with async_playwright()` exits means
+  the Playwright NodeJS server has already shut down — Chrome receives SIGKILL from the dying
+  server, reparents to uvicorn, and accumulates as a zombie the waitpid loop cannot reach. Pattern:
+  ```python
+  async with async_playwright() as p:
+      browser = await p.chromium.launch(...)
+      try:
+          ...
+      finally:
+          await context.close()   # INSIDE the async_playwright block
+          await browser.close()   # INSIDE the async_playwright block — Chrome exits cleanly
+  ```
+- **Playwright concurrent sessions must use `asyncio.Semaphore(N)`, never `asyncio.Lock()`.**
+  A Lock is `Semaphore(1)` — it serializes every scraper caller and kills throughput when multiple
+  pipelines (catalog scraper, rockauto, OEM discovery) run concurrently. Use
+  `_PLAYWRIGHT_MAX_CONCURRENT = int(os.getenv("PLAYWRIGHT_MAX_CONCURRENT", "2"))` with a lazy
+  `asyncio.Semaphore`; set `PLAYWRIGHT_MAX_CONCURRENT` in `docker-compose.yml`. Budget: each
+  headless Chrome ≈300 MB RSS; the Amayama Chrome is always on (~400 MB); on a 12 GB no-swap box,
+  `PLAYWRIGHT_MAX_CONCURRENT=2` is safe, 4+ risks OOM.
+- **The zombie reaper must count OS-level Chrome processes, not job-registry entries.** Scan
+  `/proc/*/cmdline` for entries containing `chrome` AND `--headless` AND without `--type=` (to
+  match only the main process, not renderers). Alert and kill the oldest if the count exceeds
+  `PLAYWRIGHT_MAX_CONCURRENT × 18` (each Chrome spawns ~12–15 OS procs). Wired into
+  `_zombie_reaper_loop()` in `BACKEND_API_ROUTES.py` with a 6 h WhatsApp-alert cooldown.
 
 ### Categorization
 - **One file, one vocabulary.** `category_map.py` is the only file that defines category rules.
@@ -184,6 +235,19 @@ How to apply:
   defense-in-depth — a prompt rule does not hold under a fallback model.
 - **Silence is the one failure mode a user cannot diagnose.** Every background path that owes an
   answer needs: a strong reference, a deadline (`asyncio.wait_for(..., 120s)`), and a fallback.
+- **An agent must never promise a SYSTEM ACTION that has no underlying mechanism.** The existing
+  Truth-Only Guardrail covers invented business facts (prices, coupons, discounts) — this is the
+  same rule extended to invented CAPABILITIES. Found 2026-08-12: the owner asked AVI (owner
+  console) to connect him with SHIRA/NOA without the `@agent` prefix; AVI replied "I'll connect
+  you… I'll forward the message, they'll answer soon" — **twice**, even after being told directly
+  it wasn't forwarding anything. There is no cross-agent message-relay mechanism; the only real
+  path is the owner typing `@agent` himself (switches the sticky session). Fix: (1) detect the
+  underlying intent in natural language and actually DO the switch instead of promising it — make
+  the real request work rather than teaching a new syntax; (2) a hard shared-prompt rule: never
+  say "I'll forward/connect/pass this along to X" — state the real mechanism instead. **Whenever
+  an agent can take an action OR merely describe one, a hallucinated capability is indistinguishable
+  from a real one to the person reading it — verify the mechanism exists before letting an agent
+  promise it, the same way a claimed discount must exist in the DB before an agent states it.**
 
 ### Deployment & Config
 - **Bind mount `./backend:/app`** — code changes are live on disk after `docker restart`. No
@@ -198,6 +262,12 @@ How to apply:
   the inode; the running container holds the old inode until `docker restart autospare_nginx`.
 - **Adding a value to an in-memory enum requires a restart before backfilling.** The bind mount
   updates files, not the loaded module. Watch a backfilled count for drift afterwards.
+- **`browser.close()` must be called INSIDE the `async with async_playwright() as p:` block.**
+  Calling it in an outer `finally` (after the `async with` exits) sends the CDP close command to
+  a Playwright NodeJS server that has already been stopped — Chrome is SIGKILLed by the dying
+  server, reparents to uvicorn, and the Python waitpid loop cannot reap it. 22 zombie Chrome
+  processes accumulated per scraper cycle before this was fixed (2026-08-11). See Background Jobs
+  section for the full pattern.
 
 ### External APIs & OAuth
 - **External API capabilities drift — verify live before stating a limitation.** Training-era
@@ -1414,7 +1484,62 @@ image + the part name only — never a supplier link/ad).
   vector). **Residual:** Contabo access keys are ACCOUNT-WIDE (can reach every bucket) — if the
   key is ever exposed, rotate it in the Contabo panel and update `.env`.
 
-## 10. Operations Reference
+## 10. Google Stitch Design Integration
+
+**Installed 2026-08-12.** Security-audited (87 files, Apache-2.0, Google Labs), sandbox-tested. CLEAN.
+
+### What it is
+Google Stitch (`stitch.withgoogle.com`) is a generative UI tool — it creates screens from text/image prompts. The `stitch-skills` repo is a collection of Claude Code skills that teach me how to use Stitch's MCP server to generate, manage, and deploy designs.
+
+### Installation paths
+- **Skills repo**: `.claude/skills/stitch-skills/` (project-scoped)
+- **Brand ground-truth**: `.stitch/DESIGN.md` — synthesized from `brand/*.md`. Load this before EVERY Stitch generation to prevent generic AI designs.
+- **Stitch project state**: `.stitch/metadata.json` (created when first Stitch project is used)
+
+### Available skills (invoke with `/` prefix)
+| Skill | Use |
+|---|---|
+| `/stitch::generate-design` | Generate or edit screens from text/image |
+| `/stitch::manage-design-system` | Upload DESIGN.md to Stitch, apply to screens |
+| `/stitch::upload-to-stitch` | Upload local PNG/HTML/MD to Stitch |
+| `/stitch::code-to-design` | Extract frontend → HTML snapshot → upload to Stitch |
+| `/stitch::extract-static-html` | Snapshot a running dev server |
+| `/stitch::extract-design-md` | Extract DESIGN.md from frontend source |
+| `/stitch::react-components` | Convert Stitch screens → React components |
+| `/design-md` | Analyze a Stitch project → synthesize DESIGN.md |
+| `/enhance-prompt` | Polish vague UI ideas → Stitch-optimized prompts |
+| `/stitch-loop` | Autonomous iterative website builder |
+
+### MCP configuration — LIVE ✅ (configured 2026-08-12)
+`~/.claude.json` → `projects["/opt/autosparefinder"].mcpServers.stitch`:
+```json
+{ "type": "http", "url": "https://stitch.googleapis.com/mcp", "headers": { "X-Goog-Api-Key": "..." } }
+```
+API key stored in `.env` as `STITCH_API_KEY`. 15 Stitch tools verified live:
+`create_project`, `get_project`, `list_projects`, `list_screens`, `get_screen`,
+`generate_screen_from_text`, `edit_screens`, `generate_variants`, `upload_design_md`,
+`create_design_system`, `create_design_system_from_design_md`, `update_design_system`,
+`list_design_systems`, `apply_design_system`, `delete_project`.
+
+### Design system rules (never regress)
+- **Always load `.stitch/DESIGN.md` before generating** — it contains the full brand palette, typography, and component specs extracted from `brand/*.md`.
+- **Dark mode only**: base `#0F1218`, cards `#151B27`, accent `#0EA5E9`
+- **Font**: Inter (primary), JetBrains Mono (OEM numbers/codes)
+- **RTL**: Hebrew and Arabic must mirror correctly
+- **Forbidden in Stitch**: white/light backgrounds, pill buttons, colorful gradients, generic blue (`#1a73e8`)
+
+### Upload script (works today, no MCP needed)
+```bash
+python3 .claude/skills/stitch-skills/plugins/stitch-design/skills/upload-to-stitch/scripts/upload_to_stitch.py \
+  --project-id <PROJECT_ID> \
+  --file-path .stitch/DESIGN.md \
+  --api-key <OAUTH2_TOKEN> \
+  --title "AutoSpareFinder DESIGN.md"
+```
+
+---
+
+## 11. Operations Reference
 
 
 When the user asks "give me a review / review the system / check everything", always query live data and fill in this exact table format:

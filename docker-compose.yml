@@ -113,6 +113,15 @@ services:
       THUMB_PUBLIC_BASE: ${THUMB_PUBLIC_BASE:-https://autosparefinder.co.il/api/v1/thumbnails}
       DATABASE_URL: postgresql+asyncpg://autospare:${DB_PASSWORD}@postgres_catalog:5432/autospare
       DATABASE_PII_URL: postgresql+asyncpg://autospare:${DB_PASSWORD}@postgres_pii:5432/autospare_pii
+      # Raised 2026-08-13 after a 100-user load test showed the PII pool (customers/
+      # orders/payments) exhausting at its old default (pool_size=5, overflow=2 — the
+      # PII engine derives from half of these) — `QueuePool limit of size 5 overflow 2
+      # reached` on every cart/checkout/payment/order-history call under concurrent
+      # load. Postgres itself allows max_connections=100 with ~90 headroom unused, so
+      # this only raises the app-level pool, not the DB server. Catalog pool = this
+      # value + overflow; PII pool = half of each (see BACKEND_DATABASE_MODELS.py).
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-40}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-20}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       JWT_SECRET_KEY: ${JWT_SECRET_KEY}
       JWT_REFRESH_SECRET_KEY: ${JWT_REFRESH_SECRET_KEY}
@@ -305,9 +314,9 @@ services:
       NOA_TELEGRAM_MIRROR: '1'
       COLLECT_SECRET: ${COLLECT_SECRET}
       FLARESOLVERR_URL: http://flaresolverr:8191/v1
-      FLARESOLVERR_URL_2: http://flaresolverr2:8191/v1
       CPIE_FULL_SEED_ENABLED: ${CPIE_FULL_SEED_ENABLED:-1}
       HARVESTER_PARALLEL_SESSIONS: ${HARVESTER_PARALLEL_SESSIONS:-5}
+      PLAYWRIGHT_MAX_CONCURRENT: ${PLAYWRIGHT_MAX_CONCURRENT:-2}
       OWNER_WHATSAPP_LID: ${OWNER_WHATSAPP_LID:-98058566160397@lid}
       GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
     depends_on:
@@ -503,6 +512,25 @@ services:
     - ./backups/catalog:/backups
     networks:
     - internal
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    restart: unless-stopped
+    mem_limit: 2560m
+    memswap_limit: 5120m
+    environment:
+      LOG_LEVEL: info
+    tmpfs:
+    - /tmp:size=536870912,exec
+    networks:
+    - internal
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
+    security_opt:
+    - no-new-privileges:true
 networks:
   internal:
     driver: bridge

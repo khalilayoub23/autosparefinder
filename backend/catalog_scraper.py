@@ -90,6 +90,24 @@ from agent_todo_utils import (
 load_dotenv()
 logger = logging.getLogger(__name__)
 
+# Limit concurrent Playwright Chrome launches to 1 at a time.
+# Chrome takes ~300 MB RSS per instance; with the Amayama browser always running,
+# multiple concurrent scraper browsers caused OOM on the 12 GB box (no swap).
+# Initialized lazily inside the event loop so module import stays safe.
+# Maximum concurrent headless Chrome instances from this scraper.
+# Each instance uses ~300 MB RSS. Box: 12 GB, no swap. Amayama Chrome is always on (~400 MB).
+# 2 concurrent = 2×300 + 400 = 1 GB Chrome headroom — measured safe on 6 vCPU.
+# Override with PLAYWRIGHT_MAX_CONCURRENT env var.
+_PLAYWRIGHT_MAX_CONCURRENT = int(os.getenv("PLAYWRIGHT_MAX_CONCURRENT", "2"))
+_PLAYWRIGHT_SEM: "asyncio.Semaphore | None" = None
+
+
+def _get_playwright_sem() -> "asyncio.Semaphore":
+    global _PLAYWRIGHT_SEM
+    if _PLAYWRIGHT_SEM is None:
+        _PLAYWRIGHT_SEM = asyncio.Semaphore(_PLAYWRIGHT_MAX_CONCURRENT)
+    return _PLAYWRIGHT_SEM
+
 
 def _real_data_only_enabled() -> bool:
     """True when synthetic data generation is blocked (AI-generated parts, fake links)."""
@@ -586,6 +604,11 @@ async def _playwright_fetch_page(
     so manufacturer sites / Cloudflare do not instantly identify the crawler.
     wait_for_content=True adds an extra 2.5 s after DOMContentLoaded so JS-rendered
     product grids (React/Vue) fully populate before we read the DOM.
+
+    Capped at _PLAYWRIGHT_MAX_CONCURRENT concurrent instances via a Semaphore so
+    the Amayama always-on browser + up to 2 scraper sessions don't exhaust RAM on
+    the 12 GB no-swap box.  browser/context are closed INSIDE async_playwright() so
+    Chrome exits before the Playwright server does — preventing zombie reparenting.
     """
     try:
         from playwright.async_api import async_playwright
@@ -593,60 +616,68 @@ async def _playwright_fetch_page(
         logger.warning("Playwright import failed for %s: %s", url, exc)
         return "", ""
 
-    browser = None
-    context = None
-    try:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(
-                headless=True,
-                args=[
-                    "--no-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-blink-features=AutomationControlled",
-                    "--disable-infobars",
-                ],
-            )
-            context = await browser.new_context(
-                user_agent=_rand_ua(),
-                viewport={"width": 1366, "height": 768},
-                locale="en-US",
-                extra_http_headers={
-                    "Accept-Language": "en-US,en;q=0.9",
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                    "DNT": "1",
-                },
-            )
-            # Mask webdriver flag so manufacturer sites don't instant-block
-            await context.add_init_script(
-                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
-                "Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});"
-                "Object.defineProperty(navigator, 'languages', {get: () => ['en-US','en']});"
-            )
-            page = await context.new_page()
-            page.set_default_timeout(timeout_ms)
-            await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
-            # JS-heavy SPAs (React/Vue parts catalogs) need extra time to render
-            await page.wait_for_timeout(2500 if wait_for_content else 900)
-            html = await page.content()
-            try:
-                text = await page.inner_text("body")
-            except Exception:
-                text = await page.evaluate("() => document.body ? document.body.innerText : ''")
-            return html or "", text or ""
-    except Exception as exc:
-        logger.warning("Playwright fetch failed for %s: %s", url, exc)
-        return "", ""
-    finally:
+    async with _get_playwright_sem():
         try:
-            if context is not None:
-                await context.close()
-        except Exception:
-            pass
-        try:
-            if browser is not None:
-                await browser.close()
-        except Exception:
-            pass
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(
+                    headless=True,
+                    args=[
+                        "--no-sandbox",
+                        "--disable-dev-shm-usage",
+                        "--disable-blink-features=AutomationControlled",
+                        "--disable-infobars",
+                    ],
+                )
+                try:
+                    context = await browser.new_context(
+                        user_agent=_rand_ua(),
+                        viewport={"width": 1366, "height": 768},
+                        locale="en-US",
+                        extra_http_headers={
+                            "Accept-Language": "en-US,en;q=0.9",
+                            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                            "DNT": "1",
+                        },
+                    )
+                    try:
+                        # Mask webdriver flag so manufacturer sites don't instant-block
+                        await context.add_init_script(
+                            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
+                            "Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});"
+                            "Object.defineProperty(navigator, 'languages', {get: () => ['en-US','en']});"
+                        )
+                        page = await context.new_page()
+                        page.set_default_timeout(timeout_ms)
+                        await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+                        # JS-heavy SPAs (React/Vue parts catalogs) need extra time to render
+                        await page.wait_for_timeout(2500 if wait_for_content else 900)
+                        html = await page.content()
+                        try:
+                            text = await page.inner_text("body")
+                        except Exception:
+                            text = await page.evaluate("() => document.body ? document.body.innerText : ''")
+                        return html or "", text or ""
+                    except Exception as exc:
+                        logger.warning("Playwright fetch failed for %s: %s", url, exc)
+                        return "", ""
+                    finally:
+                        # Close context BEFORE browser.close() and INSIDE async_playwright
+                        # block so the Playwright server is still alive to send the CDP close.
+                        try:
+                            await context.close()
+                        except Exception:
+                            pass
+                finally:
+                    # Close browser INSIDE async_playwright() so Chrome exits cleanly
+                    # before the Playwright server process dies. This prevents Chrome
+                    # from being reparented to uvicorn as a zombie.
+                    try:
+                        await browser.close()
+                    except Exception:
+                        pass
+        except Exception as exc:
+            logger.warning("Playwright outer error for %s: %s", url, exc)
+            return "", ""
 
 
 async def _scrape_supplier_catalog(
