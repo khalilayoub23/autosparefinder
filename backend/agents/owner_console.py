@@ -635,7 +635,7 @@ async def _launch_script(subdir: str, script_stem: str) -> str:
     """Fire-and-forget launch of /app/<subdir>/<script_stem>.py — does not await
     completion (a harvester/importer run can take hours); reports what happened."""
     if await _process_running(script_stem):
-        return f"⏳ *{script_stem}* כבר רץ ברקע — לא הפעלתי מופע כפול."
+        return f"⏳ כבר רץ ברקע: *{script_stem}* — לא הפעלתי מופע כפול."
     script = str(_BACKEND_ROOT / subdir / f"{script_stem}.py")
     if not os.path.exists(script):
         return f"❌ לא נמצא הקובץ {subdir}/{script_stem}.py"
@@ -1691,7 +1691,9 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp") -> 
                     "@" + n for n in _other_agents_mentioned
                 )
                 note = f"\n(גם ל-{_other_tags} — פני אליהם בנפרד באותה שיטה)"
-            return f"🔀 עכשיו בשיחה עם *{tag}* (ליציאה: *יציאה*){note}\n\n[{tag}] {reply}"
-        return f"[{tag}] {reply}"
+            # ‏ = RLM (RIGHT-TO-LEFT MARK): invisible, forces RTL paragraph direction
+            # so the [TAG] prefix doesn't make WhatsApp render the reply LTR.
+            return f"🔀 עכשיו בשיחה עם *{tag}* (ליציאה: *יציאה*){note}\n\n‏[{tag}] {reply}"
+        return f"‏[{tag}] {reply}"
     except Exception as e:
         return f"⚠️ שגיאה בעיבוד ההודעה: {str(e)[:120]}"
