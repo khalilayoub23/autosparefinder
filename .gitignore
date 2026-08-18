@@ -72,6 +72,15 @@ backend/alembic/__pycache__/
 
 .venv-ci/
 whatsapp-bridge/auth_info/
+whatsapp-bridge/auth_info.*/
+whatsapp-bridge/qr.txt
+
+# Runtime logs and ephemeral files
+backend/error_log.txt
+backend/uploads/*.mp4
+backend/uploads/*.mov
+backend/uploads/*.avi
+
 jaguar_parts_raw.ndjson
 
 # Facebook browser session — contains authentication cookies, never commit
