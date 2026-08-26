@@ -1,5 +1,70 @@
 # AutoSpareFinder — Bug & Breaking Points Fix Tracker
-> Last scan: 2026-08-11 | Total issues found: 437 | Fixed: 437 | In Progress: 0 | Open: 0
+> Last scan: 2026-08-22 | Total issues found: 449 | Fixed: 449 | In Progress: 0 | Open: 0
+
+---
+
+## Session — 2026-08-22 (WA notifications + GROQ model fix)
+
+### 11. No recurring reminder for pending social posts
+**Root cause**: System notified owner once on post creation — if that WA was missed, the post sat in `pending_approval` forever. Found 41 posts accumulating silently, oldest 33 days old (808 hours).
+**Fix**: Added pending-post reminder to the health monitor loop. Every monitor cycle it queries `social_posts WHERE status='pending_approval' AND age > 2h`, sends a daily digest via `notify_owner` (24h cooldown per oldest-post-id), lists all pending IDs with platforms and age. Owner now gets a daily nudge until posts are approved/rejected.
+
+### 12. GROQ model `llama-3.3-70b-versatile` removed from GROQ catalog — 404 on all fallback calls
+**Root cause**: GROQ deprecated `llama-3.3-70b-versatile`. Their current catalog no longer includes it. Every time Cerebras (402, billing inactive) + Gemini (429 rate-limited) both failed, the GROQ fallback also failed with 404 model_not_found — meaning post generation had ZERO working LLM.
+**Fix**: Updated `GROQ_MODEL` in `.env` to `groq/compound` (tested: 200 OK, good Hebrew output, 131k context). Also updated the default in `hf_client.py`. The `groq/compound` model is fast and proven to work from our server IP.
+
+### 13. False "Cloudflare IP block" diagnosis on GROQ
+**Root cause**: My initial test used Python `urllib` whose default User-Agent (`Python-urllib/3.11`) is blocked by GROQ's Cloudflare WAF. This gave 403/1010 and I incorrectly concluded our server IP was blocked. In reality, `httpx` (what `hf_client.py` actually uses) returns 200 OK from the same IP. GROQ is fully accessible from our Contabo server.
+**Fix**: Corrected the diagnosis. No IP-level block exists for GROQ. Facebook IS server-IP blocked (separate issue, browser path is the workaround there).
+
+---
+
+## Session — 2026-08-19 (Security audit: FB group scanner + ingest endpoint)
+
+### 5. CRITICAL: COLLECT_SECRET hardcoded in git-tracked JS file
+**Root cause**: `backend/devtests/fb_group_browser_scanner.js` had the live COLLECT_SECRET value `d5b9b695…` directly in source on line 17 (`const SECRET = '...'`). File was staged but not yet committed — caught before it entered git history.
+**Fix**: Rewrote the JS entirely. Secret is now read at runtime via `window._NOA_SECRET` (owner sets it before running) or browser `prompt()`. No secret ever hardcoded in source.
+
+### 6. CRITICAL: Fake UUIDs in JS scanner group list
+**Root cause**: All 30 group entries in the old JS used synthetic UUIDs (`e7c3b2a1-0001-...`) that don't exist in `group_targets`. Every `_save_draft()` call would fail with an FK violation and silently return False — scanner appeared to work but saved nothing.
+**Fix**: Removed the hardcoded group list entirely. Owner supplies `window._NOA_GROUPS = [{id, url, name}]` from real DB IDs (via owner WhatsApp console `fb-groups` command or API endpoint). JS validates each entry against `FB_GROUP_RE` before using.
+
+### 7. HIGH: No rate limiting on /ingest-group-posts
+**Root cause**: The new endpoint accepted unlimited calls per hour — anyone with the COLLECT_SECRET could spam LLM drafting calls.
+**Fix**: Redis rate limit (20 calls/hour per real IP) using `X-Real-IP`/`CF-Connecting-IP` header, inline in the endpoint handler. Degrades gracefully if Redis is unavailable.
+
+### 8. HIGH: LLM prompt injection via caller-supplied post_text/group_name
+**Root cause**: Untrusted strings from Facebook posts (and the group name field) were passed directly into the NOA LLM prompt with no sanitization.
+**Fix**: `_sanitize_for_llm()` strips invisible Unicode obfuscation characters (Facebook's virtualization artifacts) and ASCII control chars from all caller-supplied strings before they enter any LLM prompt.
+
+### 9. MEDIUM: group_url not validated to be a Facebook URL
+**Root cause**: Any string could be passed as `group_url` and would flow into the discovery dict sent to the LLM.
+**Fix**: `_FB_GROUP_URL_RE` validates group_url must match `https://(www.)?facebook.com/groups/<slug>`. Returns HTTP 400 on mismatch. post_url inside each post is also validated to be a facebook.com hostname.
+
+### 10. MEDIUM: Unknown group_id wasted LLM calls before FK rejection
+**Root cause**: group_id was only caught at DB insert (FK constraint), after the LLM had already generated drafts for all 15 posts.
+**Fix**: Pre-validate group_id against `group_targets` with a SELECT before starting any LLM work. Returns HTTP 404 immediately for unknown IDs.
+
+---
+
+## Session — 2026-08-18 (Facebook group scan pipeline + LLM fallback fix)
+
+### 1. Cerebras 402 not triggering LLM fallback
+**Root cause**: `hf_client.hf_text()` only fell back to Gemini/GROQ on HTTP 429. HTTP 402 ("Payment Required" — account inactive/billing) raised an exception directly, skipping Gemini/GROQ.
+**Fix**: Changed condition `if resp.status_code == 429:` → `if resp.status_code in (429, 402):` in both occurrences in `hf_client.py`. Now 402 triggers the same Gemini→GROQ fallback chain as 429.
+
+### 2. group_scanner._wa_notify used wrong import
+**Root cause**: `_wa_notify` in `group_scanner.py` imported `_wa_send_quiet` from `BACKEND_AI_AGENTS` (doesn't exist there).
+**Fix**: Changed import to `from BACKEND_API_ROUTES import _wa_send_quiet`.
+
+### 3. New backend endpoint: /api/v1/system/ingest-group-posts
+**Purpose**: Accepts pre-scraped Facebook group post data from the browser (authenticated), runs NOA's `draft_group_comment()`, saves to `group_comment_drafts`. Bridges the gap where server-side Playwright can't authenticate (missing httpOnly `xs` cookie) by allowing the owner's authenticated browser to send post data to the server.
+**Location**: `routes/system.py` (appended to end). Uses text/plain CORS simple-request pattern (same as `/collect`). Auth via COLLECT_SECRET in body.
+
+### 4. group_targets — cleaned test data, 31 real automotive FB groups loaded
+**Status**: 31 Facebook groups in `group_targets` (5 approved, 26 pending). 1 draft comment saved to `group_comment_drafts` (status=pending_approval) for group "חלפים לרכב".
+
+**Next**: Owner types `תגובות-גרופ` in WhatsApp console to see drafts and `אשרתגובה <id>` to approve.
 
 ---
 
@@ -2160,3 +2225,32 @@ obsolete, wrong, or unsafe enough to retire.
 | **Live verification** | 📝 N/A for all 13, correctly reported as such | None of the 13 has a real production caller (see reachability finding above), so none could be live-verified end-to-end — reporting so explicitly rather than fabricating a test harness. The two live task types (`social_post`/`social_campaign`) were **not** re-verified in this session since neither was touched — see the 2026-08-15c entry above for their last live verification. |
 | **Files changed this session** | ✅ | `backend/devtests/digital_department_integration_test.py` (+61 lines, new `test_m4_...` test) and `backend/digital_department/registry.py` (+17 lines, documentation-only comment). No `dept-*.md`/`SKILL.md` file was touched — none needed a content or priority-marker change. No unrelated file touched; `f927ebd` unchanged; no commit created this session. |
 | **Git state** | ⏳ uncommitted, awaiting explicit authorization | Exactly 2 files modified beyond the pre-existing unrelated working-tree state (confirmed via `git status --short` before and after). Not staged, not committed — held per the owner's explicit instruction for this audit. |
+
+---
+
+## Session 2026-08-26
+
+### Fix 1: `notify_owner` cooldown consumed by failed sends (root-fix)
+
+**Symptom:** Owner received notifications "only today" despite WhatsApp bridge being restored on Aug 19.
+
+**Root cause:** `notify_owner()` set the Redis cooldown key *before* attempting the WhatsApp send. When the bridge was down (Aug 11–18), every daily retry set the 24h cooldown but failed to deliver. After the bridge was restored (Aug 19), the last failed attempt's cooldown key was still active, blocking the next real delivery. The cooldown expired ~24h later, the next attempt set a new key and sent successfully at night (outside IL quiet hours), so the message queued to Redis and was flushed at 09:00 IL on Aug 26 — the first one the owner saw.
+
+**Fix:** Moved `_r.set(_rk, "1", ex=cooldown_s)` to AFTER `result.get("ok")` is confirmed. A failed send no longer burns the cooldown window — the next attempt (up to 5 min later) will try again immediately.
+
+**File:** `backend/BACKEND_API_ROUTES.py` — `notify_owner()` function.
+
+---
+
+### Fix 2: Car-Parts.ie EUR/ILS rate stale + wrong formula (root-fix)
+
+**Symptom:** Owner saw a Mercedes battery post with ₪174 and asked if the price is correct.
+
+**Price verdict:** The formula is **correct**: `sp.price_ils × 1.45 + 0% VAT (IE supplier) = customer price`. The ₪174–175 for FAST FT01807 (Mercedes GLC X254 "car battery") reflects Car-Parts.ie's cost of €34.73 (at current 3.48 EUR/ILS). Whether this is a main starter battery or an auxiliary battery component would need manual verification on Car-Parts.ie. The pricing math itself is sound.
+
+**Rate bug fixed:** Hardcoded EUR/ILS rate in `car_parts_ie_import_generic.py` updated from 3.9 → 3.48 (live rate). Configurable via `EUR_ILS_RATE` env var for future updates without a code change.
+
+**Formula bug fixed:** The importer was doing `cost_ils = price_ils / 1.18` (stripping a phantom Israeli VAT from a European retail price). Car-Parts.ie prices are NOT Israeli VAT-inclusive prices — they're the supplier's EUR price converted to ILS. Removed the /1.18. Now: `cost_ils = price_ils` (our cost from Car-Parts.ie); `base_price = cost_ils × 1.45`. Note: the customer-facing price path (`_customer_price_fields`) uses `sp.price_ils` directly and was never affected by this formula error.
+
+**File:** `backend/importers/car_parts_ie_import_generic.py` — price conversion block (line ~290).
+

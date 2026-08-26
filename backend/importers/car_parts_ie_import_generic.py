@@ -39,6 +39,7 @@ import asyncio
 import fcntl
 import hashlib
 import json
+import os
 import re
 import signal
 from datetime import datetime
@@ -285,10 +286,14 @@ async def import_file(
                 category = categorize_on_ingest(
                     name=name, url=url, extra=description_text
                 )
-            # EUR→ILS: 1 EUR ≈ 3.9 ILS; treat as reference market price (incl. VAT equiv)
-            # cost = price_ils / 1.18, base_price = cost * 1.45 (CLAUDE.md: 45% margin)
-            price_ils = round(float(price_eur) * 3.9, 2) if price_eur else None
-            cost_ils = round(price_ils / 1.18, 2) if price_ils else None
+            # EUR→ILS: Car-Parts.ie prices are our supplier cost in EUR (NOT consumer prices
+            # with Israeli VAT). Convert to ILS and apply 45% margin for the customer price.
+            # The /1.18 that was here was wrong — it stripped phantom Israeli VAT from a
+            # European retail price. Only the margin applies (root-fix 2026-08-26).
+            # Rate updated 2026-08-26 (was 3.9, now 3.48 — live EUR/ILS; update quarterly).
+            _EUR_ILS = float(os.getenv("EUR_ILS_RATE", "3.48"))
+            price_ils = round(float(price_eur) * _EUR_ILS, 2) if price_eur else None
+            cost_ils = price_ils  # sp.price_ils IS the cost; no phantom-VAT strip
             base_price_ils = round(cost_ils * 1.45, 2) if cost_ils else None
 
             # Build compatible_vehicles from top-level model OR per-part fitment array

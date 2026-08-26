@@ -2693,33 +2693,58 @@ async def _group_scan_loop():
 
     while True:
         try:
+            # Use a fresh session scoped to the query only; facebook_group_scan
+            # schedules asyncio.create_task(_log_action(db, ...)) internally which
+            # fires AFTER the async-with exits and caused an InterfaceError on
+            # session close.  Passing a session that commits+closes before the task
+            # runs is the root cause — fixed by closing the session BEFORE we await
+            # the notification, so the background task sees an already-committed conn.
             async with async_session_factory() as db:
                 from social.tools import facebook_group_scan
                 result = await facebook_group_scan(db=db)
+                # Flush the session so _log_action's background task completes cleanly
+                # before we exit the context and close the connection.
+                try:
+                    await db.commit()
+                except Exception:
+                    pass
 
-                discoveries = result.data.get("discoveries", [])
-                if not discoveries:
-                    logger.info("[group_scan] no relevant group discussions found")
-                elif os.getenv("OWNER_WHATSAPP_PHONE"):
-                    lines = []
-                    for i, d in enumerate(discoveries[:5], 1):
-                        score_pct = int(d.get("relevance_score", 0) * 100)
-                        lines.append(
-                            f"{i}. *{d.get('group_name', '')}*\n"
-                            f"   📝 {d.get('post_text', '')[:80]}...\n"
-                            f"   רלוונטיות: {score_pct}%\n"
-                            f"   💬 טיוטה: {d.get('draft_comment', '(אין)')[:120]}"
-                        )
+            discoveries = result.data.get("discoveries", [])
+            groups_scanned = result.data.get("groups_scanned", 0)
+
+            if not discoveries:
+                logger.info("[group_scan] no relevant group discussions found (%d groups scanned)", groups_scanned)
+                # Always notify owner so they know the scan ran — cooldown prevents
+                # daily spam when nothing is found (fixed: owner was getting silence
+                # instead of a summary, reported 2026-08-23).
+                await notify_owner(
+                    "social",
+                    f"סריקת קבוצות פייסבוק — לא נמצאו פוסטים רלוונטיים",
+                    f"סרקנו *{groups_scanned}* קבוצות מאושרות — לא נמצאו דיונים רלוונטיים לרכב/חלפים היום.",
+                    severity="info",
+                    alert_key="group_scan_empty",
+                    cooldown_s=86400,  # max once/day for empty-scan summaries
+                )
+            else:
+                lines = []
+                for i, d in enumerate(discoveries[:5], 1):
+                    score_pct = int(d.get("relevance_score", 0) * 100)
                     lines.append(
-                        "\nלאישור ושליחה: *תגובות-גרופ* לרשימה · *אשרתגובה <מזהה>*"
+                        f"{i}. *{d.get('group_name', '')}*\n"
+                        f"   📝 {d.get('post_text', '')[:80]}...\n"
+                        f"   רלוונטיות: {score_pct}%\n"
+                        f"   💬 טיוטה: {d.get('draft_comment', '(אין)')[:120]}"
                     )
-                    await notify_owner(
-                        "social",
-                        f"סריקת קבוצות פייסבוק — {len(discoveries)} תגובות ממתינות",
-                        "\n".join(lines),
-                        severity="info",
-                    )
-                    logger.info("[group_scan] sent %d discoveries to owner", len(discoveries))
+                lines.append(
+                    "\nלאישור ושליחה: *תגובות-גרופ* לרשימה · *אשרתגובה <מזהה>*"
+                )
+                await notify_owner(
+                    "social",
+                    f"סריקת קבוצות פייסבוק — {len(discoveries)} תגובות ממתינות",
+                    "\n".join(lines),
+                    severity="info",
+                )
+                logger.info("[group_scan] sent %d discoveries to owner", len(discoveries))
         except Exception as exc:
             logger.error("[group_scan] error: %s", exc)
         await asyncio.sleep(interval)
@@ -2935,7 +2960,6 @@ async def notify_owner(
             _rk = f"autospare:alert_cooldown:{alert_key}"
             if await _r.exists(_rk):
                 return
-            await _r.set(_rk, "1", ex=cooldown_s)
         except Exception:
             pass  # Redis unavailable — allow the alert through rather than lose it
     cat_label = _NOTIFY_CATEGORIES.get(category, category)
@@ -2944,7 +2968,18 @@ async def notify_owner(
     text = f"{header}\n\n{body}" if body else header
     try:
         result = await _wa_send_update(text)
-        if not result.get("ok"):
+        if result.get("ok") and alert_key:
+            # Set cooldown ONLY after a confirmed successful send — a failed send must
+            # not burn the cooldown window (root-fix 2026-08-26: bridge-down failures
+            # were blocking every subsequent retry for 24h, delaying real alerts until
+            # the cooldown from the failed attempt happened to expire).
+            try:
+                _r = await get_redis()
+                _rk = f"autospare:alert_cooldown:{alert_key}"
+                await _r.set(_rk, "1", ex=cooldown_s)
+            except Exception:
+                pass
+        elif not result.get("ok"):
             print(f"[notify_owner] send failed ({alert_key or category}): {result.get('error')}")
     except Exception as exc:
         print(f"[notify_owner] error ({alert_key or category}): {exc}")
@@ -3819,8 +3854,15 @@ async def _noa_marketing_loop():
                     # WhatsApp instead of Telegram). Telegram only mirrors if enabled.
                     if OWNER_PHONE:
                         _post_short_id = (social_post_id or "")[:8] or "—"
+                        # Strip the QR-scan instruction from the WA preview: it says
+                        # "scan the code IN THE IMAGE" — but WA shows only text so no
+                        # image appears, making the instruction meaningless and confusing
+                        # (reported 2026-08-23 as "image mixed in text"). The line lives
+                        # in the stored caption for the actual published post where the
+                        # image IS shown; the WA preview uses a clean version instead.
+                        _wa_caption = re.sub(r"\n?📲\s*סרקו[^\n]*", "", caption).strip()
                         wa_post_body = (
-                            f"{caption}\n\n"
+                            f"{_wa_caption}\n\n"
                             + (f"🖼️ מדיה (עם QR): {media_url}\n" if media_url else "")
                             + f"לאישור ופרסום: כתוב *אשר {_post_short_id}*\n"
                             + f"לדחייה: כתוב *דחה {_post_short_id}*"
@@ -4674,6 +4716,47 @@ async def _health_monitor_loop():
 
         except Exception as e:
             print(f"[HealthMonitor] Outer error: {e}")
+
+        # ── Pending social-post reminder (runs every health-monitor cycle) ────
+        # One-shot WA notification on creation is easy to miss. This re-pings the
+        # owner once per day during window hours when posts are waiting > 2 hours.
+        try:
+            async with async_session_factory() as _sp_db:
+                _pending = await _sp_db.execute(text("""
+                    SELECT id, platforms, created_at,
+                           EXTRACT(EPOCH FROM (NOW() - created_at))/3600 AS age_h
+                    FROM social_posts
+                    WHERE status = 'pending_approval'
+                      AND created_at < NOW() - INTERVAL '2 hours'
+                    ORDER BY created_at ASC
+                """))
+                _pending_rows = _pending.fetchall()
+            if _pending_rows:
+                _oldest_id = str(_pending_rows[0][0])[:8]
+                _total = len(_pending_rows)
+                _oldest_age_h = round(_pending_rows[0][3])
+                _lines = [
+                    f"📢 *NOA — {_total} פוסטי' ממתינים לאישורך*",
+                    "",
+                ]
+                for _pr in _pending_rows[:5]:
+                    _pid = str(_pr[0])[:8]
+                    _plat = ", ".join(_pr[1]) if _pr[1] else "?"
+                    _age = round(_pr[3])
+                    _lines.append(f"• *אשר {_pid}* — {_plat} (לפני {_age}ש')")
+                if _total > 5:
+                    _lines.append(f"  ועוד {_total - 5} נוספים…")
+                _lines += ["", "לפרסום: *אשר <מזהה>* | לדחייה: *דחה <מזהה>*"]
+                await notify_owner(
+                    "social",
+                    f"פוסטים ממתינים לאישור ({_total})",
+                    "\n".join(_lines),
+                    severity="info",
+                    alert_key=f"pending_posts_reminder_{_oldest_id}",
+                    cooldown_s=86400,  # remind once per day per oldest-post-id
+                )
+        except Exception as _spe:
+            print(f"[HealthMonitor] pending-posts reminder error: {_spe}")
 
         await asyncio.sleep(HEALTH_MONITOR_INTERVAL_S)
 
