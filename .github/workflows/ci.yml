@@ -51,8 +51,154 @@ jobs:
             }'
           echo "Mobile repo notified"
 
+  frontend-guardrails:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # A fresh checkout has no gitignored files at all — this is naturally the
+      # negative-test environment for both the node_modules-contamination bug
+      # and the missing-generated-SVG bug (frontend/node_modules and
+      # frontend/public/part-family/generated/ do not exist here). No manual
+      # deletion needed for those two; this job proves they're not needed.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.0' # minimum verified for vite/@vitejs/plugin-react's engines field
+      - name: npm ci
+        working-directory: ./frontend
+        run: npm ci
+
+      - name: Dependency version guard — axios / react-router-dom / react-router
+        working-directory: ./frontend
+        run: |
+          set -e
+          AXIOS_V=$(node -p "require('./node_modules/axios/package.json').version")
+          RRD_V=$(node -p "require('./node_modules/react-router-dom/package.json').version")
+          RR_V=$(node -p "require('./node_modules/react-router/package.json').version")
+          echo "Resolved: axios=$AXIOS_V react-router-dom=$RRD_V react-router=$RR_V"
+          [ "$AXIOS_V" = "1.20.0" ] || { echo "::error::AXIOS REGRESSION — expected 1.20.0 (GHSA advisories fixed here), got $AXIOS_V"; exit 1; }
+          [ "$RRD_V" = "7.18.3" ] || { echo "::error::REACT-ROUTER-DOM REGRESSION — expected 7.18.3 (GHSA-wrjc-x8rr-h8h6 / GHSA-337j-9hxr-rhxg fixed here), got $RRD_V"; exit 1; }
+          [ "$RR_V" = "7.18.3" ] || { echo "::error::REACT-ROUTER REGRESSION — expected 7.18.3, got $RR_V"; exit 1; }
+
+      - name: npm audit — must stay at 0 vulnerabilities
+        working-directory: ./frontend
+        run: npm audit --audit-level=low
+
+      - name: Node engine guard
+        run: |
+          node -e "
+            const v = process.version.slice(1).split('.').map(Number);
+            const min = '20.19.0'.split('.').map(Number);
+            const ok = v[0] > min[0] || (v[0] === min[0] && (v[1] > min[1] || (v[1] === min[1] && v[2] >= min[2])));
+            if (!ok) { console.error('::error::NODE ENGINE REGRESSION — need >= 20.19.0, got ' + process.version); process.exit(1); }
+            console.log('Node engine OK: ' + process.version + ' >= 20.19.0');
+          "
+
+      - name: Canonical build — npm run build (must NOT silently become `vite build`)
+        working-directory: ./frontend
+        run: npm run build
+
+      - name: Asset generation + validation guard (source-of-truth family IDs)
+        working-directory: ./frontend
+        run: |
+          node -e "
+            const fs = require('fs');
+            const path = require('path');
+            const src = fs.readFileSync('scripts/generate_part_family_svg_assets.mjs', 'utf8');
+            const ids = [...src.matchAll(/id:\s*'([^']+)'/g)].map(m => m[1]);
+            if (ids.length === 0) { console.error('::error::Could not extract family IDs from generator source — generator source-of-truth may have changed shape'); process.exit(1); }
+            console.log('Expected families (' + ids.length + '): ' + ids.join(', '));
+            const dir = path.join('public', 'part-family', 'generated');
+            const missing = [], empty = [], invalid = [];
+            for (const id of ids) {
+              const p = path.join(dir, id + '.svg');
+              if (!fs.existsSync(p)) { missing.push(id); continue; }
+              const buf = fs.readFileSync(p);
+              if (buf.length === 0) { empty.push(id); continue; }
+              const head = buf.toString('utf8', 0, 100).trimStart().toLowerCase();
+              if (!head.startsWith('<svg') && !head.startsWith('<?xml')) invalid.push(id);
+            }
+            if (missing.length || empty.length || invalid.length) {
+              console.error('::error::ASSET REGRESSION — missing=[' + missing + '] empty=[' + empty + '] invalid=[' + invalid + ']');
+              process.exit(1);
+            }
+            console.log('All ' + ids.length + ' generated part-family assets present, non-empty, valid SVG.');
+          "
+
+      - name: Asset determinism guard
+        working-directory: ./frontend
+        run: |
+          set -e
+          mkdir -p /tmp/det1 /tmp/det2
+          cp public/part-family/generated/*.svg /tmp/det1/
+          node scripts/generate_part_family_svg_assets.mjs
+          cp public/part-family/generated/*.svg /tmp/det2/
+          sha256sum /tmp/det1/*.svg | awk '{print $1}' | sort > /tmp/h1.txt
+          sha256sum /tmp/det2/*.svg | awk '{print $1}' | sort > /tmp/h2.txt
+          diff /tmp/h1.txt /tmp/h2.txt || { echo "::error::DETERMINISM REGRESSION — generator produced different output across two runs"; exit 1; }
+          echo "Determinism OK — identical output across two independent runs."
+
+      - name: Unit tests
+        working-directory: ./frontend
+        run: npm test
+
+      - name: node_modules contamination canary
+        working-directory: ./frontend
+        run: |
+          set -e
+          MARKER="ci-canary-$(date +%s)"
+          mkdir -p "node_modules/.contamination-canary"
+          echo "$MARKER" > "node_modules/.contamination-canary/marker.txt"
+          docker build --no-cache -t ci-contamination-check .
+          if docker run --rm ci-contamination-check sh -c "test -f /usr/share/nginx/html/.contamination-canary/marker.txt || find / -name marker.txt 2>/dev/null | grep -q canary"; then
+            echo "::error::NODE_MODULES CONTAMINATION REGRESSION — host node_modules canary reached the built image"
+            rm -rf "node_modules/.contamination-canary"
+            docker rmi ci-contamination-check || true
+            exit 1
+          fi
+          echo "Contamination canary correctly excluded from the image."
+          rm -rf "node_modules/.contamination-canary"
+          docker rmi ci-contamination-check || true
+
+      - name: .dockerignore protects node_modules and dist
+        run: |
+          grep -qx "node_modules" frontend/.dockerignore || { echo "::error::.dockerignore missing node_modules exclusion"; exit 1; }
+          grep -qx "dist" frontend/.dockerignore || { echo "::error::.dockerignore missing dist exclusion"; exit 1; }
+          echo ".dockerignore OK"
+
+      - name: Docker reproducibility — fresh build, no pre-existing generated assets
+        run: |
+          set -e
+          test -d frontend/public/part-family/generated && { echo "::error::test environment unexpectedly has pre-existing generated assets — negative test invalid"; exit 1; }
+          echo "Confirmed: no pre-existing frontend/public/part-family/generated/ in this checkout (fresh clone semantics)."
+          docker compose build --no-cache frontend
+
+      - name: Verify built image — asset count + dependency versions (no bundle-hash reliance)
+        run: |
+          set -e
+          docker build --target builder -t ci-builder-verify ./frontend
+          COUNT=$(docker run --rm ci-builder-verify sh -c "ls dist/part-family/generated/*.svg 2>/dev/null | wc -l")
+          [ "$COUNT" = "20" ] || { echo "::error::Expected 20 generated SVGs in built image, found $COUNT"; exit 1; }
+          IMG_AXIOS=$(docker run --rm ci-builder-verify node -e "console.log(require('/app/node_modules/axios/package.json').version)")
+          IMG_RRD=$(docker run --rm ci-builder-verify node -e "console.log(require('/app/node_modules/react-router-dom/package.json').version)")
+          [ "$IMG_AXIOS" = "1.20.0" ] || { echo "::error::Built image axios version regression: $IMG_AXIOS"; exit 1; }
+          [ "$IMG_RRD" = "7.18.3" ] || { echo "::error::Built image react-router-dom version regression: $IMG_RRD"; exit 1; }
+          echo "Image verified: 20 assets, axios=$IMG_AXIOS, react-router-dom=$IMG_RRD"
+          docker rmi ci-builder-verify || true
+
+      - name: Docker healthcheck guard
+        run: |
+          docker compose config --format json | python3 -c "
+          import json, sys
+          d = json.load(sys.stdin)
+          fe = d['services'].get('frontend', {})
+          if 'healthcheck' not in fe or not fe['healthcheck'].get('test'):
+              print('::error::frontend service healthcheck missing from docker-compose.yml')
+              sys.exit(1)
+          print('Healthcheck present:', fe['healthcheck']['test'])
+          "
+
   deploy:
-    needs: test-and-smoke
+    needs: [test-and-smoke, frontend-guardrails]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:

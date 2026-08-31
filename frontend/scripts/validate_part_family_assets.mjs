@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(SCRIPT_DIR, '..')
-const TARGET_DIR = path.join(ROOT, 'frontend', 'public', 'part-family')
+const TARGET_DIR = path.join(ROOT, 'public', 'part-family')
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg'])
 
 function looksLikeSvg(buffer) {

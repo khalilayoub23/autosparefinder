@@ -1,9 +1,9 @@
-FROM node:18 AS builder
+FROM node:20 AS builder
 WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci --ignore-scripts
 COPY . .
-RUN npx vite build
+RUN npm run build
 
 FROM nginx:stable-alpine
 COPY --from=builder /app/dist /opt/frontend-dist

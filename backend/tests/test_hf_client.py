@@ -326,9 +326,13 @@ async def test_hf_embed_caches_vector():
     fake_resp = MagicMock()
     fake_resp.status_code = 200
     fake_resp.raise_for_status = MagicMock()
-    fake_resp.json.return_value = [fake_vector]
+    # hf_embed() calls Gemini's embedContent endpoint (switched from the HF router
+    # in fe6332a, 2026-06-17 — see hf_embed's docstring) and parses
+    # resp.json()["embedding"]["values"], not a flat list.
+    fake_resp.json.return_value = {"embedding": {"values": fake_vector}}
 
-    with patch.object(hf_client._get_http(), "post", new=AsyncMock(return_value=fake_resp)) as post_mock, \
+    with patch.object(hf_client, "GEMINI_API_KEY", "test-key-for-ci"), \
+         patch.object(hf_client._get_http(), "post", new=AsyncMock(return_value=fake_resp)) as post_mock, \
          patch("hf_client._cache_get", side_effect=fake_cache_get), \
          patch("hf_client._cache_set", side_effect=fake_cache_set):
         v1 = await hf_client.hf_embed("hello")

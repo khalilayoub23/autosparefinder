@@ -1,11 +1,11 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { partFamilySvgMarkup } from '../frontend/src/components/partFamilyVisuals.js'
+import { partFamilySvgMarkup } from '../src/components/partFamilyVisuals.js'
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(SCRIPT_DIR, '..')
-const OUTPUT_DIR = path.join(ROOT, 'frontend', 'public', 'part-family', 'generated')
+const OUTPUT_DIR = path.join(ROOT, 'public', 'part-family', 'generated')
 
 const FAMILIES = [
   { id: 'filters', label: 'פילטרים', palette: ['#d97706', '#f59e0b'], icon_key: 'filter' },

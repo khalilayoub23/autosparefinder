@@ -373,6 +373,18 @@ services:
     - internal
     security_opt:
     - no-new-privileges:true
+    healthcheck:
+      test:
+      - CMD
+      - wget
+      - --quiet
+      - --tries=1
+      - --spider
+      - http://127.0.0.1:80/
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
     logging:
       driver: json-file
       options:
