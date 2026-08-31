@@ -168,8 +168,15 @@ jobs:
       - name: Docker reproducibility — fresh build, no pre-existing generated assets
         run: |
           set -e
-          test -d frontend/public/part-family/generated && { echo "::error::test environment unexpectedly has pre-existing generated assets — negative test invalid"; exit 1; }
-          echo "Confirmed: no pre-existing frontend/public/part-family/generated/ in this checkout (fresh clone semantics)."
+          # Earlier steps in THIS job (Canonical build, Asset determinism guard) already
+          # ran `npm run build` / the generator for their own reasons, so this directory
+          # legitimately exists by this point in a real sequential job — asserting it must
+          # be absent here was a step-ordering bug (found via a real CI run, 2026-08-31),
+          # not evidence of host contamination. Remove it explicitly so this step tests
+          # what it's actually meant to test: that the Docker build works with none of
+          # this pre-existing, regardless of what ran earlier in the same job.
+          rm -rf frontend/public/part-family/generated
+          echo "Removed any generated assets from earlier steps — simulating a fresh checkout for this negative test."
           docker compose build --no-cache frontend
 
       - name: Verify built image — asset count + dependency versions (no bundle-hash reliance)
