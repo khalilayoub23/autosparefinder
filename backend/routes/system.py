@@ -761,3 +761,175 @@ async def search_sync_status(
         result["parity"] = {"error": str(exc)[:200]}
 
     return result
+
+
+# ── Browser-based Facebook group post ingest ───────────────────────────────────
+
+_INGEST_CORS_HEADERS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+}
+# Compile once — matches ONLY facebook.com group URLs
+_FB_GROUP_URL_RE = __import__("re").compile(
+    r"^https://(www\.)?facebook\.com/groups/[A-Za-z0-9._%-]+/?$"
+)
+# Strip invisible/control chars that can be used for prompt injection
+_CONTROL_RE = __import__("re").compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]|"
+                                       r"[​-‏‪-‮﻿⁠-⁤]")
+
+
+def _sanitize_for_llm(text: str, maxlen: int) -> str:
+    """Strip control/invisible chars and truncate. Defence against prompt injection."""
+    return _CONTROL_RE.sub("", text).strip()[:maxlen]
+
+
+@router.post("/api/v1/system/ingest-group-posts")
+async def ingest_group_posts(request: Request):
+    """Accept pre-scraped Facebook group posts from the browser scanner.
+
+    Uses the text/plain CORS simple-request pattern (same as /collect) so the
+    browser can POST cross-origin without a preflight.
+
+    Expected body (JSON string in a text/plain POST): {
+        "secret": "<COLLECT_SECRET>",
+        "group_id": "<uuid from group_targets>",
+        "group_name": "...",
+        "group_url": "https://www.facebook.com/groups/...",
+        "posts": [{"text": "...", "post_url": "..."}]
+    }
+
+    Returns: {"ok": true, "drafted": N, "skipped": N}
+    """
+    from fastapi.responses import JSONResponse as _JSONResponse
+
+    if request.method == "OPTIONS":
+        return _JSONResponse({}, headers=_INGEST_CORS_HEADERS)
+
+    # ── Auth ──────────────────────────────────────────────────────────────────
+    secret = os.environ.get("COLLECT_SECRET", "")
+    try:
+        raw = await request.body()
+        data = json.loads(raw)
+    except Exception:
+        return _JSONResponse({"ok": False, "error": "bad json"}, status_code=400,
+                             headers=_INGEST_CORS_HEADERS)
+
+    if not secret or data.get("secret") != secret:
+        return _JSONResponse({"ok": False, "error": "unauthorized"}, status_code=403,
+                             headers=_INGEST_CORS_HEADERS)
+
+    # ── Rate limit: 20 calls / hour per IP (protects LLM cost) ───────────────
+    client_ip = (
+        request.headers.get("X-Real-IP")
+        or request.headers.get("CF-Connecting-IP")
+        or (request.client.host if request.client else "unknown")
+    )
+    rl_key = f"rl:ingest_group_posts:{client_ip}"
+    try:
+        import redis as _redis_mod
+        _rc = _redis_mod.Redis.from_url(os.environ.get("REDIS_URL", "redis://redis:6379/0"),
+                                        decode_responses=True)
+        pipe = _rc.pipeline()
+        pipe.incr(rl_key)
+        pipe.expire(rl_key, 3600)
+        count, _ = pipe.execute()
+        if count > 20:
+            return _JSONResponse({"ok": False, "error": "rate_limited"}, status_code=429,
+                                 headers=_INGEST_CORS_HEADERS)
+    except Exception:
+        pass  # Redis unavailable — degrade gracefully, don't block the call
+
+    # ── Input validation ──────────────────────────────────────────────────────
+    group_id  = str(data.get("group_id", "")).strip()
+    group_url = str(data.get("group_url", "")).strip().rstrip("/") + "/"
+    # group_name is caller-supplied; sanitize before it touches any LLM prompt
+    group_name = _sanitize_for_llm(str(data.get("group_name", "")), 255)
+    posts = data.get("posts", [])
+
+    if not group_id or not posts:
+        return _JSONResponse({"ok": True, "drafted": 0, "skipped": 0, "reason": "no posts"},
+                             headers=_INGEST_CORS_HEADERS)
+
+    # Validate group_url is a real Facebook group URL (not an arbitrary string
+    # that could inject into the LLM prompt via the discovery dict)
+    if not _FB_GROUP_URL_RE.match(group_url.rstrip("/")):
+        return _JSONResponse({"ok": False, "error": "invalid group_url"}, status_code=400,
+                             headers=_INGEST_CORS_HEADERS)
+
+    try:
+        from social.facebook_browser.group_agent import GroupAgent, _relevance_score
+        from social.facebook_browser.group_scanner import _save_draft, _get_db
+    except Exception as exc:
+        return _JSONResponse({"ok": False, "error": f"import: {exc}"}, status_code=500,
+                             headers=_INGEST_CORS_HEADERS)
+
+    # ── Pre-validate group_id exists — saves wasting LLM calls on a bad FK ───
+    db = await _get_db()
+    try:
+        import sqlalchemy as _sa
+        row = await db.execute(
+            _sa.text("SELECT id FROM group_targets WHERE id = CAST(:gid AS uuid) LIMIT 1"),
+            {"gid": group_id},
+        )
+        if not row.fetchone():
+            return _JSONResponse({"ok": False, "error": "unknown group_id"}, status_code=404,
+                                 headers=_INGEST_CORS_HEADERS)
+    except Exception as exc:
+        await db.close()
+        return _JSONResponse({"ok": False, "error": f"db: {exc}"}, status_code=500,
+                             headers=_INGEST_CORS_HEADERS)
+
+    # ── Process posts ─────────────────────────────────────────────────────────
+    agent   = GroupAgent()
+    drafted = 0
+    skipped = 0
+    try:
+        for p in posts[:15]:  # hard cap: 15 posts per call
+            # Sanitize ALL caller-supplied strings before they enter the LLM prompt
+            raw_text = _sanitize_for_llm(str(p.get("text") or ""), 400)
+            raw_url  = str(p.get("post_url") or group_url).strip()[:500]
+
+            # Ensure post_url is at least facebook.com (not arbitrary)
+            try:
+                from urllib.parse import urlparse as _up
+                _host = _up(raw_url).hostname or ""
+                if not (_host.endswith("facebook.com") or _host.endswith("fb.com")):
+                    raw_url = group_url
+            except Exception:
+                raw_url = group_url
+
+            if not raw_text or len(raw_text) < 15:
+                skipped += 1
+                continue
+            score = _relevance_score(raw_text)
+            if score < 0.25:
+                skipped += 1
+                continue
+
+            discovery = {
+                "group_id":        group_id,
+                "group_name":      group_name,     # already sanitized above
+                "group_url":       group_url,
+                "post_url":        raw_url,
+                "post_text":       raw_text,        # already sanitized above
+                "relevance_score": score,
+            }
+            try:
+                draft = await agent.draft_group_comment(discovery)
+            except Exception:
+                skipped += 1
+                continue
+            if not draft:
+                skipped += 1
+                continue
+            saved = await _save_draft(db, group_id=group_id, post_url=raw_url,
+                                      post_text=raw_text, draft=draft, score=score)
+            if saved:
+                drafted += 1
+            else:
+                skipped += 1
+    finally:
+        await db.close()
+
+    return _JSONResponse({"ok": True, "drafted": drafted, "skipped": skipped},
+                         headers=_INGEST_CORS_HEADERS)

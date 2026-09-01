@@ -81,6 +81,15 @@ never called on the production path), `dept-cmo`'s "check-ins run whichever the 
 triggers" (NOA has no host-filesystem access — structurally impossible). Each read as true from
 the file/comment/prompt alone and was only caught by tracing the actual execution path.
 
+A second incident (2026-08-29) showed the same failure at the reporting layer, not just the
+research layer: asked to "connect [the UI] to Claude with Google Stitch," I found an existing
+Stitch project titled "auto spare finder," assumed from the title alone that it was the real
+project tied to the live site (never checked), uploaded a DESIGN.md to it and generated a design
+system asset that was never applied to any screen — then headlined the summary **"Google Stitch
+connection — done."** Every fact inside the section was individually true; the summary word
+"done" was not. The owner caught it, not me — the same "confident claim, not verified" pattern,
+just committed in my own final report instead of in a prior document.
+
 Rules:
 1. **Before stating a fact about the codebase, system behavior, or data, verify it fresh in this
    turn** — grep/read/query the real thing. Don't answer from memory of a prior session's
@@ -94,6 +103,15 @@ Rules:
    earlier turn's conclusion is a hint to re-check, not ground truth to repeat.
 4. **If verification is out of scope or too costly for the current ask, say "unverified"
    explicitly** rather than presenting an unchecked assumption as a finding.
+5. **Summary words are claims too — label status explicitly instead of saying "done"/"fixed"/
+   "connected."** Use **VERIFIED** (checked directly against the live thing), **ASSUMED**
+   (inferred, not confirmed — name what would confirm it), **APPLIED** (the change is live/
+   visible now, not just staged or generated), or **NOT DONE**. A section header or closing
+   summary is exactly where an overclaim does the most damage, because it's the part most likely
+   to be read on its own — a technically-accurate body of evidence under a false headline is
+   still a false headline. Never pick an existing resource (a project, a config, a file) as "the"
+   target of a task by name-match alone — confirm it's actually the one in use before acting on
+   it or reporting against it.
 
 ---
 

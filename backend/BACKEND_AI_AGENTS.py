@@ -4217,15 +4217,10 @@ class SupplierManagerAgent(BaseAgent):
         except Exception as _ebay_err:
             logger.error(f"eBay price sync skipped: {_ebay_err}")
 
-        # Pull AliExpress DS prices
-        aliexpress_report: Dict[str, Any] = {}
-        try:
-            from services.aliexpress_price_sync import sync_aliexpress_prices
-            async with _price_asf() as _adb:
-                aliexpress_report = await sync_aliexpress_prices(_adb, limit_per_run=int(os.getenv("ALIEXPRESS_PRICE_SYNC_LIMIT", "200")))
-            logger.info(f"AliExpress price sync report: {aliexpress_report}")
-        except Exception as _ali_err:
-            logger.error(f"AliExpress price sync skipped: {_ali_err}")
+        # Pull AliExpress DS prices — DISABLED 2026-08-26: AliExpress deleted the
+        # platform account; app key 535426 returns "appkey not exists". Re-enable
+        # when a new AliExpress Open Platform account + app is set up.
+        aliexpress_report: Dict[str, Any] = {"status": "disabled", "reason": "platform_account_deleted"}
 
         # The shared `db` sat idle through the long syncs above — reset it so the post-sync
         # queries (rate lookup, reconciliation, SystemLog/CatalogVersion) get a live connection.
@@ -5825,15 +5820,20 @@ class SocialMediaManagerAgent(BaseAgent):
                 if re.search(r'[֐-׿]', candidate):
                     return candidate
         # Take the first paragraph with Hebrew that isn't just counting characters
-        # (counting lines look like "1 מ 2 ת 3 ו ..." with many single chars)
+        # (counting lines look like "1 מ 2 ת 3 ו ..." with many single chars).
+        # Upper bound raised to 2000: a 600-char post body is perfectly valid and
+        # the old 500-char cap caused NOA posts to fall through to text[:280],
+        # truncating mid-sentence (root cause of "body cut off" 2026-08-23).
         for para in text.split('\n\n'):
             para = para.strip()
             heb_chars = len(re.findall(r'[֐-׿]', para))
             digits_spaces = len(re.findall(r'\d+\s+[֐-׿]\s+', para))
-            if heb_chars > 15 and digits_spaces < 5 and 30 < len(para) < 500:
+            if heb_chars > 15 and digits_spaces < 5 and 30 < len(para) < 2000:
                 return para
-        # Last resort: first 280 chars
-        return text[:280]
+        # Last resort: return the full stripped text rather than cutting to 280 chars.
+        # The sentence-level stripper above already removed reasoning lines, so the
+        # remaining text is the best we have — a 280-char hard cut always truncates real posts.
+        return text
 
     # English imperative meta-instructions the model sometimes echoes back AS the post
     # ("Must include hook first line… Must be in Hebrew only… Must include price…").

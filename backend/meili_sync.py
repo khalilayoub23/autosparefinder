@@ -140,7 +140,7 @@ SELECT_SQL_INCREMENTAL = """
            importer_price_ils::float,
            (importer_price_ils IS NOT NULL AND importer_price_ils > 0) AS has_il_price
     FROM parts_catalog
-    WHERE is_active = TRUE AND id > $1::uuid AND updated_at > $3
+    WHERE is_active = TRUE AND id > $1::uuid AND (updated_at > $3 OR updated_at IS NULL)
     ORDER BY id
     LIMIT $2
 """

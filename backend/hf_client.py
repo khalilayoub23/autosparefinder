@@ -441,7 +441,7 @@ async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority
             _BG_SEMAPHORE.release()
         else:
             _PRIORITY_SEMAPHORE.release()
-    if resp.status_code == 429:
+    if resp.status_code in (429, 402):  # 402 = payment required / account inactive → same fallback path
         # Try Cerebras fallback model (reasoning model zai-glm-4.7) before external providers.
         # SKIP for customer-facing fast agents (skip_fallback_model=True) — zai-glm-4.7 is a
         # reasoning model that ignores customer-service system prompts and produces wrong-context
@@ -531,7 +531,7 @@ async def hf_router_text(prompt: str, system: str = "", timeout: float = 45.0, m
     finally:
         _BG_SEMAPHORE.release()
 
-    if resp.status_code == 429:
+    if resp.status_code in (429, 402):  # 402 = payment required / account inactive → same fallback path
         # Router quota hit — fall back to Groq as last resort
         if GROQ_API_KEY:
             logger.warning("hf_router_text: HF Router 429 — falling back to Groq")
@@ -1039,7 +1039,7 @@ async def groq_text(prompt: str, system: str = "", timeout: float = 60.0, model:
     if system:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
-    _model = model or os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    _model = model or os.getenv("GROQ_MODEL", "groq/compound")
     payload = _json.dumps({
         "model": _model,
         "messages": messages,

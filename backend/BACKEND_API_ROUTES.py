@@ -131,8 +131,10 @@ def _supervised_task(name: str, coro) -> "asyncio.Task":
             if exc:
                 msg_parts.append(f"שגיאה: {type(exc).__name__}: {str(exc)[:200]}")
             msg_parts.append("⚠️ המשימה לא תאותחל אוטומטית — יש לבדוק את השרת.")
+            # Root-fix 2026-09-01: a dying background task is a production failure
+            # and must bypass quiet hours — pass critical=True.
             asyncio.get_event_loop().create_task(
-                _wa_send_update("\n".join(msg_parts))
+                _wa_send_update("\n".join(msg_parts), critical=True)
             )
         print(f"[TaskMonitor] DIED: {name} exc={exc}")
 
@@ -1470,13 +1472,14 @@ async def _whatsapp_link_monitor_loop() -> None:
                     if await _r.set("autospare:wa:phone_reminder", "1",
                                     ex=days * 86400, nx=True):
                         await _alert(
-                            "🔋 הדליקו את טלפון העסק לדקה",
+                            f"🔋 תזכורת תקופתית — טלפון העסק (כל {days} ימים)",
+                            "✅ *הגשר פועל ומחובר כרגיל* — זו תזכורת מתוזמנת, לא תקלה.\n\n"
                             "וואטסאפ מנתק מכשיר מקושר אם טלפון העסק לא היה מחובר "
-                            f"לאינטרנט כ-14 יום.\n\n"
+                            "לאינטרנט כ-14 יום.\n\n"
                             f"מספר: {os.getenv('WHATSAPP_EXPECTED_NUMBER','972532426920')}\n"
                             "הדליקו אותו לדקה עם אינטרנט — זה מאפס את השעון "
                             "ל-14 יום נוספים. הכי פשוט: להשאיר אותו על המטען.\n\n"
-                            f"(תזכורת אוטומטית כל {days} ימים)")
+                            f"(תזכורת אוטומטית כל {days} ימים — הגשר תקין)")
             except Exception:
                 pass
 
@@ -2056,19 +2059,24 @@ async def _harvest_supervisor_loop() -> None:
                                 head = "⚠️ *שאיבת הקטלוג תקועה*"
                                 delta_line = (f"אין התקדמות ב-{mins} הדק' האחרונות "
                                               f"(בתהליך: {in_progress} · ממתינים: {pending:,})")
+                                # F3-fix 2026-09-01: stall was not actionable — add owner command
+                                action_line = "פעולה: כתוב *שאיבה* לסטטוס מלא"
                             elif _state == "idle":
                                 head = "💤 *שאיבת הקטלוג בטלה*"
                                 delta_line = "התור ריק — אין דגמים ממתינים לשאיבה."
+                                action_line = "פעולה: כתוב *שאיבה* לסטטוס"
                             else:
                                 head = "✅ *שאיבת הקטלוג חזרה לפעול*"
                                 delta_line = (f"ב-{mins} הדק' האחרונות: "
                                               f"+{d_models} דגמים, +{d_parts:,} חלקים")
+                                action_line = ""
                             msg = (
                                 f"{head}\n"
                                 f"כיסוי: {done:,}/{total:,} דגמים ({pct}%) · {bdone}/{btot} מותגים\n"
                                 f"{delta_line}\n"
                                 f"סה\"כ חלקים שנאספו: {parts:,}\n"
                                 f"נשאבים כעת:\n{cur_txt}"
+                                + (f"\n{action_line}" if action_line else "")
                             )
                             try:
                                 await _wa_send_update(msg)
@@ -2738,11 +2746,17 @@ async def _group_scan_loop():
                 lines.append(
                     "\nלאישור ושליחה: *תגובות-גרופ* לרשימה · *אשרתגובה <מזהה>*"
                 )
+                import hashlib as _hashlib
+                _disc_fp = _hashlib.md5(
+                    "|".join(sorted(d.get("post_id", d.get("post_text", ""))[:32] for d in discoveries)).encode()
+                ).hexdigest()[:10]
                 await notify_owner(
                     "social",
                     f"סריקת קבוצות פייסבוק — {len(discoveries)} תגובות ממתינות",
                     "\n".join(lines),
                     severity="info",
+                    alert_key=f"group_scan_discoveries_{_disc_fp}",
+                    cooldown_s=86400,  # same discovery set: at most once/day
                 )
                 logger.info("[group_scan] sent %d discoveries to owner", len(discoveries))
         except Exception as exc:
@@ -2966,8 +2980,13 @@ async def notify_owner(
     sev_icon = _NOTIFY_SEVERITY_ICON.get(severity, "ℹ️")
     header = f"{sev_icon} [{cat_label}] {title}"
     text = f"{header}\n\n{body}" if body else header
+    # Root-fix 2026-09-01: severity="critical" must bypass quiet hours.
+    # Before this, notify_owner() always called _wa_send_update(text, critical=False),
+    # so DB-down / high-error-rate alerts were QUEUED until 09:00 even though the health
+    # monitor correctly marked them severity="critical".
+    _is_critical = severity == "critical"
     try:
-        result = await _wa_send_update(text)
+        result = await _wa_send_update(text, critical=_is_critical)
         if result.get("ok") and alert_key:
             # Set cooldown ONLY after a confirmed successful send — a failed send must
             # not burn the cooldown window (root-fix 2026-08-26: bridge-down failures
@@ -3207,11 +3226,18 @@ async def _noa_engagement_loop():
             logger.info("[noa_engagement] %s webhook=%s", summary, wsum)
             drafted = summary.get("drafted", 0) + wsum.get("drafted", 0)
             if drafted and not autoreply:
+                # Root-fix 2026-09-01: engagement loop runs every NOA_ENGAGEMENT_INTERVAL_S
+                # (default 900s = 15 min). Without an alert_key this fired a fresh
+                # WhatsApp every 15 min as long as ANYTHING was pending. The owner
+                # sees one notification per hour at most; the drafted count updates
+                # naturally if more arrive within the hour.
                 await notify_owner(
                     "social",
-                    f"NOA: {drafted} תגובות חדשות ברשתות ממתינות לתשובה",
+                    f"NOA — {drafted} תגובות ממתינות לתשובה",
                     "לצפייה: כתוב *תגובות* · לאישור: *ענה <מזהה>*",
                     severity="info",
+                    alert_key="noa_engagement_pending_reply",
+                    cooldown_s=3600,
                 )
         except Exception as exc:
             logger.error("[noa_engagement] cycle failed: %s", exc)
@@ -3244,11 +3270,17 @@ async def _supplier_sourcing_loop():
             logger.info("[supplier_sourcing] %s", summary)
             if onboarded:
                 lines = "\n".join(f"• {o['name'][:34]} ({o['domain']})" for o in onboarded[:6])
+                import hashlib as _hashlib
+                _sup_fp = _hashlib.md5(
+                    "|".join(sorted(o.get("domain", o.get("name", "")) for o in onboarded)).encode()
+                ).hexdigest()[:10]
                 await notify_owner(
                     "supplier",
                     f"NIR מצא {len(onboarded)} ספקים חדשים אפשריים",
                     f"{lines}\nלצפייה/אישור: כתוב *ספקים*",
                     severity="info",
+                    alert_key=f"supplier_sourcing_{_sup_fp}",
+                    cooldown_s=7 * 86400,  # same candidate set: at most once/week
                 )
         except Exception as exc:
             logger.error("[supplier_sourcing] cycle failed: %s", exc)
@@ -3867,11 +3899,18 @@ async def _noa_marketing_loop():
                             + f"לאישור ופרסום: כתוב *אשר {_post_short_id}*\n"
                             + f"לדחייה: כתוב *דחה {_post_short_id}*"
                         )
+                        _alert_key_post = f"noa_post_ready_{social_post_id}" if social_post_id else None
+                        # F1-fix 2026-09-01: show ALL platforms being approved, not just
+                        # the first one. A single approval publishes to every platform in
+                        # _configured simultaneously — the owner must see the full scope.
+                        _platform_display = " · ".join(p.title() for p in (_configured or ["all"]))
                         await notify_owner(
                             "social",
-                            f"NOA — פוסט {platform.title()} מוכן לאישורך",
-                            wa_post_body,
+                            "NOA — פוסט מוכן לאישורך",
+                            f"פרסום: {_platform_display}\n\n{wa_post_body}",
                             severity="info",
+                            alert_key=_alert_key_post,
+                            cooldown_s=86400,  # each post id notified at most once/day
                         )
                     if NOA_TELEGRAM_MIRROR and TELEGRAM_OWNER_ID and TELEGRAM_ADMIN_TOKEN:
                         tg_msg = f"🎯 NOA — {platform.title()} post ready\n\n📝 {caption}"
@@ -4150,6 +4189,17 @@ async def _health_monitor_loop():
         # uploads fail-open). Removed from health probes so it no longer alerts.
         "stripe":           "Stripe (תשלומים)",
     }
+    # F4-fix 2026-09-01: service-specific diagnostic hints so owner has an immediate
+    # actionable step instead of a generic "check the system" instruction.
+    # Container names verified live 2026-09-01: all carry the autospare_ prefix.
+    SERVICE_ACTIONS = {
+        "postgres_catalog": "docker logs autospare_postgres_catalog --tail 30",
+        "postgres_pii":     "docker logs autospare_postgres_pii --tail 30",
+        "redis":            "docker logs autospare_redis --tail 30",
+        "meilisearch":      "docker logs autospare_meilisearch --tail 30",
+        "huggingface":      "בדוק את HF_TOKEN ב-.env",
+        "stripe":           "בדוק את STRIPE_SECRET_KEY ב-.env",
+    }
 
     async def _probe() -> dict:
         states: dict = {}
@@ -4223,7 +4273,11 @@ async def _health_monitor_loop():
                 label = SERVICE_LABELS.get(svc, svc)
                 if state == "error":
                     _title = f"שירות {label} נפל!"
-                    _msg   = f"שירות {label} אינו זמין. בדוק את המערכת בהקדם."
+                    _action_hint = SERVICE_ACTIONS.get(svc, "")
+                    _msg = (
+                        f"שירות {label} אינו זמין."
+                        + (f"\nפעולה: {_action_hint}" if _action_hint else " בדוק את המערכת בהקדם.")
+                    )
                     _notif_type = "service_down"
                     _severity = "critical"
                     print(f"[HealthMonitor] \u26a0\ufe0f  {svc} went DOWN")
@@ -4258,7 +4312,11 @@ async def _health_monitor_loop():
                             })))
                             if admin.phone and str(admin.id) != str(WHATSAPP_ANON_USER_ID):
                                 admin_phones.add(admin.phone)
-                                wa_result = await _wa_send_quiet(to=admin.phone, text=f"{_title}\n{_msg}")
+                                # Root-fix 2026-09-01: service-down events are critical —
+                                # pass critical=True so they bypass quiet hours for admins
+                                # the same way they now do for the owner via notify_owner().
+                                _admin_critical = (state == "error")
+                                wa_result = await _wa_send_quiet(to=admin.phone, text=f"{_title}\n{_msg}", critical=_admin_critical)
                                 if not wa_result.get("ok"):
                                     print(f"[HealthMonitor] WhatsApp failed for admin {admin.id}: {wa_result.get('error')}")
                         await db.commit()
@@ -5536,7 +5594,10 @@ async def webhook_new_order_receiver(payload: WebhookOrderPayload, db: AsyncSess
     return {"status": "success", "triggered_id": payload.order_id}
 
 @app.get("/api/v1/system/thumbnail-import")
-async def thumbnail_import_status(cat_db: AsyncSession = Depends(get_db)):
+async def thumbnail_import_status(
+    cat_db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_current_admin_user),
+):
     """Observability for the thumbnail-import supervisor (last cycle + live catalog coverage)."""
     out = dict(_THUMBNAIL_IMPORT_STATUS)
     try:

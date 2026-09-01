@@ -196,6 +196,45 @@ app.post('/send', async (req, res) => {
 // therefore reported {ok:true, connected:true} through a full logged-out outage,
 // which is why nothing alerted while every owner message failed. Baileys sets
 // sock.user only once the session is actually authenticated, so test THAT.
+// Live QR page — auto-refreshes every 15s so the user can scan without racing the expiry.
+// Returns an HTML page with the QR as an inline SVG/PNG generated from the raw payload.
+app.get('/qr', (_, res) => {
+  if (!latestQR) {
+    if (waSocket && waSocket.user) {
+      return res.send('<html><body style="font-family:sans-serif;text-align:center;padding:60px"><h2>✅ Already connected!</h2><p>WhatsApp bridge is linked and running.</p></body></html>')
+    }
+    return res.send('<html><meta http-equiv="refresh" content="3"><body style="font-family:sans-serif;text-align:center;padding:60px"><h2>⏳ Waiting for QR…</h2><p>Page refreshes automatically.</p></body></html>')
+  }
+  // Encode the raw QR payload as a data URI via the qrcode-terminal module isn't ideal;
+  // instead write it to a temp file and serve an HTML page that embeds it via an <img>
+  // pointing at /qr.png which we handle below.
+  res.send(`<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<meta http-equiv="refresh" content="18">
+<title>WhatsApp QR</title>
+<style>body{margin:0;background:#111;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:sans-serif;color:#fff}
+h2{margin-bottom:8px}p{color:#aaa;margin-top:0}img{border:16px solid white;border-radius:8px}</style>
+</head><body>
+<h2>📱 Scan with WhatsApp</h2>
+<p>Open WhatsApp → Settings → Linked Devices → Link a Device</p>
+<img src="/qr.png?t=${Date.now()}" width="320" height="320" alt="QR Code">
+<p style="margin-top:16px;font-size:13px">Auto-refreshes every 18 seconds</p>
+</body></html>`)
+})
+
+app.get('/qr.png', async (_, res) => {
+  if (!latestQR) return res.status(404).json({ error: 'no QR available' })
+  try {
+    const QRCode = await import('qrcode')
+    const png = await QRCode.default.toBuffer(latestQR, { type: 'png', width: 320, margin: 4 })
+    res.set('Content-Type', 'image/png')
+    res.set('Cache-Control', 'no-store')
+    res.send(png)
+  } catch (err) {
+    res.status(500).json({ error: String(err.message) })
+  }
+})
+
 app.get('/health', (_, res) => res.json({
   ok: true,
   connected: !!(waSocket && waSocket.user),

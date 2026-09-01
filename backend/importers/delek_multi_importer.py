@@ -244,8 +244,8 @@ async def upsert_parts(
                             """INSERT INTO parts_catalog
                                 (id,sku,oem_number,name,name_he,manufacturer,manufacturer_id,
                                  part_type,part_condition,category,importer_price_ils,max_price_ils,
-                                 base_price,is_active,specifications)
-                               VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,$6,'oem','new',$11,$7,$8,$9,true,$10)
+                                 base_price,is_active,specifications,created_at,updated_at)
+                               VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,$6,'oem','new',$11,$7,$8,$9,true,$10,NOW(),NOW())
                                ON CONFLICT (sku) DO UPDATE SET
                                  importer_price_ils=CASE WHEN EXCLUDED.importer_price_ils>0
                                    THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,

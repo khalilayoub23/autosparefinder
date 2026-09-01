@@ -106,7 +106,7 @@ export default function Layout({ children }) {
       {/* Consent modal — shown on first login until user accepts privacy policy + terms */}
       {user && !user.terms_accepted_at && <ConsentModal />}
 
-      <div className="min-h-screen flex flex-col bg-brand-surface">
+      <div className="min-h-screen flex flex-col bg-[#0F1218]">
       {/* Top navbar */}
       <header className="fixed top-0 right-0 left-0 z-40 bg-[#1B2228] border-b border-slate-600 shadow-[0_10px_28px_rgba(0,0,0,0.35)]">
         <div className="flex items-center justify-between h-24 px-4 max-w-7xl mx-auto">
@@ -185,25 +185,25 @@ export default function Layout({ children }) {
                 )}
               </button>
               {showNotifs && (
-                <div className="absolute left-0 top-full mt-1 w-96 max-w-[90vw] bg-white rounded-xl border border-gray-200 shadow-xl z-50">
-                  <div className="flex items-center justify-between p-4 border-b border-gray-100">
-                    <span className="font-bold text-brand-navy text-sm">התראות</span>
+                <div className="absolute left-0 top-full mt-1 w-96 max-w-[90vw] bg-[#151B27] rounded-xl border border-[rgba(148,163,184,0.12)] shadow-[0_4px_16px_rgba(0,0,0,0.5)] z-50">
+                  <div className="flex items-center justify-between p-4 border-b border-[rgba(148,163,184,0.08)]">
+                    <span className="font-bold text-[#E2E8F0] text-sm">התראות</span>
                     {unreadCount > 0 && (
                       <button
                         onClick={() => api.put('/notifications/read-all').then(() => { setUnreadCount(0); fetchNotifications() }).catch(() => {})}
-                        className="text-xs text-brand-600 hover:text-brand-700"
+                        className="text-xs text-[#38BDF8] hover:text-[#0EA5E9]"
                       >
                         סמן הכל כנקרא
                       </button>
                     )}
                   </div>
-                  <div className="max-h-80 overflow-y-auto divide-y divide-gray-50">
+                  <div className="max-h-80 overflow-y-auto divide-y divide-[rgba(148,163,184,0.06)]">
                     {notifications.length === 0 ? (
-                      <p className="text-sm text-gray-400 text-center py-8">אין התראות</p>
+                      <p className="text-sm text-[#475569] text-center py-8">אין התראות</p>
                     ) : notifications.map((n) => (
                       <div
                         key={n.id}
-                        className={`p-4 hover:bg-gray-50 cursor-pointer ${!n.read_at ? 'bg-brand-50/70' : ''}`}
+                        className={`p-4 hover:bg-[#1E2535] cursor-pointer transition-colors ${!n.read_at ? 'bg-[rgba(14,165,233,0.06)]' : ''}`}
                         onClick={() => {
                           if (!n.read_at) {
                             api.put(`/notifications/${n.id}/read`)
@@ -216,18 +216,18 @@ export default function Layout({ children }) {
                           setSelectedNotif(n)
                         }}
                       >
-                        <p className={`text-sm ${!n.read_at ? 'font-semibold text-brand-navy' : 'text-gray-700'}`}>{n.title}</p>
+                        <p className={`text-sm ${!n.read_at ? 'font-semibold text-[#E2E8F0]' : 'text-[#94A3B8]'}`}>{n.title}</p>
                         {n.message && (
                           <div className="mt-0.5">
                             <p
-                              className={`text-xs text-gray-500 whitespace-pre-wrap break-words ${expandedNotifId === n.id ? '' : 'line-clamp-2'}`}
+                              className={`text-xs text-[#64748B] whitespace-pre-wrap break-words ${expandedNotifId === n.id ? '' : 'line-clamp-2'}`}
                             >
                               {n.message}
                             </p>
                             {n.message.length > 120 && (
                               <button
                                 type="button"
-                                className="mt-1 text-[11px] text-brand-600 hover:text-brand-700"
+                                className="mt-1 text-[11px] text-[#38BDF8] hover:text-[#0EA5E9]"
                                 onClick={(e) => {
                                   e.stopPropagation()
                                   setExpandedNotifId((prev) => (prev === n.id ? null : n.id))
@@ -258,18 +258,18 @@ export default function Layout({ children }) {
                 </span>
                 <ChevronDown className="w-4 h-4 text-slate-300" />
               </button>
-              <div className="absolute left-0 top-full mt-1 w-48 bg-white rounded-xl border border-gray-200 shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-150 z-50">
-                <div className="p-3 border-b border-gray-100">
-                  <p className="text-sm font-semibold text-brand-navy truncate">{user?.full_name}</p>
-                  <p className="text-xs text-gray-500 truncate">{user?.email}</p>
+              <div className="absolute left-0 top-full mt-1 w-48 bg-[#151B27] rounded-xl border border-[rgba(148,163,184,0.12)] shadow-[0_4px_16px_rgba(0,0,0,0.5)] opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-150 z-50">
+                <div className="p-3 border-b border-[rgba(148,163,184,0.08)]">
+                  <p className="text-sm font-semibold text-[#E2E8F0] truncate">{user?.full_name}</p>
+                  <p className="text-xs text-[#94A3B8] truncate">{user?.email}</p>
                 </div>
                 <div className="p-1">
-                  <Link to="/profile" className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-50 text-sm text-gray-700">
+                  <Link to="/profile" className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-[#1E2535] text-sm text-[#94A3B8] hover:text-[#E2E8F0] transition-colors">
                     <User className="w-4 h-4" /> הפרופיל שלי
                   </Link>
                   <button
                     onClick={handleLogout}
-                    className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-red-50 text-sm text-red-600"
+                    className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-[rgba(239,68,68,0.10)] text-sm text-[#EF4444] transition-colors"
                   >
                     <LogOut className="w-4 h-4" /> התנתק
                   </button>
@@ -292,7 +292,7 @@ export default function Layout({ children }) {
         <div className="fixed inset-0 z-30 md:hidden" onClick={() => setSidebarOpen(false)}>
           <div className="absolute inset-0 bg-black/40" />
           <nav
-            className="absolute top-24 right-0 bottom-0 w-72 bg-white border-l border-gray-200 p-4 overflow-y-auto"
+            className="absolute top-24 right-0 bottom-0 w-72 bg-[#151B27] border-l border-[rgba(148,163,184,0.12)] p-4 overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             {NAV_ITEMS.map(({ path, icon: Icon, label }) => (
@@ -300,13 +300,15 @@ export default function Layout({ children }) {
                 key={path}
                 to={path}
                 onClick={() => setSidebarOpen(false)}
-                className={`flex items-center gap-3 px-4 py-3 rounded-xl mb-1 text-sm font-medium
-                  ${location.pathname === path ? 'bg-[#00CCFF]/20 text-[#1B2228] border border-[#00CCFF]/50' : 'text-gray-700 hover:bg-gray-50'}`}
+                className={`flex items-center gap-3 px-4 py-3 rounded-xl mb-1 text-sm font-medium transition-colors
+                  ${location.pathname === path
+                    ? 'bg-[rgba(14,165,233,0.12)] text-[#38BDF8] border border-[rgba(14,165,233,0.30)]'
+                    : 'text-[#94A3B8] hover:bg-[#1E2535] hover:text-[#E2E8F0]'}`}
               >
                 <Icon className="w-5 h-5" /> {label}
               </Link>
             ))}
-            <button onClick={handleLogout} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-red-600 hover:bg-red-50 mt-2">
+            <button onClick={handleLogout} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-[#EF4444] hover:bg-[rgba(239,68,68,0.10)] mt-2 transition-colors">
               <LogOut className="w-5 h-5" /> התנתק
             </button>
           </nav>
@@ -321,37 +323,37 @@ export default function Layout({ children }) {
       </main>
 
       {/* Footer */}
-      <footer className="bg-white border-t border-brand-100 py-4 mt-auto">
-        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-gray-500" dir="rtl">
+      <footer className="bg-[#0F1218] border-t border-[rgba(148,163,184,0.08)] py-4 mt-auto">
+        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-[#475569]" dir="rtl">
           <span>© {new Date().getFullYear()} AutoSpare</span>
           <div className="flex items-center gap-4">
-            <Link to="/privacy" className="hover:text-brand-600 transition-colors">מדיניות פרטיות</Link>
-            <Link to="/terms" className="hover:text-brand-600 transition-colors">תנאי שימוש</Link>
-            <Link to="/refund" className="hover:text-brand-600 transition-colors">ביטולים והחזרות</Link>
+            <Link to="/privacy" className="hover:text-[#38BDF8] transition-colors">מדיניות פרטיות</Link>
+            <Link to="/terms" className="hover:text-[#38BDF8] transition-colors">תנאי שימוש</Link>
+            <Link to="/refund" className="hover:text-[#38BDF8] transition-colors">ביטולים והחזרות</Link>
           </div>
         </div>
       </footer>
 
       {selectedNotif && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl border border-gray-200">
-            <div className="flex items-center justify-between p-4 border-b border-gray-100">
-              <h3 className="text-sm font-bold text-brand-navy">פרטי התראה</h3>
+          <div className="w-full max-w-lg rounded-2xl bg-[#151B27] shadow-[0_20px_60px_rgba(0,0,0,0.7)] border border-[rgba(148,163,184,0.12)]">
+            <div className="flex items-center justify-between p-4 border-b border-[rgba(148,163,184,0.08)]">
+              <h3 className="text-sm font-bold text-[#E2E8F0]">פרטי התראה</h3>
               <button
                 type="button"
-                className="text-gray-400 hover:text-gray-600"
+                className="text-[#475569] hover:text-[#94A3B8] transition-colors"
                 onClick={() => setSelectedNotif(null)}
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
             <div className="p-4 space-y-2">
-              <p className="text-sm font-semibold text-brand-navy whitespace-pre-wrap break-words">{selectedNotif.title}</p>
+              <p className="text-sm font-semibold text-[#E2E8F0] whitespace-pre-wrap break-words">{selectedNotif.title}</p>
               {!!selectedNotif.message && (
-                <p className="text-sm text-gray-600 whitespace-pre-wrap break-words">{selectedNotif.message}</p>
+                <p className="text-sm text-[#94A3B8] whitespace-pre-wrap break-words">{selectedNotif.message}</p>
               )}
             </div>
-            <div className="p-4 border-t border-gray-100 flex items-center justify-end gap-2">
+            <div className="p-4 border-t border-[rgba(148,163,184,0.08)] flex items-center justify-end gap-2">
               <button
                 type="button"
                 className="btn-ghost px-4 py-2"

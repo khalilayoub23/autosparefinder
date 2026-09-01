@@ -2254,3 +2254,18 @@ obsolete, wrong, or unsafe enough to retire.
 
 **File:** `backend/importers/car_parts_ie_import_generic.py` — price conversion block (line ~290).
 
+
+## 2026-08-26 — AliExpress platform account deleted
+
+**Problem:** AliExpress changed their Open Platform. App key `535426` returns `param-appkey.not.exists`. The user's AliExpress Open Platform account is gone — cannot log in or re-register. Both access token and refresh token had already expired 2026-07-31.
+
+**Impact:** AliExpress has had 0 parts in the catalog since July 31. The `aliexpress_price_sync` task was silently failing every 3h cycle without alerting.
+
+**Actions taken:**
+- `suppliers` table: `AliExpress` set `is_active=false` (was already contributing 0 parts)
+- `aliexpress_price_sync` call in `run_all_tasks` skipped with a clear comment — no more silent failures
+- `.env` AliExpress keys left in place for reference
+
+**To restore:** Create a new AliExpress Open Platform account at openservice.aliexpress.com, register a new Dropshipping app, update `ALIEXPRESS_APP_KEY` / `ALIEXPRESS_APP_SECRET` in `.env`, then visit the OAuth URL. Re-enable the sync block in `BACKEND_AI_AGENTS.py` and set `is_active=true`.
+
+**Alternative Chinese parts source to evaluate:** Autodoc (autodoc.co.uk) — has an affiliate/API program covering Chinese brands; already in supplier list as a target.

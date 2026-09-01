@@ -28,8 +28,8 @@ const PART_FAMILY_TRIGGER_IMAGE_WIDTH = 44
 const PART_FAMILY_TRIGGER_IMAGE_HEIGHT = 28
 const PART_FAMILY_CHIP_IMAGE_WIDTH = 34
 const PART_FAMILY_CHIP_IMAGE_HEIGHT = 24
-const FILTER_SELECT_CLASS = 'w-full h-12 sm:h-11 border border-gray-200 rounded-xl bg-white text-brand-navy text-[15px] sm:text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-3 transition-colors disabled:bg-gray-50 disabled:text-gray-400'
-const FILTER_MENU_TRIGGER_CLASS = 'w-full h-12 sm:h-11 border border-gray-200 rounded-xl bg-white text-brand-navy text-[15px] sm:text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-3 transition-colors flex items-center justify-between'
+const FILTER_SELECT_CLASS = 'w-full h-12 sm:h-11 border border-[rgba(148,163,184,0.12)] rounded-xl bg-[#252D3D] text-[#E2E8F0] text-[15px] sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#0EA5E9] focus:border-transparent px-3 transition-colors disabled:bg-[#151B27] disabled:text-[#475569]'
+const FILTER_MENU_TRIGGER_CLASS = 'w-full h-12 sm:h-11 border border-[rgba(148,163,184,0.12)] rounded-xl bg-[#252D3D] text-[#E2E8F0] text-[15px] sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#0EA5E9] focus:border-transparent px-3 transition-colors flex items-center justify-between'
 
 // ── Country flag helper ───────────────────────────────────────────────────────
 const COUNTRY_ISO = {

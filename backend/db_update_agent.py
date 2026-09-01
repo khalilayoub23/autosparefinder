@@ -4851,10 +4851,15 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
                     await _r.set(_ck, "1", ex=86400)
                     _lines = []
                     for r in _err_tasks[:8]:
-                        _lines.append(f"• {r.get('task','?')}: {str(r.get('error',''))[:120]}")
+                        # F5-fix 2026-09-01: show up to 120 chars of error; if longer,
+                        # prefer the tail (exception type/message) over the leading prefix.
+                        _err_str = str(r.get('error', ''))
+                        _err_preview = _err_str[-120:].lstrip() if len(_err_str) > 120 else _err_str
+                        _lines.append(f"• {r.get('task','?')}: {_err_preview}")
                     if len(_err_tasks) > 8:
                         _lines.append(f"…ועוד {len(_err_tasks) - 8}")
                     _lines.append(f"({ok_count} משימות הצליחו, {total_elapsed:.0f}s)")
+                    _lines.append("לוגים: docker logs autospare_backend | tail -50")
                     _owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
                     if _owner:
                         try:

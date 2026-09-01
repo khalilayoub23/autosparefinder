@@ -119,7 +119,7 @@ async def _save_draft(db, group_id: str, post_url: str, post_text: str,
 
 async def _wa_notify(msg: str) -> None:
     try:
-        from BACKEND_AI_AGENTS import _wa_send_quiet
+        from BACKEND_API_ROUTES import _wa_send_quiet
         await _wa_send_quiet(
             os.environ.get("OWNER_WHATSAPP_PHONE", ""),
             msg,
