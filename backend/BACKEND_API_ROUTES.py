@@ -2392,7 +2392,8 @@ async def _meili_verify_parity() -> None:
                 "harvest",
                 "זוהה פער סנכרון ב-Meilisearch",
                 f"אינדקס: {meili_docs:,} מסמכים\nקטלוג: {db_count:,} חלקים פעילים\n"
-                f"פער: {gap:,} מסמכים — הסנכרון מפגר או מדלג על שורות.",
+                f"פער: {gap:,} מסמכים — הסנכרון מפגר או מדלג על שורות.\n"
+                f"פעולה: docker exec autospare_backend python3 /app/meili_sync.py",
                 severity="warning",
                 alert_key="meili_parity_drift",
                 cooldown_s=10800,
@@ -4395,7 +4396,23 @@ async def _health_monitor_loop():
                             func.count(SystemLog.id).filter(SystemLog.level == "ERROR").label("errors"),
                         ).where(
                             SystemLog.created_at >= cutoff_1h,
-                            SystemLog.logger_name.in_(["api_routes", "agents", "scraper"]),
+                            # Root-fix 2026-09-05: 'api_routes'/'agents'/'scraper' never
+                            # matched a real writer — no code path ever wrote those
+                            # logger_name values, so this filter matched zero rows and
+                            # the detector was permanently dormant (error_rate always
+                            # 0%). Verified complete production write-set by grepping
+                            # every SystemLog(...) ORM call and every raw
+                            # "INSERT INTO system_logs" across the whole backend
+                            # (BACKEND_AI_AGENTS.py, catalog_scraper.py,
+                            # db_cleanup_agent.py): the only logger_name values ever
+                            # persisted are these five.
+                            SystemLog.logger_name.in_([
+                                "catalog_scraper",
+                                "db_cleanup_agent",
+                                "transport_office_pipeline",
+                                "orders_agent",
+                                "supplier_manager_agent",
+                            ]),
                         )
                     )).fetchone()
                     
@@ -4492,7 +4509,10 @@ async def _health_monitor_loop():
                 if _stall_reason:
                     if True:
                         _alert_title = "Worker db_update_agent: תקוע באמת"
-                        _alert_msg = f"db_update_agent: {_stall_reason}."
+                        _alert_msg = (
+                            f"db_update_agent: {_stall_reason}.\n"
+                            f"פעולה: docker restart autospare_backend"
+                        )
                         print(f"[HealthMonitor] ALERT: worker stalled — {_stall_reason}")
                         await _alert_owner(_alert_title, _alert_msg, alert_key="worker_silence", severity="warning")
 
