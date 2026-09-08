@@ -38,13 +38,13 @@ from social.meta_client import (
 log = logging.getLogger("facebook_pages")
 
 # Fields fetched per post insight; must be approved for the page token's scopes.
+# NOTE: post_clicks, post_reactions_like_total, and post_video_views were deprecated
+# by Meta in the Graph API v21+ migration (2024). Removed to stop the recurring
+# MetaAPIError: (#100) The value must be a valid insights metric.
 _POST_INSIGHT_METRICS = (
     "post_impressions,"
     "post_impressions_unique,"
-    "post_engaged_users,"
-    "post_clicks,"
-    "post_reactions_like_total,"
-    "post_video_views"            # 0 on non-video posts — safe to request
+    "post_engaged_users"
 )
 
 _PAGE_INSIGHT_METRICS = (

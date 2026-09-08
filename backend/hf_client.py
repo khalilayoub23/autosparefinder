@@ -36,7 +36,9 @@ HF_LANG_MODEL   = os.getenv("HF_LANG_MODEL",   "Helsinki-NLP/opus-mt-tc-big-he-e
 
 CEREBRAS_API_KEY      = os.getenv("CEREBRAS_API_KEY", "")
 CEREBRAS_TEXT_MODEL   = os.getenv("CEREBRAS_TEXT_MODEL", "gpt-oss-120b")
-CEREBRAS_FALLBACK_MODEL = os.getenv("CEREBRAS_FALLBACK_MODEL", "zai-glm-4.7")
+# zai-glm-4.7 was removed from Cerebras (returns 404). Default to empty string so the fallback
+# path is skipped and we go straight to Gemini/Groq instead of wasting a round-trip.
+CEREBRAS_FALLBACK_MODEL = os.getenv("CEREBRAS_FALLBACK_MODEL", "")
 CEREBRAS_BASE         = "https://api.cerebras.ai/v1"
 GEMINI_API_KEY      = os.getenv("GEMINI_API_KEY", "")
 WHATSAPP_GEMINI_KEY = os.getenv("WHATSAPP_GEMINI_API_KEY", GEMINI_API_KEY)  # dedicated key for webhook
@@ -473,8 +475,14 @@ async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority
         elif _gemini_cb_is_open():
             logger.debug("hf_text: Gemini circuit breaker open — skipping directly to GROQ")
         if GROQ_API_KEY:
-            logger.warning("hf_text: falling back to GROQ llama-3.3-70b-versatile")
-            return await groq_text(prompt=prompt, system=system, timeout=timeout)
+            # First try Groq's gpt-oss-120b (same model as Cerebras primary, free on Groq).
+            # Falls back to GROQ_MODEL (groq/compound) if gpt-oss-120b also fails.
+            logger.warning("hf_text: falling back to GROQ openai/gpt-oss-120b")
+            try:
+                return await groq_text(prompt=prompt, system=system, timeout=timeout, model="openai/gpt-oss-120b")
+            except Exception as _groq_primary_err:
+                logger.warning("hf_text: GROQ gpt-oss-120b failed (%s) — trying %s", _groq_primary_err, os.getenv("GROQ_MODEL", "groq/compound"))
+                return await groq_text(prompt=prompt, system=system, timeout=timeout)
     raise_for_status_safe(resp)
     result: str = _extract_cerebras_content(resp.json())
     result = _clean_response(result)
@@ -1035,6 +1043,15 @@ async def groq_text(prompt: str, system: str = "", timeout: float = 60.0, model:
     """Chat completion via GROQ API. Used as fallback when Cerebras+Gemini are both 429."""
     if not GROQ_API_KEY:
         raise RuntimeError("GROQ_API_KEY not set in .env")
+    # Groq rejects payloads >~32KB with 413. NOA's system prompt alone can exceed that.
+    # Keep the first 5000 chars of the system prompt (the core instructions) and the
+    # first 6000 chars of the user prompt — enough for any real task, safe for Groq.
+    _MAX_SYS = 5000
+    _MAX_USR = 6000
+    if len(system) > _MAX_SYS:
+        system = system[:_MAX_SYS] + "\n[... truncated for Groq fallback ...]"
+    if len(prompt) > _MAX_USR:
+        prompt = prompt[:_MAX_USR] + "\n[... truncated ...]"
     messages: list[dict[str, str]] = []
     if system:
         messages.append({"role": "system", "content": system})

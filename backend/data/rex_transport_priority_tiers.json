@@ -1,492 +1,492 @@
 {
   "total_canonical_manufacturers": 137,
-  "total_records": 4298506,
+  "total_records": 4311195,
   "tiers": {
     "tier1_dominant": [
       {
         "canonical_name": "טויוטה",
         "canonical_key": "טויוטה",
-        "total_records": 584762,
+        "total_records": 586082,
         "aliases": [],
-        "fleet_share_pct": 13.6038
+        "fleet_share_pct": 13.5944
       },
       {
         "canonical_name": "יונדאי",
         "canonical_key": "יונדאי",
-        "total_records": 566839,
+        "total_records": 567817,
         "aliases": [],
-        "fleet_share_pct": 13.1869
+        "fleet_share_pct": 13.1708
       },
       {
         "canonical_name": "קיה",
         "canonical_key": "קיה",
-        "total_records": 434153,
+        "total_records": 434981,
         "aliases": [],
-        "fleet_share_pct": 10.1001
+        "fleet_share_pct": 10.0896
       },
       {
         "canonical_name": "מזדה",
         "canonical_key": "מזדה",
-        "total_records": 283050,
+        "total_records": 282228,
         "aliases": [],
-        "fleet_share_pct": 6.5848
+        "fleet_share_pct": 6.5464
       },
       {
         "canonical_name": "סקודה",
         "canonical_key": "סקודה",
-        "total_records": 251308,
+        "total_records": 252107,
         "aliases": [],
-        "fleet_share_pct": 5.8464
+        "fleet_share_pct": 5.8477
       },
       {
         "canonical_name": "מיצובישי",
         "canonical_key": "מיצובישי",
-        "total_records": 178980,
+        "total_records": 178687,
         "aliases": [],
-        "fleet_share_pct": 4.1638
+        "fleet_share_pct": 4.1447
       },
       {
         "canonical_name": "סוזוקי",
         "canonical_key": "סוזוקי",
-        "total_records": 158553,
+        "total_records": 158507,
         "aliases": [],
-        "fleet_share_pct": 3.6886
+        "fleet_share_pct": 3.6766
       },
       {
         "canonical_name": "ניסאן",
         "canonical_key": "ניסאן",
-        "total_records": 146376,
+        "total_records": 146239,
         "aliases": [],
-        "fleet_share_pct": 3.4053
-      },
-      {
-        "canonical_name": "פולקסווגן",
-        "canonical_key": "פולקסווגן",
-        "total_records": 115859,
-        "aliases": [],
-        "fleet_share_pct": 2.6953
+        "fleet_share_pct": 3.3921
       },
       {
         "canonical_name": "סיאט",
         "canonical_key": "סיאט",
-        "total_records": 115323,
+        "total_records": 115665,
         "aliases": [],
         "fleet_share_pct": 2.6829
       },
       {
+        "canonical_name": "פולקסווגן",
+        "canonical_key": "פולקסווגן",
+        "total_records": 115634,
+        "aliases": [],
+        "fleet_share_pct": 2.6822
+      },
+      {
         "canonical_name": "רנו",
         "canonical_key": "רנו",
-        "total_records": 96379,
+        "total_records": 96160,
         "aliases": [],
-        "fleet_share_pct": 2.2422
+        "fleet_share_pct": 2.2305
       },
       {
         "canonical_name": "הונדה",
         "canonical_key": "הונדה",
-        "total_records": 94538,
+        "total_records": 94387,
         "aliases": [],
-        "fleet_share_pct": 2.1993
+        "fleet_share_pct": 2.1893
       },
       {
         "canonical_name": "שברולט",
         "canonical_key": "שברולט",
-        "total_records": 88926,
+        "total_records": 88595,
         "aliases": [],
-        "fleet_share_pct": 2.0688
+        "fleet_share_pct": 2.055
       },
       {
         "canonical_name": "סיטרואן",
         "canonical_key": "סיטרואן",
-        "total_records": 85347,
+        "total_records": 85332,
         "aliases": [],
-        "fleet_share_pct": 1.9855
+        "fleet_share_pct": 1.9793
       },
       {
         "canonical_name": "סובארו",
         "canonical_key": "סובארו",
-        "total_records": 84603,
+        "total_records": 84582,
         "aliases": [],
-        "fleet_share_pct": 1.9682
+        "fleet_share_pct": 1.9619
       },
       {
         "canonical_name": "מרצדס",
         "canonical_key": "מרצדס",
-        "total_records": 80766,
+        "total_records": 81073,
         "aliases": [],
-        "fleet_share_pct": 1.8789
+        "fleet_share_pct": 1.8805
+      },
+      {
+        "canonical_name": "פיג'ו",
+        "canonical_key": "פיג ו",
+        "total_records": 76113,
+        "aliases": [],
+        "fleet_share_pct": 1.7655
       }
     ],
     "tier2_mid_volume": [
       {
-        "canonical_name": "פיג'ו",
-        "canonical_key": "פיג ו",
-        "total_records": 76260,
+        "canonical_name": "צ'רי",
+        "canonical_key": "צ רי",
+        "total_records": 75783,
         "aliases": [],
-        "fleet_share_pct": 1.7741
+        "fleet_share_pct": 1.7578
       },
       {
         "canonical_name": "פורד",
         "canonical_key": "פורד",
-        "total_records": 74285,
+        "total_records": 73809,
         "aliases": [],
-        "fleet_share_pct": 1.7282
-      },
-      {
-        "canonical_name": "צ'רי",
-        "canonical_key": "צ רי",
-        "total_records": 73205,
-        "aliases": [],
-        "fleet_share_pct": 1.703
+        "fleet_share_pct": 1.712
       },
       {
         "canonical_name": "ב מ וו",
         "canonical_key": "ב מ וו",
-        "total_records": 65084,
+        "total_records": 65395,
         "aliases": [],
-        "fleet_share_pct": 1.5141
+        "fleet_share_pct": 1.5169
       },
       {
         "canonical_name": "בי ווי די",
         "canonical_key": "בי ווי די",
-        "total_records": 61898,
+        "total_records": 63477,
         "aliases": [],
-        "fleet_share_pct": 1.44
+        "fleet_share_pct": 1.4724
       },
       {
         "canonical_name": "אאודי",
         "canonical_key": "אאודי",
-        "total_records": 50292,
+        "total_records": 50326,
         "aliases": [],
-        "fleet_share_pct": 1.17
+        "fleet_share_pct": 1.1673
       },
       {
         "canonical_name": "ג'אקו",
         "canonical_key": "ג אקו",
-        "total_records": 41514,
+        "total_records": 43679,
         "aliases": [],
-        "fleet_share_pct": 0.9658
+        "fleet_share_pct": 1.0132
       },
       {
         "canonical_name": "מ.ג",
         "canonical_key": "מ ג",
-        "total_records": 41326,
+        "total_records": 42281,
         "aliases": [],
-        "fleet_share_pct": 0.9614
+        "fleet_share_pct": 0.9807
       },
       {
         "canonical_name": "טסלה",
         "canonical_key": "טסלה",
-        "total_records": 38650,
+        "total_records": 38885,
         "aliases": [],
-        "fleet_share_pct": 0.8991
+        "fleet_share_pct": 0.902
       },
       {
         "canonical_name": "אופל",
         "canonical_key": "אופל",
-        "total_records": 36275,
+        "total_records": 36163,
         "aliases": [],
-        "fleet_share_pct": 0.8439
+        "fleet_share_pct": 0.8388
       },
       {
         "canonical_name": "איסוזו",
         "canonical_key": "איסוזו",
-        "total_records": 28982,
+        "total_records": 29012,
         "aliases": [],
-        "fleet_share_pct": 0.6742
+        "fleet_share_pct": 0.6729
       },
       {
         "canonical_name": "וולבו",
         "canonical_key": "וולבו",
-        "total_records": 27122,
+        "total_records": 27178,
         "aliases": [],
-        "fleet_share_pct": 0.631
+        "fleet_share_pct": 0.6304
       },
       {
         "canonical_name": "גילי",
         "canonical_key": "גילי",
-        "total_records": 25999,
+        "total_records": 26596,
         "aliases": [],
-        "fleet_share_pct": 0.6048
+        "fleet_share_pct": 0.6169
       },
       {
         "canonical_name": "פיאט",
         "canonical_key": "פיאט",
-        "total_records": 25491,
+        "total_records": 25388,
         "aliases": [],
-        "fleet_share_pct": 0.593
+        "fleet_share_pct": 0.5889
       },
       {
         "canonical_name": "דאצ'יה",
         "canonical_key": "דאצ יה",
-        "total_records": 24440,
+        "total_records": 24450,
         "aliases": [],
-        "fleet_share_pct": 0.5686
+        "fleet_share_pct": 0.5671
       },
       {
         "canonical_name": "מרוטי סוזוקי",
         "canonical_key": "מרוטי סוזוקי",
-        "total_records": 24049,
+        "total_records": 23994,
         "aliases": [],
-        "fleet_share_pct": 0.5595
+        "fleet_share_pct": 0.5566
       }
     ],
     "tier3_long_tail": [
       {
         "canonical_name": "לקסוס",
         "canonical_key": "לקסוס",
-        "total_records": 23720,
+        "total_records": 23864,
         "aliases": [],
-        "fleet_share_pct": 0.5518
+        "fleet_share_pct": 0.5535
       },
       {
         "canonical_name": "דייהטסו",
         "canonical_key": "דייהטסו",
-        "total_records": 22501,
+        "total_records": 22375,
         "aliases": [],
-        "fleet_share_pct": 0.5235
+        "fleet_share_pct": 0.519
       },
       {
         "canonical_name": "קרייזלר",
         "canonical_key": "קרייזלר",
-        "total_records": 16803,
+        "total_records": 16781,
         "aliases": [],
-        "fleet_share_pct": 0.3909
+        "fleet_share_pct": 0.3892
       },
       {
         "canonical_name": "אקספנג",
         "canonical_key": "אקספנג",
-        "total_records": 14652,
+        "total_records": 15051,
         "aliases": [],
-        "fleet_share_pct": 0.3409
+        "fleet_share_pct": 0.3491
       },
       {
         "canonical_name": "ג'יפ",
         "canonical_key": "ג יפ",
-        "total_records": 11543,
+        "total_records": 11663,
         "aliases": [],
-        "fleet_share_pct": 0.2685
+        "fleet_share_pct": 0.2705
       },
       {
         "canonical_name": "רובר",
         "canonical_key": "רובר",
-        "total_records": 9016,
+        "total_records": 9011,
         "aliases": [],
-        "fleet_share_pct": 0.2097
+        "fleet_share_pct": 0.209
       },
       {
         "canonical_name": "אלפא רומיאו",
         "canonical_key": "אלפא רומיאו",
-        "total_records": 7579,
+        "total_records": 7573,
         "aliases": [],
-        "fleet_share_pct": 0.1763
-      },
-      {
-        "canonical_name": "קאדילאק",
-        "canonical_key": "קאדילאק",
-        "total_records": 6669,
-        "aliases": [],
-        "fleet_share_pct": 0.1551
+        "fleet_share_pct": 0.1757
       },
       {
         "canonical_name": "לינק אנד קו",
         "canonical_key": "לינק אנד קו",
-        "total_records": 6571,
+        "total_records": 6849,
         "aliases": [],
-        "fleet_share_pct": 0.1529
+        "fleet_share_pct": 0.1589
+      },
+      {
+        "canonical_name": "קאדילאק",
+        "canonical_key": "קאדילאק",
+        "total_records": 6691,
+        "aliases": [],
+        "fleet_share_pct": 0.1552
       },
       {
         "canonical_name": "זיקר",
         "canonical_key": "זיקר",
-        "total_records": 6075,
+        "total_records": 6147,
         "aliases": [],
-        "fleet_share_pct": 0.1413
+        "fleet_share_pct": 0.1426
       },
       {
         "canonical_name": "פורשה",
         "canonical_key": "פורשה",
-        "total_records": 5784,
+        "total_records": 5799,
         "aliases": [],
-        "fleet_share_pct": 0.1346
+        "fleet_share_pct": 0.1345
       },
       {
         "canonical_name": "לנדרובר",
         "canonical_key": "לנדרובר",
-        "total_records": 5546,
+        "total_records": 5686,
         "aliases": [],
-        "fleet_share_pct": 0.129
+        "fleet_share_pct": 0.1319
       },
       {
         "canonical_name": "סאנגיונג",
         "canonical_key": "סאנגיונג",
-        "total_records": 5234,
+        "total_records": 5218,
         "aliases": [],
-        "fleet_share_pct": 0.1218
+        "fleet_share_pct": 0.121
       },
       {
         "canonical_name": "סרס",
         "canonical_key": "סרס",
-        "total_records": 4960,
+        "total_records": 4957,
         "aliases": [],
-        "fleet_share_pct": 0.1154
+        "fleet_share_pct": 0.115
       },
       {
         "canonical_name": "דיפאל",
         "canonical_key": "דיפאל",
-        "total_records": 4686,
+        "total_records": 4914,
         "aliases": [],
-        "fleet_share_pct": 0.109
+        "fleet_share_pct": 0.114
       },
       {
         "canonical_name": "קיי גי מוביליט",
         "canonical_key": "קיי גי מוביליט",
-        "total_records": 4605,
+        "total_records": 4673,
         "aliases": [],
-        "fleet_share_pct": 0.1071
+        "fleet_share_pct": 0.1084
       },
       {
         "canonical_name": "דאציה",
         "canonical_key": "דאציה",
-        "total_records": 3903,
+        "total_records": 3912,
         "aliases": [],
-        "fleet_share_pct": 0.0908
-      },
-      {
-        "canonical_name": "אודי",
-        "canonical_key": "אודי",
-        "total_records": 3692,
-        "aliases": [],
-        "fleet_share_pct": 0.0859
-      },
-      {
-        "canonical_name": "סמארט",
-        "canonical_key": "סמארט",
-        "total_records": 3647,
-        "aliases": [],
-        "fleet_share_pct": 0.0848
-      },
-      {
-        "canonical_name": "מקסוס",
-        "canonical_key": "מקסוס",
-        "total_records": 3614,
-        "aliases": [],
-        "fleet_share_pct": 0.0841
-      },
-      {
-        "canonical_name": "אורה",
-        "canonical_key": "אורה",
-        "total_records": 3576,
-        "aliases": [],
-        "fleet_share_pct": 0.0832
+        "fleet_share_pct": 0.0907
       },
       {
         "canonical_name": "אומודה",
         "canonical_key": "אומודה",
-        "total_records": 3478,
+        "total_records": 3896,
         "aliases": [],
-        "fleet_share_pct": 0.0809
+        "fleet_share_pct": 0.0904
+      },
+      {
+        "canonical_name": "אורה",
+        "canonical_key": "אורה",
+        "total_records": 3844,
+        "aliases": [],
+        "fleet_share_pct": 0.0892
+      },
+      {
+        "canonical_name": "אודי",
+        "canonical_key": "אודי",
+        "total_records": 3730,
+        "aliases": [],
+        "fleet_share_pct": 0.0865
+      },
+      {
+        "canonical_name": "סמארט",
+        "canonical_key": "סמארט",
+        "total_records": 3680,
+        "aliases": [],
+        "fleet_share_pct": 0.0854
+      },
+      {
+        "canonical_name": "מקסוס",
+        "canonical_key": "מקסוס",
+        "total_records": 3656,
+        "aliases": [],
+        "fleet_share_pct": 0.0848
       },
       {
         "canonical_name": "ליפמוטור",
         "canonical_key": "ליפמוטור",
-        "total_records": 3236,
+        "total_records": 3386,
         "aliases": [],
-        "fleet_share_pct": 0.0753
+        "fleet_share_pct": 0.0785
       },
       {
         "canonical_name": "קופרה",
         "canonical_key": "קופרה",
-        "total_records": 3190,
+        "total_records": 3261,
         "aliases": [],
-        "fleet_share_pct": 0.0742
+        "fleet_share_pct": 0.0756
       },
       {
         "canonical_name": "ביואיק",
         "canonical_key": "ביואיק",
-        "total_records": 3116,
+        "total_records": 3094,
         "aliases": [],
-        "fleet_share_pct": 0.0725
+        "fleet_share_pct": 0.0718
       },
       {
         "canonical_name": "דונגפנג",
         "canonical_key": "דונגפנג",
-        "total_records": 2821,
+        "total_records": 2898,
         "aliases": [],
-        "fleet_share_pct": 0.0656
+        "fleet_share_pct": 0.0672
       },
       {
         "canonical_name": "יגואר",
         "canonical_key": "יגואר",
-        "total_records": 2542,
+        "total_records": 2537,
         "aliases": [],
-        "fleet_share_pct": 0.0591
+        "fleet_share_pct": 0.0588
       },
       {
         "canonical_name": "סקיוול",
         "canonical_key": "סקיוול",
-        "total_records": 2502,
+        "total_records": 2486,
         "aliases": [],
-        "fleet_share_pct": 0.0582
+        "fleet_share_pct": 0.0577
       },
       {
         "canonical_name": "איווייס",
         "canonical_key": "איווייס",
-        "total_records": 2076,
+        "total_records": 2075,
         "aliases": [],
-        "fleet_share_pct": 0.0483
+        "fleet_share_pct": 0.0481
       },
       {
         "canonical_name": "איויאיסי",
         "canonical_key": "איויאיסי",
         "total_records": 1678,
         "aliases": [],
-        "fleet_share_pct": 0.039
-      },
-      {
-        "canonical_name": "גי.אי.סי",
-        "canonical_key": "גי אי סי",
-        "total_records": 1621,
-        "aliases": [],
-        "fleet_share_pct": 0.0377
+        "fleet_share_pct": 0.0389
       },
       {
         "canonical_name": "אף אי דאבל יו",
         "canonical_key": "אף אי דאבל יו",
-        "total_records": 1596,
+        "total_records": 1644,
         "aliases": [],
-        "fleet_share_pct": 0.0371
+        "fleet_share_pct": 0.0381
+      },
+      {
+        "canonical_name": "גי.אי.סי",
+        "canonical_key": "גי אי סי",
+        "total_records": 1618,
+        "aliases": [],
+        "fleet_share_pct": 0.0375
       },
       {
         "canonical_name": "וויה",
         "canonical_key": "וויה",
-        "total_records": 1424,
+        "total_records": 1489,
         "aliases": [],
-        "fleet_share_pct": 0.0331
+        "fleet_share_pct": 0.0345
       },
       {
         "canonical_name": "די אס",
         "canonical_key": "די אס",
-        "total_records": 1290,
+        "total_records": 1292,
         "aliases": [],
         "fleet_share_pct": 0.03
       },
       {
-        "canonical_name": "פורתינג",
-        "canonical_key": "פורתינג",
-        "total_records": 1181,
-        "aliases": [],
-        "fleet_share_pct": 0.0275
-      },
-      {
         "canonical_name": "מרצדס בנץ",
         "canonical_key": "מרצדס בנץ",
-        "total_records": 1173,
+        "total_records": 1189,
         "aliases": [],
-        "fleet_share_pct": 0.0273
+        "fleet_share_pct": 0.0276
+      },
+      {
+        "canonical_name": "פורתינג",
+        "canonical_key": "פורתינג",
+        "total_records": 1180,
+        "aliases": [],
+        "fleet_share_pct": 0.0274
       },
       {
         "canonical_name": "וואי",
         "canonical_key": "וואי",
-        "total_records": 1025,
+        "total_records": 1026,
         "aliases": [],
         "fleet_share_pct": 0.0238
       },
@@ -495,21 +495,28 @@
         "canonical_key": "מזארטי",
         "total_records": 918,
         "aliases": [],
-        "fleet_share_pct": 0.0214
-      },
-      {
-        "canonical_name": "ג'אק",
-        "canonical_key": "ג אק",
-        "total_records": 834,
-        "aliases": [],
-        "fleet_share_pct": 0.0194
+        "fleet_share_pct": 0.0213
       },
       {
         "canonical_name": "פוטון",
         "canonical_key": "פוטון",
-        "total_records": 825,
+        "total_records": 863,
         "aliases": [],
-        "fleet_share_pct": 0.0192
+        "fleet_share_pct": 0.02
+      },
+      {
+        "canonical_name": "ג'אק",
+        "canonical_key": "ג אק",
+        "total_records": 835,
+        "aliases": [],
+        "fleet_share_pct": 0.0194
+      },
+      {
+        "canonical_name": "איון",
+        "canonical_key": "איון",
+        "total_records": 629,
+        "aliases": [],
+        "fleet_share_pct": 0.0146
       },
       {
         "canonical_name": "פולסטאר",
@@ -519,18 +526,11 @@
         "fleet_share_pct": 0.0137
       },
       {
-        "canonical_name": "איון",
-        "canonical_key": "איון",
-        "total_records": 519,
-        "aliases": [],
-        "fleet_share_pct": 0.0121
-      },
-      {
         "canonical_name": "ג'י.אמ.סי",
         "canonical_key": "ג י אמ סי",
-        "total_records": 509,
+        "total_records": 519,
         "aliases": [],
-        "fleet_share_pct": 0.0118
+        "fleet_share_pct": 0.012
       },
       {
         "canonical_name": "ניאו רכב",
@@ -549,35 +549,35 @@
       {
         "canonical_name": "בנטלי",
         "canonical_key": "בנטלי",
-        "total_records": 397,
+        "total_records": 403,
         "aliases": [],
-        "fleet_share_pct": 0.0092
+        "fleet_share_pct": 0.0093
       },
       {
         "canonical_name": "פרארי",
         "canonical_key": "פרארי",
-        "total_records": 359,
+        "total_records": 360,
         "aliases": [],
         "fleet_share_pct": 0.0084
+      },
+      {
+        "canonical_name": "איי אם",
+        "canonical_key": "איי אם",
+        "total_records": 332,
+        "aliases": [],
+        "fleet_share_pct": 0.0077
       },
       {
         "canonical_name": "דייהו",
         "canonical_key": "דייהו",
         "total_records": 316,
         "aliases": [],
-        "fleet_share_pct": 0.0074
-      },
-      {
-        "canonical_name": "איי אם",
-        "canonical_key": "איי אם",
-        "total_records": 309,
-        "aliases": [],
-        "fleet_share_pct": 0.0072
+        "fleet_share_pct": 0.0073
       },
       {
         "canonical_name": "לנצ'יה",
         "canonical_key": "לנצ יה",
-        "total_records": 284,
+        "total_records": 283,
         "aliases": [],
         "fleet_share_pct": 0.0066
       },
@@ -605,16 +605,16 @@
       {
         "canonical_name": "גרייט וול",
         "canonical_key": "גרייט וול",
-        "total_records": 205,
+        "total_records": 198,
         "aliases": [],
-        "fleet_share_pct": 0.0048
+        "fleet_share_pct": 0.0046
       },
       {
         "canonical_name": "יודו",
         "canonical_key": "יודו",
-        "total_records": 168,
+        "total_records": 165,
         "aliases": [],
-        "fleet_share_pct": 0.0039
+        "fleet_share_pct": 0.0038
       },
       {
         "canonical_name": "האמר ג.מ",
@@ -626,9 +626,16 @@
       {
         "canonical_name": "נטע",
         "canonical_key": "נטע",
-        "total_records": 107,
+        "total_records": 106,
         "aliases": [],
         "fleet_share_pct": 0.0025
+      },
+      {
+        "canonical_name": "באייק",
+        "canonical_key": "באייק",
+        "total_records": 103,
+        "aliases": [],
+        "fleet_share_pct": 0.0024
       },
       {
         "canonical_name": "למבורגיני",
@@ -642,19 +649,19 @@
         "canonical_key": "פיאג ו",
         "total_records": 97,
         "aliases": [],
-        "fleet_share_pct": 0.0023
+        "fleet_share_pct": 0.0022
+      },
+      {
+        "canonical_name": "פאריזון",
+        "canonical_key": "פאריזון",
+        "total_records": 89,
+        "aliases": [],
+        "fleet_share_pct": 0.0021
       },
       {
         "canonical_name": "האמר",
         "canonical_key": "האמר",
         "total_records": 87,
-        "aliases": [],
-        "fleet_share_pct": 0.002
-      },
-      {
-        "canonical_name": "פאריזון",
-        "canonical_key": "פאריזון",
-        "total_records": 86,
         "aliases": [],
         "fleet_share_pct": 0.002
       },
@@ -669,13 +676,6 @@
         "canonical_name": "רולס-רויס",
         "canonical_key": "רולס רויס",
         "total_records": 71,
-        "aliases": [],
-        "fleet_share_pct": 0.0017
-      },
-      {
-        "canonical_name": "באייק",
-        "canonical_key": "באייק",
-        "total_records": 69,
         "aliases": [],
         "fleet_share_pct": 0.0016
       },
@@ -696,9 +696,9 @@
       {
         "canonical_name": "דאבל יו אם איי",
         "canonical_key": "דאבל יו אם איי",
-        "total_records": 60,
+        "total_records": 57,
         "aliases": [],
-        "fleet_share_pct": 0.0014
+        "fleet_share_pct": 0.0013
       },
       {
         "canonical_name": "אל אי וי סי",
@@ -710,21 +710,21 @@
       {
         "canonical_name": "אלפין",
         "canonical_key": "אלפין",
-        "total_records": 50,
+        "total_records": 51,
+        "aliases": [],
+        "fleet_share_pct": 0.0012
+      },
+      {
+        "canonical_name": "קוואן",
+        "canonical_key": "קוואן",
+        "total_records": 51,
         "aliases": [],
         "fleet_share_pct": 0.0012
       },
       {
         "canonical_name": "די.אף.אס.קיי",
         "canonical_key": "די אף אס קיי",
-        "total_records": 47,
-        "aliases": [],
-        "fleet_share_pct": 0.0011
-      },
-      {
-        "canonical_name": "קוואן",
-        "canonical_key": "קוואן",
-        "total_records": 47,
+        "total_records": 48,
         "aliases": [],
         "fleet_share_pct": 0.0011
       },
@@ -792,16 +792,16 @@
         "fleet_share_pct": 0.0005
       },
       {
-        "canonical_name": "לוטוס",
-        "canonical_key": "לוטוס",
-        "total_records": 13,
+        "canonical_name": "מיני",
+        "canonical_key": "מיני",
+        "total_records": 14,
         "aliases": [],
         "fleet_share_pct": 0.0003
       },
       {
-        "canonical_name": "מיני",
-        "canonical_key": "מיני",
-        "total_records": 12,
+        "canonical_name": "לוטוס",
+        "canonical_key": "לוטוס",
+        "total_records": 13,
         "aliases": [],
         "fleet_share_pct": 0.0003
       },
@@ -913,7 +913,7 @@
       {
         "canonical_name": "בואו",
         "canonical_key": "בואו",
-        "total_records": 4,
+        "total_records": 5,
         "aliases": [],
         "fleet_share_pct": 0.0001
       },

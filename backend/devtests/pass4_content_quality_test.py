@@ -246,16 +246,20 @@ check(
     True,
 )
 
-# ─── Test 11: F5 — DB agent error body uses tail-truncation + log reference ───
-print("\n11. F5 — DB agent error body uses tail-truncation and adds log reference")
+# ─── Test 11: F5 — DB agent error body uses tail-truncation ─────────────────
+print("\n11. F5 — DB agent error body uses tail-truncation (tail of error, ≤120 chars)")
 
+# FINAL PASS 2026-09-02: variable was renamed (_err_str→_es, _err_preview inlined).
+# The semantic contract is the same: tail[-120:].lstrip() is used on the error string.
 check_present(
-    "F5: error preview prefers tail of error string",
-    "_err_str[-120:].lstrip() if len(_err_str) > 120 else _err_str",
+    "F5: error tail-truncation applied in current_fail_map building",
+    "_es[-120:].lstrip() if len(_es) > 120 else _es",
     _dbagent_src,
 )
-check_present(
-    "F5: log reference line added to error body",
+# Log reference line intentionally removed in FINAL PASS (Phase 6: remove low-value data).
+# Delta labels (חדש/מתמשך) replaced it as the primary operational signal.
+check_absent(
+    "F5: raw docker logs line removed (replaced by delta labels per FINAL PASS Phase 6)",
     '"לוגים: docker logs autospare_backend | tail -50"',
     _dbagent_src,
 )

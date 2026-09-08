@@ -3977,6 +3977,19 @@ async def _stuck_orders_monitor_loop():
                 # either live-mode support being built or the owner fulfilling manually.
                 # Exclude orders whose most recent stripe_issuing failure in the last 24h
                 # is this structural (non-transient) guard from the auto-retry loop.
+                #
+                # RE-ROOT-FIX 2026-09-05: the 2026-08-06 fix above never actually worked.
+                # A retry does not INSERT a new supplier_payments row — it UPDATEs the
+                # existing one in place, so created_at stays pinned to the payment's
+                # original failure time forever while updated_at advances every cycle.
+                # Filtering on created_at therefore excluded nothing after the first 24h,
+                # so these orders silently fell back into the retryable/"auto-handled"
+                # bucket every day since — confirmed live: 4 supplier_payments rows with
+                # created_at=2026-04-18/19 and updated_at refreshed to today, still being
+                # reported as "auto_handled":true daily, and the honest manual-action path
+                # below had 0 sends in the table's entire history. Use updated_at, which
+                # reflects the most recent retry attempt regardless of when the row was
+                # first created.
                 _nonretryable_recent_ids = (
                     select(SupplierPayment.order_id)
                     .where(
@@ -3986,9 +3999,36 @@ async def _stuck_orders_monitor_loop():
                             SupplierPayment.failure_reason.ilike("%sandbox mode only%"),
                             SupplierPayment.failure_reason.ilike("%not configured%"),
                         ),
-                        SupplierPayment.created_at > now - timedelta(hours=24),
+                        SupplierPayment.updated_at > now - timedelta(hours=24),
                     )
                     .distinct()
+                )
+
+                # P1 FIX 2026-09-05: an order whose supplier payment already reached a
+                # terminal SUCCESS state (paid / tracking_received / cancelled) was still
+                # being swept into "stuck" purely because Order.status hadn't advanced to
+                # match — confirmed live on AUTO-2026-71C901A4 (payment tracking_received
+                # since April, Order.status stuck at 'confirmed'; the intended invariant,
+                # proven by routes/utils.py's own auto_fake_tracking/auto_fulfill_order
+                # code and by this loop's own Pass 2 precondition two screens down, is
+                # SupplierPayment.status='tracking_received' => Order.status IN
+                # ('supplier_ordered','shipped','delivered')). trigger_supplier_fulfillment's
+                # own early-exit (routes/utils.py ~L691) makes reprocessing such an order a
+                # pure no-op — yet it was still reported "auto_handled: true", which is false
+                # in the plain sense (nothing was attempted) and the deeper sense (nothing
+                # was needed). An order can have MULTIPLE supplier_payments rows (one per
+                # supplier, uq_supplier_payments_order_supplier) — a retry updates that row
+                # in place rather than inserting a new one, so this must require ALL of an
+                # order's supplier_payments to be terminal, not just one, or a genuinely
+                # still-failing second supplier on a multi-supplier order would be masked.
+                _all_suppliers_terminal_ids = (
+                    select(SupplierPayment.order_id)
+                    .group_by(SupplierPayment.order_id)
+                    .having(
+                        func.bool_and(
+                            SupplierPayment.status.in_(["paid", "tracking_received", "cancelled"])
+                        )
+                    )
                 )
                 result = await db.execute(
                     select(Order).where(
@@ -3998,6 +4038,7 @@ async def _stuck_orders_monitor_loop():
                             Order.id.in_(issuing_retry_order_ids),
                         ),
                         ~Order.id.in_(_nonretryable_recent_ids),
+                        ~Order.id.in_(_all_suppliers_terminal_ids),
                     )
                 )
                 stuck = result.scalars().all()
@@ -4005,11 +4046,16 @@ async def _stuck_orders_monitor_loop():
                 # Orders EXCLUDED above because they're known-doomed right now — these need
                 # the OWNER, not another retry. Honest framing (never "auto-handled"),
                 # deduped weekly (the underlying state won't change without owner action).
+                # Also excludes already-terminal-payment orders (defense in depth — today
+                # these two sets are disjoint by construction, since a nonretryable order
+                # requires a 'failed' row, but this keeps the guarantee explicit rather
+                # than relying on that staying true as either query evolves).
                 manual_result = await db.execute(
                     select(Order).where(
                         Order.status.in_(["confirmed", "paid", "processing"]),
                         Order.updated_at <= cutoff,
                         Order.id.in_(_nonretryable_recent_ids),
+                        ~Order.id.in_(_all_suppliers_terminal_ids),
                     )
                 )
                 manual_orders = manual_result.scalars().all()

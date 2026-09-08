@@ -4286,6 +4286,23 @@ class SupplierManagerAgent(BaseAgent):
             report["errors"] = (list((ebay_report or {}).get("errors") or [])
                                 + list((aliexpress_report or {}).get("errors") or []))
 
+            # Sendcloud EU/UK shipping sync (2026-08-31): replace NULL shipping_cost_ils
+            # on Car-Parts.ie / SNG Barratt / BMW Spare Parts EU with real Sendcloud rates.
+            # Runs per (supplier, category) bulk UPDATE — not per-row. Never overwrites
+            # existing non-NULL values. Skips silently if credentials not set or no route.
+            sendcloud_report: Dict[str, Any] = {}
+            try:
+                from services.sendcloud_shipping_sync import sync_sendcloud_shipping
+                from BACKEND_AUTH_SECURITY import get_redis as _get_redis_sc
+                _redis_sc = await _get_redis_sc()
+                async with _price_asf() as _scdb:
+                    sendcloud_report = await sync_sendcloud_shipping(_scdb, _redis_sc)
+                logger.info("[Price Sync] Sendcloud shipping sync report: %s", sendcloud_report)
+            except Exception as _sc_err:
+                logger.error("[Price Sync] Sendcloud shipping sync failed: %s", _sc_err)
+                sendcloud_report = {"error": str(_sc_err)}
+            report["sendcloud_shipping_report"] = sendcloud_report
+
             # Cross-source freshness reconciliation (cheap — harvest_queue is ~1.4K rows).
             from sqlalchemy import text as _recon_text
             recon: Dict[str, Any] = {
@@ -6324,6 +6341,8 @@ class SocialMediaManagerAgent(BaseAgent):
                                     f"קמפיין חדש מחכה לאישורך: {_campaign_name}",
                                     "\n".join(_msg_lines),
                                     severity="info",
+                                    alert_key=f"campaign_ready_{campaign_id}",
+                                    cooldown_s=86400,  # per-campaign: at most one approval nag/day
                                 )
                             except Exception as _e:
                                 logger.debug("GAP-A owner notify failed: %s", _e)

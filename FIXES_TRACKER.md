@@ -1,5 +1,87 @@
 # AutoSpareFinder — Bug & Breaking Points Fix Tracker
-> Last scan: 2026-08-22 | Total issues found: 449 | Fixed: 449 | In Progress: 0 | Open: 0
+> Last scan: 2026-09-02 | Total issues found: 459 | Fixed: 459 | In Progress: 0 | Open: 0
+
+---
+
+## Session — 2026-09-02 (FINAL PASS — Agent/Task Reporting Content Quality)
+
+### 18. db_update_agent WhatsApp reports only showed aggregate counts (no delta, no task names)
+**Root cause**: When 2 tasks failed, the owner received `db_update_agent — 2 משימות נכשלו במחזור` with no task names, no indication of whether the failure was new or recurring, and a raw `docker logs` command as the primary diagnostic. The old sig-based dedup (SHA256 of sorted failing-task-set, 24h TTL) suppressed all repeats but never told the owner what changed.
+
+**Fix**: Replaced the sig-based dedup with per-cycle delta tracking via a Redis key (`autospare:dbagent:prev_failed_tasks`, 4h TTL, JSON dict `{task_name: error_preview}`):
+- **NEW failure** — tasks in this cycle not in previous → title says `(חדש)`, severity escalated to `error`, shows `🆕 חדש:` section with task names + error tails
+- **ONGOING** — same task set as previous cycle → SUPPRESSED (no message), state updated
+- **CHANGED** — any task appeared/disappeared → alert fires with `🔄 מתמשך:` for still-failing + `🆕 חדש:` for new ones
+- **RESOLVED** — all tasks succeeded but previous cycle had failures → `✅ db_update_agent — כל המשימות שוחזרו` with names of recovered tasks; prev key deleted
+
+**BEFORE** (from real production screenshot):
+```
+🟡 [בריאות המערכת] db_update_agent — 2 משימות נכשלו במחזור
+(19 משימות הצליחו, 1804s)
+לוגים: docker logs autospare_backend | tail -50
+```
+
+**AFTER** (first occurrence):
+```
+🔴 [בריאות המערכת] db_update_agent — 2 משימות נכשלו (חדש)
+🆕 חדש:
+  • normalize_part_types: asyncpg.TooManyConnectionsError: sorry, too many clients
+  • task_categorize_parts: Task timed out after 3600s
+(19 הצליחו · 1804s)
+```
+
+**AFTER** (same failures next cycle → suppressed, owner gets nothing — correct)
+
+**AFTER** (one task recovers):
+```
+🟡 db_update_agent — 1 משימות נכשלו (מתמשך)
+🔄 מתמשך:
+  • task_categorize_parts: Task timed out after 3600s
+(20 הצליחו · 1701s)
+```
+
+**AFTER** (full recovery):
+```
+✅ db_update_agent — ✅ כל המשימות שוחזרו
+שוקמו: normalize_part_types, task_categorize_parts
+(21 הצליחו · 1621s)
+```
+
+**Tests**: `devtests/agent_reporting_quality_test.py` — 12 checks, all pass (delta key, TTL, NEW/ONGOING/RESOLVED/IDENTICAL logic, severity escalation, functional simulation). All prior passes (notify_policy_test 8 tests + pass4_content_quality_test 14 tests) confirmed intact via subprocess. **36/36 pass.**
+
+---
+
+## Session — 2026-09-01 (Notification dedup — second-pass audit)
+
+### 14. Phase 1 — Critical alert routing broken: notify_owner(severity="critical") did not bypass quiet hours
+**Root cause**: `notify_owner()` called `_wa_send_update(text)` without any `critical` flag. The `_is_critical` computation was missing entirely, so every alert — even `severity="critical"` — was subject to quiet-hours queuing and could be silently delayed until 09:00.
+**Fix**: Added `_is_critical = severity == "critical"` inside `notify_owner()` then passed it as `_wa_send_update(text, critical=_is_critical)`. Also propagated `critical=True` to supervised-task crash callbacks (`_supervised_task._on_done`) and to health-monitor admin sends (`_admin_critical = (state == "error")`).
+**Tests**: `notify_policy_test.py` tests 1, 6, 7, 8 — all pass.
+
+### 15. Phase 1 — NOA engagement loop spammed owner every 15 minutes with pending-reply alerts
+**Root cause**: `_noa_engagement_loop` fired `notify_owner("social", "NOA: {N} תגובות חדשות...")` on every 900s loop pass whenever drafts were pending, with no alert_key cooldown. Owner received up to 96 identical WhatsApp messages per day.
+**Fix**: Added `alert_key="noa_engagement_pending_reply"` + `cooldown_s=3600` so the same pending-reply alert fires at most once per hour.
+**Tests**: `notify_policy_test.py` test 5.
+
+### 16. Phase 2 — Forensic audit: 4 notification call sites missing alert_key deduplication
+**Root cause**: Second-pass audit of all 20+ proactive owner-notification call sites revealed 4 bare `notify_owner` calls with no `alert_key`, each capable of generating repeated identical messages:
+1. `_group_scan_loop` discoveries (daily scan): re-notified for same undismissed discoveries on restart
+2. `_supplier_sourcing_loop` (weekly): re-notified same pending candidates if owner hadn't approved
+3. `_noa_marketing_loop` post approval: could double-fire if loop restarted mid-cycle
+4. `execute_campaign` (BACKEND_AI_AGENTS): no per-campaign dedup, could re-notify on re-run
+
+**Fix**: Added content-fingerprinted `alert_key` to all four sites:
+- Group scan discoveries: `alert_key=f"group_scan_discoveries_{_disc_fp}"` — MD5 of sorted post_id/text set, cooldown_s=86400
+- Supplier sourcing: `alert_key=f"supplier_sourcing_{_sup_fp}"` — MD5 of sorted domain set, cooldown_s=7*86400
+- NOA post approval: `alert_key=f"noa_post_ready_{social_post_id}"`, cooldown_s=86400
+- execute_campaign: `alert_key=f"campaign_ready_{campaign_id}"`, cooldown_s=86400
+
+**Confirmed already handled (no change needed)**: amayama monitor (has `alert_key="amayama_harvester_down"` + 4h cooldown), pending-posts reminder (per-oldest-id key + 24h), health monitor (per-service keys), meili parity (24h), chrome zombie (6h), campaign publish failure (per post+platform), NOA coherence gate, stuck orders (own Redis dedup), status loop (in-memory state dedup).
+
+**Before**: Owner received duplicate WhatsApp messages for the same undismissed pending posts/suppliers/campaigns across restarts or within the same day.
+**After**: Every notification call site has either an `alert_key` cooldown, a state-machine dedup, or an in-memory guard. No message fires more than once per its natural period for identical content.
+
+**Tests**: `devtests/agent_reporting_quality_test.py` — 14 tests, all pass. `devtests/notify_policy_test.py` — 8 tests, all pass. 22 total.
 
 ---
 

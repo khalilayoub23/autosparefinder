@@ -4834,46 +4834,100 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
         # failing-task SET per 24h (Redis-keyed) so a persistent error doesn't nag every
         # 3h cycle but a NEW failure alerts immediately. Quiet-hours-aware via
         # _wa_send_quiet (queued at night, delivered in the morning window).
+        # FINAL-PASS 2026-09-02: delta-based reporting. Replaces the old sig-dedup
+        # approach. Key: autospare:dbagent:prev_failed_tasks (JSON dict, 4h TTL).
+        # NEW failures always alert. ONGOING-only (identical task set) is suppressed.
+        # RESOLVED (0 errors after prior failures) sends a recovery notice.
+        _PREV_FAIL_KEY = "autospare:dbagent:prev_failed_tasks"
+        try:
+            import json as _json_alert
+            from BACKEND_AUTH_SECURITY import get_redis as _gr
+            _r = await _gr()
+            _prev_raw = await _r.get(_PREV_FAIL_KEY)
+            _prev_fail_map: dict = _json_alert.loads(_prev_raw) if _prev_raw else {}
+        except Exception:
+            _prev_fail_map = {}
+
         if err_count > 0:
             try:
-                import hashlib as _hashlib
+                import json as _json_alert2
                 _err_tasks = [
                     r for r in results
                     if isinstance(r, dict) and r.get("status") == "error"
                 ]
-                _sig = _hashlib.sha256(
-                    ",".join(sorted(str(r.get("task", "?")) for r in _err_tasks)).encode()
-                ).hexdigest()[:16]
-                from BACKEND_AUTH_SECURITY import get_redis as _gr
-                _r = await _gr()
-                _ck = f"autospare:alert_cooldown:dbagent_task_errors:{_sig}"
-                if not await _r.exists(_ck):
-                    await _r.set(_ck, "1", ex=86400)
+                # Build {task_name: error_preview} for this cycle
+                _current_fail_map: dict = {}
+                for _fr in _err_tasks:
+                    _tn = str(_fr.get("task", "?"))
+                    _es = str(_fr.get("error", ""))
+                    _current_fail_map[_tn] = _es[-120:].lstrip() if len(_es) > 120 else _es
+
+                # Delta: which tasks are NEW vs ONGOING
+                _new_tasks = {t: e for t, e in _current_fail_map.items() if t not in _prev_fail_map}
+                _ongoing_tasks = {t: e for t, e in _current_fail_map.items() if t in _prev_fail_map}
+
+                # Suppress only if the task SET is identical to previous cycle (pure ongoing)
+                _identical = (not _new_tasks and set(_current_fail_map) == set(_prev_fail_map))
+
+                # Always store current state for next cycle (4h TTL > 3h cycle interval)
+                from BACKEND_AUTH_SECURITY import get_redis as _gr2
+                _r2 = await _gr2()
+                await _r2.set(_PREV_FAIL_KEY,
+                              _json_alert2.dumps(_current_fail_map, ensure_ascii=False),
+                              ex=14400)
+
+                if not _identical:
                     _lines = []
-                    for r in _err_tasks[:8]:
-                        # F5-fix 2026-09-01: show up to 120 chars of error; if longer,
-                        # prefer the tail (exception type/message) over the leading prefix.
-                        _err_str = str(r.get('error', ''))
-                        _err_preview = _err_str[-120:].lstrip() if len(_err_str) > 120 else _err_str
-                        _lines.append(f"• {r.get('task','?')}: {_err_preview}")
+                    if _new_tasks:
+                        _lines.append("🆕 *חדש:*")
+                        for _t, _e in list(_new_tasks.items())[:4]:
+                            _lines.append(f"  • {_t}: {_e}" if _e else f"  • {_t}")
+                    if _ongoing_tasks:
+                        _lines.append("🔄 *מתמשך:*")
+                        for _t, _e in list(_ongoing_tasks.items())[:4]:
+                            _lines.append(f"  • {_t}: {_e}" if _e else f"  • {_t}")
                     if len(_err_tasks) > 8:
                         _lines.append(f"…ועוד {len(_err_tasks) - 8}")
-                    _lines.append(f"({ok_count} משימות הצליחו, {total_elapsed:.0f}s)")
-                    _lines.append("לוגים: docker logs autospare_backend | tail -50")
+                    _lines.append(f"({ok_count} הצליחו · {total_elapsed:.0f}s)")
                     _owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
                     if _owner:
                         try:
                             from BACKEND_API_ROUTES import notify_owner as _notify
+                            _delta_label = "חדש" if _new_tasks else "מתמשך"
                             await _notify(
                                 "health",
-                                f"db_update_agent — {err_count} משימות נכשלו במחזור האחרון",
+                                f"db_update_agent — {err_count} משימות נכשלו ({_delta_label})",
                                 "\n".join(_lines),
-                                severity="warning",
+                                severity="error" if _new_tasks else "warning",
                             )
                         except Exception as _ne:
                             logger.warning("run_all_tasks error-alert notify_owner failed: %s", _ne)
             except Exception as _alert_exc:
                 logger.warning("run_all_tasks error-alert failed: %s", _alert_exc)
+        elif _prev_fail_map:
+            # No errors this cycle, but previous cycle had failures → RESOLVED
+            try:
+                import json as _json_res
+                from BACKEND_AUTH_SECURITY import get_redis as _gr3
+                _r3 = await _gr3()
+                await _r3.delete(_PREV_FAIL_KEY)
+                _resolved_names = ", ".join(list(_prev_fail_map)[:6])
+                if len(_prev_fail_map) > 6:
+                    _resolved_names += f" +{len(_prev_fail_map) - 6}"
+                _owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
+                if _owner:
+                    try:
+                        from BACKEND_API_ROUTES import notify_owner as _notify_res
+                        await _notify_res(
+                            "health",
+                            "db_update_agent — ✅ כל המשימות שוחזרו",
+                            f"שוקמו: {_resolved_names}\n({ok_count} הצליחו · {total_elapsed:.0f}s)",
+                            severity="info",
+                        )
+                    except Exception as _ne2:
+                        logger.warning("run_all_tasks resolved-alert notify_owner failed: %s", _ne2)
+            except Exception as _res_exc:
+                logger.warning("run_all_tasks resolved-alert failed: %s", _res_exc)
         # Publish final stats to shared memory
         try:
             from agents.memory import AgentMemory as _AgentMemory
