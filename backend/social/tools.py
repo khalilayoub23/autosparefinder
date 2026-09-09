@@ -276,19 +276,24 @@ async def facebook_group_scan(
     """
     tracking = _tracking_id()
     try:
-        # Fetch approved groups from DB
+        # Fetch all non-rejected groups from DB.
+        # Scanning is read-only — approval workflow controls whether to POST, not whether to scan.
+        # Previously only 'approved' groups were fetched, leaving 26 'pending' groups unscanned.
         import sqlalchemy as sa
         rows = (await db.execute(
-            sa.text("SELECT id, group_url, group_name FROM group_targets WHERE status='approved' AND platform='facebook'")
+            sa.text("SELECT id, group_url, group_name, status FROM group_targets WHERE status != 'rejected' AND platform='facebook'")
         )).fetchall()
         approved = [{"id": str(r.id), "group_url": r.group_url, "group_name": r.group_name}
                     for r in rows]
+        pending_count = sum(1 for r in rows if r.status == 'pending')
 
         if not approved:
             return ToolResult(
                 status="success", analytics_tracking_id=tracking,
-                data={"discoveries": [], "note": "no approved groups configured"}
+                data={"discoveries": [], "note": "no configured groups (approved or pending)"}
             )
+        if pending_count:
+            log.info("facebook_group_scan: scanning %d pending groups in addition to approved", pending_count)
 
         from social.facebook_browser import GroupAgent
         agent = GroupAgent()

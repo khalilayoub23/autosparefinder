@@ -311,9 +311,29 @@ check_present(
     _routes_src,
 )
 # F3 changes must not have removed _wa_send_update call
+#
+# Updated 2026-09-09 (owner alert architecture remediation, authorized): the
+# harvest-stall path was intentionally migrated OFF a direct `_wa_send_update(msg)`
+# call and onto the centralized `notify_owner()` mechanism, specifically so its
+# cooldown survives a container restart (it used to live only in an in-memory
+# module-level dict). The old literal pin below is now checking for the very
+# pattern this migration was authorized to remove, so it is replaced with the
+# equivalent successor-architecture pin: the stall/idle/recovery alert_keys must
+# still be present and the harvest supervisor must still route through
+# notify_owner (not have quietly reverted, or been deleted outright).
 check_present(
-    "Regression F3: harvest stall still calls _wa_send_update",
-    "await _wa_send_update(msg)",
+    "Regression F3 (superseded 2026-09-09): harvest stall alert_key still present",
+    "harvest_catalog_stalled",
+    _routes_src,
+)
+check_present(
+    "Regression F3 (superseded 2026-09-09): harvest idle alert_key still present",
+    "harvest_catalog_idle",
+    _routes_src,
+)
+check_present(
+    "Regression F3 (superseded 2026-09-09): harvest recovery alert_key still present",
+    "harvest_catalog_recovered",
     _routes_src,
 )
 
@@ -331,8 +351,11 @@ check_present(
     _routes_src,
 )
 check_present(
+    # Loosened 2026-09-09: notify_owner now also threads alert_key through to
+    # _wa_send_update for quiet-hours-queue dedup, so the full call gained a third
+    # argument. critical is still derived from _is_critical exactly as before.
     "Regression: _wa_send_update still called with critical=_is_critical",
-    "_wa_send_update(text, critical=_is_critical)",
+    "_wa_send_update(text, critical=_is_critical",
     _routes_src,
 )
 

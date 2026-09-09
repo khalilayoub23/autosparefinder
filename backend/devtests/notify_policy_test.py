@@ -34,8 +34,8 @@ print("1. severity=critical reaches _wa_send_update with critical=True")
 _captured_wa_calls: list[dict] = []
 
 
-async def _mock_wa_send_update(text: str, critical: bool = False) -> dict:
-    _captured_wa_calls.append({"text": text, "critical": critical})
+async def _mock_wa_send_update(text: str, critical: bool = False, alert_key: str = "") -> dict:
+    _captured_wa_calls.append({"text": text, "critical": critical, "alert_key": alert_key})
     return {"ok": True}
 
 
@@ -149,7 +149,7 @@ async def test_alert_key_dedup() -> None:
 
     _sends: list[str] = []
 
-    async def _fake_wa_update(text: str, critical: bool = False) -> dict:
+    async def _fake_wa_update(text: str, critical: bool = False, alert_key: str = "") -> dict:
         _sends.append(text)
         return {"ok": True}
 
@@ -253,8 +253,14 @@ check(
     True,
 )
 check(
+    # Loosened 2026-09-09 (owner alert architecture remediation): notify_owner now
+    # also threads alert_key through to _wa_send_update for quiet-hours-queue dedup
+    # (see _wa_send_quiet), so the exact call is
+    # "_wa_send_update(text, critical=_is_critical, alert_key=alert_key)". Match on
+    # the substring that actually matters — critical is still derived correctly —
+    # rather than pinning the full argument list.
     "_wa_send_update called with critical=_is_critical",
-    "_wa_send_update(text, critical=_is_critical)" in _routes_src,
+    "_wa_send_update(text, critical=_is_critical" in _routes_src,
     True,
 )
 

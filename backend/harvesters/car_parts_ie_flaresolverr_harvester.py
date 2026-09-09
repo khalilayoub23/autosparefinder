@@ -441,6 +441,11 @@ import threading as _threading
 
 _CLEARANCE = {"cookie": "", "ua": _DEFAULT_UA, "ts": 0.0}
 _CLEARANCE_LOCK = _threading.Lock()
+# Timestamp of the last complete ensure_clearance() failure. Prevents each http_get()
+# call from retrying the full 6×70s mint sequence when FlareSolverr is known broken.
+# Cleared on success; set on failure. Back-off: 120s (CLEARANCE_FAIL_BACKOFF_S).
+_CLEARANCE_FAILED_TS: float = 0.0
+CLEARANCE_FAIL_BACKOFF_S: int = int(os.environ.get("HARVESTER_CLEARANCE_FAIL_BACKOFF_S", "120"))
 
 
 def _solve_clearance() -> bool:
@@ -469,15 +474,23 @@ def _solve_clearance() -> bool:
 
 
 def ensure_clearance(force: bool = False) -> bool:
+    global _CLEARANCE_FAILED_TS
     with _CLEARANCE_LOCK:
         fresh = bool(_CLEARANCE["cookie"]) and (time.time() - _CLEARANCE["ts"] < CLEARANCE_TTL_S)
     if fresh and not force:
         return True
-    for _ in range(6):
+    # If FlareSolverr is known broken (failed recently), fail fast — don't retry 6×70s
+    # for every http_get() call. Without this, each page fetch in harvest_model() hangs
+    # for ~7 min, stalling a 30-page model for 3+ hours (exceeds the 45-min reclaim threshold).
+    if not force and _CLEARANCE_FAILED_TS and (time.time() - _CLEARANCE_FAILED_TS < CLEARANCE_FAIL_BACKOFF_S):
+        return False
+    for _ in range(3):  # reduced from 6 — failure is faster with back-off in place
         if _solve_clearance():
+            _CLEARANCE_FAILED_TS = 0.0  # clear failure state on success
             return True
         time.sleep(6)
     log.error("could not mint cf_clearance cookie after retries")
+    _CLEARANCE_FAILED_TS = time.time()  # record failure so next call skips the 3×70s attempt
     return False
 
 
@@ -753,6 +766,18 @@ def main():
             f"done={prog['done']}/{prog['total']} models "
             f"({prog['brands_done']}/{prog['brands_total']} brands), pending={pending} ═══"
         )
+
+        # Guard: do NOT start workers when clearance is unavailable. Without this,
+        # workers claim models (set in_progress) then fail every page with "", marking
+        # models "empty" permanently — burning the entire queue with false-empty status.
+        # If FlareSolverr can't mint a cookie, sleep and retry next cycle instead.
+        with _CLEARANCE_LOCK:
+            have_clearance = bool(_CLEARANCE["cookie"])
+        if not have_clearance:
+            log.warning("No valid cf_clearance — skipping worker cycle to avoid false-empty queue burn. "
+                        "Sleeping 60s before retry.")
+            time.sleep(60)
+            continue
 
         # Each worker takes a bounded slice of the queue this cycle, then the cycle rests.
         # Workers now fetch by plain HTTP (no browser), so concurrency is cheap — PARALLEL_

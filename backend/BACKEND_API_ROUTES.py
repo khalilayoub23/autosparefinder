@@ -133,6 +133,16 @@ def _supervised_task(name: str, coro) -> "asyncio.Task":
             msg_parts.append("⚠️ המשימה לא תאותחל אוטומטית — יש לבדוק את השרת.")
             # Root-fix 2026-09-01: a dying background task is a production failure
             # and must bypass quiet hours — pass critical=True.
+            #
+            # INTENTIONAL DIRECT DELIVERY (owner alert architecture audit, 2026-09-09):
+            # this is a synchronous asyncio done-callback, not an `async def` — it
+            # cannot `await notify_owner(...)` itself, only schedule a fire-and-forget
+            # task the same way it already does. A supervised task never auto-restarts
+            # after crashing (see the message above), so this fires once per genuine
+            # crash event, not in a respawn loop — there is no observed burst/duplicate
+            # behavior to fix here. Left as direct _wa_send_update(critical=True); an
+            # existing regression test (devtests/notify_policy_test.py, "supervised task
+            # crash uses critical=True") pins this exact call.
             asyncio.get_event_loop().create_task(
                 _wa_send_update("\n".join(msg_parts), critical=True)
             )
@@ -932,6 +942,20 @@ async def _status_update_loop() -> None:
             )
             has_problem = bool(dead_tasks or failed_jobs)
 
+            # INTENTIONAL DIRECT DELIVERY (owner alert architecture audit, 2026-09-09):
+            # both branches below are justified exceptions to notify_owner(), not
+            # accidental bypasses.
+            #   - digest: a scheduled once-daily report (like the weekly harvest
+            #     digest) — no persistent condition to key a cooldown on.
+            #   - problem: dedups on the EXACT set of currently-failed jobs/dead
+            #     tasks (problem_sig), which changes shape every time a different
+            #     job fails or recovers. notify_owner()'s single alert_key+cooldown
+            #     model would either (a) need one alert_key per possible job-name
+            #     combination (unbounded, defeats "stable identity"), or (b) use one
+            #     shared key and — by design — SUPPRESS a genuinely new/different
+            #     failure that happens to occur inside another failure's cooldown
+            #     window, which is a real regression from the current signature-based
+            #     dedup (re-alerts immediately the moment the failing set changes).
             if is_digest_time:
                 lines[0] = f"📅 *AutoSpareFinder — דוח יומי* ({_il_time} ישראל)"
                 await _wa_send_update("\n".join(lines))
@@ -1534,6 +1558,20 @@ async def _job_queue_report_loop() -> None:
             failed = [s for s in steps if s["status"] == "failed"]
             finished = not active
 
+            # INTENTIONAL DIRECT DELIVERY, all three sends in this loop (owner alert
+            # architecture audit, 2026-09-09): this is a FINITE, one-off migration
+            # tool (see the docstring above), not a recurring background alert
+            # family. Each send already has its own correct, narrower dedup than a
+            # single alert_key+cooldown could give it: the finish summary fires
+            # exactly once per queue RUN (`announced_done`, re-armed when a new run
+            # starts); the failure alert fires exactly once per STEP
+            # (`prev["failed::"+step_key]`), so two different steps failing back to
+            # back are both reported, which a single shared alert_key would not do
+            # without inventing a per-step key anyway; the hourly progress line is
+            # informational, not an alert. Migrating would not remove a bug — there
+            # is no observed duplicate/burst behavior here — and would trade a
+            # simpler, already-correct in-run mechanism for a Redis round trip.
+            #
             # ── the queue finished: say so ONCE, with the parity verdict ──────
             if finished and not announced_done:
                 verdict = "—"
@@ -2055,23 +2093,42 @@ async def _harvest_supervisor_loop() -> None:
                                 cur_txt = "\n".join(f"• {r[0]} {r[1]}" for r in cur) or "—"
                             except Exception:
                                 cur_txt = "—"
+                            # Root-fix 2026-09-09 (owner alert architecture remediation):
+                            # this used to call _wa_send_update() directly with its own
+                            # in-memory-only cooldown (_harvest_alert_sent_utc / _harvest_alert_state),
+                            # which does not survive a container restart — right after a
+                            # restart prev_state resets to None, so the very next sample
+                            # would look like a brand-new stall and re-alert immediately
+                            # even if one had just been sent minutes before the restart.
+                            # Migrated to notify_owner() so the cooldown lives in Redis
+                            # (survives restart) and the quiet-hours queue can dedup by
+                            # alert_key (see _wa_send_quiet). stalled/idle/recovered get
+                            # DISTINCT alert_keys — sharing one key would let notify_owner's
+                            # cooldown silently swallow a stalled→idle (or idle→stalled)
+                            # transition, which harvest_notify_policy_test.py requires to
+                            # report immediately as a genuinely different condition.
                             if _state == "stalled":
-                                head = "⚠️ *שאיבת הקטלוג תקועה*"
+                                _title = "שאיבת הקטלוג תקועה"
                                 delta_line = (f"אין התקדמות ב-{mins} הדק' האחרונות "
                                               f"(בתהליך: {in_progress} · ממתינים: {pending:,})")
                                 # F3-fix 2026-09-01: stall was not actionable — add owner command
                                 action_line = "פעולה: כתוב *שאיבה* לסטטוס מלא"
+                                _alert_key = "harvest_catalog_stalled"
+                                _severity = "warning"
                             elif _state == "idle":
-                                head = "💤 *שאיבת הקטלוג בטלה*"
+                                _title = "שאיבת הקטלוג בטלה"
                                 delta_line = "התור ריק — אין דגמים ממתינים לשאיבה."
                                 action_line = "פעולה: כתוב *שאיבה* לסטטוס"
+                                _alert_key = "harvest_catalog_idle"
+                                _severity = "warning"
                             else:
-                                head = "✅ *שאיבת הקטלוג חזרה לפעול*"
+                                _title = "שאיבת הקטלוג חזרה לפעול"
                                 delta_line = (f"ב-{mins} הדק' האחרונות: "
                                               f"+{d_models} דגמים, +{d_parts:,} חלקים")
                                 action_line = ""
-                            msg = (
-                                f"{head}\n"
+                                _alert_key = "harvest_catalog_recovered"
+                                _severity = "success"
+                            body = (
                                 f"כיסוי: {done:,}/{total:,} דגמים ({pct}%) · {bdone}/{btot} מותגים\n"
                                 f"{delta_line}\n"
                                 f"סה\"כ חלקים שנאספו: {parts:,}\n"
@@ -2079,7 +2136,16 @@ async def _harvest_supervisor_loop() -> None:
                                 + (f"\n{action_line}" if action_line else "")
                             )
                             try:
-                                await _wa_send_update(msg)
+                                await notify_owner(
+                                    "harvest", _title, body,
+                                    severity=_severity,
+                                    alert_key=_alert_key,
+                                    # Persistent bad states re-alert on the same cadence as
+                                    # before (HARVEST_STALL_REALERT_S, default 6h); recovery
+                                    # only needs a short cooldown to survive a restart-time
+                                    # double-fire, not a long silence window.
+                                    cooldown_s=(_realert_s if _bad else 3600),
+                                )
                                 _harvest_alert_sent_utc = _now
                             except Exception as _rex:
                                 print(f"[harvest_supervisor] status send failed: {_rex}", flush=True)
@@ -2118,6 +2184,12 @@ async def _harvest_supervisor_loop() -> None:
                             f"סה\"כ חלקים שנאספו: {parts:,}\n\n"
                             f"הבאים בתור (עדיפות עליונה):\n{nxt}"
                         )
+                        # INTENTIONAL DIRECT DELIVERY (owner alert architecture audit,
+                        # 2026-09-09): a scheduled Sunday-09:00 digest, not an alert on a
+                        # condition — there is no persistent state to key a cooldown on
+                        # (it fires once per calendar week by construction via
+                        # _last_digest_date) and notify_owner()'s alert_key/cooldown model
+                        # has nothing to add here. Kept as a direct, justified bypass.
                         try:
                             await _wa_send_update(msg)
                         except Exception:
@@ -2848,27 +2920,102 @@ def _notify_window_open(now_local: "datetime | None" = None) -> tuple[bool, date
     return is_open, current_local
 
 
-async def _wa_send_quiet(to: str, text: str, critical: bool = False) -> dict:
+# Root-fix 2026-09-09 (atomic dedup — closes a TOCTOU race flagged by the
+# pre-production safety audit): the previous implementation did
+#   LRANGE (read) -> inspect in Python -> LREM (remove match) -> RPUSH (append)
+# as 3-4 separate Redis round trips, each a real `await` suspension point. This
+# process runs `--workers 1` but a SINGLE event loop juggling ~39 concurrent
+# supervised background tasks (harvest_supervisor, amayama_harvest_monitor,
+# noa_marketing_loop, health_monitor_loop, ...) — any `await` is a point where
+# another task's own call to this same function can interleave. Two concurrent
+# calls with the SAME alert_key could both complete their LRANGE (seeing no
+# existing match) before either one's RPUSH lands, so BOTH would survive in the
+# queue — exactly the duplicate-burst outcome the dedup exists to prevent.
+#
+# Redis executes a Lua script to completion as ONE atomic operation — no other
+# client command, from any task/process/container, can interleave mid-script
+# (Redis is single-threaded for command execution). Moving the whole
+# "find-and-remove the old entry for this alert_key, then append the new one,
+# then trim" sequence into a single EVAL makes it atomic BY CONSTRUCTION rather
+# than by the accidental absence of concurrent same-key callers. cjson is a
+# built-in part of Redis's embedded Lua environment (present since Redis 2.6 —
+# not a separate module, nothing new to install); verified live against this
+# deployment's actual Redis 7.4.9 / redis-py 8.0.1 (see
+# devtests/queue_atomic_dedup_test.py, which runs this exact script against a
+# real, isolated, non-Production Redis instance).
+#
+# KEYS[1] = queue key
+# ARGV[1] = alert_key ("" = no dedup, just append — matches prior behavior for
+#           legacy/one-off sends)
+# ARGV[2] = new payload JSON (already carries "alert_key" when one was given)
+# ARGV[3], ARGV[4] = LTRIM bounds (kept identical to the prior "-50, -1" cap)
+_WA_QUIET_ENQUEUE_LUA = """
+local key = KEYS[1]
+local alert_key = ARGV[1]
+local payload = ARGV[2]
+local trim_start = tonumber(ARGV[3])
+local trim_end = tonumber(ARGV[4])
+
+if alert_key ~= "" then
+    local items = redis.call('LRANGE', key, 0, -1)
+    for _, raw in ipairs(items) do
+        local ok, item = pcall(cjson.decode, raw)
+        -- A malformed or legacy (no alert_key field) entry decodes fine but
+        -- item.alert_key is nil, which never equals a non-empty alert_key —
+        -- so legacy/malformed entries are never matched or touched here,
+        -- exactly like the previous implementation's explicit skip.
+        if ok and type(item) == 'table' and item['alert_key'] == alert_key then
+            redis.call('LREM', key, 1, raw)
+        end
+    end
+end
+
+redis.call('RPUSH', key, payload)
+redis.call('LTRIM', key, trim_start, trim_end)
+return 1
+"""
+
+
+async def _wa_send_quiet(to: str, text: str, critical: bool = False, alert_key: str = "") -> dict:
     """Quiet-hours-aware WhatsApp send. Inside the window (or critical=True) → send now.
     Outside → queue to Redis; the health monitor flushes the queue at window open, so
     nothing is lost and nobody gets a 03:00 message. Owner notifications go to his REAL
     number (OWNER_WHATSAPP_PHONE) — a masked …@lid is NOT deliverable (owner-confirmed
-    2026-07-24), so we never route to a LID."""
+    2026-07-24), so we never route to a LID.
+
+    alert_key (optional, root-fix 2026-09-09): a persistent condition (e.g. a
+    stalled harvester) can re-fire every sampling cycle for the ENTIRE quiet-hours
+    window — each firing individually valid because its own cooldown had expired
+    — so several near-identical items for the SAME condition can accumulate in the
+    queue before the window opens and then burst-deliver back to back. When
+    alert_key is given, any already-queued item carrying the SAME alert_key is
+    replaced by this newer one (semantic identity, never message text) so at most
+    one queued delivery survives per condition; the newest diagnostic text always
+    wins. Items with no alert_key (legacy/one-off sends) are never touched. The
+    find-and-replace is a single atomic Redis Lua script (_WA_QUIET_ENQUEUE_LUA) —
+    see its comment for why a multi-round-trip version was not safe here."""
     is_open, _ = _notify_window_open()
     if is_open or critical:
         return await _wa_send(to=to, text=text)
     try:
         _r = await get_redis()
-        await _r.rpush(_WA_QUIET_QUEUE_KEY, json.dumps({
+        payload = {
             "to": to, "text": text[:3800],
             "queued_at": datetime.now(APP_LOCAL_TZ).strftime("%d/%m %H:%M"),
-        }, ensure_ascii=False))
-        await _r.ltrim(_WA_QUIET_QUEUE_KEY, -50, -1)  # keep at most 50 queued
+        }
+        if alert_key:
+            payload["alert_key"] = alert_key
+        await _r.eval(
+            _WA_QUIET_ENQUEUE_LUA, 1, _WA_QUIET_QUEUE_KEY,
+            alert_key, json.dumps(payload, ensure_ascii=False), -50, -1,
+        )
         print(f"[QuietHours] queued WhatsApp for {to[-4:] if to else '?'} (outside "
-              f"{NOTIFY_SEND_START_HOUR_IL}:00-{NOTIFY_SEND_END_HOUR_IL}:00 window)")
+              f"{NOTIFY_SEND_START_HOUR_IL}:00-{NOTIFY_SEND_END_HOUR_IL}:00 window)"
+              + (f" alert_key={alert_key}" if alert_key else ""))
         return {"ok": True, "queued": True}
     except Exception as exc:
-        # Redis down — better to deliver late-night than to lose the alert entirely.
+        # Redis down (or EVAL unsupported for some reason) — better to deliver
+        # late-night than to lose the alert entirely.
         print(f"[QuietHours] queue failed ({exc}) — sending immediately")
         return await _wa_send(to=to, text=text)
 
@@ -2888,37 +3035,113 @@ async def _updates_group_jid() -> str:
     return os.getenv("OWNER_UPDATES_GROUP_JID", "").strip()
 
 
-async def _wa_send_update(text: str, critical: bool = False) -> dict:
+async def _wa_send_update(text: str, critical: bool = False, alert_key: str = "") -> dict:
     """Send a SYSTEM/AGENT update. Goes to the dedicated updates group if one is
     configured, otherwise to the owner's 1:1 number — both through the quiet-hours gate
     so nothing lands at 03:00. This keeps alerts/digests/approvals out of the
-    conversational thread the owner uses to talk to the agents."""
+    conversational thread the owner uses to talk to the agents.
+
+    alert_key (optional) is passed straight through to _wa_send_quiet's queue-level
+    dedup — see its docstring. Omitted by every caller that isn't a persistent,
+    semantically-identified alert, so existing behavior for those is unchanged."""
     jid = await _updates_group_jid()
     if jid:
-        return await _wa_send_quiet(to=jid, text=text, critical=critical)
+        return await _wa_send_quiet(to=jid, text=text, critical=critical, alert_key=alert_key)
     owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
     if owner:
-        return await _wa_send_quiet(to=owner, text=text, critical=critical)
+        return await _wa_send_quiet(to=owner, text=text, critical=critical, alert_key=alert_key)
     return {"ok": False, "error": "no updates destination"}
 
 
+# After this many CONFIRMED failed delivery attempts (across separate flush
+# passes — the count travels with the payload), a single undeliverable
+# ("poison") item is dropped rather than blocking every item behind it forever.
+# A loud log line always accompanies the drop — never a silent loss.
+_WA_QUIET_MAX_ATTEMPTS = 5
+
+
 async def _flush_wa_quiet_queue() -> int:
-    """Send everything queued during quiet hours. Called by the health monitor each pass
-    while the window is open. Returns number of messages sent."""
+    """Send everything queued during quiet hours, in FIFO order, without losing a
+    message on a failed delivery. Called by the health monitor each pass while
+    the window is open. Returns the number of messages CONFIRMED sent.
+
+    Root-fix 2026-09-09 (queue delivery safety — closes a gap flagged by the
+    pre-production safety audit): the previous implementation did
+    `LPOP` (destructive) THEN attempted `_wa_send()` — an exception during the
+    send, or a soft `{"ok": False}` result (which was not even inspected — any
+    non-raising return was counted as delivered), silently discarded a message
+    that had already been removed from Redis. This is now peek-then-pop:
+      - `LINDEX key 0` (non-destructive peek) at the head — the item is NOT
+        removed yet.
+      - Attempt delivery. A soft `ok=False` result is now explicitly checked
+        and treated exactly like an exception — never silently "success".
+      - The item is only removed (`LPOP`) once delivery is CONFIRMED successful.
+      - On failure (exception or ok=False), the item stays at the head with its
+        `attempts` counter incremented in place (`LSET`), and this pass STOPS —
+        it does not tight-loop retrying the same item, and does not skip ahead
+        to items behind it (which would silently reorder delivery). The next
+        scheduled flush pass (the existing 5-min health-monitor cadence) is the
+        retry — a bounded, already-existing cadence, not a new one.
+      - A malformed (non-JSON) entry can never be delivered under any retry —
+        it is dropped immediately (loud log line) so it cannot block the queue.
+      - After `_WA_QUIET_MAX_ATTEMPTS` confirmed failures, a genuinely
+        undeliverable item is dropped (loud log line) rather than blocking
+        every real alert behind it forever — a documented, bounded, non-silent
+        last resort, not silent data loss.
+
+    Concurrency note: this function has exactly one caller (`_health_monitor_loop`,
+    one supervised task, one `await`-sequential `while True` body) — concurrent
+    flush calls racing each other are not a scenario this needs to defend
+    against. Concurrent ENQUEUES (`_wa_send_quiet`'s Lua script, always RPUSH at
+    the tail) cannot race with this function's reads/removals at the head:
+    nothing else in this codebase ever pops from the head of this list, so the
+    element `LINDEX key 0` returns cannot change before the matching `LPOP`.
+
+    Delivery model — stated honestly, per the safety audit's requirement: this
+    is AT-LEAST-ONCE, not exactly-once. If the process dies after `_wa_send()`
+    reports success but before the following `LPOP` executes, the next flush
+    pass will resend the same message — a harmless, rare duplicate is the
+    deliberate trade-off against the previous behavior's silent loss. There is
+    no way to make "send a WhatsApp message" (an external network call) and
+    "remove it from Redis" a single atomic operation — Redis Lua scripts cannot
+    perform outside I/O, so this gap is structural, not a shortcut taken here.
+    """
     sent = 0
     try:
         _r = await get_redis()
         while sent < 50:
-            raw = await _r.lpop(_WA_QUIET_QUEUE_KEY)
+            raw = await _r.lindex(_WA_QUIET_QUEUE_KEY, 0)
             if not raw:
                 break
             try:
                 item = json.loads(raw)
-                await _wa_send(to=item["to"],
-                               text=f"🌙 [נשלח מאוחר — נשמר משעות הלילה {item.get('queued_at','')}]\n{item['text']}")
-                sent += 1
             except Exception as exc:
-                print(f"[QuietHours] flush item failed: {exc}")
+                print(f"[QuietHours] dropping malformed queue entry (undeliverable): {exc}")
+                await _r.lpop(_WA_QUIET_QUEUE_KEY)
+                continue
+            try:
+                result = await _wa_send(
+                    to=item["to"],
+                    text=f"🌙 [נשלח מאוחר — נשמר משעות הלילה {item.get('queued_at','')}]\n{item['text']}",
+                )
+            except Exception as exc:
+                result = {"ok": False, "error": str(exc)}
+            if result.get("ok"):
+                await _r.lpop(_WA_QUIET_QUEUE_KEY)
+                sent += 1
+                continue
+            # Failure — exception or explicit ok=False. The item is NOT removed.
+            attempts = int(item.get("attempts", 0)) + 1
+            if attempts >= _WA_QUIET_MAX_ATTEMPTS:
+                print(f"[QuietHours] dropping queue entry after {attempts} failed "
+                      f"delivery attempts (last error: {result.get('error')})")
+                await _r.lpop(_WA_QUIET_QUEUE_KEY)
+                continue
+            item["attempts"] = attempts
+            await _r.lset(_WA_QUIET_QUEUE_KEY, 0, json.dumps(item, ensure_ascii=False))
+            print(f"[QuietHours] flush item failed, attempt {attempts}/{_WA_QUIET_MAX_ATTEMPTS} "
+                  f"(will retry next pass): {result.get('error')}")
+            break  # stop this pass — preserves FIFO order, avoids a tight retry loop
         if sent:
             print(f"[QuietHours] flushed {sent} queued message(s)")
     except Exception as exc:
@@ -2987,7 +3210,10 @@ async def notify_owner(
     # monitor correctly marked them severity="critical".
     _is_critical = severity == "critical"
     try:
-        result = await _wa_send_update(text, critical=_is_critical)
+        # alert_key threads through to the quiet-hours queue's dedup (root-fix
+        # 2026-09-09) so a persistent condition that re-queues every sampling
+        # cycle all night collapses to one delivery instead of bursting at 09:00.
+        result = await _wa_send_update(text, critical=_is_critical, alert_key=alert_key)
         if result.get("ok") and alert_key:
             # Set cooldown ONLY after a confirmed successful send — a failed send must
             # not burn the cooldown window (root-fix 2026-08-26: bridge-down failures
