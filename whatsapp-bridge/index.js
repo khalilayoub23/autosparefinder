@@ -14,7 +14,16 @@ import { Boom } from '@hapi/boom'
 import axios from 'axios'
 import express from 'express'
 import qrcode from 'qrcode-terminal'
-import pino from 'pino'
+import { installSafeConsoleFilter, createSafeBaileysLogger } from './safe_logging.js'
+
+// Root-fix 2026-09-12 (WhatsApp logging/telemetry hardening): installed as
+// early as possible, before any Signal session operation can occur, so the
+// libsignal SessionEntry leak (see safe_logging.js) is intercepted from the
+// very first connection attempt onward. This bridge's own console.log/error
+// calls elsewhere in this file are completely unaffected — the filter only
+// rewrites the small set of libsignal message prefixes proven to carry raw
+// key material.
+installSafeConsoleFilter()
 
 const BACKEND_WEBHOOK = process.env.BACKEND_URL || 'http://backend:8000/api/v1/webhooks/whatsapp'
 const BRIDGE_PORT = 3001
@@ -68,7 +77,15 @@ function startLivenessWatchdog(sock) {
     }
   }, 180000)
 }
-const logger = pino({ level: 'silent' })
+// Root-fix 2026-09-12: was `pino({ level: 'silent' })`, which silenced ALL
+// Baileys telemetry — including the retry/getMessage/session-recovery/
+// decrypt-error events that would have made the "Waiting for this message"
+// incident diagnosable in real time. createSafeBaileysLogger() (safe_logging.js)
+// surfaces exactly those events with hand-picked-safe fields only; every
+// other Baileys log call is either suppressed (debug/trace noise) or kept as
+// text-only with its object payload stripped (info/warn/error) — never an
+// unvetted raw object.
+const logger = createSafeBaileysLogger()
 const MAX_MEDIA_BYTES = Math.max(256000, Number.parseInt(process.env.WA_MEDIA_MAX_BYTES || '6291456', 10) || 6291456)
 
 let waSocket = null
