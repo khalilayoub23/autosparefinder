@@ -2762,7 +2762,7 @@ async def _social_feedback_loop():
 # Toggle off with SOCIAL_GROUP_SCAN_ENABLED=0.
 
 async def _group_scan_loop():
-    """Supervised loop: daily FB group scan → draft comment proposals → owner approval."""
+    """Supervised loop: daily FB group discovery sync + scan → draft comment proposals → owner approval."""
     interval = int(os.getenv("SOCIAL_GROUP_SCAN_INTERVAL_S", "86400"))  # 24h default
     enabled = os.getenv("SOCIAL_GROUP_SCAN_ENABLED", "1").strip() == "1"
     if not enabled:
@@ -2774,6 +2774,41 @@ async def _group_scan_loop():
 
     while True:
         try:
+            # ── Discovery sync (root-fix 2026-09-19) ──────────────────────────
+            # group_targets was a stale one-time snapshot — nothing kept it in
+            # sync with the account's real joined-group list, so it silently
+            # drifted (verified: only 1/32 previously-captured groups was still
+            # a current membership after 31 days). Re-discover + upsert every
+            # cycle, reusing the existing read-only discover_account_groups()
+            # and the existing additive-only _upsert_discovered_groups() —
+            # never deletes/rejects a group, never touches status. A failure
+            # here is non-fatal: the scan below still runs against whatever
+            # is already in the DB.
+            try:
+                from social.facebook_browser.group_agent import GroupAgent
+                from social.facebook_browser.group_scanner import (
+                    _upsert_discovered_groups,
+                    _get_db as _get_scanner_db,
+                )
+                discovered = await GroupAgent().discover_account_groups()
+                if discovered:
+                    sync_db = await _get_scanner_db()
+                    try:
+                        new_count = await _upsert_discovered_groups(sync_db, discovered)
+                        logger.info(
+                            "[group_scan] discovery sync: %d groups seen, %d new",
+                            len(discovered), new_count,
+                        )
+                    finally:
+                        await sync_db.close()
+                else:
+                    logger.warning(
+                        "[group_scan] discovery sync: 0 groups returned "
+                        "(session may not be authenticated) — scanning existing population"
+                    )
+            except Exception as exc:
+                logger.error("[group_scan] discovery sync failed (continuing to scan existing population): %s", exc)
+
             # Use a fresh session scoped to the query only; facebook_group_scan
             # schedules asyncio.create_task(_log_action(db, ...)) internally which
             # fires AFTER the async-with exits and caused an InterfaceError on
@@ -2791,9 +2826,35 @@ async def _group_scan_loop():
                     pass
 
             discoveries = result.data.get("discoveries", [])
-            groups_scanned = result.data.get("groups_scanned", 0)
+            # Root fix (2026-09-19): this previously read "groups_scanned", a key
+            # facebook_group_scan() never sets (it returns groups_selected/
+            # groups_attempted/groups_fetched) — always silently defaulted to 0.
+            # "Attempted" is the correct semantic for "we scanned N groups": it's
+            # incremented per-group before the scan attempt, regardless of whether
+            # that group's fetch later succeeded or threw — the true count of
+            # scanning work performed, not merely how many were eligible input
+            # (groups_selected) or how many completed without error (groups_fetched).
+            groups_scanned = result.data.get("groups_attempted", 0)
+            session_failed = bool(result.data.get("session_failed"))
 
-            if not discoveries:
+            if session_failed:
+                # Root fix (2026-09-19): this branch never existed before — an
+                # authentication failure fell through to the "no discoveries"
+                # branch below and was reported to the owner as an ordinary
+                # empty scan ("סרקנו 0 קבוצות... לא נמצאו דיונים"), masking a
+                # real auth problem as a benign quiet day. facebook_group_scan()
+                # already distinguishes this via status="error" + session_failed
+                # — this loop simply never checked it.
+                logger.error("[group_scan] Facebook session not authenticated — scan did not run")
+                await notify_owner(
+                    "social",
+                    "סריקת קבוצות פייסבוק — נכשלה",
+                    "החיבור לפייסבוק לא מאומת — הסריקה לא בוצעה. נדרש חידוש session.",
+                    severity="error",
+                    alert_key="group_scan_auth_failed",
+                    cooldown_s=21600,  # 6h — an ongoing outage shouldn't spam, but shouldn't hide for a full day either
+                )
+            elif not discoveries:
                 logger.info("[group_scan] no relevant group discussions found (%d groups scanned)", groups_scanned)
                 # Always notify owner so they know the scan ran — cooldown prevents
                 # daily spam when nothing is found (fixed: owner was getting silence
@@ -4385,6 +4446,15 @@ async def _stuck_orders_monitor_loop():
                     select(Order).where(
                         Order.status.in_(["supplier_ordered", "shipped"]),
                         Order.tracking_number.isnot(None),
+                        # Eurosender-managed orders (sandbox-only integration, see
+                        # services/shipping/) are driven by REAL webhook/tracking
+                        # events, never by elapsed-time guesswork. Excluding them
+                        # here is required so this loop never synthesizes a
+                        # "shipped"/"delivered" transition ahead of an actual
+                        # carrier event for those orders. Non-Eurosender orders
+                        # (shipping_provider IS NULL, the existing/default case)
+                        # are completely unaffected by this filter.
+                        or_(Order.shipping_provider.is_(None), Order.shipping_provider != "eurosender"),
                     )
                 )
                 in_transit = result.scalars().all()
@@ -5801,6 +5871,8 @@ from routes.brands import router as brands_router
 app.include_router(brands_router, tags=["Brands"])
 from routes.webhooks import router as webhooks_router
 app.include_router(webhooks_router, tags=["Webhooks"])
+from routes.eurosender_webhook import router as eurosender_webhook_router
+app.include_router(eurosender_webhook_router, tags=["Webhooks"])  # sandbox-only, see routes/eurosender_webhook.py
 from routes.stripe_issuing import router as stripe_issuing_router
 app.include_router(stripe_issuing_router, prefix="/api")
 from routes.suppliers import router as suppliers_router
