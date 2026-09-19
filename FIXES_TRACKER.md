@@ -1,5 +1,485 @@
 # AutoSpareFinder — Bug & Breaking Points Fix Tracker
-> Last scan: 2026-09-19 | Total issues found: 464 | Fixed: 464 | In Progress: 0 | Open: 0
+> Last scan: 2026-09-19 | Total issues found: 469 | Fixed: 469 | In Progress: 0 | Open: 0
+
+---
+
+## /goal — CLOSE NOA FACEBOOK PAGE + EOD REPORTING END-TO-END — 2026-09-19
+
+Scope: extend the closed NOA Facebook Group workflow to (1) verify Page publishing after a
+reported "approved but never appeared on the Page" symptom, (2) confirm/wire Page-feed
+monitoring with the same approval gate, (3) add EOD reporting. Did **not** reopen the closed
+Group workflow — no scanner/DOM/group-draft/group-approval code was touched; full Group
+regression (see below) re-confirmed intact.
+
+### 28. Facebook Page post approved via the Telegram-mirror button silently published to Telegram ONLY, yet the row was marked 'published' — root cause of the reported missing Facebook Page post
+
+**Symptom reported by owner**: a post approved "for all platforms" ~2 days earlier never
+appeared on the AutoSpareFinder Facebook Page.
+
+**Investigation (code + live DB evidence, not inference)**: found the exact row —
+`social_posts` id `8a6e91a7-edfd-4273-9444-7705706ea262`, `platforms=[discord,facebook,
+telegram,tiktok]`, created 2026-09-17 17:02, `status='published'`, `published_at`
+2026-09-17 17:29, **`approved_at IS NULL`**, `external_post_ids = {"telegram":565,
+"published_platforms":["telegram"], ...}` — no `facebook`/`discord`/`tiktok` key anywhere.
+The exact shape of `external_post_ids` (a `published_platforms` wrapper key, no
+`approved_at`) uniquely fingerprints which of the TWO existing "approve a NOA post" code
+paths ran: **not** the canonical WhatsApp `אשר <id>` command
+(`agents/owner_console.py::_approve_and_publish`, which merges bare `published` with no
+wrapper key and always calls `campaign_manager.approve_post_content()` first, setting
+`approved_at`), but the **Telegram-mirror inline-button callback**
+(`routes/webhooks.py::telegram_admin_webhook`'s `"approve_post"` handler) — a SECOND,
+independently-written implementation of "approve and publish."
+
+**Root cause**: that Telegram-callback implementation (a) **unconditionally published to
+Telegram first**, regardless of which platform button was tapped ("every approved post goes
+out here" — literal comment in the removed code); (b) only ever attempted **one** additional
+platform, and explicitly **excluded `"telegram"`/`"post"`/`""`** from that single slot — so
+whenever the tapped button's platform value resolved to any of those three (the generic
+"✅ אשר פרסום" button, or a per-day post whose own `platform` label happened to be
+`"telegram"`), Facebook/Discord/TikTok were **never attempted at all**; (c) marked the
+**entire** multi-platform row `status='published'` the instant that lone unconditional
+Telegram send succeeded — giving a false "fully published" signal while the row's other
+target platforms were silently untouched; (d) never called
+`campaign_manager.approve_post_content()`, so `approved_at` was never recorded — the human
+approval itself left no audit trail on this path, unlike the WhatsApp path.
+
+**Fix (root-fix, one canonical implementation — not a downstream patch)**: `routes/
+webhooks.py`'s `"approve_post"` callback now resolves the real `SocialPost` row by its
+`social_post_id` and delegates to the **same** `agents.owner_console._approve_and_publish()`
+the WhatsApp path already uses. Both approval channels now share one implementation, one
+`approve_post_content()` call (idempotent — a duplicate approval from either channel is a
+safe no-op, verified live), and one per-platform loop over the row's real `platforms` column
+— so an approval via either channel now genuinely attempts every platform on the post,
+Facebook included, and `approved_at` is always recorded. A legacy fallback (best-effort
+single-platform dispatch) is kept for the rare case of a `pending_post` memory entry with no
+`social_post_id` (predates `_noa_enqueue_social_post`).
+
+**Second, smaller defect found and fixed while consolidating**: `_approve_and_publish()`
+itself did not carry the `p != "tiktok"` exemption the (now-removed) Telegram-callback code
+had for TikTok's media-required check — `registry.dispatch("tiktok", ...)` auto-generates a
+branded video when no `media_url` is supplied (`social/registry.py`), so TikTok must never
+be skipped for "media required" the way Instagram genuinely must be. Consolidating both
+approval channels onto `_approve_and_publish()` would have silently regressed TikTok's
+existing no-media capability for the (now-unified) Telegram-button path. Ported the same
+exemption into `_approve_and_publish()` — verified live (mocked dispatch) that TikTok is
+still attempted with no `media_url` and Instagram-class media-required platforms still skip
+correctly.
+
+**Files**: `backend/routes/webhooks.py` (`telegram_admin_webhook`'s `approve_post` callback
+— replaced the divergent block), `backend/agents/owner_console.py`
+(`_approve_and_publish` — added the tiktok exemption), new
+`backend/devtests/noa_page_publish_approval_test.py` (11 checks: 5 source-text structural +
+1 tiktok-exemption source-text + a controlled functional proof against the live DB with
+`social.registry.dispatch` mocked — no real Facebook/Telegram/Discord/TikTok call made —
+proving all 4 platforms are attempted, `approved_at` is set, per-platform ids persist
+correctly, a failed platform is never recorded as published, prior JSONB metadata survives
+the merge, and a duplicate approval is a safe no-op with zero re-dispatch).
+
+**The historical row was deliberately NOT retroactively force-published.** Silently firing
+a 2-day-old marketing post to the live Facebook Page now, without the owner's fresh
+awareness of its (possibly stale) content, would itself be an unauthorized/surprising live
+Facebook action — exactly what this task's safety rules forbid. Reported here for the owner
+to decide (re-approve fresh content, or manually publish that specific text if still wanted).
+
+**Separately discovered while live-verifying Phase B/C (external, NOT a code defect, NOT
+fixed here)**: `FACEBOOK_PAGE_TOKEN` is **currently invalid** — a live, read-only Graph API
+call (`GET /{page_id}?fields=name`) made during this investigation returned `OAuthException
+190/460: "session has been invalidated because the user changed their password or Facebook
+has changed the session for security reasons."` This is the SAME token used by both
+`facebook_publisher.publish()` (Phase A/B publishing) and `social/engagement.py::fb_fetch_new`
+(Phase C Page-feed reading) — both are correctly wired in code (verified) but currently
+blocked end-to-end by this one external credential. Refreshing it requires a fresh Facebook
+USER OAuth consent (the documented `app_secret → fb_exchange_token → long-lived → page token`
+chain in CLAUDE.md §9) — a human login/consent click only the owner can perform (CLAUDE.md
+Critical Directives rule 4's genuine-stop: "click 'approve' on an OAuth consent dialog AS the
+owner"). Not counted in the header issue tally above (an expired credential is not a code
+defect); tracked here as the one item preventing full LIVE (Facebook-side) verification of
+this fix and of Page-feed reading until the owner re-authorizes.
+
+**STATUS: PASS** (code root cause fixed, regression-tested, and functionally proven via
+mocks — no unauthorized live Facebook action was taken; genuine LIVE end-to-end verification
+against the real Graph API is **BLOCKED** on the owner's OAuth re-consent, a bona fide
+external/manual dependency, not a code gap).
+
+### Page feed monitoring — verified ALREADY BUILT and correctly approval-gated (no new code needed)
+
+Traced `social/engagement.py` (built/verified live 2026-07-25, per CLAUDE.md §9) and found it
+already satisfies this task's Phase C requirement in full, reusing the SAME
+`FACEBOOK_PAGE_TOKEN`/`FACEBOOK_PAGE_ID` the publisher uses (no second Facebook auth
+mechanism, as required): `fb_fetch_new()` reads the Page's recent posts
+(`GET /{page_id}/posts`) then each post's comments (`GET /{post_id}/comments`), capturing
+external_id, parent post id, author, text, permalink, and timestamp — fed through
+`poll_once()` → `_draft_or_handoff()` (LLM draft, or a hand-off message after
+`NOA_ENGAGEMENT_MAX_REPLIES`) → `social_inbox` with `status='pending_approval'` — **never**
+auto-sent unless the owner has explicitly enabled `NOA_ENGAGEMENT_AUTOREPLY` (default `0`).
+Replies dispatch only via the owner-console `ענה <id>` command or the same autoreply flag —
+the identical discovery≠authorization model already enforced for Groups. `fb_post_reply()`
+(commenting) is a fully separate function/code path from `facebook_publisher.publish()`
+(posting to the Page) — the three concepts (publish-to-Page / read-feed / respond-to-item)
+are already cleanly separated exactly as this task's Phase D requires. No relevance-score
+field is computed for Page comments today (unlike Groups' 0.2/0.4 thresholds) — a reasoned
+existing design choice, not a gap: a comment on our OWN published content is presumptively
+on-topic, unlike scanning broad third-party group feeds for automotive-part signal. Currently
+returns `[]` (fails open, no crash — verified via `engagement_lifecycle_test.py`) because of
+the same invalidated `FACEBOOK_PAGE_TOKEN` noted under #28.
+
+### 29. NOA End-of-Day Facebook Activity report — new (Phase D, not a bug fix)
+
+**Added** `_noa_eod_report_loop()` (`BACKEND_API_ROUTES.py`, registered via
+`_supervised_task("noa_eod_report_loop", ...)`), firing once/day at a fixed IL local time
+(`NOA_EOD_REPORT_HOUR_IL`, default 21:00 — same fixed-local-time pattern as
+`_noa_marketing_loop`, not a container-uptime timer). Reuses the EXISTING owner channel
+(`notify_owner` → `_wa_send_quiet`, quiet-hours-safe, daily `alert_key` dedup) — no new
+transport. Every count comes from a real persisted table over a rolling 24h window (a plain
+timestamp-bounded query, not a second parallel activity ledger, so a restart or re-run can
+never double-count a prior day): `group_comment_drafts` for GROUPS, `social_inbox` (platform=
+facebook) for PAGE, `social_posts` (all platforms) for PLATFORM RESULT and the
+JSONB-`external_post_ids ? 'facebook'`-gated "Original Page posts published" count.
+
+**Real architectural asymmetries surfaced and reported honestly, not hidden**: (1) for
+Groups, "identified" and "drafted" are the same number by design — a discovery below the
+0.4 relevance threshold is reported to the owner in the scan-cycle WhatsApp message but never
+persisted anywhere, so counting it here would require a new ledger (explicitly against this
+task's own instructions). (2) for Page items, "approved" and "published" are the same number
+— the engagement pipeline's `ענה <id>` approves-and-sends in one atomic step, unlike Groups'
+3-state `pending_approval → approved → posted`. (3) `social_posts` has no distinct terminal
+`'failed'` status in its schema CHECK constraint — a row stuck at `'approved'` with no
+`published_at` (every platform dispatch failed) is reported as "approved but not fully
+published" rather than inventing a status the schema doesn't have.
+
+**Bug found + fixed while building this**: `social_posts.created_at` is a plain (naive)
+`DateTime` column (populated via `datetime.utcnow()`) while `group_comment_drafts`/
+`social_inbox` use `TIMESTAMPTZ` — binding a tz-aware Python datetime
+(`datetime.now(APP_LOCAL_TZ)`) against the naive column raised
+`asyncpg.DataError: can't subtract offset-naive and offset-aware datetimes` (caught live
+while testing, before this ever reached production). Fixed by using `datetime.utcnow()`
+(naive) for the window boundary — verified live to compare correctly against both column
+types.
+
+**Files**: `backend/BACKEND_API_ROUTES.py` (new `_noa_eod_report_loop`, `startup()`
+registration), new `backend/devtests/noa_eod_report_test.py` (6 structural checks — reuse of
+`notify_owner`, no new ledger/table, fixed-local-time scheduling, daily alert-key dedup,
+naive-UTC window — plus a controlled functional test seeding synthetic rows across all three
+tables and asserting the exact identified/drafted/approved/published/pending counts and the
+JSONB Page-post check; no WhatsApp message is sent by the test).
+
+**STATUS: PASS.**
+
+### Regression
+
+Full existing suite re-run clean (Group workflow untouched and confirmed intact), plus the 2
+new suites above:
+
+| Suite | Result |
+|---|---|
+| `fb_group_handoff_test.py` | 32/32 |
+| `fb_relevance_hardening_regression_test.py` | 81/81 |
+| `fb_auth_lifecycle_test.py` | 25/25 |
+| `fb_session_hardening_regression_test.py` | 12/12 |
+| `fb_session_degradation_regression_test.py` | 10/10 |
+| `fb_dom_readiness_regression_test.py` | 71/71 |
+| `social_hardening_test.py` | 85/85 |
+| `social_publishers_test.py` | 24/24 |
+| `engagement_lifecycle_test.py` | pass |
+| `group_scan_reporting_test.py` | 11/11 |
+| `noa_group_draft_handoff_test.py` | 11/11 |
+| `noa_pipeline_controlled_e2e_test.py` | pass (7 steps + cleanup) |
+| `noa_page_publish_approval_test.py` (new) | 11/11 |
+| `noa_eod_report_test.py` (new) | 10/10 |
+| **TOTAL (numbered suites)** | **373/373** |
+
+**Observed, pre-existing, unrelated flake (not caused by this task, not fixed here)**:
+`e2e_campaign_test.py` failed on 2 consecutive runs during this session, but purely from a
+live LLM-provider outage cascade unrelated to Facebook — Cerebras 429 → Gemini 429 → GROQ
+429 → GROQ falling back to the already-documented-deprecated `llama-3.3-70b-versatile`
+(FIXES_TRACKER 2026-08-22 #12) → 404 — which left a DB transaction aborted mid-test and
+cascaded into a cleanup-statement failure. Confirmed via source read that
+`NOA.execute_campaign()`'s dry_run path never calls `_approve_and_publish`,
+`routes/webhooks.py`, or anything touched by this task. Flagged for a future session (the
+GROQ secondary-fallback model name needs the same fix #12 already applied to the primary
+`GROQ_MODEL` env default) — out of this task's scope.
+
+### Live safety
+
+No real Facebook comment/post/reaction was made. No WhatsApp message was sent (all new
+tests mock `registry.dispatch`/never call `notify_owner`). No Facebook credentials/cookies
+were modified (the invalidated `FACEBOOK_PAGE_TOKEN` was READ, via one GET request, to
+confirm its state — never written to). No unrelated DB records were touched; every synthetic
+test row was created with a unique marker and deleted in a `finally` block, verified via a
+before/after row-count check. Scanner/scheduler/Redis were not touched. The historical
+falsely-"published" row was left exactly as found (see #28) rather than silently
+re-published.
+
+### Git
+
+Uncommitted, pending explicit owner authorization: `backend/BACKEND_API_ROUTES.py`,
+`backend/agents/owner_console.py`, `backend/routes/webhooks.py` (all modified);
+`backend/devtests/noa_page_publish_approval_test.py`,
+`backend/devtests/noa_eod_report_test.py` (new); `FIXES_TRACKER.md` (this entry). HEAD
+unchanged at `d28c15b` (branch `main`) throughout this investigation.
+
+### 30. Blocker cleared same day — owner supplied a fresh token; completed the exchange chain and live-verified Phase B/C end-to-end
+
+The owner supplied a fresh Facebook token and asked for a restart to pick it up. `docker
+restart` alone does **not** re-read `.env`, so the container kept serving the stale token
+until `docker compose up -d backend` recreated it (ran `pre_restart.sh` both times, per the
+standing rule). The token that landed was a valid, unexpired **USER** access token — not
+yet the page-specific token `facebook_publisher.py`/`engagement.py` require — so the direct
+`/{page_id}/feed` POST correctly failed closed with Facebook's own
+`(#200) ... requires pages_read_engagement and pages_manage_posts as an admin` error.
+`debug_token` confirmed `"type":"USER"`, all required scopes present with the right
+`target_ids`, but `expires_at` was only ~2 hours out — a **short-lived** user token, one step
+short of CLAUDE.md's own documented chain (`app_secret → fb_exchange_token → long-lived →
+non-expiring page token`).
+
+**Second, genuine root cause found (not the owner's fault — a pre-existing infra gap)**:
+completing that documented chain requires `FACEBOOK_APP_ID`/`FACEBOOK_APP_SECRET`, both
+correctly present in `.env` but **never wired into `docker-compose.yml`'s explicit backend
+`environment:` block** (unlike `FACEBOOK_PAGE_ID`/`FACEBOOK_PAGE_TOKEN`, which are) — the
+container has never had access to them. This is exactly why the durable-token refresh had
+apparently never been completed end-to-end before. **Fixed**: added
+`FACEBOOK_APP_ID: ${FACEBOOK_APP_ID:-}` / `FACEBOOK_APP_SECRET: ${FACEBOOK_APP_SECRET:-}`
+to `docker-compose.yml` (same pattern as the two existing lines), recreated the container.
+
+With app id/secret now reachable, completed the full chain against the live Graph API:
+short-lived user token → `fb_exchange_token` (60-day long-lived user token) → `GET
+/{page_id}?fields=access_token` → resulting page token confirmed via `debug_token`:
+`"type":"PAGE"`, **`"expires_at":0`** (non-expiring, matching the documented durable-credential
+pattern), all required scopes present. Written to `.env` as the new `FACEBOOK_PAGE_TOKEN`,
+container recreated once more.
+
+**Live end-to-end verification (Phase B/C, previously BLOCKED — now genuinely proven, not
+just mocked)**: re-ran the exact controlled test from #28 through the real, fixed
+`agents.owner_console._approve_and_publish()` production path — this time reaching the REAL
+Graph API. Result: `✅ אושר ופורסם: facebook: ✅ פורסם`; DB row shows `approved_at` and
+`published_at` both set and `external_post_ids.facebook = "1170174359502072_
+122131770902736783"` — a real Facebook post id. Fetched that exact post back from Facebook
+(`GET /{post_id}`) and got a real `permalink_url` pointing at the live AutoSpareFinder Page —
+proof the fixed approval path genuinely publishes to Facebook end-to-end, not merely that the
+code no longer skips the attempt. Immediately deleted the test post (`DELETE /{post_id}` →
+`{"success":true}`, re-fetch → object no longer exists) and the synthetic `social_posts` row,
+per this task's own instruction to never leave an unwanted public post. Also live-verified
+Page-feed reading (Phase C): `GET /{page_id}/posts` returned 5 real posts with no error
+(confirming the credential fix reaches `social/engagement.py` too, which shares the same
+token); `fb_fetch_new()` itself correctly returned 0 items because none of those 5 posts
+currently have comments — genuinely empty, not a silent failure (verified by inspecting the
+raw Graph API response directly, not trusting the wrapper alone).
+
+**Files**: `docker-compose.yml` (+2 lines, `FACEBOOK_APP_ID`/`FACEBOOK_APP_SECRET` passthrough
+— the actual root fix that unblocked the token refresh), `.env` (new non-expiring
+`FACEBOOK_PAGE_TOKEN`, owner's secret — never logged/committed).
+
+**Live safety**: the ONE real Facebook Page post created during this verification was
+explicitly, unmistakably marked as an automated test in its own text, was up for well under
+a minute, and was deleted immediately after confirming success — deletion itself confirmed
+via a follow-up fetch. No other post, comment, or reaction was made. No customer or owner
+WhatsApp message was sent by this verification. The historical 2026-09-17 row from #28 was
+still **not** retroactively force-published (unchanged from #28's decision).
+
+**STATUS: PASS.**
+
+**FINAL STATUS: PASS** — every Phase A/B/C/D item is now fixed, regression-tested, AND
+live-verified end-to-end against the real Facebook Graph API (not mocks alone). No external
+dependency remains open.
+
+---
+
+## /goal — CLOSE NOA FACEBOOK POST HANDLING END-TO-END — 2026-09-19
+
+Scope: trace the complete lifecycle of a genuine relevant Facebook group post discovered by
+the scanner (now CLOSED/PASS, `d28c15b`) through relevance decision, persistence/handoff, NOA
+decision, approval gate, Facebook execution, and result recording — with code evidence at every
+stage, not inference from names/docs. Did **not** reopen the closed scanner investigation; no
+scanner/DOM/extraction code was touched.
+
+### 26. Scheduled Facebook-group-scan path never drafted or persisted a comment for any discovery — owner-facing approval commands had nothing to approve
+
+**Root cause**: `_group_scan_loop()` (`BACKEND_API_ROUTES.py`, the automatic scheduled scan) calls
+`facebook_group_scan()` → `GroupAgent.scan_groups()` and gets back discovery dicts (post_url,
+post_text, group_id, relevance_score, suggested_action) — but nothing in this call chain ever
+generated a draft comment or wrote a row to `group_comment_drafts`. The owner-facing WhatsApp
+notification already read `d.get("draft_comment", "(אין)")`, so it silently always showed the
+"(none)" placeholder, and the WhatsApp approval commands (`תגובות-גרופ`/`אשרתגובה <id>`,
+`agents/owner_console.py`) had zero rows to ever act on for anything the automatic scan found.
+A bridge function clearly written to solve exactly this, `campaign_manager.py::create_group_discovery_tasks()`
+(drafts via the same `draft_group_comment()`, but never persists), was confirmed via a
+repo-wide `grep` to have **zero callers anywhere** — dead code, never wired in.
+
+Separately verified as NOT affected: the manually-triggered path (`agents/owner_console.py`'s
+`"סרוק קבוצות"` WhatsApp command → `group_scanner.run_group_scanner()`) already had its own
+correct draft+persist loop and was never broken — this defect was isolated to the scheduled
+loop only.
+
+**Fix**: Inserted a draft+persist block into `_group_scan_loop()` (right after `discoveries =
+result.data.get("discoveries", [])`, before any reporting code runs) that, for each discovery
+whose `suggested_action` is `"comment"` or `"post"` (i.e. `relevance_score >= 0.4` — discoveries
+scored only high enough for `"monitor"` are deliberately left undrafted), calls the exact same
+pre-existing `GroupAgent.draft_group_comment()` and `group_scanner._save_draft()` functions
+already proven correct in `run_group_scanner()`'s own loop — no duplicate INSERT logic, no new
+dedup logic (relies on the existing DB-level unique index; see #27 for a widening of that
+index found while proving this fix). Populates `discovery["draft_comment"]` in place so the
+pre-existing, unmodified notification code starts working correctly.
+
+**Files**: `backend/BACKEND_API_ROUTES.py` (`_group_scan_loop`), new
+`backend/devtests/noa_group_draft_handoff_test.py` (11 tests, source-text-level — importing
+`BACKEND_API_ROUTES.py` directly hangs on unrelated startup side effects in this environment,
+same constraint as `group_scan_reporting_test.py`).
+
+**STATUS: PASS.**
+
+### 27. `group_comment_drafts` dedup index only covered `pending_approval` — a rescanned already-answered post could re-enter the approval queue
+
+**Root cause** (found while designing the controlled test for #26, not a defect introduced by
+#26 — pre-existing since the 0059 migration, 2026-08-11): the unique index
+`uq_group_comment_drafts_pending_post` was `ON group_comment_drafts (post_url) WHERE
+status='pending_approval'` — a partial index scoped to ONE status. Once a draft moved to
+`'approved'` or `'posted'`, its `post_url` became free again, so a later rescan of the SAME
+still-visible Facebook post (plausible — popular posts stay visible for days across multiple
+daily scan cycles) could insert a **second** `'pending_approval'` draft asking the owner to
+approve another comment on a post NOA had already commented on. The approval gate itself was
+never bypassed (an owner action is still required either way — this was never an automatic
+duplicate post), but an owner who didn't recognize the repeated post could unknowingly approve
+a genuine duplicate public comment.
+
+**Fix (root-fix, not a downstream guard)**: New migration `0060_drafts_dedup_active` widens the
+partial unique index to `WHERE status IN ('pending_approval','approved','posted')`, so a rescan
+can never re-draft a post that already has a live or in-flight comment. `'skipped'` is
+deliberately left out of the index — the owner explicitly declined that draft, and NOA may
+legitimately propose a different comment on the same post later. `_save_draft()`'s existing
+`ON CONFLICT DO NOTHING` (no explicit conflict target) automatically honors the new, wider
+constraint with zero application-code change. Applied live via `alembic upgrade head`
+(verified: 1 pre-existing unrelated `pending_approval` row from 2026-08-18 untouched, live
+`pg_indexes` definition confirmed to include exactly `pending_approval`/`approved`/`posted`
+and exclude `skipped`).
+
+**Files**: new `backend/alembic/versions/0060_drafts_dedup_active.py`; extended
+`backend/devtests/noa_group_draft_handoff_test.py` (+3 tests, including one that queries the
+live index definition, not just the migration source).
+
+**STATUS: PASS.**
+
+### Controlled end-to-end proof (section 3 requirement — no real Facebook action taken)
+
+New `backend/devtests/noa_pipeline_controlled_e2e_test.py` runs the REAL production functions
+(`GroupAgent.draft_group_comment()` — a genuine LLM call, not a Facebook action —
+`group_scanner._save_draft()`, and the exact SQL `owner_console.py`'s `אשרתגובה <id>` handler
+executes) against the live catalog DB with a synthetic test group + post_url, proving the full
+state machine end to end:
+
+```
+discovery (post_text/url/group_id/score=0.667/suggested_action="comment")
+  → draft_group_comment() → real drafted Hebrew text
+  → _save_draft() → group_comment_drafts row, status='pending_approval'
+  → rescan while pending → still exactly 1 row (dedup, #27 unaffected — pre-existing behavior)
+  → owner-approval SQL → status='approved'
+  → second approve attempt on same row → 0 rows affected (cannot double-fire)
+  → GroupAgent.submit_approved_comment() PATCHED to a mocked no-op (ok=True) — the ONLY step
+    that would ever touch real Facebook; never actually invoked against Facebook
+  → status update → status='posted'
+  → rescan after posted → still exactly 1 row (NEW #27 dedup, proven live against the 0060 index)
+  → cleanup — zero rows left behind
+```
+
+All 7 steps + cleanup passed. No real Facebook comment/post was made. No WhatsApp message was
+sent. Test group/post rows removed after the run; production `group_comment_drafts` table
+verified to hold only its 1 pre-existing unrelated row afterward.
+
+**Observation, not a defect in scope**: the real LLM-drafted comment in this test cited a
+specific OEM code (`23140-J150`) the model was not given — `draft_group_comment()`'s prompt
+accuracy is pre-existing code untouched by this task; the mandatory owner-approval gate before
+any comment is ever posted is precisely the safety net for this class of risk. Flagged for a
+future session focused on `draft_group_comment()` itself, not fixed here (out of this task's
+root-cause scope).
+
+### Approval gate — verified with code evidence (section E), multi-layered, all owner-only
+
+1. **Group-level**: `group_targets.status` `pending → approved` only via the owner's WhatsApp
+   `אשרגרופ <id>` (`owner_console.py::_fb_group_approve`), which only matches
+   `status='pending'` rows — reachable only through the owner-console command dispatch gated to
+   `OWNER_WHATSAPP_PHONE` in `routes/webhooks.py`, ahead of the customer-facing brain.
+2. **Comment-level**: `group_comment_drafts.status` `pending_approval → approved` only via
+   owner WhatsApp `אשרתגובה <id>` (`owner_console.py::_fb_comment_approve`), which only matches
+   `status='pending_approval'` rows — a second approve attempt on the same id is a no-op
+   (verified live in the controlled test above).
+3. **Tool-level defense in depth**: the separate LLM/agent-invocable tool surface
+   (`social/tools.py::facebook_group_comment`/`facebook_group_publish`, registered in the
+   `TOOLS` dict) independently fails closed on a live DB check that `group_targets.status ==
+   'approved'` before ever calling the browser agent — even if an agent's own LLM reasoning
+   decided to call the tool, it cannot succeed unless the owner already flipped that group's
+   status via WhatsApp.
+4. **Code-level invariant**: `APPROVAL_REQUIRED = True` is hardcoded in `group_agent.py` and
+   checked inside `submit_approved_comment()`/`publish_group_post()` themselves — raises
+   `RuntimeError` if ever `False`, so no caller can silently disable it.
+5. `digital_department/policy.py` independently classifies both tool names as
+   "Browser-approval-gated" and forbids even advisory marketing-context injection into them.
+
+**Dead code found, NOT fixed (unreachable today, out of root-cause scope)**:
+`integrations/facebook_browser/task_queue.py::BrowserTaskQueue` has zero callers anywhere in
+the codebase (confirmed via grep) and, unlike `social/tools.py`'s gated functions, its
+`_execute()` calls `submit_approved_comment`/`publish_group_post` with **no internal approval
+check** — if a future change ever wires a caller to `BrowserTaskQueue.submit(action=
+"group_comment"|"group_publish", ...)`, that caller MUST add its own approval-status check
+first (mirroring `social/tools.py`'s pattern), or this becomes a real bypass. Recorded here so
+a future session does not have to rediscover it.
+
+### Execution — verified with code evidence (section F)
+
+`submit_approved_comment()`/`publish_group_post()` (`group_agent.py`) use **Playwright browser
+automation against the authenticated cookie session — NOT the Graph API** — navigate to the
+post/group URL, locate the comment box, type at a human cadence, submit, and verify success by
+checking the rendered page content contains a text fragment of the submitted comment; rate
+limited to 3 actions/hour/group (`_is_rate_limited`/`_record_rate`); on failure, saves a
+diagnostic screenshot (`_save_failure_screenshot`) and returns `{ok:False, error}`. The
+approval-command background task (`owner_console.py::_fb_comment_approve`) records `'posted'`
+only on confirmed success and reverts to `'pending_approval'` on failure (a legitimate,
+owner-visible retry path, not a silent/automatic retry).
+
+### Regression
+
+All existing suites re-run clean, plus the 2 new suites above:
+
+| Suite | Result |
+|---|---|
+| `fb_group_handoff_test.py` | 32/32 |
+| `fb_relevance_hardening_regression_test.py` | 81/81 |
+| `fb_auth_lifecycle_test.py` | 25/25 |
+| `fb_session_hardening_regression_test.py` | 12/12 |
+| `fb_session_degradation_regression_test.py` | 10/10 |
+| `fb_dom_readiness_regression_test.py` | 71/71 |
+| `social_hardening_test.py` | 85/85 |
+| `social_publishers_test.py` | 24/24 |
+| `engagement_lifecycle_test.py` | pass (all lifecycle checks) |
+| `group_scan_reporting_test.py` | 11/11 |
+| `noa_group_draft_handoff_test.py` (new) | 11/11 |
+| `noa_pipeline_controlled_e2e_test.py` (new, controlled/live-adjacent) | 7/7 steps + cleanup |
+| **TOTAL (numbered suites)** | **362/362** |
+
+`engagement_lifecycle_test.py` surfaced a pre-existing, unrelated live issue worth noting (not
+a regression from this task, not fixed here — out of scope, "never alter Facebook
+credentials"): the Graph-API `FACEBOOK_PAGE_TOKEN` used for reading **page comment** engagement
+(a different subsystem from the group scanner's browser-cookie session) is currently invalidated
+("session has been invalidated because the user changed their password..."). The engagement
+poller already handles this gracefully (returns 0 new items, does not crash) — flagged for the
+owner to re-mint the page token via the existing `fb_exchange_token` flow documented in
+CLAUDE.md §9 (Engagement) when convenient.
+
+### Live safety
+
+No real Facebook comment, post, or reaction was made. No WhatsApp message was sent to the
+owner or any customer. No Facebook credentials/cookies were modified. No unrelated DB records
+were touched. The one DB schema change (#27's migration) only affects a partial unique index
+on a table created in a previous session for exactly this purpose — verified against live data
+before and after, zero rows lost or altered. Scanner/scheduler/Redis were not touched.
+
+### Git
+
+Uncommitted, pending explicit owner authorization (same pattern as every prior `/goal` in this
+tracker): `backend/BACKEND_API_ROUTES.py` (modified), `backend/alembic/versions/0060_drafts_dedup_active.py`
+(new), `backend/devtests/noa_group_draft_handoff_test.py` (new),
+`backend/devtests/noa_pipeline_controlled_e2e_test.py` (new), `FIXES_TRACKER.md` (this entry).
+HEAD unchanged at `d28c15b` (branch `main`) throughout this investigation.
+
+**FINAL STATUS: PASS.**
 
 ---
 

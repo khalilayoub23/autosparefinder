@@ -2706,6 +2706,7 @@ async def startup():
     _supervised_task("supplier_sourcing_loop",      _supplier_sourcing_loop())
     _supervised_task("social_feedback_loop",        _social_feedback_loop())
     _supervised_task("group_scan_loop",             _group_scan_loop())
+    _supervised_task("noa_eod_report_loop",         _noa_eod_report_loop())
     _supervised_task("ebay_fitment_backfill_loop",  _ebay_fitment_backfill_loop())
     _supervised_task("enrich_catalog_loop",         _enrich_catalog_loop())
     _supervised_task("status_update_loop",          _status_update_loop())
@@ -2826,6 +2827,54 @@ async def _group_scan_loop():
                     pass
 
             discoveries = result.data.get("discoveries", [])
+
+            # ── Draft + persist handoff (root-fix, 2026-09-19) ────────────────
+            # facebook_group_scan() / GroupAgent.scan_groups() never populate a
+            # "draft_comment" key on discovery dicts, and NOTHING in this loop
+            # ever called _save_draft() — so group_comment_drafts received zero
+            # rows from the automatic scheduled scan, while the WhatsApp message
+            # below told the owner to approve via "תגובות-גרופ"/"אשרתגובה <id>"
+            # against drafts that never existed. (campaign_manager.py's
+            # create_group_discovery_tasks() was clearly written to bridge this
+            # exact gap — drafts via the same draft_group_comment() — but has
+            # zero callers anywhere in the codebase; confirmed via grep.) This
+            # reuses the IDENTICAL draft+persist pattern already proven in
+            # group_scanner.run_group_scanner()'s own discovery loop: same
+            # draft_group_comment() call, same _save_draft() call (its
+            # ON CONFLICT DO NOTHING on the post_url UNIQUE INDEX already
+            # guarantees the same post can never produce two draft rows, so no
+            # new dedup logic is needed here). Populates discovery["draft_comment"]
+            # in place so the EXISTING notification code below (which already
+            # reads d.get("draft_comment", "(אין)")) starts working correctly
+            # with no further changes to that code.
+            if discoveries:
+                try:
+                    from social.facebook_browser.group_agent import GroupAgent as _DraftGroupAgent
+                    from social.facebook_browser.group_scanner import _save_draft as _save_group_draft
+                    async with async_session_factory() as draft_db:
+                        for d in discoveries:
+                            if d.get("suggested_action") not in ("comment", "post"):
+                                continue
+                            try:
+                                draft_text = await _DraftGroupAgent().draft_group_comment(d)
+                            except Exception as exc:
+                                logger.warning("[group_scan] draft_group_comment failed: %s", exc)
+                                continue
+                            if not draft_text:
+                                continue
+                            saved = await _save_group_draft(
+                                draft_db,
+                                group_id=d.get("group_id"),
+                                post_url=d.get("post_url", ""),
+                                post_text=d.get("post_text", ""),
+                                draft=draft_text,
+                                score=d.get("relevance_score", 0),
+                            )
+                            if saved:
+                                d["draft_comment"] = draft_text
+                except Exception as exc:
+                    logger.error("[group_scan] draft+persist handoff failed (discoveries still reported): %s", exc)
+
             # Root fix (2026-09-19): this previously read "groups_scanned", a key
             # facebook_group_scan() never sets (it returns groups_selected/
             # groups_attempted/groups_fetched) — always silently defaulted to 0.
@@ -4221,6 +4270,143 @@ async def _noa_marketing_loop():
 
         await asyncio.sleep(_secs_until_next_post())
 
+
+async def _noa_eod_report_loop():
+    """
+    NOA — Daily Facebook Activity report (2026-09-19, /goal "close NOA Facebook
+    Page + EOD reporting end-to-end").
+
+    Fires once per day at a fixed IL local time (default 21:00, override with
+    NOA_EOD_REPORT_HOUR_IL/NOA_EOD_REPORT_MINUTE_IL — same fixed-local-time
+    pattern as _noa_marketing_loop's _secs_until_next_post, not a
+    container-start-anchored 24h timer). Reuses the EXISTING owner
+    notification channel (notify_owner -> _wa_send_quiet, quiet-hours-safe)
+    — no new transport is created.
+
+    Every number comes from a REAL persisted table, queried over a rolling
+    24h window ending "now" — a plain timestamp-bounded query, not a second
+    parallel activity ledger, so the report can never double-count a prior
+    day's activity even across restarts:
+      - GROUPS come from group_comment_drafts (the Facebook Group Scanner /
+        NOA draft-handoff pipeline closed in the prior /goal). "Identified"
+        and "drafted" are the SAME count here by design: a group discovery
+        only ever becomes visible/persisted once _save_draft() runs for it
+        (relevance_score >= 0.4) — lower-scoring "monitor" discoveries are
+        reported to the owner in the scan-cycle WhatsApp message but are
+        never persisted anywhere, so counting them here would require a
+        NEW ledger, which the task explicitly says not to add.
+      - PAGE comes from social_inbox (platform='facebook') — the existing
+        NOA engagement/reply pipeline (social/engagement.py). Note: this
+        pipeline has no separate "approved but not yet sent" state (unlike
+        Groups' pending_approval -> approved -> posted) — an owner "ענה <id>"
+        both approves AND sends in one step, so "Responses approved" and
+        "Responses actually published" are structurally the same number
+        here; this is a real architectural difference, not a bug.
+      - "PLATFORM RESULT" comes from social_posts across ALL platforms.
+        social_posts has no distinct terminal 'failed' status (its CHECK
+        constraint only allows draft/pending_approval/approved/published/
+        rejected) — a post stuck in 'approved' with no published_at means
+        _approve_and_publish() ran but every platform dispatch failed (or
+        is still awaiting a retry); reported honestly as "approved but not
+        fully published" rather than inventing a 'failed' state the schema
+        doesn't have.
+    """
+    import sqlalchemy as sa
+    from BACKEND_DATABASE_MODELS import async_session_factory
+    from social import engagement
+
+    NOA_EOD_HOUR_IL = int(os.getenv("NOA_EOD_REPORT_HOUR_IL", "21"))
+    NOA_EOD_MINUTE_IL = int(os.getenv("NOA_EOD_REPORT_MINUTE_IL", "0"))
+
+    def _secs_until_next_eod() -> float:
+        now_l = datetime.now(APP_LOCAL_TZ)
+        t = now_l.replace(hour=NOA_EOD_HOUR_IL, minute=NOA_EOD_MINUTE_IL, second=0, microsecond=0)
+        if t <= now_l:
+            t += timedelta(days=1)
+        return max(60.0, (t - now_l).total_seconds())
+
+    while True:
+        await asyncio.sleep(_secs_until_next_eod())
+        try:
+            # NAIVE UTC on purpose: social_posts.created_at is a plain (naive)
+            # DateTime column populated via datetime.utcnow(), while
+            # group_comment_drafts/social_inbox use TIMESTAMPTZ — asyncpg
+            # rejects a tz-aware Python datetime bound against a naive
+            # column ("can't subtract offset-naive and offset-aware
+            # datetimes"), but a naive-UTC value compares correctly against
+            # BOTH column types. Verified live against all three tables.
+            window_start = datetime.utcnow() - timedelta(hours=24)
+            async with async_session_factory() as db:
+                g = (await db.execute(sa.text("""
+                    SELECT
+                        COUNT(*) FILTER (WHERE created_at >= :ws) AS identified,
+                        COUNT(*) FILTER (WHERE created_at >= :ws AND status IN ('approved','posted')) AS approved,
+                        COUNT(*) FILTER (WHERE created_at >= :ws AND status = 'posted') AS published,
+                        COUNT(*) FILTER (WHERE created_at >= :ws AND status = 'pending_approval') AS pending
+                    FROM group_comment_drafts
+                """), {"ws": window_start})).fetchone()
+
+                p = (await db.execute(sa.text("""
+                    SELECT
+                        COUNT(*) FILTER (WHERE created_at >= :ws) AS identified,
+                        COUNT(*) FILTER (WHERE created_at >= :ws AND status IN ('pending_approval','replied','skipped')) AS drafted,
+                        COUNT(*) FILTER (WHERE created_at >= :ws AND status = 'replied') AS published,
+                        COUNT(*) FILTER (WHERE created_at >= :ws AND status = 'new') AS pending
+                    FROM social_inbox WHERE platform = 'facebook'
+                """), {"ws": window_start})).fetchone()
+
+                page_posts = (await db.execute(sa.text("""
+                    SELECT COUNT(*) FROM social_posts
+                    WHERE created_at >= :ws AND 'facebook' = ANY(platforms)
+                      AND external_post_ids ? 'facebook'
+                """), {"ws": window_start})).scalar() or 0
+
+                overall = (await db.execute(sa.text("""
+                    SELECT
+                        COUNT(*) FILTER (WHERE status = 'published') AS published,
+                        COUNT(*) FILTER (WHERE status = 'pending_approval') AS pending,
+                        COUNT(*) FILTER (WHERE status = 'approved') AS approved_not_published
+                    FROM social_posts WHERE created_at >= :ws
+                """), {"ws": window_start})).fetchone()
+
+            notable: list[str] = []
+            try:
+                if not engagement.fb_configured():
+                    notable.append("Facebook Page not configured (FACEBOOK_PAGE_ID/FACEBOOK_PAGE_TOKEN unset)")
+            except Exception:
+                pass
+
+            report = (
+                "GROUPS\n"
+                f"- Relevant posts identified: {g.identified}\n"
+                f"- Draft replies created: {g.identified}\n"
+                f"- Replies approved: {g.approved}\n"
+                f"- Replies actually published: {g.published}\n"
+                f"- Failed/pending: {g.pending}\n\n"
+                "PAGE\n"
+                f"- Relevant feed items identified: {p.identified}\n"
+                f"- Draft responses created: {p.drafted}\n"
+                f"- Responses approved: {p.published}\n"
+                f"- Responses actually published: {p.published}\n"
+                f"- Original Page posts published: {page_posts}\n"
+                f"- Failed/pending: {p.pending}\n\n"
+                "PLATFORM RESULT (all platforms)\n"
+                f"- Published successfully: {overall.published}\n"
+                f"- Pending approval: {overall.pending}\n"
+                f"- Approved but not fully published: {overall.approved_not_published}\n\n"
+                "NOTABLE\n"
+                + ("\n".join(f"- {n}" for n in notable) if notable else "- (none)")
+            )
+
+            today_key = datetime.now(APP_LOCAL_TZ).date().isoformat()
+            await notify_owner(
+                "social", "NOA — Daily Facebook Activity", report,
+                severity="info",
+                alert_key=f"noa_eod_report_{today_key}",
+                cooldown_s=23 * 3600,  # at most once per day
+            )
+        except Exception as exc:
+            logger.error("noa_eod_report_loop error: %s", exc)
 
 
 async def _stuck_orders_monitor_loop():

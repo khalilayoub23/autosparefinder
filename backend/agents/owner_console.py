@@ -338,7 +338,16 @@ async def _approve_and_publish(db, post: Dict[str, Any]) -> str:
     published = {}
     for p in platforms:
         p = str(p).strip().lower()
-        if p in registry.MEDIA_REQUIRED and not media_url:
+        # TikTok is exempt from the media-required skip: registry.dispatch()
+        # auto-generates a branded product video when no media_url is given
+        # (social/registry.py's "tiktok" branch) — it must never be skipped
+        # for "media required" the way instagram genuinely must be. This
+        # exception existed in the Telegram-callback webhook's OWN divergent
+        # publish logic (routes/webhooks.py) before that logic was
+        # consolidated into this function (2026-09-19, FIXES_TRACKER #28) —
+        # ported here so unifying the two approval channels doesn't silently
+        # regress TikTok's existing no-media capability.
+        if p in registry.MEDIA_REQUIRED and not media_url and p != "tiktok":
             results.append(f"• {p}: ⏭️ דורש תמונה (אין מדיה)")
             continue
         if not registry.is_configured(p):

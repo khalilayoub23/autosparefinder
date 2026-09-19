@@ -222,65 +222,53 @@ async def telegram_admin_webhook(request: Request):
                                   break
 
                       if pending:
-                          caption = pending.get("caption", "")
-                          hashtags = pending.get("hashtags") or []
-                          media_url = pending.get("media_url")
-                          plat = (callback_platform or pending.get("platform") or "post").lower()
                           sp_id = pending.get("social_post_id")
-                          notes: list[str] = []
-                          from social import registry
-
-                          # 1) Telegram channel — real public distribution we fully
-                          #    control; every approved post goes out here.
-                          tg_res = await registry.dispatch("telegram", caption)
-                          notes.append("✅ פורסם בערוץ הטלגרם" if tg_res.get("ok")
-                                       else f"⚠️ טלגרם: {tg_res.get('error', 'נכשל')}")
-                          results = {"telegram": tg_res}
-                          published: dict = {"telegram": tg_res.get("id")} if tg_res.get("ok") else {}
-
-                          # 2) The post's target platform(s) — ONE registry dispatch for
-                          #    facebook/instagram/x/discord/reddit/tiktok. not_configured
-                          #    (no token yet) → hand back copy-paste-ready text.
-                          for p in ([plat] if plat not in ("post", "", "telegram") else []):
-                              # TikTok: registry auto-generates a video when no media_url —
-                              # never skip it for "media required" (registry handles it).
-                              if p in registry.MEDIA_REQUIRED and not media_url and p != "tiktok":
-                                  notes.append(f"⚠️ {p}: דרושה תמונה/וידאו (אין מדיה לפוסט)")
-                                  results[p] = {"ok": False, "error": "media required"}
-                                  continue
-                              r = await registry.dispatch(p, caption, media_url=media_url, hashtags=hashtags)
-                              results[p] = r
-                              if r.get("ok"):
-                                  published[p] = r.get("id"); notes.append(f"✅ פורסם ב-{p.title()}")
-                              elif r.get("not_configured"):
-                                  notes.append(f"📋 {p.title()}: אין עדיין חיבור API — הטקסט מוכן להעתקה למטה")
-                              else:
-                                  notes.append(f"⚠️ {p.title()}: {r.get('error')}")
-
-                          # 3) Update the social_posts row so the approval queue reflects reality.
+                          sp_row = None
                           if sp_id:
-                              try:
-                                  import datetime as _dt
-                                  from sqlalchemy import select as _sel
-                                  from BACKEND_DATABASE_MODELS import SocialPost
-                                  sp = (await db.execute(_sel(SocialPost).where(SocialPost.id == sp_id))).scalar_one_or_none()
-                                  if sp:
-                                      sp.status = "published" if published else "approved"
-                                      if published:
-                                          _m = dict(sp.external_post_ids or {}); _m.update(published)
-                                          _m["published_platforms"] = sorted(published.keys())
-                                          sp.external_post_ids = _m
-                                          sp.published_at = _dt.datetime.utcnow()
-                                      sp.updated_at = _dt.datetime.utcnow()
-                                      await db.commit()
-                              except Exception as _dbe:
-                                  notes.append(f"⚠️ DB: {_dbe}")
+                              from sqlalchemy import select as _sel
+                              from BACKEND_DATABASE_MODELS import SocialPost
+                              sp_row = (await db.execute(_sel(SocialPost).where(SocialPost.id == sp_id))).scalar_one_or_none()
 
-                          pending["status"] = "published" if published else "approved"
-                          await mem.set("pending_post", pending)
-                          reply = "🎯 הפוסט אושר!\n" + "\n".join(notes)
-                          if any((results.get(p) or {}).get("not_configured") for p in results):
-                              reply += f"\n\n--- העתק מכאן ---\n{caption}"
+                          if sp_row:
+                              # ROOT FIX (2026-09-19, FIXES_TRACKER #28): this used to be
+                              # a SECOND, divergent approve+publish implementation —
+                              # unconditionally re-published to Telegram no matter which
+                              # button was tapped, then dispatched at most ONE additional
+                              # platform (explicitly excluding "telegram"/"post"/"" from
+                              # ever firing), then marked the WHOLE row 'published' the
+                              # instant that lone Telegram send succeeded. A post approved
+                              # for [discord, facebook, telegram, tiktok] could be marked
+                              # fully "published" having only ever touched Telegram —
+                              # Facebook/Discord/TikTok were never even attempted. It also
+                              # never set approved_at (campaign_manager.approve_post_content()
+                              # was never called here), unlike the canonical WhatsApp
+                              # "אשר <id>" path. Delegating to the SAME canonical
+                              # owner_console._approve_and_publish() used by WhatsApp means
+                              # ANY approval channel (WhatsApp text or this Telegram button)
+                              # now dispatches the FULL platforms list on the row, records
+                              # approved_at correctly, and is idempotent against a
+                              # double-approval race (a second tap/text is a safe no-op).
+                              from agents.owner_console import _approve_and_publish
+                              post = {
+                                  "id": str(sp_row.id),
+                                  "content": sp_row.content or "",
+                                  "platforms": sp_row.platforms or [],
+                              }
+                              reply = await _approve_and_publish(db, post)
+                              pending["status"] = "published" if "✅" in reply else "approved"
+                              await mem.set("pending_post", pending)
+                          else:
+                              # Legacy pending_post entries with no social_post_id (from
+                              # before _noa_enqueue_social_post existed) — best-effort
+                              # single-platform publish, unchanged from prior behavior.
+                              caption = pending.get("caption", "")
+                              plat = (callback_platform or pending.get("platform") or "telegram").lower()
+                              from social import registry
+                              r = await registry.dispatch(plat, caption)
+                              reply = (f"✅ פורסם ב-{plat.title()}" if r.get("ok")
+                                       else f"⚠️ {plat.title()}: {r.get('error', 'נכשל')}")
+                              pending["status"] = "published" if r.get("ok") else "approved"
+                              await mem.set("pending_post", pending)
                       else:
                           reply = "⚠️ No pending NOA post was found for approval"
 
