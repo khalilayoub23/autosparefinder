@@ -282,6 +282,18 @@ still **not** retroactively force-published (unchanged from #28's decision).
 live-verified end-to-end against the real Facebook Graph API (not mocks alone). No external
 dependency remains open.
 
+**Commit/push closure (2026-09-19)**: final 14-suite regression re-run immediately before
+committing — all exit 0 (373/373 baseline preserved). Committed as `38f6778`
+("fix(noa): unify Facebook approval publish path, wire OAuth env, add EOD report") on `main`,
+10 files: `FIXES_TRACKER.md`, `backend/BACKEND_API_ROUTES.py`, `backend/agents/owner_console.py`,
+`backend/routes/webhooks.py`, `backend/alembic/versions/0060_drafts_dedup_active.py`, four
+`backend/devtests/noa_*_test.py` files, and `docker-compose.yml` staged **by hunk** — only the
+2-line `FACEBOOK_APP_ID`/`FACEBOOK_APP_SECRET` passthrough; the file's unrelated pre-existing
+Eurosender and `FB_EMAIL`/`FB_PASSWORD` edits were left uncommitted in the working tree. This
+commit also carries the previously-uncommitted #26/#27 work (group draft handoff + migration
+0060) because `BACKEND_API_ROUTES.py` and this tracker contain both. `.env` and all tokens
+excluded (staged diff scanned for token/secret patterns: none).
+
 ---
 
 ## /goal — CLOSE NOA FACEBOOK POST HANDLING END-TO-END — 2026-09-19
