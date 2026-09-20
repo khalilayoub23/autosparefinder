@@ -3,6 +3,29 @@
 
 ---
 
+## /goal — WHY THE FACEBOOK BROWSER SESSION DID NOT SURVIVE — 2026-09-20
+
+### 30b. Scanner replayed cookies.json into a fresh ephemeral Chromium context; the persistent profile that held the real session was never used
+
+**Evidence (live, not inferred):** `cookies.json` (7 cookies, c_user+xs present, 1-year expiries, written 09:01 Sep 19 by a healthy `_stop()`) failed the 20:10/21:35 health checks: Facebook served the "Continue as <name>" remembered-device picker (classified AMBIGUOUS because the picker check keys on Hebrew "היכנס", not "המשך" - same relogin outcome) and the live context lost c_user/xs = server-side rejection of the replayed `xs`. Meanwhile the native Chrome profile `/app/state/fb_native_test/profile` (c_user/xs refreshed 17:19, survived the 19:35 container recreate, stale SingletonLock harmless) opened headless from the same IP ~11h later was **still fully authenticated** (throwaway-copy test). Failure history shows the cookie-replay design dying repeatedly (AMBIGUOUS daily Aug 24-Sep 12, picker Sep 14-18). Not expired, not destroyed (`_stop()` guard worked; cookies.json intact), not a profile reset, not VNC/Xvfb (production uses neither; Chrome is spawned headless per scan). Only Chrome procs running were amayama's.
+
+**Root cause:** `FacebookSession._start` used `chromium.launch()` + `new_context()` (spoofed Chrome/124 UA) + `add_cookies(cookies.json)`. A session is bound to the browser identity, not to cookies alone; the cookie-only replay does not persist. The persistent profile was a manual experiment no production code referenced.
+
+**Fix (session.py only, single choke point - all 4 GroupAgent entry points use it):** `launch_persistent_context(_PROFILE_DIR)` (env `FB_PROFILE_DIR`, default the established profile; no UA override); cookies.json seeded ONLY when the profile has no c_user+xs (never overwrites live auth with a stale backup); `_stop` closes the context (flushes profile); cookies.json c_user+xs write guard unchanged; in-process `_PROFILE_LOCK` serializes sessions (Chrome allows one owner per profile). Health-check/validation NOT weakened. Not changed: credentials, Page token, cookies, auto-relogin.
+
+**Verified live:** discovery found 129 groups and a 2-group scan ran (`session_failed=False`, 7 discoveries) with no login; session re-verified AUTHENTICATED after `pre_restart.sh` + `docker restart`.
+
+**Tests:** new `fb_persistent_profile_regression_test.py` 11/11 (incl. live copy of real profile + stale backup ignored); lifecycle 25/25, hardening 12/12, degradation 10/10 (updated to expect context.close), cookie_destruction 10/10, relevance 81/81, dom/handoff/group_scan_reporting/noa_group_draft_handoff pass. `fb_phase5h_observability_test` fails in a `_scan_one_group` mock (group_agent, not session.py; not in the prior baseline) - pre-existing/unrelated, not fixed here.
+
+**Closure verification (2026-09-20, same day):**
+- **`fb_phase5h_observability_test` = PRE-EXISTING, unrelated.** Fails in Section 7 (`_scan_one_group` with a mocked page; `FacebookSession` is never instantiated). Run against the pre-change HEAD `session.py` (shadow package copy, traceback path `/tmp/base/social/...`) it fails identically at `group_agent.py:682` with `StopAsyncIteration`. Cause: commit `d28c15b` (scanner DOM-readiness/incremental-extraction rewrite, 2026-09-19) makes more `page.evaluate` calls than the test's fixed 3-item `side_effect`; the test file is untracked and predates that rewrite. Sections 1-6 pass. Not fixed here (stale test mock, not a code defect).
+- **Identity:** login = personal account `khalil.ay.3` (c_user) acting as the Page/profile "autosparefinder" (i_user). `FACEBOOK_PAGE_ID` and the acting-as `i_user` resolve to the same entity (identical "Manage Page / autosparefinder" heading set) although the numeric ids differ. Intended AutoSpareFinder identity confirmed. Read-only navigation only; no cookies/tokens printed; no public write.
+- **Recovery:** `docker compose up -d --force-recreate backend` (config hash identical, nothing unrelated applied): container `d3641f55fc70` -> `b353541893d9`, hostname changed, stale SingletonLock present, no VNC/cookie import -> AUTHENTICATED from the profile, 129 groups discovered, 2/2 groups scanned (`session_failed=False`, 7 discoveries).
+
+**Open, not fixed (out of scope):** session is the AutoSpareFinder identity (`i_user` set) - scanning works, but comment-posting identity should be confirmed by the owner before approving group comments; `playwright_stealth` is absent from requirements (ad-hoc install lost on recreate; only affects fb_browser_login fallback); picker detector misses the Hebrew "המשך" variant.
+
+---
+
 ## /goal — CLOSE NOA FACEBOOK PAGE + EOD REPORTING END-TO-END — 2026-09-19
 
 Scope: extend the closed NOA Facebook Group workflow to (1) verify Page publishing after a
