@@ -75,6 +75,8 @@ whatsapp-bridge/auth_info/
 whatsapp-bridge/auth_info.*/
 whatsapp-bridge/evidence-*/
 whatsapp-bridge/qr.txt
+# Operator artifact rendered by whatsapp-bridge/show_qr.sh: a WhatsApp pairing QR (sensitive, transient, read by no code).
+/WHATSAPP_QR.png
 
 # Runtime logs and ephemeral files
 backend/error_log.txt

@@ -3,6 +3,18 @@
 
 ---
 
+## /goal — CLOSE THE LAST 10 TRACKED RUNTIME FILES CORRECTLY — 2026-09-20
+
+**Audit (production impact: NONE; all 10 files byte-identical on disk before/after, sha256 verified; no service restarted):**
+| file(s) | producer | consumer | policy | action |
+|---|---|---|---|---|
+| 8 x `backend/data/rex_transport_*.json` | `run_rex_transport_office_pipeline.py` (invoked by `catalog_scraper`), last run 09-10 02:07 | `db_update_agent` (`FileNotFoundError` if `rex_transport_manufacturer_frequency.json` is missing), `validate_rex_transport_full.py` | **C - keep tracked** | committed the CURRENT regeneration: it is substantive (source records 101,311 -> 131,732, manufacturers 137 -> 139, models 12,130 -> 12,149), not churn. Untracking would break a fresh checkout; discarding would roll production reference data back. (My earlier "runtime data, exclude" call was wrong for these: they are versioned reference data, not logs.) |
+| `backend/error_log.txt` | `BACKEND_API_ROUTES.general_exception_handler` appends tracebacks (relative path -> `/app`), last append 09-12 | none (write-only; no process holds it open) | **B - stop tracking, preserve** | `git rm --cached`; the existing `.gitignore` rule (`backend/error_log.txt`) was inert only because the file was tracked; file kept on disk |
+| `WHATSAPP_QR.png` | `whatsapp-bridge/show_qr.sh` (operator utility; rewritten at the 09-20 re-pair) | none (opened by a human) | **B - stop tracking, preserve** | `git rm --cached` + new anchored rule `/WHATSAPP_QR.png` (a pairing QR must not live in Git); file kept on disk |
+`.gitignore` change: +1 rule (`/WHATSAPP_QR.png`, anchored; verified it matches only that path and hides no legitimate file). Validation: all 9 REX JSON files parse; `manufacturer_frequency` satisfies the `db_update_agent` contract (list, 139/139 usable rows); `docker compose config` valid; no secrets/emails/phone numbers in the staged data. Not run on purpose: `validate_rex_transport_full.py` (it RUNS the pipeline and writes audit files, so it is not a lightweight check). Historical blobs of the two untracked files remain in past commits (no history rewrite).
+
+---
+
 ## /goal — WORKING-TREE CLOSURE: 77 uncommitted entries audited, verified and committed — 2026-09-20
 
 **Inventory (HEAD `0d16c86`, nothing staged):** 30 modified + 47 untracked entries (the untracked `backend/services/shipping/` directory holds 14 files). They were NOT one task; five generations of work had accumulated, each traced to code comments/tests/tracker/history:

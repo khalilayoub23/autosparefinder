@@ -1,207 +1,211 @@
 [
   {
     "manufacturer": "טויוטה",
-    "count": 586082
+    "count": 586402
   },
   {
     "manufacturer": "יונדאי",
-    "count": 567817
+    "count": 567681
   },
   {
     "manufacturer": "קיה",
-    "count": 434981
+    "count": 435008
   },
   {
     "manufacturer": "מזדה",
-    "count": 282228
+    "count": 281958
   },
   {
     "manufacturer": "סקודה",
-    "count": 252107
+    "count": 252050
   },
   {
     "manufacturer": "מיצובישי",
-    "count": 178687
-  },
-  {
-    "manufacturer": "סוזוקי",
-    "count": 158507
+    "count": 178592
   },
   {
     "manufacturer": "ניסאן",
-    "count": 146239
+    "count": 146153
   },
   {
     "manufacturer": "סיאט",
-    "count": 115665
+    "count": 115648
   },
   {
     "manufacturer": "פולקסווגן",
-    "count": 115634
+    "count": 115550
+  },
+  {
+    "manufacturer": "סוזוקי",
+    "count": 97627
   },
   {
     "manufacturer": "רנו",
-    "count": 96160
+    "count": 96053
   },
   {
     "manufacturer": "הונדה",
-    "count": 94387
+    "count": 94300
   },
   {
     "manufacturer": "שברולט",
-    "count": 88595
+    "count": 88475
   },
   {
     "manufacturer": "סיטרואן",
-    "count": 85332
+    "count": 85278
   },
   {
     "manufacturer": "סובארו",
-    "count": 84582
+    "count": 84574
   },
   {
     "manufacturer": "מרצדס",
-    "count": 81073
+    "count": 81109
   },
   {
     "manufacturer": "פיג'ו",
-    "count": 76113
+    "count": 76049
   },
   {
     "manufacturer": "צ'רי",
-    "count": 75783
+    "count": 75909
   },
   {
     "manufacturer": "פורד",
-    "count": 73809
+    "count": 73616
   },
   {
     "manufacturer": "ב מ וו",
-    "count": 65395
+    "count": 65425
   },
   {
     "manufacturer": "בי ווי די",
-    "count": 63477
+    "count": 63696
+  },
+  {
+    "manufacturer": "סוזוקי יפן",
+    "count": 60880
   },
   {
     "manufacturer": "אאודי",
-    "count": 50326
+    "count": 50347
   },
   {
     "manufacturer": "ג'אקו",
-    "count": 43679
+    "count": 43901
   },
   {
     "manufacturer": "מ.ג",
-    "count": 42281
+    "count": 42489
   },
   {
     "manufacturer": "טסלה",
-    "count": 38885
+    "count": 38997
   },
   {
     "manufacturer": "אופל",
-    "count": 36163
+    "count": 36128
   },
   {
     "manufacturer": "איסוזו",
-    "count": 29012
+    "count": 28977
   },
   {
     "manufacturer": "וולבו",
-    "count": 27178
+    "count": 27170
   },
   {
     "manufacturer": "גילי",
-    "count": 26596
+    "count": 26662
   },
   {
     "manufacturer": "פיאט",
-    "count": 25388
+    "count": 25354
   },
   {
     "manufacturer": "דאצ'יה",
-    "count": 24450
+    "count": 24447
   },
   {
     "manufacturer": "מרוטי סוזוקי",
-    "count": 23994
+    "count": 23959
   },
   {
     "manufacturer": "לקסוס",
-    "count": 23864
+    "count": 23878
   },
   {
     "manufacturer": "דייהטסו",
-    "count": 22375
+    "count": 22318
   },
   {
     "manufacturer": "קרייזלר",
-    "count": 16781
+    "count": 16766
   },
   {
     "manufacturer": "אקספנג",
-    "count": 15051
+    "count": 15119
   },
   {
     "manufacturer": "ג'יפ",
-    "count": 11663
+    "count": 11699
   },
   {
     "manufacturer": "רובר",
-    "count": 9011
+    "count": 9010
   },
   {
     "manufacturer": "אלפא רומיאו",
-    "count": 7573
+    "count": 7572
   },
   {
     "manufacturer": "לינק אנד קו",
-    "count": 6849
+    "count": 6863
   },
   {
     "manufacturer": "קאדילאק",
-    "count": 6691
+    "count": 6693
   },
   {
     "manufacturer": "זיקר",
-    "count": 6147
+    "count": 6154
   },
   {
     "manufacturer": "פורשה",
-    "count": 5799
+    "count": 5816
   },
   {
     "manufacturer": "לנדרובר",
-    "count": 5686
+    "count": 5733
   },
   {
     "manufacturer": "סאנגיונג",
-    "count": 5218
-  },
-  {
-    "manufacturer": "סרס",
-    "count": 4957
+    "count": 5212
   },
   {
     "manufacturer": "דיפאל",
-    "count": 4914
+    "count": 4988
+  },
+  {
+    "manufacturer": "סרס",
+    "count": 4953
   },
   {
     "manufacturer": "קיי גי מוביליט",
-    "count": 4673
-  },
-  {
-    "manufacturer": "דאציה",
-    "count": 3912
+    "count": 4683
   },
   {
     "manufacturer": "אומודה",
-    "count": 3896
+    "count": 3945
+  },
+  {
+    "manufacturer": "דאציה",
+    "count": 3905
   },
   {
     "manufacturer": "אורה",
-    "count": 3844
+    "count": 3871
   },
   {
     "manufacturer": "אודי",
@@ -213,35 +217,35 @@
   },
   {
     "manufacturer": "מקסוס",
-    "count": 3656
+    "count": 3652
   },
   {
     "manufacturer": "ליפמוטור",
-    "count": 3386
+    "count": 3390
   },
   {
     "manufacturer": "קופרה",
-    "count": 3261
+    "count": 3273
   },
   {
     "manufacturer": "ביואיק",
-    "count": 3094
+    "count": 3086
   },
   {
     "manufacturer": "דונגפנג",
-    "count": 2898
+    "count": 2907
   },
   {
     "manufacturer": "יגואר",
-    "count": 2537
+    "count": 2540
   },
   {
     "manufacturer": "סקיוול",
-    "count": 2486
+    "count": 2483
   },
   {
     "manufacturer": "איווייס",
-    "count": 2075
+    "count": 2074
   },
   {
     "manufacturer": "איויאיסי",
@@ -249,19 +253,19 @@
   },
   {
     "manufacturer": "אף אי דאבל יו",
-    "count": 1644
+    "count": 1645
   },
   {
     "manufacturer": "גי.אי.סי",
-    "count": 1618
+    "count": 1616
   },
   {
     "manufacturer": "וויה",
-    "count": 1489
+    "count": 1499
   },
   {
     "manufacturer": "די אס",
-    "count": 1292
+    "count": 1291
   },
   {
     "manufacturer": "מרצדס בנץ",
@@ -281,7 +285,7 @@
   },
   {
     "manufacturer": "פוטון",
-    "count": 863
+    "count": 873
   },
   {
     "manufacturer": "ג'אק",
@@ -289,7 +293,7 @@
   },
   {
     "manufacturer": "איון",
-    "count": 629
+    "count": 634
   },
   {
     "manufacturer": "פולסטאר",
@@ -317,7 +321,7 @@
   },
   {
     "manufacturer": "איי אם",
-    "count": 332
+    "count": 341
   },
   {
     "manufacturer": "דייהו",
@@ -328,12 +332,12 @@
     "count": 283
   },
   {
-    "manufacturer": "סאאב",
-    "count": 264
-  },
-  {
     "manufacturer": "דודג'",
     "count": 253
+  },
+  {
+    "manufacturer": "סאאב שבדיה",
+    "count": 246
   },
   {
     "manufacturer": "אסטון מרטין",
@@ -352,12 +356,12 @@
     "count": 139
   },
   {
-    "manufacturer": "נטע",
-    "count": 106
+    "manufacturer": "באייק",
+    "count": 107
   },
   {
-    "manufacturer": "באייק",
-    "count": 103
+    "manufacturer": "נטע",
+    "count": 106
   },
   {
     "manufacturer": "למבורגיני",
@@ -448,6 +452,10 @@
     "count": 23
   },
   {
+    "manufacturer": "סאאב",
+    "count": 18
+  },
+  {
     "manufacturer": "מיני",
     "count": 14
   },
@@ -517,18 +525,18 @@
   },
   {
     "manufacturer": "בואו",
-    "count": 5
+    "count": 6
   },
   {
     "manufacturer": "טי אי סי",
     "count": 4
   },
   {
-    "manufacturer": "מ א ן",
+    "manufacturer": "מאן גרמניה",
     "count": 4
   },
   {
-    "manufacturer": "מורגן",
+    "manufacturer": "מורגן אנגליה",
     "count": 4
   },
   {
