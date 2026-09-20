@@ -253,14 +253,21 @@ def _graph_post(path: str, data: Dict[str, str]) -> Dict[str, Any]:
         return {"error": {"body": str(e)[:200]}}
 
 
+# Health of the last Facebook fetch. fb_fetch_new() deliberately fails open (returns []), which made an
+# invalid/expired token indistinguishable from a quiet day - poll_once/readiness read this instead.
+FETCH_STATUS: Dict[str, Dict[str, Any]] = {}
+
+
 async def fb_fetch_new(limit: int = 25) -> List[Dict[str, Any]]:
     """Recent comments across the Page's recent posts. Read scope: pages_read_engagement."""
     if not fb_configured():
+        FETCH_STATUS["facebook"] = {"ok": False, "error": "not_configured", "items": 0}
         return []
     out: List[Dict[str, Any]] = []
     posts = _graph_get(f"{_fb_page_id()}/posts", {"fields": "id,permalink_url", "limit": "10"})
     if posts.get("error"):
         log("FB posts read failed:", posts["error"])
+        FETCH_STATUS["facebook"] = {"ok": False, "error": str(posts["error"])[:200], "items": 0}
         return []
     for post in posts.get("data", []):
         pid = post.get("id")
@@ -275,6 +282,7 @@ async def fb_fetch_new(limit: int = 25) -> List[Dict[str, Any]]:
                 "text": c.get("message") or "", "permalink": c.get("permalink_url") or post.get("permalink_url"),
                 "created_at": _parse_ts(c.get("created_time")),
             })
+    FETCH_STATUS["facebook"] = {"ok": True, "error": None, "items": len(out), "posts": len(posts.get("data", []))}
     return out
 
 
@@ -917,7 +925,8 @@ async def poll_once(db, *, per_platform_limit: int = 25, autoreply: bool = False
     Fully graceful: a platform with no/expired creds contributes nothing and never raises.
     """
     await ensure_inbox_table(db)
-    summary: Dict[str, Any] = {"platforms": {}, "new": 0, "drafted": 0, "auto_sent": 0, "errors": []}
+    summary: Dict[str, Any] = {"platforms": {}, "new": 0, "drafted": 0, "auto_sent": 0, "errors": [],
+                               "fetched": {}, "duplicates": 0, "fetch_status": {}}
     own_names = {(os.getenv("SOCIAL_PAGE_NAME", "") or "").lower().strip()}
     for platform, h in PLATFORMS.items():
         if not h["configured"]():
@@ -928,7 +937,10 @@ async def poll_once(db, *, per_platform_limit: int = 25, autoreply: bool = False
         except Exception as e:
             summary["errors"].append(f"{platform}:fetch:{str(e)[:100]}")
             summary["platforms"][platform] = "fetch_error"
+            summary["fetch_status"][platform] = {"ok": False, "error": str(e)[:200]}
             continue
+        summary["fetched"][platform] = len(items)
+        summary["fetch_status"][platform] = FETCH_STATUS.get(platform, {"ok": True, "error": None})
         pnew = 0
         for it in items:
             if not it.get("external_id"):
@@ -939,6 +951,7 @@ async def poll_once(db, *, per_platform_limit: int = 25, autoreply: bool = False
             item_id = await record_item(db, it)
             await db.commit()
             if not item_id:
+                summary["duplicates"] += 1  # duplicate-prevention event (already recorded)
                 continue  # already seen
             pnew += 1
             summary["new"] += 1
@@ -949,11 +962,12 @@ async def poll_once(db, *, per_platform_limit: int = 25, autoreply: bool = False
             await set_draft(db, item_id, reply)
             summary["drafted"] += 1
             if autoreply:
-                r = await send_reply(platform, str(it["external_id"]), reply)
+                from social import noa_ops
+                r = await noa_ops.send_page_reply(
+                    db, {"id": item_id, "platform": platform, "external_id": it["external_id"]}, reply, actor="autonomous")
                 if r.get("ok"):
-                    await mark_replied(db, item_id, r.get("id"))
                     summary["auto_sent"] += 1
-                else:
+                else:  # blocked by safety/rate gate or send failed -> stays pending_approval for the owner
                     summary["errors"].append(f"{platform}:reply:{r.get('error')}")
         summary["platforms"][platform] = f"ok:{pnew}new"
     return summary
@@ -979,9 +993,10 @@ async def draft_new_items(db, *, limit: int = 20, autoreply: bool = False) -> Di
         await set_draft(db, m["id"], reply)
         summary["drafted"] += 1
         if autoreply:
-            rr = await send_reply(m["platform"], str(m["external_id"]), reply)
+            from social import noa_ops
+            rr = await noa_ops.send_page_reply(
+                db, {"id": m["id"], "platform": m["platform"], "external_id": m["external_id"]}, reply, actor="autonomous")
             if rr.get("ok"):
-                await mark_replied(db, m["id"], rr.get("id"))
                 summary["auto_sent"] += 1
             else:
                 summary["errors"].append(f'{m["platform"]}:{rr.get("error")}')

@@ -166,6 +166,27 @@ def _resolve_supplier_spend_provider(supplier_credentials: dict | None) -> str:
     return _normalize_supplier_spend_provider(from_supplier or default_provider)
 
 
+def _auto_fake_tracking_allowed(supplier_credentials: dict | None, supplier_id) -> bool:
+    """Whether the auto_fake_tracking test-cycle flag may fire for this
+    supplier. Hard rule (sandbox-implementation Phase 15): a Eurosender-
+    eligible supplier must NEVER receive synthetic tracking, even if its own
+    credentials carry the auto_fake_tracking flag — this check runs at the
+    point auto_fake_tracking would otherwise apply, which is EARLIER in
+    trigger_supplier_fulfillment than the later Eurosender interception
+    (near suppliers_ready_for_purchase), so it cannot be skipped.
+    """
+    requested = bool((supplier_credentials or {}).get("auto_fake_tracking", False))
+    if not requested:
+        return False
+    try:
+        from services.shipping.eurosender_routing import is_eurosender_eligible
+        if is_eurosender_eligible(supplier_id):
+            return False
+    except Exception:
+        return False  # fail safe: never fake-track on an eligibility-check error
+    return True
+
+
 def _list_test_virtual_issuing_card_ids(stripe_key: str, limit: int = 25) -> list[str]:
     """Return active virtual issuing card ids from Stripe test mode."""
     import stripe as stripe_sdk
@@ -698,7 +719,7 @@ async def trigger_supplier_fulfillment(paid_orders: list, db: AsyncSession) -> N
                 supplier_credentials.get("stripe_test_payment_method")
                 or default_supplier_payment_method
             ).strip()
-            auto_fake_tracking = bool(supplier_credentials.get("auto_fake_tracking", False))
+            auto_fake_tracking = _auto_fake_tracking_allowed(supplier_credentials, supplier_id)
 
             try:
                 if spend_provider == "issuing":
@@ -1088,6 +1109,29 @@ async def trigger_supplier_fulfillment(paid_orders: list, db: AsyncSession) -> N
                             },
                         ))
                         asyncio.create_task(_guarded_task(publish_notification(str(admin.id), {"type": "supplier_order", "title": _title_fail, "message": _msg_fail})))
+
+        # Eurosender interception (sandbox-only; inert unless EUROSENDER_ENABLED=1
+        # AND the supplier's UUID is in EUROSENDER_SUPPLIER_ALLOWLIST — see
+        # services/shipping/eurosender_routing.py). Any Eurosender-eligible
+        # supplier is removed from suppliers_ready_for_purchase HERE, before the
+        # OrdersAgent handoff below, so it can never fall through to
+        # OrdersAgent's synthetic/fake tracking generator.
+        if suppliers_ready_for_purchase:
+            try:
+                from services.shipping.eurosender_fulfillment import handle_eligible_suppliers
+                suppliers_ready_for_purchase = await handle_eligible_suppliers(
+                    by_supplier, suppliers_ready_for_purchase, order_db, supplier_payments_by_key, db,
+                )
+            except Exception as eurosender_err:
+                # handle_eligible_suppliers() itself guarantees it never raises
+                # (see its own docstring) — this except only covers the import
+                # statement failing outright. In that narrow case we fall back
+                # to the pre-Eurosender behavior for ALL suppliers, which is
+                # safe today because EUROSENDER_ENABLED defaults to 0 with an
+                # empty allowlist (routing gate closed) — the same as before
+                # this feature existed. A broken import would also surface
+                # immediately via CI/smoke tests, not silently in production.
+                print(f"[Fulfillment] Eurosender interception import failed: {eurosender_err}")
 
         # Continue supplier purchase cycle through OrdersAgent after successful supplier spend.
         if suppliers_ready_for_purchase:

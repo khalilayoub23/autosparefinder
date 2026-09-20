@@ -69,9 +69,12 @@ async def main():
         login_form = 'id="email"' in content or 'name="login"' in content
         ok = not login_form and c_user_ok and xs_ok
         log.info("Health: c_user=%s xs=%s form=%s → %s", c_user_ok, xs_ok, login_form, "✅ OK" if ok else "❌ FAIL")
-        _COOKIES_FILE.write_text(json.dumps(cookies, indent=2))
-        log.info("Saved %d cookies → %s", len(cookies), _COOKIES_FILE)
-        log.info("Cookie names: %s", names)
+        if ok:
+            _COOKIES_FILE.write_text(json.dumps(cookies, indent=2))
+            log.info("Saved %d cookies → %s", len(cookies), _COOKIES_FILE)
+            log.info("Cookie names: %s", names)
+        else:
+            log.warning("Login failed — cookie write SKIPPED. Existing cookies.json preserved.")
         await browser.close()
         return ok
 

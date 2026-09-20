@@ -781,14 +781,18 @@ class GroupAgent:
             raise RuntimeError("APPROVAL_REQUIRED safety invariant violated")
 
         if _is_rate_limited(group_url or post_url):
-            return {"ok": False, "error": "rate limit: max 3 comments/hour per group"}
+            return {"ok": False, "error": "rate limit: max 3 comments/hour per group", "submitted": False}
 
+        # `submitted` flips True the instant Enter is pressed: from then on the comment may be
+        # public, so callers must NOT treat a later failure as "safe to retry" (duplicate risk).
+        submitted = False
         try:
             async with FacebookSession() as page:
                 if not page:
                     return {
                         "ok": False,
                         "error": "Facebook session not authenticated — re-login required",
+                        "submitted": False,
                     }
 
                 # Navigate to the specific post
@@ -812,7 +816,7 @@ class GroupAgent:
 
                 if not comment_box:
                     await _save_failure_screenshot(page, "comment_box_not_found")
-                    return {"ok": False, "error": "comment input not found (FB DOM changed?)"}
+                    return {"ok": False, "error": "comment input not found (FB DOM changed?)", "submitted": False}
 
                 await comment_box.click()
                 await _random_delay(0.8, 1.8)
@@ -826,6 +830,7 @@ class GroupAgent:
 
                 # Submit: Enter key (works in FB's Lexical editor)
                 await page.keyboard.press("Enter")
+                submitted = True
                 await _random_delay(3.0, 5.0)
 
                 # Verify the comment appeared
@@ -835,14 +840,14 @@ class GroupAgent:
                 if posted:
                     _record_rate(group_url or post_url)
                     log.info("fb_browser: comment posted on %s", post_url[:80])
-                    return {"ok": True, "error": None}
+                    return {"ok": True, "error": None, "submitted": True}
                 else:
                     await _save_failure_screenshot(page, "comment_post_unverified")
-                    return {"ok": False, "error": "comment submitted but could not verify it appeared"}
+                    return {"ok": False, "error": "comment submitted but could not verify it appeared", "submitted": True}
 
         except Exception as exc:
             log.error("fb_browser: submit_approved_comment error: %s", exc)
-            return {"ok": False, "error": str(exc)[:200]}
+            return {"ok": False, "error": str(exc)[:200], "submitted": submitted}
 
     async def publish_group_post(
         self,

@@ -22,6 +22,8 @@ import string
 from datetime import datetime, timedelta
 from typing import Optional, Tuple
 
+from synthetic_recipients import is_reserved_test_email
+
 import redis.asyncio as aioredis
 from dotenv import load_dotenv
 from fastapi import Depends, HTTPException, Request, status
@@ -481,6 +483,16 @@ async def create_2fa_code(user_id: str, phone: str, db: AsyncSession) -> Optiona
     )
     db.add(two_fa)
     await db.commit()
+
+    # SAFETY BOUNDARY (2026-09-20): an account on a reserved/example domain (RFC 2606/6761) is a test
+    # or synthetic principal and can never be a real customer, so NO real message (WhatsApp or SMS)
+    # may be delivered to it. Incident 2026-09-14: an automated test run registered 51 such users
+    # against the live server; each register+login sent a real 2FA WhatsApp message through the
+    # production bridge to a random real-format number (99 sends in 14 min) and WhatsApp removed the
+    # linked device. The code is still stored above, so test flows that verify it are unaffected.
+    if user is not None and is_reserved_test_email(getattr(user, "email", None)):
+        print("[2FA] reserved test-domain account — real delivery (WhatsApp/SMS) suppressed")
+        return code
 
     import asyncio as _asyncio
     # Delivery channel selection:

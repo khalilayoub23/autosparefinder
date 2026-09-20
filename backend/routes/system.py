@@ -933,3 +933,97 @@ async def ingest_group_posts(request: Request):
 
     return _JSONResponse({"ok": True, "drafted": drafted, "skipped": skipped},
                          headers=_INGEST_CORS_HEADERS)
+
+
+@router.post("/api/v1/system/ingest-group-list")
+async def ingest_group_list(request: Request):
+    """Accept a pre-harvested Facebook group list from the owner's browser.
+
+    Uses the text/plain CORS simple-request pattern so the browser can POST
+    cross-origin from facebook.com without a preflight.
+
+    Expected body (JSON string in a text/plain POST): {
+        "secret": "<COLLECT_SECRET>",
+        "groups": [{"name": "...", "url": "https://www.facebook.com/groups/..."}]
+    }
+
+    Returns: {"ok": true, "total_submitted": N, "accepted": N,
+              "already_known": N, "rejected_invalid": N, "duplicates": N}
+    """
+    from fastapi.responses import JSONResponse as _JSONResponse
+
+    if request.method == "OPTIONS":
+        return _JSONResponse({}, headers=_INGEST_CORS_HEADERS)
+
+    # ── Auth ──────────────────────────────────────────────────────────────────
+    secret = os.environ.get("COLLECT_SECRET", "")
+    try:
+        raw = await request.body()
+        data = json.loads(raw)
+    except Exception:
+        return _JSONResponse({"ok": False, "error": "bad json"}, status_code=400,
+                             headers=_INGEST_CORS_HEADERS)
+
+    if not secret or data.get("secret") != secret:
+        return _JSONResponse({"ok": False, "error": "unauthorized"}, status_code=403,
+                             headers=_INGEST_CORS_HEADERS)
+
+    # ── Input shape ───────────────────────────────────────────────────────────
+    raw_groups = data.get("groups", [])
+    if not isinstance(raw_groups, list):
+        return _JSONResponse({"ok": False, "error": "groups must be a list"}, status_code=400,
+                             headers=_INGEST_CORS_HEADERS)
+    if len(raw_groups) > 500:
+        return _JSONResponse({"ok": False, "error": "too many groups (max 500)"}, status_code=400,
+                             headers=_INGEST_CORS_HEADERS)
+
+    # ── Validate and normalise ────────────────────────────────────────────────
+    valid: list[dict] = []
+    rejected_invalid = 0
+    seen_urls: set[str] = set()
+    duplicates = 0
+
+    for g in raw_groups:
+        if not isinstance(g, dict):
+            rejected_invalid += 1
+            continue
+        raw_url = str(g.get("url") or "").strip().rstrip("/")
+        name = _sanitize_for_llm(str(g.get("name") or ""), 255)
+        if not name:
+            name = "Unknown Group"
+        if not _FB_GROUP_URL_RE.match(raw_url):
+            rejected_invalid += 1
+            continue
+        norm_url = raw_url + "/"
+        if norm_url in seen_urls:
+            duplicates += 1
+            continue
+        seen_urls.add(norm_url)
+        valid.append({"name": name, "url": norm_url})
+
+    # ── Upsert via existing scanner logic ─────────────────────────────────────
+    accepted = 0
+    if valid:
+        try:
+            from social.facebook_browser.group_scanner import _upsert_discovered_groups, _get_db
+        except Exception as exc:
+            return _JSONResponse({"ok": False, "error": f"import: {exc}"}, status_code=500,
+                                 headers=_INGEST_CORS_HEADERS)
+        db = await _get_db()
+        try:
+            accepted = await _upsert_discovered_groups(db, valid)
+        except Exception as exc:
+            await db.close()
+            return _JSONResponse({"ok": False, "error": f"db: {exc}"}, status_code=500,
+                                 headers=_INGEST_CORS_HEADERS)
+        finally:
+            await db.close()
+
+    return _JSONResponse({
+        "ok": True,
+        "total_submitted": len(raw_groups),
+        "accepted": accepted,
+        "already_known": len(valid) - accepted,
+        "rejected_invalid": rejected_invalid,
+        "duplicates": duplicates,
+    }, headers=_INGEST_CORS_HEADERS)

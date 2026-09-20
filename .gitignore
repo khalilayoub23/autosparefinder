@@ -73,6 +73,7 @@ backend/alembic/__pycache__/
 .venv-ci/
 whatsapp-bridge/auth_info/
 whatsapp-bridge/auth_info.*/
+whatsapp-bridge/evidence-*/
 whatsapp-bridge/qr.txt
 
 # Runtime logs and ephemeral files

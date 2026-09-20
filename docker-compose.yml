@@ -129,7 +129,7 @@ services:
       GITHUB_TOKEN: ${GITHUB_TOKEN}
       HF_TOKEN: ${HF_TOKEN}
       GROQ_API_KEY: ${GROQ_API_KEY}
-      GROQ_MODEL: ${GROQ_MODEL:-llama-3.3-70b-versatile}
+      GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-20b}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       CEREBRAS_API_KEY: ${CEREBRAS_API_KEY}
       CEREBRAS_TEXT_MODEL: ${CEREBRAS_TEXT_MODEL:-gpt-oss-120b}
@@ -155,6 +155,19 @@ services:
       EBAY_PRICE_SYNC_LIMIT: ${EBAY_PRICE_SYNC_LIMIT:-4400}
       SENDCLOUD_PUBLIC_KEY: ${SENDCLOUD_PUBLIC_KEY:-}
       SENDCLOUD_SECRET_KEY: ${SENDCLOUD_SECRET_KEY:-}
+      # Eurosender — sandbox-only shipping integration (services/shipping/).
+      # Every default below is the SAFE/off state, matching
+      # services/shipping/eurosender_config.py's own Python-side defaults —
+      # adding this pass-through does not enable or change anything by itself;
+      # it only lets a value placed in .env actually reach the container (the
+      # adapter itself additionally refuses any call that resolves to the
+      # production URL — see EurosenderProductionBlocked in eurosender_adapter.py).
+      EUROSENDER_ENABLED: ${EUROSENDER_ENABLED:-0}
+      EUROSENDER_SANDBOX: ${EUROSENDER_SANDBOX:-1}
+      EUROSENDER_API_KEY: ${EUROSENDER_API_KEY:-}
+      EUROSENDER_WEBHOOK_SECRET: ${EUROSENDER_WEBHOOK_SECRET:-}
+      EUROSENDER_SUPPLIER_ALLOWLIST: ${EUROSENDER_SUPPLIER_ALLOWLIST:-}
+      EUROSENDER_MAX_WEIGHT_KG: ${EUROSENDER_MAX_WEIGHT_KG:-25}
       EUR_TO_ILS: ${EUR_TO_ILS:-4.05}
       EBAY_APP_ID: ${EBAY_APP_ID:-}
       EBAY_CERT_ID: ${EBAY_CERT_ID:-}
@@ -209,6 +222,14 @@ services:
       # NOA social publishers (see docs/SOCIAL_SETUP.md). Empty = platform stays draft.
       # NOA engagement (read+reply) tunables:
       NOA_ENGAGEMENT_MAX_REPLIES: ${NOA_ENGAGEMENT_MAX_REPLIES:-5}
+      # Phase 2 (autonomous) release control - deliberate operator action, default OFF. Even when 1,
+      # the runtime readiness gate + safety + rate limits still apply (social/noa_ops.py).
+      NOA_ENGAGEMENT_AUTOREPLY: ${NOA_ENGAGEMENT_AUTOREPLY:-0}
+      NOA_AUTONOMOUS_MAX_PER_HOUR: ${NOA_AUTONOMOUS_MAX_PER_HOUR:-3}
+      NOA_AUTONOMOUS_MAX_PER_DAY: ${NOA_AUTONOMOUS_MAX_PER_DAY:-10}
+      NOA_GROUP_DRAFT_MAX_PER_CYCLE: ${NOA_GROUP_DRAFT_MAX_PER_CYCLE:-20}
+      SOCIAL_GROUP_SCAN_START_DELAY_S: ${SOCIAL_GROUP_SCAN_START_DELAY_S:-7200}
+      SOCIAL_GROUP_SCAN_MAX_GROUPS: ${SOCIAL_GROUP_SCAN_MAX_GROUPS:-0}
       GRAPH_API_VERSION: ${GRAPH_API_VERSION:-v21.0}
       FACEBOOK_PAGE_ID: ${FACEBOOK_PAGE_ID:-}
       FACEBOOK_PAGE_TOKEN: ${FACEBOOK_PAGE_TOKEN:-}
@@ -325,6 +346,8 @@ services:
       PLAYWRIGHT_MAX_CONCURRENT: ${PLAYWRIGHT_MAX_CONCURRENT:-2}
       OWNER_WHATSAPP_LID: ${OWNER_WHATSAPP_LID:-98058566160397@lid}
       GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+      FB_EMAIL: ${FB_EMAIL}
+      FB_PASSWORD: ${FB_PASSWORD}
     depends_on:
       postgres_catalog:
         condition: service_healthy

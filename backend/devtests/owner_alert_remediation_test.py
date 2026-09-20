@@ -622,6 +622,169 @@ print("   - devtests/notify_policy_test.py            -> 8/8 PASS")
 print("   - devtests/harvest_notify_policy_test.py     -> 11/11 PASS")
 print("   - devtests/pass4_content_quality_test.py     -> 14/14 PASS")
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+print()
+print("=" * 70)
+print("DEFECT A — validate_watchdog_actions uses notify_owner() (2026-09-10)")
+print("=" * 70)
+
+_dbagent_src = pathlib.Path("/app/db_update_agent.py").read_text(encoding="utf-8")
+
+# A1 — direct send_message import removed from validate_watchdog_actions
+print("\nA1. validate_watchdog_actions no longer imports send_message directly")
+# The forensic fix removed the deferred import:
+#   from social.whatsapp_provider import send_message as _wa_alert
+# That exact form must not appear in validate_watchdog_actions (it may exist
+# elsewhere for other purposes — we use a narrow context window check).
+_watchdog_fn_idx = _dbagent_src.find("async def validate_watchdog_actions")
+_watchdog_fn_end = _dbagent_src.find("\nasync def ", _watchdog_fn_idx + 1)
+if _watchdog_fn_end == -1:
+    _watchdog_fn_end = len(_dbagent_src)
+_watchdog_body = _dbagent_src[_watchdog_fn_idx:_watchdog_fn_end]
+check(
+    "validate_watchdog_actions body does NOT import send_message as _wa_alert",
+    "from social.whatsapp_provider import send_message as _wa_alert" in _watchdog_body,
+    False,
+)
+
+# A2 — notify_owner is used when anomalies exist
+print("\nA2. validate_watchdog_actions calls notify_owner() for anomalies")
+check(
+    "notify_owner import present in watchdog body",
+    "from BACKEND_API_ROUTES import notify_owner" in _watchdog_body,
+    True,
+)
+check(
+    "await _notify(...) call present in watchdog body",
+    "await _notify(" in _watchdog_body,
+    True,
+)
+
+# A3 — anomaly details pass through to notify_owner call
+print("\nA3. Anomaly details are forwarded to notify_owner as body")
+check(
+    "anomaly list is joined into the notify_owner body arg",
+    'join(f"• {a}" for a in anomalies)' in _watchdog_body,
+    True,
+)
+
+# A4 — stable alert_key and appropriate severity present
+print("\nA4. Stable alert_key and severity='warning' present")
+check(
+    "alert_key='watchdog_anomaly' used",
+    'alert_key="watchdog_anomaly"' in _watchdog_body,
+    True,
+)
+check(
+    "severity='warning' used",
+    'severity="warning"' in _watchdog_body,
+    True,
+)
+check(
+    "cooldown_s present",
+    "cooldown_s=" in _watchdog_body,
+    True,
+)
+
+# A5 — quiet-hours logic NOT duplicated inside watchdog function
+print("\nA5. No quiet-hours reimplementation inside watchdog body")
+check(
+    "_notify_window_open not called inside watchdog",
+    "_notify_window_open" in _watchdog_body,
+    False,
+)
+check(
+    "_wa_send_quiet not called directly inside watchdog",
+    "_wa_send_quiet" in _watchdog_body,
+    False,
+)
+check(
+    "_wa_send not called directly inside watchdog",
+    "_wa_send(" in _watchdog_body.replace("_wa_send_quiet", ""),
+    False,
+)
+
+# A6 — notify_owner failure is logged, not silently swallowed
+print("\nA6. notify_owner failure is logged (not silent except: pass)")
+# The old code had bare `except Exception: pass`. The fix must log.
+check(
+    "logger.warning used on notify_owner failure",
+    "logger.warning" in _watchdog_body and "notify_owner failed" in _watchdog_body,
+    True,
+)
+check(
+    "bare 'except Exception: pass' pattern eliminated from watchdog anomaly block",
+    "except Exception:\n            pass" not in _watchdog_body,
+    True,
+)
+
+# A7 — behavioural: validate_watchdog_actions routes through notify_owner end-to-end
+print("\nA7. Behavioural: anomalies route through notify_owner -> quiet-hours path")
+
+
+async def t_a7():
+    import BACKEND_API_ROUTES as routes
+    import db_update_agent as dba
+    import watchdog_state
+
+    notify_calls: list[dict] = []
+
+    async def fake_notify(category, title, body="", *, severity="info",
+                          alert_key="", cooldown_s=3600):
+        notify_calls.append(
+            dict(category=category, title=title, body=body,
+                 severity=severity, alert_key=alert_key, cooldown_s=cooldown_s)
+        )
+
+    # Seed 6 synthetic kill_orphan events — the burst threshold is >5 kills,
+    # so exactly 6 unvalidated events triggers the "Unusual kill burst" anomaly.
+    watchdog_state._EVENTS.clear()
+    for i in range(6):
+        watchdog_state.record(
+            "kill_orphan", 9000 + i, 1,
+            f"backend_start=1970-01-01T00:00:00Z age_s={99999 + i}",
+        )
+
+    # validate_watchdog_actions(db) requires an AsyncSession; mock it minimally.
+    _fake_db = mock.MagicMock()
+
+    with mock.patch.object(
+        routes, "notify_owner",
+        new=mock.AsyncMock(side_effect=fake_notify)
+    ):
+        result = await dba.validate_watchdog_actions(_fake_db)
+
+    check("A7: anomaly detected on burst", result["anomalies"] > 0, True)
+    check("A7: notify_owner called exactly once for the burst anomaly",
+          len(notify_calls), 1)
+    check("A7: category is 'health'",
+          notify_calls[0]["category"] if notify_calls else None, "health")
+    check("A7: alert_key is 'watchdog_anomaly'",
+          notify_calls[0]["alert_key"] if notify_calls else None, "watchdog_anomaly")
+    check("A7: severity is 'warning'",
+          notify_calls[0]["severity"] if notify_calls else None, "warning")
+    check("A7: anomaly detail in body",
+          "Unusual kill burst" in (notify_calls[0]["body"] if notify_calls else ""),
+          True)
+
+    # Prove send_message (direct WhatsApp provider) was NOT called at all.
+    import social.whatsapp_provider as _wp
+    watchdog_state._EVENTS.clear()
+    for i in range(6):
+        watchdog_state.record(
+            "kill_orphan", 9000 + i, 1,
+            f"backend_start=1970-01-01T00:00:00Z age_s={99999 + i}",
+        )
+    with mock.patch.object(_wp, "send_message", new=mock.AsyncMock()) as _direct:
+        with mock.patch.object(routes, "notify_owner", new=mock.AsyncMock()):
+            await dba.validate_watchdog_actions(_fake_db)
+    check("A7: send_message (provider) NOT called directly", _direct.call_count, 0)
+
+
+asyncio.run(t_a7())
+
+
 print()
 if fails:
     print(f"FAILED: {len(fails)} test(s):")

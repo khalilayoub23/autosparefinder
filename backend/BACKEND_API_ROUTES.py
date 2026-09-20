@@ -1403,6 +1403,14 @@ async def _whatsapp_link_monitor_loop() -> None:
     last_state: str | None = None
     last_alert = 0.0
     realert_s = int(os.getenv("WA_LINK_REALERT_S", "21600"))   # 6h while broken
+    # /health.connected is `!!waSocket.user` - true with stale credentials after WhatsApp rejects the
+    # login (401), so a health-only monitor stayed silent through the 2026-07-29 AND 2026-09-14
+    # outages. A real authenticated round-trip (bridge /groups) is the truthful check; it is throttled
+    # because repeated group fetches can trip WhatsApp rate limits.
+    probe_s = int(os.getenv("WA_LINK_PROBE_INTERVAL_S", "1800"))
+    last_probe_at = 0.0
+    probe_dead = False
+    probe_detail = ""
 
     async def _alert(subject: str, body: str) -> None:
         sent = []
@@ -1442,6 +1450,15 @@ async def _whatsapp_link_monitor_loop() -> None:
                               f"אמור להיות: {am.get('expected')}")
                 elif h.get("connected"):
                     state = "ok"
+                    if time.time() - last_probe_at >= probe_s:
+                        last_probe_at = time.time()
+                        from social import noa_ops as _noa_ops_wa
+                        _pr = await _noa_ops_wa.probe_owner_channel()
+                        probe_dead = (_pr["probe_ok"] is False and _noa_ops_wa._looks_dead(_pr["probe_err"]))
+                        probe_detail = _pr["probe_err"] or ""
+                    if probe_dead:
+                        state = "session_dead"
+                        detail = f"round-trip לשרתי WhatsApp נכשל: {probe_detail}"
                 elif h.get("awaiting_qr_scan"):
                     state = "awaiting_qr"
                 else:
@@ -1449,9 +1466,15 @@ async def _whatsapp_link_monitor_loop() -> None:
             except Exception as exc:
                 state = "unreachable"
                 detail = f"{type(exc).__name__}: {exc}"
+                if probe_dead:  # crash-looping bridge whose last authenticated probe already failed
+                    state = "session_dead"
+                    detail = f"הגשר מופעל מחדש; בדיקה מאומתת אחרונה נכשלה: {probe_detail} ({type(exc).__name__})"
 
             now = time.time()
-            changed = state != last_state
+            # unreachable/session_dead are one "link down" class: a crash-looping bridge flips between them
+            # every few minutes, and each flip must not be a new alert (re-alert stays on realert_s).
+            _cls = lambda st: "link_down" if st in ("unreachable", "session_dead") else st  # noqa: E731
+            changed = _cls(state) != _cls(last_state)
             stale = (now - last_alert) >= realert_s
 
             if state != "ok" and (changed or stale):
@@ -1464,6 +1487,12 @@ async def _whatsapp_link_monitor_loop() -> None:
                                     "וסרוק מהטלפון של העסק (972532426920)."),
                     "disconnected": ("🔴 WhatsApp מנותק",
                                      "הגשר פועל אך אינו מחובר לוואטסאפ."),
+                    "session_dead": ("🔴 WhatsApp — הגשר מדווח 'מחובר' אך ההתחברות נדחתה",
+                                     "שאילתה מאומתת לשרתי WhatsApp נכשלה — אף הודעה לא נשלחת ולא מתקבלת "
+                                     "(התראות, אישורים ולקוחות).\n\n"
+                                     "לתיקון, הרץ בשרת:\n"
+                                     "bash /opt/autosparefinder/whatsapp-bridge/show_qr.sh\n"
+                                     "וסרוק מהטלפון של העסק (972532426920)."),
                     "wrong_account": ("🚨 WhatsApp מחובר לחשבון הלא נכון",
                                       "לקוחות שכותבים למספר העסקי לא מגיעים אלינו."),
                     "unreachable": ("🔴 גשר הוואטסאפ אינו מגיב",
@@ -2771,9 +2800,13 @@ async def _group_scan_loop():
         return
 
     # Stagger: offset 2h after startup so it doesn't compete with harvester warmup
-    await asyncio.sleep(7200)
+    # (SOCIAL_GROUP_SCAN_START_DELAY_S lets an operator shorten it for a bounded verification run).
+    await asyncio.sleep(int(os.getenv("SOCIAL_GROUP_SCAN_START_DELAY_S", "7200")))
 
     while True:
+        _cycle_started = datetime.now(timezone.utc)
+        _drafts_saved = _dup_events = _draft_failures = _budget_skipped = 0
+        _autonomous_outcomes: dict = {}
         try:
             # ── Discovery sync (root-fix 2026-09-19) ──────────────────────────
             # group_targets was a stale one-time snapshot — nothing kept it in
@@ -2851,16 +2884,31 @@ async def _group_scan_loop():
                 try:
                     from social.facebook_browser.group_agent import GroupAgent as _DraftGroupAgent
                     from social.facebook_browser.group_scanner import _save_draft as _save_group_draft
+                    from social import noa_ops as _noa_ops
+                    _draft_budget = _noa_ops.draft_budget_per_cycle()
+                    _drafts_attempted = 0
                     async with async_session_factory() as draft_db:
-                        for d in discoveries:
+                        # Best-relevance first, so the per-cycle LLM budget is spent where it matters.
+                        for d in sorted(discoveries, key=lambda x: -(x.get("relevance_score") or 0)):
                             if d.get("suggested_action") not in ("comment", "post"):
                                 continue
+                            # Never spend an LLM call on a post that already has a live/failed draft
+                            # (rescans of the same visible posts previously re-drafted them every cycle).
+                            if await _noa_ops.has_active_draft(draft_db, d.get("post_url", "")):
+                                _dup_events += 1
+                                continue
+                            if _drafts_attempted >= _draft_budget:
+                                _budget_skipped += 1
+                                continue
+                            _drafts_attempted += 1
                             try:
                                 draft_text = await _DraftGroupAgent().draft_group_comment(d)
                             except Exception as exc:
                                 logger.warning("[group_scan] draft_group_comment failed: %s", exc)
+                                _draft_failures += 1
                                 continue
                             if not draft_text:
+                                _draft_failures += 1
                                 continue
                             saved = await _save_group_draft(
                                 draft_db,
@@ -2872,6 +2920,14 @@ async def _group_scan_loop():
                             )
                             if saved:
                                 d["draft_comment"] = draft_text
+                                _drafts_saved += 1
+                                # Phase 2 hook: same claim+post path as the owner command; returns
+                                # 'disabled' immediately while NOA_ENGAGEMENT_AUTOREPLY is off.
+                                _out = await _noa_ops.maybe_autonomous_group_post(draft_db, d.get("post_url", ""))
+                                _k = _out.split(":")[0]
+                                _autonomous_outcomes[_k] = _autonomous_outcomes.get(_k, 0) + 1
+                            else:
+                                _dup_events += 1
                 except Exception as exc:
                     logger.error("[group_scan] draft+persist handoff failed (discoveries still reported): %s", exc)
 
@@ -2885,6 +2941,28 @@ async def _group_scan_loop():
             # (groups_selected) or how many completed without error (groups_fetched).
             groups_scanned = result.data.get("groups_attempted", 0)
             session_failed = bool(result.data.get("session_failed"))
+
+            # Persist this cycle (noa_scan_runs) - the only durable source for scan volume,
+            # duplicate-prevention and session-failure metrics (EOD + release readiness).
+            try:
+                from social import noa_ops as _noa_ops_rec
+                _tel = result.data.get("telemetry", {}) or {}
+                async with async_session_factory() as _run_db:
+                    await _noa_ops_rec.record_scan_run(
+                        _run_db, "group", _cycle_started,
+                        items_scanned=_tel.get("scored", 0), relevant=len(discoveries),
+                        rejected=(_tel.get("zero_score", 0) or 0) + (_tel.get("near_misses", 0) or 0),
+                        drafted=_drafts_saved, duplicates=_dup_events, failures=_draft_failures,
+                        session_failed=session_failed,
+                        error=(result.error if getattr(result, "status", "") == "error" else None),
+                        detail={"groups_selected": result.data.get("groups_selected"),
+                                "groups_attempted": groups_scanned,
+                                "groups_fetched": result.data.get("groups_fetched"),
+                                "telemetry": _tel, "draft_budget_skipped": _budget_skipped,
+                                "autonomous": _autonomous_outcomes},
+                    )
+            except Exception as exc:
+                logger.warning("[group_scan] scan-run record failed: %s", exc)
 
             if session_failed:
                 # Root fix (2026-09-19): this branch never existed before — an
@@ -2944,6 +3022,13 @@ async def _group_scan_loop():
                 logger.info("[group_scan] sent %d discoveries to owner", len(discoveries))
         except Exception as exc:
             logger.error("[group_scan] error: %s", exc)
+            try:  # a crashed cycle is a scanner failure and must be countable, not silent
+                from social import noa_ops as _noa_ops_err
+                async with async_session_factory() as _err_db:
+                    await _noa_ops_err.record_scan_run(_err_db, "group", _cycle_started, failures=1,
+                                                       error=f"cycle_exception:{str(exc)[:200]}")
+            except Exception:
+                pass
         await asyncio.sleep(interval)
 
 
@@ -3337,6 +3422,18 @@ async def notify_owner(
                 pass
         elif not result.get("ok"):
             print(f"[notify_owner] send failed ({alert_key or category}): {result.get('error')}")
+        # Record the REAL delivery outcome (skip quiet-hours queueing, which proves nothing about the
+        # channel). The bridge's /health reports "connected" with a logged-out session, so actual send
+        # results are the only trustworthy signal; NOA readiness check 13 reads this.
+        if not result.get("queued"):
+            try:
+                import json as _dj
+                _r = await get_redis()
+                await _r.set("autospare:owner_delivery:last", _dj.dumps({
+                    "ts": datetime.now(timezone.utc).isoformat(), "ok": bool(result.get("ok")),
+                    "error": None if result.get("ok") else str(result.get("error"))[:120]}), ex=30 * 86400)
+            except Exception:
+                pass
     except Exception as exc:
         print(f"[notify_owner] error ({alert_key or category}): {exc}")
 
@@ -3543,8 +3640,8 @@ async def _noa_engagement_loop():
     from BACKEND_DATABASE_MODELS import async_session_factory
     from social import engagement as _eng
 
+    from social import noa_ops as _noa_ops
     interval = int(os.getenv("NOA_ENGAGEMENT_INTERVAL_S", "900"))
-    autoreply = os.getenv("NOA_ENGAGEMENT_AUTOREPLY", "0") == "1"
     await asyncio.sleep(30)  # let startup settle
     while True:
         if os.getenv("NOA_ENGAGEMENT_ENABLED", "1") != "1":
@@ -3555,11 +3652,26 @@ async def _noa_engagement_loop():
             logger.info("[noa_engagement] no social platform configured (need FACEBOOK_PAGE_TOKEN); idling")
             await asyncio.sleep(max(interval, 3600))
             continue
+        _cycle_started = datetime.now(timezone.utc)
         try:
             async with async_session_factory() as db:
+                # Phase gate, evaluated EVERY cycle (never cached at startup): autonomous only when the
+                # operator flag is on AND the readiness checks pass; otherwise owner approval is mandatory.
+                autoreply, _gate_why = await _noa_ops.autonomous_gate(db)
                 summary = await _eng.poll_once(db, autoreply=autoreply)
                 # draft items recorded by a webhook (Telegram) rather than polled
                 wsum = await _eng.draft_new_items(db, autoreply=autoreply)
+                _fbs = summary.get("fetch_status", {}).get("facebook", {"ok": False, "error": "not_polled"})
+                await _noa_ops.record_scan_run(
+                    db, "page", _cycle_started,
+                    items_scanned=summary.get("fetched", {}).get("facebook", 0),
+                    relevant=summary.get("new", 0), drafted=summary.get("drafted", 0) + wsum.get("drafted", 0),
+                    duplicates=summary.get("duplicates", 0),
+                    failures=len(summary.get("errors", [])) + len(wsum.get("errors", [])),
+                    error=(None if _fbs.get("ok") else str(_fbs.get("error"))[:200]),
+                    detail={"facebook_ok": bool(_fbs.get("ok")), "platforms": summary.get("platforms"),
+                            "auto_sent": summary.get("auto_sent", 0), "autonomous": bool(autoreply)},
+                )
             logger.info("[noa_engagement] %s webhook=%s", summary, wsum)
             drafted = summary.get("drafted", 0) + wsum.get("drafted", 0)
             if drafted and not autoreply:
@@ -4369,6 +4481,17 @@ async def _noa_eod_report_loop():
                     FROM social_posts WHERE created_at >= :ws
                 """), {"ws": window_start})).fetchone()
 
+            ops_block = ""
+            try:  # month-long observability: scan volume, approvals, failures, latency, readiness
+                from social import noa_ops as _noa_ops_eod
+                async with async_session_factory() as _ops_db:
+                    ops_block = "\n\n" + _noa_ops_eod.format_metrics(
+                        await _noa_ops_eod.daily_metrics(_ops_db, window_start),
+                        await _noa_ops_eod.readiness_report(_ops_db))
+            except Exception as exc:
+                logger.warning("noa_eod_report_loop: ops metrics unavailable: %s", exc)
+                ops_block = "\n\nOPERATIONS: metrics unavailable this cycle"
+
             notable: list[str] = []
             try:
                 if not engagement.fb_configured():
@@ -4396,6 +4519,7 @@ async def _noa_eod_report_loop():
                 f"- Approved but not fully published: {overall.approved_not_published}\n\n"
                 "NOTABLE\n"
                 + ("\n".join(f"- {n}" for n in notable) if notable else "- (none)")
+                + ops_block
             )
 
             today_key = datetime.now(APP_LOCAL_TZ).date().isoformat()
@@ -6033,6 +6157,8 @@ from routes.thumbnails import router as thumbnails_router
 app.include_router(thumbnails_router)
 from routes.connect import router as connect_router
 app.include_router(connect_router)
+from routes.noa_ops_routes import router as noa_ops_router
+app.include_router(noa_ops_router)
 from routes.reviews import router as reviews_router
 app.include_router(reviews_router)
 from routes.vehicles import router as vehicles_router

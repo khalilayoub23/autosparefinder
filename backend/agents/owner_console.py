@@ -27,9 +27,12 @@ Last Updated: 2026-07-23
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from typing import Any, Dict, List
+
+log = logging.getLogger("owner_console")
 
 from sqlalchemy import text as _sql
 
@@ -729,6 +732,7 @@ _HELP = (
     "• *גרופים* — קבוצות פייסבוק (ממתינות/מאושרות) · *אשרגרופ / דחהגרופ <מזהה>* — אשר/דחה קבוצה\n"
     "• *סרוק קבוצות* — NOA תגלה קבוצות + תנסח תגובות על פוסטים רלוונטיים\n"
     "• *תגובות-גרופ* — תגובות שנוסחו ממתינות לאישור · *אשרתגובה / דלגתגובה <מזהה>*\n"
+    "• *מוכנות* — בדיקת מוכנות NOA למצב אוטונומי (בדיקה בלבד) · *מדדים* — מדדי הפעילות ב-24 שעות\n"
     "• *קבוצות* — הצג קבוצות וואטסאפ · *קבוצת עדכונים <מספר>* — "
     "הפנה את כל עדכוני המערכת/הסוכנים לקבוצה נפרדת (כדי שהצ׳אט כאן יישאר לשיחה בלבד)\n\n"
     "*3 תפריטי בקרה:*\n"
@@ -1066,10 +1070,10 @@ async def _engagement_reply(db, token: str, override: str = "") -> str:
     text = (override or item.get("reply_text") or "").strip()
     if not text:
         return "אין טקסט לשליחה. כתוב *ענה <מזהה> הטקסט שלך*."
-    res = await _eng.send_reply(item["platform"], str(item["external_id"]), text)
+    from social import noa_ops
+    res = await noa_ops.send_page_reply(db, item, text, actor="owner")
     if not res.get("ok"):
         return f"⚠️ שליחה נכשלה: {str(res.get('error'))[:140]}"
-    await _eng.mark_replied(db, item["id"], res.get("id"))
     return f"✅ נשלחה תשובה ב-{item['platform']} ({_short(item['id'])})."
 
 
@@ -1362,51 +1366,23 @@ async def _fb_comment_drafts_list(db) -> str:
 
 
 async def _fb_comment_approve(db, token: str) -> str:
-    import sqlalchemy as sa
+    """Owner approval of a group comment draft. Uses the SAME claim+post path as autonomous mode
+    (social/noa_ops.py); only the recorded actor differs. Outcome is audited and reported back."""
     if not token:
         return "ציין מזהה: *אשרתגובה <מזהה>*"
-    res = await db.execute(sa.text("""
-        SELECT d.id::text, d.group_target_id::text, d.post_url, d.draft_comment, t.group_url
-        FROM group_comment_drafts d
-        JOIN group_targets t ON t.id = d.group_target_id
-        WHERE d.status='pending_approval'
-          AND (d.id::text LIKE :tok OR d.id::text = :full)
-        LIMIT 1
-    """), {"tok": f"{token}%", "full": token})
-    row = res.fetchone()
-    if not row:
+    from social import noa_ops
+    claimed = await noa_ops.claim_group_draft(db, token, actor="owner")
+    if not claimed:
         return "לא מצאתי תגובה ממתינה עם המזהה הזה. כתוב *תגובות-גרופ* לרשימה."
-    did, group_target_id, post_url, draft, group_url = row
-    # Mark as approved immediately (fire-and-forget the actual browser post)
-    await db.execute(sa.text("""
-        UPDATE group_comment_drafts
-        SET status='approved', approved_at=NOW()
-        WHERE id=CAST(:id AS uuid)
-    """), {"id": did})
-    await db.commit()
-    # Submit the comment via browser in background
+
     async def _post_comment():
         try:
-            from social.facebook_browser.group_agent import GroupAgent
-            agent = GroupAgent()
-            result = await agent.submit_approved_comment(
-                post_url=post_url,
-                comment_text=draft,
-                group_url=group_url,
-            )
-            status = "posted" if result.get("ok") else "pending_approval"
-            from BACKEND_DATABASE_MODELS import async_session_factory
-            async with async_session_factory() as _db:
-                import sqlalchemy as _sa
-                await _db.execute(_sa.text(
-                    "UPDATE group_comment_drafts SET status=:s WHERE id=CAST(:id AS uuid)"
-                ), {"s": status, "id": did})
-                await _db.commit()
+            await noa_ops.post_claimed_group_draft(claimed, actor="owner")
         except Exception as exc:
             log.error("_fb_comment_approve background post failed: %s", exc)
     import asyncio as _aio
     _aio.create_task(_post_comment())
-    return f"✅ אישרת את התגובה — NOA שולחת אותה עכשיו ל-Facebook.\n\n💬 _{draft[:150]}_"
+    return f"✅ אישרת את התגובה — NOA שולחת אותה עכשיו ל-Facebook (תקבל הודעה עם התוצאה).\n\n💬 _{claimed['draft'][:150]}_"
 
 
 async def _fb_comment_skip(db, token: str) -> str:
@@ -1423,7 +1399,7 @@ async def _fb_comment_skip(db, token: str) -> str:
     if not row:
         return "לא מצאתי תגובה ממתינה."
     await db.execute(sa.text(
-        "UPDATE group_comment_drafts SET status='skipped' WHERE id=CAST(:id AS uuid)"
+        "UPDATE group_comment_drafts SET status='skipped', skipped_at=NOW() WHERE id=CAST(:id AS uuid)"
     ), {"id": row[0]})
     await db.commit()
     return "⏭️ דילגתי על התגובה."
@@ -1622,6 +1598,14 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp") -> 
         return await _fb_comment_skip(db, m_scd.group(2) or "")
     if low in ("סרוק קבוצות", "scan groups", "scan-groups", "סריקת קבוצות"):
         return await _fb_scan_groups_trigger()
+    if low in ("מוכנות", "readiness", "noa-readiness", "מוכנות noa"):
+        from social import noa_ops
+        return noa_ops.format_readiness(await noa_ops.readiness_report(db))
+    if low in ("מדדים", "noa-stats", "noa stats", "מדדי noa"):
+        from social import noa_ops
+        from datetime import datetime, timedelta
+        return noa_ops.format_metrics(await noa_ops.daily_metrics(db, datetime.utcnow() - timedelta(hours=24)),
+                                      await noa_ops.readiness_report(db))
 
     # ── conversational path (AVI / NOA in owner mode) ─────────────────────────
     # Call the LLM DIRECTLY (not via get_agent): the router_agent is a JSON classifier

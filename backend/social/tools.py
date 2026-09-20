@@ -29,6 +29,7 @@ Last Updated: 2026-08-06
 from __future__ import annotations
 
 import asyncio
+import os
 import logging
 import uuid
 from datetime import datetime
@@ -294,15 +295,49 @@ async def facebook_group_scan(
             )
         if pending_count:
             log.info("facebook_group_scan: scanning %d pending groups in addition to approved", pending_count)
+        # Optional operator cap (0/unset = scan everything). Lets a bounded live verification
+        # cycle run through the real production loop without scanning the whole population.
+        _cap = int(os.getenv("SOCIAL_GROUP_SCAN_MAX_GROUPS", "0") or 0)
+        if _cap > 0:
+            approved = approved[:_cap]
 
         from social.facebook_browser import GroupAgent
         agent = GroupAgent()
-        discoveries = await agent.scan_groups(approved)
+        scan_result = await agent.scan_groups(approved)
 
-        res = ToolResult(
-            status="success", analytics_tracking_id=tracking,
-            data={"discoveries": discoveries, "groups_scanned": len(approved)}
-        )
+        discoveries = scan_result["discoveries"]
+        session_failed = scan_result.get("session_failed", False)
+        groups_selected = scan_result.get("groups_selected", len(approved))
+        groups_attempted = scan_result.get("groups_attempted", 0)
+        groups_fetched = scan_result.get("groups_fetched", 0)
+
+        if session_failed:
+            # Authentication failure is NOT a successful empty scan.
+            # Returning status="error" here ensures the caller can distinguish
+            # "Facebook auth broken" from "scanned all groups, found 0 posts".
+            res = ToolResult(
+                status="error", analytics_tracking_id=tracking,
+                error="Facebook session not authenticated — re-login required",
+                data={
+                    "session_failed": True,
+                    "groups_selected": groups_selected,
+                    "groups_attempted": 0,
+                    "groups_fetched": 0,
+                    "discoveries": [],
+                    "telemetry": scan_result.get("telemetry", {}),
+                },
+            )
+        else:
+            res = ToolResult(
+                status="success", analytics_tracking_id=tracking,
+                data={
+                    "discoveries": discoveries,
+                    "groups_selected": groups_selected,
+                    "groups_attempted": groups_attempted,
+                    "groups_fetched": groups_fetched,
+                    "telemetry": scan_result.get("telemetry", {}),
+                },
+            )
     except Exception as exc:
         log.error("facebook_group_scan error: %s", exc)
         res = ToolResult(status="error", analytics_tracking_id=tracking, error=str(exc)[:200])

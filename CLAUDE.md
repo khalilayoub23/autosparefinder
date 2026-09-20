@@ -1685,7 +1685,7 @@ asyncio.run(main())
 | **Disk** | 145 GB virtual disk (QEMU, SSD-backed by Contabo), 109 GB used / 36 GB free |
 | **OS** | Ubuntu 24.04 LTS, kernel 6.8.0-136 |
 | **Hosting** | Contabo standard VPS |
-| **IP / SSH** | 161.97.158.177, port 63159 |
+| **IP / SSH** | 207.180.217.129, port 22 (corrected 2026-09-18 — verified live via `ip addr show` + `ss -tlnp`; the previous 161.97.158.177:63159 was stale and not reachable) |
 
 **Container memory limits (post-upgrade 2026-07-20)**:
 | Container | Limit | Notes |

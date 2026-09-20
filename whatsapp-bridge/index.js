@@ -8,13 +8,17 @@ const {
   fetchLatestBaileysVersion,
   normalizeMessageContent,
   downloadContentFromMessage,
+  BufferJSON,
 } = baileys
 
 import { Boom } from '@hapi/boom'
 import axios from 'axios'
 import express from 'express'
 import qrcode from 'qrcode-terminal'
+import path from 'path'
+import { atomicWriteFile } from './atomic_write.js'
 import { installSafeConsoleFilter, createSafeBaileysLogger } from './safe_logging.js'
+import { installOrphanTimeoutGuard, createConnectionState, socketUnavailable, healthSnapshot, safeListenerSend } from './bridge_lifecycle.js'
 
 // Root-fix 2026-09-12 (WhatsApp logging/telemetry hardening): installed as
 // early as possible, before any Signal session operation can occur, so the
@@ -26,14 +30,17 @@ import { installSafeConsoleFilter, createSafeBaileysLogger } from './safe_loggin
 installSafeConsoleFilter()
 
 const BACKEND_WEBHOOK = process.env.BACKEND_URL || 'http://backend:8000/api/v1/webhooks/whatsapp'
-const BRIDGE_PORT = 3001
+const BRIDGE_PORT = Number.parseInt(process.env.BRIDGE_PORT || '3001', 10) || 3001
+// Overridable ONLY so the regression harness can run the real index.js without touching the live
+// qr.txt / connection_events.log; production leaves it unset (=> /app, the bind-mounted bridge dir).
+const APP_DIR = process.env.BRIDGE_APP_DIR || '/app'
 
 // Connection-event log (added 2026-07-05): persistent, timestamped record of
 // every connect/disconnect/watchdog action so disconnection patterns can be
 // tracked over time. Lives on the bind mount → survives restarts, readable
 // from the host at /opt/autosparefinder/whatsapp-bridge/connection_events.log
 import fs from 'fs'
-const EVENT_LOG = '/app/connection_events.log'
+const EVENT_LOG = `${APP_DIR}/connection_events.log`
 function logEvent(event, detail = '') {
   const line = `${new Date().toISOString()} | ${event}${detail ? ' | ' + detail : ''}\n`
   console.log('[ConnLog]', line.trim())
@@ -52,6 +59,9 @@ function logEvent(event, detail = '') {
   }
 }
 logEvent('PROCESS_START', `pid=${process.pid}`)
+// Contain ONLY Baileys' orphaned query timeout (see bridge_lifecycle.js); every other unhandled
+// rejection still terminates the process. Timeouts stay observable as ORPHAN_QUERY_TIMEOUT events.
+installOrphanTimeoutGuard({ log: logEvent })
 
 // Liveness watchdog (added 2026-07-05): Baileys sockets can die SILENTLY —
 // no 'close' event fires, the process keeps running, and inbound messages
@@ -88,7 +98,33 @@ function startLivenessWatchdog(sock) {
 const logger = createSafeBaileysLogger()
 const MAX_MEDIA_BYTES = Math.max(256000, Number.parseInt(process.env.WA_MEDIA_MAX_BYTES || '6291456', 10) || 6291456)
 
+// Bounded outbound message cache for Baileys retry recovery (Defect B fix 2026-09-10).
+// When the recipient's WhatsApp fails to decrypt a message it sends a retry receipt back
+// to the sender. Baileys calls getMessage({ remoteJid, fromMe, id }) on the sender side;
+// if that returns a truthy value it calls relayMessage() with it.  The old stub returned
+// { conversation: '' } for every message ID — including unknown ones — which caused
+// Baileys to relay an empty body on every retry, producing "Waiting for this message".
+// Fix: cache the proto.IMessage payload (sent.message) by its ID (sent.key.id) after
+// each successful outbound send.  Unknown IDs return null, which makes Baileys log
+// "message not available" and skip the relay — the correct failure mode.
+// Capacity: 500 ≈ 10 days at normal production rate (~2 msgs/hour).  A restart clears
+// the cache; any message sent before the restart will return null on retry (skip relay),
+// which is correct — we cannot reconstruct what was sent from memory alone.
+const MAX_MSG_CACHE = 500
+const msgCache = new Map()  // messageId (string) → proto.IMessage
+
+function cacheOutboundMessage(msgId, protoMessage) {
+  if (!msgId || !protoMessage) return
+  if (msgCache.has(msgId)) return       // first write wins; no overwrite on resend
+  if (msgCache.size >= MAX_MSG_CACHE) {
+    msgCache.delete(msgCache.keys().next().value)   // evict oldest (Map insertion order)
+  }
+  msgCache.set(msgId, protoMessage)
+}
+
 let waSocket = null
+// Connection state derived from connection.update events only (never from stored credentials).
+const connState = createConnectionState()
 // Raw payload of the pending link QR, or null once authenticated. Kept in
 // memory + /app/qr.txt so it can be rendered as an image; never served over
 // HTTP (scanning it links a phone to this bridge).
@@ -132,6 +168,10 @@ async function downloadInboundMedia(messageNode, mediaType) {
 }
 
 app.post('/send', async (req, res) => {
+  const unavailable = socketUnavailable(connState, waSocket)
+  if (unavailable) {
+    return res.status(503).json({ ok: false, error: unavailable })
+  }
   const {
     to,
     text,
@@ -148,8 +188,23 @@ app.post('/send', async (req, res) => {
   const hasImage = typeof image_base64 === 'string' && image_base64.trim().length > 0
   const hasAudio = typeof audio_base64 === 'string' && audio_base64.trim().length > 0
 
-  if (!waSocket || !to || (!hasText && !hasImage && !hasAudio)) {
-    return res.status(400).json({ ok: false, error: 'Missing params or socket not ready' })
+  // Root-fix 2026-09-12: `waSocket` is created (non-null) BEFORE authentication
+  // completes and stays non-null for the entire time the bridge sits at the QR
+  // screen — same defect already identified and fixed for /health, /qr and
+  // /groups (see the comment above the /qr route), but never applied here.
+  // Calling sendMessage() on an unauthenticated socket reaches Baileys'
+  // internals at authState.creds.me.id (messages-send.js, no optional
+  // chaining there) and throws "Cannot read properties of undefined (reading
+  // 'id')" — a confusing 500 instead of a clear, fast, actionable failure.
+  // Checking `.user` (only set once Baileys confirms authentication) matches
+  // the already-correct /health check exactly.
+  if (!waSocket || !waSocket.user || !to || (!hasText && !hasImage && !hasAudio)) {
+    return res.status(503).json({
+      ok: false,
+      error: waSocket && !waSocket.user
+        ? 'WhatsApp not authenticated — awaiting QR scan'
+        : 'Missing params or socket not ready',
+    })
   }
 
   try {
@@ -190,6 +245,7 @@ app.post('/send', async (req, res) => {
       }
       console.log('[Bridge] Sending audio to', jid, '| bytes:', audioBuffer.length)
       sent = await waSocket.sendMessage(jid, payload)
+      cacheOutboundMessage(sent?.key?.id, sent?.message)
       if (hasText) {
         sent = await waSocket.sendMessage(jid, { text: text.trim() })
       }
@@ -198,6 +254,7 @@ app.post('/send', async (req, res) => {
       sent = await waSocket.sendMessage(jid, { text })
     }
 
+    cacheOutboundMessage(sent?.key?.id, sent?.message)
     console.log('[Bridge] Sent OK to', jid)
     // Return the message key so the caller can later delete-for-everyone (used to
     // remove a 2FA code from the chat once it's been verified). Non-breaking add.
@@ -252,22 +309,23 @@ app.get('/qr.png', async (_, res) => {
   }
 })
 
-app.get('/health', (_, res) => res.json({
-  ok: true,
-  connected: !!(waSocket && waSocket.user),
-  awaiting_qr_scan: latestQR !== null,
-  jid: waSocket?.user?.id || null,
-  expected_number: EXPECTED_NUMBER,
-  // Non-null => the bridge is linked to the WRONG WhatsApp account. Surfaced
-  // here so the backend health monitor can alert instead of it going unnoticed.
-  account_mismatch: accountMismatch,
-}))
+// `connected` is USABLE connectivity (event-derived state + live ws), not the mere presence of stored
+// credentials: `waSocket.user` stays populated from creds.json after WhatsApp rejects the login, which
+// made this report connected=true through two logged-out outages. Cheap: reads in-memory state only.
+app.get('/health', (_, res) => res.json(healthSnapshot({
+  conn: connState,
+  sock: waSocket,
+  latestQR,
+  expectedNumber: EXPECTED_NUMBER,
+  accountMismatch,
+})))
 
 // List the WhatsApp groups this account participates in — so the owner can pick which
 // one receives system/agent updates (2026-08-04). Returns [{jid, subject, size}].
 app.get('/groups', async (_, res) => {
-  if (!waSocket || !waSocket.user) {
-    return res.status(503).json({ ok: false, error: 'not connected' })
+  const unavailable = socketUnavailable(connState, waSocket)
+  if (unavailable) {
+    return res.status(503).json({ ok: false, error: unavailable })
   }
   try {
     const groups = await waSocket.groupFetchAllParticipating()
@@ -288,8 +346,9 @@ app.get('/groups', async (_, res) => {
 // his phone. Body: { subject, participants: ["9725XXXXXXXX", ...] }.
 // Returns { ok, jid, subject }.
 app.post('/group/create', async (req, res) => {
-  if (!waSocket || !waSocket.user) {
-    return res.status(503).json({ ok: false, error: 'not connected' })
+  const unavailable = socketUnavailable(connState, waSocket)
+  if (unavailable) {
+    return res.status(503).json({ ok: false, error: unavailable })
   }
   const { subject, participants } = req.body || {}
   if (!subject || !Array.isArray(participants) || participants.length === 0) {
@@ -309,9 +368,13 @@ app.post('/group/create', async (req, res) => {
 })
 
 app.post('/typing', async (req, res) => {
+  if (socketUnavailable(connState, waSocket)) {
+    return res.status(503).json({ ok: false })
+  }
   const { to, reply_jid } = req.body
-  if (!waSocket || (!to && !reply_jid)) {
-    return res.status(400).json({ ok: false })
+  // Same readiness-check root-fix as /send (2026-09-12) — see its comment.
+  if (!waSocket || !waSocket.user || (!to && !reply_jid)) {
+    return res.status(503).json({ ok: false })
   }
   try {
     const jid = reply_jid || (() => {
@@ -331,9 +394,14 @@ app.post('/typing', async (req, res) => {
 // failed delete never affects login (the code is already used/expired). Expects the
 // full message key returned by /send: { remoteJid, id, fromMe }.
 app.post('/delete', async (req, res) => {
+  const unavailable = socketUnavailable(connState, waSocket)
+  if (unavailable) {
+    return res.status(503).json({ ok: false, error: unavailable })
+  }
   const { key } = req.body || {}
-  if (!waSocket || !key || !key.remoteJid || !key.id) {
-    return res.status(400).json({ ok: false, error: 'Missing key or socket not ready' })
+  // Same readiness-check root-fix as /send (2026-09-12) — see its comment.
+  if (!waSocket || !waSocket.user || !key || !key.remoteJid || !key.id) {
+    return res.status(503).json({ ok: false, error: 'Missing key or socket not ready' })
   }
   try {
     await waSocket.sendMessage(key.remoteJid, { delete: key })
@@ -349,8 +417,19 @@ app.listen(BRIDGE_PORT, () => {
   console.log('[Bridge] Listening on port ' + BRIDGE_PORT)
 })
 
+// Root-fix 2026-09-12: kept as its own named constant (not just './auth_info'
+// inlined at each use) so the auth-state loader and the atomic creds writer
+// below are provably pointed at the EXACT SAME directory/file — see
+// atomic_write.js for why the temp file and the target must share a filesystem.
+const AUTH_DIR = './auth_info'
+const CREDS_PATH = path.join(AUTH_DIR, 'creds.json')
+
 async function startBot() {
-  const { state, saveCreds } = await useMultiFileAuthState('./auth_info')
+  // `saveCreds` (Baileys' own non-atomic writer — see atomic_write.js's
+  // docstring for the full forensic background) is intentionally NOT used
+  // below. `state.keys` (sessions, pre-keys, app-state-sync) is untouched —
+  // this fix is scoped to the one file that was actually proven vulnerable.
+  const { state } = await useMultiFileAuthState(AUTH_DIR)
   const { version } = await fetchLatestBaileysVersion()
 
   // Connection-health config (root fix 2026-07-05): with the defaults, a
@@ -359,12 +438,13 @@ async function startBot() {
   // Same disease we fixed for Postgres with TCP keepalives. These settings
   // make the library itself detect a dead socket within ~35s and fire the
   // normal close→reconnect path (graceful, no process restart needed):
+  connState.onConnecting()
   const sock = makeWASocket({
     version,
     auth: state,
     logger,
     printQRInTerminal: false,
-    getMessage: async () => ({ conversation: '' }),
+    getMessage: async (key) => msgCache.get(key.id) ?? null,
     keepAliveIntervalMs: 15000,     // probe every 15s (default 30s)
     connectTimeoutMs: 30000,        // fail dead connects fast
     defaultQueryTimeoutMs: 60000,   // never wait forever on a query
@@ -386,7 +466,7 @@ async function startBot() {
         const code = await sock.requestPairingCode(EXPECTED_NUMBER)
         const pretty = String(code).match(/.{1,4}/g).join('-')
         latestPairCode = pretty
-        try { fs.writeFileSync('/app/pair_code.txt', pretty) } catch (e) {}
+        try { fs.writeFileSync(`${APP_DIR}/pair_code.txt`, pretty) } catch (e) {}
         logEvent('PAIR_CODE', `issued for ${EXPECTED_NUMBER}`)
         console.log(
           `\n🔗 PAIRING CODE for ${EXPECTED_NUMBER}:  ${pretty}\n` +
@@ -403,6 +483,7 @@ async function startBot() {
 
   sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
     if (qr) {
+      connState.onQr()
       logEvent('QR_DISPLAYED', 'awaiting scan')
       console.log('\n📱 Scan QR with WhatsApp:\n')
       qrcode.generate(qr, { small: true })
@@ -412,22 +493,24 @@ async function startBot() {
       // deliberately NOT an HTTP endpoint: whoever scans this QR links THEIR
       // phone to this bridge, so it must never be reachable over the network.
       latestQR = qr
-      try { fs.writeFileSync('/app/qr.txt', qr) } catch (e) { /* non-fatal */ }
+      try { fs.writeFileSync(`${APP_DIR}/qr.txt`, qr) } catch (e) { /* non-fatal */ }
     }
     if (connection === 'close') {
       const code = new Boom(lastDisconnect?.error)?.output?.statusCode
       const reconnect = code !== DisconnectReason.loggedOut
+      connState.onClose(code, lastDisconnect?.error?.message)
       logEvent('DISCONNECTED', `code=${code} reason=${lastDisconnect?.error?.message || 'unknown'} reconnect=${reconnect}`)
       console.log('[Bridge] Closed (' + code + '). Reconnect: ' + reconnect)
       if (reconnect) startBot()
     }
     if (connection === 'open') {
+      connState.onOpen()
       logEvent('CONNECTED')
       console.log('✅ WhatsApp connected')
       latestQR = null
       latestPairCode = null
-      try { fs.existsSync('/app/qr.txt') && fs.unlinkSync('/app/qr.txt') } catch (e) {}
-      try { fs.existsSync('/app/pair_code.txt') && fs.unlinkSync('/app/pair_code.txt') } catch (e) {}
+      try { fs.existsSync(`${APP_DIR}/qr.txt`) && fs.unlinkSync(`${APP_DIR}/qr.txt`) } catch (e) {}
+      try { fs.existsSync(`${APP_DIR}/pair_code.txt`) && fs.unlinkSync(`${APP_DIR}/pair_code.txt`) } catch (e) {}
 
       // WHICH ACCOUNT did we just link? A QR scan links whatever phone scanned
       // it, and nothing here previously checked. On 2026-07-29 the bridge was
@@ -454,7 +537,22 @@ async function startBot() {
     }
   })
 
-  sock.ev.on('creds.update', saveCreds)
+  // Root-fix 2026-09-12 (creds.json 0-byte forensic): `state.creds` is the
+  // SAME object Baileys mutates in place before firing this event — reading
+  // it here at call time always captures the current, complete credential
+  // state, exactly like the original saveCreds() closure did. Only the
+  // ON-DISK write changed: atomicWriteFile() replaces creds.json via a
+  // temp-file + fsync + rename sequence instead of Baileys' own direct,
+  // truncating writeFile() — see atomic_write.js. A write failure is logged,
+  // never thrown into the event emitter (an unhandled rejection here would
+  // crash the whole bridge process over a transient disk issue).
+  sock.ev.on('creds.update', () => {
+    const serialized = JSON.stringify(state.creds, BufferJSON.replacer)
+    atomicWriteFile(CREDS_PATH, serialized).catch((err) => {
+      logEvent('CREDS_SAVE_FAILED', err?.message || String(err))
+      console.error('[Bridge] Atomic creds save failed:', err?.message || err)
+    })
+  })
 
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return
@@ -562,7 +660,13 @@ async function startBot() {
         await axios.post(BACKEND_WEBHOOK, payload, { timeout: 90000 })
       } catch (err) {
         console.error('[Bridge] Backend error:', err.message)
-        await sock.sendMessage(jid, { text: 'מצטערים, אירעה שגיאה. נסה שוב בעוד רגע.' })
+        // Listener boundary: this runs inside an un-awaited async listener, so a dead-socket throw here
+        // used to become an unhandled rejection (process exit). Skip/contain expected dead-socket
+        // failures; any other error is re-thrown unchanged.
+        await safeListenerSend({
+          conn: connState, sock, jid, log: logEvent, what: 'inbound-error-fallback-reply',
+          payload: { text: 'מצטערים, אירעה שגיאה. נסה שוב בעוד רגע.' },
+        })
       }
     }
   })

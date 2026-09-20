@@ -940,6 +940,15 @@ class Order(PiiBase):
     deleted_at = Column(DateTime, nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    # Eurosender integration (sandbox-only, additive — see alembic_pii 0038).
+    # shipping_provider is NULL for every existing/synthetic-tracking order;
+    # only set to 'eurosender' by the adapter's own order-creation path.
+    eurosender_order_code = Column(String(100), nullable=True)
+    eurosender_status = Column(String(50), nullable=True, index=True)
+    # statuses: pending_creation, created, timeout_pending_reconciliation,
+    #           reconciled, label_ready, awaiting_customs, failed, cancelled
+    shipping_label_url = Column(String(500), nullable=True)
+    shipping_provider = Column(String(50), nullable=True, index=True)
 
     # Relationships
     user = relationship("User", back_populates="orders")
@@ -1038,6 +1047,9 @@ class SupplierPayment(PiiBase):
     paid_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    # Eurosender orderCode for this specific supplier's shipment (an order can
+    # span multiple suppliers/shipments) — sandbox-only, see alembic_pii 0038.
+    shipping_provider_ref = Column(String(100), nullable=True)
 
     order = relationship("Order", back_populates="supplier_payments")
 

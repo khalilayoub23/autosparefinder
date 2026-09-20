@@ -54,9 +54,9 @@ async def _upsert_discovered_groups(db, discovered: list[dict]) -> int:
         await db.execute(
             sa.text("""
                 INSERT INTO group_targets
-                    (platform, group_url, group_name, status, created_at)
+                    (id, platform, group_url, group_name, status, created_at)
                 VALUES
-                    ('facebook', :url, :name, 'pending', NOW())
+                    (gen_random_uuid(), 'facebook', :url, :name, 'pending', NOW())
             """),
             {"url": url, "name": name},
         )
@@ -96,19 +96,21 @@ async def _save_draft(db, group_id: str, post_url: str, post_text: str,
     """Insert draft; returns True if inserted, False if duplicate post_url."""
     import sqlalchemy as sa
     try:
-        await db.execute(
+        res = await db.execute(
             sa.text("""
                 INSERT INTO group_comment_drafts
                     (group_target_id, post_url, post_text, draft_comment, relevance_score, status, created_at)
                 VALUES
                     (CAST(:gid AS uuid), :url, :text, :draft, :score, 'pending_approval', NOW())
                 ON CONFLICT DO NOTHING
+                RETURNING id
             """),
             {"gid": group_id, "url": post_url[:500], "text": post_text[:300],
              "draft": draft[:300], "score": score},
         )
+        inserted = res.first() is not None  # ON CONFLICT DO NOTHING returns no row on a duplicate
         await db.commit()
-        return True
+        return inserted
     except Exception as exc:
         log.warning("group_scanner: save_draft failed for %s: %s", post_url[:60], exc)
         await db.rollback()
@@ -145,10 +147,15 @@ async def _load_all_discovered_groups(db) -> list[dict]:
     return [{"id": r[0], "group_url": r[1], "group_name": r[2]} for r in res.fetchall()]
 
 
-async def run_group_scanner(*, scan_limit: int = 129) -> dict:
+async def run_group_scanner(*, scan_limit: int | None = None) -> dict:
     """Run the full scan pipeline. Returns a summary dict.
 
-    scan_limit: max groups to scan for posts in one pass (default = all).
+    scan_limit: max groups to scan for posts in one pass. None (default) means
+    no cap — scan the full eligible population, whatever its current size.
+    A hardcoded 129 default previously capped scanning below the account's
+    real group count once discovery sync grew the population past it
+    (root-fixed 2026-09-19 — see the group discovery sync in
+    BACKEND_API_ROUTES._group_scan_loop for the full context).
     Scanning (reading) does not require group approval — only POSTING/COMMENTING does.
     """
     from social.facebook_browser.group_agent import GroupAgent
@@ -179,7 +186,7 @@ async def run_group_scanner(*, scan_limit: int = 129) -> dict:
 
         # ── Step 3: Load ALL groups for scanning (reading needs no approval) ──
         all_groups = await _load_all_discovered_groups(db)
-        to_scan = all_groups[:scan_limit]
+        to_scan = all_groups if scan_limit is None else all_groups[:scan_limit]
         summary["scanned_groups"] = len(to_scan)
         log.info("group_scanner: Step 3 — scanning %d groups for relevant posts", len(to_scan))
 
@@ -195,9 +202,18 @@ async def run_group_scanner(*, scan_limit: int = 129) -> dict:
                 log.info("group_scanner: scanning batch %d/%d (%d groups)",
                          i // BATCH + 1, (len(to_scan) + BATCH - 1) // BATCH, len(batch))
                 try:
-                    discoveries = await agent.scan_groups(batch, posts_per_group=8)
+                    scan_result = await agent.scan_groups(batch, posts_per_group=8)
+                    discoveries = scan_result["discoveries"]
                     all_discoveries.extend(discoveries)
-                    log.info("group_scanner: batch found %d relevant posts", len(discoveries))
+                    if scan_result.get("session_failed"):
+                        log.error("group_scanner: batch %d — Facebook session not authenticated", i // BATCH + 1)
+                        summary["errors"].append(f"batch {i // BATCH + 1}: session_failed — re-login required")
+                    else:
+                        log.info(
+                            "group_scanner: batch found %d relevant posts (attempted=%d fetched=%d)",
+                            len(discoveries), scan_result.get("groups_attempted", 0),
+                            scan_result.get("groups_fetched", 0),
+                        )
                 except Exception as exc:
                     log.warning("group_scanner: batch %d failed: %s", i // BATCH + 1, exc)
                     summary["errors"].append(f"batch {i // BATCH + 1}: {str(exc)[:80]}")

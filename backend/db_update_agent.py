@@ -4454,14 +4454,18 @@ async def validate_watchdog_actions(db: AsyncSession) -> Dict[str, Any]:
         )
 
     if anomalies:
-        owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
-        if owner:
-            msg = "⚠️ *Watchdog anomaly detected by db_update_agent*:\n" + "\n".join(f"• {a}" for a in anomalies)
-            try:
-                from social.whatsapp_provider import send_message as _wa_alert
-                await _wa_alert(owner, msg)
-            except Exception:
-                pass
+        try:
+            from BACKEND_API_ROUTES import notify_owner as _notify
+            await _notify(
+                "health",
+                "watchdog anomaly",
+                "\n".join(f"• {a}" for a in anomalies),
+                severity="warning",
+                alert_key="watchdog_anomaly",
+                cooldown_s=1800,
+            )
+        except Exception as _ne:
+            logger.warning("validate_watchdog_actions notify_owner failed: %s", _ne)
         logger.warning("validate_watchdog_actions anomalies: %s", anomalies)
 
     stats = _wds.stats()

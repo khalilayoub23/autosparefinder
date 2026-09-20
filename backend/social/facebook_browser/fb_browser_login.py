@@ -413,7 +413,68 @@ async def login() -> bool:
                 # (checkbox "אני לא רובוט") and real 2FA code prompts. We detect which one it is
                 # by checking for a reCAPTCHA iframe on the page — if present, it's CAPTCHA, not 2FA.
                 current_url = page.url.lower()
-                if any(kw in current_url for kw in ("two_step", "checkpoint", "approvals", "login_approvals")):
+                if "auth_platform" in current_url:
+                    # AFAD (Authenticate From Another Device): Facebook sent a push-notification
+                    # login approval to the owner's trusted device.  The browser MUST stay on this
+                    # page — navigating away destroys the pending approval session.
+                    await asyncio.sleep(2)
+                    await _screenshot(page, "afad_waiting")
+                    log.info("📱 WAITING_FOR_LOGIN_APPROVAL — /auth_platform/afad/ detected")
+                    log.info("   Facebook sent a push notification to the owner's trusted device.")
+                    log.info("   Remaining on approval page (NOT navigating away).")
+                    log.info("   Waiting up to 180 s for owner to approve on their device…")
+                    _afad_url_changed = False
+                    for _tick in range(36):  # 36 × 5 s = 180 s
+                        await asyncio.sleep(5)
+                        _afad_url = page.url.lower()
+                        if "auth_platform" not in _afad_url:
+                            log.info("AFAD: page navigated away — URL: %s", page.url[:80])
+                            _afad_url_changed = True
+                            break
+                        if (_tick + 1) % 6 == 0:  # log every 30 s
+                            log.info(
+                                "AFAD: still awaiting owner approval (%d s elapsed)…",
+                                (_tick + 1) * 5,
+                            )
+                    if not _afad_url_changed:
+                        log.warning("⏱ LOGIN_APPROVAL_TIMEOUT — no approval received within 180 s")
+                        log.warning(
+                            "   Health check will detect unauthenticated state and preserve "
+                            "last-known-good cookies (c_user+xs guard prevents overwrite)."
+                        )
+                    else:
+                        # URL leaving auth_platform is NOT proof of successful approval.
+                        # Facebook can redirect to a login page, checkpoint, account picker,
+                        # or other unauthenticated state.  Verify the actual session before
+                        # claiming approval — only c_user + xs + no login form = success.
+                        _post_afad_names = [c["name"] for c in await context.cookies()]
+                        _post_afad_c_user = "c_user" in _post_afad_names
+                        _post_afad_xs = "xs" in _post_afad_names
+                        _post_afad_url = page.url.lower()
+                        _post_afad_unauth = any(
+                            kw in _post_afad_url
+                            for kw in ("login", "checkpoint", "two_step", "auth_platform", "approvals")
+                        )
+                        if _post_afad_c_user and _post_afad_xs and not _post_afad_unauth:
+                            log.info(
+                                "✅ AFAD_APPROVED — authenticated invariants confirmed "
+                                "(c_user+xs present, no login/checkpoint in URL)"
+                            )
+                        else:
+                            log.warning(
+                                "⚠️  AFAD_FAILED — URL changed but authenticated invariants NOT satisfied "
+                                "(c_user=%s xs=%s unauth_url=%s url=%s)",
+                                "present" if _post_afad_c_user else "MISSING",
+                                "present" if _post_afad_xs else "MISSING",
+                                _post_afad_unauth,
+                                page.url[:80],
+                            )
+                            log.warning(
+                                "   Last-known-good cookies preserved by c_user+xs guard."
+                            )
+                    # Fall through to health check unconditionally — it is the authoritative
+                    # decision point for all cookie writes regardless of AFAD outcome.
+                elif any(kw in current_url for kw in ("two_step", "checkpoint", "approvals", "login_approvals")):
                     await asyncio.sleep(2)
                     await _screenshot(page, "two_fa_page")
                     log.info("⚠️  Security checkpoint at: %s", page.url[:80])
@@ -724,13 +785,23 @@ async def login() -> bool:
                         "present" if c_user_present else "MISSING",
                         "present" if xs_present else "MISSING")
 
-        cookies = await context.cookies()
-        _COOKIES_FILE.write_text(json.dumps(cookies, indent=2), encoding="utf-8")
-        log.info("Saved %d cookies → %s", len(cookies), _COOKIES_FILE)
+        if logged_in:
+            # Only persist when c_user + xs are confirmed present.  A failed or
+            # partial login (checkpoint, CAPTCHA, missing session cookies) must
+            # never overwrite the last-known-good authenticated disk state.
+            cookies = await context.cookies()
+            _COOKIES_FILE.write_text(json.dumps(cookies, indent=2), encoding="utf-8")
+            log.info("Saved %d cookies → %s", len(cookies), _COOKIES_FILE)
+            names = [c["name"] for c in cookies]
+            log.info("Cookie names: %s", names)
+        else:
+            log.warning(
+                "fb_browser_login: login failed — cookie write SKIPPED to preserve "
+                "last-known-good session (c_user=%s xs=%s). cookies.json unchanged.",
+                "present" if c_user_present else "MISSING",
+                "present" if xs_present else "MISSING",
+            )
 
-        # Log cookie names (not values) for transparency
-        names = [c["name"] for c in cookies]
-        log.info("Cookie names: %s", names)
         log.info(
             "Session %s (c_user=%s, xs=%s)",
             "AUTHENTICATED" if logged_in else "NOT AUTHENTICATED",

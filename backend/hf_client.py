@@ -481,7 +481,7 @@ async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority
             try:
                 return await groq_text(prompt=prompt, system=system, timeout=timeout, model="openai/gpt-oss-120b")
             except Exception as _groq_primary_err:
-                logger.warning("hf_text: GROQ gpt-oss-120b failed (%s) — trying %s", _groq_primary_err, os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"))
+                logger.warning("hf_text: GROQ gpt-oss-120b failed (%s) — trying %s", _groq_primary_err, os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"))
                 return await groq_text(prompt=prompt, system=system, timeout=timeout)
     raise_for_status_safe(resp)
     result: str = _extract_cerebras_content(resp.json())
@@ -1056,7 +1056,7 @@ async def groq_text(prompt: str, system: str = "", timeout: float = 60.0, model:
     if system:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
-    _model = model or os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    _model = model or os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
     payload = _json.dumps({
         "model": _model,
         "messages": messages,
