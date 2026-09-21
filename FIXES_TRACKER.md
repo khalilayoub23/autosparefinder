@@ -1,5 +1,34 @@
 # AutoSpareFinder — Bug & Breaking Points Fix Tracker
-> Last scan: 2026-09-19 | Total issues found: 469 | Fixed: 469 | In Progress: 0 | Open: 0
+> Last scan: 2026-09-19 | Total issues found: 470 | Fixed: 470 | In Progress: 0 | Open: 0
+
+---
+
+## /goal — FIX NOA GROUP DRAFT APPROVAL HANDOFF — 2026-09-21
+
+### 31. Group scan owner summary reported discoveries as pending replies; `תגובות-גרופ` could not reach most drafts
+
+**Defect**: after the 09-20 scan the owner received "490 תגובות ממתינות" although the scan created **18** drafts and **40** were pending in total. The owner also could not see 30 of the 40 (`תגובות-גרופ` was `LIMIT 10`, no paging) and the summary carried no draft IDs. Not a delivery failure: read-only trace showed the summary was sent at 17:22:30Z (in window), bridge "Sent OK", no quiet-hours/dedup suppression; there is (by design) no per-draft WhatsApp message.
+
+**Root cause**: the summary title/body were built from the discovery set — `len(discoveries)` (posts FOUND) — instead of persisted `group_comment_drafts` state; drafts that already existed also rendered as "(אין)". Plus a visibility gap in the draft list command.
+
+**Minimal fix** (reporting/handoff layer only; scanner, relevance, approval gate, publishing and transport untouched):
+- `social/noa_ops.py`: `group_draft_summary()` (new = drafts *created since this cycle started*, total = all `pending_approval`, top-10 new pending by relevance with IDs), `format_group_summary()` (three distinct numbers: relevant posts / new drafts / total pending; IDs; `תגובות-גרופ` and `אשרתגובה <מזהה>` hints), `format_group_summary_fallback()` (used only if the query fails; never claims a pending count).
+- `BACKEND_API_ROUTES.py::_group_scan_loop`: summary branch now uses those helpers. `alert_key=group_scan_discoveries_<fp>`, `cooldown_s=86400`, `notify_owner` transport: unchanged.
+- `agents/owner_console.py`: `תגובות-גרופ [N]` pages 10 per page (`עמוד p/N · מציג a–b מתוך T`, next-page hint, out-of-range clamps); list is read-only; `אשרתגובה`/`דלגתגובה` untouched.
+
+**Regression**: new `devtests/noa_group_summary_test.py` (10 unit + 6 functional steps: 490 discoveries + 18 new + 40 pending => exact counts; pre-existing drafts not counted as new; "490 תגובות ממתינות" absent; every ID shown is a real pending draft; paging reaches all pending drafts and clamps; dispatcher parses `תגובות-גרופ 2`; `אשרתגובה` approves exactly one draft through the owner gate with the publish step **mocked**; helpers contain no publish path; dedup key/cooldown/`notify_owner` intact; autonomy default OFF, `APPROVAL_REQUIRED=True`). One existing assertion in `group_scan_reporting_test.py` pinned the defective wording (`"תגובות ממתינות"` in the loop source); it now pins the corrected behaviour (title/body from `format_group_summary`, `{len(discoveries)} תגובות ממתינות` absent) while the dedup-key assertion is kept. Full battery: 15/15 suites exit 0.
+
+**Production activation (2026-09-21, owner-approved)**: pre-checks clean (HEAD=origin=`d3cd917`, only expected files modified, `NOA_ENGAGEMENT_AUTOREPLY=0`, `APPROVAL_REQUIRED=True`, 40 drafts all `pending_approval`, no test rows). `pre_restart.sh` then `docker restart autospare_backend` at 05:17:54Z — backend only; WhatsApp bridge (start 09-20 12:35Z) and Facebook session untouched; backend healthy, new helpers loaded, autonomy OFF. Note: at 07:05:27Z the backend was killed by a **host-level OOM** (exit 137, kernel `global_oom`, uvicorn 2.7 GB RSS; Docker `unless-stopped` relaunched it) — unrelated to this change (new code paths had not run) and it reset the loop's 2h start delay; the fresh process loaded the fixed code.
+**Paging (read-only, via `process_owner_message`)**: `תגובות-גרופ`, `… 2`, `… 3`, `… 4`, `… 9` on the 40 pending -> 4 pages, 40/40 reachable, out-of-range clamps to last page; re-verified after the scan on 56 pending -> 6 pages, 56/56 reachable.
+**Natural scan (no scan forced)**: started 09:05:35Z (session AUTHENTICATED), finished 11:58:22Z: 386 groups, 3,013 items scored, **335 relevant**, **16 new drafts** (33 dups, 22 draft-budget-skipped, 4 failures), autonomous hook `disabled` x16. Persisted state after: 16 new / **56 total pending**, all `pending_approval`, 0 approved/posted/failed.
+**WhatsApp handoff**: one summary, sent 11:58:23Z (in window), bridge "Sent OK", one send of 1878 UTF-16 units. Independent proof it is the NEW format: text rebuilt from persisted state with the new formatter = 1856 chars + 22 astral emoji (10x🆔, 10x💬, 📣, 🔎; JS counts 2 units each) = **1878 exactly**; the old format was 1194 chars. It reports 335 relevant posts / 16 new drafts / 56 pending (never "335 pending"), lists 10 draft IDs and the `תגובות-גרופ` / `אשרתגובה` hints. Dedup key `group_scan_discoveries_<fp>` (new fp `27d82b2f06`) and 24h cooldown present and unchanged; quiet queue empty. (Other bridge sends that day — 09:00-IL queue flush, system alerts, three `status@broadcast` posts — are pre-existing behaviour, not from this change.)
+**Regression after activation**: `noa_group_summary_test` (10 unit + 6 functional), `group_scan_reporting_test` 11/11, `noa_group_draft_handoff_test` 11/11 — all exit 0; earlier full battery 15/15.
+
+**Safety**: no WhatsApp message sent, no Facebook post/comment, no draft approved, no approval-gate/autonomy/scanner/relevance change.
+
+**Git**: committed+pushed on owner approval: `backend/social/noa_ops.py`, `backend/BACKEND_API_ROUTES.py`, `backend/agents/owner_console.py`, `backend/devtests/group_scan_reporting_test.py` (modified); `backend/devtests/noa_group_summary_test.py` (new); `FIXES_TRACKER.md`. HEAD `d3cd917`.
+
+**STATUS: PASS — activated in production and verified on a natural scan (335 relevant / 16 new / 56 pending), committed and pushed (see Git below).**
 
 ---
 

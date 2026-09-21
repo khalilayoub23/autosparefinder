@@ -1341,26 +1341,37 @@ async def _fb_group_reject(db, token: str) -> str:
     return f"🗑️ הקבוצה *{row[1]}* נמחקה."
 
 
-async def _fb_comment_drafts_list(db) -> str:
+async def _fb_comment_drafts_list(db, page: int = 1) -> str:
+    """Pending group-comment drafts, best relevance first, GROUP_DRAFT_PAGE_SIZE per page.
+    Read-only: paging changes only what is shown, never any draft's status."""
     import sqlalchemy as sa
+    from social.noa_ops import GROUP_DRAFT_PAGE_SIZE as _PS
+    total = (await db.execute(sa.text(
+        "SELECT COUNT(*) FROM group_comment_drafts WHERE status='pending_approval'"))).scalar() or 0
+    if not total:
+        return "אין תגובות ממתינות לאישור. כתוב *סרוק קבוצות* כדי לנסח תגובות חדשות."
+    pages = (total + _PS - 1) // _PS
+    page = max(1, min(int(page or 1), pages))
     res = await db.execute(sa.text("""
         SELECT d.id::text, t.group_name, d.post_text, d.draft_comment, d.relevance_score
         FROM group_comment_drafts d
         JOIN group_targets t ON t.id = d.group_target_id
         WHERE d.status='pending_approval'
-        ORDER BY d.relevance_score DESC, d.created_at DESC
-        LIMIT 10
-    """))
+        ORDER BY d.relevance_score DESC, d.created_at DESC, d.id
+        LIMIT :n OFFSET :o
+    """), {"n": _PS, "o": (page - 1) * _PS})
     rows = res.fetchall()
-    if not rows:
-        return "אין תגובות ממתינות לאישור. כתוב *סרוק קבוצות* כדי לנסח תגובות חדשות."
-    lines = ["✍️ *תגובות שנוסחו ע\"י NOA — ממתינות לאישורך:*", ""]
+    first = (page - 1) * _PS + 1
+    lines = [f"✍️ *תגובות שנוסחו ע\"י NOA — ממתינות לאישורך:*",
+             f"עמוד {page}/{pages} · מציג {first}–{first + len(rows) - 1} מתוך {total}", ""]
     for r in rows:
         did, gname, post, draft, score = r
         lines.append(f"🆔 {did[:8]} [{gname[:25]}] ציון {score:.2f}")
         lines.append(f"   📝 *פוסט:* {post[:80]}...")
         lines.append(f"   💬 *תגובה:* {draft[:120]}")
         lines.append("")
+    if page < pages:
+        lines.append(f"לעמוד הבא: *תגובות-גרופ {page + 1}*")
     lines.append("לאישור ושליחה: *אשרתגובה <מזהה>* · לדילוג: *דלגתגובה <מזהה>*")
     return "\n".join(lines)
 
@@ -1588,8 +1599,9 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp") -> 
     m_rg = re.match(r"^(reject[\-_ ]?group|דחהגרופ|דחה גרופ)\b\s*(\S+)?", msg, re.I)
     if m_rg:
         return await _fb_group_reject(db, m_rg.group(2) or "")
-    if low in ("תגובות-גרופ", "group-drafts", "group drafts", "תגובות גרופ", "דראפטים"):
-        return await _fb_comment_drafts_list(db)
+    m_gd = re.match(r"^(תגובות-גרופ|group-drafts|group drafts|תגובות גרופ|דראפטים)(?:\s+(\d+))?$", low)
+    if m_gd:
+        return await _fb_comment_drafts_list(db, int(m_gd.group(2) or 1))
     m_acd = re.match(r"^(approve[\-_ ]?comment|אשרתגובה|אשר תגובה)\b\s*(\S+)?", msg, re.I)
     if m_acd:
         return await _fb_comment_approve(db, m_acd.group(2) or "")

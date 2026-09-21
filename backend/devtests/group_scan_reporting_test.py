@@ -126,7 +126,11 @@ class TestDiscoveriesPathUnaffected(unittest.TestCase):
 
     def test_discoveries_branch_still_present_and_unchanged_in_shape(self):
         self.assertIn('alert_key=f"group_scan_discoveries_{_disc_fp}"', self.source)
-        self.assertIn("תגובות ממתינות", self.source)
+        # FIXES_TRACKER #31: this used to pin the literal "{len(discoveries)} תגובות ממתינות"
+        # — the defective wording that reported 490 discovered POSTS as 490 pending replies.
+        # The title/body now come from persisted draft state (noa_ops.format_group_summary).
+        self.assertIn("_noa_sum.format_group_summary(len(discoveries), _dsum)", self.source)
+        self.assertNotIn("{len(discoveries)} תגובות ממתינות", self.source)
 
     def test_empty_scan_message_still_uses_groups_scanned_variable(self):
         # The display variable name is preserved (only its source key

@@ -604,3 +604,68 @@ def format_metrics(m: Dict[str, Any], rep: Optional[Dict[str, Any]] = None) -> s
         bad = [f"{c['n']}" for c in rep["checks"] if not c["ok"]]
         L.append(f"- Autonomous release readiness: {'READY' if rep['ready_for_release'] else 'not ready (failing: ' + ','.join(bad) + ')'}")
     return "\n".join(L)
+
+
+# ── group-draft owner summary (built from PERSISTED draft state) ──────────────
+# The scan-cycle WhatsApp summary used to title itself with len(discoveries) — the
+# number of relevant POSTS found — as if it were the number of replies awaiting
+# approval (a 490-discovery scan produced "490 תגובות ממתינות" while only 18 drafts
+# existed). Counts and IDs now come from group_comment_drafts itself.
+GROUP_DRAFT_PAGE_SIZE = 10
+
+
+async def group_draft_summary(db, since: datetime, *, top: int = 10) -> Dict[str, Any]:
+    """Persisted draft state for one scan cycle. `new` = drafts CREATED at/after `since`
+    (pre-existing drafts are never counted as new); `total_pending` = every draft still
+    awaiting owner approval; `top` = the new, still-pending drafts, best relevance first."""
+    new = (await db.execute(sa.text(
+        "SELECT COUNT(*) FROM group_comment_drafts WHERE created_at >= :s"), {"s": since})).scalar() or 0
+    total = (await db.execute(sa.text(
+        "SELECT COUNT(*) FROM group_comment_drafts WHERE status='pending_approval'"))).scalar() or 0
+    rows = (await db.execute(sa.text("""
+        SELECT d.id::text, COALESCE(t.group_name, ''), d.relevance_score, d.draft_comment
+          FROM group_comment_drafts d LEFT JOIN group_targets t ON t.id = d.group_target_id
+         WHERE d.status='pending_approval' AND d.created_at >= :s
+         ORDER BY d.relevance_score DESC, d.created_at DESC, d.id
+         LIMIT :n"""), {"s": since, "n": top})).fetchall()
+    return {
+        "new": int(new), "total_pending": int(total),
+        "top": [{"id": r[0], "group": r[1], "score": float(r[2] or 0), "draft": r[3] or ""} for r in rows],
+    }
+
+
+def format_group_summary(relevant: int, summary: Dict[str, Any]) -> Tuple[str, str]:
+    """(title, body) for the scan-cycle owner summary. Three distinct numbers, never conflated:
+    relevant posts found / new drafts this scan / all drafts awaiting approval."""
+    new, total = summary["new"], summary["total_pending"]
+    if new:
+        title = f"סריקת קבוצות פייסבוק — {new} תגובות חדשות ממתינות לאישור"
+    else:
+        title = "סריקת קבוצות פייסבוק — לא נוצרו תגובות חדשות"
+    lines = [
+        f"🔎 נמצאו *{relevant}* פוסטים רלוונטיים בסריקה",
+        f"✍️ *{new}* תגובות חדשות נוסחו בסריקה זו",
+        f"⏳ *{total}* תגובות בסך הכול ממתינות לאישורך",
+    ]
+    if summary["top"]:
+        shown = len(summary["top"])
+        lines.append("")
+        lines.append(f"*התגובות החדשות (מובילות {shown} לפי רלוונטיות):*")
+        for it in summary["top"]:
+            lines.append(f"🆔 {it['id'][:8]} · {it['group'][:25]} · ציון {it['score']:.2f}")
+            lines.append(f"   💬 {it['draft'][:100]}")
+    lines.append("")
+    lines.append("לצפייה בכל הממתינות: *תגובות-גרופ* (עמוד הבא: *תגובות-גרופ 2*)")
+    lines.append("לאישור ושליחה: *אשרתגובה <מזהה>* · לדילוג: *דלגתגובה <מזהה>*")
+    return title, "\n".join(lines)
+
+
+def format_group_summary_fallback(relevant: int) -> Tuple[str, str]:
+    """Used only if the persisted-state query fails: reports what is known (posts found)
+    and never claims a pending-reply count it could not read."""
+    return (
+        "סריקת קבוצות פייסבוק — הושלמה",
+        f"🔎 נמצאו *{relevant}* פוסטים רלוונטיים בסריקה\n"
+        "לא ניתן היה לקרוא את מצב הטיוטות כרגע.\n"
+        "לצפייה בממתינות: *תגובות-גרופ*",
+    )

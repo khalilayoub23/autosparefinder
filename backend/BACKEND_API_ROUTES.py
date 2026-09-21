@@ -2995,26 +2995,25 @@ async def _group_scan_loop():
                     cooldown_s=86400,  # max once/day for empty-scan summaries
                 )
             else:
-                lines = []
-                for i, d in enumerate(discoveries[:5], 1):
-                    score_pct = int(d.get("relevance_score", 0) * 100)
-                    lines.append(
-                        f"{i}. *{d.get('group_name', '')}*\n"
-                        f"   📝 {d.get('post_text', '')[:80]}...\n"
-                        f"   רלוונטיות: {score_pct}%\n"
-                        f"   💬 טיוטה: {d.get('draft_comment', '(אין)')[:120]}"
-                    )
-                lines.append(
-                    "\nלאישור ושליחה: *תגובות-גרופ* לרשימה · *אשרתגובה <מזהה>*"
-                )
+                # Counts/IDs come from PERSISTED group_comment_drafts, never len(discoveries):
+                # 490 relevant posts previously read as "490 pending replies" when only 18
+                # drafts existed. Dedup key/cooldown are unchanged (one summary per cycle).
                 import hashlib as _hashlib
+                from social import noa_ops as _noa_sum
+                try:
+                    async with async_session_factory() as _sum_db:
+                        _dsum = await _noa_sum.group_draft_summary(_sum_db, _cycle_started)
+                    _sum_title, _sum_body = _noa_sum.format_group_summary(len(discoveries), _dsum)
+                except Exception as _sum_exc:
+                    logger.warning("[group_scan] draft-state summary failed, using fallback: %s", _sum_exc)
+                    _sum_title, _sum_body = _noa_sum.format_group_summary_fallback(len(discoveries))
                 _disc_fp = _hashlib.md5(
                     "|".join(sorted(d.get("post_id", d.get("post_text", ""))[:32] for d in discoveries)).encode()
                 ).hexdigest()[:10]
                 await notify_owner(
                     "social",
-                    f"סריקת קבוצות פייסבוק — {len(discoveries)} תגובות ממתינות",
-                    "\n".join(lines),
+                    _sum_title,
+                    _sum_body,
                     severity="info",
                     alert_key=f"group_scan_discoveries_{_disc_fp}",
                     cooldown_s=86400,  # same discovery set: at most once/day
