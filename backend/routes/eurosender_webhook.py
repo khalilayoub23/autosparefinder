@@ -3,16 +3,43 @@ Eurosender webhook — SANDBOX ONLY.
 
 POST /api/v1/webhooks/eurosender
 
-Security limitation (documented, not worked around — see the 2026-09-08
-sandbox-contract resolution gate, Area 9): the Eurosender Webhook-Signature
-algorithm is not published in any public documentation or the OpenAPI spec.
-eurosender_config.EUROSENDER_WEBHOOK_SIGNATURE_VERIFIED is a hardcoded
-`False` constant (not env-overridable) for exactly this reason. This
-endpoint:
-  - refuses to operate at all unless EUROSENDER_SANDBOX=1 (returns 501)
-  - accepts the payload WITHOUT verifying Webhook-Signature (records it only)
-  - is NOT production-ready and must not be treated as such while that
-    constant is False
+Signature contract (SUPERSEDED 2026-09-25 by a second, more precise official
+Eurosender support answer — the 2026-09-21 "raw body only" contract below was
+tested against a genuine Sandbox delivery and did NOT match):
+
+    message = Webhook-Event + Webhook-Id + raw_request_body   (no delimiter,
+              no separator, no whitespace — plain concatenation of the exact
+              header string values and the exact raw body bytes)
+    signature = HMAC-SHA256(sandbox_webhook_signing_secret_utf8, message)
+    header value = "sha256=" + hex(signature)                 (prefix format
+              empirically evidenced 2026-09-21 against a real delivery; the
+              support answer did not re-specify the header encoding, so the
+              already-observed hex+prefix format is kept, not re-guessed)
+    No timestamp, no nonce. Sandbox and Production use SEPARATE signing
+    secrets — this file only ever uses eurosender_config.webhook_secret(),
+    which must hold the SANDBOX dashboard secret while EUROSENDER_SANDBOX=1.
+
+verify_signature() enforces this on the raw bytes BEFORE JSON parsing, dedup
+or any handling; a missing/malformed/wrong signature (or unset secret) -> 401.
+
+VERIFIED 2026-09-25 (Phase 22): this exact contract was cryptographically
+matched against a genuine Eurosender Sandbox delivery (cancelling real
+Sandbox order 935766-26 produced a live `order_cancelled` webhook, Webhook-Id
+10847; the HMAC computed from its captured event/id/raw-body against the
+Sandbox signing secret equalled the received signature, and this same
+unmodified verify_signature() accepted it). See FIXES_TRACKER.md 2026-09-25
+(Phases 19-22) for the full chain of evidence, including the earlier
+2026-09-21 non-match that was under the since-superseded "raw body only"
+contract, not this one.
+
+This endpoint still:
+  - refuses to operate at all unless EUROSENDER_SANDBOX=1 (returns 501) — the
+    signature algorithm being verified does not by itself enable production;
+    EUROSENDER_ENABLED / EUROSENDER_SANDBOX / the supplier allowlist are the
+    separate, independent gates for that.
+  - eurosender_config.EUROSENDER_WEBHOOK_SIGNATURE_VERIFIED is now True,
+    recording that this signature contract is confirmed — not that the
+    integration overall is production-ready.
 
 Events handled (payload shapes taken from integrators.eurosender.com/apis/
 webhooks, confirmed 2026-09-08):
@@ -25,6 +52,8 @@ webhooks, confirmed 2026-09-08):
 Only orders with shipping_provider == 'eurosender' are ever touched here —
 every other order in the system is structurally unreachable from this file.
 """
+import hashlib
+import hmac
 import json
 import logging
 from datetime import datetime
@@ -53,6 +82,31 @@ KNOWN_EVENTS = frozenset({
 # Order.status values that mean "already advanced past supplier_ordered" —
 # a webhook event must never move status BACKWARD past one of these.
 _TERMINAL_OR_ADVANCED = ("shipped", "delivered", "cancelled", "refunded")
+
+
+_SIG_PREFIX = "sha256="
+
+
+def verify_signature(webhook_event: str, webhook_id: str, body: bytes, signature_header: str, secret: str) -> bool:
+    """Official Eurosender contract (support answer, 2026-09-25):
+        message = webhook_event + webhook_id + raw_body_bytes   (plain
+                  concatenation — no delimiter, no JSON parsing/reserialization)
+        HMAC-SHA256(sandbox_signing_secret_utf8, message), compared in
+        constant time against the `sha256=<hex>` header.
+    `webhook_event` / `webhook_id` must be the EXACT header string values —
+    never normalized, defaulted, or substituted. Fails closed on an empty
+    secret, a missing/malformed header, or a non-bytes body.
+    """
+    if not secret or not signature_header or not isinstance(body, (bytes, bytearray)):
+        return False
+    if not webhook_event or not webhook_id:
+        return False
+    if not signature_header.startswith(_SIG_PREFIX):
+        return False
+    received = signature_header[len(_SIG_PREFIX):].strip().lower()
+    message = webhook_event.encode("utf-8") + webhook_id.encode("utf-8") + bytes(body)
+    expected = hmac.new(secret.encode("utf-8"), message, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected.encode("ascii"), received.encode("utf-8", "replace"))
 
 
 async def _get_redis_safe():
@@ -251,6 +305,16 @@ async def eurosender_webhook(request: Request, db: AsyncSession = Depends(get_pi
     webhook_signature = request.headers.get("Webhook-Signature", "")
 
     body_bytes = await request.body()
+
+    # Verify on the exact received bytes, before any parse/dedup/handling.
+    signature_ok = verify_signature(webhook_event, webhook_id, body_bytes, webhook_signature, eurosender_config.webhook_secret())
+    if not signature_ok:
+        logger.warning(
+            "[EurosenderWebhook] signature rejected event=%s id=%s signature_present=%s",
+            webhook_event, webhook_id, bool(webhook_signature),
+        )
+        return Response(status_code=401)
+
     try:
         payload = json.loads(body_bytes or b"{}")
     except Exception:
@@ -264,8 +328,7 @@ async def eurosender_webhook(request: Request, db: AsyncSession = Depends(get_pi
     # and test_eurosender_webhook.py's real-payload regression tests.
     logger.info(
         "[EurosenderWebhook][sandbox] event=%s id=%s signature_present=%s signature_verified=%s",
-        webhook_event, webhook_id, bool(webhook_signature),
-        eurosender_config.EUROSENDER_WEBHOOK_SIGNATURE_VERIFIED,
+        webhook_event, webhook_id, bool(webhook_signature), signature_ok,
     )
 
     if webhook_id:

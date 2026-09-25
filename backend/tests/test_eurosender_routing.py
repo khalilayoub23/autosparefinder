@@ -70,11 +70,14 @@ def test_sandbox_mode_defaults_on(monkeypatch):
     assert eurosender_config.sandbox_mode() is True
 
 
-def test_webhook_signature_verified_is_hardcoded_false_not_env_overridable(monkeypatch):
-    # This constant must NOT be overridable via environment — it is a code
-    # guarantee, not a config toggle (see eurosender_config.py docstring).
-    monkeypatch.setenv("EUROSENDER_WEBHOOK_SIGNATURE_VERIFIED", "true")
-    assert eurosender_config.EUROSENDER_WEBHOOK_SIGNATURE_VERIFIED is False
+def test_webhook_signature_verified_is_hardcoded_true_not_env_overridable(monkeypatch):
+    # VERIFIED 2026-09-25 (Phase 22): the flag flipped True via a reviewed
+    # source change after a real Sandbox delivery's signature was
+    # cryptographically matched (see eurosender_config.py docstring and
+    # FIXES_TRACKER.md). It must still NOT be overridable via environment in
+    # either direction — it stays a code guarantee, not a config toggle.
+    monkeypatch.setenv("EUROSENDER_WEBHOOK_SIGNATURE_VERIFIED", "false")
+    assert eurosender_config.EUROSENDER_WEBHOOK_SIGNATURE_VERIFIED is True
 
 
 def test_base_url_is_sandbox_by_default(monkeypatch):

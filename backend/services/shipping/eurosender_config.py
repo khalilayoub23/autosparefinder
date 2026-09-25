@@ -55,15 +55,28 @@ def webhook_secret() -> str:
 # ---------------------------------------------------------------------------
 # Webhook signature verification — HARD CODE CONSTANT, not env-overridable.
 #
-# The Eurosender Webhook-Signature algorithm is not published in any public
+# The Eurosender Webhook-Signature algorithm was not published in any public
 # documentation or the OpenAPI spec (confirmed 2026-09-08 sandbox-contract
 # research). This is a code-level guarantee, not a config toggle, precisely
 # so a stray .env edit cannot silently "enable" production webhook trust in
-# an unverified signature scheme. Flip this to True ONLY after the real
-# algorithm has been obtained from Eurosender's authenticated developer
-# portal AND implemented AND tested against a real signed payload.
+# an unverified signature scheme. This constant only ever flips via a source
+# change reviewed the same way as this comment — never via .env.
+#
+# VERIFIED TRUE 2026-09-25 (Phase 22): the algorithm was obtained from
+# Eurosender support (message = Webhook-Event + Webhook-Id + raw_body,
+# HMAC-SHA256, sandbox signing secret as UTF-8, header `sha256=<hex>`),
+# implemented in routes/eurosender_webhook.py's verify_signature() (Phase 19),
+# and cryptographically matched against a genuine Sandbox delivery: cancelling
+# real Sandbox order 935766-26 produced a live `order_cancelled` webhook
+# (Webhook-Id 10847) whose HMAC, computed with this same secret, equalled the
+# received `Webhook-Signature`, and the unmodified production verifier
+# accepted it. See FIXES_TRACKER.md 2026-09-25 (Phase 22) for full evidence.
+#
+# This flag means the SIGNATURE ALGORITHM is confirmed correct — it does NOT
+# mean production is enabled. EUROSENDER_ENABLED / EUROSENDER_SANDBOX / the
+# supplier allowlist remain the separate, independent gates for that.
 # ---------------------------------------------------------------------------
-EUROSENDER_WEBHOOK_SIGNATURE_VERIFIED = False
+EUROSENDER_WEBHOOK_SIGNATURE_VERIFIED = True
 
 
 def production_url() -> str:
