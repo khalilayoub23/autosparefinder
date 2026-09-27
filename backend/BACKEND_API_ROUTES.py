@@ -3880,7 +3880,7 @@ async def _noa_marketing_loop():
                     SELECT sp.price_ils AS cost, s.name AS supplier_name, s.country
                     FROM supplier_parts sp JOIN suppliers s ON s.id = sp.supplier_id
                     WHERE sp.part_id = pc.id AND sp.is_available AND sp.price_ils > 0
-                    ORDER BY sp.price_ils ASC LIMIT 1
+                    ORDER BY __RANK__, sp.price_ils ASC LIMIT 1
                 ) mp ON TRUE
                 WHERE pc.is_active
                   AND (pc.name_he ILIKE :hq OR pc.name ILIKE :eq)
@@ -3889,6 +3889,8 @@ async def _noa_marketing_loop():
                 ORDER BY random() LIMIT 1
             """
             params = {"hq": f"%{heb_part.split()[0]}%", "eq": f"%{eng_part.split()[0]}%"}
+            from offer_classification import class_rank_sql as _crs
+            _sql = _sql.replace("__RANK__", _crs("sp.part_type", "pc.part_type"))   # marketing price = class-compatible offer
             row = (await db.execute(text(_sql.format(mfr_clause="AND pc.manufacturer ILIKE :mfr")),
                                     {**params, "mfr": f"%{car_make}%"})).fetchone()
             if not row:

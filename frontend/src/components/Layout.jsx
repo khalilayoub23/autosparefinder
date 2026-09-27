@@ -42,6 +42,7 @@ export default function Layout({ children }) {
       partId: item.partId,
       supplierPartId: item.supplierPartId || item.supplier_part_id || item.id,
       serverCartItemId: item.id,
+      offerPartType: item.offerPartType || null,
       name: item.name,
       manufacturer: item.supplierName || 'Supplier',
       price: Number(item.price || 0),

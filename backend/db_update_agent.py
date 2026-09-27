@@ -1252,7 +1252,7 @@ async def normalize_availability(db: AsyncSession) -> Dict[str, Any]:
 # Task 5 – Fix base prices
 # =========================================================================
 
-async def fix_base_prices(db: AsyncSession) -> Dict[str, Any]:
+async def fix_base_prices(db: AsyncSession, only_part_ids: Optional[list] = None) -> Dict[str, Any]:
     """
     Ensure parts_catalog.base_price is not below the cheapest supplier retail price.
 
@@ -1263,7 +1263,12 @@ async def fix_base_prices(db: AsyncSession) -> Dict[str, Any]:
 
     VAT is determined per supplier via suppliers.country = 'IL'.
     supplier_parts.price_ils is always stored excl. VAT.
+
+    Classification safety (2026-09-21): only offers whose product class is COMPATIBLE with the catalog part
+    (offer_classification.class_rank = 0) can be the basis — an aftermarket offer never sets or raises the
+    base_price of an OEM part. `only_part_ids` restricts the run (tests); None = the whole catalog (production).
     """
+    from offer_classification import class_rank_sql
     MARGIN = 1.45
     t0 = time.monotonic()
     rows_updated = 0
@@ -1275,9 +1280,7 @@ async def fix_base_prices(db: AsyncSession) -> Dict[str, Any]:
 
             # Single bulk UPDATE via CTE — minimises lock window vs row-by-row loop
             # Pricing policy: base_price = supplier_cost_excl_vat × 1.45 (45% margin, no VAT factor)
-            result = await db.execute(
-                text(
-                    """
+            _fix_sql = """
                     WITH new_prices AS (
                         SELECT
                             pc.id,
@@ -1292,7 +1295,9 @@ async def fix_base_prices(db: AsyncSession) -> Dict[str, Any]:
                             )::numeric, 2) AS min_retail_ils
                         FROM parts_catalog pc
                         JOIN supplier_parts sp ON sp.part_id = pc.id AND sp.is_available = TRUE
+                             AND __RANK__ = 0
                         JOIN suppliers s ON s.id = sp.supplier_id
+                        __ONLY__
                         GROUP BY pc.id
                         HAVING MIN(
                             CASE
@@ -1310,9 +1315,12 @@ async def fix_base_prices(db: AsyncSession) -> Dict[str, Any]:
                     WHERE pc.id = np.id
                       AND (pc.base_price IS NULL OR pc.base_price < np.min_retail_ils)
                     """
-                ),
-                {"rate": ils_rate, "margin": MARGIN},
-            )
+            _fix_sql = (_fix_sql.replace("__RANK__", class_rank_sql("sp.part_type", "pc.part_type"))
+                        .replace("__ONLY__", "WHERE pc.id = ANY(CAST(:only_ids AS uuid[]))" if only_part_ids else ""))
+            _fix_params = {"rate": ils_rate, "margin": MARGIN}
+            if only_part_ids:
+                _fix_params["only_ids"] = [str(i) for i in only_part_ids]
+            result = await db.execute(text(_fix_sql), _fix_params)
             rows_updated = result.rowcount or 0
             await db.commit()
             logger.info("fix_base_prices: updated=%d (rate=%.2f)", rows_updated, ils_rate)
@@ -1342,7 +1350,7 @@ async def fix_base_prices(db: AsyncSession) -> Dict[str, Any]:
 # Task 5b – Normalize base_price from alternate price columns
 # =========================================================================
 
-async def normalize_base_price(db: AsyncSession) -> Dict[str, Any]:
+async def normalize_base_price(db: AsyncSession, only_part_ids: Optional[List[str]] = None) -> Dict[str, Any]:
     """
     Compute base_price (customer-facing retail) from source price columns.
 
@@ -1359,8 +1367,20 @@ async def normalize_base_price(db: AsyncSession) -> Dict[str, Any]:
       3. importer=0, online=0, max_price_ils > 0  (IL consumer ref price incl. 18% VAT):
          base = (max_price_ils / 1.18) * 1.45  — divide out VAT first, then apply margin
     """
+    from offer_classification import class_rank_sql
     MARGIN = float(os.getenv("IL_MARGIN", "1.45"))
     t0 = time.monotonic()
+    # Class guard (2026-09-21): importer/online/max_price_ils are catalog-level columns that ALSO get fed by
+    # cross-offer aggregates (refresh_min_max_prices writes max_price_ils over ALL offers). A part whose only
+    # priced offers are of ANOTHER class (an aftermarket AliExpress listing on an OEM part) must not get a
+    # base_price from them. Parts with no offers at all (catalog-only importer data) or with a compatible
+    # offer are unaffected.
+    _rank = class_rank_sql("sp_g.part_type", "parts_catalog.part_type")
+    _guard = f"""AND NOT (
+                EXISTS (SELECT 1 FROM supplier_parts sp_g WHERE sp_g.part_id = parts_catalog.id AND sp_g.price_ils > 0 AND {_rank} <> 0)
+                AND NOT EXISTS (SELECT 1 FROM supplier_parts sp_g WHERE sp_g.part_id = parts_catalog.id AND sp_g.price_ils > 0 AND {_rank} = 0))"""
+    _only = "AND id = ANY(CAST(:only_ids AS uuid[]))" if only_part_ids is not None else ""
+    _extra = {"only_ids": only_part_ids} if only_part_ids is not None else {}
     # Delta scope (added 2026-07-11): base_price only needs recomputing when a
     # SOURCE price column changed — and every importer bumps updated_at when it
     # writes prices (mandatory pipeline rule) — so we only scan rows touched since
@@ -1378,7 +1398,7 @@ async def normalize_base_price(db: AsyncSession) -> Dict[str, Any]:
         # No-op guard: each UPDATE writes only rows whose base_price would ACTUALLY
         # change (`IS DISTINCT FROM`) — steady state writes ~0.
         # Case 1: importer_price_ils is the actual cost excl. VAT — 45% margin over cost
-        r1 = await db.execute(text("""
+        r1 = await db.execute(text(f"""
             UPDATE parts_catalog
             SET base_price = ROUND((importer_price_ils * :margin)::numeric, 2),
                 updated_at = NOW()
@@ -1386,11 +1406,12 @@ async def normalize_base_price(db: AsyncSession) -> Dict[str, Any]:
               AND is_active = TRUE
               AND (:full_pass OR updated_at > :since)
               AND base_price IS DISTINCT FROM ROUND((importer_price_ils * :margin)::numeric, 2)
-        """), {"margin": MARGIN, "full_pass": full_pass, "since": since})
+              {_guard} {_only}
+        """), {"margin": MARGIN, "full_pass": full_pass or only_part_ids is not None, "since": since, **_extra})
         importer_updated = r1.rowcount
 
         # Case 2: eBay / international buy price (already excl. VAT) — 45% margin
-        r2 = await db.execute(text("""
+        r2 = await db.execute(text(f"""
             UPDATE parts_catalog
             SET base_price = ROUND((online_price_ils * :margin)::numeric, 2),
                 updated_at = NOW()
@@ -1399,11 +1420,12 @@ async def normalize_base_price(db: AsyncSession) -> Dict[str, Any]:
               AND is_active = TRUE
               AND (:full_pass OR updated_at > :since)
               AND base_price IS DISTINCT FROM ROUND((online_price_ils * :margin)::numeric, 2)
-        """), {"margin": MARGIN, "full_pass": full_pass, "since": since})
+              {_guard} {_only}
+        """), {"margin": MARGIN, "full_pass": full_pass or only_part_ids is not None, "since": since, **_extra})
         online_updated = r2.rowcount
 
         # Case 3: IL importer reference price (incl. 18% VAT) — divide out VAT, then 45% margin
-        r3 = await db.execute(text("""
+        r3 = await db.execute(text(f"""
             UPDATE parts_catalog
             SET base_price = ROUND((max_price_ils / 1.18 * :margin)::numeric, 2),
                 updated_at = NOW()
@@ -1413,7 +1435,8 @@ async def normalize_base_price(db: AsyncSession) -> Dict[str, Any]:
               AND is_active = TRUE
               AND (:full_pass OR updated_at > :since)
               AND base_price IS DISTINCT FROM ROUND((max_price_ils / 1.18 * :margin)::numeric, 2)
-        """), {"margin": MARGIN, "full_pass": full_pass, "since": since})
+              {_guard} {_only}
+        """), {"margin": MARGIN, "full_pass": full_pass or only_part_ids is not None, "since": since, **_extra})
         max_updated = r3.rowcount
 
         await db.commit()

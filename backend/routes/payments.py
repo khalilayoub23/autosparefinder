@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_, text, desc, func
+from offer_classification import class_rank_sql, offer_label, class_label_he
 from datetime import datetime
 import asyncio
 import json
@@ -2117,7 +2118,10 @@ async def create_whatsapp_checkout(
                 .join(Supplier, SupplierPart.supplier_id == Supplier.id)
                 .where(SupplierPart.part_id == part_uuid)
                 .where(SupplierPart.is_available == True)
-                .order_by(SupplierPart.price_ils.asc().nullslast())
+                # class-compatible offers first (an aftermarket offer is never silently substituted for an OEM
+                # part), then cheapest — see offer_classification.py
+                .order_by(text(class_rank_sql("supplier_parts.part_type", "parts_catalog.part_type")),
+                          SupplierPart.price_ils.asc().nullslast())
                 .limit(1)
             )
             row = sp_res.first()
@@ -2228,7 +2232,10 @@ async def create_whatsapp_checkout(
                                         "name": _display_name,
                                         "description": (
                                             f"{part.manufacturer or ''} | "
-                                            f"אחריות {sp.warranty_months or 12} חודשים"
+                                            # product class of the offer being bought (same rule as search/cart/chat)
+                                            + (f"{class_label_he(offer_label(part.part_type, sp.part_type))} | "
+                                               if class_label_he(offer_label(part.part_type, sp.part_type)) else "")
+                                            + f"אחריות {sp.warranty_months or 12} חודשים"
                                         ),
                                     },
                                     "unit_amount": int(round((unit_price + vat_per_unit) * quantity * 100)),

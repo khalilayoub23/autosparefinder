@@ -141,6 +141,7 @@ services:
       ALIEXPRESS_TOKEN_EXPIRE: ${ALIEXPRESS_TOKEN_EXPIRE:-0}
       ALIEXPRESS_DS_API_URL: ${ALIEXPRESS_DS_API_URL:-https://api-sg.aliexpress.com/sync}
       ALIEXPRESS_PRICE_SYNC_LIMIT: ${ALIEXPRESS_PRICE_SYNC_LIMIT:-200}
+      ALIEXPRESS_PRICE_SYNC_ENABLED: ${ALIEXPRESS_PRICE_SYNC_ENABLED:-1}
       HF_TEXT_MODEL: ${HF_TEXT_MODEL}
       HF_VISION_MODEL: ${HF_VISION_MODEL:-Qwen/Qwen3-VL-8B-Instruct}
       EXTERNAL_FITMENT_PROVIDER_URLS: ${EXTERNAL_FITMENT_PROVIDER_URLS:-https://www.autodoc.eu/api/v1/part/applicability,https://www.buycarparts.co.uk/api/v1/part/applicability}

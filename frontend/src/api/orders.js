@@ -16,7 +16,8 @@ export const ordersApi = {
 
 export const cartApi = {
   get: () => api.get('/customers/cart'),
-  addItem: (part_id, quantity = 1) => api.post('/customers/cart/items', { part_id, quantity }),
+  addItem: (part_id, quantity = 1, supplier_part_id) =>
+    api.post('/customers/cart/items', supplier_part_id ? { part_id, quantity, supplier_part_id } : { part_id, quantity }),
   removeItem: (item_id) => api.delete(`/customers/cart/items/${item_id}`),
   checkout: (shipping_address, selected_supplier_part_ids = []) =>
     api.post('/customers/checkout', { shipping_address, selected_supplier_part_ids }),

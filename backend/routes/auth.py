@@ -533,69 +533,16 @@ async def social_login(
 
 
 # ==============================================================================
-# GET /api/aliexpress/callback
+# GET|POST /api/aliexpress/callback — the callback registered in the AliExpress Console.
+# Delegates to the single encrypted-persistence OAuth implementation in
+# routes/suppliers.py (auth/token/create -> Fernet-encrypted suppliers.credentials).
+# The former legacy handler (raw tokens in the response, no persistence) was removed.
 # ==============================================================================
 
-@router.get("/api/aliexpress/callback")
-async def aliexpress_oauth_callback(
-    code: str,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    AliExpress sends authorization_code here after user approves the app.
-    Exchange it for access_token + refresh_token.
-    """
-    import hashlib
-    import hmac
-    import time
-
-    app_key = os.getenv("ALIEXPRESS_APP_KEY", "")
-    app_secret = os.getenv("ALIEXPRESS_APP_SECRET", "")
-
-    if not app_key or not app_secret:
-        raise HTTPException(status_code=500, detail="AliExpress app credentials are not configured")
-
-    _ = request
-    _ = db
-
-    params = {
-        "method": "aliexpress.system.oauth.token",
-        "app_key": app_key,
-        "timestamp": str(int(time.time() * 1000)),
-        "sign_method": "sha256",
-        "format": "json",
-        "v": "2.0",
-        "code": code,
-        "grant_type": "authorization_code",
-    }
-    sorted_str = "".join(f"{k}{v}" for k, v in sorted(params.items()))
-    params["sign"] = hmac.new(
-        app_secret.encode("utf-8"), sorted_str.encode("utf-8"), hashlib.sha256
-    ).hexdigest().upper()
-
-    async with _httpx.AsyncClient(timeout=20.0) as client:
-        resp = await client.post("https://api-sg.aliexpress.com/sync", data=params)
-        resp.raise_for_status()
-        data = resp.json()
-
-    token_data = data.get("aliexpress_system_oauth_token_response", {})
-    if isinstance(token_data, dict) and "resp_result" in token_data:
-        rr = token_data.get("resp_result") or {}
-        if isinstance(rr, dict):
-            token_data = rr.get("result") or token_data
-
-    access_token = token_data.get("access_token")
-    refresh_token = token_data.get("refresh_token")
-    expires_in = token_data.get("expire_time")
-
-    # Tokens stored in env/DB — never log to stdout
-
-    return {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "expires_in": expires_in,
-    }
+@router.api_route("/api/aliexpress/callback", methods=["GET", "POST"], include_in_schema=False)
+async def aliexpress_oauth_callback(request: Request):
+    from routes.suppliers import aliexpress_callback_request  # lazy: avoid import cycles
+    return await aliexpress_callback_request(request)
 
 
 # ==============================================================================

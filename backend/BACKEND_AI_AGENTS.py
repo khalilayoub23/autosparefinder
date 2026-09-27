@@ -51,6 +51,7 @@ CRITICAL BUSINESS RULES (enforced in prompts & code):
 
 import json
 import os
+import offer_classification as _oc
 import re
 import random
 import string
@@ -2647,14 +2648,16 @@ NEVER:
                         sp.shipping_cost_usd, sp.shipping_cost_ils,
                         sp.is_available, sp.warranty_months, sp.estimated_delivery_days,
                         s.name AS supplier_name, s.country AS supplier_country,
+                        sp.part_type AS offer_part_type,
                         ROW_NUMBER() OVER (
                             PARTITION BY sp.part_id
-                            ORDER BY sp.is_available DESC, s.priority ASC
+                            ORDER BY sp.is_available DESC, __RANK__, s.priority ASC
                         ) AS rn
                     FROM supplier_parts sp
                     JOIN suppliers s ON sp.supplier_id = s.id
                     WHERE sp.part_id = ANY(:pids) AND s.is_active = true
-                """),
+                    ORDER BY sp.part_id, sp.is_available DESC, __RANK__, s.priority ASC
+                """.replace("__RANK__", _oc.class_rank_sql("sp.part_type", "(SELECT pc0.part_type FROM parts_catalog pc0 WHERE pc0.id = sp.part_id)"))),
                 {"pids": part_ids},
             )
             sp_rows_all = sp_batch_result.fetchall()
@@ -2703,6 +2706,8 @@ NEVER:
                         local_vat_only=True,
                     )
                 pricing["availability"] = availability
+                # product class of THIS offer (own label, else the catalog part's) — same rule as search/cart
+                pricing["part_type"] = _oc.offer_label(part.part_type, getattr(sp_row, "offer_part_type", None))
                 pricing["warranty_months"] = sp_row.warranty_months
                 estimated_delivery_days = int(sp_row.estimated_delivery_days) if sp_row.estimated_delivery_days is not None else 14
                 pricing["estimated_delivery_days"] = estimated_delivery_days
@@ -2743,6 +2748,7 @@ NEVER:
                     "warranty_months": 12,
                     "estimated_delivery_days": 14,
                     "supplier_part_id": None,
+                    "part_type": _oc.offer_label(part.part_type, None),
                     "estimated_delivery": "14\u201321 \u05d9\u05de\u05d9\u05dd",
                     "is_base_price_fallback": True,
                 }]
@@ -3142,13 +3148,16 @@ CRITICAL RULES:
                     lines = [
                         f"\n[CATALOG — {len(results)} חלקים | הצג תוצאות כ-טוב/טוב-יותר/הכי-טוב]\n"
                         "השתמש ONLY במחירים האלו — אל תמציא!\n"
+                        "ציין ללקוח את 'סוג המוצר' (OEM / חליפי / שווה ערך ל-OEM) בדיוק כפי שמופיע ברשימה — אל תציג מוצר חליפי כמקורי.\n"
                         "סיים כל תשובה ב: 'להשלמת ההזמנה — עבור ל https://autosparefinder.co.il/cart ולחץ לתשלום'\n"
                     ]
                     for i, p in enumerate(results, 1):
                         pr = p.get("pricing") or {}
-                        tier = {"Aftermarket": "✅ טוב", "OEM": "⭐ טוב יותר", "Original": "🏆 הכי טוב"}.get(
-                            p.get("part_type", ""), p.get("part_type", "")
+                        _cls = pr.get("part_type") or p.get("part_type")          # the OFFER's class (same as search/cart)
+                        tier = {"aftermarket": "✅ טוב", "oe_equivalent": "⭐ שווה ערך", "oem": "⭐ טוב יותר", "original": "🏆 הכי טוב"}.get(
+                            _oc.normalize_type(_cls) or "", ""
                         )
+                        _cls_he = _oc.class_label_he(_cls)
                         pnv = pr.get("price_no_vat", 0.0)
                         vat = pr.get("vat", 0.0)
                         total = pr.get("total", 0.0)
@@ -3158,7 +3167,7 @@ CRITICAL RULES:
                         avail_he = "זמין להזמנה ✅" if pr.get("availability") == "in_stock" else "זמין בהזמנה מיוחדת ⏳"
                         price_line = f"{pnv:.0f}₪ + {vat:.0f}₪ מע\"מ + ₪29-149 משלוח (לפי ספק) = **{total:.0f}₪**" if total > 0 else "מחיר: לא זמין"
                         lines.append(
-                            f"{i}. [{tier}] {p.get('manufacturer','?')} – {p.get('name','?')}\n"
+                            f"{i}. [{tier}] {p.get('manufacturer','?')} – {p.get('name','?')} | סוג המוצר: {_cls_he or 'לא צוין'}\n"
                             f"   {price_line} | {avail_he} | אספקה: {delivery} ימים | אחריות: {warranty} חודשים\n"
                             f"   supplier_part_id: {sp_id}\n"
                         )
@@ -3182,7 +3191,7 @@ CRITICAL RULES:
                             avail_he = "זמין להזמנה ✅" if pr.get("availability") == "in_stock" else "זמין בהזמנה מיוחדת ⏳"
                             price_line = f"{pnv:.0f}₪ + {vat:.0f}₪ מע\"מ + ₪29-149 משלוח (לפי ספק) = **{total:.0f}₪**" if total > 0 else "לא זמין"
                             lines.append(
-                                f"{i}. {p.get('manufacturer','?')} – {p.get('name','?')} ({p.get('part_type','?')})\n"
+                                f"{i}. {p.get('manufacturer','?')} – {p.get('name','?')} (סוג המוצר: {_oc.class_label_he(pr.get('part_type') or p.get('part_type')) or 'לא צוין'})\n"
                                 f"   {price_line} | {avail_he} | {delivery} ימים | {warranty} חודשים אחריות\n"
                                 f"   supplier_part_id: {sp_id}\n"
                             )
@@ -4217,10 +4226,21 @@ class SupplierManagerAgent(BaseAgent):
         except Exception as _ebay_err:
             logger.error(f"eBay price sync skipped: {_ebay_err}")
 
-        # Pull AliExpress DS prices — DISABLED 2026-08-26: AliExpress deleted the
-        # platform account; app key 535426 returns "appkey not exists". Re-enable
-        # when a new AliExpress Open Platform account + app is set up.
-        aliexpress_report: Dict[str, Any] = {"status": "disabled", "reason": "platform_account_deleted"}
+        # Pull AliExpress DS prices — RE-ENABLED 2026-09-21: new IOP app 546482 authorized; OAuth tokens
+        # live Fernet-encrypted in suppliers.credentials (auto-refreshed by AliExpressSupplier). Same
+        # isolated-session pattern as eBay above. Kill-switch: ALIEXPRESS_PRICE_SYNC_ENABLED=0.
+        aliexpress_report: Dict[str, Any] = {"status": "disabled", "reason": "ALIEXPRESS_PRICE_SYNC_ENABLED=0"}
+        if (os.getenv("ALIEXPRESS_PRICE_SYNC_ENABLED", "1") or "1").strip().lower() not in {"0", "false", "no", "off"}:
+            try:
+                from services.aliexpress_price_sync import sync_aliexpress_prices
+                async with _price_asf() as _adb:
+                    aliexpress_report = await sync_aliexpress_prices(
+                        _adb, limit_per_run=int(os.getenv("ALIEXPRESS_PRICE_SYNC_LIMIT", "200")))
+                logger.info(f"AliExpress price sync report: { {k: v for k, v in aliexpress_report.items() if k != 'errors'} }"
+                            f" errors={len(aliexpress_report.get('errors') or [])}")
+            except Exception as _ali_err:
+                logger.error(f"AliExpress price sync skipped: {type(_ali_err).__name__}: {_ali_err}")
+                aliexpress_report = {"status": "error", "errors": [f"{type(_ali_err).__name__}: {_ali_err}"]}
 
         # The shared `db` sat idle through the long syncs above — reset it so the post-sync
         # queries (rate lookup, reconciliation, SystemLog/CatalogVersion) get a live connection.

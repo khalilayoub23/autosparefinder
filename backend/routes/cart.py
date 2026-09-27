@@ -35,6 +35,8 @@ from routes.schemas import (
     OrderItemCreate,
 )
 from routes.utils import _mask_supplier
+from routes.parts import _customer_unit_price, _current_part_offer, _customer_thumbnail_map
+from offer_classification import class_rank_sql, offer_label
 
 router = APIRouter()
 
@@ -91,11 +93,12 @@ async def _cart_to_response(items: list, cat_db: AsyncSession) -> list:
         id, partId, name, price, quantity, imageUrl, supplierId, supplierName, stockAvailable
     Fetches part + supplier details from the catalog DB in a single JOIN query.
     """
-    from BACKEND_DATABASE_MODELS import SupplierPart, PartsCatalog, Supplier as SupplierModel, PartImage
+    from BACKEND_DATABASE_MODELS import SupplierPart, PartsCatalog, Supplier as SupplierModel
 
     if not items:
         return []
 
+    usd_to_ils_rate = await get_usd_to_ils_rate(cat_db)
     sp_ids = [i.supplier_part_id for i in items]
     rows = await cat_db.execute(
         select(SupplierPart, PartsCatalog, SupplierModel)
@@ -105,13 +108,9 @@ async def _cart_to_response(items: list, cat_db: AsyncSession) -> list:
     )
     catalog: dict = {str(r.SupplierPart.id): r for r in rows}
 
-    # Fetch primary images for all parts in one query
+    # Clean bucket thumbnails only — a raw parts_images URL names the supplier's CDN (never customer-visible)
     part_ids = [r[1].id for r in catalog.values()]
-    img_res = await cat_db.execute(
-        select(PartImage)
-        .where(and_(PartImage.part_id.in_(part_ids), PartImage.is_primary == True))
-    )
-    images: dict = {str(r.part_id): r.url for r in img_res.scalars()}
+    images: dict = await _customer_thumbnail_map(cat_db, part_ids)
 
     result = []
     for item in items:
@@ -119,16 +118,21 @@ async def _cart_to_response(items: list, cat_db: AsyncSession) -> list:
         if not row:  # supplier_part deleted from catalog — skip silently
             continue
         sp, part, supplier = row[0], row[1], row[2]
+        # `item.unit_price` is NOT trusted for display: rows written before 2026-09-21 hold the RAW supplier
+        # cost. The customer-visible price is always derived from the live offer through the canonical policy.
+        _cost = float(sp.price_ils or 0) or (float(sp.price_usd or 0) * (usd_to_ils_rate or 0))
+        _shown = _customer_unit_price(_cost, supplier.name, supplier.country)
         result.append({
             "id":             str(item.id),
             "partId":         str(item.part_id),
             "supplierPartId": str(item.supplier_part_id),
             "name":           part.name,
-            "price":          float(item.unit_price),
+            "price":          float(_shown or 0),
             "quantity":       item.quantity,
             "imageUrl":       images.get(str(part.id)),
             "supplierId":     str(sp.supplier_id),
             "supplierName":   _mask_supplier(supplier.name),
+            "offerPartType":  offer_label(part.part_type, sp.part_type),
             "stockAvailable": sp.stock_quantity if sp.stock_quantity is not None else 99,
         })
     return result
@@ -136,7 +140,7 @@ async def _cart_to_response(items: list, cat_db: AsyncSession) -> list:
 
 async def _wishlist_item_to_response(item, cat_db: AsyncSession) -> dict:
     """Resolve part details from catalog DB for a single WishlistItem row."""
-    from BACKEND_DATABASE_MODELS import PartsCatalog, PartImage
+    from BACKEND_DATABASE_MODELS import PartsCatalog
     part_res = await cat_db.execute(
         select(PartsCatalog).where(PartsCatalog.id == item.part_id)
     )
@@ -144,12 +148,8 @@ async def _wishlist_item_to_response(item, cat_db: AsyncSession) -> dict:
     if not part:
         return None
 
-    img_res = await cat_db.execute(
-        select(PartImage).where(
-            and_(PartImage.part_id == part.id, PartImage.is_primary == True)
-        ).limit(1)
-    )
-    img = img_res.scalar_one_or_none()
+    _thumb = (await _customer_thumbnail_map(cat_db, [part.id])).get(str(part.id))
+    _offer = await _current_part_offer(cat_db, str(part.id))
 
     return {
         "id":           str(item.id),
@@ -157,8 +157,12 @@ async def _wishlist_item_to_response(item, cat_db: AsyncSession) -> dict:
         "name":         part.name,
         "category":     part.category,
         "manufacturer": part.manufacturer,
-        "price":        float(part.min_price_ils or part.base_price or 0),
-        "imageUrl":     img.url if img else None,
+        # min_price_ils is an INTERNAL supplier-cost aggregate (never a customer price): use the cheapest
+        # live offer through the canonical policy, falling back to base_price (already cost×1.45).
+        "price":        float((_offer or {}).get("price_ils") or part.base_price or 0),
+        # product class of the offer the price is taken from (own label, else the part's)
+        "offerPartType": (_offer or {}).get("part_type") or offer_label(part.part_type, None),
+        "imageUrl":     _thumb,
         "addedAt":      item.added_at.isoformat(),
     }
 
@@ -187,26 +191,37 @@ async def add_cart_item(
     db: AsyncSession = Depends(get_pii_db),
     cat_db: AsyncSession = Depends(get_db),
 ):
-    from BACKEND_DATABASE_MODELS import Cart, CartItem as CartItemModel, SupplierPart
+    from BACKEND_DATABASE_MODELS import Cart, CartItem as CartItemModel, SupplierPart, Supplier as SupplierModel, PartsCatalog
 
-    # Resolve cheapest available supplier_part for the given catalog part
-    sp_res = await cat_db.execute(
-        select(SupplierPart)
-        .where(
-            and_(
-                SupplierPart.part_id == data.part_id,
-                SupplierPart.is_available == True,
-            )
-        )
-        .order_by(SupplierPart.price_ils.asc().nullslast())
-        .limit(1)
+    # Resolve WHICH offer goes in the cart. The customer may pick one explicitly (`supplier_part_id`: any
+    # available offer of this part — OEM, equivalent or aftermarket). Without a choice the default is the
+    # cheapest offer whose product class is COMPATIBLE with the catalog part (same class or unclassified); an
+    # offer of another class (e.g. an aftermarket listing on an OEM part) is never silently substituted —
+    # it is only the default when nothing compatible exists. The cart line carries the offer's class.
+    _stmt = (
+        select(SupplierPart, SupplierModel, PartsCatalog.part_type)
+        .join(SupplierModel, SupplierPart.supplier_id == SupplierModel.id)
+        .join(PartsCatalog, SupplierPart.part_id == PartsCatalog.id)
+        .where(and_(SupplierPart.part_id == data.part_id, SupplierPart.is_available == True))
     )
-    sp = sp_res.scalar_one_or_none()
-    if not sp:
+    if data.supplier_part_id:
+        _stmt = _stmt.where(SupplierPart.id == data.supplier_part_id)
+    else:
+        _stmt = _stmt.order_by(text(class_rank_sql("supplier_parts.part_type", "parts_catalog.part_type")),
+                               SupplierPart.price_ils.asc().nullslast())
+    sp_res = await cat_db.execute(_stmt.limit(1))
+    _sp_row = sp_res.first()
+    if not _sp_row:
         raise HTTPException(status_code=404, detail="Part not available from any supplier")
+    sp, _supplier = _sp_row[0], _sp_row[1]
 
     usd_to_ils_rate = await get_usd_to_ils_rate(cat_db)
-    unit_price = float(sp.price_ils or 0) or (float(sp.price_usd or 0) * usd_to_ils_rate)
+    _cost = float(sp.price_ils or 0) or (float(sp.price_usd or 0) * usd_to_ils_rate)
+    # The cart line stores the CUSTOMER price (cost×1.45 + conditional VAT via the canonical policy) —
+    # never the raw supplier cost.
+    unit_price = _customer_unit_price(_cost, _supplier.name, _supplier.country)
+    if not unit_price:
+        raise HTTPException(status_code=404, detail="Part not available from any supplier")
     cart = await _get_or_create_cart(current_user.id, db)
 
     # Compatible upsert: update existing row if found, otherwise insert.

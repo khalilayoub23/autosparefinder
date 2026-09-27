@@ -1,3 +1,4 @@
+import { offerClassInfo, realSupplierPartId } from '../utils/offerClass'
 import { useState, useEffect, useRef, useCallback, useDeferredValue } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { partsApi } from '../api/parts'
@@ -929,6 +930,9 @@ function AllOffersModal({ part, onAddToCart, onClose }) {
                         {s.express_available && (
                           <ExpressBadge price={s.express_price_ils} days={s.express_delivery_days} cutoff={s.express_cutoff_time} />
                         )}
+                        {offerClassInfo(s.part_type) && (
+                          <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${offerClassInfo(s.part_type).cls}`}>{offerClassInfo(s.part_type).label}</span>
+                        )}
                         {s.warranty_months ? (
                           <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] text-slate-500">
                             <Shield className="h-3 w-3" />{s.warranty_months} חוד׳
@@ -957,6 +961,7 @@ function AllOffersModal({ part, onAddToCart, onClose }) {
                           onAddToCart({
                             partId: part.id,
                             supplierPartId: s.supplier_part_id || `fallback-${part.id}-${i}`,
+                            offerPartType: s.part_type || null,
                             name: part.name_he || part.name,
                             manufacturer: part.manufacturer,
                             price: s.subtotal,
@@ -1118,6 +1123,9 @@ function TypeSection({ typeKey, data, onAddToCart }) {
                     {sp.express_available && (
                       <ExpressBadge price={sp.express_price_ils} days={sp.express_delivery_days} cutoff={sp.express_cutoff_time} />
                     )}
+                    {offerClassInfo(sp.part_type) && (
+                      <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${offerClassInfo(sp.part_type).cls}`}>{offerClassInfo(sp.part_type).label}</span>
+                    )}
                     {displayWarrantyMonths && (
                       <span className="flex items-center gap-1 text-xs text-gray-500">
                         <Shield className="w-3 h-3" />{displayWarrantyMonths} חודשים
@@ -1140,6 +1148,7 @@ function TypeSection({ typeKey, data, onAddToCart }) {
                     onAddToCart({
                       partId: part.id,
                       supplierPartId: sp.supplier_part_id || `fallback-${part.id}-${i}`,
+                      offerPartType: sp.part_type || null,
                       name: part.name_he || part.name,
                       manufacturer: part.manufacturer,
                       price: s.subtotal,
@@ -1700,7 +1709,7 @@ export default function Parts() {
       return
     }
     addItemLocal(item)
-    if (item.partId) cartApi.addItem(item.partId, item.quantity ?? 1).catch(() => {})
+    if (item.partId) cartApi.addItem(item.partId, item.quantity ?? 1, realSupplierPartId(item.supplierPartId)).catch(() => {})
   }
   const { vehicles, selectedVehicle, loadVehicles, selectVehicle, addVehicle: storeAddVehicle, removeVehicle } = useVehicleStore()
   const [searchParams] = useSearchParams()

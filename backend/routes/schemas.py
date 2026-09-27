@@ -161,6 +161,9 @@ class ResolveApprovalBody(BaseModel):
 class CartAddRequest(BaseModel):
     part_id: str
     quantity: int = Field(default=1, ge=1, le=100)
+    # optional: the specific offer the customer picked (OEM / equivalent / aftermarket). Absent => the
+    # class-compatible cheapest default (see routes/cart.py).
+    supplier_part_id: Optional[str] = None
 
 
 class WishlistAddRequest(BaseModel):

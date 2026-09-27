@@ -1333,6 +1333,41 @@ _BASE_PRICE_BATCH_BACKOFF_S = 30.0
 _BASE_PRICE_BATCH_BACKOFF_MAX = 1800.0
 
 
+# base_price = cost x 1.45 of the cheapest CLASS-COMPATIBLE offer (offer_classification.py). An aftermarket offer
+# (e.g. AliExpress) must never become the base price of an OEM catalog part: base_price is the price of the catalog
+# part's own product class. No compatible offer => the part stays unpriced (its other-class offers are still listed,
+# labeled, to the customer by search/cart — they just are not the catalog price).
+_NORMALIZE_BASE_PRICE_SQL = """
+    UPDATE parts_catalog pc
+    SET base_price        = ROUND((sp_min.min_price * 1.45)::numeric, 2),
+        importer_price_ils = sp_min.min_price,
+        max_price_ils      = COALESCE(NULLIF(pc.max_price_ils, 0), ROUND((sp_min.min_price * 1.18)::numeric, 2)),
+        min_price_ils      = sp_min.min_price,
+        updated_at         = NOW()
+    FROM (
+        SELECT sp.part_id, MIN(sp.price_ils) AS min_price
+        FROM supplier_parts sp
+        JOIN parts_catalog pcx ON pcx.id = sp.part_id
+        WHERE sp.updated_at > NOW() - INTERVAL '35 min'
+          AND sp.is_available = TRUE AND sp.price_ils > 0
+          AND __RANK__ = 0
+          __ONLY__
+        GROUP BY sp.part_id
+        LIMIT :batch
+    ) sp_min
+    WHERE pc.id = sp_min.part_id
+      AND pc.is_active
+      AND (pc.base_price IS NULL OR pc.base_price = 0)
+"""
+
+
+def _normalize_base_price_sql(only_ids: bool = False) -> str:
+    from offer_classification import class_rank_sql
+    return (_NORMALIZE_BASE_PRICE_SQL
+            .replace("__RANK__", class_rank_sql("sp.part_type", "pcx.part_type"))
+            .replace("__ONLY__", "AND sp.part_id = ANY(CAST(:only_ids AS uuid[]))" if only_ids else ""))
+
+
 async def task_normalize_base_price_batched(batch_size: int = 1000) -> int:
     """Batched normalize_base_price — replaces the disabled full-table-scan version.
     Finds parts where base_price=0 but a supplier_parts price exists, then sets:
@@ -1364,25 +1399,7 @@ async def task_normalize_base_price_batched(batch_size: int = 1000) -> int:
             # the recent window catches exactly those. The 35-min window is wider
             # than the max backoff (30 min) below, so nothing is missed between
             # runs. Idempotent: once fixed, base_price>0 excludes it next time.
-            result = await db.execute(text("""
-                UPDATE parts_catalog pc
-                SET base_price        = ROUND((sp_min.min_price * 1.45)::numeric, 2),
-                    importer_price_ils = sp_min.min_price,
-                    max_price_ils      = COALESCE(NULLIF(pc.max_price_ils, 0), ROUND((sp_min.min_price * 1.18)::numeric, 2)),
-                    min_price_ils      = sp_min.min_price,
-                    updated_at         = NOW()
-                FROM (
-                    SELECT sp.part_id, MIN(sp.price_ils) AS min_price
-                    FROM supplier_parts sp
-                    WHERE sp.updated_at > NOW() - INTERVAL '35 min'
-                      AND sp.is_available = TRUE AND sp.price_ils > 0
-                    GROUP BY sp.part_id
-                    LIMIT :batch
-                ) sp_min
-                WHERE pc.id = sp_min.part_id
-                  AND pc.is_active
-                  AND (pc.base_price IS NULL OR pc.base_price = 0)
-            """), {"batch": batch_size})
+            result = await db.execute(text(_normalize_base_price_sql()), {"batch": batch_size})
             fixed = result.rowcount or 0
             if fixed:
                 await db.commit()

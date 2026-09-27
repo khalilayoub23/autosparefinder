@@ -38,6 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from BACKEND_DATABASE_MODELS import get_db
 from BACKEND_AUTH_SECURITY import get_redis, check_rate_limit
 from routes.parts import _customer_price_fields
+from offer_classification import class_rank_sql, offer_label
 
 router = APIRouter()
 
@@ -93,6 +94,8 @@ def _shape(r) -> Dict[str, Any]:
         "manufacturer": r["manufacturer"],
         "category": r["category"],
         "barcode": r["barcode"],
+        # product class of the offer the price comes from (oem | oe_equivalent | aftermarket; part's own class when no offer)
+        "part_type": offer_label(r["part_class"], r["offer_part_type"]),
         "available": available,
         "price": None if not available else {
             "amount": price["customer_price_ils"],   # net (before VAT)
@@ -104,17 +107,19 @@ def _shape(r) -> Dict[str, Any]:
     }
 
 
+# Default price basis = cheapest offer whose product class is COMPATIBLE with the part (an aftermarket listing is
+# never silently the "price" of an OEM part) — see offer_classification.py.
 _ROW_SQL = """
     pc.id, pc.oem_number, pc.name, pc.name_he, pc.manufacturer, pc.category, pc.barcode,
-    sp.price_ils AS cost, s.name AS supplier, s.country
+    sp.price_ils AS cost, s.name AS supplier, s.country, pc.part_type AS part_class, sp.offer_part_type
     FROM parts_catalog pc
     LEFT JOIN LATERAL (
-        SELECT price_ils, supplier_id FROM supplier_parts
-        WHERE part_id = pc.id AND is_available AND price_ils > 0
-        ORDER BY price_ils ASC LIMIT 1
+        SELECT spx.price_ils, spx.supplier_id, spx.part_type AS offer_part_type FROM supplier_parts spx
+        WHERE spx.part_id = pc.id AND spx.is_available AND spx.price_ils > 0
+        ORDER BY __RANK__, spx.price_ils ASC LIMIT 1
     ) sp ON true
     LEFT JOIN suppliers s ON s.id = sp.supplier_id
-"""
+""".replace("__RANK__", class_rank_sql("spx.part_type", "pc.part_type"))
 
 
 def _valid_uuids(ids: List[str]) -> List[str]:

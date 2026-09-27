@@ -41,6 +41,7 @@ from currency_rate import get_usd_to_ils_rate
 from BACKEND_AI_AGENTS import get_agent, resolve_customer_shipping_fee as _resolve_ship_fee, get_supplier_vat_rate
 from resilience import retry_with_backoff
 from routes.utils import _mask_supplier
+from offer_classification import class_rank_sql, offer_label
 from manufacturer_normalization import (
     canonicalize_vehicle_model_for_manufacturer,
     normalize_vehicle_model_name,
@@ -115,6 +116,12 @@ _EXTERNAL_API_SEMAPHORE = asyncio.Semaphore(max(1, _EXTERNAL_API_MAX_CONCURRENCY
 _MARGIN = 1.45
 _VAT_RATE = 0.18
 
+def _offer_price_fields(cf: Dict[str, Any]) -> Dict[str, Any]:
+    """Customer-facing price fields for an offer payload. `price_ils` is the CUSTOMER price (same as the compare
+    endpoint) — the raw supplier cost must never ride along under that name (search leaked it, 2026-09-21)."""
+    return {**cf, "price_ils": cf.get("customer_price_ils")}
+
+
 def _customer_price_fields(
     cost_ils: Optional[float],
     ship_ils: Optional[float],
@@ -141,21 +148,92 @@ def _customer_price_fields(
     total = round(sell_net + vat + float(ship_ils or 0), 2)
     return {"customer_price_ils": sell_net, "customer_vat_ils": vat, "customer_total_ils": total}
 
-async def _current_part_price(cat_db, part_id: str):
-    """Cheapest available supplier → conditional-VAT customer price (net+VAT, no shipping).
-    Returns (price_ils, part_name) or None. Shared by the watch endpoints + the checker loop."""
+async def _customer_thumbnail_map(db, part_ids) -> Dict[str, str]:
+    """part_id -> clean bucket thumbnail URL (status 'ok'): the ONLY image ever shown to customers (owner rule
+    2026-07-18). `parts_images` holds RAW supplier URLs (a supplier CDN host such as *.aliexpress-media.com,
+    cdn.autoteile-meile.de, i.ebayimg.com) — internal input of the thumbnail pipeline, never a display value.
+    Every customer-facing image (search, cart, wishlist, part detail) must come from here."""
+    ids = [str(p) for p in part_ids if p]
+    if not ids:
+        return {}
+    rows = (await db.execute(text(
+        "SELECT part_id::text, url FROM part_thumbnails "
+        "WHERE part_id = ANY(CAST(:ids AS uuid[])) AND status = 'ok' AND url IS NOT NULL"
+    ), {"ids": ids})).fetchall()
+    return {str(r[0]): str(r[1]) for r in rows}
+
+
+def _customer_unit_price(
+    cost_ils: Optional[float],
+    supplier_name: Optional[str] = None,
+    supplier_country: Optional[str] = None,
+) -> Optional[float]:
+    """THE customer-visible unit price of ONE supplier offer: cost×1.45 + conditional VAT, excluding
+    delivery (the cart/wishlist/watch surfaces show this; checkout charges the same figure).
+    Every surface that shows a per-part price to a customer must obtain it here — a raw supplier cost
+    (`supplier_parts.price_ils`, `parts_catalog.min_price_ils`/`importer_price_ils`) is INTERNAL and must
+    never be shown as, or stand in for, the customer price. Returns None when there is no usable cost."""
+    return _customer_price_fields(cost_ils, 0, supplier_name=supplier_name,
+                                  supplier_country=supplier_country)["customer_total_ils"]
+
+
+# image_url is deliberately NOT here: a raw supplier image URL names the supplier's CDN (e.g. *.aliexpress-media.com)
+# and customer surfaces must only ever show our own bucket thumbnails (see thumbnail rules in CLAUDE.md).
+_EXTERNAL_OFFER_SAFE_FIELDS = ("title", "condition", "estimated_delivery_days", "ships_to_israel", "warranty_months")
+
+
+def _sanitize_external_offer(offer: Dict[str, Any], usd_to_ils: float) -> Optional[Dict[str, Any]]:
+    """Live external-supplier result (PartResult.__dict__: raw `price`/`total_cost`/`seller`/`item_url`
+    /supplier name) -> customer-safe offer: descriptive fields + customer_* price computed by the
+    canonical policy + a masked supplier alias. Returns None when the price cannot be converted with a
+    trusted rate (never guessed) — the raw cost/URL/seller are never passed through."""
+    try:
+        currency = str(offer.get("currency") or "").upper()
+        price = float(offer.get("price") or 0)
+        ship = float(offer.get("shipping_cost") or 0)
+        if price <= 0:
+            return None
+        if currency == "USD":
+            cost_ils, ship_ils = price * usd_to_ils, ship * usd_to_ils
+        elif currency in ("ILS", "NIS"):
+            cost_ils, ship_ils = price, ship
+        else:
+            return None
+        fields = _customer_price_fields(cost_ils, ship_ils, supplier_name=offer.get("supplier"),
+                                        supplier_country=offer.get("location"))
+        if not fields.get("customer_price_ils"):
+            return None
+    except Exception:
+        return None
+    out = {k: offer.get(k) for k in _EXTERNAL_OFFER_SAFE_FIELDS if k in offer}
+    out["supplier"] = _mask_supplier(str(offer.get("supplier") or ""))
+    out.update(fields)
+    return out
+
+
+async def _current_part_offer(cat_db, part_id: str):
+    """Price-basis offer of a part: the cheapest available offer whose product class is COMPATIBLE with the part
+    (offer_classification.py), as a customer-safe dict {price_ils, name, part_type} (price via the canonical policy,
+    ex-delivery; part_type = the offer's displayed class). None when there is no usable offer."""
     row = (await cat_db.execute(text("""
-        SELECT sp.price_ils, s.name, s.country, pc.name_he, pc.name
+        SELECT sp.price_ils, s.name, s.country, pc.name_he, pc.name, sp.part_type, pc.part_type
         FROM supplier_parts sp
         JOIN suppliers s ON s.id = sp.supplier_id
         JOIN parts_catalog pc ON pc.id = sp.part_id
         WHERE sp.part_id = :pid AND sp.is_available AND sp.price_ils > 0 AND s.is_active
-        ORDER BY sp.price_ils ASC LIMIT 1
-    """), {"pid": part_id})).first()
+        ORDER BY {_rank}, sp.price_ils ASC LIMIT 1
+    """.replace("{_rank}", class_rank_sql("sp.part_type", "pc.part_type"))), {"pid": part_id})).first()
     if not row:
         return None
-    fields = _customer_price_fields(float(row[0]), 0, supplier_name=row[1], supplier_country=row[2])
-    return fields["customer_total_ils"], (row[3] or row[4] or "")
+    return {"price_ils": _customer_unit_price(float(row[0]), row[1], row[2]), "name": (row[3] or row[4] or ""),
+            "part_type": offer_label(row[6], row[5])}
+
+
+async def _current_part_price(cat_db, part_id: str):
+    """Cheapest available (class-compatible) supplier -> conditional-VAT customer price (net+VAT, no shipping).
+    Returns (price_ils, part_name) or None. Shared by the watch endpoints + the checker loop."""
+    o = await _current_part_offer(cat_db, part_id)
+    return (o["price_ils"], o["name"]) if o else None
 
 
 @router.post("/api/v1/parts/{part_id}/watch")
@@ -1602,7 +1680,8 @@ async def search_parts(
                     sp.express_delivery_days,
                     sp.express_cutoff_time,
                     sp.last_checked_at,
-                    s.website        AS supplier_website
+                    s.website        AS supplier_website,
+                    sp.part_type     AS offer_part_type
                 FROM supplier_parts sp
                 JOIN suppliers s ON s.id = sp.supplier_id
                 WHERE sp.part_id = :part_id
@@ -1610,9 +1689,9 @@ async def search_parts(
                   AND s.is_active = TRUE
                   AND s.name NOT IN ('Official Manufacturer Sites', 'Sandbox Supplier QA')
                   AND NULLIF(BTRIM(sp.supplier_url), '') IS NOT NULL
-                ORDER BY COALESCE(sp.price_ils, sp.price_usd * :usd_to_ils_rate) ASC
+                ORDER BY {_rank}, COALESCE(sp.price_ils, sp.price_usd * :usd_to_ils_rate) ASC
                 LIMIT 20
-            """),
+            """.replace("{_rank}", class_rank_sql("sp.part_type", "(SELECT pc0.part_type FROM parts_catalog pc0 WHERE pc0.id = sp.part_id)"))),
             {"part_id": part_id_str, "usd_to_ils_rate": usd_to_ils_rate},
         )).fetchall()
 
@@ -1695,11 +1774,12 @@ async def search_parts(
                 "supplier_name":         _mask_supplier(sp[1]),
                 "supplier_country":      sp[2] or "",
                 "supplier_sku":          sp[3],
+                # product class of THIS offer (OEM / oe_equivalent / aftermarket): its own label, else the part's
+                "part_type":             offer_label(part_row[6], sp[19] if len(sp) > 19 else None),
                 "source":                supplier_source,
-                "price_usd":             float(sp[4]) if sp[4] else None,
-                "price_ils":             round(price_ils, 2) if price_ils else None,
-                **_customer_price_fields(price_ils, shipping_cost_ils_resolved,
-                                         supplier_name=sp[1], supplier_country=sp[2]),
+                "price_usd":             None,  # raw supplier cost in USD is internal — never exposed (2026-09-21)
+                **_offer_price_fields(_customer_price_fields(price_ils, shipping_cost_ils_resolved,
+                                         supplier_name=sp[1], supplier_country=sp[2])),
                 "shipping_cost_ils":     shipping_cost_ils,
                 "shipping_cost_usd":     shipping_cost_usd,
                 "shipping_cost_ils_resolved": shipping_cost_ils_resolved,
@@ -1743,7 +1823,8 @@ async def search_parts(
                             sp.express_delivery_days,
                             sp.express_cutoff_time,
                             sp.last_checked_at,
-                            s.website               AS supplier_website
+                            s.website               AS supplier_website,
+                            sp.part_type            AS offer_part_type
                         FROM supplier_parts sp
                         JOIN suppliers s ON s.id = sp.supplier_id
                         WHERE sp.part_id = ANY(CAST(:extra_ids AS uuid[]))
@@ -1751,9 +1832,9 @@ async def search_parts(
                           AND s.is_active = TRUE
                           AND s.name NOT IN ('Official Manufacturer Sites', 'Sandbox Supplier QA')
                           AND NULLIF(BTRIM(sp.supplier_url), '') IS NOT NULL
-                        ORDER BY sp.part_id,
+                        ORDER BY sp.part_id, {_rank},
                                                                  COALESCE(sp.price_ils, sp.price_usd * :usd_to_ils_rate) ASC
-                    """),
+                    """.replace("{_rank}", class_rank_sql("sp.part_type", "(SELECT pc0.part_type FROM parts_catalog pc0 WHERE pc0.id = sp.part_id)"))),
                                         {"extra_ids": extra_ids, "usd_to_ils_rate": usd_to_ils_rate},
                 )).fetchall()
             except Exception:
@@ -1817,11 +1898,11 @@ async def search_parts(
                         "supplier_name":           _mask_supplier(bsp[2]),
                         "supplier_country":        bsp[3] or "",
                         "supplier_sku":            bsp[4],
+                        "part_type":               offer_label(extra_dict.get("part_type"), bsp[20] if len(bsp) > 20 else None),
                         "source":                  b_supplier_source,
-                        "price_usd":               float(bsp[5]) if bsp[5] else None,
-                        "price_ils":               round(b_price_ils, 2) if b_price_ils else None,
-                        **_customer_price_fields(b_price_ils, b_shipping_cost_ils_resolved,
-                                                 supplier_name=bsp[2], supplier_country=bsp[3]),
+                        "price_usd":               None,  # raw supplier cost in USD is internal — never exposed (2026-09-21)
+                        **_offer_price_fields(_customer_price_fields(b_price_ils, b_shipping_cost_ils_resolved,
+                                                 supplier_name=bsp[2], supplier_country=bsp[3])),
                         "shipping_cost_ils":       b_shipping_cost_ils,
                         "shipping_cost_usd":       b_shipping_cost_usd,
                         "shipping_cost_ils_resolved": b_shipping_cost_ils_resolved,
@@ -2171,7 +2252,13 @@ async def search_parts(
             _cached_ext = await redis.get(_ext_cache_key)
             if _cached_ext:
                 import json as _json
-                external_supplier_results = _json.loads(_cached_ext)
+                # The cache holds RAW supplier results (cost, seller, item URL). Never serve them to
+                # customers: convert to customer-safe offers through the canonical pricing policy.
+                _ext_rate = await get_usd_to_ils_rate(db)
+                external_supplier_results = [
+                    _o for _o in (_sanitize_external_offer(_r, _ext_rate) for _r in _json.loads(_cached_ext)
+                                  if isinstance(_r, dict)) if _o
+                ]
     except Exception:
         pass
 
@@ -3488,6 +3575,7 @@ async def get_part_suppliers(
             raise HTTPException(status_code=429, detail="יותר מדי בקשות — נסה שוב בעוד דקה")
 
     usd_to_ils_rate = float(await get_usd_to_ils_rate(db))
+    _cmp_part_type = (await db.execute(text("SELECT part_type FROM parts_catalog WHERE id = :pid"), {"pid": part_id})).scalar()
 
     # Fetch all available suppliers — no URL filter (marketplace shows all price sources)
     rows = (await db.execute(
@@ -3546,7 +3634,7 @@ async def get_part_suppliers(
             # supplier_website and supplier_url intentionally OMITTED from response
             # — exposing these lets customers bypass us and order directly
             "supplier_sku":            r[4],
-            "price_usd":               float(r[5]) if r[5] else None,
+            "price_usd":               None,  # raw supplier cost in USD is internal — never exposed (2026-09-21)
             # price_ils = CUSTOMER sell price (cost×1.45), never raw supplier
             # cost — this endpoint used to leak our purchase cost (2026-07-05)
             "price_ils":               _cust["customer_price_ils"],
@@ -3560,7 +3648,7 @@ async def get_part_suppliers(
             "express_price_ils":       float(r[15]) if r[15] else None,
             "express_delivery_days":   r[16],
             "last_checked_at":         r[17].isoformat() if r[17] else None,
-            "part_type":               r[18],
+            "part_type":               offer_label(_cmp_part_type, r[18]),
             "total_cost_ils":          _cust["customer_total_ils"],
             "source":                  _supplier_source_tag(r[1], r[3]),
         })
@@ -3619,12 +3707,9 @@ async def get_part(part_id: str, db: AsyncSession = Depends(get_db)):
     if not part:
         raise HTTPException(status_code=404, detail="Part not found")
 
-    images_res = await db.execute(
-        select(PartImage.url)
-        .where(and_(PartImage.part_id == part.id, PartImage.url.is_not(None)))
-        .order_by(PartImage.is_primary.desc(), PartImage.sort_order.asc(), PartImage.created_at.desc())
-    )
-    image_urls = [str(r[0]) for r in images_res.fetchall() if r[0]]
+    # Clean bucket thumbnail only — never a raw supplier image URL (see _customer_thumbnail_map).
+    _thumb = (await _customer_thumbnail_map(db, [part.id])).get(str(part.id))
+    image_urls = [_thumb] if _thumb else []
 
     specs = part.specifications or {}
     ebay_meta = specs.get("ebay") if isinstance(specs, dict) else {}

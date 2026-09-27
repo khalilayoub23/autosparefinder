@@ -1,3 +1,4 @@
+import { offerClassInfo, realSupplierPartId } from '../utils/offerClass'
 import { useState, useEffect, useRef } from 'react'
 import { useCartStore } from '../stores/cartStore'
 import { useAuthStore } from '../stores/authStore'
@@ -90,6 +91,7 @@ export default function Cart() {
       partId: item.partId,
       supplierPartId: item.supplierPartId || item.supplier_part_id || item.id,
       serverCartItemId: item.id,
+      offerPartType: item.offerPartType || null,
       name: item.name,
       manufacturer: item.supplierName || 'Supplier',
       price: Number(item.price || 0),
@@ -124,7 +126,7 @@ export default function Cart() {
             if (!item.partId) continue
             syncAttempts += 1
             try {
-              await cartApi.addItem(item.partId, item.quantity)
+              await cartApi.addItem(item.partId, item.quantity, realSupplierPartId(item.supplierPartId))
               syncSuccess += 1
             } catch {
               // skip unavailable
@@ -172,7 +174,7 @@ export default function Cart() {
     try {
       await cartApi.removeItem(item.serverCartItemId)
       if (quantity > 0) {
-        const { data } = await cartApi.addItem(item.partId, quantity)
+        const { data } = await cartApi.addItem(item.partId, quantity, realSupplierPartId(item.supplierPartId))
         syncCartFromResponse(data)
       } else {
         const { data } = await cartApi.get()
@@ -203,7 +205,7 @@ export default function Cart() {
         if (refreshedCartItems.length === 0 && items.length > 0) {
           for (const item of items) {
             if (!item.partId) continue
-            try { await cartApi.addItem(item.partId, item.quantity) } catch { /* skip unavailable */ }
+            try { await cartApi.addItem(item.partId, item.quantity, realSupplierPartId(item.supplierPartId)) } catch { /* skip unavailable */ }
           }
           const { data: refreshedCart } = await cartApi.get()
           refreshedCartItems = refreshedCart.items || []
@@ -336,6 +338,9 @@ export default function Cart() {
                 <div className="flex-1 min-w-0">
                   <p className="font-medium text-brand-navy truncate">{item.name}</p>
                   <p className="text-xs text-gray-500">{item.manufacturer}</p>
+                  {offerClassInfo(item.offerPartType) && (
+                    <span className={`inline-block rounded-full border px-2 py-0.5 text-[11px] font-medium mt-0.5 ${offerClassInfo(item.offerPartType).cls}`}>{offerClassInfo(item.offerPartType).label}</span>
+                  )}
                   <p className="text-brand-600 font-semibold mt-1">₪{(item.price * item.quantity).toFixed(2)}</p>
                   {item.isEstimated && (
                     <span className="inline-block text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5 mt-0.5">~ מחיר משוער</span>

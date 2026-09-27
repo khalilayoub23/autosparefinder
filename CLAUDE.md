@@ -146,6 +146,20 @@ Rules:
 - **One canonical price function**: `_customer_price_fields` (routes/parts.py). Every surface —
   search, chat, checkout, NOA — consumes it. No per-channel price formulas.
   Formula: `sell = cost × 1.45`, `vat = sell × 0.18 (IL only)`, `total = sell + vat + ship`.
+- **A raw supplier cost is NEVER a customer price (2026-09-21).** `supplier_parts.price_ils`, `parts_catalog.min_price_ils`/
+  `importer_price_ils` and a live external result's `price`/`total_cost` are INTERNAL. Every customer-visible per-part price comes from
+  `routes/parts.py::_customer_unit_price` / `_customer_price_fields`; live external results reach customers only through
+  `_sanitize_external_offer`; raw supplier-result routes (`/api/suppliers/*`) are admin-only. Guarded by `tests/test_customer_price_boundary.py`.
+- **Offer classification — OEM / OE-equivalent / aftermarket offers COEXIST (owner rule 2026-09-21).** Classification is per OFFER
+  (`supplier_parts.part_type`; NULL = legacy, inherits the catalog part's class). `offer_classification.py` is the single rule: default
+  selections/price bases (cart default, WhatsApp checkout, watch/wishlist, partner API, NOA, search ordering) prefer offers COMPATIBLE
+  with the part's class, then cheapest; offers of another class are always listed, labeled (`part_type` in every offer payload),
+  selectable (`supplier_part_id` on cart add) and never overwritten or hidden. A marketplace listing (AliExpress) is NEVER classified
+  OEM — `aftermarket`, or `oe_equivalent` when the title names a known OE-supplier brand. AliExpress is simply another supplier offer.
+- **An extra supplier offer must be ADDITIONAL to an already customer-visible offer** (same predicate as the search's offer list:
+  active supplier, available, priced, non-empty `supplier_url`). Search hides URL-less offers (IL importer price lists), so a URL-bearing
+  new offer on such a part would become the ONLY listed offer and hide the existing OEM price — the priced AliExpress population is
+  restricted accordingly (`aliexpress_price_sync._select_targets`). Found by the live production sample.
 - **Import formula**: `cost = consumer_price / 1.18` → `importer_price_ils = cost`,
   `base_price = cost × 1.45`, `max_price_ils = consumer_price`. Never reverse this.
 

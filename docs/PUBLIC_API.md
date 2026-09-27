@@ -79,6 +79,7 @@ List of car brands present in the catalog.
   "manufacturer": "Jaguar",
   "category": "filters",
   "barcode": null,
+  "part_type": "oem",      // product class of the offer the price comes from: oem | oe_equivalent | aftermarket
   "available": true,
   "price": {
     "amount": 244.82,      // net price (before VAT)
@@ -90,6 +91,7 @@ List of car brands present in the catalog.
 }
 ```
 `price` is `null` and `available` is `false` when no priced stock is currently offered.
+`part_type` is the class of the offer behind `price` (an aftermarket offer is never presented as `oem`); when no offer exists it is the catalog part's own class.
 
 ## Errors
 | Status | Meaning |
