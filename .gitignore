@@ -75,6 +75,11 @@ whatsapp-bridge/auth_info/
 whatsapp-bridge/auth_info.*/
 whatsapp-bridge/evidence-*/
 whatsapp-bridge/qr.txt
+# Persistent outbound-message retry cache (msg_cache.js, 2026-09-27) — holds real
+# message CONTENT (order numbers, customer names/prices, owner alert text) so a
+# retry can be served after a restart. Same sensitivity class as auth_info/ above;
+# never commit it.
+whatsapp-bridge/msg_cache.json
 # Operator artifact rendered by whatsapp-bridge/show_qr.sh: a WhatsApp pairing QR (sensitive, transient, read by no code).
 /WHATSAPP_QR.png
 

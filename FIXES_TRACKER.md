@@ -4040,3 +4040,57 @@ Failure classes that entered the same path (not all alike, so now classified sep
 - **Commit scope:** ONLY the AliExpress/offer-classification/price-boundary work — the two AliExpress service files, `offer_classification.py` (a hard import of `aliexpress_price_sync`), the routes/agents that consume it, the OAuth callback + nginx, the offer-class UI, the approved tests, docs, the AliExpress hunk of `docker-compose.yml`, and the AliExpress sections of this tracker. EXCLUDED and left uncommitted for the owner: Eurosender route/tests, `whatsapp-bridge/*`, the two `init: true` compose hunks, and the Eurosender/NOA/communication tracker sections.
 - **Numeric AliExpress quota: NOT PROVEN** (observed only 662 calls and 0 `ApiCallLimit` events in this cycle).
 - **Remaining risks:** one production cycle is a single sample; recurring OOM kills of uvicorn (backend near its 4 GiB limit); `pre_restart.sh` self-matching `pgrep -f freesbe_importer` and its blanket `superseded` update; `docker-compose.yml`/tracker/Eurosender working-tree changes still uncommitted by owner choice.
+
+## 2026-09-27 — Notification-quality verification & closure run (read-only; no restarts) — PARTIAL
+
+**Zombies — VERIFIED.** 8 (was 43). Six samples over 2 min held at 8. All 8 = `chromium` defunct children of two SIGSTOP'd chromium mains (PID 373318 ×5, 3556582 ×3) inside the `flaresolverr` container (not restarted; born Sep 10–11). Backup containers `init=true`, healthy, backups completed 03:00Z; the 35-`curl` class has not returned.
+
+**WhatsApp — VERIFIED.** Bridge up since 2026-09-26T20:21Z on existing creds; `/health` CONNECTED, `awaiting_qr_scan:false`, `last_disconnect:null` → no reconnect loop since restart. 5 sends in 9 h, 0 send errors.
+
+**Retry logging — VERIFIED LIVE (naturally occurring).** 2026-09-27 04:00:57–04:01:01Z: the primary phone (`device:0`, `...0397`) burst-requested retries for 9 message ids. Every `wa_retry` carries non-empty `msg_id`, `jid_hint`, `device` (previously `msg_id:""`, no device). No keys/ciphertext in output. Attempt counter is not logged (never was; not added).
+
+**NEW PROVEN DEFECT (NOT fixed — needs bridge restart + design decision):** 5 of the 9 retried ids returned `wa_get_message result=not_found`. `msgCache` in `whatsapp-bridge/index.js` is in-memory only (500 entries), so every bridge restart discards it; retry requests for pre-restart messages can never be honoured and the phone shows "Waiting for this message" permanently for them. The 4 post-restart ids were found and resent. Options: persist outbound messages to disk (stores owner-alert text at rest) or accept. Owner decision required.
+
+**Notification flood — NONE.** 24 h `notifications`: supplier_order/push 8 (single 21:20 batch), system/push 4. Quiet queue 6 entries (distinct alert keys, will flush 09:00 IL). Tests: `test_safe_logging.mjs` 34/34; `owner_alert_remediation_test`, `notify_policy_test`, `pass4_content_quality_test`, `harvest_notify_policy_test` exit 0. `queue_atomic_dedup_test` NOT RUN (needs ephemeral Redis container).
+
+**SEPARATE OPEN RISK — backend OOM (not notification quality):** kernel OOM-killed uvicorn again 2026-09-27 03:36 CEST (anon-rss 2.8 GB; 4 GiB cgroup). uvicorn RSS ≈2.0 GB + a 615 MB Playwright headless chrome + amayama chrome; container sampled 2.96–3.40 GiB at ~3 h uptime.
+
+## 2026-09-27 — WhatsApp persistent outbound-message retry cache (Task A) — IMPLEMENTED, PRE-RESTART VERIFIED, LIVE E2E PENDING APPROVAL
+
+**Root cause (confirmed, not speculative):** `whatsapp-bridge/index.js`'s outbound-message cache (`msgCache`, used by Baileys' `getMessage(key)` to answer phone-side retry requests) was a plain in-memory `Map`. A bridge restart discards it. Real production evidence (2026-09-27 04:00:57–04:01:01Z, this same investigation): 9 phone-side retries arrived after the 2026-09-26 20:21Z restart; 4 (sent after the restart) were served; 5 (sent before it) logged `wa_get_message result=not_found` and could never be redelivered — the phone shows "Waiting for this message" permanently for those.
+
+**Fix — new module `whatsapp-bridge/msg_cache.js`:** the same bounded Map, now mirrored to a JSON file (`${APP_DIR}/msg_cache.json`) via the EXISTING `atomicWriteFile()` primitive (`atomic_write.js` — the same crash-safe temp-file+fsync+rename sequence already used for `auth_info/creds.json`; no new persistence mechanism invented). `index.js` wires it with Baileys' own `BufferJSON.replacer/reviver` (already imported for creds.json) so Buffer-bearing fields (e.g. an image's `mediaKey`) round-trip correctly. `getMessage` now calls `msgCache.getCachedMessage(key.id)` instead of a raw `Map.get`.
+
+**Persistence boundary:** `msg_cache.json` lives inside the `./whatsapp-bridge:/app` bind mount (`docker-compose.yml`) — the exact mount `auth_info/` already relies on. Survives a container restart AND recreation (host-backed, not the writable container layer).
+
+**Capacity / retention:** `DEFAULT_MAX_ENTRIES=500` unchanged from the original in-memory cap. `DEFAULT_TTL_MS=14 days` — new; a backstop against unbounded disk growth if send volume ever rises far above the observed ~2/hour baseline, generous enough to never discard anything a real retry could plausibly still reference. Both are overridable via `createMsgCache(path, {maxEntries, ttlMs})`.
+
+**Security:** file mode `0600`; persists only `{message, ts}` per id — no session/auth state, no keys beyond whatever the original proto already carried for that send.
+
+**Failure handling (all fail-safe, none crash the bridge):** missing file (first run) → empty cache. Malformed JSON → empty cache + `onError('load_parse_failed')`. One malformed record inside an otherwise-valid file → that record skipped, the rest load + `onError('load_skipped_malformed_records')`. `persist()` failure (disk/permissions) → swallowed + `onError('persist_failed')`; in-memory cache (this process's source of truth) stays correct; next successful write catches the file up. `cacheOutboundMessage`/`getCachedMessage` never throw synchronously into the caller.
+
+**Files changed:** `whatsapp-bridge/msg_cache.js` (new), `whatsapp-bridge/index.js` (wiring only — cache creation + `getMessage` call site), `whatsapp-bridge/test_msgcache.mjs` (rewritten to import the real module instead of a hand-copied replica; B1–B7 preserved + new T3–T6 covering capacity/expiration/restart-simulation/Buffer round-trip/corrupt-and-missing-state).
+
+**Tests:** `node test_msgcache.mjs` → **44 passed, 0 failed** (was 0 tests against real code before — previously a stale hand-copy). `node test_safe_logging.mjs` → 34/34 unchanged. Python regression (`owner_alert_remediation_test`, `notify_policy_test`, `pass4_content_quality_test`, `harvest_notify_policy_test`) → all exit 0, unchanged.
+
+**Live bridge:** NOT restarted. `docker ps` confirms `whatsapp_bridge`/`autospare_backend`/both backup containers/`flaresolverr` all at their pre-task uptimes; `/health` still CONNECTED on the pre-existing (old in-memory-cache) code, proving nothing was disturbed. AliExpress Redis lock `autospare:lock:aliexpress_price_sync` = None (idle, untouched).
+
+**STATUS: READY FOR APPROVAL.** A controlled `whatsapp_bridge` restart is required to prove persistence end-to-end against the real Baileys socket (the restart-simulation tests above prove the module itself; they do not touch the live bridge). Awaiting explicit approval before that restart and before git commit/push.
+
+## 2026-09-27 20:00-20:02Z — WhatsApp persistent retry-cache: LIVE RESTART E2E — PASS
+
+**Authorized action performed:** ONE `docker restart whatsapp_bridge` (owner-approved). No other container touched — `autospare_backend`/both backup containers/`flaresolverr` uptimes unchanged (verified before and after). AliExpress Redis lock `autospare:lock:aliexpress_price_sync` untouched throughout.
+
+**Pre-restart setup:** since the live bridge had never run the new persistence code before this restart, no genuine pre-restart entry existed in `msg_cache.json` to test against. To test the actual restart-recovery code path (not merely re-run the unit simulation), a clearly-labeled test entry (`E2E-TEST-PERSIST-1790539241273`, content explicitly marked "hand-seeded PRE-RESTART entry... Not a real customer/owner message") was written directly to the real production path (`/opt/autosparefinder/whatsapp-bridge/msg_cache.json`, i.e. `/app/msg_cache.json` inside the container) BEFORE the restart, in the exact schema `msg_cache.js` itself writes.
+
+**Post-restart health:** CONNECTED, `session_invalid:false`, `awaiting_qr_scan:false`, `last_disconnect:null`, no crash, startup logs show `PROCESS_START → Listening on port 3001 → CONNECTED` with zero `MSG_CACHE_ERROR` lines (clean load of the seeded file).
+
+**Tier B — live post-restart recovery (real module, real file, real container):** ran the actual `msg_cache.js`/`getMessage(key)` code (via a one-shot script, deleted immediately after use) inside the running `whatsapp_bridge` container against the real `/app/msg_cache.json`. Result: `cache.size()=1`, `getMessage({id:'E2E-TEST-PERSIST-…'})` returned the exact seeded content, not null. This is a separate Node invocation of the same module against the same file — not literally inside the live Baileys socket process — stated explicitly for accuracy.
+
+**Tier C — genuine live phone-side retry (the strongest proof, NOT forced):** sent one real, clearly-labeled test message via the bridge's own production `/send` path to the owner's WhatsApp (`3EB05DE2C01C2B08CDA8EF`) — this exercised the ACTUAL live `cacheOutboundMessage()` call site, confirmed written to the real `msg_cache.json` (2 entries total: the seed + this one) by the live process itself. ~90s later, the recipient's primary device (`...0397`, `device:0`) organically issued a real WhatsApp retry receipt for THIS EXACT message id (`wa_retry msg_id=3EB05DE2C01C2B08CDA8EF jid_hint=...0397 device=0`) — not simulated, not triggered by us. No `wa_get_message result=not_found` and no `error in sending message again` followed → Baileys' own `getMessage()` found it and `relayMessage()` completed without error. **This is the exact real-world failure mode from earlier today (04:00–04:01Z), now proven fixed on a message sent after the persistence fix.**
+
+**Regression (all unchanged/passing):** `/health` CONNECTED; retry-logging fields (`msg_id`/`jid_hint`/`device`) present and correct on the live retry event; `owner_alert_remediation_test`/`notify_policy_test`/`pass4_content_quality_test`/`harvest_notify_policy_test` all exit 0; `node test_safe_logging.mjs` 34/34; `node test_msgcache.mjs` 44/44 (isolated tmp-file tests, unaffected by the live run); `DEFAULT_MAX_ENTRIES=500`/`DEFAULT_TTL_MS=14d` unchanged in source.
+
+**Remaining state:** `msg_cache.json` now holds 2 entries (the harmless labeled test seed + the real test send) — will age out via the 14-day TTL / 500-entry cap like any other entry; not cleaned up manually to avoid a second live write outside the tested code path.
+
+**CLOSURE STATUS: The original defect (pre-restart messages permanently unrecoverable after a bridge restart) is FIXED AND PROVEN** — both via the direct code-path check (Tier B) and, more strongly, via a real, unforced, naturally-occurring phone-side retry succeeding end-to-end (Tier C) on a message that only exists because of this fix.

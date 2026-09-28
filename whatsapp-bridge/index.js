@@ -17,6 +17,7 @@ import express from 'express'
 import qrcode from 'qrcode-terminal'
 import path from 'path'
 import { atomicWriteFile } from './atomic_write.js'
+import { createMsgCache } from './msg_cache.js'
 import { installSafeConsoleFilter, createSafeBaileysLogger } from './safe_logging.js'
 import { installOrphanTimeoutGuard, createConnectionState, socketUnavailable, healthSnapshot, safeListenerSend } from './bridge_lifecycle.js'
 
@@ -98,28 +99,30 @@ function startLivenessWatchdog(sock) {
 const logger = createSafeBaileysLogger()
 const MAX_MEDIA_BYTES = Math.max(256000, Number.parseInt(process.env.WA_MEDIA_MAX_BYTES || '6291456', 10) || 6291456)
 
-// Bounded outbound message cache for Baileys retry recovery (Defect B fix 2026-09-10).
-// When the recipient's WhatsApp fails to decrypt a message it sends a retry receipt back
-// to the sender. Baileys calls getMessage({ remoteJid, fromMe, id }) on the sender side;
-// if that returns a truthy value it calls relayMessage() with it.  The old stub returned
-// { conversation: '' } for every message ID — including unknown ones — which caused
-// Baileys to relay an empty body on every retry, producing "Waiting for this message".
-// Fix: cache the proto.IMessage payload (sent.message) by its ID (sent.key.id) after
-// each successful outbound send.  Unknown IDs return null, which makes Baileys log
-// "message not available" and skip the relay — the correct failure mode.
-// Capacity: 500 ≈ 10 days at normal production rate (~2 msgs/hour).  A restart clears
-// the cache; any message sent before the restart will return null on retry (skip relay),
-// which is correct — we cannot reconstruct what was sent from memory alone.
-const MAX_MSG_CACHE = 500
-const msgCache = new Map()  // messageId (string) → proto.IMessage
+// Bounded, PERSISTENT outbound message cache for Baileys retry recovery
+// (Defect B fix 2026-09-10; made persistent 2026-09-27 — see msg_cache.js's
+// docstring for the full defect history and design rationale). When the
+// recipient's WhatsApp fails to decrypt a message it sends a retry receipt
+// back to the sender. Baileys calls getMessage({ remoteJid, fromMe, id }) on
+// the sender side; if that returns a truthy value it calls relayMessage()
+// with it. The old stub returned { conversation: '' } for every message ID
+// — including unknown ones — which caused Baileys to relay an empty body on
+// every retry, producing "Waiting for this message". The fix below caches
+// the proto.IMessage payload (sent.message) by its ID (sent.key.id) after
+// each successful outbound send, now backed by msg_cache.json (same
+// bind-mounted directory as auth_info/) so it survives a bridge restart —
+// real production retries on 2026-09-27 proved the previous in-memory-only
+// version could not serve pre-restart messages. Unknown/expired IDs still
+// return null, which makes Baileys log "message not available" and skip the
+// relay — the correct failure mode, unchanged.
+const msgCache = createMsgCache(`${APP_DIR}/msg_cache.json`, {
+  replacer: BufferJSON.replacer,
+  reviver: BufferJSON.reviver,
+  onError: (stage, err) => logEvent('MSG_CACHE_ERROR', `stage=${stage} err=${err.message}`),
+})
 
 function cacheOutboundMessage(msgId, protoMessage) {
-  if (!msgId || !protoMessage) return
-  if (msgCache.has(msgId)) return       // first write wins; no overwrite on resend
-  if (msgCache.size >= MAX_MSG_CACHE) {
-    msgCache.delete(msgCache.keys().next().value)   // evict oldest (Map insertion order)
-  }
-  msgCache.set(msgId, protoMessage)
+  msgCache.cacheOutboundMessage(msgId, protoMessage)
 }
 
 let waSocket = null
@@ -444,7 +447,7 @@ async function startBot() {
     auth: state,
     logger,
     printQRInTerminal: false,
-    getMessage: async (key) => msgCache.get(key.id) ?? null,
+    getMessage: async (key) => msgCache.getCachedMessage(key.id) ?? null,
     keepAliveIntervalMs: 15000,     // probe every 15s (default 30s)
     connectTimeoutMs: 30000,        // fail dead connects fast
     defaultQueryTimeoutMs: 60000,   // never wait forever on a query
