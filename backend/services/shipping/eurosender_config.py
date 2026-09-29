@@ -45,11 +45,30 @@ def max_weight_kg() -> float:
 
 
 def api_key() -> str:
-    return (os.getenv("EUROSENDER_API_KEY", "") or "").strip()
+    """Environment-specific: EUROSENDER_SANDBOX_API_KEY (sandbox) or
+    EUROSENDER_PRODUCTION_API_KEY (production) — so a stray .env edit or a
+    forgotten SANDBOX->0 flip can never send one environment's credential to
+    the other environment's endpoint (production-hardening finding, closure
+    phase). SANDBOX mode ONLY falls back to the legacy single
+    EUROSENDER_API_KEY var, since that is the name every verified Sandbox
+    call in this integration's history has actually used — introducing the
+    dedicated var must not require re-entering the already-working Sandbox
+    key. PRODUCTION mode has NO such fallback: EUROSENDER_API_KEY has always
+    held a Sandbox key in practice, so falling back to it in production would
+    reintroduce exactly the cross-environment leak this split prevents.
+    """
+    if sandbox_mode():
+        return (os.getenv("EUROSENDER_SANDBOX_API_KEY") or os.getenv("EUROSENDER_API_KEY", "") or "").strip()
+    return (os.getenv("EUROSENDER_PRODUCTION_API_KEY", "") or "").strip()
 
 
 def webhook_secret() -> str:
-    return (os.getenv("EUROSENDER_WEBHOOK_SECRET", "") or "").strip()
+    """Same environment-specific split as api_key(), for the same reason —
+    Sandbox and Production sign webhooks with different secrets (confirmed by
+    Eurosender support, Phase 19)."""
+    if sandbox_mode():
+        return (os.getenv("EUROSENDER_SANDBOX_WEBHOOK_SECRET") or os.getenv("EUROSENDER_WEBHOOK_SECRET", "") or "").strip()
+    return (os.getenv("EUROSENDER_PRODUCTION_WEBHOOK_SECRET", "") or "").strip()
 
 
 # ---------------------------------------------------------------------------

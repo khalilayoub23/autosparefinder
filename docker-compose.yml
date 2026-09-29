@@ -156,17 +156,27 @@ services:
       EBAY_PRICE_SYNC_LIMIT: ${EBAY_PRICE_SYNC_LIMIT:-4400}
       SENDCLOUD_PUBLIC_KEY: ${SENDCLOUD_PUBLIC_KEY:-}
       SENDCLOUD_SECRET_KEY: ${SENDCLOUD_SECRET_KEY:-}
-      # Eurosender — sandbox-only shipping integration (services/shipping/).
+      # Eurosender — shipping integration (services/shipping/).
       # Every default below is the SAFE/off state, matching
       # services/shipping/eurosender_config.py's own Python-side defaults —
       # adding this pass-through does not enable or change anything by itself;
-      # it only lets a value placed in .env actually reach the container (the
-      # adapter itself additionally refuses any call that resolves to the
-      # production URL — see EurosenderProductionBlocked in eurosender_adapter.py).
+      # it only lets a value placed in .env actually reach the container.
+      # A production call is additionally refused unless EUROSENDER_ENABLED is
+      # set — see EurosenderProductionBlocked in eurosender_adapter.py.
       EUROSENDER_ENABLED: ${EUROSENDER_ENABLED:-0}
       EUROSENDER_SANDBOX: ${EUROSENDER_SANDBOX:-1}
+      # Legacy single-env-var names — historically always held the SANDBOX
+      # credential; kept only as sandbox_mode()'s fallback (never read in
+      # production — see eurosender_config.py).
       EUROSENDER_API_KEY: ${EUROSENDER_API_KEY:-}
       EUROSENDER_WEBHOOK_SECRET: ${EUROSENDER_WEBHOOK_SECRET:-}
+      # Environment-specific credentials (production-hardening closure,
+      # 2026-09-29) — added so Sandbox and Production keys/secrets can never
+      # cross into each other's endpoint. Empty until the owner sets them.
+      EUROSENDER_SANDBOX_API_KEY: ${EUROSENDER_SANDBOX_API_KEY:-}
+      EUROSENDER_SANDBOX_WEBHOOK_SECRET: ${EUROSENDER_SANDBOX_WEBHOOK_SECRET:-}
+      EUROSENDER_PRODUCTION_API_KEY: ${EUROSENDER_PRODUCTION_API_KEY:-}
+      EUROSENDER_PRODUCTION_WEBHOOK_SECRET: ${EUROSENDER_PRODUCTION_WEBHOOK_SECRET:-}
       EUROSENDER_SUPPLIER_ALLOWLIST: ${EUROSENDER_SUPPLIER_ALLOWLIST:-}
       EUROSENDER_MAX_WEIGHT_KG: ${EUROSENDER_MAX_WEIGHT_KG:-25}
       EUR_TO_ILS: ${EUR_TO_ILS:-4.05}

@@ -308,3 +308,91 @@ def test_parse_warnings_account_severity_is_not_treated_as_universal_failure():
     response = {"warnings": [{"code": "insufficient-payment-balance", "message": "x", "parameterPath": ""}]}
     warnings = parse_warnings(response)  # must not raise
     assert len(warnings) == 1
+
+
+# ---------------------------------------------------------------------------
+# Production configuration hardening (closure phase, 2026-09-29): the
+# production gate is now EUROSENDER_ENABLED (the documented kill switch),
+# not an unconditional code-level ban — and credentials are environment-
+# specific so a Sandbox key/secret can never reach Production.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_production_still_blocked_by_default_today(monkeypatch):
+    """Today's real config (EUROSENDER_ENABLED unset/false) must behave
+    IDENTICALLY to the old unconditional ban — this is the regression that
+    matters most: the hardening must not have opened anything today."""
+    monkeypatch.delenv("EUROSENDER_ENABLED", raising=False)
+    monkeypatch.setenv("EUROSENDER_SANDBOX", "0")
+    monkeypatch.setenv("EUROSENDER_PRODUCTION_API_KEY", "prod-test-key")
+    adapter = EurosenderAdapter()
+    with pytest.raises(EurosenderProductionBlocked):
+        await adapter.get_quote({"country": "IE"}, {"country": "IL"}, [VALID_PACKAGE])
+
+
+@pytest.mark.asyncio
+async def test_production_blocked_even_with_key_if_kill_switch_off(monkeypatch):
+    monkeypatch.setenv("EUROSENDER_ENABLED", "0")
+    monkeypatch.setenv("EUROSENDER_SANDBOX", "0")
+    monkeypatch.setenv("EUROSENDER_PRODUCTION_API_KEY", "prod-test-key")
+    adapter = EurosenderAdapter()
+    with pytest.raises(EurosenderProductionBlocked):
+        await adapter.get_quote({"country": "IE"}, {"country": "IL"}, [VALID_PACKAGE])
+
+
+@pytest.mark.asyncio
+async def test_production_call_proceeds_only_with_kill_switch_and_real_key(monkeypatch):
+    """The kill switch alone isn't enough either — production credentials
+    must actually be configured, checked by the SAME preflight call."""
+    monkeypatch.setenv("EUROSENDER_ENABLED", "1")
+    monkeypatch.setenv("EUROSENDER_SANDBOX", "0")
+    monkeypatch.delenv("EUROSENDER_PRODUCTION_API_KEY", raising=False)
+    monkeypatch.delenv("EUROSENDER_API_KEY", raising=False)  # legacy var must NOT leak into production
+    adapter = EurosenderAdapter()
+    with pytest.raises(EurosenderNotConfigured):
+        await adapter.get_quote({"country": "IE"}, {"country": "IL"}, [VALID_PACKAGE])
+
+    monkeypatch.setenv("EUROSENDER_PRODUCTION_API_KEY", "prod-test-key")
+    _patch_client(monkeypatch, _FakeResponse(200, {"options": {"serviceTypes": []}}))
+    result = await adapter.get_quote({"country": "IE"}, {"country": "IL"}, [VALID_PACKAGE])
+    assert result == {"options": {"serviceTypes": []}}
+    assert _FakeAsyncClient.last_call["headers"]["x-api-key"] == "prod-test-key"
+    assert _FakeAsyncClient.last_call["url"].startswith(eurosender_config.production_url())
+
+
+def test_legacy_env_api_key_never_used_for_production():
+    """EUROSENDER_API_KEY has always held a SANDBOX key in this project's
+    real history — production must never fall back to it."""
+    import os
+    old_sandbox = os.environ.get("EUROSENDER_SANDBOX")
+    old_legacy = os.environ.get("EUROSENDER_API_KEY")
+    old_prod = os.environ.pop("EUROSENDER_PRODUCTION_API_KEY", None)
+    try:
+        os.environ["EUROSENDER_SANDBOX"] = "0"
+        os.environ["EUROSENDER_API_KEY"] = "sandbox-key-that-must-not-leak"
+        assert eurosender_config.api_key() == ""
+    finally:
+        if old_sandbox is None: os.environ.pop("EUROSENDER_SANDBOX", None)
+        else: os.environ["EUROSENDER_SANDBOX"] = old_sandbox
+        if old_legacy is None: os.environ.pop("EUROSENDER_API_KEY", None)
+        else: os.environ["EUROSENDER_API_KEY"] = old_legacy
+        if old_prod is not None: os.environ["EUROSENDER_PRODUCTION_API_KEY"] = old_prod
+
+
+def test_sandbox_mode_still_accepts_legacy_env_var_names(monkeypatch):
+    """Backward compatibility: the already-working Sandbox integration must
+    not require re-entering its key/secret under new var names."""
+    monkeypatch.delenv("EUROSENDER_SANDBOX_API_KEY", raising=False)
+    monkeypatch.delenv("EUROSENDER_SANDBOX_WEBHOOK_SECRET", raising=False)
+    monkeypatch.setenv("EUROSENDER_SANDBOX", "1")
+    monkeypatch.setenv("EUROSENDER_API_KEY", "legacy-sandbox-key")
+    monkeypatch.setenv("EUROSENDER_WEBHOOK_SECRET", "legacy-sandbox-secret")
+    assert eurosender_config.api_key() == "legacy-sandbox-key"
+    assert eurosender_config.webhook_secret() == "legacy-sandbox-secret"
+
+
+def test_dedicated_sandbox_env_vars_take_precedence_over_legacy(monkeypatch):
+    monkeypatch.setenv("EUROSENDER_SANDBOX", "1")
+    monkeypatch.setenv("EUROSENDER_API_KEY", "legacy-sandbox-key")
+    monkeypatch.setenv("EUROSENDER_SANDBOX_API_KEY", "dedicated-sandbox-key")
+    assert eurosender_config.api_key() == "dedicated-sandbox-key"

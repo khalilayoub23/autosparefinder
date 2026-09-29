@@ -1,10 +1,14 @@
 """
 Script: eurosender_adapter.py
-Purpose: Minimal adapter around the Eurosender integrators API, SANDBOX ONLY.
-         Built from the OpenAPI bundle (integrators.eurosender.com/_bundle/apis/
-         index.yaml) and public guides/webhooks docs validated in the 2026-09-08
-         sandbox-contract resolution gate. Every field name and requirement below
-         is taken from that verified contract — nothing here is invented.
+Purpose: Minimal adapter around the Eurosender integrators API. Built from the
+         OpenAPI bundle (integrators.eurosender.com/_bundle/apis/index.yaml)
+         and public guides/webhooks docs validated in the 2026-09-08
+         sandbox-contract resolution gate. Every field name and requirement
+         below is taken from that verified contract — nothing here is
+         invented. Sandbox-only in PRACTICE (today's real config:
+         EUROSENDER_SANDBOX=1, EUROSENDER_ENABLED=0), not sandbox-only by an
+         unconditional code-level ban — see _preflight()'s docstring for the
+         production-hardening rationale (closure phase, 2026-09-29).
 Process:
   1. Every public method validates its inputs (required package fields, HS
      codes) and preflight-checks configuration (API key present, sandbox URL
@@ -120,11 +124,13 @@ def parse_warnings(response: dict) -> list[QuoteWarning]:
 
 
 class EurosenderNotConfigured(RuntimeError):
-    """Raised when EUROSENDER_API_KEY is absent. Never call the API without it."""
+    """Raised when no API key is configured for the resolved environment
+    (sandbox or production). Never call the API without one."""
 
 
 class EurosenderProductionBlocked(RuntimeError):
-    """Raised if anything ever tries to point this adapter at the production API."""
+    """Raised if a production call is attempted while EUROSENDER_ENABLED is
+    not set — the kill switch, not an unconditional ban (see _preflight())."""
 
 
 def _raise_for_status_safe(resp: "httpx.Response") -> None:
@@ -142,30 +148,49 @@ def _validate_packages(packages: list[dict]) -> None:
 
 
 class EurosenderAdapter:
-    """Sandbox-only Eurosender client. Never targets production."""
+    """Eurosender client. Targets production ONLY when EUROSENDER_ENABLED is
+    explicitly set AND EUROSENDER_SANDBOX is explicitly 0 — see _preflight()."""
 
     def __init__(self, timeout_s: float = 20.0):
         self._timeout_s = timeout_s
 
     def _preflight(self) -> tuple[str, dict]:
         """Resolve (base_url, headers), raising immediately — and WITHOUT
-        entering any retry-decorated method — if credentials are missing or
-        the resolved URL is production. Called at the top of every public
-        method, before @retry_with_backoff-wrapped network I/O.
+        entering any retry-decorated method — if credentials are missing or a
+        production call is not explicitly authorized. Called at the top of
+        every public method, before @retry_with_backoff-wrapped network I/O.
+
+        Production gate (root-fixed, closure phase — see FIXES_TRACKER.md
+        "production configuration hardening"): this used to be an
+        UNCONDITIONAL ban on the production URL, regardless of any config —
+        meaning EUROSENDER_ENABLED had no actual effect at the adapter level,
+        contradicting its own documented role as "the real production kill
+        switch." That absolute ban was correct for the sandbox-development
+        phase (2026-09-08 authorization) but makes production structurally
+        unreachable even once real credentials and explicit authorization
+        exist. Now: a production URL is refused UNLESS EUROSENDER_ENABLED is
+        explicitly set — the same kill switch the routing layer
+        (is_eurosender_eligible) already relies on — so this is a single,
+        consistent gate, not two different ones. Today's real config
+        (EUROSENDER_ENABLED=False) makes this behave IDENTICALLY to before:
+        production stays completely unreachable.
         """
         url = eurosender_config.base_url()
-        if url.startswith(eurosender_config.production_url()):
+        is_production_url = url.startswith(eurosender_config.production_url())
+        if is_production_url and not eurosender_config.eurosender_enabled():
             raise EurosenderProductionBlocked(
-                "This sandbox-only adapter refused a call to the Eurosender "
-                "PRODUCTION API. Production execution is out of scope for this "
-                "implementation — see the 2026-09-08 sandbox-implementation "
-                "authorization."
+                "Refused a call to the Eurosender PRODUCTION API: EUROSENDER_ENABLED "
+                "is not set. The global kill switch must be explicitly enabled (and "
+                "real EUROSENDER_PRODUCTION_API_KEY / EUROSENDER_PRODUCTION_WEBHOOK_SECRET "
+                "credentials configured) before any production call is attempted."
             )
         key = eurosender_config.api_key()
         if not key:
+            env_name = "PRODUCTION" if is_production_url else "SANDBOX"
             raise EurosenderNotConfigured(
-                "EUROSENDER_API_KEY is not set — no sandbox credentials available. "
-                "This adapter will not fabricate a request without real credentials."
+                f"No {env_name} Eurosender API credentials are configured "
+                f"(EUROSENDER_{env_name}_API_KEY) — this adapter will not "
+                "fabricate a request without real credentials."
             )
         return url, {"x-api-key": key, "Content-Type": "application/json"}
 

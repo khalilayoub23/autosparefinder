@@ -1,7 +1,14 @@
 """
-Eurosender webhook — SANDBOX ONLY.
+Eurosender webhook.
 
 POST /api/v1/webhooks/eurosender
+
+Operates whenever EUROSENDER_SANDBOX is on (testing) OR EUROSENDER_ENABLED is
+on (production is live) — refuses only when the integration is disabled in
+both directions. See the route function's own comment for why this must
+never be an unconditional "sandbox only" ban (production-hardening closure,
+2026-09-29): that used to make this endpoint reject every real production
+webhook forever, the moment production was ever activated.
 
 Signature contract (SUPERSEDED 2026-09-25 by a second, more precise official
 Eurosender support answer — the 2026-09-21 "raw body only" contract below was
@@ -284,6 +291,18 @@ async def handle_event(event: str, payload: dict, db: AsyncSession) -> None:
         if not order:
             logger.info("[EurosenderWebhook] order_cancelled for unknown orderCode=%s", order_code)
             return
+        if order.eurosender_status == "cancelled":
+            # Idempotent at the business-logic level, not just via the Redis
+            # dedup key: Redis is best-effort (a down Redis makes the route's
+            # dedup fast-path a no-op, per _get_redis_safe()'s own fallback),
+            # so a genuine duplicate delivery must never re-alert admins on
+            # its own. This is the only handler with a real per-event side
+            # effect (an unconditional admin Notification) — the other
+            # handlers are already naturally idempotent (status/tracking
+            # writes are no-ops on an unchanged value; _apply_tracking_codes
+            # explicitly short-circuits on an unchanged tracking number).
+            logger.info("[EurosenderWebhook] order_cancelled already applied for order %s — skipping duplicate alert", order_code)
+            return
         order.eurosender_status = "cancelled"
         await db.flush()
         # Cancellation is a financial event — flag for manual review rather
@@ -298,7 +317,12 @@ async def handle_event(event: str, payload: dict, db: AsyncSession) -> None:
             ),
             data={"order_id": str(order.id), "order_number": order.order_number, "eurosender_order_code": order_code, "needs_manual_review": True},
         )
-        await db.commit()
+        # No inner commit here — the route's single commit (after
+        # handle_event returns) is the one transaction boundary now that a
+        # handler exception rolls back AND returns a retryable non-2xx; a
+        # second, earlier commit point would let the alert survive even if a
+        # later exception forced the caller to report failure and expect a
+        # clean retry.
 
     elif event == "delivery_status_updated":
         notifications = payload.get("notifications") or []
@@ -323,12 +347,24 @@ async def handle_event(event: str, payload: dict, db: AsyncSession) -> None:
 
 @router.post("/api/v1/webhooks/eurosender")
 async def eurosender_webhook(request: Request, db: AsyncSession = Depends(get_pii_db)):
-    if not eurosender_config.sandbox_mode():
+    # Root-fixed (production-hardening closure, 2026-09-29): this used to
+    # refuse whenever EUROSENDER_SANDBOX was falsy, unconditionally — a
+    # leftover from before the signature contract was verified (Phase 22)
+    # AND a mirror of the adapter's old unconditional production ban (see
+    # eurosender_adapter.py's _preflight() docstring for the matching fix).
+    # Left as-is, it would make this endpoint permanently reject every real
+    # production webhook (label_ready/submitted_to_courier/tracking_ready/
+    # cancelled/delivery_status_updated) the moment EUROSENDER_SANDBOX is
+    # ever set to 0 to activate production — silently breaking the entire
+    # order lifecycle for every real customer order. Now gated on the SAME
+    # kill switch the adapter uses: refuse only when the integration is
+    # disabled in BOTH directions (no sandbox testing AND production not
+    # enabled). Today's real config (EUROSENDER_SANDBOX=1) is unaffected.
+    if not (eurosender_config.sandbox_mode() or eurosender_config.eurosender_enabled()):
         return Response(
             status_code=501,
-            content="Eurosender webhook is sandbox-only (EUROSENDER_SANDBOX must be 1) — "
-                    "the Webhook-Signature algorithm is unverified, so this endpoint refuses "
-                    "to operate in a non-sandbox configuration.",
+            content="Eurosender integration is disabled (EUROSENDER_SANDBOX=0 and "
+                    "EUROSENDER_ENABLED=0) — this endpoint has nothing to process.",
         )
 
     webhook_id = request.headers.get("Webhook-Id", "")
@@ -361,17 +397,29 @@ async def eurosender_webhook(request: Request, db: AsyncSession = Depends(get_pi
         webhook_event, webhook_id, bool(webhook_signature), signature_ok,
     )
 
-    if webhook_id:
+    # Dedup semantics (root-fixed — see FIXES_TRACKER.md "webhook retry /
+    # dedup" closure): the dedup key is a FAST-PATH READ here, checked before
+    # doing any work, but it is only ever WRITTEN after handle_event() has
+    # actually committed successfully, further down. This is deliberate:
+    # marking a webhook "seen" before it was successfully processed (the
+    # previous design) meant a transient DB error mid-processing would leave
+    # the webhook permanently un-processed AND permanently un-retryable —
+    # Eurosender never retries a 200, and our own dedup key would then have
+    # silently swallowed the one retry Eurosender might otherwise have sent.
+    # A handler failure below now returns a non-2xx instead, so Eurosender's
+    # own retry mechanism (confirmed real — Phase 20 evidence, ids 10790/10793
+    # retried after 401s) can redeliver it, and this fast-path read lets a
+    # genuine redelivery skip reprocessing once it already succeeded.
+    r = None
+    dedup_key = f"eurosender:webhook_seen:{webhook_id}" if webhook_id else None
+    if dedup_key:
         try:
             r = await _get_redis_safe()
-            if r is not None:
-                dedup_key = f"eurosender:webhook_seen:{webhook_id}"
-                if await r.exists(dedup_key):
-                    logger.info("[EurosenderWebhook] duplicate Webhook-Id=%s, skipping", webhook_id)
-                    return Response(status_code=200)
-                await r.set(dedup_key, "1", ex=_DEDUP_TTL_S)
+            if r is not None and await r.exists(dedup_key):
+                logger.info("[EurosenderWebhook] duplicate Webhook-Id=%s (already processed), skipping", webhook_id)
+                return Response(status_code=200)
         except Exception as exc:
-            logger.warning("[EurosenderWebhook] Redis dedup check failed (continuing without dedup): %s", exc)
+            logger.warning("[EurosenderWebhook] Redis dedup read failed (continuing without the fast-path): %s", exc)
 
     if webhook_event not in KNOWN_EVENTS:
         logger.warning("[EurosenderWebhook] unrecognized event type: %s", webhook_event)
@@ -381,7 +429,16 @@ async def eurosender_webhook(request: Request, db: AsyncSession = Depends(get_pi
         await handle_event(webhook_event, payload, db)
         await db.commit()
     except Exception:
-        logger.exception("[EurosenderWebhook] handler error for event=%s id=%s", webhook_event, webhook_id)
+        logger.exception("[EurosenderWebhook] handler error for event=%s id=%s — requesting retry", webhook_event, webhook_id)
         await db.rollback()
+        # Non-2xx: this webhook was NOT successfully processed and MUST stay
+        # retryable — the dedup key above was never written for it.
+        return Response(status_code=503)
+
+    if dedup_key and r is not None:
+        try:
+            await r.set(dedup_key, "1", ex=_DEDUP_TTL_S)
+        except Exception as exc:
+            logger.warning("[EurosenderWebhook] Redis dedup write failed after successful processing: %s", exc)
 
     return Response(status_code=200)

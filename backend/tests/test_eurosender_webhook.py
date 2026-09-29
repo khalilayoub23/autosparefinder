@@ -158,9 +158,22 @@ async def test_order_cancelled_sets_status_and_alerts_admins():
     db = _FakeDB([_ScalarOneResult(order), _ScalarsAllResult([admin])])
     await handle_event("order_cancelled", {"triggerId": "t1", "orderCode": "ES-100"}, db)
     assert order.eurosender_status == "cancelled"
-    assert db.committed is True
+    # No inner commit — the route (not handle_event) owns the single commit
+    # boundary now (webhook retry/dedup hardening); handle_event only flushes.
+    assert db.committed is False
+    assert db.flushed is True
     # Never auto-refunds — only alerts for manual review.
     assert any(n.data.get("needs_manual_review") for n in db.added)
+
+
+async def test_order_cancelled_is_idempotent_at_the_business_logic_level():
+    """A duplicate order_cancelled delivery (Redis dedup down, or a genuine
+    retry after the FIRST delivery already succeeded) must never re-alert
+    admins — idempotent regardless of the Redis fast-path's availability."""
+    order = _order(eurosender_status="cancelled")  # already applied
+    db = _FakeDB([_ScalarOneResult(order)])
+    await handle_event("order_cancelled", {"orderCode": "ES-100"}, db)
+    assert db.added == []  # no second admin alert
 
 
 async def test_delivery_status_updated_delivered_maps_correctly():
@@ -536,3 +549,146 @@ def test_route_unknown_event_with_valid_signature_is_acknowledged_but_never_hand
         "/api/v1/webhooks/eurosender", content=_BODY,
         headers=_headers(event=ev, sig=_sig(event=ev)))
     assert r.status_code == 200 and calls == []
+
+
+# ---------------------------------------------------------------------------
+# Webhook retry / dedup semantics — root-fixed: the dedup key is written only
+# AFTER a successful commit, and a handler failure returns a retryable
+# non-2xx instead of swallowing the error behind a 200. Tests A-E below match
+# the required scenarios exactly (normal delivery, processing failure, retry
+# after failure, duplicate after success, invalid signature never poisoning
+# dedup).
+# ---------------------------------------------------------------------------
+
+def _stateful_fake_redis():
+    seen = {}
+
+    class _R:
+        async def exists(self, key):
+            return key in seen
+
+        async def set(self, key, value, ex=None):
+            seen[key] = value
+
+    return _R(), seen
+
+
+def _client_with_stateful_redis(monkeypatch, calls, fail_first_n=0):
+    """Like _client(), but handle_event can be made to fail its first N
+    calls (simulating a transient processing/DB failure) before succeeding,
+    and uses a real stateful fake Redis (not the no-redis stub)."""
+    monkeypatch.setenv("EUROSENDER_SANDBOX", "1")
+    monkeypatch.setenv("EUROSENDER_WEBHOOK_SECRET", _SECRET)
+
+    state = {"attempts": 0}
+
+    async def _fake_handle(event, payload, db):
+        state["attempts"] += 1
+        if state["attempts"] <= fail_first_n:
+            raise RuntimeError("simulated transient processing failure")
+        calls.append((event, payload))
+
+    async def _fake_db():
+        class _D:
+            async def commit(self): pass
+            async def rollback(self): pass
+        yield _D()
+
+    redis, seen = _stateful_fake_redis()
+
+    async def _get_redis():
+        return redis
+
+    monkeypatch.setattr(_wh, "handle_event", _fake_handle)
+    monkeypatch.setattr(_wh, "_get_redis_safe", _get_redis)
+    app = FastAPI()
+    app.include_router(_wh.router)
+    app.dependency_overrides[_wh.get_pii_db] = _fake_db
+    return TestClient(app), state, seen
+
+
+def test_A_normal_webhook_applies_state_once_and_returns_2xx(monkeypatch):
+    calls = []
+    c, state, seen = _client_with_stateful_redis(monkeypatch, calls)
+    r = c.post("/api/v1/webhooks/eurosender", content=_BODY, headers=_headers(sig=_sig()))
+    assert r.status_code == 200
+    assert len(calls) == 1
+    assert f"eurosender:webhook_seen:{_WID}" in seen  # marked processed
+
+
+def test_B_processing_failure_returns_non_2xx_and_does_not_mark_dedup(monkeypatch):
+    calls = []
+    c, state, seen = _client_with_stateful_redis(monkeypatch, calls, fail_first_n=1)
+    r = c.post("/api/v1/webhooks/eurosender", content=_BODY, headers=_headers(sig=_sig()))
+    assert r.status_code >= 500  # non-2xx: Eurosender should retry this
+    assert calls == []  # business state never claimed success
+    assert f"eurosender:webhook_seen:{_WID}" not in seen  # NOT marked — must stay retryable
+
+
+def test_C_retry_after_failure_applies_state_exactly_once(monkeypatch):
+    calls = []
+    c, state, seen = _client_with_stateful_redis(monkeypatch, calls, fail_first_n=1)
+    r1 = c.post("/api/v1/webhooks/eurosender", content=_BODY, headers=_headers(sig=_sig()))
+    assert r1.status_code >= 500 and calls == []
+    r2 = c.post("/api/v1/webhooks/eurosender", content=_BODY, headers=_headers(sig=_sig()))  # Eurosender's retry
+    assert r2.status_code == 200
+    assert len(calls) == 1  # applied exactly once, on the retry
+    assert f"eurosender:webhook_seen:{_WID}" in seen  # now marked processed
+
+
+def test_D_duplicate_after_success_does_not_reapply_or_renotify(monkeypatch):
+    calls = []
+    c, state, seen = _client_with_stateful_redis(monkeypatch, calls)
+    r1 = c.post("/api/v1/webhooks/eurosender", content=_BODY, headers=_headers(sig=_sig()))
+    r2 = c.post("/api/v1/webhooks/eurosender", content=_BODY, headers=_headers(sig=_sig()))
+    assert r1.status_code == 200 and r2.status_code == 200
+    assert len(calls) == 1  # second delivery never reaches handle_event
+
+
+def test_E_invalid_signature_never_poisons_dedup_for_a_later_valid_delivery(monkeypatch):
+    calls = []
+    c, state, seen = _client_with_stateful_redis(monkeypatch, calls)
+    bad = c.post("/api/v1/webhooks/eurosender", content=_BODY, headers=_headers(sig="sha256=" + "0" * 64))
+    assert bad.status_code == 401
+    assert calls == []
+    assert f"eurosender:webhook_seen:{_WID}" not in seen  # an invalid attempt marks nothing
+    good = c.post("/api/v1/webhooks/eurosender", content=_BODY, headers=_headers(sig=_sig()))
+    assert good.status_code == 200
+    assert len(calls) == 1  # the real delivery still processes normally
+
+
+# ---------------------------------------------------------------------------
+# Webhook endpoint availability gate (production-hardening closure,
+# 2026-09-29) — mirrors the adapter's EUROSENDER_ENABLED gate. Must never
+# regress to an unconditional "sandbox only" ban.
+# ---------------------------------------------------------------------------
+
+def test_route_operates_normally_in_sandbox_mode_today(monkeypatch):
+    """Today's real config — unaffected by the hardening."""
+    calls = []
+    monkeypatch.delenv("EUROSENDER_ENABLED", raising=False)
+    r = _client(monkeypatch, calls).post(
+        "/api/v1/webhooks/eurosender", content=_BODY, headers=_headers(sig=_sig()))
+    assert r.status_code == 200 and len(calls) == 1
+
+
+def test_route_operates_in_production_once_enabled(monkeypatch):
+    """EUROSENDER_SANDBOX=0 + EUROSENDER_ENABLED=1 (the intended production
+    activation) must NOT be rejected — the historic bug this closes."""
+    calls = []
+    monkeypatch.setenv("EUROSENDER_SANDBOX", "0")
+    monkeypatch.setenv("EUROSENDER_ENABLED", "1")
+    monkeypatch.setenv("EUROSENDER_WEBHOOK_SECRET", _SECRET)  # legacy var: sandbox_mode() is 0, so
+    monkeypatch.setenv("EUROSENDER_PRODUCTION_WEBHOOK_SECRET", _SECRET)  # this is the one actually read
+    r = _client(monkeypatch, calls).post(
+        "/api/v1/webhooks/eurosender", content=_BODY, headers=_headers(sig=_sig()))
+    assert r.status_code == 200 and len(calls) == 1
+
+
+def test_route_refuses_only_when_fully_disabled(monkeypatch):
+    calls = []
+    c = _client(monkeypatch, calls)  # sets EUROSENDER_SANDBOX=1 as its default
+    monkeypatch.setenv("EUROSENDER_SANDBOX", "0")  # override AFTER _client()
+    monkeypatch.setenv("EUROSENDER_ENABLED", "0")
+    r = c.post("/api/v1/webhooks/eurosender", content=_BODY, headers=_headers(sig=_sig()))
+    assert r.status_code == 501 and calls == []
