@@ -58,11 +58,11 @@ def _normalize_part_condition(raw: Optional[str]) -> Optional[str]:
     if not value:
         return None
     if value.startswith("new"):
-        return "New"
+        return "new"
     if "used" in value or "pre-owned" in value:
-        return "Used"
+        return "used"
     if "reman" in value:
-        return "Remanufactured"
+        return "remanufactured"
     return None
 
 
@@ -155,7 +155,7 @@ async def _update_catalog_metadata(
                 END,
                 min_price_ils = CASE
                     WHEN CAST(:candidate_min_price_ils AS numeric) IS NULL THEN min_price_ils
-                    WHEN min_price_ils IS NULL OR min_price_ils > CAST(:candidate_min_price_ils AS numeric) THEN CAST(:candidate_min_price_ils AS numeric)
+                    WHEN min_price_ils IS NULL OR min_price_ils = 0 OR min_price_ils > CAST(:candidate_min_price_ils AS numeric) THEN CAST(:candidate_min_price_ils AS numeric)
                     ELSE min_price_ils
                 END,
                 max_price_ils = CASE
@@ -413,14 +413,31 @@ async def sync_ebay_prices(
                     pending_writes = 0
                 continue
 
-            price_usd = Decimal(str(getattr(selected, "price", None) or getattr(cheapest, "price", 0) or 0))
-            shipping_usd = Decimal(str(getattr(selected, "shipping_cost", 0) or 0))
-            if price_usd <= 0:
+            raw_price = Decimal(str(getattr(selected, "price", None) or getattr(cheapest, "price", 0) or 0))
+            raw_shipping = Decimal(str(getattr(selected, "shipping_cost", 0) or 0))
+            if raw_price <= 0:
                 report["parts_not_found"] += 1
                 continue
 
-            price_ils = (price_usd * Decimal(str(ils_per_usd_rate))).quantize(Decimal("0.01"))
-            shipping_ils = (shipping_usd * Decimal(str(ils_per_usd_rate))).quantize(Decimal("0.01"))
+            # eBay returns ILS-denominated prices when X-EBAY-C-ENDUSERCTX: country=IL is sent.
+            # Detect the actual currency from the result and handle both cases correctly,
+            # so price_ils is never inflated by ~3.07× from double-conversion.
+            result_currency = str(
+                getattr(selected, "currency", None) or getattr(cheapest, "currency", "USD") or "USD"
+            ).upper().strip()
+            _rate = Decimal(str(ils_per_usd_rate))
+            if result_currency == "ILS":
+                # raw_price is already in ILS — use directly; back-calculate USD for storage
+                price_ils = raw_price.quantize(Decimal("0.01"))
+                shipping_ils = raw_shipping.quantize(Decimal("0.01"))
+                price_usd = (price_ils / _rate).quantize(Decimal("0.01"))
+                shipping_usd = (shipping_ils / _rate).quantize(Decimal("0.01"))
+            else:
+                # raw_price is in USD — multiply by rate to get ILS
+                price_usd = raw_price
+                shipping_usd = raw_shipping
+                price_ils = (price_usd * _rate).quantize(Decimal("0.01"))
+                shipping_ils = (shipping_usd * _rate).quantize(Decimal("0.01"))
             candidate_min_price_ils = float((price_ils + shipping_ils).quantize(Decimal("0.01")))
 
             tech_specs = dict(getattr(selected, "tech_specs", None) or {})

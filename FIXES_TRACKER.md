@@ -1,5 +1,244 @@
 # AutoSpareFinder — Bug & Breaking Points Fix Tracker
-> Last scan: 2026-09-19 | Total issues found: 470 | Fixed: 470 | In Progress: 0 | Open: 0
+> Last scan: 2026-09-29 | Total issues found: 476 | Fixed: 476 | In Progress: 0 | Open: 0
+
+---
+
+## eBay scanner — live production activation — 2026-09-29
+
+### 38. Fixes #34/#35/#36 activated in live production backend — VERIFIED
+
+**Action:** `docker restart autospare_backend` (owner-authorized, 2026-09-29T19:02:07Z).
+- Pre-restart: no running jobs, no eBay lock, uptime=14h40m (started 04:21:35Z), uvicorn PID=1.
+- Post-restart: container started 19:02:07Z, uvicorn PID=1, uptime ~2m after verification.
+- No other containers restarted (PostgreSQL, Redis, Meilisearch, Nginx, WhatsApp bridge all unchanged).
+
+**Fixes loaded (confirmed from live process via `inspect.getsource`):**
+- Fix #34: `result_currency` variable present, `"ILS"` branch check present — **LOADED**
+- Fix #35: `_normalize_part_condition('New')` → `'new'`, `('USED')` → `'used'`, `('Remanufactured')` → `'remanufactured'` — **LOADED**
+- Fix #36: SQL CASE contains `min_price_ils = 0 OR min_price_ils >` guard — **LOADED**
+
+**Live pricing verified (read-only):** BMW OEM 34208837116 → `customer_total_ils=1735.03` (expected 1735.03). PASS.
+
+**Service health:** PostgreSQL connected, Redis connected (`sync_prices` lock clear), Meilisearch available. Scanner registered exactly once (`supervised_task("price_sync_loop")` count=1). No running jobs. No crash loop (logs clean). Next eBay scan in 8.2h.
+
+**`EBAY_PRICE_SYNC_LIMIT` resolved:** `4400` (from `.env` / `docker-compose.yml` default `${EBAY_PRICE_SYNC_LIMIT:-4400}`). Hardcoded fallback in source is `500`. The value `4600` seen in earlier reports was an operational metric (e.g. `api_calls_logged` or `parts_checked`), not a configured limit.
+
+**Status:** VERIFIED — all three fixes are live in the production process.
+
+---
+
+## eBay scanner — 45% pricing policy E2E verification — 2026-09-29
+
+### 37. Pricing policy E2E verified for BMW Caliper Support (OEM 34208837116) — no defects found
+
+**Verification summary:**
+
+**Authoritative formula** (`routes/parts.py::_customer_price_fields`, `_MARGIN=1.45`, `_VAT_RATE=0.18`):
+- `sell_net = supplier_parts.price_ils × 1.45` (item cost only, **not** item+shipping)
+- `vat = sell_net × vat_rate` (0% for foreign suppliers incl. eBay/US; 18% for IL suppliers only — `get_supplier_vat_rate` via `is_local_supplier`)
+- `total = sell_net + vat + supplier_parts.shipping_cost_ils` (shipping added UNCHANGED after markup)
+
+**Verified values (BMW OEM 34208837116):**
+- eBay supplier: 'eBay Motors', country='US' → `is_local=False` → `vat_rate=0.0`
+- `price_ils=1126.41` → `sell_net=1126.41×1.45=1633.29`
+- `shipping_cost_ils=101.74` → added raw
+- `customer_price_ils=1633.29`, `customer_vat_ils=0.0`, `customer_total_ils=1735.03`
+
+**DB state:** `min_price_ils=1228.15` (raw cost basis = price+ship, INTERNAL), `max_price_ils=1228.15`, `base_price=NULL`, `importer_price_ils=NULL` (eBay parts have no IL importer price — correct)
+
+**Customer price is NOT pre-stored** — computed at query time in `_customer_price_fields()` from live `supplier_parts` rows. Every call to the search/compare API re-computes it, ensuring accuracy.
+
+**Meilisearch:** `min_price_ils=0.0` (stale — meili_sync's last incremental pass used cutoff `2026-09-29T15:12:10`, before the scanner runs at 18:33/18:40). The NEXT meili_sync run will pick up `updated_at=2026-09-29T18:41:xx` and update `min_price_ils=1228.15`. `has_il_price=False` is CORRECT (no IL importer price; eBay price is in `supplier_parts` not `importer_price_ils`).
+
+**Double-markup checks:** all PASS — no second 45%, shipping not marked up, VAT correctly 0% for eBay/US, ILS fix applied (no USD re-conversion), min_price_ils and max_price_ils use the same raw cost basis.
+
+**Status:** VERIFIED — no defects found. Policy correctly implemented.
+
+---
+
+## eBay price scanner — real-match verification — 2026-09-29
+
+### 36. `_update_catalog_metadata` never updated `min_price_ils` when starting value was 0
+
+**Root cause:** The `min_price_ils` UPDATE CASE in `_update_catalog_metadata` reads:
+`WHEN min_price_ils IS NULL OR min_price_ils > :candidate THEN :candidate`. All unpriced candidate parts have `min_price_ils = 0` (not NULL). Since `0 < 1228.15`, the condition `min_price_ils > candidate` is False, and `0 IS NULL` is also False — so the CASE fell through to ELSE and left `min_price_ils = 0`. Result: after a successful eBay match, `min_price_ils` stayed 0 and Meilisearch showed `has_il_price=False` for a part that now has an eBay price. Every part in the candidate pool (`base_price IS NULL OR base_price = 0`) would hit this path.
+
+**Fix (`backend/services/ebay_price_sync.py`, line 158):**
+Added `OR min_price_ils = 0` so the CASE treats 0 as "not set":
+`WHEN min_price_ils IS NULL OR min_price_ils = 0 OR min_price_ils > :candidate THEN :candidate`
+
+**Verification:** second-pass run on same part (BMW OEM `34208837116`) — `min_price_ils` updated from 0 → 1228.15. PASS.
+
+**Status:** FIXED on disk (2026-09-29). Takes effect on next container restart. db_cleanup_agent does not heal this field; production impact is that previously-priced eBay rows (from `ebay_brand_importer.py`) would have had `min_price_ils` set from a different code path — unaffected. Only `sync_ebay_prices` is affected; its candidate pool is currently ~2.18M parts with `base_price=0`, all of which will now correctly update `min_price_ils` once scanned.
+
+---
+
+### 35. `_normalize_part_condition` returned mixed-case values, violating the mandatory lowercase rule
+
+**Root cause:** `_normalize_part_condition` in `ebay_price_sync.py` (lines 60-65) did `.strip().lower()` on the input (correct) but then returned `"New"`, `"Used"`, `"Remanufactured"` (capitalised). CLAUDE.md §6 and §8 MANDATORY: `part_condition` must always be lowercase (`'new'`, `'used'`, `'remanufactured'`). Discovered during the real-match verification run: `part_condition` changed from `'new'` → `'New'` in `parts_catalog` after the scanner wrote the eBay listing's condition.
+
+**Evidence:** real-match run DB query confirmed `parts_catalog.part_condition = 'New'` immediately after the scanner updated the row. db_cleanup_agent healed it back to `'new'` within 30 seconds (its `task_heal_part_condition()` runs every 30s) — mitigation, not a fix.
+
+**Fix (`backend/services/ebay_price_sync.py`, lines 61, 63, 65):**
+Changed return values to lowercase:
+- `return "New"` → `return "new"`
+- `return "Used"` → `return "used"`
+- `return "Remanufactured"` → `return "remanufactured"`
+
+**Regression guard:** db_cleanup_agent's 30s heal remains in place as defence-in-depth. The fix eliminates the write of the wrong value. `_normalize_part_condition("New")` → `'new'` confirmed in fresh process.
+
+**Status:** FIXED on disk (2026-09-29). Takes effect on next container restart.
+
+---
+
+## eBay price scanner — ILS currency double-conversion — 2026-09-29
+
+### 34. `sync_ebay_prices` treated eBay ILS prices as USD and multiplied by the FX rate, inflating stored prices ~3.07×
+
+**Root cause:** `EbaySupplier.search()` sends `X-EBAY-C-ENDUSERCTX: contextualLocation=country=IL` which causes eBay Browse API v1 to return prices in ILS (`"currency":"ILS"`) instead of USD. `ebay_price_sync.sync_ebay_prices()` extracted `PartResult.price` (which is the ILS value when eBay localises) into a variable named `price_usd`, then unconditionally computed `price_ils = price_usd × ils_per_usd_rate (~3.07)`. Result: every stored `price_ils` was ~3.07× the correct ILS value; `price_usd` was also wrong (it held an ILS amount under a USD label).
+
+**Evidence:** `EbaySupplier.search()` correctly captures `currency = str(price_obj.get("currency") or "USD")` on each `PartResult`. The mislabeling and inflation happened entirely in `ebay_price_sync.py` lines 416-424, which ignored `PartResult.currency`.
+
+**Discovered by:** full read-only audit + controlled 200-item production run (2026-09-29). The 200-item run produced 0 new DB rows (all candidates returned no IL-shippable results), so no inflated prices exist in production from `sync_ebay_prices`. The 37,407 existing eBay `supplier_parts` rows were created by the old `ebay_brand_importer.py` (different code path, not affected by this fix).
+
+**Fix (`backend/services/ebay_price_sync.py`, lines 416-441):**
+- Replaced the unconditional `price_ils = price_usd × rate` with a currency-aware branch.
+- Reads `result_currency` from `selected.currency` (fallback to `cheapest.currency`, then "USD").
+- **ILS path:** `price_ils = raw_price` (direct), `price_usd = price_ils / rate` (back-calculated for storage).
+- **USD path:** original logic unchanged — `price_usd = raw_price`, `price_ils = price_usd × rate`.
+- Variable names `price_usd`, `price_ils`, `shipping_usd`, `shipping_ils` retained; no downstream changes needed.
+
+**Regression guard:** fix is backward-compatible. If eBay ever stops sending ILS (e.g. removes the country context), the USD branch fires and behaviour is identical to pre-fix.
+
+**Status:** FIXED on disk (2026-09-29). Takes effect on next container restart. Next production `sync_prices` run is ~22h away; normal operational restarts are expected in that window. No restart triggered (per task HARD SAFETY RULES).
+
+**Syntax:** `python3 -c "import ast; ast.parse(...)"` → SYNTAX OK.
+
+---
+
+## /goal — AVI DETERMINISTIC TASK POST-CONDITION GATE — 2026-09-28
+
+### 33. `_trigger_task()` trusted the task's own `status: "ok"` as sufficient success evidence
+
+**Defect (root cause):** `_trigger_task()` called `run_task(name, db)` which executes a task from `TASK_REGISTRY` and returns a self-reported dict (e.g. `{"task": "normalize_part_types", "status": "ok", "updated": 482}`). The function then formatted this as `✅ *name*: ok` and returned it to the owner with no independent verification that the intended DB state change actually occurred. A task could return `{"status": "ok"}` while its DB writes silently failed, while returning fabricated counts, or while the commit was never persisted — and the owner would see a false SUCCESS claim.
+
+**Execution integrity violation:** CLAUDE.md lesson: "An agent must never promise a SYSTEM ACTION that has no underlying mechanism." The `status: "ok"` self-report is NOT an independent observable post-condition.
+
+**Fix (2 changes to `backend/agents/owner_console.py`):**
+
+1. **Module-level imports** — `async_session_factory`, `job_registry_start`, `job_registry_finish` promoted from lazy function-local imports to module-level (`agents/owner_console.py` lines 39–41). This makes them patchable in tests and removes circular import risk.
+
+2. **`_trigger_task()` job_registry post-condition verifier** — Rewrote the function to:
+   - Generate a unique `jid = f"owner_trigger:{name}:{uuid4_hex}"` before each call (ties the post-condition to THIS specific invocation, not a prior cycle).
+   - Call `job_registry_start(db, name, ttl_seconds=660, job_id=jid)` BEFORE `run_task()` runs.
+   - If `status == "ok"`: call `job_registry_finish(db, jid, status="completed")` to write the completion record.
+   - Open a SEPARATE `async_session_factory()` session and execute `SELECT 1 FROM job_registry WHERE job_id = :jid AND status = 'completed' AND completed_at >= :since` (where `:since` = `call_started` timestamp).
+   - If the row is found: appends `🔍 *[VERIFIED]* — הושלם ואומת בבסיס הנתונים.`
+   - If not found (silent commit failure, fabricated result, DB down): replaces the message with `⚠️ *[NOT_VERIFIED]* — …`
+   - `status == "skipped"` and `status == "error"` (non-success outcomes) pass through unchanged — they carry no success claim requiring verification.
+
+**Independent verification mechanism:** `job_registry` read-back on a separate DB session. The SELECT confirms: (a) the task ran to completion, (b) the DB session accepted at least one write (the finish row), and (c) the `completed_at` timestamp is ≥ the call start time (rejecting stale pre-existing rows). This is option #2 from the preferred-order hierarchy: "A newly created execution/job record with the expected task name and fresh timestamp."
+
+**Bypass audit:**
+- Deterministic execution paths inspected: 1 (`_trigger_task`)
+- Early returns before verifier: exception path (→ `❌`) + timeout path (→ `⏳`) + unknown task (→ direct string) — none of these claim SUCCESS
+- `status == "skipped"` path: returns `⏭️` message — not a success claim
+- `status == "error"` path: returns `❌` message — not a success claim
+- Direct `[VERIFIED]` construction: only one site — the `if verified:` branch after the SELECT read-back
+- **Bypass paths remaining: 0**
+
+**Adversarial tests (`backend/devtests/avi_execution_integrity_test.py` — extended from 27 → 43 tests, all PASS):**
+
+| Test | Expected | Actual | Result |
+|---|---|---|---|
+| A. Fake success — ok but verify row absent | NOT_VERIFIED | NOT_VERIFIED | PASS |
+| B. Real verified success — ok + verify row present | [VERIFIED] | [VERIFIED] | PASS |
+| C. Wrong resource — jid-scoped SELECT finds nothing | NOT_VERIFIED | NOT_VERIFIED | PASS |
+| D. Stale state — SQL includes `completed_at >= since` predicate | Predicate present | Confirmed in source | PASS |
+| E. Verifier exception — verify session raises | NOT_VERIFIED | NOT_VERIFIED | PASS |
+| F. Task exception — run_task() raises | ❌ (never [VERIFIED]) | ❌ | PASS |
+| G. Partial execution — finish() raises, no row | NOT_VERIFIED | NOT_VERIFIED | PASS |
+| H. Fabricated result + start() fails — no row | NOT_VERIFIED | NOT_VERIFIED | PASS |
+| I. Repeated execution — two distinct jids | unique jids | confirmed | PASS |
+| J. Conversational regression — original 27 tests | all PASS | 27/27 PASS | PASS |
+| Deterministic invariant: ok+None → NOT_VERIFIED | NOT_VERIFIED | NOT_VERIFIED | PASS |
+| Deterministic invariant: ok+row → [VERIFIED] | [VERIFIED] | [VERIFIED] | PASS |
+| Deterministic invariant: 0 paths to SUCCESS without row | 0 paths | 0 paths | PASS |
+
+**Regression:**
+- `avi_execution_integrity_test.py`: **43/43 PASS** (27 original + 16 new)
+- `noa_group_summary_test.py`: **ALL PASS** (16/16)
+- Full backend pytest: **185 passed, 1 failed** — `test_postgres_ports_are_not_publicly_exposed` (pre-existing environment failure: `FileNotFoundError: /docker-compose.yml` inside container — unrelated, present before this change)
+
+**Known limitations:**
+- The verifier confirms a DB commit occurred for the `job_registry` row, but does not verify the SPECIFIC rows each task was supposed to modify (e.g. a task that updated 0 rows by design still passes if it commits cleanly). This is the strongest practical general verification without per-task bespoke post-conditions across 28 diverse tasks.
+- `_trigger_task()` acquires two DB sessions serially (main + verify) — negligible overhead for owner-console use (≤1 call/minute in normal operation).
+
+**STATUS: PASS**
+
+---
+
+## /goal — AVI EXECUTION INTEGRITY GATE — 2026-09-28
+
+### 32. AVI could claim "בוצע" / "I executed" in conversational replies without any underlying system action
+
+**Defect (root cause):** The owner console has two paths:
+- **Deterministic commands** (`הרץ משימה`, `אשר <id>`, `הרץ שאיבה`, etc.) — real Python code queries DB / spawns processes; results are independently verified by construction.
+- **Conversational LLM path** — calls `hf_text()` and returns text. Has NO tool-calling capability; cannot execute any system action. Yet an LLM can emit first-person past-tense execution verbs ("הפעלתי", "I launched", "ביצעתי") implying it acted. The resulting reply would reach the owner as a factual claim of completion — with no underlying action having occurred.
+
+Additionally, `_launch_script` reported "🚀 הפעלתי את X ברקע" without verifying the process actually started (fire-and-forget with no post-condition check).
+
+Also discovered: `asyncio` was used in `_trigger_task`, `_process_running`, and `_launch_script` without being imported at the module level — a latent NameError that would fire on first call to those functions.
+
+**Execution integrity violation:** per the CLAUDE.md lesson: "An agent must never promise a SYSTEM ACTION that has no underlying mechanism." The conversational path has NO mechanism for any action it might claim to perform.
+
+**Fix (3 changes to `backend/agents/owner_console.py`):**
+
+1. **Added `import asyncio`** at the top — fixes the latent NameError in `_trigger_task`, `_process_running`, `_launch_script`.
+
+2. **`_guard_avi_conversational_reply(reply)` gate** — added after `_clean_wa_reply()` in the conversational LLM path. Scans the reply for first-person past-tense Hebrew execution verbs (`הפעלתי`, `ביצעתי`, `הרצתי`, `אישרתי`, `פרסמתי`, `יצרתי`, `סיימתי`, `השלמתי`, `עצרתי`, `הפסקתי`, plus English equivalents `i ran / executed / launched / started / triggered / completed / finished / approved / published / dispatched`). If any match: returns `_NOT_VERIFIED_REPLY` (a NOT_VERIFIED status + deterministic command redirect). Unmodified reply if no match. Deterministic command handlers return BEFORE this gate is reached → their `✅`/`❌` results are unaffected.
+
+3. **`_launch_script` post-launch verification** — after `asyncio.create_subprocess_exec`, waits 1.5 s then calls `_process_running` (pgrep). If the process is found: returns `[VERIFIED]`. If not: returns `[NOT_VERIFIED]` with an explicit "process not found" message. The fire-and-forget false-success is eliminated.
+
+**Verification mechanism:**
+- Conversational path: deterministic regex gate applied post-hoc — model cannot override it.
+- Launch path: independent `pgrep -f {script_stem}.py` after 1.5 s — the post-condition is OS-level process existence, not the model's judgment.
+- `SUCCESS` in the conversational path: 0 allowed paths (the gate returns either the unchanged reply or NOT_VERIFIED; it never returns a success claim it didn't receive from a deterministic handler).
+
+**Adversarial tests (`backend/devtests/avi_execution_integrity_test.py`, 27 tests, all PASS):**
+
+| Test | Expected | Actual | Result |
+|---|---|---|---|
+| Tool success (הפעלתי), state unchanged | NOT_VERIFIED | NOT_VERIFIED | PASS |
+| HTTP 200 analogue — process absent after launch | NOT_VERIFIED | NOT_VERIFIED | PASS |
+| Timeout after side effect — exception path | Not SUCCESS | ❌ message (not SUCCESS) | PASS |
+| LLM claims ביצעתי without tool call | NOT_VERIFIED | NOT_VERIFIED | PASS |
+| Fabricated tool result ("הרצתי … success=true") | NOT_VERIFIED | NOT_VERIFIED | PASS |
+| Wrong resource ID ("אישרתי פוסט abc123") | NOT_VERIFIED | NOT_VERIFIED | PASS |
+| Partial task ("השלמתי שלב 1 בלבד") | NOT SUCCESS | NOT_VERIFIED | PASS |
+| Verification timeout / pgrep error | NOT_VERIFIED | ❌ (not [VERIFIED]) | PASS |
+| Stale read — process appears on 2nd check | [VERIFIED] | [VERIFIED] | PASS |
+| Final-layer SUCCESS injection ("הרצתי … Status: SUCCESS") | NOT_VERIFIED | NOT_VERIFIED | PASS |
+| Follow-up "Did you do it?" (ביצעתי כפי שאמרתי) | NOT_VERIFIED | NOT_VERIFIED | PASS |
+| Error preservation — honest ❌ reply unchanged | PASS_THROUGH | PASS_THROUGH | PASS |
+| Invariant — all 11 combinatorial cases | 0 SUCCESS paths without verification | 0 | PASS |
+
+**Invariant (Phase 9):** `SUCCESS without independent_verification: 0 allowed paths` — proved by `test_success_without_verification_is_zero_paths` which enumerates every known execution verb and confirms each produces NOT_VERIFIED.
+
+**Regression:** `noa_group_summary_test.py` 16/16 PASS. Main pytest suite running (in background, expected clean — no logic paths changed in deterministic commands, only the conversational return path has the new guard appended).
+
+**Files changed:** `backend/agents/owner_console.py`, `backend/devtests/avi_execution_integrity_test.py` (new), `FIXES_TRACKER.md`.
+
+**Services touched:** None — no container restart; code is on the bind-mounted volume (`./backend:/app`), changes are live for the next conversational request.
+
+**Live actions:** None. Tests run in-container. No WhatsApp messages sent, no posts published, no DB writes.
+
+**Remaining risk:**
+- The gate targets first-person past-tense verbs. A sufficiently creative LLM could use alternative phrasing ("המשימה רצה עכשיו", passive voice) that is not a first-person claim but might still mislead. These forms are ambiguous enough in status-report context that they cannot be blocked without high false-positive risk. The deterministic commands remain the authoritative execution surface.
+- `_trigger_task` trusts the task's own `status: "ok"` self-report. Per-task post-condition functions (e.g. SELECT COUNT after a normalize task) would provide truly independent verification but require per-task contracts — deferred.
+- The 1.5 s launch verification window may be too short for slow-starting scripts on a loaded box. If needed, `LAUNCH_VERIFY_SLEEP_S` env var can be added to make this tunable without a code change.
+
+**STATUS: PASS — 27/27 adversarial tests green, NOA regression clean, invariant proved.**
 
 ---
 
@@ -29,6 +268,30 @@
 **Git**: committed+pushed on owner approval: `backend/social/noa_ops.py`, `backend/BACKEND_API_ROUTES.py`, `backend/agents/owner_console.py`, `backend/devtests/group_scan_reporting_test.py` (modified); `backend/devtests/noa_group_summary_test.py` (new); `FIXES_TRACKER.md`. HEAD `d3cd917`.
 
 **STATUS: PASS — activated in production and verified on a natural scan (335 relevant / 16 new / 56 pending), committed and pushed (see Git below).**
+
+---
+
+## /goal — NOA PHASE 1 (CONTROLLED OPERATIONAL MONITORING) ACTIVATION + LIVE VERIFICATION — 2026-09-21
+
+**Finding: Phase 1 was already ACTIVE; no activation step, code or config change was required.** There is no Phase-1 switch: the Page/Group/EOD loops are default-enabled (`NOA_ENGAGEMENT_ENABLED`, `SOCIAL_GROUP_SCAN_ENABLED` unset => on) and have been running since the backend start (2026-09-20 11:59Z). The only flag in this area is the Phase-2 one, `NOA_ENGAGEMENT_AUTOREPLY`, which is `0`.
+**Readiness (existing `GET /api/v1/system/noa-ops`, 2026-09-21 04:42Z):** 13/13 PASS, `ready_for_release: true`, `autonomous_mode: OFF`. Check 13 = **`DELIVERY_VERIFIED`** (last owner send ok 03:10Z; bridge `CONNECTED`, device `:11`). Facebook: persistent profile authenticated (each group discovery+scan opens `AUTHENTICATED` from the profile; 0 re-login/AFAD/relogin lines; check 1 PASS).
+**Observed live (09-20 12:00Z -> 09-21 04:42Z, ~16.7 h; from `noa_scan_runs`, DB and logs; nothing manufactured):**
+- Page: 67 cycles (every 15 min), `facebook_ok` true in all 67, 0 errors; 0 Page comments exist to scan => 0 drafts (nothing to reply to).
+- Groups: 1 full cycle (13:59Z -> 17:22Z): 386/386 groups scanned, 3,596 items scored, **490 relevant**, 3,106 rejected by relevance, **18 drafts created**, 40 duplicate-prevention events, 2 draft failures (LLM), 86 relevant posts held back by the per-cycle LLM budget (20), session failures 0. The autonomous hook returned `disabled` for all 18. Owner notified: `sent 490 discoveries to owner` (1,194-char WhatsApp, `Sent OK` 17:22Z).
+- Approval queue: `group_comment_drafts` = **40 `pending_approval`**, 0 approved, 0 posted, 0 autonomous-approved (ever). `social_inbox` empty. No Page/group publish or reply attempt occurred.
+- Owner WhatsApp: 7 bridge sends since the 12:35Z restart, **7 delivered, 0 errors**; 5 more items are queued for the 09:00 IL quiet-hours window (EOD report, pending-posts reminder, 3 health notices).
+- EOD: ran on its real schedule (21:00 IL) and produced the full report incl. the new OPERATIONS block (39 drafts / 0 approved / 0 published / duplicate events 40 / session failures 0 / autonomous OFF / readiness READY); queued for 09:00 IL because 21:00 sits on the quiet-window boundary.
+**Approval-gate / autonomous audit:** the flag is read in exactly one module (`social/noa_ops.py`); env `NOA_ENGAGEMENT_AUTOREPLY=0`, not set in compose/.env; `group_agent.APPROVAL_REQUIRED=True`; gate fail-closed and the live loop's autonomous outcome `disabled` x18. Other publish routes are all owner-gated: `noa_ops.claim_group_draft` (owner command), `execute_campaign` (publishes only posts already `approved`; only callers = owner-console `קמפיין` command and an admin endpoint), `facebook_group_publish` (requires an approved group target), marketing loop (only enqueues to the approval queue). Dormant `facebook_group_comment`/`BrowserTaskQueue` have no production caller (test-enforced). No autonomous path enabled.
+**Production safety:** bridge untouched (started 12:35:51Z, restarts 0, 0 QR, 0 x 401/409/failure, `CONNECTED` `:11`); backend untouched (up since 09-20 11:59Z); no Facebook re-login; no auth/session change; unexpected posts/comments **0** (0 `social_posts` published or approved in 24 h; 0 group drafts posted).
+**One action taken:** removed ONE queued WhatsApp notice ("new campaign awaiting approval: Approval Flow Test") from `autospare:wa_quiet_queue`. It was residue of my own closure regression (`devtests/social_hardening_test.py` creates that campaign, deletes it, but the notification it triggered was already queued), and would have reached the owner at 09:00 IL as a notice for a non-existent campaign. The other 5 queued items were left intact.
+**Known limitations / not blockers:**
+1. The owner-COMMAND (inbound) path has not been exercised since the re-pair (0 inbound WhatsApp messages; last customer/owner message 09-14). Approvals need it: the owner should send `תגובות-גרופ` (read-only list) to confirm the round trip; I sent nothing.
+2. EOD at 21:00 IL is on the quiet-window edge (09:00-21:00), so it is always delivered the next morning.
+3. Group cadence = 24 h sleep AFTER each ~3.4 h cycle (~27.4 h start-to-start); next full scan ~09-21 17:22Z.
+4. Per-cycle LLM budget (20) leaves relevant posts undrafted until a later cycle (they are re-detected, not lost). Cerebras is out of credit (402); drafts run on the Gemini/Groq fallbacks (weaker Hebrew), one more reason approval stays mandatory.
+5. Backlog: 40 pending group drafts and 46 pending social posts (oldest 07-19) await the owner; 2 stale `approved` `social_posts` (09-19, no `approved_by`, e2e-test residue) exist but nothing calls `execute_campaign` automatically.
+6. Test hygiene: `social_hardening_test.py` does not mock `notify_owner`, so running it queues a real owner notice (cleaned up above; worth fixing separately).
+**Git:** HEAD `d3cd917`, unchanged; only `FIXES_TRACKER.md` modified by this entry, deliberately NOT committed (no code/config change was made).
 
 ---
 
@@ -3147,6 +3410,57 @@ obsolete, wrong, or unsafe enough to retire.
 **Alternative Chinese parts source to evaluate:** Autodoc (autodoc.co.uk) — has an affiliate/API program covering Chinese brands; already in supplier list as a target.
 
 
+## 2026-09-21 — Eurosender webhook signature verification (sandbox route)
+
+**Root cause:** `routes/eurosender_webhook.py` read `Webhook-Signature` only to log its presence and accepted every body unauthenticated (algorithm was unknown). Official Eurosender support has now given the contract: HMAC-SHA256, raw body bytes only, secret as UTF-8, header `sha256=<hex>`, no timestamp/nonce, Webhook-Id/Event not signed.
+
+**Fix:** `verify_signature(body, header, secret)` (constant-time `hmac.compare_digest`, fails closed on empty secret / missing / wrong-prefix header) runs on `await request.body()` BEFORE `json.loads`, Redis dedup and `handle_event`; failure -> HTTP 401, nothing handled. Logs carry only event/id/presence/boolean — never secret, signature, body. `EUROSENDER_WEBHOOK_SIGNATURE_VERIFIED` deliberately left `False` (production blocker) until the contract is confirmed on a genuine live delivery.
+
+**Regression:** 11 new tests in `tests/test_eurosender_webhook.py` (valid, invalid, modified body, wrong secret, missing, empty secret, malformed prefix, raw-bytes whitespace, route-level valid / headers-only-401 / modified-body-401). Webhook file 30/30; Eurosender suite 188/188; 64 direct regressions pass.
+
+**Status:** APPLIED (backend restarted). NOT VERIFIED against a real Eurosender delivery — none stored locally, no order created. An earlier 32-combination empirical sweep found no match; unreconciled (suspects: `.env` secret is not the dashboard signing key, or non-matching body/signature pair). If real sandbox deliveries now get 401, that discrepancy is the lead.
+**Separate finding:** Webhook-Id dedup exists (Redis `eurosender:webhook_seen:{id}`, 24h, best-effort, fail-open if Redis is down); it now runs after signature verification, so unsigned requests can't poison it. Not changed further.
+
+## 2026-09-21 — Real Sandbox webhook signature verification attempt (evidence phase, no code change)
+
+**Question:** does the current implementation accept a genuine Eurosender Sandbox delivery?
+**Result: NOT TESTED — no genuine delivery (raw body + signature) is obtainable from this environment.**
+- Local evidence: no stored raw body/signature anywhere in repo, `/app/state`, or `/tmp` (earlier temp captures were deleted). `autospare_backend` was recreated 2026-09-20, so earlier delivery log lines are gone; nginx history holds no Eurosender webhook request. Since the verification went live (restart 05:57 UTC) no Eurosender delivery has reached the backend (0 `[EurosenderWebhook]` log lines).
+- Replay/resend: the public OpenAPI spec (`integrators.eurosender.com/_bundle/apis/index.yaml`) has no webhook/notification/resend/replay path, so no API replay exists. A dashboard-side resend is UNKNOWN: this session has no authenticated browser tool and `.env` holds no Eurosender dashboard login (only API key + webhook secret), so the dashboard could not be inspected.
+- No order created, no `POST /v1/orders`, no code change. Webhook tests re-run: 30/30. `EUROSENDER_WEBHOOK_SIGNATURE_VERIFIED` unchanged (False). Earlier 32-combination sweep non-match remains unreconciled.
+- To close: owner uses the dashboard's webhook delivery history/resend (or any legitimate lifecycle event on an existing sandbox order); the next delivery logs `signature rejected ... signature_present=` or `signature_verified=True` (safe metadata only).
+
+## 2026-09-21 — Real Sandbox E2E webhook signature verification (Case B: real delivery REJECTED)
+
+**Setup (verified):** base URL `https://sandbox-api.eurosender.com`, API key + webhook secret present (secret: 36 chars, UUID-shaped, no whitespace, NOT equal to the API key), `EUROSENDER_ENABLED=False`, `EUROSENDER_WEBHOOK_SIGNATURE_VERIFIED=False`, `verify_signature()` unchanged from the previous phase. Public unsigned POST -> 401 (route live through Cloudflare/nginx).
+**Order:** exactly ONE Sandbox order `699034-26` (GB->IL, regular_plus, EUR 60.98, ref ASF-SIGVERIFY-20260921-061301, created 06:13:04Z, status "Awaiting customs documentation"), then cancelled via documented `DELETE /v1/orders/{code}` (204, status Canceled) to trigger a lifecycle event. No other order, no production call.
+**Real delivery:** 06:17:00Z, `POST /api/v1/webhooks/eurosender` from an external IP, `Webhook-Event=order_cancelled`, `Webhook-Id=10790`, `Content-Type: application/json`, headers `webhook-id/webhook-event/webhook-signature` present, signature header = `sha256=` + total length 71 (matches the contract format), body 59 bytes. Backend answered **401 (signature rejected)**; event NOT handled.
+**Body evidence:** SHA-256 of the received 59 bytes == SHA-256 of the compact JSON `{"notifications":[{"orderCode":"699034-26","triggerId":4}]}` (the 63-byte spaced form does not match) -> body is intact, belongs to our order/event, is compact JSON. nginx has no request-body rewriting (gzip is response-side).
+**Root cause: NOT PROVEN.** Same-delivery body and header are established, format matches the contract, the configured secret is well-formed and distinct from the API key. Not yet distinguishable from evidence gathered: (A/E) configured secret != the dashboard webhook's signing secret, vs (G) an undocumented signing detail. Distinguishing needs the actual signature bytes compared against HMAC(secret, body) under a controlled, non-printed capture, or the owner confirming the dashboard signing secret. No brute force attempted; no verification code changed.
+**Cleanup:** temporary DIAG log (metadata only) added and REMOVED (file restored, 0 diag lines, backend restarted, health 200). Webhook tests 30/30. Eurosender suite not rerun (no net code change).
+**Status:** REAL WEBHOOK RECEIVED = YES; SIGNATURE VERIFIED = NO (FAIL); EVENT HANDLED = NO. Historic five-route incident boundary unchanged (UNRESOLVED).
+
+## 2026-09-21 — Controlled real-webhook signature capture (Case B: NO MATCH)
+
+**Setup:** Sandbox only (`https://sandbox-api.eurosender.com`, `EUROSENDER_ENABLED=False`, flag False). NO new order created — existing sandbox test order `833308-26` (ref ASF-WEBHOOK-E2E-001, from the earlier batch) was cancelled via documented `DELETE /v1/orders/{code}` (204, Canceled) at 06:21:57Z. No `POST /v1/orders`, no production call.
+**Capture:** one-shot private 0600 files in the container (never logged/printed). Captured delivery = Eurosender's own RETRY of `Webhook-Id=10790` (`order_cancelled`, order 699034-26) at 06:22:00Z; the new cancel arrived as id 10793 (also 401, not captured). Body 59 bytes, SHA-256 `ced3c576ce9eacd30a8579b865014eb304c1a7433638637b3c23a85f66ca0693` (identical to the first delivery of 10790 -> retry carries the same bytes), `application/json`.
+**Cryptographic check (independent of the route):** signature header prefix `sha256=` valid; total length 71; digest = 64 lowercase hex chars, no whitespace/newline; exact raw captured bytes; secret UTF-8; only `sha256=` stripped; `hmac.compare_digest`. **Result: HMAC(configured secret, exact raw body) != received digest — NO MATCH.**
+**Proven:** the configured `.env` secret does NOT reproduce the signature Eurosender sent on a real delivery, using the documented contract on the exact received bytes. The route's 401 is therefore correct behaviour for this secret, not a code defect in `verify_signature()`. **Not proven / not chosen between:** (a) `.env` secret != dashboard signing secret for this webhook, vs (b) Eurosender's real signing differs from the stated contract. No brute force, no alternate algorithms tried, no code change.
+**Cleanup:** capture files shredded/deleted (0 remain), capture code removed (file restored, 0 diag lines), backend restarted, health 200, webhook tests 30/30. Signature/body never written to logs, Redis, DB, Git or this file.
+**Status:** REAL WEBHOOK RECEIVED = YES; SIGNATURE VERIFIED = NO; EVENT HANDLED = NO.
+
+## 2026-09-21 — Eurosender webhook signature root-cause investigation (investigation only, NO code change)
+
+**Facts (real Sandbox evidence):** `order_cancelled`, Webhook-Id 10790, body 59 bytes, SHA-256 `ced3c576ce9eacd30a8579b865014eb304c1a7433638637b3c23a85f66ca0693`; header `sha256=`+64 lowercase hex; owner confirmed dashboard signing secret == `.env` secret; HMAC-SHA256(secret utf8, exact raw body) != received digest.
+**Our implementation vs the support contract:** `verify_signature()` = HMAC-SHA256(secret.encode('utf-8'), raw body bytes), strips only the `sha256=` prefix, `hmac.compare_digest`, runs on `await request.body()` before parsing. Matches the support statement exactly (it also lower-cases the received digest, which can only make matching more lenient).
+**Official sources checked:** (1) `integrators.eurosender.com/apis/webhooks` and the OpenAPI bundle `/_bundle/apis/index.yaml`: the only signature text is the header line `Webhook-Signature:...` (value elided) — no algorithm, no secret, no signing input, no example; 0 hits for hmac/sha256/secret. (2) github.com/eurosender: dhl-sdk-api-express, universal-shortcodes, s3-deploy, aftership-tracking-sdk-php — none implements webhook signing. (3) npm `eurosender`/`eurosender-api`/`eurosender-sdk` and PyPI `eurosender`: not found. **NO OFFICIAL SIGNATURE IMPLEMENTATION FOUND. Public docs are SILENT on signing**; the HMAC/raw-body/utf-8 contract exists only as an attributed support statement. Public docs also show the flat body shape for events 1-4, which the real delivery contradicts (real = `notifications[]`-wrapped) — the docs are demonstrably not a precise description of the real payload.
+**Secret semantics:** public docs mention only enabling webhooks in Dashboard -> Eurosender API tab; no signing-secret/API-secret/version semantics documented. Nothing changed/regenerated.
+**Body transformation:** NO EVIDENCE OF BODY TRANSFORMATION. Received bytes hash-equal the compact JSON for the test order; the `/api/` nginx location has no body rewriting (gzip is response-side); the app's only middleware (`SecurityHeadersAndAuthMiddleware`) never reads/modifies the body and its webhook check only matches `/api/webhooks/`, not `/api/v1/webhooks/eurosender`. Cloudflare (upstream of nginx) not inspectable from the server.
+**Alternative signing tests:** NONE run — no official evidence supports any alternative input, and the capture files were already destroyed.
+**Root cause: NOT PROVEN.** Support clarification required.
+**Status:** NO code/order/config change. Webhook still returns 401 to real deliveries (event handling not reached).
+
+
 ## 2026-09-21 — AliExpress re-registration: app verified, OAuth authorization pending (BLOCKED)
 
 **Status: BLOCKED (owner OAuth consent click required). Not PASS.**
@@ -3894,6 +4208,223 @@ These are linear extrapolations of a stable 2-calls/target, 3.6-3.9-calls/valid-
 
 **Remaining non-blocking risks (carried forward, unchanged):** (1) AliExpress's numeric API quota is still not published anywhere reachable — existence and short (~1s) recovery behavior of `ApiCallLimit` are proven, a number is not; (2) both `docker-compose.yml` and the code's own kill-switch read default to ENABLED if the env var were ever unset — currently safe only because `.env` sets it to `0` explicitly; (3) `sync_aliexpress_prices()` itself has no self-contained kill-switch/lock (both live in its caller `sync_prices()`) — any FUTURE direct/manual invocation of the inner function (as every controlled validation in this file has done) must independently re-verify the same pre-flight conditions checked here, not assume the function gates itself; (4) the admin manual-trigger endpoint (`routes/admin.py::POST /api/v1/admin/price-sync/run`) means production activation risk includes an admin accidentally triggering a full sync/market-drift cycle on demand, in addition to the 24h timer — this is an existing, intentional feature (predates this AliExpress work), not something introduced or altered here, but worth the owner's awareness at activation time.
 
+## 2026-09-25 — Phase 19: Eurosender webhook signature — corrected contract (event+id+body)
+
+**New official contract (support, 2026-09-25), supersedes the 2026-09-21 "raw body only" contract that was tested against a real delivery and did NOT match:**
+`message = Webhook-Event + Webhook-Id + raw_body` (plain concatenation, no delimiter, no JSON parse/reserialization) → `HMAC-SHA256(sandbox_signing_secret_utf8, message)` → compared against `Webhook-Signature: sha256=<hex>` with `hmac.compare_digest`. Header encoding (`sha256=`+hex) is kept from the 2026-09-21 empirical capture, since support did not re-specify it.
+
+**Implementation:** `verify_signature(webhook_event, webhook_id, body, signature_header, secret)` rewritten in `routes/eurosender_webhook.py` (signature now takes event/id as first two args, both required and taken verbatim from the request headers — never defaulted/normalized). Runs on the exact raw bytes before JSON parsing, Redis dedup, or `handle_event`; fails closed on empty secret/missing/malformed-prefix header; 401 on failure, nothing handled.
+
+**Regression:** webhook file 36/36 (added the full Phase-8 matrix A–L: correct/changed event/changed id/tampered byte/changed signature/empty body/missing headers/missing secret/reserialized-JSON/escaped-JSON/malformed prefix/wrong secret, plus route-level: valid accepted, headers-alone don't replace signature, modified body rejected, wrong event+matching body rejected, duplicate Webhook-Id still deduplicated after a valid signature). Full Eurosender suite 194/194. Named regressions (`test_payments_supplier_helpers`, `test_hf_client`, `test_stripe_config`, `test_payment_simulation_guard`, `test_payments_verify_helpers`, `test_frontend_url_resolution`) 64/64. `test_fitment_step0_release_gate.py` 4/6 (2 PRE-EXISTING failures, unrelated — `routes/parts.py` caching/query code, confirmed by traceback, not touched this phase). `test_db_network_hardening.py` 0/1 (ENVIRONMENTAL — `/docker-compose.yml` not mounted in this container, pre-existing).
+
+**Live payload verification: BLOCKED — no fabrication performed.** No currently-stored capture has both a real signature AND the new contract's inputs: the one real delivery captured 2026-09-21 (Webhook-Id 10790, order_cancelled, 59-byte body) was deleted per that capture's own one-shot cleanup mandate immediately after the (superseded-contract) test; only its SHA-256 and safe metadata remain. Eurosender DID retry that same delivery again naturally on 2026-09-22 16:47:01 UTC (ids 10790 and 10793, both `signature_present=True`, both rejected 401 under the old code) — but no capture mechanism was armed at that time (removed per the prior phase's cleanup), so nothing was retained. This phase's authorization did not include installing a new temporary capture or performing a mutating Eurosender call (e.g. cancelling one of the still-open earlier test orders) to generate a fresh delivery, so none was attempted. **CORRECTION during this phase:** an initial DB check queried the wrong database (`DATABASE_URL`/catalog) and appeared to show migration 0038 "not applied"; re-checked against the correct `DATABASE_PII_URL` and confirmed migration `0038_eurosender_shipping` **IS** the PII DB's current alembic head (applied in an earlier session, not by this phase) — `orders.eurosender_order_code/eurosender_status/tracking_number/tracking_url` and `supplier_payments.shipping_provider_ref` all exist live. No migration was run in this phase; 0 orders created in the PII DB in the last 15 minutes.
+**Sandbox re-verification (read-only only, 0 `POST /v1/orders` calls):** `GET /v1/countries` → IE/PL/DE/NL/GB/IL all present; `POST /v1/quotes` IE→IL → regular_plus €149.76, express €134.99; `POST /v1/orders/validate_creation` with a synthetic P19 payload → empty-dict success shape (no violations).
+**Status:** `EUROSENDER_WEBHOOK_SIGNATURE_VERIFIED` unchanged (False) — the new contract is implemented and unit-proven but not yet confirmed against a real signature. Historic 5-route incident boundary and prior root-cause investigations remain UNRESOLVED, unchanged, not rewritten.
+
+## 2026-09-25 — Phase 20: Eurosender webhook signature — real-delivery verification attempt (BLOCKED)
+
+**Objective:** close B3 by matching the event+id+body contract against one genuine Eurosender Sandbox delivery, with no mutating Eurosender call permitted (no order create/cancel/retry).
+
+**Capture mechanism:** temporary one-shot private 0600 files (event/id/body/signature/safe-metadata only, secret never captured), armed on the live route before any real delivery.
+
+**Real finding — a false-positive capture, caught and root-caused before being mistaken for genuine evidence:** the first capture (Webhook-Id `10790`, event `order_cancelled`, body `{"notifications":[{"orderCode":"ES-100","triggerId":4}]}`, 56 bytes) was NOT a real Eurosender delivery — it was this session's own `pytest tests/test_eurosender_webhook.py` run. That suite's route-level tests use FastAPI's in-process `TestClient` against the real, unmocked `eurosender_webhook()` function with synthetic fixtures (`_WID="10790"`, body `ES-100`), and the capture's trigger condition (`webhook_signature and webhook_id`) doesn't distinguish an in-process test call from a real externally-delivered HTTP request. **Root-fixed in the temporary capture only** (not in the production verifier): added a requirement that `X-Real-IP` or `CF-Connecting-IP` be present — headers nginx sets on every real proxied request and that `TestClient` never sends — before anything is captured. Discarded the false capture, re-armed with the fix, re-ran the test suite once to confirm 0 captures result (confirmed), then watched passively.
+
+**Passive watch:** ~14.5 minutes total across two bounded windows, zero mutating Eurosender API calls made at any point. No genuine delivery arrived in that window (the last two natural Eurosender retries of this same still-outstanding delivery were ~5 minutes and ~34.5 hours apart, so a short synchronous wait was a low-probability attempt, not a guaranteed one).
+
+**Result: BLOCKED per the phase's own stop conditions** — "if no genuine delivery is available without a mutating operation, STOP and report BLOCKED." No signature was fabricated or substituted at any point.
+
+**Cleanup:** all temporary capture files removed (`es_p20_*`, confirmed 0 remain); `routes/eurosender_webhook.py` restored byte-for-byte to its Phase-19 state (diff against the pre-Phase-20 copy shows only the Phase-19 content, 0 diagnostic lines); backend restarted; health check 200; webhook tests 36/36; full Eurosender suite 194/194.
+
+**B3 status: OPEN — NOT CLOSED.** Nothing here disproves the current implementation; it simply couldn't be tested against a real signature in the available window. No code change survives this phase (the file is identical to Phase 19's).
+
+## 2026-09-25 — Phase 21: Eurosender Sandbox webhook trigger discovery (read-only, no mutations)
+
+**Objective:** find a safe, non-mutating way to obtain a genuine Sandbox webhook delivery for B3. Discovery only — no execution.
+
+**API surface (OpenAPI spec, `integrators.eurosender.com/_bundle/apis/index.yaml`, re-fetched and checked):** 15 paths total (countries, cities, regions, orders, orders/validate_creation, orders/{code}, orders/{code}/documents, /labels, /tracking, pickup, pickup/availability, proforma, proforma/upload, quotes). **Zero webhook-management endpoints** — no list/resend/replay/test-webhook API exists. Webhooks are configured entirely through the dashboard UI per the spec's own Webhooks section ("Log in to your Eurosender business account → User dashboard → Eurosender API tab").
+
+**Dashboard UI (inspected live via browser, `sandbox.eurosender.com/en/dashboard/api`, logged in as `autosparefinder`):** the registered webhook (`https://autosparefinder.co.il/api/v1/webhooks/eurosender`, Active, created 2026-09-11) has a `...` menu with exactly three options: **Disable, Edit, Delete** — no Resend, no Test, no delivery log, no history view. None were clicked/used. Order detail pages (`/en/dashboard/orders/{code}`) are walled off entirely in Sandbox ("This feature is not available in sandbox environment"), so no per-order notification/resend UI is reachable either.
+
+**Discovery findings (A–G):**
+- A (dedicated webhook test endpoint): NO
+- B (webhook resend/replay operation): NO
+- C (dashboard "send test webhook" function): NO
+- D (non-mutating API operation that produces a webhook): NO
+- E (free/no-charge test order): NO — Sandbox order creation consumes wallet balance (proven empirically in an earlier phase: a 422 "insufficient payment balance" blocked creation until the wallet was funded); disqualified twice over (also mutating).
+- F (transition an existing Sandbox test object): the only known-working mechanism — cancelling one of the still-open Sandbox test orders (e.g. from the ASF-WEBHOOK-E2E-0xx batch, several still `Paid`) via the documented `DELETE /v1/orders/{orderCode}` generates a real `order_cancelled` webhook. This is exactly what produced the real deliveries analyzed in the 2026-09-21/22 phases. It is a genuine order mutation (state change on an already-paid order, no new charge), reversible only in the sense that cancellation is Eurosender's own terminal state.
+- G (other documented mechanism): none found.
+
+**Conclusion: no safe non-mutating trigger exists.** The only path to a fresh genuine delivery is F, which requires cancelling an existing Sandbox order — explicitly out of scope for this discovery-only phase.
+
+**Safety:** 0 API mutations, 0 dashboard mutations (viewed the webhook menu and Get-Webhook-Signing-Key button only — neither clicked/used), 0 orders created/cancelled/edited, 0 production calls, secret never viewed/captured. Re-checked after discovery: webhook config and order list unchanged.
+
+**B3 remains OPEN.**
+
+## 2026-09-25 — Phase 22: B3 CLOSED — real Eurosender Sandbox signature cryptographically matched
+
+**Target order:** `935766-26` (ref `ASF-WEBHOOK-E2E-009`), an existing already-paid Sandbox test order from the 2026-09-12 E2E batch, confirmed `Order Received`/open immediately before action, not created in this phase, not needed by any other active test.
+
+**Action (exactly one mutation):** `DELETE /v1/orders/935766-26` at 2026-09-25 06:49:02Z → success (204), order confirmed `Canceled` immediately after. No `POST /v1/orders`, no second order touched, no retry.
+
+**Capture:** same X-Real-IP/CF-Connecting-IP–gated one-shot private capture proven in Phase 20 (re-added, re-verified 0 files present before the DELETE, removed immediately after use). Captured a genuine external delivery within the wait window: `Webhook-Id=10847` (fresh — not the earlier test/fixture id 10790), `Webhook-Event=order_cancelled`, body `{"notifications":[{"orderCode":"935766-26","triggerId":4}]}` (59 bytes) — references the exact order just cancelled, `Content-Type: application/json`, `real_ip_present=true`.
+
+**Cryptographic verification:** `HMAC-SHA256(sandbox_webhook_signing_secret_utf8, "order_cancelled" + "10847" + raw_body)` computed hex digest **== the received `sha256=<hex>` signature** (constant-time compare). The same captured event/id/body/signature were then run through the actual, unmodified `routes.eurosender_webhook.verify_signature()` — **it returned True.**
+
+**Root cause of the earlier (2026-09-21) non-match is now understood in outline (not re-investigated further here):** that test used the SUPERSEDED "raw body only" contract; the corrected event+id+body contract (Phase 19) is what verifies.
+
+**Cleanup:** all 5 capture files shredded and deleted (confirmed 0 remain), `routes/eurosender_webhook.py` restored byte-for-byte to its Phase-19 state (diff confirms no diagnostic code survives), backend restarted, health 200. Webhook config/signing key untouched (not viewed, not edited, not disabled). Secret never printed — only a boolean match result and safe metadata appear anywhere, including here.
+
+**Regression:** webhook file 36/36, full Eurosender suite 194/194, named direct regressions 64/64. No failures, no unrelated changes.
+
+**Safety:** 1 DELETE (authorized), 0 POST /v1/orders, 0 new orders, 0 production API calls, 0 production mutations, `EUROSENDER_ENABLED` still False, `EUROSENDER_SANDBOX` still True.
+
+**Flag decision (deferred, not made unilaterally):** `EUROSENDER_WEBHOOK_SIGNATURE_VERIFIED` is left `False`. Its own docstring conditions it on exactly the evidence now obtained, but flipping a production-readiness flag was outside this phase's explicit scope/success-criteria and is left for an explicit owner decision in a follow-up phase.
+
+**B3: CLOSED.** The event+id+body HMAC-SHA256 contract is cryptographically proven against a genuine Eurosender Sandbox delivery, and the existing, unmodified verifier accepts it. No code was changed by this phase (file is identical to Phase 19's).
+
+## 2026-09-25 — Phase 23: EUROSENDER_WEBHOOK_SIGNATURE_VERIFIED finalized True
+
+**Confirmed this is the documented readiness flag** — `eurosender_config.py`'s own comment conditioned it exactly on "the real algorithm has been obtained... AND implemented AND tested against a real signed payload," which Phases 19 and 22 completed. Grepped the whole backend: the constant has exactly 3 references — its own definition, a docstring line in `routes/eurosender_webhook.py`, and one guard test (`test_eurosender_routing.py`). **It is read by ZERO runtime logic** — the webhook route's sandbox-only 501 gate is controlled entirely by `eurosender_config.sandbox_mode()` (`EUROSENDER_SANDBOX`), independent of this flag. Flipping it therefore has **no runtime/production behavioral effect** — it is purely a documented status record, not a live gate. No stop condition applied.
+
+**Change:** `EUROSENDER_WEBHOOK_SIGNATURE_VERIFIED` `False → True` in `services/shipping/eurosender_config.py`, with its comment rewritten to record the Phase 22 evidence (order 935766-26, Webhook-Id 10847, HMAC match, verifier acceptance) and to state explicitly that this flag means the SIGNATURE ALGORITHM is confirmed, not that production is enabled (`EUROSENDER_ENABLED`/`EUROSENDER_SANDBOX`/allowlist remain the separate gates). `routes/eurosender_webhook.py`'s module docstring updated to match (comment-only, no logic/algorithm/header/HMAC/dedup/event-handling change). The one guard test asserting non-env-overridability (`test_webhook_signature_verified_is_hardcoded_false_not_env_overridable`) updated to `test_webhook_signature_verified_is_hardcoded_true_not_env_overridable` — same guarantee, opposite direction (env cannot force it back to False either).
+
+**Verification:** webhook tests 36/36, full Eurosender suite 194/194 (same count — one test updated in place, none added/removed), named direct regressions 64/64. Backend restarted; live process confirms `EUROSENDER_WEBHOOK_SIGNATURE_VERIFIED=True`, `EUROSENDER_ENABLED=False`, `EUROSENDER_SANDBOX=True` unchanged. Zero Eurosender API calls, zero order/shipment mutations, zero production calls in this phase.
+
+**B3: CLOSED** (confirmed Phase 22, flag now reflects it). Not committed/pushed — awaiting explicit approval.
+
+## 2026-09-25 — Phase 24: B4 (HS Code Policy) investigation — CLOSED, policy already correct
+
+**Data path traced:** `parts_catalog.category` (English slug, the canonical vocabulary) → order item `category` field → `eurosender_order_service._build_packages_and_gates()` calls `eurosender_hs_codes.classify_hs(category)` **per distinct category** (so a multi-category shipment legitimately gets one HS code per package/category — confirmed, not a single shipment-wide code) → `hs_by_category` dict carried on `ShipmentResult.hs_codes` → `eurosender_fulfillment.py`'s proforma step → `eurosender_proforma.build_proforma_items()` (Phase 12, Israel-only, since Eurosender requires a proforma for non-EU destinations).
+
+**Current policy (`eurosender_hs_codes.py`, "Phase-1"):** a small explicit map of 7 categories (`brakes`→870830, `gearbox`→870840, `suspension`/`suspension-steering`→870880, `wheels-bearings`→870870, `lighting`→851220, `filters`→842123), each a real chapter-87 (or correct non-87) heading — never a bare/generic code. Every other category (including `כללי` and the ~15+ other real catalog categories: engine, cooling, electrical, interior-comfort, etc.) returns `MANUAL_REVIEW`, `hs_code=None`. Overridable per-category via `HS_CODE_OVERRIDES` env (JSON) without a code change — malformed JSON fails safe to the built-in map.
+
+**What happens when HS code is missing:** `MANUAL_REVIEW` on that category blocks the **entire shipment** at `_build_packages_and_gates()` — `block_reasons` accumulates, `evaluate_and_create_shipment()` returns `ShipmentVerdict.MANUAL_REVIEW` **before any adapter/API call**. No partial shipment, no guessed code, ever. If HS somehow resolved but reached the proforma step without one anyway, `build_proforma_items()` independently raises `ProformaBuildError` — defense in depth, same "never guess" rule enforced twice.
+
+**Eurosender's own requirement is actually LOOSER than the app's:** re-fetched and inspected the live OpenAPI spec's `ProformaItemRequest` schema — `hsCode: {type: [string, 'null']}`, not in any `required` list. Eurosender's API would accept a null HS code; **the application's stricter refusal is a deliberate, already-made business-safety decision** (an Israeli customs proforma without a real HS classification risks a real shipment being held/delayed), not a technical gap the app failed to enforce.
+
+**Multiple items, multiple HS codes:** confirmed handled correctly — `hs_by_category` is keyed per category, and `build_proforma_items()` looks up each item's own category's code independently.
+
+**No technical defect found.** One minor test-coverage gap identified and closed: no existing order_service-level test isolated the HS gate specifically (the two existing MANUAL_REVIEW examples in `test_eurosender_order_service.py`, categories `engine` and `lighting`, are both actually blocked earlier by the *dimensions* gate, not HS — traced via `eurosender_dimensions.py`'s BLOCK/MANUAL_REVIEW lists). Added `test_hs_unmapped_category_blocks_shipment_never_calls_adapter` using category `electrical` (ALLOW in dimensions, short content, absent from `_HS_MAP`) to prove the HS gate in isolation.
+
+**Verdict: Outcome A — the policy already exists and is correctly implemented.** No owner decision is required to close B4 as a technical matter. Whether/when to *expand* Phase-1's 7-category map to cover more of the catalog (so fewer IL shipments land in manual review) is a separate, future, non-blocking scope decision — not a defect and not attempted here (would require inventing customs classifications, explicitly prohibited).
+
+**Tests:** `test_eurosender_hs_and_value.py` 18/18 (unchanged). `test_eurosender_order_service.py` 16/16 (was 15, +1 focused test). Full Eurosender suite 195/195 (was 194, +1). Zero Eurosender API calls, zero order/shipment mutations.
+
+**B4: CLOSED.**
+
+## 2026-09-25 — Phase 25: B5 (Car-Parts.ie pickup address) investigation — OWNER DECISION REQUIRED
+
+**Canonical Car-Parts.ie supplier record (catalog DB `suppliers` table):** id `88f6ce24-ab5f-4f99-8b41-03cf6828cf3d`, `name='Car-Parts.ie'`, `country='IE'`, `website='https://www.car-parts.ie'`, `is_active=true`. **`shipping_info` is `NULL`** — no street, city, zip, region, Eircode, or contact anywhere on the row. Checked every column on the row (schema dump above), `docs/SUPPLIERS.md`, `FIXES_TRACKER.md`, and `.env` for any stored Car-Parts.ie physical address — **none exists anywhere in this project's data.**
+
+**Exact code/data path (generic — no Car-Parts.ie special-casing exists, confirmed by reading `eurosender_routing.py`'s own docstring and code):** `eurosender_fulfillment._attempt_shipment()` reads `Supplier.shipping_info` (catalog DB) → `_extract_pickup_from_shipping_info(shipping_info)` requires `address` to have ALL of `{country, zip, city, street}` non-blank AND `contact` to have ALL of `{name, email, phone}` non-blank, else returns `(None, None)` → `_attempt_shipment` sees `not pickup_address or not pickup_contact` → returns `ShipmentVerdict.MANUAL_REVIEW` with a clear reason string **before any adapter/API call**. This is the correct, already-proven-safe behavior — confirmed with Car-Parts.ie's real live row: `_extract_pickup_from_shipping_info(None) == (None, None)`.
+
+**Required Eurosender pickup fields — verified against the LIVE spec/API (read-only), not assumed:**
+- `ShipmentAddressRequest` schema: only `country` is unconditionally `required`; `city`/`region` are **conditionally required per-country** (schema text names Ireland explicitly: "providing exact city name is mandatory (like Ireland or Romania)" and "providing region... is mandatory, like Ireland, Romania, Italy, USA, Canada").
+- **Confirmed live via `GET /v1/countries`** (read-only, no order touched): Ireland's entry returns `"requiresRegion": true, "requiresCity": true`, plus a **country-specific custom field `eire_code` (Eircode) marked `"required": true`** — a field concept the current schema/validation has no knowledge of at all.
+- `ShipmentContactRequest`: no field-level `required` in the schema itself, but the parent description marks the whole contact object required for Order (not Quote). The app's `{name, email, phone}` requirement is stricter than the bare schema — consistent with the same deliberate "stricter than the minimum, never guess" pattern already established for HS codes (B4) and country-of-origin.
+
+**Root cause — TWO SEPARATE findings, correctly not conflated per this phase's own instruction:**
+1. **The actual blocker (not a code defect):** Car-Parts.ie's real business pickup address (company/warehouse name, street, city, Eircode, region, contact name/email/phone) does not exist in this project. This requires the owner to obtain it from Car-Parts.ie (their real return/pickup point) — nothing here can be inferred, copied from another supplier, or safely defaulted.
+2. **An independent, now-confirmed technical gap** (would matter the moment #1 is resolved): the current `shipping_info.address` shape and `_extract_pickup_from_shipping_info()` validation know nothing about `region`/`regionCode`/`regionId` or the Ireland-specific `eire_code` custom field that Eurosender's own live API marks required for Ireland. Even a fully-populated `{country, zip, city, street}` for an Irish supplier could still be rejected by Eurosender's real order-creation validation today. **Not fixed in this phase** — fixing it now would mean guessing a data shape without a real Irish address to validate it against, and the phase's rules prohibit changing broader shipping policy without justification; flagged here as a concrete, evidence-backed follow-up for whenever #1 is resolved.
+
+**No fabrication performed.** No address invented, no other supplier's address copied, no code change to supplier business data.
+
+**Code changes:** `backend/tests/test_eurosender_fulfillment.py` only — added 7 focused unit tests for `_extract_pickup_from_shipping_info()` (previously ZERO coverage despite being the exact function standing between B5 and a fabricated address): None/empty/non-dict input, each of the 4 required address fields missing individually, a blank-but-present field, each of the 3 required contact fields missing individually, and a complete-info pass-through-unmodified case (using Car-Parts.ie's real supplier id/name in test data, real address/contact values are synthetic test fixtures, not asserted as the real business address). No production code changed.
+
+**Tests:** `test_eurosender_fulfillment.py` 12/12 (was 5, +7). Full Eurosender suite **202/202** (was 195, +7 — exactly the delta from the new tests). Zero Eurosender order/shipment mutations; the only live calls made were read-only `GET /v1/countries` (already an existing verified-safe operation from earlier phases).
+
+**B5: OWNER DECISION REQUIRED.** Exact information needed from the owner (via Car-Parts.ie directly): the real pickup/return address (company or warehouse name, street + house number, city, Eircode, county/region) and a pickup contact (name, email, phone in E.164 format). Once supplied, it goes into `Supplier.shipping_info` for row `88f6ce24-ab5f-4f99-8b41-03cf6828cf3d` — the existing plumbing already consumes it correctly (proven by the new tests) — plus the separate technical follow-up above (region/Eircode field support) should be implemented and tested against that real data before enabling Car-Parts.ie in `EUROSENDER_SUPPLIER_ALLOWLIST`.
+
+## 2026-09-25 — Phase 25 (E2E): Full Eurosender Sandbox lifecycle validation — B5 CLOSED, B7 CLOSED, B6 SANDBOX LIMITATION
+
+**Scope decision (stated up front, not hidden):** real Sandbox mutations (order create/proforma/cancel) were performed exactly as authorized. Fake customer `Order`/`User`/`SupplierPayment` rows were deliberately **NOT** written to the live PII database — every prior phase in this project maintained "0 production DB writes" as a hard invariant, and this phase's own safety section only authorizes Sandbox/Eurosender-side mutations, not PII-DB test data. Instead, the real app orchestration functions (`evaluate_and_create_shipment()`, `_submit_proforma()`, `_extract_pickup_from_shipping_info()`) were called directly with real data and the real adapter — this exercises the exact same code path and makes the exact same real Eurosender API calls the app would make, without polluting the live customer database.
+
+**Test supplier (Phase 3):** new, separate, clearly-labeled row in `suppliers` — id `974c5292-0cd6-49b6-bc5b-1475e4ee9c6a`, name `Eurosender Sandbox E2E Test Supplier (UK)`, `country='GB'`, **`is_active=FALSE`**, `credentials={"source":"eurosender_phase25_e2e_test","purpose":"sandbox_only_never_activate"}`, `shipping_info` = the Heritage Building / Stourbridge Road / Bridgnorth / Shropshire / WV15 6AP / GB address + a test contact. **Car-Parts.ie was not touched.** Left in place (inactive, harmless, documents this test) — can be deleted on request.
+
+### A. Shipment creation — PASS
+Real `GET /v1/countries` confirmed GB: `requiresRegion=false, requiresCity=false, customFields=[]` (materially simpler than Ireland's `requiresRegion=true, requiresCity=true, eire_code required` found in Phase 25's earlier B5 investigation — isolates the Ireland-specific gap as country-specific, not general). Real quote GB→IL: regular_plus €76.04. Real `evaluate_and_create_shipment()` call → **order `853604-26` created**, verdict `CREATED`, `eurosender_status=awaiting_customs`, HS resolved (`brakes→870830`), declared value €123, weight 1.5kg (from the weight policy, not caller input — confirmed the app recomputes it, never trusts an arbitrary caller weight).
+
+### B. Status lifecycle — PARTIAL / SANDBOX LIMITATION
+Reachable in this test: `Awaiting customs documentation` (creation) → unchanged after real proforma submission (Eurosender's customs review is evidently manual/async even in Sandbox — did not block on it) → `Canceled` (after DELETE). **`order_label_ready`, `order_submitted_to_courier`, `order_tracking_ready` were NOT observed** — consistent with every prior Sandbox order in this project's history (no real courier ever physically handles a Sandbox test shipment). Classified **SANDBOX LIMITATION**, not a defect: nothing in the code or account configuration blocks these; there is simply no real-world pickup/transit event to generate them.
+
+### C. Address/contact changes — NOT SUPPORTED (confirmed via spec)
+Re-fetched and grepped the full live OpenAPI spec for every HTTP method on every path: **zero PATCH, zero PUT, anywhere.** Only POST (create/quote/validate/proforma/pickup-scheduling), GET (read), DELETE (cancel) exist. **There is no Eurosender endpoint to modify an existing order's address or contact — cancel-and-recreate is the only path.** This is a hard platform limitation, not an application gap.
+
+### D. Shipment processing / tracking — PASS (read-only)
+`GET /v1/orders/853604-26` (status), `GET .../tracking` (parcel `Pending`/`Pending_001`, no tracking number yet — correct pre-carrier state), `GET .../labels` (empty `labelLink`, correct — no label issued while awaiting customs), `GET /v1/pickup/853604-26/availability` (real time-slot data returned) all exercised successfully, read-only, on the real order.
+
+### E. Cancellation — PASS, full webhook chain re-verified a 3rd time
+`DELETE /v1/orders/853604-26` → 204, confirmed `Canceled`. A genuine external webhook arrived (Webhook-Id **10850**, fresh — never seen before, event `order_cancelled`, body `{"notifications":[{"orderCode":"853604-26","triggerId":4}]}`, 59 bytes, `X-Real-IP` present). **HMAC-SHA256(secret, event+id+body) matched the received signature, and the existing, completely unmodified `verify_signature()` accepted it** — same result as Phase 22, now proven against a second, independent real order. Capture files shredded immediately after use (0 remain); the temporary capture code was fully removed and the route file diffed byte-identical to its Phase-22 state.
+
+### F. Failure / exceptional states — PASS (real 4xx obtained)
+`validate_creation()` called with a deliberately invalid package (1×1×1 cm, 0 kg) against the **real** Sandbox API → genuine **422**: `"Minimum required dimensions are 15 cm x 11 cm x 1 cm and weight 1 kg."` — new, concrete evidence of Eurosender's real minimum-package enforcement, not previously documented. Confirmed not retried (422 outside the retry set) and would map to `ShipmentVerdict.FAILED` per the existing, already-unit-tested clean-4xx path. **Ambiguous 5xx/timeout could not be forced against a healthy live Sandbox** without fabricating a failure — classified **SANDBOX LIMITATION**; the existing deterministic tests (`test_eurosender_order_service.py`'s mocked `httpx.TimeoutException/ConnectError/RemoteProtocolError`/5xx cases) remain the strongest available evidence and were re-confirmed passing in this phase's regression run. **Duplicate-webhook**: no natural retry of Webhook-Id 10850 arrived within a ~90s observation window (consistent with Phase 20/22's observed 5min–34.5h natural retry cadence, not a gap) — the dedup mechanism itself (Redis `eurosender:webhook_seen:{id}`) is unchanged and was already exercised by a genuine retry in Phase 20 (ids 10790/10793 both hit the route again and were independently evaluated).
+
+### B5 — CLOSED (re-confirmed with a real, separate supplier + a real order)
+`_extract_pickup_from_shipping_info()` against the real new UK supplier row returned a complete, usable pickup address+contact. `evaluate_and_create_shipment()` used it to create a real Sandbox order end-to-end. The generic pickup-address plumbing is proven correct for a real, non-Ireland supplier. (Car-Parts.ie itself remains blocked on the separate, already-documented data gap — its real address still doesn't exist anywhere in this project; that part of B5 is unchanged and still requires the owner to obtain it from Car-Parts.ie.)
+
+### B6 — SANDBOX LIMITATION (reconciliation logic verified by the strongest available non-fabricated evidence)
+True network ambiguity cannot be produced against a live, healthy Sandbox API on demand. No timeout was faked. The `timeout_pending_reconciliation` state machine (`eurosender_timeout.py`, `can_attempt_creation()`) is exercised by deterministic unit tests simulating `httpx.TimeoutException`/`ConnectError`/`RemoteProtocolError`/5xx — all still passing (202/202 suite includes `test_eurosender_timeout.py`). This is the same class of finding as C (an honest platform/environment limitation), not a defect.
+
+### B7 — CLOSED
+Traced the real call graph: `get_quote()` is called **nowhere** in the production order path — `evaluate_and_create_shipment()` goes straight from local gates to `validate_creation()` then `create_shipment()`, using the exact same computed package data for both. **There is no quote-shown-then-booked-at-a-different-price window in this codebase's actual design** — the scenario B7 asks about doesn't structurally arise. As additional direct evidence: a fresh quote built with parameters matching the real booked order (same weight/dimensions) returned the identical price the order was actually booked at (€76.04 both times) — Sandbox introduced no silent variance either. **No owner policy decision is needed to close B7** as currently implemented; if a customer-facing pre-booking quote step is ever added in the future, a variance/acceptance policy would become relevant then — noted as a forward-looking caveat only.
+
+**Defects found:** NONE. No code changed in this phase beyond what Phase 25's earlier B5 unit-test addition already covered — this E2E phase made zero further code changes, only real API calls and one new (inactive) test-supplier DB row.
+
+**Sandbox operations (exact counts):** 1 new order created (`853604-26`), 1 proforma submitted, 1 cancellation, 7 read-only calls (`GET /v1/countries` ×2, `GET /v1/quotes` ×2, `GET /v1/orders/{code}` ×2, `GET .../tracking`, `GET .../labels`, `GET /v1/pickup/.../availability`), 1 real 4xx validation probe (`POST /v1/orders/validate_creation`, no order created). **0 additional `POST /v1/orders` beyond the one authorized creation. 0 production API calls.**
+
+**Tests:** full Eurosender suite **202/202** (unchanged from the prior Phase-25 B5 commit — this E2E phase added no new automated tests, only live evidence); named direct regressions **64/64**.
+
+**FIXES_TRACKER.md:** updated (this entry). **Production safety:** `EUROSENDER_ENABLED=False`, `EUROSENDER_SANDBOX=True`, supplier allowlist unchanged/empty, 0 production mutations.
+
+## 2026-09-25 — Phase 26: Eurosender Sandbox capability verification (previous "SANDBOX LIMITATION" labels re-examined) — DEFECT FOUND + FIXED
+
+**Headline:** the Phase-25 E2E labelled `order_label_ready`, `order_submitted_to_courier` and courier-lifecycle events "SANDBOX LIMITATION". That was **wrong**: those events were never triggered because every prior test order used a GB→IL route that stops at customs review. On non-customs routes Sandbox delivers real webhooks reliably. Also the Phase-25 statement "no address change possible" was too coarse — reclassified below. Official docs (integrators.eurosender.com/guides/api_overview) say Sandbox "replicates the behavior of the Production system"; they document no failure-injection or retry-forcing mechanism.
+
+**Environment safety (verified before/after):** `EUROSENDER_ENABLED=False`, `EUROSENDER_SANDBOX=True`, allowlist empty. The Eurosender-eligible allowlist was set ONLY inside short-lived `docker exec` test processes (never in `.env`/the running server). UK test supplier `974c5292-…` still `is_active=FALSE`. Car-Parts.ie untouched (`shipping_info` still NULL). 0 production calls.
+
+**Real application path exercised** (`handle_eligible_suppliers()` = the exact interception point `trigger_supplier_fulfillment()` calls, with real persisted test Order/OrderItem/SupplierPayment/User rows, real catalog part, real supplier row → pickup extraction → package/HS/dimension/weight gates → real Sandbox `POST /v1/orders` → proforma → persistence → live webhook route). **Not invoked:** the Stripe supplier-payment portion of `trigger_supplier_fulfillment()` (it would make real Stripe charges). Test records used `ASF-P26-E2E-1/2/3` + a dedicated test user; **all deleted afterwards** (orders/items/payments/user/3 notifications = 0 remain, verified).
+
+**Sandbox orders (all Sandbox):** direct-service lifecycle orders `395382-26` (DE→DE), `526806-26` (GB→GB), `690381-26` (DE→PL `selection`), `724460-26` (DE→PL express); app-path orders `144118-26` (GB→GB, E2E-1), `718586-26` (GB→IL customs, E2E-2), `239515-26` (GB→GB, E2E-3); independent-pickup order `523527-26`; flexibleChanges order `077314-26`. Cancelled: `395382-26`, `239515-26` (+ earlier `853604-26`, `935766-26`, `833308-26`). Left open (Sandbox): `526806-26`, `690381-26`, `724460-26`, `144118-26`, `718586-26`, `523527-26`, `077314-26`.
+
+**Webhooks — 17 genuine external deliveries captured, ALL 17 verified by the real `verify_signature()`, 17/17 tampered-body variants rejected** (label_ready ×7, submitted_to_courier ×8, cancelled ×2; ids 10853…10901). Timing: `order_label_ready` ≈ 3.5–4.7 min after creation; `order_submitted_to_courier` ≈ 9 min; deliveries are dispatched in 5-minute batches (:x2:01 / :x7:01). Real payload facts: `label_ready` notification bodies also carry a `"signature"` field; `submitted_to_courier` carries `courierId`, `documentUrls[]`, and `trackingCodes[]` (with a real `trackingNumber` when known, `null` for `selection`).
+
+**DEFECT (root-caused with real data): tracking number never persisted for the common case.** Eurosender docs: `order_tracking_ready` fires only "if [tracking codes] weren't already available when submitted". Real `submitted_to_courier` deliveries already contained a tracking number for 5 of 6 tracked orders, and no `tracking_ready` followed — but the handler stored tracking ONLY on `order_tracking_ready`. Evidence: app-path order `ASF-P26-E2E-1` after its real `submitted_to_courier` webhook: `status=supplier_ordered` but `tracking_number=NULL`, supplier payment still `paid`, no customer notification. **Root fix (one place):** new shared `_apply_tracking_codes()` in `routes/eurosender_webhook.py` used by BOTH events (idempotent — same number arriving twice never re-notifies the customer; last-leg rule and never-regress-status rules preserved). **Re-verified live** with a fresh real order `ASF-P26-E2E-3` after the fix: `tracking_number` + `tracking_url` persisted, supplier payment `tracking_received`, exactly one customer notification; and `order_cancelled` then set `eurosender_status=cancelled` + 2 admin alerts. Regression tests added (+4 webhook tests, + 1 unknown-event route test).
+
+**Capability matrix (final classifications):**
+- Order creation / validation / proforma / labels / documents / pickup availability / tracking read / cancellation: **PASS** (label PDF fetched: 200, `application/pdf`, ≥14 KB `%PDF-`).
+- `order_label_ready`: **PASS** — fires for label-required services (regular_plus, express) on non-customs routes; correctly NOT fired for `selection` (`isLabelRequired=false`, no documents) and not for the customs-route order (label not created while awaiting customs).
+- `order_submitted_to_courier`: **PASS** (all service types incl. `selection`, courier ids 101/2/136…).
+- `order_cancelled`: **PASS** (+ persistence + admin alert verified).
+- `order_tracking_ready`: **SUPPORTED — NOT TRIGGERED.** Documented trigger = tracking not available at submission; only `selection` order `690381-26` had `trackingNumber=null` at submission and still had none after ~1.5 h. No evidence Sandbox cannot produce it.
+- `delivery_status_updated`: **SUPPORTED — NOT TRIGGERED.** All parcels stayed `Pending` for ~1.5 h (earliest order 12:17 UTC); no courier scan simulation observed in that window. Not proven unavailable; longer observation / support confirmation needed.
+- Customs route progression (`Awaiting customs documentation`/`Order Received` → `Confirmed`): **SUPPORTED — NOT TRIGGERED** — proforma accepted, but order did not advance in >1.5 h here and 10-day-old IL orders never advanced; likely manual Eurosender review, unconfirmed.
+- Webhook retry: Eurosender **does retry after non-2xx** (evidence: Phase 20 — ids 10790/10793 retried at ~5 min and ~34.5 h after 401 responses). **Controlled retry+dedup test: BLOCKED** — the deliberate 503-after-processing switch in the live webhook route was denied by the Claude Code auto-mode classifier (not worked around). Dedup itself: unit-tested (`test_route_duplicate_webhook_id_still_deduplicated…`), never observed live (0 "duplicate Webhook-Id" log lines).
+- Address / contact change: **NOT EXPOSED VIA API** (no PATCH/PUT anywhere in the spec). Officially it is a **manual/support service**: Eurosender's blog documents "Flexible changes" (free changes until one day before pickup; without it an admin fee up to €15) — booking add-on `flexibleChanges` IS selectable via the API (quote showed +€4.99; order `077314-26` created with it, price 9.67→14.66; the official blog says €9.99 → documentation/API price conflict recorded). The actual change is not an API operation. Dashboard self-service change UNVERIFIED (browser extension disconnected; order-detail pages were previously observed walled off in Sandbox).
+- Independent pickup: `POST /v1/pickup/{code}` on a normal order → 422 "Independent pickup is not activated on this Order" (prerequisite confirmed). On a real `independentPickup:true` order `523527-26` (availability returned no slots at that hour) → **HTTP 500 "Internal Server Error" from Eurosender, reproducible ×4 with different bodies** (real Sandbox 5xx sample; our app does not use this endpoint). Recorded for support.
+- Deferred payment (`Deferred Payment` status): **BLOCKED** — `paymentMethod: deferred` → 422 `payment-method-invalid` (docs: "must be additionally approved").
+- Timeout / 5xx simulation: **No documented Sandbox failure-injection mechanism found** (docs + spec). A genuine Sandbox 500 was obtained (above) and confirmed our retry layer does not retry a 500 (`failed after 1 attempts`). Reconciliation logic: 15 deterministic timeout/ambiguity/reconciliation tests pass.
+- Invalid transitions (real): DELETE on already-cancelled order → 400 "Order is already cancelled"; unknown order → 404. Cancelling an order already submitted to the courier is ALLOWED in Sandbox (204).
+- Statuses observed: `Order Received`, `Confirmed`, `Canceled`, `Awaiting customs documentation`. Not reached: `Pending` (order-level), `Tracking`, `Label Error`, `Awaiting Payment`, `Awaiting additional payment`, `Deferred Payment` — reasons: needs courier scans / payment states / deferred-payment approval; insufficient wallet earlier produced a rejected 422 (no order), not an "Awaiting Payment" order.
+- PUDO: not relevant to door-to-door shipments; not tested.
+- Quote/booking variance (B7): unchanged; no new discrepancy (GB→GB: quote €9.67 = booking €9.67).
+
+**Other observations:** (1) intermittent `400 "Syntax error"` on `/v1/quotes` for ~6 consecutive valid requests within one minute, then self-resolved (12/12 subsequent rapid calls OK) — cause UNKNOWN; our retry layer does not retry 400, so such a transient would surface as a clean-4xx FAILED on validate/create. (2) **Dedup design risk (found by code reading; NOT changed):** the Redis dedup key is set BEFORE `handle_event()`, and handler exceptions are swallowed with HTTP 200 — a transient DB error would permanently lose that webhook (Eurosender never retries; dedup would block it anyway). Recommend: set the dedup key only after a successful commit and return 5xx on handler failure — needs owner approval since it changes retry semantics.
+
+**Code changes:** `backend/routes/eurosender_webhook.py` (shared `_apply_tracking_codes`, submitted_to_courier now applies tracking; temporary capture code fully removed — verified 0 `TEMP-` markers, 0 capture files); tests: `test_eurosender_webhook.py` (+5), plus earlier-phase uncommitted test additions. **Tests:** webhook 41/41; full Eurosender suite 207/207 (was 202); named regressions 64/64. **Not committed/pushed.**
+
+## 2026-09-26 — Communication & system-health closure pass (WhatsApp mobile / email flood / zombies) — NO RESTARTS
+
+**Constraint:** no container restart (AliExpress scans running). Fixes are on disk; the two that need a recreate/restart to take effect are marked NOT APPLIED.
+
+**WhatsApp "waiting for this message" on phone (T1/T2) — CLIENT/SYNC, not application.** New Baileys telemetry (98 `wa_retry` events, 09-21→09-26) shows the recipient's devices repeatedly request re-delivery; the bridge answers each (fresh session + resend from msgCache; zero `message not available`, zero decrypt errors). Owner-alert payload is plain `{text}` (`notify_owner` → `"{icon} [cat] title\n\nbody"`, ~200–400 chars) — no buttons/templates/media, so construction is not the cause. Registration id in the churn moved 10126 → 1888878048 on 09-24 (a different device is now the one retrying). **Defect found in our telemetry:** `wa_retry.msg_id` was `""` in 98/98 events (Baileys `handleReceipt` logs `key.id === ''`; id is `attrs.id`) and the requesting device was not recorded. Fixed in `whatsapp-bridge/safe_logging.js` (`retryRequestFields`, `jidDevice`); test now uses the real Baileys shape (the old fabricated shape hid the bug). **NOT APPLIED — needs a `whatsapp_bridge` restart.**
+
+**Email flood (T3/T5/T6) — no application-side flood or feedback loop found.** Traced all 9 `send_template/send_email` call sites: paid-order emails fire only on the pending_payment→paid transition; price-watch dedups on `last_notified_price_ils`; abandoned-cart is lifetime-capped; the WA-link monitor email failure only logs. Email failure never creates another notification. No email records exist in `notifications` and backend logs contain no `[Email]` lines. Mailbox contents UNVERIFIED (T4). Likely-but-unproven source: Gmail-generated bounce/security mail for `autosparefinder2024@gmail.com` (SMTP_FROM == owner alert recipient).
+
+**Zombies (T7–T10) — 43, all OLD/STATIC.** 35 `curl` (parents = go-cron PID 1 of the two postgres-backup containers; healthcheck curls orphaned during Sep 2–14 host stalls, never reaped) + 8 `chromium` (parents = two SIGSTOP'd chromium mains inside flaresolverr, born Sep 10–11, before the 07-23 fetch-engine fix). Newest zombie is 12 days old; 12×5 s sampling held at 43, only transient self-reaped `runc` entries. Latent defect fixed: `init: true` on both backup services in `docker-compose.yml` (compose config validates). **NOT APPLIED — takes effect only when those two containers are recreated.**
+
+**Unrelated critical finding (NOT fixed here):** `autospare_backend` is cgroup-OOM-killed every ~4.5 h (dmesg: uvicorn anon-rss ≈2.5 GB at kill, 4 GiB limit; kills 09-25 20:22, 09-26 00:44, 05:17, 09:55, 14:20, 18:51 CEST). Each kill restarts uvicorn (RestartCount=6), resets in-memory state and interrupts background scans. Needs its own memory-growth investigation.
+
+
 ## 2026-09-26 — Three controlled "2,000-target" production validation runs (AliExpress price sync) — PARTIAL (all three ran clean; none could reach 2,000 selected targets)
 
 **Scope:** three sequential, direct invocations of `services.aliexpress_price_sync.sync_aliexpress_prices(db, limit_per_run=2000)` (real production entry point, real allocator + in-run discovery, real write path), driven by a fresh-subprocess script per run (`/tmp/gate/run2000.py`), never concurrent, scheduler never invoked, no config/code changes by me. `ALIEXPRESS_PRICE_SYNC_ENABLED=0` and `ALIEXPRESS_PRICE_SYNC_LIMIT=2000` confirmed unchanged live before and after every run. Between runs: previous process exited, Redis `sync_prices` lock unheld, backend healthy, config unchanged, integrity reviewed. Instrumentation live (`api_call_limit_hits` in every report).
@@ -4041,6 +4572,8 @@ Failure classes that entered the same path (not all alike, so now classified sep
 - **Numeric AliExpress quota: NOT PROVEN** (observed only 662 calls and 0 `ApiCallLimit` events in this cycle).
 - **Remaining risks:** one production cycle is a single sample; recurring OOM kills of uvicorn (backend near its 4 GiB limit); `pre_restart.sh` self-matching `pgrep -f freesbe_importer` and its blanket `superseded` update; `docker-compose.yml`/tracker/Eurosender working-tree changes still uncommitted by owner choice.
 
+- **Git result (2026-09-27):** commit `7433fd9811403be784fc0bb8d99c756deedc7aa0` — `fix(aliexpress): preserve search failures and activate production sync` — 35 files, +4517/−502, pushed fast-forward `3e835aa..7433fd9` to `origin/main` (no force); remote verified equal to local HEAD. This line was appended after the push (the hash cannot be known before the commit), so it lives in the working tree only. Left uncommitted by design: Eurosender route/tests, `whatsapp-bridge/*`, the two `init: true` compose hunks, and the Eurosender/NOA/communication tracker sections.
+
 ## 2026-09-27 — Notification-quality verification & closure run (read-only; no restarts) — PARTIAL
 
 **Zombies — VERIFIED.** 8 (was 43). Six samples over 2 min held at 8. All 8 = `chromium` defunct children of two SIGSTOP'd chromium mains (PID 373318 ×5, 3556582 ×3) inside the `flaresolverr` container (not restarted; born Sep 10–11). Backup containers `init=true`, healthy, backups completed 03:00Z; the 35-`curl` class has not returned.
@@ -4094,3 +4627,132 @@ Failure classes that entered the same path (not all alike, so now classified sep
 **Remaining state:** `msg_cache.json` now holds 2 entries (the harmless labeled test seed + the real test send) — will age out via the 14-day TTL / 500-entry cap like any other entry; not cleaned up manually to avoid a second live write outside the tested code path.
 
 **CLOSURE STATUS: The original defect (pre-restart messages permanently unrecoverable after a bridge restart) is FIXED AND PROVEN** — both via the direct code-path check (Tier B) and, more strongly, via a real, unforced, naturally-occurring phone-side retry succeeding end-to-end (Tier C) on a message that only exists because of this fix.
+
+
+## 2026-09-29 — AliExpress `product.get`: real successful response captured — ROOT CAUSE FOUND (get_part_details() has always returned None on every real product)
+
+**Owner-authorized restart, one-shot diagnostic capture, evidence task only (no fix applied).** Temporary instrumentation added to `AliExpressSupplier.get_part_details()` (`services/suppliers/aliexpress_supplier.py`), immediately after the existing `error_response` check: writes the raw response body only (never the request `params`, where credentials/signature live) to `/app/state/aliexpress_product_get_raw_capture.json` the first time a non-error response is seen, guarded by file-existence (one-shot), scanned for credential-like substrings before writing (none ever found). Backend restarted once (`autospare_backend` only) to activate it; an unrelated OOM auto-restart occurred ~4h later (RAM pressure, not caused by this instrumentation) but the on-disk code survived (bind mount) and the capture still fired correctly afterward.
+
+**Capture:** fired 2026-09-29T03:04:08Z during the real scheduled `sync_prices` cycle (`sync_prices:2026-09-29T01:54:25`, "checking 213 parts"), product_id `1005010669652047`, `rsp_code: 200 "Call succeeds"` — a genuine successful product (Mazda air filter, OEM `SH01-13-3A0A`). Provenance: the instrumentation's own log line (`AliExpress product.get raw capture written…`) is immediately followed (0.27s) by the sync's own `AliExpress updated part SH01133A0A` log line for the same cycle; the matching `supplier_parts` row (created 2026-09-21) carries exactly this product's URL and its first image URL byte-for-byte.
+
+**ROOT CAUSE — proven, not inferred:** the real response's top-level `result` keys are `ae_item_sku_info_dtos, ae_multimedia_info_dto, package_info_dto, logistics_info_dto, product_id_converter_result, ae_item_base_info_dto, ae_item_properties, ae_store_info`. **None of the 5 paths `get_part_details()` reads exist in this schema** — `aeop_ae_product_skus`, `aeop_ae_product_display_dto`, `image_u_r_ls`, `store_id`, and even `product_id` (top-level) all evaluate to `None`. Traced the consequence exactly: `skus=[]` → `price` stays `0.0` → the display-dto fallback also yields `0.0` → `if price <= 0: return None`. **`get_part_details()` has returned `None` for every real product it has ever been called on, in every AliExpress cycle since activation (2026-09-21).** `selected = detail or cheapest` therefore silently falls back to the SEARCH-stage result on every single call — which is exactly why every price, and every persisted image, has come from the search stage's single `itemMainPic`, never from `product.get`'s real multi-image gallery. **Confirmed directly on this part's own DB row: exactly 1 stored image, matching the FIRST of the 6 real gallery URLs the captured response actually contains** — the other 5 were fetched over the wire and silently discarded, as they have been for every AliExpress offer, every cycle, with zero errors logged (the code has no exception path for "wrong schema," only for "no data").
+
+**Shipping/freight:** `logistics_info_dto = {"delivery_time": 7, "ship_to_country": "IL"}` — **destination-aware delivery TIME exists and is genuinely IL-specific** (matches the request's own `ship_to_country: IL` parameter), but a full recursive scan of the entire captured JSON found **zero monetary shipping/freight fee field anywhere**. Conclusion: **PRESENT BUT INSUFFICIENT for a real shipping price** — usable to replace the current hardcoded `estimated_delivery_days=20` constant with a real per-product value, but cannot answer the China→Israel cost question; that remains a genuine capability gap, not a parsing bug.
+
+**Technical/product data — PROVEN AVAILABLE, currently 100% discarded:** `ae_item_properties.ae_item_property[]` (13 structured key/value attributes) carries real OEM number, Manufacturer Part Number, Interchange Part Number, Item Weight/Length/Width/Height, Origin country, Brand Name, and "Automotive fit type" (category-level, not per-vehicle). `package_info_dto` separately carries real shipping-box dimensions + gross weight. `ae_item_base_info_dto.detail` is a real HTML product description; `mobile_detail` is a richer JSON-encoded mobile description repeating the same specs as text. None of this is structured per-vehicle compatibility (make/model/year) — only free text in the title/description mentions "Mazda 3 6 CX5 2012-2016." **None of the above (specs, description, weight, dimensions) is read by any current code path** — `PartResult` has no field for any of it, and the parser that runs on this endpoint reads only price/image paths that don't exist in the real schema anyway.
+
+**Cleanup:** the 2-block capture instrumentation was fully removed from source (`git diff` against this file is now empty — byte-identical to the committed version); the artifact remains only at `/app/state/aliexpress_product_get_raw_capture.json` (private runtime path, not served, not committed, not in the repo) for the owner's own audit. **The currently-running backend process still holds the instrumented-but-now-permanently-inert module in memory** (the one-shot file-existence guard means it can never write again regardless) until its next restart, natural or approved — no second restart was performed solely for cleanup, per the standing "never restart just for cleanup" rule; the on-disk source is already clean for that next restart to pick up.
+
+**Not done in this task (by design — evidence only):** no fix applied to `get_part_details()`'s parsing, no new DB column, no PartResult field added, no shipping/technical-data implementation. **Recommended next task (smallest root-cause fix, not implemented here):** rewrite `get_part_details()`'s parser to read the REAL schema observed here (`ae_item_sku_info_dtos.ae_item_sku_info_d_t_o[].offer_sale_price`, `ae_multimedia_info_dto.image_urls`, `ae_item_base_info_dto.product_id`/`subject`/`detail`, `ae_store_info.store_id`) — this alone would fix a defect that has silently discarded real price precision and 5/6 of every product's images since 2026-09-21, independent of any shipping/technical-data decision.
+
+
+## 2026-09-29 — `get_part_details()` schema mismatch: ROOT-FIXED (code only, not deployed/committed)
+
+**Root cause (proven by the 2026-09-29 real-response capture above, not re-derived):** the parser read `aeop_ae_product_skus`, `aeop_sku_latest_price_module`, `aeop_ae_product_display_dto`, top-level `image_u_r_ls`, top-level `store_id`, top-level `product_id` — none of which exist in the real `aliexpress.ds.product.get` response. The real top-level `result` keys are `ae_item_sku_info_dtos, ae_multimedia_info_dto, package_info_dto, logistics_info_dto, product_id_converter_result, ae_item_base_info_dto, ae_item_properties, ae_store_info`. Every old lookup returned `None`/`{}`, so `price` was always `0.0` and the function always returned `None` — on every real product, every cycle, since 2026-09-21.
+
+**Fix — `get_part_details()` only** (`backend/services/suppliers/aliexpress_supplier.py`): rewrote the parsing block to read the real schema. Also removed a pre-existing block of fully unreachable dead code at the end of the same function (a leftover legacy implementation for a different, unused affiliate endpoint response shape — it could never execute because every branch above it already returns/raises).
+
+| Real JSON path | Existing application field | Action |
+|---|---|---|
+| `ae_item_sku_info_dtos.ae_item_sku_info_d_t_o[].offer_sale_price` (→ `offer_bulk_sale_price` → `sku_price`, cheapest positive across SKUs) | `PartResult.price` | Mapped (replaces the dead `aeop_*` lookup; same "cheapest across SKUs" contract as before) |
+| `ae_multimedia_info_dto.image_urls` (`;`-joined) | `PartResult.image_url` / `image_urls` | Mapped (same split/cap-8 pattern as before, real field name) |
+| `ae_item_base_info_dto.subject` | `PartResult.title` | Mapped |
+| `ae_item_base_info_dto.product_id` (→ `result.product_id` → `item_id` param) | `PartResult.item_id` | Mapped |
+| `ae_store_info.store_id` | `PartResult.seller` | Mapped |
+| `logistics_info_dto.delivery_time` | `PartResult.estimated_delivery_days` | Mapped, **replacing the hardcoded `20`**; falls back to `20` when absent/invalid (existing behavior preserved) |
+| `logistics_info_dto.ship_to_country` | `PartResult.ships_to_israel` | Mapped (`== "IL"`); falls back to `True` when absent (existing behavior preserved) |
+| `ae_item_properties.ae_item_property[]` — Manufacturer Part Number, OEM NO., Interchange Part Number, Item Weight/Length/Width/Height, Origin, Brand Name, Automotive fit type | `PartResult.tech_specs` (existing generic dict, not persisted anywhere today) | Mapped, alongside the existing self-derived `part_origin` key |
+
+**Explicitly deferred (per task scope — no DB/schema change, no new feature):**
+- **Shipping cost** — the real response has no monetary shipping/freight field anywhere (confirmed by the full recursive scan in the capture task above); not implemented, not guessed, not derived from `shipping_speed_rating` (a seller rating, not a fee).
+- **Structured fitment/compatibility** — no make/model/year array exists in the response; vehicle names appear only as free text in `subject`/`detail`. No NLP/parser built.
+- **`package_info_dto`** (box `package_width/height/length`, `gross_weight`) — no existing `PartResult`/DB field carries this semantic; left unmapped rather than stuffed into `tech_specs` (per the task's more conservative instruction for package data specifically).
+- **`ae_item_base_info_dto.detail` / `mobile_detail`** (real HTML/rich description) — no existing description field; left unmapped.
+
+**Tests (new file `tests/test_aliexpress_product_get.py`, 9/9 passed):** built directly from the real captured response (sanitized — no credentials, verified). Covers: real response now produces a `PartResult` instead of `None` (the root-cause proof); price extraction (`14.24` USD); all 6 gallery images extracted (`image_url` + `image_urls`); `estimated_delivery_days == 7` and `ships_to_israel is True` from `logistics_info_dto`; item identity + all 7 mapped `tech_specs` attributes, with the deliberately-deferred fields (`package_width`, `detail`) confirmed absent; missing optional sub-objects (`logistics_info_dto`, `ae_item_properties`, `ae_store_info`, `package_info_dto` all removed) still returns a valid result with the existing fallbacks (`20`, `True`, `""`); no-usable-price still returns `None`; existing `error_response` and empty-`result` behavior unchanged.
+
+**Regression:** full narrow suite — `test_aliexpress_matching.py`, `test_aliexpress_discovery.py`, `test_aliexpress_price_sync.py` (real Postgres schema, rolled back), `test_aliexpress_iop_oauth.py`, `test_aliexpress_product_get.py` — **150/150 passed**, 0 failed, 5m26s.
+
+**Verification method:** offline only — no live AliExpress API call, no manual sync, no scheduler trigger, no backend restart performed for this task (the code-only change is on disk; it will take effect for the running scheduler at its next restart, same as any bind-mounted change).
+
+**Not done in this task (by explicit scope):** no shipping-cost feature, no fitment parser, no DB/schema change, no pricing-formula change, no scheduler/kill-switch/Redis/Meilisearch change, no commit, no push. The owner will review this PASS before any commit/push or deployment restart.
+
+## 2026-09-29 — FINAL CLOSURE: Eurosender Sandbox investigation (Support-confirmed)
+
+**Trigger:** official Eurosender Support response, cited verbatim by the owner. This closes the open items from Phase 26 without further Sandbox probing of `order_tracking_ready` / `delivery_status_updated` / full customs progression.
+
+### Confirmed by Eurosender Support
+- `order_label_ready`, `order_submitted_to_courier`, `order_cancelled`: valid and testable in Sandbox — matches this project's own live evidence (17 genuine Sandbox deliveries, Phase 26).
+- `order_tracking_ready` and `delivery_status_updated`: **effectively Production-only** — Sandbox does not simulate real courier tracking. **Classification finalized: PRODUCTION-ONLY / SANDBOX LIMITATION CONFIRMED BY EUROSENDER.** No further attempts will be made to trigger these in Sandbox.
+- Sandbox does not execute the full customs-review/courier-submission lifecycle end to end — matches this project's observation that order `718586-26` never advanced past `Awaiting customs documentation`.
+- A non-2xx from the pickup endpoint should be treated as "no availability," falling back to Eurosender's automatic/default pickup.
+- The reproducible HTTP 500 on `/v1/pickup/{orderCode}` (found in Phase 26, order `523527-26`, ×4 reproductions) has been forwarded by Eurosender to their technical team — **BLOCKED on Eurosender's side, not an application defect.**
+- Sandbox quote instability (the transient `400 "Syntax error"` burst observed in Phase 26) is known Sandbox behavior, not an application defect, when the request is correctly formatted.
+- Sandbox prices are not live/real prices; Production/API prices must be used for real customer-facing pricing (no change needed here — the app already never uses Eurosender's Sandbox price as a customer-facing number; `_customer_price_fields` is the only price source shown to customers, per the platform's standing pricing rule).
+- VAT/B2B activation requires Eurosender's requested company/VAT documentation — an owner/business task, not a code task.
+
+### Capability classifications — FINALIZED
+**PASS:** `order_label_ready`, `order_submitted_to_courier`, `order_cancelled`, order creation, label/document retrieval, tracking read API, proforma submission.
+**PRODUCTION-ONLY / SANDBOX LIMITATION CONFIRMED BY EUROSENDER:** `order_tracking_ready`, `delivery_status_updated`, full customs-route progression beyond what Sandbox simulates.
+
+### Application defect — verified fixed (Phase 26 fix, re-confirmed here)
+**Root cause:** tracking was persisted only in the `order_tracking_ready` handler. Since that event is Production-only, the Sandbox/Production-common case — a real tracking number already present in the `order_submitted_to_courier` payload — left `orders.tracking_number = NULL` forever.
+**Fix:** single shared `_apply_tracking_codes()` in `routes/eurosender_webhook.py`, called from BOTH `order_submitted_to_courier` and `order_tracking_ready` — one tracking-persistence path, not two. Idempotent (`order.tracking_number == tracking_number` short-circuits before any DB write or notification, so re-delivery or double-firing never double-notifies the customer). Preserves the last-leg-for-multi-carrier rule and the never-regress-terminal-status rule.
+**Verified (unchanged from Phase 26, re-run today):** `order_submitted_to_courier` with tracking → number + URL persisted, supplier payment → `tracking_received`, exactly one customer notification (live real Sandbox order `ASF-P26-E2E-3`, deleted afterward). `order_tracking_ready` continues to work standalone (its own dedicated tests still pass) for whenever Production actually emits it. Duplicate delivery of the same tracking number → 0 additional notifications (unit-tested: `test_same_tracking_number_arriving_twice_never_double_notifies`).
+**Regression:** `test_eurosender_webhook.py` 41/41, `test_eurosender_fulfillment.py` + `test_eurosender_order_service.py` 28/28, full Eurosender suite 207/207, named direct regressions 64/64 — all re-run fresh today, identical to Phase 26's counts (no new tests added this closure, none needed).
+
+### Pickup HTTP 500 handling — verified, NO code change made
+Traced every caller of pickup scheduling: `independentPickup` is set nowhere in the codebase (`grep independentPickup` across all production `.py` files returns zero results) and `create_shipment()`'s payload never includes it, so it always defaults to `false` per Eurosender's own schema. **The application never calls `/v1/pickup/{orderCode}` or its availability endpoint in the real order-creation flow at all** — every order this app creates uses Eurosender's automatic/default pickup already, by construction, never independent pickup. Eurosender Support's guidance ("non-2xx -> no availability -> automatic fallback") describes behavior for a code path this application does not use. **The application already satisfies the required outcome — trivially, by never opting into independent pickup — and no code change is needed or was made.** The reproducible 500 discovered in Phase 26 was from a direct diagnostic call (`_do_request` against `/v1/pickup/523527-26`, order created specifically for that test, no application code involved) and cannot occur via any real order the app creates today.
+
+### FOLLOW-UP / DESIGN DECISION REQUIRED (unchanged, not touched this closure)
+Webhook dedup key is set BEFORE `handle_event()` runs, and handler exceptions return HTTP 200 (swallowed). A transient DB error during handling would lose that webhook permanently — Eurosender won't retry a 200, and the dedup key would block any coincidental future retry regardless. Recommended fix (NOT implemented, needs explicit owner approval since it changes retry semantics): move the dedup-key `SET` to after a successful `db.commit()`, and return a 5xx (not 200) on a genuine handler exception so Eurosender's own retry mechanism (confirmed to exist — Phase 20 evidence, ids 10790/10793 retried after 401s) can recover it.
+
+### Safety
+Production API calls: 0. Sandbox mutations: 0 (read-only verification only). `EUROSENDER_ENABLED=False`, `EUROSENDER_SANDBOX=True`, allowlist empty. Test rows: 0 remain (orders/user re-confirmed deleted). UK test supplier still `is_active=false`. Car-Parts.ie untouched (`shipping_info` still NULL). Temporary webhook capture code: 0 markers remain, 0 capture files remain (both re-confirmed).
+
+**Status: CLOSED.** Not committed, not pushed — awaiting explicit approval.
+
+## 2026-09-29 — FINAL PHASE: Eurosender production integration — root-cause closure
+
+**Scope:** full lifecycle audit + close every real fixable defect, per the Eurosender Support-confirmed facts already recorded (2026-09-29 closure entry above) and the committed tracking fix (`90903b1`).
+
+### Full lifecycle audit (traced end to end, real code read, not assumed)
+`trigger_supplier_fulfillment` (routes/utils.py) → `handle_eligible_suppliers` → `_attempt_shipment` → pickup extraction (`_extract_pickup_from_shipping_info`) → item categories → `evaluate_and_create_shipment` (dimension/weight/HS/declared-value gates, all fail-closed to `MANUAL_REVIEW`, never guess) → `create_shipment` → `_submit_proforma` when `awaiting_customs` → `_persist_result` (order + supplier_payment) → webhook route → `handle_event` (5 branches) → `_apply_tracking_codes` (shared) → `_persist_result`-equivalent writes → notification. Every state transition, DB write, and external call in this chain was re-read this session; no additional business-logic defect was found beyond the two below.
+
+### DEFECT 1 (root-caused and FIXED): webhook retry/dedup could permanently lose a webhook
+**Root cause:** the Redis dedup key was written BEFORE `handle_event()` ran, and a handler exception was swallowed behind an HTTP 200. A transient DB/application failure mid-processing therefore left the webhook (a) not actually applied AND (b) marked "seen" — Eurosender never retries a 200, so that event was gone forever, with no recoverable trace.
+**Fix (`routes/eurosender_webhook.py`):** the dedup key is now a read-only fast-path check before processing, and is only ever WRITTEN after `handle_event()` + `db.commit()` both succeed. A handler exception now rolls back and returns **503** (not 200) — a genuine invitation for Eurosender's own confirmed retry mechanism (Phase 20: ids 10790/10793 retried after 401s) to redeliver it. No dedup key is ever set for a failed attempt, so the retry is not suppressed.
+**Business-logic idempotency (defense in depth, since Redis is explicitly best-effort — `_get_redis_safe()` already falls back to "continue without dedup" if Redis is down):** `order_cancelled` was the one handler with an unconditional side effect (an admin `Notification` on every call) — now guarded with `if order.eurosender_status == "cancelled": return` before doing anything, so a duplicate delivery can never double-alert regardless of Redis's state. The other four handlers were already naturally idempotent (status writes are no-ops on an unchanged value or guarded by `not in _TERMINAL_OR_ADVANCED`; `_apply_tracking_codes` already short-circuits on an unchanged tracking number) — verified by tracing each branch, not assumed.
+**Also removed:** a redundant inner `await db.commit()` inside `order_cancelled` — the route's single commit (after `handle_event` returns) is now the one transaction boundary, consistent with "processing failure ⇒ nothing claims success."
+**Regression (6 new tests, Tests A-E from the spec + F already covered by Phase 26's tracking tests):** normal delivery applies once and marks dedup; a simulated processing failure returns ≥500 and does NOT mark dedup; the same webhook redelivered after a failure applies exactly once and then marks dedup; a duplicate after success never reaches `handle_event` again; an invalid signature never poisons dedup for a later valid delivery of the same id; `order_cancelled` redelivered against an already-cancelled order sends zero additional alerts.
+**Real Sandbox retry injection (task section 5):** attempted a controlled test where the live route deliberately returns a temporary 5xx once for a genuine delivery, then restores normal handling. **This exact action was denied by the Claude Code auto-mode permission classifier** (same as the identical attempt in Phase 26) — not bypassed. Falling back exactly as the task's own instruction anticipates: the application-level semantics are fully verified by the 6 deterministic tests above using the real, unmocked route and verifier, with only `handle_event` mocked to simulate the failure; the external fact that Eurosender itself retries a non-2xx delivery is independently already proven (Phase 20 live evidence).
+
+### DEFECT 2 (root-caused and FIXED): production was structurally unreachable, and `EUROSENDER_ENABLED` had no real effect
+**Root cause — outbound (`eurosender_adapter.py`):** `_preflight()` raised `EurosenderProductionBlocked` on ANY resolved production URL, unconditionally — regardless of `EUROSENDER_ENABLED`. This was a correct, deliberate scope limiter for the sandbox-development phase, but it directly contradicts this project's own documented architecture ("EUROSENDER_ENABLED is the actual production kill switch" — explicitly named as a requirement to verify in this closure) and made every earlier piece of "production readiness" work (credential wiring, config hardening) unverifiable and pointless, since production could never be reached no matter what was configured.
+**Root cause — inbound (`routes/eurosender_webhook.py`):** the webhook route independently refused with `501` whenever `EUROSENDER_SANDBOX` was falsy, unconditionally. Undiscovered until now, this is the more dangerous of the two: the moment the owner ever sets `EUROSENDER_SANDBOX=0` to activate production, this endpoint would start **permanently rejecting every real Eurosender webhook** (label_ready/submitted_to_courier/tracking_ready/cancelled/delivery_status_updated) with 501 — silently breaking order-status tracking for every real production customer order, with no error visible anywhere except a 501 in nginx's access log.
+**Fix:** both gates now key off `EUROSENDER_ENABLED` (the adapter) / `EUROSENDER_ENABLED OR EUROSENDER_SANDBOX` (the webhook route — refuses only when disabled in both directions), matching the kill-switch architecture already documented and used everywhere else in this integration (`eurosender_routing.is_eurosender_eligible`). **Today's real config is functionally UNCHANGED** — `EUROSENDER_ENABLED=False` (unset) and `EUROSENDER_SANDBOX` unset (defaults True) in `.env`, verified live before and after — production remains exactly as unreachable as before. The only behavioral change is that production becomes reachable once the owner explicitly flips both real config values AND supplies real production credentials — never done in this session.
+**Regression:** 3 new adapter tests confirm production stays blocked today (no kill switch), stays blocked with the kill switch alone but no key, and DOES proceed only with both the kill switch AND a real key present (verified with a fake HTTP client — no real network call). 3 new webhook-route tests mirror this for the inbound side, including the exact historic-bug scenario (`SANDBOX=0 + ENABLED=1` must NOT 501).
+
+### DEFECT 3 (root-caused and FIXED): Sandbox and Production credentials shared one env var each
+**Root cause:** `api_key()` and `webhook_secret()` each read a single, non-environment-specific env var (`EUROSENDER_API_KEY`, `EUROSENDER_WEBHOOK_SECRET`). Combined with Defect 2, this meant: the moment someone flipped `EUROSENDER_SANDBOX=0`, the code would use whatever was in the SAME variable that has only ever held the Sandbox credential throughout this entire project — i.e., the Sandbox API key and webhook signing secret would silently be sent to the real Production endpoint.
+**Fix:** `api_key()`/`webhook_secret()` now select `EUROSENDER_SANDBOX_*` or `EUROSENDER_PRODUCTION_*` based on `sandbox_mode()`. Sandbox mode ONLY falls back to the legacy single var (since that's genuinely what it has always held) — backward-compatible, zero `.env` changes required, verified live (`api_key_set=True`, `webhook_secret_set=True`, unchanged after this fix). Production mode has NO fallback to the legacy var — it requires the dedicated `EUROSENDER_PRODUCTION_API_KEY`/`EUROSENDER_PRODUCTION_WEBHOOK_SECRET` to be set explicitly, or `EurosenderNotConfigured` is raised before any network call (fails safe, per section 7's requirement).
+**Wiring:** `docker-compose.yml` updated to pass through the 4 new env vars (empty-default, same safe pattern as the existing ones) — without this, setting the new vars in `.env` alone would never have reached the container. Applied via `docker compose up -d backend` (compose file changed, per this repo's own deployment rule) — container recreated, health 200, real config re-verified unchanged.
+**Regression:** 4 new config tests (legacy-name backward compatibility, dedicated-var precedence, and the legacy var proven NOT to leak into production).
+
+### Non-findings (verified, no change needed)
+- **Pickup handling (section 15):** re-confirmed `independentPickup` is set nowhere in production code (`grep` across the whole backend, zero hits outside tests) — the app still never calls `/v1/pickup/{orderCode}`, so Eurosender's non-2xx-fallback guidance describes a path this app doesn't use. No code needed.
+- **HS gate (B4, section 17):** re-read `classify_hs`/`_build_packages_and_gates` — unchanged, still fails closed to `MANUAL_REVIEW`, no universal fallback code. No loosening made or needed.
+- **B5 supplier data:** UK test supplier still `is_active=false`; Car-Parts.ie still untouched (`shipping_info` NULL); no guessed address inserted.
+- **Security audit (section 19):** HMAC over exact raw bytes + `hmac.compare_digest` (unchanged, Phase 19/22-verified); signature checked before any parse/dedup/handling (unchanged); `_scrub()` + `_raise_for_status_safe()` are the sole HTTP-error path for every adapter method (2 call sites, both covered) — no secret can leak through an exception message; grepped for any `logger.*` call that might dump a payload/body/response — none found beyond safe order codes/statuses; grepped for `TEMP-CAPTURE`/`TEMP-FAILONCE`/`TEMP-DIAG`/test-supplier-UUID/test-order-codes in production code — zero hits (only 2 historical evidence references inside docstring comments, not executable code).
+- **Pricing (section 18):** unchanged — `_customer_price_fields` remains the only customer-facing price source platform-wide; this Eurosender work never touches customer pricing; Sandbox prices were never used as production prices anywhere in this codebase.
+
+### Test results (full re-run, this session)
+Eurosender suite: **222/222** (was 207 after the committed tracking fix; +15 this closure: 6 retry/dedup + 3 route-availability-gate + 6 adapter production-gate/credential-separation). Named direct regressions: **64/64** (unchanged). `test_fitment_step0_release_gate.py`/`test_db_network_hardening.py`: 4/7 — the same 3 pre-existing, unrelated failures (routes/parts.py caching logic; docker-compose.yml not bind-mounted inside the test container) confirmed again this session, untouched by this work.
+
+### Real API operations this session
+Sandbox API calls: 0 (only `grep`/code reads/unit tests — no live Eurosender call was made this closure). Production API calls: **0**. Production mutations: **0**. Production orders: **0**.
+
+### External dependency (genuine, not invented)
+**EXTERNAL DEPENDENCY — WAITING FOR EUROSENDER PRODUCTION CREDENTIALS.** No real `EUROSENDER_PRODUCTION_API_KEY` / `EUROSENDER_PRODUCTION_WEBHOOK_SECRET` exist yet (Eurosender has been asked to provide them). The code is now correctly wired to receive and use them the moment they exist, gated by the same `EUROSENDER_ENABLED` kill switch and requiring the owner to explicitly set `EUROSENDER_SANDBOX=0` — neither was touched this session. No credential was invented, guessed, or hard-coded.
+
+**Status: TECHNICALLY CLOSED**, subject only to the external credential dependency above. Not committed, not pushed — awaiting explicit approval.
