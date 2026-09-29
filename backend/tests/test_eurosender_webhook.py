@@ -267,3 +267,272 @@ async def test_delivery_status_updated_unaffected_by_normalization():
     }
     await handle_event("delivery_status_updated", payload, db)
     assert order.status == "shipped"
+
+
+# ---------------------------------------------------------------------------
+# Signature verification — official Eurosender contract (support answer,
+# 2026-09-25, SUPERSEDES the 2026-09-21 "raw body only" contract):
+#   message = webhook_event + webhook_id + raw_body   (plain concatenation,
+#             no delimiter, no JSON parsing/reserialization)
+#   HMAC-SHA256(sandbox_secret_utf8, message), header `sha256=<hex>`.
+# Vectors use a synthetic secret; nothing here is a real credential.
+# ---------------------------------------------------------------------------
+import hashlib
+import hmac as _hmac
+
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from routes import eurosender_webhook as _wh
+
+_SECRET = "unit-test-secret-not-real"
+_EVENT = "order_cancelled"
+_WID = "10790"
+_BODY = b'{"notifications":[{"orderCode":"ES-100","triggerId":4}]}'
+
+
+def _msg(event=_EVENT, wid=_WID, body=_BODY):
+    return event.encode() + wid.encode() + body
+
+
+def _sig(event=_EVENT, wid=_WID, body=_BODY, secret=_SECRET, prefix="sha256="):
+    return prefix + _hmac.new(secret.encode(), _msg(event, wid, body), hashlib.sha256).hexdigest()
+
+
+# --- Phase 8 matrix -----------------------------------------------------
+
+def test_A_correct_event_id_body_secret_passes():
+    assert _wh.verify_signature(_EVENT, _WID, _BODY, _sig(), _SECRET) is True
+
+
+def test_B_changed_event_fails():
+    assert _wh.verify_signature("order_label_ready", _WID, _BODY, _sig(), _SECRET) is False
+
+
+def test_C_changed_id_fails():
+    assert _wh.verify_signature(_EVENT, "99999", _BODY, _sig(), _SECRET) is False
+
+
+def test_D_one_byte_changed_in_body_fails():
+    tampered = _BODY[:-1] + bytes([_BODY[-1] ^ 1])
+    assert tampered != _BODY
+    assert _wh.verify_signature(_EVENT, _WID, tampered, _sig(), _SECRET) is False
+
+
+def test_E_changed_signature_fails():
+    assert _wh.verify_signature(_EVENT, _WID, _BODY, "sha256=" + "0" * 64, _SECRET) is False
+
+
+def test_F_empty_body_deterministic():
+    # An empty body is still a well-defined message (event+id+b"") — never an
+    # exception, never a silent True.
+    sig = _sig(body=b"")
+    assert _wh.verify_signature(_EVENT, _WID, b"", sig, _SECRET) is True
+    assert _wh.verify_signature(_EVENT, _WID, b"", "sha256=" + "0" * 64, _SECRET) is False
+
+
+def test_G_missing_headers_rejected():
+    assert _wh.verify_signature("", _WID, _BODY, _sig(), _SECRET) is False
+    assert _wh.verify_signature(_EVENT, "", _BODY, _sig(), _SECRET) is False
+    assert _wh.verify_signature(_EVENT, _WID, _BODY, "", _SECRET) is False
+
+
+def test_H_missing_secret_rejected_safely():
+    assert _wh.verify_signature(_EVENT, _WID, _BODY, _sig(secret=""), "") is False
+
+
+def test_I_reserialized_json_with_equal_semantics_not_accepted():
+    """Same JSON meaning, different bytes -> the signature for one must not
+    validate the other. Proves byte-exactness, not semantic equivalence."""
+    pretty = b'{\n  "notifications": [ {"orderCode": "ES-100", "triggerId": 4} ]\n}'
+    assert _BODY != pretty
+    import json as _json
+    assert _json.loads(_BODY) == _json.loads(pretty)
+    assert _wh.verify_signature(_EVENT, _WID, pretty, _sig(body=pretty), _SECRET) is True
+    assert _wh.verify_signature(_EVENT, _WID, pretty, _sig(body=_BODY), _SECRET) is False
+
+
+def test_J_escaped_json_characters_remain_byte_sensitive():
+    escaped_a = b'{"note":"a\\/b"}'
+    escaped_b = b'{"note":"a/b"}'  # semantically identical after JSON parse
+    import json as _json
+    assert _json.loads(escaped_a) == _json.loads(escaped_b)
+    assert escaped_a != escaped_b
+    assert _wh.verify_signature(_EVENT, _WID, escaped_b, _sig(body=escaped_a), _SECRET) is False
+
+
+def test_malformed_prefix_rejected():
+    digest = _sig()[len("sha256="):]
+    assert _wh.verify_signature(_EVENT, _WID, _BODY, digest, _SECRET) is False
+    assert _wh.verify_signature(_EVENT, _WID, _BODY, "sha1=" + digest, _SECRET) is False
+    assert _wh.verify_signature(_EVENT, _WID, _BODY, "SHA256=" + digest, _SECRET) is False
+
+
+def test_wrong_secret_rejected():
+    assert _wh.verify_signature(_EVENT, _WID, _BODY, _sig(), "other-secret") is False
+
+
+# --- Route-level: signature gate, dedup, and event handling -------------
+
+def _client(monkeypatch, calls):
+    monkeypatch.setenv("EUROSENDER_SANDBOX", "1")
+    monkeypatch.setenv("EUROSENDER_WEBHOOK_SECRET", _SECRET)
+
+    async def _fake_handle(event, payload, db):
+        calls.append((event, payload))
+
+    async def _fake_db():
+        class _D:
+            async def commit(self): pass
+            async def rollback(self): pass
+        yield _D()
+
+    async def _no_redis():
+        return None
+
+    monkeypatch.setattr(_wh, "handle_event", _fake_handle)
+    monkeypatch.setattr(_wh, "_get_redis_safe", _no_redis)
+    app = FastAPI()
+    app.include_router(_wh.router)
+    app.dependency_overrides[_wh.get_pii_db] = _fake_db
+    return TestClient(app)
+
+
+def _headers(wid=_WID, event=_EVENT, sig=None):
+    h = {"Webhook-Id": wid, "Webhook-Event": event}
+    if sig is not None:
+        h["Webhook-Signature"] = sig
+    return h
+
+
+def test_route_accepts_valid_signature_and_handles(monkeypatch):
+    calls = []
+    r = _client(monkeypatch, calls).post(
+        "/api/v1/webhooks/eurosender", content=_BODY, headers=_headers(sig=_sig()))
+    assert r.status_code == 200 and len(calls) == 1
+
+
+def test_route_valid_id_and_event_headers_do_not_replace_signature(monkeypatch):
+    """(L) An invalid signature must never reach business event processing,
+    even when Webhook-Id/Webhook-Event are perfectly well-formed."""
+    calls = []
+    c = _client(monkeypatch, calls)
+    assert c.post("/api/v1/webhooks/eurosender", content=_BODY, headers=_headers()).status_code == 401
+    bad = _headers(sig="sha256=" + "a" * 64)
+    assert c.post("/api/v1/webhooks/eurosender", content=_BODY, headers=bad).status_code == 401
+    assert calls == []  # nothing handled without a valid signature
+
+
+def test_route_rejects_modified_body_and_does_not_handle(monkeypatch):
+    calls = []
+    r = _client(monkeypatch, calls).post(
+        "/api/v1/webhooks/eurosender", content=_BODY.replace(b"ES-100", b"ES-999"),
+        headers=_headers(sig=_sig()))
+    assert r.status_code == 401 and calls == []
+
+
+def test_route_rejects_changed_event_header_with_body_signature_for_other_event(monkeypatch):
+    """A signature computed for order_cancelled must not validate the same
+    body delivered with a different Webhook-Event header."""
+    calls = []
+    r = _client(monkeypatch, calls).post(
+        "/api/v1/webhooks/eurosender", content=_BODY,
+        headers=_headers(event="order_label_ready", sig=_sig(event=_EVENT)))
+    assert r.status_code == 401 and calls == []
+
+
+def test_route_duplicate_webhook_id_still_deduplicated_after_valid_signature(monkeypatch):
+    """(K) Dedup must still fire for a signature-verified, repeated delivery."""
+    calls = []
+    c = _client(monkeypatch, calls)
+    sig = _sig()
+    seen = {}
+
+    async def _redis_with_state():
+        class _R:
+            async def exists(self, key):
+                return key in seen
+
+            async def set(self, key, value, ex=None):
+                seen[key] = value
+        return _R()
+
+    monkeypatch.setattr(_wh, "_get_redis_safe", _redis_with_state)
+    r1 = c.post("/api/v1/webhooks/eurosender", content=_BODY, headers=_headers(sig=sig))
+    r2 = c.post("/api/v1/webhooks/eurosender", content=_BODY, headers=_headers(sig=sig))
+    assert r1.status_code == 200 and r2.status_code == 200
+    assert len(calls) == 1  # second delivery deduplicated, handler ran once
+
+
+# ---------------------------------------------------------------------------
+# Phase 26 regression — tracking carried by order_submitted_to_courier.
+# Root cause (found via real Sandbox deliveries + DB inspection 2026-09-25):
+# tracking was persisted ONLY on order_tracking_ready, but Eurosender fires that
+# event only when tracking was NOT already available at submission. Real
+# submitted_to_courier deliveries already carry trackingCodes[].trackingNumber,
+# so orders.tracking_number stayed NULL and the customer was never notified.
+# Payload shapes below are the REAL captured wrapper (notifications[0]).
+# ---------------------------------------------------------------------------
+
+def _real_submitted_payload(order_code="ES-100", tracking="794873899979", url=None):
+    return {"notifications": [{
+        "courierId": 101,
+        "documentUrls": [{"documentType": "label", "apiUrl": f"/v1/orders/{order_code}/documents/label_pdf_x"}],
+        "trackingCodes": [{"orderCode": order_code, "trackingNumber": tracking, "trackingUrl": url}],
+        "orderCode": order_code,
+        "triggerId": 2,
+    }]}
+
+
+async def test_submitted_to_courier_with_tracking_persists_number_and_notifies_once():
+    order = _order(status="paid")
+    sp = SimpleNamespace(shipping_provider_ref="ES-100", tracking_number=None, tracking_url=None, status="paid")
+    db = _FakeDB([_ScalarOneResult(order), _ScalarsAllResult([sp])])
+    await handle_event("order_submitted_to_courier", _real_submitted_payload(url="https://t/794873899979"), db)
+    assert order.status == "supplier_ordered"
+    assert order.tracking_number == "794873899979"
+    assert order.tracking_url == "https://t/794873899979"
+    assert sp.tracking_number == "794873899979" and sp.status == "tracking_received"
+    assert len(db.added) == 1 and "794873899979" in db.added[0].message
+
+
+async def test_submitted_to_courier_with_null_tracking_number_is_normal_and_notifies_nobody():
+    """'selection' service: trackingNumber is null at submission (real capture)."""
+    order = _order(status="paid")
+    db = _FakeDB([_ScalarOneResult(order)])
+    await handle_event("order_submitted_to_courier", _real_submitted_payload(tracking=None), db)
+    assert order.status == "supplier_ordered"
+    assert order.tracking_number is None
+    assert db.added == []
+
+
+async def test_same_tracking_number_arriving_twice_never_double_notifies():
+    """submitted_to_courier (with tracking) followed by tracking_ready for the
+    same number must not send the customer a second notification."""
+    order = _order(status="paid")
+    db = _FakeDB([_ScalarOneResult(order), _ScalarsAllResult([]), _ScalarOneResult(order)])
+    await handle_event("order_submitted_to_courier", _real_submitted_payload(), db)
+    assert len(db.added) == 1
+    await handle_event("order_tracking_ready", {"orderCode": "ES-100", "trackingCodes": [
+        {"orderCode": "ES-100", "trackingNumber": "794873899979", "trackingUrl": None}]}, db)
+    assert len(db.added) == 1  # unchanged — idempotent
+    assert order.tracking_number == "794873899979"
+
+
+async def test_submitted_to_courier_tracking_never_regresses_delivered_order():
+    order = _order(status="delivered")
+    db = _FakeDB([_ScalarOneResult(order), _ScalarsAllResult([])])
+    await handle_event("order_submitted_to_courier", _real_submitted_payload(), db)
+    assert order.status == "delivered"  # tracking stored, status untouched
+    assert order.tracking_number == "794873899979"
+
+
+def test_route_unknown_event_with_valid_signature_is_acknowledged_but_never_handled(monkeypatch):
+    """A correctly-signed delivery of an event type we don't handle must return
+    2xx (so Eurosender doesn't retry it forever) and must never reach handle_event."""
+    calls = []
+    ev = "some_future_event"
+    r = _client(monkeypatch, calls).post(
+        "/api/v1/webhooks/eurosender", content=_BODY,
+        headers=_headers(event=ev, sig=_sig(event=ev)))
+    assert r.status_code == 200 and calls == []

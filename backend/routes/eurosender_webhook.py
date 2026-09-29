@@ -160,6 +160,82 @@ def _normalize_notification_payload(payload: dict) -> dict:
     return payload
 
 
+async def _apply_tracking_codes(db: AsyncSession, order: Order, order_code: str, tracking_codes: list) -> bool:
+    """Persist the REAL carrier tracking number for an Eurosender order and
+    notify the customer — the single place this happens, shared by
+    order_tracking_ready AND order_submitted_to_courier.
+
+    Why shared (Phase 26, real-delivery evidence 2026-09-25): Eurosender's own
+    docs state order_tracking_ready fires only "if they weren't already
+    available when submitted". Real Sandbox order_submitted_to_courier
+    deliveries for 3 of 4 tested orders already carried `trackingCodes` with a
+    real trackingNumber, and the matching order_tracking_ready never came — so
+    handling tracking ONLY on order_tracking_ready left orders.tracking_number
+    NULL forever for the common case.
+
+    Returns True if a tracking number was present in the payload (whether
+    newly stored or already stored), False if there is nothing to apply.
+    Idempotent: the same number arriving again (e.g. via both events) never
+    re-notifies the customer.
+    Multi-leg shipments: the LAST entry is the final-mile carrier — expose that
+    one to the customer (sandbox-contract Area 10 note).
+    """
+    if not tracking_codes:
+        return False
+    final_leg = tracking_codes[-1]
+    tracking_number = final_leg.get("trackingNumber")
+    tracking_url = final_leg.get("trackingUrl")
+    if not tracking_number:
+        return False
+    if order.tracking_number == tracking_number:
+        return True  # already stored — do not double-notify the customer
+
+    order.tracking_number = tracking_number
+    order.tracking_url = tracking_url
+    if order.status not in _TERMINAL_OR_ADVANCED:
+        order.status = "supplier_ordered"
+
+    sp_res = await db.execute(
+        select(SupplierPayment).where(SupplierPayment.shipping_provider_ref == order_code)
+    )
+    for sp in sp_res.scalars().all():
+        sp.tracking_number = tracking_number
+        sp.tracking_url = tracking_url
+        if sp.status == "paid":
+            sp.status = "tracking_received"
+
+    # ONLY place a Eurosender order's customer gets a tracking notification —
+    # a REAL carrier tracking number now exists (Phase 13: never notify before
+    # this point, never fabricate a number).
+    db.add(Notification(
+        user_id=order.user_id,
+        type="order_update",
+        title=f"📦 ההזמנה {order.order_number} הועברה למוביל",
+        message=(
+            f"ההזמנה {order.order_number} בדרך אליך.\n"
+            f"מספר מעקב: {tracking_number}\n"
+            + (f"קישור מעקב: {tracking_url}" if tracking_url else "")
+        ),
+        data={
+            "order_id": str(order.id),
+            "order_number": order.order_number,
+            "tracking_number": tracking_number,
+            "tracking_url": tracking_url,
+            "shipping_provider": "eurosender",
+        },
+    ))
+    try:
+        await publish_notification(str(order.user_id), {
+            "type": "order_update",
+            "title": f"📦 ההזמנה {order.order_number} הועברה למוביל",
+            "message": f"מספר מעקב: {tracking_number}",
+        })
+    except Exception:
+        pass
+    await db.flush()
+    return True
+
+
 async def handle_event(event: str, payload: dict, db: AsyncSession) -> None:
     # delivery_status_updated has its OWN pre-existing, correct handling of a
     # differently-shaped (and potentially multi-element) notifications[]
@@ -185,6 +261,10 @@ async def handle_event(event: str, payload: dict, db: AsyncSession) -> None:
         if order.status not in _TERMINAL_OR_ADVANCED and order.status != "supplier_ordered":
             order.status = "supplier_ordered"
         await db.flush()
+        # Real payloads carry trackingCodes here when tracking already exists
+        # at submission (order_tracking_ready then never fires). null
+        # trackingNumber (e.g. 'selection' service) is normal: nothing to apply.
+        await _apply_tracking_codes(db, order, order_code, payload.get("trackingCodes") or [])
 
     elif event == "order_tracking_ready":
         order = await _find_order_by_eurosender_code(db, order_code)
@@ -195,58 +275,9 @@ async def handle_event(event: str, payload: dict, db: AsyncSession) -> None:
         if not tracking_codes:
             logger.warning("[EurosenderWebhook] order_tracking_ready with empty trackingCodes for order %s", order_code)
             return
-        # Multi-leg shipments: the LAST entry is the final-mile carrier —
-        # expose that one to the customer (per the sandbox-contract Area 10 note).
-        final_leg = tracking_codes[-1]
-        tracking_number = final_leg.get("trackingNumber")
-        tracking_url = final_leg.get("trackingUrl")
-        if not tracking_number:
+        if not await _apply_tracking_codes(db, order, order_code, tracking_codes):
             logger.warning("[EurosenderWebhook] order_tracking_ready with no trackingNumber for order %s", order_code)
             return
-
-        order.tracking_number = tracking_number
-        order.tracking_url = tracking_url
-        if order.status not in _TERMINAL_OR_ADVANCED:
-            order.status = "supplier_ordered"
-
-        sp_res = await db.execute(
-            select(SupplierPayment).where(SupplierPayment.shipping_provider_ref == order_code)
-        )
-        for sp in sp_res.scalars().all():
-            sp.tracking_number = tracking_number
-            sp.tracking_url = tracking_url
-            if sp.status == "paid":
-                sp.status = "tracking_received"
-
-        # ONLY place a Eurosender order's customer gets a tracking
-        # notification — a REAL carrier tracking number now exists (Phase 13:
-        # never notify before this point, never fabricate a number).
-        db.add(Notification(
-            user_id=order.user_id,
-            type="order_update",
-            title=f"📦 ההזמנה {order.order_number} הועברה למוביל",
-            message=(
-                f"ההזמנה {order.order_number} בדרך אליך.\n"
-                f"מספר מעקב: {tracking_number}\n"
-                + (f"קישור מעקב: {tracking_url}" if tracking_url else "")
-            ),
-            data={
-                "order_id": str(order.id),
-                "order_number": order.order_number,
-                "tracking_number": tracking_number,
-                "tracking_url": tracking_url,
-                "shipping_provider": "eurosender",
-            },
-        ))
-        try:
-            await publish_notification(str(order.user_id), {
-                "type": "order_update",
-                "title": f"📦 ההזמנה {order.order_number} הועברה למוביל",
-                "message": f"מספר מעקב: {tracking_number}",
-            })
-        except Exception:
-            pass
-        await db.flush()
 
     elif event == "order_cancelled":
         order = await _find_order_by_eurosender_code(db, order_code)
@@ -305,7 +336,6 @@ async def eurosender_webhook(request: Request, db: AsyncSession = Depends(get_pi
     webhook_signature = request.headers.get("Webhook-Signature", "")
 
     body_bytes = await request.body()
-
     # Verify on the exact received bytes, before any parse/dedup/handling.
     signature_ok = verify_signature(webhook_event, webhook_id, body_bytes, webhook_signature, eurosender_config.webhook_secret())
     if not signature_ok:

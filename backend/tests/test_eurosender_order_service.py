@@ -147,6 +147,23 @@ async def test_category_with_long_slug_and_no_short_content_goes_manual_review()
     assert any("content" in r.lower() for r in result.reasons)
 
 
+async def test_hs_unmapped_category_blocks_shipment_never_calls_adapter():
+    """(B4 investigation, Phase 24) Proves the HS gate specifically, not a
+    different gate: 'electrical' passes dimensions (ALLOW-mapped) and has
+    short content, so ONLY an unresolved HS classification can explain a
+    MANUAL_REVIEW verdict here. No prior test in this file isolated the HS
+    gate — 'engine'/'lighting' above are blocked earlier by dimensions."""
+    adapter = _FakeAdapter(response={"orderCode": "SHOULD-NOT-BE-CALLED"})
+    result = await _run(
+        adapter,
+        items=[{"category": "electrical", "quantity": 1, "content": "wiring"}],
+    )
+    assert result.verdict == ShipmentVerdict.MANUAL_REVIEW
+    assert adapter.called_with is None
+    assert any("hs_code" in r.lower() for r in result.reasons)
+    assert "electrical" not in result.hs_codes  # never assigned a guessed code
+
+
 async def test_short_real_item_content_is_used_over_category():
     adapter = _FakeAdapter(response={"orderCode": "ES-CONTENT-1", "status": "Confirmed"})
     result = await _run(
