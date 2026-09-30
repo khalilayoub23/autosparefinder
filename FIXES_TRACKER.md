@@ -1,5 +1,337 @@
 # AutoSpareFinder — Bug & Breaking Points Fix Tracker
-> Last scan: 2026-09-29 | Total issues found: 476 | Fixed: 476 | In Progress: 0 | Open: 0
+> Last scan: 2026-09-30 | Total issues found: 482 | Fixed: 481 | In Progress: 0 | Open: 1
+
+---
+
+## OOM / restart root cause — stale agent_todo re-enabling disabled tasks — 2026-09-30
+
+### 42. Recurring backend OOM kills caused by stale agent_todo re-enabling `fix_base_prices` — VERIFIED FIXED (DB fix live; code fix requires restart)
+
+**Root cause:**
+
+A `not_started` agent_todo (id `1a4e15a1-0bb7-4b6f-8945-2199d9794b2c`, "Freesbe import: normalize + categorize new parts", created 2026-09-05, never completed) had `artifacts.task_names = ["normalize_categories", "fix_base_prices", "normalize_base_price", "fill_car_brands"]`.
+
+Every `run_all_tasks` cycle, `get_active_agent_todos` fetches all `not_started`/`in_progress` todos and `extract_todo_task_names` extracts those task names. The `[name for name in task_names if name in TASK_REGISTRY]` guard only checks EXISTENCE in the registry, not whether the task was deliberately disabled. Since `fix_base_prices` and `normalize_base_price` are in `TASK_REGISTRY` (they're just commented out of `ordered_tasks`), they were prepended to every cycle's task list — bypassing the `# DISABLED: OOM / already complete` intent.
+
+**Consequence:**
+- `fix_base_prices` runs a single-shot CTE UPDATE over 4.18M parts × 2M supplier_parts with no batching. Hits statement/task timeout (900s) EVERY cycle.
+- This wasted 15 min of DB CPU at ~100% per cycle, added to Python memory growth from the extended cycle duration.
+- Previously (before 2026-09-30) contributed to the 3 confirmed uvicorn OOM kills (RSS 2.3–2.7 GB at kill; container `b7f760a3…` / `9168266d…` cgroup OOM) and 2 chrome-headless OOM kills recorded in dmesg.
+
+**Evidence:**
+- `dmesg`: 3 `constraint=CONSTRAINT_MEMCG … task=uvicorn` kills; 2 chrome-headless kills (1 container-level, 1 global OOM)
+- `docker inspect autospare_backend … oom=true`
+- `docker inspect flaresolverr … oom=true`
+- `docker logs autospare_backend`: `fix_base_prices elapsed=900.1s status=error` repeated on 2026-09-29 04:23, 08:09, 11:55 + today 18:32
+- `agent_todos WHERE id = '1a4e15a1…'`: status was `not_started`, `artifacts.task_names` contained `fix_base_prices`
+- DB: `run_all_tasks:2026-09-30T18:31:55` job superseded; `fix_base_prices` ran 18:32–18:47 (15 min), then tasks continued
+
+**Fix applied (2026-09-30, no restart required):**
+
+1. **DB — immediate:** Dismissed the stale todo:
+   ```sql
+   UPDATE agent_todos SET status = 'dismissed', updated_at = NOW()
+   WHERE id = '1a4e15a1-0bb7-4b6f-8945-2199d9794b2c';
+   ```
+   Takes effect on the NEXT `run_all_tasks` cycle. The stale Freesbe import from 2026-09-05 was already complete.
+
+2. **Code guard — `db_update_agent.py` lines 4718–4733 (requires restart to activate):**
+   Added `_TODO_OOM_BLOCKED` frozenset containing all tasks disabled for OOM:
+   `fix_base_prices`, `normalize_base_price`, `backfill_bmw_fitment_from_name_he`, `backfill_ford_fitment_from_name_he`, `backfill_jaguar_fitment_from_name`, `merge_catalog_fitment_from_part_vehicle_fitment`.
+   The todo task extraction now filters through this blocklist, so future stale todos cannot re-enable them regardless of `artifacts.task_names` content.
+
+**Verification:**
+- DB: `SELECT status FROM agent_todos WHERE id = '1a4e15a1…'` → `dismissed` ✓
+- DB: No active `fix_base_prices` / `normalize_base_price` todos remaining: `SELECT COUNT(*) FROM agent_todos WHERE status IN ('not_started','in_progress') AND artifacts::text ILIKE '%fix_base_prices%'` → 0 ✓
+- Code: `python3 -c "import ast; ast.parse(open('backend/db_update_agent.py').read()); print('OK')"` → syntax OK ✓
+- Memory post-fix: backend 1.676 GiB (41.9%) — stable, not growing ✓
+- AliExpress: 0 running jobs, no scan interrupted ✓
+- No containers restarted ✓
+
+**Remaining open item (requires restart):**
+The code guard in `db_update_agent.py` is written but not yet active (Python loaded the module at 18:30:10 before the edit). It activates on next restart. Until then, if another `not_started` todo with `fix_base_prices` appears, the DB fix (dismissed todo) is the active protection.
+
+**Secondary finding (non-blocking, flagged):**
+`autospare_meilisearch` container is at 2.112 GiB / 2.5 GiB limit (84.5%) as of this analysis. No OOM yet, but headroom is 388 MB. Monitor under heavy re-indexing. Owner may wish to raise `autospare_meilisearch` memory limit from `2560m` to `3072m` in `docker-compose.yml` during next planned restart.
+
+**Never regress:**
+- Tasks commented out of `ordered_tasks` with `# DISABLED: OOM` are permanently blocked. They must ALSO be added to `_TODO_OOM_BLOCKED` in the same change.
+- New agent_todos requesting these tasks must have their `artifacts.task_names` filtered. Do not remove `_TODO_OOM_BLOCKED` or expand it to `TASK_REGISTRY` only.
+
+---
+
+## Login page dark-theme — OR divider + OAuth buttons — 2026-09-30
+
+### 41. `/login` had two light-theme (white) elements that violated the dark design system — APPLIED (awaiting frontend rebuild)
+
+**Root cause — two components:**
+
+**Element 1 — OR divider (`Login.jsx` lines 152–158):**
+`<span className="bg-white ...">OR</span>` rendered a white pill against the page root `#0F1218` background. The `.auth-panel` class has no CSS definition (not in `index.css` or any stylesheet), so the card panel inherits `body { background: #0F1218 }`. The divider line used `border-gray-200` (light gray), also wrong.
+
+**Element 2 — OAuth buttons (`SocialLoginButtons.jsx` lines 168–202):**
+Both Google and Facebook buttons used `bg-white text-gray-700 border-gray-300 hover:bg-gray-50 active:bg-gray-100 shadow-sm` — fully light-themed, rendering as white cards with dark text against the dark login panel.
+
+**Changes — visual-only, no auth logic touched:**
+
+**`frontend/src/pages/Login.jsx` (divider, lines 152–158):**
+- `border-gray-200` → `border-white/[.12]` (matches `var(--border)` design token)
+- `bg-white` on span → `bg-[#0F1218]` (Void Black, matches page root)
+- `text-gray-400` on span → `text-[#475569]` (text-muted design token)
+
+**`frontend/src/components/SocialLoginButtons.jsx` (both buttons, lines 168–202):**
+- `bg-white` → `bg-[#1E2535]` (Steel Navy / `--card2` — elevated panel surface)
+- `border-gray-300` → `border-white/[.12]`
+- `text-gray-700` → `text-white`
+- `hover:bg-gray-50` → `hover:bg-[#252D3D]` (Surface Highlight / `--card3`)
+- `active:bg-gray-100` → `active:bg-[#252D3D]`
+- `shadow-sm` removed (irrelevant on dark background)
+- Spinner: `text-gray-500` → `text-gray-400`
+
+**Integrity preserved:**
+- No handler functions changed (`handleGoogle`, `handleFacebook`, `handleLogin`, `handle2FA`)
+- No OAuth config changed (`GOOGLE_CLIENT_ID`, `FACEBOOK_APP_ID`, SDK load)
+- No auth store methods changed (`socialLogin`, `login`, `verify2fa`)
+- No API routes, callbacks, or redirects changed
+- No global CSS overrides added
+- Checkbox `border-gray-300` on "Remember me" / "Trust device" left as-is (out of scope)
+- Focus ring: browser default `:focus-visible` (from `index.css`) applies unchanged
+- Disabled state: `disabled:opacity-60 disabled:cursor-not-allowed` preserved on both buttons
+
+**Deployment (2026-09-30, owner-approved):**
+1. `bash backend/scripts/pre_restart.sh` — worker state saved, freesbe_importer SIGTERM'd
+2. `docker compose build frontend && docker compose up -d frontend` — only `autospare_frontend` recreated (old bundle `index-MZ8KZjvw.js` → new `index-DSefOucP.js`); all 10 other services stayed Running/healthy
+3. No backend restart, no database/Redis/Meili/nginx restart, no other service touched
+
+**Live bundle verification (post-deploy):**
+- New bundle `index-DSefOucP.js` served by nginx ✅
+- `bg-[#0F1218] px-3 text-[#475569] font-medium` on OR span ✅
+- `border-white/[.12]` on divider line ✅
+- `border border-white/[.12] bg-[#1E2535] ... hover:bg-[#252D3D]` on Google button ✅
+- `border border-white/[.12] bg-[#1E2535] ... hover:bg-[#252D3D]` on Facebook button ✅
+- Old `bg-white px-3` on OR span: **gone** ✅
+- Old `border-gray-300 bg-white` on OAuth buttons: **gone** ✅
+- Google SVG logo (4285F4): present ✅ · Facebook SVG logo (1877F2): present ✅
+
+**Auth integrity (bundle verification):**
+- Google Identity Services script (`accounts.google.com/gsi/client`): present ✅
+- Facebook SDK (`connect.facebook.net`): present ✅
+- `socialLogin` call: present ✅
+- `initTokenClient` / `requestAccessToken`: present ✅
+- `navigate` + `replace:true`: present ✅
+- No OAuth config, callback, endpoint, or redirect changed ✅
+
+**Keyboard accessibility:**
+- Both OAuth buttons: `type="button"` ✅ (keyboard-clickable)
+- `:focus-visible` rule (Electric Blue `#0EA5E9` ring, `#0F1218` offset): in CSS bundle ✅
+
+**Regression checks:**
+- Landing page: loads (2036 chars), new bundle served ✅
+- Parts page: loads ✅
+- Global focus ring: `:focus-visible` + `0EA5E9` in CSS bundle ✅
+- Background services: backend (healthy 18 min up), postgres, Redis, Meili, Nginx, FlareSolverr, WhatsApp bridge — all Running/healthy, untouched ✅
+- `car_parts_ie_flaresolverr_harvester.py`: still running (PID 108) ✅
+
+**Never regress:**
+- OR divider span must use `bg-[#0F1218]` (page root) — never `bg-white`
+- OAuth buttons must use `bg-[#1E2535] text-white border-white/[.12]` — never the light-theme `bg-white text-gray-700 border-gray-300`
+- `SocialLoginButtons.jsx` is a shared component — any future restyling must maintain dark-surface treatment
+
+**Status:** ✅ VERIFIED — Both light-theme elements are replaced with the dark design system. OR divider and OAuth buttons (Google + Facebook) all render correctly on the dark login page.
+
+---
+
+## Category counts — API & landing page fix — 2026-09-30
+
+### 40. `/api/v1/parts/categories` `counts` dict used display-name keys; landing page used hardcoded estimates — IN PROGRESS (awaiting backend restart + frontend rebuild)
+
+**Root cause — two layers:**
+
+**Layer 1 (backend, `routes/parts.py`):** `get_categories` maintained two parallel dicts:
+- `family_counts: {family.id: count}` — slug-keyed, correctly populated (e.g. `"body-exterior": 908413`)
+- `flat_counts: {family.label: count}` — **display-name-keyed** (e.g. `"Body Parts": 908413`)
+
+The `"counts"` key in the response was built as `{**fallback_counts, **flat_counts}`, merging slug-keyed zeros from `fallback_counts` with display-name-keyed real counts from `flat_counts`. Result: `counts["body-exterior"] = 0` while `counts["Body Parts"] = 908413`. Any consumer looking up `counts[slug]` got 0.
+
+The `"family_counts"` key was already correct (slug-keyed with real counts) — it was the `"counts"` key that was broken. `Parts.jsx` reads `data.family_counts` and was unaffected. `LandingPage.jsx` was affected (hardcoded instead of calling the API, in part because `counts` was unusable).
+
+Same bug existed in the vehicle-specific path (lines 2468–2501): `flat_counts` populated, then `counts.update(flat_counts)` applied display-name overrides.
+
+**Layer 2 (frontend, `LandingPage.jsx`):** Lines 61-72 hardcoded all category counts as string estimates (`"25,000+"`, `"18,000+"`, etc.) with no API call.
+
+**Fix — aggregate path (`routes/parts.py`, no-vehicle branch):**
+- Removed `flat_counts` init (`{family.label: 0}`) and the `flat_counts[family.label] += cnt` update
+- Changed `"counts": {**fallback_counts, **flat_counts}` → `"counts": {**fallback_counts, **family_counts}`
+
+**Fix — vehicle-specific path (`routes/parts.py`):**
+- Removed `flat_counts` init and `flat_counts[family.label] += 1` update
+- Changed `counts = {**fallback_counts}; counts.update(flat_counts)` → `counts = {**fallback_counts, **family_counts}`
+
+**Fix — `LandingPage.jsx`:**
+- Added `import { partsApi } from '../api/parts'`
+- Replaced static `categories` array with `CATEGORY_DEFS` mapping i18n keys to family IDs (slugs)
+- Added `_formatCount(n)` helper: n ≥ 1M → `"1.2M+"`, n ≥ 1K → `"123K+"`, else raw number
+- Added `const [familyCounts, setFamilyCounts] = useState({})` + `useEffect` that calls
+  `partsApi.categories()` → `data.family_counts` on mount (silently catches errors)
+- Render now derives `rawCount = familyCounts[familyId]` → `_formatCount(rawCount)` per card
+
+**Tests:** `backend/tests/test_category_counts.py` — 5 tests:
+- `test_family_ids_are_slugs` — no uppercase, no spaces in any family.id
+- `test_family_labels_differ_from_ids` — labels ≠ ids (regression guard)
+- `test_key_expected_family_ids_exist` — all 9 landing-page slugs in `PART_TYPE_FAMILY_BY_ID`
+- `test_counts_response_uses_slug_keys` — simulates aggregation; asserts slug counts are real, no display-name keys leak
+- `test_family_counts_and_counts_share_same_slugs` — `counts[id] == family_counts[id]` for every family
+
+**All 5 pass** (`pytest -v` in container).
+
+**Second root cause discovered during pre-deployment verification:**
+
+During verification a DB vs API comparison revealed `family_counts["engine"] = 0` despite 322,742 active parts with `category='engine'` in the DB. Root cause: `classify_part_type_family("engine", ...)` iterates `PART_TYPE_FAMILIES` in order and the `fluids` family (defined before `engine`) has `"engine oil"` in its normalized_terms. The check `candidate in term` means `"engine" in "engine oil"` = True → `fluids` returned instead of `engine`. All 322,742 engine parts were being bucketed under `fluids`.
+
+**Third fix (same PR):**
+- Added `PART_TYPE_FAMILY_BY_ID` to imports from `part_type_taxonomy`
+- Both aggregation loops now try `PART_TYPE_FAMILY_BY_ID.get(raw_category)` FIRST (direct O(1) dict lookup, exact slug match) before falling back to `classify_part_type_family`
+- This is the correct path for counts aggregation because `category` column already stores canonical slugs
+- Regression test added: `test_counts_response_uses_slug_keys` asserts `counts["engine"] == 400` and `counts.get("fluids") == 0` when input is `("engine", "oem", 400)`
+
+**Pre-deployment verification (simulated fixed code against live DB — no restart needed):**
+
+| CATEGORY | Simulated API | DB direct | MATCH |
+|---|---|---|---|
+| body-exterior | 908,425 | 908,425 | PASS |
+| electrical | 403,088 | 403,088 | PASS |
+| interior-comfort | 356,882 | 356,882 | PASS |
+| suspension-steering | 294,876 | 294,876 | PASS |
+| brakes | 169,989 | 169,989 | PASS |
+| cooling | 142,309 | 142,309 | PASS |
+| **engine** | **322,742** | **322,742** | **PASS** (was 0 before fix) |
+| filters | 71,331 | 71,331 | PASS |
+| gearbox | 64,126 | 64,126 | PASS |
+| wipers-washers | 53,823 | 53,823 | PASS |
+
+**Frontend checks:**
+- ✅ No hardcoded count strings in `CATEGORY_DEFS`
+- ✅ `LandingPage.jsx` calls `partsApi.categories()` → reads `data.family_counts`
+- ✅ `_formatCount()` is pure presentation only (no API calls, no state mutation)
+
+**All 5 tests pass** (including new engine regression test).
+
+**Deployment (2026-09-30, owner-approved):**
+1. `bash backend/scripts/pre_restart.sh` — saved state, SIGTERM'd active importers
+2. `docker restart autospare_backend` — uvicorn up in ~2 min, HealthMonitor pass confirmed
+3. `docker compose build frontend && docker compose up -d frontend` — only `autospare_frontend` recreated
+   (old bundle `index-B-eC1I-C.js` → new `index-MZ8KZjvw.js`); all 10 other services unchanged
+4. Background jobs: HealthMonitor, flaresolverr harvester, meili sync, supplier sourcing all confirmed running post-restart
+
+**Live API verification (post-restart):**
+
+| CATEGORY | family_counts | DB direct | MATCH |
+|---|---|---|---|
+| body-exterior (large) | 908,465 | 908,465 | ✅ PASS |
+| electrical (large) | 403,143 | 403,143 | ✅ PASS |
+| interior-comfort (medium) | 356,908 | 356,908 | ✅ PASS |
+| suspension-steering (medium) | 294,940 | 294,940 | ✅ PASS |
+| brakes (medium) | 169,996 | 169,996 | ✅ PASS |
+| cooling | 142,317 | 142,317 | ✅ PASS |
+| **engine (was 0)** | **322,764** | **322,764** | ✅ **PASS** |
+| filters | 71,333 | 71,333 | ✅ PASS |
+| gearbox | 64,138 | 64,138 | ✅ PASS |
+| wipers-washers | 53,827 | 53,827 | ✅ PASS |
+
+**Engine classifier fix confirmed:**
+- Old: `engine → fluids` (fluids was ~356K, inflated by 322K engine parts)
+- New: `engine → engine` (fluids = 33,373 — only genuine fluid/oil products)
+- `PART_TYPE_FAMILY_BY_ID.get("engine")` = engine family ✅
+- `fluids` count returned to correct value (~33K)
+
+**`counts` dict fix confirmed:** 0 label-keyed entries in `counts` post-restart (was 25 display-name keys)
+
+**Frontend live checks:**
+- New bundle `index-MZ8KZjvw.js` deployed ✅
+- Old bundle `index-B-eC1I-C.js` returns 404 ✅
+- `.categories()` API call in bundle ✅
+- `family_counts` key reads from API ✅
+- `1e3`/`1e6` formatting thresholds in bundle ✅
+- `body-exterior`, `suspension-steering` slugs in bundle ✅
+- No hardcoded count strings in served HTML ✅
+
+**Never regress:**
+- `get_categories` must use `PART_TYPE_FAMILY_BY_ID.get(raw_category)` before `classify_part_type_family` in both aggregation paths
+- `"counts"` in the API response must be `{**fallback_counts, **family_counts}` — never `{**fallback_counts, **flat_counts}` (display-name keys)
+- Landing page category counts must come from `data.family_counts` via `partsApi.categories()` — never hardcoded
+
+**Status:** ✅ VERIFIED — Category counts are live and accurate. All 10 representative categories match DB direct counts exactly. Engine family recovered from 0 → 322,764.
+
+---
+
+## Cart VAT — conditional per-supplier fix — 2026-09-30
+
+### 39. Cart displayed flat 18% VAT on all items regardless of supplier origin — APPLIED (awaiting restart)
+
+**Root cause:** `frontend/src/pages/Cart.jsx:43` applied `selectedSubtotal * 0.18` to the entire
+cart subtotal, ignoring supplier origin. The business rule is: IL suppliers → 18% VAT on the sell
+price; foreign suppliers (car-parts.ie/IE, SNG/UK, eBay/US, AliExpress/CN) → 0% VAT. This caused
+foreign-sourced parts to display ~18% over their actual checkout charge.
+
+**Authoritative function:** `BACKEND_AI_AGENTS.is_local_supplier(name, country)` — country in
+`{il, israel, ישראל}` → IL; otherwise 0% VAT. Used already by `_customer_unit_price` /
+`get_supplier_vat_rate` in `routes/parts.py` and at checkout.
+
+**Changes made:**
+
+1. **`backend/routes/cart.py`** — added `from BACKEND_AI_AGENTS import is_local_supplier`; added
+   `"isIlSupplier": is_local_supplier(supplier.name, supplier.country)` to the `_cart_to_response`
+   dict. The `Supplier` model is already JOINed in that function — no extra query needed.
+
+2. **`frontend/src/pages/Cart.jsx`** — two changes:
+   - `mapServerCartItems` (line 98): added `isIlSupplier: item.isIlSupplier ?? false` so new API
+     field flows into store items (defaults `false` for backward compat with cached sessions).
+   - Line 43: replaced flat `selectedSubtotal * 0.18` with per-item reduction:
+     ```js
+     const selectedVat = Math.round(
+       selectedItems.reduce((sum, i) => {
+         const lineTotal = (Number(i.price) || 0) * (Number(i.quantity) || 0)
+         return sum + (i.isIlSupplier ? lineTotal * 0.18 : 0)
+       }, 0) * 100
+     ) / 100
+     ```
+
+3. **`backend/tests/test_cart_vat.py`** — 9 tests covering: IL country codes, foreign country
+   codes, country-priority-over-name, name fallback, None inputs, IL-only cart, foreign-only
+   cart, mixed cart, empty cart. All 9 pass (`pytest -v`).
+
+**Regression guard:** `is_local_supplier` is the single enforcement point — no inline country
+strings or heuristics in the frontend.
+
+**Deployment (2026-09-30, owner-approved):**
+1. `bash backend/scripts/pre_restart.sh` — saved worker state, marked in-flight jobs superseded
+2. `docker restart autospare_backend` — live in 21s; health `/health` → `{"status":"ok"}`
+3. In-process verification: `_cart_to_response` called directly with the 2 real cart items:
+   - item[0]: supplier=ספק #9878 (Official Manufacturer Sites / Global) → `isIlSupplier=False`
+   - item[1]: supplier=ספק #1013 (eBay Motors / US) → `isIlSupplier=False`
+   - Field present on all items: `True`
+4. `docker compose build frontend && docker compose up -d frontend` — only `autospare_frontend`
+   recreated; all other 8 services untouched. Bundle `Cart-Cb7hUQl0.js` confirmed to contain
+   both `isIlSupplier?a*.18:0)` and `isIlSupplier:t.isIlSupplier??!1`.
+
+**Live VAT verification (all 3 cases):**
+
+| Case | Supplier origin | `isIlSupplier` | VAT | Result |
+|------|----------------|----------------|-----|--------|
+| A — IL-only | country=IL | True | 18% of each IL line | PASS — 580.00 subtotal → 104.40 VAT |
+| B — Foreign-only (real cart data) | country=Global / US | False | 0% | PASS — 3719.93 subtotal → 0.00 VAT |
+| C — Mixed | one IL + one foreign | IL=True / FOR=False | 18% on IL line only | PASS — 26.10 VAT on IL line only, foreign contributes 0 |
+
+**Regression check (Playwright 1440px):**
+- Landing: loads (2009 chars), no overflow, no JS errors
+- Parts: loads (448 chars), no overflow
+- Cart: redirects to `/login` (unauthenticated, expected)
+- Background jobs: `car_parts_ie_flaresolverr_harvester.py` still running; no unrelated service restarted
+
+**Status:** ✅ VERIFIED — Cart VAT is now conditional per supplier origin. The flat 18% bug is closed.
+
+**Never regress:** Cart VAT must always be computed per item via `isIlSupplier` from the backend
+response. The flat `* 0.18` pattern is prohibited. Any new cart surface must propagate this flag.
 
 ---
 
@@ -4756,3 +5088,401 @@ Sandbox API calls: 0 (only `grep`/code reads/unit tests — no live Eurosender c
 **EXTERNAL DEPENDENCY — WAITING FOR EUROSENDER PRODUCTION CREDENTIALS.** No real `EUROSENDER_PRODUCTION_API_KEY` / `EUROSENDER_PRODUCTION_WEBHOOK_SECRET` exist yet (Eurosender has been asked to provide them). The code is now correctly wired to receive and use them the moment they exist, gated by the same `EUROSENDER_ENABLED` kill switch and requiring the owner to explicitly set `EUROSENDER_SANDBOX=0` — neither was touched this session. No credential was invented, guessed, or hard-coded.
 
 **Status: TECHNICALLY CLOSED**, subject only to the external credential dependency above. Not committed, not pushed — awaiting explicit approval.
+
+
+## 2026-09-29 — UI/UX Audit + Design System Foundation: APPLIED
+
+**Task:** Full UI/UX audit of existing AutoSpareFinder frontend, design system creation, and P0/P1 fixes.
+
+### Phase 0-3: Audit findings
+
+**ROOT CAUSE A — Two incompatible design systems (P0 — Critical)**
+- `LandingPage.jsx` used a completely different visual system from the rest of the app: light page background (`#f4f7fd`), Google blue (`#2563eb`), `bg-white` section cards, `text-[#021737]` dark navy text. This violated every token in `DESIGN.md` and created a jarring discontinuity for any user navigating Landing → Search Results.
+- The inner app pages (`Parts.jsx`, `Login.jsx`, `Register.jsx`, `Cart.jsx`, `Layout.jsx`) used the correct dark system from `DESIGN.md` after prior session fixes.
+
+**ROOT CAUSE B — JetBrains Mono font never loaded (P1)**
+- `tailwind.config.js` defines `fontFamily.mono: ['JetBrains Mono', ...]` but `index.html` only loaded Inter. Every OEM number, VIN code, and SKU rendered in system monospace, violating the brand specification.
+
+**ROOT CAUSE C — App.jsx global elements used wrong colors and fonts (P1)**
+- `PageLoader`: `borderTopColor: '#00A3FF'` (legacy wrong blue); track color `#e5e7eb` (light gray on dark bg — invisible)
+- `Toaster`: `fontFamily: 'Rubik, Heebo, sans-serif'` (wrong fonts — not in the design system); light default background (system toast on dark page)
+- `ErrorBoundary`: `fontFamily: 'sans-serif'`, `background: '#f4f4f4'` — unbranded white/light error screen appearing on dark-bg app
+
+### Fixes applied
+
+**File: `frontend/src/App.jsx`**
+- `PageLoader`: `border: '3px solid #1E2535'`, `borderTopColor: '#0EA5E9'` — correct dark track + Electric Blue spinner
+- `Toaster`: `fontFamily: 'Inter, system-ui, sans-serif'`, `background: '#151B27'`, `color: '#E2E8F0'`, `border: '1px solid rgba(148,163,184,0.12)'` — fully dark-system toast
+- `Toaster success iconTheme`: `primary: '#0EA5E9'`, `secondary: '#0F1218'` — dark background on icon
+- `ErrorBoundary`: dark styling (`#0F1218` bg, `#151B27` pre, `#E2E8F0` / `#94A3B8` text, Inter font, `#0EA5E9` gradient button with `6px` brand radius)
+
+**File: `frontend/index.html`**
+- Added JetBrains Mono 400/500 to Google Fonts link alongside Inter
+
+**File: `frontend/src/pages/LandingPage.jsx`** — complete dark system migration:
+- Root wrapper: `bg-[#f4f7fd] text-slate-900` → `bg-[#0F1218] text-[#E2E8F0]`
+- Header: `bg-[#0d1524]` → `bg-[#0F1218]`; top bar: `bg-[#080e1c]` → `bg-[#0A0E17]`
+- Language dropdown: `bg-[#021737]` → `bg-[#1E2535]`
+- Nav search: `bg-white` → `bg-[#1E2535]` with dark input text and Electric Blue focus border
+- Search button: `bg-[#2563eb]` → `bg-[#0EA5E9]` with dark text `#0F1218`
+- Cart badge: `bg-[#2563eb]` → `bg-[#0EA5E9] text-[#0F1218]`
+- Sub-nav: `bg-[#0d1524]` → `bg-[#0F1218]`; active nav item: `bg-[#2563eb]` → `bg-[#0EA5E9] text-[#0F1218]`
+- Hero: `bg-[#070e1d]` → `bg-[#0F1218]`; gradient radial: `rgba(37,99,235,0.18)` → `rgba(14,165,233,0.12)`
+- Hero text highlights: `text-[#3b82f6]` → `text-[#38BDF8]`
+- Hero search box: `bg-[#0a1e3f]/60` → `bg-[#151B27]/80`; `rounded-2xl` → `rounded-xl` (brand token)
+- Hero search tabs: active `bg-[#2563eb] text-white` → `bg-[#0EA5E9] text-[#0F1218]`; inactive `bg-[#0f274e]` → `bg-[#1E2535]`; hover `bg-[#153468]` → `bg-[#252D3D]`
+- Hero search input: `bg-white` → `bg-[#1E2535]`; focus ring `#3b82f6` → `#0EA5E9`; input text `text-slate-800` → `text-[#E2E8F0]`
+- Hero search button: `bg-[#2563eb]` → `bg-[#0EA5E9] text-[#0F1218]`
+- Trust bar: `bg-[#0d1524]` → `bg-[#0F1218]`
+- "How It Works" section: `bg-white` → `bg-[#151B27]`
+- Step headings: `text-[#021737]` → `text-[#E2E8F0]`; step descriptions: `text-slate-500` → `text-[#94A3B8]`
+- Dashed divider: `border-slate-200` → `border-[rgba(148,163,184,0.20)]`
+- Step number circles: `bg-[#2563eb] text-white shadow-[0_0_0_5px_white]` → `bg-[#0EA5E9] text-[#0F1218] shadow-[0_0_0_5px_#151B27]`
+- Step icon bg: `bg-slate-100` → `bg-[#252D3D]`; icon color: `text-[#2563eb]` → `text-[#0EA5E9]`
+- "View all" button: `text-[#2563eb]` → `text-[#0EA5E9]`
+- Category section heading: `text-[#021737]` → `text-[#E2E8F0]`
+- Category cards: `border-slate-100 bg-white` → `border-[rgba(148,163,184,0.12)] bg-[#1E2535]`; hover `hover:border-[#2563eb]/40` → `hover:border-[rgba(14,165,233,0.30)]`
+- Category image bg: `bg-slate-50 group-hover:bg-blue-50/50` → `bg-[#252D3D] group-hover:bg-[rgba(14,165,233,0.08)]`
+- Category "more" icon: `text-slate-400 group-hover:text-[#2563eb]` → `text-[#94A3B8] group-hover:text-[#0EA5E9]`
+- Category name: `text-[#021737] group-hover:text-[#2563eb]` → `text-[#E2E8F0] group-hover:text-[#38BDF8]`
+- Category count: `text-slate-500` → `text-[#94A3B8]`
+- AI CTA card: `bg-[#021737] border-white/10` → `bg-[#1E2535] border-[rgba(14,165,233,0.20)] shadow-electric`; added `from-[rgba(14,165,233,0.06)] to-transparent` gradient
+- AI CTA icon bg: `from-blue-400/20 to-blue-600/20 border-blue-400/30` → `from-[rgba(14,165,233,0.15)] to-[rgba(2,132,199,0.15)] border-[rgba(14,165,233,0.30)]`
+- AI CTA button: `bg-[#2563eb] border-blue-500/50` → AI button style `bg-[rgba(14,165,233,0.12)] text-[#38BDF8] border-[rgba(14,165,233,0.35)]`
+- Feature cards: `border-slate-200 bg-white` → `border-[rgba(148,163,184,0.12)] bg-[#1E2535]`; icon bg: `bg-blue-50` → `bg-[rgba(14,165,233,0.10)]`; icon: `text-[#2563eb]` → `text-[#0EA5E9]`; title/text: dark system tokens
+- About/footer: `bg-[#021737]` → `bg-[#0F1218]` with top border
+- BotIcon SVG: `#2563eb`/`#60a5fa`/`#93c5fd` → `#0EA5E9`/`#38BDF8`/`#7DD3FC`
+
+### Design system files created/updated
+- `design-system/autosparefinder/MASTER.md` — CREATED (comprehensive 17-section product design system)
+- `design-system/autosparefinder/STITCH_BRIEF.md` — CREATED (Stitch-ready generation brief)
+- `frontend/tailwind.config.js` — was fixed in prior session (dark tokens)
+- `frontend/src/index.css` — was fixed in prior session (CSS custom properties + dark utility classes)
+- `frontend/src/components/Layout.jsx` — was fixed in prior session (header/footer dark)
+- `frontend/src/pages/Parts.jsx` — was fixed in prior session (search results dark)
+
+### Remaining issues (P2/P3 — not yet implemented)
+- Cart.jsx hardcodes 18% VAT for all items: `selectedVat = Math.round(selectedSubtotal * 0.18 * 100) / 100` — must use conditional VAT per supplier (0% foreign, 18% IL). Requires backend `is_il_supplier` flag on cart items. Root fix touches backend API (out of scope for this UI audit session).
+- `<html lang="en">` in index.html is static — should update dynamically with i18n language. Requires React Portal or direct DOM manipulation via `useEffect` in i18n.js.
+- Language selector uses `<details>/<summary>` — poor keyboard/screen-reader support. Should be replaced with controlled dropdown + proper `role="listbox"` + `aria-expanded`.
+- `#475569` placeholder text on `#0F1218` background: contrast ratio 2.9:1 — fails WCAG AA for text (passes for UI component; acceptable for placeholders per WCAG 1.4.11).
+- Hardcoded category counts in LandingPage.jsx ("25,000+", "18,000+", etc.) — not wired to live API.
+
+**Status: APPLIED** (files written to disk; container not yet restarted — changes are live on bind-mount after restart).
+
+**Verification:** Build check pending (see next step). Visual verification requires browser test of `/` (landing), `/parts` (search), `/login`.
+
+
+---
+
+## 2026-09-29 — Phase 2 UI/UX Live Verification & Remaining Fixes
+
+**Task:** Live browser verification (Playwright) of Phase 1 fixes, Parts.jsx dark migration, i18n dir fix, language selector ARIA upgrade, responsive + accessibility audit.
+
+**Scope constraints:** No backend changes, no VAT logic changes, no container restarts (frontend only), no Stitch generation, no duplicate design system files.
+
+### Verification run 1 (before Phase 2 fixes)
+
+Live Playwright scan of deployed container found:
+- `parts_forbidden_bgs`: 2 white elements on `/parts` — `input.w-full.min-h-12` (plate/VIN inputs) and `div.bg-white.rounded-2xl` (photo panel)
+- `html_dir: ""` — i18n.js was deliberately not setting `document.documentElement.dir`
+- `lang_selector: {has_details: true}` — `<details>/<summary>` still present despite being listed as P2
+- Landing page: no forbidden colors, dark system confirmed
+
+### Fixes applied (Phase 2)
+
+**File: `frontend/src/pages/Parts.jsx`**
+- Search mode card inactive state: `border-gray-200 from-white to-gray-50` → dark transparent overlays (`from-[#1E2535] to-[#151B27]`, `border-[rgba(148,163,184,0.12)]`)
+- Search mode card tone values (active state): `from-sky-50 to-blue-50 border-sky-200` etc. → RGBA dark overlays preserving brand accent colors
+- Search mode card ring: `ring-brand-300` → `ring-[rgba(14,165,233,0.40)]`
+- Card text (title, subtitle, count): `text-brand-navy`, `text-gray-500`, `text-gray-600` → `text-[#CBD5E1]`, `text-[#94A3B8]`, `text-[#64748B]`
+- Card icon bg inactive: `bg-gray-100 text-gray-500` → `bg-[#252D3D] text-[#94A3B8]`
+- Card badge: `bg-white/90 border-brand-200 text-brand-700` → `bg-[rgba(14,165,233,0.12)] border-[rgba(14,165,233,0.30)] text-[#38BDF8]`
+- Card count active: `text-brand-700` → `text-[#38BDF8]`
+- Plate input: `bg-white text-brand-navy placeholder:text-gray-400` → `bg-[#1E2535] text-[#E2E8F0] placeholder:text-[#475569]`
+- VIN input: `border-gray-200 bg-white text-brand-navy focus:ring-brand-400` → `border-[rgba(148,163,184,0.15)] bg-[#1E2535] text-[#E2E8F0] focus:ring-[#0EA5E9]`
+- Photo panel container: `bg-white border-gray-100` → `bg-[#151B27] border-[rgba(148,163,184,0.12)]`
+- Photo panel header icon bg: `bg-brand-100` → `bg-[rgba(14,165,233,0.12)]`; icon: `text-brand-600` → `text-[#0EA5E9]`
+- Photo panel title: `text-brand-navy` → `text-[#E2E8F0]`
+- Photo panel sub-tab bar: `border-gray-100` → `border-[rgba(148,163,184,0.12)]`; active tab: `bg-brand-600 text-white` → `bg-[#0EA5E9] text-[#0F1218]`; inactive: `text-gray-500 hover:text-brand-600 hover:bg-brand-50` → `text-[#94A3B8] hover:text-[#E2E8F0] hover:bg-[#252D3D]`
+- Suggestions dropdown: `bg-white border-gray-200` → `bg-[#1E2535] border-[rgba(148,163,184,0.15)]`; items: light grays → dark system (`text-[#E2E8F0]`, `text-[#64748B]`, `hover:bg-[#252D3D]`); delete btn: `text-[#475569] hover:text-[#EF4444]`
+- Image editor modal: `bg-white` → `bg-[#151B27] border-[rgba(148,163,184,0.12)]`; toolbar: `bg-gray-50 border-gray-100` → `bg-[#1E2535] border-[rgba(148,163,184,0.10)]`; close btn: `text-gray-500 hover:bg-gray-100` → `text-[#94A3B8] hover:bg-[#252D3D]`
+
+**File: `frontend/src/i18n.js`**
+- Added `document.documentElement.dir = dir` inside the useEffect (was intentionally omitted before)
+- Removed incorrect comment that claimed setting `<html dir>` would break other pages
+- Result: `html.dir` now correctly reflects active language (ltr/rtl)
+
+**File: `frontend/src/pages/LandingPage.jsx`**
+- Replaced `<details>/<summary>` language selector with controlled ARIA dropdown
+- Added `useState(false)` for open state, `useRef` for click-outside detection, `useEffect` for mousedown listener
+- Button: `aria-haspopup="listbox"`, `aria-expanded={langOpen}`, `aria-label={t('lang.label')}`, `focus-visible:ring-2 focus-visible:ring-[#0EA5E9] focus-visible:ring-offset-1 focus-visible:ring-offset-[#0A0E17]`
+- Dropdown: `role="listbox"`, `aria-label={t('lang.label')}`; options: `role="option"`, `aria-selected={lang === l}`
+- Keyboard: Escape key closes dropdown on both button and option buttons
+- Click-outside: `mousedown` listener on `document` closes when clicking outside `langRef`
+
+### Verification run 2 (after Phase 2 fixes) — CONFIRMED PASS
+
+| Check | Result | Value |
+|---|---|---|
+| `parts_forbidden` | ✅ PASS | `[]` (was: 2 white elements) |
+| `parts_body_bg` | ✅ PASS | `rgb(15, 18, 24)` |
+| `vin_input_bg` | ✅ PASS | `rgb(30, 37, 53)` = `#1E2535` |
+| `html_dir_en` | ✅ PASS | `ltr` (was: `""`) |
+| `html_dir_after_he` | ✅ PASS | `rtl` (switching to Hebrew now sets RTL) |
+| `html_lang_after_he` | ✅ PASS | `he` |
+| `lang_details_removed` | ✅ PASS | `true` |
+| `lang_btn_exists` | ✅ PASS | ARIA button with `aria-haspopup=listbox` |
+| `lang_aria_expanded_open` | ✅ PASS | `"true"` when open |
+| `lang_listbox_visible` | ✅ PASS | `[role=listbox]` visible when open |
+| `lang_listbox_closed_on_esc` | ✅ PASS | Escape key closes dropdown |
+| `landing_forbidden_en` | ✅ PASS | `[]` (no forbidden colors) |
+| `parts_mobile_overflow` | ✅ PASS | `false` |
+| `tablet_overflow` | ✅ PASS | `false` |
+
+### Remaining / deferred issues
+
+| ID | Issue | Status |
+|---|---|---|
+| D1 | Cart 18% VAT hardcoded for all suppliers (must be conditional IL vs. foreign) | **DEFERRED** — requires backend `is_il_supplier` flag on cart items; touches business pricing logic (explicitly out of scope) |
+| D2 | Nav link focus indicators invisible: `rgb(16, 16, 16)` outline (near-black on `#0F1218` bg) | **P2 remaining** — nav `<a>` tags need `focus-visible:ring-2 focus-visible:ring-[#0EA5E9]`; not fixed in this task |
+| D3 | Category counts in LandingPage.jsx are hardcoded approximations | **DEFERRED** — backend `/api/v1/parts/categories` returns all-zero due to `classify_part_type_family()` mapping gap; must fix backend first |
+| D4 | JetBrains Mono visual verification | **PARTIAL** — font link added to index.html in Phase 1; no code/OEM elements on landing page to visually confirm; expected to render on Parts page OEM numbers |
+
+**Stitch readiness: PARTIAL** — design system DESIGN.md exists at `.stitch/DESIGN.md`, dark tokens verified live in all pages. Remaining before Stitch: fix nav focus indicators (D2) for full accessibility baseline.
+
+**Build:** `docker compose build --no-cache frontend` → 2524 modules, 20.06s → ✅
+**Deploy:** `docker compose up -d frontend` → Recreated, Up (healthy) → ✅
+**Verification:** Playwright live scan → all critical checks PASS → ✅ **VERIFIED**
+
+---
+
+## 2026-09-29 — Phase 3 UI/UX: Focus Indicators, Responsive/RTL Regression, Stitch Readiness
+
+**Task:** Close remaining Phase 2 P2 issue (nav focus indicators), verify JetBrains Mono, run responsive + RTL regression, determine Stitch readiness.
+
+**Scope constraints:** No backend changes, no VAT logic, no design system file creation, no Stitch generation yet.
+
+### Phase 1 — Navigation Focus Indicator Fix
+
+**Root cause:** Browser-default `outline` (`rgb(16,16,16)`) is near-black and invisible on the `#0F1218` dark background. No custom focus treatment existed on `<a>` and `<Link>` elements in either the Landing page top-bar or the Layout shared nav component.
+
+**Fix — single enforcement point (global CSS rule in `@layer base`):**
+
+`frontend/src/index.css` — added at the top of `@layer base`:
+```css
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px #0F1218, 0 0 0 4px #0EA5E9;
+}
+```
+This applies to every keyboard-navigable element site-wide. Uses Electric Blue (`#0EA5E9`) with a `#0F1218` inner gap ring, matching DESIGN.md focus specification (`"Focus ring: 0 0 0 2px #0EA5E9"`).
+
+**Supplementary explicit `focus-visible:outline-none` added to:**
+- `frontend/src/components/Layout.jsx` — `TOP_NAV_ITEMS` Link map, admin/agents Links, cart Link (so the Tailwind `outline: none` layer is also applied, preventing any Tailwind reset fighting the base rule)
+- `frontend/src/pages/LandingPage.jsx` — top-bar `<a>` links (Support, Track Order, WhatsApp): added `rounded focus-visible:outline-none`
+
+**Browser verification (Playwright, 8-step Tab chain on `/`):**
+| Element | boxShadow |
+|---|---|
+| Support (A) | `rgb(15,18,24) 0 0 0 2px, rgb(14,165,233) 0 0 0 4px` ✅ |
+| Track Order (A) | `rgb(15,18,24) 0 0 0 2px, rgb(14,165,233) 0 0 0 4px` ✅ |
+| WhatsApp (A) | `rgb(15,18,24) 0 0 0 2px, rgb(14,165,233) 0 0 0 4px` ✅ |
+| Lang button (BUTTON) | Electric Blue ring via own `focus-visible:ring-2` ✅ |
+| Logo link (A) | `rgb(15,18,24) 0 0 0 2px, rgb(14,165,233) 0 0 0 4px` ✅ |
+| Search input (INPUT) | `rgb(15,18,24) 0 0 0 2px, rgb(14,165,233) 0 0 0 4px` ✅ |
+| Category select (SELECT) | `rgb(15,18,24) 0 0 0 2px, rgb(14,165,233) 0 0 0 4px` ✅ |
+| Search button (BUTTON) | `rgb(15,18,24) 0 0 0 2px, rgb(14,165,233) 0 0 0 4px` ✅ |
+
+All 8 elements confirmed Electric Blue ring (`rgb(14,165,233)` = `#0EA5E9`). **VERIFIED.**
+
+### Phase 2 — JetBrains Mono
+
+Result: **NOT VERIFIED — NO SUITABLE RENDERED ELEMENT AVAILABLE**
+
+The `/parts` page loaded with no search query — no part result cards rendered, therefore no OEM number, SKU, or VIN code elements appear in the DOM. The font link IS present in `index.html` (verified Phase 1). JetBrains Mono renders only on elements using the `font-mono` Tailwind class, which is applied to OEM/code fields in part result cards. These elements only appear once parts are loaded.
+
+### Phase 3 — Responsive Regression
+
+All 6 viewport × page combinations PASS:
+
+| Page | 390 overflow | 768 overflow | 1440 overflow | Forbidden colors (any) |
+|---|---|---|---|---|
+| `/` Landing | ✅ none | ✅ none | ✅ none | ✅ none |
+| `/parts` Parts | ✅ none | ✅ none | ✅ none | ✅ none |
+
+Nav visible: ✅ all viewports. Search visible: ✅ 768+1440 (390 landing uses mobile nav = expected).
+
+### Phase 4 — RTL Regression
+
+| Language | `lang` | `dir` | Nav computed direction | Result |
+|---|---|---|---|---|
+| English (default) | `en` | `ltr` | block (inherits ltr) | ✅ |
+| Hebrew | `he` | `rtl` | `rtl` | ✅ |
+| Arabic | `ar` | `rtl` | — | ✅ |
+
+Language selector dropdown opens correctly, switch confirmed for all 3 languages. `document.documentElement.dir` updates in real-time on language change.
+
+### Phase 5 — Cart
+
+**CART VISUAL VERIFICATION BLOCKED BY AUTHENTICATION STATE**
+
+Unauthenticated request to `/cart` redirects to `/login`. No cart UI was visible. Login page body background = `rgb(15,18,24)` (dark ✅). Two white elements found on the **login page** (`span.bg-white.px-3`, `button.w-full.flex`) — these are on the login page, not the cart. Out of scope for this task. Not changed.
+
+### Phase 6 — Design System Consistency
+
+`.stitch/DESIGN.md` (authoritative) and `design-system/autosparefinder/MASTER.md` are consistent on:
+- All color tokens (Void Black `#0F1218`, Deep Navy `#151B27`, Electric Blue `#0EA5E9`)
+- Typography (Inter + JetBrains Mono for same use cases)
+- Focus rings (`0 0 0 2px #0EA5E9`)
+- Component language (dark gradient button, card tokens, RTL rules)
+
+One stale note in MASTER.md (`⚠️ MISSING from index.html — must be added` for JetBrains Mono) is outdated — this was fixed in Phase 1. Not a contradiction. MASTER.md is a supporting artifact; `.stitch/DESIGN.md` remains authoritative.
+
+### Stitch Readiness: PARTIAL
+
+**Criteria check:**
+| Criterion | Status |
+|---|---|
+| No P0/P1 UI issues | ✅ PASS |
+| Verified responsive behavior | ✅ PASS (6 combinations) |
+| Verified main visual system | ✅ PASS (dark tokens, no forbidden colors) |
+| Verified navigation focus | ✅ PASS (Electric Blue ring on all nav elements) |
+| Verified language/RTL behavior | ✅ PASS (en/he/ar, dir updates) |
+| No design-system contradiction | ✅ PASS |
+| Live browser evidence | ✅ PASS (Playwright) |
+| JetBrains Mono rendered verification | ⚠️ NOT VERIFIED (no code elements rendered without search results) |
+
+JetBrains Mono is loaded but unverifiable without part data rendering → PARTIAL.
+
+### Deferred (retained)
+
+| Item | Status |
+|---|---|
+| Cart 18% VAT hardcoded (business logic) | **DEFERRED** — requires backend `is_il_supplier` flag |
+| Category counts API (backend data) | **DEFERRED** — backend `classify_part_type_family()` mapping gap |
+| Login page white elements (`span.bg-white`, Google button) | **Out of scope** for this task |
+| MASTER.md stale JetBrains note | **Non-critical** — supporting artifact, `.stitch/DESIGN.md` authoritative |
+
+**Build:** `docker compose build --no-cache frontend` → success
+**Deploy:** `docker compose up -d frontend` → Up (healthy)
+**Verification:** Playwright Phase 3 scan → all critical checks PASS → ✅ **VERIFIED**
+
+**Files changed:**
+- `frontend/src/index.css` — global `:focus-visible` rule in `@layer base`
+- `frontend/src/components/Layout.jsx` — `focus-visible:outline-none` on 4 nav Link/Link elements
+- `frontend/src/pages/LandingPage.jsx` — `rounded focus-visible:outline-none` on 3 top-bar `<a>` links
+
+---
+
+## 2026-09-30 — Phase 4 Final Font Verification + Stitch Gate
+
+**Task:** Verify JetBrains Mono on actual rendered OEM/SKU content. Determine final Stitch readiness.
+
+### Phase 1 — Finding a real rendered part
+
+- API confirmed: `GET /api/v1/parts/search?q=oil+filter` → 48 results, first OEM `90915YZZD1`
+- Parts.jsx uses `?search=` URL param (not `?q=`) — initial attempt with `?q=` yielded empty page (449 chars)
+- Used Playwright to type "oil filter" into the search input and navigate via `?search=oil+filter`
+- Result cards rendered: `div.card.p-4`, OEM text `22042046` and `9G33-6714-AA` visible in DOM
+
+### Phase 2 — Root cause: OEM span missing font-mono
+
+`jetbrains_scan: []` on first run despite parts rendering.
+
+Root cause found at [frontend/src/pages/Parts.jsx:1049](frontend/src/pages/Parts.jsx#L1049):
+```jsx
+// BEFORE — no font-mono, wrong color tokens:
+{part.sku && <span className="text-xs text-gray-400">· {part.sku}</span>}
+{part.oem_number && <span className="text-xs text-gray-400">· OEM: {part.oem_number}</span>}
+```
+OEM number span had `text-gray-400` but no `font-mono` class. DESIGN.md specifies: "OEM number: JetBrains Mono, 0.875rem, Halo Edge Blue (`#38BDF8`)."
+
+Also fixed the expanded card SKU at line 1270: light-theme `bg-white/90 border-slate-200 text-slate-600` → dark tokens, also missing `font-mono`.
+
+### Fix applied
+
+**File: `frontend/src/pages/Parts.jsx`**
+
+Line 1048-1049 (compact card):
+```jsx
+// AFTER:
+{part.sku && <span className="font-mono text-xs text-[#64748B]">· {part.sku}</span>}
+{part.oem_number && <span className="font-mono text-xs text-[#38BDF8]">· {part.oem_number}</span>}
+```
+
+Line 1270 (expanded card):
+```jsx
+// AFTER:
+{part.sku ? <span className="font-mono inline-flex items-center rounded-full border border-[rgba(148,163,184,0.15)] bg-[#252D3D] px-2.5 py-1 font-medium text-[#64748B]">SKU: {part.sku}</span> : null}
+```
+
+### Phase 3 — Browser verification after fix
+
+Playwright scan of `/parts` with "oil filter" search loaded:
+
+```json
+{
+  "tag": "span", "cls": "font-mono text-xs text-[#38BDF8]",
+  "text": "· 22042046",
+  "font": "\"JetBrains Mono\", \"Fira Code\", \"Cascadia Code\", monospace"
+}
+```
+
+**VERIFIED — JetBrains Mono renders on actual OEM/SKU content.**
+
+- OEM `22042046`: `font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace` ✅
+- OEM `9G33-6714-AA`: `font-family: "JetBrains Mono", ...` ✅
+- SKU `INFINI-22042046`: `font-family: "JetBrains Mono", ...` ✅
+- SKU `JAG-P-9G33-6714-AA`: `font-family: "JetBrains Mono", ...` ✅
+
+### Final Stitch Gate: READY
+
+All criteria met:
+
+| Criterion | Status |
+|---|---|
+| No P0/P1 UI issues | ✅ |
+| Responsive (6 viewport/page combos) | ✅ |
+| Dark visual system | ✅ |
+| Navigation focus (Electric Blue ring) | ✅ |
+| Language selector (ARIA listbox) | ✅ |
+| Escape key / click-outside | ✅ |
+| EN LTR / HE RTL / AR RTL | ✅ |
+| Dynamic `<html lang>` + `<html dir>` | ✅ |
+| Design-system consistency (DESIGN.md = MASTER.md) | ✅ |
+| JetBrains Mono on rendered OEM content | ✅ VERIFIED |
+
+### Follow-up items (retained, not fixed in this task)
+
+1. **Cart conditional VAT** — `Cart.jsx` hardcodes 18% for all suppliers. Requires backend `is_il_supplier` flag.
+2. **Category counts API** — `/api/v1/parts/categories` returns all-zero. Backend `classify_part_type_family()` mapping gap.
+3. **Login page light elements** — `span.bg-white` (OR divider) and Google OAuth button on `/login`. Light-theme elements discovered during Phase 3 cart check. FOLLOW-UP UI TASK — LOGIN PAGE LIGHT ELEMENTS.
+
+**Build:** `docker compose build --no-cache frontend` → 2524 modules ✅
+**Deploy:** `docker compose up -d frontend` → Up (healthy) ✅
+**Verification:** Playwright → JetBrains Mono on actual rendered OEM/SKU spans ✅ **VERIFIED**
+
+**Files changed:**
+- `frontend/src/pages/Parts.jsx` — lines 1048-1049 and 1270: `font-mono` + dark color tokens on OEM/SKU spans
+
+
+## 2026-09-30 — Stage 3 real-scheduler verification: PASS (with two confounders precisely separated)
+
+**Scheduler-triggered, not manually invoked.** Job `sync_prices:2026-09-30T03:15:30.678990`, started 03:15:30Z, completed 04:29:47Z (~74 min). Confirmed via the scheduler's own `[PriceSync] done — updated=109 avail_changes=0 errors=0` log line and its own `AliExpress price sync: checking 249 parts (targeting=discovery)` / `AliExpress price sync complete: {...}` lines — no admin endpoint, no direct `sync_prices()`/`sync_aliexpress_prices()` call, no manual trigger of any kind was used to produce this cycle; it fired at its own naturally-computed due time (the loop's own math from the prior 2026-09-29 03:15:27Z completion + 24h interval).
+
+**Report:** `parts_checked=249` (limit 2000; finite candidate pool — not a failure) · `parts_updated=109` · `parts_not_found=133` · `sku_conflicts=7` · `discovery_queries=150` · `candidates_added=358` · `api_calls=515` (cross-checked: 515−150 discovery−249 search = 116 product.get calls = 109 updated + 7 conflicts, exact — the same identity verified on 8 prior cycles) · `api_call_limit_hits=0` · `searches_unconfirmed=0`, `search_failure_kinds={}`, `search_aborted=False` · `errors=[]`.
+
+**Stage 3 fix (transient-search-failure protection):** **not naturally exercised this cycle** (`searches_unconfirmed=0`) — no regression evidence either way; the mechanism simply had nothing to catch this run. Not a defect.
+
+**Data integrity (independently verified, not from the self-report):** candidates cited 1207→1316, no_match 1837→1977, matched 1888→1997 (Δmatched=109, exact match to `parts_updated`); AliExpress offers 1890→1999 (Δ=109, exact); AliExpress price_history 1899→2008 (Δ=109, exact, all `source='aliexpress_sync'`); 0 duplicate offers (by SKU and by part); 0 OEM/base-price pollution; 0 non-AliExpress `supplier_parts` rows touched in the run window; `parts_catalog` row count unchanged (4,607,422). Job registry: exactly one `sync_prices` row in the run window, no overlap; Redis lock free both before and after.
+
+**Pricing safety — independently verified via the canonical function itself, not reimplemented:** 3 sampled new offers' raw costs (182.54 / 35.43 / 55.23 ₪) run through `routes.parts._customer_price_fields` produced 264.68 / 51.37 / 80.08 ₪ (cost×1.45, 0% VAT — AliExpress is foreign/CN), confirming no bypass and no raw-cost exposure. All new offers classified `aftermarket` (never `oem`).
+
+**CONFOUNDER 1 — unrelated OOM, unattributable to Stage 3.** A genuine kernel OOM killed `uvicorn` (and, in the same event, a `chrome-headless` process in the same container) at 2026-09-29 23:49:32 UTC — confirmed via `dmesg`, matched to the exact running `autospare_backend` container ID. The container's current `StartedAt` (2026-09-30T02:49:08Z) is ~3 hours after that kill, an unusually long gap for a simple `unless-stopped` auto-restart; the cause of that specific delay is **not established** (not investigated further — out of scope) and no restart was performed by this session. Because the restart happened well before the natural due time, the loop's one-time wait recomputation still landed on the same natural due time (~03:15Z) — the resulting cycle is not itself a product of the restart's timing, only enabled by it (the loop had to re-arm after the crash).
+
+**CONFOUNDER 2 — the still-unapproved `get_part_details()` schema fix is live and materially changed this run's shape.** That fix (staged 2026-09-29, never approved, never deployed by this session — it became live purely as a side effect of an earlier unrelated OOM restart) was exercised extensively this cycle: `parts_images_added=453` for only 109 updated parts (≈4.2 images/part) — independently confirmed by sampling: **85 of 109 new offers got exactly 5 images** (the per-part cap), several got more (pre-existing images from other suppliers summed in), and only **7 of 109** still show the old single-image shape. This is a direct, measurable consequence of `get_part_details()` now succeeding instead of always returning `None` — **this improvement belongs to that separate, not-yet-approved fix, not to Stage 3**, and is recorded here only to correctly attribute it, not to claim it as a Stage 3 result.
+
+**Unproven:** the AliExpress external call quota remains unproven beyond this run's own observed 515 calls / 0 `ApiCallLimit` events. The 3-hour OOM-to-restart gap's cause is unproven.
+
+**Final status: PASS — Stage 3 verified through the real scheduler path.** No commit, no push.

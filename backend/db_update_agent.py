@@ -4715,8 +4715,22 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
             "validate_watchdog_actions",
         ]
 
+        # Tasks permanently disabled for OOM — never re-enabled via agent_todos, even if a stale todo
+        # lists them in artifacts.task_names. The TASK_REGISTRY guard only checks existence, not safety.
+        _TODO_OOM_BLOCKED: frozenset[str] = frozenset({
+            "fix_base_prices",
+            "normalize_base_price",
+            "backfill_bmw_fitment_from_name_he",
+            "backfill_ford_fitment_from_name_he",
+            "backfill_jaguar_fitment_from_name",
+            "merge_catalog_fitment_from_part_vehicle_fitment",
+        })
+
         shared_todos = await get_active_agent_todos(db, "db_update_agent")
-        todo_task_names = [name for name in extract_todo_task_names(shared_todos) if name in TASK_REGISTRY]
+        todo_task_names = [
+            name for name in extract_todo_task_names(shared_todos)
+            if name in TASK_REGISTRY and name not in _TODO_OOM_BLOCKED
+        ]
         if todo_task_names:
             ordered_tasks = todo_task_names + [name for name in ordered_tasks if name not in todo_task_names]
 
