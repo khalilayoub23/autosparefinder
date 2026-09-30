@@ -1,11 +1,11 @@
 # AutoSpareFinder — Bug & Breaking Points Fix Tracker
-> Last scan: 2026-09-30 | Total issues found: 482 | Fixed: 481 | In Progress: 0 | Open: 1
+> Last scan: 2026-09-30 | Total issues found: 482 | Fixed: 482 | In Progress: 0 | Open: 0
 
 ---
 
 ## OOM / restart root cause — stale agent_todo re-enabling disabled tasks — 2026-09-30
 
-### 42. Recurring backend OOM kills caused by stale agent_todo re-enabling `fix_base_prices` — VERIFIED FIXED (DB fix live; code fix requires restart)
+### 42. Recurring backend OOM kills caused by stale agent_todo re-enabling `fix_base_prices` — FULLY RESOLVED (restart complete 2026-09-30 19:34 UTC)
 
 **Root cause:**
 
@@ -48,8 +48,8 @@ Every `run_all_tasks` cycle, `get_active_agent_todos` fetches all `not_started`/
 - AliExpress: 0 running jobs, no scan interrupted ✓
 - No containers restarted ✓
 
-**Remaining open item (requires restart):**
-The code guard in `db_update_agent.py` is written but not yet active (Python loaded the module at 18:30:10 before the edit). It activates on next restart. Until then, if another `not_started` todo with `fix_base_prices` appears, the DB fix (dismissed todo) is the active protection.
+**Restart completed (2026-09-30 19:34 UTC):**
+`autospare_backend` restarted cleanly. `_TODO_OOM_BLOCKED` frozenset is now active in the live runtime — verified by direct runtime check inside the container. Commit: `b8023a3`. Backend health: `{'status': 'healthy'}`, OOMKilled=false, RestartCount=0. Memory stable at ~1.79 GiB / 4 GiB (44.8%) after restart.
 
 **Secondary finding (non-blocking, flagged):**
 `autospare_meilisearch` container is at 2.112 GiB / 2.5 GiB limit (84.5%) as of this analysis. No OOM yet, but headroom is 388 MB. Monitor under heavy re-indexing. Owner may wish to raise `autospare_meilisearch` memory limit from `2560m` to `3072m` in `docker-compose.yml` during next planned restart.
