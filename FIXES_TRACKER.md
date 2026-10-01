@@ -5,7 +5,7 @@
 
 ## #44 — NOA marketing loop: coherence failure leaves DB session open during inter-slot sleep — 2026-10-01
 
-**Status: FULLY RESOLVED**
+**Status: FULLY RESOLVED (E2E verified 2026-10-02)**
 
 **Root cause:**
 `_noa_marketing_loop` (BACKEND_API_ROUTES.py) used `await asyncio.sleep(_secs_until_next_post()) + continue`
@@ -31,18 +31,33 @@ skip an entire calendar day. Observed on 2026-09-30 and 2026-10-01: `10:02 coher
 **Files changed:**
 - `backend/BACKEND_API_ROUTES.py` — 3-line change in `_noa_marketing_loop` coherence-failure path
 
-**Tests:**
+**Tests (commit 17892b0):**
 - 4 focused `_SkipCycle` control-flow tests: PASS (exits session, normal path intact, errors not swallowed, next slots reachable)
 - 43/43 AVI execution integrity tests: PASS
 - 14/14 category + AliExpress regression tests: PASS
-- 215/216 full test suite: PASS (1 pre-existing failure: `test_postgres_ports_are_not_publicly_exposed`, unrelated)
+- 8/8 cart VAT regression tests: PASS
+- 66/66 focused regression suite: PASS
+- 215/216 full test suite: PASS (1 pre-existing failure: `test_postgres_ports_are_not_publicly_exposed` — network config test, unrelated to NOA/Digital)
+
+**E2E Verification (2026-10-02, controlled test against live DB):**
+- `devtests/test_noa_e2e_skip_cycle.py` run inside the container against the real `async_session_factory`:
+  - `_SkipCycle` raised inside real `async with async_session_factory()`: PASS
+  - `except _SkipCycle` caught (NOT the generic Exception handler): PASS
+  - `AsyncSession.__aexit__` completed cleanly (no InterfaceError): PASS
+  - No `asyncpg.InterfaceError`: PASS
+  - No `idle in transaction` connection from test pid after `_SkipCycle`: PASS
+  - Inter-slot sleep reached outside DB session: PASS
+  - Next slot can open a new DB session cleanly: PASS
+  - Loop continuation: skip on slot 0, slots 1+2 complete normally: PASS
+  - All 10 E2E checks: **PASS**
 
 **Regression guard:** The `except _SkipCycle: pass` handler is inserted BEFORE `except Exception`, so
 it only catches the sentinel and never suppresses real errors. The inter-slot sleep at L4388 is outside
 any DB session in both the fixed path (coherence failure) and the normal path (successful post generation).
 
-**Runtime:** Fix loaded in running process (verified via `inspect.getsource` after restart). Next natural
-NOA slot: 2026-10-02 10:00 UTC / 13:00 IDT. Natural runtime verification pending that slot.
+**Runtime verification:** Fix loaded in live process (confirmed via `inspect.getsource` on running container).
+Backend healthy. OOMKilled=false. RestartCount=0. No unexpected restarts of any other service.
+All production workloads (run_all_tasks, brand_discovery) preserved/restored via pre_restart.sh mechanism.
 
 ---
 
