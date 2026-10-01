@@ -1,5 +1,48 @@
 # AutoSpareFinder — Bug & Breaking Points Fix Tracker
-> Last scan: 2026-10-01 | Total issues found: 483 | Fixed: 483 | In Progress: 0 | Open: 0
+> Last scan: 2026-10-01 | Total issues found: 484 | Fixed: 484 | In Progress: 0 | Open: 0
+
+---
+
+## #44 — NOA marketing loop: coherence failure leaves DB session open during inter-slot sleep — 2026-10-01
+
+**Status: FULLY RESOLVED**
+
+**Root cause:**
+`_noa_marketing_loop` (BACKEND_API_ROUTES.py) used `await asyncio.sleep(_secs_until_next_post()) + continue`
+at indent=24, which is **inside** the `async with async_session_factory() as db:` block at indent=12.
+After a coherence-gate failure (3/3 attempts rejected), the loop slept for up to 7 hours with the
+SQLAlchemy session open and a transaction idle-in-transaction. PostgreSQL's `idle_in_transaction_session_timeout = 30min`
+killed the connection after 30 minutes. When the sleep ended and `continue` unwound the `async with`,
+`AsyncSession.__aexit__` tried to rollback the dead connection → `asyncpg.InterfaceError: cannot call
+Transaction.rollback(): the underlying connection is closed`. This was caught by `except Exception`,
+logged as a `noa_marketing_loop error`, and the loop slept again until the NEXT DAY's slot.
+
+**Effect:** Any coherence failure eliminated both the same-day 20:00 IDT slot AND caused the loop to
+skip an entire calendar day. Observed on 2026-09-30 and 2026-10-01: `10:02 coherence fail → 17:00 InterfaceError
+→ loop resets to next day 10:00 UTC`.
+
+**Fix:** `_SkipCycle` sentinel-exception pattern:
+1. Added `class _SkipCycle(Exception)` before `while True:` in `_noa_marketing_loop`.
+2. Replaced `await asyncio.sleep(_secs_until_next_post()); continue` with `raise _SkipCycle()`.
+3. Added `except _SkipCycle: pass` before `except Exception as exc:` — the session unwinds
+   cleanly (connection still alive, rollback succeeds), then falls through to the inter-slot sleep
+   at line 4388 which is **outside** the `async with` block.
+
+**Files changed:**
+- `backend/BACKEND_API_ROUTES.py` — 3-line change in `_noa_marketing_loop` coherence-failure path
+
+**Tests:**
+- 4 focused `_SkipCycle` control-flow tests: PASS (exits session, normal path intact, errors not swallowed, next slots reachable)
+- 43/43 AVI execution integrity tests: PASS
+- 14/14 category + AliExpress regression tests: PASS
+- 215/216 full test suite: PASS (1 pre-existing failure: `test_postgres_ports_are_not_publicly_exposed`, unrelated)
+
+**Regression guard:** The `except _SkipCycle: pass` handler is inserted BEFORE `except Exception`, so
+it only catches the sentinel and never suppresses real errors. The inter-slot sleep at L4388 is outside
+any DB session in both the fixed path (coherence failure) and the normal path (successful post generation).
+
+**Runtime:** Fix loaded in running process (verified via `inspect.getsource` after restart). Next natural
+NOA slot: 2026-10-02 10:00 UTC / 13:00 IDT. Natural runtime verification pending that slot.
 
 ---
 

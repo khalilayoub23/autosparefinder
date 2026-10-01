@@ -3945,6 +3945,9 @@ async def _noa_marketing_loop():
         6: ("discord",   "Discord — הודעה קהילתית ידידותית עם קריאה לפעולה"),
     }
 
+    class _SkipCycle(Exception):
+        """Raised inside the DB-session block to exit it cleanly before the inter-slot sleep."""
+
     while True:
         try:
             now = datetime.now(APP_LOCAL_TZ)   # IL local — weekday/season match the audience
@@ -4273,8 +4276,7 @@ async def _noa_marketing_loop():
                             alert_key="noa_coherence_gate_exhausted",
                             cooldown_s=3600,
                         )
-                        await asyncio.sleep(_secs_until_next_post())
-                        continue
+                        raise _SkipCycle()
                     # NO UTM re-injection (fix 2026-08-05, owner "fix the long link"): the
                     # finalizer deliberately produces a CLEAN bare "autosparefinder.co.il".
                     # Re-adding "?utm_source=…&utm_medium=…&utm_campaign=…" here put the long
@@ -4378,6 +4380,8 @@ async def _noa_marketing_loop():
 
                     logger.info("noa_marketing_loop: %s post generated topic=%s — %s", platform, heb_part, car)
 
+        except _SkipCycle:
+            pass  # coherence failure: session already closed, fall through to the inter-slot sleep
         except Exception as exc:
             logger.error("noa_marketing_loop error: %s", exc)
 
