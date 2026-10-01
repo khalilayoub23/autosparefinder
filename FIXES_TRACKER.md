@@ -1,5 +1,31 @@
 # AutoSpareFinder — Bug & Breaking Points Fix Tracker
-> Last scan: 2026-09-30 | Total issues found: 482 | Fixed: 482 | In Progress: 0 | Open: 0
+> Last scan: 2026-10-01 | Total issues found: 483 | Fixed: 483 | In Progress: 0 | Open: 0
+
+---
+
+## #43 — DB agent false-error reporting: status=skipped counted as err — 2026-10-01
+
+**Status: FULLY RESOLVED**
+
+**Root cause:** `err_count = len(results) - ok_count` (db_update_agent.py ~line 4823) counted
+`status=skipped` results as errors. Two tasks always return `skipped` (not executed):
+`lookup_oem_spec` (`OEM_LOOKUP_ENABLED=0`) and `enrich_pending_parts` (`ENRICH_PARTS_ENABLED=0`).
+This inflated `err_count` to 2 every cycle even with zero real failures, caused misleading
+`run_all_tasks finished: ok=19 err=2` logs, and suppressed the RESOLVED WhatsApp notification
+(`elif _prev_fail_map:` never reached because `err_count > 0` always evaluated true).
+
+**Fix:** Added `skip_count = sum(1 for r in results if r.get("status") == "skipped")` and
+changed `err_count = len(results) - ok_count - skip_count`. Also added `tasks_skipped` to the
+report dict and the log message (`ok=%d skip=%d err=%d`).
+
+**Files changed:**
+- `backend/db_update_agent.py` — counting fix, report field, log format, heartbeat field
+- `backend/tests/test_db_agent_task_counting.py` — 7 regression tests (all pass)
+
+**Regression guard:** `tests/test_db_agent_task_counting.py` covers: skipped≠error, error=error,
+unknown=error, all-ok, mixed, OOM-block filter, OOM frozenset membership.
+
+**No restart needed** — bind-mount means the fix is live on disk immediately.
 
 ---
 

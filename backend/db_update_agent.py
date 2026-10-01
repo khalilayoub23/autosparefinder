@@ -4820,7 +4820,8 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
 
         total_elapsed = round(time.monotonic() - t0, 2)
         ok_count = sum(1 for r in results if r.get("status") == "ok")
-        err_count = len(results) - ok_count
+        skip_count = sum(1 for r in results if r.get("status") == "skipped")
+        err_count = len(results) - ok_count - skip_count
 
         # Mark todos complete whose task_names all finished ok
         completed_task_names = {r["task"] for r in results if r.get("status") == "ok"}
@@ -4852,6 +4853,7 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
             "finished_at": datetime.now(timezone.utc).isoformat(),
             "total_elapsed_s": total_elapsed,
             "tasks_ok": ok_count,
+            "tasks_skipped": skip_count,
             "tasks_error": err_count,
             "shared_todos": [
                 {"id": todo["id"], "title": todo["title"], "status": todo["status"]}
@@ -4865,8 +4867,9 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
         _last_report = report
         _agent_running = False
         logger.info(
-            "run_all_tasks finished: ok=%d err=%d elapsed=%.1fs",
+            "run_all_tasks finished: ok=%d skip=%d err=%d elapsed=%.1fs",
             ok_count,
+            skip_count,
             err_count,
             total_elapsed,
         )
@@ -4974,7 +4977,7 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
             from agents.memory import AgentMemory as _AgentMemory
             _wm = _AgentMemory(db, agent_name="db_update_agent")
             await _wm.write_worker_heartbeat({
-                "status": "completed", "tasks_ok": ok_count, "tasks_error": err_count,
+                "status": "completed", "tasks_ok": ok_count, "tasks_skipped": skip_count, "tasks_error": err_count,
                 "elapsed_s": round(total_elapsed, 1),
             })
         except Exception:
