@@ -1,5 +1,92 @@
 # AutoSpareFinder — Bug & Breaking Points Fix Tracker
-> Last scan: 2026-10-01 | Total issues found: 484 | Fixed: 484 | In Progress: 0 | Open: 0
+> Last scan: 2026-10-02 | Total issues found: 485 | Fixed: 484 | In Progress: 0 | Open: 1
+
+---
+
+## #45 — car-parts.ie harvester stalled: Chrome file-lock deadlock + OOM renderer crash — 2026-09-12
+
+**Status: PARTIAL — Code fix deployed; OOM root cause requires one owner action**
+
+**Background:** 1,507 harvest_queue entries unchanged since 2026-09-12. Harvester logs
+`"could not mint cf_clearance cookie after retries"` every cycle; `done=5188/6695` frozen.
+
+**Root cause chain (3 layers):**
+
+**Layer 1 — Chrome file-lock deadlock (FIXED, prior session):**
+Chrome processes from the Sep10–11 OOM event were left in `T` (SIGSTOP) / `t` (ptrace-stop)
+state inside the FlareSolverr container. These stopped Chrome processes held an `FLOCK ADVISORY
+WRITE` lock on inode `527088` forever. Every new Chrome startup attempted the same lock and
+blocked at `wchan=locks_lock_inode_wait9`. Result: Chrome could not start at all for 20 days.
+Fix: killed all `T`/`t`-state Chrome processes (`kill -9 <pids>`) — lock cleared, Chrome starts.
+
+**Layer 2 — OOM kills Chrome renderer mid-navigation (ACTIVE BLOCKER):**
+System RAM: 12 GB, NO swap. Containers consume ~10.5 GB. FlareSolverr's Chrome:
+main(210 MB) + GPU(112 MB) + network(103 MB) + storage(82 MB) + renderer(108 MB) = ~615 MB RSS.
+When Chrome navigates to car-parts.ie, the renderer needs ~400–600 MB more for page rendering.
+Total ~1.0–1.2 GB needed. System OOM killer fires (constraint=CONSTRAINT_NONE) and kills the
+renderer (oom_score_adj=200). FlareSolverr returns HTTP 500. `_solve_clearance()` retries →
+HTTP 500 again → logs `"could not mint cf_clearance cookie after retries"`.
+
+Evidence: `dmesg | grep oom` shows Chrome PID 3343092/3343108 killed; kernel `JITWorker
+invoked oom-killer` at timestamp 4439074 and 4439075. System has 505 MB free, 2027 MB available.
+
+**Layer 3 — 0-cookie Cloudflare response (code handled):**
+When Chrome successfully loads car-parts.ie (after Layer 1 was fixed but before memory
+tightened again), FlareSolverr returned `sol.status=200 + cookies=[]`. Cloudflare did not
+issue a challenge to Chrome (either because Chrome was killed before the JS challenge ran,
+or Cloudflare's behavior changed). `_solve_clearance()` checked `sol.get("cookies")` →
+`[]` → falsy → returned False. Direct urllib still returns 403.
+
+**Code fix deployed (2026-10-02, this session):**
+`backend/harvesters/car_parts_ie_flaresolverr_harvester.py`:
+1. **Better error logging**: `_solve_clearance()` now logs distinct messages for each failure
+   mode (FlareSolverr HTTP 500 / 200+0 cookies / unexpected HTTP status) instead of silently
+   returning False or only logging a generic exception.
+2. **Session-mode fallback**: When FlareSolverr returns 200 + 0 cookies, the harvester now
+   enters "session mode" — it finds/creates a persistent FlareSolverr session and routes all
+   page fetches through it (Chrome stays alive; ~3–5 s/page vs <1 s in cookie mode).
+3. **`_fs_get_via_session()`**: new helper for FlareSolverr session-based page fetches;
+   resets to cookie mode if Chrome crashes mid-session.
+4. **`http_get()` updated**: checks `_CLEARANCE["mode"]` at the start; routes to
+   `_fs_get_via_session()` when in session mode, otherwise the existing urllib path.
+5. **`ensure_clearance()` freshness check**: now also counts a live session as "fresh"
+   (previously the empty-cookie check caused re-solve on every cycle in session mode).
+6. **Main loop guard updated**: `have_clearance` now checks EITHER a valid cookie OR a valid
+   session_id — previously it only checked `_CLEARANCE["cookie"]` which was always `""` in
+   session mode, blocking workers even when a session was established.
+
+**Verified in log (2026-10-02 06:11):**
+- Old code: silent generic failure
+- New code: `"FlareSolverr error solving clearance... HTTP Error 500"` (Layer 2 OOM error)
+- After Chrome briefly loads the page: `"FlareSolverr returned HTTP 200 but 0 cookies —
+  Cloudflare issued no challenge... Switching to session mode"` (Layer 3)
+- Session established: `"Session mode active, id=2ad8dc00..."`
+- Workers started: `▶ renault/4-112`, `▶ renault/21-estate-k48` (queue finally consumed)
+- But session page fetches fail (HTTP 500) because Chrome renderer still OOM-killed
+
+**Remaining blocker — owner action required:**
+
+Add 4 GB swap to the server. Run on the server (not inside a container):
+```bash
+fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+```
+This is a one-command host-level operation. After adding swap:
+1. Chrome renderer can use swap when RAM is tight → page loads complete without OOM
+2. `_solve_clearance()` gets either cf_clearance cookie (fast cookie mode) or 200+0 cookies
+   (session mode) — both are now handled
+3. Harvester processes the 1,507-model backlog automatically
+4. To make permanent across reboots: `echo '/swapfile none swap sw 0 0' >> /etc/fstab`
+
+**Also consuming ~670 MB unnecessarily:** idle sandbox containers (`sandbox_backend`,
+`sandbox_tools`, `sandbox_redis`, `sandbox_postgres`, `sandbox_meili`). Stopping them would
+free enough RAM for Chrome without swap:
+```bash
+docker stop sandbox_backend sandbox_tools sandbox_redis sandbox_postgres sandbox_meili
+```
+
+**Files changed:**
+- `backend/harvesters/car_parts_ie_flaresolverr_harvester.py` — session-mode fallback,
+  better logging, updated `_CLEARANCE` dict, `_fs_get_via_session()`, updated guards
 
 ---
 

@@ -439,7 +439,8 @@ def fs_cleanup_stale_sessions() -> int:
 # request per page — is what leaked Chrome and is gone.)
 import threading as _threading
 
-_CLEARANCE = {"cookie": "", "ua": _DEFAULT_UA, "ts": 0.0}
+_CLEARANCE = {"cookie": "", "ua": _DEFAULT_UA, "ts": 0.0,
+              "session_id": None, "mode": "cookie"}
 _CLEARANCE_LOCK = _threading.Lock()
 # Timestamp of the last complete ensure_clearance() failure. Prevents each http_get()
 # call from retrying the full 6×70s mint sequence when FlareSolverr is known broken.
@@ -449,34 +450,90 @@ CLEARANCE_FAIL_BACKOFF_S: int = int(os.environ.get("HARVESTER_CLEARANCE_FAIL_BAC
 
 
 def _solve_clearance() -> bool:
-    """Mint a fresh cf_clearance cookie via a SESSIONLESS FlareSolverr request. Verified
-    2026-07-23: a sessionless `request.get` spins a throwaway browser, solves, and CLOSES
-    it cleanly (chrome 0→0) — whereas sessions.create+destroy ORPHANS the browser (the leak).
-    So this leaves ZERO lingering Chrome. Tries both instances. Returns True on success."""
+    """Mint a fresh cf_clearance cookie (cookie mode) OR establish a persistent FlareSolverr
+    session (session mode) when Cloudflare does not issue a challenge to Chrome.
+
+    Cookie mode (preferred): Cloudflare challenges Chrome, Chrome passes, cf_clearance cookie
+    obtained. Plain urllib + cookie used for all subsequent page fetches (~30 min TTL).
+
+    Session mode (fallback): Cloudflare lets Chrome through without a challenge, so no
+    cf_clearance is issued. Direct urllib still returns 403. All page fetches are routed
+    through a persistent FlareSolverr session (Chrome stays alive). Slower (~3-5s/page)
+    but the only way to reach car-parts.ie when Cloudflare skips the challenge.
+
+    Root cause of session mode activation (2026-10-02): Chrome renders car-parts.ie without
+    triggering a visible CF challenge when system RAM is tight — Chrome may be OOM-killed
+    partway through the JS challenge, leaving cf_clearance unset. Add 4 GB swap to fix:
+        fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+    """
     for host in (FLARESOLVERR_2, FLARESOLVERR):   # prefer the 2nd instance if configured
         if not host:
             continue
-        try:
-            sol = _fs_call(host, {"cmd": "request.get", "url": BASE + "/",
-                                  "maxTimeout": 60000}).get("solution", {})
-            if sol.get("status") == 200 and sol.get("cookies"):
-                ck = "; ".join(c["name"] + "=" + c["value"] for c in sol["cookies"])
+        r = _fs_call(host, {"cmd": "request.get", "url": BASE + "/", "maxTimeout": 60000})
+        if r.get("status") == "error":
+            # Chrome crashed (OOM) or FlareSolverr internal error
+            log.warning(f"FlareSolverr error solving clearance on {host}: {r.get('message','')[:120]}")
+            continue
+        sol = r.get("solution", {})
+        sol_status = sol.get("status")
+        cookies = sol.get("cookies") or []
+        if sol_status == 200 and cookies:
+            # ── Cookie mode ──────────────────────────────────────────────────────
+            ck = "; ".join(c["name"] + "=" + c["value"] for c in cookies)
+            with _CLEARANCE_LOCK:
+                _CLEARANCE["cookie"] = ck
+                _CLEARANCE["ua"] = sol.get("userAgent") or _DEFAULT_UA
+                _CLEARANCE["ts"] = time.time()
+                _CLEARANCE["session_id"] = None
+                _CLEARANCE["mode"] = "cookie"
+            log.info(f"cf_clearance minted via {host.split('//')[-1].split(':')[0]} "
+                     f"({len(cookies)} cookies, sessionless)")
+            return True
+        elif sol_status == 200:
+            # ── Session mode fallback ─────────────────────────────────────────────
+            # Chrome loaded car-parts.ie (real content, HTTP 200) but Cloudflare issued
+            # no challenge → 0 cookies. This happens when Chrome is OOM-killed before
+            # the CF JS challenge runs, or if Cloudflare bypasses Chrome entirely.
+            # Direct urllib still returns 403. Route all fetches through a persistent
+            # FlareSolverr session instead (ONE Chrome instance kept alive).
+            log.warning(
+                "cf_clearance: FlareSolverr returned HTTP 200 but 0 cookies — "
+                "Cloudflare issued no challenge to Chrome (possibly OOM mid-challenge). "
+                "Switching to session mode: all page fetches via FlareSolverr session. "
+                "To restore faster cookie mode: add 4 GB swap → "
+                "`fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile`"
+            )
+            sess_resp = _fs_call(host, {"cmd": "sessions.list"})
+            sess_list = sess_resp.get("sessions", []) if sess_resp.get("status") == "ok" else []
+            if not sess_list:
+                cre = _fs_call(host, {"cmd": "sessions.create"})
+                if cre.get("session"):
+                    sess_list = [cre["session"]]
+            if sess_list:
+                sid = sess_list[0]
                 with _CLEARANCE_LOCK:
-                    _CLEARANCE["cookie"] = ck
+                    _CLEARANCE["cookie"] = ""
                     _CLEARANCE["ua"] = sol.get("userAgent") or _DEFAULT_UA
                     _CLEARANCE["ts"] = time.time()
-                log.info(f"cf_clearance minted via {host.split('//')[-1].split(':')[0]} "
-                         f"({len(sol['cookies'])} cookies, sessionless)")
+                    _CLEARANCE["session_id"] = sid
+                    _CLEARANCE["mode"] = "session"
+                log.info(f"Session mode active, id={sid[:8]}... via {host}")
                 return True
-        except Exception as e:
-            log.warning(f"clearance solve error on {host}: {str(e)[:80]}")
+            log.warning("Session mode: could not obtain FlareSolverr session")
+        else:
+            log.warning(f"cf_clearance: unexpected sol_status={sol_status} cookies={len(cookies)}")
     return False
 
 
 def ensure_clearance(force: bool = False) -> bool:
     global _CLEARANCE_FAILED_TS
     with _CLEARANCE_LOCK:
-        fresh = bool(_CLEARANCE["cookie"]) and (time.time() - _CLEARANCE["ts"] < CLEARANCE_TTL_S)
+        _ts = _CLEARANCE["ts"]
+        _not_expired = (time.time() - _ts < CLEARANCE_TTL_S)
+        cookie_fresh = bool(_CLEARANCE["cookie"]) and _not_expired
+        session_fresh = (bool(_CLEARANCE.get("session_id")) and _not_expired
+                         and _CLEARANCE.get("mode") == "session")
+        fresh = cookie_fresh or session_fresh
     if fresh and not force:
         return True
     # If FlareSolverr is known broken (failed recently), fail fast — don't retry 6×70s
@@ -494,9 +551,54 @@ def ensure_clearance(force: bool = False) -> bool:
     return False
 
 
+def _fs_get_via_session(url: str, session_id: str, timeout_s: int) -> str:
+    """Fetch a car-parts.ie URL via a persistent FlareSolverr session (session mode).
+    On Chrome crash (FlareSolverr error), resets _CLEARANCE to trigger re-solve next cycle."""
+    host = FLARESOLVERR or FLARESOLVERR_2
+    if not host:
+        return ""
+    r = _fs_call(host, {
+        "cmd": "request.get",
+        "url": url,
+        "session": session_id,
+        "maxTimeout": min(timeout_s, 55) * 1000,
+    })
+    if r.get("status") == "error":
+        log.warning(f"session fetch failed ({r.get('message','')[:80]}) — resetting to cookie mode")
+        with _CLEARANCE_LOCK:
+            _CLEARANCE["session_id"] = None
+            _CLEARANCE["mode"] = "cookie"
+            _CLEARANCE["ts"] = 0.0
+        return ""
+    sol = r.get("solution", {})
+    if sol.get("status") == 200:
+        return sol.get("response", "")
+    if sol.get("status") in (403, 503, 429):
+        with _CLEARANCE_LOCK:
+            _CLEARANCE["ts"] = 0.0  # force re-solve on next ensure_clearance()
+        return ""
+    return ""
+
+
 def http_get(url: str, timeout_s: int = 40) -> str:
-    """Fetch a car-parts.ie page with plain urllib + the cf_clearance cookie — NO browser.
-    On a Cloudflare block (403/503/429) refresh the cookie once and retry."""
+    """Fetch a car-parts.ie page. Cookie mode: plain urllib + cf_clearance (fast, <1s/page).
+    Session mode: FlareSolverr persistent session (slow, ~3-5s/page — fallback when
+    Cloudflare does not issue cf_clearance to Chrome). On a Cloudflare block, refreshes
+    the cookie/session once and retries."""
+    # ── Session mode: route all fetches through FlareSolverr ─────────────────────
+    with _CLEARANCE_LOCK:
+        mode = _CLEARANCE.get("mode", "cookie")
+        session_id = _CLEARANCE.get("session_id")
+    if mode == "session":
+        if not session_id:
+            ensure_clearance()
+            with _CLEARANCE_LOCK:
+                session_id = _CLEARANCE.get("session_id")
+            if not session_id:
+                return ""
+        return _fs_get_via_session(url, session_id, timeout_s)
+
+    # ── Cookie mode: plain urllib + cf_clearance ──────────────────────────────────
     for attempt in range(2):
         with _CLEARANCE_LOCK:
             ck, ua = _CLEARANCE["cookie"], _CLEARANCE["ua"]
@@ -770,12 +872,14 @@ def main():
         # Guard: do NOT start workers when clearance is unavailable. Without this,
         # workers claim models (set in_progress) then fail every page with "", marking
         # models "empty" permanently — burning the entire queue with false-empty status.
-        # If FlareSolverr can't mint a cookie, sleep and retry next cycle instead.
+        # If FlareSolverr can't mint a cookie (cookie mode) or establish a session
+        # (session mode), sleep and retry next cycle instead.
         with _CLEARANCE_LOCK:
-            have_clearance = bool(_CLEARANCE["cookie"])
+            have_clearance = bool(_CLEARANCE["cookie"]) or (
+                _CLEARANCE.get("mode") == "session" and bool(_CLEARANCE.get("session_id")))
         if not have_clearance:
-            log.warning("No valid cf_clearance — skipping worker cycle to avoid false-empty queue burn. "
-                        "Sleeping 60s before retry.")
+            log.warning("No valid cf_clearance/session — skipping worker cycle to avoid false-empty "
+                        "queue burn. Sleeping 60s before retry.")
             time.sleep(60)
             continue
 
