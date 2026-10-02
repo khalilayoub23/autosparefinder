@@ -1,5 +1,128 @@
 # AutoSpareFinder — Bug & Breaking Points Fix Tracker
-> Last scan: 2026-10-02 | Total issues found: 485 | Fixed: 484 | In Progress: 0 | Open: 1
+> Last scan: 2026-10-02 | Total issues found: 490 | Fixed: 489 | In Progress: 0 | Open: 1
+
+---
+
+## #50 — Monitoring blind spot: OOM watchdog + FlareSolverr health + harvester stall detection + WhatsApp empty-body — 2026-10-02
+
+**Status: FULLY RESOLVED — 49 regression tests PASS**
+
+**Root causes (5 independent structural gaps, all fixed):**
+
+### RC1 — OOM kills were invisible until manual inspection
+The backend container had no mechanism to detect when the cgroup OOM killer fired. `oom_kill` counter
+lived in `/sys/fs/cgroup/memory.events` but nothing read it. The only signal was degraded behavior.
+
+**Fix:** `_oom_watchdog_loop()` added to `BACKEND_API_ROUTES.py`.
+- Reads `/sys/fs/cgroup/memory.events` for `oom_kill` on every 300s poll.
+- Redis-persisted baseline (`autospare:oom_watchdog:baseline`): startup check compares current
+  vs baseline; in-run check watches for increases.
+- Alerts via `notify_owner(severity="critical", alert_key="oom_watchdog_startup")` on startup
+  if OOM kills happened since last container start, `alert_key="oom_watchdog_new_kills"` in-run.
+- Gracefully exits when cgroup is unavailable (`_read_oom_kills()` returns -1).
+- `_mem_avail_mb()` reads `/proc/meminfo` for MemAvailable to include in alert body.
+- Registered: `_supervised_task("oom_watchdog", _oom_watchdog_loop())` in startup().
+
+### RC2 — FlareSolverr OOM 500-loop went undetected by health monitor
+`_health_monitor_loop._probe()` checked Meilisearch, Redis, Stripe, and WhatsApp but NOT FlareSolverr.
+The harvester's log-mtime healthcheck reported `status=ok` even during a 100% FlareSolverr stall
+(harvester logs a WARNING every ~12s → log is always "fresh").
+
+**Fix:** FlareSolverr probe added to `_health_monitor_loop._probe()`.
+- `POST {FLARESOLVERR_URL} {"cmd": "sessions.list"}` — lightest valid API call.
+- Returns `"ok"` on HTTP 200, `"error"` otherwise or on connection refused.
+- `"flaresolverr"` added to `SERVICE_LABELS` and `SERVICE_ACTIONS` dicts.
+- State-change alerting is free — same ok→error / error→ok recovery machinery used for Redis/Meili.
+
+### RC3 — Harvester consecutive FlareSolverr failures undetected (log-age blind spot)
+`_car_parts_ie_harvester_healthcheck_loop()` detected stalls via log file mtime. When FlareSolverr
+returns HTTP 500 on every clearance attempt, the harvester logs a WARNING every ~12s — log mtime
+is always within the 15-min freshness window — so the healthcheck returned `status=ok` throughout
+a 100% stall. Nothing counted consecutive clearance failures.
+
+**Fix (two-part):**
+1. **Harvester writes state file** (`/app/state/harvester_fs_health.json`):
+   - `_write_fs_health(consecutive_fails)` called after every `ensure_clearance()` attempt.
+   - `_FS_CONSECUTIVE_FAILS` global counter: incremented on failure, reset to 0 on success.
+   - File contains `{"consecutive_fails": N, "ts": ..., "mode": "cookie|session"}`.
+2. **Healthcheck loop reads and alerts**:
+   - Added consecutive-failure check block in `_car_parts_ie_harvester_healthcheck_loop()`.
+   - Alerts at `>= HARVESTER_FS_FAIL_ALERT_THRESHOLD` (default 10, env-overridable).
+   - Alert key `"harvester_fs_consecutive_fails"`, severity `"critical"`, cooldown 3600s.
+   - Exception-safe: file missing or malformed → logged + skipped, loop continues.
+
+### RC4 — Harvest supervisor state reset to None on OOM restart → 30-60 min blind window
+`_harvest_supervisor_loop()` keeps `_prev_done`, `_prev_parts`, `_harvest_alert_state`,
+`_last_report_utc` as in-memory variables. After an OOM kill + container restart, all reset to
+`None`. First while-loop iteration: `_last_report_utc is None` → `first_sample=True` →
+`_harvest_status_decision` returns `("ok", False)` regardless of actual harvester state.
+An ongoing stall went unreported for 30-60 min (until the next sample after the first).
+
+**Fix:** Redis persistence for supervisor state.
+- Key `autospare:harvest_supervisor:prev_v2`, 7-day TTL.
+- On first while-loop iteration (`_redis_state_loaded=False`): restore `_prev_done`, `_prev_parts`,
+  `_harvest_alert_state`, `_last_report_utc` from Redis. Sets `first_sample=False` so stall
+  detection is active from the first post-restart sample.
+- After each state update: persist all four values to Redis.
+- Redis failure falls back to in-memory (`first_sample=True` on next check → safe, conservative).
+
+### RC5 — WhatsApp empty body entered 5-retry loop producing confusing bridge 503s
+Baileys recovery path could return `{"conversation": ""}` for unknown message IDs.
+An empty string could reach `send_message()` and enter the 5-retry loop, burning bridge
+capacity and generating confusing `503` errors indistinguishable from genuine bridge failures.
+
+**Fix:** Empty-body invariant guard at provider boundary (`social/whatsapp_provider.py`).
+- Before any network code: `if not text or not str(text).strip(): return {"ok": False, "error": "INVALID_PAYLOAD: empty body", "key": None}`
+- Returns `INVALID_PAYLOAD` (structurally distinct from `BRIDGE_DOWN`).
+- Callers can distinguish: `"INVALID_PAYLOAD" in error` = caller bug; other error = bridge failure.
+
+**Tests (49/49 PASS — verified live 2026-10-02):**
+- `tests/test_whatsapp_empty_body_guard.py` — 8 tests (parametrized: "", "   ", "\t\n", None, None-coerced; valid body passes; INVALID_PAYLOAD ≠ BRIDGE_DOWN)
+- `tests/test_oom_watchdog.py` — 11 tests (cgroup parsing, notify on new kills, baseline unchanged → no notify, distinct startup/runtime keys, Redis unavailable fallback, cgroup unavailable graceful exit, mem_avail parsing)
+- `tests/test_harvest_supervisor_persistence.py` — 13 tests (first_sample=True never alerts; Redis restore makes first_sample=False; stall/recovery/idle/ok states; cooldown realert; JSON round-trip; Redis failure fallback)
+- `tests/test_flaresolverr_health.py` — 17 tests (probe ok/error/connection-refused/skip; state-change alerts; no alert unchanged; consecutive_fails threshold; reset on success; file round-trip; missing/malformed file safe)
+
+**Breaking points checked before merging:**
+- OOM watchdog: cgroup unavailable → graceful exit (does NOT block startup); Redis unavailable → in-memory only.
+- FlareSolverr probe: network failure → "error" (not exception propagation); missing `FLARESOLVERR_URL` → probe skipped.
+- Harvester state file: write failure → `except: pass` (no crash); read failure → healthcheck skips that block.
+- Redis persistence: restore failure → `first_sample=True` (conservative, no false alerts); persist failure → silent.
+- WhatsApp guard: `None` text → coerced to str before `.strip()` → safe.
+
+**Files changed:**
+- `backend/social/whatsapp_provider.py` — empty-body guard
+- `backend/BACKEND_API_ROUTES.py` — OOM watchdog, FlareSolverr probe, healthcheck FS-health check, supervisor Redis persistence
+- `backend/harvesters/car_parts_ie_flaresolverr_harvester.py` — `_write_fs_health()`, `_FS_CONSECUTIVE_FAILS`, `ensure_clearance()` updates
+- `backend/tests/test_whatsapp_empty_body_guard.py` — new (8 tests)
+- `backend/tests/test_oom_watchdog.py` — new (11 tests)
+- `backend/tests/test_harvest_supervisor_persistence.py` — new (13 tests)
+- `backend/tests/test_flaresolverr_health.py` — new (17 tests)
+
+**No production restart required.** Changes take effect on next scheduled container restart.
+
+---
+
+## #49 — [placeholder — see next entry gap filled by #50 above]
+
+*Tracking number reserved; combined with #50 root-fix bundle.*
+
+---
+
+## #48 — [placeholder]
+
+*Tracking number reserved.*
+
+---
+
+## #47 — [placeholder]
+
+*Tracking number reserved.*
+
+---
+
+## #46 — [placeholder]
+
+*Tracking number reserved.*
 
 ---
 

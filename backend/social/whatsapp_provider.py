@@ -38,6 +38,10 @@ def parse_incoming(data: dict) -> dict:
 
 async def send_message(to: str, text: str, reply_jid: str = "") -> dict:
     """Send WhatsApp message via Baileys bridge."""
+    # Invariant: never send an empty body. An empty message is a caller error, not a
+    # bridge-down event — it must not enter the retry loop (root-fix 2026-10-02).
+    if not text or not str(text).strip():
+        return {"ok": False, "error": "INVALID_PAYLOAD: empty body", "key": None}
     payload = {"to": _normalize_bridge_phone(to), "text": text}
     if reply_jid:
         payload["reply_jid"] = reply_jid

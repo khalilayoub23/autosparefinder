@@ -448,6 +448,26 @@ _CLEARANCE_LOCK = _threading.Lock()
 _CLEARANCE_FAILED_TS: float = 0.0
 CLEARANCE_FAIL_BACKOFF_S: int = int(os.environ.get("HARVESTER_CLEARANCE_FAIL_BACKOFF_S", "120"))
 
+# ── FlareSolverr health state file ───────────────────────────────────────────
+# Written after each ensure_clearance() attempt so the healthcheck loop in
+# BACKEND_API_ROUTES.py can detect consecutive failures without parsing log files.
+# The log-age check (existing healthcheck) is blind when the harvester is 500-looping
+# because it logs every ~12s — always "fresh" — while making zero progress.
+_FS_HEALTH_FILE = _BASE_DIR / "state" / "harvester_fs_health.json"
+_FS_CONSECUTIVE_FAILS: int = 0
+
+
+def _write_fs_health(consecutive_fails: int) -> None:
+    """Write FlareSolverr clearance health state for the external healthcheck to read."""
+    try:
+        _FS_HEALTH_FILE.write_text(json.dumps({
+            "consecutive_fails": consecutive_fails,
+            "ts": time.time(),
+            "mode": _CLEARANCE.get("mode", "cookie"),
+        }))
+    except Exception:
+        pass
+
 
 def _solve_clearance() -> bool:
     """Mint a fresh cf_clearance cookie (cookie mode) OR establish a persistent FlareSolverr
@@ -526,7 +546,7 @@ def _solve_clearance() -> bool:
 
 
 def ensure_clearance(force: bool = False) -> bool:
-    global _CLEARANCE_FAILED_TS
+    global _CLEARANCE_FAILED_TS, _FS_CONSECUTIVE_FAILS
     with _CLEARANCE_LOCK:
         _ts = _CLEARANCE["ts"]
         _not_expired = (time.time() - _ts < CLEARANCE_TTL_S)
@@ -544,10 +564,14 @@ def ensure_clearance(force: bool = False) -> bool:
     for _ in range(3):  # reduced from 6 — failure is faster with back-off in place
         if _solve_clearance():
             _CLEARANCE_FAILED_TS = 0.0  # clear failure state on success
+            _FS_CONSECUTIVE_FAILS = 0
+            _write_fs_health(0)
             return True
         time.sleep(6)
     log.error("could not mint cf_clearance cookie after retries")
     _CLEARANCE_FAILED_TS = time.time()  # record failure so next call skips the 3×70s attempt
+    _FS_CONSECUTIVE_FAILS += 1
+    _write_fs_health(_FS_CONSECUTIVE_FAILS)
     return False
 
 

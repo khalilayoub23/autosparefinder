@@ -2054,8 +2054,35 @@ async def _harvest_supervisor_loop() -> None:
     _prev_parts: int | None = None
     _harvest_alert_state: str | None = None      # ok | stalled | idle
     _harvest_alert_sent_utc: "datetime | None" = None
+    _REDIS_PREV_KEY = "autospare:harvest_supervisor:prev_v2"
+    _redis_state_loaded = False
     while True:
         try:
+            # Restore persistent state from Redis on first iteration (root-fix 2026-10-02).
+            # Without this, an OOM restart sets _last_report_utc=None → first_sample=True →
+            # _harvest_status_decision returns ("ok", False) even if the harvester was stalled
+            # before the restart. With Redis, the previous done/parts count is recovered and
+            # the delta is computed correctly, allowing immediate stall re-detection.
+            if not _redis_state_loaded:
+                try:
+                    _r = await get_redis()
+                    _stored = await _r.get(_REDIS_PREV_KEY)
+                    if _stored:
+                        _sv = json.loads(_stored)
+                        _prev_done = _sv.get("done")
+                        _prev_parts = _sv.get("parts")
+                        _harvest_alert_state = _sv.get("alert_state")
+                        if _sv.get("ts"):
+                            _last_report_utc = datetime.fromisoformat(_sv["ts"])
+                        print(
+                            f"[harvest_supervisor] restored from Redis: "
+                            f"done={_prev_done} state={_harvest_alert_state}",
+                            flush=True,
+                        )
+                except Exception as _rx:
+                    print(f"[harvest_supervisor] Redis state restore failed: {_rx}", flush=True)
+                _redis_state_loaded = True
+
             async with async_session_factory() as db:
                 row = (await db.execute(text("""
                     SELECT
@@ -2192,6 +2219,18 @@ async def _harvest_supervisor_loop() -> None:
                     _last_report_utc = _now
                     _prev_done = done
                     _prev_parts = parts
+                    # Persist state to Redis so a restart can restore it and avoid
+                    # treating a post-restart sample as first_sample (root-fix 2026-10-02).
+                    try:
+                        _r = await get_redis()
+                        await _r.set(_REDIS_PREV_KEY, json.dumps({
+                            "done": _prev_done,
+                            "parts": _prev_parts,
+                            "alert_state": _harvest_alert_state,
+                            "ts": _last_report_utc.isoformat() if _last_report_utc else None,
+                        }), ex=86400 * 7)
+                    except Exception:
+                        pass  # Redis unavailable — in-memory only this cycle; will retry next
 
                 _il_hour = (_now.hour + 3) % 24
                 _today = _now.strftime("%Y-%m-%d")
@@ -2416,6 +2455,39 @@ async def _car_parts_ie_harvester_healthcheck_loop() -> None:
 
             if stalled:
                 await _force_kill_pid(pid, "stalled harvester")
+
+            # Consecutive clearance-failure detection (root-fix 2026-10-02).
+            # The log-age healthcheck (above) is blind when FlareSolverr 500-loops:
+            # the harvester logs a warning every ~12s → log is never stale → status=ok
+            # even during 100% stall. The harvester now writes a JSON state file
+            # (harvester_fs_health.json) after each ensure_clearance() attempt.
+            # Alert if ≥ 10 consecutive failures (~30 min of FlareSolverr being broken).
+            _FS_ALERT_THRESHOLD = int(os.getenv("HARVESTER_FS_FAIL_ALERT_THRESHOLD", "10"))
+            try:
+                import json as _hcj
+                _fs_health_path = os.path.join(
+                    os.path.dirname(os.path.abspath(__file__)), "state", "harvester_fs_health.json"
+                )
+                if os.path.exists(_fs_health_path):
+                    with open(_fs_health_path) as _fh:
+                        _fhs = _hcj.load(_fh)
+                    _consec = _fhs.get("consecutive_fails", 0)
+                    if _consec >= _FS_ALERT_THRESHOLD:
+                        await notify_owner(
+                            "harvest",
+                            f"שאיבה: FlareSolverr נכשל {_consec} פעמים ברציפות",
+                            f"כל ניסיונות קבלת cf_clearance נכשלו — Chrome קורס (OOM?) או FlareSolverr בעייתי.\n"
+                            f"הקטלוג לא מתקדם.\n"
+                            f"פעולה — הוסף swap לשרת:\n"
+                            f"fallocate -l 4G /swapfile && chmod 600 /swapfile && "
+                            f"mkswap /swapfile && swapon /swapfile",
+                            severity="critical",
+                            alert_key="harvester_fs_consecutive_fails",
+                            cooldown_s=3600,
+                        )
+                        print(f"[car_parts_ie_healthcheck] FlareSolverr: {_consec} consecutive failures — alerted", flush=True)
+            except Exception as _fex:
+                print(f"[car_parts_ie_healthcheck] fs_health check skipped: {_fex}", flush=True)
 
             # FlareSolverr session-leak guard (added 2026-07-07). Second layer
             # behind the harvester's own per-cycle cleanup: if sessions ever
@@ -2725,6 +2797,7 @@ async def startup():
     _supervised_task("pending_payment_reminder",    _pending_payment_reminder_loop())
     _supervised_task("price_watch_loop",            _price_watch_loop())
     _supervised_task("health_monitor_loop",         _health_monitor_loop())
+    _supervised_task("oom_watchdog",                _oom_watchdog_loop())
     _supervised_task("vip_detection_loop",          _vip_detection_loop())
     _supervised_task("backup_loop",                 _backup_loop())
     start_scraper_task()           # ← catalog scraper: every 3h (owns its own task internally)
@@ -4809,6 +4882,130 @@ async def _stuck_orders_monitor_loop():
         await asyncio.sleep(STUCK_ORDER_CHECK_INTERVAL_MIN * 60)
 
 
+# ── OOM watchdog loop ───────────────────────────────────────────────────────
+async def _oom_watchdog_loop() -> None:
+    """Poll /sys/fs/cgroup/memory.events every OOM_WATCHDOG_INTERVAL_S seconds (default 5 min).
+
+    Detects NEW OOM kill events inside this container's own cgroup.
+    Persists the baseline count to Redis so the comparison survives in-process restarts
+    within a single container lifetime. Does NOT survive container restarts (the kernel
+    resets the counter on each new cgroup). A container restart is itself a signal caught
+    by the _supervised_task crash callback.
+
+    FlareSolverr OOM events live in a different cgroup and are not readable from here;
+    they are proxied by the FlareSolverr health probe in _health_monitor_loop.
+
+    Root cause of the Sep-12 outage: 28 Chrome OOM kills in FlareSolverr container +
+    uvicorn OOM kill in backend container, all silent. This loop adds the backend half.
+    """
+    CGROUP_PATH = "/sys/fs/cgroup/memory.events"
+    REDIS_KEY   = "autospare:oom_watchdog:baseline_v2"
+    INTERVAL_S  = int(os.getenv("OOM_WATCHDOG_INTERVAL_S", "300"))
+
+    def _read_oom_kills() -> int:
+        """Read oom_kill counter from cgroup v2 memory.events. Returns -1 if unavailable."""
+        try:
+            with open(CGROUP_PATH) as _f:
+                for _line in _f:
+                    if _line.startswith("oom_kill "):
+                        return int(_line.split()[1])
+        except Exception:
+            pass
+        return -1
+
+    def _mem_avail_mb() -> float:
+        """Read MemAvailable from /proc/meminfo. Returns 0.0 if unavailable."""
+        try:
+            with open("/proc/meminfo") as _mf:
+                for _ml in _mf:
+                    if _ml.startswith("MemAvailable:"):
+                        return int(_ml.split()[1]) / 1024
+        except Exception:
+            pass
+        return 0.0
+
+    await asyncio.sleep(30)  # let startup tasks settle
+
+    current = _read_oom_kills()
+    if current < 0:
+        print("[oom_watchdog] /sys/fs/cgroup/memory.events unavailable — watchdog disabled", flush=True)
+        return  # cgroup v1 or restricted container; exit gracefully
+
+    # Baseline from Redis (survives in-process restarts; a container restart resets the
+    # cgroup counter anyway so a post-restart reading of >0 means OOM within THIS run).
+    baseline: int = 0
+    try:
+        _r = await get_redis()
+        _stored = await _r.get(REDIS_KEY)
+        if _stored is not None:
+            baseline = int(_stored)
+    except Exception:
+        pass
+
+    # Startup check: if the counter is already above the saved baseline (or >0 with no
+    # baseline), OOM kills happened since this container started — alert immediately.
+    if current > baseline:
+        new_kills = current - baseline
+        _free = _mem_avail_mb()
+        await notify_owner(
+            "health",
+            f"🔴 {new_kills} OOM kill(s) זוהו בהפעלה (Backend container)",
+            f"{new_kills} תהליך(ים) נהרגו ע\"י ה-OOM killer בהפעלה האחרונה.\n"
+            f"RAM פנוי: {_free:.0f} MB\n"
+            f"פעולה מומלצת — הוסף swap:\n"
+            f"fallocate -l 4G /swapfile && chmod 600 /swapfile && "
+            f"mkswap /swapfile && swapon /swapfile",
+            severity="critical",
+            alert_key="oom_watchdog_startup",
+            cooldown_s=3600,
+        )
+        print(f"[oom_watchdog] startup: {new_kills} new OOM kill(s) (total={current})", flush=True)
+    else:
+        print(f"[oom_watchdog] startup: oom_kills={current} (baseline={baseline}) — clean", flush=True)
+
+    # Store current as the new baseline for this container run
+    baseline = current
+    try:
+        _r = await get_redis()
+        await _r.set(REDIS_KEY, str(baseline), ex=86400)
+    except Exception:
+        pass
+
+    while True:
+        await asyncio.sleep(INTERVAL_S)
+        try:
+            current = _read_oom_kills()
+            if current < 0:
+                continue
+            if current > baseline:
+                new_kills = current - baseline
+                baseline = current
+                try:
+                    _r = await get_redis()
+                    await _r.set(REDIS_KEY, str(baseline), ex=86400)
+                except Exception:
+                    pass
+                _free = _mem_avail_mb()
+                await notify_owner(
+                    "health",
+                    f"🔴 {new_kills} OOM kill(s) חדשים — Backend container",
+                    f"{new_kills} תהליך(ים) נהרגו ע\"י ה-OOM killer בדקות האחרונות.\n"
+                    f"RAM פנוי: {_free:.0f} MB\n"
+                    f"סה\"כ במריצה זו: {current} OOM kill(s).\n"
+                    f"פעולה מומלצת — הוסף swap:\n"
+                    f"fallocate -l 4G /swapfile && chmod 600 /swapfile && "
+                    f"mkswap /swapfile && swapon /swapfile",
+                    severity="critical",
+                    alert_key="oom_watchdog_new_kills",
+                    cooldown_s=1800,
+                )
+                print(f"[oom_watchdog] {new_kills} new OOM kill(s) detected (total={current})", flush=True)
+        except asyncio.CancelledError:
+            raise
+        except Exception as _exc:
+            print(f"[oom_watchdog] error: {_exc}", flush=True)
+
+
 # ── Health monitor loop ─────────────────────────────────────────────────────
 async def _health_monitor_loop():
     """
@@ -4846,6 +5043,7 @@ async def _health_monitor_loop():
         # clamav DECOMMISSIONED 2026-07-12 (RAM-incompatible with this no-swap box;
         # uploads fail-open). Removed from health probes so it no longer alerts.
         "stripe":           "Stripe (תשלומים)",
+        "flaresolverr":     "FlareSolverr (מעקף Cloudflare)",
     }
     # F4-fix 2026-09-01: service-specific diagnostic hints so owner has an immediate
     # actionable step instead of a generic "check the system" instruction.
@@ -4857,6 +5055,7 @@ async def _health_monitor_loop():
         "meilisearch":      "docker logs autospare_meilisearch --tail 30",
         "huggingface":      "בדוק את HF_TOKEN ב-.env",
         "stripe":           "בדוק את STRIPE_SECRET_KEY ב-.env",
+        "flaresolverr":     "docker logs flaresolverr --tail 30",
     }
 
     async def _probe() -> dict:
@@ -4903,6 +5102,19 @@ async def _health_monitor_loop():
 
         _stripe_key, _ = resolve_stripe_secret_key()
         states["stripe"] = "ok" if is_valid_stripe_secret_key(_stripe_key) else "error"
+
+        # FlareSolverr probe (root-fix 2026-10-02): the primary Cloudflare-bypass
+        # service for the car-parts.ie harvester was not previously monitored here,
+        # leaving a 30-min blind spot. sessions.list is the lightest valid API call
+        # (no Chrome launch). Only probe if configured (env set).
+        _fs_url = os.getenv("FLARESOLVERR_URL", "")
+        if _fs_url:
+            try:
+                async with _httpx.AsyncClient(timeout=8) as _hc:
+                    _resp = await _hc.post(_fs_url, json={"cmd": "sessions.list"})
+                states["flaresolverr"] = "ok" if _resp.status_code == 200 else "error"
+            except Exception:
+                states["flaresolverr"] = "error"
 
         return states
 
