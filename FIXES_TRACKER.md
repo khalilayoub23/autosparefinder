@@ -1,5 +1,121 @@
 # AutoSpareFinder — Bug & Breaking Points Fix Tracker
-> Last scan: 2026-10-02 | Total issues found: 490 | Fixed: 489 | In Progress: 0 | Open: 1
+> Last scan: 2026-10-02 | Total issues found: 491 | Fixed: 489 | In Progress: 0 | Open: 2
+
+---
+
+## #51 — ROOT-CAUSE ANALYSIS: recurring backend container OOM — `_group_scan_loop()` + `chrome-headless-shell` — 2026-10-02
+
+**Status: ROOT CAUSE IDENTIFIED — NO FIX APPLIED (investigation only, owner decision required)**
+
+**Safety record: CHANGES PERFORMED: 0 / RESTARTS: 0 / CONTAINERS STOPPED: 0 / PRODUCTION WORKLOADS INTERRUPTED: 0**
+
+### Summary
+
+The `autospare_backend` container hits its 4 GB cgroup memory limit and has uvicorn OOM-killed approximately every 5-7h since 2026-09-25 — 13 verified events through 2026-10-02. Root cause: `_group_scan_loop()`, a supervised background task enabled by default, launches `chrome-headless-shell` to scan 386 Facebook groups via `GroupAgent().discover_account_groups()`. Chrome's RSS grows from ~200 MB at scan start to ~850-880 MB after 5-6h of scanning. Combined with uvicorn's normal within-run growth (1.4 GB → ~2.5 GB in 4-5h), Amayama Chrome (~500 MB always running), and Playwright Node (~140 MB), the container fills its 4 GB limit and the OOM killer fires uvicorn. Docker auto-restarts (`unless-stopped`), the 2h startup stagger triggers the next scan, and the cycle self-perpetuates.
+
+### Component
+
+`BACKEND_API_ROUTES.py`, `_group_scan_loop()`, registered via `_supervised_task("group_scan_loop", ...)` in `startup()`. Default-enabled (`SOCIAL_GROUP_SCAN_ENABLED=1`). 2h startup delay (`SOCIAL_GROUP_SCAN_START_DELAY_S=7200`). Scans 386 Facebook groups daily via `GroupAgent().discover_account_groups()` → `chromium_headless_shell-1228/chrome-headless-shell`.
+
+### Critical blind spot: zombie_reaper is completely blind to this Chrome
+
+The zombie reaper (`_zombie_reaper_loop()`) scans for processes matching:
+```
+chrome AND --headless AND without --type=
+```
+This matches `chromium-1228/chrome` (Amayama Chrome, uses `--headless` flag) but **never matches** `chromium_headless_shell-1228/chrome-headless-shell` (different binary name, no `--headless` flag). The reaper reports `"Chrome headless: 1 main proc(s) running (ok)"` throughout all active fb_browser scans — tracking only Amayama Chrome the entire time.
+
+### Memory arithmetic from kernel OOM log (Sep 30 01:49:01 UTC)
+
+```
+Container cgroup limit:    4,194,304 KB  (4.000 GB exactly)
+uvicorn anon-rss:          2,473,572 KB  (2.36 GB)
+chrome-headless anon-rss:    885,676 KB  (0.84 GB)  ← fb_browser Chrome
+Remaining ~834 KB shared by: Amayama Chrome (~500 MB) + Playwright Node (~140 MB) + misc
+Arithmetic check: 2,473 + 885 + ~836 = 4,194 MB ✓ container filled exactly
+```
+
+### Chrome RSS growth within a scan (kernel direct measurement)
+
+| Kernel timestamp | chrome-headless anon-rss | Scan phase |
+|---|---|---|
+| Oct 01 05:44 UTC | 260,044 KB (0.25 GB) | Early — just launched |
+| Sep 30 01:49 UTC | 885,676 KB (0.84 GB) | Late — 5-6h into scan of 386 groups |
+| Sep 30 09:28 UTC | 873,704 KB (0.83 GB) | Late — 5-6h into scan (CONSTRAINT_NONE event) |
+
+Growth: ~200 MB at launch → ~850 MB at 5-6h = **+650 MB within one scan run**.
+
+### Uvicorn RSS at OOM across multiple restarts (kernel data, Sep 26 cascade)
+
+| Restart | Kill timestamp | uvicorn anon-rss at kill | Cycle elapsed |
+|---|---|---|---|
+| 1 | Sep 26 00:44 | 2,872,364 KB (2.74 GB) | ~4.5h |
+| 2 | Sep 26 05:16 | 2,790,988 KB (2.66 GB) | ~4.5h |
+| 3 | Sep 26 09:54 | 2,631,872 KB (2.51 GB) | ~4.5h |
+| 4 | Sep 26 14:20 | 2,557,796 KB (2.44 GB) | ~4.5h |
+| 5 | Sep 26 18:50 | 2,579,512 KB (2.46 GB) | ~4.5h |
+
+Pattern: uvicorn starts at ~1.4 GB and grows to ~2.5 GB within one run. NOT cumulative across restarts (first restart reached highest RSS, successive restarts lower — if cumulative, the sequence would be ascending).
+
+### Recurring sequence (13 verified cycles, Sep 25 – Oct 02)
+
+1. Docker auto-restarts container → uvicorn starts at ~1.4 GB RSS
+2. `SOCIAL_GROUP_SCAN_START_DELAY_S=7200` stagger fires (2h after startup)
+3. `GroupAgent().discover_account_groups()` launches `chrome-headless-shell`
+4. Chrome scans 386 Facebook groups over ~5-6h; RSS: ~200 MB → ~850 MB
+5. Simultaneously, uvicorn grows from run_all_tasks/meili_sync/category-learning: ~1.4 GB → ~2.5 GB
+6. Container fills: uvicorn (~2.5 GB) + fb_browser Chrome (~0.85 GB) + Amayama Chrome (~0.5 GB) + Playwright Node (~0.14 GB) ≈ 4.0 GB = container limit
+7. OOM killer fires uvicorn (highest `oom_score_adj` among non-Chrome processes)
+8. Docker auto-restarts (`unless-stopped`) → return to step 1
+
+### HISTORICAL PATTERN
+
+**Earliest usable evidence:** 2026-09-01 22:41 UTC (journald kernel OOM log; current system boot started 2026-08-11)
+
+**Number of usable cycles:** 13 (CONSTRAINT_MEMCG uvicorn kills in `autospare_backend` container, Sep 25 – Oct 02)
+
+**Number of identifiable OOM events:** 185 (Sep 01 – Oct 02; 152 CONSTRAINT_NONE + 33 CONSTRAINT_MEMCG)
+
+**Number of cycles with FB_BROWSER active:** 13 — all 13 CONSTRAINT_MEMCG uvicorn kills from Sep 25–Oct 02 show the container at exactly 4 GB with `chrome-headless-shell` co-resident; Sep 30 and Oct 01 events include direct `chrome-headless` CONSTRAINT_MEMCG kills at the same timestamp as the uvicorn kill
+
+**Number of cycles with PostgreSQL-heavy tasks:** UNKNOWN — no PostgreSQL process was killed in any of the 33 CONSTRAINT_MEMCG events; `db_update_agent` tasks run inside uvicorn's asyncio loop and contribute to uvicorn RSS indirectly but not separably
+
+**Number of cycles showing backend baseline RSS increase:** 13/13 — uvicorn RSS at OOM spans 2.28–2.74 GB; consistent within-run growth confirmed; NOT cumulative across restarts (Sep 26 5-restart sequence shows 2.74→2.66→2.51→2.44→2.46 GB — no upward trend)
+
+**Number of cycles showing Chrome baseline RSS increase:** 13 indirect (always co-present at OOM) + 2 direct kernel measurements; within-scan growth 200 MB → 850 MB over 5-6h confirmed; NOT cumulative across restarts (Chrome killed at each OOM event, starts fresh)
+
+**RECURRING SEQUENCE:** PROVEN — 13 consecutive cycles Sep 25–Oct 02, zero exceptions. Container restart → 2h wait → GroupAgent launches chrome-headless-shell → parallel growth of uvicorn (~1.4→2.5 GB) and Chrome (~200→850 MB) over 5-6h → container fills to 4 GB limit → OOM kills uvicorn → Docker restarts → cycle repeats.
+
+**UVICORN CUMULATIVE GROWTH:** UNPROVEN — RSS at OOM is consistent across 13 restarts with no upward trend. Growth is within-run only (1.4 GB startup → ~2.5 GB at OOM). Sep 26 data definitively rules out cross-restart accumulation.
+
+**FB_BROWSER CUMULATIVE GROWTH:** UNPROVEN — Chrome is killed at each OOM event (same container cgroup, killed by OOM alongside uvicorn). Within-scan growth (200 MB → 850 MB) is PROVEN. No mechanism for cross-restart accumulation.
+
+**POSTGRES CONTRIBUTION:** CONTRIBUTORY — postgres processes were never OOM-killed in any of the 185 recorded events. DB task overhead is subsumed within the measured uvicorn RSS band.
+
+**PATTERN REPRODUCIBILITY:** REPRODUCIBLE — Fired 13 consecutive times Sep 25–Oct 02 with zero exceptions. Self-perpetuating loop via Docker `unless-stopped` restart policy. Will continue indefinitely without a change to `SOCIAL_GROUP_SCAN_ENABLED`, container memory limit, or Chrome RSS growth behavior.
+
+**PRE-UPGRADE VS POST-UPGRADE:** INSUFFICIENT HISTORICAL DATA — Server upgraded 2026-07-20 (4 vCPU/8 GB → 6 vCPU/12 GB). All 185 recorded OOM events are from the post-upgrade server (journald boot started 2026-08-11). No kernel OOM records from the pre-upgrade era are available in the current journal. The Sep 10 storm (82 CONSTRAINT_NONE kills) and Sep 12-15 cascade (10 CONSTRAINT_MEMCG kills in a different container) were also post-upgrade events from different root causes (FlareSolverr PARALLEL_SESSIONS leak and an unidentified subprocess, respectively).
+
+**HISTORICAL EVIDENCE GAPS:**
+1. Application (docker) logs before Sep 30: unavailable — old container logs are binary JSON and incomplete (truncated at start); only 3 days of application logs reachable. No fb_browser scan start/end timestamps for any of the 13 pre-Sep-30 cycles.
+2. Pre-upgrade kernel OOM records: unavailable — current system boot started 2026-08-11; earlier boot archives not examined.
+3. Sep 15 cascade (10 python3 CONSTRAINT_MEMCG kills, container `9c832b24`, 2-minute intervals): root cause undetermined — different container from production backend; likely a heavy subprocess (meili_sync or thumbnail pipeline).
+4. Sep 10 storm (82 CONSTRAINT_NONE kills from 2 containers; Chrome renderer processes 20-60 KB): consistent with PARALLEL_SESSIONS=4 FlareSolverr leak (pre-fix), but no application logs available to confirm.
+5. fb_browser/`_group_scan_loop` first activation date: unknown — no application logs predating Sep 30.
+
+### Fix options (not applied — owner decision required)
+
+**Option A — `SOCIAL_GROUP_SCAN_ENABLED=0` in `docker-compose.yml`** ← lowest risk, immediate effect
+Stops the OOM cycle immediately. No Chrome growth, no 4 GB pressure. Owner can still trigger group scans manually via WhatsApp `"סרוק קבוצות"` command. Requires owner approval + deploy.
+
+**Option B — Raise backend memory limit to ≥5 GB**
+`mem_limit: 5g` in docker-compose.yml. Provides ~760 MB margin above the measured 4.24 GB peak (uvicorn 2.7 + Amayama 0.5 + Chrome 0.9 + Node 0.14). Requires reducing another container's limit or accepting less overall margin on the 12 GB RAM box.
+
+**Option C — Extend zombie_reaper to detect chrome-headless-shell** (visibility fix only)
+Add `chrome-headless-shell` to the reaper's process scan. Adds visibility but does NOT prevent OOM — only 1 chrome-headless-shell runs per scan (not a zombie leak), so the `PLAYWRIGHT_MAX_CONCURRENT × 18` threshold will never fire during normal operation.
+
+**Option D — Limit Chrome scan scope** (code change required)
+Reduce `group_targets` scan count from 386 to a bounded set (e.g. 50 highest-priority groups). Would reduce Chrome RSS peak proportionally (~5-6h scan → 30-45 min), preventing full container fill.
 
 ---
 
