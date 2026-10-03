@@ -5,6 +5,7 @@ Prices are wholesale USD midpoints. ils = usd * 3.65.
 Run: python3 geely_seed_import.py
 """
 from __future__ import annotations
+from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environment, never from source (FIXES_TRACKER #61)
 
 # Category mapping DELEGATED to category_map — the single source of truth.
 # This importer used to keep its own CATEGORY_MAP (which contained real errors,
@@ -18,7 +19,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger(__name__)
 
 DB_DSN = (
-    "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43"
+    f"postgresql://autospare:{_DB_PW}"
     "@postgres_catalog:5432/autospare"
 )
 USD_TO_ILS = 3.65

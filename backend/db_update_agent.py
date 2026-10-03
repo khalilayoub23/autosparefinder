@@ -3378,20 +3378,12 @@ async def _enrich_pending_parts_task(db: AsyncSession) -> Dict[str, Any]:
     return await enrich_pending_parts(db, limit=2000)
 
 
-async def _trigger_scraper_for_misses_task(db: AsyncSession) -> Dict[str, Any]:
-    """Find high-frequency zero-result queries (miss_count >= 3, not yet triggered)
-    and fire REX brand discovery for the likely brand."""
-    if not _rex_harvest_enabled():
-        return {
-            "task": "trigger_scraper_for_misses",
-            "status": "skipped",
-            "reason": "REX_HARVEST_ENABLED=false",
-            "triggered": 0,
-            "errors": 0,
-        }
-
-    from catalog_scraper import run_brand_discovery
-
+async def select_search_miss_brands(db: AsyncSession) -> Dict[str, Any]:
+    """SELECT (do not launch) the brands behind high-frequency zero-result customer
+    searches (search_misses.miss_count >= 3, not yet triggered). Returns
+    {"brands": [...], "ids": [...]}. Consumed ONLY by the monthly brand-discovery run
+    (catalog_scraper.run_monthly_brand_discovery) — the DB agent no longer launches
+    brand discovery at all (#55, 2026-10-03)."""
     try:
         rows = (await db.execute(
             text("""
@@ -3405,22 +3397,10 @@ async def _trigger_scraper_for_misses_task(db: AsyncSession) -> Dict[str, Any]:
         )).fetchall()
     except Exception as exc:
         if "search_misses" in str(exc).lower() and "does not exist" in str(exc).lower():
-            return {
-                "task": "trigger_scraper_for_misses",
-                "status": "skipped",
-                "reason": "search_misses_table_missing",
-                "triggered": 0,
-                "errors": 0,
-            }
+            return {"brands": [], "ids": []}
         raise
-
-    if not rows:
-        return {"task": "trigger_scraper_for_misses", "status": "ok", "triggered": 0, "errors": 0}
-
-    triggered = 0
-    errors = 0
-    triggered_ids = []
-
+    brands: List[str] = []
+    ids: List[str] = []
     for row in rows:
         # Prefer explicit vehicle_manufacturer; fall back to first token of query
         brand = (row.vehicle_manufacturer or "").strip()
@@ -3429,33 +3409,27 @@ async def _trigger_scraper_for_misses_task(db: AsyncSession) -> Dict[str, Any]:
             brand = first_token[0] if first_token else ""
         if not brand:
             continue
+        if brand not in brands:
+            brands.append(brand)
+        ids.append(str(row.id))
+    return {"brands": brands, "ids": ids}
 
-        try:
-            asyncio.create_task(run_brand_discovery(brands=[brand]))
-            triggered += 1
-            triggered_ids.append(str(row.id))
-        except Exception as e:
-            logger.warning("trigger_scraper_for_misses: brand=%s error=%s", brand, e)
-            errors += 1
 
-    if triggered_ids:
-        for _tid in triggered_ids:
-            await db.execute(
-                text("UPDATE search_misses SET triggered_scrape = TRUE WHERE id = :tid"),
-                {"tid": _tid},
-            )
+async def mark_search_misses_triggered(db: AsyncSession, ids: List[str]) -> None:
+    """Mark search_misses rows as handled — call only AFTER discovery actually ran for them."""
+    for _tid in ids:
+        await db.execute(
+            text("UPDATE search_misses SET triggered_scrape = TRUE WHERE id = :tid"),
+            {"tid": _tid},
+        )
     await db.commit()
 
-    return {
-        "task": "trigger_scraper_for_misses",
-        "status": "ok",
-        "triggered": triggered,
-        "errors": errors,
-    }
 
-
-async def _trigger_scraper_for_registry_gaps_task(db: AsyncSession) -> Dict[str, Any]:
-    """Queue brand discovery for all known manufacturers under-covered in parts_catalog.
+async def select_registry_gap_brands(db: AsyncSession) -> Dict[str, Any]:
+    """SELECT (do not launch) the under-covered manufacturers for brand discovery.
+    Consumed ONLY by the monthly brand-discovery run
+    (catalog_scraper.run_monthly_brand_discovery). The DB agent no longer launches brand
+    discovery at all (#55, 2026-10-03) — not from its cycle and not via agent todos.
 
     Pool includes:
     - active car_brands
@@ -3475,7 +3449,6 @@ async def _trigger_scraper_for_registry_gaps_task(db: AsyncSession) -> Dict[str,
             "brands": [],
         }
 
-    from catalog_scraper import run_brand_discovery
 
     target = max(1, int(os.getenv("DISCOVERY_TARGET", "120")))
     per_run = min(50, max(1, int(os.getenv("DISCOVERY_PER_RUN", "20"))))
@@ -3580,7 +3553,6 @@ async def _trigger_scraper_for_registry_gaps_task(db: AsyncSession) -> Dict[str,
             "reason": "no_valid_brand_names",
         }
 
-    asyncio.create_task(run_brand_discovery(brands=brands, target=target, per_run=per_run))
 
     return {
         "task": "trigger_scraper_for_registry_gaps",
@@ -4531,8 +4503,6 @@ TASK_REGISTRY: Dict[str, Any] = {
     "seed_system_settings":      seed_system_settings,
     "lookup_oem_spec": _lookup_oem_spec_task,
     "enrich_pending_parts":      _enrich_pending_parts_task,
-    "trigger_scraper_for_registry_gaps": _trigger_scraper_for_registry_gaps_task,
-    "trigger_scraper_for_misses": _trigger_scraper_for_misses_task,
     "generate_image_embeddings": _generate_image_embeddings_task,
     "auto_add_hebrew_brand_aliases": _auto_add_hebrew_brand_aliases_task,
     "validate_watchdog_actions": validate_watchdog_actions,
@@ -4697,7 +4667,10 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
             # "backfill_jaguar_fitment_from_name",  # DISABLED: OOM / already complete
             # "merge_catalog_fitment_from_part_vehicle_fitment",  # DISABLED: full-catalog scan, OOM per cycle, near-zero updates
             "sync_manufacturer_registries",
-            "trigger_scraper_for_registry_gaps",
+            # trigger_scraper_for_registry_gaps / trigger_scraper_for_misses REMOVED (#55, 2026-10-03):
+            # brand discovery has exactly ONE automatic trigger — the monthly loop in
+            # night_pipeline.Controller's monthly brand_discovery job. Neither task is in TASK_REGISTRY
+            # any more, so an agent todo cannot re-inject one into this cycle either.
             "clean_part_names",
             "normalize_part_types",
             "normalize_categories",
@@ -4710,7 +4683,6 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
             "refresh_min_max_prices",
             "lookup_oem_spec",
             "enrich_pending_parts",
-            "trigger_scraper_for_misses",
             "generate_image_embeddings",
             "validate_watchdog_actions",
         ]
@@ -5076,6 +5048,21 @@ async def _agent_loop(get_db_fn, interval_hours: float = 6.0) -> None:
                         continue
             except Exception as _dexc:      # never let the guard stop maintenance
                 logger.debug("queue-defer check skipped: %s", _dexc)
+
+            # DEFER while the night pipeline runs a MEMORY-HEAVY job (#57, 2026-10-03).
+            # Kernel log, 7 days: 8 of 8 uvicorn cgroup-OOM kills happened with brand
+            # discovery AND a run_all_tasks cycle running together. The controller will not
+            # START such a job while this agent holds its lock; this is the other
+            # direction — do not start a cycle on top of a discovery job already running.
+            try:
+                import night_pipeline as _np
+                _np_job = await _np.running_job()
+                if _np_job in _np.MEM_HEAVY_JOBS:
+                    logger.info("run_all_tasks deferred — night pipeline is running %s", _np_job)
+                    await asyncio.sleep(600)
+                    continue
+            except Exception as _npexc:     # never let the guard stop maintenance
+                logger.debug("night-pipeline defer check skipped: %s", _npexc)
 
             async for db in get_db_fn():
                 result = await run_all_tasks(db)

@@ -19,6 +19,7 @@ RockAuto embeds parts as a large PHP/JS array in the page source — very compac
 Structure: /en/catalog/{make}/{year}/{model}/{engine}/{category}
 """
 from __future__ import annotations
+from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environment, never from source (FIXES_TRACKER #61)
 
 import argparse
 import asyncio
@@ -37,7 +38,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger(__name__)
 
 DB_DSN = (
-    "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43"
+    f"postgresql://autospare:{_DB_PW}"
     "@postgres_catalog:5432/autospare"
 )
 

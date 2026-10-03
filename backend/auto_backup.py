@@ -1,7 +1,8 @@
 """
-auto_backup.py — pg_dump both databases every 24 h.
+auto_backup.py — pg_dump both databases once a night.
 Keeps last 7 daily + 4 weekly + 3 monthly backups per DB (retention tagging).
-Called via _backup_loop() registered at startup.
+run_backup() is the first job of night_pipeline.Controller (01:00 Israel window) — this
+module no longer schedules itself (FIXES_TRACKER #57).
 """
 from __future__ import annotations
 
@@ -18,7 +19,9 @@ logger = logging.getLogger(__name__)
 
 BACKUP_DIR = os.environ.get("BACKUP_DIR", os.path.join(os.path.dirname(__file__), "backups"))
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
-PII_DATABASE_URL = os.environ.get("PII_DATABASE_URL", "")
+# The container sets DATABASE_PII_URL; the old name PII_DATABASE_URL was never set, so the
+# PII database was silently "skipped" on every run (0 autospare_pii_* dumps ever existed).
+PII_DATABASE_URL = os.environ.get("DATABASE_PII_URL") or os.environ.get("PII_DATABASE_URL", "")
 KEEP_LAST = 7  # Keep last 7 daily backups
 
 os.makedirs(BACKUP_DIR, exist_ok=True)
@@ -159,6 +162,18 @@ def _delete_backup(backup_path: str) -> None:
 async def run_backup(dry_run: bool = False) -> dict:
     """Back up autospare + autospare_pii. Returns {label: status} dict."""
     os.makedirs(BACKUP_DIR, exist_ok=True)
+    # A dump is written to "<name>.partial" and renamed only when pg_dump succeeded
+    # (FIXES_TRACKER #58): a run killed mid-dump (backend restart, OOM) used to leave a
+    # truncated file under its final name, which restore_latest_backup() would pick as
+    # "the latest backup" and retention would count as a real one. Leftovers of a killed
+    # run are removed here; "*.sql.partial" never matches the "*.sql" restore/retention globs.
+    if not dry_run:
+        for _stale in glob.glob(os.path.join(BACKUP_DIR, "*.sql.partial")):
+            try:
+                os.remove(_stale)
+                logger.warning("auto_backup: removed partial dump left by an interrupted run: %s", _stale)
+            except OSError:
+                pass
     ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     results: dict = {}
     for label, url in [("autospare", DATABASE_URL), ("autospare_pii", PII_DATABASE_URL)]:
@@ -172,7 +187,15 @@ async def run_backup(dry_run: bool = False) -> dict:
             results[label] = "dry_run"
             continue
         t0 = time.monotonic()
-        ok = await asyncio.get_running_loop().run_in_executor(None, _pg_dump, url, out_path)
+        tmp_path = out_path + ".partial"
+        ok = await asyncio.get_running_loop().run_in_executor(None, _pg_dump, url, tmp_path)
+        if ok:
+            os.replace(tmp_path, out_path)
+        else:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
         elapsed = round(time.monotonic() - t0, 1)
         if ok:
             size_mb = round(os.path.getsize(out_path) / 1_048_576, 1)
@@ -185,18 +208,6 @@ async def run_backup(dry_run: bool = False) -> dict:
         else:
             results[label] = "error"
     return results
-
-
-async def _backup_loop() -> None:
-    """Runs every 24 h. Registered at startup in BACKEND_API_ROUTES.py."""
-    await asyncio.sleep(300)  # 5-min startup grace period
-    while True:
-        try:
-            res = await run_backup()
-            logger.info("auto_backup loop: %s", res)
-        except Exception as exc:
-            logger.error("auto_backup loop error: %s", exc)
-        await asyncio.sleep(86_400)
 
 
 async def restore_latest_backup(db_label: str = "autospare", dry_run: bool = True) -> dict:

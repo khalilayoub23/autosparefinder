@@ -3905,6 +3905,29 @@ async def _run_category_discovery() -> Dict[str, Any]:
         "errors": 0,
         "manufacturers": {},
     }
+    # job_registry + 60 s heartbeat (#54, 2026-10-03): this job had NO registry row, so its
+    # runtime was never recorded (FIXES_TRACKER #53 "NOT VERIFIED"), the startup reconciler
+    # map's "category_discovery" entry had nothing to reconcile, and no zombie supervision
+    # applied. Same pattern as run_brand_discovery / run_scraper_cycle.
+    _cd_job_id: Optional[str] = None
+    _cd_hb_task = None
+    try:
+        async with scraper_session_factory() as _jdb:
+            _cd_job_id = await job_registry_start(_jdb, "category_discovery", ttl_seconds=lock_ttl)
+    except Exception as exc:
+        print(f"[CategoryDiscovery] job_registry_start error: {exc}")
+
+    async def _cd_heartbeat_loop() -> None:
+        while True:
+            await asyncio.sleep(60)
+            try:
+                async with scraper_session_factory() as _hb_db:
+                    await job_heartbeat(_hb_db, _cd_job_id)
+            except Exception as _hb_exc:
+                print(f"[CategoryDiscovery] heartbeat failed: {_hb_exc}")
+    if _cd_job_id:
+        _cd_hb_task = asyncio.create_task(_cd_heartbeat_loop(), name="category_discovery_hb")
+    _cd_status, _cd_err = "dead", None
 
     try:
         async with scraper_session_factory() as db:
@@ -3922,20 +3945,48 @@ async def _run_category_discovery() -> Dict[str, Any]:
             )).fetchall()
             manufacturers = [str(r[0]).strip() for r in rows if r and r[0]]
 
+            # IN-RUN BUDGET (FIXES_TRACKER #58, 2026-10-03). The night pipeline's resource
+            # guard only decides whether this job may START; its real runtime was never
+            # measured and it launches Chrome (scrape_rockauto → Playwright). So the job
+            # bounds itself between manufacturers: it stops CLEANLY (never mid-write) when
+            # the time budget is spent or host memory falls below the floor, and reports
+            # `truncated`. The start index rotates by date so a truncated run does not
+            # always cover the same alphabetical head and starve the tail.
+            import time as _time
+            _budget_s = int(os.getenv("CATEGORY_DISCOVERY_MAX_RUNTIME_S", "7200"))
+            _min_avail_mb = float(os.getenv("CATEGORY_DISCOVERY_MIN_AVAIL_MB", "800"))
+            _t0 = _time.monotonic()
+            if manufacturers:
+                _rot = datetime.utcnow().toordinal() % len(manufacturers)
+                manufacturers = manufacturers[_rot:] + manufacturers[:_rot]
+            report["manufacturers_total"] = len(manufacturers)
+
             for manufacturer in manufacturers:
+                if _time.monotonic() - _t0 > _budget_s:
+                    report["truncated"] = f"time budget {_budget_s}s reached"
+                    break
+                try:
+                    from night_pipeline import _read_host_avail_mb
+                    _avail = _read_host_avail_mb()
+                except Exception:
+                    _avail = None
+                if _avail is not None and _avail < _min_avail_mb:
+                    report["truncated"] = f"host memory available {_avail:.0f} MB < {_min_avail_mb:.0f} MB"
+                    break
                 m_report: Dict[str, int] = {}
-                existing_rows = (await db.execute(
-                    text("SELECT sku FROM parts_catalog WHERE manufacturer = :m"),
-                    {"m": manufacturer},
-                )).fetchall()
-                existing_skus = {
-                    str(r[0]).upper().replace(" ", "")
-                    for r in existing_rows
-                    if r and r[0]
-                }
+                # Loaded lazily: only a manufacturer with a category that is really short
+                # needs its SKU set (up to 509k rows for Kia) for de-duplication.
+                existing_skus: Optional[set] = None
 
                 for category_he, search_terms in DISCOVERY_CATEGORIES:
                     inserted_for_category = 0
+                    # ROOT FIX (#54): parts_catalog.category stores English slugs (+ כללי);
+                    # comparing the Hebrew display name always counted 0, so all
+                    # 85 manufacturers x 18 categories (1,530 pairs, up to 3,655 queries) were
+                    # searched nightly although only 171 pairs (11%) are really below the
+                    # minimum — and any hit would have written a Hebrew display name into the
+                    # column. Count and write the canonical slug instead.
+                    category_slug = categorize_on_ingest(category_he)
                     try:
                         current_count = int((await db.execute(
                             text(
@@ -3947,10 +3998,21 @@ async def _run_category_discovery() -> Dict[str, Any]:
                                   AND category = :c
                                 """
                             ),
-                            {"m": manufacturer, "c": category_he},
+                            {"m": manufacturer, "c": category_slug},
                         )).scalar() or 0)
 
                         need = max(0, CATEGORY_MIN_PARTS_PER_BRAND_CATEGORY - current_count)
+                        if need > 0 and existing_skus is None:
+                            existing_rows = (await db.execute(
+                                text("SELECT sku FROM parts_catalog WHERE manufacturer = :m"),
+                                {"m": manufacturer},
+                            )).fetchall()
+                            existing_skus = {
+                                str(r[0]).upper().replace(" ", "")
+                                for r in existing_rows
+                                if r and r[0]
+                            }
+                            del existing_rows
                         if need > 0:
                             for search_term in search_terms:
                                 if inserted_for_category >= need:
@@ -3990,7 +4052,7 @@ async def _run_category_discovery() -> Dict[str, Any]:
                                         sku=sku_clean,
                                         name=part.get("name") or sku_clean,
                                         manufacturer=manufacturer,
-                                        category=category_he,
+                                        category=category_slug,
                                         part_type=part.get("part_type") or "aftermarket",
                                         base_price=float(part.get("price_usd") or 0),
                                         description=(
@@ -4024,12 +4086,103 @@ async def _run_category_discovery() -> Dict[str, Any]:
 
         report["status"] = "completed"
         report["finished_at"] = datetime.utcnow().isoformat()
+        _cd_status = "completed"
         return report
+    except Exception as exc:
+        _cd_err = str(exc)[:500]
+        raise
     finally:
+        if _cd_hb_task is not None:
+            _cd_hb_task.cancel()
+        if _cd_job_id:
+            try:
+                async with scraper_session_factory() as _fdb:
+                    await job_registry_finish(_fdb, _cd_job_id, status=_cd_status, error_message=_cd_err)
+            except Exception as exc:
+                print(f"[CategoryDiscovery] job_registry_finish error: {exc}")
         try:
             await _cat_lock.release()
         except Exception:
             pass
+
+async def run_monthly_brand_discovery() -> Dict[str, Any]:
+    """The ONE automatic brand-discovery entry point (#55, 2026-10-03).
+
+    Called by night_pipeline.Controller as its monthly `brand_discovery` job: day 1, not
+    before 03:15 Israel time, and only after sync_prices has verifiably completed and no
+    other heavy job is running (#57).
+      A. the IL-priority pool   — run_brand_discovery() auto-selection
+      B. the registry-gap pool  — thinnest brands (db_update_agent.select_registry_gap_brands)
+      C. search-miss brands     — customer demand (db_update_agent.select_search_miss_brands);
+                                  rows are marked triggered only after their run happened.
+    Why monthly: 30 days of logs showed 2,724 brand attempts at ~6-7 runs/day with 0 parts
+    inserted, while the catalog already holds 4.1M parts / 8,120 fitted make+models.
+    Manual runs stay available: POST /api/v1/admin/scraper/discover[/{brand}] and
+    harvesters/bulk_harvest.py (same function, same lock).
+    """
+    global _last_discovery_report
+    out: Dict[str, Any] = {"job": "monthly_brand_discovery", "pools": {}}
+    if not DISCOVERY_ENABLED:
+        out["status"] = "disabled"
+        return out
+    from db_update_agent import (select_registry_gap_brands, select_search_miss_brands,
+                                 mark_search_misses_triggered)
+
+    def _ran(rep: Any) -> bool:
+        return isinstance(rep, dict) and rep.get("status") not in ("skipped", "disabled")
+
+    rep_a = await run_brand_discovery()
+    _last_discovery_report = rep_a
+    out["pools"]["il_priority"] = (rep_a or {}).get("status")
+    if not _ran(rep_a) and (rep_a or {}).get("status") == "skipped":
+        # lock held (a manual run is in flight) or harvesting disabled — do not queue behind it
+        out["status"] = "skipped"
+        out["reason"] = (rep_a or {}).get("reason")
+        return out
+
+    async with scraper_session_factory() as _db:
+        gap = await select_registry_gap_brands(_db)
+    if gap.get("brands"):
+        await asyncio.sleep(5)
+        rep_b = await run_brand_discovery(brands=gap["brands"], target=gap["target"], per_run=gap["per_run"])
+        out["pools"]["registry_gaps"] = (rep_b or {}).get("status")
+
+    async with scraper_session_factory() as _db:
+        miss = await select_search_miss_brands(_db)
+    if miss.get("brands"):
+        await asyncio.sleep(5)
+        rep_c = await run_brand_discovery(brands=miss["brands"])
+        out["pools"]["search_misses"] = (rep_c or {}).get("status")
+        if _ran(rep_c):
+            async with scraper_session_factory() as _db:
+                await mark_search_misses_triggered(_db, miss["ids"])
+    out["status"] = "completed"
+    return out
+
+
+async def run_rex_night_cycle() -> Dict[str, Any]:
+    """REX's nightly heavy work as ONE unit for night_pipeline.Controller (#57):
+    scraper cycle (price sync of 200 parts) → inactive-OEM recovery (DB-only) →
+    transport-office pipeline if it is due. Each step is isolated; the report carries
+    every step's outcome so the controller can verify the post-condition."""
+    global _last_run_report
+    out: Dict[str, Any] = {"job": "rex_night"}
+    try:
+        _last_run_report = await run_scraper_cycle(refresh_fx=False)
+        out["scraper_cycle"] = {k: v for k, v in (_last_run_report or {}).items() if k != "rows"}
+    except Exception as exc:
+        out["scraper_cycle"] = {"status": "error", "error": str(exc)[:500]}
+    try:
+        out["resolve_inactive"] = await resolve_inactive_parts_with_oem_lookup()
+    except Exception as exc:
+        out["resolve_inactive"] = {"status": "error", "error": str(exc)[:500]}
+    try:
+        await run_transport_pipeline_if_due()
+        out["transport"] = {"status": "ok"}
+    except Exception as exc:
+        out["transport"] = {"status": "error", "error": str(exc)[:500]}
+    return out
+
 # MAIN SCRAPER RUN  —  called by the background loop
 # ==============================================================================
 
@@ -4734,8 +4887,6 @@ async def scraper_background_loop():
     while True:
         try:
             now = datetime.utcnow()
-            is_midnight_run = now.hour == 0  # 00:00 UTC
-            is_noon_run = now.hour == 12     # 12:00 UTC
 
             # Job 0 — FX refresh: both runs
             run_fx_refresh = True
@@ -4754,38 +4905,12 @@ async def scraper_background_loop():
                     print(f"[Scraper] FX refresh error: {error_msg}")
                 await asyncio.sleep(5)
 
-            # Job 2 — Brand Discovery (every DISCOVERY_INTERVAL_H hours)
-            global _last_discovery_report
-            run_discovery = is_noon_run and DISCOVERY_ENABLED
-            if run_discovery:
-                try:
-                    _last_discovery_report = await run_brand_discovery()
-                except Exception as exc:
-                    error_msg = str(exc)[:500]
-                    print(f"[Scraper] Brand discovery error: {error_msg}")
-                    # Log failure to DLQ (Gap 2b)
-                    try:
-                        from BACKEND_DATABASE_MODELS import pii_session_factory
-                        async with pii_session_factory() as pii_db:
-                            await log_job_failure(
-                                pii_db,
-                                job_name="run_brand_discovery",
-                                error=error_msg,
-                                payload={},
-                                attempts=1,
-                            )
-                    except Exception as dlq_err:
-                        print(f"[Scraper] Failed to log brand_discovery to DLQ: {dlq_err}")
-                
-                await asyncio.sleep(30)
-            # Job 2c — Noon recovery for inactive OEM-lookup backlog
-            if is_noon_run:
-                try:
-                    await resolve_inactive_parts_with_oem_lookup()
-                except Exception as exc:
-                    print(f"[Scraper] resolve_inactive_parts_with_oem_lookup error: {str(exc)[:500]}")
-
-                await asyncio.sleep(5)
+            # HEAVY NIGHT JOBS ARE NOT STARTED HERE (#57, 2026-10-03). The scraper cycle, the
+            # inactive-OEM recovery, the transport pipeline (run_rex_night_cycle below),
+            # category discovery and brand discovery are owned by night_pipeline.Controller,
+            # which runs them one at a time after the previous heavy job has verifiably
+            # finished. This loop keeps only the light every-3-h work: FX refresh and the
+            # todo-gated Jaguar lookup. It must never call a heavy job directly again.
 
             # Job 2f — Jaguar fitment external lookup (every cycle, rate-gated to 200 parts/run)
             try:
@@ -4796,62 +4921,7 @@ async def scraper_background_loop():
             await asyncio.sleep(5)
 
 
-            # Job 2b — Category Discovery (every CATEGORY_DISCOVERY_INTERVAL_H hours)
-            run_category_discovery = is_midnight_run and CATEGORY_DISCOVERY_ENABLED
-            if run_category_discovery:
-                try:
-                    await _run_category_discovery()
-                except Exception as exc:
-                    print(f"[Scraper] Category discovery error: {str(exc)[:500]}")
-                await asyncio.sleep(10)
 
-            # Job 2d — eBay price sync (midnight only)
-            if is_midnight_run:
-                try:
-                    from services.ebay_price_sync import sync_ebay_prices
-                    async with scraper_session_factory() as ebay_db:
-                        ebay_report = await sync_ebay_prices(
-                            ebay_db,
-                            limit_per_run=int(os.getenv("EBAY_PRICE_SYNC_LIMIT", "4400"))
-                        )
-                        print(f"[Rex] eBay sync: checked={ebay_report['parts_checked']} "
-                              f"updated={ebay_report['parts_updated']} "
-                              f"not_found={ebay_report['parts_not_found']}")
-                except Exception as exc:
-                    print(f"[Rex] eBay sync error: {exc}")
-
-                await asyncio.sleep(10)
-
-            # Job 2e — Transport Office Pipeline scheduling (midnight only)
-            if is_midnight_run:
-                try:
-                    await run_transport_pipeline_if_due()
-                except Exception as exc:
-                    print(f"[Scraper] Transport pipeline scheduler error: {str(exc)[:500]}")
-
-                await asyncio.sleep(5)
-
-
-            # Job 1 — Price Sync (every SCRAPE_INTERVAL_H hours)
-            try:
-                _last_run_report = await run_scraper_cycle(refresh_fx=False)
-            except Exception as exc:
-                error_msg = str(exc)[:500]
-                print(f"[Scraper] Scraper cycle error: {error_msg}")
-                # Log failure to DLQ (Gap 2b)
-                try:
-                    from BACKEND_DATABASE_MODELS import pii_session_factory
-                    async with pii_session_factory() as pii_db:
-                        await log_job_failure(
-                            pii_db,
-                            job_name="run_scraper_cycle",
-                            error=error_msg,
-                            payload={},
-                            attempts=1,
-                        )
-                except Exception as dlq_err:
-                    print(f"[Scraper] Failed to log scraper_cycle to DLQ: {dlq_err}")
-        
         except Exception as exc:
             print(f"[Rex] ❌ Unhandled error in cycle: {exc}")
         

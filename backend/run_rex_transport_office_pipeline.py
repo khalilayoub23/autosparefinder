@@ -1,4 +1,5 @@
 from __future__ import annotations
+from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environment, never from source (FIXES_TRACKER #61)
 
 import argparse
 import json
@@ -604,7 +605,7 @@ def sync_market_priority_to_db(
     # Connect to catalog DB
     url = db_url or _os.getenv(
         "DATABASE_URL",
-        "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43@postgres_catalog/autospare",
+        f"postgresql://autospare:{_DB_PW}@postgres_catalog/autospare",
     )
     # Strip asyncpg driver prefix so psycopg2 can parse the URL
     url = url.replace("postgresql+asyncpg://", "postgresql://")

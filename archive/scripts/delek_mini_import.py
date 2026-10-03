@@ -4,6 +4,7 @@ Delek Motors MINI parts harvest + import.
 Harvests MINI-specific parts from brandId=3 (BMW Group at Delek Motors)
 filtered by MINI model codes in part names.
 """
+import os as _os_dbpw; _DB_PW = _os_dbpw.environ["DB_PASSWORD"]  # credential from the environment, never from source (FIXES_TRACKER #61)
 
 import asyncio
 import logging
@@ -32,7 +33,7 @@ MINI_NAME_QUERIES = [
     "MINI","Clubman","Countryman","Paceman","JCW",
 ]
 
-DB_URL       = "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43@localhost:5432/autospare"
+DB_URL       = f"postgresql://autospare:{_DB_PW}@localhost:5432/autospare"
 MINI_BRAND_ID = "47a433bf-4f6f-4f8f-a686-a8c02f7727a8"
 SUPPLIER_NAME = "Delek Motors IL"
 SUPPLIER_URL  = "https://www.delekmotors.co.il"

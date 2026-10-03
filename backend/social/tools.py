@@ -282,7 +282,7 @@ async def facebook_group_scan(
         # Previously only 'approved' groups were fetched, leaving 26 'pending' groups unscanned.
         import sqlalchemy as sa
         rows = (await db.execute(
-            sa.text("SELECT id, group_url, group_name, status FROM group_targets WHERE status != 'rejected' AND platform='facebook'")
+            sa.text("SELECT id, group_url, group_name, status FROM group_targets WHERE status NOT IN ('rejected', 'inactive') AND platform='facebook'")
         )).fetchall()
         approved = [{"id": str(r.id), "group_url": r.group_url, "group_name": r.group_name}
                     for r in rows]

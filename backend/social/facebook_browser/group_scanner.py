@@ -38,18 +38,32 @@ async def _get_db():
 
 
 async def _upsert_discovered_groups(db, discovered: list[dict]) -> int:
-    """Insert new groups as pending; skip if URL already exists. Returns new-row count."""
+    """Insert new groups as pending; re-activate inactive groups on re-discovery.
+    Returns new-row count (net new insertions + re-activations).
+    """
     import sqlalchemy as sa
     new_count = 0
     for g in discovered:
         url = g["url"].strip().rstrip("/") + "/"
         name = g["name"].strip()[:255]
-        # Check if already exists (any status)
         res = await db.execute(
-            sa.text("SELECT id FROM group_targets WHERE platform='facebook' AND group_url=:url LIMIT 1"),
+            sa.text("SELECT id, status FROM group_targets WHERE platform='facebook' AND group_url=:url LIMIT 1"),
             {"url": url},
         )
-        if res.fetchone():
+        row = res.fetchone()
+        if row:
+            # Re-activate groups that were previously marked inactive: the group is
+            # discoverable again, so our account must have been re-added or it was
+            # a transient redirect failure — reset to pending for the owner to review.
+            if row[1] == "inactive":
+                await db.execute(
+                    sa.text(
+                        "UPDATE group_targets SET status='pending', updated_at=NOW() "
+                        "WHERE id=:gid"
+                    ),
+                    {"gid": row[0]},
+                )
+                new_count += 1
             continue
         await db.execute(
             sa.text("""
@@ -140,7 +154,7 @@ async def _load_all_discovered_groups(db) -> list[dict]:
         sa.text("""
             SELECT id::text, group_url, group_name
             FROM group_targets
-            WHERE platform='facebook' AND status != 'rejected'
+            WHERE platform='facebook' AND status NOT IN ('rejected', 'inactive')
             ORDER BY last_posted_at NULLS FIRST, created_at
         """)
     )

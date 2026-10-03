@@ -40,7 +40,12 @@ export default function Cart() {
 
   const selectedItems = items.filter((i) => selectedSupplierPartIds.includes(i.supplierPartId))
   const selectedSubtotal = selectedItems.reduce((sum, i) => sum + (Number(i.price) || 0) * (Number(i.quantity) || 0), 0)
-  const selectedVat = Math.round(selectedSubtotal * 0.18 * 100) / 100
+  const selectedVat = Math.round(
+    selectedItems.reduce((sum, i) => {
+      const lineTotal = (Number(i.price) || 0) * (Number(i.quantity) || 0)
+      return sum + (i.isIlSupplier ? lineTotal * 0.18 : 0)
+    }, 0) * 100
+  ) / 100
   const selectedShipping = selectedItems.length > 0
     ? selectedItems.reduce((sum, i) => sum + (i.shippingCost ?? 0), 0) || 91
     : 0
@@ -96,6 +101,7 @@ export default function Cart() {
       manufacturer: item.supplierName || 'Supplier',
       price: Number(item.price || 0),
       vat: 0,
+      isIlSupplier: item.isIlSupplier ?? false,
       quantity: Number(item.quantity || 1),
     }))
 

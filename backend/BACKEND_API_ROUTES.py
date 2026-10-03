@@ -49,7 +49,6 @@ from BACKEND_AI_AGENTS import (
     OrdersAgent, OrdersAgent as _OrdersAgent, SalesAgent as _SalesAgent, SocialMediaManagerAgent,
     NOA_TELEGRAM_URL, NOA_WHATSAPP_URL, NOA_FACEBOOK_URL, NOA_INSTAGRAM_URL, NOA_WEBSITE_URL,
 )
-from auto_backup import _backup_loop
 from social.whatsapp_provider import send_message as _wa_send
 import httpx as _httpx
 import clamd as _clamd
@@ -976,30 +975,38 @@ async def _status_update_loop() -> None:
         await asyncio.sleep(1800)  # check every 30 minutes (send only on problems/digest)
 
 
-async def _ebay_fitment_backfill_loop() -> None:
-    """
-    Daily eBay fitment backfill — runs once per day at ~01:00 UTC (after eBay quota resets).
-    Processes 500 parts per run to stay well under the 5,000 call/day Browse API limit.
-    Offset advances each cycle so all 8,123 eBay-linked parts get covered over ~17 days.
-    """
-    import math
-
-    # Wait until 01:00 UTC before first run — quota resets at midnight UTC
-    await asyncio.sleep(3600)  # 1h startup delay
+async def run_ebay_fitment_once() -> dict:
+    """ONE eBay fitment backfill batch — a heavy night job owned by night_pipeline.Controller
+    (#57, 2026-10-03); it is no longer a self-scheduling loop.
+    Processes 500 parts (0.1 s pacing → minutes), well under the 5,000 call/day Browse API
+    limit. The offset advances every run so all ~8,200 eBay-linked parts are covered in
+    ~17 runs; the run counter lives in Redis (the old in-memory counter restarted at 0 on
+    every backend restart, re-scanning the same first 500 parts).
+    The counter is advanced only AFTER the batch returned (#58): a batch interrupted by a
+    restart is repeated on the next night instead of being skipped for a whole rotation.
+    Repeating is safe — fitment rows are inserted only if absent and the OEM update is
+    guarded by `oem_number IS NULL`."""
     _BATCH = 500
     _TOTAL = 8200  # approximate total eBay-linked parts
-
-    run = 0
-    while True:
-        offset = (_BATCH * run) % _TOTAL
-        try:
-            from ebay_fitment_backfill import run_backfill as _ebay_fitment_run
-            report = await _ebay_fitment_run(dry_run=False, limit=_BATCH, offset=offset)
-            print(f"[EbayFitment] run #{run}: {report}")
-        except Exception as exc:
-            print(f"[EbayFitment] loop error: {exc}")
-        run += 1
-        await asyncio.sleep(86400)  # wait 24h before next batch
+    _KEY = "autospare:ebay_fitment:run"
+    run, _r = 0, None
+    try:
+        from BACKEND_AUTH_SECURITY import get_redis as _fit_redis
+        _r = await _fit_redis()
+        if _r:
+            run = int(await _r.get(_KEY) or 0)
+    except Exception as exc:
+        print(f"[EbayFitment] run counter unavailable ({exc}) — using offset 0")
+    offset = (_BATCH * run) % _TOTAL
+    from ebay_fitment_backfill import run_backfill as _ebay_fitment_run
+    report = await _ebay_fitment_run(dry_run=False, limit=_BATCH, offset=offset)
+    print(f"[EbayFitment] run #{run} offset={offset}: {report}")
+    try:
+        if _r:
+            await _r.incr(_KEY)
+    except Exception as exc:
+        print(f"[EbayFitment] could not advance run counter: {exc}")
+    return report
 
 
 async def _enrich_catalog_loop() -> None:
@@ -1265,6 +1272,7 @@ async def _car_parts_ie_full_seed_loop() -> None:
     between = int(os.getenv("CPIE_FULL_SEED_INTERVAL_S", str(30 * 24 * 3600)))  # ~monthly
     while True:
         started = _time.time()
+        rc = None
         try:
             print(f"[cpie_full_seed] seeding (log → {logpath})", flush=True)
             with open(logpath, "a") as _lf:
@@ -1277,8 +1285,10 @@ async def _car_parts_ie_full_seed_loop() -> None:
             print(f"[cpie_full_seed] finished rc={rc} after {_time.time()-started:.0f}s", flush=True)
         except Exception as exc:
             print(f"[cpie_full_seed] launch failed: {exc}", flush=True)
-        # Success → wait the full interval; a fast failure (CF down) → retry in 1h.
-        await asyncio.sleep(between if _time.time() - started > 120 else 3600)
+        # Success (rc 0) → wait the full interval; ANY failure → retry in 1h.
+        # (#53, 2026-10-03: this used "ran >120 s" as the success test, so a slow failure —
+        # rc=1 after 210 s while FlareSolverr's /tmp was full — slept the full ~30 days.)
+        await asyncio.sleep(between if rc == 0 else 3600)
 
 
 # ── Part-thumbnail import supervisor ──────────────────────────────────────────
@@ -1286,7 +1296,7 @@ async def _car_parts_ie_full_seed_loop() -> None:
 _THUMBNAIL_IMPORT_STATUS: dict = {"state": "starting", "total_ok": 0, "last_batch": None, "updated_at": None}
 
 
-async def _weekly_maintenance_loop() -> None:
+async def run_weekly_maintenance_once() -> dict:
     """Weekly catalogue maintenance: re-merge new duplicates, then verify.
 
     WHY (owner, 2026-08-05). The big cleanups were ONE-SHOT jobs for a finite
@@ -1308,71 +1318,55 @@ async def _weekly_maintenance_loop() -> None:
 
     Reports BY EXCEPTION — a clean week is silent. A routine "all good" weekly
     message is the camouflage that trains the owner to ignore the channel.
+
+    ONE run (#57, 2026-10-03): scheduling, ordering and stand-down are owned by
+    night_pipeline.Controller (weekly, Saturday, earliest 05:00 Israel time, after every
+    other heavy night job has verifiably finished) — this is no longer a self-scheduling
+    loop. Returns {"status": "completed"|"disabled"|"error", "merged", "problems"} so the
+    controller can verify the outcome; a merge or parity failure is status "error".
     """
-    interval = int(os.getenv("WEEKLY_MAINT_INTERVAL_S", str(7 * 24 * 3600)))
+    if os.getenv("WEEKLY_MAINT_ENABLED", "1").strip().lower() not in ("1", "true", "yes"):
+        return {"status": "disabled", "merged": 0, "problems": []}
     merge_limit = int(os.getenv("WEEKLY_MAINT_MERGE_LIMIT", "2000"))
-    await asyncio.sleep(int(os.getenv("WEEKLY_MAINT_FIRST_DELAY_S", "3600")))
-    while True:
-        try:
-            if os.getenv("WEEKLY_MAINT_ENABLED", "1").strip().lower() not in ("1", "true", "yes"):
-                await asyncio.sleep(interval)
-                continue
-            # Never fight the job queue — same stand-down contract the other
-            # heavy writers use.
-            try:
-                import job_queue as _jq
-                async with async_session_factory() as _db:
-                    if await _jq.queue_busy(_db):
-                        logger.info("[weekly_maint] deferred — job queue is running")
-                        await asyncio.sleep(3600)
-                        continue
-            except Exception:
-                pass
+    problems: list[str] = []
 
-            problems: list[str] = []
+    # 1. Merge whatever duplicates arrived since last week.
+    m = await asyncio.to_thread(
+        subprocess.run,
+        ["python3", "/app/maintenance/merge_master_parts.py",
+         "--all-brands", "--limit", str(merge_limit)],
+        capture_output=True, text=True, timeout=5400)
+    mout = ((m.stdout or "") + (m.stderr or ""))[-1500:]
+    merged = 0
+    _mm = re.search(r"ALL-BRANDS DONE groups=(\d+)", mout)
+    if _mm:
+        merged = int(_mm.group(1))
+    logger.info("[weekly_maint] merge rc=%s groups=%s", m.returncode, merged)
+    if m.returncode != 0:
+        problems.append(f"מיזוג כפילויות נכשל: {mout[-200:]}")
 
-            # 1. Merge whatever duplicates arrived since last week.
-            m = await asyncio.to_thread(
-                subprocess.run,
-                ["python3", "/app/maintenance/merge_master_parts.py",
-                 "--all-brands", "--limit", str(merge_limit)],
-                capture_output=True, text=True, timeout=5400)
-            mout = ((m.stdout or "") + (m.stderr or ""))[-1500:]
-            merged = 0
-            _mm = re.search(r"ALL-BRANDS DONE groups=(\d+)", mout)
-            if _mm:
-                merged = int(_mm.group(1))
-            logger.info("[weekly_maint] merge rc=%s groups=%s", m.returncode, merged)
-            if m.returncode != 0:
-                problems.append(f"מיזוג כפילויות נכשל: {mout[-200:]}")
+    # 2. Verify the outcome (full suite — this is the weekly gate).
+    p = await asyncio.to_thread(
+        subprocess.run,
+        ["python3", "/app/maintenance/pipeline_parity_check.py"],
+        capture_output=True, text=True, timeout=1800)
+    pout = ((p.stdout or "") + (p.stderr or ""))[-2000:]
+    logger.info("[weekly_maint] parity rc=%s", p.returncode)
+    if p.returncode != 0:
+        fails = [ln.strip() for ln in pout.splitlines() if "[FAIL]" in ln]
+        problems.append("בדיקת התאמה נכשלה:\n" + "\n".join(fails[:5]))
 
-            # 2. Verify the outcome (full suite — this is the weekly gate).
-            p = await asyncio.to_thread(
-                subprocess.run,
-                ["python3", "/app/maintenance/pipeline_parity_check.py"],
-                capture_output=True, text=True, timeout=1800)
-            pout = ((p.stdout or "") + (p.stderr or ""))[-2000:]
-            logger.info("[weekly_maint] parity rc=%s", p.returncode)
-            if p.returncode != 0:
-                fails = [ln.strip() for ln in pout.splitlines() if "[FAIL]" in ln]
-                problems.append("בדיקת התאמה נכשלה:\n" + "\n".join(fails[:5]))
-
-            if problems:
-                await notify_owner(
-                    "harvest",
-                    "תחזוקה שבועית — נדרשת תשומת לב",
-                    (f"מוזגו {merged:,} כפילויות חדשות.\n" if merged else "")
-                    + "\n".join(problems)[:900],
-                    severity="warning",
-                )
-            else:
-                logger.info("[weekly_maint] clean (merged=%s) — no owner message", merged)
-
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.error("[weekly_maint] error: %s", exc)
-        await asyncio.sleep(interval)
+    if problems:
+        await notify_owner(
+            "harvest",
+            "תחזוקה שבועית — נדרשת תשומת לב",
+            (f"מוזגו {merged:,} כפילויות חדשות.\n" if merged else "")
+            + "\n".join(problems)[:900],
+            severity="warning",
+        )
+    else:
+        logger.info("[weekly_maint] clean (merged=%s) — no owner message", merged)
+    return {"status": "error" if problems else "completed", "merged": merged, "problems": problems}
 
 
 async def _whatsapp_link_monitor_loop() -> None:
@@ -1722,6 +1716,16 @@ async def _job_queue_loop() -> None:
             if os.getenv("JOB_QUEUE_ENABLED", "0").strip().lower() not in ("1", "true", "yes"):
                 await asyncio.sleep(idle_sleep)
                 continue
+            # Mutual stand-down with the night pipeline (#57): the controller will not
+            # start a heavy job while this queue is busy, and this queue does not start a
+            # batch while a pipeline job is running.
+            try:
+                import night_pipeline as _np
+                if await _np.running_job():
+                    await asyncio.sleep(idle_sleep)
+                    continue
+            except Exception:
+                pass
             async with async_session_factory() as db:
                 res = await _jq.run_once(db)
             act = res.get("action")
@@ -2630,6 +2634,20 @@ async def _meili_sync_loop() -> None:
         await asyncio.sleep(7200)  # every 2h
 
 
+# Single job_registry-name → Redis-lock-name map for the jobs that run as asyncio tasks
+# INSIDE this uvicorn process (FIXES_TRACKER #53, 2026-10-03). It used to be three
+# hand-copied dicts (reconciler, shutdown handler, health-monitor zombie fix) that had
+# drifted: two named the price-sync lock "price_sync", but sync_prices acquires
+# "sync_prices" (BACKEND_AI_AGENTS.sync_prices), so that lock was never freed by them.
+_INPROC_JOB_LOCKS = {
+    "run_scraper_cycle":   "scraper_cycle",       # catalog_scraper.py (SCRAPER_LOCK_TTL_S 1800)
+    "run_brand_discovery": "brand_discovery",     # catalog_scraper.py (TTL 86400)
+    "run_all_tasks":       "db_update_agent",     # db_update_agent.py (DB_AGENT_LOCK_TTL_S 600)
+    "category_discovery":  "category_discovery",  # catalog_scraper.py (TTL ≥3600)
+    "sync_prices":         "sync_prices",         # BACKEND_AI_AGENTS.py (SYNC_PRICES_LOCK_TTL_S 14400)
+}
+
+
 async def _reconcile_orphaned_jobs() -> None:
     """Reconcile jobs left 'running' by a PREVIOUS backend container.
 
@@ -2651,13 +2669,6 @@ async def _reconcile_orphaned_jobs() -> None:
     are unaffected — those still get reaped and alerted by the watchdog.
     """
     cutoff = _BACKEND_START_UTC.replace(tzinfo=None)  # job_registry timestamps are naive UTC
-    _JOB_LOCK_MAP = {
-        "run_scraper_cycle":   "scraper_cycle",
-        "run_brand_discovery": "brand_discovery",
-        "run_all_tasks":       "db_update_agent",
-        "category_discovery":  "category_discovery",
-        "sync_prices":         "price_sync",
-    }
     try:
         async with async_session_factory() as _db:
             rows = (await _db.execute(text("""
@@ -2673,23 +2684,31 @@ async def _reconcile_orphaned_jobs() -> None:
         if rows:
             names = [str(r.job_name).split(":")[0] for r in rows]
             print(f"[Startup] reconciled {len(rows)} orphaned running job(s) → superseded: {names}")
-            try:
-                from BACKEND_AUTH_SECURITY import get_redis
-                _r = await get_redis()
-                if _r:
-                    for base in {n for n in names}:
-                        lock = _JOB_LOCK_MAP.get(base, base)
-                        await _r.delete(f"autospare:lock:{lock}")
-                    try:
-                        await _r.aclose()
-                    except Exception:
-                        pass
-            except Exception as _le:
-                print(f"[Startup] orphan lock clear failed: {_le}")
         else:
+            names = []
             print("[Startup] no orphaned running jobs to reconcile")
     except Exception as e:
+        names = []
         print(f"[Startup] orphan job reconciliation failed: {e}")
+
+    # Free the Redis locks of EVERY in-process job, not only of rows found 'running'
+    # above (ROOT FIX #53, 2026-10-03). This runs before any scheduler starts, and these
+    # jobs only ever run inside this uvicorn process, so any such lock present now was
+    # left by a dead process. The old code keyed the clear on the rows it had just
+    # superseded — but pre_restart.sh supersedes them FIRST, so the shutdown handler and
+    # this reconciler both found 0 rows and freed nothing: brand_discovery's 24 h lock
+    # leaked at the 2026-10-02 14:31 restart and every discovery run was skipped for ~19 h.
+    try:
+        from BACKEND_AUTH_SECURITY import get_redis
+        _r = await get_redis()
+        if _r:
+            _freed = []
+            for lock in sorted(set(_INPROC_JOB_LOCKS.values()) | {_INPROC_JOB_LOCKS.get(n, n) for n in names}):
+                if await _r.delete(f"autospare:lock:{lock}"):
+                    _freed.append(lock)
+            print(f"[Startup] freed stale in-process job locks: {_freed or 'none'}")
+    except Exception as _le:
+        print(f"[Startup] orphan lock clear failed: {_le}")
 
 
 async def _amayama_harvest_monitor_loop() -> None:
@@ -2789,7 +2808,6 @@ async def startup():
         _supervised_task("embed_warmup", _warmup_embed_model())
     else:
         print("[EmbedWarmup] disabled (ENABLE_LOCAL_EMBED_WARMUP=false)")
-    _supervised_task("price_sync_loop",             _price_sync_loop())
     _supervised_task("stuck_orders_monitor",        _stuck_orders_monitor_loop())
     _supervised_task("notify_search_miss_loop",     _notify_search_miss_loop())
     _supervised_task("scrape_search_misses_loop",   _scrape_search_misses_loop())
@@ -2799,8 +2817,14 @@ async def startup():
     _supervised_task("health_monitor_loop",         _health_monitor_loop())
     _supervised_task("oom_watchdog",                _oom_watchdog_loop())
     _supervised_task("vip_detection_loop",          _vip_detection_loop())
-    _supervised_task("backup_loop",                 _backup_loop())
-    start_scraper_task()           # ← catalog scraper: every 3h (owns its own task internally)
+    # THE single automatic entry point for every heavy night job (#57, 2026-10-03):
+    # auto_backup → eBay fitment → sync_prices → REX night cycle → monthly brand discovery →
+    # category discovery → weekly maintenance, one at a time, each started only after the
+    # previous one reached a verified terminal state. Do NOT register another time-based
+    # loop for any of these jobs — add a JobSpec in night_pipeline.build_production_controller.
+    import night_pipeline as _night_pipeline
+    _supervised_task("night_pipeline",              _night_pipeline.controller_loop())
+    start_scraper_task()           # ← catalog scraper: FX refresh + Jaguar todos every 3h (heavy night work → night_pipeline)
     start_db_agent(get_db, 3.0)   # ← DB cleaning / normalisation agent (every 3h, staggered from scraper)
     _supervised_task("cleanup_loop",                run_cleanup_loop())
     _supervised_task("noa_marketing_loop",          _noa_marketing_loop())
@@ -2809,7 +2833,6 @@ async def startup():
     _supervised_task("social_feedback_loop",        _social_feedback_loop())
     _supervised_task("group_scan_loop",             _group_scan_loop())
     _supervised_task("noa_eod_report_loop",         _noa_eod_report_loop())
-    _supervised_task("ebay_fitment_backfill_loop",  _ebay_fitment_backfill_loop())
     _supervised_task("enrich_catalog_loop",         _enrich_catalog_loop())
     _supervised_task("status_update_loop",          _status_update_loop())
     _supervised_task("rex_dispatch_loop",           _rex_dispatch_loop())
@@ -2820,7 +2843,6 @@ async def startup():
     _supervised_task("job_queue_loop",               _job_queue_loop())
     _supervised_task("job_queue_report",             _job_queue_report_loop())
     _supervised_task("whatsapp_link_monitor",        _whatsapp_link_monitor_loop())
-    _supervised_task("weekly_maintenance",           _weekly_maintenance_loop())
     _supervised_task("car_parts_ie_stall_watchdog",  _car_parts_ie_stall_watchdog_loop())
     _supervised_task("car_parts_ie_healthcheck",     _car_parts_ie_harvester_healthcheck_loop())
     _supervised_task("meili_sync_loop",              _meili_sync_loop())
@@ -2860,23 +2882,45 @@ async def _social_feedback_loop():
 
 
 # ── Group Scan Loop ────────────────────────────────────────────────────────────
-# Scans approved Facebook groups every SOCIAL_GROUP_SCAN_INTERVAL_S (default 86400 = daily).
+# Scans approved Facebook groups daily at SOCIAL_GROUP_SCAN_HOUR_IL (default 10:00 Israel time).
 # Drafts comment proposals and queues them for owner WhatsApp approval.
 # Toggle off with SOCIAL_GROUP_SCAN_ENABLED=0.
 
 async def _group_scan_loop():
     """Supervised loop: daily FB group discovery sync + scan → draft comment proposals → owner approval."""
-    interval = int(os.getenv("SOCIAL_GROUP_SCAN_INTERVAL_S", "86400"))  # 24h default
     enabled = os.getenv("SOCIAL_GROUP_SCAN_ENABLED", "1").strip() == "1"
     if not enabled:
         logger.info("[group_scan] disabled (SOCIAL_GROUP_SCAN_ENABLED=0)")
         return
 
-    # Stagger: offset 2h after startup so it doesn't compete with harvester warmup
-    # (SOCIAL_GROUP_SCAN_START_DELAY_S lets an operator shorten it for a bounded verification run).
-    await asyncio.sleep(int(os.getenv("SOCIAL_GROUP_SCAN_START_DELAY_S", "7200")))
+    # SCHEDULE (#53, 2026-10-03): daily at a fixed DAYTIME Israel time (default 10:00 IL;
+    # a full 39-batch scan takes ~3.1 h → done ~13:10, inside the 09-21 notify window, so
+    # drafts are fresh when the owner approves them). Was "SOCIAL_GROUP_SCAN_START_DELAY_S
+    # after container start, then sleep 24 h AFTER the cycle" — the ~3 h runtime added to
+    # every period, so the start drifted ~+3 h/day and periodically marched through the
+    # 01:00-05:30 overnight window (auto_backup/sync_prices), where this Chrome — the
+    # largest variable memory consumer (0.84 GB anon in the #51 kernel OOM log) — would
+    # stack on the night jobs. SOCIAL_GROUP_SCAN_START_DELAY_S / _INTERVAL_S are retired.
+    from local_schedule import seconds_until, describe
+    _scan_hour = int(os.getenv("SOCIAL_GROUP_SCAN_HOUR_IL", "10"))
+    _scan_minute = int(os.getenv("SOCIAL_GROUP_SCAN_MINUTE_IL", "0"))
 
     while True:
+        logger.info("[group_scan] next run %s", describe(_scan_hour, _scan_minute))
+        await asyncio.sleep(seconds_until(_scan_hour, _scan_minute))
+        # Never start this Chrome on top of a heavy night job that is running late (#57):
+        # the pipeline closes at 07:00 IL, but a job that started before the close is
+        # allowed to finish. Wait for it (5-min polls, at most 2 h) instead of overlapping.
+        try:
+            import night_pipeline as _np
+            for _ in range(24):
+                _np_job = await _np.running_job()
+                if not _np_job:
+                    break
+                logger.info("[group_scan] waiting — night pipeline is still running %s", _np_job)
+                await asyncio.sleep(300)
+        except Exception as _npexc:
+            logger.debug("[group_scan] night-pipeline check skipped: %s", _npexc)
         _cycle_started = datetime.now(timezone.utc)
         _drafts_saved = _dup_events = _draft_failures = _budget_skipped = 0
         _autonomous_outcomes: dict = {}
@@ -2916,21 +2960,135 @@ async def _group_scan_loop():
             except Exception as exc:
                 logger.error("[group_scan] discovery sync failed (continuing to scan existing population): %s", exc)
 
-            # Use a fresh session scoped to the query only; facebook_group_scan
-            # schedules asyncio.create_task(_log_action(db, ...)) internally which
-            # fires AFTER the async-with exits and caused an InterfaceError on
-            # session close.  Passing a session that commits+closes before the task
-            # runs is the root cause — fixed by closing the session BEFORE we await
-            # the notification, so the background task sees an already-committed conn.
-            async with async_session_factory() as db:
-                from social.tools import facebook_group_scan
-                result = await facebook_group_scan(db=db)
-                # Flush the session so _log_action's background task completes cleanly
-                # before we exit the context and close the connection.
+            # ── Batched Facebook group scan (Issue #51 OOM fix, 2026-10-02) ────
+            # Previously called facebook_group_scan() which sent ALL groups through
+            # one GroupAgent.scan_groups() call — one Playwright context, one Page,
+            # ~386 navigations, Chrome resident for ~2.7h → RSS ~850 MB → OOM.
+            # Fix: load groups from DB, split into bounded batches, call
+            # scan_groups(batch) once per batch.  Each call opens/closes its own
+            # FacebookSession → context.close() → playwright.stop() so Chrome
+            # is released every SOCIAL_GROUP_SCAN_BATCH_SIZE groups.
+            # facebook_group_scan() in social/tools.py is unchanged (manual path).
+            import types as _types
+            import sqlalchemy as _sa
+            _SCAN_BATCH = int(os.getenv("SOCIAL_GROUP_SCAN_BATCH_SIZE", "10"))
+            async with async_session_factory() as _grp_db:
+                _grp_rows = (await _grp_db.execute(
+                    _sa.text("""
+                        SELECT id::text, group_url, group_name
+                        FROM group_targets
+                        WHERE platform='facebook'
+                          AND status NOT IN ('rejected', 'inactive')
+                        ORDER BY last_posted_at NULLS FIRST, created_at
+                    """)
+                )).fetchall()
+            _scan_group_list = [
+                {"id": r[0], "group_url": r[1], "group_name": r[2]}
+                for r in _grp_rows
+            ]
+            _n_batches = (len(_scan_group_list) + _SCAN_BATCH - 1) // _SCAN_BATCH if _scan_group_list else 0
+            from social.facebook_browser.group_agent import GroupAgent as _BatchScanAgent
+            _all_disc: list = []
+            _g_attempted = 0
+            _g_fetched = 0
+            _g_session_failed = False
+            _agg_tel: dict = {
+                "scored": 0, "near_misses": 0, "zero_score": 0,
+                "dom_candidates": 0, "text_valid": 0, "discoveries": 0,
+            }
+            _batch_errors: list = []
+            for _bi in range(0, len(_scan_group_list), _SCAN_BATCH):
+                _batch = _scan_group_list[_bi: _bi + _SCAN_BATCH]
+                _bnum = _bi // _SCAN_BATCH + 1
                 try:
-                    await db.commit()
-                except Exception:
-                    pass
+                    # Batch watchdog (#54, 2026-10-03): scan_groups() had no overall timeout.
+                    # When a host OOM killed the page renderer mid-batch (10:59/11:01 UTC),
+                    # batch 34 hung with no output and the whole cycle — and every discovery
+                    # aggregated from the 33 finished batches — could never complete.
+                    # A healthy batch takes ~5 min. On timeout the batch is cancelled WITHOUT
+                    # awaiting its cleanup (cleanup against a crashed browser is what hangs;
+                    # leftover Chrome is policed by _zombie_reaper_loop) and recorded as a
+                    # batch error by the except below; the scan continues with the next batch.
+                    _btask = asyncio.create_task(_BatchScanAgent().scan_groups(_batch))
+                    _bdone, _ = await asyncio.wait(
+                        {_btask}, timeout=int(os.getenv("SOCIAL_GROUP_SCAN_BATCH_TIMEOUT_S", "1200")))
+                    if not _bdone:
+                        _btask.cancel()
+                        raise TimeoutError(f"batch exceeded {os.getenv('SOCIAL_GROUP_SCAN_BATCH_TIMEOUT_S', '1200')}s")
+                    _br = _btask.result()
+                    _all_disc.extend(_br["discoveries"])
+                    _g_attempted += _br.get("groups_attempted", 0)
+                    _g_fetched += _br.get("groups_fetched", 0)
+                    _bt = _br.get("telemetry", {}) or {}
+                    for _k in _agg_tel:
+                        _agg_tel[_k] += _bt.get(_k, 0)
+                    if _br.get("session_failed"):
+                        _g_session_failed = True
+                        logger.error(
+                            "[group_scan] batch %d/%d: session not authenticated"
+                            " — halting remaining batches",
+                            _bnum, _n_batches,
+                        )
+                        break
+                    logger.info(
+                        "[group_scan] batch %d/%d — attempted=%d fetched=%d disc=%d unavail=%d",
+                        _bnum, _n_batches,
+                        _br.get("groups_attempted", 0), _br.get("groups_fetched", 0),
+                        len(_br["discoveries"]),
+                        len(_br.get("groups_unavailable", [])),
+                    )
+                    # Dead-group streak tracking (root-fix 2026-10-02): for each group that
+                    # redirected away from its expected URL this batch, increment a Redis
+                    # per-group failure counter. After ≥3 consecutive failures, mark the
+                    # group 'inactive' in group_targets — it will be excluded from future
+                    # scans until re-discovered (re-activation handled in _upsert_discovered_groups).
+                    _DEAD_STREAK_KEY = "autospare:group_fail_streak:{}"
+                    _DEAD_STREAK_THRESHOLD = 3
+                    for _unavail_gid in _br.get("groups_unavailable", []):
+                        try:
+                            _streak_key = _DEAD_STREAK_KEY.format(_unavail_gid)
+                            _streak = await redis_client.incr(_streak_key)
+                            await redis_client.expire(_streak_key, 86400 * 14)  # 2-week TTL
+                            if _streak >= _DEAD_STREAK_THRESHOLD:
+                                async with async_session_factory() as _dead_db:
+                                    await _dead_db.execute(
+                                        _sa.text(
+                                            "UPDATE group_targets SET status='inactive', "
+                                            "updated_at=NOW() "
+                                            "WHERE id=CAST(:gid AS uuid)"
+                                        ),
+                                        {"gid": _unavail_gid},
+                                    )
+                                    await _dead_db.commit()
+                                await redis_client.delete(_streak_key)
+                                logger.warning(
+                                    "[group_scan] group %s marked inactive after %d consecutive "
+                                    "redirect-away failures",
+                                    _unavail_gid, _streak,
+                                )
+                        except Exception as _dead_exc:
+                            logger.warning("[group_scan] dead-group streak update failed for %s: %s",
+                                           _unavail_gid, _dead_exc)
+                except Exception as _be:
+                    _batch_errors.append(f"batch_{_bnum}:{str(_be)[:80]}")
+                    logger.warning("[group_scan] batch %d/%d failed: %s", _bnum, _n_batches, _be)
+
+            result = _types.SimpleNamespace(
+                status="error" if (_g_session_failed or _batch_errors) else "success",
+                data={
+                    "discoveries": _all_disc,
+                    "groups_selected": len(_scan_group_list),
+                    "groups_attempted": _g_attempted,
+                    "groups_fetched": _g_fetched,
+                    "session_failed": _g_session_failed,
+                    "telemetry": _agg_tel,
+                },
+                error=(
+                    "Facebook session not authenticated — re-login required"
+                    if _g_session_failed else
+                    ("; ".join(_batch_errors) if _batch_errors else None)
+                ),
+            )
 
             discoveries = result.data.get("discoveries", [])
 
@@ -3091,7 +3249,10 @@ async def _group_scan_loop():
                     alert_key=f"group_scan_discoveries_{_disc_fp}",
                     cooldown_s=86400,  # same discovery set: at most once/day
                 )
-                logger.info("[group_scan] sent %d discoveries to owner", len(discoveries))
+                # "dispatched" is accurate: notify_owner() may QUEUE the message to Redis
+                # outside 09:00-21:00 IL — it is NOT necessarily delivered immediately.
+                logger.info("[group_scan] dispatched notification for %d discoveries "
+                            "(may be queued outside quiet hours)", len(discoveries))
         except Exception as exc:
             logger.error("[group_scan] error: %s", exc)
             try:  # a crashed cycle is a scanner failure and must be countable, not silent
@@ -3101,7 +3262,6 @@ async def _group_scan_loop():
                                                        error=f"cycle_exception:{str(exc)[:200]}")
             except Exception:
                 pass
-        await asyncio.sleep(interval)
 
 
 @app.on_event("shutdown")
@@ -3119,11 +3279,7 @@ async def shutdown():
     # at startup is the safety net for UNGRACEFUL deaths (OOM / SIGKILL / crash),
     # where this handler never gets to run.
     try:
-        _JOB_LOCK_MAP = {
-            "run_scraper_cycle": "scraper_cycle", "run_brand_discovery": "brand_discovery",
-            "run_all_tasks": "db_update_agent", "category_discovery": "category_discovery",
-            "sync_prices": "price_sync",
-        }
+        _JOB_LOCK_MAP = _INPROC_JOB_LOCKS
         async with async_session_factory() as _db:
             _rows = (await _db.execute(text("""
                 UPDATE job_registry
@@ -5577,12 +5733,7 @@ async def _health_monitor_loop():
 
                     # Maps job_registry name → Redis lock name (they differ when acquire_lock()
                     # uses a shorter key than the job name registered in job_registry_start()).
-                    _JOB_LOCK_MAP = {
-                        "run_scraper_cycle":   "scraper_cycle",
-                        "run_brand_discovery": "brand_discovery",
-                        "run_all_tasks":       "db_update_agent",
-                        "category_discovery":  "category_discovery",
-                    }
+                    _JOB_LOCK_MAP = _INPROC_JOB_LOCKS
                     for _zr in _zombie_rows:
                         _silence_min = int((_zr.silence_s or 0) // 60)
                         # Auto-fix 1: clear Redis distributed lock so next run can acquire it
@@ -6178,147 +6329,86 @@ async def _pending_payment_reminder_loop():
 PRICE_SYNC_INTERVAL_H = int(os.getenv("PRICE_SYNC_INTERVAL_H", "24"))  # hours
 
 
-async def _price_sync_loop():
-    """
-    Runs the SupplierManagerAgent.sync_prices() every PRICE_SYNC_INTERVAL_H hours.
-    On first start, checks the last SystemLog entry: if < interval ago, waits the
-    remainder; otherwise runs immediately.
+async def run_sync_prices_once() -> dict:
+    """ONE BOAZ price sync (eBay + AliExpress) — a heavy night job owned by
+    night_pipeline.Controller (#57, 2026-10-03); no longer a self-scheduling loop.
+
+    Returns {"status": "completed" | "skipped" | "error", …report}. The controller treats
+    only "completed" (plus a completed job_registry row) as success, so a lock-skip or an
+    exception can never be recorded as a finished sync. Keeps the 2026-07-23 fixes: the
+    job_registry heartbeat on its own short session, finishing on a FRESH session, and
+    always freeing autospare:lock:sync_prices after the run (sync_prices only releases it
+    on its own success path).
     """
     from BACKEND_AI_AGENTS import SupplierManagerAgent
     from resilience import log_job_failure, job_registry_start, job_registry_finish, job_heartbeat
     interval_s = PRICE_SYNC_INTERVAL_H * 3600
+    job_id = None
 
-    # Determine how long to wait before the first run
-    first_wait = 0
+    async def _finish(_status: str, _err: "str | None" = None):
+        if not job_id:
+            return
+        try:
+            async with async_session_factory() as _fdb:
+                await job_registry_finish(_fdb, job_id, status=_status, error_message=_err)
+        except Exception as _fe:
+            print(f"[PriceSync] job_registry_finish failed: {_fe}")
+
     try:
         async with async_session_factory() as db:
-            last_log = (await db.execute(
-                select(SystemLog)
-                .where(SystemLog.logger_name == "supplier_manager_agent")
-                .order_by(SystemLog.created_at.desc())
-                .limit(1)
-            )).scalar_one_or_none()
-            if last_log and last_log.created_at:
-                elapsed = (datetime.utcnow() - last_log.created_at).total_seconds()
-                first_wait = max(0, interval_s - elapsed)
-    except Exception as e:
-        print(f"[PriceSync] could not check last run: {e}")
-
-    if first_wait > 0:
-        print(f"[PriceSync] last sync was recent — next run in {first_wait/3600:.1f}h")
-    else:
-        print("[PriceSync] no recent sync found — running now")
-
-    await asyncio.sleep(first_wait)
-
-    # ROOT FIX 2026-07-25: this loop is the SOLE scheduled runner of sync_prices, so a
-    # lock present at startup is stale — left by a run that was killed mid-flight (a backend
-    # restart/OOM). sync_prices' own release() only runs on its success path, so an error or
-    # a kill leaked autospare:lock:sync_prices for the full 4h TTL → every subsequent run
-    # logged "skipped — already running on another worker" and the price sync stalled. Clear
-    # it once here so a fresh container never inherits a phantom lock.
-    try:
-        from BACKEND_AUTH_SECURITY import get_redis as _get_redis_ps
-        _r0 = await _get_redis_ps()
-        if await _r0.delete("autospare:lock:sync_prices"):
-            print("[PriceSync] cleared a stale sync_prices lock from a prior killed run")
-    except Exception as _lce:
-        print(f"[PriceSync] startup lock check failed: {_lce}")
-
-    while True:
-        job_id = None
-        sleep_s = interval_s
-        try:
-            async with async_session_factory() as db:
-                try:
-                    job_id = await job_registry_start(db, "sync_prices", ttl_seconds=interval_s)
-                except Exception as exc:
-                    print(f"[PriceSync] job_registry_start failed: {exc}")
-
-                # ROOT FIX 2026-07-23: sync_prices runs eBay+AliExpress for ~1-2h. Previously
-                # the whole run used this ONE `db` session and never heartbeated, so (a) the
-                # zombie watchdog marked it 'dead' after 30 min of silence, and (b) the long-held
-                # transaction hit idle_in_transaction / connection reset → job_registry_finish
-                # threw "invalid transaction". Fix: heartbeat on a separate short session every
-                # 5 min, and finish on a FRESH session (the long-running one may be poisoned).
-                async def _hb_loop():
-                    while True:
-                        await asyncio.sleep(300)
-                        try:
-                            async with async_session_factory() as _hbdb:
-                                await job_heartbeat(_hbdb, job_id)
-                        except Exception as _hbe:
-                            print(f"[PriceSync] heartbeat failed: {_hbe}")
-                hb_task = asyncio.create_task(_hb_loop()) if job_id else None
-
-                agent = SupplierManagerAgent()
-                try:
-                    report = await agent.sync_prices(db)
-                finally:
-                    if hb_task:
-                        hb_task.cancel()
-                        try:
-                            await hb_task
-                        except BaseException:
-                            pass
-                    # Always free the lock after a run — sync_prices only releases it on its
-                    # own success path, so an error mid-run would otherwise hold it for 4h and
-                    # skip every subsequent run. (This loop is the sole scheduled runner.)
-                    try:
-                        from BACKEND_AUTH_SECURITY import get_redis as _grp
-                        await (await _grp()).delete("autospare:lock:sync_prices")
-                    except Exception:
-                        pass
-                status = str((report or {}).get("status") or "ok")
-
-                async def _finish(_status: str, _err: "str | None" = None):
-                    if not job_id:
-                        return
-                    try:
-                        async with async_session_factory() as _fdb:
-                            await job_registry_finish(_fdb, job_id, status=_status, error_message=_err)
-                    except Exception as _fe:
-                        print(f"[PriceSync] job_registry_finish failed: {_fe}")
-
-                if status == "skipped":
-                    reason = str((report or {}).get("reason") or "unknown")
-                    sleep_s = min(interval_s, 900)
-                    print(f"[PriceSync] skipped — {reason}. retry_in={int(sleep_s)}s")
-                    await _finish("skipped", reason)
-                else:
-                    updated = int((report or {}).get("parts_updated") or 0)
-                    avail_changes = int((report or {}).get("availability_changes") or 0)
-                    errors_count = len((report or {}).get("errors") or [])
-                    print(
-                        f"[PriceSync] done — "
-                        f"updated={updated:,}  "
-                        f"avail_changes={avail_changes}  "
-                        f"errors={errors_count}"
-                    )
-                    await _finish("completed")
-        except Exception as exc:
-            error_msg = str(exc)[:500]
-            print(f"[PriceSync] ❌ error: {error_msg}")
-            # Log failure to DLQ (Gap 2b)
             try:
-                async with pii_session_factory() as pii_db:
-                    await log_job_failure(
-                        pii_db,
-                        job_name="sync_prices",
-                        error=error_msg,
-                        payload={},
-                        attempts=1,
-                    )
-            except Exception as dlq_err:
-                print(f"[PriceSync] Failed to log to DLQ: {dlq_err}")
+                job_id = await job_registry_start(db, "sync_prices", ttl_seconds=interval_s)
+            except Exception as exc:
+                print(f"[PriceSync] job_registry_start failed: {exc}")
 
-            if job_id:
+            async def _hb_loop():
+                while True:
+                    await asyncio.sleep(300)
+                    try:
+                        async with async_session_factory() as _hbdb:
+                            await job_heartbeat(_hbdb, job_id)
+                    except Exception as _hbe:
+                        print(f"[PriceSync] heartbeat failed: {_hbe}")
+            hb_task = asyncio.create_task(_hb_loop()) if job_id else None
+
+            agent = SupplierManagerAgent()
+            try:
+                report = await agent.sync_prices(db)
+            finally:
+                if hb_task:
+                    hb_task.cancel()
+                    try:
+                        await hb_task
+                    except BaseException:
+                        pass
                 try:
-                    async with async_session_factory() as db:
-                        await job_registry_finish(db, job_id, status="dead", error_message=error_msg)
+                    from BACKEND_AUTH_SECURITY import get_redis as _grp
+                    await (await _grp()).delete("autospare:lock:sync_prices")
                 except Exception:
                     pass
-        await asyncio.sleep(sleep_s)
+        status = str((report or {}).get("status") or "ok")
+        if status == "skipped":
+            reason = str((report or {}).get("reason") or "unknown")
+            print(f"[PriceSync] skipped — {reason}")
+            await _finish("skipped", reason)
+            return {**(report or {}), "status": "skipped", "reason": reason}
+        updated = int((report or {}).get("parts_updated") or 0)
+        avail_changes = int((report or {}).get("availability_changes") or 0)
+        errors_count = len((report or {}).get("errors") or [])
+        print(f"[PriceSync] done — updated={updated:,}  avail_changes={avail_changes}  errors={errors_count}")
+        await _finish("completed")
+        return {"status": "completed", "parts_updated": updated,
+                "availability_changes": avail_changes, "errors": errors_count}
+    except Exception as exc:
+        error_msg = str(exc)[:500]
+        print(f"[PriceSync] ❌ error: {error_msg}")
+        try:
+            async with pii_session_factory() as pii_db:
+                await log_job_failure(pii_db, job_name="sync_prices", error=error_msg, payload={}, attempts=1)
+        except Exception as dlq_err:
+            print(f"[PriceSync] Failed to log to DLQ: {dlq_err}")
+        await _finish("dead", error_msg)
+        return {"status": "error", "error": error_msg}
 
 
 @app.on_event("shutdown")

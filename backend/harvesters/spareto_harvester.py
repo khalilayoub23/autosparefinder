@@ -7,6 +7,7 @@ Usage:
     python3 spareto_harvester.py --makes TOYOTA HYUNDAI KIA --pages 50
     python3 spareto_harvester.py --makes TOYOTA --pages 100 --dry-run
 """
+from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environment, never from source (FIXES_TRACKER #61)
 
 import asyncio
 import asyncpg
@@ -24,7 +25,7 @@ from typing import Optional
 # with a NULL category and depend on the self-healing task to find them.
 from category_map import categorize_on_ingest
 
-DB_URL = "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43@postgres_catalog:5432/autospare"
+DB_URL = f"postgresql://autospare:{_DB_PW}@postgres_catalog:5432/autospare"
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",

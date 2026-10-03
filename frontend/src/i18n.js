@@ -160,11 +160,8 @@ export function useI18n() {
 
   useEffect(() => {
     try {
-      // Only set <html lang> (a11y/SEO). We deliberately do NOT set <html dir> here so we
-      // never affect the app's other (Hebrew-hardcoded) pages — each consumer applies `dir`
-      // to its own container (e.g. the landing root <div dir={dir}>), which is enough for the
-      // rtl: Tailwind variants to work within that page.
       document.documentElement.lang = lang
+      document.documentElement.dir = dir
       localStorage.setItem('asf-lang', lang)
     } catch { /* noop */ }
   }, [lang, dir])

@@ -53,7 +53,9 @@ async def _probe_flaresolverr(fs_url: str, fake_status_code: int) -> str:
 
 
 def run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    # asyncio.run owns its loop: get_event_loop() raised "no current event loop" whenever an
+    # earlier test in the session (e.g. pytest-asyncio tests) had closed the default loop.
+    return asyncio.run(coro)
 
 
 # ── probe() state tests ───────────────────────────────────────────────────────

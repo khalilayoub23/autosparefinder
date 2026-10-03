@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Build vehicle fitment for samelet-imported brands using keyword matching."""
+from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environment, never from source (FIXES_TRACKER #61)
 import asyncio, asyncpg, json
 
-DB_URL = "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43@postgres_catalog:5432/autospare"
+DB_URL = f"postgresql://autospare:{_DB_PW}@postgres_catalog:5432/autospare"
 
 # Model → keywords (EN + HE) for matching in part names
 BRAND_MODELS = {

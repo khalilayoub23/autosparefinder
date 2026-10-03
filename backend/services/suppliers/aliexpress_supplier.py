@@ -664,119 +664,90 @@ class AliExpressSupplier(BaseSupplier):
                 m = _re.search(r"[\d]+\.[\d]+|[\d]+", t.replace(",", ""))
                 return float(m.group()) if m else 0.0
 
-            # DS product.get returns aeop_ae_product_skus for pricing
-            skus = item.get("aeop_ae_product_skus", {}).get("aeop_ae_sku", []) or []
+            # REAL aliexpress.ds.product.get response shape (verified 2026-09-29 against a captured
+            # live production response — FIXES_TRACKER.md 2026-09-29). The previous `aeop_ae_*` /
+            # `image_u_r_ls` / top-level `store_id`/`product_id` paths never matched any real response
+            # and made this function return None on every call since AliExpress went live: `skus` was
+            # always `[]`, the display-dto fallback was always empty, so `price` was always 0 and the
+            # search-stage result silently stood in for `detail` on every match (see `selected = detail
+            # or cheapest` in aliexpress_price_sync.py). Every path below is read from the ACTUAL schema.
+            base = item.get("ae_item_base_info_dto", {}) or {}
+            skus = (item.get("ae_item_sku_info_dtos", {}) or {}).get("ae_item_sku_info_d_t_o", []) or []
             price = 0.0
             for sku in skus:
-                offer = sku.get("aeop_sku_latest_price_module", {}) or {}
-                p = _p(offer.get("activity_amount")) or _p(offer.get("sale_amount"))
+                p = (_p(sku.get("offer_sale_price")) or _p(sku.get("offer_bulk_sale_price"))
+                     or _p(sku.get("sku_price")))
                 if p > 0 and (price == 0 or p < price):
                     price = p
             if price <= 0:
-                price = _p(item.get("aeop_ae_product_display_dto", {}).get("sale_price"))
+                # Defensive fallback (not observed in the captured sample): some categories may only
+                # expose a product-level price with no SKU list.
+                price = _p(base.get("sale_price"))
             if price <= 0:
                 return None
 
             image_urls: list[str] = []
-            for img_url in str(item.get("image_u_r_ls") or "").split(";"):
+            multimedia = item.get("ae_multimedia_info_dto", {}) or {}
+            for img_url in str(multimedia.get("image_urls") or "").split(";"):
                 img_url = img_url.strip()
                 if img_url:
                     image_urls.append(img_url)
             image_urls = image_urls[:8]
 
-            title = str(item.get("aeop_ae_product_display_dto", {}).get("product_title") or item_id)
+            title = str(base.get("subject") or item_id)
             origin = classify_part_origin(title)
+
+            store = item.get("ae_store_info", {}) or {}
+            logistics = item.get("logistics_info_dto", {}) or {}
+            delivery_days = None
+            try:
+                delivery_days = int(logistics.get("delivery_time"))
+            except (TypeError, ValueError):
+                delivery_days = None
+
+            # Structured product attributes (ae_item_properties): mapped into the existing, already
+            # generic `tech_specs` dict — no new PartResult field, no new DB column (tech_specs is not
+            # persisted anywhere today; see FIXES_TRACKER.md 2026-09-29). Package dimensions/weight
+            # (package_info_dto) and the rich HTML description (ae_item_base_info_dto.detail /
+            # mobile_detail) are intentionally NOT mapped here — no existing field carries that
+            # semantic meaning; deferred pending a dedicated feature decision.
+            _ATTR_MAP = {
+                "Manufacturer Part Number": "manufacturer_part_number",
+                "OEM NO.": "oem_no",
+                "Interchange Part Number": "interchange_part_number",
+                "Item Weight": "item_weight_kg",
+                "Item Length": "item_length_cm",
+                "Item Width": "item_width_cm",
+                "Item Height": "item_height_cm",
+                "Origin": "origin_country",
+                "Brand Name": "brand_name",
+                "Automotive fit type": "automotive_fit_type",
+            }
+            tech_specs: dict = {"part_origin": origin}
+            for prop in (item.get("ae_item_properties", {}) or {}).get("ae_item_property", []) or []:
+                dst_key = _ATTR_MAP.get(prop.get("attr_name"))
+                value = prop.get("attr_value")
+                if dst_key and value not in (None, ""):
+                    tech_specs[dst_key] = value
+
             return PartResult(
                 supplier=self.name,
-                item_id=str(item.get("product_id") or item_id),
+                item_id=str(base.get("product_id") or item.get("product_id") or item_id),
                 title=title,
                 price=price,
                 currency="USD",
                 shipping_cost=0.0,
                 total_cost=price,
                 condition="New",
-                seller=str(item.get("store_id") or ""),
+                seller=str(store.get("store_id") or ""),
                 seller_rating=None,
                 item_url=f"https://www.aliexpress.com/item/{item_id}.html",
                 image_url=image_urls[0] if image_urls else None,
                 location="CN",
-                estimated_delivery_days=20,
-                ships_to_israel=True,
+                estimated_delivery_days=delivery_days if delivery_days and delivery_days > 0 else 20,
+                ships_to_israel=(logistics.get("ship_to_country") == "IL") if logistics.get("ship_to_country") else True,
                 image_urls=image_urls or None,
-                tech_specs={"part_origin": origin},
-                warranty_text=None,
-                warranty_months=None,
-            )
-        except Exception as exc:
-            logger.error("AliExpress DS map details error: %s", exc)
-            return None
-
-
-        try:
-            async with httpx.AsyncClient(timeout=20.0) as client:
-                resp = await client.post(ALIEXPRESS_API_URL, data=params)
-                resp.raise_for_status()
-                data = resp.json()
-        except Exception as exc:
-            logger.error("AliExpress get_part_details failed for '%s': %s", item_id, exc)
-            return None
-
-        if data.get("error_response"):
-            logger.warning("AliExpress get_part_details error: %s", data["error_response"])
-            return None
-
-        products = (
-            data.get("aliexpress_affiliate_productdetail_get_response", {})
-            .get("resp_result", {})
-            .get("result", {})
-            .get("products", {})
-            .get("product", [])
-        )
-        item = products[0] if products else {}
-        if not item:
-            return None
-
-        try:
-            import re as _re
-            def _p(v):
-                t = _safe_text(v)
-                m = _re.search(r"[\d]+\.[\d]+|[\d]+", t.replace(",", ""))
-                return float(m.group()) if m else 0.0
-
-            price = _p(item.get("target_sale_price")) or _p(item.get("sale_price")) or _p(item.get("original_price"))
-            if price <= 0:
-                return None
-
-            image_urls: list[str] = []
-            main_image = _safe_text(item.get("product_main_image_url"))
-            if main_image:
-                image_urls.append(main_image)
-            extra_imgs = item.get("product_small_image_urls") or {}
-            if isinstance(extra_imgs, dict):
-                extra_imgs = extra_imgs.get("string", [])
-            image_urls.extend([str(u) for u in extra_imgs if _safe_text(u)])
-            image_urls = list(dict.fromkeys(image_urls))
-
-            title = str(item.get("product_title") or "")
-            origin = classify_part_origin(title)
-            return PartResult(
-                supplier=self.name,
-                item_id=str(item.get("product_id") or item_id),
-                title=title,
-                price=price,
-                currency="USD",
-                shipping_cost=0.0,
-                total_cost=price,
-                condition="New",
-                seller=str(item.get("store_id") or ""),
-                seller_rating=self._parse_rating(item.get("evaluate_rate")),
-                item_url=str(item.get("product_detail_url") or f"https://www.aliexpress.com/item/{item_id}.html"),
-                image_url=image_urls[0] if image_urls else None,
-                location="CN",
-                estimated_delivery_days=20,
-                ships_to_israel=True,
-                image_urls=image_urls or None,
-                tech_specs={"part_origin": origin},
+                tech_specs=tech_specs,
                 warranty_text=None,
                 warranty_months=None,
             )

@@ -46,6 +46,7 @@ Usage:
 Author: AutoSpareFinder Agent
 Last Updated: 2026-06-01
 """
+from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environment, never from source (FIXES_TRACKER #61)
 import argparse
 import asyncio
 import json
@@ -70,7 +71,7 @@ API_URL   = "https://bydauto.co.il/wp-admin/admin-ajax.php"
 DATA_FILE = Path("/opt/autosparefinder/bydil_parts.json")
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43"
+    f"postgresql://autospare:{_DB_PW}"
     "@postgres_catalog:5432/autospare"
 ).replace("postgresql+asyncpg://", "postgresql://")
 DELAY_S   = 0.8   # polite delay between requests

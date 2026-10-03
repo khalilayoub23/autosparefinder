@@ -1,5 +1,686 @@
 # AutoSpareFinder — Bug & Breaking Points Fix Tracker
-> Last scan: 2026-10-02 | Total issues found: 491 | Fixed: 490 | In Progress: 0 | Open: 1
+> Last scan: 2026-10-03 | Total issues found: 517 | Fixed: 516 | In Progress: 0 | Open: 1
+
+---
+
+## #62 — Finalization: credential cleanup verified, full change-set audit, one commit of the accumulated production changes — 2026-10-03
+
+**Scope.** Close the hard-coded DB password issue (#61) in git, audit every changed file, commit only verified intended changes, push to `origin`. No container was restarted, stopped or recreated.
+
+**Starting state (VERIFIED).** Branch `main`, `HEAD == origin/main == 9da73bb`. The index was EMPTY — nothing was staged (the "~100 staged files" were 85 modified + 17 untracked working-tree files). `.env` is gitignored and untracked.
+
+**Credential (root cause + fix).** Root cause: one literal DSN copy-pasted into 54 standalone scripts instead of a single configuration source. Fix (#61): `backend/db_dsn.py` reads the password from `DB_PASSWORD` or parses it out of `DATABASE_URL` — the same runtime configuration docker-compose already injects from `.env`; no new variable, no fallback literal.
+- Working tree (tracked + untracked, non-ignored): live credential present in **0** files. `HEAD` before this commit: **54** files.
+- Tests (`tests/test_db_credentials.py`, 9): no literal credential in source; every rewritten script imports from `db_dsn`; password derived from `DATABASE_URL`; explicit `DB_PASSWORD` wins; missing configuration → empty value + `RuntimeError`, no built-in default; error text never echoes the connection string; module never prints/logs; the importer builds its DSN from configuration; the live credential appears in no source file (paths only, value never printed).
+- **Exposure:** the removed literal hash-matches the current `.env` `DB_PASSWORD` → it is the ACTIVE production credential and it remains in git history on the remote. **Rotation: NOT DONE.** No established zero-disruption rotation mechanism exists here: it needs `ALTER ROLE` on `postgres_catalog` + a new `.env` value + recreating every DB-connected container, which was forbidden for this task. History was not rewritten (forbidden). Mitigation in place: `postgres_catalog` binds to `127.0.0.1` only.
+
+**Audit — every changed file classified, none UNKNOWN, none secret-bearing.** Each pre-existing (earlier-session) group was accepted only with three independent proofs: a tracker entry documenting it, its tests passing now, and evidence that it is already what production runs (file mtime older than the running container/image).
+- INTENDED_SECURITY_FIX (56): 45 backend scripts + 9 `archive/scripts` (literal → configuration), `db_dsn.py`, `tests/test_db_credentials.py`.
+- INTENDED_SCHEDULER/PIPELINE: `night_pipeline.py`, `local_schedule.py`, `BACKEND_API_ROUTES.py`, `catalog_scraper.py`, `db_update_agent.py`, `auto_backup.py`, `routes/admin.py`, `tests/test_night_pipeline.py`, `tests/test_overnight_schedule.py` (#52–#59).
+- INTENDED_RESTART_FIX: `scripts/restart_workers.py`, `pre_restart.sh`, `post_restart.sh`, `container_start.sh`, `tests/test_restart_workers.py` (#60).
+- INTENDED_HARVESTER: `maintenance/build_part_thumbnails.py`, `deploy/flaresolverr_tmp_gc.sh`, `tests/test_flaresolverr_health.py`; group scan #51: `social/facebook_browser/group_agent.py`, `group_scanner.py`, `social/tools.py`, `tests/test_group_scan_batching.py`.
+- INTENDED_EUROSENDER_FIX: no source file — activation is `.env` only (not committed) and documented in #60/#61.
+- INTENDED_UI/DESIGN (2026-09-29/30 UI audit + #39/#40/#41): `frontend/index.html`, `src/App.jsx`, `components/Layout.jsx`, `components/SocialLoginButtons.jsx`, `i18n.js`, `index.css`, `pages/Cart.jsx`, `pages/LandingPage.jsx`, `pages/Login.jsx`, `pages/Parts.jsx`, `design-system/autosparefinder/{MASTER,STITCH_BRIEF}.md`. All older than the running frontend image (built 2026-09-30 18:46 UTC).
+- INTENDED_OTHER: `routes/cart.py` + `tests/test_cart_vat.py` (#39); `routes/parts.py` + `tests/test_category_counts.py` + `devtests/verify_category_counts.py` (#40, verified live today); `agents/owner_console.py` + `devtests/avi_execution_integrity_test.py` (#32/#33); `services/suppliers/aliexpress_supplier.py` + `tests/test_aliexpress_product_get.py` (2026-09-29 schema fix); `whatsapp-bridge/safe_logging.js` + `test_safe_logging.mjs` (34/34, bridge running since 2026-09-27 with this file); `docker-compose.yml` (`init: true` on the two backup containers, already applied); `FIXES_TRACKER.md`.
+- UNRELATED_PREEXISTING / UNKNOWN / SECRET: none. Excluded by gitignore: `.env`.
+
+**Secret scan of the change set (8,022 added lines + new files).** Stripe/Google/AWS/GitHub/Slack/JWT/Meta/Telegram token patterns, private keys, bearer tokens: 0. URL-embedded credentials: 3, all fake fixtures in `test_db_credentials.py`. Every `.env` value ≥12 chars compared against the change set: only the public sender e-mail address matched (already in 4 committed files).
+
+**Regression (in the running backend container, mock-only; `test_aliexpress_price_sync` deliberately NOT run — it touches the live DB).** 418 passed: restart workers, DB credentials, night pipeline, overnight schedule, group-scan batching, FlareSolverr health, harvest supervisor, cart VAT, category counts, AliExpress product-get, Eurosender (run with sandbox overrides). Plus `whatsapp-bridge/test_safe_logging.mjs` 34/34 on the host. All changed `.py` compile; all changed `.sh` pass `bash -n`.
+
+**Not verified / open.** (1) DB password rotation — owner decision, needs a maintenance window. (2) `devtests/avi_execution_integrity_test.py` was compiled, not re-run (tracker #33 records 43/43). (3) 11 files keep short dev-placeholder passwords as `getenv` fallbacks — not the production secret. (4) Night pipeline first natural run and a real signed Eurosender production webhook remain as stated in #61.
+
+**Regression risk.** None introduced by this entry: the commit records code already running in production; nothing was deployed or restarted.
+
+---
+
+## #61 — Controlled restart: Eurosender production LIVE, restart-worker fix passed its first real restart, hard-coded DB password removed from 54 files, daytime harvester explained — 2026-10-03 16:55 UTC
+
+**STATUS: DEPLOYED and verified live.** Owner-approved. Only `autospare_backend` was recreated (16:55:53 UTC, healthy in 34 s). Not committed. HEAD `9da73bb`.
+
+### 1. Why car-parts.ie runs in the daytime — intentional, not a bypass
+- **Launch path (one):** `BACKEND_API_ROUTES._car_parts_ie_harvester_loop`, a supervised loop that relaunches `harvesters/car_parts_ie_flaresolverr_harvester.py` 30 s after any exit. No clock trigger, no resume hook, no duplicate launcher (`grep` over py/sh/yml). The healthcheck loop can kill a stalled process, and the same supervisor relaunches it. `night_pipeline` does not manage it and never did.
+- **Design intent:** goal G4 in CLAUDE.md — queue-driven, IL-priority, "never idles — cycles the market forever" with a 14-day refresh. It was never one of the heavy clock jobs.
+- **What it is doing now:** a 14-day **refresh pass**. `harvest_queue.attempts` shows nearly every model harvested 4–5 times (3:304, 4:5,632, 5:696, 6+:63). Queue at 16:55 UTC: done 6,013 / pending 299 / empty 378 / in_progress 5.
+- **Useful yield today** (after #53 un-stalled it at 09:26 UTC; before that it had written nothing for days): 998 models completed → **4,396 new `parts_catalog` rows, 2,848 new supplier offers, 38,107 existing offers refreshed** (of 740,983 car-parts.ie offers). Models returning 0 parts today: 0.
+- **Cost:** 1,692 CPU-seconds over 5,684 s = **~30 % of one core**; RSS 72 MB; 6 threads; no browser of its own; 4 FlareSolverr cookie solves per hour. Host during a harvester-only window (15:20–16:45 UTC): CPU 50 % busy, load5 3.9 on 6 vCPU.
+- **Decision:** scheduling left unchanged — continuous, moderate, productive, and intentional. Resume safety was already present: `reclaim_stale_in_progress(30)` at startup and `(45)` every cycle return interrupted models to `pending`.
+
+### 2. Hard-coded database password — removed from tracked source
+- **Finding:** the production `DB_PASSWORD` (64 chars, hash-matched to `.env`) was pasted as a literal DSN into **54 tracked files**: 31 importers, 3 harvesters, 4 scrapers, 2 maintenance scripts, 3 root modules, 1 devtest, 1 legacy, 9 `archive/scripts`. One root cause: a copy-pasted `postgresql://autospare:<password>@…`.
+- **Fix:** new `backend/db_dsn.py` reads the credential from the existing configuration (`DB_PASSWORD` if set, otherwise parsed from `DATABASE_URL`, which is what the container has). Every literal became `f"postgresql://autospare:{_DB_PW}@…"` with `from db_dsn import DB_PASSWORD as _DB_PW` (archive scripts: `os.environ["DB_PASSWORD"]`; the one shell script: `${DB_PASSWORD:?…}`). Each file keeps its own host/port/db.
+- **Safety of the rewrite:** per-file round-trip check (undoing the transform reproduces the original byte-for-byte) and `ast.parse`; 0 problems; 72 changed backend `.py` files compile in the container.
+- **Verified live:** `db_dsn.DB_PASSWORD` equals `.env` by hash; the importer's `DB_DSN` connects (`select 1`); imports spawned after the rewrite wrote 1,447 offers in 3 min before the restart and 1,399 after it; no authentication error in the logs.
+- **Scan:** 0 tracked files contain the literal; a pattern scan of 1,318 source files finds no 20+-character literal Postgres password. 11 files still carry short development placeholders as `getenv` fallbacks (not the production secret) — left as is.
+- **Not done:** git history still contains the password (no history rewrite was requested). **Rotating `DB_PASSWORD` is the only real remediation**; with this fix a rotation is a one-line `.env` change.
+
+### 3. Restart-worker fix — first real production restart
+- **Stop:** SIGTERM to harvester PID 212 only (matched by real argv; my first attempt used a shell pattern that matched its own wrapper and aborted before signalling anything). Exit `rc=-15`; active harvester processes 0; queue identical before/after (`done=6013 empty=378 in_progress=5 pending=299`).
+- **`pre_restart.sh` (fixed):** ran to "PRE-RESTART COMPLETE", exit 0, 2 s after the stop. Capture recorded 0 workers (no import was running); the stop step ran and reported "no managed importer/scraper process is running". The script did not terminate itself. With zero targets present, "signals every target" is still proven only by tests.
+- **Recreate:** `docker compose up -d --no-deps --no-build backend`, issued 17 s after the harvester stop (before the supervisor's 30 s relaunch).
+- **Resume:** `container_start.sh` → `[restart_workers] resume: nothing to resume`; `post_restart.sh` → same, exit 0. No importer launched, none duplicated. (The refusal path was shown live in #60 on the real stale state: `NOT RESUMED … input file is gone`, exit 3.)
+- **Harvester after restart:** one process (PID 135), cookie minted 16:57:16, cycle 3640 continued; 5 models and 1,399 offers by 17:00. The 5 models interrupted mid-harvest (Volvo 760-704-764, 760-kombi-704-765, 850-ls, 940-944, ec40-539) stay `in_progress` until the 45-minute cycle reclaim. **Confirmed 17:54 UTC:** all five were reclaimed and re-harvested (`status=done`, `attempts=5`, completed 17:54:16–17:54:38).
+
+### 4. Eurosender — production LIVE
+- Running uvicorn (`/proc/1/environ`): `EUROSENDER_ENABLED=1`, `EUROSENDER_SANDBOX=0`; production API key and webhook secret equal `.env` by hash; no sandbox/legacy credential present.
+- App config with that environment: `eurosender_enabled()` True, `sandbox_mode()` False, `base_url()` `https://api.eurosender.com`; selected key and webhook secret are the production ones.
+- `EurosenderAdapter.get_countries()` → 249 entries (read-only; run in a process with PID 1's exact environment and code — there is no endpoint that makes the call inside PID 1).
+- Webhook: `/api/v1/webhooks/eurosender` registered (POST); unsigned → 401; forged signature → 401. A correctly signed production delivery has **not** been observed yet.
+- Routing: `EUROSENDER_SUPPLIER_ALLOWLIST` empty → `is_eurosender_eligible(<any supplier>)` False. No supplier is routed to Eurosender; the allowlist was not populated. No order, quote, label or shipment was created.
+
+### 5. System state after the restart (17:00 UTC)
+- 34 supervised tasks, 34 running, 0 dead, no duplicate names; `night_pipeline` ×1 `running`; none of the five old loops; pipeline table unchanged (October brand discovery BLOCKED seed).
+- Other containers: IDs and start times identical to the pre-restart snapshot (frontend, nginx, both Postgres, Redis, Meilisearch, both backup containers, FlareSolverr, WhatsApp bridge).
+- Inside the backend container (unavoidably restarted with it): Amayama server browser back and feeding; thumbnail importer running.
+- Resources: host available 3.5–5.1 GB; backend 1.8 GiB / 4 GiB; cgroup `oom`/`oom_kill` 0; kernel OOM kills 0; 0 tracebacks.
+
+### Tests
+restart workers 19 + DB credentials 6 (new) + night pipeline 56 + schedule 32 + group scan 27 + FlareSolverr 18 + harvest supervisor 12 + Eurosender 222 (run with sandbox/disabled overrides and a blank production key) = **392 passed, 0 failed**. `test_aliexpress_price_sync` not run (live DB).
+
+### Remaining / not verified
+- Night pipeline's first natural run (window opens 22:00 UTC).
+- The fixed stop step against real running importers (none were running at this restart).
+- A real, correctly signed production Eurosender webhook.
+- DB password rotation (history exposure) — owner decision.
+
+### Files
+New: `backend/db_dsn.py`, `backend/tests/test_db_credentials.py`. Changed: 45 backend scripts + 9 `archive/scripts` files (credential literal → environment), `FIXES_TRACKER.md`. Deployed from #60: `backend/scripts/restart_workers.py`, `pre_restart.sh`, `container_start.sh`, `post_restart.sh`, `.env` flags.
+
+---
+
+## #60 — Restart/resume bugs root-fixed; Eurosender production activation STAGED — restart BLOCKED by an active protected harvester — 2026-10-03 16:45 UTC
+
+> **Resolved by #61:** the owner approved stopping the harvester; the backend was recreated at 16:55:53 UTC and Eurosender production is live.
+
+**STATUS: BLOCKED at the restart boundary.** Both restart bugs are fixed and effective now (the scripts run at restart time, no backend reload needed). Eurosender production flags are written to `.env` but **not live**: loading them needs a backend recreate, and the car-parts.ie harvester was actively running. Nothing was restarted, stopped or killed.
+
+### Root causes
+1. **`pre_restart.sh` stop loop terminated itself.** It ran `pgrep -f <name>` inside `docker exec … bash -c "for proc in <all names>; …"`. That shell's own command line contains every target name, so the first `pgrep -f` returned the shell and `kill -TERM` ended the loop. Nothing after the first name was ever signalled (seen live at 15:14 UTC: "Stopping freesbe_importer (PIDs: …)" then straight to COMPLETE).
+2. **Resume relaunched importers without their arguments.**
+   - Capture (`ps aux | grep`) stored the script path as `cmd` and kept one process per script.
+   - `container_start.sh` ran `python3 {cmd}`; `post_restart.sh` started from `resume_args = cmd` and only ever appended `--resume-from`.
+   - So the importer came back with no `--brand/--file`, died with "the following arguments are required", and was still reported as "Resumed" / "✅ Post-restart resume complete".
+   - Both hooks launched the same worker (duplicate), and the state file was never cleared (it would relaunch on every later start).
+
+### Fix — one implementation: `backend/scripts/restart_workers.py`
+- **Matching by real argv.** A process is a target only if `/proc/<pid>/cmdline` is a Python interpreter running a managed script (matched on the script basename). A shell, `grep`, `pgrep`, `python -m/-c` or the helper itself cannot match.
+- **`capture`:** every distinct importer with its **exact argv** (state v2), written atomically to `/app/state/worker_state.json`.
+- **`stop`:** SIGTERM to resumable + stop-only targets, waits up to 10 s, reports each; a zombie counts as exited; never force-kills.
+- **`resume`:** replays the exact argv. It refuses, with a `NOT RESUMED … — <reason>` line and exit code 3, when: only a script path was recorded; an input file (`--file` …) no longer exists (the container `/tmp` is wiped by a recreate); the script is not a managed importer; or the capture is older than 30 min (`RESTART_STATE_MAX_AGE_S`). It skips an identical running process. It consumes the state under a file lock **before** launching, so the two hooks, or a later start, cannot launch a second copy.
+- **Compatibility with progress state:** `car_parts_ie_import_generic` resumes from `<--file>.checkpoint.json` when given the same arguments, so replaying the unchanged argv is the correct resume.
+- `pre_restart.sh`, `container_start.sh` and `post_restart.sh` now only call the helper. `post_restart.sh` exits non-zero when something was not resumed. Brand-discovery children stay stop-only (#57).
+
+### Live evidence (no restart)
+- `restart_workers.py list` on the production container showed a running import with its full argv (`--brand vauxhall --file /tmp/vauxhall__…_cpie.json --vehicle-slug …`).
+- The new `post_restart.sh` on the **real stale state** left by the 15:14 restart: `NOT RESUMED car_parts_ie_import_generic — input file is gone: /tmp/tvr__tvr_280-coupe_cpie.json`, `RESUME RESULT: resumed=0 not_resumed=1`, exit 3. Second run: `nothing to resume (state already consumed …)`, exit 0. No process was launched.
+- `stop` and `capture` against real processes are verified by tests only (real dummy processes, fake `/proc` root); a live run would have interrupted production imports. **NOT VERIFIED live** until the next restart.
+
+### Eurosender production activation — staged, not live
+- `.env` now has `EUROSENDER_ENABLED=1` and `EUROSENDER_SANDBOX=0` (appended; `.env` is gitignored). `docker compose config` vs the running container: a backend recreate changes exactly these two variables.
+- Read-only production check in a one-off process with those two flags (through `EurosenderAdapter.get_countries()`): base URL `https://api.eurosender.com`, selected key and webhook secret are the production variables, no sandbox/legacy credential present, `GET /v1/countries` → 249 entries. No order, quote, label or shipment was created.
+- **Running backend is unchanged:** `ENABLED=0`, `SANDBOX=1`; webhook route registered; unsigned/forged requests → 401 (verified in #59).
+- **Routing note:** `EUROSENDER_SUPPLIER_ALLOWLIST` is empty, and an empty allowlist routes **no** supplier to Eurosender. After activation the API and webhook are live, but no order ships through Eurosender until a real supplier UUID is added to the allowlist (owner decision; none invented).
+
+### Restart-boundary preflight (16:40 UTC) — why BLOCKED
+- car-parts.ie harvester PID 212 **active**: `harvest_queue` in_progress 5, pending 329, 16 models done in the last 10 min.
+- Amayama server browser feeding (3 feed calls in 3 min).
+- Clear: `job_registry` running 0, Redis locks none, pipeline RUNNING rows 0, no AliExpress scan, no managed import at that instant.
+- The night pipeline opens at 22:00 UTC (auto_backup → eBay fitment → `sync_prices` incl. AliExpress), so a restart must also avoid that window.
+
+### Night pipeline (unchanged, verified live)
+One `night_pipeline` task, state `running`; 34/34 supervised tasks, no duplicates, none of the five old loops; window 01:00–07:00 Asia/Jerusalem; order auto_backup → ebay_fitment_backfill → sync_prices → rex_night → brand_discovery → category_discovery → weekly_maintenance; guards host ≥1000/1500 MB, headroom ≥500/1200 MB, load/CPU ≤1.5. Not triggered manually; its first run is tonight.
+
+### Tests
+`tests/test_restart_workers.py` (new, 19): argv-only matching against a decoy shell naming every target; the old self-match reproduced; stop signals both importers and not the decoy; zombie counted as exited; exact-argv capture of distinct importers; resume with exact argv; resume twice / four concurrent hooks → one launch; refusals (script path only, input file gone, unmanaged command, stale capture); legacy `full_cmd` shape; identical running process skipped; the shell scripts contain no `pgrep`/`kill -TERM`/`python3 {cmd}`. Total safe regression: restart 19 + pipeline 56 + schedule 32 + group scan 27 + FlareSolverr 18 + harvest supervisor 12 + Eurosender 222 = **386 passed, 0 failed**. `test_aliexpress_price_sync` not run (live DB).
+
+### To finish (needs owner approval or an idle harvester)
+`bash backend/scripts/pre_restart.sh` → `docker compose up -d --no-deps --no-build backend` → `bash backend/scripts/post_restart.sh`, then verify in the running backend: `eurosender_enabled()` True, `sandbox_mode()` False, `get_countries()` OK, webhook 401 on bad signatures, 34 tasks once each.
+
+### Noted, not changed
+`importers/car_parts_ie_import_generic.py` has a database DSN with its password hard-coded in tracked source (pre-existing).
+
+### Files
+New: `backend/scripts/restart_workers.py`, `backend/tests/test_restart_workers.py`. Changed: `backend/scripts/pre_restart.sh`, `backend/scripts/container_start.sh`, `backend/scripts/post_restart.sh`, `backend/tests/test_night_pipeline.py`, `.env` (two flags, gitignored), `FIXES_TRACKER.md`. Runtime state: `/app/state/worker_state.json` consumed. Not committed. HEAD `9da73bb`.
+
+---
+
+## #59 — Production deployment: backend recreated, #52–#58 and the Eurosender production credentials are LIVE — 2026-10-03 15:14 UTC
+
+**STATUS: DEPLOYED and verified from the running process.** Owner-approved restart. Only `autospare_backend` was recreated; no other container was touched. Not committed. HEAD `9da73bb`.
+
+### Mechanism
+`bash backend/scripts/pre_restart.sh` → `docker compose up -d --no-deps --no-build backend` → `bash backend/scripts/post_restart.sh`. A recreate (not `docker restart`) was required because `.env` changed at 08:58 UTC, after the previous container was created at 08:17, and compose passes Eurosender configuration as environment variables. The dry run showed only `autospare_backend` recreated, same image. Full environment delta of the recreate (names only): the four Eurosender variables below and `SOCIAL_GROUP_SCAN_START_DELAY_S` 60 → 7200 (ignored by the new group-scan code).
+
+### Deployment inventory
+| Area | Class | Live evidence |
+|---|---|---|
+| #57/#58 `night_pipeline` controller | READY → DEPLOYED | `GET /api/v1/system/tasks`: `night_pipeline` state `running`; log "controller started — window 01:00-07:00 Asia/Jerusalem, jobs: [7]" |
+| #52–#56 scheduling (old clock loops removed, monthly brand discovery, REX loop light-only) | READY → DEPLOYED | live task list has none of `price_sync_loop`, `backup_loop`, `ebay_fitment_backfill_loop`, `brand_discovery_monthly`, `weekly_maintenance`; `TASK_REGISTRY` has neither discovery trigger |
+| #53 lock reconciliation | READY → DEPLOYED | log "[Startup] freed stale in-process job locks: none" |
+| #54 group-scan watchdog + fixed 10:00 slot | READY → DEPLOYED | log "[group_scan] next run 2026-10-04 10:00 IDT (07:00Z)" |
+| #53 full-seed exit-code retry, #58 backup atomic dump + PII variable, #58 fitment counter, #58 category budget | READY → DEPLOYED | same loaded files (process start 15:14:40 is after every file mtime); exercised by the 145 tests |
+| #54 thumbnail clearance single-flight/backoff | already live since 11:19 UTC | subprocess re-exec |
+| #53 FlareSolverr `/tmp` GC | already live (host cron) | 15:17:05Z run logged |
+| Group-scan `inactive` exclusion / re-activation (`group_scanner.py`, `social/tools.py`, edited 08:30 today, not by this work) | READY → DEPLOYED | completes the dead-group fix already running in the loop; 27 batching tests |
+| Eurosender production credentials (`.env`) | READY → DEPLOYED, service disabled by config | see below |
+| `routes/cart.py`, `routes/parts.py`, `agents/owner_console.py`, `aliexpress_supplier.py`, `group_agent.py` (uncommitted, older than the previous start) | already live before this restart | file mtimes 09-28 … 10-02 |
+| `frontend/*` (10 files), `whatsapp-bridge/*` (2), `design-system/` | UNRELATED — not deployed | their containers were not restarted |
+| `docker-compose.yml` diff (`init: true` on the backup containers) | already applied earlier | both backup containers run `/sbin/docker-init` |
+
+### Eurosender — `EUROSENDER CODE LIVE / PRODUCTION SERVICE DISABLED BY CONFIG`
+- Loaded (length only, values never printed): `EUROSENDER_PRODUCTION_API_KEY` set, `EUROSENDER_PRODUCTION_WEBHOOK_SECRET` set; both equal `.env` by hash; distinct from each other. The legacy sandbox `EUROSENDER_API_KEY` / `EUROSENDER_WEBHOOK_SECRET` are now empty (owner removed them from `.env`).
+- Flags preserved, not changed by this deployment: `EUROSENDER_ENABLED=0`, `EUROSENDER_SANDBOX=1` (compose defaults; unset in `.env`).
+- Resolved by the app: `eurosender_enabled()` False, `sandbox_mode()` True, `base_url()` `https://sandbox-api.eurosender.com`. In sandbox mode the app selects the sandbox key and secret, which are **empty**. So no Eurosender API call can be made, and **every webhook is rejected with 401, including genuine production deliveries**, until the owner sets `EUROSENDER_SANDBOX=0` (and `EUROSENDER_ENABLED=1` to ship).
+- Live checks: `/api/v1/webhooks/eurosender` present in the running app's OpenAPI (POST); unsigned POST → 401; forged-signature POST → 401; log lines carry no secret. No order, quote or shipment was created.
+- Code (committed, HEAD): HMAC-SHA256 on the raw bytes with `hmac.compare_digest`, dedup key written only after successful processing. 222 Eurosender unit tests pass.
+
+### Pre-restart state (15:13–15:14 UTC)
+- `job_registry` running 0; Redis locks none; quiet-queue 0.
+- `harvest_queue`: done 5,809 / pending 504 / in_progress 4 / empty 378.
+- Hung group-scan browser PID 57665 still present (batch 34 since 10:59).
+- `pre_restart.sh` exit 0: saved one transient car-parts.ie import to the state files and closed in-flight job rows.
+- Its SIGTERM loop matched its own shell and exited after the first name (pre-existing self-match bug), so imports were not signalled. The recreate was therefore issued at a moment with **no import process alive** (15:14:26).
+
+### Post-restart state (15:14:40–15:20 UTC)
+- Healthy in ~40 s; 34 supervised tasks, 34 running, 0 dead, 0 duplicate names; 0 tracebacks.
+- car-parts.ie: one harvester process; cookie minted 15:16:04; the 4 pre-restart in-progress models had completed (done 5,809 → 5,813); 10 more done by 15:20 (5,823); pending 488.
+- Group scan: hung browser gone with the old container; no stale Facebook profile lock. This cycle's discoveries (33 batches) were lost, as accepted. Next scan 2026-10-04 10:00 IDT.
+- Brand discovery: `night_pipeline_runs` seeded with `brand_discovery / M:2026-10 / BLOCKED` ("already executed this month by the pre-controller scheduler") so the day-1–7 catch-up does not run October again. 0 `run_brand_discovery` rows since the restart.
+- FlareSolverr: not restarted; "Challenge solved" 15:16:02; `/tmp` 3 MB.
+- Resources: host available 3,281 MB; backend 2.15 GiB / 4 GiB (anon 1,756 MB); load 6.8 / 4.5 / 3.9 during startup; OOM events 0.
+- Tests after restart: 145 (pipeline/schedule/group scan/FlareSolverr/harvest supervisor) + 222 (Eurosender) = **367 passed, 0 failed**. `test_aliexpress_price_sync` not run (live DB).
+
+### Not verified yet
+- The first real night (window opens 2026-10-03T22:00Z) is the runtime proof of sequencing, completion gating and the first measured category-discovery run.
+- The DB-agent cycle that started 15:16:26 on the new code was still running at report time; that it cannot launch brand discovery is verified from the loaded registry and code, not yet from a completed cycle.
+- Eurosender production API authentication from the running backend was not re-tested (it needs `EUROSENDER_SANDBOX=0`; verified earlier today in a one-off process).
+
+### Known pre-existing issues seen during deployment (not changed)
+- `pre_restart.sh`'s SIGTERM loop self-matches and stops early.
+- `container_start.sh` / `post_restart.sh` relaunch a captured importer without its arguments (it exits immediately with a usage error).
+- `sandbox_backend` bind-mounts the same code directory and was not restarted; it still runs the old loops.
+
+---
+
+## #58 — Night-pipeline final validation: backup boundary, category discovery bounds, catch-up rules, restart-mid-job semantics — 2026-10-03
+
+**STATUS — CODE: validated, 145/145 focused tests. LIVE RUNTIME: unchanged (old loops) until the approval-gated restart. Nothing restarted, stopped, killed or recreated.**
+
+### 1. Backup-container boundary (accepted external producer)
+- **What they are:** `autospare_postgres_backup` (PII) and `autospare_postgres_backup_catalog`, image `prodrigestivill/postgres-backup-local`, PID 7 `go-cron -s "0 3 * * *" -- /backup.sh`, container TZ unset → **03:00 UTC = 06:00 IDT / 05:00 IST**. `BACKUP_ON_START=FALSE`.
+- **What they run:** `/backup.sh` only — `pg_dump -Z1`, hard-link rotation (last/daily/weekly/monthly), `find … -exec rm` pruning. `/hooks/00-webhook` is the image's stock notifier, and every `WEBHOOK_*` is `**None**`, so it is a no-op. They cannot launch any other job.
+- **Measured (7 days of container logs):** catalog dump 158–273 s, PII dump 6–17 s, always starting at 03:00:00 UTC.
+- **Host impact (`sar`, during vs the 20 min before, 4 days):** CPU +7 to +16 points; available memory unchanged on 3 of 4 days (2.6–4.0 GB), 1.75 GB on the busiest night. No memory limit is set on the containers; `pg_dump` is a streaming reader.
+- **DB:** one `AccessShareLock` per table for ≤4.5 min. That blocks only DDL / `ACCESS EXCLUSIVE`, not the row writes the pipeline jobs do.
+- **Can it start mid-job?** Yes. 03:00 UTC is inside the 01:00–07:00 window, and the controller cannot stop an external cron. What it controls: it will not *start* a job while a `pg_dump` is running. Proven live: a real `pg_dump` of one small table appeared as `application_name = 'pg_dump'` and the controller's exact query counted it.
+- **Verdict:** safe as an external producer; accepted boundary. Not modified, not recreated.
+
+### 2. Category discovery
+- **Path:** `_run_category_discovery` → per manufacturer (85) × category (18): `COUNT(*)` by slug → only if < 3 parts: load that manufacturer's SKU set, then per search term sleep `SCRAPE_REQUEST_DELAY` (1.5 s) → `scrape_rockauto` (**Playwright Chrome**, via the 2-slot semaphore) → `scrape_ebay_motors` (HTTP) → `db_upsert_part`.
+- **Runtime evidence:** **no historical measurement exists.** It never wrote a `job_registry` row before #54, and its `print` logs were lost with the recreated container. Measured pieces: `scrape_ebay_motors` 1,664 calls in 30 days, avg 2.0 s, p90 2.3 s, max 16.5 s; 171 genuinely short pairs of 1,530 (#54); largest SKU set 509,312 rows (Kia). Indirect: the old REX midnight cycle displaced the 03:00 UTC slot on 2 of 5 nights (>3 h) under the buggy 1,530-pair workload.
+- **Resource evidence:** uses Chrome through `scrape_rockauto`, one browser at a time; per-run RSS not measured.
+- **Gap found and fixed:** the controller's guard only decides whether the job may *start*. Nothing bounded a run that turns out long or heavy. Added an **in-run budget** checked between manufacturers:
+  - stop cleanly when `CATEGORY_DISCOVERY_MAX_RUNTIME_S` (7200) is spent or host memory falls below `CATEGORY_DISCOVERY_MIN_AVAIL_MB` (800); the report carries `truncated`;
+  - the start index rotates by date, so a truncated run does not always starve the same tail;
+  - the SKU set is loaded lazily, only for a manufacturer with a short category (it used to load every manufacturer's SKUs every night).
+- **Remaining protection:** memory-heavy start thresholds (host ≥1500 MB, headroom ≥1200 MB), waits for the DB-agent lock, exclusivity while running (nothing else heavy starts; DB agent defers; group scan waits), and the `job_registry` row + heartbeat it now writes.
+- **Evidence gap:** the real runtime and RSS are known only after the first tracked run post-restart.
+
+### 3. Brand-discovery catch-up (intentional, verified)
+- Day 1 is the due date (earliest 03:15, needs `sync_prices` COMPLETED that night).
+- If it could not start on day 1, it stays QUEUED for nights 2–7 (`catchup_days=6`, `BRAND_DISCOVERY_CATCHUP_DAYS`).
+- One row per month (`M:YYYY-MM`), claimable once → at most one automatic execution.
+- After day 7 it is BLOCKED for the month; a first start on day 8+ queues nothing.
+- A run interrupted by a restart is FAILED and **not** re-run in the catch-up days.
+- Months of downtime produce one run for the current month, never a burst.
+- No change made. Covered by 7 tests.
+
+### 4. Restart-mid-job semantics (interrupted → FAILED, retried on the next period)
+| Job | Evidence | Verdict |
+|---|---|---|
+| `auto_backup` | `pg_dump -Fc -f <final name>`: a killed dump left a truncated file under its final name, which `restore_latest_backup()` (newest `*.sql`) would select and retention would count | **Fixed:** dump to `<name>.partial`, rename on success, stale partials removed at the next run. Then safe: next night makes a fresh full dump |
+| `ebay_fitment_backfill` | Inserts guarded by an existence check; OEM update guarded by `oem_number IS NULL` → idempotent. But the Redis offset counter was advanced *before* the batch → an interrupted batch was skipped for ~17 nights | **Fixed:** counter advances only after the batch returns. Next night repeats the same 500 |
+| `sync_prices` | Per-part commits; eBay pass targets only unpriced parts via an in-memory cursor (restarts from the head, skipping what is now priced); AliExpress cursor persisted in `system_settings`; lock freed at startup (#53); registry row reconciled | Safe as is; next night continues |
+| `rex_night` | Scraper cycle: per-part price updates, lock TTL 1800 s + startup clear. Inactive-OEM recovery: per-row DB updates. Transport pipeline: "due" is derived from its own completion log, so an interrupted run is still due | Safe as is |
+| `brand_discovery` | Upserts; search-miss rows marked only after their pool ran; lock freed at startup. Interrupted month is not re-run (by rule) | Safe as is; next month, or a manual admin trigger |
+| `category_discovery` | Upserts; lock and registry row both in the startup reconciler map; date rotation changes the start point | Safe as is |
+| `weekly_maintenance` | `merge_master_parts.py`: each duplicate group merged inside one transaction, soft-delete only, `FOR UPDATE SKIP LOCKED`; `--repair-stranded` repairs the *old* script's leftovers, not interruptions. Parity check is read-only | Safe as is; next Saturday merges the remainder |
+
+None needs an explicit recovery path beyond the two fixes above.
+
+### Also found and fixed
+The controller's backup post-condition compared the result to `"ok"`, but `run_backup` reports `"ok:<path>:<tag>"`. Every successful backup would have been marked FAILED on the first live night. It now requires an `ok` prefix **and** a non-empty dump file.
+
+### Tests
+`tests/test_night_pipeline.py` 56 (14 new: external pg_dump wait, conflict-check coverage, backup post-condition, atomic dump, fitment counter, four category-discovery runs of the real function against fakes, category guard, no catch-up after day 7, day-8 start, multi-month downtime, interrupted monthly). With `test_overnight_schedule` 32, `test_group_scan_batching` 27, `test_flaresolverr_health` 18, `test_harvest_supervisor_persistence` 12: **145/145**, both file orders. `test_aliexpress_price_sync` not run (live DB).
+
+### Files
+`backend/night_pipeline.py`, `backend/auto_backup.py`, `backend/BACKEND_API_ROUTES.py`, `backend/catalog_scraper.py`, `backend/tests/test_night_pipeline.py`, `FIXES_TRACKER.md`. Not committed. HEAD `9da73bb`.
+
+---
+
+## #57 — Nightly heavy-job pipeline: one controller, one job at a time, verified completion before the next — 2026-10-03
+
+**STATUS — CODE: implemented, 131/131 tests. LIVE RUNTIME: the running backend still has the old clock loops until the approval-gated restart.** Nothing was restarted, stopped, recreated or killed. Supersedes the fixed clock slots of #52/#55/#56; those times survive only as earliest-start constraints.
+
+### Root cause
+The problem was never just the task times. **No central orchestration existed**: every heavy job was started by its own independent loop. Clock offsets only prevent overlap while every runtime stays near its median, and real runtimes vary widely (`sync_prices` 23–203 min, brand discovery 42–86, category discovery unmeasured). When they varied, two heavy in-process jobs ran together: all 8 uvicorn cgroup-OOM kills of the prior week happened with brand discovery and a DB-agent cycle both running (#56).
+
+### Controller
+- **Location:** `backend/night_pipeline.py` (`Controller`, `JobSpec`, `ResourceGuard`, `PgStore`/`MemoryStore`).
+- **Single automatic entry point:** `_supervised_task("night_pipeline", night_pipeline.controller_loop())` in `BACKEND_API_ROUTES.startup()`. Production only (`ENVIRONMENT=production`, or `NIGHT_PIPELINE_ENABLED`).
+- **Why not `job_queue.py`:** that controller drains *finite backlogs* as subprocess batches, and a `count_sql` measurement decides termination. The night jobs are *recurring in-process coroutines* with periods and post-conditions. The two now stand down for each other (`queue_busy` ↔ the pipeline's running-marker), so there is still one heavy thing at a time across both.
+- **State:** table `night_pipeline_runs`, PRIMARY KEY `(job_key, period_key)`, states QUEUED / RUNNING / COMPLETED / FAILED / BLOCKED, with `reason`. Period keys: `D:YYYY-MM-DD`, `W:YYYY-Www`, `M:YYYY-MM`. The row is the idempotency key: a period can go QUEUED→RUNNING exactly once.
+
+### Nightly pipeline (window 01:00–07:00 Israel time, DST-safe)
+| # | Job | Period | Earliest start | Hard dependency | Post-condition (COMPLETED only if) | Measured runtime |
+|---|---|---|---|---|---|---|
+| 1 | `auto_backup` | daily | 01:00 | — | every database dump reports `ok` | ~5 min |
+| 2 | `ebay_fitment_backfill` | daily | 01:00 | — | report status `ok`/`partial` | ~5 min (500 calls) |
+| 3 | `sync_prices` (eBay + AliExpress) | daily | 01:00 | — | status `completed` **and** a completed `job_registry` row since start | median 72, p90 95, max 203 min |
+| 4 | `rex_night` (scraper cycle → inactive-OEM recovery → transport-if-due) | daily | 01:00 | — | scraper cycle not error/skipped + completed registry row | 1–3 min (+ transport when due) |
+| 5 | `brand_discovery` | **monthly, day 1** (catch-up through day 7) | **03:15** | `sync_prices` COMPLETED that night | status `completed` + completed registry row | pools: median 80 + 50 min |
+| 6 | `category_discovery` | daily | 01:00 | — | status `completed` + completed registry row | NOT VERIFIED (first tracked run after restart) |
+| 7 | `weekly_maintenance` | weekly, Saturday | 05:00 | — | merge rc 0 and parity rc 0 | ~20 min |
+
+Order rationale (evidence):
+- Backup first: snapshot before the writers; it is the I/O-heavy step.
+- Fitment before sync: same eBay quota, small batch first.
+- Brand discovery only after `sync_prices` has verifiably completed: it is the memory-heavy job.
+- Category discovery after brand discovery: same web sources and Playwright.
+- Weekly merge last: it rewrites `supplier_parts`/`parts_catalog`.
+
+### Execution rules
+- **Completion gating:** if any pipeline job is RUNNING, nothing else starts, however long it has run. The job is awaited to real completion and then verified.
+- **Earliest-start is a constraint, not a trigger:** 03:15 and 05:00 only mean "not before".
+- **Failure:** an exception or a failed post-condition is FAILED, never COMPLETED. Dependents become BLOCKED; unrelated later jobs still run, one at a time.
+- **Conflicts (wait, never interfere):** the Redis locks of manual/agent runs (`sync_prices`, `scraper_cycle`, `brand_discovery`, `category_discovery`; `db_update_agent` for the memory-heavy jobs), a busy backlog `job_queue`, and an external `pg_dump` (the backup containers).
+- **Resource guard (re-checked every 60 s):** host `MemAvailable` ≥ 1000 MB (1500 for memory-heavy jobs), container headroom (`memory.max` − anon) ≥ 500 MB (1200), load5 per CPU ≤ 1.5. All env-tunable. It only delays; it never cancels, kills or restarts anything.
+- **Reverse stand-downs** on the running-marker `autospare:night_pipeline:running` (TTL, heartbeated): the DB agent defers a cycle while a memory-heavy job runs; the Facebook group scan (10:00) and the backlog job queue wait while any pipeline job runs.
+
+### Missed-window and recovery behavior (deterministic)
+- **Window closed:** jobs still QUEUED become BLOCKED ("night window closed"); there is no daytime catch-up and no burst.
+- **Backend down for the whole window:** no rows are created and nothing runs; the next night is one normal night.
+- **Backend starts inside the window:** jobs run in order from the top; whatever does not start before 07:00 is BLOCKED.
+- **Job still running at the close:** it is allowed to finish; the rest of that night is BLOCKED.
+- **Controller/backend restart mid-job:** the RUNNING row becomes FAILED ("interrupted by backend restart") and is **not** re-run.
+- **Monthly brand discovery missed on day 1** (dependency failed, blocked, down): stays QUEUED and is eligible on nights 2–7; at most one execution per month (`M:YYYY-MM`). After day 7 it is BLOCKED for that month.
+- **First deployment note:** on a store with no row for the current month, a start on days 1–7 queues that month's discovery once.
+
+### Bypass triggers found → removed
+| Trigger | Was | Now |
+|---|---|---|
+| `_backup_loop` (auto_backup) | own loop | **deleted**; controller job 1 |
+| `_ebay_fitment_backfill_loop` | own loop | **deleted** → `run_ebay_fitment_once()` (Redis run counter; the in-memory one reset to offset 0 on every restart) |
+| `_price_sync_loop` | own loop | **deleted** → `run_sync_prices_once()` |
+| `_brand_discovery_monthly_loop` (#55/#56) | own loop | **deleted**; controller job 5 |
+| `_weekly_maintenance_loop` | own loop | **deleted** → `run_weekly_maintenance_once()` |
+| REX loop 00:00 UTC: scraper cycle, inactive-OEM recovery, category discovery, transport pipeline | independent UTC-slot scheduler | **removed from the loop** → `run_rex_night_cycle()` + controller job 6. The REX loop keeps only FX refresh + todo-gated Jaguar lookup every 3 h |
+| DB-agent / agent-todo discovery triggers | removed in #55 | still absent (tested) |
+| `pre_restart.sh` → `container_start.sh` resume of `oem_parts_online_scraper`, `oempartsonline_importer`, `catalog_scraper` CLI | a restart would relaunch brand-discovery children outside the controller | **removed from the resume capture** (still SIGTERM'd gracefully) |
+
+Remaining independent schedulers, by design: the two pg-backup **containers** (go-cron 03:00 UTC; changing them needs a container recreate) — the controller detects their `pg_dump` and waits. Manual paths kept: admin price-sync, admin scraper run/discover, `bulk_harvest.py`; their locks make the controller wait.
+
+### Also fixed on the way
+- **`auto_backup` never backed up the PII database:** it read `PII_DATABASE_URL`, but the container sets `DATABASE_PII_URL` (0 `autospare_pii_*` dumps existed). It now reads the real variable. (The backup containers do dump PII.)
+- **Sandbox contamination:** `sandbox_backend` bind-mounts the same `backend/` directory, so its own backup loop wrote 0.3 MB sandbox dumps into production's `backups/` under the same `autospare_*` name and retention (seen: `autospare_20261003_132338.sql`). With the controller production-gated, this stops once the sandbox next restarts onto this code; until then its old loop keeps doing it.
+
+### Verification
+- Behavioural tests with a fake clock and store (`tests/test_night_pipeline.py`, 42): order and one-at-a-time; each of backup→fitment→sync→REX→brand discovery waits for the previous job's real end; a 203-min sync delays discovery past 03:15; a fast night still holds discovery until 03:15; a job running 8 h starts nothing else and causes no burst; exception and failed post-condition are FAILED; dependents BLOCKED; two controllers on one store execute each job once; restart marks the interrupted job FAILED and re-runs nothing; discovery exactly once per month over 13 months, always day 1 at/after 03:15; day-1 miss catches up once; whole-window outage runs nothing; DST (2026-10-25 fall-back, 2027-03-26 spring-forward); memory/CPU/headroom pressure delays and never cancels; a foreign lock makes it wait and is never touched; the controller source contains no kill/terminate/subprocess/docker; every heavy job has exactly one automatic caller (AST over the backend).
+- `PgStore` SQL exercised against the live DB with a throwaway key (ensure ×2 → 1 row, claim once, interrupted → FAILED, JSON detail), rows deleted afterwards; table left empty.
+- Live read-only: controller builds with 7 jobs; guard readings host 2,353 MB / headroom 1,813 MB / load 0.91; no conflicts; next window 2026-10-03T22:00Z.
+- `tests/test_overnight_schedule.py` updated (32). Total with the three related suites: **131/131**, both file orders.
+
+### Risks / open
+- Not live until restart; first real night is the first live verification.
+- Category-discovery runtime and OEM-scraper Chrome RSS still unmeasured.
+- The DB agent can start a cycle while a *non*-memory-heavy job runs (by design).
+- The pg-backup containers remain clock-driven (waited on, not sequenced).
+- One line of the earlier uncommitted #51 work was changed on purpose in #54 (the group-scan batch call, now wrapped in the watchdog); the other 116 pre-existing lines in `BACKEND_API_ROUTES.py` are intact.
+- Restart blockers unchanged: hung Facebook group scan (batch 34) and the running car-parts.ie harvester.
+
+### Files
+New: `backend/night_pipeline.py`, `backend/tests/test_night_pipeline.py`. Changed: `backend/BACKEND_API_ROUTES.py`, `backend/catalog_scraper.py`, `backend/db_update_agent.py`, `backend/auto_backup.py`, `backend/routes/admin.py`, `backend/scripts/pre_restart.sh`, `backend/tests/test_overnight_schedule.py`, `FIXES_TRACKER.md`. Not committed. HEAD `9da73bb`.
+
+---
+
+## #56 — Resource-overlap check for monthly brand discovery: moved from 01:00 to 03:15 Israel time (1st of month) with a lock stand-down — 2026-10-03
+
+> **Superseded by #57:** 03:15 is now an earliest-start constraint inside the night-pipeline controller; the standalone monthly loop no longer exists.
+
+**STATUS — CODE: implemented and tested (95/95). LIVE RUNTIME: old behavior until the approved restart. Nothing restarted, stopped or killed.** Supersedes the 01:00 slot in #55; everything else in #55 stands (one automatic trigger, monthly, day 1, DST-safe).
+
+### Measured evidence
+| Job | Runtime (job_registry / files, 30 d) | Resource evidence |
+|---|---|---|
+| brand discovery | 128 completed runs: median 50, p90 65, max 86 min. Pool A (12:00 slot, IL-priority) median 80 / max 86; pool B (DB-agent) median 50 / max 72 | Launches headless Chrome ("Playwright fetch" to manufacturer sites): today 12:24–12:33 UTC the headless count rose from 1 to 2–3. Host CPU +12–18 points (≈1 of 6 cores) vs the adjacent window (`sar`: 59 % vs 42 %, 51 % vs 37 %, 39 % vs 27 %). 0 parts inserted (#54), so DB impact is reads only |
+| auto_backup | ~5 min (dump files 14:36→14:41, 08:23→08:28 UTC) | `sar` during it: CPU 68–80 % busy, iowait 17–18 %, load5 5.3–7.2 (both samples coincide with a container start, so this is an upper bound); 2 GB page cache, reclaimable |
+| eBay fitment backfill | minutes (500 calls × 0.1 s pacing; no registry row) | eBay Browse API only |
+| sync_prices | 29 completed: median 72, p90 95, max 203 min | `sar` sync-alone: CPU 27–48 % busy, no visible memory footprint. 5 `dead` runs, all "container restarted", none during discovery |
+
+- **Overlap does not slow either job:** sync_prices median 71 min with a discovery overlap (10 runs) vs 77 without (19 runs); discovery 49 vs 50 min.
+- **API:** no contention. Discovery hits `www.ebay.com` (web; 403 → cooldown), not the Browse API. All 4,400 API calls/day returned 200, including days with overlap.
+- **Locks / DB:** separate locks; 0 of the 24 deadlocks in 7 days involve discovery.
+- **RAM — the material finding.** Kernel log, last 7 days: **8 cgroup-OOM kills of uvicorn** (4 GB limit). **8 of 8 happened while `run_brand_discovery` was running, 13–20 min into the run** (16:36→16:51, 01:21→01:36, 22:49→23:05, 03:43→04:02, 23:33→23:49, 23:22→23:42, 03:28→03:45, 01:52→02:05 UTC). All 8 were also during a `run_all_tasks` cycle; 0 of 8 were during `sync_prices`. Base rates: discovery running 27 % of the time, DB agent 25 %, sync 5 %. #51 attributed these OOMs to the group-scan Chrome (0.84 GB); the timing shows brand discovery was the co-factor every time.
+- Night headroom is thin: host available memory in the 22:00–01:40 UTC window was at minimum 0.94–2.1 GB per night over 7 nights.
+- Exact per-run peak RSS of brand discovery: **NOT VERIFIED** (no per-process history exists; uvicorn anon-rss was 2.36–2.47 GB at those kills per #51, vs 1.45–1.77 GB RSS observed today).
+
+### Decision
+Running the one memory-heavy job at 01:00, on top of the backup's I/O burst, the fitment batch and then sync_prices, is a **material RAM risk**. It is not a CPU, API, lock or DB risk. Final schedule:
+- **03:15 Israel time on the 1st** (`BRAND_DISCOVERY_HOUR_IL=3`, `MINUTE_IL=15`, `MONTHDAY=1`). That is after sync_prices' p90 finish (02:50). The :15 offset is because in summer the REX night cycle starts at exactly 03:00 IL, and its category-discovery lock must be visible to the check.
+- **Stand-down at the slot:** while `sync_prices`, `db_update_agent` or `category_discovery` holds its Redis lock, wait in 5-minute polls for at most `BRAND_DISCOVERY_MAX_WAIT_S` (7200 s), then run anyway so the month is not lost. This targets the measured failure pattern: discovery starting inside a DB-agent cycle.
+- Expected window: 03:15 → ~05:30–05:55 (pool A ≈80 min + pool B ≈50 min + search-miss pool). Weekly maintenance (Sat 05:00) already stands down on the `brand_discovery` lock.
+- Residual: a DB-agent cycle can still *start* while discovery is running (it does not stand down for discovery); the group-scan Chrome, the third factor in the past OOMs, is now 10:00–13:10 and never at night.
+
+### Verification
+Tests: 95/95 (schedule file 38), both file orders. Updated: monthly slot 03:15 on day 1 across 40 months with one run per month and real IST/IDT offsets; defaults; stand-down covers the three locks; the slot starts after sync's measured p90 and ends before morning. Still exactly one automatic trigger: the AST call-site whitelist, single `_supervised_task("brand_discovery_monthly", …)`, and no DB-agent/REX/todo path are unchanged from #55. Next run once live: **2026-11-01 03:15 IST (01:15Z)**.
+
+Files: `backend/BACKEND_API_ROUTES.py`, `backend/catalog_scraper.py` (docstrings), `backend/tests/test_overnight_schedule.py`, `FIXES_TRACKER.md`. Not committed. HEAD `9da73bb`.
+
+---
+
+## #55 — Brand discovery reduced to ONE automatic trigger: monthly, 01:00 Israel time on the 1st — 2026-10-03
+
+> **Slot superseded by #56:** the monthly run is at **03:15** Israel time on the 1st (not 01:00), with a lock stand-down. The trigger inventory below is unchanged.
+
+**STATUS — CODE: monthly schedule implemented and tested. LIVE RUNTIME: old behavior remains until the approved restart** (uvicorn PID 1, started 08:18:04 UTC, has not been restarted). This supersedes the #54 "once a night" brand-discovery schedule.
+
+### Why (owner decision + evidence)
+The catalog already holds the required vehicle models, so discovery is a monthly top-up, not a daily or 3–4-hourly job. Live DB evidence, 2026-10-03:
+- `parts_catalog`: **4,115,799** active parts, **85** distinct manufacturers; **25,666** new parts in the last 30 days (from harvesters/importers, none from discovery).
+- `part_vehicle_fitment`: **5,859,771** rows covering **8,120** distinct make+model pairs.
+- `harvest_queue`: **6,695** models across **182** brands (674 `il_market` + 6,021 `car_parts_ie_full`); 5,572 done, 740 pending, 378 empty, 5 in progress.
+- `vehicle_market_il`: 97,549 registry rows; `vehicle_hierarchy_xls`: 4,901 rows.
+- `car_brands`: 147 active (153 total); 82 active brands have ≥1 active part and 65 have none — the long-tail brands the registry-gap pool keeps retrying. `truck_brands`: 19 active.
+- Discovery yield: **2,724 brand attempts in 30 days, 0 parts inserted** (#54).
+
+### Trigger inventory (whole repository, AST-verified by test)
+| Path | Kind | Before | After |
+|---|---|---|---|
+| `catalog_scraper.scraper_background_loop` → `run_brand_discovery()` | automatic | 12:00 UTC daily (HEAD); nightly 00:00 UTC in #54 | **removed** |
+| `db_update_agent` `trigger_scraper_for_registry_gaps` in `run_all_tasks` order | automatic, every ~3.6 h | fire-and-forget each cycle | **removed** |
+| `db_update_agent` `trigger_scraper_for_misses` in `run_all_tasks` order | automatic (demand) | each cycle when misses ≥3 | **removed** |
+| Agent todos → `TASK_REGISTRY` → `run_all_tasks` (incl. `rex_dispatch_loop` reassigning REX todos) | automatic/indirect | could inject either task | **removed**: both tasks deleted from `TASK_REGISTRY`; `db_update_agent.py` has no `run_brand_discovery` reference |
+| `BACKEND_API_ROUTES._brand_discovery_monthly_loop` → `catalog_scraper.run_monthly_brand_discovery()` | automatic | — | **the only automatic trigger** |
+| `POST /api/v1/admin/scraper/discover` and `/discover/{brand}` (admin auth) | manual | present | kept |
+| `python3 /app/harvesters/bulk_harvest.py` (also the only caller of `run_oempartsonline_all_brands`) | manual | present | kept |
+| `python catalog_scraper.py discover …` (`_test`, `__main__` harness) | manual | present | kept |
+| Startup hooks / `job_registry` / `pre_restart.sh` | reference the job name only | — | no launch path |
+
+Previous automatic frequency: **~6–7 runs/day** (44 `run_brand_discovery` rows in the last 6 days in `job_registry`, queried 13:33 UTC). Final: **1 run/month**.
+
+### Final behavior
+- **Schedule:** `BRAND_DISCOVERY_HOUR_IL=1`, `BRAND_DISCOVERY_MINUTE_IL=0`, `BRAND_DISCOVERY_MONTHDAY=1` → 01:00 Israel time on the 1st, via `local_schedule` (new `monthday` filter; all comparisons in UTC). Next run once live: **2026-11-01 01:00 IST (2026-10-31T23:00Z)**. Kill switch: `BRAND_DISCOVERY_MONTHLY_ENABLED=0`.
+- **One run, three brand pools, back-to-back under the existing lock:**
+  - A: `run_brand_discovery()` IL-priority auto-selection;
+  - B: `select_registry_gap_brands()` (thinnest brands);
+  - C: `select_search_miss_brands()` (customer demand). Rows are marked `triggered_scrape` only after their run actually ran.
+- **Lock:** `run_brand_discovery` still takes Redis `brand_discovery` (TTL 86,400 s). If a manual run is in flight, the monthly run **skips** (it does not queue behind it), and that month's automatic run is not retried.
+- **No catch-up:** if the backend is down at the slot, the next run is the following month.
+- **Overlap on the 1st:** it starts with `auto_backup` + eBay fitment (01:00) and overlaps `sync_prices` (01:15). These co-ran repeatedly before with all 37 sync runs completing (#53). Weekly maintenance stands down while the `brand_discovery` lock is held (#54).
+
+### Tests (`tests/test_overnight_schedule.py`, now 37 tests; 94/94 with the three related suites, both file orders)
+- Monthly slot over 40 consecutive months: always day 1, 01:00 Israel wall time, exactly one per month, no month skipped, real IST/IDT offsets (2026-10-31T23:00Z, 2027-06-30T22:00Z). `monthday` > 28 is rejected.
+- Loop defaults + exactly one `_supervised_task("brand_discovery_monthly", …)`; no interval sleep.
+- **Call-site whitelist (AST over the whole backend):** `run_brand_discovery` is called only from `run_monthly_brand_discovery` (×3), `routes/admin.py` (×2), `bulk_harvest.py`, and the `__main__` harness. `run_monthly_brand_discovery` is called only from the monthly loop. A returning DB-agent or REX trigger fails this test.
+- DB agent: neither task in the automatic order nor in `TASK_REGISTRY`; no `run_brand_discovery` in `db_update_agent.py`. REX loop: no discovery call in any slot.
+- Functional (fakes): the monthly run sweeps 3 pools and marks misses; skips entirely when the lock is held; leaves miss rows untriggered when their run was skipped. `distributed_lock.acquire_lock`: the second acquire of `brand_discovery` is refused.
+- Manual admin endpoints still defined and admin-gated. Real manual execution was **not** run (heavy job); its code path is unchanged.
+- Against HEAD, the same conditions fail (DB agent launches discovery, both tasks registered, REX noon slot present, no monthly loop).
+
+### Runtime
+The running old code still launches discovery from the DB-agent cycle (last 11:48–12:38 UTC; next cycle ~15:19 UTC) and at the 12:00 UTC slot until restart. **Restart required: YES** (approval-gated; blockers unchanged — see #54 blocker diagnosis).
+
+### Files
+`backend/local_schedule.py`, `backend/BACKEND_API_ROUTES.py`, `backend/catalog_scraper.py`, `backend/db_update_agent.py`, `backend/tests/test_overnight_schedule.py`, `FIXES_TRACKER.md`. Not committed. HEAD `9da73bb`.
+
+---
+
+## #54 — Recurring-workload audit: overnight objective verified, brand discovery consolidated from ~6-7×/day (3 automatic triggers) to 1 nightly trigger, duplicate eBay sync removed, zero-yield daytime scans moved overnight — 2026-10-03
+
+**STATUS: code fixes in source and tested; NOT LIVE until the approval-gated backend restart. Nothing restarted, stopped or recreated.** The restart-gate evidence is recorded at the end of this entry.
+
+### Evidence that drove the decisions (live DB, 30 days unless stated)
+| Workload | Measured | Source |
+|---|---|---|
+| brand discovery | **2,724 brand attempts, 39 distinct brands, 0 parts inserted** (official/febest/rockauto/eBay/oempartsonline all 0); ~6-7 runs/day, ~50 min each | `system_logs` "[Rex] discovery brand=… inserted=N", `job_registry` |
+| category discovery | **0 parts ever** inserted (description "… discovered for … Source: multisource"). Searched **1,530 (manufacturer × category) pairs nightly, up to 3,655 queries**, because it compared Hebrew display names against slug-valued `category` (count always 0); **by slug only 171 pairs (11 %) are really below the 3-part minimum** | `parts_catalog`, `category_map.categorize_on_ingest` |
+| REX `run_scraper_cycle` (Job 1) | **94 runs, 0 price updates, 0 availability changes**; 47–190 s each; 8×/day; re-hits www.ebay.com (403 → 60 min cooldown) | `system_logs` "[Scraper cycle] checked=200 updated=0 …" |
+| REX Job 2d `sync_ebay_prices` | **0 eBay calls** from the 00:00 UTC slot in 6 days. All 4,400/day happen at `sync_prices` start times (00:27, 01:54, 03:15, 04:29, 05:36, 06:47 UTC) | `scraper_api_calls` by hour |
+| REX Job 2c `resolve_inactive_parts_with_oem_lookup` | DB-only, 200 parts, seconds; `oem_filled=0 reactivated=0` every day | `system_logs` |
+| FX refresh (every 3 h) | 7 distinct USD/ILS values (3.01–3.08), 1 HTTP call | `system_logs` |
+| catalog inflow | 111 new parts in 3 days; 2,183 `supplier_parts` rows touched in 24 h (continuous harvesters) | `parts_catalog`, `supplier_parts` |
+| search-miss demand | 43 `search_misses` rows, all triggered, 0 eligible now | `search_misses` |
+
+### Brand discovery triggers: CURRENT → REQUIRED → FINAL
+- CURRENT (4 automatic paths): REX 12:00 UTC slot `run_brand_discovery()` (IL-priority pool: Toyota, Hyundai, Kia, …); `db_update_agent.trigger_scraper_for_registry_gaps` on **every** `run_all_tasks` cycle (~every 3.6 h; thinnest-brand pool: Aion, Aiways, …); `trigger_scraper_for_misses` (search-miss demand); plus manual admin `POST /api/v1/admin/scraper/discover[/{brand}]` and `harvesters/bulk_harvest.py`.
+- The two sweeps serve the same purpose (under-covered brands below `DISCOVERY_TARGET`), call the same function and take the same lock, but select **different** pools. Dropping either trigger would therefore silently drop a pool.
+- REQUIRED: one automatic sweep covering both pools, plus the demand trigger, plus manual. Nothing justifies daytime: 0 yield in 30 days, and the inputs (brand part counts) barely move (111 new parts in 3 days).
+- FINAL: **once a night**, in the REX 00:00 UTC slot (03:00 IDT / 02:00 IST, overnight in both DST states, after 01:00 backup/fitment and 01:15 `sync_prices`). Pool A is `run_brand_discovery()`, then pool B is `run_brand_discovery(brands=select_registry_gap_brands())`, sequentially under the same Redis lock.
+  - `trigger_scraper_for_registry_gaps` was removed from `run_all_tasks`' automatic order; it is kept in `TASK_REGISTRY` for manual/agent-todo use (0 active todos reference it). The selection SQL now lives in one function, `select_registry_gap_brands()`, used by both.
+  - Demand trigger fix: it used to launch **one task per miss row** (the first took the lock, the rest returned "skipped") yet marked **every** row `triggered_scrape=TRUE`, silently dropping that demand. Now: one batched run, and rows are marked only when it is launched. While the discovery lock is held it returns `deferred` and the next cycle retries.
+
+### Final schedule of every recurring workload
+| Workload | Triggers (final) | Was | Final | Runtime | Resources | Lock | Daytime justification / note |
+|---|---|---|---|---|---|---|---|
+| auto_backup (pg_dump ×2) | supervised loop | start+5 min, then 24 h | **01:00 IL daily** | ~5 min | disk + page cache | — | overnight (#52) |
+| eBay fitment backfill | supervised loop | start+1 h, then 24 h | **01:00 IL daily** | ~5 min | eBay API 500 | — | overnight (#52) |
+| `sync_prices` (eBay 4,400 + AliExpress 2,000 + AliExpress candidate discovery) | supervised loop + manual admin | drifting 24 h after end | **01:15 IL daily** | avg 61 / max 203 min | eBay/AliExpress APIs, `supplier_parts` | `sync_prices` | overnight (#52); now the **only** automatic caller of both price syncs |
+| weekly maintenance (merge + parity) | supervised loop | start+1 h, then 7 d | **Sat 05:00 IL**, stands down while `sync_prices`/`brand_discovery`/`category_discovery` locks or the job queue are busy (retries hourly) | ~20 min | `parts_catalog`/`supplier_parts` writes | lock checks | overnight (#52, #54) |
+| REX night cycle: FX → scraper cycle → brand discovery A+B → 2c → Jaguar todos → category discovery → transport-if-due | REX loop | 12:00 UTC (brand, 2c), every 3 h (scraper cycle), 00:00 UTC (category, eBay 2d) | **00:00 UTC = 03:00 IDT / 02:00 IST** | scraper 1–3 min, brand A 70–90 min (12:00-slot lag), brand B ~50 min, category **NOT VERIFIED** (now registry-tracked) | Playwright OEM scraper (via brand discovery), web sources, DB reads | `scraper_cycle`, `brand_discovery`, `category_discovery` | overnight |
+| REX FX refresh + Jaguar todo check | REX loop | every 3 h | every 3 h (unchanged) | seconds | 1 HTTP call; Jaguar runs only with pending todos (0) | — | **daytime justified:** FX is a live pricing input (7 distinct values in 30 d) at negligible cost; Jaguar is todo-driven |
+| Facebook group scan | supervised loop | start+60 s (leftover override), then 24 h after end (+3 h/day drift) | **10:00 IL daily** | ~3.1 h (39 × 4.8 min) | Chrome ≤0.84 GB | — | **daytime justified:** drafts comments on fresh posts for owner approval in the 09–21 window; can post autonomously (#53) |
+| NOA posts | fixed | 13:00 + 20:00 IL | unchanged | short | LLM | — | **daytime justified:** peak-audience posting (owner directive 2026-07-25) |
+| NOA EOD report / status digest / harvest digest | fixed | 21:00 / 09:00 / Sun 09:00 IL | unchanged | short | — | — | **daytime justified:** owner-facing notifications |
+| `db_update_agent.run_all_tasks` | own loop | every ~3.6 h (3 h after end) | unchanged | avg 38 / max 140 min | DB | `db_update_agent` | **daytime justified (partial):** CLAUDE.md §8 Rule 4 assigns 3-hourly data quality; intraday `supplier_parts` writes (2,183/24 h) need min/max price + normalization refresh for search; hosts the search-miss demand trigger. **Per-task yield NOT VERIFIED** (only in container logs) → candidate for a future cadence review; no longer launches brand discovery |
+| `meili_sync` | supervised loop | every 2 h | unchanged | incremental | Meili | flock | **daytime justified:** search index freshness for intraday price/catalog writes (customer-facing) |
+| search-miss eBay scraping | supervised loop | every 6 h | unchanged | ~0 (0 eligible misses) | eBay | — | **daytime justified:** customer-demand latency; idle cost ≈0 |
+| price watch | supervised loop | every 6 h | unchanged | short | — | — | **daytime justified:** customer price alerts |
+| social feedback | supervised loop | every 6 h | unchanged | short | social APIs (reads) | — | **daytime justified:** engagement curve of the 13:00/20:00 posts |
+| supplier sourcing (NIR) | supervised loop | weekly from start | unchanged | minutes | Gemini | — | weekly, light |
+| car-parts.ie full seed | supervised loop | ~30 d from start | unchanged (exit-code retry fix, #53) | minutes | 1 FlareSolverr solve | — | monthly, light |
+| car-parts.ie harvester | supervised subprocess | continuous | continuous | — | FlareSolverr cookie + HTTP threads | DB claims, import flock | **continuous by design** (protected) |
+| Amayama server browser | supervised | continuous | continuous | — | Chrome ~0.39 GB | — | continuous price-fill feed |
+| Amayama FS harvester | supervised | — | disabled (`AMAYAMA_HARVEST_ENABLED=0`) | — | — | — | — |
+| thumbnail import | supervised subprocess | continuous batches | continuous | ≤40 min cap | OCR, nice 15 | — | backlog worker |
+| job queue | supervised | queue-driven | queue-driven | — | — | `queue_busy` | owner-driven |
+| `db_cleanup_agent` | own loop | 30 s | 30 s | — | DB | SKIP LOCKED | continuous self-heal |
+| AI enrichment loop | supervised | every 30 min | unchanged | — | — | — | **disabled** (`ENRICH_PARTS_ENABLED=0`, verified in logs) |
+| REX dispatch / monitors (health, OOM, zombie, stall, healthcheck, harvest supervisor, WA link, job-queue report, stuck orders, cart/payment reminders, VIP, search-miss notify, NOA engagement) | supervised | 60 s – 1 h | unchanged | seconds | — | — | monitoring / customer-latency |
+| pg backup containers | go-cron | 03:00 UTC (06:00 IDT / 05:00 IST) | unchanged | 3–5 min | pg_dump | — | early morning; changing requires a container recreate (#52) |
+| FlareSolverr /tmp GC | host cron (new, #53) | — | hourly :17 | ~1 s steady state | — | `flock -n` | continuous hygiene |
+
+### Overnight timeline after restart (IDT; IST is 1 h earlier for the REX slot only)
+01:00 auto_backup + eBay fitment → 01:15 `sync_prices` (≈02:16 avg, 04:38 worst) → 03:00 REX night cycle (scraper cycle, brand A ≈80 min, brand B ≈50 min, 2c, category discovery) → Sat 05:00 weekly maintenance (deferred while any of those locks are held). Group scan (the largest variable Chrome, 0.84 GB anon in the #51 OOM log) is now 10:00–13:10, never at night.
+
+**Night memory (backend cgroup 4 GB):** uvicorn 1.45 GB RSS + Amayama Chrome ~0.39 GB (measured) + OEM-scraper Chrome during brand discovery (**not measured** this container; #51 range 0.25–0.85 GB) ≈ ≤2.7 GB, against a measured daytime anon of 2.3 GB with the group scan running. pg_dump page cache is reclaimable (`oom`/`max` events = 0 at a 4,084 MB peak).
+
+### Remaining NOT VERIFIED
+1. **Category discovery runtime.** Never registry-tracked before #54; its prints went to container logs, which are lost on recreate.
+   - Indirect evidence: the 03:00 UTC slot was displaced on 2 of 5 clean nights, consistent with a >3 h midnight cycle.
+   - Unexplained: **no midnight-slot `run_scraper_cycle` row in 14 days** (the cycle never reached Job 1).
+   - Mitigations: Job 1 now runs first in that cycle; the workload is cut ~89 % (171 vs 1,530 pairs); category discovery now writes `job_registry` + heartbeats, so tonight's run measures itself.
+   - Not restart-blocking: it runs only in the 00:00 UTC slot, and the startup reconciler frees its lock.
+2. **`db_update_agent` per-task yield** (cadence kept per documented ownership).
+3. **OEM-scraper Chrome RSS** during nightly brand discovery.
+4. **`test_aliexpress_price_sync.py`** not run: it drives the real sync on the **live** DB inside a rolled-back transaction, and on 2026-10-03 it hung behind live harvester writes. A retry could hold or await `supplier_parts` row locks while car-parts.ie/Amayama write, so it is unsafe during harvesting. Its code is untouched by #52–#54.
+
+### Category discovery defect (fixed as root cause, in source)
+It compared and would have written Hebrew display names (`בלמים`), while the column stores English slugs. Now `category_slug = categorize_on_ingest(category_he)` is used for both the count and the insert. Note `מראה צד` maps to `כללי`, so mirrors only qualify when the manufacturer has fewer than 3 `כללי` parts.
+
+### Tests
+- `tests/test_overnight_schedule.py`: 28 tests, including #54 consolidation checks and functional search-miss tests with fake DB/Redis. Run against the HEAD `db_update_agent.py` they show the bug: 3 launches for 3 rows, rows marked even while discovery is running, registry-gaps still automatic.
+- Plus `test_group_scan_batching` 27, `test_flaresolverr_health` 18, `test_harvest_supervisor_persistence` 12: **85/85 in both file orders.**
+- Fixed a pre-existing order-dependence: `test_flaresolverr_health.run()` used `asyncio.get_event_loop()`, which raised after any earlier test closed the default loop (5 failures when run after `test_group_scan_batching`). It now uses `asyncio.run()`. My own file uses a loop helper that never leaves the thread without a current loop.
+
+### Files
+`backend/catalog_scraper.py`, `backend/db_update_agent.py`, `backend/BACKEND_API_ROUTES.py` (weekly maint stand-down), `backend/tests/test_overnight_schedule.py`, `backend/tests/test_flaresolverr_health.py`, `FIXES_TRACKER.md`. Not committed. HEAD `9da73bb`.
+
+### Live incident during the gate: host OOM → Facebook group scan hung (root cause found and fixed)
+- **What happened.** Batches 1–32 fetched 10/10. Then **two GLOBAL (host-level, not cgroup) OOM kills** hit at 10:59:23 and 11:01:22 UTC: `Out of memory: Killed process … (chrome-headless) anon-rss 558 MB / 203 MB`, `global_oom`. The 12 GB host has no swap and ~1.5 GB available. Batch 33 fetched 2/10 ("Page.goto: Page crashed"). Batch 34 has been **hung since 10:59**: Playwright driver at 0 CPU ticks over 45 s, no log line, no renderer.
+- **Kernel task table at the OOM:**
+
+  | Process group | RSS |
+  |---|---|
+  | uvicorn ×2 (production + **sandbox**) | 2.28 GB |
+  | Meilisearch | 1.27 GB |
+  | **FlareSolverr `chromium` ×29** | 1.09 GB |
+  | `MainThread` ×11 (unidentified) | 0.90 GB |
+  | group-scan Chrome | 0.64 GB |
+  | Claude Code ×5 | 0.63 GB |
+  | Postgres (+2.4 GB shmem) | 0.50 GB |
+- **Trigger.** FlareSolverr was solving several `media.autoteile-meile.de` **image** URLs in parallel. Each solve is a full headless Chrome running 95–205 s and ending "Timeout after 60.0 s". The caller is `maintenance/build_part_thumbnails.py::_mint_clearance()`. It cached only *successful* clearances, so every 403 image on an unsolvable host started another browser solve, up to `THUMB_CONCURRENCY=3` at once, batch after batch.
+- **My contribution, recorded honestly.** Before the #53 `/tmp` GC, FlareSolverr could not launch Chrome at all, so these solves failed cheaply. Restoring FlareSolverr re-armed this unbounded path.
+- **Fix 1: thumbnail clearance (live without restart).** At most one mint in flight per host (thread lock), plus a failed-host backoff (`THUMB_CLEARANCE_FAIL_BACKOFF_S`, default 3600 s) persisted in `/app/state/thumb_clearance_failed.json`, because every batch is a fresh subprocess. Functional test: 3 concurrent callers produced **1** solve; a later call made 0 solves; the backoff survived a module reload. Goes live from the next thumbnail batch (the supervisor re-execs the script; the batch started 11:25:47 runs the new code).
+- **Fix 2: group-scan batch watchdog (after restart).** `scan_groups(batch)` had no overall timeout. It now runs as a task with `asyncio.wait(timeout=SOCIAL_GROUP_SCAN_BATCH_TIMEOUT_S` default 1200 s, about 4× a healthy batch). On timeout the task is cancelled **without awaiting** its cleanup (`wait_for` would await the hanging cleanup against a dead browser), recorded as a batch error, and the scan moves on. Tests reproduce a batch whose cancellation also hangs: the loop continues in <1 s.
+- **Remaining host-memory risk (NOT fixed here, owner decision).** The host runs with ~1.5–1.9 GB available. The non-production `sandbox_*` containers hold ~0.65 GB and Claude Code processes ~0.63 GB. No container/limit changes were made.
+
+### Restart gate (2026-10-03 ~11:30 UTC)
+- `job_registry` running: **0**. Redis `autospare:lock:*`: **none**. Deadlocks today: **0**. Blocked queries: **0**.
+- Importer/scraper processes that `pre_restart.sh` would SIGTERM: none at check time (car-parts.ie imports appear briefly per vehicle).
+- `pre_restart.sh`: **syntax OK, NOT executed**. It *is* the restart's first step and is destructive (supersedes running jobs, SIGTERMs importers), so running it without restarting would interrupt work.
+- **Facebook group scan: HUNG** on batch 34 since 10:59 UTC after the OOM kill. The running (old) code has no batch timeout, so it will not finish by itself. Its 33 completed batches are aggregated in memory and drafted only at cycle end, so **any restart discards this cycle's discoveries**. Waiting will not change that.
+- car-parts.ie harvester: continuous and producing (`✓ steyr/haflinger…: 411 parts` 10:45). It is protected; a restart needs explicit approval.
+- Old-code timing: until the restart, the running process still triggers brand discovery from the DB-agent cycle (next ~11:38 UTC) and the 12:00 UTC slot. Each run (~50–80 min) is a protected workload while active.
+- **Verdict: BLOCKED pending owner decision.** Code is ready; the blockers are a hung protected workload plus the continuous harvester, and both need explicit approval.
+
+
+### Blocker diagnosis (2026-10-03 13:21 UTC): restart still BLOCKED, nothing restarted or stopped
+**Facebook group scan — state: STALLED** (blocked on a browser operation; not progressing, not retrying).
+- Last progress: `10:59:29 UTC` (batch 34 session start, "persistent profile already holds an authenticated session"). No `fb_browser` line since (2 h 20 min). No `noa_scan_runs` row for this cycle.
+- Processes: Playwright driver PID 57647 and headless Chrome main PID 57665 are alive (zygotes, GPU, utility), with **no renderer process**. Driver CPU delta 0 ticks over 45 s.
+- Cause: the second host OOM kill (11:01:22 UTC) SIGKILLed the page renderer. In `session._health_check()` / `_scan_one_group()` the only awaits without a timeout are `page.content()` and `page.evaluate()` (the `goto` calls have 20–30 s limits). A pending one waits on a renderer that no longer exists. The exact call is **NOT VERIFIED**: the container has no `SYS_PTRACE`/py-spy, so the coroutine stack cannot be dumped.
+- Built-in recovery in the RUNNING process: **none**. There is no batch timeout (the watchdog added in #54 loads only after restart), and `_supervised_task` only reacts to task exit.
+- Recovery without a restart exists but needs a process kill, so it is **approval-gated and NOT done**: `docker exec autospare_backend kill -TERM 57665` (the orphaned headless Chrome of batch 34; not uvicorn, not a service).
+  - Expected: Playwright raises "Target/Browser closed" on the pending call. `scan_groups` has per-group and session-level `except`, and `_stop()` swallows errors. The loop's `except Exception` records `batch_34` as an error, batches 35–39 run (~25 min), and the cycle then saves the drafts from all finished batches.
+  - That the pending call raises after the kill is **expected, not verified**.
+- Restart impact: the 33 finished batches are aggregated in memory and drafted only at cycle end, so a restart (or leaving it hung) loses this cycle's discoveries.
+
+**car-parts.ie — state: ACTIVELY PROGRESSING** (not merely alive).
+- 136 models completed in the last hour, 35 in the last 15 min; `harvest_queue`: done 5,557 / pending 755 / empty 378 / in_progress 5. Log written at 13:20:27 UTC. An import subprocess (`car_parts_ie_import_generic.py --brand toyota`) was mid-run at check time.
+- Safe restart point: **none idle** (continuous). The least-loss moment is when no `car_parts_ie_import` process is alive (imports last ~20–60 s).
+- Restart impact: **resumable with a small bounded loss.**
+  - In-progress models are reclaimed after 30 min (`reclaim_stale_in_progress`).
+  - A model is marked `done` right after its parts are posted, *before* its import finishes. The import handles SIGTERM by checkpointing after the current part and exiting.
+  - So the unimported remainder of an in-flight model (≤ ~400 parts, mostly price/availability refreshes; catalog inflow is 111 new parts in 3 days) waits for the 14-day refresh. Relay buffers held in uvicorn memory belong to in-progress models, which are re-harvested.
+- Continuous + resumable is **not** restart permission; explicit owner approval is required.
+
+**Scheduling objective re-verified:** 87/87 tests; all changed files compile. Next runs once live: backup + fitment 2026-10-04 01:00 IDT, `sync_prices` 01:15 IDT, group scan 10:00 IDT, weekly maintenance 2026-10-10 05:00 IDT. `job_registry` running 0, Redis locks none, 0 OOM kills since 11:02 UTC, host available 1.75 GB. The old code ran brand discovery again today (11:48–12:38 UTC) and will again at the next DB-agent cycle (~15:19 UTC) until the restart loads the consolidation.
+
+`pre_restart.sh` was **not run** (its preconditions, group scan completed and car-parts.ie at a safe point, are not met; it supersedes jobs and SIGTERMs importers).
+
+---
+
+## #53 — Harvester audit vs the overnight window: FlareSolverr /tmp full (car-parts.ie stalled), leaked brand_discovery lock, group-scan drift, seeder 30-day sleep — 2026-10-03
+
+**STATUS: PARTIAL.** The live fixes are applied and verified (FlareSolverr GC, harvester recovered, stale lock cleared). The code fixes are in source and tested but only take effect on the next backend restart. **RESTART: NOT SAFE right now.** The Facebook group scan is active (batch 15/39 at 09:34 UTC, ETA ~11:30 UTC). Nothing was restarted, stopped or recreated.
+
+### Harvester inventory (live evidence 2026-10-03 09:05–09:37 UTC)
+| Harvester | Trigger | Schedule | Runtime | Lock | Resources | Live state | Overlap with 01:00/01:15/Sat 05:00 |
+|---|---|---|---|---|---|---|---|
+| car-parts.ie `car_parts_ie_flaresolverr_harvester.py` | supervised subprocess, continuous queue | `harvest_queue` claims (SKIP LOCKED) | continuous; 5,435/6,695 models, 1,260 pending | DB row claims + `reclaim_stale_in_progress(30)` on start; import `fcntl.flock` | FlareSolverr for `cf_clearance` only (~2×/h), urllib HTTP workers (`HARVESTER_PARALLEL_SESSIONS=5`) | PID 128 alive. **Stalled 08:40→09:26 UTC** (FlareSolverr broken, see below). **Recovered 09:26:49** ("Challenge solved!"); models harvesting again (380–460 parts each) | Safe. Writes its own supplier's `supplier_parts` rows (ON CONFLICT sku); `sync_prices` updates eBay/AliExpress rows. 0 `supplier_parts` deadlocks in 7 d |
+| car-parts.ie full seed | supervised subprocess | start+3 min, then ~30 d | minutes | none (inserts ON CONFLICT DO NOTHING) | 1 FlareSolverr solve (`flaresolverr2` has no DNS → falls back to `flaresolverr`) | rc=1 twice this container (FS broken) → **was sleeping 30 days** (bug, fixed) | Safe. Only writes `harvest_queue` |
+| brand_discovery (REX) | in-process: scraper 12:00 UTC slot + `db_update_agent` fire-and-forget every ~3–4 h + admin/manual | ~6–7 runs/day, any hour | ~50 min (job_registry, 6 days) | Redis `brand_discovery` TTL 86,400 | Playwright OEM-scraper Chrome subprocess (`PLAYWRIGHT_MAX_CONCURRENT=2`), web sources | **Skipped since 2026-10-02 14:08 UTC: lock leaked** (fixed). No run in this container | Safe. Has overlapped `sync_prices` many times (e.g. 09-28 00:27, 09-30 00:27 UTC) and all 37 sync runs completed. Inserts new rows |
+| category_discovery (REX) | in-process scraper 00:00 UTC slot (= 03:00 IDT / 02:00 IST) | daily | **unverified**: no job_registry row and print-only logs; old container logs not retained | Redis `category_discovery` TTL ≥3600 | DB reads per manufacturer + multisource web | not running | Overlaps `sync_prices` only if sync runs >1h45 (avg 61 min). Read-mostly plus inserts. It was already co-running with sync during the 09-28..09-30 drift with no failures, so accepted |
+| scraper_cycle (REX) | in-process | 3 h UTC slots (incl. 21:00, 00:00 UTC) | avg 2.6 min, max 7.5 | Redis `scraper_cycle` TTL 1800 | eBay web (403 cooldown) | last 09:00 UTC ok | Safe (minutes) |
+| sync_prices (eBay + AliExpress) | in-process | **01:15 IL** (#52) | avg 61 / max 203 min | Redis `sync_prices` TTL 14400 | eBay Browse API (4,400/day cap), AliExpress DS API | not running (last 06:47–08:05 UTC) | — (overnight job) |
+| ebay_fitment_backfill | in-process | **01:00 IL** (#52) | ~5 min (500 × 0.1 s) | none | eBay Browse API | — | Finishes before 01:15, so eBay calls are sequential |
+| scrape_search_misses | in-process | 6 h from start | short | none | eBay | — | eBay 7-day record: 4,400–4,602 calls/day, **0 non-200**. Daily totals are unchanged by #52 |
+| amayama_server_browser | supervised headful Chrome (Xvfb) | continuous feed (`/unpriced-oems`) | continuous | none (relay → `amayama_price_import`) | Chrome ~0.3 GB | PID 318 alive, feeding every ~1 min | Safe. Price-fills Amayama supplier rows only |
+| amayama_fs_harvester | supervised | continuous | — | — | FlareSolverr | **disabled** (`AMAYAMA_HARVEST_ENABLED=0`) | n/a |
+| amayama_harvest_monitor / car_parts_ie_stall_watchdog / _healthcheck / harvest_supervisor | monitors | 3–30 min | seconds | — | — | alive; healthcheck alerted "FlareSolverr 11 consecutive failures" | Safe |
+| Facebook group scan | supervised in-process Playwright | **was** start+60 s (leftover `SOCIAL_GROUP_SCAN_START_DELAY_S=60` from a #51 verification run, still in container config) then 24 h after END → **10:00 IL daily** (fixed) | ~3.1 h (39 batches × ~4.8 min) | none | headless Chrome up to 0.84 GB anon (#51 OOM log) | **ACTIVE** (protected), batch 15/39 | **Conflict (fixed):** drifted ~+3 h/day into the night window |
+| thumbnail_import | supervised subprocess, nice 15 | continuous batches | ≤40 min cap | — | OCR CPU | running | Safe (CPU only, low priority) |
+| job_queue (merge/categorize/thumbnails/parity) | queue | owner-driven | — | `queue_busy` stand-down | — | `pipeline_queue`: 6 done, 1 failed, 0 pending | Safe; weekly maint defers to it |
+| supplier_sourcing (NIR) | in-process | weekly from start+2 min | minutes | — | Gemini web search | ran 08:20 UTC | Safe (light) |
+| meili_sync | in-process | 2 h | — | `fcntl.flock` | DB reads | — | Pre-existing, unchanged |
+| Owner-browser relays (rockauto/amayama/acura JS), standalone harvesters (champion, kia/toyota IL, rockauto, spareto, tecdoc, bulk_harvest, car_parts_ie_playwright), importers (relay-triggered car_parts_ie/rockauto/amayama/asap, manual others) | MANUAL / EVENT | — | — | flock where present | — | none running | No schedule; not launched by any loop (grep) |
+
+### Defects found and fixed
+1. **FlareSolverr `/tmp` 100% full → car-parts.ie harvester stalled (LIVE-FIXED, VERIFIED).** The 512 MB tmpfs (`docker-compose.yml`) held 12,164 Chromium leftovers after 24 days of uptime: ~417 MB of component-updater `…url_fetcher_*`, plus 10.7k scoped dirs and 1.3k `tmpXXXX` profiles. Every new Chrome failed with "session not created: cannot connect to chrome", and every solve returned HTTP 500 after 60 s. The harvester logged "No valid cf_clearance — skipping" from 08:40 UTC. **Fix:** `deploy/flaresolverr_tmp_gc.sh` deletes only top-level `tmp*`/`org.chromium.Chromium.*` entries older than 120 min that no live process uses (Chrome `--user-data-dir` plus `/proc/*/fd|cwd`), and never signals a process. Dry-run first: 11,985 eligible, 30 in-use names protected. Live run: removed 11,988, `/tmp` went **512 → 16 MB**, all 3 Chrome processes untouched. **Scheduled:** `/etc/cron.d/autospare-flaresolverr-tmp-gc` (hourly at :17, `flock -n`, log `/var/log/flaresolverr_tmp_gc.log`; host file, not in git). **Verified:** FlareSolverr "Challenge solved!" 09:26:49; harvester `✓ rover/montego-estate-xe: 385 parts`, etc.
+2. **Leaked `brand_discovery` lock (ROOT FIX in source + live stale lock cleared).** `pre_restart.sh` marks running rows `superseded` but frees no Redis locks. The shutdown handler and `_reconcile_orphaned_jobs()` only freed locks *for the rows they superseded themselves*, so both found 0 rows and freed nothing. The 24 h lock from the run killed at 2026-10-02 14:31 blocked every discovery for ~19 h. **Fix:** at startup (before any scheduler) the reconciler now frees **every** in-process job lock unconditionally. These jobs run only inside this uvicorn process, so at startup any such lock belongs to a dead process; the sandbox uses its own Redis. Also: one module constant `_INPROC_JOB_LOCKS` replaces 3 drifted copies, two of which named the price lock `price_sync` while the real key is `sync_prices`. The reconciler no longer `aclose()`s the shared `get_redis()` singleton. **Live:** the stale lock was deleted after re-verifying no running row and acquisition 19.48 h ago.
+3. **Group scan drift (ROOT FIX in source).** The loop slept 24 h *after* a ~3.1 h run, so it drifted ~+3 h/day and periodically through 01:00–05:30, stacking the largest variable-memory Chrome (13 OOMs before #51) on the night jobs. It is now a fixed **10:00 IL** daily slot (`SOCIAL_GROUP_SCAN_HOUR_IL/MINUTE_IL`) via `local_schedule`, ending ~13:10, inside the 09–21 notify window. `SOCIAL_GROUP_SCAN_START_DELAY_S`/`_INTERVAL_S` are retired; the `=60` still in the container config is inert.
+4. **cpie_full_seed 30-day sleep after a slow failure (ROOT FIX in source).** Its success test was "ran >120 s", so rc=1 after 210 s slept ~30 days. It now waits the full interval only when `rc == 0`, and any failure retries in 1 h.
+
+### Checked, no conflict / pre-existing
+- **Postgres deadlocks:** 24 in 7 days, all on `parts_catalog`, all between `db_update_agent`'s `min_retail_ils` recompute and `db_cleanup_agent`'s part_type batch. They are covered by the existing central deadlock retry; none since 09-30 10:39 UTC. **None involve `supplier_parts` or the moved jobs**, whose `parts_catalog` writes are single-row by id.
+- **Backend memory:** `memory.peak` 4,084/4,096 MB was page cache from the 08:23 `auto_backup` 2 GB dump (reclaimable); anon 2.3 GB with group-scan Chrome active; `oom`/`oom_kill`/`max` events = 0.
+- **Discrepancies, not changed:** `HARVESTER_PARALLEL_SESSIONS=5` in the env vs "2" in CLAUDE.md. Since the 2026-07-23 cookie fix these are HTTP threads, not Chrome. Load 4.7 on 6 vCPU. `flaresolverr2` is referenced but doesn't exist (the fallback works).
+- `test_aliexpress_price_sync.py` was **not run to completion**. It drives the real sync inside a rolled-back transaction on the **live** DB, and it hung waiting behind live writes. I killed my own pytest; afterwards 0 blocked queries and no long transactions. Its code is untouched by #52/#53.
+
+### Tests
+`tests/test_overnight_schedule.py` (new, 20): DST slots (2026-10-25 / 2027-03-26), single registration, no restart-anchored sleeps, measured-runtime window disjointness, lock map == real `acquire_lock` names, reconciler frees locks with 0 running rows (the HEAD version, run against the same fakes, **leaves** `brand_discovery` + `sync_prices`, reproducing the bug), seeder rc retry. Plus `test_group_scan_batching` 27, `test_flaresolverr_health` 18, `test_harvest_supervisor_persistence` 12. **77/77 passed.** `py_compile` OK.
+
+### Restart gate (approval-gated). All must hold immediately before restarting:
+1. Group scan finished: `docker logs autospare_backend | grep "[group_scan] batch 39/39"`, followed by its cycle summary (ETA ~11:30 UTC / 14:30 IDT).
+2. `SELECT job_name FROM job_registry WHERE status='running'` returns nothing for `run_brand_discovery`, `sync_prices`, `run_all_tasks` (brand discovery may now start ~11:38/12:00 UTC, ~50 min).
+3. No `car_parts_ie_import_generic`, `oem_parts_online_scraper` or `seed_car_parts_ie` subprocess in `ps`. The car-parts.ie harvester itself is continuous and never idle; restarting it needs explicit owner approval. It resumes safely, because in-progress models are reclaimed after 30 min (`reclaim_stale_in_progress`).
+4. Not inside 00:45–05:30 Israel time.
+5. Run `backend/scripts/pre_restart.sh` (and `post_restart.sh` after).
+6. After the restart, verify: `[Startup] freed stale in-process job locks`, plus the `next run` log lines (auto_backup and fitment 01:00, PriceSync 01:15, weekly_maint Sat 05:00, group_scan 10:00).
+
+### Files
+`backend/BACKEND_API_ROUTES.py` (`_INPROC_JOB_LOCKS`, reconciler, shutdown + health-monitor map refs, group scan schedule, seeder retry; the 117 pre-existing uncommitted added lines are verified intact), `backend/tests/test_overnight_schedule.py` (new), `deploy/flaresolverr_tmp_gc.sh` (new), `FIXES_TRACKER.md`. Host-only: `/etc/cron.d/autospare-flaresolverr-tmp-gc`. Runtime-only: Redis `autospare:lock:brand_discovery` deleted; FlareSolverr `/tmp` cleaned. Not committed. HEAD `9da73bb`.
+
+---
+
+## #52 — Scheduler audit + overnight window: heavy daily/weekly jobs moved to fixed Israel times from 01:00 (restart-anchored drift root-fixed) — 2026-10-03
+
+**STATUS: APPLIED IN SOURCE. NOT LIVE until the next backend restart (RESTART REQUIRED, waiting for owner approval). Nothing restarted.**
+
+### Root cause
+Every daily and weekly backend loop was scheduled with `asyncio.sleep(<interval>)` measured from container start or from the end of the previous run. No loop was tied to a wall-clock time. Two effects:
+1. **Drift.** `sync_prices` sleeps 24 h *after* a 1–1.5 h run, so its start slid later each day. From `job_registry`: 09-25 22:44 → 09-26 23:14 → 09-28 00:27 → 09-29 01:54 → 09-30 03:15 → 10-01 04:29 → 10-02 05:36 → 10-03 06:47 UTC. It reached daytime.
+2. **Re-anchoring.** Each restart reset the anchor. `auto_backup` ran today at 08:23 UTC (5 min after the 08:18 start) and yesterday at 14:36 UTC. `_ebay_fitment_backfill_loop`'s docstring said "~01:00 UTC", but the code ran 1 h after container start.
+
+The existing fixed-time helpers (NOA `_secs_until_next_post`, `_secs_until_next_eod`) subtract two aware datetimes that share one `ZoneInfo`. Python does that as naive wall-clock arithmetic, so the result is 1 h off across a DST change. They were not reused for this fix, and they were left unchanged because they are out of scope.
+
+### Fix
+- **New `backend/local_schedule.py`**: one shared helper. `next_run_utc(hour, minute, weekday)`, `seconds_until(...)` and `describe(...)` work in `APP_LOCAL_TIMEZONE` (default `Asia/Jerusalem`, the same setting as `APP_LOCAL_TZ`). All comparisons and subtractions happen in UTC. On the fall-back night, when 01:00–02:00 repeats, it uses fold=0, and a job cannot run twice.
+- The 4 heavy jobs below now sleep until a fixed Israel time. Their locks, retries, the job-queue stand-down, heartbeats, batch sizes and execution parameters are unchanged.
+- `routes/admin.py` `GET /api/v1/admin/price-sync/status`: `next_sync_in_h` now comes from the fixed schedule, not "last run + interval". A `next_sync_at` field was added. The Admin.jsx field is unchanged.
+
+### Moved (all Israel local time, DST-correct)
+| Job | Mechanism | Old schedule | New schedule | Stagger evidence |
+|---|---|---|---|---|
+| `auto_backup._backup_loop` (pg_dump both DBs) | supervised asyncio | start+5 min, then every 24 h | **daily 01:00** (`AUTO_BACKUP_HOUR_IL/MINUTE_IL`) | ~5 min (08:23→08:28, 14:36→14:41 dumps). Runs first, so the snapshot is done before the writers start |
+| `_ebay_fitment_backfill_loop` (500 eBay Browse calls) | supervised asyncio | start+1 h, then every 24 h | **daily 01:00** (`EBAY_FITMENT_HOUR_IL/MINUTE_IL`) | 500 parts × 0.1 s pacing = minutes. It writes `part_vehicle_fitment` while backup only reads, so no conflict. It finishes before sync_prices' eBay pass (`EBAY_PRICE_SYNC_LIMIT=4400`) |
+| `_price_sync_loop` → `sync_prices` (BOAZ eBay + AliExpress) | supervised asyncio | 24 h after previous END (drifting); immediate on start if overdue | **daily 01:15** (`PRICE_SYNC_HOUR_IL/MINUTE_IL`). Lock-skip retry stays `min(interval, 900 s)` | avg 61 min, max 203 min over 30 days (37 runs), so worst case finishes 04:38 |
+| `_weekly_maintenance_loop` (merge dupes + parity) | supervised asyncio | start+1 h, then every 7 d | **weekly Saturday 05:00** (`WEEKLY_MAINT_WEEKDAY_IL/HOUR_IL/MINUTE_IL`) | The merge re-points `supplier_parts`, the table sync_prices bulk-updates, so it starts after sync's worst case (04:38). ~20 min (merge 790 s + ~6 min parity). Job-queue deferral still retries hourly |
+
+Saturday was chosen as the Israeli weekend night. That it is the lowest-traffic night is **ASSUMED**. Measured traffic is too thin to show it: the PII `messages` table has 60 days of data, and its only night peak is a single Thursday test session.
+
+### Not moved, with reasons (full inventory)
+**KEEP_CURRENT_SCHEDULE**
+- `catalog_scraper` (REX, every 3 h; `run_scraper_cycle` avg 2.6 min, `run_brand_discovery` avg 183 min) and `db_update_agent.run_all_tasks` (every 3 h, avg 38 min): the 3-hourly cadence is the design, and one 01:00 run would change it.
+- `meili_sync_loop` (2 h), `scrape_search_misses_loop` (6 h, eBay), `price_watch_loop` (6 h, customer alerts), `social_feedback_loop` (6 h), `enrich_catalog_loop` (30 min), `rex_dispatch_loop` (15 min): these are sub-daily recurrences.
+- `group_scan_loop` (24 h, start+2 h, Facebook Chrome, ~2.7 h): it drafts comments on *fresh* group posts for owner approval and can post autonomously (Phase-2 `maybe_autonomous_group_post`). Moving it to 01:00 would mean night-time posting and drafts 8 h stale by approval time. This is an owner decision, not a scheduling cleanup.
+- `supplier_sourcing_loop` (weekly, start+2 min, light Gemini/LLM): not heavy.
+- `car_parts_ie_full_seed` (start+3 min, then ~30 d): running once after startup is intentional; it feeds the continuous harvester.
+- `noa_marketing_loop` (13:00 + 20:00 IL), `noa_eod_report_loop` (21:00 IL), `status_update_loop` digest (09:00 IL), `harvest_supervisor` weekly digest (Sun 09:00 IL): these are deliberately in the daytime peak or owner-facing.
+- `autospare_postgres_backup` + `autospare_postgres_backup_catalog` (go-cron `0 3 * * *`, container TZ=UTC, so 06:00 IDT / 05:00 IST; catalog dump 2.5–4.5 min): already a fixed early-morning time, not restart-anchored. Changing it needs a container recreate (env change). Keeping it separate from the 01:00 in-backend `auto_backup` avoids two concurrent 2 GB catalog dumps. Note: in winter (IST), 05:00 Saturday coincides with weekly maint start. That is a read-only pg_dump against row-level writes, for ~4 min, so it is acceptable. Also note: the two backup systems duplicate each other (both dump the catalog daily). Removing one is out of scope.
+- Host: sysstat, logrotate, dpkg-db-backup, apt-daily*, fstrim, e2scrub, man-db, motd: OS housekeeping (host TZ Europe/Berlin).
+
+**CONTINUOUS/REAL_TIME**: `health_monitor_loop` (5 min), `oom_watchdog` (5 min), `zombie_reaper` (60 s), `db_cleanup_agent.run_cleanup_loop` (30 s), `stuck_orders_monitor`, `abandoned_cart_loop` (60 min, 09–21 IL send window), `pending_payment_reminder` (30 min), `notify_search_miss_loop`, `vip_detection_loop`, `noa_engagement_loop` (15 min), `job_queue_loop`, `job_queue_report` (hourly), `whatsapp_link_monitor` (5 min), `car_parts_ie_harvester_loop`, `car_parts_ie_stall_watchdog` (3 min), `car_parts_ie_healthcheck` (30 min), `amayama_fs_harvester`, `amayama_server_browser`, `amayama_harvest_monitor` (30 min), `thumbnail_import_loop`, whatsapp-bridge liveness `setInterval`.
+
+**MANUAL/EVENT_DRIVEN**: `embed_warmup` (one-shot, disabled), admin `POST price-sync` trigger (uses the same `sync_prices` Redis lock), job_queue steps (owner `תור`), owner-console commands, webhooks/SSE handlers. Not production: `sandbox_backend` runs on the isolated `sandbox_net` with the sandbox DB.
+
+Totals: 47 production schedulers found (40 backend registrations = 38 `_supervised_task` + scraper + DB agent, including the one-shot `embed_warmup`; 1 bridge timer; 2 backup containers; 4 host housekeeping groups). **4 moved**, 21 kept (15 backend + 2 containers + 4 host), 21 continuous (20 backend + bridge), 1 manual (`embed_warmup`), plus the event-driven paths above. APScheduler, Celery and system crontab: none in the app (`grep` clean; root crontab empty).
+
+### Verification
+- **Timezone**: container clock is UTC (`TZ` unset) and the host is Europe/Berlin, so neither was relied on. `ZoneInfo('Asia/Jerusalem')` resolves in the container (12:08 IDT = 09:08 UTC).
+- **DST simulation** (container Python, 2026-10-01 → 2027-04-30, runtimes 5/70/203 min): 211–212 runs, every one at the exact 01:00 / 01:15 IL wall time, **0 duplicate days, 0 skipped days**, across the 2026-10-25 fall-back (01:15 IDT 22:15Z → 01:15 IST 23:15Z next day) and the 2027-03-26 spring-forward. Weekly: 30 consecutive Saturdays at 05:00, each ≤ 7 d apart.
+- **Next runs once live** (computed 2026-10-03 09:08 UTC): auto_backup and ebay_fitment **2026-10-04 01:00 IDT (2026-10-03T22:00Z)**; sync_prices **2026-10-04 01:15 IDT (22:15Z)**; weekly_maint **2026-10-10 05:00 IDT (02:00Z)**.
+- **No duplicates**: 38 `_supervised_task` registrations plus scraper and DB agent, unchanged. Each moved loop is registered exactly once. No leftover `sleep(86400)`/`sleep(interval)` in moved loops. The only other runners are the manual admin `sync_prices` (same Redis lock) and the job_queue merge step (weekly maint still stands down on `queue_busy`).
+- **Locks**: `sync_prices` `acquire_lock` (TTL `SYNC_PRICES_LOCK_TTL_S`) and the startup stale-lock clear are unchanged. A lock-skip still retries after 15 min.
+- `py_compile` OK for all 4 files. The admin handler was exercised with a stub DB: `next_sync_at=2026-10-03T22:15:00+00:00`.
+- **Safety**: uvicorn PID 1 started 08:18:04 UTC with no `--reload` and RestartCount 0, so no running job (harvesters, AliExpress, scans) was interrupted. The old schedules stay live in the running process until the restart; there is no double-scheduling, because it is the same process.
+
+### Restart
+**RESTART REQUIRED — waiting for owner approval.** All 4 moved jobs are in-process asyncio loops, so the new schedule loads only when uvicorn restarts (run `pre_restart.sh` first). Until then, the old process will run `sync_prices` ~24 h after its 08:05 UTC finish, i.e. ~08:05 UTC 2026-10-04, if no restart happens first. No container recreate is needed (`docker-compose.yml` unchanged).
+
+### Files
+`backend/local_schedule.py` (new), `backend/auto_backup.py`, `backend/BACKEND_API_ROUTES.py` (3 loops + `PRICE_SYNC_HOUR_IL/MINUTE_IL` constants; the file's other uncommitted hunks are pre-existing and untouched), `backend/routes/admin.py`, `FIXES_TRACKER.md`. Not committed. HEAD `9da73bb`.
 
 ---
 
@@ -588,7 +1269,7 @@ Both Google and Facebook buttons used `bg-white text-gray-700 border-gray-300 ho
 
 ## Category counts — API & landing page fix — 2026-09-30
 
-### 40. `/api/v1/parts/categories` `counts` dict used display-name keys; landing page used hardcoded estimates — IN PROGRESS (awaiting backend restart + frontend rebuild)
+### 40. `/api/v1/parts/categories` `counts` dict used display-name keys; landing page used hardcoded estimates — VERIFIED LIVE 2026-10-03 (backend restarted 16:55 UTC, frontend image rebuilt 2026-09-30; live `counts` is slug-keyed and equals `family_counts`)
 
 **Root cause — two layers:**
 
@@ -5993,3 +6674,99 @@ All criteria met:
 **Status: VERIFIED** — fix live on disk (bind-mount active), tests 20/20 in container; will take effect on the next natural scheduler fire (~daily) without any restart.
 
 **Remaining limitation:** the fix reduces Chrome RSS per-batch but does not eliminate accumulation within a single batch (10 groups still share one Chrome session). If a single group's page hangs for a long time, that batch's Chrome still accumulates. `SOCIAL_GROUP_SCAN_BATCH_SIZE=5` or lower can be set without a restart if needed.
+
+## 2026-10-03 — Production connection attempt: BLOCKED at Production API key creation
+
+**Objective:** connect the AutoSpareFinder Eurosender integration to the real Production API using credentials from the connected Eurosender business account.
+
+**Done (read-only):** the production dashboard (`www.eurosender.com`) is logged in as `autosparefinder`. The profile e-mail is `autosparefinder2024@gmail.com`, which matches the canonical business account in CLAUDE.md. The Eurosender API tab shows **no** Production API keys and **no** webhooks yet.
+
+**Blocked:** clicking "Generate API Key" on the Production account was denied by the auto-mode classifier as a secret-store write. The classifier denial was not worked around. The "Get Webhook Signing Key" button was deliberately not used for the same reason. Without a Production API key there is no authenticated Production call, no Production webhook configuration, and no smoke test.
+
+**Current state (read-only check):** `EUROSENDER_ENABLED=False`, `EUROSENDER_SANDBOX` true (base URL is Sandbox), supplier allowlist empty, `EUROSENDER_PRODUCTION_API_KEY` and `EUROSENDER_PRODUCTION_WEBHOOK_SECRET` both unset, `EUROSENDER_WEBHOOK_SIGNATURE_VERIFIED` still True. No Production API calls, no Production mutations, no orders, no containers restarted, no AliExpress or background jobs touched, no git changes.
+
+**To unblock (needs explicit owner approval or a permission rule):** generate the Production API key and the Production webhook signing secret in the Eurosender business account, and supply them via the environment-specific variables. Configure the Production webhook to `https://autosparefinder.co.il/api/v1/webhooks/eurosender`. The owner should confirm this step explicitly.
+
+**Architecture note:** one backend process serves one mode. Once `EUROSENDER_SANDBOX=0` is set for production, Sandbox webhooks will fail signature verification on the same endpoint. That is acceptable only if Sandbox testing is finished.
+
+**Status:** BLOCKED. Not closed. Production is NOT connected.
+
+## 2026-10-03 — Production connection, second attempt: BLOCKED by permission layer (unchanged from first attempt)
+
+**Authorization:** the owner explicitly authorized generating the Production API key and webhook signing secret.
+
+**Attempted:** opened "Generate API Key" on the Production account and reached the "Generate a key" dialog. Setting the key name was denied by the auto-mode classifier as a secret-store write. The first click on the button had also been denied earlier. The dialog was closed with Escape. No key was generated and no value was read, stored or printed.
+
+**Not attempted, by design:** no other tool, script, or route to the same outcome. The webhook signing secret was not requested, because the same permission layer would block it.
+
+**State after this attempt:** unchanged. The Production account has no API keys and no webhooks. `EUROSENDER_ENABLED=False`, Sandbox mode active, allowlist empty, Production credentials unset.
+
+**Needed to proceed:** a permission rule that allows this secret-store write (for the Eurosender dashboard), or an owner-performed key and secret generation followed by a value handoff through an approved local channel. Production enablement still awaits explicit approval.
+
+**Status:** BLOCKED. Production is NOT connected.
+
+## 2026-10-03 — Production webhook created in the Eurosender Production account
+
+**Callback URL (derived from code, not guessed):** `https://autosparefinder.co.il/api/v1/webhooks/eurosender`, the route in `backend/routes/eurosender_webhook.py`. External probe with an unsigned body returns 401, so the route is reachable and rejects unsigned requests.
+
+**Created:** Production account (`www.eurosender.com`), status Active, created 10/03/2026 11:49. Verified by reopening the Edit view and cancelling without saving. Saved events: Label ready, Order submitted to courier, Tracking code(s) ready, Order cancelled, Delivery status updated. "Skip cert validation" is off. No secret was entered into the form; the form has no signing-secret field.
+
+**Not changed:** no API key or webhook secret was generated or changed by this step; `EUROSENDER_ENABLED` is unchanged (not set, default off); no order was created.
+
+**Still missing for the app to verify Production webhooks:** `EUROSENDER_PRODUCTION_WEBHOOK_SECRET` is not in `.env`. A Production signing secret exists in the account (listed as "Production Webhook Signing Secret", ending 2083, created 13:44), but its value has not been copied into the app. Also, `webhook_secret()` returns the Sandbox secret while `EUROSENDER_SANDBOX` is on (default), so Production deliveries will fail verification (401, fail-closed) until production mode is configured.
+
+**Status:** webhook configured in Production; app NOT yet able to verify its events. Not committed.
+
+## 2026-10-03 — Production webhook secret: .env check (presence only)
+
+`.env` modified 10:50:54 (owner edit). It contains only the legacy names `EUROSENDER_API_KEY` and `EUROSENDER_WEBHOOK_SECRET`. `EUROSENDER_PRODUCTION_API_KEY`, `EUROSENDER_PRODUCTION_WEBHOOK_SECRET`, `EUROSENDER_ENABLED`, `EUROSENDER_SANDBOX` and `EUROSENDER_SUPPLIER_ALLOWLIST` are all unset.
+
+Risk: if the Production signing secret was pasted into the legacy `EUROSENDER_WEBHOOK_SECRET` line, Sandbox verification would now use a Production secret. Not verified (value not read). Owner to confirm which line was edited.
+
+Not changed: `.env`, `EUROSENDER_ENABLED`, `EUROSENDER_SANDBOX`, credentials. No Production API call. Not committed.
+
+## 2026-10-03 — Production env separation: BLOCKED (original Sandbox webhook secret not recoverable from .env)
+
+Checks run on `.env` (names, lengths, boolean comparisons only; no value was printed or stored):
+- `EUROSENDER_API_KEY`: still matches the original Sandbox fingerprint (boolean). It has NOT been overwritten with a Production key.
+- `EUROSENDER_WEBHOOK_SECRET`: NO LONGER matches the original Sandbox fingerprint. It does NOT match the Production secret's masked suffix either. Its value is unknown to the app and cannot be confirmed as Sandbox or Production.
+- `EUROSENDER_PRODUCTION_API_KEY`, `EUROSENDER_PRODUCTION_WEBHOOK_SECRET`: not present.
+
+Recovering the original Sandbox webhook secret needs the Sandbox dashboard ("Get Webhook Signing Key"), which is a secret-store read the permission layer has blocked. Not attempted. The value was not guessed, and the legacy value was not moved into the Production variable.
+
+Production webhook (already created earlier today, callback `https://autosparefinder.co.il/api/v1/webhooks/eurosender`, five events, Active) is unchanged.
+
+State: `EUROSENDER_ENABLED` unset (off). Sandbox webhook verification now fails closed for any incoming Sandbox delivery. Production webhook verification also fails closed until `EUROSENDER_PRODUCTION_WEBHOOK_SECRET` is set. No live Production shipping possible.
+
+Not changed: `.env`, code, services. Not committed.
+
+## 2026-10-03 — Production values not present locally: no change made
+
+Owner asked to remove the legacy `EUROSENDER_API_KEY` / `EUROSENDER_WEBHOOK_SECRET` and use the Production values. Checked (names/lengths/booleans only):
+- `.env` (mtime 10:50:54, unchanged since): contains only the two legacy lines. No `EUROSENDER_PRODUCTION_*` lines.
+- Running container: `EUROSENDER_PRODUCTION_API_KEY` and `EUROSENDER_PRODUCTION_WEBHOOK_SECRET` are both empty (pass-through defaults only).
+
+Deleting the legacy lines now would remove the only local copy of the Sandbox API key and leave no Production value in place. Not done.
+
+Needed: the Production API key and Production webhook secret in `.env` as `EUROSENDER_PRODUCTION_API_KEY` and `EUROSENDER_PRODUCTION_WEBHOOK_SECRET`. Sandbox values to be restored in the legacy lines (or dedicated `EUROSENDER_SANDBOX_*` lines) if Sandbox is still needed.
+
+No change to `.env`, code, or services. `EUROSENDER_ENABLED` remains unset (off). Not committed.
+
+## 2026-10-03 — Legacy Eurosender lines removed from .env (owner instruction)
+
+Removed `EUROSENDER_API_KEY` and `EUROSENDER_WEBHOOK_SECRET` from `.env` (the only two EUROSENDER lines). No EUROSENDER lines remain in `.env`. The new Production values were not available locally, so none were added. The owner will add `EUROSENDER_PRODUCTION_API_KEY` and `EUROSENDER_PRODUCTION_WEBHOOK_SECRET` directly.
+
+A temporary backup of the old file was made for safety and then securely deleted. No copy of the removed secrets remains on disk outside the Sandbox dashboard.
+
+Running container: still holds the previously loaded environment until the backend is restarted. Not restarted (no restart was requested; AliExpress/background jobs not interrupted).
+
+`EUROSENDER_ENABLED` unset (off). Not committed.
+
+## 2026-10-03 — Production credentials in .env; Production authentication verified (read-only)
+
+- `.env` now holds `EUROSENDER_PRODUCTION_API_KEY` and `EUROSENDER_PRODUCTION_WEBHOOK_SECRET` (both set, UUID-shaped, distinct). No legacy `EUROSENDER_API_KEY` / `EUROSENDER_WEBHOOK_SECRET` lines remain. Values not printed or stored.
+- Production authentication: `GET /v1/countries` against `https://api.eurosender.com` returned HTTP 200 with 249 countries. Selected key: the production variable. Run as a one-off process with `EUROSENDER_SANDBOX=0` and `EUROSENDER_ENABLED=1` set in that process only. No order, quote or other mutation.
+- Running backend NOT restarted: a car-parts.ie harvester (pid 128, running ~40 min) and the `brand_discovery` lock were active. Restart is needed to load the new `.env` into the running app; to be done after the harvester finishes or with owner approval.
+- `EUROSENDER_ENABLED` and `EUROSENDER_SANDBOX` in `.env`: unchanged (not set). Live Production shipping still off until owner confirms.
+- Production webhook (created earlier today, callback `https://autosparefinder.co.il/api/v1/webhooks/eurosender`, five events): unchanged. Delivery verification pending a restart and a real Production event.
+- Not committed.

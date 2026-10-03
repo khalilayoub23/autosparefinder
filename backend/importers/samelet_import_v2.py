@@ -47,10 +47,11 @@ Confidence tier: 1.00 (Official Israeli importer price data)
 Author: AutoSpareFinder Agent
 Last Updated: 2026-06-01
 """
+from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environment, never from source (FIXES_TRACKER #61)
 import asyncio, asyncpg, requests, time, re, os, string, json, uuid, sys
 from warranty_policy import resolve as _warranty_resolve
 
-DB_URL = os.environ.get("DATABASE_URL", "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43@postgres_catalog:5432/autospare").replace("postgresql+asyncpg://", "postgresql://")
+DB_URL = os.environ.get("DATABASE_URL", f"postgresql://autospare:{_DB_PW}@postgres_catalog:5432/autospare").replace("postgresql+asyncpg://", "postgresql://")
 # Run a single brand: python3 samelet_import_v2.py Hongqi  (or 'hongqi')
 SINGLE = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("SAMELET_BRAND", "")
 

@@ -44,6 +44,7 @@ Confidence tier: 1.00 (Official Israeli importer price data)
 Author: AutoSpareFinder Agent
 Last Updated: 2026-06-01
 """
+from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environment, never from source (FIXES_TRACKER #61)
 import asyncio, asyncpg, json, urllib.request, urllib.parse, sys, uuid
 from html.parser import HTMLParser
 
@@ -51,7 +52,7 @@ from html.parser import HTMLParser
 from category_map import categorize_on_ingest
 from warranty_policy import resolve as _warranty_resolve
 
-DB_URL = "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43@postgres_catalog:5432/autospare"
+DB_URL = f"postgresql://autospare:{_DB_PW}@postgres_catalog:5432/autospare"
 KIA_MFR_ID = "626947bf-be3f-4dd1-a52e-fbcff8168cfc"
 PARTS_URL = "https://kia-israel.co.il/%d7%9e%d7%97%d7%99%d7%a8%d7%95%d7%9f-%d7%97%d7%9c%d7%a4%d7%99%d7%9d"
 BATCH = 25

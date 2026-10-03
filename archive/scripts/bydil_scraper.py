@@ -12,6 +12,7 @@ Usage:
   python3 bydil_scraper.py --scrape --import-db  # Both
   python3 bydil_scraper.py --dry-run           # Import dry run
 """
+import os as _os_dbpw; _DB_PW = _os_dbpw.environ["DB_PASSWORD"]  # credential from the environment, never from source (FIXES_TRACKER #61)
 import argparse
 import asyncio
 import json
@@ -31,7 +32,7 @@ import httpx
 API_URL   = "https://bydauto.co.il/wp-admin/admin-ajax.php"
 DATA_FILE = Path("/opt/autosparefinder/bydil_parts.json")
 DATABASE_URL = (
-    "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43"
+    f"postgresql://autospare:{_DB_PW}"
     "@localhost:5432/autospare"
 )
 DELAY_S   = 0.8   # polite delay between requests

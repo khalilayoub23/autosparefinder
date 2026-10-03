@@ -17,6 +17,7 @@ Data notes:
 - Tesla products are aftermarket body parts with NO standard OEM numbers
 - confidence_score = 0.50 (scraped web data per claude.md rules)
 """
+import os as _os_dbpw; _DB_PW = _os_dbpw.environ["DB_PASSWORD"]  # credential from the environment, never from source (FIXES_TRACKER #61)
 
 import re
 import sys
@@ -42,7 +43,7 @@ log = logging.getLogger("saicmg")
 # ── DB ─────────────────────────────────────────────────────────────────────────
 _raw_url = os.environ.get(
     "DATABASE_URL",
-    "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43"
+    f"postgresql://autospare:{_DB_PW}"
     "@postgres_catalog:5432/autospare",
 )
 DSN = _raw_url.replace("postgresql+asyncpg://", "postgresql://")

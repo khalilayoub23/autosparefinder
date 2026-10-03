@@ -144,6 +144,25 @@ export function jidHint(jid) {
   return m ? `...${m[1]}` : '...'
 }
 
+/** `9805…0397:32@lid` -> 32 (companion device number; 0/absent = primary phone). */
+export function jidDevice(jid) {
+  if (typeof jid !== 'string') return undefined
+  const m = jid.match(/:(\d+)@/)
+  return m ? Number(m[1]) : 0
+}
+
+// Baileys handleReceipt logs `{ attrs, key }` where key.id is always '' — the
+// real message id and the requesting device live on `attrs` (id / from).
+function retryRequestFields(o) {
+  const from = o?.attrs?.from || o?.key?.participant || o?.key?.remoteJid
+  return {
+    event: 'wa_retry',
+    msg_id: o?.attrs?.id || o?.key?.id || undefined,
+    jid_hint: jidHint(from),
+    device: jidDevice(from),
+  }
+}
+
 // Exact message strings/prefixes confirmed via the installed source
 // (node_modules/@whiskeysockets/baileys/lib/Socket/messages-recv.js).
 // Each extractor picks ONLY the fields manually verified safe at that call
@@ -152,14 +171,10 @@ const WA_EVENT_EXTRACTORS = [
   ['recv retry request, but message not available', (o) => ({
     event: 'wa_get_message', result: 'not_found', msg_id: o?.id, jid_hint: jidHint(o?.jid),
   })],
-  ['recv retry request', (o) => ({
-    event: 'wa_retry', msg_id: o?.key?.id, jid_hint: jidHint(o?.key?.remoteJid),
-  })],
-  ['recv retry for not fromMe message', (o) => ({
-    event: 'wa_retry', msg_id: o?.key?.id,
-  })],
+  ['recv retry request', retryRequestFields],
+  ['recv retry for not fromMe message', retryRequestFields],
   ['will not send message again, as sent too many times', (o) => ({
-    event: 'wa_retry_limit', msg_id: o?.key?.id,
+    ...retryRequestFields(o), event: 'wa_retry_limit',
   })],
   ['reached retry limit, clearing', (o) => ({
     event: 'wa_retry_limit', retry_count: o?.retryCount, msg_id: o?.msgId,

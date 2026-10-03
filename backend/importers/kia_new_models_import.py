@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Kia new model parts importer — kia-israel.co.il"""
+from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environment, never from source (FIXES_TRACKER #61)
 import asyncio, asyncpg, urllib.request, urllib.parse
 from html.parser import HTMLParser
 
@@ -10,7 +11,7 @@ _SOURCE_HAS_NO_IMAGES = True
 # ONE category source of truth — never a private ruleset here.
 from category_map import categorize_on_ingest
 
-DB_URL   = "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43@postgres_catalog:5432/autospare"
+DB_URL   = f"postgresql://autospare:{_DB_PW}@postgres_catalog:5432/autospare"
 KIA_MFR  = "626947bf-be3f-4dd1-a52e-fbcff8168cfc"
 PARTS_URL= "https://kia-israel.co.il/%d7%9e%d7%97%d7%99%d7%a8%d7%95%d7%9f-%d7%97%d7%9c%d7%a4%d7%99%d7%9d"
 BATCH    = 25

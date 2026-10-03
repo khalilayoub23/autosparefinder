@@ -33,6 +33,7 @@ Usage:
       --model "Corolla (E12) (01.2002 - 12.2007)" --engine "1.4 VVT-i (71 KW)"
 """
 from __future__ import annotations
+from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environment, never from source (FIXES_TRACKER #61)
 
 import argparse
 import asyncio
@@ -57,7 +58,7 @@ def _handle_sigterm(signum, frame):
 
 
 DB_DSN = (
-    "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43"
+    f"postgresql://autospare:{_DB_PW}"
     "@postgres_catalog:5432/autospare"
 )
 SUPPLIER_NAME = "Car-Parts.ie"

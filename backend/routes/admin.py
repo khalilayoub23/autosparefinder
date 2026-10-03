@@ -4656,16 +4656,27 @@ async def price_sync_status(
         .limit(1)
     )).scalar_one_or_none()
 
+    # sync_prices is the 3rd job of the night pipeline (night_pipeline.Controller, #57): it
+    # starts after auto_backup and eBay fitment have finished, not at a fixed minute.
+    # "next" is therefore the EARLIEST possible start — the next window opening.
+    import night_pipeline as _np
+    from datetime import timezone as _tz
+    _now = datetime.now(_tz.utc)
+    _open = _np.Controller(jobs=[], store=None).next_open(_now)
+    next_in_h = (_open - _now).total_seconds() / 3600
+    next_at = _open.isoformat()
+
     if not last:
-        return {"last_sync": None, "next_sync_in_h": 0, "status": "never_run"}
+        return {"last_sync": None, "next_sync_in_h": round(next_in_h, 2),
+                "next_sync_at": next_at, "status": "never_run"}
 
     elapsed_h = (datetime.utcnow() - last.created_at).total_seconds() / 3600
-    next_in_h = max(0.0, PRICE_SYNC_INTERVAL_H - elapsed_h)
     return {
         "last_sync": last.created_at.isoformat(),
         "message": last.message,
         "elapsed_h": round(elapsed_h, 2),
         "next_sync_in_h": round(next_in_h, 2),
+        "next_sync_at": next_at,
         "interval_h": PRICE_SYNC_INTERVAL_H,
     }
 

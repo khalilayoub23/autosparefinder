@@ -473,6 +473,7 @@ class GroupAgent:
         session_failed = False
         groups_attempted = 0
         groups_fetched = 0
+        groups_unavailable: list[str] = []  # group_ids redirected away (dead/removed/private)
 
         # Diagnostic telemetry aggregators (Phase 5H observability)
         total_dom_candidates = 0
@@ -502,6 +503,12 @@ class GroupAgent:
                             grp_result = await self._scan_one_group(
                                 page, url, name, gid, posts_per_group
                             )
+                            if grp_result.get("group_unavailable"):
+                                groups_unavailable.append(gid)
+                                # Don't count as fetched — navigating to an error page
+                                # is not a successful scan. Pause briefly before next group.
+                                await asyncio.sleep(random.uniform(2, 5))
+                                continue
                             groups_fetched += 1
                             found = grp_result["discoveries"]
                             discoveries.extend(found)
@@ -550,6 +557,10 @@ class GroupAgent:
             "groups_attempted": groups_attempted,
             "groups_fetched": groups_fetched,
             "session_failed": session_failed,
+            # Dead-group detection (2026-10-02): group_ids that redirected away from the
+            # expected URL — FB removed the account from the group, group deleted, or made
+            # private. Caller tracks a per-group failure streak and marks 'inactive' after ≥3.
+            "groups_unavailable": groups_unavailable,
             # Phase 5H diagnostic telemetry (new — callers that ignore extra keys are unaffected)
             "telemetry": {
                 "dom_candidates": total_dom_candidates,
@@ -584,6 +595,34 @@ class GroupAgent:
         """
         await page.goto(group_url, wait_until="domcontentloaded", timeout=30_000)
         await _random_delay(2.0, 4.0)
+
+        # Dead-group detection (root-fix 2026-10-02): Facebook silently redirects
+        # to /login or the home feed when the account is no longer a member or the
+        # group was deleted/made private.  A redirect produces 0 DOM candidates and
+        # counts the group as "fetched" — causing every future scan to waste ~30s
+        # per dead URL indefinitely.  Check the final URL after navigation; if it
+        # no longer contains a /groups/<slug> path, the group is inaccessible.
+        _final_url = page.url
+        _expected_slug = group_url.rstrip("/").split("/groups/", 1)[-1].split("/")[0] if "/groups/" in group_url else ""
+        _still_on_group = (
+            "/groups/" in _final_url
+            and _expected_slug
+            and _expected_slug.lower() in _final_url.lower()
+        )
+        if not _still_on_group:
+            log.warning(
+                "fb_browser: _scan_one_group '%s' — redirected away from group URL "
+                "(expected .../groups/%s/, got %s) — marking unavailable",
+                group_name, _expected_slug, _final_url[:80],
+            )
+            return {
+                "discoveries": [],
+                "telemetry": {
+                    "dom_candidates": 0, "text_valid": 0, "scored": 0,
+                    "discoveries": 0, "near_misses": 0, "zero_score": 0,
+                },
+                "group_unavailable": True,
+            }
 
         # Facebook's own group identifier from the URL (NOT the `group_id`
         # parameter above, which is our internal DB id) — used only to scope

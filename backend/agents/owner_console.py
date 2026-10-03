@@ -26,6 +26,7 @@ Last Updated: 2026-07-23
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -35,6 +36,11 @@ from typing import Any, Dict, List
 log = logging.getLogger("owner_console")
 
 from sqlalchemy import text as _sql
+
+# Module-level imports for _trigger_task's post-condition verifier so tests can
+# patch them via agents.owner_console.{name} without relying on lazy-import timing.
+from BACKEND_DATABASE_MODELS import async_session_factory  # noqa: E402
+from resilience import job_registry_start, job_registry_finish  # noqa: E402
 
 OWNER_PHONE = (os.getenv("OWNER_WHATSAPP_PHONE", "") or "").strip()
 # WhatsApp now routes some contacts by a stable LID ("<digits>@lid") instead of the phone
@@ -577,16 +583,40 @@ async def _trigger_task(token: str) -> str:
     name = _resolve_token(token, names)
     if not name:
         return "לא זיהיתי את המשימה. כתוב *משימות* לרשימה, ואז *הרץ משימה <מספר>*."
+    import uuid as _uuid
+    from datetime import datetime, timezone
     import db_update_agent as _dua
-    from BACKEND_DATABASE_MODELS import async_session_factory
+    from sqlalchemy import text as _sqla_text
+
+    # Unique execution ID for THIS specific invocation — the post-condition verifier
+    # checks for this exact ID so stale/prior job_registry rows cannot pass the gate.
+    jid = f"owner_trigger:{name}:{_uuid.uuid4().hex[:16]}"
+    call_started = datetime.now(timezone.utc)
+
     try:
         async with async_session_factory() as db:
+            # Register the execution BEFORE running the task so the post-condition
+            # read-back is tied to this invocation, not a prior cycle.
+            try:
+                await job_registry_start(db, name, ttl_seconds=660, job_id=jid)
+            except Exception:
+                pass  # DB write failure → read-back will return nothing → NOT_VERIFIED
+
             report = await asyncio.wait_for(_dua.run_task(name, db), timeout=600)
+
+            status = report.get("status", "?")
+
+            # Finish the registry row on success so the read-back can confirm it.
+            if status == "ok":
+                try:
+                    await job_registry_finish(db, jid, status="completed")
+                except Exception:
+                    pass  # Handled: read-back will find nothing → NOT_VERIFIED
     except asyncio.TimeoutError:
         return f"⏳ *{name}* עדיין רצה אחרי 10 דקות — ממשיכה ברקע, בדוק *סטטוס* בהמשך."
     except Exception as exc:
         return f"❌ *{name}* נכשלה: {str(exc)[:200]}"
-    status = report.get("status", "?")
+
     icon = "✅" if status == "ok" else ("⏭️" if status == "skipped" else "❌")
     extra = ", ".join(
         f"{k}={v}" for k, v in report.items()
@@ -597,6 +627,37 @@ async def _trigger_task(token: str) -> str:
         msg += f"\n{extra}"
     if report.get("error"):
         msg += f"\n⚠️ {str(report['error'])[:200]}"
+
+    # Independent post-condition: for "ok" outcomes only (skipped/error are honest and
+    # carry no success claim requiring verification).
+    # Open a SEPARATE session so the read-back is a genuine DB round-trip, not an
+    # in-memory view — this rules out silent commit failures.
+    if status == "ok":
+        verified = False
+        try:
+            async with async_session_factory() as verify_db:
+                row = await verify_db.execute(
+                    _sqla_text(
+                        "SELECT 1 FROM job_registry "
+                        "WHERE job_id = :jid AND status = 'completed' "
+                        "AND completed_at >= :since"
+                    ),
+                    {"jid": jid, "since": call_started},
+                )
+                verified = row.fetchone() is not None
+        except Exception:
+            verified = False  # verifier exception → NOT_VERIFIED
+
+        if verified:
+            msg += "\n🔍 *[VERIFIED]* — הושלם ואומת בבסיס הנתונים."
+        else:
+            msg = (
+                f"⚠️ *[NOT_VERIFIED]* — *{name}* דיווחה הצלחה "
+                f"אך לא נמצא רשומת השלמה בבסיס הנתונים עבור הריצה הזו "
+                f"(job_id={jid[:32]}…).\n"
+                f"ייתכן שה-commit נכשל. בדוק: `docker logs autospare_backend`."
+            )
+
     return msg
 
 
@@ -644,8 +705,12 @@ async def _process_running(script_stem: str) -> bool:
 
 
 async def _launch_script(subdir: str, script_stem: str) -> str:
-    """Fire-and-forget launch of /app/<subdir>/<script_stem>.py — does not await
-    completion (a harvester/importer run can take hours); reports what happened."""
+    """Launch /app/<subdir>/<script_stem>.py in the background and VERIFY it started.
+
+    Post-condition check: after a brief wait, pgrep confirms the process exists.
+    Returns [VERIFIED] on confirmed start, [NOT_VERIFIED] if the post-condition
+    is not met (process died immediately or pgrep failed).
+    """
     if await _process_running(script_stem):
         return f"⏳ כבר רץ ברקע: *{script_stem}* — לא הפעלתי מופע כפול."
     script = str(_BACKEND_ROOT / subdir / f"{script_stem}.py")
@@ -659,7 +724,20 @@ async def _launch_script(subdir: str, script_stem: str) -> str:
             stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
             env=env,
         )
-        return f"🚀 הפעלתי את *{script_stem}* ברקע. מעקב: `docker logs autospare_backend`."
+        # Independent post-condition check: verify the process is actually running.
+        # 1.5 s gives Python's interpreter enough time to start without being long
+        # enough to mistake a fast-completing script for a launch failure.
+        await asyncio.sleep(1.5)
+        if not await _process_running(script_stem):
+            return (
+                f"⚠️ *[NOT_VERIFIED]* — ניסיתי להפעיל את *{script_stem}* "
+                f"אך הוא לא נמצא בין התהליכים הרצים. "
+                f"ייתכן שנכשל מיד. בדוק: `docker logs autospare_backend`."
+            )
+        return (
+            f"🚀 *[VERIFIED]* — *{script_stem}* רץ ברקע (תהליך אומת). "
+            f"מעקב: `docker logs autospare_backend`."
+        )
     except Exception as exc:
         return f"❌ הפעלת {script_stem} נכשלה: {str(exc)[:200]}"
 
@@ -844,6 +922,61 @@ def _detect_connect_intent(message: str) -> "tuple[str, list[str]] | None":
 _SAVE_INTENT = re.compile(
     r"תשמר|שמר[יי]?|נוהל|הנחי|מעכשיו|מעתה|תמיד תפרסמ|save|remember|guideline|from now",
     re.I)
+
+# ── AVI Execution Integrity Gate ─────────────────────────────────────────────
+# The conversational LLM path (hf_text) is READ-ONLY. It has no tool-call
+# capability: it generates text and returns it. Yet an LLM can emit first-
+# person past-tense execution verbs ("הפעלתי", "I launched") implying it
+# performed a real system action. That claim is ALWAYS false in this path.
+#
+# CLAUDE.md lesson: "An agent must never promise a SYSTEM ACTION that has no
+# underlying mechanism." This gate enforces that mechanically so no prompt
+# wording can override it.
+#
+# ONLY applies to the conversational hf_text() path. Deterministic command
+# handlers (e.g. _trigger_task, _launch_script, _approve_and_publish) return
+# their own ✅/❌ results BEFORE this code is reached, so those are unaffected.
+
+_EXECUTION_CLAIM_RE = re.compile(
+    # Hebrew first-person past-tense execution verbs (suffix -תי / -נו)
+    # These mean "I did/ran/activated/completed/approved/etc."
+    r'(?<![א-ת])'  # not the tail of a longer Hebrew word
+    r'(?:'
+    r'\bהפעלתי\b|\bביצעתי\b|\bהרצתי\b|\bהפסקתי\b|\bעצרתי\b|'
+    r'\bאישרתי\b|\bפרסמתי\b|\bיצרתי\b|\bסיימתי\b|\bהשלמתי\b|'
+    r'\bהתחלתי\s+ל(?:הריץ|הפעיל|בצע)\b|'
+    r'\bהצלחתי\s+ל(?:הפעיל|הריץ|שלוח|לאשר|לבצע)\b|'
+    # English first-person past-tense execution forms
+    r'\bi\s+(?:have\s+)?(?:ran|run|executed|launched|started|triggered|'
+    r'completed|finished|activated|stopped|published|approved|dispatched)\b'
+    r')',
+    re.I | re.UNICODE,
+)
+
+_NOT_VERIFIED_REPLY = (
+    "⚠️ *[NOT_VERIFIED]* — לא ניתן לאמת ביצוע פעולה זו.\n"
+    "שיחה חופשית עם AVI היא קריאה בלבד — לביצוע משימות, השתמש בפקודות:\n"
+    "• *הרץ משימה <שם/מספר>* → הפעלת משימת עדכון/ניקוי\n"
+    "• *הרץ שאיבה <שם/מספר>* → הפעלת שאיבה\n"
+    "• *הרץ ייבוא <שם/מספר>* → הפעלת ייבוא\n"
+    "• *אשר <מזהה>* → אישור פוסט ופרסום\n"
+    "• *עזרה* → כל הפקודות הזמינות"
+)
+
+
+def _guard_avi_conversational_reply(reply: str) -> str:
+    """Reject false execution claims from the conversational LLM path.
+
+    The LLM (hf_text) can only generate text — it cannot call tools or mutate
+    state. If it emits a first-person past-tense execution verb, that claim is
+    false and is replaced with NOT_VERIFIED + command redirect.
+
+    Returns the unmodified reply if no false claim is found.
+    Returns _NOT_VERIFIED_REPLY if an execution claim is detected.
+    """
+    if _EXECUTION_CLAIM_RE.search(reply):
+        return _NOT_VERIFIED_REPLY
+    return reply
 
 
 def _guidelines_text(raw) -> str:
@@ -1683,6 +1816,9 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp") -> 
         reply = await hf_text(prompt, system=system, priority=True, max_tokens=600,
                               temperature=_console_temp, reasoning_effort="low")
         reply = _clean_wa_reply(reply) or "בסדר, קיבלתי."
+        # Execution integrity gate: conversational path is read-only.
+        # Reject any reply claiming to have performed a system action.
+        reply = _guard_avi_conversational_reply(reply)
         reply += saved_note
         hist2 = hist + [{"role": "user", "content": clean},
                         {"role": "assistant", "content": reply, "agent": agent_key}]

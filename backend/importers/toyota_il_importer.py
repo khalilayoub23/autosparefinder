@@ -34,6 +34,7 @@ Missing Data Delegation:
 Author: AutoSpareFinder Agent
 Last Updated: 2026-06-02
 """
+from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environment, never from source (FIXES_TRACKER #61)
 
 import asyncio
 import json
@@ -54,7 +55,7 @@ import asyncpg
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("toyota_il_importer")
 
-DSN = "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43@postgres_catalog:5432/autospare"
+DSN = f"postgresql://autospare:{_DB_PW}@postgres_catalog:5432/autospare"
 
 MANUFACTURER = "Toyota"
 MANUFACTURER_ID = "01954786-65c7-4ff4-a6ad-4836b31da9f4"

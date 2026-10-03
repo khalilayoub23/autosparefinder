@@ -190,7 +190,10 @@ section('E. createSafeBaileysLogger() — vetted retry/getMessage/decrypt events
 
   const lines = await captureLoggerOutput(() => {
     logger.debug({ jid: '972586050155@s.whatsapp.net', id: 'MSG123' }, 'recv retry request, but message not available')
-    logger.debug({ key: { id: 'MSG456', remoteJid: '972586050155@s.whatsapp.net' } }, 'recv retry request')
+    // REAL Baileys shape (messages-recv.js handleReceipt): key.id is ALWAYS '', the
+    // message id + requesting device are on attrs. The old fabricated shape hid an
+    // empty msg_id in all 98 production wa_retry events.
+    logger.debug({ attrs: { id: 'MSG456', from: '98058566160397:32@lid', type: 'retry' }, key: { remoteJid: '98058566160397@lid', id: '', fromMe: true, participant: undefined } }, 'recv retry request')
     logger.debug({ participant: '972586050155@s.whatsapp.net', sendToAll: false }, 'forced new session for retry recp')
     logger.error({ error: new Error('decrypt boom'), node: { tag: 'enc', content: Buffer.from('CIPHERTEXT_MUST_NOT_APPEAR') } }, 'error in handling message')
   })
@@ -200,6 +203,10 @@ section('E. createSafeBaileysLogger() — vetted retry/getMessage/decrypt events
   assertTrue('event 1 msg_id preserved', lines[0]?.msg_id === 'MSG123')
   assertTrue('event 1 jid_hint is masked, not the full JID', lines[0]?.jid_hint === '...0155')
   assertTrue('event 2 is wa_retry', lines[1]?.event === 'wa_retry')
+  assertTrue('event 2 msg_id comes from attrs.id (not the empty key.id)', lines[1]?.msg_id === 'MSG456')
+  assertTrue('event 2 identifies the requesting device number', lines[1]?.device === 32)
+  assertTrue('event 2 jid_hint masked', lines[1]?.jid_hint === '...0397')
+  assertTrue('event 2 never carries the full JID', !JSON.stringify(lines[1]).includes('98058566160397'))
   assertTrue('event 3 is wa_signal_session (forced_for_retry)', lines[2]?.event === 'wa_signal_session' && lines[2]?.reason === 'forced_for_retry')
   assertTrue('event 4 is wa_decrypt_error with only the error message text', lines[3]?.event === 'wa_decrypt_error' && lines[3]?.error === 'decrypt boom')
   const allSerialized = JSON.stringify(lines)

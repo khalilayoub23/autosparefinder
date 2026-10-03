@@ -169,10 +169,10 @@ export default function SocialLoginButtons({ redirectTo = '/', onSuccess }) {
         type="button"
         onClick={handleGoogle}
         disabled={!!loading}
-        className="w-full flex items-center justify-center gap-3 rounded-lg border border-gray-300 bg-white px-4 py-3 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 active:bg-gray-100 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+        className="w-full flex items-center justify-center gap-3 rounded-lg border border-white/[.12] bg-[#1E2535] px-4 py-3 text-sm font-medium text-white hover:bg-[#252D3D] active:bg-[#252D3D] disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
       >
         {loading === 'google' ? (
-          <Loader2 className="w-5 h-5 animate-spin text-gray-500" />
+          <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
         ) : (
           <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
             <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
@@ -189,10 +189,10 @@ export default function SocialLoginButtons({ redirectTo = '/', onSuccess }) {
         type="button"
         onClick={handleFacebook}
         disabled={!!loading}
-        className="w-full flex items-center justify-center gap-3 rounded-lg border border-gray-300 bg-white px-4 py-3 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 active:bg-gray-100 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+        className="w-full flex items-center justify-center gap-3 rounded-lg border border-white/[.12] bg-[#1E2535] px-4 py-3 text-sm font-medium text-white hover:bg-[#252D3D] active:bg-[#252D3D] disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
       >
         {loading === 'facebook' ? (
-          <Loader2 className="w-5 h-5 animate-spin text-gray-500" />
+          <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
         ) : (
           <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
             <path fill="#1877F2" d="M24 12.073C24 5.405 18.627 0 12 0S0 5.405 0 12.073C0 18.1 4.388 23.094 10.125 24v-8.437H7.078v-3.49h3.047V9.41c0-3.025 1.792-4.697 4.533-4.697 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.93-1.956 1.883v2.263h3.328l-.532 3.49h-2.796V24C19.612 23.094 24 18.1 24 12.073z"/>

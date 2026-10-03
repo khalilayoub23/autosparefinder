@@ -4,13 +4,14 @@ and populates part_vehicle_fitment for Volkswagen, Audi, Skoda, SEAT, Cupra.
 
 Run: docker exec autospare_backend python /app/maintenance/backfill_vw_fitment.py
 """
+from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environment, never from source (FIXES_TRACKER #61)
 import asyncio, json, re, sys, uuid
 import asyncpg
 import urllib.parse as up
 
 INPUT_JSON = "/opt/autosparefinder/champion_motors_parts.json"
 DATABASE_URL = (
-    "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43"
+    f"postgresql://autospare:{_DB_PW}"
     "@postgres_catalog:5432/autospare"
 )
 

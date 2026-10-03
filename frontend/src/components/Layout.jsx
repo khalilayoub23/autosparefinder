@@ -122,7 +122,7 @@ export default function Layout({ children }) {
               <Link
                 key={path}
                 to={path}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors focus-visible:outline-none
                   ${location.pathname === path
                     ? 'bg-[#00CCFF]/18 text-white border border-[#00CCFF]/60'
                     : 'text-slate-100 hover:bg-white/10 hover:text-white'
@@ -136,7 +136,7 @@ export default function Layout({ children }) {
               <>
                 <Link
                   to="/admin"
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors focus-visible:outline-none
                     ${(location.pathname === '/admin' || location.pathname.startsWith('/admin/'))
                       ? 'bg-[#00CCFF]/18 text-white border border-[#00CCFF]/60'
                       : 'text-slate-100 hover:bg-white/10'
@@ -147,7 +147,7 @@ export default function Layout({ children }) {
                 </Link>
                 <Link
                   to="/agents"
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors focus-visible:outline-none
                     ${location.pathname === '/agents'
                       ? 'bg-[#00CCFF]/18 text-white border border-[#00CCFF]/60'
                       : 'text-slate-100 hover:bg-white/10'
@@ -163,7 +163,7 @@ export default function Layout({ children }) {
           {/* Right actions */}
           <div className="flex items-center gap-2">
             {/* Cart */}
-            <Link to="/cart" className="relative p-2 rounded-lg text-slate-100 hover:bg-white/10 transition-colors">
+            <Link to="/cart" className="relative p-2 rounded-lg text-slate-100 hover:bg-white/10 transition-colors focus-visible:outline-none">
               <ShoppingCart className="w-5 h-5" />
               {cartTotals.count > 0 && (
                 <span className="absolute -top-1 -left-1 min-w-[1.25rem] h-5 px-1 bg-[#00CCFF] text-[#1B2228] text-[10px] rounded-full flex items-center justify-center font-black leading-none">

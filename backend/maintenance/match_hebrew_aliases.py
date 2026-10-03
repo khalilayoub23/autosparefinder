@@ -4,6 +4,7 @@
 # Pattern: (1) Extract with browser tool → save JSON, (2) Import JSON with this script.
 # See claude.md § Web Scraping Rules.
 """Match raw Israeli transport manufacturers to unmatched car_brands via Hebrew variants."""
+from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environment, never from source (FIXES_TRACKER #61)
 import os
 import json
 import re
@@ -12,7 +13,7 @@ import psycopg2
 from difflib import SequenceMatcher
 import requests
 
-DB_URL = "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43@postgres_catalog/autospare"
+DB_URL = f"postgresql://autospare:{_DB_PW}@postgres_catalog/autospare"
 
 # Enhanced Romanization mapping for common Hebrew brand names
 HEBREW_TO_ENGLISH = {

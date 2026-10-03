@@ -3,11 +3,12 @@ Nothing references this module. It predates the current import rules
 (no needs_oem_lookup, no specifications provenance) — do not resurrect it;
 extend samelet_import_v2.py instead. See docs/IMPORTER_RULES.md.
 """
+from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environment, never from source (FIXES_TRACKER #61)
 #!/usr/bin/env python3
 """Samelet.com importer — flat 2-char coverage, no deep recursion."""
 import asyncio, asyncpg, requests, time, re, os, string
 
-DB_URL = "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43@postgres_catalog:5432/autospare"
+DB_URL = f"postgresql://autospare:{_DB_PW}@postgres_catalog:5432/autospare"
 
 BRANDS = [
     ("alfaromeo","Alfa Romeo","AR"),

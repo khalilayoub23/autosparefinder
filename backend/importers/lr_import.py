@@ -38,13 +38,14 @@ Run: docker exec autospare_backend python3 /app/importers/lr_import.py
 Author: AutoSpareFinder Agent
 Last Updated: 2026-06-01
 """
+from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environment, never from source (FIXES_TRACKER #61)
 import asyncio, json, os, re, sys, uuid
 import asyncpg
 
 LR_SUPPLIER_URL = 'https://www.landrover.co.il'
 
 DB_URL   = os.getenv("DATABASE_URL",
-           "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43"
+           f"postgresql://autospare:{_DB_PW}"
            "@postgres_catalog:5432/autospare").replace("postgresql+asyncpg://", "postgresql://")
 JSON_SRC = os.getenv("JSON_FILE", "/opt/autosparefinder/land_rover_parts.json")
 

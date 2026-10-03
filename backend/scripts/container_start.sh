@@ -55,45 +55,14 @@ async def cleanup_jobs():
 asyncio.run(cleanup_jobs())
 PYEOF
 
-# Resume workers based on state file
-STATE_FILE="$STATE_DIR/worker_state.json"
-if [ -f "$STATE_FILE" ]; then
-    echo "[container_start] Found worker state file — resuming workers..." >&2
-    python3 - << 'PYEOF'
-import json, subprocess, os, time
-from pathlib import Path
-
-STATE_FILE = '/app/state/worker_state.json'
-LOG_DIR = '/app/state/logs'
-
-try:
-    state = json.loads(Path(STATE_FILE).read_text())
-except Exception as e:
-    print(f'[container_start] Could not read state file: {e}')
-    exit(0)
-
-workers = state.get('workers', [])
-print(f'[container_start] Resuming {len(workers)} worker(s)...')
-
-for w in workers:
-    cmd = w.get('cmd', '')
-    name = w.get('name', 'unknown')
-    if not cmd:
-        continue
-    log = f'{LOG_DIR}/{name}_{int(time.time())}.log'
-    try:
-        subprocess.Popen(
-            ['bash', '-c', f'PYTHONUNBUFFERED=1 python3 {cmd} >> {log} 2>&1'],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        print(f'[container_start] Resumed: {name} -> {cmd}')
-        time.sleep(2)  # stagger starts to avoid memory spike
-    except Exception as e:
-        print(f'[container_start] Failed to resume {name}: {e}')
-PYEOF
+# Resume workers based on state file — scripts/restart_workers.py (FIXES_TRACKER #60).
+# It replays each captured importer with its EXACT arguments, refuses (loudly) when the
+# arguments or an input file are missing, never duplicates a running one, and consumes the
+# state so post_restart.sh or a later start cannot launch it a second time.
+if python3 /app/scripts/restart_workers.py resume >&2; then
+    echo "[container_start] Resume step finished" >&2
 else
-    echo "[container_start] No worker state file — fresh start" >&2
+    echo "[container_start] WARNING: at least one captured worker was NOT resumed (see lines above)" >&2
 fi
 
 echo "[container_start] Startup complete" >&2

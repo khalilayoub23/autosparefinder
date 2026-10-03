@@ -529,6 +529,7 @@ services:
     image: prodrigestivill/postgres-backup-local
     container_name: autospare_postgres_backup
     restart: unless-stopped
+    init: true  # go-cron is PID 1 and never reaps orphaned healthcheck curl -> zombies
     environment:
       POSTGRES_HOST: postgres_pii
       POSTGRES_DB: autospare_pii
@@ -552,6 +553,7 @@ services:
     image: prodrigestivill/postgres-backup-local
     container_name: autospare_postgres_backup_catalog
     restart: unless-stopped
+    init: true  # go-cron is PID 1 and never reaps orphaned healthcheck curl -> zombies
     environment:
       POSTGRES_HOST: postgres_catalog
       POSTGRES_DB: autospare

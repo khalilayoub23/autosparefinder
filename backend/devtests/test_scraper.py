@@ -9,6 +9,7 @@ Tests:
   4. todo_requests_ranked_first — HIGH todos trigger ranked-first mode
 """
 from __future__ import annotations
+from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environment, never from source (FIXES_TRACKER #61)
 
 import asyncio
 import sys
@@ -16,7 +17,7 @@ from pathlib import Path
 
 import asyncpg
 
-DB_DSN = "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43@postgres_catalog:5432/autospare"
+DB_DSN = f"postgresql://autospare:{_DB_PW}@postgres_catalog:5432/autospare"
 
 _PASS = "\033[32mPASS\033[0m"
 _FAIL = "\033[31mFAIL\033[0m"

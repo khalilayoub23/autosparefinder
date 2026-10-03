@@ -25,7 +25,7 @@ fi
 
 # Run import (host → postgres_catalog via localhost:5432)
 echo "[$(date)] Starting DB import..."
-DATABASE_URL="postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43@localhost:5432/autospare" \
+DATABASE_URL="postgresql://autospare:${DB_PASSWORD:?set DB_PASSWORD in the environment}@localhost:5432/autospare" \
   python3 /opt/autosparefinder/backend/sng_barratt_jaguar_import.py
 
 echo "[$(date)] Import done. Running Meilisearch sync..."

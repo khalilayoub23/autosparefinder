@@ -12,39 +12,16 @@ JOBS=$(docker exec autospare_postgres_catalog psql -U autospare -d autospare -t 
 SELECT json_agg(json_build_object('job_id', job_id, 'status', status, 'age_mins', EXTRACT(EPOCH FROM (NOW()-last_heartbeat_at))/60))
 FROM job_registry WHERE status='running';" 2>/dev/null | tr -d '[:space:]')
 
-# 2. Capture ALL running Python worker subprocesses inside the container
-PROCS_RAW=$(docker exec autospare_backend ps aux 2>/dev/null | \
-  grep -E "freesbe_importer|category_backfill|oempartsonline_importer|car_parts_ie_import|oem_parts_online_scraper|ebay_brand_importer|kgm_ssangyong|saab_parts|gm_playwright|catalog_scraper|kick_run_all|run_todo" | \
-  grep -v grep || true)
-
-WORKERS_JSON=$(echo "$PROCS_RAW" | python3 -c "
-import sys, json, re
-workers = []
-seen = set()
-for line in sys.stdin:
-    line = line.strip()
-    if not line:
-        continue
-    parts = line.split(None, 10)
-    if len(parts) < 11:
-        continue
-    full_cmd = parts[10] if len(parts) > 10 else ''
-
-    # Extract the script path
-    m = re.search(r'python3\s+(/\S+\.py)', full_cmd)
-    if not m:
-        continue
-    script = m.group(1)
-    if script in seen:
-        continue
-    seen.add(script)
-
-    # Derive a friendly name from the script basename
-    name = script.split('/')[-1].replace('.py', '')
-    workers.append({'name': name, 'cmd': script, 'full_cmd': full_cmd})
-
-print(json.dumps(workers))
-" 2>/dev/null || echo "[]")
+# 2. Capture running MANUAL importer subprocesses (container_start.sh / post_restart.sh
+#    relaunch whatever is recorded here after the restart).
+#    Done by scripts/restart_workers.py INSIDE the container (FIXES_TRACKER #60): it reads
+#    each process's real argv from /proc, so it records the EXACT arguments (the old
+#    `ps aux | grep` text match kept only the script path and one process per script) and
+#    it writes /app/state/worker_state.json itself.
+#    NOT captured (#57): oem_parts_online_scraper, oempartsonline_importer and the
+#    catalog_scraper CLI — brand-discovery work is owned by night_pipeline.Controller.
+WORKERS_STATE=$(docker exec autospare_backend python3 /app/scripts/restart_workers.py capture 2>/dev/null || echo '{"workers": []}')
+WORKERS_JSON=$(printf '%s' "$WORKERS_STATE" | python3 -c "import sys, json; print(json.dumps((json.load(sys.stdin) or {}).get('workers', [])))" 2>/dev/null || echo "[]")
 
 # Write raw captures to temp files to avoid shell quoting issues with JSON
 JOBS_TMP="/tmp/jobs_raw.json"
@@ -53,7 +30,6 @@ printf '%s' "${JOBS:-null}" > "$JOBS_TMP"
 printf '%s' "${WORKERS_JSON:-[]}" > "$WORKERS_TMP"
 
 # 3. Save combined state to host /tmp (for manual post_restart.sh)
-VOLUME_STATE_FILE="/tmp/worker_state_volume.json"
 python3 - << PYEOF
 import json
 from datetime import datetime, timezone
@@ -84,18 +60,10 @@ with open(STATE_FILE, 'w') as f:
     json.dump(state, f, indent=2)
 print(json.dumps(state, indent=2))
 
-# 4. Save worker state to persistent volume file (will be docker cp'd in a moment)
-vol_state = {'workers': workers, 'timestamp': state['timestamp']}
-open('/tmp/worker_state_volume.json', 'w').write(json.dumps(vol_state, indent=2))
-print(f'[pre_restart] Saved {len(workers)} workers to /tmp/worker_state_volume.json')
+print(f'[pre_restart] {len(workers)} worker(s) recorded with exact arguments in /app/state/worker_state.json')
 PYEOF
 echo "" >&2
 echo "State saved to $STATE_FILE" >&2
-
-docker exec autospare_backend mkdir -p /app/state 2>/dev/null || true
-docker cp "$VOLUME_STATE_FILE" autospare_backend:/app/state/worker_state.json 2>/dev/null && \
-    echo "[pre_restart] Worker state copied to container volume" || \
-    echo "[pre_restart] WARNING: could not copy to container (may already be stopped)"
 
 # 4.6 Close out in-flight job_registry rows so a restart does not orphan them.
 # run_all_tasks / run_brand_discovery run as asyncio tasks INSIDE uvicorn (not as
@@ -110,17 +78,12 @@ UPDATE job_registry SET status='superseded', completed_at=NOW(),
     error_message='Superseded: pre-restart graceful shutdown'
 WHERE status='running';" 2>/dev/null | tr -d '[:space:]' | { read n; echo "  marked superseded" >&2; } || true
 
-# 5. Gracefully stop active importers (let them finish current DB batch)
+# 5. Gracefully stop active importers (let them finish the current DB batch / part).
+#    scripts/restart_workers.py matches processes by their real argv. The old loop ran
+#    `pgrep -f <name>` inside a `bash -c` whose own command line contained every name, so
+#    it matched and SIGTERM'd itself on the first name and signalled nothing else (#60).
 echo "Sending SIGTERM to active importers..." >&2
-docker exec autospare_backend bash -c "
-for proc in freesbe_importer category_backfill oempartsonline_importer car_parts_ie_import oem_parts_online_scraper ebay_brand_importer; do
-  pids=\$(pgrep -f \$proc 2>/dev/null)
-  if [ -n \"\$pids\" ]; then
-    echo \"  Stopping \$proc (PIDs: \$pids)\"
-    kill -TERM \$pids 2>/dev/null || true
-  fi
-done
-sleep 3
-" 2>/dev/null || true
+docker exec autospare_backend python3 /app/scripts/restart_workers.py stop >&2 || \
+    echo "[pre_restart] WARNING: stop step could not run (container may already be stopped)" >&2
 
 echo "=== PRE-RESTART COMPLETE ===" >&2

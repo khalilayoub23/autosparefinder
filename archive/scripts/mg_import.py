@@ -15,6 +15,7 @@ Columns:
 
 Runs inside autospare_backend container: python3 /app/mg_import.py
 """
+import os as _os_dbpw; _DB_PW = _os_dbpw.environ["DB_PASSWORD"]  # credential from the environment, never from source (FIXES_TRACKER #61)
 
 import sys
 import os
@@ -36,7 +37,7 @@ log = logging.getLogger("mg_import")
 # ── Database ──────────────────────────────────────────────────────────────────
 _raw_url = os.environ.get(
     "DATABASE_URL",
-    "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43"
+    f"postgresql://autospare:{_DB_PW}"
     "@postgres_catalog:5432/autospare",
 )
 # psycopg2 needs plain postgresql://, not postgresql+asyncpg://

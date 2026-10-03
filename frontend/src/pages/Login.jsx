@@ -151,10 +151,10 @@ export default function Login() {
               {/* OR divider */}
               <div className="relative my-5">
                 <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-gray-200" />
+                  <div className="w-full border-t border-white/[.12]" />
                 </div>
                 <div className="relative flex justify-center text-sm">
-                  <span className="bg-white px-3 text-gray-400 font-medium">OR</span>
+                  <span className="bg-[#0F1218] px-3 text-[#475569] font-medium">OR</span>
                 </div>
               </div>
 

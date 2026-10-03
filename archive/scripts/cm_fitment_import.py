@@ -3,11 +3,12 @@
 Import Champion Motors fitment data from pipe-delimited stdin into part_vehicle_fitment.
 Format per line: oem|model_string|make_string
 """
+import os as _os_dbpw; _DB_PW = _os_dbpw.environ["DB_PASSWORD"]  # credential from the environment, never from source (FIXES_TRACKER #61)
 import sys
 import re
 import psycopg2
 
-DB_URL = "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43@localhost:5432/autospare"
+DB_URL = f"postgresql://autospare:{_DB_PW}@localhost:5432/autospare"
 
 BRAND_HE = {
     'אודי': 'Audi', 'סקודה': 'Skoda', 'סיאט': 'SEAT',

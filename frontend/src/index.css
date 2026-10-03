@@ -3,6 +3,16 @@
 @tailwind utilities;
 
 @layer base {
+  /* ── Global focus indicator — Electric Blue ring, dark offset ────────
+     Single enforcement point: replaces browser near-black outline
+     (rgb(16,16,16)) that is invisible against the #0F1218 background.
+     Individual elements that set their own focus ring (via Tailwind
+     focus:ring-* utilities) take precedence as expected. */
+  :focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px #0F1218, 0 0 0 4px #0EA5E9;
+  }
+
   /* ── Design System Tokens (DESIGN.md — dark-first) ──────────────────── */
   :root {
     /* Surfaces */
@@ -162,4 +172,5 @@
     @apply rounded-xl;
     box-shadow: 0 4px 16px rgba(0,0,0,0.5), 0 8px 32px rgba(0,0,0,0.4);
   }
+
 }

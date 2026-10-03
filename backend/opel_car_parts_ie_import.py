@@ -5,6 +5,7 @@ Purpose: Import Opel parts extracted from car-parts.ie into catalog tables.
 """
 
 from __future__ import annotations
+from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environment, never from source (FIXES_TRACKER #61)
 
 import argparse
 import asyncio
@@ -16,7 +17,7 @@ from typing import Any
 
 import asyncpg
 
-DB_DSN = "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43@postgres_catalog:5432/autospare"
+DB_DSN = f"postgresql://autospare:{_DB_PW}@postgres_catalog:5432/autospare"
 OPEL_MANUFACTURER_ID = "86106424-41ba-434b-b107-4b6db23523b7"
 SUPPLIER_NAME = "Car-Parts.ie"
 SUPPLIER_URL = "https://www.car-parts.ie"

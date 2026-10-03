@@ -33,6 +33,7 @@ Missing Data Delegation:
 Author: AutoSpareFinder Agent
 Last Updated: 2026-06-02
 """
+from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environment, never from source (FIXES_TRACKER #61)
 
 import asyncio
 import json
@@ -52,7 +53,7 @@ from warranty_policy import resolve as _warranty_resolve
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("mazda_il_importer")
 
-DSN = "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43@postgres_catalog:5432/autospare"
+DSN = f"postgresql://autospare:{_DB_PW}@postgres_catalog:5432/autospare"
 
 MANUFACTURER = "Mazda"
 MANUFACTURER_ID = "72dd2cd7-a452-471c-8ea8-a376ff905c45"

@@ -54,6 +54,7 @@ Confidence tier: 1.00 (Official Israeli Delek Motors importer data)
 Author: AutoSpareFinder Agent
 Last Updated: 2026-06-01
 """
+from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environment, never from source (FIXES_TRACKER #61)
 import asyncio, json, os, re, sys, uuid, argparse
 from pathlib import Path
 import asyncpg
@@ -65,7 +66,7 @@ from warranty_policy import resolve as _warranty_resolve
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43@postgres_catalog:5432/autospare"
+    f"postgresql://autospare:{_DB_PW}@postgres_catalog:5432/autospare"
 )
 BATCH_SIZE = 25
 DATA_DIR   = Path("/opt/autosparefinder")

@@ -18,6 +18,7 @@ Usage:
   python cm_import_pipeline.py --dry-run --brand VW
   python cm_import_pipeline.py --brand VW --limit 500
 """
+import os as _os_dbpw; _DB_PW = _os_dbpw.environ["DB_PASSWORD"]  # credential from the environment, never from source (FIXES_TRACKER #61)
 import argparse, asyncio, json, logging, os, re, sys, uuid
 from datetime import datetime
 from pathlib import Path
@@ -27,7 +28,7 @@ import asyncpg
 INPUT    = Path("/opt/autosparefinder/champion_motors_parts.json")
 LOGS_DIR = Path("/opt/autosparefinder/logs")
 DB_DSN   = (os.getenv("DATABASE_URL",
-    "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43"
+    f"postgresql://autospare:{_DB_PW}"
     "@localhost:5432/autospare")
     .replace("postgresql+asyncpg://", "postgresql://"))
 

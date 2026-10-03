@@ -31,7 +31,7 @@ const PaymentSuccess = lazy(() => import('./pages/PaymentSuccess'))
 function PageLoader() {
   return (
     <div style={{ minHeight: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ width: 40, height: 40, border: '3px solid #e5e7eb', borderTopColor: '#00A3FF', borderRadius: '50%', animation: 'asf-spin 0.8s linear infinite' }} />
+      <div style={{ width: 40, height: 40, border: '3px solid #1E2535', borderTopColor: '#0EA5E9', borderRadius: '50%', animation: 'asf-spin 0.8s linear infinite' }} />
       <style>{'@keyframes asf-spin{to{transform:rotate(360deg)}}'}</style>
     </div>
   )
@@ -44,15 +44,15 @@ class ErrorBoundary extends Component {
   render() {
     if (this.state.error) {
       return (
-        <div style={{ padding: '2rem', fontFamily: 'sans-serif' }}>
-          <h2 style={{ textAlign: 'center' }}>משהו השתבש</h2>
-          <p style={{ color: '#666', fontSize: '0.9rem', textAlign: 'center' }}>{this.state.error?.message}</p>
-          <pre style={{ background: '#f4f4f4', padding: '1rem', fontSize: '0.75rem', overflowX: 'auto', marginTop: '1rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: '300px', overflowY: 'auto' }}>
+        <div style={{ padding: '2rem', fontFamily: 'Inter, system-ui, sans-serif', background: '#0F1218', minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+          <h2 style={{ textAlign: 'center', color: '#E2E8F0', marginBottom: '0.5rem' }}>משהו השתבש</h2>
+          <p style={{ color: '#94A3B8', fontSize: '0.9rem', textAlign: 'center' }}>{this.state.error?.message}</p>
+          <pre style={{ background: '#151B27', border: '1px solid rgba(148,163,184,0.12)', color: '#94A3B8', padding: '1rem', fontSize: '0.75rem', overflowX: 'auto', marginTop: '1rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: '300px', overflowY: 'auto', borderRadius: '8px', maxWidth: '640px', width: '100%' }}>
             {this.state.info?.componentStack || this.state.error?.stack}
           </pre>
           <div style={{ textAlign: 'center' }}>
             <button
-              style={{ marginTop: '1rem', padding: '0.5rem 1.5rem', background: '#00A3FF', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer' }}
+              style={{ marginTop: '1rem', padding: '0.5rem 1.5rem', background: 'linear-gradient(135deg,#38BDF8 0%,#0EA5E9 60%,#0284C7 100%)', color: '#0F1218', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, fontFamily: 'Inter, system-ui, sans-serif' }}
               onClick={() => { localStorage.removeItem('cart-store'); localStorage.removeItem('auth-store'); window.location.reload() }}
             >
               נקה מטמון וטען מחדש
@@ -73,8 +73,8 @@ export default function App() {
           position="top-center"
           toastOptions={{
             duration: 3500,
-            style: { fontFamily: 'Rubik, Heebo, sans-serif', direction: 'rtl', textAlign: 'right' },
-            success: { iconTheme: { primary: '#00A3FF', secondary: '#fff' } },
+            style: { fontFamily: 'Inter, system-ui, sans-serif', background: '#151B27', color: '#E2E8F0', border: '1px solid rgba(148,163,184,0.12)' },
+            success: { iconTheme: { primary: '#0EA5E9', secondary: '#0F1218' } },
           }}
         />
 

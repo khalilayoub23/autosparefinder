@@ -312,20 +312,20 @@ function PhotoEditorModal({ src, onApply, onClose }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-3" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col overflow-hidden" style={{maxHeight: '95vh'}}>
+      <div className="bg-[#151B27] rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col overflow-hidden border border-[rgba(148,163,184,0.12)]" style={{maxHeight: '95vh'}}>
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-[rgba(148,163,184,0.10)]">
           <div className="flex items-center gap-2">
-            <Camera className="w-5 h-5 text-brand-600" />
-            <h3 className="font-bold text-brand-navy">ערוך תמונה לחיפוש מדויק</h3>
+            <Camera className="w-5 h-5 text-[#0EA5E9]" />
+            <h3 className="font-bold text-[#E2E8F0]">ערוך תמונה לחיפוש מדויק</h3>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100">
-            <X className="w-5 h-5 text-gray-500" />
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-[#252D3D]">
+            <X className="w-5 h-5 text-[#94A3B8]" />
           </button>
         </div>
 
         {/* Toolbar */}
-        <div className="flex items-center gap-2 px-4 py-2.5 bg-gray-50 border-b border-gray-100">
+        <div className="flex items-center gap-2 px-4 py-2.5 bg-[#1E2535] border-b border-[rgba(148,163,184,0.10)]">
           <span className="text-xs text-gray-500 font-medium ml-1">כלי:</span>
           {[
             { id: 'crop', icon: <Crop className="w-4 h-4" />, label: 'חתוך' },
@@ -1045,8 +1045,8 @@ function TypeSection({ typeKey, data, onAddToCart }) {
         </p>
         <div className="flex flex-wrap gap-1 mt-1">
           <span className="text-xs text-gray-500">{part.manufacturer}</span>
-          {part.sku && <span className="text-xs text-gray-400">· {part.sku}</span>}
-          {part.oem_number && <span className="text-xs text-gray-400">· OEM: {part.oem_number}</span>}
+          {part.sku && <span className="font-mono text-xs text-[#64748B]">· {part.sku}</span>}
+          {part.oem_number && <span className="font-mono text-xs text-[#38BDF8]">· {part.oem_number}</span>}
         </div>
       </div>
 
@@ -1267,7 +1267,7 @@ function PartCard({ part, onAddToCart, brandLogos = {} }) {
                   ) : null}
                   {part.manufacturer || 'יצרן לא זמין'}
                 </span>
-                {part.sku ? <span className="inline-flex items-center rounded-full border border-slate-200 bg-white/90 px-2.5 py-1 font-medium text-slate-600">SKU: {part.sku}</span> : null}
+                {part.sku ? <span className="font-mono inline-flex items-center rounded-full border border-[rgba(148,163,184,0.15)] bg-[#252D3D] px-2.5 py-1 font-medium text-[#64748B]">SKU: {part.sku}</span> : null}
               </div>
             </div>
             <button
@@ -3051,8 +3051,8 @@ export default function Parts() {
       icon: Search,
       badge: query?.trim() ? 'פעיל' : null,
       metric: query?.trim() ? `שאילתה: ${query.trim().slice(0, 24)}` : 'חיפוש טקסט בזמן אמת',
-      tone: 'from-sky-50 to-blue-50 border-sky-200',
-      iconTone: 'bg-sky-600',
+      tone: 'from-[rgba(14,165,233,0.10)] to-[rgba(14,165,233,0.04)] border-[rgba(14,165,233,0.35)]',
+      iconTone: 'bg-[#0EA5E9]',
     },
     {
       id: 'vehicle',
@@ -3061,8 +3061,8 @@ export default function Parts() {
       icon: SlidersHorizontal,
       badge: activeFiltersCount > 0 || category ? `${activeFiltersCount + (category ? 1 : 0)} מסננים` : null,
       metric: `${brands.length.toLocaleString()} יצרנים • ${partFamilies.length.toLocaleString()} משפחות חלקים`,
-      tone: 'from-emerald-50 to-teal-50 border-emerald-200',
-      iconTone: 'bg-emerald-600',
+      tone: 'from-[rgba(34,197,94,0.10)] to-[rgba(34,197,94,0.04)] border-[rgba(34,197,94,0.35)]',
+      iconTone: 'bg-[#16a34a]',
     },
     {
       id: 'vin',
@@ -3071,8 +3071,8 @@ export default function Parts() {
       icon: Hash,
       badge: vinVehicle ? 'רכב מזוהה' : null,
       metric: vinInput ? `VIN: ${vinInput.replace(/\s/g, '').length}/17` : 'פענוח רכב לפי VIN/לוחית',
-      tone: 'from-amber-50 to-orange-50 border-amber-200',
-      iconTone: 'bg-amber-600',
+      tone: 'from-[rgba(245,158,11,0.10)] to-[rgba(245,158,11,0.04)] border-[rgba(245,158,11,0.35)]',
+      iconTone: 'bg-[#d97706]',
     },
     {
       id: 'photo',
@@ -3081,8 +3081,8 @@ export default function Parts() {
       icon: Camera,
       badge: photoPreview || isListening ? 'פעיל' : null,
       metric: isListening ? 'האזנה פעילה' : (photoPreview ? 'תמונה נטענה לזיהוי' : 'ניתוח תמונה וקול'),
-      tone: 'from-violet-50 to-fuchsia-50 border-violet-200',
-      iconTone: 'bg-violet-600',
+      tone: 'from-[rgba(139,92,246,0.10)] to-[rgba(139,92,246,0.04)] border-[rgba(139,92,246,0.35)]',
+      iconTone: 'bg-[#7c3aed]',
     },
   ]
   const handleVinSearch = async (partQuery = vinPartQuery, pageNum = 0, explicitVin) => {
@@ -3198,21 +3198,21 @@ export default function Parts() {
               key={card.id}
               type="button"
               onClick={() => switchMode(card.id)}
-              className={`text-right rounded-[24px] border bg-gradient-to-br p-4 min-h-[132px] transition-all ${active ? `${card.tone} shadow-sm ring-1 ring-brand-300 -translate-y-0.5` : 'border-gray-200 from-white to-gray-50 hover:border-brand-300 hover:shadow-sm hover:-translate-y-0.5'}`}
+              className={`text-right rounded-[24px] border bg-gradient-to-br p-4 min-h-[132px] transition-all ${active ? `${card.tone} shadow-sm ring-1 ring-[rgba(14,165,233,0.40)] -translate-y-0.5` : 'border-[rgba(148,163,184,0.12)] from-[#1E2535] to-[#151B27] hover:border-[rgba(14,165,233,0.25)] hover:shadow-sm hover:-translate-y-0.5'}`}
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className={`text-sm font-bold ${active ? 'text-brand-800' : 'text-brand-navy'}`}>{card.title}</p>
-                  <p className="text-xs text-gray-500 mt-1">{card.subtitle}</p>
+                  <p className={`text-sm font-bold ${active ? 'text-[#E2E8F0]' : 'text-[#CBD5E1]'}`}>{card.title}</p>
+                  <p className="text-xs text-[#94A3B8] mt-1">{card.subtitle}</p>
                 </div>
-                <span className={`inline-flex h-9 w-9 items-center justify-center rounded-xl ${active ? `${card.iconTone} text-white` : 'bg-gray-100 text-gray-500'}`}>
+                <span className={`inline-flex h-9 w-9 items-center justify-center rounded-xl ${active ? `${card.iconTone} text-white` : 'bg-[#252D3D] text-[#94A3B8]'}`}>
                   <Icon className="w-4 h-4" />
                 </span>
               </div>
-              <p className="mt-3 text-[11px] sm:text-xs text-gray-600 truncate" title={card.metric}>{card.metric}</p>
+              <p className="mt-3 text-[11px] sm:text-xs text-[#64748B] truncate" title={card.metric}>{card.metric}</p>
               <div className="mt-2.5 flex items-center justify-between">
-                <span className={`text-[11px] font-semibold ${active ? 'text-brand-700' : 'text-gray-500'}`}>{active ? 'פעיל עכשיו' : 'לחץ למעבר'}</span>
-                {card.badge ? <span className="text-[11px] rounded-full bg-white/90 border border-brand-200 px-2 py-0.5 text-brand-700 font-medium">{card.badge}</span> : null}
+                <span className={`text-[11px] font-semibold ${active ? 'text-[#38BDF8]' : 'text-[#64748B]'}`}>{active ? 'פעיל עכשיו' : 'לחץ למעבר'}</span>
+                {card.badge ? <span className="text-[11px] rounded-full bg-[rgba(14,165,233,0.12)] border border-[rgba(14,165,233,0.30)] px-2 py-0.5 text-[#38BDF8] font-medium">{card.badge}</span> : null}
               </div>
             </button>
           )
@@ -3251,10 +3251,10 @@ export default function Parts() {
               autoComplete="off"
             />
             {showSuggestions && (query.length >= 2 ? suggestions.length > 0 : recentSearches.length > 0) && (
-              <ul className="absolute z-50 right-0 left-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-64 overflow-y-auto">
+              <ul className="absolute z-50 right-0 left-0 top-full mt-1 bg-[#1E2535] border border-[rgba(148,163,184,0.15)] rounded-lg shadow-lg max-h-64 overflow-y-auto">
                 {query.length < 2 && recentSearches.length > 0 && (
                   <>
-                    <li className="px-3 py-1.5 text-xs text-gray-400 font-medium border-b border-gray-100 flex items-center justify-between">
+                    <li className="px-3 py-1.5 text-xs text-[#64748B] font-medium border-b border-[rgba(148,163,184,0.10)] flex items-center justify-between">
                       <span>חיפושים אחרונים</span>
                       <button
                         onMouseDown={(e) => {
@@ -3263,17 +3263,17 @@ export default function Parts() {
                           localStorage.removeItem('recentPartSearches')
                           setShowSuggestions(false)
                         }}
-                        className="text-gray-300 hover:text-red-400 text-xs"
+                        className="text-[#475569] hover:text-[#EF4444] text-xs"
                       >מחק</button>
                     </li>
                     {recentSearches.map((s, i) => (
                       <li
                         key={i}
-                        className="flex items-center gap-2 px-3 py-2 hover:bg-brand-50 cursor-pointer border-b border-gray-50 last:border-0"
+                        className="flex items-center gap-2 px-3 py-2 hover:bg-[#252D3D] cursor-pointer border-b border-[rgba(148,163,184,0.08)] last:border-0"
                         onMouseDown={(e) => { e.preventDefault(); setQuery(s); setShowSuggestions(false); setTimeout(() => search(), 0) }}
                       >
-                        <span className="text-gray-300 text-xs">🕐</span>
-                        <span className="text-sm text-gray-700">{s}</span>
+                        <span className="text-[#475569] text-xs">🕐</span>
+                        <span className="text-sm text-[#CBD5E1]">{s}</span>
                       </li>
                     ))}
                   </>
@@ -3281,7 +3281,7 @@ export default function Parts() {
                 {query.length >= 2 && suggestions.map((s, i) => (
                   <li
                     key={i}
-                    className="flex items-center justify-between px-3 py-2 hover:bg-brand-50 cursor-pointer border-b border-gray-50 last:border-0"
+                    className="flex items-center justify-between px-3 py-2 hover:bg-[#252D3D] cursor-pointer border-b border-[rgba(148,163,184,0.08)] last:border-0"
                     onMouseDown={(e) => {
                       e.preventDefault()
                       setQuery(s.name)
@@ -3289,8 +3289,8 @@ export default function Parts() {
                       setTimeout(() => search(), 0)
                     }}
                   >
-                    <span className="text-sm font-medium text-gray-800 truncate flex-1">{s.name}</span>
-                    <span className="text-xs text-gray-400 mr-2 shrink-0">{s.category}</span>
+                    <span className="text-sm font-medium text-[#E2E8F0] truncate flex-1">{s.name}</span>
+                    <span className="text-xs text-[#64748B] mr-2 shrink-0">{s.category}</span>
                   </li>
                 ))}
               </ul>
@@ -3332,7 +3332,7 @@ export default function Parts() {
               <div className="flex gap-2 flex-col xs:flex-row">
                 <div className="relative flex rounded-lg overflow-hidden border border-gray-200 focus-within:border-brand-400 focus-within:ring-1 focus-within:ring-brand-300 transition-colors flex-1 min-w-0">
                   <input
-                    className="w-full min-h-12 bg-white text-brand-navy font-mono font-semibold text-sm tracking-[0.15em] text-center uppercase placeholder:text-gray-400 placeholder:font-normal placeholder:text-xs placeholder:tracking-normal focus:outline-none px-3 py-3"
+                    className="w-full min-h-12 bg-[#1E2535] text-[#E2E8F0] font-mono font-semibold text-sm tracking-[0.15em] text-center uppercase placeholder:text-[#475569] placeholder:font-normal placeholder:text-xs placeholder:tracking-normal focus:outline-none px-3 py-3"
                     placeholder="123-45-678"
                     dir="ltr"
                     value={newPlate}
@@ -3366,7 +3366,7 @@ export default function Parts() {
               <div className="flex gap-2 flex-col xs:flex-row">
                 <div className="relative flex-1 min-w-0">
                   <input
-                    className="w-full min-h-12 border border-gray-200 rounded-xl bg-white text-brand-navy font-mono text-sm tracking-wider uppercase focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent px-3 py-3 pl-8"
+                    className="w-full min-h-12 border border-[rgba(148,163,184,0.15)] rounded-xl bg-[#1E2535] text-[#E2E8F0] font-mono text-sm tracking-wider uppercase focus:outline-none focus:ring-2 focus:ring-[#0EA5E9] focus:border-transparent px-3 py-3 pl-8"
                     placeholder="1HGCM82633..."
                     dir="ltr"
                     maxLength={17}
@@ -4100,16 +4100,16 @@ export default function Parts() {
       )}
 
       {/* ── BLOCK 3: Photo / Voice ── */}
-      <div className={`bg-white rounded-2xl border border-gray-100 shadow-sm ${activeSearchPanel !== 'photo' ? 'hidden' : ''}`} style={{order: 3}}>
+      <div className={`bg-[#151B27] rounded-2xl border border-[rgba(148,163,184,0.12)] shadow-sm ${activeSearchPanel !== 'photo' ? 'hidden' : ''}`} style={{order: 3}}>
           {/* Header */}
           <div className="flex items-center gap-2 px-4 pt-4">
-            <div className="w-8 h-8 rounded-lg bg-brand-100 flex items-center justify-center flex-shrink-0">
-              <Camera className="w-4 h-4 text-brand-600" />
+            <div className="w-8 h-8 rounded-lg bg-[rgba(14,165,233,0.12)] flex items-center justify-center flex-shrink-0">
+              <Camera className="w-4 h-4 text-[#0EA5E9]" />
             </div>
-            <h3 className="font-semibold text-brand-navy">חיפוש בתמונה / קול</h3>
+            <h3 className="font-semibold text-[#E2E8F0]">חיפוש בתמונה / קול</h3>
           </div>
           {/* Sub-tab bar */}
-          <div className="flex border-b border-gray-100 p-1.5 gap-1 mt-3">
+          <div className="flex border-b border-[rgba(148,163,184,0.12)] p-1.5 gap-1 mt-3">
             {[
               { key: 'photo', icon: <Camera className="w-4 h-4" />, label: 'תמונה' },
               { key: 'voice', icon: <Mic className="w-4 h-4" />, label: 'קול' },
@@ -4124,8 +4124,8 @@ export default function Parts() {
                   }}
                   className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
                     active
-                      ? 'bg-brand-600 text-white shadow-sm'
-                      : 'text-gray-500 hover:text-brand-600 hover:bg-brand-50'
+                      ? 'bg-[#0EA5E9] text-[#0F1218] shadow-sm'
+                      : 'text-[#94A3B8] hover:text-[#E2E8F0] hover:bg-[#252D3D]'
                   }`}
                 >
                   {icon}<span>{label}</span>

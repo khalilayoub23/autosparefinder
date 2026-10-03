@@ -1,6 +1,7 @@
+import os as _os_dbpw; _DB_PW = _os_dbpw.environ["DB_PASSWORD"]  # credential from the environment, never from source (FIXES_TRACKER #61)
 import asyncio, asyncpg, uuid, sys, re
 
-DB = "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43@localhost:5432/autospare"
+DB = f"postgresql://autospare:{_DB_PW}@localhost:5432/autospare"
 BRAND_IDS = {
     'Volkswagen': '04877cea-0889-4b57-978a-cff0a8f1ed25',
     'Audi':       '4a718e3c-5b47-478d-9c62-0b6b5135593e',

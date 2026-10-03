@@ -25,6 +25,7 @@ from BACKEND_DATABASE_MODELS import (
     get_db, get_pii_db,
     User,
 )
+from BACKEND_AI_AGENTS import is_local_supplier
 from currency_rate import get_usd_to_ils_rate
 from BACKEND_AUTH_SECURITY import get_current_user, get_current_verified_user
 from BACKEND_AUTH_SECURITY import get_redis
@@ -133,6 +134,7 @@ async def _cart_to_response(items: list, cat_db: AsyncSession) -> list:
             "supplierId":     str(sp.supplier_id),
             "supplierName":   _mask_supplier(supplier.name),
             "offerPartType":  offer_label(part.part_type, sp.part_type),
+            "isIlSupplier":   is_local_supplier(supplier.name, supplier.country),
             "stockAvailable": sp.stock_quantity if sp.stock_quantity is not None else 99,
         })
     return result

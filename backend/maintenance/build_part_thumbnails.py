@@ -25,7 +25,7 @@ Usage (inside the backend container):
   python3 /app/maintenance/build_part_thumbnails.py --limit 500 [--dry-run]
 
 Author: AutoSpareFinder Agent
-Last Updated: 2026-07-18
+Last Updated: 2026-10-03 (single-flight + persisted failure backoff for cf_clearance mints, FIXES_TRACKER #54)
 """
 import argparse
 import threading
@@ -108,6 +108,42 @@ _FS_HOSTS = [h for h in (os.getenv("FLARESOLVERR_URL", "http://flaresolverr:8191
                          os.getenv("FLARESOLVERR_URL_2", "")) if h]
 _CLEARANCE_TTL = int(os.getenv("THUMB_CLEARANCE_TTL_S", "1500"))
 _clearance: dict = {}          # host -> {"cookie": str, "ua": str, "ts": float}
+# FIXES_TRACKER #54 (2026-10-03): a FAILED mint was not remembered, so on a host whose
+# challenge FlareSolverr cannot solve (media.autoteile-meile.de: "Timeout after 60.0 s")
+# EVERY 403 image launched another full headless-Chrome solve (95-205 s, ~0.3-0.5 GB),
+# up to THUMB_CONCURRENCY at once. Those parallel browsers tipped the 12 GB no-swap host
+# into two GLOBAL OOM kills (10:59 / 11:01 UTC) that took down the Facebook group scan.
+# Now: at most ONE mint in flight per host, and a failed host is not retried for
+# THUMB_CLEARANCE_FAIL_BACKOFF_S.
+_CLEARANCE_FAIL_BACKOFF = int(os.getenv("THUMB_CLEARANCE_FAIL_BACKOFF_S", "3600"))
+# Persisted in the worker_state volume: every batch is a fresh subprocess, so an
+# in-memory backoff alone would still spend one failed 60-200 s solve per batch.
+_CLEARANCE_FAIL_FILE = os.getenv("THUMB_CLEARANCE_FAIL_FILE", "/app/state/thumb_clearance_failed.json")
+
+
+def _load_failed() -> dict:
+    try:
+        import json as _j
+        with open(_CLEARANCE_FAIL_FILE) as fh:
+            return {str(k): float(v) for k, v in _j.load(fh).items()}
+    except Exception:
+        return {}
+
+
+def _save_failed(d: dict) -> None:
+    try:
+        import json as _j
+        tmp = _CLEARANCE_FAIL_FILE + ".tmp"
+        with open(tmp, "w") as fh:
+            _j.dump(d, fh)
+        os.replace(tmp, _CLEARANCE_FAIL_FILE)
+    except Exception:
+        pass
+
+
+_clearance_failed: dict = _load_failed()   # host -> ts of last failed mint
+_clearance_locks: dict = {}    # host -> threading.Lock (single-flight)
+_clearance_locks_guard = threading.Lock()
 
 
 def _mint_clearance(url: str) -> dict | None:
@@ -116,26 +152,37 @@ def _mint_clearance(url: str) -> dict | None:
     import time as _time
     from urllib.parse import urlsplit
     host = urlsplit(url).netloc
-    got = _clearance.get(host)
-    if got and (_time.time() - got["ts"]) < _CLEARANCE_TTL:
-        return got
-    for fs in _FS_HOSTS:
-        try:
-            req = urllib.request.Request(
-                fs, data=_json.dumps({"cmd": "request.get", "url": url,
-                                      "maxTimeout": 60000}).encode(),
-                headers={"Content-Type": "application/json"})
-            sol = _json.load(urllib.request.urlopen(req, timeout=120)).get("solution", {})
-            if sol.get("cookies"):
-                got = {"cookie": "; ".join(c["name"] + "=" + c["value"] for c in sol["cookies"]),
-                       "ua": sol.get("userAgent") or UA["User-Agent"],
-                       "ts": _time.time()}
-                _clearance[host] = got
-                print(f"  cf_clearance minted for {host}")
-                return got
-        except Exception:
-            continue
-    return None
+    with _clearance_locks_guard:
+        lock = _clearance_locks.setdefault(host, threading.Lock())
+    with lock:                       # single-flight: waiters reuse the result below
+        got = _clearance.get(host)
+        if got and (_time.time() - got["ts"]) < _CLEARANCE_TTL:
+            return got
+        failed_at = _clearance_failed.get(host)
+        if failed_at and (_time.time() - failed_at) < _CLEARANCE_FAIL_BACKOFF:
+            return None
+        for fs in _FS_HOSTS:
+            try:
+                req = urllib.request.Request(
+                    fs, data=_json.dumps({"cmd": "request.get", "url": url,
+                                          "maxTimeout": 60000}).encode(),
+                    headers={"Content-Type": "application/json"})
+                sol = _json.load(urllib.request.urlopen(req, timeout=120)).get("solution", {})
+                if sol.get("cookies"):
+                    got = {"cookie": "; ".join(c["name"] + "=" + c["value"] for c in sol["cookies"]),
+                           "ua": sol.get("userAgent") or UA["User-Agent"],
+                           "ts": _time.time()}
+                    _clearance[host] = got
+                    if _clearance_failed.pop(host, None) is not None:
+                        _save_failed(_clearance_failed)
+                    print(f"  cf_clearance minted for {host}")
+                    return got
+            except Exception:
+                continue
+        _clearance_failed[host] = _time.time()
+        _save_failed(_clearance_failed)
+        print(f"  cf_clearance mint FAILED for {host} — no retry for {_CLEARANCE_FAIL_BACKOFF}s")
+        return None
 
 
 def _fetch_source(url: str) -> bytes:

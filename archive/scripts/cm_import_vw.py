@@ -3,11 +3,12 @@
 Import Champion Motors VW-group parts from NDJSON relay file.
 OEM numbers may have Hebrew vehicle_make suffix - strip it.
 """
+import os as _os_dbpw; _DB_PW = _os_dbpw.environ["DB_PASSWORD"]  # credential from the environment, never from source (FIXES_TRACKER #61)
 import json, re, sys, asyncio
 from datetime import datetime
 import asyncpg
 
-DB_URL = "postgresql://autospare:e4b79d75ca640dbe7f259618f078b82f21573e419308f668beed5e20b26b1d43@localhost:5432/autospare"
+DB_URL = f"postgresql://autospare:{_DB_PW}@localhost:5432/autospare"
 SUPPLIER_ID = "9f7c3f7b-5d58-4dba-b67a-bcba3890d827"  # Champion Motors
 
 # Hebrew character range
