@@ -2829,6 +2829,10 @@ async def startup():
     _supervised_task("cleanup_loop",                run_cleanup_loop())
     _supervised_task("noa_marketing_loop",          _noa_marketing_loop())
     _supervised_task("noa_engagement_loop",         _noa_engagement_loop())
+    # Email Agent (Gmail read -> classify -> context -> policy -> DRAFT only; never sends).
+    # Idles unless EMAIL_AGENT_ENABLED=1 and the GMAIL_OAUTH_* values are set - docs/EMAIL_AGENT.md.
+    from email_agent.loop import email_agent_loop as _email_agent_loop
+    _supervised_task("email_agent_loop",            _email_agent_loop(notify=notify_owner))
     _supervised_task("supplier_sourcing_loop",      _supplier_sourcing_loop())
     _supervised_task("social_feedback_loop",        _social_feedback_loop())
     _supervised_task("group_scan_loop",             _group_scan_loop())
@@ -6466,6 +6470,8 @@ from routes.connect import router as connect_router
 app.include_router(connect_router)
 from routes.noa_ops_routes import router as noa_ops_router
 app.include_router(noa_ops_router)
+from routes.email_agent_routes import router as email_agent_router
+app.include_router(email_agent_router)
 from routes.reviews import router as reviews_router
 app.include_router(reviews_router)
 from routes.vehicles import router as vehicles_router

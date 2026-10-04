@@ -6770,3 +6770,34 @@ Running container: still holds the previously loaded environment until the backe
 - `EUROSENDER_ENABLED` and `EUROSENDER_SANDBOX` in `.env`: unchanged (not set). Live Production shipping still off until owner confirms.
 - Production webhook (created earlier today, callback `https://autosparefinder.co.il/api/v1/webhooks/eurosender`, five events): unchanged. Delivery verification pending a restart and a real Production event.
 - Not committed.
+
+## 2026-10-04 — Email Agent foundation: Gmail read, classification, context, policy, draft-only
+
+**Goal:** a production-grade foundation for an Email Agent on the business mailbox. This phase must not send email.
+
+**Finding (inventory, verified in code and live):**
+- The backend had an outbound-only email path (`routes/email_utils.py`, Gmail SMTP app password). Nothing read the mailbox.
+- The only Google OAuth grant in `.env` is the YouTube one. Live check: token refresh succeeds, granted scope is `youtube.force-ssl` only, `GET gmail/v1/users/me/profile` returns 403 `insufficient authentication scopes`. No `GMAIL_*` variable exists.
+- The closest existing architecture is NOA's inbound engine (`social/engagement.py`: record once, draft, human decides), so the Email Agent follows that shape instead of adding a second agent framework.
+
+**Built:** package `backend/email_agent/` (config, redaction, gmail_client, normalize, senders, context, classifier, policy, drafts, store, agent, loop); `routes/email_agent_routes.py` (`GET /api/v1/system/email-agent`, `X-Collect-Secret`); `maintenance/email_agent_cli.py`; `maintenance/gmail_oauth_setup.py` (host-side consent URL + code exchange into `.env`, prints no secret); migration `alembic_pii/versions/0039_email_agent_messages.py`; loop + router registered in `BACKEND_API_ROUTES.py`; env pass-throughs in `docker-compose.yml`; `docs/EMAIL_AGENT.md`.
+
+**No-send boundary (six layers):** no send method on the client; a six-endpoint allowlist (`GET profile|messages|messages/{id}|threads/{id}|drafts/{id}`, `POST drafts`) checked before every request; `policy.send_allowed()` returns False unconditionally; every decision `sendable=False`; `CHECK (sendable = false)` on the table; `POST drafts` never auto-retried.
+
+**Bugs caught before shipping (by the tests, not in production):**
+- `received_at` was bound as an ISO string into `CAST(:x AS timestamptz)`; asyncpg requires a datetime. Caught by the store test against real Postgres, fixed in `store.save_result`.
+- A Gmail part whose `body` is not an object crashed normalization; invalid base64 was decoded to garbage instead of rejected. Both fixed in `normalize.py`.
+
+**Existing issue revealed and fixed:** `tests/test_whatsapp_empty_body_guard.py` failed (8 tests, `RuntimeError: There is no current event loop`) whenever an async test file ran before it, e.g. `tests/test_whatsapp_test_isolation.py`. Root cause: its `_run()` helper used `asyncio.get_event_loop().run_until_complete()`, which fails once pytest-asyncio has closed the loop. Reproduced with only those two pre-existing files. Fix: `asyncio.run(coro)`. Now 8/8 pass in any order.
+
+**Verification:**
+- VERIFIED — `tests/test_email_agent.py`: 104 passed (103 + the opt-in real-Postgres store test on a session TEMP table; the test asserts the table is temporary and that nothing remains afterwards).
+- VERIFIED — migration 0039 DDL executed inside a transaction on the PII DB and rolled back (table + 3 indexes created, `to_regclass` NULL after rollback); `alembic heads` shows the single head `0039_email_agent_messages`.
+- VERIFIED — context SQL against live data, SELECT only: a real order + its account resolves and passes the primary-key re-check; the same order cited by a different sender is `sender_mismatch` with no references; a real supplier website domain resolves.
+- VERIFIED — live OAuth through `GmailClient` with the existing YouTube-scoped grant: token refresh OK, Gmail denies the scope, the agent reports `error_kind=scope`, processes 0 messages. HTTP calls made: `POST oauth2 token`, `GET gmail profile`.
+- NOT DONE — live Gmail read / draft E2E. No Gmail grant exists.
+- NOT DONE — migration 0039 not applied and the loop not loaded: the backend was not restarted (a car-parts.ie harvester was running; restart was out of scope). Both take effect on the next normal backend start. `EMAIL_AGENT_ENABLED` defaults to 0.
+
+**Remaining owner step:** enable the Gmail API and add `gmail.readonly` + `gmail.compose` to the consent screen in project `valid-moment-444021-r6` (account `autosparefinder2024@gmail.com`), then approve the consent URL from `gmail_oauth_setup.py auth-url`. Steps in `docs/EMAIL_AGENT.md`.
+
+**Safety:** no email sent, no Gmail mailbox touched, no container restarted, no production row written, no secret printed.

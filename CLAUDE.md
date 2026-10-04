@@ -516,6 +516,14 @@ rolling Redis history. Deterministic commands: `סטטוס`/status, `שאיבה`
 `אשר <id>`/approve (marks approved + publishes via `social/registry.dispatch`), `דחה`/reject,
 `עזרה`/help — so the owner acts on NOA's approval notifications by replying. Uses its own
 CATALOG-DB session (those tables aren't in the PII DB the webhook passes).
+**Email Agent** (`backend/email_agent/`, added 2026-10-04 — full reference `docs/EMAIL_AGENT.md`): reads
+the business Gmail mailbox, classifies, resolves context against the DB, applies a response policy and
+prepares DRAFTS. **It never sends**: `GmailClient` has no send method, every request passes a six-endpoint
+allowlist (`assert_allowed`), `policy.send_allowed()` returns False unconditionally, and
+`email_agent_messages` has `CHECK (sendable = false)`. Enabling sending is a reviewed code change plus a
+migration, never an env flag. Off unless `EMAIL_AGENT_ENABLED=1` and `GMAIL_OAUTH_*` are set. Context is
+resolved only by exact DB match; an unauthenticated sender, another account's order or more than one
+candidate stays unresolved and goes to a human.
 **Layer B — pipeline workers**: `catalog_scraper` (ingest), `db_cleanup_agent` (30s self-heal),
 `db_update_agent` (`run_all_tasks` every 3h), `ai_catalog_builder` (enrichment), `meili_sync`
 (indexing, 2h loop), `run_rex_transport_office_pipeline` (vehicle registry), REX harvest queue,
