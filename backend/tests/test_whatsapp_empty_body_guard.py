@@ -24,7 +24,7 @@ from social.whatsapp_provider import send_message
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)   # get_event_loop() fails once an earlier async test has closed the loop
 
 
 # ── INVALID_PAYLOAD cases (must never reach network) ─────────────────────────
