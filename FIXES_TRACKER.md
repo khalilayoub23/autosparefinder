@@ -6825,3 +6825,10 @@ Running container: still holds the previously loaded environment until the backe
 - BLOCKED — `GET gmail/v1/users/me/profile` returns 403 `PERMISSION_DENIED: Gmail API has not been used in project 614571826604 before or it is disabled`. Mailbox identity therefore NOT verified yet. Fix is on the Google side: enable the Gmail API in that project. No re-consent is needed afterwards.
 - Known mislabel, not fixed here: `gmail_client` reports this 403 as `error_kind="scope"`; it is an API-disabled error, not a scope error.
 - Running backend does not have the grant loaded (no restart). Migration 0039 not applied. No email, draft or Gmail mutation; HTTP calls made: `POST oauth2 token`, `GET gmail profile`.
+
+## 2026-10-06 — Gmail API enabled in the business project; read-only grant verified against the mailbox
+
+- Enabled the **Gmail API** in the Google Cloud console. Before clicking, confirmed on the live console: active account `autosparefinder2024@gmail.com` (read from the account button; the browser's default account was the personal one and `authuser=1` was a third account), project ID `valid-moment-444021-r6`, project number `614571826604` (the OAuth client's project). Console then showed `gmail.googleapis.com — Status: Enabled`. Nothing else in the project was changed.
+- VERIFIED — one-off process with the stored grant: token refresh OK, `GET gmail/v1/users/me/profile` 200, mailbox `autosparefinder2024@gmail.com` (matches the configured business mailbox), granted scope exactly `gmail.readonly`, `can_read=true`, `can_draft=false`. HTTP calls made: `POST oauth2 token`, `GET gmail profile`. No message listed or read.
+- NOT DONE (by instruction) — backend not restarted, so the running app does not have the grant loaded; migration 0039 not applied; `EMAIL_AGENT_ENABLED` unset. No email, draft or Gmail mutation.
+- Still open: `gmail_client` labels an API-disabled 403 as `error_kind="scope"`; authorization codes are written to the nginx access log (needs a dedicated callback path).
