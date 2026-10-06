@@ -6817,3 +6817,11 @@ Running container: still holds the previously loaded environment until the backe
 **Open:** authorization codes are written to the nginx access log (and same-origin Referer). The two real codes from 2026-10-04 were never exchanged and are long expired. A dedicated callback path with `access_log off` needs a new redirect URI on the Google client, a backend route and an nginx restart — not done (out of scope: no restart, no Google console change).
 
 **Safety:** no email, draft, Gmail call, restart, migration or credential change.
+
+## 2026-10-06 — Gmail OAuth grant stored (read-only); Gmail API is disabled in the project
+
+- VERIFIED — fresh consent with a new one-time `state`; redirect detected 5 s after approval (`code` present, no `error`, issuer accounts.google.com, scope `gmail.readonly`); exchange succeeded; `.env` now holds `GMAIL_OAUTH_CLIENT_ID`, `GMAIL_OAUTH_CLIENT_SECRET`, `GMAIL_OAUTH_REFRESH_TOKEN` (client = the existing business web client `614571826604-…`). No code or token printed.
+- VERIFIED — the stored refresh token works (token refresh OK in a one-off process); granted scope is exactly `https://www.googleapis.com/auth/gmail.readonly`; no write-capable scope.
+- BLOCKED — `GET gmail/v1/users/me/profile` returns 403 `PERMISSION_DENIED: Gmail API has not been used in project 614571826604 before or it is disabled`. Mailbox identity therefore NOT verified yet. Fix is on the Google side: enable the Gmail API in that project. No re-consent is needed afterwards.
+- Known mislabel, not fixed here: `gmail_client` reports this 403 as `error_kind="scope"`; it is an API-disabled error, not a scope error.
+- Running backend does not have the grant loaded (no restart). Migration 0039 not applied. No email, draft or Gmail mutation; HTTP calls made: `POST oauth2 token`, `GET gmail profile`.
