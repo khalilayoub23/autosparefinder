@@ -7,7 +7,8 @@ Process:
   SAFE FOR FUTURE AUTOMATION (a draft is prepared, still not sendable):
     order / shipping status when the order is verified and belongs to the authenticated sender;
     a request for the missing order number; a request for missing vehicle / part details;
-    a supplier acknowledgement for a verified supplier.
+    a supplier acknowledgement for a verified AND ACTIVE supplier (an inactive / pending
+    supplier row is a known sender, not an approved one - it goes to a human).
   HUMAN APPROVAL REQUIRED (no draft is prepared):
     refund, cancellation, price change, financial commitment, address change, legal / dispute,
     complaint, security / account recovery, customs, payment / billing, unknown, a risky
@@ -34,7 +35,7 @@ HUMAN_CATEGORIES = ("complaint_dispute", "refund_cancellation", "payment_billing
                     "account_security", "unknown")
 HUMAN_FLAGS = ("refund", "cancellation", "dispute_legal", "complaint", "price_change",
                "financial_commitment", "address_change", "security", "customs",
-               "risky_attachment", "unauthenticated_sender")
+               "risky_attachment", "unauthenticated_sender", "bulk_headers", "automated_sender")
 NOTIFICATION_CATEGORIES = ("automated_notification", "shipping_eurosender", "ebay", "aliexpress")
 DRAFT_ACTIONS = ("draft_order_status", "draft_request_order_number", "draft_request_details",
                  "draft_supplier_ack")
@@ -105,7 +106,9 @@ def decide(c: Classification, ctx: ResolvedContext, already_answered: bool = Fal
         return PolicyDecision(TIER_SAFE, "draft_request_details", False,
                               ["general inquiry: ask for vehicle / part details (non-sensitive)"])
     if cat == "supplier":
-        if ctx.supplier.get("status") == "resolved":
-            return PolicyDecision(TIER_SAFE, "draft_supplier_ack", False, ["verified supplier: acknowledgement"])
-        return _human(["supplier is not verified"])
+        if ctx.supplier.get("status") != "resolved":
+            return _human(["supplier is not verified"])
+        if ctx.supplier.get("is_active") is not True:
+            return _human(["supplier is known but not active / approved: no automated acknowledgement"])
+        return PolicyDecision(TIER_SAFE, "draft_supplier_ack", False, ["verified active supplier: acknowledgement"])
     return _human([f"no policy rule for category {cat}"])

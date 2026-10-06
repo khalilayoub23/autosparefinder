@@ -25,7 +25,9 @@ from email_agent.redaction import safe_error
 from email_agent.store import PgStore
 
 Notify = Callable[..., Awaitable[None]]
-_ATTENTION = ("auth", "wrong_account", "scope")
+# Owner action needed. A rate limit ("throttled") or an unknown transient error is NOT in this list:
+# the next cycle simply continues.
+_ATTENTION = ("auth", "wrong_account", "scope", "config", "permission")
 
 last_cycle: dict = {}   # read by routes/email_agent_routes.py
 

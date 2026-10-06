@@ -7,10 +7,20 @@ Purpose: Minimal Gmail API v1 client for the Email Agent: OAuth refresh-token fl
 Process:
   - token: POST oauth2.googleapis.com/token (refresh_token grant), cached until ~expiry; the
     granted scope set is kept so read / draft capability is known, not assumed.
-  - calls: GET is retried on 429/5xx (bounded); POST is NEVER auto-retried (a retried draft
-    create could produce a duplicate draft). 401 triggers one token refresh.
-  - errors: GmailError(kind) with kind in auth | scope | transient | permanent | malformed;
-    messages are redacted before they leave this module.
+  - calls: paced (min_request_interval_s between API calls). GET is retried, bounded, only for
+    errors proven retryable (rate limit, 5xx, network); POST is NEVER auto-retried (a retried
+    draft create could produce a duplicate draft). 401 triggers one token refresh.
+  - errors: classify_error() reads Google's own reason (error.errors[].reason,
+    error.details[].reason, message) - a 403 is NOT one thing:
+        rate_limit  quota / rate limit (HTTP 429 or a 403 "Quota exceeded")  retryable, throttle
+        config      Gmail API disabled / never enabled in the project        owner action
+        scope       grant lacks the scope                                    owner re-consent
+        auth        invalid / expired / revoked credentials                  owner re-consent
+        permission  authorization / IAM / delegation denied                  owner action
+        unknown     a 403 with no recognizable reason                        retried next cycle, bounded
+        transient   5xx / network                                            retryable
+        permanent   other 4xx          malformed   unparseable success body
+    Messages are redacted before they leave this module.
   - the mailbox is never mutated except by create_draft.
 Data Imported/Modified: Gmail drafts (create only), nothing else.
 Data Sources: https://gmail.googleapis.com/gmail/v1/users/me, https://oauth2.googleapis.com/token
@@ -48,6 +58,20 @@ ALLOWED_ENDPOINTS: Tuple[Tuple[str, "re.Pattern[str]"], ...] = (
 Transport = Callable[[str, str, Dict[str, str], Optional[bytes]], Tuple[int, bytes]]
 
 
+RETRYABLE_KINDS = ("transient", "rate_limit", "unknown")
+# Mailbox-level failures: not the fault of the message being processed, and not fixed by retrying.
+MAILBOX_LEVEL_KINDS = ("auth", "scope", "config", "permission", "prohibited")
+
+_RATE_REASONS = {"ratelimitexceeded", "userratelimitexceeded", "quotaexceeded", "dailylimitexceeded",
+                 "rate_limit_exceeded", "resource_exhausted", "limitexceeded"}
+_DISABLED_REASONS = {"accessnotconfigured", "service_disabled", "api_disabled"}
+_SCOPE_REASONS = {"insufficientpermissions", "access_token_scope_insufficient", "insufficient_scope"}
+_AUTH_REASONS = {"autherror", "unauthenticated", "invalid_grant", "invalid_credentials",
+                 "access_token_expired", "account_state_invalid", "credentials_missing"}
+_PERMISSION_REASONS = {"forbidden", "domainpolicy", "iam_permission_denied", "delegationdenied",
+                       "user_project_denied", "consumer_invalid"}
+
+
 class GmailError(Exception):
     def __init__(self, kind: str, message: str, http: int = 0):
         super().__init__(redact(message)[:400])
@@ -56,7 +80,43 @@ class GmailError(Exception):
 
     @property
     def retryable(self) -> bool:
-        return self.kind == "transient"
+        return self.kind in RETRYABLE_KINDS
+
+
+def classify_error(status: int, raw: bytes) -> Tuple[str, str]:
+    """(kind, short detail) for a non-2xx Gmail response, from Google's structured error."""
+    reasons: set = set()
+    message = ""
+    try:
+        err = json.loads(raw or b"{}").get("error", {})
+    except Exception:
+        err = {}
+    if isinstance(err, dict):
+        message = str(err.get("message", ""))
+        if err.get("status"):
+            reasons.add(str(err["status"]).lower())
+        for item in list(err.get("errors") or []) + list(err.get("details") or []):
+            if isinstance(item, dict) and item.get("reason"):
+                reasons.add(str(item["reason"]).lower())
+    elif err:
+        message = str(err)
+    low = message.lower()
+    detail = (" ".join(sorted(reasons)) + " " + message[:200]).strip() or "no error detail"
+    if status == 429 or reasons & _RATE_REASONS or "quota exceeded" in low or "rate limit" in low:
+        return "rate_limit", detail
+    if status >= 500:
+        return "transient", detail
+    if reasons & _DISABLED_REASONS or "has not been used in project" in low or "it is disabled" in low:
+        return "config", detail
+    if reasons & _SCOPE_REASONS or "insufficient authentication scopes" in low or "insufficient permission" in low:
+        return "scope", detail
+    if status == 401 or reasons & _AUTH_REASONS:
+        return "auth", detail
+    if status == 403:
+        if reasons & _PERMISSION_REASONS or "delegation denied" in low or "does not have permission" in low:
+            return "permission", detail
+        return "unknown", detail
+    return "permanent", detail
 
 
 class SendProhibited(GmailError):
@@ -87,12 +147,14 @@ def urllib_transport(method: str, url: str, headers: Dict[str, str], body: Optio
 class GmailClient:
     def __init__(self, cfg: EmailAgentConfig, transport: Transport = urllib_transport,
                  clock: Callable[[], float] = time.time, sleep: Callable[[float], None] = time.sleep,
-                 get_retries: int = 2):
+                 get_retries: int = 2, min_interval_s: Optional[float] = None):
         self._cfg = cfg
         self._transport = transport
         self._clock = clock
         self._sleep = sleep
         self._get_retries = get_retries
+        self._min_interval = cfg.min_request_interval_s if min_interval_s is None else min_interval_s
+        self._next_call_at = 0.0
         self._token = ""
         self._token_exp = 0.0
         self.granted_scopes: set[str] = set()
@@ -130,6 +192,16 @@ class GmailClient:
         return self._refresh()
 
     # ── transport ────────────────────────────────────────────────────────────
+    def _pace(self) -> None:
+        """Keep at least min_interval between Gmail API calls (per-user per-minute quota)."""
+        if self._min_interval <= 0:
+            return
+        now = self._clock()
+        if now < self._next_call_at:
+            self._sleep(round(self._next_call_at - now, 3))
+            now = self._next_call_at
+        self._next_call_at = now + self._min_interval
+
     def _call(self, method: str, path: str, params: Optional[List[Tuple[str, str]]] = None,
               json_body: Optional[dict] = None) -> Dict[str, Any]:
         assert_allowed(method, path)
@@ -143,6 +215,7 @@ class GmailClient:
             headers = {"Authorization": f"Bearer {self._access_token()}", "Accept": "application/json"}
             if body is not None:
                 headers["Content-Type"] = "application/json"
+            self._pace()
             try:
                 status, raw = self._transport(method, url, headers, body)
             except OSError as e:
@@ -155,18 +228,17 @@ class GmailClient:
                 refreshed = True
                 self._token = ""
                 continue
-            if status == 429 or status >= 500:
-                last = GmailError("transient", f"Gmail HTTP {status} on {method} {path}", status)
+            if status >= 400:
+                kind, detail = classify_error(status, raw)
+                err = GmailError(kind, f"Gmail HTTP {status} on {method} {path}: {detail}", status)
+                if kind not in ("rate_limit", "transient"):
+                    raise err                      # permanent / owner-action errors are never retried blindly
+                last = err
                 i += 1
                 if i < attempts:
-                    self._sleep(min(2 ** i, 8))
+                    # a per-minute quota needs a longer pause than a transient 5xx
+                    self._sleep(min(5 * 3 ** (i - 1), 30) if kind == "rate_limit" else min(2 ** i, 8))
                 continue
-            if status in (401, 403):
-                detail = _error_status(raw)
-                kind = "scope" if "scope" in detail.lower() or status == 403 else "auth"
-                raise GmailError(kind, f"Gmail HTTP {status} on {method} {path}: {detail}", status)
-            if status >= 400:
-                raise GmailError("permanent", f"Gmail HTTP {status} on {method} {path}: {_error_status(raw)}", status)
             data = _parse_json(raw, f"{method} {path}")
             if not isinstance(data, dict):
                 raise GmailError("malformed", f"Gmail returned a non-object for {method} {path}")

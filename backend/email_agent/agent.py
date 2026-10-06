@@ -27,7 +27,7 @@ from email_agent import drafts as _drafts
 from email_agent import policy as _policy
 from email_agent.config import CONFIGURED, EmailAgentConfig, can_draft, can_read
 from email_agent.context import ContextSource, resolve_context, verify_context
-from email_agent.gmail_client import GmailClient, GmailError
+from email_agent.gmail_client import MAILBOX_LEVEL_KINDS, GmailClient, GmailError
 from email_agent.normalize import MalformedMessage, NormalizedEmail, normalize_thread
 from email_agent.redaction import redact, safe_error
 
@@ -67,9 +67,14 @@ async def check_connection(cfg: EmailAgentConfig, client: GmailClient) -> Dict[s
 
 
 async def process_message(cfg: EmailAgentConfig, client: GmailClient, store, source: ContextSource,
-                          message_id: str, thread_id: str, draft_mode: str) -> Dict[str, Any]:
+                          message_id: str, thread_id: str, draft_mode: str,
+                          thread_cache: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Process one claimed message. Raises on failure (the caller records retry / failed)."""
-    raw_thread = await asyncio.to_thread(client.get_thread, thread_id)
+    raw_thread = (thread_cache or {}).get(thread_id)
+    if raw_thread is None:
+        raw_thread = await asyncio.to_thread(client.get_thread, thread_id)
+        if thread_cache is not None:
+            thread_cache[thread_id] = raw_thread       # one read per thread per cycle (quota)
     thread = normalize_thread(raw_thread, cfg.mailbox)
     email = next((m for m in thread if m.message_id == message_id), None)
     if email is None:
@@ -174,6 +179,7 @@ async def process_once(cfg: EmailAgentConfig, client: GmailClient, store, source
 
     refs = await asyncio.to_thread(client.list_message_ids, cfg.query, limit or cfg.max_per_cycle)
     summary["listed"] = len(refs)
+    thread_cache: Dict[str, Any] = {}
     for ref in refs:
         mid, tid = ref["id"], ref["threadId"]
         claim = await store.claim(mid, tid, cfg.max_attempts)
@@ -182,12 +188,19 @@ async def process_once(cfg: EmailAgentConfig, client: GmailClient, store, source
             continue
         summary["new" if claim == "new" else "retried"] += 1
         try:
-            result = await process_message(cfg, client, store, source, mid, tid, draft_mode)
+            result = await process_message(cfg, client, store, source, mid, tid, draft_mode, thread_cache)
             summary["processed"] += 1
             summary["requires_human"] += int(result["policy"]["requires_human"])
             summary["drafts"] += int(result["draft"]["body"] is not None)
         except GmailError as e:
-            if e.kind in ("auth", "scope", "prohibited"):
+            if e.kind == "rate_limit":
+                # Gmail quota: not a failure of this message and not a permission problem. Hand the
+                # claim back without using an attempt and end the cycle; the next cycle continues.
+                await store.release(mid)
+                summary["throttled"] = True
+                audit_log("cycle_throttled", message_id=mid, error_kind=e.kind, failure_reason=safe_error(e, 200))
+                break
+            if e.kind in MAILBOX_LEVEL_KINDS:
                 # mailbox-level failure, not this message's fault: hand the claim back and stop
                 await store.release(mid)
                 summary["aborted"] = e.kind

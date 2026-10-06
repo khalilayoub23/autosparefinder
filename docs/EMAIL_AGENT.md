@@ -70,6 +70,7 @@ YouTube OAuth values). Changing them needs a backend restart.
 | `EMAIL_AGENT_MAX_PER_CYCLE` | `25` | messages per cycle |
 | `EMAIL_AGENT_INTERVAL_S` | `600` | seconds between cycles |
 | `EMAIL_AGENT_MAX_ATTEMPTS` | `3` | attempts per message before it is marked failed |
+| `EMAIL_AGENT_MIN_REQUEST_INTERVAL_MS` | `1500` | minimum gap between Gmail API calls (the project's per-user quota is 6,000 units per minute) |
 
 States:
 
@@ -138,10 +139,32 @@ One category per email:
 `payment_billing`, `account_security`, `complaint_dispute`, `refund_cancellation`,
 `automated_notification`, `newsletter_marketing`, `spam_irrelevant`, `unknown`.
 
-Evidence, in order: Gmail's SPAM label → an authenticated platform sender domain → bulk or
-automated headers → a resolved supplier → keywords (Hebrew, English, Arabic) in the new text of
-the message, then in earlier inbound messages of the thread → `unknown`. The subject is never
-used alone.
+Evidence, in this order. The subject is never used alone.
+
+1. Gmail's SPAM label.
+2. An authenticated platform sender domain (Eurosender, eBay, AliExpress, payment, Google).
+3. Auto-reply or auto-generated headers (`Auto-Submitted`, `X-Autoreply`) → `automated_notification`,
+   whoever the sender is. An auto-reply is never answered.
+4. Bulk-mail headers (`List-Unsubscribe`, `List-Id`, `Precedence: bulk`) → `newsletter_marketing`,
+   **even when the sender domain matches a known supplier**. A supplier's marketing mail is not
+   supplier correspondence. Exception: mail from a resolved customer is never dropped as a
+   newsletter; it is classified by content and flagged `bulk_headers` for a human.
+5. A no-reply style address on its own is a weak signal: from an unknown sender →
+   `automated_notification`; from a known supplier → still `supplier`, flagged `automated_sender`
+   for a human.
+6. A resolved supplier → `supplier`.
+7. Keywords (Hebrew, English, Arabic) in the new text of the message, then in earlier inbound
+   messages of the thread.
+8. `unknown`.
+
+Risk flags are detected on the meaningful text only (`normalize.meaningful_text`):
+
+- Human-written mail: the whole message minus boilerplate lines (unsubscribe, legal, "sent from
+  my …"). Text after a sign-off still counts, and a footer-looking line written in the first
+  person is kept.
+- Automated notices: the subject plus the opening of the body, up to the sign-off or the first
+  footer line (at most 1,500 characters). Order-summary tables, promo lines and legal paragraphs
+  below that are ignored.
 
 Record schema (`Classification.to_dict()`, also stored in the audit row):
 
@@ -156,7 +179,7 @@ references           customer_id / order_id / order_number / tracking_number /
                      eurosender_order_code / supplier_id — DB-verified values only
 risk_flags           refund, cancellation, dispute_legal, complaint, price_change,
                      financial_commitment, address_change, security, customs,
-                     risky_attachment, unauthenticated_sender
+                     risky_attachment, unauthenticated_sender, bulk_headers, automated_sender
 recommended_action   draft_order_status | draft_request_order_number | draft_request_details |
                      draft_supplier_ack | escalate_to_human | log_only | ignore
 requires_human       true / false
@@ -190,8 +213,8 @@ What stays unresolved:
 
 | Tier | When | Result |
 |---|---|---|
-| Safe for future automation | verified order status for the authenticated account owner; missing order number; missing vehicle / part details; acknowledgement to a verified supplier | a draft is prepared |
-| Human approval required | refund, cancellation, price change, financial commitment, address change, legal / dispute, complaint, security / account recovery, customs, payment / billing, unknown category, risky attachment, unauthenticated sender, ambiguous or conflicting context, order status the templates do not cover, a draft that failed verification | no draft, `requires_human = true` |
+| Safe for future automation | verified order status for the authenticated account owner; missing order number; missing vehicle / part details; acknowledgement to a verified **and active** supplier | a draft is prepared |
+| Human approval required | refund, cancellation, price change, financial commitment, address change, legal / dispute, complaint, security / account recovery, customs, payment / billing, unknown category, risky attachment, unauthenticated sender, inactive or pending supplier, no-reply supplier address, ambiguous or conflicting context, order status the templates do not cover, a draft that failed verification | no draft, `requires_human = true` |
 | No reply | newsletter, spam, automated or platform notification without a serious flag, thread already answered by us | logged only |
 
 Drafts are fixed Hebrew / English / Arabic templates filled only with verified context. They
@@ -216,10 +239,27 @@ failure leaves the row in `retry` until `EMAIL_AGENT_MAX_ATTEMPTS`, then `failed
 mailbox-level failure (auth, scope) hands the claim back without using an attempt and stops the
 cycle.
 
+## Gmail errors
+
+`gmail_client.classify_error` reads Google's own reason; an HTTP 403 is not one thing.
+
+| Kind | Meaning | What the agent does |
+|---|---|---|
+| `rate_limit` | quota or rate limit (HTTP 429, or a 403 "Quota exceeded") | backs off 5 s then 15 s; if still limited, hands the message back without using an attempt and ends the cycle (`throttled`). No owner alert. |
+| `config` | Gmail API disabled or never enabled in the project | stops the cycle, alerts the owner |
+| `scope` | the grant lacks the scope | stops the cycle, alerts the owner |
+| `auth` | invalid, expired or revoked credentials | stops the cycle, alerts the owner |
+| `permission` | authorization or delegation denied | stops the cycle, alerts the owner |
+| `unknown` | a 403 with no recognizable reason | not retried in the call; the message is retried next cycle, up to the attempt limit |
+| `transient` | 5xx or network | retried in the call, then next cycle |
+
+Calls are paced (`EMAIL_AGENT_MIN_REQUEST_INTERVAL_MS`) and a thread is read once per cycle even
+when it holds several new messages.
+
 ## Observability
 
 - One JSON log line per event, prefix `[email_agent]`, events `processed`, `failed`,
-  `skipped_outbound`, `cycle`, `cycle_aborted`, `connection_not_ready`, `idle`, `cycle_error`.
+  `skipped_outbound`, `cycle`, `cycle_aborted`, `cycle_throttled`, `connection_not_ready`, `idle`, `cycle_error`.
   A `processed` line carries message id, thread id, sender domain, classification, confidence,
   context statuses, recommended action, requires_human, draft mode, draft id, verification
   result, `sent: false`. Body text is never logged.

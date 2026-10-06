@@ -313,6 +313,11 @@ Rules:
 - **Confirm Google account AND project before creating any resource.** Read the account button in
   the console (not `authuser=` URL param — it lies). Business assets → `autosparefinder2024@gmail.com`
   / project `valid-moment-444021-r6`.
+- **An HTTP 403 is not one thing — classify a provider error by its stated reason.** Google returns 403
+  for quota exceeded, API disabled, missing scope and denied permission alike; mapping the status code to
+  "scope" mislabelled two different live failures (2026-10-06) and would have stopped a cycle and alerted
+  the owner for a rate limit. Read `error.errors[].reason` / `error.details[].reason`; retry only what is
+  proven retryable.
 - **An OAuth `redirect_uri` must land where something visibly receives the code.** Pointing it at the
   homepage "works" (Google redirects with `?code=`) but the page renders normally and the owner sees
   nothing (2026-10-04, Gmail: approved twice, "no code"). Bind each attempt to a `state`, capture the

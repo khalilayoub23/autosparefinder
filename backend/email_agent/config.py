@@ -53,6 +53,10 @@ class EmailAgentConfig:
     max_per_cycle: int = 25
     interval_s: int = 600
     max_attempts: int = 3
+    # Gap between Gmail API calls. The project's per-user quota is 6,000 units/minute (checked in
+    # the Cloud console 2026-10-06) and ~75 thread reads in a minute exhausted it; 1.5 s keeps a
+    # cycle at <= 40 calls/minute.
+    min_request_interval_s: float = 1.5
 
     def missing(self) -> List[str]:
         vals = {"GMAIL_OAUTH_CLIENT_ID": self.client_id,
@@ -95,6 +99,7 @@ def load_config(env: Mapping[str, str] | None = None) -> EmailAgentConfig:
         max_per_cycle=_int(env, "EMAIL_AGENT_MAX_PER_CYCLE", 25, 1, 100),
         interval_s=_int(env, "EMAIL_AGENT_INTERVAL_S", 600, 60, 86400),
         max_attempts=_int(env, "EMAIL_AGENT_MAX_ATTEMPTS", 3, 1, 10),
+        min_request_interval_s=_int(env, "EMAIL_AGENT_MIN_REQUEST_INTERVAL_MS", 1500, 0, 60000) / 1000.0,
     )
     register_secrets([cfg.client_secret, cfg.refresh_token])
     return cfg

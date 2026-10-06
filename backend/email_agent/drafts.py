@@ -139,8 +139,8 @@ def build_draft(action: str, email: NormalizedEmail, ctx: ResolvedContext) -> Dr
         lines.append(_T["need_details"][lang])
         reason = "parts inquiry: ask for vehicle and part details"
     elif action == "draft_supplier_ack":
-        if ctx.supplier.get("status") != "resolved":
-            raise DraftNotPossible("supplier acknowledgement requires a verified supplier")
+        if ctx.supplier.get("status") != "resolved" or ctx.supplier.get("is_active") is not True:
+            raise DraftNotPossible("supplier acknowledgement requires a verified, active supplier")
         lines.append(_T["supplier_ack"][lang])
         reason = "acknowledgement to a verified supplier"
     else:

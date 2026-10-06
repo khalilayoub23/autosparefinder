@@ -47,6 +47,53 @@ _QUOTE_CUT = re.compile(
 )
 
 
+# Boilerplate that is not what the sender is saying: unsubscribe / legal / app footers.
+_FOOTER_LINE = re.compile(
+    r"(?i)(unsubscribe|manage (your )?(e-?mail )?preferences|privacy policy|terms (and|&) conditions|"
+    r"terms of (use|service)|all rights reserved|©|\(c\)\s*\d{4}|you are receiving this|"
+    r"you received this (e-?mail|message)|this (e-?mail|message) was sent|"
+    r"view (this (e-?mail|message) )?in (your |a )?browser|follow us on|registered (office|number|in )|"
+    r"is a (private )?limited|confidentiality notice|sent from my |"
+    r"להסרה מרשימת|להסרה מ|מדיניות ה?פרטיות|כל הזכויות שמורות|תנאי השימוש|"
+    r"إلغاء الاشتراك|سياسة الخصوصية|جميع الحقوق محفوظة)")
+_VIEW_IN_BROWSER = re.compile(r"(?i)view (this (e-?mail|message) )?in (your |a )?browser")
+_SENT_FROM = re.compile(r"(?i)sent from my ")
+_FIRST_PERSON = re.compile(r"(?i)(?<![a-z])(i|i'm|my|me|we|our)(?![a-z])|אני|שלי|אנחנו|أنا|لي ")
+# Where an automated notice stops talking and its signature / order summary / legal block begins.
+_SIGNOFF = re.compile(
+    r"(?i)^\s*(--\s*$|(best|kind|warm)\s+regards|regards,?\s*$|sincerely|thanks,?\s*$|thank you,?\s*$|"
+    r"cheers,?\s*$|(your|the) .{1,40} team\.?\s*$|בברכה|בכבוד רב|תודה,?\s*$|مع التحية|تحياتي|شكرا,?\s*$)")
+NOTIFICATION_OPENING_CHARS = 1500
+
+
+def meaningful_text(text: Optional[str], notification: bool = False) -> str:
+    """The part of a message that carries what the sender is actually saying.
+
+    Human-written mail (default): the whole text minus boilerplate lines (unsubscribe / legal /
+    "sent from my ..." footers). Nothing after a sign-off is dropped - people write "P.S. please
+    cancel" - and a footer-looking line written in the first person is kept.
+
+    Automated notices (notification=True): the opening only - everything up to the sign-off or
+    the first footer line, capped at NOTIFICATION_OPENING_CHARS. Order-summary tables, promo
+    lines and legal paragraphs after that point are not the message (2026-10-06: every
+    Eurosender notice was flagged for "cancel" in its legal footer and "discount" in a
+    price-table row).
+    """
+    lines = (text or "").splitlines()
+    out: List[str] = []
+    for line in lines:
+        if notification:
+            if _VIEW_IN_BROWSER.search(line):
+                continue
+            if _SIGNOFF.search(line) or _FOOTER_LINE.search(line):
+                break
+        elif _FOOTER_LINE.search(line) and (_SENT_FROM.search(line) or not _FIRST_PERSON.search(line)):
+            continue
+        out.append(line)
+    result = "\n".join(out).strip()
+    return result[:NOTIFICATION_OPENING_CHARS] if notification else result
+
+
 class MalformedMessage(ValueError):
     pass
 

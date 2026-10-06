@@ -5,11 +5,25 @@ Purpose: Classify an inbound email into one explicit category with a confidence,
          budget gate), but schema-first so an LLM classifier can be plugged in later: any
          classifier's output must pass validate_classification().
 Process: evidence is weighed in this order, never from the subject line alone -
-           Gmail SPAM label -> authenticated platform sender -> bulk / automated headers ->
-           resolved supplier -> content keywords (he / en / ar) over the new text of the
-           message, falling back to the earlier inbound messages of the thread -> unknown.
+           1. Gmail SPAM label
+           2. authenticated platform sender (Eurosender / eBay / AliExpress / payment / Google)
+           3. auto-reply / auto-generated headers (Auto-Submitted, X-Autoreply) -> automated,
+              whoever the sender is: an auto-reply is never answered
+           4. bulk-mail headers (List-Unsubscribe, List-Id, Precedence: bulk) -> newsletter, EVEN
+              WHEN the sender domain matches a known supplier. A supplier's marketing blast is
+              not supplier correspondence (2026-10-06: 9 of 9 live "supplier" mails were
+              newsletters). Exception: a resolved customer is never dropped as a newsletter;
+              the mail is classified by content and flagged bulk_headers for a human.
+           5. a no-reply style address alone is a WEAK signal: unknown sender -> automated;
+              known supplier -> still supplier mail, flagged automated_sender for a human
+           6. resolved supplier
+           7. content keywords (he / en / ar) over the new text of the message, falling back
+              to the earlier inbound messages of the thread
+           8. unknown
          Risk flags (refund, cancellation, dispute, price, address, security, customs ...) are
-         detected independently of the category; the policy layer turns them into escalation.
+         detected independently of the category, on the MEANINGFUL text only
+         (normalize.meaningful_text): for automated notices that is the subject plus the opening
+         of the body, not the order-summary / promo / legal footer.
          A classification may cite only identifiers that context resolution verified.
 Data Imported/Modified: none.
 Last Updated: 2026-10-04
@@ -21,7 +35,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Dict, List, Tuple
 
 from email_agent.context import ResolvedContext
-from email_agent.normalize import NormalizedEmail
+from email_agent.normalize import NormalizedEmail, meaningful_text
 from email_agent.senders import is_automated_address
 
 CATEGORIES = (
@@ -45,8 +59,8 @@ _KW: Dict[str, Tuple[str, ...]] = {
 }
 
 _FLAGS: Dict[str, Tuple[str, ...]] = {
-    "refund": ("refund", "money back", "reimburse", "החזר כספי", "זיכוי", "החזר", "استرداد", "استرجاع"),
-    "cancellation": ("cancel", "cancellation", "ביטול", "לבטל", "בטלו", "إلغاء", "الغاء"),
+    "refund": ("refund", "refunded", "refunds", "money back", "reimburse", "החזר כספי", "זיכוי", "החזר", "استرداد", "استرجاع"),
+    "cancellation": ("cancel", "cancelled", "canceled", "cancelling", "canceling", "cancellation", "ביטול", "לבטל", "בטלו", "إلغاء", "الغاء"),
     "dispute_legal": ("dispute", "chargeback", "lawyer", "attorney", "legal action", "lawsuit", "court",
                       "case opened", "claim opened", "small claims", "תביעה", "עורך דין", "משפטי",
                       "הכחשת עסקה", "בית משפט", "محامي", "دعوى", "نزاع"),
@@ -67,7 +81,8 @@ _FLAGS: Dict[str, Tuple[str, ...]] = {
 }
 
 # Flags that make even an automated / platform notification worth a human look.
-SERIOUS_FLAGS = ("refund", "cancellation", "dispute_legal", "financial_commitment", "security", "customs")
+SERIOUS_FLAGS = ("refund", "cancellation", "dispute_legal", "financial_commitment", "security", "customs",
+                 "price_change", "address_change")
 
 
 def _hits(text: str, keywords: Tuple[str, ...]) -> List[str]:
@@ -98,8 +113,29 @@ class Classification:
         return asdict(self)
 
 
+def _header_signals(email: NormalizedEmail) -> Tuple[bool, bool, bool]:
+    """(bulk, auto_strong, auto_weak). Strong = an explicit header; weak = only a no-reply address."""
+    h = email.headers
+    bulk = ("list-unsubscribe" in h or "list-id" in h
+            or h.get("precedence", "").strip().lower() in ("bulk", "list", "junk"))
+    local = email.sender_email.split("@", 1)[0]
+    auto_strong = (h.get("auto-submitted", "no").strip().lower() not in ("", "no")
+                   or "x-autoreply" in h or local in ("mailer-daemon", "postmaster"))
+    return bulk, auto_strong, is_automated_address(email.sender_email)
+
+
+def is_notification(email: NormalizedEmail, ctx: ResolvedContext) -> bool:
+    """Automated / bulk / platform mail. A resolved customer's mail is always treated as human."""
+    if ctx.sender_kind in ("eurosender", "ebay", "aliexpress", "payment", "google"):
+        return True
+    if ctx.customer.get("status") == "resolved":
+        return False
+    return any(_header_signals(email))
+
+
 def detect_flags(email: NormalizedEmail, ctx: ResolvedContext) -> List[str]:
-    text = f"{email.subject}\n{email.new_text or email.body_text}".lower()
+    body = meaningful_text(email.new_text or email.body_text, notification=is_notification(email, ctx))
+    text = f"{email.subject}\n{body}".lower()
     flags = [name for name, kws in _FLAGS.items() if _hits(text, kws)]
     if any(a.get("risky") for a in email.attachments):
         flags.append("risky_attachment")
@@ -133,15 +169,23 @@ def classify(email: NormalizedEmail, thread: List[NormalizedEmail], ctx: Resolve
             return done("automated_notification", 0.8, "authenticated Google system sender")
         return done(platform_cat[kind], 0.95, f"authenticated sender domain {email.sender_domain} ({kind})")
 
-    bulk = ("list-unsubscribe" in h or "list-id" in h
-            or h.get("precedence", "").strip().lower() in ("bulk", "list", "junk"))
-    auto = (h.get("auto-submitted", "no").strip().lower() not in ("", "no")
-            or "x-autoreply" in h or is_automated_address(email.sender_email))
-    if ctx.supplier.get("status") != "resolved" and ctx.customer.get("status") != "resolved":
-        if bulk:
-            return done("newsletter_marketing", 0.85, "bulk-mail headers (List-Unsubscribe / List-Id / Precedence)")
-        if auto:
-            return done("automated_notification", 0.8, "automated sender (Auto-Submitted header or no-reply address)")
+    bulk, auto_strong, auto_weak = _header_signals(email)
+    supplier_known = ctx.supplier.get("status") == "resolved"
+    customer_known = ctx.customer.get("status") == "resolved"
+    if auto_strong:
+        return done("automated_notification", 0.85, "auto-generated / auto-reply headers (Auto-Submitted, X-Autoreply)")
+    if bulk:
+        if not customer_known:
+            return done("newsletter_marketing", 0.85,
+                        "bulk-mail headers (List-Unsubscribe / List-Id / Precedence)"
+                        + ("; sender is a known supplier, but bulk mail is not supplier correspondence"
+                           if supplier_known else ""))
+        flags.append("bulk_headers")
+    if auto_weak:
+        if supplier_known:
+            flags.append("automated_sender")
+        elif not customer_known:
+            return done("automated_notification", 0.8, "automated sender (no-reply style address)")
 
     if ctx.supplier.get("status") == "resolved":
         return done("supplier", 0.9, "authenticated sender domain matches exactly one supplier website")

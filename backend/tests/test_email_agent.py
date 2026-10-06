@@ -36,6 +36,33 @@ FAKE_SECRET = "GOCSPX-fake-client-secret-000"
 FAKE_ACCESS = "ya29.fake-access-token-000"
 
 
+def gerr(status, message, reason=None, detail_reason=None, rpc_status="PERMISSION_DENIED"):
+    """A Google API error body in the real shape (error.errors[].reason + error.details[].reason)."""
+    err = {"code": status, "message": message, "status": rpc_status}
+    if reason:
+        err["errors"] = [{"message": message, "domain": "usageLimits", "reason": reason}]
+    if detail_reason:
+        err["details"] = [{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": detail_reason,
+                           "domain": "googleapis.com"}]
+    return status, json.dumps({"error": err}).encode()
+
+
+# messages are the ones Google actually returned to this project on 2026-10-06
+G_DISABLED = gerr(403, "Gmail API has not been used in project 614571826604 before or it is disabled. Enable it by "
+                       "visiting https://console.developers.google.com/apis/api/gmail.googleapis.com/overview",
+                  "accessNotConfigured", "SERVICE_DISABLED")
+G_SCOPE = gerr(403, "Request had insufficient authentication scopes.", "insufficientPermissions",
+               "ACCESS_TOKEN_SCOPE_INSUFFICIENT")
+G_QUOTA = gerr(403, "Quota exceeded for quota metric 'Total Query Cost' and limit 'Units per minute per user' of "
+                    "service 'gmail.googleapis.com' for consumer 'project_number:614571826604'.",
+               "rateLimitExceeded", "RATE_LIMIT_EXCEEDED")
+G_QUOTA_MSG_ONLY = gerr(403, "Quota exceeded for quota metric 'Total Query Cost' and limit 'Units per minute per user'")
+G_429 = gerr(429, "Too many concurrent requests for user", "rateLimitExceeded", rpc_status="RESOURCE_EXHAUSTED")
+G_PERMISSION = gerr(403, "Delegation denied for this mailbox", "forbidden")
+G_UNKNOWN_403 = gerr(403, "Forbidden")
+G_UNAUTH = gerr(401, "Invalid Credentials", "authError", rpc_status="UNAUTHENTICATED")
+
+
 def cfg(**kw):
     base = dict(enabled=True, client_id="cid.apps.googleusercontent.com", client_secret=FAKE_SECRET,
                 refresh_token=FAKE_REFRESH, mailbox=MAILBOX, gmail_drafts=False, max_attempts=3)
@@ -96,7 +123,10 @@ class FakeGmail:
         assert headers["Authorization"] == f"Bearer {FAKE_ACCESS}"
         queue = self.fail.get(path)
         if queue:
-            return queue.pop(0), b'{"error": {"status": "UNAVAILABLE", "message": "backend error"}}'
+            item = queue.pop(0)
+            if isinstance(item, tuple):
+                return item
+            return item, b'{"error": {"status": "UNAVAILABLE", "message": "backend error"}}'
         if path in self.raw_override:
             return 200, self.raw_override[path]
         if path == "/profile":
@@ -330,7 +360,7 @@ async def test_interrupted_draft_attempt_never_creates_a_second_draft():
 
 async def test_auth_failure_mid_cycle_releases_claim_without_burning_attempts():
     fake = FakeGmail([gmsg("m1", "t1", "dana@gmail.com", "x", "y")])
-    fake.fail["/threads/t1"] = [403]
+    fake.fail["/threads/t1"] = [G_SCOPE]
     summary, store = await run(fake)
     assert summary["aborted"] == "scope" and store.rows["m1"] == {**store.rows["m1"], "status": "retry", "attempts": 0}
 
@@ -874,3 +904,253 @@ async def test_pgstore_sql_against_temp_table():
     await engine.dispose()
     async with create_async_engine(os.environ["DATABASE_PII_URL"], poolclass=NullPool).connect() as check:
         assert (await check.execute(text("SELECT to_regclass('public.email_agent_messages')"))).scalar() is None
+
+
+# ══ Regressions from the 2026-10-06 live 25-message sample ══════════════════════════════════════
+BULK = {"List-Unsubscribe": "<mailto:unsub@partsgmbh.de>", "List-Id": "<news.partsgmbh.de>"}
+
+
+async def classify_one(frm, subject, text=None, html=None, headers=None, source=None, labels=("INBOX",), **kw):
+    e = normalize_message(gmsg("m1", "t1", frm, subject, text, html=html, extra_headers=headers, labels=labels, **kw),
+                          MAILBOX)
+    src = source or FakeSource(users=[USER], orders=[ORDER], suppliers=[SUPPLIER])
+    ctx = await resolve_context(e, [e], src)
+    c = classifier.classify(e, [e], ctx)
+    d = policy.decide(c, ctx)
+    return e, ctx, c, d
+
+
+# ── defect 1: a known supplier's newsletter is not supplier business mail ───────────────────────
+@pytest.mark.parametrize("headers", [BULK, {"List-Unsubscribe": "<https://partsgmbh.de/u>"},
+                                     {"List-Id": "<news.partsgmbh.de>"}, {"Precedence": "bulk"}],
+                         ids=["unsubscribe+list-id", "unsubscribe", "list-id", "precedence-bulk"])
+async def test_known_supplier_newsletter_is_newsletter_not_safe_automation(headers):
+    _, ctx, c, d = await classify_one("news@partsgmbh.de", "Are you ready to become a top seller?",
+                                      "Big news for our dealers this month.", headers=headers)
+    assert ctx.supplier["status"] == "resolved"                  # the domain match itself is still exact
+    assert c.classification == "newsletter_marketing" and "supplier" in c.reason
+    assert (d.tier, d.recommended_action, d.requires_human) == (policy.TIER_NONE, "ignore", False)
+    assert not d.wants_draft
+
+
+async def test_supplier_newsletter_gets_no_reply_text_end_to_end():
+    fake = FakeGmail([gmsg("m1", "t1", "news@partsgmbh.de", "New To Range", "See our new products.", extra_headers=BULK)])
+    summary, store = await run(fake, FakeSource(suppliers=[SUPPLIER]), gmail_drafts=True)
+    row = store.rows["m1"]
+    assert row["classification"] == "newsletter_marketing" and row["draft_body"] is None
+    assert summary["drafts"] == 0 and fake.drafts == {} and row["policy_tier"] == policy.TIER_NONE
+
+
+async def test_supplier_auto_reply_is_never_answered():
+    _, _, c, d = await classify_one("sales@partsgmbh.de", "Automatic reply: order", "I am out of the office.",
+                                    headers={"Auto-Submitted": "auto-replied"})
+    assert c.classification == "automated_notification" and d.recommended_action == "log_only" and not d.wants_draft
+
+
+async def test_weak_automated_signal_does_not_turn_supplier_mail_into_a_newsletter():
+    # only a no-reply style address, no bulk header: still supplier correspondence, but a human looks at it
+    _, _, c, d = await classify_one("noreply@partsgmbh.de", "Your order confirmation", "We confirm your order.")
+    assert c.classification == "supplier" and "automated_sender" in c.risk_flags
+    assert d.requires_human is True and not d.wants_draft
+
+
+async def test_manually_written_mail_from_an_active_supplier_still_qualifies():
+    _, _, c, d = await classify_one("sales@partsgmbh.de", "Stock update", "Hello, the parts you asked about arrived.")
+    assert c.classification == "supplier" and c.risk_flags == []
+    assert (d.tier, d.recommended_action, d.requires_human) == (policy.TIER_SAFE, "draft_supplier_ack", False)
+
+
+async def test_customer_mail_with_list_headers_is_not_silently_ignored():
+    _, ctx, c, d = await classify_one("dana@gmail.com", "Order", "Where is my order?", headers={"List-Id": "<x.gmail.com>"})
+    assert ctx.customer["status"] == "resolved" and c.classification == "order_shipping"
+    assert "bulk_headers" in c.risk_flags and d.requires_human is True
+
+
+async def test_unknown_sender_bulk_and_auto_precedence_is_unchanged():
+    _, _, c, _ = await classify_one("news@bigshop.com", "Deals", "x", headers={"List-Unsubscribe": "<mailto:u@b.com>"})
+    assert c.classification == "newsletter_marketing"
+    _, _, c, _ = await classify_one("no-reply@someservice.io", "Report", "Your report is ready.")
+    assert c.classification == "automated_notification"
+
+
+# ── defect 2: an inactive / pending supplier never qualifies for automation ─────────────────────
+@pytest.mark.parametrize("supplier", [{**SUPPLIER, "is_active": False},
+                                      {k: v for k, v in SUPPLIER.items() if k != "is_active"},
+                                      {**SUPPLIER, "is_active": None}],
+                         ids=["inactive", "active-flag-missing", "active-flag-null"])
+async def test_inactive_supplier_goes_to_a_human(supplier):
+    _, ctx, c, d = await classify_one("sales@partsgmbh.de", "Stock update", "Hello, your account is ready.",
+                                      source=FakeSource(suppliers=[supplier]))
+    assert ctx.supplier["status"] == "resolved" and ctx.supplier["is_active"] is False
+    assert c.classification == "supplier"
+    assert (d.tier, d.recommended_action, d.requires_human) == (policy.TIER_HUMAN, "escalate_to_human", True)
+    assert any("not active" in r for r in d.reasons)
+    with pytest.raises(drafts.DraftNotPossible):
+        drafts.build_draft("draft_supplier_ack", normalize_message(gmsg("m", "t", "sales@partsgmbh.de", "s", "b")), ctx)
+
+
+async def test_inactive_supplier_gets_no_reply_text_end_to_end():
+    fake = FakeGmail([gmsg("m1", "t1", "sales@partsgmbh.de", "Hello", "Your dealer account is pending.")])
+    _, store = await run(fake, FakeSource(suppliers=[{**SUPPLIER, "is_active": False}]), gmail_drafts=True)
+    assert store.rows["m1"]["requires_human"] is True and store.rows["m1"]["draft_body"] is None and fake.drafts == {}
+
+
+# ── defect 3: footer / order-summary boilerplate does not raise serious-topic flags ─────────────
+# Structure of the real Eurosender sandbox notices (template text, test data).
+EUROSENDER_HTML = """<html><body>
+<p>Notice: this email is from "sandbox" environment. Only for testing purposes.</p>
+<h2>{headline}</h2><p>Shipping service from United Kingdom to United Kingdom ( 12.34 EUR)</p>
+<p>Dear,</p><p>Thank you for your order.</p>
+<p>{opening}</p>
+<p>For more information in this regard, please visit our FAQ section.</p>
+<p>Your Eurosender team</p>
+<p>For details on your order please click here</p><p>Order review (408540-26)</p>
+<table><tr><td>Order No</td><td>Price</td></tr><tr><td>408540-26</td><td>9.99 EUR</td></tr>
+<tr><td>Flexible changes</td><td>0.00 EUR</td></tr><tr><td>User credit discount</td><td>0.00 EUR</td></tr></table>
+<p>Follow us on social media</p>
+<p>Eurosender SARL is a private limited liability company that manages the Eurosender.com online platform.
+You can cancel your order free of charge according to our terms and conditions. A refund is subject to the general
+terms. Privacy policy applies. To unsubscribe from these notifications click here.</p></body></html>"""
+ROUTINE = dict(headline="Payment successful 408540-26",
+               opening="You have successfully placed and paid for courier services booked through Eurosender.")
+
+
+async def test_eurosender_notice_footer_words_raise_no_flags():
+    e, ctx, c, d = await classify_one("noreply@eurosender.com", "[sandbox environment] Order No. 408540-26 Payment successful",
+                                      html=EUROSENDER_HTML.format(**ROUTINE))
+    assert "cancel your order" in e.body_text and "discount" in e.body_text      # the words ARE in the mail
+    assert c.classification == "shipping_eurosender" and c.risk_flags == []
+    assert (d.tier, d.recommended_action, d.requires_human) == (policy.TIER_NONE, "log_only", False)
+
+
+@pytest.mark.parametrize("subject,headline,opening,flag", [
+    ("Order No. 408540-26 cancelled", "Order cancelled", "Your order was processed.", "cancellation"),
+    ("Order No. 408540-26 update", "Order update", "Your order has been cancelled by the courier.", "cancellation"),
+    ("Order No. 408540-26 update", "Order update", "A refund of 12.34 EUR has been issued to your card.", "refund"),
+    ("Order No. 408540-26 update", "Price change", "We applied a discount and changed the price of your order.", "price_change"),
+    ("Order No. 408540-26 held", "Customs", "Your parcel is held by customs and duties must be paid.", "customs"),
+], ids=["cancel-in-subject", "cancel-in-opening", "refund-in-opening", "price-in-opening", "customs-in-opening"])
+async def test_genuine_serious_topic_in_a_notice_still_escalates(subject, headline, opening, flag):
+    _, _, c, d = await classify_one("noreply@eurosender.com", subject,
+                                    html=EUROSENDER_HTML.format(headline=headline, opening=opening))
+    assert flag in c.risk_flags and d.requires_human is True and d.recommended_action == "escalate_to_human"
+
+
+async def test_human_mail_keeps_full_text_risk_detection_minus_boilerplate_lines():
+    # a person may write the important part after the sign-off: it must still count
+    _, _, c, d = await classify_one("dana@gmail.com", "Order AUTO-2026-1A2B3C4D",
+                                    "Where is my order?\n\nBest regards,\nDana\n\nP.S. if it is late please cancel it.")
+    assert "cancellation" in c.risk_flags and d.requires_human is True
+    # ...but an app footer / unsubscribe line is not what the customer said
+    _, _, c, d = await classify_one("dana@gmail.com", "Order AUTO-2026-1A2B3C4D",
+                                    "Where is my order?\n\nSent from my phone\nTo unsubscribe or cancel these emails click here"
+                                    "\nPrivacy policy | Terms and conditions | refund policy")
+    assert c.risk_flags == [] and d.recommended_action == "draft_order_status"
+
+
+async def test_first_person_line_with_footer_words_is_still_the_customers_message():
+    _, _, c, d = await classify_one("dana@gmail.com", "Order AUTO-2026-1A2B3C4D",
+                                    "Hi,\nplease unsubscribe me and cancel my order.")
+    assert "cancellation" in c.risk_flags and d.requires_human is True
+
+
+def test_meaningful_text_modes():
+    from email_agent.normalize import meaningful_text
+    body = ("View this email in your browser\nYour parcel is on its way.\nTrack it online.\n\nKind regards,\n"
+            "The Shipping Team\nOrder summary: discount 0.00\n© 2026 Shipping Ltd. All rights reserved. Cancel anytime.")
+    human = meaningful_text(body)
+    assert "Order summary: discount 0.00" in human and "Cancel anytime" not in human and "View this email" not in human
+    notice = meaningful_text(body, notification=True)
+    assert notice == "Your parcel is on its way.\nTrack it online."
+    assert len(meaningful_text("word " * 2000, notification=True)) <= 1500
+    assert meaningful_text("") == "" and meaningful_text(None) == ""
+
+
+# ── defect 4: Gmail errors are classified by Google's reason, not by HTTP status alone ──────────
+@pytest.mark.parametrize("body,kind,retryable", [
+    (G_DISABLED, "config", False), (G_SCOPE, "scope", False), (G_QUOTA, "rate_limit", True),
+    (G_QUOTA_MSG_ONLY, "rate_limit", True), (G_429, "rate_limit", True), (G_PERMISSION, "permission", False),
+    (G_UNKNOWN_403, "unknown", True), ((403, b"<html>Forbidden</html>"), "unknown", True),
+    (G_UNAUTH, "auth", False), ((404, b'{"error": {"status": "NOT_FOUND"}}'), "permanent", False),
+    ((503, b"oops"), "transient", True),
+], ids=["api-disabled", "insufficient-scope", "quota", "quota-message-only", "http-429", "permission",
+        "unknown-403", "unparseable-403", "unauthenticated", "not-found", "server-error"])
+def test_gmail_error_classification(body, kind, retryable):
+    from email_agent.gmail_client import classify_error
+    assert classify_error(body[0], body[1])[0] == kind
+    fake = FakeGmail()
+    fake.fail["/profile"] = [body] * 9
+    with pytest.raises(GmailError) as e:
+        client_for(fake).profile()
+    assert e.value.kind == kind and e.value.retryable is retryable and e.value.http == body[0]
+
+
+def test_invalid_grant_is_authentication_not_retried():
+    fake = FakeGmail(token_status=400, token_error="invalid_grant")
+    with pytest.raises(GmailError) as e:
+        client_for(fake).profile()
+    assert e.value.kind == "auth" and not e.value.retryable and fake.paths().count("TOKEN") == 1
+
+
+def test_permanent_errors_are_not_retried_but_rate_limit_backs_off_and_recovers():
+    for body in (G_DISABLED, G_SCOPE, G_PERMISSION, G_UNKNOWN_403):
+        fake = FakeGmail()
+        fake.fail["/profile"] = [body] * 5
+        with pytest.raises(GmailError):
+            client_for(fake).profile()
+        assert fake.paths("GET").count("/profile") == 1
+    fake, sleeps = FakeGmail(), []
+    fake.fail["/profile"] = [G_QUOTA, G_QUOTA]
+    c = GmailClient(cfg(), transport=fake, sleep=sleeps.append, min_interval_s=0)
+    assert c.profile()["emailAddress"] == MAILBOX and fake.paths("GET").count("/profile") == 3
+    assert sleeps == [5, 15]                                         # longer than the 2s/4s used for 5xx
+
+
+def test_requests_are_paced():
+    fake, sleeps = FakeGmail(), []
+    c = GmailClient(cfg(), transport=fake, sleep=sleeps.append, clock=lambda: 1000.0, min_interval_s=1.5)
+    c.profile()
+    assert sleeps == []
+    c.profile()
+    assert sleeps == [1.5]
+    assert load_config({}).min_request_interval_s == 1.5
+    assert load_config({"EMAIL_AGENT_MIN_REQUEST_INTERVAL_MS": "250"}).min_request_interval_s == 0.25
+
+
+async def test_quota_error_mid_cycle_throttles_instead_of_failing_as_scope():
+    fake = FakeGmail([gmsg("m1", "t1", "dana@gmail.com", "q", "is this part in stock?"),
+                      gmsg("m2", "t2", "dana@gmail.com", "q", "is this part in stock?")])
+    fake.fail["/threads/t1"] = [G_QUOTA] * 3                          # outlasts the client's own back-off
+    store = InMemoryStore()
+    first, _ = await run(fake, FakeSource(users=[USER]), store)
+    assert first.get("aborted") is None and first["throttled"] is True and first["failed"] == 0
+    assert store.rows["m1"]["status"] == "retry" and store.rows["m1"]["attempts"] == 0   # no attempt burned
+    assert "m2" not in store.rows                                    # cycle stopped politely, nothing lost
+    second, _ = await run(fake, FakeSource(users=[USER]), store)
+    assert second["processed"] == 2 and store.rows["m1"]["status"] == "processed"
+
+
+@pytest.mark.parametrize("body,kind", [(G_DISABLED, "config"), (G_SCOPE, "scope"), (G_PERMISSION, "permission")],
+                         ids=["api-disabled", "scope", "permission"])
+async def test_mailbox_level_errors_abort_with_the_right_category(body, kind):
+    fake = FakeGmail([gmsg("m1", "t1", "dana@gmail.com", "x", "y")])
+    fake.fail["/profile"] = [body]
+    summary, store = await run(fake)
+    assert summary["connection"]["error_kind"] == kind and store.rows == {}
+    fake2 = FakeGmail([gmsg("m1", "t1", "dana@gmail.com", "x", "y")])
+    fake2.fail["/threads/t1"] = [body]
+    summary2, store2 = await run(fake2)
+    assert summary2["aborted"] == kind and store2.rows["m1"]["attempts"] == 0
+
+
+async def test_loop_alerts_on_config_errors_but_not_on_rate_limits(monkeypatch):
+    from email_agent import loop as loop_mod
+    assert {"auth", "wrong_account", "scope", "config", "permission"} <= set(loop_mod._ATTENTION)
+    assert "rate_limit" not in loop_mod._ATTENTION and "unknown" not in loop_mod._ATTENTION
+
+
+async def test_thread_is_fetched_once_per_cycle_even_with_several_new_messages():
+    fake = FakeGmail([gmsg("m1", "t1", "dana@gmail.com", "q", "is this part in stock?", ts=1000),
+                      gmsg("m2", "t1", "dana@gmail.com", "Re: q", "and the price?", ts=2000)])
+    summary, store = await run(fake, FakeSource(users=[USER]))
+    assert summary["processed"] == 2 and fake.paths("GET").count("/threads/t1") == 1
