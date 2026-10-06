@@ -6842,3 +6842,21 @@ Ran `maintenance/email_agent_cli.py run-once --limit 3 --dry-run` in a one-off p
 - 2 messages were mail this mailbox sent to itself (labels INBOX+SENT, from = to = mailbox) → skipped as outbound, by design. They are the platform's own notifications arriving in its inbox.
 - HTTP calls: 2 token refreshes, 2 `GET profile`, 1 `GET messages`, 3 `GET threads/{id}`. Zero non-GET requests to Gmail. Messages still carry UNREAD afterwards. No Gmail draft, no in-memory reply text, nothing sent. `email_agent_messages` does not exist before or after; alembic still 0038.
 - NOT exercised on live data (no such mail in the 3-message sample): customer / order / shipment / supplier resolution from a real email, and the safe-for-future-automation tier. Those remain proven by tests and by the earlier read-only DB check only.
+
+## 2026-10-06 — Email Agent: 25-message live read-only sample; four classifier/policy defects found (not patched)
+
+Ran the unchanged CLI (`run-once --limit 25 --dry-run`) in a one-off process with `EMAIL_AGENT_QUERY="in:inbox -from:me newer_than:30d"` set for that process only (the setting already existed; no code change, default query untouched).
+
+**Result:** 25 listed, 25 processed, 0 failed. Categories: shipping_eurosender 12, supplier 9, newsletter_marketing 2, account_security 1, payment_billing 1. Context: supplier resolved 9; customer / order / shipment resolved 0. Policy: human 12, safe-for-future-automation 9, no-reply 4. Gmail requests GET-only (1 list, 25 thread reads, 1 profile); labels of all 34 messages in those threads unchanged on re-read; `email_agent_messages` absent before and after; alembic 0038; no restart.
+
+**Sample composition:** no customer mail. The 25 newest inbound messages were Eurosender (mostly sandbox order notices), supplier marketing mail, two social newsletters, one Google alert, one vendor receipt. The 30-day window holds at least 100 more inbound messages from other senders (ids counted only, not read), so customer/order paths remain unexercised on live mail.
+
+**Defects (VERIFIED on the live sample, root cause in code, NOT fixed in this run):**
+1. **Supplier newsletters classified as supplier business mail and given a reply draft.** All 9 `supplier` messages (ASAP Network 7, SNG Barratt 2) carry `List-Unsubscribe` (7 also `List-Id`, 2 `Precedence: bulk`). `classifier.classify` only checks bulk/automated headers when neither supplier nor customer is resolved, so a known supplier's marketing blast becomes `supplier` → `draft_supplier_ack`. Fix: evaluate bulk/automated headers before the resolved-supplier branch (keep the supplier reference; category `newsletter_marketing` / `automated_notification`).
+2. **Inactive supplier treated as verified.** ASAP Network is `is_active=false` (`account_active_pending_brand_approval`) yet resolves and qualifies for an acknowledgement. Fix: `policy.decide` requires `supplier.is_active` for `draft_supplier_ack`, else human.
+3. **Boilerplate triggers risk flags.** All 9 Eurosender sandbox order notices were flagged `cancellation` + `price_change` ("cancel" in the footer, "discount" in a promo line) and escalated to a human; 9 of the 12 escalations are this noise. Fix: for notification categories, take serious flags from the subject and the opening of the body only, not the whole text.
+4. **Gmail quota 403 handled as a permanent "scope" error.** Follow-up verification reads hit `Quota exceeded … Units per minute per user`; `gmail_client._call` maps every 403 to `kind="scope"` (non-retryable, aborts the cycle, would alert the owner). Same root cause as the known API-disabled mislabel. Fix: read the error reason — rate/quota → `transient`, API disabled → `config`, insufficient scope → `scope` — and pace thread reads.
+
+**Correct behaviour confirmed:** the 5 Eurosender order codes in the subjects match 0 orders (no order in the DB has any Eurosender code — they are sandbox test shipments), so "order unresolved" is right; no identifier was cited without DB verification.
+
+**Tests:** 112 passed, 1 skipped. No code changed.
