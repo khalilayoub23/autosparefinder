@@ -17,7 +17,7 @@ has been read.
 | Background loop | `email_agent/loop.py`, registered in `BACKEND_API_ROUTES.startup()` as `email_agent_loop` |
 | Status endpoint | `routes/email_agent_routes.py` → `GET /api/v1/system/email-agent` (`X-Collect-Secret`) |
 | Operator CLI | `maintenance/email_agent_cli.py` (`status`, `run-once`) |
-| OAuth setup helper (host) | `maintenance/gmail_oauth_setup.py` (`auth-url`, `exchange`) |
+| OAuth setup helper (host) | `maintenance/gmail_oauth_setup.py` (`auth-url`, `callback-status`, `exchange`) |
 | Audit / idempotency table | `email_agent_messages`, PII DB, migration `alembic_pii/versions/0039_email_agent_messages.py` |
 | Tests | `backend/tests/test_email_agent.py` |
 
@@ -88,12 +88,17 @@ Everything must be under `autosparefinder2024@gmail.com` and project `valid-mome
    `gmail.readonly` and `gmail.compose`.
 3. Use the existing web client, or create a new one, with the redirect URI
    `https://autosparefinder.co.il/`.
-4. On the host: `python3 backend/maintenance/gmail_oauth_setup.py auth-url`
-   (add `--read-only` to request `gmail.readonly` alone). Open the URL signed in as the
-   business mailbox and approve.
-5. Copy the `code` value from the redirect URL and run
-   `python3 backend/maintenance/gmail_oauth_setup.py exchange --code <code>`.
-   It writes the three `GMAIL_OAUTH_*` values to `.env` and prints only key names and scopes.
+4. On the host: `python3 backend/maintenance/gmail_oauth_setup.py auth-url --read-only`
+   (drop `--read-only` to also request `gmail.compose`). The URL carries a one-time `state`
+   and is valid for one hour. Open it signed in as the business mailbox and approve.
+   **After approving, the browser shows the normal AutoSpareFinder homepage.** That is
+   expected: the redirect goes to `https://autosparefinder.co.il/?state=…&code=…&scope=…`,
+   and the homepage does not react to it. Nothing needs to be copied.
+5. Within eight minutes run `python3 backend/maintenance/gmail_oauth_setup.py exchange`.
+   It finds the redirect that carries our `state` in the edge nginx access log, exchanges the
+   code server-side, writes the three `GMAIL_OAUTH_*` values to `.env` and prints only key
+   names and scopes. `callback-status` shows, without any secret, whether the redirect
+   arrived, its age, the granted scope and whether Google returned a code or an error.
 6. Restart the backend with the normal restart procedure. Migration 0039 creates the table.
 7. `docker exec autospare_backend python3 /app/maintenance/email_agent_cli.py status`
    must show `ok: true`, the business mailbox, `can_read: true`.
@@ -253,6 +258,11 @@ requests to Gmail.
 - Gmail push (`users.watch` + Pub/Sub). The agent polls. `watch` is deliberately not on the
   endpoint allowlist; adding push means adding that endpoint, a Pub/Sub topic in the business
   project and an authenticated webhook route.
+- A dedicated OAuth callback path. The redirect lands on the homepage, so the authorization
+  code is written to the nginx access log (and to same-origin `Referer` headers). A code is
+  single-use and expires within minutes, but the clean design is a callback location with
+  `access_log off`, like the AliExpress one. It needs a new redirect URI on the Google client,
+  a backend route and an nginx restart.
 - Owner review commands in the WhatsApp console.
 - LLM-written drafts and LLM classification.
 

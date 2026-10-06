@@ -6801,3 +6801,19 @@ Running container: still holds the previously loaded environment until the backe
 **Remaining owner step:** enable the Gmail API and add `gmail.readonly` + `gmail.compose` to the consent screen in project `valid-moment-444021-r6` (account `autosparefinder2024@gmail.com`), then approve the consent URL from `gmail_oauth_setup.py auth-url`. Steps in `docs/EMAIL_AGENT.md`.
 
 **Safety:** no email sent, no Gmail mailbox touched, no container restarted, no production row written, no secret printed.
+
+## 2026-10-06 — Gmail OAuth: "no code after consent" root-caused; setup helper now captures the redirect itself
+
+**Report:** the owner approved the Gmail consent screen (twice, 2026-10-04) and saw no `?code=` in the browser.
+
+**Root cause (VERIFIED from the nginx access log):** Google did return the code both times. Two requests reached the edge nginx: `GET /?iss=https://accounts.google.com&code=…&scope=https://www.googleapis.com/auth/gmail.readonly` at 20:17:34 and 20:20:58 UTC, HTTP 200, Referer `https://accounts.google.com/`. No `error` parameter. Requests made by the same page afterwards (assets, `/api/v1/parts/categories` 20 s later, the click to `/login` two minutes later) still carried the full URL with the code in their `Referer`, so nothing on our side removed it: nginx `location /` serves `index.html` with no redirect, and the frontend has no code that rewrites the query on `/`. The redirect URI is simply the public homepage, which renders normally. The flow depended on a person spotting the code in a long address-bar URL and copying it.
+
+**Google-side configuration (VERIFIED by behaviour, console not accessed):** Google only redirects to a URI registered on the client, and it redirected to exactly `https://autosparefinder.co.il/` with a code, so the redirect URI and the `gmail.readonly` scope are accepted for client `614571826604-cmdavo…`. Whether the Gmail API is enabled in the project is still unverified (it only shows on the first Gmail call).
+
+**Fix:** `backend/maintenance/gmail_oauth_setup.py` — `auth-url` adds a one-time `state` (kept in a 0600 file outside the repo, valid 1 h); new `callback-status` finds the redirect with that `state` in the nginx access log and reports only non-secret facts; `exchange` without `--code` takes the code from that redirect, refusing a missing, errored or older-than-8-minutes callback. No code, token or secret is printed. Tests: `backend/tests/test_gmail_oauth_setup.py` (9).
+
+**Verification:** tests 112 passed, 1 skipped (`test_gmail_oauth_setup.py` + `test_email_agent.py`). Live trace with a fake code: issued a URL, sent `GET https://autosparefinder.co.il/?state=<ours>&iss=…&code=<fake>&scope=…gmail.readonly` (200, no redirect), `callback-status` then reported `callback_received: true, code_present: true, code_fresh: true, granted_scope: gmail.readonly`. No token exchange performed; `.env` has no `GMAIL_OAUTH_*` line.
+
+**Open:** authorization codes are written to the nginx access log (and same-origin Referer). The two real codes from 2026-10-04 were never exchanged and are long expired. A dedicated callback path with `access_log off` needs a new redirect URI on the Google client, a backend route and an nginx restart — not done (out of scope: no restart, no Google console change).
+
+**Safety:** no email, draft, Gmail call, restart, migration or credential change.

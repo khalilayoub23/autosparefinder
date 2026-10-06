@@ -313,6 +313,10 @@ Rules:
 - **Confirm Google account AND project before creating any resource.** Read the account button in
   the console (not `authuser=` URL param — it lies). Business assets → `autosparefinder2024@gmail.com`
   / project `valid-moment-444021-r6`.
+- **An OAuth `redirect_uri` must land where something visibly receives the code.** Pointing it at the
+  homepage "works" (Google redirects with `?code=`) but the page renders normally and the owner sees
+  nothing (2026-10-04, Gmail: approved twice, "no code"). Bind each attempt to a `state`, capture the
+  redirect yourself, and prove a missing code from the access log before blaming Google's config.
 - **OAuth client type matters.** A Desktop client cannot have JS origins or do browser sign-in.
   Inspect the live client config before asserting a root cause — error messages name symptoms.
 
