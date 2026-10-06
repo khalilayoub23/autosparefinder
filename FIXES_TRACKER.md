@@ -6832,3 +6832,13 @@ Running container: still holds the previously loaded environment until the backe
 - VERIFIED — one-off process with the stored grant: token refresh OK, `GET gmail/v1/users/me/profile` 200, mailbox `autosparefinder2024@gmail.com` (matches the configured business mailbox), granted scope exactly `gmail.readonly`, `can_read=true`, `can_draft=false`. HTTP calls made: `POST oauth2 token`, `GET gmail profile`. No message listed or read.
 - NOT DONE (by instruction) — backend not restarted, so the running app does not have the grant loaded; migration 0039 not applied; `EMAIL_AGENT_ENABLED` unset. No email, draft or Gmail mutation.
 - Still open: `gmail_client` labels an API-disabled 403 as `error_kind="scope"`; authorization codes are written to the nginx access log (needs a dedicated callback path).
+
+## 2026-10-06 — Email Agent: first live read-only E2E against the business mailbox
+
+Ran `maintenance/email_agent_cli.py run-once --limit 3 --dry-run` in a one-off process fed the stored grant (no restart, in-memory store).
+
+- VERIFIED — mailbox `autosparefinder2024@gmail.com`, scope `gmail.readonly` only. 3 messages listed, 3 threads fetched (1 message each), 3 processed, 0 failed.
+- 1 inbound message ran the full pipeline: authenticated Google sender → `account_security` (0.9) → context all unresolved with explicit reasons, 0 verified references → `human_approval_required` / `escalate_to_human`. Read and context post-conditions OK.
+- 2 messages were mail this mailbox sent to itself (labels INBOX+SENT, from = to = mailbox) → skipped as outbound, by design. They are the platform's own notifications arriving in its inbox.
+- HTTP calls: 2 token refreshes, 2 `GET profile`, 1 `GET messages`, 3 `GET threads/{id}`. Zero non-GET requests to Gmail. Messages still carry UNREAD afterwards. No Gmail draft, no in-memory reply text, nothing sent. `email_agent_messages` does not exist before or after; alembic still 0038.
+- NOT exercised on live data (no such mail in the 3-message sample): customer / order / shipment / supplier resolution from a real email, and the safe-for-future-automation tier. Those remain proven by tests and by the earlier read-only DB check only.
