@@ -6913,3 +6913,23 @@ Five test emails were sent from the business mailbox to the owner's registered c
 4. **Outlook's reply separator survives quote stripping (normalization, cosmetic).** The `________________________________` line stays in `new_text`. The `From: / Sent: / To: / Subject:` block is cut correctly; sender, order selection and risk flags were not affected.
 
 Delivery note: the earlier "not in Hotmail inbox" report was not root-caused (no bounce on the Gmail side); the owner later replied to all five, so they were delivered.
+
+## 2026-10-09 — Email Agent: a reply with no newly-authored text can no longer reach the safe tier
+
+**Reported by the 2026-10-08 live E2E:** two real customer replies whose own text was only dots above Outlook's quoted original were placed in `safe_for_future_automation` (`draft_order_status`).
+
+**Root cause (three places, one idea — nothing checked that the sender had written anything):**
+1. `classifier.classify` built its text as `subject + (new_text or body_text)`. With dots as new text the category came from the inherited `Re:` subject; with an empty new text it fell back to the FULL body, i.e. the quoted original.
+2. `classifier.detect_flags` used the same `new_text or body_text` fallback, so risk words could be lifted from the quote.
+3. `policy.decide` had no rule about an empty message; a verified order (resolved from the quoted order number) plus an `order_shipping` category was enough for the safe tier.
+
+**Fix:**
+- `normalize.authored_text()` = the text above the quote, boilerplate lines removed, never falling back to the quote; `normalize.has_meaningful_text()` = at least two letters or digits in any script (whitespace, punctuation, dots, divider lines are empty). `strip_quoted` now drops the mail client's trailing divider line (Outlook's row of underscores).
+- `classifier.detect_flags`: a human (non-notification) message without meaningful authored text gets `empty_message`; for human mail, flags are computed on the authored text only.
+- `classifier.classify`: content keywords come from the subject + authored text only; an empty message contributes none (the customer's own earlier inbound messages may still set the category), otherwise `unknown` with reason "no newly-authored text".
+- `policy.decide`: `empty_message` is checked before the category and always returns `human_approval_required`; it is also in `HUMAN_FLAGS`. `drafts.build_draft` refuses a source email with no authored text.
+- Unchanged on purpose: `context.resolve_context` still reads identifiers from the quoted text (ownership enforced).
+
+**Tests:** 30 focused tests (23 failed on the old code): empty / whitespace / punctuation / dots / divider-only replies over Outlook- and Gmail-style quotes, quote-only, real short replies in English, Hebrew and Arabic, real reply + quoted order number still safe, empty reply + quoted valid order → order resolved but human, quoted risk words not lifted. Email Agent + OAuth + compose suites: 184 passed, 3 skipped (with the real-Postgres store test). App-import / config suites: 58 passed; host compose test 3/3.
+
+**Live replay (read-only, in memory, GET only):** the same two real replies now give — order still resolved (`AUTO-2026-BC7D3824`, `AUTO-2026-1D2E937B`), `risk_flags=['empty_message']`, `human_approval_required`, no reply text. Gmail: 5 GET, 0 non-GET. Backend `RestartCount=0`; the fix is on disk only (not loaded in the running app); agent still disabled.

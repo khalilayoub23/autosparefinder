@@ -12,7 +12,8 @@ Process:
   HUMAN APPROVAL REQUIRED (no draft is prepared):
     refund, cancellation, price change, financial commitment, address change, legal / dispute,
     complaint, security / account recovery, customs, payment / billing, unknown, a risky
-    attachment, an unauthenticated sender, and any ambiguous or conflicting context.
+    attachment, an unauthenticated sender, a message with no newly-authored text (a quoted
+    original is context, never a request), and any ambiguous or conflicting context.
   NO REPLY: newsletters, spam, automated / platform notifications without a serious flag.
   SENDING: every decision is sendable=False. send_allowed() returns False unconditionally in
   this phase - it does not read the environment or any flag, so no configuration can enable it.
@@ -35,7 +36,8 @@ HUMAN_CATEGORIES = ("complaint_dispute", "refund_cancellation", "payment_billing
                     "account_security", "unknown")
 HUMAN_FLAGS = ("refund", "cancellation", "dispute_legal", "complaint", "price_change",
                "financial_commitment", "address_change", "security", "customs",
-               "risky_attachment", "unauthenticated_sender", "bulk_headers", "automated_sender")
+               "risky_attachment", "unauthenticated_sender", "bulk_headers", "automated_sender",
+               "empty_message")
 NOTIFICATION_CATEGORIES = ("automated_notification", "shipping_eurosender", "ebay", "aliexpress")
 DRAFT_ACTIONS = ("draft_order_status", "draft_request_order_number", "draft_request_details",
                  "draft_supplier_ack")
@@ -80,6 +82,11 @@ def decide(c: Classification, ctx: ResolvedContext, already_answered: bool = Fal
         if ctx.order.get("status") in ("ambiguous", "sender_mismatch"):
             return _human([f"order context is {ctx.order['status']}: {ctx.order.get('reason', '')}"])
         return PolicyDecision(TIER_NONE, "log_only", False, [f"{cat}: informational, no reply"])
+
+    if "empty_message" in flags:
+        # checked before the category: whatever the subject or a quoted original suggests, a message
+        # in which the sender wrote nothing is not a request that can be answered automatically
+        return _human(["empty_message: the sender wrote no new text; quoted content is context, not a request"])
 
     if cat in HUMAN_CATEGORIES:
         return _human([f"category {cat} always requires human approval"])

@@ -24,6 +24,9 @@ Process: evidence is weighed in this order, never from the subject line alone -
          detected independently of the category, on the MEANINGFUL text only
          (normalize.meaningful_text): for automated notices that is the subject plus the opening
          of the body, not the order-summary / promo / legal footer.
+         A human message whose newly-authored part (normalize.authored_text: above the quote,
+         boilerplate removed) holds no letters or digits is flagged empty_message. The category may
+         still be derived from the subject or the quote, but the policy never automates it.
          A classification may cite only identifiers that context resolution verified.
 Data Imported/Modified: none.
 Last Updated: 2026-10-04
@@ -35,7 +38,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Dict, List, Tuple
 
 from email_agent.context import ResolvedContext
-from email_agent.normalize import NormalizedEmail, meaningful_text
+from email_agent.normalize import NormalizedEmail, authored_text, has_meaningful_text, meaningful_text
 from email_agent.senders import is_automated_address
 
 CATEGORIES = (
@@ -134,19 +137,30 @@ def is_notification(email: NormalizedEmail, ctx: ResolvedContext) -> bool:
 
 
 def detect_flags(email: NormalizedEmail, ctx: ResolvedContext) -> List[str]:
-    body = meaningful_text(email.new_text or email.body_text, notification=is_notification(email, ctx))
+    notice = is_notification(email, ctx)
+    # A person's message is judged on what they newly wrote - never on the quoted original.
+    # (Automated notices have no quote to speak of, so the body fallback is kept for them.)
+    body = meaningful_text((email.new_text or email.body_text) if notice else email.new_text, notification=notice)
     text = f"{email.subject}\n{body}".lower()
     flags = [name for name, kws in _FLAGS.items() if _hits(text, kws)]
     if any(a.get("risky") for a in email.attachments):
         flags.append("risky_attachment")
     if not ctx.sender_authenticated:
         flags.append("unauthenticated_sender")
+    # A person's message with nothing newly written (only dots / whitespace / the client's divider
+    # above a quoted original) is not a request. The quote may still resolve context (an order
+    # number), but it must never make the message actionable (2026-10-08 live E2E: replies made of
+    # dots reached the safe tier on the strength of the quoted text of our own email).
+    if not is_notification(email, ctx) and not has_meaningful_text(authored_text(email)):
+        flags.append("empty_message")
     return flags
 
 
 def classify(email: NormalizedEmail, thread: List[NormalizedEmail], ctx: ResolvedContext) -> Classification:
     flags = detect_flags(email, ctx)
-    text = f"{email.subject}\n{email.new_text or email.body_text}".lower()
+    empty = "empty_message" in flags
+    # content keywords are read from the subject and the newly-authored text only (no quoted original)
+    text = f"{email.subject}\n{email.new_text}".lower()
     h = email.headers
     kind, authed = ctx.sender_kind, ctx.sender_authenticated
 
@@ -203,7 +217,9 @@ def classify(email: NormalizedEmail, thread: List[NormalizedEmail], ctx: Resolve
                 return cat, hits
         return None, []
 
-    cat, hits = content(text, "message")
+    # An empty message contributes no content of its own (its subject is usually an inherited "Re:").
+    # The customer's own EARLIER messages in the thread may still say what the conversation is about.
+    cat, hits = (None, []) if empty else content(text, "message")
     origin = "this message"
     if not cat:
         earlier = "\n".join(f"{m.subject}\n{m.new_text}" for m in thread
@@ -219,6 +235,8 @@ def classify(email: NormalizedEmail, thread: List[NormalizedEmail], ctx: Resolve
             conf -= 0.15
         return done(cat, conf, f"content signals in {origin}: {', '.join(hits[:5])}")
 
+    if empty:
+        return done("unknown", 0.2, "message has no newly-authored text (only empty, punctuation or quoted content)")
     return done("unknown", 0.2, "no sender, header or content signal matched a known category")
 
 

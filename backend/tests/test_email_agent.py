@@ -1154,3 +1154,118 @@ async def test_thread_is_fetched_once_per_cycle_even_with_several_new_messages()
                       gmsg("m2", "t1", "dana@gmail.com", "Re: q", "and the price?", ts=2000)])
     summary, store = await run(fake, FakeSource(users=[USER]))
     assert summary["processed"] == 2 and fake.paths("GET").count("/threads/t1") == 1
+
+
+# ══ Regression from the 2026-10-08 live E2E: a reply with no newly-authored text must never be automatable ══
+# Shape of the real Hotmail/Outlook replies: a few dots, Outlook's separator, then the quoted original
+# (our own outbound message) which is where the order number sits.
+OUTLOOK_QUOTE = ("________________________________\r\nFrom: AutoSpareFinder <autosparefinder2024@gmail.com>\r\n"
+                 "Sent: Friday, October 9, 2026 00:25\r\nTo: dana@gmail.com <dana@gmail.com>\r\n"
+                 "Subject: Order update\r\n\r\nHello,\r\n\r\nI placed order AUTO-2026-1A2B3C4D on your site and I would "
+                 "like an update on it.\r\nPlease change the delivery address and give me a refund.\r\n\r\nThank you.\r\n")
+GMAIL_QUOTE = ("On Fri, 9 Oct 2026 at 00:25, AutoSpareFinder <autosparefinder2024@gmail.com> wrote:\n"
+               "> I placed order AUTO-2026-1A2B3C4D on your site and I would like an update on it.\n")
+
+
+async def reply_case(authored, quote=OUTLOOK_QUOTE, subject="Re: Order update"):
+    ours = normalize_message(gmsg("m0", "t1", MAILBOX, "Order update", "I placed order AUTO-2026-1A2B3C4D ...",
+                                  labels=("SENT",), ts=1000, to="dana@gmail.com"), MAILBOX)
+    e = normalize_message(gmsg("m1", "t1", "dana@gmail.com", subject, authored + quote, ts=2000), MAILBOX)
+    src = FakeSource(users=[USER], orders=[ORDER])
+    ctx = await resolve_context(e, [ours, e], src)
+    c = classifier.classify(e, [ours, e], ctx)
+    return e, ctx, c, policy.decide(c, ctx)
+
+
+EMPTY_REPLIES = {"dots": ".....\r\n", "whitespace": "  \r\n\r\n \t\r\n", "nothing": "", "punctuation": "?!\r\n...\r\n— \r\n",
+                 "separators": "-----\r\n=====\r\n* * *\r\n", "dots-and-blank-lines": "...\r\n\r\n"}
+
+
+@pytest.mark.parametrize("authored", EMPTY_REPLIES.values(), ids=list(EMPTY_REPLIES))
+@pytest.mark.parametrize("quote", [OUTLOOK_QUOTE, GMAIL_QUOTE], ids=["outlook-quote", "gmail-quote"])
+async def test_reply_without_authored_text_is_never_automatable(authored, quote):
+    e, ctx, c, d = await reply_case(authored, quote)
+    # the quoted identifier is still used for context: exact customer, exact order, owned by the sender
+    assert ctx.customer["status"] == "resolved" and ctx.order["status"] == "resolved"
+    assert ctx.order["order_number"] == "AUTO-2026-1A2B3C4D" and c.references["order_number"] == "AUTO-2026-1A2B3C4D"
+    # ...but the quote is not a customer request
+    assert "empty_message" in c.risk_flags
+    assert (d.tier, d.recommended_action, d.requires_human) == (policy.TIER_HUMAN, "escalate_to_human", True)
+    assert not d.wants_draft and any("empty_message" in r for r in d.reasons)
+
+
+async def test_empty_reply_gets_no_reply_text_end_to_end():
+    fake = FakeGmail([gmsg("m0", "t1", MAILBOX, "Order update", "I placed order AUTO-2026-1A2B3C4D ...",
+                           labels=("SENT",), ts=1000, to="dana@gmail.com"),
+                      gmsg("m1", "t1", "dana@gmail.com", "Re: Order update", ".....\r\n" + OUTLOOK_QUOTE, ts=2000)])
+    summary, store = await run(fake, FakeSource(users=[USER], orders=[ORDER]), gmail_drafts=True)
+    row = store.rows["m1"]
+    assert row["context"]["order"]["status"] == "resolved" and "empty_message" in row["risk_flags"]
+    assert row["requires_human"] is True and row["policy_tier"] == policy.TIER_HUMAN
+    assert row["draft_body"] is None and fake.drafts == {} and summary["drafts"] == 0
+
+
+async def test_empty_new_email_with_only_a_subject_goes_to_a_human():
+    _, _, c, d = await classify_one("dana@gmail.com", "Where is my order AUTO-2026-1A2B3C4D?", " \n")
+    assert "empty_message" in c.risk_flags and d.requires_human is True and not d.wants_draft
+
+
+SHORT_REPLIES = ["Where is my order?", "Can you update me?", "Please check this", "ok thanks", "איפה ההזמנה שלי?",
+                 "أين طلبي؟", "any news"]
+
+
+@pytest.mark.parametrize("authored", SHORT_REPLIES)
+async def test_real_short_reply_is_meaningful(authored):
+    e, ctx, c, d = await reply_case(authored + "\r\n")
+    assert e.new_text == authored and "empty_message" not in c.risk_flags
+    assert ctx.order["status"] == "resolved" and ctx.order["order_number"] == "AUTO-2026-1A2B3C4D"   # from the quote
+
+
+async def test_real_short_reply_with_quoted_order_number_still_qualifies():
+    e, ctx, c, d = await reply_case("Where is my order?\r\n")
+    assert c.classification == "order_shipping" and c.risk_flags == []
+    assert (d.tier, d.recommended_action, d.requires_human) == (policy.TIER_SAFE, "draft_order_status", False)
+    assert "AUTO-2026-1A2B3C4D" in drafts.build_draft(d.recommended_action, e, ctx).body
+
+
+async def test_quoted_risk_words_do_not_become_the_customers_request_when_they_wrote_something():
+    # the quote mentions an address change and a refund; the customer only asked a status question
+    _, _, c, d = await reply_case("Where is my order?\r\n")
+    assert "refund" not in c.risk_flags and "address_change" not in c.risk_flags and d.tier == policy.TIER_SAFE
+
+
+def test_meaningful_authored_text_definition():
+    from email_agent.normalize import has_meaningful_text
+    for empty in ("", "   ", "\n\n", ".....", "?!", "...\n________________________________", "-----", "* * *", "—", "> ", "…", "._-"):
+        assert has_meaningful_text(empty) is False, repr(empty)
+    for real in ("Where is my order?", "ok", "כן", "نعم", "AUTO-2026-1A2B3C4D", "12", "thanks!"):
+        assert has_meaningful_text(real) is True, repr(real)
+
+
+def test_outlook_separator_is_not_left_in_the_new_text():
+    e = normalize_message(gmsg("m1", "t1", "dana@gmail.com", "Re: x", "Where is my order?\r\n" + OUTLOOK_QUOTE))
+    assert e.new_text == "Where is my order?"
+    assert normalize_message(gmsg("m2", "t1", "dana@gmail.com", "Re: x", ".....\r\n" + OUTLOOK_QUOTE)).new_text == "....."
+
+
+async def test_notification_mail_is_not_flagged_empty():
+    _, _, c, _ = await classify_one("noreply@eurosender.com", "Order No. 408540-26 Payment successful", html=EUROSENDER_HTML.format(**ROUTINE))
+    assert "empty_message" not in c.risk_flags
+
+
+async def test_empty_reply_category_is_never_taken_from_the_quoted_original():
+    # the quote talks about a refund and an address change; the sender wrote nothing
+    _, ctx, c, d = await reply_case(".....\r\n")
+    assert c.classification == "unknown" and "no newly-authored text" in c.reason
+    assert c.risk_flags == ["empty_message"]                      # no refund / address_change lifted from the quote
+    assert ctx.order["status"] == "resolved" and d.tier == policy.TIER_HUMAN
+
+
+async def test_empty_followup_may_use_the_customers_own_earlier_message_but_is_still_not_automatable():
+    first = normalize_message(gmsg("m1", "t1", "dana@gmail.com", "Hi", "Where is my order?", ts=1000))
+    follow = normalize_message(gmsg("m2", "t1", "dana@gmail.com", "Re: Hi", "???", ts=2000))
+    ctx = await resolve_context(follow, [first, follow], FakeSource(users=[USER]))
+    c = classifier.classify(follow, [first, follow], ctx)
+    d = policy.decide(c, ctx)
+    assert c.classification == "order_shipping" and "earlier messages" in c.reason and "empty_message" in c.risk_flags
+    assert d.tier == policy.TIER_HUMAN and not d.wants_draft

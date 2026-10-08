@@ -162,6 +162,12 @@ Risk flags are detected on the meaningful text only (`normalize.meaningful_text`
 - Human-written mail: the whole message minus boilerplate lines (unsubscribe, legal, "sent from
   my …"). Text after a sign-off still counts, and a footer-looking line written in the first
   person is kept.
+- A human message with no newly-authored text is flagged `empty_message` and always goes to a
+  human. "Newly-authored" is the text above the quoted original, minus boilerplate lines; it
+  counts only if it holds at least two letters or digits, so whitespace, dots, punctuation and
+  the mail client's divider line are empty. The quoted original is still read for identifiers
+  (an order number in the quote resolves the order, ownership enforced), but it never supplies
+  the category, a risk flag or a reason to reply.
 - Automated notices: the subject plus the opening of the body, up to the sign-off or the first
   footer line (at most 1,500 characters). Order-summary tables, promo lines and legal paragraphs
   below that are ignored.
@@ -179,7 +185,8 @@ references           customer_id / order_id / order_number / tracking_number /
                      eurosender_order_code / supplier_id — DB-verified values only
 risk_flags           refund, cancellation, dispute_legal, complaint, price_change,
                      financial_commitment, address_change, security, customs,
-                     risky_attachment, unauthenticated_sender, bulk_headers, automated_sender
+                     risky_attachment, unauthenticated_sender, bulk_headers, automated_sender,
+                     empty_message
 recommended_action   draft_order_status | draft_request_order_number | draft_request_details |
                      draft_supplier_ack | escalate_to_human | log_only | ignore
 requires_human       true / false
@@ -214,7 +221,7 @@ What stays unresolved:
 | Tier | When | Result |
 |---|---|---|
 | Safe for future automation | verified order status for the authenticated account owner; missing order number; missing vehicle / part details; acknowledgement to a verified **and active** supplier | a draft is prepared |
-| Human approval required | refund, cancellation, price change, financial commitment, address change, legal / dispute, complaint, security / account recovery, customs, payment / billing, unknown category, risky attachment, unauthenticated sender, inactive or pending supplier, no-reply supplier address, ambiguous or conflicting context, order status the templates do not cover, a draft that failed verification | no draft, `requires_human = true` |
+| Human approval required | refund, cancellation, price change, financial commitment, address change, legal / dispute, complaint, security / account recovery, customs, payment / billing, unknown category, risky attachment, unauthenticated sender, a message with no newly-authored text, inactive or pending supplier, no-reply supplier address, ambiguous or conflicting context, order status the templates do not cover, a draft that failed verification | no draft, `requires_human = true` |
 | No reply | newsletter, spam, automated or platform notification without a serious flag, thread already answered by us | logged only |
 
 Drafts are fixed Hebrew / English / Arabic templates filled only with verified context. They

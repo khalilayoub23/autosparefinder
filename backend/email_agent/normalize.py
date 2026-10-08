@@ -189,7 +189,13 @@ def html_to_text(html: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
+# A divider line a mail client puts above the quoted original (Outlook: a row of underscores).
+_DIVIDER_LINE = re.compile(r"^\s*[_\-=*]{5,}\s*$")
+MIN_MEANINGFUL_CHARS = 2
+
+
 def strip_quoted(text: str) -> str:
+    """The newly-authored part of a message: everything above the quoted original."""
     out = []
     for line in (text or "").splitlines():
         if _QUOTE_CUT.match(line):
@@ -197,7 +203,21 @@ def strip_quoted(text: str) -> str:
         if line.lstrip().startswith(">"):
             continue
         out.append(line)
+    while out and (not out[-1].strip() or _DIVIDER_LINE.match(out[-1])):
+        out.pop()                      # the client's divider above the quote is not something the sender wrote
     return "\n".join(out).strip()
+
+
+def has_meaningful_text(text: Optional[str]) -> bool:
+    """True when the text contains something a person actually wrote: at least two letters or digits
+    (any script). Whitespace, punctuation, dots and divider lines alone are not a message."""
+    return sum(1 for ch in (text or "") if ch.isalnum()) >= MIN_MEANINGFUL_CHARS
+
+
+def authored_text(email: "NormalizedEmail") -> str:
+    """What the sender newly wrote in THIS message: the text above the quote, minus boilerplate
+    lines. Never falls back to the quoted original - a quote is context, not a request."""
+    return meaningful_text(email.new_text)
 
 
 def _walk(part: Any, plain: List[str], html: List[str], atts: List[dict], depth: int, counter: List[int]) -> None:

@@ -25,7 +25,8 @@ from email.message import EmailMessage
 from typing import Any, Dict, List
 
 from email_agent.context import ResolvedContext
-from email_agent.normalize import MalformedMessage, NormalizedEmail, normalize_message
+from email_agent.normalize import (MalformedMessage, NormalizedEmail, authored_text, has_meaningful_text,
+                                    normalize_message)
 
 
 class DraftNotPossible(Exception):
@@ -108,6 +109,8 @@ def build_draft(action: str, email: NormalizedEmail, ctx: ResolvedContext) -> Dr
     lang = detect_language(f"{email.subject}\n{email.new_text or email.body_text}")
     if not email.reply_address:
         raise DraftNotPossible("source email has no reply address")
+    if not has_meaningful_text(authored_text(email)):
+        raise DraftNotPossible("source email has no newly-authored text to answer")
     facts: Dict[str, str] = {}
     name = ""
     if ctx.customer.get("status") == "resolved" and ctx.customer.get("full_name"):
