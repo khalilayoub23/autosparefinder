@@ -1269,3 +1269,68 @@ async def test_empty_followup_may_use_the_customers_own_earlier_message_but_is_s
     d = policy.decide(c, ctx)
     assert c.classification == "order_shipping" and "earlier messages" in c.reason and "empty_message" in c.risk_flags
     assert d.tier == policy.TIER_HUMAN and not d.wants_draft
+
+
+# ══ Regression from the 2026-10-09 live message: subject "AUTO-2026-BC7D3824", body "change address" ══
+# The address-change detector was a list of fixed phrases ("change my address", "new address", ...), so the
+# terse real wording raised no flag and the message was escalated only because its category was unknown.
+async def test_live_terse_address_change_is_detected_from_authored_text():
+    e, ctx, c, d = await classify_one("dana@gmail.com", "AUTO-2026-1A2B3C4D", "change address")
+    assert e.new_text == "change address" and ctx.order["status"] == "resolved"
+    assert ctx.order["order_number"] == "AUTO-2026-1A2B3C4D" and ctx.customer["status"] == "resolved"
+    assert c.risk_flags == ["address_change"] and c.classification == "order_shipping"
+    assert "address_change" in c.reason
+    assert (d.tier, d.recommended_action, d.requires_human) == (policy.TIER_HUMAN, "escalate_to_human", True)
+    assert not d.wants_draft and any("address_change" in r for r in d.reasons)
+
+
+ADDRESS_CHANGE = ["change address", "Change the delivery address please", "pls update shipping address", "address change",
+                  "I need to correct my address", "the address is wrong", "my address was incorrect", "send it to a different address",
+                  "can you modify the delivery address on my order", "Please update my billing address",
+                  "לשנות כתובת", "אני רוצה לעדכן את כתובת המשלוח", "שינוי כתובת", "הכתובת שגויה", "תיקון הכתובת בבקשה",
+                  "تغيير العنوان", "أريد تعديل عنوان التوصيل", "العنوان خاطئ"]
+
+
+@pytest.mark.parametrize("text", ADDRESS_CHANGE)
+async def test_address_change_wordings_are_flagged_and_escalated(text):
+    _, _, c, d = await classify_one("dana@gmail.com", "Order AUTO-2026-1A2B3C4D", text)
+    assert "address_change" in c.risk_flags, c.risk_flags
+    assert d.requires_human is True and not d.wants_draft
+
+
+ACCOUNT_CHANGE = ["change my email", "update phone number", "please change the email address on my account",
+                  "I want to update my mobile number", "replace my phone", "לשנות את המייל שלי", "עדכון טלפון", "לעדכן את מספר הטלפון",
+                  "تغيير البريد الإلكتروني", "تحديث رقم الهاتف"]
+
+
+@pytest.mark.parametrize("text", ACCOUNT_CHANGE)
+async def test_account_contact_change_is_flagged_and_escalated(text):
+    _, _, c, d = await classify_one("dana@gmail.com", "My account", text)
+    assert "account_change" in c.risk_flags, c.risk_flags
+    assert c.classification == "account_security" and d.requires_human is True and not d.wants_draft
+
+
+NOT_A_CHANGE = ["Can you update me by email?", "What is your address?", "Please email me the invoice for my order",
+                "My address is correct, where is my order?", "Call me on my phone if needed", "Where is my order?",
+                "I changed my mind about nothing, just checking the order", "מה הכתובת שלכם?", "תעדכנו אותי במייל"]
+
+
+@pytest.mark.parametrize("text", NOT_A_CHANGE)
+async def test_ordinary_wording_is_not_mistaken_for_a_sensitive_change(text):
+    _, _, c, _ = await classify_one("dana@gmail.com", "Order AUTO-2026-1A2B3C4D", text)
+    assert "address_change" not in c.risk_flags and "account_change" not in c.risk_flags, c.risk_flags
+
+
+async def test_quoted_address_change_is_not_the_customers_request():
+    # the quote (our own earlier message) talks about an address change; the customer asks only for status
+    e, ctx, c, d = await reply_case("Where is my order?\r\n")
+    assert "address_change" not in c.risk_flags and d.tier == policy.TIER_SAFE
+    # and when the customer authors it themselves above the same quote, it IS their request
+    e, ctx, c, d = await reply_case("change address\r\n")
+    assert c.risk_flags == ["address_change"] and d.tier == policy.TIER_HUMAN and ctx.order["status"] == "resolved"
+
+
+async def test_address_change_in_a_notice_opening_escalates():
+    _, _, c, d = await classify_one("noreply@eurosender.com", "Order No. 408540-26 update",
+                                    html=EUROSENDER_HTML.format(headline="Order update", opening="The delivery address was changed by the courier."))
+    assert "address_change" in c.risk_flags and d.requires_human is True

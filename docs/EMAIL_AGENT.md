@@ -184,7 +184,7 @@ sender               sender address
 references           customer_id / order_id / order_number / tracking_number /
                      eurosender_order_code / supplier_id — DB-verified values only
 risk_flags           refund, cancellation, dispute_legal, complaint, price_change,
-                     financial_commitment, address_change, security, customs,
+                     financial_commitment, address_change, account_change, security, customs,
                      risky_attachment, unauthenticated_sender, bulk_headers, automated_sender,
                      empty_message
 recommended_action   draft_order_status | draft_request_order_number | draft_request_details |

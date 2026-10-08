@@ -35,7 +35,7 @@ TIER_NONE = "no_reply"
 HUMAN_CATEGORIES = ("complaint_dispute", "refund_cancellation", "payment_billing",
                     "account_security", "unknown")
 HUMAN_FLAGS = ("refund", "cancellation", "dispute_legal", "complaint", "price_change",
-               "financial_commitment", "address_change", "security", "customs",
+               "financial_commitment", "address_change", "account_change", "security", "customs",
                "risky_attachment", "unauthenticated_sender", "bulk_headers", "automated_sender",
                "empty_message")
 NOTIFICATION_CATEGORIES = ("automated_notification", "shipping_eurosender", "ebay", "aliexpress")

@@ -83,9 +83,36 @@ _FLAGS: Dict[str, Tuple[str, ...]] = {
     "customs": ("customs", "import duty", "duties", "clearance", "מכס", "עמילות", "جمارك"),
 }
 
+# Sensitive-change requests are detected by STRUCTURE (a change verb next to the thing being
+# changed), not by a list of whole phrases: the live message that exposed this was just
+# "change address" (2026-10-09), which none of the fixed phrases above matched.
+_EN_VERB = r"(?:change|changes|changed|changing|update|updated|updating|correct|corrected|modify|edit|replace|switch|amend)"
+_EN_ADDR_FILL = r"(?:(?:my|the|our|your|a|delivery|shipping|billing|home|postal|order|order's)\s+){0,3}"
+_EN_ACCT_FILL = r"(?:(?:my|the|our|your|account|account's|contact|registered)\s+){0,3}"
+_HE_VERB = r"(?:לשנות|שינוי|שנו|תשנו|לעדכן|עדכון|עדכנו|תעדכנו|להחליף|החלפת|לתקן|תיקון|תתקנו)"
+_AR_VERB = r"(?:تغيير|تعديل|تحديث|تصحيح|أغير|اغير|غيروا)"
+_FLAG_PATTERNS: Dict[str, Tuple["re.Pattern[str]", ...]] = {
+    "address_change": tuple(re.compile(p) for p in (
+        rf"(?<![a-z]){_EN_VERB}\s+{_EN_ADDR_FILL}address(?![a-z])",
+        r"(?<![a-z])address(?:es)?\s+(?:(?:is|was|to|needs?|should|be|been|has|a)\s+){0,3}"
+        r"(?:wrong|incorrect|changed?|updated?|different|outdated)(?![a-z])",
+        r"(?<![a-z])(?:new|different|another|other|wrong|incorrect)\s+(?:(?:delivery|shipping|billing|home)\s+)?address(?![a-z])",
+        rf"{_HE_VERB}\s+(?:את\s+)?ה?כתובת",
+        r"כתובת\s+(?:ה?משלוח\s+)?(?:שגויה|לא נכונה|חדשה|אחרת)",
+        rf"{_AR_VERB}\s+(?:ال)?عنوان",
+        r"(?:ال)?عنوان\s+(?:التوصيل\s+)?(?:خاطئ|خطأ|غلط|جديد|مختلف)",
+    )),
+    # a request to change the contact details an account is reached / recovered by
+    "account_change": tuple(re.compile(p) for p in (
+        rf"(?<![a-z]){_EN_VERB}\s+{_EN_ACCT_FILL}(?:e-?mail|phone|mobile|telephone|cell)(?![a-z])",
+        rf"{_HE_VERB}\s+(?:את\s+)?(?:מספר\s+)?ה?(?:מייל|אימייל|דוא\"ל|טלפון|נייד)",
+        rf"{_AR_VERB}\s+(?:رقم\s+)?(?:ال)?(?:بريد|ايميل|إيميل|هاتف|جوال|موبايل)",
+    )),
+}
+
 # Flags that make even an automated / platform notification worth a human look.
 SERIOUS_FLAGS = ("refund", "cancellation", "dispute_legal", "financial_commitment", "security", "customs",
-                 "price_change", "address_change")
+                 "price_change", "address_change", "account_change")
 
 
 def _hits(text: str, keywords: Tuple[str, ...]) -> List[str]:
@@ -143,6 +170,9 @@ def detect_flags(email: NormalizedEmail, ctx: ResolvedContext) -> List[str]:
     body = meaningful_text((email.new_text or email.body_text) if notice else email.new_text, notification=notice)
     text = f"{email.subject}\n{body}".lower()
     flags = [name for name, kws in _FLAGS.items() if _hits(text, kws)]
+    for name, patterns in _FLAG_PATTERNS.items():
+        if name not in flags and any(p.search(text) for p in patterns):
+            flags.append(name)
     if any(a.get("risky") for a in email.attachments):
         flags.append("risky_attachment")
     if not ctx.sender_authenticated:
@@ -205,8 +235,8 @@ def classify(email: NormalizedEmail, thread: List[NormalizedEmail], ctx: Resolve
         return done("supplier", 0.9, "authenticated sender domain matches exactly one supplier website")
 
     def content(t: str, origin: str):
-        if "security" in flags and origin == "message":
-            return "account_security", ["security"]
+        if origin == "message" and ("security" in flags or "account_change" in flags):
+            return "account_security", [f for f in ("security", "account_change") if f in flags]
         if origin == "message" and ("dispute_legal" in flags or "complaint" in flags):
             return "complaint_dispute", [f for f in ("dispute_legal", "complaint") if f in flags]
         if origin == "message" and ("refund" in flags or "cancellation" in flags):
@@ -215,6 +245,8 @@ def classify(email: NormalizedEmail, thread: List[NormalizedEmail], ctx: Resolve
             hits = _hits(t, _KW[cat])
             if hits:
                 return cat, hits
+        if origin == "message" and "address_change" in flags:
+            return "order_shipping", ["address_change"]     # a delivery matter; the flag sends it to a human
         return None, []
 
     # An empty message contributes no content of its own (its subject is usually an inherited "Re:").
