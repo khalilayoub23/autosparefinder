@@ -412,7 +412,8 @@ async def test_body_outweighs_a_misleading_subject():
 
 async def test_short_followup_uses_thread_context():
     first = normalize_message(gmsg("m1", "t1", "dana@gmail.com", "Hi", "Where is my order?", ts=1000))
-    follow = normalize_message(gmsg("m2", "t1", "dana@gmail.com", "Re: Hi", "???", ts=2000))
+    follow = normalize_message(gmsg("m2", "t1", "dana@gmail.com", "Re: Hi", "???", ts=2000,
+                                    extra_headers={"In-Reply-To": "<m1@mail.test>", "References": "<m1@mail.test>"}))
     ctx = await resolve_context(follow, [first, follow], FakeSource(users=[USER]))
     c = classifier.classify(follow, [first, follow], ctx)
     assert c.classification == "order_shipping" and "earlier messages" in c.reason
@@ -1263,7 +1264,8 @@ async def test_empty_reply_category_is_never_taken_from_the_quoted_original():
 
 async def test_empty_followup_may_use_the_customers_own_earlier_message_but_is_still_not_automatable():
     first = normalize_message(gmsg("m1", "t1", "dana@gmail.com", "Hi", "Where is my order?", ts=1000))
-    follow = normalize_message(gmsg("m2", "t1", "dana@gmail.com", "Re: Hi", "???", ts=2000))
+    follow = normalize_message(gmsg("m2", "t1", "dana@gmail.com", "Re: Hi", "???", ts=2000,
+                                    extra_headers={"In-Reply-To": "<m1@mail.test>", "References": "<m1@mail.test>"}))
     ctx = await resolve_context(follow, [first, follow], FakeSource(users=[USER]))
     c = classifier.classify(follow, [first, follow], ctx)
     d = policy.decide(c, ctx)
@@ -1437,3 +1439,72 @@ async def test_order_reference_of_a_different_shape_is_not_counted_as_a_second_o
     # a tracking number or a truncated reference has another shape and must not block a real order
     _, ctx, c, d = await classify_one("dana@gmail.com", "AUTO-2026-1A2B3C4D", "Where is my order? tracking TRK123456, ref AUTO-2026-1A")
     assert ctx.order["status"] == "resolved" and d.tier == policy.TIER_SAFE
+
+
+# ══ Thread-context isolation (2026-10-09 live: Gmail grouped 13 independent emails with the same subject
+# into one thread; none of them replied to another) ═════════════════════════════════════════════════
+OTHER_OWN = {**ORDER, "id": "o-9", "order_number": "AUTO-2026-9Z8Y7X6W", "eurosender_order_code": None}
+
+
+def _thr(*specs):
+    """specs: (mid, text, extra_headers) — same sender, same subject, increasing time; the last one is current."""
+    msgs = [normalize_message(gmsg(mid, "t1", "dana@gmail.com", "AUTO-2026 order", text, ts=1000 * (i + 1),
+                                   extra_headers=hdrs or {}), MAILBOX) for i, (mid, text, hdrs) in enumerate(specs)]
+    return msgs[-1], msgs
+
+
+def _reply_to(mid):
+    return {"In-Reply-To": f"<{mid}@mail.test>", "References": f"<{mid}@mail.test>"}
+
+
+async def _decide(cur, thread, orders=(ORDER,)):
+    ctx = await resolve_context(cur, thread, FakeSource(users=[USER], orders=list(orders)))
+    c = classifier.classify(cur, thread, ctx)
+    return ctx, c, policy.decide(c, ctx)
+
+
+async def test_same_subject_message_does_not_borrow_an_order_from_an_unrelated_message():
+    cur, thread = _thr(("m1", "Where is order AUTO-2026-1A2B3C4D?", None), ("m2", "Where is my order?", None))
+    ctx, c, d = await _decide(cur, thread)
+    assert ctx.order["status"] == "unresolved" and d.recommended_action == "draft_request_order_number"
+
+
+async def test_valid_order_elsewhere_does_not_override_a_nonexistent_order_in_the_current_message():
+    cur, thread = _thr(("m1", "Status of AUTO-2026-1A2B3C4D please", None), ("m2", "Where is my order AUTO-2026-1A2B3C99?", None))
+    ctx, c, d = await _decide(cur, thread)
+    assert ctx.order["status"] == "unresolved" and "order_number" not in ctx.order
+    assert "AUTO-2026-1A2B3C4D" not in c.references.values()
+
+
+async def test_valid_order_elsewhere_does_not_disambiguate_the_current_messages_two_orders():
+    cur, thread = _thr(("m1", "Status of AUTO-2026-1A2B3C4D please", None),
+                       ("m2", "What about AUTO-2026-1A2B3C4D and AUTO-2026-9Z8Y7X6W?", None))
+    ctx, _, d = await _decide(cur, thread, orders=(ORDER, OTHER_OWN))
+    assert ctx.order["status"] == "ambiguous" and d.requires_human is True
+
+
+async def test_an_explicit_reply_to_the_customers_own_earlier_message_may_use_it():
+    cur, thread = _thr(("m1", "Where is order AUTO-2026-1A2B3C4D?", None), ("m2", "any update please", _reply_to("m1")))
+    ctx, c, d = await _decide(cur, thread)
+    assert ctx.order["status"] == "resolved" and ctx.order["order_number"] == "AUTO-2026-1A2B3C4D"
+
+
+async def test_explicit_reply_citing_a_nonexistent_order_is_not_rescued_by_the_earlier_message():
+    cur, thread = _thr(("m1", "Where is order AUTO-2026-1A2B3C4D?", None), ("m2", "sorry I meant AUTO-2026-1A2B3C99", _reply_to("m1")))
+    ctx, c, d = await _decide(cur, thread)
+    assert ctx.order["status"] == "ambiguous" and d.requires_human is True and not d.wants_draft
+
+
+async def test_empty_message_does_not_take_its_category_from_an_unrelated_same_subject_message():
+    cur, thread = _thr(("m1", "I want a refund for AUTO-2026-1A2B3C4D", None), ("m2", "", None))
+    ctx, c, d = await _decide(cur, thread)
+    assert c.classification == "unknown" and c.risk_flags == ["empty_message"] and d.requires_human is True
+
+
+def test_thread_association_rule():
+    from email_agent.normalize import associated_messages
+    cur, thread = _thr(("m1", "a", None), ("m2", "b", None), ("m3", "c", {"In-Reply-To": "<m1@mail.test>",
+                                                                       "References": "<m0@x> <m1@mail.test>"}))
+    assert [m.message_id for m in associated_messages(cur, thread)] == ["m1"]
+    cur2, thread2 = _thr(("m1", "a", None), ("m2", "b", None))
+    assert associated_messages(cur2, thread2) == []

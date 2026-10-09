@@ -215,6 +215,19 @@ What stays unresolved:
 - tracking on an order without a real carrier shipment (the test-cycle `auto_fake_tracking`
   flag writes synthetic tracking) → `no_shipment`, never quoted.
 
+Thread association (`normalize.associated_messages`). A Gmail thread is not a conversation: Gmail
+also groups independent emails that only share a subject. Context and the category fallback may
+therefore use only:
+
+- the current message itself: subject, newly-authored text, and the quoted original it carries
+  (quoted identifiers resolve context; quoted text never sets the category or a risk flag);
+- the sender's own earlier messages whose Message-ID the current message names in `In-Reply-To`
+  or `References`.
+
+Other messages in the same Gmail thread are ignored. If the current message's own words cite a
+second order reference of the same shape as the resolved order (same prefix up to the last `-`,
+same length) that matches no order, the order is `ambiguous` and goes to a human.
+
 `verify_context()` re-reads every resolved entity by primary key and re-checks ownership.
 
 ## Response policy

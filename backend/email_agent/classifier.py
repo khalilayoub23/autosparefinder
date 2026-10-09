@@ -18,7 +18,8 @@ Process: evidence is weighed in this order, never from the subject line alone -
               known supplier -> still supplier mail, flagged automated_sender for a human
            6. resolved supplier
            7. content keywords (he / en / ar) over the new text of the message, falling back
-              to the earlier inbound messages of the thread
+              to the sender's earlier messages this one explicitly replies to (In-Reply-To /
+              References; never other emails that only share the Gmail thread)
            8. unknown
          Risk flags (refund, cancellation, dispute, price, address, security, customs ...) are
          detected independently of the category, on the MEANINGFUL text only
@@ -38,7 +39,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Dict, List, Tuple
 
 from email_agent.context import ResolvedContext
-from email_agent.normalize import NormalizedEmail, authored_text, has_meaningful_text, meaningful_text
+from email_agent.normalize import NormalizedEmail, associated_messages, authored_text, has_meaningful_text, meaningful_text
 from email_agent.senders import is_automated_address
 
 CATEGORIES = (
@@ -279,8 +280,8 @@ def classify(email: NormalizedEmail, thread: List[NormalizedEmail], ctx: Resolve
     cat, hits = (None, []) if empty else content(text, "message")
     origin = "this message"
     if not cat:
-        earlier = fold("\n".join(f"{m.subject}\n{m.new_text}" for m in thread
-                                 if m.is_inbound and m.message_id != email.message_id))
+        earlier = fold("\n".join(f"{m.subject}\n{m.new_text}" for m in associated_messages(email, thread)
+                                 if m.is_inbound))
         if earlier.strip():
             cat, hits = content(earlier, "thread")
             origin = "earlier messages in the thread"

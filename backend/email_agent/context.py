@@ -4,7 +4,10 @@ Purpose: Resolve an inbound email against REAL AutoSpareFinder data - customer a
          shipment, supplier - using the existing tables as the only source of business state.
 Process (no guessing):
   - customer: users.email == sender address, and only when Gmail authenticated the sender.
-  - order: candidate identifier tokens are taken from the thread text and matched by EXACT
+  - order: candidate identifier tokens are taken from this message (subject, authored text and the
+    quoted original it carries) plus the sender's own earlier messages that this one explicitly
+    replies to (In-Reply-To / References) - never from other emails Gmail grouped into the same
+    thread by subject - and matched by EXACT
     equality against orders.order_number / tracking_number / eurosender_order_code and
     order_items.supplier_order_id. No identifier format is assumed; a token that equals no row
     resolves nothing. A customer resolves only orders that belong to their own account; an
@@ -28,7 +31,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Protocol
 from urllib.parse import urlsplit
 
-from email_agent.normalize import NormalizedEmail
+from email_agent.normalize import NormalizedEmail, associated_messages
 from email_agent.senders import is_authenticated, org_domain, sender_kind
 
 _TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9\-_/]{3,38}[A-Za-z0-9]")
@@ -147,7 +150,10 @@ async def resolve_context(email: NormalizedEmail, thread: List[NormalizedEmail],
             ctx.supplier = _unresolved(f"{len(rows)} suppliers share this domain", "ambiguous")
 
     # ── order ────────────────────────────────────────────────────────────────
-    inbound_text = "\n".join(f"{m.subject}\n{m.new_text}" for m in thread if m.is_inbound)
+    # Context may come from this message (subject, authored text, the quote it carries) and from the
+    # sender's own earlier messages it explicitly replies to - never from other emails Gmail merely
+    # grouped under the same subject.
+    inbound_text = "\n".join(f"{m.subject}\n{m.new_text}" for m in associated_messages(email, thread) if m.is_inbound)
     tokens = candidate_tokens(f"{email.subject}\n{email.body_text}\n{inbound_text}")
     matches: Dict[str, dict] = {}
     if tokens:

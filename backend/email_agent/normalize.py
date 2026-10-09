@@ -320,6 +320,17 @@ def normalize_message(raw: Any, mailbox: str = "") -> NormalizedEmail:
     )
 
 
+def associated_messages(email: NormalizedEmail, thread: List[NormalizedEmail]) -> List[NormalizedEmail]:
+    """The thread messages the current message EXPLICITLY belongs to: those whose Message-ID it names
+    in In-Reply-To or References. A Gmail thread is not a conversation - Gmail also groups independent
+    emails that merely share a subject (live 2026-10-09: 13 unrelated test emails titled with the same
+    order number became one thread) - so thread membership alone carries no context."""
+    named = set(re.findall(r"<[^<>\s]+>", f"{email.in_reply_to} {email.references}"))
+    if not named:
+        return []
+    return [m for m in thread if m.message_id != email.message_id and m.rfc822_message_id in named]
+
+
 def normalize_thread(raw: Any, mailbox: str = "") -> List[NormalizedEmail]:
     """All messages of a thread, oldest first. A malformed member is skipped, not fatal."""
     if not isinstance(raw, dict) or not isinstance(raw.get("messages"), list):
