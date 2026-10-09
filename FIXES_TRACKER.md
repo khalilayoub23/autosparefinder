@@ -6999,3 +6999,13 @@ Four new messages from the test sender (06:17–06:18 UTC) were processed with t
 - **Reply-chain path — BLOCKED.** None of the four carries `In-Reply-To` / `References`; each is alone in its Gmail thread. For comparison, the 2026-10-08 Hotmail replies (sent with Outlook's Reply button) carry both headers. Same-subject isolation remains verified on the earlier live thread (13 unlinked messages, 0 associated).
 
 No defect found; no code change.
+
+## 2026-10-09 — Email Agent: live scenarios i and j verified on genuine Hotmail replies (read-only)
+
+Two genuine replies (Outlook Reply button), processed with the unchanged pipeline in memory (code = `c1691fa`):
+
+- **i — PASS (live).** `1a11f54810932978`, `In-Reply-To` / `References` = `<6ac80a6b.e9321e8c.26011e.41f8@mx.google.com>` = our sent message `1a11d68b5c49cdec`. Authored text "What is the status of my order AUTO-2026-BC7D3824?" above a 480-character quote that contains address- and contact-change wording (keyword "new address"; both change patterns match the quote). Result: `order_shipping` (0.70, from the authored text), `risk_flags=[]`, order `AUTO-2026-BC7D3824` resolved and owned by the sender, no shipment, safe tier; the in-memory reply states only "awaiting payment" (the DB status) with no tracking.
+- **j — PASS (live).** `1a11f54db1228175`, linked to our sent message `1a11d686cf3efa7e`. Authored text "."; `AUTO-2026-BC7D3824` only in the 416-character quote. Result: `empty_message`, `unknown`, order resolved from the quote and owned, `human_approval_required`, no reply text.
+- **Reply chain — PARTIAL.** Each thread has 3 messages: our original, the sender's unlinked 2026-10-08 reply, and the new reply. The association set is exactly the linked original in both cases; the unlinked earlier reply is excluded. That earlier reply contained only dots, so its exclusion produced no visible difference; and a reply linking to the customer's OWN earlier message has still not been seen live.
+
+Side effects: Gmail 4 message GETs + 2 thread GETs, 1 token refresh, 0 non-GET; labels unchanged; business tables unchanged; alembic 0038; no Email Agent rows; backend `RestartCount=0`; agent disabled. No defect; no code change.
