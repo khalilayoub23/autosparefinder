@@ -128,6 +128,16 @@ SERIOUS_FLAGS = ("refund", "cancellation", "dispute_legal", "financial_commitmen
                  "price_change", "address_change", "account_change")
 
 
+# Typographic quotes / apostrophes as Outlook, iOS and Word type them. Keywords are written with
+# ASCII ("hasn't arrived"), so text is folded before matching (live: "hasn’t arrived" was missed).
+_TYPO_FOLD = str.maketrans({"\u2019": "'", "\u2018": "'", "\u201b": "'", "\u00b4": "'", "\u0060": "'",
+                            "\u201c": '"', "\u201d": '"', "\u201e": '"', "\u00ab": '"', "\u00bb": '"'})
+
+
+def fold(text: str) -> str:
+    return (text or "").translate(_TYPO_FOLD).lower()
+
+
 def _hits(text: str, keywords: Tuple[str, ...]) -> List[str]:
     found = []
     for kw in keywords:
@@ -181,7 +191,7 @@ def detect_flags(email: NormalizedEmail, ctx: ResolvedContext) -> List[str]:
     # A person's message is judged on what they newly wrote - never on the quoted original.
     # (Automated notices have no quote to speak of, so the body fallback is kept for them.)
     body = meaningful_text((email.new_text or email.body_text) if notice else email.new_text, notification=notice)
-    text = f"{email.subject}\n{body}".lower()
+    text = fold(f"{email.subject}\n{body}")
     flags = [name for name, kws in _FLAGS.items() if _hits(text, kws)]
     for name, patterns in _FLAG_PATTERNS.items():
         if name not in flags and any(p.search(text) for p in patterns):
@@ -203,7 +213,7 @@ def classify(email: NormalizedEmail, thread: List[NormalizedEmail], ctx: Resolve
     flags = detect_flags(email, ctx)
     empty = "empty_message" in flags
     # content keywords are read from the subject and the newly-authored text only (no quoted original)
-    text = f"{email.subject}\n{email.new_text}".lower()
+    text = fold(f"{email.subject}\n{email.new_text}")
     h = email.headers
     kind, authed = ctx.sender_kind, ctx.sender_authenticated
 
@@ -269,8 +279,8 @@ def classify(email: NormalizedEmail, thread: List[NormalizedEmail], ctx: Resolve
     cat, hits = (None, []) if empty else content(text, "message")
     origin = "this message"
     if not cat:
-        earlier = "\n".join(f"{m.subject}\n{m.new_text}" for m in thread
-                            if m.is_inbound and m.message_id != email.message_id).lower()
+        earlier = fold("\n".join(f"{m.subject}\n{m.new_text}" for m in thread
+                                 if m.is_inbound and m.message_id != email.message_id))
         if earlier.strip():
             cat, hits = content(earlier, "thread")
             origin = "earlier messages in the thread"

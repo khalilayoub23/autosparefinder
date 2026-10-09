@@ -1377,3 +1377,63 @@ async def test_carrier_delay_notice_is_not_escalated_for_the_word_delay():
     _, _, c, d = await classify_one("noreply@eurosender.com", "Order No. 408540-26 update",
                                     html=EUROSENDER_HTML.format(headline="Shipment update", opening="Your shipment is delayed by one day."))
     assert "delivery_problem" in c.risk_flags and d.recommended_action == "log_only"
+
+
+# ══ Regressions from the 2026-10-09 live run (17 real Hotmail messages) ═════════════════════════════
+def _raw_part_msg(mid, frm, subject, body_bytes, charset, html_bytes=None):
+    def b(x): return base64.urlsafe_b64encode(x).decode().rstrip("=")
+    dom = frm.rsplit("@", 1)[-1]
+    parts = [{"mimeType": "text/plain", "headers": [{"name": "Content-Type", "value": f'text/plain; charset="{charset}"'}],
+              "body": {"data": b(body_bytes)}}]
+    if html_bytes is not None:
+        parts.append({"mimeType": "text/html", "headers": [{"name": "Content-Type", "value": f'text/html; charset="{charset}"'}],
+                      "body": {"data": b(html_bytes)}})
+    return {"id": mid, "threadId": "t" + mid, "labelIds": ["INBOX"], "internalDate": "1700000000000", "payload": {
+        "mimeType": "multipart/alternative", "parts": parts, "headers": [
+            {"name": "From", "value": frm}, {"name": "To", "value": MAILBOX}, {"name": "Subject", "value": subject},
+            {"name": "Authentication-Results", "value": f"mx.google.com; dmarc=pass header.from={dom}"}]}}
+
+
+def test_utf8_body_labelled_windows_1252_is_not_mis_decoded():
+    # exact bytes Gmail returned for the live message: UTF-8, while the part says charset="Windows-1252"
+    raw = _raw_part_msg("m1", "dana@gmail.com", "AUTO-2026-1A2B3C4D", b"\xe2\x80\x9cMy order hasn\xe2\x80\x99t arrived yet.\xe2\x80\x9d\r\n", "Windows-1252")
+    e = normalize_message(raw)
+    assert e.body_text == "“My order hasn’t arrived yet.”" and "â" not in e.body_text
+    he = _raw_part_msg("m2", "dana@gmail.com", "x", "איפה ההזמנה שלי?".encode(), "windows-1255")
+    assert normalize_message(he).body_text == "איפה ההזמנה שלי?"
+
+
+def test_genuine_legacy_charset_bytes_still_decode():
+    raw = _raw_part_msg("m1", "dana@gmail.com", "x", b"\x93Where is my order?\x94", "Windows-1252")
+    assert normalize_message(raw).body_text == "“Where is my order?”"
+
+
+@pytest.mark.parametrize("text", ["“My order hasn’t arrived yet.”", "I haven’t received it",
+                                  "It didn’t arrive", "the part doesn’t fit"])
+async def test_typographic_apostrophes_do_not_hide_a_claim(text):
+    _, _, c, d = await classify_one("dana@gmail.com", "AUTO-2026-1A2B3C4D", text)
+    assert {"delivery_problem", "wrong_item"} & set(c.risk_flags), c.risk_flags
+    assert d.requires_human is True and not d.wants_draft
+
+
+async def test_live_not_received_message_end_to_end():
+    raw = _raw_part_msg("m1", "dana@gmail.com", "AUTO-2026-1A2B3C4D", b"\xe2\x80\x9cMy order hasn\xe2\x80\x99t arrived yet.\xe2\x80\x9d\r\n", "Windows-1252")
+    fake = FakeGmail([raw])
+    _, store = await run(fake, FakeSource(users=[USER], orders=[ORDER]), gmail_drafts=True)
+    row = store.rows["m1"]
+    assert "delivery_problem" in row["risk_flags"] and row["requires_human"] is True and row["draft_body"] is None
+
+
+async def test_message_citing_a_second_unverified_order_reference_is_ambiguous():
+    # live: subject = the customer's own order, body = "i want to check for my friend order <nonexistent number>"
+    _, ctx, c, d = await classify_one("dana@gmail.com", "AUTO-2026-1A2B3C4D",
+                                      "i want to check for my friend order AUTO-2026-1A2B3C99")
+    assert ctx.order["status"] == "ambiguous" and "order_number" not in ctx.order
+    assert "AUTO-2026-1A2B3C4D" not in c.references.values()
+    assert d.requires_human is True and not d.wants_draft
+
+
+async def test_order_reference_of_a_different_shape_is_not_counted_as_a_second_order():
+    # a tracking number or a truncated reference has another shape and must not block a real order
+    _, ctx, c, d = await classify_one("dana@gmail.com", "AUTO-2026-1A2B3C4D", "Where is my order? tracking TRK123456, ref AUTO-2026-1A")
+    assert ctx.order["status"] == "resolved" and d.tier == policy.TIER_SAFE

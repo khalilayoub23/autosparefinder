@@ -156,10 +156,18 @@ def _charset(part: dict) -> str:
 
 
 def _decode_part(part: dict) -> str:
+    """Gmail's API hands text parts back as UTF-8 even when the part still declares its original
+    charset (live 2026-10-09: Hotmail parts labelled charset="Windows-1252" carried UTF-8 bytes, and
+    trusting the label turned a curly quote into "â€œ"). So: strict UTF-8 first; the declared
+    charset only for bytes that are not valid UTF-8."""
     body = part.get("body")
     raw = _b64url(body.get("data", "") if isinstance(body, dict) else "")
     if not raw:
         return ""
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        pass
     try:
         return raw.decode(_charset(part), errors="replace")
     except LookupError:

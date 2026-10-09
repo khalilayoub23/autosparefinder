@@ -176,6 +176,20 @@ async def resolve_context(email: NormalizedEmail, thread: List[NormalizedEmail],
         ctx.order = _unresolved("an order is referenced but the sender is not verified as its customer",
                                 "sender_mismatch")
     if chosen:
+        # The sender's own words cite another reference of the SAME shape as the order that resolved
+        # (same prefix up to the last "-", same length) that matches no order: the message is about
+        # more than the resolved order (live 2026-10-09: "check my friend order <nonexistent>" under
+        # a subject naming the sender's own order was answered with the own order's status).
+        own_number = str(chosen["order_number"]).upper()
+        shape = (own_number[: own_number.rfind("-") + 1], len(own_number))
+        known = {str(o.get("order_number") or "").upper() for o in found}
+        stray = sorted({t.upper() for t in candidate_tokens(f"{email.subject}\n{email.new_text}")
+                        if (t.upper()[: t.upper().rfind("-") + 1], len(t)) == shape and t.upper() not in known})
+        if stray:
+            ctx.order = _unresolved(f"the message also cites {len(stray)} order reference(s) that match no order",
+                                    "ambiguous")
+            chosen = None
+    if chosen:
         ctx.order = {"status": "resolved", "order_id": str(chosen["id"]),
                      "order_number": chosen["order_number"], "order_status": chosen.get("status") or "",
                      "user_id": str(chosen.get("user_id") or ""), "matched_on": chosen.get("matched_on") or ""}
