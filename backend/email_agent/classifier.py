@@ -81,6 +81,19 @@ _FLAGS: Dict[str, Tuple[str, ...]] = {
                  "security alert", "new sign-in", "suspicious", "סיסמה", "סיסמא", "קוד אימות", "נפרץ",
                  "התחברות חשודה", "كلمة المرور", "رمز التحقق", "اختراق"),
     "customs": ("customs", "import duty", "duties", "clearance", "מכס", "עמילות", "جمارك"),
+    # Customer CLAIMS about what happened to an order. They contradict or dispute the recorded state,
+    # so an automatic status reply ("your order is delivered") is never an acceptable answer to them.
+    "delivery_problem": ("not arrived", "hasn't arrived", "has not arrived", "haven't arrived", "didn't arrive",
+                         "did not arrive", "never arrived", "not received", "haven't received", "have not received",
+                         "didn't receive", "did not receive", "never received", "didn't get", "did not get",
+                         "not delivered", "wasn't delivered", "was not delivered", "late", "delayed", "delay",
+                         "lost", "לא הגיע", "לא הגיעה", "לא קיבלתי", "איחור", "מתעכב", "מתעכבת", "אבד", "הלך לאיבוד",
+                         "لم يصل", "لم يصلني", "لم أستلم", "تأخر", "متأخر", "ضاع"),
+    "wrong_item": ("wrong part", "wrong item", "wrong product", "wrong one", "not the part i ordered",
+                   "not what i ordered", "different part", "damaged", "broken", "defective", "faulty",
+                   "doesn't fit", "does not fit", "didn't fit", "did not fit", "missing from", "part is missing",
+                   "parts are missing", "חלק לא נכון", "לא החלק", "פגום", "פגומה", "שבור", "שבורה", "תקול",
+                   "לא מתאים", "לא מתאימה", "قطعة خاطئة", "خاطئة", "تالف", "تالفة", "مكسور", "لا تناسب", "غير مناسبة"),
 }
 
 # Sensitive-change requests are detected by STRUCTURE (a change verb next to the thing being
@@ -241,6 +254,8 @@ def classify(email: NormalizedEmail, thread: List[NormalizedEmail], ctx: Resolve
             return "complaint_dispute", [f for f in ("dispute_legal", "complaint") if f in flags]
         if origin == "message" and ("refund" in flags or "cancellation" in flags):
             return "refund_cancellation", [f for f in ("refund", "cancellation") if f in flags]
+        if origin == "message" and "wrong_item" in flags:
+            return "complaint_dispute", ["wrong_item"]       # wrong / damaged / non-fitting part received
         for cat in ("payment_billing", "order_shipping", "customer_inquiry"):
             hits = _hits(t, _KW[cat])
             if hits:

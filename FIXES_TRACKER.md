@@ -6947,3 +6947,17 @@ Delivery note: the earlier "not in Hotmail inbox" report was not root-caused (no
 **Live replay of the same message after the fix:** `order_shipping` (0.70, "content signals in this message: address_change"), `risk_flags=['address_change']`, policy `human_approval_required` with reason `risk flags: address_change`, no reply text, not sendable. Gmail: GET only (first run 5 GET, replay 3 GET, 0 non-GET); labels unchanged (`INBOX`, `UNREAD`); business tables and the order's stored address unchanged; `email_agent_messages` absent; alembic 0038; backend `RestartCount=0`, agent disabled, fix on disk only.
 
 **Remaining gap:** only one real sensitive-change wording has been seen live; the patterns are tested against written examples, not a corpus of real customer mail.
+
+## 2026-10-09 — Email Agent: 12-scenario matrix; "not received" and "wrong part" claims got an automatic status reply
+
+**Run:** the 12 requested scenarios (status, not received, tracking, wrong part, cancellation, refund, address change, email/phone change, status above a quoted address change, empty reply with the order only in the quote, another customer's order, nonexistent order) through the real pipeline (`agent.process_message`), real `DbContextSource` (SELECT only) and an in-memory store; the Gmail side was an in-process transport serving messages shaped like the real Hotmail ones. Real data: the owner's customer account (`AUTO-2026-BC7D3824` pending payment, `AUTO-2026-1D2E937B` delivered with tracking text but no carrier record); the cross-customer case used `AUTO-2026-43EA94CF`, owned by the documented test account. The live inbound leg was NOT run: test messages must come from the owner's Hotmail account, which this system cannot send from.
+
+**Defects found and fixed:**
+1. **"My order has not arrived" → automatic "it is delivered".** No flag covered a non-delivery / delay / loss claim, and the word "order" made it `order_shipping` → `draft_order_status`. On a delivered order that reply contradicts the customer.
+2. **"I received the wrong part" → automatic "it is delivered".** No flag covered wrong / damaged / defective / non-fitting items.
+
+**Fix:** `classifier._FLAGS` gains `delivery_problem` and `wrong_item` (English, Hebrew, Arabic); both are in `policy.HUMAN_FLAGS`, so a customer claim always goes to a human. `wrong_item` sets the category to `complaint_dispute`. They are deliberately NOT in `SERIOUS_FLAGS`: a carrier notice saying a shipment is delayed stays `log_only`.
+
+**Tests:** 30 focused (24 failed on the old code), including 11 non-receipt and 12 wrong-item wordings, 6 plain questions that must not be flagged ("I will pay later today", "does this part fit a 2018 Corolla?"), and a carrier delay notice. Email Agent + OAuth + compose: 254 passed, 3 skipped (with the real-Postgres store test).
+
+**Matrix after the fix:** a, c, i → safe tier (order resolved, owned; status reply without tracking because no carrier record is verified); l → safe tier, asking for the order number (no order attached). b, d, e, f, g, h, j, k → `human_approval_required`, no reply text; k = `sender_mismatch`, the other account's order details withheld. Business tables unchanged; `email_agent_messages` absent; alembic 0038; no Gmail call; backend `RestartCount=0`, agent disabled, fix on disk only.

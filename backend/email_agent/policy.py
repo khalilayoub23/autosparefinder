@@ -12,7 +12,8 @@ Process:
   HUMAN APPROVAL REQUIRED (no draft is prepared):
     refund, cancellation, price change, financial commitment, address change, legal / dispute,
     complaint, security / account recovery, customs, payment / billing, unknown, a risky
-    attachment, an unauthenticated sender, a message with no newly-authored text (a quoted
+    attachment, an unauthenticated sender, a claim that an order did not arrive or arrived wrong /
+    damaged (never answered with an automatic status), a message with no newly-authored text (a quoted
     original is context, never a request), and any ambiguous or conflicting context.
   NO REPLY: newsletters, spam, automated / platform notifications without a serious flag.
   SENDING: every decision is sendable=False. send_allowed() returns False unconditionally in
@@ -36,6 +37,7 @@ HUMAN_CATEGORIES = ("complaint_dispute", "refund_cancellation", "payment_billing
                     "account_security", "unknown")
 HUMAN_FLAGS = ("refund", "cancellation", "dispute_legal", "complaint", "price_change",
                "financial_commitment", "address_change", "account_change", "security", "customs",
+               "delivery_problem", "wrong_item",
                "risky_attachment", "unauthenticated_sender", "bulk_headers", "automated_sender",
                "empty_message")
 NOTIFICATION_CATEGORIES = ("automated_notification", "shipping_eurosender", "ebay", "aliexpress")

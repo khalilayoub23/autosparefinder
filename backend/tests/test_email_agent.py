@@ -1334,3 +1334,46 @@ async def test_address_change_in_a_notice_opening_escalates():
     _, _, c, d = await classify_one("noreply@eurosender.com", "Order No. 408540-26 update",
                                     html=EUROSENDER_HTML.format(headline="Order update", opening="The delivery address was changed by the courier."))
     assert "address_change" in c.risk_flags and d.requires_human is True
+
+
+# ══ Regressions from the 2026-10-09 scenario matrix (real pipeline, real DB context) ══════════════════
+# A customer saying an order never arrived, or that the wrong / a damaged part arrived, got an automatic
+# "your order is delivered" reply: neither claim raised any flag, and "order" alone made it order_shipping.
+NOT_RECEIVED = ["My order AUTO-2026-1A2B3C4D has not arrived yet. It is very late, where is it?",
+                "I never received order AUTO-2026-1A2B3C4D", "I haven't received my parts", "the parcel was lost",
+                "order AUTO-2026-1A2B3C4D is delayed", "it says delivered but I did not get it",
+                "ההזמנה AUTO-2026-1A2B3C4D עדיין לא הגיעה", "לא קיבלתי את ההזמנה", "יש איחור במשלוח",
+                "لم يصل طلبي AUTO-2026-1A2B3C4D", "الطلب متأخر"]
+WRONG_ITEM = ["I received the wrong part for order AUTO-2026-1A2B3C4D. This is not the part I ordered.",
+              "you sent me the wrong item", "the part arrived damaged", "it is broken", "the part does not fit my car",
+              "this is not what I ordered", "a part is missing from the box",
+              "קיבלתי חלק לא נכון", "החלק הגיע פגום", "החלק לא מתאים לרכב", "وصلتني قطعة خاطئة", "القطعة تالفة"]
+
+
+@pytest.mark.parametrize("text", NOT_RECEIVED)
+async def test_not_received_claim_never_gets_an_automatic_status_reply(text):
+    _, ctx, c, d = await classify_one("dana@gmail.com", "Order AUTO-2026-1A2B3C4D", text)   # ORDER fixture is 'shipped'
+    assert "delivery_problem" in c.risk_flags, c.risk_flags
+    assert (d.tier, d.requires_human) == (policy.TIER_HUMAN, True) and not d.wants_draft
+
+
+@pytest.mark.parametrize("text", WRONG_ITEM)
+async def test_wrong_or_damaged_item_claim_goes_to_a_human(text):
+    _, _, c, d = await classify_one("dana@gmail.com", "Order AUTO-2026-1A2B3C4D", text)
+    assert "wrong_item" in c.risk_flags, c.risk_flags
+    assert c.classification == "complaint_dispute" and d.requires_human is True and not d.wants_draft
+
+
+@pytest.mark.parametrize("text", ["Where is my order?", "What is the status of my order AUTO-2026-1A2B3C4D?",
+                                  "Can you send me the tracking number for order AUTO-2026-1A2B3C4D?",
+                                  "I will pay later today", "does this part fit a 2018 Corolla?", "do you have this part in stock?"])
+async def test_plain_status_and_parts_questions_are_not_claims(text):
+    _, _, c, _ = await classify_one("dana@gmail.com", "Order AUTO-2026-1A2B3C4D", text)
+    assert "delivery_problem" not in c.risk_flags and "wrong_item" not in c.risk_flags, c.risk_flags
+
+
+async def test_carrier_delay_notice_is_not_escalated_for_the_word_delay():
+    # a platform notice saying a shipment is delayed is information, not a customer claim
+    _, _, c, d = await classify_one("noreply@eurosender.com", "Order No. 408540-26 update",
+                                    html=EUROSENDER_HTML.format(headline="Shipment update", opening="Your shipment is delayed by one day."))
+    assert "delivery_problem" in c.risk_flags and d.recommended_action == "log_only"

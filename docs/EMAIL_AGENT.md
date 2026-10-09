@@ -185,6 +185,7 @@ references           customer_id / order_id / order_number / tracking_number /
                      eurosender_order_code / supplier_id — DB-verified values only
 risk_flags           refund, cancellation, dispute_legal, complaint, price_change,
                      financial_commitment, address_change, account_change, security, customs,
+                     delivery_problem, wrong_item,
                      risky_attachment, unauthenticated_sender, bulk_headers, automated_sender,
                      empty_message
 recommended_action   draft_order_status | draft_request_order_number | draft_request_details |
@@ -221,7 +222,7 @@ What stays unresolved:
 | Tier | When | Result |
 |---|---|---|
 | Safe for future automation | verified order status for the authenticated account owner; missing order number; missing vehicle / part details; acknowledgement to a verified **and active** supplier | a draft is prepared |
-| Human approval required | refund, cancellation, price change, financial commitment, address change, legal / dispute, complaint, security / account recovery, customs, payment / billing, unknown category, risky attachment, unauthenticated sender, a message with no newly-authored text, inactive or pending supplier, no-reply supplier address, ambiguous or conflicting context, order status the templates do not cover, a draft that failed verification | no draft, `requires_human = true` |
+| Human approval required | refund, cancellation, price change, financial commitment, address change, legal / dispute, complaint, security / account recovery, customs, payment / billing, unknown category, risky attachment, unauthenticated sender, a claim that an order did not arrive or arrived wrong or damaged, a message with no newly-authored text, inactive or pending supplier, no-reply supplier address, ambiguous or conflicting context, order status the templates do not cover, a draft that failed verification | no draft, `requires_human = true` |
 | No reply | newsletter, spam, automated or platform notification without a serious flag, thread already answered by us | logged only |
 
 Drafts are fixed Hebrew / English / Arabic templates filled only with verified context. They
