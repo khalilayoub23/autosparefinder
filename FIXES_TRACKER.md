@@ -6988,3 +6988,14 @@ Delivery note: the earlier "not in Hotmail inbox" report was not root-caused (no
 **Tests:** 7 new (4 failed on the old code): duplicate subject with no reply link does not borrow an order; a valid order elsewhere neither overrides a nonexistent order nor disambiguates two orders in the current message; an explicit reply may use the customer's own earlier message; an explicit reply citing a nonexistent order is not rescued by the earlier message; an empty message does not borrow a category; the association rule itself. Two existing follow-up tests now carry real reply headers. Email Agent + OAuth + compose: 270 passed, 3 skipped (with the real-Postgres store test).
 
 **Live re-run of the same 17 messages (read-only):** associated thread messages = 0 for all 17 (none is a reply). Changed outcomes: `1a11f3e7f457e401` order now unresolved (still human, `address_change`); `1a11f40a911581b3` and `1a11f410122d5209` category now `unknown` (still human, `empty_message`, own-subject order still resolved). All other outcomes unchanged; friend's-order message still `ambiguous`. Gmail 39 GET, 0 non-GET; labels unchanged; business tables unchanged; alembic 0038; backend `RestartCount=0`, agent disabled.
+
+## 2026-10-09 — Email Agent: live scenarios i, j, k and the reply-chain path (read-only)
+
+Four new messages from the test sender (06:17–06:18 UTC) were processed with the unchanged pipeline in memory (code = `c1691fa`). Gmail: 8 message GETs + 4 thread GETs + 1 token refresh, 0 non-GET; labels unchanged; business tables unchanged; alembic 0038; backend `RestartCount=0`, agent disabled.
+
+- **k — PASS (live).** `1a11f50a2061fb8a`, "Where is my order AUTO-2026-43EA94CF?": order `sender_mismatch` ("referenced order belongs to a different account"), no order details in the result, `human_approval_required`, no reply text.
+- **i — BLOCKED.** Neither candidate is a reply: `1a11f4f1b83ff4c3` (the question in the body, empty subject) and `1a11f4f4d64fe8fd` (the question as the subject, empty body) carry no `In-Reply-To`, no `References` and no quoted original (only Outlook's `Thread-Index`). Observed: the first → `order_shipping`, own order resolved, safe tier, no tracking (no verified carrier record); the second → `empty_message`, human. The quoted-address-change path was not exercised.
+- **j — BLOCKED.** `1a11f500fa3cba5f` ("." with the subject "Customer request — real order") is a new message, not a reply: no reply headers, no quote, so no order in a quote. Observed: `empty_message`, order unresolved, human, no reply text.
+- **Reply-chain path — BLOCKED.** None of the four carries `In-Reply-To` / `References`; each is alone in its Gmail thread. For comparison, the 2026-10-08 Hotmail replies (sent with Outlook's Reply button) carry both headers. Same-subject isolation remains verified on the earlier live thread (13 unlinked messages, 0 associated).
+
+No defect found; no code change.
