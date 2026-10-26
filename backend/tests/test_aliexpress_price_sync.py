@@ -16,6 +16,8 @@ from sqlalchemy.pool import NullPool
 import services.aliexpress_price_sync as svc
 from BACKEND_DATABASE_MODELS import engine
 from services.suppliers.base_supplier import PartResult
+from catalog_population import seed_population  # noqa: E402  (tests/ on sys.path via conftest)
+import isolated_db_guard  # noqa: E402
 
 
 def _hit(oem: str, price: float, img: str = "https://img.example/x.jpg") -> PartResult:
@@ -28,6 +30,11 @@ def _hit(oem: str, price: float, img: str = "https://img.example/x.jpg") -> Part
 
 @pytest.fixture
 async def db():
+    # #95: isolated databases only — refuse BEFORE connecting (no opt-in / not an isolated environment /
+    # a production host), and again on the live server before the first write.
+    _refusal = isolated_db_guard.static_refusal()
+    if _refusal is not None:
+        pytest.skip(f"isolated DB only: {_refusal}")
     # own NullPool engine: the shared engine's pooled connections belong to another test's event loop
     eng = create_async_engine(engine.url, poolclass=NullPool)
     try:
@@ -38,6 +45,10 @@ async def db():
     trans = await conn.begin()
     session = AsyncSession(bind=conn, join_transaction_mode="create_savepoint", expire_on_commit=False)
     try:
+        _live = await isolated_db_guard.live_refusal(session)
+        if _live is not None:                        # fail CLOSED: never write to a production-like DB
+            pytest.fail(f"REFUSED before any write: {_live}")
+        await seed_population(session)   # #88: the rows this file selects, in ITS rolled-back transaction
         yield session
     finally:
         await session.close()

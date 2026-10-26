@@ -83,7 +83,7 @@ check_present(
 )
 check_present(
     "N29: stall reason content preserved",
-    '_alert_msg = (\n                            f"db_update_agent: {_stall_reason}.\\n"',
+    '_alert_msg = (\n                                f"db_update_agent: {_stall_reason}.\\n"',
     _routes_src,
 )
 check_present(
@@ -93,7 +93,7 @@ check_present(
 )
 check_present(
     "N29 regression: no duplicate notification path (single _alert_owner call site for worker_silence)",
-    "_alert_owner(_alert_title, _alert_msg, alert_key=\"worker_silence\", severity=\"warning\")",
+    "_alert_owner(_alert_title, _alert_msg, alert_key=\"worker_silence\",\n                                           cooldown_s=21600, severity=\"warning\")",
     _routes_src,
 )
 check(

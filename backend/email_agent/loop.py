@@ -5,18 +5,21 @@ Purpose: Supervised background loop for the Email Agent (registered in
 Process:
   - state disabled (EMAIL_AGENT_ENABLED != 1, the default) or unconfigured (a Gmail OAuth value
     is missing): logs the state ONCE and sleeps >= 1h. Never raises, never crash-loops.
-  - configured: every EMAIL_AGENT_INTERVAL_S runs agent.process_once() (read -> classify ->
+  - configured but halted by the runtime kill switch (email_agent/control.py; the default until an
+    operator arms it): logs once, creates no Gmail client, re-checks every HALT_RECHECK_S.
+  - configured and armed: every EMAIL_AGENT_INTERVAL_S runs agent.process_once() (read -> classify ->
     context -> policy -> draft -> verify). No LLM call. Nothing is sent.
   - a Gmail auth / wrong-account / scope failure backs off for 1h and notifies the owner at
     most once per 24h (notify-by-exception); routine cycles send no notification.
 Data Imported/Modified: email_agent_messages (PII DB); Gmail drafts when EMAIL_AGENT_GMAIL_DRAFTS=1.
-Last Updated: 2026-10-04
+Last Updated: 2026-10-09
 """
 from __future__ import annotations
 
 import asyncio
 from typing import Awaitable, Callable, Optional
 
+from email_agent import control as _control
 from email_agent.agent import audit_log, process_once
 from email_agent.config import CONFIGURED, load_config
 from email_agent.context import DbContextSource
@@ -30,6 +33,7 @@ Notify = Callable[..., Awaitable[None]]
 _ATTENTION = ("auth", "wrong_account", "scope", "config", "permission")
 
 last_cycle: dict = {}   # read by routes/email_agent_routes.py
+HALT_RECHECK_S = 60     # while enabled but halted, re-read the runtime control this often
 
 
 async def _heartbeat(stats: dict) -> None:
@@ -55,6 +59,16 @@ async def email_agent_loop(notify: Optional[Notify] = None) -> None:
             last_cycle.clear()
             last_cycle.update({"state": cfg.state})
             await asyncio.sleep(max(cfg.interval_s, 3600))
+            continue
+        ctl = _control.read_control()
+        if not ctl["running"]:
+            # Runtime kill switch: no Gmail client, no heartbeat, no DB access while halted.
+            if logged_state != "halted":
+                audit_log("idle", state="halted", reason=ctl["reason"])
+                logged_state = "halted"
+            last_cycle.clear()
+            last_cycle.update({"state": "halted", "reason": ctl["reason"]})
+            await asyncio.sleep(HALT_RECHECK_S)
             continue
         logged_state = cfg.state
         delay = cfg.interval_s

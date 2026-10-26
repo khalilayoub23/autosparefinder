@@ -64,6 +64,34 @@ def _gemini_cb_trip() -> None:
     logger.warning("Gemini circuit breaker TRIPPED — skipping Gemini for 1 hour")
 
 
+# A 402 from Cerebras is BILLING (account unpaid/inactive), not a rate limit: every request
+# fails until someone pays. It was handled exactly like a 429 — each call still tried Cerebras
+# and then the Cerebras fallback model on the SAME account (extra latency on every customer
+# reply) and nothing told the owner (0 successful Cerebras calls since 2026-10-18 19:55 UTC
+# went unnoticed). Now: skip Cerebras for _CEREBRAS_BILLING_COOLDOWN after a 402, and leave a
+# Redis marker the health monitor turns into one owner alert per day (FIXES_TRACKER #69 §12).
+_CEREBRAS_BILLING_COOLDOWN = 900
+_CEREBRAS_BILLING_REDIS_KEY = "autospare:llm:cerebras_payment_required"
+_cerebras_billing_down_until: float = 0.0
+
+
+def _cerebras_billing_is_down() -> bool:
+    return _time.time() < _cerebras_billing_down_until
+
+
+async def _cerebras_billing_trip() -> None:
+    global _cerebras_billing_down_until
+    _cerebras_billing_down_until = _time.time() + _CEREBRAS_BILLING_COOLDOWN
+    logger.warning("Cerebras 402 Payment Required — skipping Cerebras for %ss", _CEREBRAS_BILLING_COOLDOWN)
+    try:
+        from BACKEND_AUTH_SECURITY import get_redis
+        r = await get_redis()
+        if r:
+            await r.set(_CEREBRAS_BILLING_REDIS_KEY, str(int(_time.time())), ex=3600)
+    except Exception:
+        pass
+
+
 ROUTER_BASE  = "https://router.huggingface.co/v1"
 INFER_BASE   = "https://router.huggingface.co/hf-inference/models"
 
@@ -235,6 +263,33 @@ def _scrub_secrets(text: str) -> str:
     "never print OAuth tokens to stdout".
     """
     return _SECRET_QS_RE.sub(r"\1<redacted>", text or "")
+
+
+class _RedactUrlSecretsFilter(logging.Filter):
+    """#109 (2026-10-26): httpx logs every request at INFO with the full URL ("HTTP Request: POST …"), so a
+    credential carried as a query parameter reached `docker logs` even though the ERROR path above was scrubbed —
+    the live Gemini key was found there in clear text. Gemini now authenticates with the x-goog-api-key header (no
+    key in any URL); this filter is the second layer for any other `?key=`/`?token=` style URL."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            msg = record.getMessage()
+        except Exception:
+            return True
+        clean = _scrub_secrets(msg)
+        if clean != msg:
+            record.msg, record.args = clean, None
+        return True
+
+
+def _install_url_secret_redaction() -> None:
+    for name in ("httpx", "httpcore"):
+        lg = logging.getLogger(name)
+        if not any(isinstance(f, _RedactUrlSecretsFilter) for f in lg.filters):
+            lg.addFilter(_RedactUrlSecretsFilter())
+
+
+_install_url_secret_redaction()
 
 
 def raise_for_status_safe(resp: "httpx.Response") -> None:
@@ -422,33 +477,41 @@ async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority
         _body["reasoning_effort"] = reasoning_effort
     payload = _json.dumps(_body, ensure_ascii=False).encode()
 
-    _acquire = not priority
-    if _acquire:
-        await _BG_SEMAPHORE.acquire()
-    else:
-        await _PRIORITY_SEMAPHORE.acquire()
-    try:
-        resp = await _post_with_retry(
-            f"{CEREBRAS_BASE}/chat/completions",
-            {
-                "Authorization": f"Bearer {CEREBRAS_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            payload,
-            timeout,
-            "text",
-        )
-    finally:
+    resp = None
+    status = 402                     # billing breaker open: treat as the 402 path, no request
+    if not _cerebras_billing_is_down():
+        _acquire = not priority
         if _acquire:
-            _BG_SEMAPHORE.release()
+            await _BG_SEMAPHORE.acquire()
         else:
-            _PRIORITY_SEMAPHORE.release()
-    if resp.status_code in (429, 402):  # 402 = payment required / account inactive → same fallback path
+            await _PRIORITY_SEMAPHORE.acquire()
+        try:
+            resp = await _post_with_retry(
+                f"{CEREBRAS_BASE}/chat/completions",
+                {
+                    "Authorization": f"Bearer {CEREBRAS_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                payload,
+                timeout,
+                "text",
+            )
+        finally:
+            if _acquire:
+                _BG_SEMAPHORE.release()
+            else:
+                _PRIORITY_SEMAPHORE.release()
+        status = resp.status_code
+        if status == 402:
+            await _cerebras_billing_trip()
+    if status in (429, 402):  # 402 = payment required / account inactive → external fallback
         # Try Cerebras fallback model (reasoning model zai-glm-4.7) before external providers.
         # SKIP for customer-facing fast agents (skip_fallback_model=True) — zai-glm-4.7 is a
         # reasoning model that ignores customer-service system prompts and produces wrong-context
         # replies (e.g. parts-finder response inside orders_agent, 2026-08-11 audit).
-        if CEREBRAS_FALLBACK_MODEL and CEREBRAS_FALLBACK_MODEL != selected_model and not skip_fallback_model:
+        # Also skipped on 402: the fallback model bills to the same unpaid account.
+        if (status == 429 and CEREBRAS_FALLBACK_MODEL and CEREBRAS_FALLBACK_MODEL != selected_model
+                and not skip_fallback_model):
             logger.warning("hf_text: Cerebras primary 429 — trying fallback model %s", CEREBRAS_FALLBACK_MODEL)
             try:
                 result = await _cerebras_call(prompt, system, CEREBRAS_FALLBACK_MODEL, timeout, priority, temperature, reasoning_effort)
@@ -483,6 +546,8 @@ async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority
             except Exception as _groq_primary_err:
                 logger.warning("hf_text: GROQ gpt-oss-120b failed (%s) — trying %s", _groq_primary_err, os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"))
                 return await groq_text(prompt=prompt, system=system, timeout=timeout)
+    if resp is None:
+        raise RuntimeError("Cerebras skipped (402 Payment Required) and no fallback provider answered")
     raise_for_status_safe(resp)
     result: str = _extract_cerebras_content(resp.json())
     result = _clean_response(result)
@@ -793,8 +858,8 @@ async def hf_embed(text: str, timeout: float = 10.0) -> list[float]:
         http = _get_http()
         resp = await asyncio.wait_for(
             http.post(
-                f"{GEMINI_BASE}/gemini-embedding-001:embedContent?key={GEMINI_API_KEY}",
-                headers={"Content-Type": "application/json"},
+                f"{GEMINI_BASE}/gemini-embedding-001:embedContent",
+                headers={"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY},
                 json={
                     "content": {"parts": [{"text": text}]},
                     "outputDimensionality": 384,
@@ -869,8 +934,8 @@ async def hf_vision(
         }, ensure_ascii=False).encode()
 
         resp = await _post_with_retry(
-            f"{GEMINI_BASE}/{GEMINI_VIS_MODEL}:generateContent?key={GEMINI_API_KEY}",
-            {"Content-Type": "application/json"},
+            f"{GEMINI_BASE}/{GEMINI_VIS_MODEL}:generateContent",
+            {"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY},
             payload,
             timeout,
             "vision",
@@ -943,8 +1008,8 @@ async def gemini_text(
     }, ensure_ascii=False).encode()
 
     resp = await _post_with_retry(
-        f"{GEMINI_BASE}/{model}:generateContent?key={GEMINI_API_KEY}",
-        {"Content-Type": "application/json"},
+        f"{GEMINI_BASE}/{model}:generateContent",
+        {"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY},
         payload,
         timeout,
         "gemini_text",
@@ -975,8 +1040,8 @@ async def whatsapp_gemini_text(prompt: str, system: str = "", timeout: float = 6
         "generationConfig": {"temperature": 0.7, "maxOutputTokens": 1500},
     }, ensure_ascii=False).encode()
     resp = await _post_with_retry(
-        f"{GEMINI_BASE}/{model}:generateContent?key={WHATSAPP_GEMINI_KEY}",
-        {"Content-Type": "application/json"},
+        f"{GEMINI_BASE}/{model}:generateContent",
+        {"Content-Type": "application/json", "x-goog-api-key": WHATSAPP_GEMINI_KEY},
         payload,
         timeout,
         "whatsapp_gemini",
@@ -1017,8 +1082,8 @@ async def gemini_web_search(
         "generationConfig": {"temperature": 0.2, "maxOutputTokens": 2000},
     }, ensure_ascii=False).encode()
     resp = await _post_with_retry(
-        f"{GEMINI_BASE}/{model}:generateContent?key={GEMINI_API_KEY}",
-        {"Content-Type": "application/json"},
+        f"{GEMINI_BASE}/{model}:generateContent",
+        {"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY},
         payload,
         timeout,
         "gemini_web_search",

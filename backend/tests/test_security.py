@@ -491,7 +491,9 @@ def test_C_no_eval_exec_in_backend():
         src = open(os.path.join(BACKEND_DIR, fname), encoding="utf-8").read()
         # Allow eval inside comments or string literals for non-user-data uses
         # Look for actual call patterns
-        assert not re.search(r'\beval\s*\(', src), \
+        # A bare eval( call. Not `.eval(` — redis.eval() runs a fixed Lua script with the
+        # values passed as KEYS/ARGV, which is not Python code evaluation.
+        assert not re.search(r'(?<![.\w])eval\s*\(', src), \
             f"eval() found in {fname} — potential code injection risk"
 
 

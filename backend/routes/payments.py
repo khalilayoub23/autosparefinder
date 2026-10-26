@@ -3,9 +3,11 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_, text, desc, func
+from sqlalchemy.exc import IntegrityError
 from offer_classification import class_rank_sql, offer_label, class_label_he
 from datetime import datetime
 import asyncio
+from typing import Optional
 import json
 import os
 import uuid
@@ -2073,18 +2075,64 @@ async def get_payment_history(current_user=Depends(get_current_user), limit: int
     return {"payments": items}
 
 
+# #77: one logical order + one Stripe session per chat request (see create_whatsapp_checkout idempotency_ref).
+CHAT_CHECKOUT_NAMESPACE = uuid.UUID("5d0c2b9e-7f1a-4c55-9b7e-2a6f0d3c8e41")
+
+
+def chat_checkout_order_id(idempotency_ref: str, part_id: str, quantity: int) -> uuid.UUID:
+    """Deterministic order id for one logical chat checkout: same request + part + quantity → same order."""
+    return uuid.uuid5(CHAT_CHECKOUT_NAMESPACE, f"chat-checkout:{idempotency_ref}:{part_id}:{int(quantity)}")
+
+
+async def _reuse_chat_checkout(stripe_sdk, order_id: uuid.UUID, _pii_sf) -> dict:
+    """The order for this logical checkout already exists: return its own Stripe session, never a new one."""
+    async with _pii_sf() as db:
+        row = (await db.execute(
+            select(Order.id, Order.status, Order.total_amount, Payment.payment_intent_id)
+            .join(Payment, Payment.order_id == Order.id)
+            .where(Order.id == order_id)
+            .order_by(Payment.created_at.asc())
+            .limit(1)
+        )).first()
+    if row is None:
+        # an order with this id cannot exist without its payment (one commit) — anything else is not ours to guess
+        return {"ok": False, "error": "checkout_reconcile_failed: order without payment"}
+    try:
+        session = await asyncio.get_running_loop().run_in_executor(
+            None, lambda: stripe_sdk.checkout.Session.retrieve(row.payment_intent_id))
+    except Exception as exc:
+        return {"ok": False, "error": f"checkout_reconcile_failed: {type(exc).__name__}"}
+    status = getattr(session, "status", None)
+    if status == "open" and getattr(session, "url", None):
+        return {"ok": True, "checkout_url": session.url, "order_id": str(row.id),
+                "total": float(row.total_amount), "reused": True}
+    # complete / expired: the one order for this request exists; never create a second
+    return {"ok": False, "error": f"checkout_session_{status or 'unknown'}", "order_id": str(row.id)}
+
+
 async def create_whatsapp_checkout(
     user_id: str,
     part_id: str,
     quantity: int,
     shipping_address: dict,
     source: str = "whatsapp",
+    idempotency_ref: Optional[str] = None,
 ) -> dict:
     """
     Internal checkout for chatbot channels (WhatsApp/Telegram/Web) — no JWT required.
     Opens its own catalog and PII DB sessions.
     Returns {"ok": True, "checkout_url": str, "order_id": str, "total": float}
          or {"ok": False, "error": str}
+
+    idempotency_ref (#77): the chat request id. The order id is then DETERMINISTIC for (request, part, quantity)
+    and the Stripe idempotency key derives from it, so a retry / recovery re-run of the same request can never
+    create a second order or session:
+      - the order already committed (order + items + payment commit together) → its Stripe session is reused;
+      - a concurrent attempt is serialised by the order primary key (its INSERT waits for the first transaction,
+        then fails) and reuses the committed order;
+      - a crash after Stripe created the session but before the commit → the retry replays the SAME Stripe
+        idempotency key and gets the same session back; nothing local existed, so nothing is duplicated.
+    Without idempotency_ref the behaviour is unchanged (random order id) — web checkout and other callers.
     """
     import stripe as stripe_sdk
     from BACKEND_DATABASE_MODELS import (
@@ -2154,10 +2202,19 @@ async def create_whatsapp_checkout(
     total = round(subtotal + vat_total + shipping, 2)
 
     # ── 3. Create Order + OrderItem (PII DB) ───────────────────────────────────
+    fixed_id = chat_checkout_order_id(idempotency_ref, str(part_uuid), quantity) if idempotency_ref else None
+    if fixed_id is not None:
+        async with _pii_sf() as _probe:
+            _exists = (await _probe.execute(select(Order.id).where(Order.id == fixed_id))).scalar()
+        if _exists:
+            stripe_sdk.api_key = stripe_key
+            return await _reuse_chat_checkout(stripe_sdk, fixed_id, _pii_sf)
     try:
         async with _pii_sf() as db_pii:
-            order_number = f"{order_prefix}-{str(uuid.uuid4())[:8].upper()}"
+            order_number = (f"{order_prefix}-{fixed_id.hex[:8].upper()}" if fixed_id is not None
+                            else f"{order_prefix}-{str(uuid.uuid4())[:8].upper()}")
             order = Order(
+                **({"id": fixed_id} if fixed_id is not None else {}),
                 order_number=order_number,
                 user_id=user_uuid,
                 status="pending_payment",
@@ -2168,7 +2225,14 @@ async def create_whatsapp_checkout(
                 shipping_address=shipping_address,
             )
             db_pii.add(order)
-            await db_pii.flush()
+            try:
+                await db_pii.flush()      # with a fixed id, a concurrent attempt WAITS here, then fails on the PK
+            except IntegrityError:
+                if fixed_id is None:
+                    raise
+                await db_pii.rollback()
+                stripe_sdk.api_key = stripe_key
+                return await _reuse_chat_checkout(stripe_sdk, fixed_id, _pii_sf)
 
             db_pii.add(OrderItem(
                 order_id=order.id,
@@ -2260,7 +2324,8 @@ async def create_whatsapp_checkout(
                             "user_id": str(user_id),
                             "source": source_key,
                         },
-                        idempotency_key=f"{source_key}-order:{order.id}",
+                        idempotency_key=(f"{source_key}-chatreq:{order.id}" if fixed_id is not None
+                                         else f"{source_key}-order:{order.id}"),
                     )
                 )
             except Exception as stripe_err:
@@ -2278,7 +2343,13 @@ async def create_whatsapp_checkout(
                 currency="ILS",
                 status="pending",
             ))
-            await db_pii.commit()
+            try:
+                await db_pii.commit()
+            except IntegrityError:
+                if fixed_id is None:
+                    raise
+                await db_pii.rollback()        # another attempt committed this logical order first
+                return await _reuse_chat_checkout(stripe_sdk, fixed_id, _pii_sf)
 
             return {
                 "ok": True,

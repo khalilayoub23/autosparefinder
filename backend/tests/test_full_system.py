@@ -127,6 +127,18 @@ def _make_pii_engine():
     return eng, factory
 
 
+async def _guard_writes(db, url):
+    """#101: these CRUD tests COMMIT. Refuse unless the database they are about to write is isolated: static checks on
+    the URL actually used (skip), then the live check on the open session (fail) — both before the first write."""
+    import isolated_db_guard as g
+    why = g.url_refusal(url)
+    if why:
+        pytest.skip(f"isolated DB only: {why}")
+    why = await g.live_refusal(db)
+    if why:
+        pytest.fail(f"REFUSED before any write: {why}")
+
+
 def _auth(token=None):
     t = token or _TOKEN
     return {"Authorization": f"Bearer {t}"} if t else {}
@@ -435,6 +447,7 @@ async def test_C_supplier_crud():
     sid = _uuid.uuid4()
     try:
         async with fac() as db:
+            await _guard_writes(db, DATABASE_URL)
             s = Supplier(
                 id=sid, name=f"TestSupplier_{sid.hex[:6]}",
                 country="il", is_active=True,
@@ -462,6 +475,7 @@ async def test_C_system_setting_crud():
     key = f"test_key_{_uuid.uuid4().hex[:6]}"
     try:
         async with fac() as db:
+            await _guard_writes(db, DATABASE_URL)
             setting = SystemSetting(key=key, value="test_value",
                                     description="pytest temp setting")
             db.add(setting)
@@ -484,6 +498,7 @@ async def test_C_notification_crud():
     eng, fac = _make_pii_engine()
     try:
         async with fac() as db:
+            await _guard_writes(db, DATABASE_PII_URL)
             # Need a real user id — get any existing one
             r = await db.execute(select(User).limit(1))
             user = r.scalar_one_or_none()
@@ -561,15 +576,23 @@ def test_D_register():
 
 
 def test_D_duplicate_register_rejected():
-    r = httpx.post(f"{BASE_URL}/api/v1/auth/register", json={
-        "email": _EMAIL,
-        "password": _PASSWORD,
-        "full_name": "Duplicate",
-        "phone": "+972509999999",
-    }, timeout=15)
-    _skip_if_rate_limited(r, "duplicate-register")
-    assert r.status_code in (400, 409, 422), \
-        f"Duplicate register should fail, got {r.status_code}"
+    """#102: owns its user (unique per run) instead of reusing test_D_register's, so test order cannot change the
+    outcome: register it, prove the SAME email is then refused with 409, remove it."""
+    from registered_user_cleanup import delete_registered_user, unique_identity
+    email, phone = unique_identity("fulldup")
+    _, other_phone = unique_identity("fulldup")
+    try:
+        first = httpx.post(f"{BASE_URL}/api/v1/auth/register", json={
+            "email": email, "password": _PASSWORD, "full_name": "Duplicate Owner", "phone": phone}, timeout=15)
+        _skip_if_rate_limited(first, "duplicate-register (first)")
+        assert first.status_code in (200, 201), f"precondition: first registration failed: {first.text}"
+        r = httpx.post(f"{BASE_URL}/api/v1/auth/register", json={
+            "email": email, "password": _PASSWORD, "full_name": "Duplicate", "phone": other_phone}, timeout=15)
+        _skip_if_rate_limited(r, "duplicate-register")
+        assert r.status_code == 409 and "Email already registered" in r.text, \
+            f"Duplicate register should be rejected with 409, got {r.status_code}: {r.text}"
+    finally:
+        delete_registered_user(email)          # raises if the PII DB claims isolation but looks like production
 
 
 def test_D_login():
@@ -605,7 +628,7 @@ def test_D_login_wrong_password():
 
 def test_D_login_nonexistent_user():
     r = httpx.post(f"{BASE_URL}/api/v1/auth/login", json={
-        "email": f"ghost_{_RUN_ID}@nowhere.com",
+        "email": f"ghost_{_RUN_ID}@example.com",   # reserved domain — never a real inbox
         "password": "AnyPassword1!",
     }, timeout=10)
     assert r.status_code in (401, 403, 404, 400, 429), \
@@ -744,7 +767,11 @@ def test_E_parts_search_by_vin():
                       timeout=15)
     except httpx.HTTPError as exc:
         pytest.skip(f"search-by-vin transient HTTP error: {exc}")
-    assert r.status_code in (200, 404, 422, 502), \
+    # #104: 502 / 503 / 504 are the route's own "VIN provider unavailable" outcomes (provider error, circuit breaker
+    # open, timeout — routes/parts._decode_vin_with_resilience). Without external access every decode fails, and
+    # after a few failures the breaker answers 503, so accepting only 502 made this test depend on how many VIN
+    # requests ran before it (order-dependent, found by the release gate). Same set as test_fitment_search_flows.
+    assert r.status_code in (200, 404, 422, 502, 503, 504), \
         f"search-by-vin returned unexpected {r.status_code}"
     assert r.status_code != 500
 
@@ -902,6 +929,7 @@ async def test_G_supplier_part_crud():
     sp_id = _uuid.uuid4()
     try:
         async with fac() as db:
+            await _guard_writes(db, DATABASE_URL)
             brand_row = (await db.execute(
                 select(CarBrand.id, CarBrand.name)
                 .where(CarBrand.id.is_not(None))
@@ -1392,10 +1420,17 @@ def test_N_logout_calls_logout_user():
         "Logout endpoint must call logout_user() to revoke the session"
 
 
-def test_N_password_reset_uses_sendgrid():
-    auth_src = _auth_src()
-    assert "sendgrid_key" in auth_src or "SENDGRID_API_KEY" in auth_src, \
-        "Password reset must send email via SendGrid"
+def test_N_password_reset_sends_email():
+    """A reset must actually send the link (SMTP first, SendGrid fallback — routes/email_utils)
+    to the public site, never to a localhost default."""
+    import inspect
+    import BACKEND_AUTH_SECURITY as auth
+    from routes import email_utils
+    src = inspect.getsource(auth.create_password_reset_token)
+    assert "send_template(" in src and "password_reset(" in src, "reset token is created but never emailed"
+    mail = inspect.getsource(email_utils)
+    assert "SMTP_HOST" in mail and "_send_via_sendgrid" in mail, "no working mail transport"
+    assert (os.getenv("FRONTEND_URL") or "").startswith("https://"), "reset link would point at localhost"
 
 
 def test_N_return_reason_in_request_body():
@@ -1429,13 +1464,12 @@ def test_N_create_tables_initializes_both_dbs():
 
 
 def test_N_search_oem_original_separate_queries():
-    """OEM and Original search buckets must use different condition lists."""
-    src = _routes_src()
-    # The original bucket should specify only 'Original', not mixed with OEM
-    assert '["Original"]' in src, \
-        'Original search bucket should use ["Original"], not mixed with OEM'
-    assert '["OEM"]' in src, \
-        'OEM search bucket should use ["OEM"], not mixed with Original'
+    """Original, OEM and aftermarket buckets (routes/parts.py) use disjoint part_type lists,
+    so one part can never be offered under two labels."""
+    from routes import parts
+    o, e, a = set(parts._PT_ORIGINAL), set(parts._PT_OEM), set(parts._PT_AFTERMARKET)
+    assert o and e and a
+    assert not (o & e) and not (o & a) and not (e & a), (o & e, o & a, e & a)
 
 
 def test_N_asyncio_get_event_loop_not_used():

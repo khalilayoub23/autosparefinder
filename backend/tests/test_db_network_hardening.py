@@ -8,6 +8,10 @@ COMPOSE_PATH = os.path.join(REPO_DIR, "docker-compose.yml")
 
 
 def _compose_text() -> str:
+    if not os.path.exists(COMPOSE_PATH):
+        import pytest
+        pytest.skip("docker-compose.yml is not mounted in the backend container; run on the host "
+                    "(the live bind addresses were also verified with `ss -tlnp` on 2026-10-19)")
     with open(COMPOSE_PATH, encoding="utf-8") as f:
         return f.read()
 

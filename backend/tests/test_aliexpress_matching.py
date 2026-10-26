@@ -20,7 +20,10 @@ REAL_TITLE_YEARS = "Motorcycle Front and Rear Brake Pads for HONDA CBF 600 SA CB
 
 @pytest.fixture
 def sup(monkeypatch):
-    for k, v in (("ALIEXPRESS_APP_KEY", "546482"), ("ALIEXPRESS_APP_SECRET", "S" * 32), ("ENCRYPTION_KEY", "k" * 64)):
+    # #88: ALIEXPRESS_ACCESS_TOKEN too — the supplier adds access_token to a request only when one is configured
+    # (aliexpress_supplier._build_request); without it the test passed only where a REAL token was in the environment.
+    for k, v in (("ALIEXPRESS_APP_KEY", "546482"), ("ALIEXPRESS_APP_SECRET", "S" * 32), ("ENCRYPTION_KEY", "k" * 64),
+                 ("ALIEXPRESS_ACCESS_TOKEN", "test-access-token")):
         monkeypatch.setenv(k, v)
     s = AliExpressSupplier()
     monkeypatch.setattr(s, "_ensure_token", AsyncMock(return_value=True))
@@ -91,7 +94,7 @@ async def test_text_search_parses_real_structure(sup, monkeypatch):
     assert [p["itemId"] for p in out] == ["1005001234567890", "2"]
     url, params = sent[0]
     assert url == "https://api-sg.aliexpress.com/sync" and params["method"] == "aliexpress.ds.text.search"
-    assert params["keyWord"] == "15400-PLM-A01" and params["pageSize"] == "30" and params["access_token"] is not None
+    assert params["keyWord"] == "15400-PLM-A01" and params["pageSize"] == "30" and params["access_token"] == "test-access-token"
 
 async def test_text_search_error_response_returns_empty(sup, monkeypatch):
     _post(monkeypatch, {"error_response": {"code": "IllegalAccessToken", "msg": "x"}})

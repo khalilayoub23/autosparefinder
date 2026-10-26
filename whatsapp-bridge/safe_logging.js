@@ -144,6 +144,13 @@ export function jidHint(jid) {
   return m ? `...${m[1]}` : '...'
 }
 
+/** Any phone number / JID inside free text (e.g. an error message) -> "...<last 4>" (#72). Runs of 7+
+ *  digits, optionally followed by :<device> and @<domain>, are masked; shorter numbers are left alone. */
+export function maskNumbers(text) {
+  if (typeof text !== 'string') return text
+  return text.replace(/\+?\d{3,}(\d{4})(?::\d+)?(@[a-z.]+)?/gi, (m, last4) => (m.replace(/\D/g, '').length >= 7 ? `...${last4}` : m))
+}
+
 /** `9805…0397:32@lid` -> 32 (companion device number; 0/absent = primary phone). */
 export function jidDevice(jid) {
   if (typeof jid !== 'string') return undefined

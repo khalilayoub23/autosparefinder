@@ -15,6 +15,7 @@ import hmac
 import hashlib
 import logging
 from datetime import datetime, timezone, timedelta
+import uuid
 from uuid import UUID as _UUID
 from typing import Dict, Any
 import httpx
@@ -25,12 +26,15 @@ import binascii
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from BACKEND_DATABASE_MODELS import (
     get_pii_db, async_session_factory,
     User, Conversation, Message, SystemSetting,
 )
 from BACKEND_AI_AGENTS import process_user_message
+import chat_requests as creq
+import time
 
 logger = logging.getLogger("webhooks")
 
@@ -565,8 +569,573 @@ def _sanitize_for_telegram(text: str) -> str:
     return text
 
 
+# ── Agent reply with late delivery (#71) ──────────────────────────────────────────────────────
+# Before: asyncio.wait_for(process_user_message(...), 12) CANCELLED the agent at 12 s, told the customer
+# (always in Hebrew) "שלח שוב את שאלתך" and discarded the answer. Now the agent runs as its own task in
+# its own session; after WA_AGENT_REPLY_WAIT_S the customer gets an honest "the answer will follow" in
+# their language, and the answer is sent the moment it is ready (overall deadline WA_AGENT_LATE_DEADLINE_S).
+# A strong reference keeps the task alive (CLAUDE.md: a path that owes an answer needs a strong
+# reference, a deadline and a fallback).
+WA_AGENT_REPLY_WAIT_S = float(os.getenv("WA_AGENT_REPLY_WAIT_S", "12"))
+WA_AGENT_LATE_DEADLINE_S = float(os.getenv("WA_AGENT_LATE_DEADLINE_S", "120"))
+_AGENT_REPLY_TASKS: set = set()
+WA_FAST_DELIVERY_WAIT_S = float(os.getenv("WA_FAST_DELIVERY_WAIT_S", "20"))
+
+_WAIT_TEXT = {
+    "he": "⏳ אני עדיין מחפש עבורך — התשובה תגיע בהודעה נפרדת בעוד רגע, אין צורך לשלוח שוב.",
+    "ar": "⏳ ما زلت أبحث لك — سيصلك الرد في رسالة منفصلة بعد قليل، لا داعي لإعادة الإرسال.",
+    "en": "⏳ Still searching for you — the answer will follow in a separate message shortly, no need to resend.",
+}
+_LATE_FAIL_TEXT = {
+    "he": "מצטערים — לא הצלחתי להשלים את החיפוש הפעם. אפשר לשלוח שוב את השאלה.",
+    "ar": "عذرًا — لم أتمكن من إكمال البحث هذه المرة. يمكنك إرسال سؤالك مرة أخرى.",
+    "en": "Sorry — I could not finish this search. Please send your question again.",
+}
+_STILL_WORKING_TEXT = {
+    "he": "⏳ עדיין עובד על השאלה הקודמת שלך — התשובה בדרך.",
+    "ar": "⏳ ما زلت أعمل على سؤالك السابق — الرد في الطريق.",
+    "en": "⏳ Still working on your previous question — the answer is on its way.",
+}
+
+
+def _reply_lang(text: str) -> str:
+    t = text or ""
+    if re.search(r"[\u0600-\u06FF]", t):
+        return "ar"
+    if re.search(r"[\u0590-\u05FF]", t):
+        return "he"
+    return "en" if re.search(r"[A-Za-z]", t) else "he"
+
+
+def _keep(task) -> None:
+    _AGENT_REPLY_TASKS.add(task)
+    task.add_done_callback(_AGENT_REPLY_TASKS.discard)
+
+
+async def run_agent_reply(run, render, send, *, lang: str, wait_s: float = None, deadline_s: float = None,
+                          on_done=None) -> dict:
+    """run(): coroutine → agent result (in its own session). render(result) → reply text.
+    send(text): delivers a LATE message. Returns {"mode": "direct", "text"} when the answer came within
+    wait_s (the caller sends it), {"mode": "error", "error"} when the agent failed fast, or
+    {"mode": "deferred", "text": wait text} — the caller sends the wait text; the answer (or, after the
+    deadline, the failure text) is delivered exactly once by `send`. on_done() runs when the work ends."""
+    wait_s = WA_AGENT_REPLY_WAIT_S if wait_s is None else wait_s
+    deadline_s = WA_AGENT_LATE_DEADLINE_S if deadline_s is None else deadline_s
+    task = asyncio.ensure_future(run())
+    _keep(task)
+    done, _ = await asyncio.wait({task}, timeout=wait_s)
+    if done:
+        if on_done:
+            await on_done()
+        exc = task.exception()
+        if exc is not None:
+            return {"mode": "error", "error": exc}
+        return {"mode": "direct", "text": render(task.result())}
+
+    async def _late():
+        try:
+            try:
+                result = await asyncio.wait_for(task, timeout=max(0.0, deadline_s - wait_s))   # cancels at the deadline
+                text = render(result)
+            except Exception as exc:                       # deadline, or the agent failed late
+                print(f"[WhatsApp] late agent reply failed: {type(exc).__name__}")
+                text = _LATE_FAIL_TEXT.get(lang, _LATE_FAIL_TEXT["he"])
+            await send(text)
+        finally:
+            if on_done:
+                await on_done()
+    _keep(asyncio.ensure_future(_late()))
+    return {"mode": "deferred", "text": _WAIT_TEXT.get(lang, _WAIT_TEXT["he"])}
+
+
+async def _agent_inflight_claim(redis, user_key: str, body: str, ttl_s: int, rid: str = None) -> str:
+    """'new' (claimed) | 'duplicate' (the SAME text is already being answered) | 'other' (a different
+    question is in flight — answered separately). Redis unavailable → 'new' (never block a reply).
+    With rid (#73) the claim names its request; a claim whose request has ended or whose owner process has no
+    heartbeat (it died) is stale and is taken over — a resend must
+    never get "still working" for an answer nobody is producing."""
+    if redis is None:
+        return "new"
+    digest = hashlib.sha256((body or "").strip().encode("utf-8")).hexdigest()[:16]
+    key = f"wa:agent_inflight:{user_key}:{digest}"
+    try:
+        if await redis.set(key, rid or "1", ex=ttl_s, nx=True):
+            return "new"
+        if rid is None:
+            return "duplicate"
+        holder = await redis.get(key)
+        holder = holder.decode() if isinstance(holder, bytes) else holder
+        rec = await creq.get(redis, holder) if holder and holder != "1" else None
+        if rec and rec.get("status") in creq.OPEN_STATUSES and await creq.owner_alive(redis, rec.get("owner")):
+            return "duplicate"
+        await redis.set(key, rid, ex=ttl_s)
+        return "new"
+    except Exception:
+        return "new"
+
+
+async def _agent_inflight_release(redis, user_key: str, body: str) -> None:
+    if redis is None:
+        return
+    digest = hashlib.sha256((body or "").strip().encode("utf-8")).hexdigest()[:16]
+    try:
+        await redis.delete(f"wa:agent_inflight:{user_key}:{digest}")
+    except Exception:
+        pass
+
+
+# ── Durable chat-request lifecycle (#73/#74) — shared by WhatsApp and Telegram ────────────────
+# The request record (chat_requests) is written BEFORE the agent task starts. Separate fields: processing
+# `status`/`reason`, the agent's conversation turn (tagged in `messages.analysis.chat_request_id`, committed in
+# the SAME transaction as the turn), transport `delivery`, and the authoritative history row (`history`).
+# Before any re-run the turn is RECONCILED against the database: a turn that was already saved is reused, never
+# produced twice. An outcome that cannot be reconciled stays `ambiguous` (open, retried, then an honest failure).
+_ACTIVE_REQUESTS: set = set()          # rids this process is working on right now
+_TERMINAL_DELIVERY = ("sent", "failed", "unknown")
+
+
+def _transport(channel: str):
+    """(send(rec, text) → result, classify(result) → sent|not_sent|invalid|rejected|unknown), resolved at call time."""
+    if channel == "tg":
+        from social import telegram_publisher as _tp
+
+        async def _send(rec, text):
+            return await _tp.send_telegram_message(rec["target"], _sanitize_for_telegram(text))
+        return _send, creq.classify_telegram
+    from social import whatsapp_provider as _wp
+
+    async def _send(rec, text):
+        return await _wp.send_message(rec["target"], text, reply_jid=rec.get("reply_jid") or "")
+    return _send, creq.classify_whatsapp
+
+
+def _render_agent_answer(agent_result):
+    """(answer, "") for a genuine non-empty answer, else ("", "empty_answer" | "malformed_answer")."""
+    if not isinstance(agent_result, dict):
+        return "", "malformed_answer"
+    raw = agent_result.get("response")
+    if raw is None:
+        return "", "empty_answer"
+    if not isinstance(raw, str):
+        return "", "malformed_answer"
+    text = re.sub(r"<[^>]+>", "", raw).strip()
+    return (text, "") if text else ("", "empty_answer")
+
+
+async def _run_agent_for(rec: dict, rid: str, reuse_user_id: str = ""):
+    """One agent run in its own PII session. Every conversation-turn row it creates is tagged with the request id
+    inside the agent's own transaction, so "was this turn saved?" is answerable after any crash (and the unique
+    index of migration 0040 makes a second live row per request impossible).
+    reuse_user_id: the customer's question was already saved by an interrupted run — the re-run's own copy of it
+    is created soft-deleted and points at the original, so the original stays the one visible question and no
+    existing history row is altered."""
+    from sqlalchemy import event
+    from BACKEND_DATABASE_MODELS import pii_session_factory as _psf, Message as _Msg
+    async with _psf() as _adb:
+        def _tag(sess, _ctx, _inst):
+            for obj in list(sess.new):
+                if isinstance(obj, _Msg) and obj.role in ("user", "assistant"):
+                    a = dict(obj.analysis or {})
+                    if "chat_request_id" not in a:
+                        a.update(chat_request_id=rid, chat_turn=obj.role)
+                        if obj.role == "user" and reuse_user_id:
+                            a["chat_duplicate_of"] = reuse_user_id
+                            obj.deleted_at = datetime.utcnow()
+                        obj.analysis = a
+        event.listen(_adb.sync_session, "before_flush", _tag)
+        # this task's context only: side-effecting agent code and the history loader see which request this is
+        creq.CURRENT_REQUEST.set(rid)
+        creq.REUSE_USER_ROW.set(reuse_user_id or "")
+        _res = await process_user_message(user_id=rec["user_key"], message=rec["body"],
+                                          conversation_id=rec.get("conv_id") or None, db=_adb,
+                                          source="telegram" if rec.get("channel") == "tg" else "whatsapp")
+        await _adb.commit()
+        return _res
+
+
+async def _reconcile_turn(rec: dict, rid: str) -> dict:
+    """What the database says about this request's conversation turn. Raises when the database cannot answer.
+    complete (assistant row saved) | partial (only the user row saved) | none."""
+    if not rec.get("conv_id"):
+        return {"state": "none"}
+    from sqlalchemy import text as _t
+    from BACKEND_DATABASE_MODELS import pii_session_factory as _psf
+    async with _psf() as s:
+        rows = (await s.execute(_t(
+            "SELECT id, role, content FROM messages WHERE conversation_id = CAST(:c AS uuid) "
+            "AND analysis->>'chat_request_id' = :rid AND analysis->>'chat_kind' IS NULL AND deleted_at IS NULL "
+            "ORDER BY created_at"), {"c": rec["conv_id"], "rid": rid})).fetchall()
+    asst = [r for r in rows if r[1] == "assistant"]
+    if asst:
+        return {"state": "complete", "answer": asst[-1][2] or "", "msg_id": str(asst[-1][0])}
+    users = [str(r[0]) for r in rows if r[1] == "user"]
+    return {"state": "partial", "user_ids": users} if users else {"state": "none"}
+
+
+async def _try_reconcile(rec: dict, rid: str):
+    try:
+        return await _reconcile_turn(rec, rid)
+    except Exception as exc:
+        print(f"[Chat] rid={rid} reconcile failed: {type(exc).__name__}")
+        return None
+
+
+async def _history_failure_row(rid: str, rec: dict, text: str, reason: str) -> str:
+    """The customer-facing failure message in the authoritative history (`messages`), once per request."""
+    from sqlalchemy import text as _t
+    from BACKEND_DATABASE_MODELS import pii_session_factory as _psf, Message as _Msg
+    async with _psf() as s:
+        row = (await s.execute(_t(
+            "SELECT id FROM messages WHERE conversation_id = CAST(:c AS uuid) AND analysis->>'chat_request_id' = :rid "
+            "AND analysis->>'chat_kind' = 'failure' AND deleted_at IS NULL LIMIT 1"),
+            {"c": rec["conv_id"], "rid": rid})).fetchone()
+        if row:
+            return str(row[0])
+        m = _Msg(conversation_id=rec["conv_id"], role="assistant", agent_name="chat_failure", content=text,
+                 content_type="text", model_used="lifecycle",
+                 analysis={"chat_request_id": rid, "chat_kind": "failure", "reason": reason, "delivery": "pending"})
+        s.add(m)
+        try:
+            await s.commit()
+        except IntegrityError:
+            # a concurrent writer inserted it first (unique index, migration 0040): use that row
+            await s.rollback()
+            row = (await s.execute(_t(
+                "SELECT id FROM messages WHERE analysis->>'chat_request_id' = :rid "
+                "AND analysis->>'chat_kind' = 'failure' AND deleted_at IS NULL LIMIT 1"), {"rid": rid})).fetchone()
+            if row is None:
+                raise
+            return str(row[0])
+        return str(m.id)
+
+
+async def _history_set_delivery(msg_id: str, state: str) -> None:
+    from sqlalchemy import text as _t
+    from BACKEND_DATABASE_MODELS import pii_session_factory as _psf
+    async with _psf() as s:
+        await s.execute(_t(
+            "UPDATE messages SET analysis = COALESCE(analysis, '{}'::jsonb) || jsonb_build_object('delivery', "
+            "CAST(:st AS text), 'delivery_at', CAST(:ts AS text)) WHERE id = CAST(:id AS uuid)"),
+            {"st": state, "ts": datetime.now(timezone.utc).isoformat(), "id": msg_id})
+        await s.commit()
+
+
+async def _sync_history(r, rid: str) -> bool:
+    """Make the history row match the record: the failure row exists (written BEFORE its send, delivery
+    'pending'), and the outcome row carries the final delivery state. Idempotent; bounded on errors."""
+    rec = await creq.get(r, rid)
+    if rec is None or not rec.get("conv_id"):
+        await creq.update(r, rid, history="failed", history_error="no_conversation")
+        return False
+    try:
+        if rec.get("status") == "failed" and not rec.get("history_msg_id"):
+            mid = await _history_failure_row(rid, rec, rec.get("failure_text") or "", rec.get("reason") or "")
+            await creq.update(r, rid, history_msg_id=mid, history="pending")
+            rec["history_msg_id"] = mid
+        row = rec.get("history_msg_id") if rec.get("status") == "failed" else rec.get("answer_msg_id")
+        if not row:
+            await creq.update(r, rid, history="failed", history_error="no_history_row")
+            return False
+        if rec.get("delivery") in _TERMINAL_DELIVERY:
+            await _history_set_delivery(row, rec["delivery"])
+            await creq.update(r, rid, history="synced")
+            return True
+        await creq.update(r, rid, history="pending")
+        return False
+    except Exception as exc:
+        n = await creq.incr(r, rid, "history_attempts")
+        await creq.update(r, rid, history="failed" if n >= creq.MAX_HISTORY_ATTEMPTS else "pending",
+                          history_error=type(exc).__name__)
+        print(f"[Chat] rid={rid} history write failed ({n}): {type(exc).__name__}")
+        return False
+
+
+async def _deliver(r, rid: str, rec: dict, text: str, kind: str) -> str:
+    """Send `text` once for rid and record the outcome. Never re-sends what was sent or may have been sent;
+    retries (bounded across restarts) ONLY when the transport provably sent nothing."""
+    send, classify = _transport(rec.get("channel") or "wa")
+    cur = await creq.get(r, rid) or {}
+    used = 0
+    if cur.get("delivered_kind") == kind:
+        if cur.get("delivery") in _TERMINAL_DELIVERY:
+            return cur["delivery"]
+        if cur.get("delivery") == "sending":          # the previous owner died mid-send: it may be on the phone
+            await creq.update(r, rid, delivery="unknown", delivery_error="interrupted_during_send")
+            print(f"[Chat] rid={rid} delivery=unknown (interrupted during send) kind={kind}")
+            return "unknown"
+        used = int(cur.get("delivery_attempts") or 0)
+    else:
+        await creq.update(r, rid, delivery_attempts=0)
+    delays = list(creq.DELIVERY_RETRY_DELAYS_S)[used:]
+    while True:
+        n = await creq.incr(r, rid, "delivery_attempts")
+        await creq.update(r, rid, delivery="sending", delivered_kind=kind)
+        res = await send(rec, text)
+        cls = classify(res)
+        err = "" if cls == "sent" else str((res or {}).get("error") or "")[:120]
+        if cls == "not_sent" and delays:
+            await creq.update(r, rid, delivery="retrying", delivery_error=err)
+            print(f"[Chat] rid={rid} delivery attempt {n} not sent (transport down) — retrying")
+            await asyncio.sleep(delays.pop(0))
+            continue
+        state = "sent" if cls == "sent" else ("failed" if cls in ("not_sent", "invalid", "rejected") else "unknown")
+        await creq.update(r, rid, delivery=state, delivery_error=err,
+                          **({"delivered_at": time.time()} if state == "sent" else {}))
+        print(f"[Chat] rid={rid} delivery={state} kind={kind} attempts={n}")
+        return state
+
+
+async def _finish_request(r, rid: str, rec: dict, outcome: str, answer: str = "", reason: str = "",
+                          answer_msg_id: str = "") -> str:
+    """Record the processing outcome, persist it in history, deliver it once, settle."""
+    lang = rec.get("lang") or "he"
+    if outcome == "answered":
+        await creq.update(r, rid, status="answered", reason="", answer=answer, answer_msg_id=answer_msg_id,
+                          answered_at=time.time())
+        state = await _deliver(r, rid, rec, answer, "answer")
+    else:
+        text = _LATE_FAIL_TEXT.get(lang, _LATE_FAIL_TEXT["he"])
+        await creq.update(r, rid, status="failed", reason=reason, failure_text=text, failed_at=time.time())
+        await _sync_history(r, rid)                  # the intended failure message is on record BEFORE the send
+        state = await _deliver(r, rid, rec, text, "failure")
+    await _sync_history(r, rid)
+    await _settle_request(r, rid, rec)
+    return state
+
+
+async def _settle_request(r, rid: str, rec: dict) -> None:
+    cur = await creq.get(r, rid) or {}
+    if rec.get("claim_body"):
+        await _agent_inflight_release(r, rec["user_key"], rec["claim_body"])
+    if cur.get("delivery") in _TERMINAL_DELIVERY and cur.get("history") in ("synced", "failed"):
+        await creq.close(r, rid)
+    if r is not None:
+        print(f"[Chat] settled {creq.summary(rid, cur)}")
+
+
+async def _outcome(rid: str, rec: dict, task, deadline_hit: bool) -> dict:
+    if deadline_hit:
+        task.cancel()
+        try:
+            await task
+        except BaseException:
+            pass
+        rc = await _try_reconcile(rec, rid)
+        if rc is None:
+            return {"outcome": "ambiguous", "reason": "deadline_unreconciled"}
+        if rc["state"] == "complete":
+            ans, why = _render_agent_answer({"response": rc["answer"]})
+            return ({"outcome": "answered", "answer": ans, "answer_msg_id": rc["msg_id"]} if ans
+                    else {"outcome": "failed", "reason": why})
+        return {"outcome": "failed", "reason": "deadline"}
+    exc = task.exception()
+    if exc is not None:
+        print(f"[Chat] rid={rid} agent failed: {type(exc).__name__}")
+        rc = await _try_reconcile(rec, rid)          # the turn may have been saved before the error
+        if rc is None:
+            return {"outcome": "ambiguous", "reason": f"exception_unreconciled:{type(exc).__name__}"}
+        if rc["state"] == "complete":
+            ans, _ = _render_agent_answer({"response": rc["answer"]})
+            if ans:
+                return {"outcome": "answered", "answer": ans, "answer_msg_id": rc["msg_id"]}
+        return {"outcome": "failed", "reason": f"exception:{type(exc).__name__}"}
+    result = task.result()
+    ans, why = _render_agent_answer(result)
+    if not ans:
+        print(f"[Chat] rid={rid} agent produced no usable answer: {why}")
+        return {"outcome": "failed", "reason": why}
+    return {"outcome": "answered", "answer": ans, "answer_msg_id": str(result.get("message_id") or "")}
+
+
+async def _process_request(r, rid: str, rec: dict, *, wait_s: float = None, deadline_s: float = None,
+                           reuse_user_id: str = "") -> dict:
+    """Run the agent for a persisted request. {"mode": "done"} when the outcome was produced within wait_s
+    (delivered now), else {"mode": "deferred", "text": status note} — the outcome follows from a background task."""
+    wait_s = WA_AGENT_REPLY_WAIT_S if wait_s is None else wait_s
+    deadline_s = WA_AGENT_LATE_DEADLINE_S if deadline_s is None else deadline_s
+    _ACTIVE_REQUESTS.add(rid)
+    attempts = await creq.incr(r, rid, "attempts")
+    await creq.update(r, rid, status="processing", owner=creq.BOOT_ID, processing_at=time.time())
+    print(f"[Chat] rid={rid} processing attempt={attempts}")
+    task = asyncio.ensure_future(_run_agent_for(rec, rid, reuse_user_id))
+    _keep(task)
+
+    async def _settle(deadline_hit=False):
+        try:
+            o = await _outcome(rid, rec, task, deadline_hit)
+            if o["outcome"] == "ambiguous":
+                await creq.update(r, rid, status="ambiguous", reason=o["reason"])
+                print(f"[Chat] rid={rid} outcome ambiguous ({o['reason']}) — left open for reconciliation")
+                return
+            await _finish_request(r, rid, rec, o["outcome"], answer=o.get("answer", ""),
+                                  reason=o.get("reason", ""), answer_msg_id=o.get("answer_msg_id", ""))
+        finally:
+            _ACTIVE_REQUESTS.discard(rid)
+
+    done, _ = await asyncio.wait({task}, timeout=wait_s)
+    if done:
+        st = asyncio.ensure_future(_settle())
+        _keep(st)
+        await asyncio.wait({st}, timeout=WA_FAST_DELIVERY_WAIT_S)   # a transport outage continues in the background
+        return {"mode": "done"}
+
+    async def _late():
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=max(0.0, deadline_s - wait_s))
+        except asyncio.TimeoutError:
+            print(f"[Chat] rid={rid} agent passed the {deadline_s:.0f}s deadline")
+            await _settle(deadline_hit=True)
+            return
+        except Exception:
+            pass
+        await _settle()
+    _keep(asyncio.ensure_future(_late()))
+    return {"mode": "deferred", "text": _WAIT_TEXT.get(rec.get("lang") or "he", _WAIT_TEXT["he"])}
+
+
+async def _recover_one(r, rid: str, rec: dict, out: dict) -> bool:
+    """Act on one request this process now owns. True when a re-run was started (it manages its own state)."""
+    status = rec.get("status")
+    if status in creq.OPEN_STATUSES:
+        rc = await _try_reconcile(rec, rid)
+        if rc is None:
+            n = await creq.incr(r, rid, "reconcile_attempts")
+            if n >= creq.MAX_RECONCILE:
+                await _finish_request(r, rid, rec, "failed", reason="unreconciled")
+                out["failed"] += 1
+            else:
+                await creq.update(r, rid, status="ambiguous", reason=rec.get("reason") or "unreconciled")
+                out["ambiguous"] += 1
+            return False
+        if rc["state"] == "complete":               # the turn was saved: reuse it, never run the agent again
+            ans, why = _render_agent_answer({"response": rc["answer"]})
+            if ans:
+                await _finish_request(r, rid, rec, "answered", answer=ans, answer_msg_id=rc["msg_id"])
+                out["reused"] += 1
+            else:
+                await _finish_request(r, rid, rec, "failed", reason=why)
+                out["failed"] += 1
+            return False
+        age = time.time() - float(rec.get("created_at") or 0)
+        if int(rec.get("attempts") or 0) < creq.MAX_ATTEMPTS and age < creq.MAX_AGE_S:
+            # partial: the question row was saved, the answer was not — keep that row as THE question
+            reuse = rc["user_ids"][0] if rc["state"] == "partial" else ""
+            if reuse:
+                await creq.update(r, rid, rerun_reuses_user_row=reuse)
+            if rec.get("claim_body"):
+                await _agent_inflight_claim(r, rec["user_key"], rec["claim_body"],
+                                            int(WA_AGENT_LATE_DEADLINE_S) + 30, rid=rid)
+            await _process_request(r, rid, rec, wait_s=0, reuse_user_id=reuse)
+            out["rerun"] += 1
+            return True
+        await _finish_request(r, rid, rec, "failed", reason="interrupted")
+        out["failed"] += 1
+        return False
+    if status == "answered":
+        await _finish_request(r, rid, rec, "answered", answer=rec.get("answer") or "",
+                              answer_msg_id=rec.get("answer_msg_id") or "")
+        out["redelivered"] += 1
+    elif status == "failed":
+        await _finish_request(r, rid, rec, "failed", reason=rec.get("reason") or "")
+        out["failed"] += 1
+    return False
+
+
+async def recover_agent_requests(r=None) -> dict:
+    """One recovery pass over open requests: those of a dead owner are taken over (atomic, so concurrent passes
+    never both act), and this process's own unfinished ones (ambiguous / history pending) are retried."""
+    if r is None:
+        try:
+            from BACKEND_AUTH_SECURITY import get_redis as _gr
+            r = await _gr()
+        except Exception:
+            r = None
+    out = {"taken": 0, "rerun": 0, "reused": 0, "redelivered": 0, "failed": 0, "ambiguous": 0}
+    if r is None:
+        return out
+    await creq.heartbeat(r)
+    for rid, rec in await creq.open_requests(r):
+        # Reserve BEFORE any await: check-and-add with no await in between is atomic within this process, so two
+        # overlapping passes can never both act on one request (found by test R5: a pass that snapshotted the
+        # record just after another pass's take-over saw "owner = me, not active" and re-ran the agent).
+        if rid in _ACTIVE_REQUESTS:
+            continue
+        _ACTIVE_REQUESTS.add(rid)
+        rerun = False
+        try:
+            cur = await creq.get(r, rid) or rec
+            owner = cur.get("owner") or ""
+            if owner != creq.BOOT_ID:
+                if await creq.owner_alive(r, owner) or not await creq.take_over(r, rid, owner):
+                    continue                              # alive elsewhere, or another process took it first
+                await creq.update(r, rid, recovered="1")
+                out["taken"] += 1
+                print(f"[Chat] taking over {creq.summary(rid, cur)} from a dead process")
+            if (await creq.get(r, rid) or {}).get("closed_at"):
+                continue                                  # finished between the snapshot and now
+            rerun = await _recover_one(r, rid, await creq.get(r, rid) or cur, out)
+        finally:
+            if not rerun:
+                _ACTIVE_REQUESTS.discard(rid)
+    if any(out.values()):
+        print(f"[Chat] request recovery: {out}")
+    return out
+
+
+async def chat_request_recovery_loop(interval_s: float = None) -> None:
+    """Supervised: heartbeat + one recovery pass every interval (also the first thing after a restart)."""
+    interval_s = float(os.getenv("CHAT_REQ_RECOVERY_INTERVAL_S", "20")) if interval_s is None else interval_s
+    while True:
+        try:
+            await recover_agent_requests()
+        except Exception as exc:
+            print(f"[Chat] recovery pass failed: {type(exc).__name__}")
+        await asyncio.sleep(interval_s)
+
+
+async def _inbound_claim(redis, key: str, rid: str) -> bool:
+    """Inbound dedup that survives a crash: the key names the process handling the message; a redelivery is
+    ignored while that process is alive or after it finished ("done"), and processed again only when the
+    process died before persisting a request record for it."""
+    if redis is None:
+        return True
+    if await redis.set(key, creq.BOOT_ID, ex=3600, nx=True):
+        return True
+    val = await redis.get(key)
+    val = val.decode() if isinstance(val, bytes) else (val or "")
+    if val in ("done", "1") or await creq.owner_alive(redis, val):    # "1" = written by the pre-#74 code
+        return False
+    if await creq.get(redis, rid) is not None:                       # persisted: recovery owns it
+        return False
+    await redis.set(key, creq.BOOT_ID, ex=3600)
+    print(f"[Chat] rid={rid} redelivery after the handling process died — processing it")
+    return True
+
+
+async def _inbound_done(request: Request) -> None:
+    key = getattr(request.state, "inbound_key", None)
+    if not key:
+        return
+    try:
+        from BACKEND_AUTH_SECURITY import get_redis as _gr
+        _r = await _gr()
+        if _r is not None:
+            await _r.set(key, "done", ex=3600)
+    except Exception:
+        pass
+
+
 @router.post("/api/v1/webhooks/whatsapp")
 async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_pii_db)):
+    """Inbound WhatsApp messages from Baileys bridge. The message id is marked "done" when handling ends, so a
+    redelivery is processed again only if the handling process died first (#74)."""
+    try:
+        return await _whatsapp_webhook_impl(request, db)
+    finally:
+        await _inbound_done(request)
+
+
+async def _whatsapp_webhook_impl(request: Request, db: AsyncSession):
     """Inbound WhatsApp messages from Baileys bridge."""
     from social.whatsapp_provider import parse_incoming, send_message as wa_send
 
@@ -589,9 +1158,9 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_pii_
         try:
             from BACKEND_AUTH_SECURITY import get_redis
             redis = await get_redis()
-            is_new = await redis.set(f"wa:msg:{wa_message_id}", "1", ex=3600, nx=True)
-            if not is_new:
+            if not await _inbound_claim(redis, f"wa:msg:{wa_message_id}", f"wa:{wa_message_id}"):
                 return Response(content="<Response/>", media_type="text/xml")
+            request.state.inbound_key = f"wa:msg:{wa_message_id}"
         except Exception:
             pass  # dedup is best-effort; never block message handling
 
@@ -620,10 +1189,9 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_pii_
     try:
         from agents.owner_console import is_owner, process_owner_message, OWNER_PHONE
         if is_owner(phone_e164) and body:
-            # The owner's device may present a masked WhatsApp LID (…@lid) as the sender,
-            # which is NOT his real number — replying to it (or its "<lid>@s.whatsapp.net"
-            # conversion) delivers nowhere. Always reply to his REAL number
-            # (OWNER_WHATSAPP_PHONE = +972586050155). Confirmed by the owner 2026-07-24.
+            # Reply to OWNER_WHATSAPP_PHONE; social/whatsapp_provider routes that number to
+            # the owner's LID (the only session his devices decrypt — 2026-10-18). Never
+            # build "<lid>@s.whatsapp.net": that conversion delivers nowhere (2026-07-24).
             # Generate + send the reply in the BACKGROUND and ack the webhook immediately:
             # AVI/NOA replies can take 20-90s under Cerebras rate-limits, which would
             # otherwise block the webhook and time out the bridge.
@@ -1031,40 +1599,63 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_pii_
     # Route ALL messages (including purchase intent) through the AI agent.
     # The agent already handles "אני רוצה להזמין" by calling create_checkout_link()
     # and returning a real Stripe payment URL. The old short-circuit was bypassing this.
+    # The agent runs in ITS OWN session so a slow answer can be delivered after this request ends
+    # (#71). Commit the conversation updates made above first, so that session sees them and the two
+    # sessions never write conversation.context over each other.
+    await db.commit()
+    _lang = _reply_lang(body)
+    _user_key = str(conversation_user_id)
     try:
-        # 12s timeout — purchase flow needs extra time to build Stripe session
-        agent_result = await asyncio.wait_for(
-            process_user_message(
-                user_id=str(conversation_user_id),
-                message=body,
-                conversation_id=conv_id,
-                db=db,
-                source="whatsapp",
-            ),
-            timeout=12.0,
-        )
-        raw_reply = agent_result.get("response", "מצטערים, נתקלנו בבעיה. אנא נסה שוב.")
-        reply_text = _re.sub(r'<[^>]+>', '', raw_reply).strip()
-    except asyncio.TimeoutError:
-        reply_text = "⏳ מחפש עבורך... שלח שוב את שאלתך ואענה תוך שניות."
-    except Exception as exc:
-        safe_phone = (phone_e164 or "")
-        safe_tail = safe_phone[-4:] if len(safe_phone) >= 4 else safe_phone
-        print(f"[WhatsApp] Agent error for ****{safe_tail}: {exc}")
-        reply_text = "מצטערים, נתקלנו בבעיה. אנא נסה שוב."
+        from BACKEND_AUTH_SECURITY import get_redis as _gr
+        _ir = await _gr()
+    except Exception:
+        _ir = None
+    # #73/#74: the request is persisted (Redis, AOF) BEFORE any asynchronous handoff, so a restart, a slow agent
+    # or a transport outage can never lose a question the customer was told would be answered.
+    _rid = f"wa:{wa_message_id}" if wa_message_id else f"wa:r{uuid.uuid4().hex[:16]}"
+    _claim = await _agent_inflight_claim(_ir, _user_key, body, int(WA_AGENT_LATE_DEADLINE_S) + 30, rid=_rid)
+    if _claim == "duplicate":
+        # The same question is already being answered (the customer resent it): no second agent run,
+        # no second answer — one honest note instead.
+        print(f"[Chat] rid={_rid} duplicate of an in-flight question — status note only")
+        await wa_send(sender_phone, _STILL_WORKING_TEXT[_lang], reply_jid=reply_jid)
+        await db.commit()
+        return Response(content="<Response/>", media_type="application/xml")
 
-    send_result = await wa_send(sender_phone, reply_text, reply_jid=reply_jid)
-    if not send_result["ok"]:
-        safe_phone = (sender_phone or "")
-        safe_tail = safe_phone[-4:] if len(safe_phone) >= 4 else safe_phone
-        print(f"[WhatsApp] Send failed to ****{safe_tail}: {send_result['error']}")
+    _rec = {"channel": "wa", "target": sender_phone, "reply_jid": reply_jid or "", "user_key": _user_key,
+            "conv_id": conv_id, "body": body, "lang": _lang, "claim_body": body}
+    try:
+        if not await creq.create(_ir, _rid, **_rec):
+            print(f"[Chat] rid={_rid} already persisted — recovery owns it")
+            return Response(content="<Response/>", media_type="application/xml")
+    except Exception as exc:                 # Redis down: answer anyway, just without durability
+        print(f"[Chat] rid={_rid} request record not persisted: {type(exc).__name__}")
+        _ir = None
+    _out = await _process_request(_ir, _rid, _rec)
+    if _out["mode"] == "deferred":
+        # The interim note is a STATUS, recorded apart from the outcome's delivery; never counted as the answer.
+        _st = await wa_send(sender_phone, _out["text"], reply_jid=reply_jid)
+        try:
+            await creq.update(_ir, _rid, status_note=creq.classify_whatsapp(_st), status_note_text=_out["text"])
+        except Exception as exc:
+            print(f"[Chat] rid={_rid} status note bookkeeping failed: {type(exc).__name__}")
 
     await db.commit()
 
     return Response(content="<Response/>", media_type="application/xml")
 
+
 @router.post("/api/v1/webhooks/telegram")
 async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_pii_db)):
+    """Inbound Telegram messages from Telegram Bot API webhook. The update id is marked "done" when handling
+    ends, so a redelivered update is processed again only if the handling process died first (#74)."""
+    try:
+        return await _telegram_webhook_impl(request, db)
+    finally:
+        await _inbound_done(request)
+
+
+async def _telegram_webhook_impl(request: Request, db: AsyncSession):
     """Inbound Telegram messages from Telegram Bot API webhook."""
     from social.telegram_publisher import send_telegram_message, send_telegram_chat_action
 
@@ -1087,12 +1678,13 @@ async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_pii_
             from BACKEND_AUTH_SECURITY import get_redis
             redis = await get_redis()
             dedup_key = f"tg:update:{update_id}"
-            is_new = await redis.set(dedup_key, "1", ex=3600, nx=True)
-            if not is_new:
+            if not await _inbound_claim(redis, dedup_key, f"tg:{update_id}"):
                 return {"ok": True, "ignored": True, "reason": "duplicate_update"}
+            request.state.inbound_key = dedup_key
         except Exception as exc:
-            print(f"[Telegram] Dedup check skipped: {exc}")
-            return {"ok": True, "ignored": True, "reason": "redis_unavailable"}
+            # #74: dedup is best-effort — Redis being down must not drop the customer's message (it used to
+            # return "ignored" here, so every message was lost while Redis was unavailable).
+            print(f"[Telegram] Dedup check skipped: {type(exc).__name__}")
 
     # message_reaction_count (2026-08-16 — deep Telegram capability
     # verification): campaign-post reaction totals, a real engagement signal
@@ -1386,39 +1978,61 @@ async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_pii_
                     "delivered": bool(send_result.get("ok")),
                 }
 
-            # 12s timeout — purchase flow needs extra time for Stripe session creation
+            # #74: the 12 s wait_for used to CANCEL the agent and ask the customer (always in Hebrew) to resend.
+            # Now the request is persisted first and shares the WhatsApp lifecycle: status note after the wait,
+            # the answer (or one honest failure) delivered and tracked separately, recovery after a restart.
+            await db.commit()
+            _lang = _reply_lang(text)
             try:
-                agent_result = await asyncio.wait_for(
-                    process_user_message(
-                        user_id=str(conversation.user_id),
-                        message=text,
-                        conversation_id=conv_id,
-                        db=db,
-                        source="telegram",
-                    ),
-                    timeout=12.0,
-                )
-                raw_reply = agent_result.get("response", "מצטערים, נתקלנו בבעיה. אנא נסה שוב.")
-            except asyncio.TimeoutError:
-                raw_reply = "⏳ אני מחפש עבורך... הבקשה לוקחת קצת יותר מהרגיל. אנא שלח שוב את שאלתך."
-            reply_text = _sanitize_for_telegram(raw_reply)
+                from BACKEND_AUTH_SECURITY import get_redis as _gr
+                _ir = await _gr()
+            except Exception:
+                _ir = None
+            _rid = f"tg:{update_id}" if isinstance(update_id, int) else f"tg:r{uuid.uuid4().hex[:16]}"
+            _user_key = str(conversation.user_id)
+            _claim = await _agent_inflight_claim(_ir, _user_key, text, int(WA_AGENT_LATE_DEADLINE_S) + 30, rid=_rid)
+            if _claim == "duplicate":
+                print(f"[Chat] rid={_rid} duplicate of an in-flight question — status note only")
+                _st = await send_telegram_message(chat_id, _sanitize_for_telegram(_STILL_WORKING_TEXT[_lang]))
+                return {"ok": True, "conversation_id": conv_id, "request_id": _rid, "mode": "duplicate",
+                        "delivered": bool(_st.get("ok"))}
+            _rec = {"channel": "tg", "target": str(chat_id), "user_key": _user_key, "conv_id": conv_id,
+                    "body": text, "lang": _lang, "claim_body": text}
+            try:
+                if not await creq.create(_ir, _rid, **_rec):
+                    return {"ok": True, "ignored": True, "reason": "already_persisted", "request_id": _rid}
+            except Exception as exc:
+                print(f"[Chat] rid={_rid} request record not persisted: {type(exc).__name__}")
+                _ir = None
+            _out = await _process_request(_ir, _rid, _rec)
+            _cur = {}
+            try:                                     # the request is in flight: never fall into the except below
+                if _out["mode"] == "deferred":
+                    _st = await send_telegram_message(chat_id, _sanitize_for_telegram(_out["text"]))
+                    await creq.update(_ir, _rid, status_note=creq.classify_telegram(_st),
+                                      status_note_text=_out["text"])
+                _cur = await creq.get(_ir, _rid) or {}
+            except Exception as exc:
+                print(f"[Chat] rid={_rid} status note bookkeeping failed: {type(exc).__name__}")
+            return {"ok": True, "conversation_id": conv_id, "request_id": _rid, "mode": _out["mode"],
+                    "delivery": _cur.get("delivery") or "unknown"}
         except Exception:
             import traceback
             await db.rollback()
             used_fallback = True
             print(f"[Telegram] FULL ERROR for chat {chat_id}:")
             print(traceback.format_exc())
-            reply_text = "תודה על פנייתך! 😊 נציג שירות יחזור אליך בהקדם."
+            # #74: an honest failure (there is no "a representative will call you back" mechanism), and the
+            # webhook reports the REAL send result instead of always claiming delivered.
+            reply_text = _sanitize_for_telegram(_LATE_FAIL_TEXT[_reply_lang(text)])
 
-        # Fix 3 cont: send response in background so webhook returns immediately to Telegram
-        # (Telegram retries if we don't respond within 5s — background task prevents duplicate retries)
-        asyncio.create_task(send_telegram_message(chat_id, reply_text))
+        send_result = await send_telegram_message(chat_id, reply_text)
 
         return {
             "ok": True,
             "conversation_id": conv_id,
             "fallback": used_fallback,
-            "delivered": True,
+            "delivered": bool(send_result.get("ok")),
         }
     finally:
         await _stop_typing()

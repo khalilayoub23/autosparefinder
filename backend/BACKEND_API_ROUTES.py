@@ -104,6 +104,7 @@ from routes.stripe_config import resolve_stripe_secret_key, is_valid_stripe_secr
 # (crash / unhandled exception) the done-callback fires a WhatsApp alert directly
 # to the owner phone so the crash is never silently swallowed.
 _SUPERVISED_TASKS: dict = {}  # name → asyncio.Task
+_CRASH_ALERT_TASKS: set = set()  # strong refs for in-flight crash alerts
 _BACKEND_START_UTC: "datetime" = datetime.now(timezone.utc)  # set at import time; used by watchdog to identify orphaned DB connections
 
 
@@ -142,9 +143,14 @@ def _supervised_task(name: str, coro) -> "asyncio.Task":
             # behavior to fix here. Left as direct _wa_send_update(critical=True); an
             # existing regression test (devtests/notify_policy_test.py, "supervised task
             # crash uses critical=True") pins this exact call.
-            asyncio.get_event_loop().create_task(
+            # t.get_loop() (the deprecated module-level loop getter is gone); keep a strong
+            # reference — an unreferenced task can be garbage-collected before the alert
+            # that a worker died is ever sent.
+            _alert_task = t.get_loop().create_task(
                 _wa_send_update("\n".join(msg_parts), critical=True)
             )
+            _CRASH_ALERT_TASKS.add(_alert_task)
+            _alert_task.add_done_callback(_CRASH_ALERT_TASKS.discard)
         print(f"[TaskMonitor] DIED: {name} exc={exc}")
 
     task.add_done_callback(_on_done)
@@ -248,6 +254,9 @@ app.add_middleware(SecurityHeadersAndAuthMiddleware)
 # SSL is terminated by Cloudflare — no HTTPSRedirectMiddleware needed
 
 
+_SEARCH_WARMUP_TASK: Optional["asyncio.Task"] = None   # strong reference to the one-shot startup warm-up
+
+
 async def _warm_search_paths() -> None:
     if not SEARCH_WARMUP_ENABLED:
         print("[SearchWarmup] disabled (SEARCH_WARMUP_ENABLED=false)")
@@ -257,36 +266,15 @@ async def _warm_search_paths() -> None:
 
     try:
         from routes.parts import search_parts
+        from search_warmup import run_warmup_cases, summary_line
 
-        # Fresh session PER case (fixed 2026-07-11): a shared session broke here —
-        # when a case hit the wait_for timeout, cancelling the query mid-flight
-        # left the asyncpg connection in an aborted state, so every later case
-        # failed with "cannot call Transaction.rollback(): the underlying
-        # connection is closed" (17× in logs). One session per case isolates that.
-        for case in SEARCH_WARMUP_CASES:
-            try:
-                async with async_session_factory() as db:
-                    await asyncio.wait_for(
-                        search_parts(
-                            query=case.get("query", ""),
-                            vehicle_id=case.get("vehicle_id"),
-                            category=case.get("category"),
-                            per_type=4,
-                            sort_by="price_ils",
-                            vehicle_manufacturer=case.get("vehicle_manufacturer"),
-                            vehicle_model=case.get("vehicle_model"),
-                            vehicle_submodel=case.get("vehicle_submodel"),
-                            vehicle_year=case.get("vehicle_year"),
-                            enable_cross_refs=case.get("enable_cross_refs"),
-                            db=db,
-                            request=None,
-                            redis=None,
-                        ),
-                        timeout=float(case.get("timeout_s", SEARCH_WARMUP_QUERY_TIMEOUT_S)),
-                    )
-            except Exception as exc:
-                logger.warning("[SearchWarmup] failed for %s: %s", case, exc)
-        print(f"[SearchWarmup] primed {len(SEARCH_WARMUP_CASES)} search shapes")
+        # One fresh session per case, each case bounded, outcomes classified (ok / timeout /
+        # error) and never raised - see search_warmup.py. The search runs with redis=None, so it
+        # starts no live external supplier lookup (2026-10-09: each start used to send ~20
+        # doomed/discarded requests to PartSouq, Autodoc, Amayama and eBay).
+        result = await run_warmup_cases(SEARCH_WARMUP_CASES, search_parts, async_session_factory,
+                                        SEARCH_WARMUP_QUERY_TIMEOUT_S)
+        print(summary_line(result))
 
         # Pre-warm the manufacturers cache (its scan is ~68s; the parts page fetches
         # the brand dropdown on load, so a cold cache = the "pages hang after login"
@@ -520,9 +508,9 @@ _SEARCH_MISS_NOTIFY_INTERVAL = 3600  # seconds — 60 minutes
 
 async def _scrape_search_misses_loop() -> None:
     """
-    Every 6 hours: search eBay for unscraped search misses.
-    Sets triggered_scrape=TRUE so _notify_search_miss_loop
-    can then inform the customer.
+    Every 6 hours: look up unscraped search misses at the live suppliers.
+    Sets triggered_scrape=TRUE - ONLY when a real priced offer exists - so
+    _notify_search_miss_loop can then inform the customer.
     """
     await asyncio.sleep(180)  # brief startup delay
     while True:
@@ -537,6 +525,7 @@ async def _scrape_search_misses_loop() -> None:
                         WHERE triggered_scrape = FALSE
                         AND notified = FALSE
                         AND miss_count >= 1
+                        AND last_seen_at > NOW() - INTERVAL '30 days'
                         ORDER BY miss_count DESC
                         LIMIT 20
                     """)
@@ -545,21 +534,20 @@ async def _scrape_search_misses_loop() -> None:
 
             if misses:
                 print(f"[scrape_misses] Processing {len(misses)} search misses")
-                for miss in misses:
-                    try:
-                        results = await search_all_suppliers(miss.query, limit_per_supplier=5)
-                        if results:
-                            print(f"[scrape_misses] Found {len(results)} results for: {miss.query}")
-                            async with async_session_factory() as db:
-                                await db.execute(
-                                    text("UPDATE search_misses SET triggered_scrape = TRUE WHERE id = :id"),
-                                    {"id": str(miss.id)}
-                                )
-                                await db.commit()
-                        else:
-                            print(f"[scrape_misses] No results for: {miss.query}")
-                    except Exception as miss_err:
-                        print(f"[scrape_misses] Error for miss {miss.id}: {miss_err}")
+                from search_miss_resolver import process_misses
+
+                async def _mark_resolved(miss) -> None:
+                    async with async_session_factory() as db:
+                        await db.execute(
+                            text("UPDATE search_misses SET triggered_scrape = TRUE WHERE id = :id"),
+                            {"id": str(miss.id)}
+                        )
+                        await db.commit()
+
+                # Resolved ONLY by a real priced offer - affiliate suppliers return a price-0
+                # placeholder for any query (search_miss_resolver.py, root-fixed 2026-10-10).
+                summary = await process_misses(misses, search_all_suppliers, _mark_resolved)
+                print(f"[scrape_misses] cycle: {summary}")
 
         except Exception as e:
             print(f"[scrape_misses] loop error: {e}")
@@ -784,6 +772,72 @@ async def _load_runtime_ai_overrides_from_db():
         print(f"[Startup] Failed to load runtime AI overrides (non-fatal): {e}")
 
 
+def _digest_due(now_local: datetime, hour: int, weekday: "int | None" = None) -> bool:
+    """A scheduled digest is due in the given LOCAL hour (and weekday). Israel time comes from
+    APP_LOCAL_TZ — the old `(utc_hour + 3) % 24` was wrong for the half of the year on UTC+2
+    (from 2026-10-25 the 09:00 digest would fire at 08:00 IL, before the send window) (#70)."""
+    return now_local.hour == hour and (weekday is None or now_local.weekday() == weekday)
+
+
+def _digest_marker_key(kind: str, local_date: str) -> str:
+    return f"autospare:digest_sent:{kind}:{local_date}"
+
+
+async def _digest_already_sent(kind: str, local_date: str) -> bool:
+    """Persisted "sent today" marker — the in-memory date alone re-sent the digest after every
+    restart inside the digest hour (two daily reports on 2026-10-09 and 10-10) (#70)."""
+    try:
+        _r = await get_redis()
+        return bool(_r and await _r.exists(_digest_marker_key(kind, local_date)))
+    except Exception:
+        return False
+
+
+async def _mark_digest_sent(kind: str, local_date: str) -> None:
+    try:
+        _r = await get_redis()
+        if _r:
+            await _r.set(_digest_marker_key(kind, local_date), "1", ex=8 * 86400)
+    except Exception:
+        pass
+
+
+_NIGHT_STATE_HE = {"COMPLETED": "✅", "FAILED": "🔴 נכשל", "BLOCKED": "⛔ נחסם", "RUNNING": "🟢 רץ עדיין",
+                   "QUEUED": "⏳ לא התחיל"}
+
+
+def _night_runs_lines(period_key: str, rows) -> "list[str]":
+    """Last night's night-pipeline runs, from night_pipeline_runs (the authoritative run records, keyed by
+    period). The 09:00 digest listed only jobs STARTED in the last 2 h, so the night's backup / price sync /
+    category discovery never appeared in any WhatsApp message (#71)."""
+    out = [f"\n*עבודות הלילה ({period_key}):*"]
+    if not rows:
+        return out + ["  (לא נרשמו הרצות לילה)"]
+    for job_key, state, started, finished, reason in rows:
+        mins = (f" · {max(0, int((finished - started).total_seconds() // 60))}′"
+                if started is not None and finished is not None else "")
+        why = f" — {str(reason)[:60]}" if reason and state != "COMPLETED" else ""
+        out.append(f"  {_NIGHT_STATE_HE.get(state, state)} {job_key}{mins}{why}")
+    return out
+
+
+def _rex_todo_lines(rows, now_utc: datetime) -> "list[str]":
+    """REX catalogue todos by status, marked when the numbers have not changed for over a day — the digest
+    printed "הושלם: 27" daily from data last updated on 2026-06-14 (#71). rows: (status, cnt, last_updated)."""
+    _he = {"pending": "ממתין", "in_progress": "בתהליך", "completed": "הושלם", "dismissed": "נדחה"}
+    if not rows:
+        return ["  (אין)"]
+    out = []
+    for status, cnt, last in rows:
+        stale = ""
+        if last is not None:
+            _l = last if last.tzinfo else last.replace(tzinfo=timezone.utc)
+            if (now_utc - _l).total_seconds() > 86400:
+                stale = f" (ללא שינוי מאז {_l.astimezone(APP_LOCAL_TZ):%d/%m/%Y})"
+        out.append(f"  {_he.get(status, status)}: {cnt}{stale}")
+    return out
+
+
 async def _status_update_loop() -> None:
     """
     Owner WhatsApp notifications — rewritten 2026-07-05 per Khalil's feedback
@@ -803,11 +857,12 @@ async def _status_update_loop() -> None:
     while True:
         try:
             _now = datetime.now(timezone.utc)
-            _il_hour = (_now.hour + 3) % 24
-            _today = _now.strftime("%Y-%m-%d")
-            is_digest_time = _il_hour == 9 and _last_digest_date != _today
+            _il_now = datetime.now(APP_LOCAL_TZ)
+            _today = _il_now.strftime("%Y-%m-%d")
+            is_digest_time = (_digest_due(_il_now, 9) and _last_digest_date != _today
+                              and not await _digest_already_sent("daily_status", _today))
 
-            _il_time = (_now + timedelta(hours=3)).strftime("%H:%M")
+            _il_time = _il_now.strftime("%H:%M")
             lines: list[str] = [
                 f"📊 *AutoSpareFinder — עדכון מצב* ({_il_time} ישראל)"
             ]
@@ -822,7 +877,7 @@ async def _status_update_loop() -> None:
                 """))).fetchall()
 
                 todos = (await _db.execute(text("""
-                    SELECT status, COUNT(*) AS cnt
+                    SELECT status, COUNT(*) AS cnt, MAX(updated_at) AS last_updated
                     FROM agent_todos
                     WHERE assigned_to_agent = 'rex' AND category = 'catalog_discovery'
                     GROUP BY status
@@ -833,6 +888,15 @@ async def _status_update_loop() -> None:
                     SELECT COUNT(*) FROM parts_catalog
                     WHERE created_at > NOW() - INTERVAL '30 minutes'
                 """))).scalar() or 0
+
+                try:
+                    _night_rows = (await _db.execute(text("""
+                        SELECT job_key, state, started_at, finished_at, reason
+                        FROM night_pipeline_runs WHERE period_key = :pk
+                        ORDER BY COALESCE(started_at, created_at)
+                    """), {"pk": f"D:{_today}"})).fetchall()
+                except Exception:
+                    _night_rows = None
 
                 total_parts = (await _db.execute(text("""
                     SELECT COUNT(*) FROM parts_catalog WHERE is_active = TRUE
@@ -865,7 +929,7 @@ async def _status_update_loop() -> None:
                 "dismissed":  "נדחה",
             }
 
-            lines.append("\n*עובדים:*")
+            lines.append("\n*עובדים (שהתחילו בשעתיים האחרונות):*")   # the query window (#70)
             if jobs:
                 for job in jobs:
                     age_min = (
@@ -889,12 +953,11 @@ async def _status_update_loop() -> None:
             if dead_tasks:
                 lines.append(f"  קרסו: {', '.join(dead_tasks[:5])}")
 
+            if is_digest_time and _night_rows is not None:
+                lines.extend(_night_runs_lines(f"D:{_today}", _night_rows))
+
             lines.append("\n*משימות REX לקטלוג:*")
-            if todos:
-                for row in todos:
-                    lines.append(f"  {_TODO_STATUS_HE.get(row.status, row.status)}: {row.cnt}")
-            else:
-                lines.append("  (אין)")
+            lines.extend(_rex_todo_lines([(r.status, r.cnt, r.last_updated) for r in todos], _now))
 
             lines.append(f"\n*קטלוג:* {total_parts:,} חלקים פעילים")
             lines.append(f"  +{new_parts} נוספו ב-30 דקות האחרונות")
@@ -957,8 +1020,10 @@ async def _status_update_loop() -> None:
             #     dedup (re-alerts immediately the moment the failing set changes).
             if is_digest_time:
                 lines[0] = f"📅 *AutoSpareFinder — דוח יומי* ({_il_time} ישראל)"
-                await _wa_send_update("\n".join(lines))
+                _dres = await _wa_send_update("\n".join(lines))
                 _last_digest_date = _today
+                if (_dres or {}).get("ok"):
+                    await _mark_digest_sent("daily_status", _today)
                 print("[StatusUpdate] Sent daily digest to owner")
             elif has_problem and problem_sig != _last_problem_sig:
                 lines[0] = f"⚠️ *AutoSpareFinder — בעיה במערכת* ({_il_time} ישראל)"
@@ -1218,11 +1283,23 @@ async def _car_parts_ie_harvester_loop() -> None:
     env = dict(os.environ)
     env.setdefault("FLARESOLVERR_URL", "http://flaresolverr:8191/v1")
     backoff = 30
+    import harvester_health as _hh
+    _announced_off = False
 
     while True:
+        # #93: the ONLY launch path of the harvester honours its toggle (CPIE_HARVEST_ENABLED, legacy
+        # HARVESTER_ENABLED). Before this, both were set to "0" in the sandbox and nothing read them.
+        _on, _src = _hh.harvest_enabled(env)
+        if not _on:
+            if not _announced_off:
+                print(f"[car_parts_ie_harvester] disabled ({_src}) — not launching", flush=True)
+                _announced_off = True
+            await asyncio.sleep(300)
+            continue
+        _announced_off = False
         started = _time.time()
         try:
-            print(f"[car_parts_ie_harvester] launching {script}", flush=True)
+            print(f"[car_parts_ie_harvester] launching {script} ({_src})", flush=True)
             proc = await asyncio.create_subprocess_exec(
                 _sys.executable, script,
                 stdout=asyncio.subprocess.DEVNULL,
@@ -1262,7 +1339,6 @@ async def _car_parts_ie_full_seed_loop() -> None:
     if os.getenv("CPIE_FULL_SEED_ENABLED", "1") != "1":
         print("[cpie_full_seed] disabled (CPIE_FULL_SEED_ENABLED=0)", flush=True)
         return
-    await asyncio.sleep(180)  # let startup + the harvester settle first
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           "maintenance", "seed_car_parts_ie_full_catalog.py")
     logpath = "/app/state/logs/cpie_full_seed.log"
@@ -1270,6 +1346,19 @@ async def _car_parts_ie_full_seed_loop() -> None:
     env = dict(os.environ)
     env.setdefault("FLARESOLVERR_URL_2", "http://flaresolverr2:8191/v1")
     between = int(os.getenv("CPIE_FULL_SEED_INTERVAL_S", str(30 * 24 * 3600)))  # ~monthly
+    # Restart-safe cadence (2026-10-10): ~monthly since the last SUCCESSFUL seed, not "once after
+    # every container start" (it ran after each of three restarts that day). 180 s settle kept.
+    _first = 180.0
+    try:
+        import inproc_job_marker as _marker
+        from local_schedule import delay_after_restart
+        _fin = _marker.status("cpie_full_seed").get("finished_at")
+        _first = delay_after_restart(datetime.fromtimestamp(float(_fin), timezone.utc) if _fin else None,
+                                     between, 180)
+    except Exception as _sexc:
+        print(f"[cpie_full_seed] restart-cadence check skipped: {_sexc}", flush=True)
+    print(f"[cpie_full_seed] first seed after this start in {_first / 3600:.1f} h", flush=True)
+    await asyncio.sleep(_first)  # >= 180 s: let startup + the harvester settle first
     while True:
         started = _time.time()
         rc = None
@@ -1283,6 +1372,13 @@ async def _car_parts_ie_full_seed_loop() -> None:
                 )
                 rc = await proc.wait()
             print(f"[cpie_full_seed] finished rc={rc} after {_time.time()-started:.0f}s", flush=True)
+            if rc == 0:
+                try:
+                    import inproc_job_marker as _marker
+                    _marker.mark_started("cpie_full_seed", now=started)
+                    _marker.mark_finished("cpie_full_seed")
+                except Exception as _mexc:
+                    print(f"[cpie_full_seed] success marker skipped: {_mexc}", flush=True)
         except Exception as exc:
             print(f"[cpie_full_seed] launch failed: {exc}", flush=True)
         # Success (rc 0) → wait the full interval; ANY failure → retry in 1h.
@@ -1595,7 +1691,26 @@ async def _job_queue_report_loop() -> None:
             # is no observed duplicate/burst behavior here — and would trade a
             # simpler, already-correct in-run mechanism for a Redis round trip.
             #
-            # ── the queue finished: say so ONCE, with the parity verdict ──────
+            # "Already announced" used to live only in this process (announced_done/prev), so
+            # EVERY backend restart re-sent the 2026-08-05 parity failure as new (it reached the
+            # owner 4 times in the week to 2026-10-18). Persist it in Redis, keyed by the event's
+            # own identity (step + finished_at), so each finish/failure is announced once ever.
+            async def _announced_before(ident: str) -> bool:
+                try:
+                    _rq = await get_redis()
+                    if not _rq:
+                        return False
+                    return not await _rq.set(f"autospare:job_queue:announced:{ident}", "1",
+                                             nx=True, ex=180 * 86400)
+                except Exception:
+                    return False
+
+            if finished and not announced_done:
+                _run_end = max((str(s.get("finished_at") or "") for s in steps), default="")
+                if await _announced_before(f"done:{_run_end}"):
+                    announced_done = True
+                    for s in failed:
+                        prev["failed::" + s["step_key"]] = s["status"]
             if finished and not announced_done:
                 verdict = "—"
                 par = next((s for s in steps if s["step_key"] == "parity_check"), None)
@@ -1613,6 +1728,9 @@ async def _job_queue_report_loop() -> None:
                                  f"{str(s['error'] or '')[:110]}")
                 await _wa_send_update("\n".join(lines), critical=True)
                 announced_done = True
+                for s in failed:                    # the summary already lists them
+                    prev["failed::" + s["step_key"]] = s["status"]
+                    await _announced_before(f"failed:{s['step_key']}:{s.get('finished_at')}")
                 await asyncio.sleep(interval)
                 continue
             if active:
@@ -1623,6 +1741,8 @@ async def _job_queue_report_loop() -> None:
                             if prev.get("failed::" + s["step_key"]) != s["status"]]
             for s in newly_failed:
                 prev["failed::" + s["step_key"]] = s["status"]
+                if await _announced_before(f"failed:{s['step_key']}:{s.get('finished_at')}"):
+                    continue
                 await _wa_send_update(critical=True, text=(
                     f"❌ *שלב נכשל בתור המשימות*\n"
                     f"{s['title'] or s['step_key']}\n"
@@ -1766,13 +1886,18 @@ async def _thumbnail_import_loop() -> None:
         _THUMBNAIL_IMPORT_STATUS["state"] = "disabled"
         return
 
-    await asyncio.sleep(120)  # let startup + harvesters settle before adding OCR load
+    # Restart-safe idle back-off (2026-10-10): if the backlog was already drained, wait out the
+    # back-off the loop had earned instead of re-running the ~200 s empty scan after every start.
+    import thumbnail_idle_state as _tis
+    _first_wait, _resumed_backoff = _tis.resume(floor_s=120)
+    print(f"[thumbnail_import] first check after this start in {_first_wait / 60:.0f} min", flush=True)
+    await asyncio.sleep(_first_wait)  # >= 120 s: let startup + harvesters settle before adding OCR load
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "maintenance", "build_part_thumbnails.py")
     # Smaller batches → status updates land sooner + gentler per-batch CPU/lock pressure
     # while OCR competes with the flaresolverr harvesters on this 4-core box.
     batch = int(os.getenv("THUMBNAIL_IMPORT_BATCH", "80"))
     between = int(os.getenv("THUMBNAIL_IMPORT_SLEEP", "90"))
-    idle_backoff = 300
+    idle_backoff = _resumed_backoff
 
     while True:
         # Stand down while the JOB QUEUE owns the thumbnail step — otherwise two
@@ -1842,9 +1967,11 @@ async def _thumbnail_import_loop() -> None:
 
         if n_cand == 0:
             # backlog drained — back off, re-check later for newly-imported parts / refreshes
+            _tis.save(idle_backoff)
             await asyncio.sleep(idle_backoff)
             idle_backoff = min(idle_backoff * 2, 3600)
         else:
+            _tis.clear()
             idle_backoff = 300
             await asyncio.sleep(between)
 
@@ -2002,7 +2129,7 @@ async def _amayama_server_browser_loop() -> None:
 def _harvest_status_decision(
     *, first_sample: bool, d_models: int, d_parts: int, in_progress: int, pending: int,
     prev_state: "str | None", secs_since_alert: "float | None",
-    realert_s: int, mode: str = "exceptions",
+    realert_s: int, mode: str = "exceptions", idle_realert_s: "int | None" = None,
 ) -> "tuple[str, bool]":
     """Decide the harvest state and whether the owner should hear about it.
 
@@ -2022,7 +2149,11 @@ def _harvest_status_decision(
     else:
         state = "ok"
     bad = state in ("stalled", "idle")
-    stale = secs_since_alert is not None and secs_since_alert >= realert_s
+    # An empty queue is a steady state, not a fault: it repeats on its own, longer cadence
+    # (HARVEST_IDLE_REALERT_S) — at the stall cadence the same "queue empty" message went out
+    # twice a day for 4 days (2026-10-06..10-09) (#71). A stall keeps `realert_s`.
+    _ra = idle_realert_s if (state == "idle" and idle_realert_s is not None) else realert_s
+    stale = secs_since_alert is not None and secs_since_alert >= _ra
     should_send = (
         mode == "hourly"
         or (bad and (prev_state != state or stale))
@@ -2053,6 +2184,9 @@ async def _harvest_supervisor_loop() -> None:
     # How long a PERSISTENT stall waits before re-alerting (default 6h) — so a stuck
     # harvester is chased up, but never once an hour.
     _realert_s = int(os.getenv("HARVEST_STALL_REALERT_S", "21600"))
+    # An empty queue re-alerts once a day, and every message says since when (#71).
+    _idle_realert_s = int(os.getenv("HARVEST_IDLE_REALERT_S", "86400"))
+    _idle_since_utc: "datetime | None" = None
     _last_report_utc: "datetime | None" = None
     _prev_done: int | None = None
     _prev_parts: int | None = None
@@ -2076,6 +2210,8 @@ async def _harvest_supervisor_loop() -> None:
                         _prev_done = _sv.get("done")
                         _prev_parts = _sv.get("parts")
                         _harvest_alert_state = _sv.get("alert_state")
+                        if _sv.get("idle_since"):
+                            _idle_since_utc = datetime.fromisoformat(_sv["idle_since"])
                         if _sv.get("ts"):
                             _last_report_utc = datetime.fromisoformat(_sv["ts"])
                         print(
@@ -2136,9 +2272,14 @@ async def _harvest_supervisor_loop() -> None:
                         prev_state=_harvest_alert_state,
                         secs_since_alert=(None if _harvest_alert_sent_utc is None
                                           else (_now - _harvest_alert_sent_utc).total_seconds()),
-                        realert_s=_realert_s, mode=_report_mode,
+                        realert_s=_realert_s, mode=_report_mode, idle_realert_s=_idle_realert_s,
                     )
                     _bad = _state in ("stalled", "idle")
+                    # _harvest_alert_state still holds the PREVIOUS sample's state here.
+                    if _state != "idle":
+                        _idle_since_utc = None
+                    elif _harvest_alert_state != "idle" or _idle_since_utc is None:
+                        _idle_since_utc = _now
 
                     if _should_send and _open:
                         owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
@@ -2177,7 +2318,8 @@ async def _harvest_supervisor_loop() -> None:
                                 _severity = "warning"
                             elif _state == "idle":
                                 _title = "שאיבת הקטלוג בטלה"
-                                delta_line = "התור ריק — אין דגמים ממתינים לשאיבה."
+                                _since_txt = (_idle_since_utc or _now).astimezone(APP_LOCAL_TZ).strftime("%d/%m %H:%M")
+                                delta_line = f"התור ריק מאז {_since_txt} — אין דגמים ממתינים לשאיבה."
                                 action_line = "פעולה: כתוב *שאיבה* לסטטוס"
                                 _alert_key = "harvest_catalog_idle"
                                 _severity = "warning"
@@ -2204,7 +2346,8 @@ async def _harvest_supervisor_loop() -> None:
                                     # before (HARVEST_STALL_REALERT_S, default 6h); recovery
                                     # only needs a short cooldown to survive a restart-time
                                     # double-fire, not a long silence window.
-                                    cooldown_s=(_realert_s if _bad else 3600),
+                                    cooldown_s=(_idle_realert_s if _state == "idle"
+                                                else _realert_s if _bad else 3600),
                                 )
                                 _harvest_alert_sent_utc = _now
                             except Exception as _rex:
@@ -2231,14 +2374,16 @@ async def _harvest_supervisor_loop() -> None:
                             "done": _prev_done,
                             "parts": _prev_parts,
                             "alert_state": _harvest_alert_state,
+                            "idle_since": _idle_since_utc.isoformat() if _idle_since_utc else None,
                             "ts": _last_report_utc.isoformat() if _last_report_utc else None,
                         }), ex=86400 * 7)
                     except Exception:
                         pass  # Redis unavailable — in-memory only this cycle; will retry next
 
-                _il_hour = (_now.hour + 3) % 24
-                _today = _now.strftime("%Y-%m-%d")
-                if _now.weekday() == 6 and _il_hour == 9 and _last_digest_date != _today:
+                _il_now = datetime.now(APP_LOCAL_TZ)            # not (utc_hour + 3) (#70)
+                _today = _il_now.strftime("%Y-%m-%d")
+                if (_digest_due(_il_now, 9, weekday=6) and _last_digest_date != _today
+                        and not await _digest_already_sent("weekly_harvest", _today)):
                     owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
                     if owner:
                         # Top 3 highest-IL-priority models still pending
@@ -2263,7 +2408,9 @@ async def _harvest_supervisor_loop() -> None:
                         # _last_digest_date) and notify_owner()'s alert_key/cooldown model
                         # has nothing to add here. Kept as a direct, justified bypass.
                         try:
-                            await _wa_send_update(msg)
+                            _wres = await _wa_send_update(msg)
+                            if (_wres or {}).get("ok"):
+                                await _mark_digest_sent("weekly_harvest", _today)
                         except Exception:
                             pass
                     _last_digest_date = _today
@@ -2422,15 +2569,15 @@ async def _car_parts_ie_stall_watchdog_loop() -> None:
 
 async def _car_parts_ie_harvester_healthcheck_loop() -> None:
     """
-    Every 30 min: confirm the harvester process is alive and has logged recent
-    progress. If it's alive but stalled (no log activity), kill it so
-    _car_parts_ie_harvester_loop's crash-relaunch picks it back up.
+    Every 30 min: confirm the harvester process is alive and either legitimately idle or making progress
+    (harvester_health.evaluate over /app/state/harvester_status.json; #78). If it is genuinely stalled, kill it
+    so _car_parts_ie_harvester_loop's crash-relaunch picks it back up.
     """
     import subprocess as _sp
     import time as _time
 
     log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state", "logs", "flaresolverr_harvester.log")
-    STALE_LOG_S = 900  # no log line in 15 min while the process is alive = stuck
+    _status_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state", "harvester_status.json")
 
     await asyncio.sleep(300)
     while True:
@@ -2449,16 +2596,13 @@ async def _car_parts_ie_harvester_healthcheck_loop() -> None:
             if os.path.exists(log_path):
                 log_age_s = _time.time() - os.path.getmtime(log_path)
 
-            stalled = pid is not None and log_age_s is not None and log_age_s > STALE_LOG_S
-            status = "STALLED" if stalled else ("MISSING" if pid is None else "ok")
-            print(
-                f"[car_parts_ie_healthcheck] alive={pid is not None} pid={pid} "
-                f"log_age_s={int(log_age_s) if log_age_s is not None else None} status={status}",
-                flush=True,
-            )
-
-            if stalled:
-                await _force_kill_pid(pid, "stalled harvester")
+            # #78: decide from the harvester's own status (idle / working + last real progress), not from log
+            # quietness alone — a drained queue rests up to an hour without logging, which used to be killed
+            # as "STALLED" about hourly. Without a usable status file the old log-age rule still applies.
+            import harvester_health as _hh
+            _verdict = await _hh.health_pass(pid, log_path=log_path, status_path=_status_path, now=_time.time(),
+                                             kill=_force_kill_pid)
+            print(_verdict["line"], flush=True)
 
             # Consecutive clearance-failure detection (root-fix 2026-10-02).
             # The log-age healthcheck (above) is blind when FlareSolverr 500-loops:
@@ -2590,8 +2734,18 @@ async def _meili_sync_loop() -> None:
     """
     import sys as _sys
 
-    await asyncio.sleep(600)  # let startup settle
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "meili_sync.py")
+    # Restart-safe cadence (2026-10-10): 2 h after the last COMPLETED sync, not 600 s after
+    # every container start. An interrupted sync (checkpoint not complete) resumes at 600 s.
+    _first = 600.0
+    try:
+        from local_schedule import delay_after_restart
+        from meili_checkpoint_state import last_completed_sync
+        _first = delay_after_restart(last_completed_sync(), 7200, 600)
+    except Exception as _mexc:
+        print(f"[meili_sync_loop] restart-cadence check skipped: {_mexc}", flush=True)
+    print(f"[meili_sync_loop] first sync after this start in {_first / 60:.0f} min", flush=True)
+    await asyncio.sleep(_first)
     while True:
         try:
             print("[meili_sync_loop] starting incremental sync", flush=True)
@@ -2808,6 +2962,10 @@ async def startup():
         _supervised_task("embed_warmup", _warmup_embed_model())
     else:
         print("[EmbedWarmup] disabled (ENABLE_LOCAL_EMBED_WARMUP=false)")
+    # #73/#74: chat (WhatsApp/Telegram) requests whose owner process died are taken over and finished — the
+    # saved turn reused, else a bounded re-run, else one honest failure; this process's heartbeat lives here too.
+    from routes.webhooks import chat_request_recovery_loop as _chat_recovery
+    _supervised_task("chat_request_recovery", _chat_recovery())
     _supervised_task("stuck_orders_monitor",        _stuck_orders_monitor_loop())
     _supervised_task("notify_search_miss_loop",     _notify_search_miss_loop())
     _supervised_task("scrape_search_misses_loop",   _scrape_search_misses_loop())
@@ -2854,7 +3012,11 @@ async def startup():
     _supervised_task("amayama_fs_harvester",         _amayama_fs_harvester_loop())
     _supervised_task("amayama_server_browser",       _amayama_server_browser_loop())
     _supervised_task("harvest_supervisor",           _harvest_supervisor_loop())
-    await _warm_search_paths()
+    # Background, not awaited (2026-10-09): awaiting it held "Application startup complete" -
+    # and therefore every API request and the container health check - behind an OPTIONAL warm-up
+    # whose cases may legitimately take up to ~230s cold. The warm-up never raises.
+    global _SEARCH_WARMUP_TASK
+    _SEARCH_WARMUP_TASK = asyncio.create_task(_guarded_task(_warm_search_paths()), name="search_warmup")
     print("✅ All systems ready — price-sync + catalog-scraper + db-agent schedulers started")
 
 
@@ -2926,6 +3088,11 @@ async def _group_scan_loop():
         except Exception as _npexc:
             logger.debug("[group_scan] night-pipeline check skipped: %s", _npexc)
         _cycle_started = datetime.now(timezone.utc)
+        try:    # durable "scan in progress" marker - read by scripts/restart_preflight.py
+            import inproc_job_marker as _marker
+            _marker.mark_started("group_scan")
+        except Exception as _mkexc:
+            logger.debug("[group_scan] start marker skipped: %s", _mkexc)
         _drafts_saved = _dup_events = _draft_failures = _budget_skipped = 0
         _autonomous_outcomes: dict = {}
         try:
@@ -3198,6 +3365,11 @@ async def _group_scan_loop():
                     )
             except Exception as exc:
                 logger.warning("[group_scan] scan-run record failed: %s", exc)
+            try:
+                import inproc_job_marker as _marker
+                _marker.mark_finished("group_scan")
+            except Exception as _mkexc:
+                logger.debug("[group_scan] finish marker skipped: %s", _mkexc)
 
             if session_failed:
                 # Root fix (2026-09-19): this branch never existed before — an
@@ -3398,17 +3570,74 @@ if alert_key ~= "" then
 end
 
 redis.call('RPUSH', key, payload)
+-- Overflow is no longer silent (#70): entries LTRIM would cut are recorded first in the
+-- dead-letter list KEYS[2] — metadata only, never the message text.
+local cap = -trim_start
+local n = redis.call('LLEN', key)
+local dropped = 0
+if KEYS[2] and n > cap then
+    local now = redis.call('TIME')[1]
+    for _, raw in ipairs(redis.call('LRANGE', key, 0, n - cap - 1)) do
+        local ok, item = pcall(cjson.decode, raw)
+        local meta = {reason = 'overflow', dropped_at = tonumber(now)}
+        if ok and type(item) == 'table' then
+            meta['alert_key'] = item['alert_key']
+            meta['queued_at'] = item['queued_at']
+            meta['text_len'] = string.len(item['text'] or '')
+            meta['to_tail'] = string.sub(tostring(item['to'] or ''), -4)
+        end
+        redis.call('LPUSH', KEYS[2], cjson.encode(meta))
+        dropped = dropped + 1
+    end
+    redis.call('LTRIM', KEYS[2], 0, 199)
+    redis.call('EXPIRE', KEYS[2], 2592000)
+end
 redis.call('LTRIM', key, trim_start, trim_end)
-return 1
+return dropped
 """
+
+# Dead-letter record of every queued WhatsApp item that was NOT delivered (#70): reason +
+# metadata, never the text. Bounded (200 newest, 30 days). Read by _flush_wa_quiet_queue's
+# daily summary to the owner, so a drop is never silent.
+_WA_QUIET_DEAD_KEY = "autospare:wa_quiet_dead"
+
+
+def _wa_text_usable(text) -> bool:
+    """A WhatsApp text with content. Empty / whitespace-only / non-string is never sent."""
+    return isinstance(text, str) and bool(text.strip())
+
+
+def _wa_permanent_error(error) -> bool:
+    """A delivery error that no retry can fix: the provider refused the payload itself
+    (social/whatsapp_provider: INVALID_PAYLOAD). Everything else — bridge readiness, timeouts,
+    5xx — is transient or of unknown outcome and keeps the bounded retry."""
+    return str(error or "").startswith("INVALID_PAYLOAD")
+
+
+async def _wa_dead_letter(_r, item: dict, reason: str, error: str = "") -> None:
+    """Record an undelivered queue item: metadata only (no text, last 4 recipient digits)."""
+    try:
+        meta = {
+            "reason": reason, "dropped_at": int(time.time()),
+            "alert_key": (item or {}).get("alert_key"), "queued_at": (item or {}).get("queued_at"),
+            "text_len": len(str((item or {}).get("text") or "")),
+            "to_tail": str((item or {}).get("to") or "")[-4:],
+            "attempts": int((item or {}).get("attempts", 0) or 0),
+            "error": str(error or "")[:120],
+        }
+        await _r.lpush(_WA_QUIET_DEAD_KEY, json.dumps(meta, ensure_ascii=False))
+        await _r.ltrim(_WA_QUIET_DEAD_KEY, 0, 199)
+        await _r.expire(_WA_QUIET_DEAD_KEY, 30 * 86400)
+    except Exception as exc:
+        print(f"[QuietHours] dead-letter record failed ({reason}): {exc}")
 
 
 async def _wa_send_quiet(to: str, text: str, critical: bool = False, alert_key: str = "") -> dict:
     """Quiet-hours-aware WhatsApp send. Inside the window (or critical=True) → send now.
     Outside → queue to Redis; the health monitor flushes the queue at window open, so
-    nothing is lost and nobody gets a 03:00 message. Owner notifications go to his REAL
-    number (OWNER_WHATSAPP_PHONE) — a masked …@lid is NOT deliverable (owner-confirmed
-    2026-07-24), so we never route to a LID.
+    nothing is lost and nobody gets a 03:00 message. Owner notifications are addressed to
+    OWNER_WHATSAPP_PHONE; social/whatsapp_provider maps that number to the owner's LID at
+    the bridge boundary (phone-number-session sends failed to decrypt — 2026-10-18).
 
     alert_key (optional, root-fix 2026-09-09): a persistent condition (e.g. a
     stalled harvester) can re-fire every sampling cycle for the ENTIRE quiet-hours
@@ -3420,7 +3649,17 @@ async def _wa_send_quiet(to: str, text: str, critical: bool = False, alert_key: 
     one queued delivery survives per condition; the newest diagnostic text always
     wins. Items with no alert_key (legacy/one-off sends) are never touched. The
     find-and-replace is a single atomic Redis Lua script (_WA_QUIET_ENQUEUE_LUA) —
-    see its comment for why a multi-round-trip version was not safe here."""
+    see its comment for why a multi-round-trip version was not safe here.
+
+    Validation (#70): an empty / whitespace-only text or a missing recipient is refused here,
+    never queued — a queued empty text used to be delivered at 09:00 as the night banner with
+    nothing under it (the provider's empty-body guard saw the non-empty banner)."""
+    if not _wa_text_usable(text):
+        print(f"[QuietHours] refused: empty text (alert_key={alert_key or '-'})")
+        return {"ok": False, "error": "INVALID_PAYLOAD: empty body"}
+    if not str(to or "").strip():
+        print(f"[QuietHours] refused: no recipient (alert_key={alert_key or '-'})")
+        return {"ok": False, "error": "INVALID_PAYLOAD: no recipient"}
     is_open, _ = _notify_window_open()
     if is_open or critical:
         return await _wa_send(to=to, text=text)
@@ -3432,10 +3671,13 @@ async def _wa_send_quiet(to: str, text: str, critical: bool = False, alert_key: 
         }
         if alert_key:
             payload["alert_key"] = alert_key
-        await _r.eval(
-            _WA_QUIET_ENQUEUE_LUA, 1, _WA_QUIET_QUEUE_KEY,
+        _dropped = await _r.eval(
+            _WA_QUIET_ENQUEUE_LUA, 2, _WA_QUIET_QUEUE_KEY, _WA_QUIET_DEAD_KEY,
             alert_key, json.dumps(payload, ensure_ascii=False), -50, -1,
         )
+        if _dropped:
+            print(f"[QuietHours] queue full — {_dropped} oldest queued message(s) NOT delivered "
+                  f"(recorded in {_WA_QUIET_DEAD_KEY})")
         print(f"[QuietHours] queued WhatsApp for {to[-4:] if to else '?'} (outside "
               f"{NOTIFY_SEND_START_HOUR_IL}:00-{NOTIFY_SEND_END_HOUR_IL}:00 window)"
               + (f" alert_key={alert_key}" if alert_key else ""))
@@ -3544,6 +3786,14 @@ async def _flush_wa_quiet_queue() -> int:
                 item = json.loads(raw)
             except Exception as exc:
                 print(f"[QuietHours] dropping malformed queue entry (undeliverable): {exc}")
+                await _wa_dead_letter(_r, {}, "malformed", str(exc))
+                await _r.lpop(_WA_QUIET_QUEUE_KEY)
+                continue
+            if not isinstance(item, dict) or not _wa_text_usable(item.get("text")) or not str(item.get("to") or "").strip():
+                # Permanently invalid (#70): never send the night banner with nothing under it,
+                # never let it block the items behind it.
+                print("[QuietHours] dropping invalid queue entry (empty text or no recipient)")
+                await _wa_dead_letter(_r, item if isinstance(item, dict) else {}, "invalid_payload")
                 await _r.lpop(_WA_QUIET_QUEUE_KEY)
                 continue
             try:
@@ -3558,10 +3808,18 @@ async def _flush_wa_quiet_queue() -> int:
                 sent += 1
                 continue
             # Failure — exception or explicit ok=False. The item is NOT removed.
+            if _wa_permanent_error(result.get("error")):
+                # No retry can fix a refused payload (#70): it used to sit at the head for
+                # _WA_QUIET_MAX_ATTEMPTS passes (~25 min), holding every message behind it.
+                print(f"[QuietHours] dropping queue entry — permanent error: {result.get('error')}")
+                await _wa_dead_letter(_r, item, "permanent_error", result.get("error"))
+                await _r.lpop(_WA_QUIET_QUEUE_KEY)
+                continue
             attempts = int(item.get("attempts", 0)) + 1
             if attempts >= _WA_QUIET_MAX_ATTEMPTS:
                 print(f"[QuietHours] dropping queue entry after {attempts} failed "
                       f"delivery attempts (last error: {result.get('error')})")
+                await _wa_dead_letter(_r, dict(item, attempts=attempts), "retry_exhausted", result.get("error"))
                 await _r.lpop(_WA_QUIET_QUEUE_KEY)
                 continue
             item["attempts"] = attempts
@@ -3571,9 +3829,50 @@ async def _flush_wa_quiet_queue() -> int:
             break  # stop this pass — preserves FIFO order, avoids a tight retry loop
         if sent:
             print(f"[QuietHours] flushed {sent} queued message(s)")
+        await _report_wa_dead_letters(_r)
     except Exception as exc:
         print(f"[QuietHours] flush error: {exc}")
     return sent
+
+
+def _wa_dead_letter_summary(entries, now_ts: float, window_s: int = 86400) -> "dict | None":
+    """Counts by reason of dead-letter entries dropped in the last `window_s`; None if none."""
+    counts: dict = {}
+    for raw in entries or []:
+        try:
+            e = json.loads(raw)
+        except Exception:
+            continue
+        if now_ts - float(e.get("dropped_at") or 0) <= window_s:
+            counts[e.get("reason") or "unknown"] = counts.get(e.get("reason") or "unknown", 0) + 1
+    return counts or None
+
+
+_WA_DEAD_REASON_HE = {
+    "overflow": "התור התמלא בלילה (נשמרות 50 האחרונות)",
+    "retry_exhausted": "נכשלו 5 ניסיונות שליחה",
+    "permanent_error": "הספק דחה את ההודעה",
+    "invalid_payload": "הודעה ריקה או ללא נמען",
+    "malformed": "רשומה פגומה בתור",
+}
+
+
+async def _report_wa_dead_letters(_r) -> None:
+    """Once a day, tell the owner how many queued notifications were NOT delivered and why
+    (#70) — a drop is logged AND reported, never silent. Deduplicated per day by alert_key."""
+    try:
+        counts = _wa_dead_letter_summary(await _r.lrange(_WA_QUIET_DEAD_KEY, 0, 199), time.time())
+        if not counts:
+            return
+        total = sum(counts.values())
+        lines = [f"• {_WA_DEAD_REASON_HE.get(k, k)}: {v}" for k, v in sorted(counts.items(), key=lambda x: -x[1])]
+        await notify_owner(
+            "health", f"{total} התראות WhatsApp לא נמסרו ב-24 השעות האחרונות",
+            "\n".join(lines) + "\n\nפרטים (ללא תוכן ההודעות): Redis " + _WA_QUIET_DEAD_KEY,
+            severity="warning", alert_key=f"wa_dead_letter_{datetime.now(APP_LOCAL_TZ):%Y-%m-%d}",
+            cooldown_s=86400)
+    except Exception as exc:
+        print(f"[QuietHours] dead-letter report failed: {exc}")
 
 
 # ── Owner notification taxonomy (2026-08-13 — "organize the notifications") ────
@@ -3602,6 +3901,24 @@ _NOTIFY_SEVERITY_ICON = {
 }
 
 
+def _admin_gets_wa(admin) -> bool:
+    """Whether an admin user receives a WhatsApp copy of a system alert.
+
+    Explicit opt-in only (ADMIN_ALERT_PHONES, comma-separated), never the owner (he already
+    gets the owner alert — admins were derived from users.is_admin, and the owner's own row
+    stores "0586050155", so he got every alert twice), never a row merely flagged admin: the
+    seeded "Admin Test User" (+972501112233) received 103 system alerts in a week."""
+    if not getattr(admin, "phone", None) or str(getattr(admin, "id", "")) == str(WHATSAPP_ANON_USER_ID):
+        return False
+
+    def _d(p):
+        d = "".join(ch for ch in str(p or "") if ch.isdigit())
+        return "972" + d[1:] if d.startswith("0") else d
+    allowed = {_d(x) for x in os.getenv("ADMIN_ALERT_PHONES", "").split(",") if x.strip()}
+    phone = _d(admin.phone)
+    return phone in allowed and phone != _d(os.getenv("OWNER_WHATSAPP_PHONE", ""))
+
+
 async def notify_owner(
     category: str,
     title: str,
@@ -3610,7 +3927,7 @@ async def notify_owner(
     severity: str = "info",
     alert_key: str = "",
     cooldown_s: int = 3600,
-) -> None:
+) -> dict:
     """The one function every proactive owner alert must call — health, harvest,
     orders, social, supplier. Gives every message a consistent
     "{severity icon} [{category}] {title}" header, a Redis-backed cooldown
@@ -3624,7 +3941,7 @@ async def notify_owner(
             _r = await get_redis()
             _rk = f"autospare:alert_cooldown:{alert_key}"
             if await _r.exists(_rk):
-                return
+                return {"ok": False, "suppressed": True, "error": "cooldown"}
         except Exception:
             pass  # Redis unavailable — allow the alert through rather than lose it
     cat_label = _NOTIFY_CATEGORIES.get(category, category)
@@ -3666,8 +3983,10 @@ async def notify_owner(
                     "error": None if result.get("ok") else str(result.get("error"))[:120]}), ex=30 * 86400)
             except Exception:
                 pass
+        return result
     except Exception as exc:
         print(f"[notify_owner] error ({alert_key or category}): {exc}")
+        return {"ok": False, "error": str(exc)}
 
 # How often the pending-payment reminder runs (default: every 30 min)
 PAYMENT_REMINDER_INTERVAL_S = int(os.getenv("PAYMENT_REMINDER_INTERVAL_S", "1800"))
@@ -3940,15 +4259,35 @@ async def _supplier_sourcing_loop():
     from services import supplier_sourcing as _ss
 
     interval = int(os.getenv("SUPPLIER_SOURCING_INTERVAL_S", str(7 * 24 * 3600)))
-    await asyncio.sleep(120)  # let startup settle
+    # Restart-safe cadence (2026-10-10): weekly since the last COMPLETED cycle, not 120 s after
+    # every container start (three restarts that day ran three discovery cycles, 3 pending
+    # suppliers onboarded and the owner notified outside the weekly rhythm).
+    _first = 120.0
+    try:
+        import inproc_job_marker as _marker
+        from local_schedule import delay_after_restart
+        _fin = _marker.status("supplier_sourcing").get("finished_at")
+        _first = delay_after_restart(datetime.fromtimestamp(float(_fin), timezone.utc) if _fin else None,
+                                     interval, 120)
+    except Exception as _sexc:
+        logger.warning("[supplier_sourcing] restart-cadence check skipped: %s", _sexc)
+    logger.info("[supplier_sourcing] first cycle after this start in %.1f h", _first / 3600)
+    await asyncio.sleep(_first)  # >= 120 s: let startup settle
     while True:
         if os.getenv("SUPPLIER_SOURCING_ENABLED", "1") != "1":
             await asyncio.sleep(interval)
             continue
         try:
+            _cycle_t0 = datetime.now(timezone.utc).timestamp()
             summary = await _ss.run_sourcing_cycle()
             onboarded = summary.get("onboarded", [])
             logger.info("[supplier_sourcing] %s", summary)
+            try:
+                import inproc_job_marker as _marker
+                _marker.mark_started("supplier_sourcing", now=_cycle_t0)
+                _marker.mark_finished("supplier_sourcing")
+            except Exception as _mexc:
+                logger.debug("[supplier_sourcing] cycle marker skipped: %s", _mexc)
             if onboarded:
                 lines = "\n".join(f"• {o['name'][:34]} ({o['domain']})" for o in onboarded[:6])
                 import hashlib as _hashlib
@@ -4312,16 +4651,41 @@ async def _noa_marketing_loop():
                         campaign_prompt = _bpwc(campaign_prompt, agent="noa", task_type="social_campaign")
                     except Exception: pass  # preserve original campaign_prompt on any loader failure
 
-                    raw_plan = await _hf_text(prompt=campaign_prompt, system=_noa_system, timeout=180.0, max_tokens=6000, temperature=noa.temperature, reasoning_effort="low")
+                    # An unusable plan (provider 429/402 fallback returned empty or non-JSON
+                    # text) used to be sent anyway — the 2026-10-19 brief had every field blank —
+                    # and stored as the week's plan. Validate, retry once, never send it empty.
+                    def _parse_plan(raw_text) -> dict:
+                        try:
+                            jm = re.search(r'\{[\s\S]*\}', raw_text or "")
+                            return _json.loads(jm.group(0)) if jm else {}
+                        except Exception:
+                            return {}
+
+                    def _plan_usable(p: dict) -> bool:
+                        return bool(isinstance(p, dict) and str(p.get("core_message") or "").strip()
+                                    and any(isinstance(d, dict) and str(d.get("content_angle") or "").strip()
+                                            for d in (p.get("daily_plan") or [])))
 
                     plan: dict = {}
-                    try:
-                        jm = re.search(r'\{[\s\S]*\}', raw_plan)
-                        if jm:
-                            plan = _json.loads(jm.group(0))
-                    except Exception:
-                        plan = {"raw": raw_plan}
+                    for _plan_attempt in range(2):
+                        try:
+                            raw_plan = await _hf_text(prompt=campaign_prompt, system=_noa_system, timeout=180.0, max_tokens=6000, temperature=noa.temperature, reasoning_effort="low")
+                        except Exception as _plan_err:
+                            logger.warning("noa_marketing_loop: weekly plan attempt %d failed: %s", _plan_attempt + 1, _plan_err)
+                            raw_plan = ""
+                        plan = _parse_plan(raw_plan)
+                        if _plan_usable(plan):
+                            break
+                    if not _plan_usable(plan):
+                        logger.error("noa_marketing_loop: weekly campaign plan unusable after 2 attempts — not sent, not stored")
+                        if OWNER_PHONE:
+                            await notify_owner(
+                                "social", f"NOA — לא נבנתה תוכנית קמפיין לשבוע {week_num}",
+                                "מנוע ה-AI החזיר תשובה ריקה או לא תקינה פעמיים (עומס/חסימה אצל ספקי ה-AI). "
+                                "הפוסטים היומיים ממשיכים כרגיל; ניסיון נוסף ביום שני הבא.",
+                                severity="warning", alert_key=f"noa_week_plan_failed_{week_num}", cooldown_s=86400)
 
+                if weekday == 0 and now.hour <= _post_hours[0] and _plan_usable(plan):
                     await mem.set("current_week_plan", plan, ttl_hours=192)  # 8 days
 
                     # Format WhatsApp campaign brief
@@ -4498,18 +4862,37 @@ async def _noa_marketing_loop():
                             f"⚠️ הניסיון הקודם שלך נדחה: {_reason}\n"
                             f"כתבי גרסה חדשה שמתקנת את הבעיה הזו במדויק."
                         )
+                    # Notify by exception: one rejected cycle is the gate working ("no action
+                    # needed" reached the owner 16 times in a week). Only a STREAK means NOA
+                    # has stopped producing posts.
+                    _streak_key = "autospare:noa:coherence_fail_streak"
                     if _gate_failed:
                         logger.error("noa_marketing_loop: coherence gate failed 3/3 attempts — skipping this cycle")
-                        await notify_owner(
-                            "social",
-                            "NOA — פוסט נפסל 3 פעמים ולא פורסם המחזור הזה",
-                            f"נושא: {heb_part} ({eng_part}) — {car}. שער הבדיקה (מילה מומצאת/דימוי לא הגיוני) "
-                            f"דחה 3 ניסיונות ברצף. אין פעולה נדרשת — המחזור הבא ינסה נושא אחר.",
-                            severity="warning",
-                            alert_key="noa_coherence_gate_exhausted",
-                            cooldown_s=3600,
-                        )
+                        _streak = 0
+                        try:
+                            _rs = await get_redis()
+                            if _rs:
+                                _streak = int(await _rs.incr(_streak_key))
+                                await _rs.expire(_streak_key, 7 * 86400)
+                        except Exception:
+                            pass
+                        if _streak >= 3:
+                            await notify_owner(
+                                "social",
+                                f"NOA לא פרסמה {_streak} מחזורים ברצף",
+                                f"שער הבדיקה דחה את כל הניסיונות ב-{_streak} המחזורים האחרונים "
+                                f"(אחרון: {heb_part} — {car}). כנראה בעיה במודל או בשער — כדאי לבדוק.",
+                                severity="warning",
+                                alert_key="noa_coherence_gate_streak",
+                                cooldown_s=86400,
+                            )
                         raise _SkipCycle()
+                    try:
+                        _rs = await get_redis()
+                        if _rs:
+                            await _rs.delete(_streak_key)
+                    except Exception:
+                        pass
                     # NO UTM re-injection (fix 2026-08-05, owner "fix the long link"): the
                     # finalizer deliberately produces a CLEAN bare "autosparefinder.co.il".
                     # Re-adding "?utm_source=…&utm_medium=…&utm_campaign=…" here put the long
@@ -4731,6 +5114,28 @@ async def _noa_eod_report_loop():
                 ops_block = "\n\nOPERATIONS: metrics unavailable this cycle"
 
             notable: list[str] = []
+            # Zero groups is ambiguous: "scanned, found nothing" or "never scanned". On 2026-10-17
+            # and 10-18 the 10:00 IL scan was cut by backend restarts (no catch-up) and the report
+            # said 0 as if it were a quiet day. Say which one it is (FIXES_TRACKER #69 §13).
+            try:
+                import inproc_job_marker as _gs_marker
+                _gs = _gs_marker.status("group_scan")
+                _ws_epoch = window_start.replace(tzinfo=timezone.utc).timestamp()
+                _fmt = lambda e: datetime.fromtimestamp(e, APP_LOCAL_TZ).strftime("%d/%m %H:%M")  # noqa: E731
+                if _gs["running"]:
+                    notable.append(f"Group scan still running (started {_fmt(_gs['started_at'])}) — group numbers are partial")
+                elif not _gs["known"]:
+                    notable.append("Group scan: no run recorded — group numbers do not reflect a scan")
+                elif (_gs.get("finished_at") or 0) >= _ws_epoch and (_gs.get("finished_at") or 0) >= _gs["started_at"]:
+                    pass                                    # completed inside the window: numbers are real
+                elif _gs["started_at"] >= _ws_epoch:
+                    notable.append(f"Group scan INTERRUPTED (started {_fmt(_gs['started_at'])}, never finished) — "
+                                   "group numbers are incomplete")
+                else:
+                    notable.append("Group scan did NOT run in the last 24 h — 0 means nothing was scanned, "
+                                   "not that nothing was found")
+            except Exception as exc:
+                notable.append(f"Group scan status unknown ({type(exc).__name__})")
             try:
                 if not engagement.fb_configured():
                     notable.append("Facebook Page not configured (FACEBOOK_PAGE_ID/FACEBOOK_PAGE_TOKEN unset)")
@@ -4865,6 +5270,14 @@ async def _stuck_orders_monitor_loop():
                         )
                     )
                 )
+                # #111: in production the agent only handles orders that were REALLY paid (a live Stripe checkout
+                # session) by a non-test customer — the same rule trigger_supplier_fulfillment enforces. April TEST
+                # orders (Stripe test sessions, manual markers, @example.com customers) were re-detected daily,
+                # "auto-handled" and reported to the owner as paid customer orders.
+                import order_payment_policy as _spend_policy
+                _real_order_filters = ([Order.id.in_(_spend_policy.live_paid_order_ids()),
+                                        ~Order.user_id.in_(_spend_policy.test_customer_user_ids())]
+                                       if _spend_policy.production_enforced() else [])
                 result = await db.execute(
                     select(Order).where(
                         Order.status.in_(["confirmed", "paid", "processing"]),
@@ -4874,9 +5287,42 @@ async def _stuck_orders_monitor_loop():
                         ),
                         ~Order.id.in_(_nonretryable_recent_ids),
                         ~Order.id.in_(_all_suppliers_terminal_ids),
+                        *_real_order_filters,
                     )
                 )
                 stuck = result.scalars().all()
+
+                # #111 anomaly: a NON-test customer's order marked paid/confirmed without any live payment is not
+                # test data and not fulfillable — tell the owner (weekly), never spend on it.
+                if _spend_policy.production_enforced():
+                    _anomaly = (await db.execute(
+                        select(Order).where(
+                            Order.status.in_(["confirmed", "paid", "processing"]),
+                            Order.updated_at <= cutoff,
+                            ~Order.id.in_(_spend_policy.live_paid_order_ids()),
+                            ~Order.user_id.in_(_spend_policy.test_customer_user_ids()),
+                        )
+                    )).scalars().all()
+                    if _anomaly:
+                        import hashlib as _hl3
+                        _an_sig = _hl3.sha256(",".join(sorted(o.order_number for o in _anomaly)).encode()).hexdigest()[:16]
+                        _notify_an = True
+                        try:
+                            _ra = await get_redis()
+                            if _ra is not None:
+                                if await _ra.exists(f"autospare:nonlive_orders_notified:{_an_sig}"):
+                                    _notify_an = False
+                                else:
+                                    await _ra.set(f"autospare:nonlive_orders_notified:{_an_sig}", "1", ex=7 * 86400)
+                        except Exception:
+                            _notify_an = True
+                        if _notify_an:
+                            _an_list = ", ".join(o.order_number for o in _anomaly)
+                            await notify_owner(
+                                "orders", f"{len(_anomaly)} הזמנות מסומנות כמשולמות ללא תשלום אמיתי",
+                                f"ההזמנות מסומנות paid/confirmed אבל אין להן תשלום Stripe חי (cs_live), והלקוח אינו כתובת בדיקה. "
+                                f"לא בוצע תשלום לספק. יש לבדוק: {_an_list}", severity="warning")
+                            print(f"[OrderMonitor] non-live paid-status orders reported: {_an_list}")
 
                 # Orders EXCLUDED above because they're known-doomed right now — these need
                 # the OWNER, not another retry. Honest framing (never "auto-handled"),
@@ -4891,6 +5337,7 @@ async def _stuck_orders_monitor_loop():
                         Order.updated_at <= cutoff,
                         Order.id.in_(_nonretryable_recent_ids),
                         ~Order.id.in_(_all_suppliers_terminal_ids),
+                        *_real_order_filters,
                     )
                 )
                 manual_orders = manual_result.scalars().all()
@@ -5340,7 +5787,7 @@ async def _health_monitor_loop():
                                 "title":   _title,
                                 "message": _msg,
                             })))
-                            if admin.phone and str(admin.id) != str(WHATSAPP_ANON_USER_ID):
+                            if _admin_gets_wa(admin):
                                 admin_phones.add(admin.phone)
                                 # Root-fix 2026-09-01: service-down events are critical —
                                 # pass critical=True so they bypass quiet hours for admins
@@ -5351,7 +5798,7 @@ async def _health_monitor_loop():
                                     print(f"[HealthMonitor] WhatsApp failed for admin {admin.id}: {wa_result.get('error')}")
                         await db.commit()
                         # Send directly to owner phone (no cooldown — service state changes are already deduplicated)
-                        if _OWNER_PHONE and _OWNER_PHONE not in admin_phones:
+                        if _OWNER_PHONE:
                             await _alert_owner(_title, _msg, alert_key="", severity=_severity)
                 except Exception as _e:
                     print(f"[HealthMonitor] Notify error for {svc}: {_e}")
@@ -5409,7 +5856,7 @@ async def _health_monitor_loop():
                                     "title": _alert_title,
                                     "message": _alert_msg,
                                 })))
-                                if _send_admin_wa_cs and admin.phone and str(admin.id) != str(WHATSAPP_ANON_USER_ID):
+                                if _send_admin_wa_cs and _admin_gets_wa(admin):
                                     await _wa_send_quiet(to=admin.phone, text=f"{_alert_title}\n{_alert_msg}")
                             await _pii_db.commit()
             except Exception as _e:
@@ -5478,6 +5925,22 @@ async def _health_monitor_loop():
             except Exception as _e:
                 print(f"[HealthMonitor] Threshold check 2 error: {_e}")
 
+            # Check 2b: primary AI provider billing. hf_client leaves this marker on a Cerebras
+            # 402 (account unpaid) — every agent then runs on the Gemini/Groq fallbacks, which
+            # rate-limit at peak (empty NOA weekly campaign 2026-10-19). Billing is an owner
+            # action, so say it once a day while it lasts (FIXES_TRACKER #69 §12).
+            try:
+                _rb = await get_redis()
+                if _rb and await _rb.exists("autospare:llm:cerebras_payment_required"):
+                    await _alert_owner(
+                        "ספק ה-AI הראשי (Cerebras) דורש תשלום",
+                        "Cerebras מחזיר 402 Payment Required — כל הסוכנים (צ'אט לקוחות, NOA, AVI) "
+                        "רצים על ספקי הגיבוי (Gemini/Groq), שנחסמים בעומס (429) ומאטים/מרוקנים תשובות.\n"
+                        "פעולה: לחדש את החיוב בחשבון Cerebras.",
+                        alert_key="llm_cerebras_payment_required", cooldown_s=86400, severity="warning")
+            except Exception as _e:
+                print(f"[HealthMonitor] Check 2b (LLM billing) error: {_e}")
+
             # Check 3: worker silent > 2 hours (no recent heartbeat from db_update_agent)
             def _extract_dt(report) -> Optional[datetime]:
                 if report is None:
@@ -5535,15 +5998,52 @@ async def _health_monitor_loop():
                     elif str(_hb_row[0]) != "running" and silence_mins > 300:
                         _stall_reason = f"לא התחיל מחזור חדש כבר {silence_mins:.0f} דקות (רגיל: עד ~180)"
 
+                # Name the real cause. For 4.5 days (2026-10-12..17) this said "no cycle started —
+                # docker restart" 153 times while run_all_tasks was deliberately deferring to a
+                # hung night-pipeline job; the restart advice was the only thing that ended it.
+                _np_blocker = None
+                if _stall_reason and not (_hb_row and str(_hb_row[0]) == "running"):
+                    try:
+                        import night_pipeline as _np_mod
+                        _np_blocker = await _np_mod.running_job()
+                    except Exception:
+                        _np_blocker = None
+                _ws_flag = "autospare:worker_silence:active"
+                if not _stall_reason:
+                    try:
+                        _rws = await get_redis()
+                        if _rws and await _rws.delete(_ws_flag):
+                            await _alert_owner("db_update_agent חזר לפעול",
+                                               "מחזור עדכון הנתונים רץ שוב כרגיל.",
+                                               alert_key="worker_silence_recovered", severity="info")
+                    except Exception:
+                        pass
+
                 if _stall_reason:
                     if True:
-                        _alert_title = "Worker db_update_agent: תקוע באמת"
-                        _alert_msg = (
-                            f"db_update_agent: {_stall_reason}.\n"
-                            f"פעולה: docker restart autospare_backend"
-                        )
-                        print(f"[HealthMonitor] ALERT: worker stalled — {_stall_reason}")
-                        await _alert_owner(_alert_title, _alert_msg, alert_key="worker_silence", severity="warning")
+                        if _np_blocker:
+                            _alert_title = "db_update_agent ממתין לעבודת לילה"
+                            _alert_msg = (
+                                f"מחזור העדכון לא רץ {silence_mins / 60:.0f} שעות: הוא ממתין לסיום "
+                                f"עבודת הלילה *{_np_blocker}*, שעדיין רצה.\n"
+                                f"לכל עבודת לילה יש מגבלת זמן והיא תבוטל אוטומטית אם תחרוג ממנה.")
+                        else:
+                            _alert_title = "Worker db_update_agent: תקוע באמת"
+                            _alert_msg = (
+                                f"db_update_agent: {_stall_reason}.\n"
+                                f"פעולה: docker restart autospare_backend"
+                            )
+                        print(f"[HealthMonitor] ALERT: worker stalled — {_stall_reason} (night job: {_np_blocker})")
+                        # A persisting condition: first alert, then a reminder every 6 h (was
+                        # hourly), and one "recovered" message when it clears.
+                        await _alert_owner(_alert_title, _alert_msg, alert_key="worker_silence",
+                                           cooldown_s=21600, severity="warning")
+                        try:
+                            _rws = await get_redis()
+                            if _rws:
+                                await _rws.set(_ws_flag, "1", ex=7 * 86400)
+                        except Exception:
+                            pass
 
                         async with pii_session_factory() as _pii_db:
                             admins_res = await _pii_db.execute(select(User).where(User.is_admin == True))
@@ -5555,7 +6055,7 @@ async def _health_monitor_loop():
                                 if await _r2.exists(_awk_ws):
                                     _send_admin_wa_ws = False
                                 else:
-                                    await _r2.set(_awk_ws, "1", ex=3600)
+                                    await _r2.set(_awk_ws, "1", ex=21600)
                             except Exception:
                                 pass
                             # ROOT FIX 2026-08-06: this Notification row used to be created for
@@ -5580,7 +6080,7 @@ async def _health_monitor_loop():
                                         "title": _alert_title,
                                         "message": _alert_msg,
                                     })))
-                                    if admin.phone and str(admin.id) != str(WHATSAPP_ANON_USER_ID):
+                                    if _admin_gets_wa(admin):
                                         await _wa_send_quiet(to=admin.phone, text=f"{_alert_title}\n{_alert_msg}")
                                 await _pii_db.commit()
             except Exception as _e:
@@ -5653,7 +6153,7 @@ async def _health_monitor_loop():
                                 "title": _alert_title,
                                 "message": _alert_msg,
                             })))
-                            if admin.phone and str(admin.id) != str(WHATSAPP_ANON_USER_ID):
+                            if _admin_gets_wa(admin):
                                 await _wa_send_quiet(to=admin.phone, text=f"{_alert_title}\n{_alert_msg}")
                         await _pii_db.commit()
             except Exception as _e:
@@ -5833,30 +6333,7 @@ async def _health_monitor_loop():
                     ORDER BY created_at ASC
                 """))
                 _pending_rows = _pending.fetchall()
-            if _pending_rows:
-                _oldest_id = str(_pending_rows[0][0])[:8]
-                _total = len(_pending_rows)
-                _oldest_age_h = round(_pending_rows[0][3])
-                _lines = [
-                    f"📢 *NOA — {_total} פוסטי' ממתינים לאישורך*",
-                    "",
-                ]
-                for _pr in _pending_rows[:5]:
-                    _pid = str(_pr[0])[:8]
-                    _plat = ", ".join(_pr[1]) if _pr[1] else "?"
-                    _age = round(_pr[3])
-                    _lines.append(f"• *אשר {_pid}* — {_plat} (לפני {_age}ש')")
-                if _total > 5:
-                    _lines.append(f"  ועוד {_total - 5} נוספים…")
-                _lines += ["", "לפרסום: *אשר <מזהה>* | לדחייה: *דחה <מזהה>*"]
-                await notify_owner(
-                    "social",
-                    f"פוסטים ממתינים לאישור ({_total})",
-                    "\n".join(_lines),
-                    severity="info",
-                    alert_key=f"pending_posts_reminder_{_oldest_id}",
-                    cooldown_s=86400,  # remind once per day per oldest-post-id
-                )
+            await _notify_pending_posts(_pending_rows)
         except Exception as _spe:
             print(f"[HealthMonitor] pending-posts reminder error: {_spe}")
 
@@ -5864,6 +6341,57 @@ async def _health_monitor_loop():
 
 
 # ── Abandoned-cart re-engagement loop ───────────────────────────────────────
+async def _notify_pending_posts(rows, *, now_ts: "float | None" = None, redis_client=None) -> dict:
+    """NOA posts waiting for approval (> 2 h) → owner, honestly (#71).
+
+    rows: (id, platforms, created_at, age_h), oldest first. NEW posts (not announced before) are listed
+    with their age, plus the real total and the oldest date; an unchanged backlog is a labelled reminder
+    at most every BACKLOG_REMINDER_DAYS. Before: the same July posts were re-listed every day
+    ("פוסטים ממתינים לאישור (50)", one alert_key per oldest id)."""
+    import notify_backlog as _nb
+    now_ts = time.time() if now_ts is None else now_ts
+    try:
+        if redis_client is None:
+            redis_client = await get_redis()
+        by_id = {str(r[0]): r for r in rows}
+        current = {pid: (r[2].replace(tzinfo=None) if getattr(r[2], "tzinfo", None) else r[2]) for pid, r in by_id.items()}
+        state = await _nb.load_state(redis_client, "noa_posts")
+        plan = _nb.backlog_plan(current, state["announced"], last_reminder_ts=state["reminded_at"],
+                                now_ts=now_ts, last_new_ts=state["announced_at"])
+        if plan["bootstrap"] and plan["send"] is None:
+            await _nb.record_bootstrap(redis_client, "noa_posts", current)
+        if plan["send"] is None:
+            return plan
+        oldest = plan["oldest"].strftime("%d/%m/%Y") if plan["oldest"] else "?"
+
+        def _line(pid):
+            r = by_id[pid]
+            return f"• *אשר {pid[:8]}* — {', '.join(r[1]) if r[1] else '?'} (לפני {round(r[3])}ש')"
+        if plan["send"] == "new":
+            title = f"{len(plan['new'])} פוסטים חדשים ממתינים לאישור"
+            lines = [f"📢 *NOA — {len(plan['new'])} פוסטים חדשים ממתינים לאישורך*", ""]
+            lines += [_line(pid) for pid in plan["new"][:5]]
+            if len(plan["new"]) > 5:
+                lines.append(f"  ועוד {len(plan['new']) - 5} חדשים…")
+            lines += ["", f"סה\"כ ממתינים: {plan['total']} (הוותיק מ-{oldest})"]
+        else:
+            since = (datetime.fromtimestamp(state["announced_at"], APP_LOCAL_TZ).strftime("%d/%m")
+                     if state.get("announced_at") else None)
+            title = f"תזכורת: {plan['total']} פוסטים ממתינים לאישור"
+            lines = [f"📢 *NOA — תזכורת: {plan['total']} פוסטים ממתינים לאישורך*",
+                     (f"אין פוסטים חדשים מאז {since}. " if since else "אין פוסטים חדשים. ")
+                     + f"הוותיק ממתין מ-{oldest}.", ""]
+            lines += [_line(str(r[0])) for r in rows[:3]]
+        lines += ["", "לפרסום: *אשר <מזהה>* | לדחייה: *דחה <מזהה>*"]
+        res = await notify_owner("social", title, "\n".join(lines), severity="info")
+        if (res or {}).get("ok"):
+            await _nb.save_state(redis_client, "noa_posts", current, plan, now_ts=now_ts)
+        return plan
+    except Exception as exc:
+        print(f"[HealthMonitor] pending-posts notice error: {exc}")
+        return {"send": None, "error": str(exc)}
+
+
 async def _price_watch_loop():
     """Every 6h: for each price watch, compare the current cheapest customer price to the
     watched price; if it dropped >=5% (and below the last-notified price), email price_drop.

@@ -1,0 +1,56 @@
+{
+  "project": {
+    "id": "6817478358970681127",
+    "name": "projects/6817478358970681127",
+    "verified_at": "2026-10-05"
+  },
+  "design_system": {
+    "assetId": "0bf3a3a22d3b4730bf6cebadd5937527",
+    "ref": "assets/0bf3a3a22d3b4730bf6cebadd5937527",
+    "source": ".stitch/DESIGN.md",
+    "design_md_screen_id": "4055650559965931022"
+  },
+  "authoritative_design_files": [
+    ".stitch/DESIGN.md",
+    "design-system/autosparefinder/MASTER.md",
+    "design-system/autosparefinder/STITCH_BRIEF.md"
+  ],
+  "homepage": {
+    "status": "PARTIAL — built locally, not in Stitch",
+    "local_artifact": ".stitch/designs/homepage.html",
+    "sections_present": 8,
+    "sections_required": 8,
+    "verified_breakpoints": [1440, 1280, 834, 768, 390, 360],
+    "verified_rtl": true,
+    "horizontal_overflow": "none at any tested breakpoint",
+    "data_source": "live catalog DB (parts_catalog, harvest_queue) queried 2026-10-05"
+  },
+  "stitch_screens_verified_2026_10_05": {
+    "note": "All four desktop 'Marketplace Home' screens are ABRIDGED — header + hero + 4 featured-part cards + footer only. 5 of the 8 required sections are absent from every one. Verified by downloading and parsing each screen's HTML, not by title match.",
+    "d45b6e30ebc947588126c1f068dc2223": {
+      "title": "AutoSpareFinder - Marketplace Home",
+      "size": "2560x3396",
+      "actual_content": "Generic performance store; html <title> is 'AutoSpare - High Performance Parts'; footer reads '© 2024 AUTOSPARE PERFORMANCE'",
+      "sections": 3
+    },
+    "3488486660394ce59e243902c2945489": { "title": "AutoSpareFinder - Marketplace Home", "size": "2560x2862", "sections": 3 },
+    "1e77fe0e71ab4510b3f137e7c7069f8f": { "title": "AutoSpareFinder - Marketplace Home", "size": "2560x2792", "sections": 3 },
+    "3db3e13b610049b8bf41babb9f3d3196": {
+      "title": "AutoSpareFinder - Marketplace Home (Elite)",
+      "size": "2560x2070",
+      "note": "Best on-brand base: correct tokens, fitment-first hero copy, realistic prices. Still only 3 of 8 sections.",
+      "sections": 3
+    }
+  },
+  "known_blockers": {
+    "edit_screens_does_not_persist": "mcp__stitch__edit_screens returned detailed success responses with dom_operations for 3 separate edits; the stored HTML was byte-identical (17240 bytes) afterwards and the rendered screenshot was unchanged. Treat its success response as a PLAN, not a commit — always re-download the HTML to verify.",
+    "long_prompts_time_out": "generate_screen_from_text and edit_screens time out on multi-section prompts. Short, single-change prompts return in seconds.",
+    "no_mobile_screen": "Two MOBILE generation attempts timed out and created no screen.",
+    "no_rtl_screen": "Not attempted — blocked behind the same write path."
+  },
+  "next_steps": [
+    "Re-run mobile + RTL generation when the Stitch write path recovers.",
+    "Upload .stitch/designs/homepage.html to the Stitch project via plugins/stitch-design/skills/upload-to-stitch/scripts/upload_to_stitch.py.",
+    "Port the verified homepage.html into frontend/src/pages/LandingPage.jsx, replacing the remaining light-theme anti-patterns."
+  ]
+}

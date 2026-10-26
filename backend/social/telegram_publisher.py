@@ -53,6 +53,10 @@ async def _telegram_api_post(method: str, payload: dict) -> dict:
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(url, json=payload)
         data = resp.json()
+    except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+        # No connection was ever established: provably nothing was sent, so a retry cannot duplicate (#74).
+        return {"ok": False, "description": f"telegram unreachable: {type(exc).__name__}", "status_code": 502,
+                "not_sent": True}
     except httpx.HTTPError as exc:
         return {"ok": False, "description": str(exc), "status_code": 502}
     except ValueError:
@@ -106,7 +110,11 @@ async def send_telegram_message(chat_id: Union[int, str], text: str) -> dict:
     if result.get("ok"):
         message = result.get("result", {})
         return {"ok": True, "message_id": message.get("message_id")}
-    return {"ok": False, "error": result.get("description", "Unknown Telegram API error")}
+    status = int(result.get("error_code") or result.get("status_code") or 0)
+    # 429 = Telegram refused it (rate limit): not sent. status_code lets callers tell a permanent 4xx from an
+    # ambiguous timeout/5xx (#74).
+    return {"ok": False, "error": result.get("description", "Unknown Telegram API error"), "status_code": status,
+            "not_sent": bool(result.get("not_sent")) or status == 429}
 
 
 async def send_telegram_photo(

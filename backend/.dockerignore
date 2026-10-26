@@ -1,0 +1,42 @@
+# Build-context guard for the backend image (FIXES_TRACKER #67).
+# The Dockerfile does `COPY . .` and there was no .dockerignore, so EVERYTHING under
+# backend/ was baked into the image — including backups/ (two 1.8 GB production catalog
+# dumps were shipped inside the image built 2026-07-28, and Docker then copied them into
+# any empty volume mounted at /app/backups). Runtime data never belongs in an image.
+
+# ── database backups / dumps (any location, any stage of writing) ──
+backups/
+**/backups/
+**/*.sql
+**/*.sql.gz
+**/*.sql.partial
+**/*.sql.meta
+**/*.partial
+**/*.dump
+**/*.pgdump
+**/*.pg_dump
+**/*.backup
+**/*.bak
+**/*.sqlite
+**/*.sqlite3
+**/*.db
+# source SQL that is part of the application stays in:
+!alembic/**/*.sql
+!alembic_pii/**/*.sql
+
+# ── runtime state (the worker_state volume is mounted here; never ship a snapshot) ──
+state/
+
+# ── secrets / local environment ──
+.env
+.env.*
+!.env.example
+**/*.pem
+**/*.key
+
+# ── caches and logs ──
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+**/*.log
+error_log.txt

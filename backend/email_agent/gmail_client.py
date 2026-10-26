@@ -21,10 +21,11 @@ Process:
         transient   5xx / network                                            retryable
         permanent   other 4xx          malformed   unparseable success body
     Messages are redacted before they leave this module.
-  - the mailbox is never mutated except by create_draft.
+  - the mailbox is never mutated except by create_draft, and every non-GET request is sent
+    inside a runtime-kill-switch write intent (email_agent/control.py): announced, checked, sent.
 Data Imported/Modified: Gmail drafts (create only), nothing else.
 Data Sources: https://gmail.googleapis.com/gmail/v1/users/me, https://oauth2.googleapis.com/token
-Last Updated: 2026-10-04
+Last Updated: 2026-10-10
 """
 from __future__ import annotations
 
@@ -36,6 +37,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from email_agent import control as _control
 from email_agent.config import EmailAgentConfig
 from email_agent.redaction import redact, register_secrets
 
@@ -147,8 +149,12 @@ def urllib_transport(method: str, url: str, headers: Dict[str, str], body: Optio
 class GmailClient:
     def __init__(self, cfg: EmailAgentConfig, transport: Transport = urllib_transport,
                  clock: Callable[[], float] = time.time, sleep: Callable[[float], None] = time.sleep,
-                 get_retries: int = 2, min_interval_s: Optional[float] = None):
+                 get_retries: int = 2, min_interval_s: Optional[float] = None,
+                 write_intent: Optional[Callable[[str], Any]] = None):
         self._cfg = cfg
+        # Runtime kill switch: every non-GET request (a draft create) is sent inside a write
+        # intent - announced, then checked against the control, then sent (email_agent/control.py).
+        self._write_intent = write_intent or _control.write_intent
         self._transport = transport
         self._clock = clock
         self._sleep = sleep
@@ -212,12 +218,18 @@ class GmailClient:
         last: Optional[GmailError] = None
         i = 0
         while i < attempts:
+            if method != "GET":
+                _control.require_running(f"gmail {method} {path}")   # halted: not even a token refresh
             headers = {"Authorization": f"Bearer {self._access_token()}", "Accept": "application/json"}
             if body is not None:
                 headers["Content-Type"] = "application/json"
             self._pace()
             try:
-                status, raw = self._transport(method, url, headers, body)
+                if method == "GET":
+                    status, raw = self._transport(method, url, headers, body)
+                else:
+                    with self._write_intent(f"gmail {method} {path}"):   # raises control.Halted; nothing sent
+                        status, raw = self._transport(method, url, headers, body)
             except OSError as e:
                 last = GmailError("transient", f"Gmail unreachable: {type(e).__name__}")
                 i += 1

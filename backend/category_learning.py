@@ -452,12 +452,36 @@ async def evidence_profile(db, token: str, proposed: str | None = None) -> dict:
     }
 
 
+def norm_token(token) -> str:
+    """The exact form a keyword is stored and matched in: whitespace collapsed, lowercased. Used by every
+    owner decision path so "brake  pad" and " Brake Pad " mean the stored token "brake pad" — and nothing
+    else (no prefix/partial matching) (#72)."""
+    return " ".join(str(token or "").split()).lower()
+
+
+async def token_exists(db, token: str) -> bool:
+    return bool((await db.execute(text(
+        "SELECT 1 FROM category_learned_keywords WHERE token = :t LIMIT 1"), {"t": norm_token(token)})).first())
+
+
+async def similar_tokens(db, token: str, limit: int = 5) -> list:
+    """Read-only suggestions for a token that does not exist (never acted on)."""
+    t = norm_token(token)
+    if not t:
+        return []
+    rows = (await db.execute(text(
+        "SELECT DISTINCT token FROM category_learned_keywords "
+        "WHERE token LIKE :p OR token LIKE :q ORDER BY token LIMIT :lim"),
+        {"p": t + " %", "q": "% " + t, "lim": limit})).fetchall()
+    return [r[0] for r in rows]
+
+
 async def pending_for_owner(db, limit: int = 15) -> list:
     """Tokens that reached consensus and await the owner's approve/reject."""
     await ensure_table(db)
     rows = (await db.execute(text(f"""
-        SELECT token, category, observations, total FROM (
-            SELECT token, category, observations, status,
+        SELECT token, category, observations, total, created_at FROM (
+            SELECT token, category, observations, status, created_at,
                    SUM(observations) OVER (PARTITION BY token)    AS total,
                    ROW_NUMBER() OVER (PARTITION BY token
                                       ORDER BY observations DESC) AS rn
@@ -470,10 +494,10 @@ async def pending_for_owner(db, limit: int = 15) -> list:
         LIMIT :lim
     """), {"lim": limit})).fetchall()
     out = []
-    for tok, cat, obs, tot in rows:
+    for tok, cat, obs, tot, since in rows:
         if is_blocked(tok):
             continue
-        out.append({"token": tok, "category": cat,
+        out.append({"token": tok, "category": cat, "since": since,   # first recorded (#71)
                     "observations": obs, "agreement": obs / max(tot, 1)})
     return out
 
@@ -481,7 +505,7 @@ async def pending_for_owner(db, limit: int = 15) -> list:
 async def approve(db, token: str, *, force: bool = False) -> dict:
     """Approve a learned keyword → it goes live in the matcher."""
     await ensure_table(db)
-    tok = (token or "").strip().lower()
+    tok = norm_token(token)
     row = (await db.execute(text(
         "SELECT category, observations FROM category_learned_keywords "
         "WHERE token = :t ORDER BY observations DESC LIMIT 1"
@@ -534,7 +558,7 @@ async def approve_as(db, token: str, category: str) -> dict:
     problem the whole category system exists to prevent.
     """
     await ensure_table(db)
-    tok = (token or "").strip().lower()
+    tok = norm_token(token)
     cat = (category or "").strip()
     if cat not in category_map.CANONICAL:
         return {"ok": False, "error": "not_canonical", "category": cat}
@@ -576,7 +600,7 @@ async def undo_keyword(db, token: str) -> int:
     (`specifications->>'category_by'`), so it reverses EXACTLY the rows this
     keyword touched and nothing else.
     """
-    tok = (token or "").strip().lower()
+    tok = norm_token(token)
     res = await db.execute(text("""
         UPDATE parts_catalog
         SET category = COALESCE(specifications->>'category_prev', 'כללי'),
@@ -594,7 +618,11 @@ async def undo_keyword(db, token: str) -> int:
 async def reject(db, token: str) -> dict:
     """Reject a learned keyword → never loaded, never re-proposed."""
     await ensure_table(db)
-    tok = (token or "").strip().lower()
+    tok = norm_token(token)
+    if not await token_exists(db, tok):
+        # Nothing to reject: do NOT add it to the rejected set or run undo_keyword (#72) — before, a
+        # mistyped/partial token was blocked from ever being learned until the next restart.
+        return {"ok": False, "error": "not_found", "token": tok}
     res = await db.execute(text(
         "UPDATE category_learned_keywords SET status='rejected', updated_at=NOW() "
         "WHERE token = :t"

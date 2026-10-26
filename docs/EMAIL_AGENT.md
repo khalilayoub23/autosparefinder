@@ -9,6 +9,34 @@ Status on 2026-10-04: code, tests and wiring are in the repo. The agent is **off
 and **unconfigured** — no Gmail OAuth grant exists yet (see "Google setup"). No live mailbox
 has been read.
 
+## Live state (verified 2026-10-25)
+
+The agent is **running in production in draft-only mode**: it creates Gmail drafts and never sends.
+Activated 2026-10-25 20:43 UTC (backend recreate; previous state: read-only processing since 2026-10-10).
+
+| Setting | Live value |
+|---|---|
+| `EMAIL_AGENT_ENABLED` | `1` (in `.env`, since 2026-10-10 07:06 UTC) |
+| Runtime control | `run` (armed 07:19:45 UTC by the CLI) |
+| `EMAIL_AGENT_GMAIL_DRAFTS` | `1` (in `.env` since 2026-10-25): drafts are created in Gmail (`POST drafts`) and read back |
+| Gmail OAuth grant | `gmail.readonly` + `gmail.compose` (owner re-consent 2026-10-25). `compose` could technically send; the no-send boundary below is enforced in code and in the database, not by the scope. |
+| Sending | impossible by construction (see "The no-send boundary") |
+| Bounds | 25 messages per cycle, one cycle every 600 s, query `in:inbox newer_than:14d` |
+
+**Controlled verification 2026-10-25 (owner test message from his own Hotmail, subject "ASF draft test 2510"):** processed 20:44:28 UTC by the first cycle after activation (`order_shipping` → `draft_request_order_number`); one Gmail draft `Re: ASF draft test 2510` addressed to the sender, in the same thread, label `DRAFT` only; agent read-back all checks true, `send_calls: 0`; independent check through the allow-listed client: the thread holds the inbound message + 1 draft, 0 `SENT`; the next cycle skipped it (`new: 0, drafts: 0, sent: 0`), still 1 DB row and 1 draft (idempotent). Kill switch without restart: `email_agent_cli.py halt`. To return to read-only drafts: `EMAIL_AGENT_GMAIL_DRAFTS=0` + backend recreate.
+
+What it does today: reads the inbox, classifies each message, resolves context by exact DB
+match, decides a policy tier and stores the result (and, where policy allows, a proposed reply
+text) in `email_agent_messages`. It changes nothing in Gmail and nothing in orders or users.
+
+Not active, each needing a separate decision: Gmail drafts (needs a `gmail.compose` re-consent
+and `EMAIL_AGENT_GMAIL_DRAFTS=1`), any review surface for the stored results (not built), and
+sending (a reviewed code change plus a migration).
+
+To stop it now: `docker exec autospare_backend python3 /app/maintenance/email_agent_cli.py halt`.
+The running loop notices at its next wake (at most one interval, 600 s, when idle; at the next
+checkpoint when mid-cycle). A manual run and any Gmail write are refused immediately.
+
 ## Where it lives
 
 | Piece | File |
@@ -16,7 +44,8 @@ has been read.
 | Package | `backend/email_agent/` |
 | Background loop | `email_agent/loop.py`, registered in `BACKEND_API_ROUTES.startup()` as `email_agent_loop` |
 | Status endpoint | `routes/email_agent_routes.py` → `GET /api/v1/system/email-agent` (`X-Collect-Secret`) |
-| Operator CLI | `maintenance/email_agent_cli.py` (`status`, `run-once`) |
+| Operator CLI | `maintenance/email_agent_cli.py` (`status`, `run-once`, `control`, `halt`, `arm`) |
+| Runtime kill switch | `email_agent/control.py`, state file `/app/state/email_agent_control.json` |
 | OAuth setup helper (host) | `maintenance/gmail_oauth_setup.py` (`auth-url`, `callback-status`, `exchange`) |
 | Audit / idempotency table | `email_agent_messages`, PII DB, migration `alembic_pii/versions/0039_email_agent_messages.py` |
 | Tests | `backend/tests/test_email_agent.py` |
@@ -277,17 +306,110 @@ cycle.
 Calls are paced (`EMAIL_AGENT_MIN_REQUEST_INTERVAL_MS`) and a thread is read once per cycle even
 when it holds several new messages.
 
+## Runtime kill switch
+
+`EMAIL_AGENT_ENABLED` comes from the container environment, so changing it needs a backend
+recreation. The runtime control stops the agent without one.
+
+- **State:** one JSON file on the persistent `worker_state` volume
+  (`EMAIL_AGENT_CONTROL_FILE`, default `/app/state/email_agent_control.json`). The background
+  loop (inside uvicorn) and a `docker exec` CLI run read the same file. No Redis, DB or network
+  is involved.
+- **Fail closed:** processing is allowed only when the file exists, is valid JSON and says
+  `{"mode": "run"}`. A missing file means halted (`not_armed`, the default). An unreadable file,
+  invalid JSON, an unknown mode or a file over 4 KB also mean halted.
+- **Two keys to run:** the background loop needs `EMAIL_AGENT_ENABLED=1` and an armed control.
+  `run-once` ignores `EMAIL_AGENT_ENABLED` (it is an explicit operator action) but never runs
+  while halted.
+
+Operator commands (each takes effect at the next checkpoint, with no restart):
+
+```
+docker exec autospare_backend python3 /app/maintenance/email_agent_cli.py halt      # stop now
+docker exec autospare_backend python3 /app/maintenance/email_agent_cli.py control   # show state (read-only)
+docker exec autospare_backend python3 /app/maintenance/email_agent_cli.py arm       # allow processing again
+```
+
+Deleting the file also halts the agent.
+
+Checkpoints:
+
+| Where | Effect when halted |
+|---|---|
+| Loop, every iteration | No Gmail client, no heartbeat, no DB access. Logs `idle state=halted` once and re-checks every 60 s. |
+| `process_once` start | No token refresh, no Gmail call, no store write. Returns `halted`. |
+| Before each message claim | The cycle ends; the message is not claimed. |
+| `process_message`, before the draft step | Raises `Halted`; the claim is released (status `retry`, attempt not used). |
+| `process_message`, before saving the result | Same as before the draft step, **unless a Gmail draft was already created for this message**: that record is always saved, so the system never loses track of a draft that exists. |
+| `GmailClient._call`, any non-GET request (`POST drafts`), before the token step | Raises `Halted`; no network call at all, not even a token refresh. |
+| `GmailClient._call`, write intent around the request itself | Marker written, control re-read, then sent. Raises `Halted` and sends nothing if halted, or if the marker cannot be written. |
+| CLI `run-once` (incl. `--dry-run`, `--gmail-drafts`) | Exit 3. No Gmail client, no DB store. |
+
+**Latency.** A checkpoint is one small file read: 17 µs with no file, 45 µs when armed
+(measured in the backend container). A halt affects nothing that
+has already finished, and nothing new starts after it.
+- **Idle loop:** halted before its next cycle can start.
+- **During a cycle:** stops at the next checkpoint. At most the Gmail GET already in flight
+  completes first: the 25 s timeout, up to 3 attempts with backoff (2–4 s, or 5–15 s on a rate
+  limit), so about 95 s in the worst case. Reads only.
+- **A draft create:** checked before the token step and again, inside the write intent,
+  immediately before the request leaves.
+
+**What a halt guarantees, and what it does not.**
+
+The switch *prevents new writes after a halt*. It does **not** *cancel a request that was
+already authorized and sent*: no code on this side can recall an HTTP request that has left.
+Those are two different guarantees and only the first is claimed.
+
+What makes the first one exact is the write intent (`control.write_intent`). No lock is held
+across the network request:
+
+- A Gmail write records a marker file **first**, **then** reads the control, sends, and removes
+  the marker.
+- `halt` writes the control **first**, **then** reads the markers.
+
+For any write, one of two things is therefore true: the writer saw the halt and sent nothing,
+or `halt` saw the marker and lists it under `writes_in_flight`. So:
+
+- `halt` prints `"writes_in_flight": []` → no Gmail write is in flight and none will start
+  until someone arms the agent.
+- `halt` lists a write → that request was authorized before the halt. It is not cancelled. It
+  finishes within the 25 s transport timeout (a POST is never retried); run `control` again
+  to see it clear. The result is at most one more *draft*, and its record is saved.
+
+A lock held across the request (so that `halt` waits for it) was considered and rejected: a
+hung request would block the kill switch for up to 25 s, and a crashed holder could block it
+for longer.
+
+**Limits that remain.**
+1. **A write listed by `halt` completes.** See above: reported, never cancelled.
+2. **A killed process leaves its marker.** It is shown as `stale: true` after 180 s and removed
+   by the next write. A stale marker means "unknown outcome": check the mailbox's drafts.
+3. **Halt between the agent's draft checkpoint and the client's check.** Nothing is sent, but
+   `draft_attempted_at` was already written, so after re-arming that one message goes to a
+   human instead of risking a duplicate draft. Conservative by design (tested).
+4. **Store writes after a halt.** A halt mid-message hands the claim back (`release`), a draft
+   that already exists gets its record saved, and a message that fails for another reason is
+   still marked failed. These are local bookkeeping rows, never Gmail calls.
+5. **Reads in flight.** A Gmail GET already running completes (about 95 s worst case, above).
+6. **The control file is not access-controlled.** Anyone who can write `/app/state` in the
+   backend container can arm or halt. That is the same trust boundary as `.env`.
+
+Sending is not controlled by this switch. It is impossible by construction (see "The no-send
+boundary"); the switch adds a halt for drafts and processing.
+
 ## Observability
 
 - One JSON log line per event, prefix `[email_agent]`, events `processed`, `failed`,
-  `skipped_outbound`, `cycle`, `cycle_aborted`, `cycle_throttled`, `connection_not_ready`, `idle`, `cycle_error`.
+  `skipped_outbound`, `cycle`, `cycle_aborted`, `cycle_throttled`, `connection_not_ready`, `idle`, `cycle_error`,
+  `halted` (runtime kill switch; carries the stage and reason).
   A `processed` line carries message id, thread id, sender domain, classification, confidence,
   context statuses, recommended action, requires_human, draft mode, draft id, verification
   result, `sent: false`. Body text is never logged.
 - `email_agent_messages` holds the full record, including the verification result and the
   failure reason.
-- `GET /api/v1/system/email-agent` returns configuration state, the last cycle, counts by
-  status and the 20 most recent rows.
+- `GET /api/v1/system/email-agent` returns configuration state, the runtime kill-switch state,
+  the last cycle, counts by status and the 20 most recent rows.
 - Tokens, client secrets and passwords are redacted by pattern and by exact value in every log
   line, stored error and CLI output.
 
@@ -308,7 +430,9 @@ docker exec -w /app -e EMAIL_AGENT_PG_TEST=1 autospare_backend python3 -m pytest
 
 ```
 docker exec autospare_backend python3 /app/maintenance/email_agent_cli.py status
+docker exec autospare_backend python3 /app/maintenance/email_agent_cli.py arm        # run-once refuses while halted
 docker exec autospare_backend python3 /app/maintenance/email_agent_cli.py run-once --limit 5 --dry-run
+docker exec autospare_backend python3 /app/maintenance/email_agent_cli.py halt
 ```
 
 `--dry-run` keeps everything in memory: no database row and no Gmail draft. It issues only GET
@@ -339,3 +463,114 @@ Sending is a separate, reviewed change, not a configuration switch. It needs, at
 4. a migration replacing `CHECK (sendable = false)`;
 5. rate limits, the same quiet-hours handling as other outbound messages, and a post-condition
    that reads the sent message back.
+
+## Deployment runbook (prepared 2026-10-09 — NOT executed; every step needs owner approval)
+
+Current state: code and config on disk (`deploy/nginx.conf`, `docker-compose.yml`, `backend/`), not
+loaded. Running backend started 2026-10-04 (no `GMAIL_OAUTH_*` / `EMAIL_AGENT_*` in its environment),
+PII migration at 0038, agent disabled, Gmail grant `gmail.readonly` only.
+
+**0. Before anything** — quiet window (the car-parts.ie harvester and supervised loops restart with
+the backend); `bash backend/scripts/pre_restart.sh`; confirm the latest PII backup exists.
+
+**1. nginx — OAuth log redaction** (`deploy/nginx.conf`, single-file mount → needs a container
+RESTART, a reload reads the old file)
+- validate: `docker run --rm --network none -v $PWD/deploy/nginx.conf:/etc/nginx/nginx.conf:ro -v autosparefinder_frontend_build:/usr/share/nginx/html:ro nginx:alpine nginx -t`
+- apply: `docker restart autospare_nginx`
+- verify: `curl -s -o /dev/null "https://autosparefinder.co.il/?state=CHECK1&code=CHECK2"`, then
+  `docker logs --since 2m autospare_nginx | grep -c CHECK2` must be 0 and the line must show
+  `code=<redacted>`; site `/` and `/api/v1/system/health` return 200; host test
+  `python3 backend/tests/test_nginx_oauth_log_redaction.py` passes.
+- rollback: revert the OAuth hunks in `deploy/nginx.conf`, `docker restart autospare_nginx`.
+- note: lines written before the fix stay in the existing container log (expired / already used
+  codes); they disappear only when the nginx container is recreated or its log file is rotated.
+
+**`--no-deps` is mandatory (preflight 2026-10-09).** `postgres_catalog` and `postgres_pii` run with a
+`POSTGRES_PASSWORD` environment value that differs from what `.env` renders today (the variable is only
+read when a data directory is first initialised, so the databases are unaffected — but Compose sees
+config drift). Recreating the backend without `--no-deps` also brings up the backend's
+dependencies and would RECREATE BOTH DATABASES; Compose's own dry run confirms it
+(`docker compose up --dry-run -d backend` → "postgres_pii Recreate", "postgres_catalog Recreate"; with
+`--no-deps` only the backend is recreated). Re-run both dry runs immediately before executing.
+
+**2. Backend — load code, env and migration 0039** (`docker compose up -d --no-deps backend`; a plain
+`docker restart` does NOT load new environment variables)
+- the start command runs `alembic -c alembic_pii.ini upgrade head` → creates `email_agent_messages`.
+- verify: `alembic -c alembic_pii.ini current` = `0039_email_agent_messages`; the table exists with
+  `CHECK (sendable = false)`; `GET /api/v1/system/email-agent` (header `X-Collect-Secret`) returns
+  `config.state = "disabled"`, `send_enabled = false`, no `store_error`; one `[email_agent] idle`
+  log line; `/api/v1/system/health` 200; the harvester relaunched; `bash backend/scripts/post_restart.sh`.
+- rollback: the agent is off, so the code is inert; the migration rolls back with
+  `alembic -c alembic_pii.ini downgrade 0038_eurosender_shipping` (drops the still-empty table).
+
+**3. Read-only verification in the running container** (no switch change)
+- `docker exec autospare_backend python3 /app/maintenance/email_agent_cli.py status` → `ok`,
+  mailbox `autosparefinder2024@gmail.com`, `can_read: true`, `can_draft: false`.
+- `... email_agent_cli.py run-once --limit 5 --dry-run` → Gmail GET only, nothing stored.
+
+**4. Activation — separate approval** (`EMAIL_AGENT_ENABLED=1` in `.env`, then `docker compose up -d --no-deps backend`)
+- keep `EMAIL_AGENT_GMAIL_DRAFTS=0`: draft text is stored in `email_agent_messages` only.
+- verify after the first cycle: rows appear; every row `sendable = false`; refund / cancellation /
+  address / contact / not-received / wrong-item / cross-customer / empty rows all
+  `requires_human = true`; Gmail calls GET only; no `cycle_error` loop.
+- rollback criteria (any one): a non-GET Gmail request; a sensitive or cross-customer row with
+  `requires_human = false`; repeated `cycle_error`; backend unhealthy; quota / auth alerts.
+  Rollback: `EMAIL_AGENT_ENABLED=0` + `docker compose up -d --no-deps backend` (there is no runtime kill
+  switch; the switch is read at start).
+
+**5. Gmail drafts — later, separate approval**: needs a new consent with `gmail.compose` and
+`EMAIL_AGENT_GMAIL_DRAFTS=1`. Drafts are created in the mailbox and read back for verification;
+sending stays impossible in code.
+
+**OAuth re-consent after the log fix**: the redirect still lands on `/`, but its code is no longer
+in any log, so `gmail_oauth_setup.py exchange` reports `code_redacted` and needs `--code` copied from
+the browser address bar. A server-side capture without logging needs a dedicated callback route and a
+new redirect URI on the Google client (not built).
+
+### Step 2 execution plan — backend recreation (verified preflight 2026-10-09; EXECUTED 2026-10-09 06:58 UTC, see FIXES_TRACKER)
+
+> Since 2026-10-10 `backend/scripts/pre_restart.sh` runs `scripts/restart_preflight.py` first and
+> aborts with exit 4 if any work would be cut, including in-process work such as the 10:00 IL
+> Facebook group scan. Treat a BLOCKED preflight as a failed gate. When only code changed, add
+> `--force-recreate` to the recreate command: compose otherwise reports the backend as up to date.
+
+Gates — all must hold at the moment of execution (a snapshot from earlier does not count):
+1. `docker compose up --dry-run -d --no-deps backend` lists only `autospare_backend`.
+2. No running job: `job_registry` has no `status='running'` row; `restart_workers.py` scan finds no importer;
+   the harvester log shows "queue drained … Resting" (it is relaunched by its supervised loop after start).
+3. Outside the night-pipeline window (01:00–07:00 Israel time) and not within ~10 min of the next
+   `run_all_tasks` (it runs ~every 3 h; the last ones started 20:40, 01:29, 04:38 UTC on 8–9 Oct).
+4. Host memory available > 2 GB; no waiting locks in either database.
+
+Commands (in order):
+```
+bash backend/scripts/pre_restart.sh          # NOTE: marks running job_registry rows 'superseded' (DB write)
+                                             # and SIGTERMs importer subprocesses; with gate 2 met it changes nothing
+docker compose up --dry-run -d --no-deps backend
+docker compose up -d --no-deps backend
+```
+Expected start: alembic catalog = no-op (already at head `0061_noa_ops_audit`), PII `0038 → 0039`
+(creates only `email_agent_messages`), then uvicorn. The migration chain runs in the background of the
+start command, so uvicorn may answer before it finishes; with the agent disabled nothing reads the table.
+`container_start.sh` then clears the `db_update_agent` Redis lock, marks leftover `running` jobs `dead`,
+and resumes captured workers. `run_all_tasks` starts ~90 s after start (~10–12 min of DB writes).
+
+Verify (in this order):
+- `docker inspect autospare_backend` → running, health `healthy`; `autospare_postgres_*` start times unchanged.
+- `docker exec -w /app autospare_backend alembic -c alembic_pii.ini current` → `0039_email_agent_messages (head)`;
+  the table has `CHECK ((sendable = false))` (`pg_get_constraintdef`).
+- `docker exec autospare_backend sh -c 'echo $EMAIL_AGENT_ENABLED $EMAIL_AGENT_GMAIL_DRAFTS'` → `0 0`;
+  `GMAIL_OAUTH_REFRESH_TOKEN` present (check presence only, never print it).
+- `GET /api/v1/system/email-agent` with `X-Collect-Secret` → `config.state="disabled"`, `send_enabled=false`,
+  no `store_error`; one `[email_agent] {"event": "idle", "state": "disabled"…}` log line.
+- `docker exec autospare_backend python3 /app/maintenance/email_agent_cli.py status` → ok, `can_read: true`,
+  `can_draft: false` (one token refresh + one Gmail GET).
+- `/api/v1/system/health` 200 through the public domain; harvester process back; `bash backend/scripts/post_restart.sh`.
+- nginx keeps proxying to the new backend address without a reload (resolver `valid=10s` + `server backend:8000 resolve`).
+
+Rollback criteria: backend not `healthy` within 5 min; migration error in the start log; any Postgres
+container recreated; a non-GET Gmail request; `email_agent` state not `disabled`.
+Rollback: the agent is disabled, so the code is inert. Migration: `docker exec -w /app autospare_backend
+alembic -c alembic_pii.ini downgrade 0038_eurosender_shipping` (drops the empty table; verified in isolation).
+If the backend itself will not start: check the start log, revert the offending change on disk,
+`docker compose up -d --no-deps backend` again.

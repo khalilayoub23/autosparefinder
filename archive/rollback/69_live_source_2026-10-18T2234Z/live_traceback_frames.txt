@@ -1,0 +1,8 @@
+      1 File "/app/routes/parts.py", line 2634, in get_parts_by_license_plate
+      1 File "/app/routes/parts.py", line 2010, in search_parts
+      1 File "/app/routes/parts.py", line 1940, in _fetch_three_buckets
+      1 File "/app/db_update_agent.py", line 702, in ensure_part_vehicle_fitment_table
+      1 File "/app/db_update_agent.py", line 4736, in run_all_tasks
+      1 File "/app/db_update_agent.py", line 4526, in run_task
+      1 File "/app/db_update_agent.py", line 2874, in backfill_mini_fitment_from_name_he
+      1 File "/app/BACKEND_API_ROUTES.py", line 237, in dispatch

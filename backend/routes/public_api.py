@@ -247,6 +247,10 @@ async def public_fitment(
     year_clause = ("AND f.year_from <= :year AND (f.year_to IS NULL OR f.year_to >= :year)"
                    if year else "")
     cat_clause = "AND pc.category = :cat" if category else ""
+    # Was `model LIKE :model || '%'` — no word boundary ("Corolla" → "Corolla Cross", "Rav" →
+    # "RAV4"). The one shared model rule decides which fitment models fit (#69 §9).
+    import vehicle_model_match as _vmm
+    allowed_models = await _vmm.allowed_fitment_models(db, [make], [model]) or ["<no fitting model>"]
     # Resolve the fitting part-ids FIRST (uses the pvf trgm/norm indexes + LIMIT), THEN price
     # only those ≤limit parts — otherwise the LATERAL price + price-sort runs over every match
     # (measured 28s). This keeps it sub-second.
@@ -257,13 +261,13 @@ async def public_fitment(
                 JOIN part_vehicle_fitment f ON f.part_id = pc.id
                 WHERE pc.is_active
                   AND lower(btrim(f.manufacturer)) = lower(btrim(:make))
-                  AND lower(btrim(f.model)) LIKE lower(btrim(:model)) || '%'
+                  AND lower(btrim(f.model)) = ANY(:models)
                   {year_clause}
                   {cat_clause}
                 LIMIT :lim OFFSET :off
             )
             SELECT {_ROW_SQL} WHERE pc.id IN (SELECT id FROM fit)"""
-    ), {"make": make, "model": model, "year": year, "cat": category, "lim": limit, "off": offset}
+    ), {"make": make, "models": allowed_models, "year": year, "cat": category, "lim": limit, "off": offset}
     )).mappings().all()
     results = [_shape(r) for r in rows]
     return {"vehicle": {"make": make, "model": model, "year": year}, "category": category,

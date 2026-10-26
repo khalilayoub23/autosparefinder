@@ -21,6 +21,8 @@ import routes.parts as parts
 import services.aliexpress_price_sync as svc
 from BACKEND_DATABASE_MODELS import engine
 from routes.schemas import CartAddRequest
+from catalog_population import seed_population  # noqa: E402  (tests/ on sys.path via conftest)
+import isolated_db_guard  # noqa: E402
 
 
 # ---------------------------------------------------------------- pure rule
@@ -62,6 +64,9 @@ def test_marketplace_listing_is_never_oem(title, expected):
 async def test_sql_rank_matches_python_rank():
     """The SQL twin must agree with the Python rule for every combination (real Postgres)."""
     vals = [None, "", "unknown", "oem", "OEM", "original", "genuine", "aftermarket", "oe_equivalent", "OE Equivalent", "oem equivalent", "used"]
+    _refusal = isolated_db_guard.static_refusal()       # #95: read-only, but it connects — isolated databases only
+    if _refusal is not None:
+        pytest.skip(f"isolated DB only: {_refusal}")
     eng = create_async_engine(engine.url, poolclass=NullPool)
     try:
         async with eng.connect() as c:
@@ -76,6 +81,11 @@ async def test_sql_rank_matches_python_rank():
 # ---------------------------------------------------------------- real-schema coexistence (rolled back)
 @pytest.fixture
 async def db():
+    # #95: isolated databases only — refuse BEFORE connecting (no opt-in / not an isolated environment /
+    # a production host), and again on the live server before the first write.
+    _refusal = isolated_db_guard.static_refusal()
+    if _refusal is not None:
+        pytest.skip(f"isolated DB only: {_refusal}")
     eng = create_async_engine(engine.url, poolclass=NullPool)
     try:
         conn = await eng.connect()
@@ -85,6 +95,10 @@ async def db():
     trans = await conn.begin()
     sess = AsyncSession(bind=conn, join_transaction_mode="create_savepoint", expire_on_commit=False)
     try:
+        _live = await isolated_db_guard.live_refusal(sess)
+        if _live is not None:                        # fail CLOSED: never write to a production-like DB
+            pytest.fail(f"REFUSED before any write: {_live}")
+        await seed_population(sess)   # #88: the rows this file selects, in ITS rolled-back transaction
         yield sess
     finally:
         await sess.close(); await trans.rollback(); await conn.close(); await eng.dispose()

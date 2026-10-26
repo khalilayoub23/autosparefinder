@@ -8,12 +8,15 @@ Process:
                       business mailbox (wrong-account guard) and the grant must allow reading.
   process_once()      list recent inbox messages, claim each unseen inbound one in the store
                       (idempotency), process it, write one structured audit log line.
+  Runtime kill switch (email_agent/control.py): checked at cycle start, before each claim, before
+  the draft step and before the result is saved (unless a Gmail draft was already created - that
+  record is always kept); a halt mid-message releases the claim.
   Draft modes: 'gmail' (EMAIL_AGENT_GMAIL_DRAFTS=1 and the grant allows drafts) creates a Gmail
   draft in the original thread and verifies it by reading it back; otherwise 'local' stores the
   draft text in the audit row only. Nothing is ever sent, and no message is marked, labelled,
   archived or deleted.
 Data Imported/Modified: email_agent_messages (PII DB); Gmail drafts when enabled.
-Last Updated: 2026-10-04
+Last Updated: 2026-10-10
 """
 from __future__ import annotations
 
@@ -23,6 +26,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from email_agent import classifier as _cls
+from email_agent import control as _control
 from email_agent import drafts as _drafts
 from email_agent import policy as _policy
 from email_agent.config import CONFIGURED, EmailAgentConfig, can_draft, can_read
@@ -80,6 +84,7 @@ async def process_message(cfg: EmailAgentConfig, client: GmailClient, store, sou
     if email is None:
         raise MalformedMessage("message is not present / not parseable in its thread")
     if not email.is_inbound:
+        _control.require_running("before saving the result")
         await store.save_result(message_id, {
             "sender_email": email.sender_email, "subject": email.subject, "received_at": email.date,
             "reason": "message was sent or drafted by this mailbox: not an inbound email",
@@ -102,6 +107,7 @@ async def process_message(cfg: EmailAgentConfig, client: GmailClient, store, sou
     decision = _policy.decide(c, ctx, already_answered=later_outbound)
     c.recommended_action, c.requires_human = decision.recommended_action, decision.requires_human
 
+    _control.require_running("before draft")          # kill switch: no draft step once halted
     draft: Optional[_drafts.Draft] = None
     draft_id: Optional[str] = None
     draft_v: Dict[str, Any] = {"ok": True, "mode": "none", "checks": {}, "send_calls": 0}
@@ -152,6 +158,10 @@ async def process_message(cfg: EmailAgentConfig, client: GmailClient, store, sou
         "draft_reason": draft.reason if draft else None, "gmail_draft_id": draft_id,
         "verification": verification,
     }
+    if draft_id is None:
+        _control.require_running("before saving the result")
+    # else: a Gmail draft already exists for this message. Its record is ALWAYS saved, halted or
+    # not - losing track of an external write that happened is worse than one local row.
     await store.save_result(message_id, record)
     audit_log("processed", message_id=message_id, thread_id=thread_id, sender_domain=email.sender_domain,
               classification=c.classification, confidence=c.confidence,
@@ -169,6 +179,13 @@ async def process_once(cfg: EmailAgentConfig, client: GmailClient, store, source
     summary: Dict[str, Any] = {"state": cfg.state, "listed": 0, "new": 0, "retried": 0, "skipped": 0,
                                "processed": 0, "failed": 0, "requires_human": 0, "drafts": 0,
                                "draft_mode": "none", "sent": 0, "errors": []}
+    ctl = _control.read_control()
+    if not ctl["running"]:
+        # Runtime kill switch: no token refresh, no Gmail call, no store write.
+        summary["halted"] = ctl["reason"]
+        summary["connection"] = {"ok": False, "state": "halted", "reason": ctl["reason"]}
+        audit_log("halted", stage="cycle start", reason=ctl["reason"])
+        return summary
     conn = await check_connection(cfg, client)
     summary["connection"] = conn
     if not conn.get("ok"):
@@ -182,6 +199,11 @@ async def process_once(cfg: EmailAgentConfig, client: GmailClient, store, source
     thread_cache: Dict[str, Any] = {}
     for ref in refs:
         mid, tid = ref["id"], ref["threadId"]
+        ctl = _control.read_control()
+        if not ctl["running"]:
+            summary["halted"] = ctl["reason"]
+            audit_log("halted", stage="before claim", message_id=mid, reason=ctl["reason"])
+            break
         claim = await store.claim(mid, tid, cfg.max_attempts)
         if claim == "skip":
             summary["skipped"] += 1
@@ -192,6 +214,13 @@ async def process_once(cfg: EmailAgentConfig, client: GmailClient, store, source
             summary["processed"] += 1
             summary["requires_human"] += int(result["policy"]["requires_human"])
             summary["drafts"] += int(result["draft"]["body"] is not None)
+        except _control.Halted as e:
+            # Halted mid-message: nothing further is drafted or saved. Hand the claim back without
+            # using an attempt so the message is processed normally once the agent is re-armed.
+            await store.release(mid)
+            summary["halted"] = e.reason
+            audit_log("halted", stage=e.stage, message_id=mid, reason=e.reason)
+            break
         except GmailError as e:
             if e.kind == "rate_limit":
                 # Gmail quota: not a failure of this message and not a permission problem. Hand the

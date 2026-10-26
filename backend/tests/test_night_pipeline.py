@@ -476,9 +476,76 @@ def test_controller_source_cannot_kill_restart_or_cancel_other_workloads():
     for forbidden in ("os.kill", ".terminate(", ".kill(", "SIGTERM", "SIGKILL", "subprocess", "docker",
                       "os.system", "pkill", "DELETE FROM", "TRUNCATE"):
         assert forbidden not in code, forbidden
-    assert set(re.findall(r"(\w+)\.cancel\(\)", code)) == {"beat"}      # only its own marker heartbeat
+    # only its own marker heartbeat and the job task it is awaiting (deadline, #69)
+    assert set(re.findall(r"(\w+)\.cancel\(\)", code)) == {"beat", "task"}
     # the only Redis key it deletes is its own running-marker
     assert re.findall(r"r\.delete\(([^)]*)\)", code) == ["RUNNING_MARKER_KEY"]
+
+
+def test_hung_job_hits_its_deadline_is_failed_and_the_night_continues():
+    # category_discovery D:2026-10-13 never returned and held the pipeline for 4.5 days.
+    async def scenario():
+        rig = Rig(il(2026, 11, 2, 1, 0))
+        rig.gates["category_discovery"] = asyncio.Event()           # never set: a hang
+        jobs = {j.key: j for j in rig.ctl.jobs}
+        jobs["category_discovery"].max_runtime_s = 0.05
+        await rig.drain(max_ticks=200)
+        row = rig.store.rows[("category_discovery", "D:2026-11-02")]
+        assert row["state"] == np.FAILED
+        assert "JobDeadlineExceeded" in row["reason"] and "exceeded max runtime" in row["reason"]
+        assert "abandoned" not in row["reason"]                     # it honoured cancellation
+        assert not await rig.store.running()                        # the pipeline is released
+        assert rig.marker_log[-1] is None                           # run_all_tasks stops deferring
+        assert all(rig.state(j, "D:2026-11-02") == np.COMPLETED
+                   for j in ("auto_backup", "ebay_fitment_backfill", "sync_prices", "rex_night"))
+    run(scenario())
+
+
+def test_job_that_ignores_cancellation_is_abandoned_and_the_pipeline_still_released(monkeypatch):
+    monkeypatch.setattr(np, "CANCEL_GRACE_S", 0.05)
+    release = asyncio.Event()
+
+    async def stubborn():
+        while True:
+            try:
+                await release.wait()
+                return {"status": "completed"}
+            except asyncio.CancelledError:
+                continue                                           # swallows every cancel
+
+    async def scenario():
+        rig = Rig(il(2026, 11, 2, 1, 0))
+        jobs = {j.key: j for j in rig.ctl.jobs}
+        jobs["auto_backup"].run = stubborn
+        jobs["auto_backup"].max_runtime_s = 0.05
+        await rig.drain(max_ticks=200)
+        row = rig.store.rows[("auto_backup", "D:2026-11-02")]
+        assert row["state"] == np.FAILED and "abandoned" in row["reason"]
+        assert rig.state("sync_prices", "D:2026-11-02") == np.COMPLETED
+        release.set()
+        await asyncio.sleep(0)
+    run(scenario())
+
+
+def test_job_finishing_inside_its_deadline_is_unaffected():
+    async def ok():
+        await asyncio.sleep(0.01)
+        return {"v": 1}
+    assert run(np._await_with_deadline(ok(), 5, 1)) == {"v": 1}
+
+
+def test_every_production_job_has_an_explicit_deadline_above_its_observed_maximum(monkeypatch):
+    for k in list(os.environ):
+        if k.startswith("NIGHT_JOB_MAX_RUNTIME_"):
+            monkeypatch.delenv(k)
+    jobs = {j.key: j for j in np.build_production_controller().jobs}
+    observed_max_min = {"auto_backup": 7.4, "ebay_fitment_backfill": 7.4, "sync_prices": 203,
+                        "rex_night": 6.1, "category_discovery": 120.4, "weekly_maintenance": 5.4}
+    for key, job in jobs.items():
+        assert job.max_runtime_s > 0, key
+        assert job.runtime_limit_s() >= 2 * 60 * observed_max_min.get(key, 0), key
+    monkeypatch.setenv("NIGHT_JOB_MAX_RUNTIME_CATEGORY_DISCOVERY_S", "999")
+    assert jobs["category_discovery"].runtime_limit_s() == 999
 
 
 def test_running_marker_is_set_during_a_job_and_cleared_after():
@@ -668,6 +735,10 @@ def test_backup_postcondition_requires_ok_status_and_a_real_file(tmp_path):
 
 def test_interrupted_backup_never_leaves_a_dump_under_its_final_name(tmp_path, monkeypatch):
     import auto_backup as ab
+    # The file names below are PRODUCTION names; the backup prefix comes from ENVIRONMENT
+    # (sandbox writes sandbox_autospare_*, #66), so pin it instead of inheriting the container's.
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.delenv("SANDBOX_MODE", raising=False)
     monkeypatch.setattr(ab, "BACKUP_DIR", str(tmp_path))
     monkeypatch.setattr(ab, "DATABASE_URL", "postgresql://u:p@h/autospare")
     monkeypatch.setattr(ab, "PII_DATABASE_URL", "postgresql://u:p@h/autospare_pii")
@@ -914,3 +985,238 @@ def test_brand_discovery_interrupted_by_restart_is_not_rerun_in_the_catch_up_day
     row = store.rows[("brand_discovery", "M:2026-11")]
     assert row["state"] == np.FAILED and row["reason"] == "interrupted by backend restart"
     assert "brand_discovery" not in new.started()
+
+
+# — #64: defects found by the FIRST NATURAL production run (2026-10-04) —
+
+def test_oversized_job_report_is_stored_as_valid_json_not_a_cut_string():
+    import json as _json
+    big = {"status": "ok", "scanned": 12, "rows": [{"sku": f"X-{i}", "name": "n" * 40} for i in range(2000)]}
+    assert len(_json.dumps(big)) > np.DETAIL_MAX_CHARS          # the old code sliced this mid-token
+    out = np.detail_json(big)
+    parsed = _json.loads(out)                                   # must parse — PostgreSQL jsonb rejects anything else
+    assert len(out) <= np.DETAIL_MAX_CHARS
+    assert parsed["truncated"] is True and parsed["scalars"] == {"status": "ok", "scanned": 12}
+    assert "rows" in parsed["keys"]
+
+
+def test_job_report_with_nan_or_nul_is_still_valid_json():
+    import json as _json
+    out = np.detail_json({"ratio": float("nan"), "top": float("inf"), "name": "a\x00b", "n": 3})
+    assert "NaN" not in out and "Infinity" not in out and "\\u0000" not in out
+    assert _json.loads(out) == {"ratio": None, "top": None, "name": "ab", "n": 3}
+    assert np.detail_json(None) is None
+    small = {"status": "ok", "n": 1}
+    assert _json.loads(np.detail_json(small)) == small          # normal reports are untouched
+
+
+def test_a_rejected_report_can_never_leave_the_row_running():
+    store = np.PgStore.__new__(np.PgStore)
+    calls = []
+
+    async def fake_exec(sql, params, fetch=False):
+        calls.append(dict(params))
+        if len(calls) == 1:
+            raise ValueError("invalid input syntax for type json")
+        return 1
+    store._exec = fake_exec
+    run(store.finish("category_discovery", "D:2026-10-04", np.COMPLETED, None, {"a": 1},
+                     datetime(2026, 10, 4, 1, 56, tzinfo=timezone.utc)))
+    assert len(calls) == 2 and calls[1]["s"] == np.COMPLETED    # the terminal state is written regardless
+    assert "detail_dropped" in calls[1]["d"]
+
+
+def test_rex_postcondition_accepts_a_clean_cycle_that_reports_no_status_key():
+    job = next(j for j in np.build_production_controller().jobs if j.key == "rex_night")
+    future = datetime(2099, 1, 1, tzinfo=timezone.utc)          # no job_registry row can exist after this
+    clean = {"job": "rex_night", "scraper_cycle": {"errors": 0, "parts_checked": 200, "prices_updated": 0}}
+    ok, why = run(job.verify(clean, future))
+    # Not rejected for the missing "status" — it reaches the independent job_registry check.
+    assert "status=None" not in why and "job_registry" in why and ok is False
+    assert run(job.verify({"scraper_cycle": {"status": "error", "error": "x"}}, future)) == (False, "scraper cycle status=error")
+    assert run(job.verify({"scraper_cycle": {"status": "skipped"}}, future))[0] is False
+    assert run(job.verify({"scraper_cycle": {"errors": 3, "parts_checked": 200}}, future)) == (False, "scraper cycle errors=3")
+    assert run(job.verify({}, future))[0] is False              # no cycle report at all
+    assert run(job.verify({"scraper_cycle": {"status": "disabled"}}, future))[0] is True
+
+
+# — #65: the two #64 defects driven through the REAL production controller path —
+# build_production_controller() supplies the real JobSpec (real run wrapper + real
+# post-condition); Controller._execute is the real execution path. Only the heavy work
+# (the scraper / discovery function) and the job_registry read are replaced. Nothing here
+# touches production state: MemoryStore, or a PgStore whose _exec is captured.
+
+class _FakeRegistrySession:
+    """Stands in for the job_registry SELECT of _registry_ok: latest row is 'completed'."""
+    async def __aenter__(self): return self
+    async def __aexit__(self, *a): return False
+
+    async def execute(self, *_a, **_k):
+        class _R:
+            @staticmethod
+            def first(): return ("completed",)
+        return _R()
+
+
+def _production_job(monkeypatch, key):
+    import BACKEND_DATABASE_MODELS as models
+    monkeypatch.setattr(models, "async_session_factory", lambda: _FakeRegistrySession())
+    ctl = np.build_production_controller()
+    return ctl, next(j for j in ctl.jobs if j.key == key)
+
+
+def _drive(ctl, job, store):
+    """Claim the job and run it through Controller._execute, exactly as tick() does."""
+    async def _noop_marker(_k): return None
+    ctl.store, ctl.marker = store, _noop_marker
+    started = datetime(2026, 10, 4, 23, 45, tzinfo=timezone.utc)
+    pk = "D:2026-10-05"
+
+    async def go():
+        await store.ensure(job.key, pk, started)
+        assert await store.claim(job.key, pk, started)
+        return await ctl._execute(job, pk, started)
+    return run(go()), pk
+
+
+def test_rex_night_clean_cycle_without_status_key_ends_COMPLETED(monkeypatch):
+    import catalog_scraper
+    # The exact shape the first natural run produced (2026-10-03 23:45 UTC): no "status" key.
+    observed = {"job": "rex_night", "transport": {"status": "ok"},
+                "scraper_cycle": {"errors": 0, "elapsed_s": 70.1, "batch_size": 200, "fx_refresh": None,
+                                  "ils_per_usd": 3.72, "parts_checked": 200, "prices_updated": 0,
+                                  "new_parts_inserted": 0, "availability_changes": 0}}
+
+    async def fake_cycle(): return observed
+    monkeypatch.setattr(catalog_scraper, "run_rex_night_cycle", fake_cycle)
+    ctl, job = _production_job(monkeypatch, "rex_night")
+    store = np.MemoryStore()
+    res, pk = _drive(ctl, job, store)
+    row = run(store.get("rex_night", pk))
+    assert res["state"] == np.COMPLETED and row["state"] == np.COMPLETED and row["reason"] is None
+    assert run(store.running()) == []
+
+
+def test_rex_night_cycle_with_errors_still_ends_FAILED(monkeypatch):
+    import catalog_scraper
+
+    async def fake_cycle(): return {"scraper_cycle": {"errors": 2, "parts_checked": 200}}
+    monkeypatch.setattr(catalog_scraper, "run_rex_night_cycle", fake_cycle)
+    ctl, job = _production_job(monkeypatch, "rex_night")
+    store = np.MemoryStore()
+    res, pk = _drive(ctl, job, store)
+    assert res["state"] == np.FAILED and run(store.get("rex_night", pk))["state"] == np.FAILED
+
+
+class _CapturingPgStore(np.PgStore):
+    """The real PgStore SQL/serialization path with the database call captured."""
+    def __init__(self, fail_first=0):
+        self.calls, self.fail_first, self.mem = [], fail_first, np.MemoryStore()
+
+    async def ensure(self, *a): return await self.mem.ensure(*a)
+    async def claim(self, *a): return await self.mem.claim(*a)
+    async def get(self, *a): return await self.mem.get(*a)
+    async def running(self): return await self.mem.running()
+
+    async def _exec(self, sql, params=None, fetch=False):
+        self.calls.append((sql, dict(params or {})))
+        if len(self.calls) <= self.fail_first:
+            raise ConnectionError("database unavailable")
+        p = params or {}
+        if sql.startswith("UPDATE night_pipeline_runs SET state=:s"):
+            import json as _json
+            await self.mem.finish(p["j"], p["p"], p["s"], p["r"], _json.loads(p["d"]) if p["d"] else None, p["n"])
+        return 1
+
+
+def _big_category_report():
+    return {"status": "completed", "categories_scanned": 25, "inserted": 3100,
+            "rows": [{"sku": f"CAT-{i:05d}", "name": "Brake pad set front axle " + "x" * 30, "price": 199.9}
+                     for i in range(3000)]}
+
+
+def test_category_discovery_large_report_is_stored_valid_and_ends_COMPLETED(monkeypatch):
+    import json as _json
+    import catalog_scraper
+    report = _big_category_report()
+    assert len(_json.dumps(report)) > 20000                       # beyond the old slice boundary
+
+    async def fake_discovery(): return report
+    monkeypatch.setattr(catalog_scraper, "_run_category_discovery", fake_discovery)
+    ctl, job = _production_job(monkeypatch, "category_discovery")
+    store = _CapturingPgStore()
+    res, pk = _drive(ctl, job, store)
+    sql, params = store.calls[-1]
+    assert "CAST(:d AS jsonb)" in sql and params["s"] == np.COMPLETED
+    stored = _json.loads(params["d"])                             # valid JSON, not a cut string
+    assert len(params["d"]) <= np.DETAIL_MAX_CHARS and stored["truncated"] is True
+    assert stored["scalars"]["status"] == "completed" and stored["scalars"]["inserted"] == 3100
+    assert res["state"] == np.COMPLETED and run(store.get("category_discovery", pk))["state"] == np.COMPLETED
+    assert run(store.running()) == []
+
+
+def test_postgresql_accepts_the_new_report_text_and_rejects_the_old_cut_one():
+    """Read-only: SELECT CAST(text AS jsonb) — nothing is written. Skips without a database."""
+    import json as _json
+    try:
+        import asyncpg
+        import db_dsn
+        dsn = db_dsn.catalog_dsn()
+    except Exception:
+        pytest.skip("no database configured")
+    report = _big_category_report()
+    new_text, old_text = np.detail_json(report), _json.dumps(report, default=str)[:20000]
+
+    async def go():
+        conn = await asyncpg.connect(dsn, timeout=15)
+        try:
+            await conn.execute("SET default_transaction_read_only = on")
+            ok = await conn.fetchval("SELECT jsonb_typeof(CAST($1::text AS jsonb))", new_text)
+            try:
+                await conn.fetchval("SELECT CAST($1::text AS jsonb)", old_text)
+                old = "accepted"
+            except asyncpg.PostgresError as exc:
+                old = type(exc).__name__
+            return ok, old
+        finally:
+            await conn.close()
+    ok, old = run(go())
+    assert ok == "object"
+    assert old == "InvalidTextRepresentationError"                # the exact production error of 2026-10-04
+
+
+def test_store_failure_at_finish_does_not_leave_the_job_RUNNING(monkeypatch):
+    import catalog_scraper
+
+    async def fake_discovery(): return {"status": "completed", "inserted": 5}
+    monkeypatch.setattr(catalog_scraper, "_run_category_discovery", fake_discovery)
+    ctl, job = _production_job(monkeypatch, "category_discovery")
+    store = _CapturingPgStore(fail_first=2)         # both the write and its report-less fallback fail
+    res, pk = _drive(ctl, job, store)
+    assert res["action"] == "wait" and "not yet stored" in res["reason"]
+    assert ctl._pending_finish and ctl._pending_finish[2] == np.COMPLETED     # the outcome is not lost
+    assert [r["job_key"] for r in run(store.running())] == ["category_discovery"]   # for now
+    ctl.clock = lambda: datetime(2026, 10, 5, 0, 30, tzinfo=timezone.utc)
+    run(ctl.tick())                                 # next tick: the store is back
+    assert ctl._pending_finish is None
+    row = run(store.get("category_discovery", pk))
+    assert row["state"] == np.COMPLETED and row["detail"] == {"status": "completed", "inserted": 5}
+    assert run(store.running()) == []
+
+
+def test_store_still_down_keeps_retrying_and_never_drops_the_outcome(monkeypatch):
+    import catalog_scraper
+
+    async def fake_discovery(): return {"status": "completed"}
+    monkeypatch.setattr(catalog_scraper, "_run_category_discovery", fake_discovery)
+    ctl, job = _production_job(monkeypatch, "category_discovery")
+    store = _CapturingPgStore(fail_first=6)
+    _drive(ctl, job, store)
+    for _ in range(2):                              # store still down: 2 failing writes per attempt
+        with pytest.raises(ConnectionError):        # controller_loop logs this as a tick error and retries
+            run(ctl.tick())
+        assert ctl._pending_finish is not None and [r["job_key"] for r in run(store.running())] == ["category_discovery"]
+    ctl.clock = lambda: datetime(2026, 10, 5, 0, 30, tzinfo=timezone.utc)
+    run(ctl.tick())                                 # store is back
+    assert ctl._pending_finish is None and run(store.running()) == []
+    assert run(store.get("category_discovery", "D:2026-10-05"))["state"] == np.COMPLETED

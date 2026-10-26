@@ -65,6 +65,14 @@ def _get_active_suppliers():
     except Exception as e:
         logger.error("[suppliers] LocalDB failed: %s", e)
 
+    # #100: every external supplier below sends live requests. Outside production they are off unless
+    # ENABLE_EXTERNAL_SUPPLIERS explicitly enables them (outbound_policy) — an unset or unknown value fails closed.
+    from outbound_policy import external_suppliers_enabled
+    _external_on, _external_source = external_suppliers_enabled()
+    if not _external_on:
+        logger.info("[suppliers] external suppliers disabled (%s) — LocalDB only", _external_source)
+        return suppliers
+
     # ── Tier 1: Real API suppliers ────────────────────────────────────────────
     suppliers.append(EbaySupplier())
     logger.info("[suppliers] eBay: enabled")

@@ -9,6 +9,7 @@ Guards:
   6. All six required task names remain in _TODO_OOM_BLOCKED (regression).
 """
 
+import os
 import sys
 import types
 
@@ -126,12 +127,12 @@ def _get_oom_blocked():
         # Parse out the frozenset literal via exec on a minimal namespace
         ns = {}
         for line in source.splitlines():
-            if "_TODO_OOM_BLOCKED" in line and "frozenset" in line:
-                start_idx = source.index("_TODO_OOM_BLOCKED: frozenset")
+            if line.startswith("OOM_BLOCKED_TASKS") and "frozenset" in line:
+                start_idx = source.index("OOM_BLOCKED_TASKS: frozenset")
                 snippet = source[start_idx:start_idx + 600]
                 end_brace = snippet.index("})") + 2
                 exec(snippet[:end_brace], ns)  # noqa: S102
-                return ns.get("_TODO_OOM_BLOCKED")
+                return ns.get("OOM_BLOCKED_TASKS")
     except Exception:
         return None
     return None
@@ -163,8 +164,10 @@ def test_oom_blocked_frozenset_contains_required_tasks():
         "merge_catalog_fitment_from_part_vehicle_fitment",
     })
     live = _get_oom_blocked()
-    if live is None:
-        # Module not importable in this environment — use the inline copy as ground truth
-        live = required
+    assert live is not None, "OOM_BLOCKED_TASKS not found in db_update_agent.py"
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "db_update_agent.py")).read()
+    assert "_TODO_OOM_BLOCKED = OOM_BLOCKED_TASKS" in src      # todo filter uses the same list
+    assert "if task_name in OOM_BLOCKED_TASKS:" in src         # and run_task() enforces it
     missing = required - live
     assert not missing, f"Missing from _TODO_OOM_BLOCKED: {missing}"

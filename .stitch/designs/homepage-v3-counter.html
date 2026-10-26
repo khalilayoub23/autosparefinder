@@ -1,0 +1,835 @@
+<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0;font:14px system-ui,sans-serif;background:#faf9f7}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>AutoSpareFinder Counter</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ── AutoSpareFinder — "Counter" concept ──────────────────────────────────────
+   Layout: a parts counter, not a billboard. A dominant masthead search sits over
+   a real category rail; the hero gives half its width to a LIVE price comparison
+   instead of a decorative photo. Below, surfaces are a hairline-ruled index plate
+   rather than floating cards. Numerals are monospace throughout — the catalogue,
+   not the brochure, is the brand. Colour tokens verbatim from MASTER.md §4. */
+:root{
+  color-scheme:dark;
+  --bg:#0F1218; --card:#151B27; --card2:#1E2535; --card3:#252D3D; --scrim:#0A0E17;
+  --blue:#0EA5E9; --blue-hi:#38BDF8; --blue-deep:#0284C7; --blue-net:#1D4ED8;
+  --text:#FFFFFF; --head:#E2E8F0; --sec:#94A3B8; --muted:#475569;
+  --rule:rgba(148,163,184,.13); --rule-soft:rgba(148,163,184,.07); --rule-blue:rgba(14,165,233,.22);
+  --ok:#22C55E; --warn:#F59E0B; --bad:#EF4444;
+  --ui:'Inter',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,monospace;
+  --e:cubic-bezier(.4,0,.2,1);
+  --maxw:1320px; --gut:28px;
+  --thumb:url('part-thumb.webp');
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--head);font-family:var(--ui);font-size:14.5px;line-height:1.5;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+.w{max-width:var(--maxw);margin-inline:auto;padding-inline:var(--gut)}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+svg{display:block}
+a{color:inherit;text-decoration:none}
+button{font-family:inherit}
+:focus-visible{outline:none;box-shadow:0 0 0 2px var(--bg),0 0 0 4px var(--blue)}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+/* labels / type */
+.lbl{font-size:10px;font-weight:800;letter-spacing:.17em;text-transform:uppercase;color:var(--muted)}
+h2{font-size:23px;font-weight:700;letter-spacing:-.02em;color:var(--head);line-height:1.2}
+.sub{font-size:13.5px;color:var(--sec);margin-top:5px}
+.secHead{display:flex;align-items:flex-end;gap:16px;padding-bottom:16px;margin-bottom:0;border-bottom:1px solid var(--rule)}
+.secHead .more{margin-inline-start:auto;font-size:12.5px;font-weight:600;color:var(--blue);display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.secHead .more:hover{color:var(--blue-hi)}
+.arr{transition:transform .18s var(--e)}
+[dir=rtl] .arr{transform:rotate(180deg)}
+a:hover .arr,button:hover .arr{transform:translateX(3px)}
+[dir=rtl] a:hover .arr,[dir=rtl] button:hover .arr{transform:rotate(180deg) translateX(3px)}
+/* buttons — geometric, 4px */
+.btn{border:0;border-radius:4px;cursor:pointer;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap;transition:all .18s var(--e)}
+.bp{background:linear-gradient(135deg,#38BDF8 0%,#0EA5E9 58%,#0284C7 100%);color:#0F1218;font-weight:700}
+.bp:hover{filter:brightness(1.07);box-shadow:0 0 18px rgba(14,165,233,.32)}
+.bp:active{transform:scale(.985)}
+.bs{background:transparent;border:1px solid var(--rule);color:#fff}
+.bs:hover{border-color:var(--rule-blue);color:var(--blue-hi)}
+
+/* ═══ S0 utility ═══ */
+.util{background:var(--scrim);border-bottom:1px solid var(--rule-soft);font-size:11.5px;color:var(--muted)}
+.util .w{height:30px;display:flex;align-items:center;gap:16px}
+.util .r{margin-inline-start:auto;display:flex;align-items:center;gap:15px}
+.util a:hover{color:var(--sec)}
+.util .wa{color:var(--ok)}
+
+/* ═══ S1 masthead — search is the dominant element ═══ */
+.mast{background:var(--bg);border-bottom:1px solid var(--rule)}
+.mast .w{height:74px;display:flex;align-items:center;gap:26px}
+.brand{display:flex;align-items:center;gap:10px;flex-shrink:0}
+.brand .wm{font-size:18px;font-weight:800;letter-spacing:-.025em;color:#fff;white-space:nowrap}
+.brand .wm i{font-style:normal;color:var(--blue)}
+/* the search bar: one unit, mode select + field + action */
+.find{flex:1;min-width:0;display:flex;height:48px;border:1px solid var(--rule);border-radius:4px;background:var(--card2);transition:border-color .18s,box-shadow .18s}
+.find:focus-within{border-color:rgba(14,165,233,.45);box-shadow:0 0 0 3px rgba(14,165,233,.13)}
+.find select{height:100%;background:transparent;border:0;border-inline-end:1px solid var(--rule);color:var(--head);font-family:inherit;font-size:13px;font-weight:600;padding-inline:14px 30px;cursor:pointer;appearance:none;flex-shrink:0;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394A3B8' stroke-width='2.4'><polyline points='6 9 12 15 18 9'/></svg>");background-repeat:no-repeat;background-position:right 11px center}
+[dir=rtl] .find select{background-position:left 11px center;padding-inline:14px 30px}
+.find select:focus{outline:none}
+.find input{flex:1;min-width:0;background:transparent;border:0;color:#fff;font-family:inherit;font-size:14px;padding-inline:15px}
+.find input::placeholder{color:var(--muted)}
+.find input:focus{outline:none}
+.find .go{width:54px;border-radius:0;flex-shrink:0;border-start-end-radius:3px;border-end-end-radius:3px}
+[dir=rtl] .find .go{border-radius:0;border-start-start-radius:3px;border-end-start-radius:3px}
+.mactions{display:flex;align-items:center;gap:4px;flex-shrink:0}
+.mact{display:flex;align-items:center;gap:9px;padding:7px 11px;border-radius:4px;background:none;border:0;color:var(--sec);cursor:pointer;transition:all .18s;white-space:nowrap}
+.mact:hover{background:rgba(148,163,184,.06);color:#fff}
+.mact .t{display:flex;flex-direction:column;align-items:flex-start;line-height:1.25}
+.mact .t b{font-size:12.5px;font-weight:600;color:var(--head)}
+.mact .t span{font-size:10.5px;color:var(--muted)}
+.mact .cbadge{background:var(--blue);color:#0F1218;font-size:10px;font-weight:800;font-family:var(--mono);border-radius:3px;padding:1px 5px;margin-inline-start:2px}
+.burger,.msearch{display:none}
+
+/* ═══ S2 category rail — the catalogue signal ═══ */
+.rail{background:var(--card);border-bottom:1px solid var(--rule)}
+.rail .w{display:flex;align-items:stretch;gap:0;overflow-x:auto;scrollbar-width:none}
+.rail .w::-webkit-scrollbar{display:none}
+.rail a{display:flex;align-items:center;gap:8px;padding:12px 15px;font-size:12.5px;font-weight:600;color:var(--sec);white-space:nowrap;border-bottom:2px solid transparent;transition:all .18s}
+.rail a:hover{color:#fff;background:rgba(148,163,184,.04)}
+.rail a.on{color:var(--blue-hi);border-bottom-color:var(--blue)}
+.rail a svg{opacity:.75}
+.rail .all{margin-inline-start:auto;color:var(--blue);font-weight:700}
+
+/* ═══ S3 finder — product in the hero, not a photo ═══ */
+.finder{position:relative;border-bottom:1px solid var(--rule);overflow:hidden}
+.finder .bgimg{position:absolute;inset:0;background-image:linear-gradient(rgba(148,163,184,.055) 1px,transparent 1px),linear-gradient(90deg,rgba(148,163,184,.055) 1px,transparent 1px);background-size:56px 56px;-webkit-mask-image:radial-gradient(70% 90% at 72% 42%,#000,transparent 76%);mask-image:radial-gradient(70% 90% at 72% 42%,#000,transparent 76%)}
+.finder .scrim{position:absolute;inset:0;background:radial-gradient(760px 420px at 76% 34%,rgba(14,165,233,.13),transparent 66%)}
+[dir=rtl] .finder .scrim{background:radial-gradient(760px 420px at 24% 34%,rgba(14,165,233,.13),transparent 66%)}
+[dir=rtl] .stat .n{text-align:start}
+[dir=rtl] .finder .bgimg{-webkit-mask-image:radial-gradient(70% 90% at 28% 42%,#000,transparent 76%);mask-image:radial-gradient(70% 90% at 28% 42%,#000,transparent 76%)}
+.finder .w{position:relative;z-index:1;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,470px);gap:56px;align-items:center;padding-block:56px 58px}
+.finder .w>*{min-width:0}
+.eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:10px;font-weight:800;letter-spacing:.17em;text-transform:uppercase;color:var(--blue-hi);margin-bottom:17px}
+.eyebrow::before{content:"";width:22px;height:1px;background:var(--blue)}
+h1{font-size:54px;line-height:1.04;font-weight:800;letter-spacing:-.045em;color:#fff;margin-bottom:15px;text-wrap:balance}
+h1 em{font-style:normal;color:var(--blue-hi)}
+.lede{font-size:15.5px;color:var(--sec);max-width:48ch;line-height:1.6}
+.lede b{color:var(--head);font-weight:600;font-family:var(--mono);font-size:14.5px}
+
+/* vehicle picker — a compact instrument, flush rules not floating fields */
+.pick{margin-top:26px;border:1px solid var(--rule);border-radius:4px;background:rgba(21,27,39,.82);backdrop-filter:blur(8px);max-width:560px}
+.pick .ph{display:flex;align-items:center;gap:9px;padding:11px 16px;border-bottom:1px solid var(--rule)}
+.pick .ph .lbl{color:var(--sec)}
+.pick .ph .sw{margin-inline-start:auto;font-size:11.5px;font-weight:600;color:var(--blue);cursor:pointer;background:none;border:0;padding:0}
+.pick .ph .sw:hover{color:var(--blue-hi)}
+.pgrid{display:grid;grid-template-columns:1fr 1fr 1fr auto}
+.pgrid .cell{border-inline-end:1px solid var(--rule);min-width:0}
+.pgrid .cell:nth-child(3){border-inline-end:1px solid var(--rule)}
+.pgrid label{display:block;font-size:9.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);padding:11px 14px 0}
+.pgrid select,.pgrid input{width:100%;background:transparent;border:0;color:#fff;font-family:inherit;font-size:14px;font-weight:600;padding:3px 14px 12px;appearance:none;cursor:pointer}
+.pgrid input{font-family:var(--mono);cursor:text}
+.pgrid select:focus,.pgrid input:focus{outline:none;background:rgba(14,165,233,.06)}
+.pgrid .act{display:flex;align-items:stretch}
+.pgrid .act .btn{border-radius:0;padding-inline:26px;font-size:14px;border-start-end-radius:3px;border-end-end-radius:3px}
+[dir=rtl] .pgrid .act .btn{border-radius:0;border-start-start-radius:3px;border-end-start-radius:3px}
+.pfoot{display:flex;flex-wrap:wrap;gap:8px 16px;padding:10px 16px;border-top:1px solid var(--rule);font-size:11.5px;color:var(--muted)}
+.pfoot .k{color:var(--sec)}
+
+/* live result preview — the hero's right half IS the product */
+.proof{background:var(--card);border:1px solid var(--rule);border-radius:4px;box-shadow:0 18px 50px rgba(0,0,0,.55)}
+.proof .ph{display:flex;align-items:center;gap:9px;padding:12px 16px;border-bottom:1px solid var(--rule);background:rgba(10,14,23,.5)}
+.proof .ph .dotrow{display:flex;gap:4px;margin-inline-end:4px}
+.proof .ph .dotrow i{width:6px;height:6px;border-radius:50%;background:var(--rule);display:block}
+.proof .ph .ttl{font-size:11.5px;color:var(--sec);font-weight:600}
+.proof .ph .live{margin-inline-start:auto;display:inline-flex;align-items:center;gap:6px;font-size:9.5px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--ok)}
+.proof .ph .live i{width:5px;height:5px;border-radius:50%;background:var(--ok);box-shadow:0 0 6px var(--ok)}
+.proof .pq{padding:13px 16px;border-bottom:1px solid var(--rule);display:grid;grid-template-columns:auto 1fr;gap:13px;align-items:center}
+.proof .pq .th{width:52px;height:52px;border:1px solid var(--rule);border-radius:3px;background:#151B27 var(--thumb) center/cover;flex-shrink:0}
+.proof .pq .q{font-size:14px;font-weight:700;color:#fff}
+.proof .pq .m{font-size:11.5px;color:var(--muted);margin-top:3px}
+.proof .pq .m b{color:var(--blue-hi);font-family:var(--mono);font-weight:500}
+.row{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:13px 16px;border-bottom:1px solid var(--rule-soft);transition:background .18s}
+.row:hover{background:rgba(14,165,233,.045)}
+.row .s{font-size:13px;font-weight:600;color:var(--head)}
+.row .meta{font-size:11px;color:var(--muted);margin-top:3px;display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.row .pr{text-align:end}
+.row .pr .v{font-family:var(--mono);font-size:17px;font-weight:700;color:var(--blue-hi);font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.row .pr .d{font-size:10.5px;color:var(--muted);margin-top:2px}
+.row.best{background:rgba(14,165,233,.055)}
+.row.best .pr .v{color:#fff}
+.tag{display:inline-flex;align-items:center;gap:4px;font-size:9px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;padding:2px 6px;border-radius:2px}
+.tg-ok{background:rgba(34,197,94,.12);color:var(--ok)}
+.tg-wn{background:rgba(245,158,11,.12);color:var(--warn)}
+.tg-bl{background:rgba(14,165,233,.14);color:var(--blue-hi)}
+.proof .pf{padding:11px 16px;display:flex;align-items:center;gap:10px;font-size:11.5px;color:var(--muted)}
+.proof .pf .cta{margin-inline-start:auto;font-size:12px;font-weight:700;color:var(--blue);display:inline-flex;align-items:center;gap:5px}
+
+/* ═══ S4 stat plate — data as proof, sharing hairlines ═══ */
+.stats{border-bottom:1px solid var(--rule);background:var(--scrim)}
+.stats .w{display:grid;grid-template-columns:repeat(4,1fr)}
+.stat{padding:22px 0 20px;border-inline-end:1px solid var(--rule);padding-inline-end:20px}
+.stat:last-child{border-inline-end:0}
+.stat:not(:first-child){padding-inline-start:28px}
+.stat .n{unicode-bidi:isolate;direction:ltr;font-family:var(--mono);font-size:27px;font-weight:600;color:#fff;letter-spacing:-.03em;font-variant-numeric:tabular-nums;line-height:1}
+.stat .n span{color:var(--blue-hi)}
+.stat .k{font-size:11.5px;color:var(--sec);margin-top:7px}
+.stat .d{font-size:10.5px;color:var(--muted);margin-top:2px}
+
+/* ═══ S5 category index — hairline plate, no floating cards ═══ */
+.sec{padding-block:46px}
+.plate{display:grid;grid-template-columns:repeat(6,1fr);border-inline-start:1px solid var(--rule);border-top:1px solid var(--rule)}
+.cellcat{display:flex;flex-direction:column;gap:9px;padding:18px 16px;border-inline-end:1px solid var(--rule);border-bottom:1px solid var(--rule);background:transparent;text-align:start;cursor:pointer;transition:background .18s,box-shadow .18s;position:relative;min-width:0}
+.cellcat:hover{background:rgba(14,165,233,.05);box-shadow:inset 0 -2px 0 var(--blue)}
+.cellcat .gi{color:var(--blue-hi);opacity:.9}
+.cellcat .nm{font-size:13px;font-weight:600;color:var(--head);line-height:1.3}
+.cellcat .ct{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:auto;font-variant-numeric:tabular-nums}
+.cellcat.all{background:rgba(148,163,184,.03)}
+.cellcat.all .nm{color:var(--blue)}
+
+/* ═══ S6 vehicles ═══ */
+.vgrid{display:grid;grid-template-columns:repeat(4,1fr);border-inline-start:1px solid var(--rule);border-top:1px solid var(--rule)}
+.vcell{display:grid;grid-template-columns:auto 1fr;gap:13px;align-items:center;padding:17px 16px;border-inline-end:1px solid var(--rule);border-bottom:1px solid var(--rule);background:transparent;cursor:pointer;text-align:start;transition:background .18s,box-shadow .18s;min-width:0}
+.vcell:hover{background:rgba(14,165,233,.05);box-shadow:inset 0 -2px 0 var(--blue)}
+.vcell .si{width:72px;flex-shrink:0;color:var(--blue-hi);opacity:.9}
+.vcell .nm{display:block;font-size:13.5px;font-weight:700;color:#fff;line-height:1.25}
+.vcell .bt{display:block;font-size:11px;color:var(--sec);margin-top:3px}
+.vcell .rc{display:block;font-family:var(--mono);font-size:10.5px;color:var(--muted);margin-top:6px;font-variant-numeric:tabular-nums}
+
+/* ═══ S7 comparison table ═══ */
+.cmp{border:1px solid var(--rule);border-radius:4px;overflow:hidden;background:var(--card)}
+.cmph{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:16px 20px;border-bottom:1px solid var(--rule);background:rgba(10,14,23,.4)}
+.cmph .pn{font-size:14.5px;font-weight:700;color:#fff}
+.cmph .oe{font-family:var(--mono);font-size:12px;color:var(--blue-hi);margin-top:3px}
+.cmph .fit{margin-inline-start:auto}
+table{width:100%;border-collapse:collapse}
+th{text-align:start;font-size:9.5px;font-weight:800;letter-spacing:.13em;text-transform:uppercase;color:var(--muted);padding:11px 20px;border-bottom:1px solid var(--rule);white-space:nowrap}
+td{padding:15px 20px;border-bottom:1px solid var(--rule-soft);font-size:13.5px;vertical-align:middle}
+tbody tr:last-child td{border-bottom:0}
+tbody tr{transition:background .18s}
+tbody tr:hover{background:rgba(14,165,233,.04)}
+tbody tr.best{background:rgba(14,165,233,.055)}
+td .sup{font-weight:600;color:#fff}
+td.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+td .tot{font-family:var(--mono);font-size:16px;font-weight:700;color:var(--blue-hi);font-variant-numeric:tabular-nums}
+tr.best td .tot{color:#fff}
+.stk{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ok);font-weight:600;white-space:nowrap}
+.stk i{width:5px;height:5px;border-radius:50%;background:currentColor}
+.sel{height:32px;padding-inline:15px;font-size:12px}
+.cmpf{padding:12px 20px;font-size:11px;color:var(--muted);background:var(--scrim);line-height:1.55}
+.cmpcards{display:none}
+
+/* ═══ S8 how it works — compact horizontal ═══ */
+.flow{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--rule)}
+.fstep{padding:20px 22px 20px 0;border-inline-end:1px solid var(--rule);min-width:0}
+.fstep:last-child{border-inline-end:0}
+.fstep:not(:first-child){padding-inline-start:26px}
+.fstep .k{font-family:var(--mono);font-size:11px;color:var(--blue);font-weight:600}
+.fstep h3{font-size:14px;font-weight:700;color:#fff;margin:8px 0 5px}
+.fstep p{font-size:12.5px;color:var(--sec);line-height:1.55}
+
+/* ═══ S9 AI strip — the only glow on the page ═══ */
+.ai{border:1px solid var(--rule-blue);border-radius:4px;background:linear-gradient(100deg,rgba(14,165,233,.09),rgba(14,165,233,.015));box-shadow:0 0 24px rgba(14,165,233,.40);display:grid;grid-template-columns:1fr auto;gap:36px;align-items:center;padding:30px 34px}
+.ai .lb{display:inline-flex;align-items:center;gap:7px;font-size:9.5px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:var(--blue-hi);margin-bottom:11px}
+.ai h2{font-size:24px;color:#fff;margin-bottom:8px}
+.ai p{font-size:13.5px;color:var(--sec);max-width:62ch;line-height:1.6}
+.ai .acts{display:flex;gap:10px;flex-shrink:0}
+.ai .acts .btn{height:44px;padding-inline:22px;font-size:13.5px}
+.aiq{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
+.aiq span{font-size:11.5px;color:var(--sec);border:1px solid var(--rule);border-radius:3px;padding:5px 10px;background:rgba(15,18,24,.5)}
+
+/* ═══ S10 footer ═══ */
+footer{border-top:1px solid var(--rule);background:var(--scrim);padding-block:40px 22px;margin-top:10px}
+.fg{display:grid;grid-template-columns:1.8fr 1fr 1fr 1fr;gap:40px;margin-bottom:30px}
+.fg p{font-size:12.5px;color:var(--sec);line-height:1.65;margin:11px 0 16px;max-width:36ch}
+.fsoc{display:flex;gap:8px}
+.fsoc a{width:32px;height:32px;border:1px solid var(--rule);border-radius:3px;display:grid;place-items:center;color:var(--sec);transition:.18s}
+.fsoc a:hover{color:var(--blue-hi);border-color:var(--rule-blue)}
+.fc h4{font-size:10px;font-weight:800;letter-spacing:.15em;text-transform:uppercase;color:var(--head);margin-bottom:13px}
+.fc a{display:block;font-size:12.5px;color:var(--sec);margin-bottom:9px;transition:color .18s}
+.fc a:hover{color:var(--blue-hi)}
+.fbot{border-top:1px solid var(--rule);padding-top:17px;display:flex;flex-wrap:wrap;gap:12px;align-items:center;font-size:11.5px;color:var(--muted)}
+.langs{margin-inline-start:auto;display:flex;border:1px solid var(--rule);border-radius:3px;overflow:hidden}
+.langs button{background:transparent;border:0;border-inline-end:1px solid var(--rule);color:var(--sec);font-size:11px;font-weight:600;padding:6px 12px;cursor:pointer;transition:.18s}
+.langs button:last-child{border-inline-end:0}
+.langs button:hover{color:var(--head)}
+.langs button.on{background:rgba(14,165,233,.12);color:var(--blue-hi)}
+
+/* floating + sheet */
+.wa{position:fixed;inset-block-end:calc(20px + env(safe-area-inset-bottom,0px));inset-inline-end:20px;width:48px;height:48px;border-radius:50%;background:#22C55E;color:#06210f;display:grid;place-items:center;border:0;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.5);z-index:40}
+.sticky{display:none}
+.sheet{position:fixed;inset:0;z-index:90;background:var(--bg);display:none;flex-direction:column;padding-top:env(safe-area-inset-top,0px)}
+.sheet.open{display:flex}
+.sh{display:flex;align-items:center;gap:12px;padding:14px var(--gut);border-bottom:1px solid var(--rule)}
+.sh .t{font-size:14.5px;font-weight:700;color:#fff}
+.sh .x{margin-inline-start:auto;width:36px;height:36px;border:1px solid var(--rule);border-radius:3px;background:none;color:var(--sec);display:grid;place-items:center;cursor:pointer}
+.sb{padding:16px var(--gut) 30px;overflow-y:auto}
+.qh{margin-top:22px}
+.qp{display:flex;align-items:center;gap:9px;width:100%;background:none;border:0;border-bottom:1px solid var(--rule);padding:13px 2px;color:var(--head);font-size:13.5px;font-weight:600;cursor:pointer;text-align:start}
+.qp em{font-style:normal;color:var(--sec);font-weight:400}
+.qp .arr{margin-inline-start:auto;color:var(--blue)}
+
+/* ══════════ RESPONSIVE ══════════ */
+@media (max-width:1180px){
+  .finder .w{grid-template-columns:minmax(0,1fr) minmax(0,420px);gap:36px}
+  h1{font-size:46px}
+  .plate{grid-template-columns:repeat(4,1fr)}
+}
+@media (max-width:960px){
+  :root{--gut:22px}
+  .util{display:none}
+  .mast .w{height:64px;gap:14px}
+  .find{display:none}
+  .burger,.msearch{display:grid}
+  .mact .t{display:none}
+  .finder .w{grid-template-columns:minmax(0,1fr);gap:30px;padding-block:34px 36px}
+  h1{font-size:40px}
+  .lede{max-width:none}
+  .pick{max-width:none}
+  .stats .w{grid-template-columns:repeat(2,1fr)}
+  .stat{border-bottom:1px solid var(--rule);padding-inline-start:0 !important}
+  .stat:nth-child(2n){border-inline-end:0}
+  .stat:nth-child(2n+1){padding-inline-end:22px}
+  .stat:nth-child(2n){padding-inline-start:22px !important}
+  .stat:nth-last-child(-n+2){border-bottom:0}
+  .vgrid{grid-template-columns:repeat(2,1fr)}
+  .flow{grid-template-columns:repeat(2,1fr)}
+  .fstep{border-bottom:1px solid var(--rule);padding-inline-start:0 !important;padding-inline-end:22px}
+  .fstep:nth-child(2n){border-inline-end:0;padding-inline-start:22px !important}
+  .ai{grid-template-columns:1fr;gap:22px;padding:24px}
+  .fg{grid-template-columns:1fr 1fr;gap:28px}
+}
+@media (max-width:640px){
+  :root{--gut:16px}
+  body{padding-bottom:78px;font-size:14px}
+  h1{font-size:31px;letter-spacing:-.035em}
+  h2{font-size:19px}
+  .ai h2{font-size:20px}
+  .lede{font-size:14px}
+  .finder .w{padding-block:26px 28px;gap:24px}
+  .rail a{padding:11px 12px;font-size:12px}
+  .pfoot{display:grid;gap:4px}
+  .pfoot>span:not(.k){display:none}
+  /* masthead keeps only search + cart; chat and account live in the menu */
+  .mactions a:nth-of-type(1),.mactions a:nth-of-type(2){display:none}
+  .mast .w{gap:10px}
+  .brand .wm{font-size:16px}
+  .mactions{gap:0}
+  /* picker stacks to full-width rows */
+  .pgrid{grid-template-columns:1fr 1fr}
+  .pgrid .cell:nth-child(1),.pgrid .cell:nth-child(2){border-bottom:1px solid var(--rule)}
+  .pgrid .cell:nth-child(2){border-inline-end:0}
+  .pgrid .cell:nth-child(3){grid-column:1 / -1;border-inline-end:0;border-bottom:1px solid var(--rule)}
+  .pgrid .act{grid-column:1 / -1}
+  .pgrid .act .btn{width:100%;height:50px;border-radius:0 0 3px 3px}
+  .plate{grid-template-columns:repeat(2,1fr)}
+  .vgrid{grid-template-columns:1fr}
+  .flow{grid-template-columns:1fr}
+  .fstep{padding-inline:0 !important;border-inline-end:0}
+  .fstep:last-child{border-bottom:0}
+  .cmp-wrap table{display:none}
+  .cmpcards{display:flex;flex-direction:column}
+  .cc{padding:14px 16px;border-bottom:1px solid var(--rule-soft)}
+  .cc:last-child{border-bottom:0}
+  .cc.best{background:rgba(14,165,233,.055)}
+  .cc .t1{display:flex;align-items:center;gap:8px;margin-bottom:9px}
+  .cc .t1 .sup{font-size:13.5px;font-weight:600;color:#fff}
+  .cc .t2{display:flex;align-items:flex-end;gap:12px}
+  .cc .t2 .tot{font-family:var(--mono);font-size:19px;font-weight:700;color:var(--blue-hi);font-variant-numeric:tabular-nums}
+  .cc.best .t2 .tot{color:#fff}
+  .cc .mt{font-size:11.5px;color:var(--sec);margin-inline-start:auto;text-align:end;line-height:1.5}
+  .cc .btn{width:100%;height:38px;margin-top:11px;font-size:12.5px}
+  .fg{grid-template-columns:1fr;gap:24px}
+  .fbot{flex-direction:column;align-items:flex-start}
+  .langs{margin-inline-start:0}
+  .sticky{display:flex;position:fixed;inset-block-end:0;inset-inline:0;z-index:50;background:rgba(15,18,24,.95);backdrop-filter:blur(14px);border-top:1px solid var(--rule);padding:11px var(--gut) calc(11px + env(safe-area-inset-bottom,0px));transform:translateY(130%);transition:transform .26s var(--e)}
+  .sticky.show{transform:translateY(0)}
+  .sticky .btn{width:100%;height:46px;font-size:14.5px}
+  .wa{inset-block-end:calc(80px + env(safe-area-inset-bottom,0px));width:44px;height:44px}
+}
+@media (max-width:380px){
+  h1{font-size:28px}
+  .stats .w{grid-template-columns:1fr}
+  .stat{border-inline-end:0;padding-inline:0 !important}
+  .stat:not(:last-child){border-bottom:1px solid var(--rule)}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition-duration:.01ms !important;scroll-behavior:auto !important}
+  .arr{transition:none}
+  .sticky{transition:none}
+}
+</style></head><body>
+
+<!-- ═══ S0 utility ═══ -->
+<div class="util"><div class="w">
+  <span data-i18n="u.vp">Fitment checked against your exact vehicle before you pay</span>
+  <span class="r">
+    <a href="#" data-i18n="u.sup">Support</a>
+    <a href="#" data-i18n="u.trk">Track order</a>
+    <a href="#" class="wa-l"><span data-i18n="u.wa" class="wa">WhatsApp</span></a>
+    <a href="#">₪ ILS</a>
+  </span>
+</div></div>
+
+<!-- ═══ S1 masthead ═══ -->
+<div class="mast"><div class="w">
+  <button class="mact burger" aria-label="Menu"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg></button>
+  <a href="/" class="brand" aria-label="AutoSpareFinder">
+    <svg width="31" height="31" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <circle cx="14.5" cy="14.5" r="9.6" stroke="#38BDF8" stroke-width="1.7"/>
+      <circle cx="14.5" cy="14.5" r="5.9" stroke="#0EA5E9" stroke-width="1" opacity=".5"/>
+      <path d="M14.5 2.5v3.1M14.5 23.4v3.1M2.5 14.5h3.1M23.4 14.5h3.1" stroke="#38BDF8" stroke-width="1.7" stroke-linecap="round"/>
+      <path d="M21.6 21.6l6.1 6.1" stroke="#0EA5E9" stroke-width="2.5" stroke-linecap="round"/>
+    </svg>
+    <span class="wm">AutoSpare<i>Finder</i></span>
+  </a>
+
+  <div class="find">
+    <label class="sr" for="fmode">Search by</label>
+    <select id="fmode">
+      <option data-i18n="m.all">All parts</option>
+      <option data-i18n="m.oem">OEM number</option>
+      <option data-i18n="m.vin">VIN</option>
+      <option data-i18n="m.plate">Licence plate</option>
+    </select>
+    <label class="sr" for="fq">Search</label>
+    <input id="fq" type="text" placeholder="Part name, OEM number, VIN or plate" data-i18n-ph="m.ph">
+    <button class="btn bp go" aria-label="Search"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6" stroke-linecap="round"/></svg></button>
+  </div>
+
+  <div class="mactions">
+    <button class="mact msearch" aria-label="Search" id="osheet"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6" stroke-linecap="round"/></svg></button>
+    <a href="/chat" class="mact"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M20.5 12.5a7.5 7.5 0 0 1-10.6 6.8L4.5 21l1.7-5.1A7.5 7.5 0 1 1 20.5 12.5z"/></svg><span class="t"><b data-i18n="a.ai">Ask AI</b><span data-i18n="a.ai2">Find my part</span></span></a>
+    <a href="/account" class="mact"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="8" r="3.5"/><path d="M4.8 20a7.2 7.2 0 0 1 14.4 0"/></svg><span class="t"><b data-i18n="a.acc">Account</b><span data-i18n="a.acc2">Sign in</span></span></a>
+    <a href="/cart" class="mact"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="20" r="1.3"/><circle cx="18" cy="20" r="1.3"/><path d="M2 3h3l2.6 12.4a1.5 1.5 0 0 0 1.5 1.2h8.6a1.5 1.5 0 0 0 1.5-1.2L21 7H6"/></svg><span class="t"><b data-i18n="a.cart">Cart</b><span data-i18n="a.cart2">2 items</span></span><span class="cbadge">2</span></a>
+  </div>
+</div></div>
+
+<!-- ═══ S2 category rail ═══ -->
+<nav class="rail" aria-label="Categories"><div class="w" id="rail"></div></nav>
+
+<!-- ═══ S3 finder ═══ -->
+<section class="finder">
+  <div class="bgimg" aria-hidden="true"></div><div class="scrim" aria-hidden="true"></div>
+  <div class="w">
+    <div>
+      <span class="eyebrow" data-i18n="h.eyebrow">Fitment-verified parts marketplace</span>
+      <h1><span data-i18n="h.h1a">Know it fits.</span><br><em data-i18n="h.h1b">Then pay the lowest price.</em></h1>
+      <p class="lede" data-i18n="h.lede">Pick your car and we check every supplier against your exact make, model and year — then show you what each one charges, shipping and VAT included.</p>
+
+      <div class="pick">
+        <div class="ph">
+          <span class="lbl" data-i18n="p.lbl">Select your vehicle</span>
+          <button class="sw" id="swapMode" data-i18n="p.sw">Use plate number instead</button>
+        </div>
+        <div class="pgrid" id="pgrid">
+          <div class="cell"><label for="mk" data-i18n="p.make">Make</label>
+            <select id="mk"><option>Toyota</option><option>Kia</option><option>Mazda</option><option>Hyundai</option><option>Skoda</option></select></div>
+          <div class="cell"><label for="md" data-i18n="p.model">Model</label>
+            <select id="md"><option>Corolla</option><option>Picanto</option><option>Mazda 3</option><option>Sportage</option></select></div>
+          <div class="cell"><label for="yr" data-i18n="p.year">Year</label>
+            <select id="yr"><option>2018</option><option>2020</option><option>2022</option><option>2024</option></select></div>
+          <div class="act"><button class="btn bp" data-i18n="p.go">Show parts</button></div>
+        </div>
+        <div class="pfoot">
+          <span class="k" data-i18n="p.f1">Free to search</span><span>·</span>
+          <span class="k" data-i18n="p.f2">No account needed</span><span>·</span>
+          <span class="k" data-i18n="p.f3">Plate checked against the national registry</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- the product itself, not a photograph -->
+    <div class="proof">
+      <div class="ph">
+        <span class="dotrow"><i></i><i></i><i></i></span>
+        <span class="ttl" data-i18n="pf.t">Price comparison</span>
+        <span class="live"><i></i><span data-i18n="pf.live">Live</span></span>
+      </div>
+      <div class="pq">
+        <span class="th" aria-hidden="true"></span>
+        <span><div class="q" data-i18n="pf.q">Brake pad set — front axle</div>
+        <div class="m"><span data-i18n="pf.for">Toyota Corolla 2018</span> · OEM <b><bdi dir="ltr">04465-02260</bdi></b></div></span>
+      </div>
+      <div class="row best">
+        <div><div class="s">Marketplace A</div>
+          <div class="meta"><span class="tag tg-ok" data-i18n="t.fits">Fits</span><span data-i18n="pf.after">Aftermarket</span><span data-i18n="pf.free">Free shipping</span></div></div>
+        <div class="pr"><div class="v"><bdi dir="ltr">₪243</bdi></div><div class="d" data-i18n="pf.inc">incl. VAT</div></div>
+      </div>
+      <div class="row">
+        <div><div class="s">Marketplace B</div>
+          <div class="meta"><span class="tag tg-ok" data-i18n="t.fits">Fits</span><span>OE-equivalent</span><span>+<bdi dir="ltr">₪45</bdi></span></div></div>
+        <div class="pr"><div class="v"><bdi dir="ltr">₪358</bdi></div><div class="d" data-i18n="pf.inc">incl. VAT</div></div>
+      </div>
+      <div class="row">
+        <div><div class="s" data-i18n="pf.eu">EU distributor</div>
+          <div class="meta"><span class="tag tg-wn" data-i18n="t.unv">Unverified</span><span>OEM</span><span>+<bdi dir="ltr">₪89</bdi></span></div></div>
+        <div class="pr"><div class="v"><bdi dir="ltr">₪541</bdi></div><div class="d" data-i18n="pf.inc">incl. VAT</div></div>
+      </div>
+      <div class="pf">
+        <span data-i18n="pf.save">You save <bdi dir="ltr">₪298</bdi> on this part</span>
+        <a href="/parts" class="cta"><span data-i18n="pf.cta">Open catalogue</span><svg class="arr" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h13M13 6l6 6-6 6"/></svg></a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ S4 stat plate ═══ -->
+<section class="stats"><div class="w">
+  <div class="stat"><div class="n">4,125,265</div><div class="k" data-i18n="s.1k">Parts in the catalogue</div><div class="d" data-i18n="s.1d">Across 25 categories</div></div>
+  <div class="stat"><div class="n">50<span>+</span></div><div class="k" data-i18n="s.2k">Suppliers compared</div><div class="d" data-i18n="s.2d">Israeli importers and global marketplaces</div></div>
+  <div class="stat"><div class="n">3</div><div class="k" data-i18n="s.3k">Languages, RTL-first</div><div class="d" data-i18n="s.3d">Hebrew, Arabic, English</div></div>
+  <div class="stat"><div class="n">1,401</div><div class="k" data-i18n="s.4k">Vehicle models mapped</div><div class="d" data-i18n="s.4d">Israeli registry fitment data</div></div>
+</div></section>
+
+<!-- ═══ S5 category index ═══ -->
+<section class="sec"><div class="w">
+  <div class="secHead">
+    <div><h2 data-i18n="c.h">Browse the catalogue</h2><p class="sub" data-i18n="c.s">Live part counts, updated as the catalogue grows</p></div>
+    <a href="/parts" class="more"><span data-i18n="c.all">All 25 categories</span><svg class="arr" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h13M13 6l6 6-6 6"/></svg></a>
+  </div>
+  <div class="plate" id="plate"></div>
+</div></section>
+
+<!-- ═══ S6 vehicles ═══ -->
+<section class="sec" style="padding-top:0"><div class="w">
+  <div class="secHead">
+    <div><h2 data-i18n="v.h">Start from your car</h2><p class="sub" data-i18n="v.s">The four most common vehicles on Israeli roads</p></div>
+    <a href="/parts" class="more"><span data-i18n="v.all">All makes and models</span><svg class="arr" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h13M13 6l6 6-6 6"/></svg></a>
+  </div>
+  <div class="vgrid" id="vgrid"></div>
+</div></section>
+
+<!-- ═══ S7 comparison ═══ -->
+<section class="sec" style="padding-top:0"><div class="w">
+  <div class="secHead" style="margin-bottom:18px">
+    <div><h2 data-i18n="k.h">What the comparison actually shows</h2><p class="sub" data-i18n="k.s">Every offer, labelled by type, with the real total you pay</p></div>
+  </div>
+  <div class="cmp">
+    <div class="cmph">
+      <div><div class="pn" data-i18n="pf.q">Brake pad set — front axle</div><div class="oe">OEM <bdi dir="ltr">04465-02260</bdi></div></div>
+      <span class="tag tg-ok fit"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5.2 5.2L20 6.8"/></svg><span data-i18n="k.fit">Verified for Toyota Corolla 2018</span></span>
+    </div>
+    <div class="cmp-wrap">
+      <table>
+        <thead><tr><th data-i18n="th.s">Supplier</th><th data-i18n="th.f">Fitment</th><th data-i18n="th.c">Offer type</th><th data-i18n="th.sh">Shipping</th><th data-i18n="th.a">Stock</th><th data-i18n="th.t">Total</th><th></th></tr></thead>
+        <tbody>
+          <tr class="best"><td class="sup">Marketplace A</td><td><span class="tag tg-ok" data-i18n="t.fits">Fits</span></td><td data-i18n="pf.after">Aftermarket</td><td class="num" data-i18n="pf.free2">Free</td><td><span class="stk"><i></i><span data-i18n="t.in">In stock</span></span></td><td><span class="tot"><bdi dir="ltr">₪243</bdi></span></td><td><button class="btn bp sel" data-i18n="t.sel">Select</button></td></tr>
+          <tr><td class="sup">Marketplace B</td><td><span class="tag tg-ok" data-i18n="t.fits">Fits</span></td><td>OE-equivalent</td><td class="num"><bdi dir="ltr">₪45</bdi></td><td><span class="stk"><i></i><span data-i18n="t.in">In stock</span></span></td><td><span class="tot"><bdi dir="ltr">₪358</bdi></span></td><td><button class="btn bs sel" data-i18n="t.sel">Select</button></td></tr>
+          <tr><td class="sup" data-i18n="pf.eu">EU distributor</td><td><span class="tag tg-wn" data-i18n="t.unv">Unverified</span></td><td>OEM</td><td class="num"><bdi dir="ltr">₪89</bdi></td><td><span class="stk" style="color:var(--warn)"><i></i><span data-i18n="t.low">Low stock</span></span></td><td><span class="tot"><bdi dir="ltr">₪541</bdi></span></td><td><button class="btn bs sel" data-i18n="t.sel">Select</button></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="cmpcards">
+      <div class="cc best"><div class="t1"><span class="tag tg-ok" data-i18n="t.fits">Fits</span><span class="sup">Marketplace A</span></div>
+        <div class="t2"><span class="tot"><bdi dir="ltr">₪243</bdi></span><span class="mt"><span data-i18n="pf.after">Aftermarket</span><br><span data-i18n="pf.free">Free shipping</span> · <span data-i18n="t.in">In stock</span></span></div>
+        <button class="btn bp" data-i18n="t.sel">Select</button></div>
+      <div class="cc"><div class="t1"><span class="tag tg-ok" data-i18n="t.fits">Fits</span><span class="sup">Marketplace B</span></div>
+        <div class="t2"><span class="tot"><bdi dir="ltr">₪358</bdi></span><span class="mt">OE-equivalent<br>+<bdi dir="ltr">₪45</bdi> · <span data-i18n="t.in">In stock</span></span></div>
+        <button class="btn bs" data-i18n="t.sel">Select</button></div>
+      <div class="cc"><div class="t1"><span class="tag tg-wn" data-i18n="t.unv">Unverified</span><span class="sup" data-i18n="pf.eu">EU distributor</span></div>
+        <div class="t2"><span class="tot"><bdi dir="ltr">₪541</bdi></span><span class="mt">OEM<br>+<bdi dir="ltr">₪89</bdi> · <span data-i18n="t.low">Low stock</span></span></div>
+        <button class="btn bs" data-i18n="t.sel">Select</button></div>
+    </div>
+    <p class="cmpf" data-i18n="k.note">OEM, OE-equivalent and aftermarket offers are always listed together and labelled — never hidden or swapped for one another. Supplier identities are shown once your order is placed.</p>
+  </div>
+</div></section>
+
+<!-- ═══ S8 how it works ═══ -->
+<section class="sec" style="padding-top:0"><div class="w">
+  <div class="secHead" style="margin-bottom:0;border-bottom:0;padding-bottom:12px">
+    <div><h2 data-i18n="w.h">How buying works</h2><p class="sub" data-i18n="w.s">You pay us once, in shekels. We deal with the supplier.</p></div>
+  </div>
+  <div class="flow">
+    <div class="fstep"><span class="k">01</span><h3 data-i18n="w.1h">Search</h3><p data-i18n="w.1p">By vehicle, licence plate, OEM number or VIN.</p></div>
+    <div class="fstep"><span class="k">02</span><h3 data-i18n="w.2h">Compare</h3><p data-i18n="w.2p">Every supplier's total, shipping and VAT already included.</p></div>
+    <div class="fstep"><span class="k">03</span><h3 data-i18n="w.3h">Order</h3><p data-i18n="w.3p">One payment on AutoSpareFinder, in shekels.</p></div>
+    <div class="fstep"><span class="k">04</span><h3 data-i18n="w.4h">Receive</h3><p data-i18n="w.4p">We buy from the supplier and ship to you, tracked.</p></div>
+  </div>
+</div></section>
+
+<!-- ═══ S9 AI ═══ -->
+<section class="sec" style="padding-top:8px"><div class="w">
+  <div class="ai">
+    <div>
+      <span class="lb"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="M12 2.5l1.9 5.6 5.6 1.9-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9z"/></svg><span data-i18n="ai.l">AI assistant</span></span>
+      <h2 data-i18n="ai.h">Not sure which part you need?</h2>
+      <p data-i18n="ai.p">Describe the car and the symptom in Hebrew, Arabic or English. The assistant identifies the part, confirms it fits your exact vehicle, and returns every supplier's price.</p>
+      <div class="aiq">
+        <span dir="rtl" lang="he">רפידות בלם לקורולה 2018</span>
+        <span dir="rtl" lang="ar">فلتر زيت لبيكانتو</span>
+        <span>Wipers for a Mazda 3</span>
+      </div>
+    </div>
+    <div class="acts">
+      <a href="/chat" class="btn bp"><span data-i18n="ai.c1">Start chat</span><svg class="arr" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h13M13 6l6 6-6 6"/></svg></a>
+      <a href="#" class="btn bs">WhatsApp</a>
+    </div>
+  </div>
+</div></section>
+
+<!-- ═══ S10 footer ═══ -->
+<footer><div class="w">
+  <div class="fg">
+    <div>
+      <a href="/" class="brand">
+        <svg width="28" height="28" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+          <circle cx="14.5" cy="14.5" r="9.6" stroke="#38BDF8" stroke-width="1.7"/>
+          <circle cx="14.5" cy="14.5" r="5.9" stroke="#0EA5E9" stroke-width="1" opacity=".5"/>
+          <path d="M14.5 2.5v3.1M14.5 23.4v3.1M2.5 14.5h3.1M23.4 14.5h3.1" stroke="#38BDF8" stroke-width="1.7" stroke-linecap="round"/>
+          <path d="M21.6 21.6l6.1 6.1" stroke="#0EA5E9" stroke-width="2.5" stroke-linecap="round"/>
+        </svg><span class="wm">AutoSpare<i>Finder</i></span></a>
+      <p data-i18n="f.b">A fitment-verified parts marketplace for Israel and beyond. Compare every supplier, pay once, get the part that actually fits.</p>
+      <div class="fsoc">
+        <a href="#" aria-label="WhatsApp"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M20.5 12.5a7.5 7.5 0 0 1-10.6 6.8L4.5 21l1.7-5.1A7.5 7.5 0 1 1 20.5 12.5z"/></svg></a>
+        <a href="#" aria-label="Telegram"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><path d="M21.5 4.5L2.8 11.3l5.4 1.9 2 6 2.8-3.6 4.6 3.4z"/></svg></a>
+        <a href="#" aria-label="Instagram"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3.5" y="3.5" width="17" height="17" rx="4.5"/><circle cx="12" cy="12" r="3.7"/></svg></a>
+        <a href="#" aria-label="Email"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="2.3"/><path d="M3 7l9 6.4L21 7"/></svg></a>
+      </div>
+    </div>
+    <div class="fc"><h4 data-i18n="f.1">Catalogue</h4>
+      <a href="/parts" data-i18n="f.1a">All parts</a><a href="/parts" data-i18n="f.1b">Categories</a><a href="/parts" data-i18n="f.1c">Search by plate</a><a href="/parts" data-i18n="f.1d">Search by VIN</a></div>
+    <div class="fc"><h4 data-i18n="f.2">Orders</h4>
+      <a href="/cart" data-i18n="f.2a">Cart</a><a href="/orders" data-i18n="f.2b">My orders</a><a href="#" data-i18n="f.2c">Shipping</a><a href="/refund" data-i18n="f.2d">Returns &amp; refunds</a></div>
+    <div class="fc"><h4 data-i18n="f.3">Company</h4>
+      <a href="/developers" data-i18n="f.3a">Developer API</a><a href="#" data-i18n="f.3b">For suppliers</a><a href="/privacy" data-i18n="f.3c">Privacy</a><a href="/terms" data-i18n="f.3d">Terms</a></div>
+  </div>
+  <div class="fbot">
+    <span>© 2026 AutoSpareFinder</span>
+    <div class="langs" role="group" aria-label="Language">
+      <button class="on" data-lang="en" data-dir="ltr">EN</button>
+      <button data-lang="he" data-dir="rtl">עברית</button>
+      <button data-lang="ar" data-dir="rtl">العربية</button>
+    </div>
+  </div>
+</div></footer>
+
+<button class="wa" aria-label="WhatsApp"><svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.5 12.5a7.5 7.5 0 0 1-10.6 6.8L4.5 21l1.7-5.1A7.5 7.5 0 1 1 20.5 12.5z"/></svg></button>
+
+<div class="sticky" id="sticky"><button class="btn bp" id="sbtn"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6" stroke-linecap="round"/></svg><span data-i18n="st.cta">Find my part</span></button></div>
+
+<div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-label="Search">
+  <div class="sh"><span class="t" data-i18n="sh.t">Find your part</span>
+    <button class="x" id="xsheet" aria-label="Close"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <div class="sb">
+    <div class="find" style="display:flex;height:46px">
+      <label class="sr" for="sq">Search</label>
+      <input id="sq" type="text" placeholder="Part name, OEM number, VIN or plate" data-i18n-ph="m.ph">
+      <button class="btn bp go" aria-label="Search"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6" stroke-linecap="round"/></svg></button>
+    </div>
+    <div id="sheetPick"></div>
+    <div class="qh">
+      <div class="lbl" style="margin-bottom:6px" data-i18n="sh.q">Popular right now</div>
+      <button class="qp"><span>Toyota Corolla</span> <em data-i18n="q1">brake pads</em><svg class="arr" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h13M13 6l6 6-6 6"/></svg></button>
+      <button class="qp"><span>Kia Picanto</span> <em data-i18n="q2">oil filter</em><svg class="arr" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h13M13 6l6 6-6 6"/></svg></button>
+      <button class="qp"><span>Mazda 3</span> <em data-i18n="q3">wiper blades</em><svg class="arr" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h13M13 6l6 6-6 6"/></svg></button>
+      <button class="qp"><span>Kia Sportage</span> <em data-i18n="q4">air filter</em><svg class="arr" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 12h13M13 6l6 6-6 6"/></svg></button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var reduce=false; try{reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;}catch(e){}
+
+  /* live counts + labels from GET /api/v1/parts/categories (fetched 2026-10-05).
+     service-general omitted — a catch-all, not a shopping category. */
+  var CATS=[
+    {id:'body-exterior',label:'Body Parts',n:904924},
+    {id:'electrical',label:'Electrical',n:396343},
+    {id:'interior-comfort',label:'Interior',n:357145},
+    {id:'engine',label:'Engine',n:324509},
+    {id:'suspension-steering',label:'Suspension & Steering',n:304532},
+    {id:'air-conditioning-heating',label:'A/C & Heating',n:224920},
+    {id:'wheels-bearings',label:'Wheels & Tires',n:218871},
+    {id:'brakes',label:'Brakes',n:171553},
+    {id:'cooling',label:'Engine Cooling',n:143473},
+    {id:'fuel-air',label:'Fuel & Air',n:141188},
+    {id:'lighting',label:'Lighting',n:139217},
+    {id:'exhaust',label:'Exhaust',n:77143}
+  ];
+  var K='fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"';
+  var G={
+    'brakes':'<circle cx="12" cy="12" r="7.6"/><circle cx="12" cy="12" r="2.6"/><path d="M12 4.4v1.6M12 18v1.6M4.4 12H6M18 12h1.6"/><path d="M19.6 8.6h1.9a1.2 1.2 0 0 1 1.2 1.2v4.4a1.2 1.2 0 0 1-1.2 1.2h-1.9"/>',
+    'engine':'<rect x="3.2" y="10" width="11.6" height="8.4" rx="1.1"/><path d="M14.8 12.6h2.1l3.9-2.6v8l-3.9-2.6h-2.1"/><rect x="5.4" y="5.6" width="2.6" height="4.4" rx=".7"/><rect x="10" y="5.6" width="2.6" height="4.4" rx=".7"/>',
+    'suspension-steering':'<circle cx="12" cy="3.6" r="1.4"/><circle cx="12" cy="20.4" r="1.4"/><path d="M8.4 6h7.2M9 8.4h6M8.4 10.8h7.2M9 13.2h6M8.4 15.6h7.2M9 18h6"/>',
+    'cooling':'<circle cx="12" cy="12" r="8.4"/><path d="M12 12c0-3.6 1.3-5.4 3.6-5.4 1.3 0 1.9 1 1.7 2.2-.4 2.1-2.9 3.2-5.3 3.2z"/><path d="M12 12c-3 1.8-5.3 1.6-6.4-.4-.7-1.1-.1-2.1 1-2.6 2-.6 4 1 5.4 3z"/><path d="M12 12c3 1.8 4 3.8 2.8 5.8-.7 1.1-1.8 1.1-2.7.3-1.5-1.4-1.5-4-.1-6.1z"/>',
+    'electrical':'<path d="M2.6 17c2.8 0 3.4-8 6.2-8s3.4 8 6.2 8 3.4-5.6 6.2-5.6"/><rect x="2.6" y="4.4" width="5.4" height="4" rx=".8"/><path d="M4.1 4.4V3M6.5 4.4V3"/>',
+    'body-exterior':'<path d="M4.4 16.6v-5.2c0-.6.3-1.1.8-1.4l5.2-3.6c.4-.3 1-.5 1.5-.5h5.7c.9 0 1.6.7 1.6 1.6v9.1c0 .9-.7 1.6-1.6 1.6H6c-.9 0-1.6-.7-1.6-1.6z"/><path d="M7 10.4h9.4M15.4 13.6h2.2"/>',
+    'interior-comfort':'<path d="M6.4 19.6v-2.8M17.6 19.6v-2.8"/><path d="M5.4 16.8h13.2c.7 0 1.2-.6 1.1-1.3l-.3-2.6a1.6 1.6 0 0 0-1.6-1.4H6.2a1.6 1.6 0 0 0-1.6 1.4l-.3 2.6c-.1.7.4 1.3 1.1 1.3z"/><path d="M7.4 11.5V6.6c0-.9.7-1.6 1.6-1.6h6c.9 0 1.6.7 1.6 1.6v4.9"/>',
+    'air-conditioning-heating':'<rect x="3.2" y="4" width="17.6" height="6.6" rx="1.3"/><path d="M6 7h12M6 9h12"/><path d="M7 13.4v2M11 13.4v3M15 13.4v2M19 13.4v3"/><path d="M6 16.4l1 1.3 1-1.3M10 18l1 1.3 1-1.3M14 16.4l1 1.3 1-1.3M18 18l1 1.3 1-1.3"/>',
+    'wheels-bearings':'<circle cx="12" cy="12" r="8.6"/><circle cx="12" cy="12" r="5.6"/><circle cx="12" cy="12" r="1.9"/><path d="M12 6.4v3.7M12 13.9v3.7M6.4 12h3.7M13.9 12h3.7"/>',
+    'fuel-air':'<path d="M6 19.6V6.6c0-.9.7-1.6 1.6-1.6h4.6c.9 0 1.6.7 1.6 1.6v13z"/><path d="M4.4 19.6h11.4M8 8.6h3.6"/><path d="M13.8 8.6h2.6c.9 0 1.6.7 1.6 1.6v6.2a1.3 1.3 0 0 0 2.6 0v-5.2"/>',
+    'lighting':'<path d="M7.6 10.4c0-3.4 2.3-5.6 5-5.6s5 2.2 5 5.6c0 2.4-1.3 3.6-2 4.8-.4.7-.5 1.3-.5 2.3H10c0-1-.1-1.6-.5-2.3-.7-1.2-1.9-2.4-1.9-4.8z"/><path d="M10.4 19.6h4"/>',
+    'exhaust':'<path d="M3 15.4h8.6c1 0 1.9-.5 2.4-1.4l1.2-2c.5-.9 1.4-1.4 2.4-1.4H21"/><circle cx="19.4" cy="15.6" r="2.6"/><path d="M3 11.6h4"/>'
+  };
+  function fmt(n){return n.toLocaleString('en-US');}
+  function ico(id,s){return '<svg width="'+s+'" height="'+s+'" viewBox="0 0 24 24" '+K+'>'+(G[id]||G['brakes'])+'</svg>';}
+
+  /* category rail — the catalogue signal, sits under the masthead */
+  var rail=document.getElementById('rail'),rh='';
+  CATS.slice(0,8).forEach(function(c,i){
+    rh+='<a href="/parts" class="'+(i===0?'on':'')+'">'+ico(c.id,15)+'<span>'+c.label+'</span></a>';
+  });
+  rh+='<a href="/parts" class="all"><span data-i18n="r.all">All categories</span></a>';
+  rail.innerHTML=rh;
+
+  /* category index plate */
+  var plate=document.getElementById('plate'),ph='';
+  CATS.forEach(function(c){
+    ph+='<button class="cellcat" aria-label="'+c.label+', '+fmt(c.n)+' parts">'
+      + '<span class="gi">'+ico(c.id,22)+'</span>'
+      + '<span class="nm">'+c.label+'</span>'
+      + '<span class="ct">'+fmt(c.n)+'</span></button>';
+  });
+  plate.innerHTML=ph;
+
+  /* vehicles — four genuinely different body shapes, real registry counts */
+  var V='fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"';
+  var VEH=[
+    {n:'Toyota Corolla',t:'Sedan',y:'2014–2026',c:132079,s:'<svg viewBox="0 0 150 52" '+V+'><path d="M5 40h140"/><path d="M11 40V31c0-1.6 1.1-3 2.7-3.4L29 24l13-10.6c1.2-1 2.7-1.6 4.3-1.6h34c1.6 0 3.2.6 4.4 1.7L99 24l17 4c1.9.5 3.2 2.2 3.2 4.1V40"/><path d="M44 13V24h23M71 13V24h22l-8.7-9.4c-1.1-1.2-2.7-1.9-4.3-1.9z"/><circle cx="39" cy="40" r="7.2"/><circle cx="108" cy="40" r="7.2"/></svg>'},
+    {n:'Kia Picanto',t:'City hatch',y:'2011–2026',c:125267,s:'<svg viewBox="0 0 150 52" '+V+'><path d="M26 40h98"/><path d="M32 40V26c0-1.7 1.2-3.1 2.8-3.5l6.8-1.7 7.6-13.6c.9-1.5 2.5-2.5 4.3-2.5h34c2 0 3.8 1.3 4.5 3.2L98 21l7.6 2c1.7.4 2.9 2 2.9 3.8V40"/><path d="M54 4.7v16.1h21M81 4.7v16.1h19L94 6.9c-.5-1.3-1.7-2.2-3.1-2.2z"/><circle cx="46" cy="40" r="7"/><circle cx="104" cy="40" r="7"/></svg>'},
+    {n:'Mazda 3',t:'Fastback',y:'2013–2026',c:94708,s:'<svg viewBox="0 0 150 52" '+V+'><path d="M5 40h140"/><path d="M9 40V32c0-1.7 1.1-3.1 2.7-3.6L29 24l14.6-11.4c1.2-.9 2.6-1.4 4.1-1.4h28c1.7 0 3.3.8 4.4 2.1l18.4 21.3c.6.8 1 1.8 1 2.8V40"/><path d="M45 12.4V24h22M73 12.6L94 36M73 12.4V24h21"/><circle cx="37" cy="40" r="7.2"/><circle cx="111" cy="40" r="7.2"/></svg>'},
+    {n:'Kia Sportage',t:'SUV',y:'2010–2026',c:91152,s:'<svg viewBox="0 0 150 52" '+V+'><path d="M6 38h138"/><path d="M12 38V22c0-1.8 1.2-3.3 3-3.8L29 14l11-7.7c1.2-.8 2.6-1.3 4.1-1.3h37c1.6 0 3.1.6 4.3 1.7l9.4 8.3 17 4c1.9.5 3.3 2.2 3.3 4.2V38"/><path d="M43 5.4V14h24M72 5.4V14h23L85.3 6.9C84.3 6 83 5.4 81.6 5.4z"/><path d="M40 3.4h49"/><circle cx="40" cy="36" r="8.8"/><circle cx="108" cy="36" r="8.8"/><path d="M27 36c0-7.2 5.8-13 13-13s13 5.8 13 13M95 36c0-7.2 5.8-13 13-13s13 5.8 13 13"/></svg>'}
+  ];
+  var vg=document.getElementById('vgrid'),vh='';
+  VEH.forEach(function(v){
+    vh+='<button class="vcell" aria-label="Parts for '+v.n+'">'
+      + '<span class="si">'+v.s+'</span><span>'
+      + '<span class="nm">'+v.n+'</span>'
+      + '<span class="bt">'+v.t+' · '+v.y+'</span>'
+      + '<span class="rc">'+fmt(v.c)+' <span data-i18n="v.road">registered</span></span>'
+      + '</span></button>';
+  });
+  vg.innerHTML=vh;
+
+  /* picker: swap between vehicle selects and a plate field */
+  var plateMode=false, pg=document.getElementById('pgrid'), sw=document.getElementById('swapMode');
+  var vehHTML=pg.innerHTML;
+  function plateHTML(){
+    return '<div class="cell" style="grid-column:1 / 4"><label for="plateNo">'+(T('p.plate')||'Licence plate')+'</label>'
+      +'<input id="plateNo" type="text" inputmode="numeric" placeholder="12-345-67"></div>'
+      +'<div class="act"><button class="btn bp">'+(T('p.go2')||'Find my car')+'</button></div>';
+  }
+  function renderPicker(){
+    pg.innerHTML = plateMode ? plateHTML() : vehHTML;
+    sw.textContent = plateMode ? (T('p.sw2')||'Use make and model instead') : (T('p.sw')||'Use plate number instead');
+  }
+  sw.addEventListener('click',function(){plateMode=!plateMode;renderPicker();});
+
+  /* mobile sheet */
+  var sheet=document.getElementById('sheet'), sp=document.getElementById('sheetPick'), built=false;
+  function build(){ if(built)return; var c=document.querySelector('.finder .pick').cloneNode(true);
+    c.querySelectorAll('[id]').forEach(function(e){e.id=e.id+'-s';});
+    c.querySelectorAll('label[for]').forEach(function(e){e.setAttribute('for',e.getAttribute('for')+'-s');});
+    c.style.marginTop='20px'; sp.appendChild(c); built=true; }
+  function open(){build();sheet.classList.add('open');document.body.style.overflow='hidden';var i=sheet.querySelector('input');if(i)i.focus();}
+  function close(){sheet.classList.remove('open');document.body.style.overflow='';}
+  document.getElementById('osheet').addEventListener('click',open);
+  document.getElementById('sbtn').addEventListener('click',open);
+  document.getElementById('xsheet').addEventListener('click',close);
+  document.addEventListener('keydown',function(e){if(e.key==='Escape'&&sheet.classList.contains('open'))close();});
+
+  /* sticky mobile CTA once the picker leaves the viewport */
+  var st=document.getElementById('sticky'), anchor=document.querySelector('.finder .pick');
+  if('IntersectionObserver' in window && anchor){
+    new IntersectionObserver(function(es){es.forEach(function(e){
+      st.classList.toggle('show', !e.isIntersecting && e.boundingClientRect.top<0);});},{threshold:0}).observe(anchor);
+  }
+
+  /* ── i18n. Hebrew/Arabic are TEMPORARY working copy from the approved English
+       intent — isolated here so they are trivial to replace with authored copy. */
+  var I={
+    he:{'u.vp':'בודקים התאמה לרכב המדויק שלך לפני התשלום','u.sup':'תמיכה','u.trk':'מעקב הזמנה','u.wa':'וואטסאפ',
+      'm.all':'כל החלקים','m.oem':'מק״ט יצרן','m.vin':'מספר שלדה','m.plate':'מספר רישוי','m.ph':'שם חלק, מק״ט, שלדה או רישוי',
+      'a.ai':'שאל AI','a.ai2':'מצא את החלק','a.acc':'חשבון','a.acc2':'כניסה','a.cart':'סל','a.cart2':'2 פריטים','r.all':'כל הקטגוריות',
+      'h.eyebrow':'מרקטפלייס חלפים עם אימות התאמה','h.h1a':'לדעת שזה מתאים.','h.h1b':'ואז לשלם את המחיר הנמוך ביותר.',
+      'h.lede':'בוחרים את הרכב ואנחנו בודקים כל ספק מול היצרן, הדגם והשנה המדויקים שלכם — ומראים כמה כל אחד גובה, כולל משלוח ומע״מ.',
+      'p.lbl':'בחרו את הרכב','p.sw':'חיפוש לפי מספר רישוי','p.sw2':'חיפוש לפי יצרן ודגם','p.make':'יצרן','p.model':'דגם','p.year':'שנה',
+      'p.plate':'מספר רישוי','p.go':'הצג חלקים','p.go2':'מצא את הרכב','p.f1':'חיפוש חינם','p.f2':'ללא צורך בחשבון','p.f3':'הרישוי נבדק מול מאגר הרכב הלאומי',
+      'pf.t':'השוואת מחירים','pf.live':'חי','pf.q':'סט רפידות בלם — ציר קדמי','pf.for':'טויוטה קורולה 2018',
+      'pf.after':'חליפי','pf.free':'משלוח חינם','pf.free2':'חינם','pf.inc':'כולל מע״מ','pf.eu':'מפיץ אירופי',
+      'pf.save':'חוסכים ₪298 על החלק הזה','pf.cta':'פתח קטלוג',
+      't.fits':'מתאים','t.unv':'לא אומת','t.in':'במלאי','t.low':'מלאי נמוך','t.sel':'בחר',
+      's.1k':'חלקים בקטלוג','s.1d':'ב-25 קטגוריות','s.2k':'ספקים בהשוואה','s.2d':'יבואנים ישראלים ומרקטפלייסים גלובליים',
+      's.3k':'שפות, RTL תחילה','s.3d':'עברית, ערבית, אנגלית','s.4k':'דגמי רכב ממופים','s.4d':'נתוני התאמה ממאגר הרכב',
+      'c.h':'עיון בקטלוג','c.s':'כמויות חיות, מתעדכנות עם גדילת הקטלוג','c.all':'כל 25 הקטגוריות',
+      'v.h':'מתחילים מהרכב שלכם','v.s':'ארבעת כלי הרכב הנפוצים ביותר בכבישי ישראל','v.all':'כל היצרנים והדגמים','v.road':'רשומים',
+      'k.h':'מה ההשוואה באמת מראה','k.s':'כל הצעה, מסומנת לפי סוג, עם הסכום האמיתי שתשלמו','k.fit':'מאומת לטויוטה קורולה 2018',
+      'th.s':'ספק','th.f':'התאמה','th.c':'סוג הצעה','th.sh':'משלוח','th.a':'מלאי','th.t':'סה״כ',
+      'k.note':'הצעות מקוריות, חליפיות ו-OE מוצגות תמיד יחד ומסומנות — לעולם לא מוסתרות ולא מוחלפות זו בזו. זהות הספק נחשפת לאחר ביצוע ההזמנה.',
+      'w.h':'איך הקנייה עובדת','w.s':'משלמים לנו פעם אחת, בשקלים. אנחנו מטפלים בספק.',
+      'w.1h':'חיפוש','w.1p':'לפי רכב, מספר רישוי, מק״ט או שלדה.','w.2h':'השוואה','w.2p':'הסכום של כל ספק, כולל משלוח ומע״מ.',
+      'w.3h':'הזמנה','w.3p':'תשלום אחד ב-AutoSpareFinder, בשקלים.','w.4h':'קבלה','w.4p':'אנחנו קונים מהספק ושולחים אליכם, עם מעקב.',
+      'ai.l':'עוזר AI','ai.h':'לא בטוחים איזה חלק צריך?','ai.p':'תארו את הרכב והתקלה בעברית, בערבית או באנגלית. העוזר מזהה את החלק, מוודא שהוא מתאים לרכב המדויק שלכם, ומחזיר את המחיר של כל ספק.',
+      'ai.c1':'התחל שיחה','st.cta':'מצא את החלק שלי','sh.t':'מצאו את החלק','sh.q':'מחפשים עכשיו',
+      'q1':'רפידות בלם','q2':'מסנן שמן','q3':'מגבים','q4':'מסנן אוויר',
+      'f.b':'מרקטפלייס חלפים עם אימות התאמה, לישראל ומעבר לה. השוו כל ספק, שלמו פעם אחת, וקבלו את החלק שבאמת מתאים.',
+      'f.1':'קטלוג','f.1a':'כל החלקים','f.1b':'קטגוריות','f.1c':'חיפוש לפי רישוי','f.1d':'חיפוש לפי שלדה',
+      'f.2':'הזמנות','f.2a':'סל','f.2b':'ההזמנות שלי','f.2c':'משלוחים','f.2d':'החזרות וזיכויים',
+      'f.3':'החברה','f.3a':'API למפתחים','f.3b':'לספקים','f.3c':'פרטיות','f.3d':'תנאים'},
+    ar:{'u.vp':'نتحقق من المطابقة لسيارتك بالضبط قبل الدفع','u.sup':'الدعم','u.trk':'تتبع الطلب','u.wa':'واتساب',
+      'm.all':'كل القطع','m.oem':'رقم الصانع','m.vin':'رقم الهيكل','m.plate':'رقم اللوحة','m.ph':'اسم القطعة أو الرقم أو الهيكل أو اللوحة',
+      'a.ai':'اسأل AI','a.ai2':'اعثر على قطعتي','a.acc':'الحساب','a.acc2':'تسجيل الدخول','a.cart':'السلة','a.cart2':'قطعتان','r.all':'كل الفئات',
+      'h.eyebrow':'سوق قطع غيار بمطابقة مؤكدة','h.h1a':'تأكد أنها تناسب.','h.h1b':'ثم ادفع أقل سعر.',
+      'h.lede':'اختر سيارتك ونتحقق من كل مورد مقابل الصانع والطراز والسنة بالضبط — ثم نعرض ما يتقاضاه كل منهم، شاملًا الشحن والضريبة.',
+      'p.lbl':'اختر سيارتك','p.sw':'البحث برقم اللوحة','p.sw2':'البحث بالصانع والطراز','p.make':'الصانع','p.model':'الطراز','p.year':'السنة',
+      'p.plate':'رقم اللوحة','p.go':'اعرض القطع','p.go2':'اعثر على سيارتي','p.f1':'البحث مجاني','p.f2':'بدون حساب','p.f3':'يتم التحقق من اللوحة في سجل المركبات',
+      'pf.t':'مقارنة الأسعار','pf.live':'مباشر','pf.q':'طقم تيل فرامل — المحور الأمامي','pf.for':'تويوتا كورولا 2018',
+      'pf.after':'تجاري','pf.free':'شحن مجاني','pf.free2':'مجاني','pf.inc':'شامل الضريبة','pf.eu':'موزع أوروبي',
+      'pf.save':'توفّر ₪298 على هذه القطعة','pf.cta':'افتح الكتالوج',
+      't.fits':'يناسب','t.unv':'غير مؤكد','t.in':'متوفر','t.low':'مخزون منخفض','t.sel':'اختر',
+      's.1k':'قطعة في الكتالوج','s.1d':'ضمن 25 فئة','s.2k':'موردًا تتم مقارنتهم','s.2d':'مستوردون إسرائيليون وأسواق عالمية',
+      's.3k':'لغات، بأولوية RTL','s.3d':'العبرية والعربية والإنجليزية','s.4k':'طرازًا مُفهرسًا','s.4d':'بيانات مطابقة من سجل المركبات',
+      'c.h':'تصفح الكتالوج','c.s':'أعداد حية تتحدث مع نمو الكتالوج','c.all':'كل الفئات الـ25',
+      'v.h':'ابدأ من سيارتك','v.s':'أكثر أربع سيارات شيوعًا على الطرق','v.all':'كل الصانعين والطرازات','v.road':'مسجلة',
+      'k.h':'ما تعرضه المقارنة فعلًا','k.s':'كل عرض، موسوم بنوعه، مع المبلغ الحقيقي الذي تدفعه','k.fit':'مؤكد لتويوتا كورولا 2018',
+      'th.s':'المورد','th.f':'المطابقة','th.c':'نوع العرض','th.sh':'الشحن','th.a':'المخزون','th.t':'المجموع',
+      'k.note':'تُعرض عروض OEM والمكافئ والتجاري معًا دائمًا وتُوسم — لا تُخفى ولا يُستبدل أحدها بالآخر. تُكشف هوية المورد بعد تنفيذ الطلب.',
+      'w.h':'كيف يتم الشراء','w.s':'تدفع لنا مرة واحدة بالشيكل. ونحن نتولى المورد.',
+      'w.1h':'ابحث','w.1p':'حسب السيارة أو اللوحة أو رقم القطعة أو الهيكل.','w.2h':'قارن','w.2p':'مجموع كل مورد، شاملًا الشحن والضريبة.',
+      'w.3h':'اطلب','w.3p':'دفعة واحدة على AutoSpareFinder بالشيكل.','w.4h':'استلم','w.4p':'نشتري من المورد ونشحن إليك مع التتبع.',
+      'ai.l':'مساعد AI','ai.h':'غير متأكد أي قطعة تحتاج؟','ai.p':'صف السيارة والعطل بالعبرية أو العربية أو الإنجليزية. يحدد المساعد القطعة، ويؤكد مطابقتها لسيارتك بالضبط، ويعيد سعر كل مورد.',
+      'ai.c1':'ابدأ المحادثة','st.cta':'اعثر على قطعتي','sh.t':'اعثر على قطعتك','sh.q':'الأكثر بحثًا الآن',
+      'q1':'تيل فرامل','q2':'فلتر زيت','q3':'مساحات','q4':'فلتر هواء',
+      'f.b':'سوق قطع غيار بمطابقة مؤكدة، لإسرائيل وخارجها. قارن كل مورد، ادفع مرة واحدة، واحصل على القطعة المناسبة فعلًا.',
+      'f.1':'الكتالوج','f.1a':'كل القطع','f.1b':'الفئات','f.1c':'البحث باللوحة','f.1d':'البحث بالهيكل',
+      'f.2':'الطلبات','f.2a':'السلة','f.2b':'طلباتي','f.2c':'الشحن','f.2d':'الإرجاع والاسترداد',
+      'f.3':'الشركة','f.3a':'واجهة المطورين','f.3b':'للموردين','f.3c':'الخصوصية','f.3d':'الشروط'}
+  };
+  var EN={},curLang='en';
+  document.querySelectorAll('[data-i18n]').forEach(function(e){EN[e.getAttribute('data-i18n')]=e.textContent;});
+  document.querySelectorAll('[data-i18n-ph]').forEach(function(e){EN[e.getAttribute('data-i18n-ph')]=e.getAttribute('placeholder');});
+  function T(k){var d=curLang==='en'?EN:I[curLang];return (d&&d[k])||EN[k];}
+  function apply(lang,dir){
+    curLang=lang;
+    document.documentElement.setAttribute('lang',lang);
+    document.documentElement.setAttribute('dir',dir);
+    document.querySelectorAll('[data-i18n]').forEach(function(e){var v=T(e.getAttribute('data-i18n'));if(v)e.textContent=v;});
+    document.querySelectorAll('[data-i18n-ph]').forEach(function(e){var v=T(e.getAttribute('data-i18n-ph'));if(v)e.setAttribute('placeholder',v);});
+    vehHTML=null;                       /* picker markup must be re-read in the new language */
+    renderPickerAfterLang();
+    built=false; sp.innerHTML='';
+  }
+  function renderPickerAfterLang(){
+    /* rebuild the vehicle picker from scratch so its labels follow the language */
+    plateMode=false;
+    pg.innerHTML='<div class="cell"><label for="mk">'+T('p.make')+'</label>'
+      +'<select id="mk"><option>Toyota</option><option>Kia</option><option>Mazda</option><option>Hyundai</option><option>Skoda</option></select></div>'
+      +'<div class="cell"><label for="md">'+T('p.model')+'</label>'
+      +'<select id="md"><option>Corolla</option><option>Picanto</option><option>Mazda 3</option><option>Sportage</option></select></div>'
+      +'<div class="cell"><label for="yr">'+T('p.year')+'</label>'
+      +'<select id="yr"><option>2018</option><option>2020</option><option>2022</option><option>2024</option></select></div>'
+      +'<div class="act"><button class="btn bp">'+T('p.go')+'</button></div>';
+    vehHTML=pg.innerHTML;
+    sw.textContent=T('p.sw');
+  }
+  document.querySelectorAll('.langs button').forEach(function(b){
+    b.addEventListener('click',function(){
+      document.querySelectorAll('.langs button').forEach(function(x){x.classList.remove('on');});
+      b.classList.add('on');
+      apply(b.getAttribute('data-lang'),b.getAttribute('data-dir'));
+      window.scrollTo({top:0,behavior:reduce?'auto':'smooth'});
+    });
+  });
+})();
+</script>
+</body></html>

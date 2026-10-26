@@ -1,0 +1,260 @@
+Source: /tmp/impact_final.jsonl (6490 models; removed rows in JSONL = 1,189,277; in groups = 1,189,277; consistent = True)
+
+| classification | evidence | rule reason | groups | customer models | fitment rows removed |
+|---|---|---|---|---|---|
+| PROVEN_CORRECT | distinct | customer_is_distinct_model_with_own_series | 10 | 16 | 166,208 |
+| PROVEN_CORRECT | not_a_model | generic_is_junk_prefix | 3 | 31 | 9,942 |
+| PROVEN_CORRECT | distinct | fitment_is_distinct_model | 6 | 6 | 5,179 |
+| UNRESOLVED | ambiguous | customer_is_distinct_model_with_own_series | 64 | 77 | 495,088 |
+| UNRESOLVED | same_platform | customer_is_distinct_model_with_own_series | 4 | 10 | 294,904 |
+| UNRESOLVED | ambiguous | fitment_is_distinct_model | 104 | 104 | 139,528 |
+| UNRESOLVED | generation_letter_year_unverified | fitment_is_distinct_model | 25 | 25 | 35,753 |
+| UNRESOLVED | generation_letter_year_unverified | customer_is_distinct_model_with_own_series | 10 | 27 | 32,487 |
+| UNRESOLVED | single_letter_model_or_trim | fitment_is_distinct_model | 8 | 8 | 5,220 |
+| UNRESOLVED | single_letter_model_or_trim | customer_is_distinct_model_with_own_series | 4 | 4 | 3,585 |
+| UNRESOLVED | same_platform | fitment_is_distinct_model | 1 | 1 | 1,383 |
+
+## PROVEN_INCORRECT — 0 groups, 0 rows
+
+## PROVEN_CORRECT — 19 groups, 181,329 rows
+- `toyota | corolla + cross` (customer_is_distinct_model_with_own_series) rows 85,912, customers 2 — different vehicle: the extension's own series and the base series carry disjoint platform/chassis codes (['g10'] vs ['ae10', 'ae86', 'aze15'])
+- `toyota | yaris + verso` (customer_is_distinct_model_with_own_series) rows 41,542, customers 1 — different vehicle: the extension's own series and the base series carry disjoint platform/chassis codes (['ncp2', 'nlp2'] vs ['dl2s', 'ksp13', 'ksp9'])
+- `renault | kangoo + express` (customer_is_distinct_model_with_own_series) rows 20,854, customers 2 — different vehicle: the extension's own series and the base series carry disjoint platform/chassis codes (['fc0', 'fw0'] vs ['kc0', 'kc0)', 'kw0'])
+- `renault | megane + scenic` (customer_is_distinct_model_with_own_series) rows 10,416, customers 1 — different vehicle: the extension's own series and the base series carry disjoint platform/chassis codes (['ja0'] vs ['b9a', 'ba0', 'bm0'])
+- `toyota | land + -` (generic_is_junk_prefix) rows 9,078, customers 17 — the fitment row names no vehicle: the registry uses it only as the start of other model names and it is not the make; no compatibility claim is possible
+- `toyota | prius + plus` (customer_is_distinct_model_with_own_series) rows 4,317, customers 3 — different vehicle: the extension's own series and the base series carry disjoint platform/chassis codes (['w4', 'zvw4'] vs ['nhp10', 'nhw11', 'nhw20'])
+- `toyota | prius + plus` (fitment_is_distinct_model) rows 1,452, customers 1 — different vehicle: the extension's own series and the base series carry disjoint platform/chassis codes (['w4', 'zvw4'] vs ['nhp10', 'nhw11', 'nhw20'])
+- `mg | mg + hs` (fitment_is_distinct_model) rows 1,188, customers 1 — different vehicle: the extension's own series and the base series carry disjoint platform/chassis codes (['as33'] vs ['4ev', '5lfp', 'ap11'])
+- `mg | mg + hs` (customer_is_distinct_model_with_own_series) rows 1,076, customers 2 — different vehicle: the extension's own series and the base series carry disjoint platform/chassis codes (['as33'] vs ['4ev', '5lfp', 'ap11'])
+- `toyota | corolla + cross` (fitment_is_distinct_model) rows 1,061, customers 1 — different vehicle: the extension's own series and the base series carry disjoint platform/chassis codes (['g10'] vs ['ae10', 'ae86', 'aze15'])
+- `mitsubishi | colt + lancer` (customer_is_distinct_model_with_own_series) rows 962, customers 2 — different vehicle: the extension's own series and the base series carry disjoint platform/chassis codes (['a7'] vs ['a15', 'c1', 'c5'])
+- `mazda | 323 + -` (generic_is_junk_prefix) rows 627, customers 11 — the fitment row names no vehicle: the registry uses it only as the start of other model names and it is not the make; no compatibility claim is possible
+- `toyota | avensis + verso` (customer_is_distinct_model_with_own_series) rows 546, customers 1 — different vehicle: the extension's own series and the base series carry disjoint platform/chassis codes (['acm2', 'clm2'] vs ['adt27', 't22', 't25'])
+- `toyota | avensis + verso` (fitment_is_distinct_model) rows 501, customers 1 — different vehicle: the extension's own series and the base series carry disjoint platform/chassis codes (['acm2', 'clm2'] vs ['adt27', 't22', 't25'])
+- `citroen | xsara + picasso` (fitment_is_distinct_model) rows 492, customers 1 — different vehicle: the extension's own series and the base series carry disjoint platform/chassis codes (['n68'] vs ['n0', 'n1', 'n2'])
+- `skoda | rapid + spaceback` (customer_is_distinct_model_with_own_series) rows 485, customers 1 — different vehicle: the extension's own series and the base series carry disjoint platform/chassis codes (['nh1'] vs ['120g', '130g', '135g'])
+- `toyota | yaris + verso` (fitment_is_distinct_model) rows 485, customers 1 — different vehicle: the extension's own series and the base series carry disjoint platform/chassis codes (['ncp2', 'nlp2'] vs ['dl2s', 'ksp13', 'ksp9'])
+- `volvo | 940 + -` (generic_is_junk_prefix) rows 237, customers 3 — the fitment row names no vehicle: the registry uses it only as the start of other model names and it is not the make; no compatibility claim is possible
+- `citroen | xsara + picasso` (customer_is_distinct_model_with_own_series) rows 98, customers 1 — different vehicle: the extension's own series and the base series carry disjoint platform/chassis codes (['n68'] vs ['n0', 'n1', 'n2'])
+
+## UNRESOLVED — 220 groups, 1,007,948 rows
+- `nissan | qashqai + qashqai` (customer_is_distinct_model_with_own_series) rows 162,558, customers 2 — D2: shares platform codes with the base — a shared platform is not proof of part compatibility
+- `toyota | corolla + verso` (customer_is_distinct_model_with_own_series) rows 128,868, customers 3 — D2: shares platform codes with the base — a shared platform is not proof of part compatibility
+- `toyota | land + cruiser` (fitment_is_distinct_model) rows 49,325, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `kia | niro + plus` (customer_is_distinct_model_with_own_series) rows 43,456, customers 2 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `toyota | yaris + cross hsd` (customer_is_distinct_model_with_own_series) rows 41,542, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `toyota | yaris + cross` (customer_is_distinct_model_with_own_series) rows 41,542, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `toyota | land cruiser + prado` (customer_is_distinct_model_with_own_series) rows 40,957, customers 1 — D5: generic Land Cruiser rows for Prado — not validated at part/generation level; D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `toyota | hilux + vigo` (customer_is_distinct_model_with_own_series) rows 40,899, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `chevrolet | spark + ls` (customer_is_distinct_model_with_own_series) rows 31,037, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `jaguar | xj + xj` (customer_is_distinct_model_with_own_series) rows 28,722, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `suzuki | sx4 + crossover` (customer_is_distinct_model_with_own_series) rows 23,789, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `suzuki | sx4 + crossover` (fitment_is_distinct_model) rows 23,720, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `kia | niro + plus phev` (customer_is_distinct_model_with_own_series) rows 21,728, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `citroen | c3 + aircross` (customer_is_distinct_model_with_own_series) rows 20,898, customers 3 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `citroen | c4 + picasso` (customer_is_distinct_model_with_own_series) rows 20,439, customers 3 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `citroen | c4 + spacetourer` (customer_is_distinct_model_with_own_series) rows 20,439, customers 3 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `citroen | c4 + cactus` (customer_is_distinct_model_with_own_series) rows 13,626, customers 2 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `porsche | 718 boxster + spy` (customer_is_distinct_model_with_own_series) rows 12,945, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `renault | megane + e tech` (customer_is_distinct_model_with_own_series) rows 10,416, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `renault | clio + b` (customer_is_distinct_model_with_own_series) rows 10,410, customers 1 — D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)
+- `chevrolet | malibu + lt` (customer_is_distinct_model_with_own_series) rows 7,365, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `citroen | c5 + aircross` (fitment_is_distinct_model) rows 6,979, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `citroen | c3 + picasso` (customer_is_distinct_model_with_own_series) rows 6,966, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `byd | byd seal + u` (customer_is_distinct_model_with_own_series) rows 6,098, customers 2 — D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)
+- `chevrolet | captiva + sport` (customer_is_distinct_model_with_own_series) rows 5,793, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `porsche | 911 + carrera` (customer_is_distinct_model_with_own_series) rows 4,943, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `porsche | 911 + speedster` (customer_is_distinct_model_with_own_series) rows 4,943, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `land rover | range rover + spo` (fitment_is_distinct_model) rows 4,734, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `byd | byd seal + u` (fitment_is_distinct_model) rows 4,546, customers 1 — D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)
+- `opel | astra + g` (fitment_is_distinct_model) rows 4,545, customers 1 — D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)
+- `byd | byd atto + 2` (fitment_is_distinct_model) rows 4,370, customers 1 — D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)
+- `opel | astra + g` (customer_is_distinct_model_with_own_series) rows 3,880, customers 8 — D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)
+- `land rover | range rover + evo` (fitment_is_distinct_model) rows 3,773, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `porsche | taycan + cross tu` (customer_is_distinct_model_with_own_series) rows 3,740, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `chevrolet | sonic + ls` (customer_is_distinct_model_with_own_series) rows 3,715, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `chevrolet | sonic + lt` (customer_is_distinct_model_with_own_series) rows 3,715, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `opel | astra + h` (fitment_is_distinct_model) rows 3,332, customers 1 — D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)
+- `byd | byd seal + 5` (customer_is_distinct_model_with_own_series) rows 3,049, customers 1 — D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)
+- `kia | sorento + fywgc` (customer_is_distinct_model_with_own_series) rows 2,922, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `opel | astra + h` (customer_is_distinct_model_with_own_series) rows 2,910, customers 6 — D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)
+- `land rover | range rover + vel` (fitment_is_distinct_model) rows 2,836, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `land rover | range rover + evo` (customer_is_distinct_model_with_own_series) rows 2,674, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `land rover | range rover + spo` (customer_is_distinct_model_with_own_series) rows 2,674, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `land rover | range rover + vel` (customer_is_distinct_model_with_own_series) rows 2,674, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `chevrolet | optra + ls` (customer_is_distinct_model_with_own_series) rows 2,393, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `byd | byd sealion + 7` (fitment_is_distinct_model) rows 2,382, customers 1 — D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)
+- `bmw | x5 + m` (customer_is_distinct_model_with_own_series) rows 2,249, customers 1 — D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)
+- `kia | optima + panorami` (customer_is_distinct_model_with_own_series) rows 2,215, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `kia | optima + premium` (customer_is_distinct_model_with_own_series) rows 2,215, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `citroen | c4 + picasso` (fitment_is_distinct_model) rows 2,175, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `mazda | cx + 5` (fitment_is_distinct_model) rows 2,154, customers 1 — D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)
+- `byd | byd atto 2 + dm i` (customer_is_distinct_model_with_own_series) rows 2,151, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `chevrolet | impala + lt` (customer_is_distinct_model_with_own_series) rows 2,080, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `audi | a4 + allroad` (customer_is_distinct_model_with_own_series) rows 2,062, customers 2 — D2: shares platform codes with the base — a shared platform is not proof of part compatibility
+- `byd | byd seal + 5` (fitment_is_distinct_model) rows 2,011, customers 1 — D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)
+- `kia | niro + plus` (fitment_is_distinct_model) rows 1,858, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `kia | sorento + fywgc` (fitment_is_distinct_model) rows 1,791, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `citroen | c3 + aircross` (fitment_is_distinct_model) rows 1,669, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `citroen | c4 + spacetourer` (fitment_is_distinct_model) rows 1,619, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `mg | mg + zs` (customer_is_distinct_model_with_own_series) rows 1,614, customers 3 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `porsche | macan + 4` (fitment_is_distinct_model) rows 1,594, customers 1 — single-letter extension with no sibling generations (e.g. Prius C, X5 M): model or trim unknown
+- `porsche | panamera + 4 e hy` (fitment_is_distinct_model) rows 1,594, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `audi | q8 + e tron` (fitment_is_distinct_model) rows 1,515, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `opel | corsa + c` (fitment_is_distinct_model) rows 1,507, customers 1 — D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)
+- `opel | corsa + b` (fitment_is_distinct_model) rows 1,486, customers 1 — D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)
+- `mazda | cx + 3` (fitment_is_distinct_model) rows 1,476, customers 1 — D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)
+- `toyota | prius + c` (customer_is_distinct_model_with_own_series) rows 1,439, customers 1 — single-letter extension with no sibling generations (e.g. Prius C, X5 M): model or trim unknown
+- `opel | corsa + b` (customer_is_distinct_model_with_own_series) rows 1,437, customers 3 — D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)
+- `opel | corsa + c` (customer_is_distinct_model_with_own_series) rows 1,437, customers 3 — D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)
+- `bmw | x3 + x drive 20d` (customer_is_distinct_model_with_own_series) rows 1,435, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `audi | a6 + allroad` (customer_is_distinct_model_with_own_series) rows 1,416, customers 3 — D2: shares platform codes with the base — a shared platform is not proof of part compatibility
+- `toyota | corolla + verso` (fitment_is_distinct_model) rows 1,383, customers 1 — D2: shares platform codes with the base — a shared platform is not proof of part compatibility
+- `bmw | x6 + m` (customer_is_distinct_model_with_own_series) rows 1,358, customers 1 — single-letter extension with no sibling generations (e.g. Prius C, X5 M): model or trim unknown
+- `bmw | x6 + xdrive 30d` (customer_is_distinct_model_with_own_series) rows 1,358, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `bmw | x6 + xdrive 35i` (customer_is_distinct_model_with_own_series) rows 1,358, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `toyota | hilux + vigo` (fitment_is_distinct_model) rows 1,325, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `bmw | x1 + sdrive 18i` (customer_is_distinct_model_with_own_series) rows 1,299, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `rover | freelander + 2` (fitment_is_distinct_model) rows 1,172, customers 1 — single-letter extension with no sibling generations (e.g. Prius C, X5 M): model or trim unknown
+- `kia | niro + plus phev` (fitment_is_distinct_model) rows 1,121, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `mg | mg + 3` (fitment_is_distinct_model) rows 1,115, customers 1 — D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)
+- `mazda | mazda + 3` (fitment_is_distinct_model) rows 1,043, customers 1 — D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)
+- `toyota | yaris + cross` (fitment_is_distinct_model) rows 1,013, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `audi | r8 + spyder` (fitment_is_distinct_model) rows 1,011, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `suzuki | s + cross` (fitment_is_distinct_model) rows 1,002, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `volkswagen | polo + gti` (customer_is_distinct_model_with_own_series) rows 948, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `volkswagen | tiguan + all spac` (customer_is_distinct_model_with_own_series) rows 885, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `volkswagen | tiguan + allspace` (customer_is_distinct_model_with_own_series) rows 885, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `toyota | proace + city` (customer_is_distinct_model_with_own_series) rows 884, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `toyota | proace + city ver` (customer_is_distinct_model_with_own_series) rows 884, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `toyota | proace + verso` (customer_is_distinct_model_with_own_series) rows 884, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `mazda | mazda + 2` (fitment_is_distinct_model) rows 868, customers 1 — D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)
+- `chevrolet | captiva + sport` (fitment_is_distinct_model) rows 845, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `volkswagen | golf + plus` (fitment_is_distinct_model) rows 840, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `volkswagen | tiguan + all spac` (fitment_is_distinct_model) rows 808, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `land rover | discovery + 3` (fitment_is_distinct_model) rows 794, customers 1 — D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)
+- `volkswagen | tiguan + allspace` (fitment_is_distinct_model) rows 783, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `land rover | freelander + 2` (fitment_is_distinct_model) rows 759, customers 1 — single-letter extension with no sibling generations (e.g. Prius C, X5 M): model or trim unknown
+- `volkswagen | t cross + life` (fitment_is_distinct_model) rows 755, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `volkswagen | t cross + life` (customer_is_distinct_model_with_own_series) rows 754, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `kia | optima + panorami` (fitment_is_distinct_model) rows 726, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `kia | optima + premium` (fitment_is_distinct_model) rows 726, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `citroen | c4 + cactus` (fitment_is_distinct_model) rows 655, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `volkswagen | polo + gti` (fitment_is_distinct_model) rows 644, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `citroen | c3 + picasso` (fitment_is_distinct_model) rows 639, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `mazda | mazda 3 + sport` (customer_is_distinct_model_with_own_series) rows 639, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `volkswagen | caddy + gp` (fitment_is_distinct_model) rows 631, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `volkswagen | caddy + maxi` (fitment_is_distinct_model) rows 628, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `mazda | mazda + 6` (fitment_is_distinct_model) rows 580, customers 1 — D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)
+- `toyota | proace + verso` (fitment_is_distinct_model) rows 558, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `toyota | proace + city` (fitment_is_distinct_model) rows 548, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `mg | mg + 3` (customer_is_distinct_model_with_own_series) rows 538, customers 1 — D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)
+- `porsche | 718 boxster + spy` (fitment_is_distinct_model) rows 537, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `opel | corsa + d` (fitment_is_distinct_model) rows 535, customers 1 — D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)
+- `toyota | proace + city ver` (fitment_is_distinct_model) rows 531, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `audi | q3 + 40 tfsi` (customer_is_distinct_model_with_own_series) rows 530, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `audi | q3 + sback etron` (customer_is_distinct_model_with_own_series) rows 530, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `toyota | yaris + cross hsd` (fitment_is_distinct_model) rows 510, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `land rover | discovery + sport` (customer_is_distinct_model_with_own_series) rows 509, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `opel | astra + gtc` (fitment_is_distinct_model) rows 504, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `toyota | c hr + hybrib` (customer_is_distinct_model_with_own_series) rows 504, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `mazda | cx + 9` (fitment_is_distinct_model) rows 503, customers 1 — D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)
+- `bmw | m3 + competition` (fitment_is_distinct_model) rows 500, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `subaru | legacy + outback` (customer_is_distinct_model_with_own_series) rows 500, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `renault | clio + b` (fitment_is_distinct_model) rows 496, customers 1 — D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)
+- `toyota | prius + c` (fitment_is_distinct_model) rows 490, customers 1 — single-letter extension with no sibling generations (e.g. Prius C, X5 M): model or trim unknown
+- `opel | astra + gtc` (customer_is_distinct_model_with_own_series) rows 485, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `opel | astra + st` (customer_is_distinct_model_with_own_series) rows 485, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `renault | megane + e tech` (fitment_is_distinct_model) rows 483, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `audi | a3 + design` (customer_is_distinct_model_with_own_series) rows 481, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `opel | corsa + d` (customer_is_distinct_model_with_own_series) rows 479, customers 1 — D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)
+- `porsche | cayenne + ehybrid` (fitment_is_distinct_model) rows 458, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `bmw | cooper + s` (fitment_is_distinct_model) rows 445, customers 1 — single-letter extension with no sibling generations (e.g. Prius C, X5 M): model or trim unknown
+- `opel | astra + st` (fitment_is_distinct_model) rows 438, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `opel | astra + berlina` (fitment_is_distinct_model) rows 437, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `subaru | impreza + tur new` (fitment_is_distinct_model) rows 433, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `subaru | impreza tur + new` (fitment_is_distinct_model) rows 433, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `volkswagen | golf + plus` (customer_is_distinct_model_with_own_series) rows 429, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `mazda | mazda + mx 5` (fitment_is_distinct_model) rows 427, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `mazda | mazda mx + 5` (fitment_is_distinct_model) rows 427, customers 1 — single-letter extension with no sibling generations (e.g. Prius C, X5 M): model or trim unknown
+- `bmw | x6 + xdrive 30d` (fitment_is_distinct_model) rows 422, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `volvo | v60 + recharge t8` (fitment_is_distinct_model) rows 421, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `bmw | x6 + xdrive 35i` (fitment_is_distinct_model) rows 415, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `volvo | xc60 + b5 fwd` (fitment_is_distinct_model) rows 415, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `chevrolet | spark + ls` (fitment_is_distinct_model) rows 409, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `mazda | mazda + cx 30` (fitment_is_distinct_model) rows 409, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `mazda | mazda3 + sport` (fitment_is_distinct_model) rows 409, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `chevrolet | sonic + lt` (fitment_is_distinct_model) rows 408, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `subaru | impreza + new` (fitment_is_distinct_model) rows 408, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `toyota | camry + hybride` (fitment_is_distinct_model) rows 408, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `bmw | x3 + x drive 20d` (fitment_is_distinct_model) rows 407, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `chevrolet | sonic + ls` (fitment_is_distinct_model) rows 406, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `chevrolet | impala + lt` (fitment_is_distinct_model) rows 405, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `chevrolet | optra + ls` (fitment_is_distinct_model) rows 405, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `mazda | mazda + cx 3` (fitment_is_distinct_model) rows 405, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `mazda | mazda cx + 3` (fitment_is_distinct_model) rows 405, customers 1 — D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)
+- `chevrolet | malibu + lt` (fitment_is_distinct_model) rows 404, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `fiat | fiat + ducato` (fitment_is_distinct_model) rows 404, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `mazda | mazda + 5` (fitment_is_distinct_model) rows 404, customers 1 — D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)
+- `volvo | ex30 + sm` (fitment_is_distinct_model) rows 404, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `mazda | mazda + cx 5` (fitment_is_distinct_model) rows 403, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `mazda | mazda cx + 5` (fitment_is_distinct_model) rows 403, customers 1 — D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)
+- `mercedes-benz | c180 + cdi` (fitment_is_distinct_model) rows 402, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `fiat | fiat + tipo` (fitment_is_distinct_model) rows 401, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `bmw | 530e + iperforman` (fitment_is_distinct_model) rows 398, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `fiat | fiat + doblo` (fitment_is_distinct_model) rows 398, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `audi | a3 + design` (fitment_is_distinct_model) rows 397, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `audi | q3 + sback etron` (fitment_is_distinct_model) rows 397, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `bmw | 530e + iperforman` (customer_is_distinct_model_with_own_series) rows 395, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `bmw | cooper + s` (customer_is_distinct_model_with_own_series) rows 395, customers 1 — single-letter extension with no sibling generations (e.g. Prius C, X5 M): model or trim unknown
+- `bmw | x1 + sdrive 18i` (fitment_is_distinct_model) rows 395, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `nissan | qashqai + plus 2` (fitment_is_distinct_model) rows 395, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `audi | q3 + 40 tfsi` (fitment_is_distinct_model) rows 394, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `audi | q3 + sb 35` (fitment_is_distinct_model) rows 393, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `nissan | infiniti + m` (customer_is_distinct_model_with_own_series) rows 393, customers 1 — single-letter extension with no sibling generations (e.g. Prius C, X5 M): model or trim unknown
+- `toyota | lexus + rx 450h` (fitment_is_distinct_model) rows 393, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `skoda | octavia + s` (fitment_is_distinct_model) rows 390, customers 1 — D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)
+- `toyota | corolla + runx` (fitment_is_distinct_model) rows 390, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `toyota | space + verso` (fitment_is_distinct_model) rows 390, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `skoda | fabia + space` (fitment_is_distinct_model) rows 389, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `skoda | octavia + space` (fitment_is_distinct_model) rows 388, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `toyota | land + criser` (fitment_is_distinct_model) rows 387, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `audi | a8 + long` (fitment_is_distinct_model) rows 386, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `bmw | m3 + competition` (customer_is_distinct_model_with_own_series) rows 333, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `land rover | discovery + 4` (fitment_is_distinct_model) rows 314, customers 1 — D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)
+- `bmw | x6 + m` (fitment_is_distinct_model) rows 296, customers 1 — single-letter extension with no sibling generations (e.g. Prius C, X5 M): model or trim unknown
+- `citroen | c5 + aircross` (customer_is_distinct_model_with_own_series) rows 158, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `volvo | v60 + recharge t8` (customer_is_distinct_model_with_own_series) rows 111, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `bmw | x5 + m` (fitment_is_distinct_model) rows 74, customers 1 — D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)
+- `ford | bronco + bigbend` (customer_is_distinct_model_with_own_series) rows 66, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `ford | bronco + outerban` (customer_is_distinct_model_with_own_series) rows 66, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `audi | q8 + e tron` (customer_is_distinct_model_with_own_series) rows 51, customers 3 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `chery | tiggo + 7 pro` (fitment_is_distinct_model) rows 48, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `chery | tiggo + 8 pro` (fitment_is_distinct_model) rows 48, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `bmw | x6 m + competitio` (fitment_is_distinct_model) rows 42, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `gmc | yukon + xl` (fitment_is_distinct_model) rows 42, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `bmw | cooper + se` (fitment_is_distinct_model) rows 40, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `bmw | m5 + competition` (fitment_is_distinct_model) rows 38, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `bmw | x4 + m` (fitment_is_distinct_model) rows 37, customers 1 — single-letter extension with no sibling generations (e.g. Prius C, X5 M): model or trim unknown
+- `bmw | 330e + iperforman` (fitment_is_distinct_model) rows 36, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `ford | focus + st` (fitment_is_distinct_model) rows 35, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `bmw | x3 + xdrive 20d` (fitment_is_distinct_model) rows 32, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `bmw | m2 + competition` (fitment_is_distinct_model) rows 30, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `honda | civic + type r` (fitment_is_distinct_model) rows 24, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `bmw | x3 + m` (fitment_is_distinct_model) rows 20, customers 1 — D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)
+- `bmw | m3 + comp` (fitment_is_distinct_model) rows 18, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `bmw | x5 + xdrive 40d` (fitment_is_distinct_model) rows 16, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `toyota | lexus + gs 300` (fitment_is_distinct_model) rows 16, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `toyota | lexus + is 250` (fitment_is_distinct_model) rows 16, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `audi | a8 + long` (customer_is_distinct_model_with_own_series) rows 10, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `bmw | x5 + xdrive 30d` (fitment_is_distinct_model) rows 8, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `bmw | x5 + xdrive 35i` (fitment_is_distinct_model) rows 8, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `subaru | wrx + sti` (fitment_is_distinct_model) rows 8, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `bmw | m4 + comp xdrive` (fitment_is_distinct_model) rows 6, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `bmw | x6 + xdrive 50i` (fitment_is_distinct_model) rows 6, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `bmw | z4 + sdrive 35i` (fitment_is_distinct_model) rows 6, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `audi | r8 + spyder` (customer_is_distinct_model_with_own_series) rows 4, customers 2 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `toyota | sienna + xle` (fitment_is_distinct_model) rows 4, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `bmw | m3 + cs` (fitment_is_distinct_model) rows 2, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `bmw | x5 + xdrive 50i` (fitment_is_distinct_model) rows 2, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence
+- `jaguar | xk8 + xkr` (customer_is_distinct_model_with_own_series) rows 1, customers 1 — D3: no platform/chassis codes on one side — name similarity only, no part-level evidence

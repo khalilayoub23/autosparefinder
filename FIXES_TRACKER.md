@@ -1,5 +1,1065 @@
 # AutoSpareFinder — Bug & Breaking Points Fix Tracker
-> Last scan: 2026-10-03 | Total issues found: 517 | Fixed: 516 | In Progress: 0 | Open: 1
+> Last scan: 2026-10-05 | Total issues found: 518 | Fixed: 516 | In Progress: 1 | Open: 1
+> Note 2026-10-22: the counts above are NOT maintained after 2026-10-05 (#92). Current open registers: #80–#92 and #105–#110, #112 (#107 partially verified).
+
+---
+
+## 2026-10-23/25 — Deployment record: unified release 78/88/100-104, PATCH_107, Email Agent draft mode, shared sandbox
+
+| When (UTC) | What | Identity | Result |
+|---|---|---|---|
+| 10-23 12:33 | Unified release deployed (owner ran `pre_restart.sh` + patch; backend recreate only) | patch `3eeb25c2823a41eccc37bd47e700ae6dfb391b35beb2f38cc9169bc55e782a4c`, 34 files; container `49053507bd37` | migration 0062 no-op; 2 h monitor clean; #78 verified (no healthcheck kills in ~44 h) |
+| 10-25 20:43 | PATCH_107 + Gmail `gmail.compose` re-consent + `EMAIL_AGENT_GMAIL_DRAFTS=1` (one owner-approved restart) | `04e2c9c02d51…86dd`, 2 files; container `e400bfc952b1` | startup clean; Email Agent `can_draft: true`, controlled owner test → 1 Gmail draft, 0 sent, idempotent |
+| 10-25 ~20:58 | Shared sandbox recreated (#99, owner-approved) | sandbox compose from the release | `internal: true` enforced live; #99/#100 closed |
+
+Release records: `/opt/asf-rel/RELEASE_78_88_100_103.md` §13–§15; Email Agent: `docs/EMAIL_AGENT.md` § Live state.
+Open from this work: #107 production verification (next scan 2026-10-26 08:00Z), #105, #106, #108, #110 (#109 closed 2026-10-26).
+
+---
+
+## #88 — Test environment drift: 62 permanent failures + order-dependent collection error — RESOLVED IN ISOLATED TREE (all 62 fixed; final fresh-environment full run 0 failed, pytest exit 0) — CLOSED — DEPLOYED 2026-10-23 12:33Z in the unified release `3eeb25c2823a` (migration 0062 applied as a no-op in production, schema identical before/after) — 2026-10-22/25
+
+**Baseline (unchanged tree = live, sandbox, Python 3.11.15 / pytest 9.1.1 / SQLAlchemy 2.0.51 / asyncpg 0.31.0):**
+- Full suite, twice: **62 failed / 1711 passed / 72 skipped**, the same failures by name and normalised reason both times.
+- Every one of the 62 reproduces in its own file alone (none is order-dependent).
+- `tests/test_fitment_pipeline_guardrails.py` alone: collection error.
+- Reports: `/opt/asf-h78/reports/baseline_*`.
+- (Correction to earlier evidence: the "EXIT 0" recorded there was grep's exit code, not pytest's; final runs record pytest's.)
+
+**Root causes and dispositions:**
+
+| Failures | Cause | Disposition |
+|---|---|---|
+| collection error (guardrails file) | `tests/` is a package, so pytest puts only its PARENT on `sys.path`; bare `import isolated_db_guard` worked only if an earlier-collected module had inserted `tests/` (8 do). Alone → error; full run → depends on alphabetical order. | **Fixed** at the source: `tests/conftest.py` adds `tests/` to `sys.path`. The file now collects alone (2 passed, 1 skipped) and in any order. |
+| 16 base_price + 9 customer_price_boundary + 8 offer_classification + 15 aliexpress_discovery + 10 aliexpress_price_sync (58) | (a) **Invalid fixtures:** they never created data; they SELECTed "the first active, offer-less part with an OEM" / "another active supplier" from the real catalog (borrowed rows; against a populated DB they UPDATE real rows inside a rollback). The sandbox catalog is empty. (b) **Schema drift:** the sandbox lacked `supplier_parts.warranty_source`, `part_thumbnails` and other objects that exist ONLY in production (no migration creates them). (c) `_discovery_brands` samples `TABLESAMPLE SYSTEM (1)`, which is empty on any small database. | **Fixed:** `tests/catalog_population.py` creates the exact population (40 offer-less parts, 8 priced parts with a visible offer, 4 suppliers, AliExpress if missing) INSIDE each test's rolled-back transaction, with ids that sort first. Assertions unchanged. Catalog migration **0062** versions the out-of-band production schema. The discovery tests take brands as an input like the network/clock. Result: **194/194** in these files + aliexpress_matching. |
+| 1 aliexpress_matching (`KeyError: 'access_token'`) | **Invalid fixture:** passed only where a REAL `ALIEXPRESS_ACCESS_TOKEN` was in the environment (the request adds the token only when configured). | **Fixed:** the fixture sets a dummy token; the assertion is tightened to the exact value. |
+| 1 test_system (`HF_VISION_MODEL is not set`) + 1 test_full_system (reset link → localhost) | **Environment/config drift:** production sets both (`.env`); the sandbox compose set neither. | **Fixed in config:** `sandbox/docker-compose.sandbox.yml` sets `HF_VISION_MODEL` (production's model name) and a sandbox https `FRONTEND_URL` (never the production site). Passes with that environment injected; **takes effect when the SANDBOX is recreated** (not done — #99). |
+| 1 test_platform_connectivity (`No Xpeng hits`) | **Environment/data:** needed a production-like catalog + index, then called the site search, which fans out to LIVE external suppliers. | **Fixed (final patch):** the test seeds its own Xpeng part + Meilisearch document, runs the real search route in-process with `ENABLE_EXTERNAL_SUPPLIERS=0`, and a DNS-level guard fails it on any external host (`test_network_guard_refuses_real_supplier_hosts`). It also drops pooled DB connections left by earlier tests' event loops (`dispose(close=False)`) — without that it failed only in the full suite ("attached to a different loop"), found in final verification. Passes alone, in its file, and in both final full runs. |
+
+**Migration 0062 (`backend/alembic/versions/0062_version_out_of_band_schema.py`, catalog):**
+- **Read-only drift inventory:** production has 7 tables and 58 columns the migrations do not create.
+- **Versioned with production's exact definitions (`pg_dump -s`, read-only):**
+  - tables `api_keys`, `gov_il_manufacturer_xref`, `harvest_queue`, `part_thumbnails`, `aliexpress_candidates`;
+  - columns `supplier_parts.warranty_source`, `parts_catalog.thumbnail_status` / `thumbnail_url`;
+  - index `idx_parts_thumb_status`.
+- **Deliberately NOT versioned:**
+  - `night_pipeline_runs` — production-only BY DESIGN. `tests/isolated_db_guard.py` uses its ABSENCE to recognise a non-production database;
+    versioning it made the guard refuse the sandbox. Caught by two failing guard tests, reverted, plus a regression test
+    `test_versioned_schema_never_includes_the_production_fingerprint_table`.
+  - `dedup_work_jaguar` — a one-off job's work table.
+- **Sandbox result:** columns (56), indexes (12) and constraints (8) of the versioned objects are **identical to production**.
+- **Production safety, proven in the sandbox:** every object is created only when missing.
+  - Over existing objects with `parts_catalog`/`supplier_parts` write-locked: **1.82 s, no wait**.
+  - Contrast: a plain `CREATE INDEX IF NOT EXISTS` on the same existing index waited for the table lock (timed out at 5 s).
+  - In production 0062 executes no DDL and takes no lock.
+- **Downgrade is a no-op** (the objects pre-date it).
+- **Rollback rehearsed:**
+  - new-code downgrade → 0061 (objects kept), and the old code then starts (exit 0);
+  - re-upgrade over existing objects works;
+  - old code on 0062 → exit 255 ("Can't locate revision"). Downgrade BEFORE reverting the code.
+
+**Final verification of PATCH_78_88 (2026-10-22, patch `1506c2b93cc0f3c9…ab27ed01b62`, 20 files — historical: the release artifact is now the unified `3eeb25c2823a`, re-verified by its own gate; disposable egress-free environment `h78disp`;
+evidence `/opt/asf-h78/reports/final/`; supersedes the earlier "1 failed / 1806 passed" result, which still had the Xpeng failure):**
+- Full suite (`pytest -q -rfE -p no:cacheprovider --continue-on-collection-errors tests/`, pytest's own exit code):
+  - run A (environment 14 h old): 1 failed / 1,834 passed / 62 skipped / 0 errors, exit 1 — the failure is #103 (`test_X3…`, chat/payment
+    crash test, file and code NOT touched by this patch; intermittent, passes 11/11 in the fresh environment);
+  - run B (environment rebuilt from scratch, `down -v`/`up`): **1,835 passed / 62 skipped / 0 failed / 0 errors, exit 0**.
+  - Baseline for comparison: 62 failed / 1,711 passed / 72 skipped (×2, identical). Total tests 1,845 → 1,897 (+52 new).
+- Collection: `--collect-only` 1,897 tests, exit 0; `test_fitment_pipeline_guardrails.py` alone 2 passed / 1 skipped, exit 0.
+- **All 62 historical failures FIXED:** each passes alone (62 × exit 0) and in runs A and B. Disposition by file: base_price 16,
+  customer_price_boundary 9, offer_classification 8, aliexpress_discovery 15, aliexpress_price_sync 10, aliexpress_matching 1 (fixtures);
+  test_system 1 + test_full_system 1 (sandbox config; still red in the SHARED sandbox until it is recreated, #99); platform_connectivity 1 (rewritten).
+- Order: the 12 affected files (540 tests) forward / reversed / 3 shuffles — no collection error in any order; the only order-dependent
+  failures are the duplicate-registration pairs (#102, files not changed by this patch).
+- Migration 0062 in scratch DBs: absent / partial / interrupted-by-lock (fails after 15 s, version stays 0061, nothing left behind) + retry /
+  present under locks (no-op, 1.4 s, no wait) / downgrade (version only) / re-upgrade — all pass. Versioned objects (64 columns, 13 indexes,
+  9 constraints incl. `social_inbox`) identical to production (read-only query); `night_pipeline_runs` absent.
+- Patch + rollback rehearsal on a scratch copy of the live tree: apply `patch -p1 -E` clean (no offset/fuzz/reject), exactly the 20 manifest
+  files changed, byte-identical to the reviewed source, `git diff --check` clean; new code applies 0062; old code on 0062 → exit 255
+  (hazard confirmed); downgrade with the new code → pre-deploy schema; `patch -p1 -R -E` → all 664 files byte-identical, new files gone; old
+  code's startup migration step exit 0 + import OK.
+- Tests not weakened: 0 xfails; only the Xpeng test's 5 assertions removed (replaced by 12 stricter), one AliExpress assertion tightened; every
+  added skip is the isolated-DB guard. Static: all changed files compile; no new unused imports; no linter installed.
+- Production NOT changed; all of the above is isolated execution except the read-only schema and config queries.
+
+**Sandbox state left (isolated environment only; production untouched):**
+- catalog alembic 0061 (consistent with the sandbox's own code), with the 0062 objects present (they match production);
+- `social_inbox` created by the app's own `ensure_inbox_table` (needed for 0060/0061 to apply — #94);
+- 0 test rows; private schema `h78_test` dropped.
+
+---
+
+## #93–#109 — Follow-up register from #78/#88 (recorded 2026-10-22/25; #93–#104 CLOSED (deployed 2026-10-23, #99/#100 live-verified 2026-10-25); #107 fix deployed, production verification pending; #105, #106, #108, #110, #112 open; #109, #111 closed)
+
+No item is an immediate risk to data integrity, security, payment correctness or production stability.
+
+| ID | Title | Status | Severity | Evidence / component | Impact | Next action (approval) |
+|---|---|---|---|---|---|---|
+| #93 | Harvester disable toggles do nothing | CLOSED — DEPLOYED 2026-10-23 12:33Z in the unified release `3eeb25c2823a` (production record: `/opt/asf-rel/RELEASE_78_88_100_103.md` §13); production: harvester launched `(default (no toggle set))`, behaviour unchanged | Medium | `sandbox/docker-compose.sandbox.yml` sets `CPIE_HARVEST_ENABLED: "0"` and `HARVESTER_ENABLED: "0"`; NO code reads either (`grep`). `_car_parts_ie_harvester_loop` has no toggle, and the sandbox has been running a harvester for 77 h (it loops on "No valid cf_clearance" — no FlareSolverr there, so no supplier traffic). | A "disabled" harvester cannot be disabled by config; an environment with FlareSolverr and a queue would harvest. | Honour one documented toggle in the supervisor loop. Code change: approval. |
+| #94 | Migration chain cannot build a database from scratch | CLOSED — DEPLOYED 2026-10-23 12:33Z in the unified release `3eeb25c2823a` (production record: `/opt/asf-rel/RELEASE_78_88_100_103.md` §13); production applied 0062 cleanly; the shared sandbox (recreated 2026-10-25) migrated 0061→0062 | Medium | 0061 `ALTER TABLE social_inbox …`, but no migration creates `social_inbox` (only `social/engagement.ensure_inbox_table` at runtime) → `alembic upgrade head` fails at 0061 on a fresh DB; this is why the sandbox sat at 0059. 0062 (#88) versions the other out-of-band objects. | A disaster-recovery rebuild from migrations fails. | Version `social_inbox` (production DDL) in a migration ordered before its first ALTER, or make 0061 tolerant. Approval. |
+| #95 | Pricing/AliExpress tests have no isolated-DB guard | CLOSED — DEPLOYED 2026-10-23 12:33Z in the unified release `3eeb25c2823a` (production record: `/opt/asf-rel/RELEASE_78_88_100_103.md` §13); test-only | Low–Medium | The 5 files fixed in #88 now create their own rows, but still connect to whatever `DATABASE_URL` is and run UPDATE/INSERT inside a rollback — with no `isolated_db_guard` check (other DB tests have it). | Run inside production by mistake (CLAUDE.md warns against it), they would lock real rows until rollback. | Add the standard guard (skip unless the isolated DB). Test-only. |
+| #96 | AliExpress discovery never runs on a small catalog | CLOSED — DEPLOYED 2026-10-23 12:33Z in the unified release `3eeb25c2823a` (production record: `/opt/asf-rel/RELEASE_78_88_100_103.md` §13); production path unchanged (sample never empty there) | Low | `services/aliexpress_price_sync._discovery_brands` uses `TABLESAMPLE SYSTEM (1)` (~1% of pages): on a small or fresh catalog it returns no brands, so discovery issues no query. Fine at production scale. | New or small environments get no AliExpress discovery. | Fall back to a plain sample when TABLESAMPLE returns nothing. Code change: approval. |
+| #97 | Sandbox skip counts depend on run history | CLOSED — DEPLOYED 2026-10-23 12:33Z in the unified release `3eeb25c2823a` (production record: `/opt/asf-rel/RELEASE_78_88_100_103.md` §13); test-only | Low | Registration/login tests skip when the server rate-limits them (`test_system.py:595/631/710`, `test_full_system.py:137`); counters persist in sandbox Redis, so the skip set changes with recent runs and order (seen 27 vs 30 skips). | Nondeterministic skip counts mask real changes. | Reset the test client's rate-limit keys in the sandbox before the suite, or a dedicated test IP. Test-env change. |
+| #98 | Xpeng connectivity test needs production data and would cause supplier traffic | CLOSED — DEPLOYED 2026-10-23 12:33Z in the unified release `3eeb25c2823a` (production record: `/opt/asf-rel/RELEASE_78_88_100_103.md` §13); test-only | Low | `tests/test_platform_connectivity.py::test_meilisearch_and_site_search_flow_for_xpeng` asserts real Xpeng parts in the index, then calls the site search, which can call external suppliers. | Permanently red in any isolated environment; a seeded sandbox would generate live supplier requests. | Mark it a production smoke test (run read-only against production on demand), or mock the supplier fan-out. Decision: owner. |
+| #99 | The sandbox compose change is not active yet | CLOSED 2026-10-25 — shared sandbox recreated with owner approval (~20:58Z); 5 containers + network recreated, 5 volumes kept; live checks: `sandbox_net` Internal=true, ENABLE_EXTERNAL_SUPPLIERS=0, supplier/public hosts do not resolve, 1.1.1.1 unreachable, local services reachable (release record §15) | Low | `sandbox/docker-compose.sandbox.yml` gains `HF_VISION_MODEL` / `FRONTEND_URL` (#88); the running `sandbox_backend` predates it, so the 2 config tests stay red until the SANDBOX backend is recreated (that also restarts its harvester, #93). | 2 expected failures in the current sandbox. | Recreate `sandbox_backend` after the patch is applied. Approval (sandbox restart). |
+| #100 | Shared sandbox sent test traffic to real suppliers and public APIs | CLOSED 2026-10-25 — DEPLOYED 2026-10-23 12:33Z in the unified release `3eeb25c2823a` (production record: `/opt/asf-rel/RELEASE_78_88_100_103.md` §13); production rule `(True, default (ENVIRONMENT=production))`; LIVE enforcement in the shared sandbox verified after its recreate (§15): rule off, no external resolution/route, 0 supplier or public-API lines in its log | Medium | `sandbox_backend` logs 2026-10-10..22: 971 external requests (858 on 2026-10-21 during full-suite runs): autodoc.eu / partsouq.com / amayama.com 257 each (mostly HTTP 403, 276 carried injection-test payloads), data.gov.il 86, vpic.nhtsa 24, exchangerate 90. Cause: `sandbox_net` routes to the internet and `ENABLE_EXTERNAL_SUPPLIERS` defaults to on, so every site search started a background supplier lookup. | Unwanted traffic from our IP to suppliers (ban risk); injection payloads reached third parties. | Recreate the shared sandbox with the new compose (`internal: true`, `ENABLE_EXTERNAL_SUPPLIERS: "0"`) — approval (#99). Until then: no live-server tests in the shared sandbox; use a disposable egress-free environment. |
+| #101 | `test_scraper_api_calls_schema_and_write_path` writes rows it never removes and defaults to the production DB host name | CLOSED — DEPLOYED 2026-10-23 12:33Z in the unified release `3eeb25c2823a` (production record: `/opt/asf-rel/RELEASE_78_88_100_103.md` §13); test-only (guard + rollback) | Low | `tests/test_platform_connectivity.py::_db_conn` connects to whatever `DATABASE_URL` names (fallback host `postgres_catalog`, the production container name) with NO isolated-DB guard; the test INSERTs into `scraper_api_calls` and psycopg2's `with conn:` COMMITS; there is no cleanup. | Test rows accumulate in every DB it runs against; run inside the production container it would commit a row to production. | Add the isolated-DB guard + cleanup. Not started (approval). |
+| #102 | Duplicate-registration tests depend on test order | CLOSED — DEPLOYED 2026-10-23 12:33Z in the unified release `3eeb25c2823a` (production record: `/opt/asf-rel/RELEASE_78_88_100_103.md` §13); test-only | Low | `tests/test_system.py::test_auth_register_new_user` + `test_auth_duplicate_register_rejected` and `tests/test_full_system.py::test_D_register` + `test_D_duplicate_register_rejected` share one email per run and assume the register test runs first. Reversed/shuffled runs of the 12 affected files (`/opt/asf-h78/reports/final/f_p3_*`): when the duplicate test runs first it creates the user (`got 201`) and the register test then gets `409 Email already registered`. Across 15 ordering runs (3 batches × forward/reversed/3 shuffles): failed in every reversed run (3/3) and 2 of 9 shuffles, never in file order (how the suite runs). Files not changed by release 78/88. | No production impact; ordering/shuffle runs and parallel test execution are unreliable. | Each duplicate test registers its own user first, then asserts the second registration is rejected (test-only). Not started (approval). |
+| #103 | Chat crash test X3 is intermittent | CLOSED — DEPLOYED 2026-10-23 12:33Z in the unified release `3eeb25c2823a` (production record: `/opt/asf-rel/RELEASE_78_88_100_103.md` §13); test-only | Low | `tests/test_chat_side_effects_e2e.py::test_X3_crash_while_stripe_is_creating_the_session_reconciled_to_one_order`: expected 1 order, found 0. Failed 2× in a 14-hour-old disposable environment (prefix run and full run A, 2026-10-22); passed 11/11 in the freshly built one (full run B, 8× alone, 2× in suite order). Timing-based (sleeps 0.6 s to crash inside a fake Stripe call, 3 s settle). Test and chat/payment code unchanged by release 78/88. | A red run that is not a regression; it can hide a real one. Cause not identified (long-lived environment state vs timing). | Investigate what differs in the long-lived environment (background loops of its own backend on the same DB; load); make the crash point event-driven instead of a sleep. Not started (approval). |
+| #104 | VIN search test depended on how many VIN requests ran before it | CLOSED — DEPLOYED 2026-10-23 12:33Z in the unified release `3eeb25c2823a` (production record: `/opt/asf-rel/RELEASE_78_88_100_103.md` §13); test-only | Low | `tests/test_full_system.py::test_E_parts_search_by_vin` accepted 200/404/422/502. Without external access every NHTSA decode fails (502) and the route's circuit breaker then answers 503 (`routes/parts._decode_vin_with_resilience`); shuffled orders put more VIN requests before it: 2 of 10 failures in the first unified gate, 1 of 8 reproduced (`503`). Test and route unchanged before this release. | A red run that is not a regression. | Accept the route's own provider-unavailable codes 502/503/504 (the set `test_fitment_search_flows` uses); still fails on 500 or any other code. Included because test_full_system.py is a file this release changes and the gate requires its order runs to pass. |
+| #105 | Price-watch table exists only in production (no migration, no runtime create) | VERIFIED (read-only table-list comparison 2026-10-22) — OPEN | Low | `part_price_watches` is used by `routes/parts.py` (watch/unwatch/list) and `BACKEND_API_ROUTES._price_watch_loop`, but no migration or runtime code creates it: production PII has it, a database built from the migrations does not (the shared sandbox, 29 vs 30 tables). Since #101 the test isolation guard uses its absence to recognise a non-production PII database. | The price-watch feature fails on a fresh environment; a DR rebuild would lack the table. | Version it in a PII migration ONLY together with a different production marker for the guard (as 0062 did for the catalog; see #88). Not started (approval). |
+| #106 | `test_security.py` live checks can skip on a self-made phone collision | VERIFIED (final gate + simulation) — OPEN | Low | `tests/test_security.py::_unique_phone` builds `+9725` + the first 7 digits of `_RUN + seed` (`_RUN` = 8 hex chars): when the run id has enough digits, different seeds give the SAME phone, so a later registration gets `409 Phone number already registered` and `_register_and_login` skips (`test_security.py:81`, both final full runs). Two given seeds collide in 13.5% of simulated run ids. Previously masked by 429 rate-limit skips, which #97's sandbox rate-limit reset removed. File not changed by the unified release. | Some live security checks are skipped in some runs (lost coverage; never a false pass). | Derive each phone from a per-call random value (as `registered_user_cleanup.unique_identity` does). Test-only. Not started (approval). |
+| #107 | Production backend OOM-killed during the daily Facebook group scan (2026-10-23) | ROOT CAUSE ESTABLISHED; FIX DEPLOYED 2026-10-25 20:43Z (PATCH_107); PRODUCTION VERIFICATION PARTIAL. 2026-10-26 evidence (read-only sampler `/opt/asf-rel/reports/scan_memory_20261026.txt`): no OOM kill; cgroup peak 3.26 GiB (10-24: 4.00 GiB at the limit); uvicorn 1,151→1,486 MiB over ~11 h (10-24: 1,210→2,217); largest uvicorn jump +351 MiB (before: +739/+884/+1,184 during run_all_tasks) — run_all_tasks 09:14-09:37Z now adds +218 MiB. NOT YET PROVEN: the scan + run_all_tasks combination — the 2026-10-26 group scan did not run (Facebook session not authenticated, 0 groups, see #112). Close after one full scan without OOM. Previous evidence: Evidence: 2nd OOM 2026-10-25 08:26Z, 26 min into the scan, while run_all_tasks was running (superseded); the 2026-10-24 sampler shows uvicorn grew 1,210→2,217 MiB between scans with transient jumps of +739/+884/+1,184 MiB during run_all_tasks, while the scan adds Chrome 465→1,750-2,024 MiB; cgroup peak 4.00 GiB on 10-24. Allocation: `db_update_agent.flag_fake_skus` fetched every candidate row (planner 4,269,138 rows) into uvicorn each cycle (~0.7-1.2 GB). Fix: keyset batches, same rows flagged (isolated regression test: 0.8 MiB vs 14.5 MiB; fails on the old code). Remaining contributors (not fixed): `backfill_catalog_fitment_from_xls` per-brand fetch (~+350 MiB), an unattributed evening ramp (~+44 MiB/5 min, 19:47-20:32Z on 10-23), the always-on Amayama Chrome (~0.4-1.3 GiB) | Medium | `dmesg`: `Memory cgroup out of memory: Killed process 283548 (uvicorn) … anon-rss:3116740kB` with `constraint=CONSTRAINT_MEMCG` (the backend container's own 4 GB limit) at 2026-10-23 08:23:05 UTC (11:23 IL); `docker inspect autospare_backend`: RestartCount=1, StartedAt 08:23:04Z. Logs: `fb_browser.group_agent` was scanning groups until 08:22:24; after the restart `[group_scan] next run 2026-10-24 10:00 IDT` (today's scan lost — no catch-up) and `[Startup] reconciled 1 orphaned running job(s) → superseded: ['run_all_tasks']`. Not caused by release work: a memcg OOM is the container's own usage, and no test environment was running at that time (the gate ran 14:06–15:00 IL). | Lost daily group-scan drafts; an interrupted run_all_tasks; a ~20 s outage. | Measure the backend's memory during the group scan (browser + uvicorn) and decide on the limit or the scan's footprint. Not started (approval). Relevant to the unified deploy: §4 preflight must show memory headroom. |
+| #108 | Restart preflight blocks on a group-scan marker left by a killed process | VERIFIED — OPEN | Low | `inproc_job_marker` records `pid` = 1, and uvicorn is always PID 1 in the container, so a marker left by a process killed mid-scan (2026-10-23 OOM) cannot be told from a live one; `status()` treats an unfinished marker as running for 6 h, so `restart_preflight` reported "Facebook group scan in progress (started 310 min ago)" for a scan that had died, blocking the deploy. Released by owner decision 2026-10-23 12:2xZ (marker marked `interrupted`, backup `group_scan.json.bak`; finished_at < started_at so the daily report still says INTERRUPTED). | A dead scan blocks deployments for up to 6 h. | Record the process start time (or a boot id) in the marker and ignore markers from an earlier process. Not started (approval). |
+| #109 | A Gemini API key is written to `docker logs` in clear text | **CLOSED 2026-10-26 — deployed + VERIFIED** | Medium (secret exposure) | httpx logged every request URL at INFO and Gemini calls carried the key as `?key=…`. | Anyone with log access had the key. | **Fix (PATCH_109, `/opt/asf-109/PATCH_109.diff` sha256 0c8e8f11…9859, 2 files):** all 5 Gemini call sites in `hf_client.py` send the key in the `x-goog-api-key` header, never the URL; `_RedactUrlSecretsFilter` on the httpx/httpcore loggers redacts `key=`/`token=`-style URL values. Test `tests/test_gemini_key_not_in_urls.py` (7; all fail on the old file); full suite 1931 passed / 0 failed. **Rotation:** owner deleted the old key (sha12 686cafa3d028 — now rejected by Google) and installed a new one in `.env` + via the Agents page (DB `runtime_gemini_api_key`, which overrides env at startup). Deployed 2026-10-26 19:03Z (backend 699ec6ae0ff2). Verified: running key + container env + DB = sha12 732deb01c298, models endpoint 200, new-container logs contain 0 unredacted URL secrets. Note: Gemini text calls currently 429 on the FREE-TIER cap (20 requests/day/model for gemini-2.5-flash) — a quota limit, not a key fault; callers fall back to other providers. Old models gemini-2.0-flash / 2.5-flash-lite now 404. |
+| #110 | CLAUDE.md still describes the Email Agent as read-only | VERIFIED — OPEN | Low | §4 "Email Agent … LIVE since 2026-10-10 in read-only processing mode (`EMAIL_AGENT_GMAIL_DRAFTS=0`, grant `gmail.readonly` only)" — since 2026-10-25 20:43Z it creates Gmail drafts with `gmail.compose` (docs/EMAIL_AGENT.md updated). Not edited now because CLAUDE.md is in the deployed unified patch and editing it would break that patch's documented reverse step. | A future session could reason from a stale mode. | Update the line in the next release (with the reverse-step note). |
+| #111 | Daily "4 orders need handling" alerts come from April TEST orders; the orders agent tries to pay suppliers for them | CLOSED — (1) data cleanup 2026-10-25 21:06Z: the 4 April test orders cancelled (backup `/root/.cache/orders_111_backup_20261025.json`); (2) PATCH_111 (`b87c26168135…6f67`, 4 files) DEPLOYED 2026-10-26 18:28Z (owner ran `pre_restart.sh` 18:27:35Z + the patch; backend recreate → container `d1a85289f038`); production verified: all 4 deployed hashes = manifest; first stuck-order pass "no stuck orders", no anomaly alert, no supplier spend attempted; live rule check: `production_enforced=True`, AUTO-2026-71C901A4 / A5B8C542 / ISGB398C42388 → refused ("customer is a reserved test address"); production has 0 live-paid orders. Rollback: `patch -p1 -R -E -i /opt/asf-111/PATCH_111.diff` + recreate (reverse BEFORE the unified release, both touch BACKEND_API_ROUTES.py) | High (money path) | `notifications` table: at 01:34 and 19:34 every day, "🤖 סוכן הזמנות: 4 הזמנות תקועות טופלו אוטומטית" + "4 הזמנות דורשות טיפול ידני שלך — התשלום ללקוח התקבל, אבל התשלום האוטומטי לספק (Stripe Issuing) חסום ב-live mode", plus per-order "תשלום לספק נכשל" — each row stored twice. The 4 orders (AUTO-2026-A5B8C542, AUTO-2026-5D6333A9, IS246AA709C0E, ISGB398C42388) were created 2026-04-18/19 by `@example.com` test users ("Payment Cycle…", "Issuing Office…", "Issuing Mode…"); their payments are Stripe TEST sessions (`cs_test_…`) or `manual-p…` markers — no live payment; one supplier is "Sandbox Supplier QA". Production has 0 orders in 7 days and 0 payments in 14 days. | False alarms to the owner every day ("customer payment received" is false); the agent attempts REAL supplier payments for fake orders daily — blocked only because Stripe Issuing is off in live mode. | Owner decision: (1) mark the 4 test orders cancelled/test in production (data change), and (2) make the orders agent and supplier-payment path refuse any order whose payment is not a live-mode payment (`cs_live_`/`pi_live_`) or whose customer is a reserved test address; fix the duplicate notification rows. Not started (approval). |
+| #112 | Daily Facebook group scan not running — session not authenticated | PARTIAL — session RESTORED 2026-10-26 18:37Z: owner logged in to Facebook (account fingerprint matches the scan account) and supplied the five cookies; imported with `fb_cookie_import.py` through an owner-only temporary env file (shredded), previous file backed up as `cookies.json.bak_20261026`; health check PASSED, "Facebook session is AUTHENTICATED". Close after the next scheduled scan (2026-10-27 08:00Z / 10:00 IL) completes in `noa_scan_runs`. Read-only memory sampler running for that scan (#107). | Medium | `noa_scan_runs`: 2026-10-22 and 2026-10-26 07:00/08:00Z → finished in 2 min, 0 groups attempted, error "Facebook session not authenticated — re-login required"; 10-23 and 10-25 were killed by the OOM (#107); only 10-24 completed (387 groups). Memory note: both server IPs are blocked by Facebook's CAPTCHA — the supported path is the cookie import (`maintenance/fb_cookie_import.py` → `/app/state/fb_browser_session/cookies.json`), not a login from the server. | No group drafts on those days; #107 cannot be proven under scan load until a scan runs. | Owner: re-export the Facebook cookies from a logged-in browser and import them; then confirm the next 10:00 IL scan completes. Not started (needs the owner's browser session). |
+
+---
+
+## #80–#92 — Follow-up register from the #73–#79 chat-reliability work (recorded 2026-10-21; NONE started; each needs its own authorisation)
+
+None of these is an immediate risk to data integrity, security, payment correctness or production stability. Each is marked VERIFIED
+(checked against code/data) or SUSPECTED (needs investigation).
+
+| ID | Title | Status | Severity | Evidence / component | Impact | Next action (approval needed) |
+|---|---|---|---|---|---|---|
+| #80 | Inbound WhatsApp is dropped while the backend is down | VERIFIED | Medium | `whatsapp-bridge/index.js:667`: one `axios.post` to the backend, no retry or spool; on error the bridge replies "מצטערים, אירעה שגיאה. נסה שוב בעוד רגע." and the message is never processed. 0 messages were lost in the #79 restart (traffic 1/24 h). | Customer messages lost during any backend restart or outage; the customer must resend. | Bounded bridge-side retry (backend dedups by message_id), or a local spool. Bridge code change + bridge restart: owner approval. |
+| #81 | PII database has no lock / statement / idle-in-transaction timeouts | VERIFIED (read-only `SHOW`) | Medium | `lock_timeout = 0`, `statement_timeout = 0`, `idle_in_transaction_session_timeout = 0` on postgres_pii (the catalog DB got an idle timeout on 2026-06-30; PII never did). Migration 0040 sets its own `lock_timeout`. | An orphaned idle-in-transaction session can hold locks and block writes to PII tables (messages, orders) indefinitely. | `ALTER SYSTEM SET idle_in_transaction_session_timeout` on PII (reload, no restart). Production config change: owner approval. |
+| #82 | Telegram handoff rows use Israel local time, other rows UTC | VERIFIED code; no current data impact | Low | `routes/webhooks.py`, 2 sites: `created_at=datetime.now(tz=timezone(timedelta(hours=3))).replace(tzinfo=None)`; agent rows use `datetime.utcnow()`. Production: 1 such row in 380 Telegram conversations, 0 order inversions, 0 future-dated rows. | Such rows sort about 3 h late, so history order (incl. the #77 latest-20 loader) can be wrong for handoff conversations. | Write UTC there; one-off correction only if rows accumulate. Code change: approval. |
+| #83 | Telegram welcome is sent fire-and-forget | VERIFIED code | Low | `routes/webhooks.py` (Telegram `/start`/greeting path): `asyncio.create_task(send_telegram_message(...))`; no strong reference, no delivery check. | The welcome can be silently lost, and its failure is never logged. | Await it or track it like the lifecycle sends. Code change: approval. |
+| #84 | Web chat is not on the durable request lifecycle | SUSPECTED | Medium (if confirmed) | `routes/chat.py:441` → `process_agent_response_for_message` (background); #73–#77 covered WhatsApp and Telegram only. Not investigated whether a web request survives a restart or has a deadline/fallback. | Possibly the same lost-answer class #73 fixed for WhatsApp, on the web channel. | Investigate (read-only) and report; then decide. |
+| #85 | Web chat message-listing API returns the OLDEST messages | VERIFIED code; UI impact unverified | Low | `routes/chat.py:766`: `ORDER BY created_at ASC LIMIT :limit` (default 100). | Conversations over 100 messages may never show their latest messages in the UI, unless the frontend paginates. | Check the frontend usage, then fix. Code change: approval. |
+| #86 | Supervised background tasks are alert-only, never restarted | VERIFIED code | Low–Medium | `BACKEND_API_ROUTES.py::_supervised_task`: on a crash it WhatsApps the owner "המשימה לא תאותחל אוטומטית"; this includes `chat_request_recovery` (#77). Its loop catches per-pass errors, so it does not exit on one. | A crashed loop stays down until the next backend restart (for chat recovery: no take-over and no heartbeat). | Decide a restart policy (e.g. bounded auto-restart for idempotent loops). Approval. |
+| #87 | `pre_restart.sh` reports "marked superseded" even when nothing was | VERIFIED | Low | `backend/scripts/pre_restart.sh` §4.6 prints a fixed line; the #79 run printed it, and 0 rows had changed (queried). The script's side effects (supersede `job_registry` rows, SIGTERM importers) are not listed in CLAUDE.md beside "run it before any restart". | Misleading operator output; a "check-only" run is impossible without reading the script. | Print the affected-row count; document the side effects; optionally a `--check` mode. Approval. |
+| #88 | Sandbox test environment drift hides regressions | CLOSED — DEPLOYED 2026-10-23 12:33Z in the unified release `3eeb25c2823a`, see `## #88` | Medium | The same 62 failures on baseline and patched: `NoResultFound` (missing catalog fixtures: base-price, customer-price-boundary, offer-classification), AliExpress without credentials/data, `HF_VISION_MODEL` unset, empty Meilisearch, localhost reset link. Plus the order-dependent collection error in `tests/test_fitment_pipeline_guardrails.py` (no module `isolated_db_guard` when run alone). | 62 red tests are permanently "expected", so a new failure among them is easy to miss. | Seed sandbox fixtures and env; add the `sys.path` insert to that test. Test-only. |
+| #89 | A paid or expired Stripe session on chat checkout reuse gives a generic error | VERIFIED code path (test P7) | Low | `routes/payments.py::_reuse_chat_checkout` returns `checkout_session_complete` / `_expired`; `BACKEND_AI_AGENTS.py` maps every `ERROR:` to "לא הצלחתי ליצור קישור תשלום כרגע…". Reachable only when the same chat request re-runs after its session was paid or expired. | A customer who already paid could be told the link failed. No duplicate order (that is guarded). | Map `checkout_session_complete` to an "already paid" reply. Code change: approval. |
+| #90 | Compose volumes exist but are not declared `external` | VERIFIED | Low | `docker compose up --dry-run` warns for `postgres_pii_data`, `meili_data`, `postgres_catalog_data`, `upload_files`: "already exists but was not created by Docker Compose". | Config hygiene. A `docker compose down -v` style operation could treat them inconsistently. | Declare them `external: true` (compose change: approval). |
+| #91 | Dead code in the WhatsApp path | VERIFIED | Low | `routes/webhooks.py::run_agent_reply` (#71) is no longer called in production after #77; only `tests/test_whatsapp_late_reply.py` helper tests use it. | Maintenance noise; it can mislead a reader about the live path. | Remove it with its helper tests in a cleanup change. Approval. |
+| #92 | FIXES_TRACKER header is stale and IDs can collide | VERIFIED | Low | The header still says "Last scan: 2026-10-05 \| Open: 1". On 2026-10-21 two sessions wrote different entries under the same IDs (#77, #78); merged, deployment record renumbered #79. | Readers can miss open items or confuse entries. | Update the header counts; grep `^## #NN` before adding an entry. Docs only. |
+
+Still open and directly relevant (not new):
+- **#78** — car-parts.ie harvester false-positive STALLED kill, plus the `HARVESTER_PARALLEL_SESSIONS` 5 vs 2 question.
+- **#79** — live customer-path verification of #77 is pending the first real WhatsApp/Telegram request: record + history rows, latest-20 ordering; checkout idempotency is proven in the sandbox only.
+
+---
+
+## #78 — car-parts.ie harvester killed as "STALLED" about hourly while legitimately resting — CLOSED — DEPLOYED 2026-10-23 12:33Z in the unified release `3eeb25c2823a`; PRODUCTION VERIFIED: 4/4 post-deploy healthchecks `verdict=idle … status=ok`, 0 kills in 2 h, and only 3 harvester launches in the following ~2.5 days (deploy, an OOM restart #107, a planned recreate) vs ~1 kill/hour before — 2026-10-21/25
+
+**Evidence (read-only):**
+- `docker logs autospare_backend`: `[car_parts_ie_healthcheck] … log_age_s=1823 status=STALLED` → `exited rc=-15 after 3575s — restarting`,
+  repeating.
+- Harvester log tail: `queue drained (idle x3). Resting 960s...`, with back-off up to `HARVESTER_IDLE_MAX_REST_S=3600`.
+- `_car_parts_ie_harvester_healthcheck_loop` uses `STALE_LOG_S = 900`.
+- So a drained queue makes the harvester rest without writing its log (correct per CLAUDE.md "a drained queue must sleep"), and the healthcheck
+  reads that as a stall, kills it and the supervisor relaunches it: a false positive.
+- Also seen: `HARVESTER_PARALLEL_SESSIONS=5` live vs 2 in CLAUDE.md (config drift, unverified intent).
+
+Impact: an hourly restart, a FlareSolverr clearance re-mint per relaunch, and a STALLED status that can hide a real hang. Severity: low (verified);
+whether owner alerts fire for these kills is UNVERIFIED.
+
+**Proposed next step (not done):** the harvester writes a heartbeat line (or a `resting_until` marker) while resting, and the healthcheck honours it.
+No intervention was made. The #77 deploy recreates the backend and relaunches the harvester, as every backend restart does.
+
+**Resolution (2026-10-22; isolated tree `/opt/asf-h78/`, release package `/opt/asf-h78/RELEASE_78_88.md`, patch `/opt/asf-h78/PATCH_78_88.diff`
+sha b64f6f39fafb — superseded; final `1506c2b93cc0`, together with #88):**
+- **Root cause (reproduced in isolation, matches the production logs):** the healthcheck's ONLY signal was log-file age (`STALE_LOG_S = 900`).
+  With an empty queue the main loop sleeps once per cycle, `min(120·2^idle, 3600)` s; from idle ×4 that is ≥ 960 s without a log line, so every
+  long rest was classified STALLED. Quietness is not a stall.
+- **Fix (smallest robust):**
+  - The harvester writes `/app/state/harvester_status.json`: `idle` / `waiting_clearance` / `working`, a main-loop heartbeat, `rest_until`,
+    `last_progress_at` updated after EVERY page request (success, empty or error) and every model, and per-worker activity. The rest is slept in
+    ≤ 60 s chunks that refresh the heartbeat.
+  - New `backend/harvester_health.py`: `evaluate()` (pure) and `health_pass()` (the single healthcheck pass, used by
+    `_car_parts_ie_harvester_healthcheck_loop`).
+  - Verdicts:
+    - `idle` while `now ≤ rest_until + 300 s` and the heartbeat is < 300 s old;
+    - stalled `rest_overrun` / `idle_heartbeat_stale` otherwise;
+    - while working, stalled only when no request has completed for 900 s (a request is capped at the 40 s HTTP timeout). A fresh heartbeat
+      never keeps a working harvester healthy;
+    - a status file from another pid, or none → the old log-age rule (a dead process's file cannot vouch).
+  - One structured log line: `verdict= reason= progress_age_s= heartbeat_age_s= log_age_s= status=` (keeps the old `status=` field).
+- **Genuine-hang bound:** 900 s without progress, plus up to the 1,800 s healthcheck interval, so detection within ~45 min (the same bound as
+  before; the interval was not changed).
+- **Parallelism — resolved, no production change:** the effective value 5 comes from the `docker-compose.yml:369` default (`.env` does not set
+  it; code default 1). History:
+  - 2 (2026-07-23, when each worker was a FlareSolverr Chrome);
+  - 1 (aaa4fc3: workers became plain-HTTP threads);
+  - 3 → 5 (eb8a96f: "all 5 workers producing, postgres ~130%" after the import fix).
+  CLAUDE.md's "= 2" was stale and is corrected. Keep 5; re-measure postgres CPU and load at the next refresh burst (not measurable now: the
+  queue is drained). Added validation: < 1 or non-numeric → 1; > 8 → clamped to 8; logged at start-up.
+- **Tests:** `backend/tests/test_harvester_health.py` **25/25**. The end-to-end scenarios run the REAL harvester loop + workers + the REAL
+  healthcheck pass in a subprocess (`tests/harvester_sim.py`) with a fake clock and fake fetches (no network, no supplier traffic):
+  - S1: an hour-long idle rest = idle at +20/+40/+59 min (the old rule said stalled), and a wedged rest is caught (`rest_overrun`);
+  - S2: new work after idle is picked up;
+  - S3: 10-minute requests are never killed;
+  - S4: a hung worker is ok at +5/+13 min and stalled at +17 min, killed once;
+  - S5: one hung worker while the other completes 6 models = ok, then stalled when progress stops;
+  - S6: transient failures are progress;
+  - S7: a status file from a dead pid cannot vouch;
+  - D1: 5 workers on the REAL queue functions (production DDL in the private sandbox schema `h78_test`) claim 12 models exactly once each;
+  - D2: models stuck `in_progress` after a kill are reclaimed and done once (attempts 2), no duplicates;
+  - parallelism parsing (10 cases) and doc/compose consistency.
+  Simulated, NOT production-observed.
+- **Final verification of PATCH_78_88 (2026-10-22, patch `1506c2b93cc0` — historical; re-verified inside the unified release `3eeb25c2823a`, gate 2026-10-23):**
+  - Bug found and fixed: a status file holding a JSON list (or any non-object) crashed `evaluate()` (`'list' object has no attribute 'get'`)
+    — in production every healthcheck pass would have raised. Now any non-object = "no usable status" → the old log-age rule; a corrupt
+    `workers` field never raises. Tests E6 (5 malformed/partial files incl. `[1, 2]`) and E9 (6 corrupt `workers` shapes).
+  - Also added: E7 (missing status + missing log), E8 (clock stepped back: future timestamps beyond 300 s count as unknown), T1/T2 (#93
+    toggle honoured by the real supervisor loop). `tests/test_harvester_health.py` **49/49**; in both final full runs.
+  - Read-only production facts at verification: `HARVESTER_PARALLEL_SESSIONS=5` in the running backend, neither toggle set (behaviour
+    unchanged), 9 of 20 healthchecks in 24 h `status=STALLED` (the "before" number for post-deploy monitoring).
+  - Production acceptance (pending deployment): 0 kills while `verdict=idle` over ≥ 2 h; runbook `/opt/asf-h78/RELEASE_78_88.md` §7–§8.
+- **Production state:** unchanged (backend still the 2026-10-21 18:35:26 instance; no status file; catalog alembic 0061).
+
+---
+
+## #77 — Chat release finalised: one order + one Stripe session per chat request (DB-enforced), latest-20 history, rollback rehearsed — STATUS: DEPLOYED 2026-10-21 18:35 UTC (deployment record and verification: #79) — 2026-10-21
+
+**Payment root cause.** `routes/payments.py::create_whatsapp_checkout` created a random-id Order and a Stripe session keyed by that random id,
+in its own transaction. Every retry or recovery re-run of a chat request was a new order and a new session. Measured on the OLD code (sandbox,
+fake Stripe):
+- retry ×3 → 3 orders / 3 sessions;
+- crash while Stripe creates → orphan session (1 order / 2 sessions);
+- ambiguous Stripe response → 2 sessions;
+- link never delivered → 2 orders;
+- 4 concurrent → 4 orders / 4 sessions.
+
+**Fix:** `create_whatsapp_checkout(…, idempotency_ref=<chat request id>)`.
+- The order id is `uuid5(namespace, request:part:qty)`, the order number derives from it, and the Stripe idempotency key is `<src>-chatreq:<order id>`.
+- An existing order → its own session via `Session.retrieve` (open → same link; complete/expired → an error, never a 2nd order; retrieve failure
+  → `checkout_reconcile_failed`, never a 2nd order).
+- A concurrent attempt waits on the order PRIMARY KEY (persistence-layer invariant, no migration needed), then reuses.
+- A crash before the commit leaves nothing local; the retry replays the same Stripe key and gets the SAME session.
+- No ref → unchanged (web checkout).
+- `create_checkout_link` passes the chat request id (contextvar). The #76 Redis guard / `checkout_in_doubt` is removed: the DB and Stripe now reconcile.
+- Reminders are per order → one order per request, so recovery cannot multiply them.
+
+**History root cause + fix.** `_load_history_rows` (and the web chat's `process_agent_response_for_message`, which had its own copy without the
+soft-delete filter) used `ORDER BY created_at ASC LIMIT 20`, the OLDEST 20. Both now use the shared loader: the latest 20, handed over oldest → newest,
+no soft-deleted rows, the reused question left out on recovery. `routes/chat.py:766` (a UI listing endpoint, oldest-first, limit 100) has different
+semantics and was left unchanged.
+
+**Tests (sandbox, PostgreSQL 16.14 = production):**
+- `tests/test_chat_checkout_idempotency_e2e.py`: 11/11 on the REAL checkout + fake Stripe; P1/P3/P4/P5/P6 fail on the old code.
+- `tests/test_chat_side_effects_e2e.py`: 14/14 (X1–X8 through the webhook + real checkout + recovery, incl. Telegram; H1–H3 history; C1–C3).
+  H1/H3 fail on the old ordering.
+- Release-critical suites: **78/78**. All chat suites: **217/217**, twice.
+- Full suite: patched 1711 passed / 62 failed / 72 skipped / 0 errors; baseline 1631 / 62 / 71 / 1 error. The 62 failures are identical by name and
+  normalised reason.
+- The collection error is NOT fixed. It is order-dependent, reproduced: the file alone still errors; on the baseline it collects after a module that
+  adds `tests/` to `sys.path`. Reconciled: 1631 + 78 + 2 = 1711 passed, 72 skipped.
+
+**Migration 0040 rehearsal (sandbox):** new code upgrade OK → old code `alembic upgrade head` exit 255 ("Can't locate revision") → new code
+`downgrade 0039_email_agent_messages` OK → old code start migration exit 0. A lock held 25 s: original waited 25.5 s; with `lock_timeout 15s` it failed
+at 16.3 s, unchanged; uncontended 1.6 s. Production (read-only): 0 rows with chat_request_id, 0 conflicts.
+
+**Release artifact:** `/opt/asf-wa73/PATCH_77.diff` (sha baa71cee8c2b, 15 files; applied to the live files it reproduces `/opt/asf-wa73/backend` byte
+for byte). No new dependencies; new env vars are optional with defaults.
+
+**Deploy (needs explicit approval; never 10:00–14:00 IL, avoid the 01:00–07:00 IL night pipeline):**
+1. Re-verify: no live file changed since 2026-10-21T04:48:27Z, HEAD 75b1323.
+2. `cd /opt/autosparefinder/backend && patch -p2 --dry-run < /opt/asf-wa73/PATCH_77.diff`, then without `--dry-run`. Verify the hashes against the
+   isolated tree.
+3. `bash backend/scripts/pre_restart.sh` (preflight must pass; NOTE it then marks running job_registry rows superseded and stops importers — that is
+   its documented purpose).
+4. `docker compose up -d --no-deps --force-recreate backend` (alembic_pii applies 0040 at start).
+5. Verify: index present, alembic 0040, one `chat_request_recovery` task, health OK, no errors, post_restart.
+
+**Rollback (rehearsed):**
+1. `docker exec autospare_backend alembic -c alembic_pii.ini downgrade 0039_email_agent_messages` (new code still running).
+2. `cd /opt/autosparefinder/backend && patch -p2 -R -E < /opt/asf-wa73/PATCH_77.diff`. **`-E` is mandatory:** plain `-R` leaves the 4 new files as
+   0-byte files, and an empty `alembic_pii/versions/0040_…py` makes the old code's start migration fail (exit 255, "Could not determine revision
+   id" — rehearsed in the sandbox), so the backend would not start. Then check that `chat_requests.py` and the 0040 file are absent and the live
+   hashes are back (`webhooks.py` c368cefa84c0).
+3. pre_restart + recreate.
+
+Never revert the code first.
+
+---
+
+## #79 — Deployment record of #77 (PATCH_77) — DEPLOYED 2026-10-21 18:35 UTC (owner-approved, conditional live gate passed) — STATUS: PASS for deployment/health; live customer-path behaviour pending first real traffic
+
+**Fixes beyond #76 (isolated, then deployed):**
+1. **Payment/order idempotency** (`routes/payments.py::create_whatsapp_checkout(idempotency_ref=...)`):
+   - With a chat request id, the order id is deterministic (`uuid5`) for (request, part, quantity), and so is the order number.
+   - The Stripe idempotency key is `<source>-chatreq:<order id>`.
+   - An existing order → its Stripe session is retrieved and reused (open → same link; complete/expired → error, never a 2nd order).
+   - A concurrent attempt waits on the order primary key, then reuses; a failed retrieve → error, never a new order.
+   - Without a ref the behaviour is unchanged (web checkout).
+   - `create_checkout_link` passes the chat request id; the #76 Redis guard / `checkout_in_doubt` refusal is removed (the database and
+     Stripe now reconcile).
+2. **History ordering:** `_load_history_rows` returns the LATEST 20 messages, oldest → newest; it was the OLDEST 20.
+   `process_agent_response_for_message` (web-chat background agent) had the same bug and no soft-delete filter; it now uses the shared
+   loader. `routes/chat.py:766` (UI listing, oldest-first `limit=100`) is a different contract and was not changed.
+
+**Tests (sandbox, PG 16.14 = production):**
+- `test_chat_checkout_idempotency_e2e.py`: 11/11. On the OLD checkout:
+
+  | Case | Orders | Stripe sessions |
+  |---|---|---|
+  | P1 retry after success | 3 | 3 |
+  | P3 crash during the Stripe call | 1 | 2 |
+  | P4 ambiguous Stripe response | 1 | 2 |
+  | P5 retry before delivery | 2 | 2 |
+  | P6 4 concurrent attempts | 4 | 4 |
+
+  New code: always 1 / 1 (P6: one Stripe call, 3 waited on the PK).
+- `test_chat_side_effects_e2e.py`: 14/14. The X tests run the REAL checkout path end to end; H1/H3 fail on the old ordering.
+- Chat + release suites on the exact PATCH_77 tree: **217/217**.
+- Full suite: patched 1711 passed / 62 failed / 72 skipped / 0 errors vs baseline 1631 / 62 / 71 / 1. The failures are identical by name
+  and normalised reason; the only difference is the collection-order effect on `test_fitment_pipeline_guardrails.py` (#76).
+- Migration + rollback rehearsed in the sandbox: upgrade → old code refuses to start (exit 255) → NEW-code downgrade → old code starts → re-upgrade.
+
+**Release artifact:** `/opt/asf-wa73/PATCH_77.diff` (sha baa71cee8c2b, 15 files, `a/backend/...` paths; apply with `patch -p2 -E` from `backend/`).
+Applied to the live files it reproduces `/opt/asf-wa73/backend` byte for byte; reversed, it restores every live file and removes the 8 new
+files (`webhooks.py` back to c368cefa84c0). Pre-deploy originals: `/opt/asf-wa73/predeploy_backup_20261021T183446Z/` (7 files).
+
+**Deployment record (UTC):**
+- 18:34:46 gate passed: 21:34 IL; HEAD 75b1323 / 94 entries unchanged; live mount unchanged since 04:48:27Z; patch sha matched; old
+  backend still the 03:50:05 instance.
+- 18:34:47 patch applied; all 15 files byte-identical to the artifact.
+- 18:34:47–49 `pre_restart.sh` exit 0: preflight SAFE; 0 workers captured / stopped; 0 job_registry rows superseded (checked).
+- 18:35:10.6 `docker compose up -d --no-deps --force-recreate backend` (only autospare_backend).
+- New container started 18:35:26.2; migration `0039 → 0040` at 18:35:29.6; uvicorn serving 18:35:31.2.
+  Downtime ≈ 20.5 s; 0 inbound WhatsApp messages and 0 bridge backend errors in that window.
+
+Note: inbound WhatsApp during downtime is NOT queued/retried. The bridge (`whatsapp-bridge/index.js:667`) replies "מצטערים, אירעה
+שגיאה. נסה שוב בעוד רגע." and drops the message. Measured traffic was 1 message per 24 h.
+
+**Post-deploy verification:**
+- `/health` 200, `/api/v1/system/health` 200, public `https://autosparefinder.co.il/health` 200; container healthy, restarts 0, 121 MiB.
+- alembic_pii `0040_messages_chat_req_uniq`; index present with the reviewed definition; messages 1,488 rows, 0 with chat_request_id.
+- Exactly 1 recovery-loop heartbeat (`chat_req:boot:*`), TTL refreshed 27 → 42 s within 25 s; 0 open requests; no errors since start.
+- Background: car-parts harvester relaunched by its supervisor; Amayama browser relaunched; group_scan next 2026-10-22 10:00 IL;
+  night_pipeline controller started; meili loop scheduled.
+
+**Not verified live (no synthetic traffic was injected):** request records / history rows of a real request, latest-history ordering in a
+live turn, live checkout idempotency (no real Stripe sessions). These are verified in the sandbox only; the first real slow request should be
+checked.
+
+**Rollback (rehearsed):**
+1. `docker exec autospare_backend alembic -c alembic_pii.ini downgrade 0039_email_agent_messages` (NEW code still running).
+2. `cd /opt/autosparefinder/backend && patch -p2 -R -E < /opt/asf-wa73/PATCH_77.diff` (`-E` mandatory, see #77); verify the 8 new
+   files are gone (verified count: 15 patched files − 7 existing = 8 new; #77 says "4") and `webhooks.py` is c368cefa84c0.
+3. `bash scripts/pre_restart.sh` (must say SAFE), then `docker compose up -d --no-deps --force-recreate backend`.
+
+Never revert the code while the schema is at 0040.
+
+---
+
+## #76 — PATCH #75 deploy-readiness review: checkout idempotency, partial-turn context, migration 0040 lock safety — STATUS: PARTIAL (technically ready for a separately authorised deploy; residual risks below; NOT deployed) — 2026-10-21
+
+**Patch boundary (verified).** `/opt/asf-wa73/PATCH_75_final.diff` (sha 5bd34911eb7e, 12 files) applied to the live files reproduces
+`/opt/asf-wa73/backend` byte for byte. This task's own delta is `/opt/asf-wa73/DELTA_75_to_final.diff`.
+- No live file changed since the restore (04:48:27Z), so the patch cannot revert anyone's work.
+- `whatsapp-bridge/test_bridge_lifecycle.mjs` and every other unrelated worktree change are NOT in it.
+- It must be applied to the WORKING TREE (it is relative to the live files, which carry the uncommitted #69–#72 changes), not to HEAD.
+
+**1. Side effects of an agent turn** (AST call graph from `process_user_message`: 96 reachable functions):
+
+| Operation | Where | Idempotency | Re-run after a crash |
+|---|---|---|---|
+| Order + Stripe Checkout Session + Payment | `routes/payments.py::create_whatsapp_checkout`, committed in its OWN session; Stripe key `order:{new uuid}` | none before #76 | **2 orders / 2 sessions / 2 links** (test X2, X3 on PATCH_75) |
+| same, after #76 | `BACKEND_AI_AGENTS.py::create_checkout_link`: request guard `chat_req:checkout:<rid>:<part>:<qty>` claimed BEFORE the call | re-run reuses the stored link; an attempt cut off mid-checkout → no second order, record `side_effect=checkout_in_doubt` | 1 order (X1–X6 pass; X2/X3 fail on PATCH_75) |
+| Vehicle / CarBrand cache (catalog) | `identify_vehicle` | select by unique `license_plate`, update-or-insert; brand insert-if-missing + rollback | idempotent |
+| search_misses | `_log_search_miss` | `ON CONFLICT (normalized_query) DO UPDATE miss_count+1` | +1 on an analytics counter |
+| Shared memory, AgentUsageLog, AgentAction, turn rows | agent's PII transaction (one commit, `BACKEND_AI_AGENTS.py:8079`) | atomic with the turn + unique index 0040 | reused, never duplicated |
+| Gov registry, Meilisearch, currency, LLM calls | HTTP reads / model calls | read-only | repeated (cost only) |
+
+No PII commit happens mid-turn (static check). So a "partial turn" can only arise from future code; the fix is defensive.
+
+**2. Partial-turn context.** Before: during a re-run the model saw the saved question in history AND as the current message (C1/C2 fail
+on PATCH_75). Now the history loader is `BACKEND_AI_AGENTS.py::_load_history_rows`, and during a re-run it leaves out the reused question row
+(`chat_requests.REUSE_USER_ROW`). C1, C2 (two interrupted attempts, then success) and C3 (normal turn unchanged) pass.
+Pre-existing, NOT fixed: the loader orders by `created_at ASC LIMIT 20` — the OLDEST 20 messages, not the latest.
+
+**3. Migration 0040** (`alembic_pii/versions/0040_messages_chat_request_uniq.py`).
+- **Production, read-only** (all SELECTs, rolled back): PostgreSQL 16.14; messages 1,488 rows / 4.3 MB; 0 rows with chat_request_id;
+  0 would-conflict groups; the index expression evaluates on all 1,488 rows (55 JSON-null, 1,416 SQL-NULL analysis); no open
+  transactions; `lock_timeout = 0`, `statement_timeout = 0`, `idle_in_transaction_session_timeout = 0` on the PII DB.
+- **Locking:** CREATE INDEX takes a SHARE lock (reads continue, writes wait).
+- **Sandbox lock experiment:**
+
+  | Run | Write lock held | Result | Elapsed |
+  |---|---|---|---|
+  | original 0040 | 25 s | waited the full time | 25.5 s |
+  | `SET LOCAL lock_timeout='15s'` added | 25 s | LockNotAvailable, DB unchanged | 16.3 s |
+  | `SET LOCAL lock_timeout='15s'` added | none | upgraded | 1.6 s |
+
+- **Semantics (sandbox, rolled back):** duplicate live (rid, role-key) rows are refused; soft-deleted rows, other role keys, other rids,
+  rows without a rid, and NULL / JSON-null analysis are allowed.
+- **Rollback hazard (confirmed in the sandbox):** old code on a DB stamped 0040 → `alembic upgrade head` exit 255, "Can't locate revision"
+  → the backend `&&` start chain would stop. Order: `alembic -c alembic_pii.ini downgrade 0039_email_agent_messages` with the NEW code,
+  THEN revert the code. The downgrade drops only the index (no data).
+
+**4. Tests (sandbox only):**
+- Lifecycle + side-effect suites: 62/62. All chat suites: 201/201, twice. R13 (Redis failure on the record) passes.
+- Full suite: patched 1695 passed / 62 failed / 72 skipped / 0 errors; fresh baseline 1631 / 62 / 71 / 1 error.
+  The 62 failures are identical by name AND normalised reason.
+- The collection error (`test_fitment_pipeline_guardrails.py`: no module `isolated_db_guard`) is NOT fixed. It is collection-order
+  dependent: it still fails alone, and it collects on the BASELINE too once a module that adds `tests/` to `sys.path` runs first; the new
+  `test_chat_side_effects_e2e.py` sorts first. Reconciled: 1631 + 62 + 2 = 1695 passed, 71 + 1 = 72 skipped.
+- Sandbox restored to 0039; 0 test keys / rows.
+
+**Residual (material):**
+- Checkout in-doubt window: after `create_whatsapp_checkout` commits and before the guard stores the URL (milliseconds), or on the 120 s
+  deadline. No duplicate order is created, but the first order may exist without the customer having seen its link; registered (non-anon)
+  customers can then get up to 3 payment reminders for it. Flagged on the record (`side_effect`); this window was pre-existing (wider on
+  the deployed Telegram path, 12 s).
+- Recovery loop: supervised, one start site (`BACKEND_API_ROUTES.startup`); if it ever crashes it alerts but does not auto-restart
+  (platform convention).
+- Observed, unrelated: the car-parts harvester is killed as STALLED and relaunched about hourly (log age ~1,800 s).
+
+---
+
+## #75 — Chat reliability closure: DB-enforced one-turn-per-request, original question preserved, recovery race fixed — STATUS: PARTIAL (isolated E2E complete; NOT deployed; no live verification) — 2026-10-21
+
+**Baseline re-verified first.** HEAD 75b1323. Live mount = deployed code: `webhooks.py` c368cefa84c0, `BACKEND_API_ROUTES.py`
+1a7b356e7b1f, no new files. The production backend started 03:50:05 UTC and was untouched; its PII alembic is at 0039. The isolated tree
+`/opt/asf-wa73/backend` matched `PATCH_74.diff` (afb153de1003) exactly. The brief's "20d03607ce01" was the superseded #73 state.
+
+**What #75 adds on top of #74:**
+1. **One logical turn per request, enforced by the database.** #74 relied on Redis ownership + select-before-insert. New
+   migration `alembic_pii/versions/0040_messages_chat_request_uniq.py`: a partial UNIQUE index on messages
+   `(analysis->>'chat_request_id', COALESCE(chat_kind, chat_turn, role)) WHERE analysis ? 'chat_request_id' AND deleted_at IS NULL`.
+   - Production `messages` holds about 1,462 rows, and 0 of them carry a chat_request_id (read-only check), so the index starts empty
+     and builds instantly.
+   - It is applied by `alembic_pii upgrade head` in the backend's start command (`docker-compose.yml:402`), so it would apply on the
+     approved deploy.
+   - `_history_failure_row` handles `IntegrityError` by reusing the existing row. An agent commit refused by the index takes the
+     exception path, reconciles and reuses the saved turn.
+   - **Proven both ways in the sandbox:** without the index, two concurrent agent runs both committed a turn (0 refused) and four
+     concurrent failure writes created 4 rows. With it: exactly 1 turn and 1 row.
+2. **No historical row is altered.** #74 soft-deleted the interrupted run's saved question before re-running. Now the ORIGINAL question
+   row stays untouched and visible; the re-run's own copy is inserted soft-deleted with `chat_duplicate_of=<original id>`.
+3. **Recovery race fixed (found by test R5, reproduced deterministically by R12).** Two recovery passes in one process could both
+   re-run the agent:
+   - a pass that snapshotted the record just after the other pass's take-over saw "owner = me, not active";
+   - logged: `taken 0, rerun 1` plus `taken 1, rerun 1`; the second turn was refused by the new index, but the agent ran twice.
+   - Fix: the request id is reserved in `_ACTIVE_REQUESTS` with no await between check and add (atomic in-process; the Redis CAS
+     covers processes).
+   - R12 FAILS 3/3 on the pre-fix loop and PASSES 3/3 fixed. (A first "pre-fix" comparison was invalid: `docker exec` without `-i`
+     had silently not applied the edit. It was redone with a content check.)
+4. **More tests:** Telegram overlapping requests (correlation); processing with no live worker; one UNSCALED test (the real 12 s
+   wait, a 13 s agent: status note, then the answer after about 13 s); history committed but record lost its row id (F10); R11 load
+   check (does not reach the race window, stated in its docstring).
+5. **Harness bug fixed:** Telegram test update ids could exceed 100,000,000,000 and escape the `tg:99*` cleanup. 19 leaked
+   SANDBOX keys were removed.
+
+**Tests (sandbox only, guarded):**
+- WhatsApp 37 + Telegram 15 lifecycle E2E = **52/52**.
+- All chat suites **191/191**, three runs.
+- Full suite: patched 1683 passed / 62 failed / 71 skipped / 1 collection error; fresh baseline copy of the live mount 1631 / 62 / 71 / 1.
+  The failure sets are IDENTICAL. These are pre-existing sandbox data/config failures, each confirmed by its error:
+  - `NoResultFound` fixtures: base-price, customer-price-boundary, offer-classification;
+  - AliExpress without credentials/data;
+  - `HF_VISION_MODEL` unset;
+  - empty Meilisearch;
+  - localhost reset link;
+  - `isolated_db_guard` import-path collection error.
+- Sandbox restored to alembic 0039 (its own `/app` head; index dropped). 0 test keys, 0 test conversations.
+
+**Patch:** `/opt/asf-wa73/PATCH_75.diff` (sha 1013be4111d4, 11 files). Applied to the live files it reproduces the isolated tree byte for byte.
+`PATCH_73.diff` and `PATCH_74.diff` are kept.
+
+**Residual:**
+- An agent's side effects outside the PII transaction (payment link, catalogue writes) are not idempotent if a run is repeated after
+  "no saved turn".
+- During a re-run of a partial turn the LLM context contains the question twice (the original row plus the current message).
+- Ambiguous provider outcomes stay `ambiguous`, never success.
+- Telegram welcome sends remain fire-and-forget.
+- Not deployed; not live-verified.
+
+---
+
+## #74 — Chat recovery idempotency, durable failure history, Telegram timeout path — STATUS: SUPERSEDED by #75 (never deployed) — 2026-10-21
+
+**Where the patch lives (NOT on the production mount).** Production `/app` and the sandbox `/app` are both bind mounts of
+`backend/`, so the #73 files were production-exposed (on disk, not loaded). They were moved off the mount, and the live files
+were restored to the deployed baseline:
+- `webhooks.py` c368cefa84c0, hash-proven by a byte-exact reconstruction;
+- `BACKEND_API_ROUTES.py` 1a7b356e7b1f, reconstructed: the diff to the #73 file is exactly the #73 insertions.
+
+All #74 work is in **`/opt/asf-wa73/backend`** (full tree) + **`/opt/asf-wa73/PATCH_74.diff`** (sha afb153de1003; 10 files;
+`patch --dry-run` applies cleanly to the live files). The #73 version is kept as `/opt/asf-wa73/PATCH_73.diff`.
+Tests ran from a copy of that tree inside the sandbox container only (`/tmp/wtapp`, removed afterwards).
+
+**Root causes (traced in code, then reproduced on the deployed code in the sandbox):**
+1. **Duplicate turn on recovery.** `process_user_message` COMMITS its own turn (`BACKEND_AI_AGENTS.py:8079`). It does not just flush,
+   as #73 assumed. A crash after that commit and before the lifecycle update made #73's recovery re-run the agent: a second
+   user+assistant turn. On deployed WhatsApp, "turn saved, then an error" sent the customer "מצטערים, נתקלנו בבעיה" while history
+   held the saved answer.
+2. **Failure history.** Failure texts were never written to `messages`. Delivery state existed nowhere.
+3. **Telegram** (`routes/webhooks.py` telegram_webhook, independent of the WhatsApp path):
+   - `asyncio.wait_for(process_user_message(...), 12.0)` CANCELLED the agent and sent "אנא שלח שוב את שאלתך". Probe with a 13 s
+     agent: that text only, and nothing in history, not even the question.
+   - Any exception → "נציג שירות יחזור אליך בהקדם": an invented call-back, no such mechanism.
+   - An empty answer was sent as "".
+   - The reply was an untracked `create_task`, and the webhook always returned `delivered: True`.
+   - Redis down → the update returned "ignored". Probe: 0 agent calls, nothing sent: the message was lost.
+   - The `tg:update` key was set before processing, so a crash lost the update.
+
+**Fix (in /opt/asf-wa73 only):**
+- `chat_requests.py` (new, replaces `wa_agent_requests.py`): one record per request `chat_req:<wa|tg>:<id>`, with separate
+  `status`/`reason`, `delivery`(+kind, attempts) and `history` fields. Owner liveness is a heartbeat key, not "boot ≠ mine" (`--workers`
+  is configurable). `take_over` is an atomic Lua compare-and-set, so concurrent recoverers never both act. Transport classifiers for both channels.
+- `routes/webhooks.py`:
+  - **Turn tagging:** the agent session's `before_flush` stamps `analysis.chat_request_id` on the turn's rows, inside the agent's own
+    transaction.
+  - **Reconciliation:** `_reconcile_turn` runs before any re-run or after any error/deadline:
+    - complete turn → reuse it (no re-run);
+    - user row only → soft-delete it, then re-run (one logical turn);
+    - database unreachable → `ambiguous`, kept open, retried, and after `CHAT_REQ_MAX_RECONCILE` one honest failure.
+  - **Failure history:** the failure row is written to `messages` (`chat_kind=failure`, reason, delivery) BEFORE its send. The final
+    delivery state is written to the outcome row (answer or failure). It is deduped per request and reconciled by the recovery loop if the
+    write failed.
+  - **Delivery:** marked `sending` before each attempt; a crash mid-send → `unknown` (never resent). Retries are bounded across restarts, and
+    only when nothing provably left.
+  - **Inbound dedup:** the dedup key names the handling process and is marked "done" when handling ends. A redelivery is processed again
+    only if that process died before persisting a request.
+  - **Telegram** shares the whole lifecycle: status note after the wait, honest localized failure, and the real send result returned.
+    Redis down no longer drops the message.
+- `social/telegram_publisher.py`: `not_sent` only for ConnectError/ConnectTimeout/429, plus `status_code` (4xx = permanent, timeout/5xx =
+  unknown).
+- `BACKEND_API_ROUTES.py`: supervised `chat_request_recovery` loop (heartbeat + pass every 20 s), replacing #73's one-shot.
+- `BACKEND_AI_AGENTS.py`: the agent's history loader skips `deleted_at` rows. The admin history views already did
+  (`routes/admin.py:2056`).
+
+**Isolated E2E (sandbox PII DB + sandbox Redis, guarded; synthetic sender/chat; the fake agent writes its turn like the real one):**
+- `tests/test_whatsapp_request_lifecycle_e2e.py`: 32 tests.
+- `tests/test_telegram_request_lifecycle_e2e.py`: 12 tests.
+- Result: **44/44 passed**, twice. Combined with every WhatsApp suite: 183/183, twice.
+
+**Full sandbox suite:** patched copy 1675 passed / 62 failed / 71 skipped / 1 collection error; baseline copy of the live mount 1631 / 62 / 71 / 1.
+The failure sets are IDENTICAL. All 62 are pre-existing sandbox data/config failures:
+- missing fixture rows (`NoResultFound`): base-price, customer-price-boundary, offer-classification;
+- AliExpress without credentials/data;
+- `HF_VISION_MODEL` unset;
+- empty Meilisearch;
+- localhost reset link;
+- the `isolated_db_guard` import-path collection error in `test_fitment_pipeline_guardrails.py`.
+
+Sandbox left clean.
+
+**Not done / residual:**
+- Not deployed. No live verification (no test traffic to real customers).
+- External side effects of an agent run outside the PII transaction (e.g. a payment link, catalogue writes) are not idempotent: a re-run
+  after "no saved turn" can repeat them.
+- A provider-level outcome that cannot be reconciled is `ambiguous`, never success.
+- Empty answers leave the agent's own empty assistant row in history (truthful), next to the failure row.
+- Telegram welcome sends remain fire-and-forget (greeting path only).
+- Redis records hold the message body and recipient for 2 days.
+
+**Deploy needs:** owner approval; apply `PATCH_74.diff` to `backend/`; run `pre_restart.sh` (preflight must say SAFE; never 10:00–14:00 IL);
+`docker compose up -d --no-deps --force-recreate backend`. Then verify live: `chat_request_recovery` running, and the first real slow
+request's record + history row.
+
+---
+
+## #73 — WhatsApp chat requests over 12 s: durable request lifecycle — STATUS: SUPERSEDED by #74 (moved off the production mount 2026-10-21; never deployed) — 2026-10-21
+
+**Deployed behaviour (traced in source; deployed `routes/webhooks.py` sha c368cefa84c0, loaded by the backend started 03:50:05 UTC;
+the file was reconstructed byte for byte from that sha to test against it):** inbound → `wa:msg:<message_id>` NX dedup (1 h, set
+BEFORE processing) → conversation commit → in-flight claim `wa:agent_inflight:<user>:<sha(body)>` → the agent runs as an asyncio
+task in its own PII session → answer within 12 s: sent directly; else a localized "the answer will follow" note, then the answer
+(or, at 120 s, one failure text) is sent by a background task. Correlation = closures only (sender, body, conversation id); there
+was no request id and no persisted request. **Defects confirmed on the deployed code in the sandbox** (fake bridge; it records the
+empty string, which the real provider refuses with `INVALID_PAYLOAD`, so the customer gets nothing):
+1. **Process interruption loses the request.** The request lived only in memory; the `wa:msg` dedup then ignores the redelivery for 1 h.
+   Probe: customer saw only the wait note, never an answer.
+2. **Empty answer → silence.** `_render` turned `{"response": ""}` into `""`. Probe: fast path = nothing; late path = the wait note and nothing after it.
+3. **Bridge outage longer than the provider's 15 s retry budget → the answer is lost**, failure only logged; one attempt.
+4. **A claim left by a dead process** made the customer's resend get "still working" for an answer nobody was producing (up to 150 s).
+5. No processing or delivery state anywhere, so "answered" and "delivered" could not be told apart.
+
+**Fix (repo only):** new `backend/wa_agent_requests.py`: Redis hash `wa:agent_req:<rid>` (rid = WhatsApp message id; Redis runs AOF),
+2-day TTL, open set `wa:agent_req:open`. It is written BEFORE the agent task starts. Processing `status`
+(received→processing→answered|failed + `reason`, `attempts`, `boot`) and `delivery` (none→sent|retrying|failed|unknown,
+`delivery_attempts`, `delivered_kind` answer|failure) are separate fields; the interim note is recorded separately (`status_note`)
+and never counts as the answer. `routes/webhooks.py`: `_process_request` / `_finish_request` / `_deliver` / `recover_agent_requests`.
+- "answered" only for a non-empty answer after tag stripping; otherwise `failed/empty_answer` + the localized failure text.
+- Delivery retries (30/120/300 s, bounded) ONLY when the bridge provably sent nothing; a timeout or bridge 500 → `unknown`, never retried (no duplicates).
+- A fast-path delivery outage continues in the background (the webhook waits at most 20 s).
+- Claims carry the rid; a claim whose request isn't being worked on by this process is taken over.
+- Startup one-shot recovery (`BACKEND_API_ROUTES.startup`), for requests of a previous process:
+  - re-run (≤ `WA_AGENT_MAX_ATTEMPTS`=2, age < 900 s), else one honest failure text;
+  - answered-but-undelivered → deliver the stored answer without re-running.
+- Logs carry the rid and the last 4 digits only.
+
+**Isolated E2E** (`tests/test_whatsapp_request_lifecycle_e2e.py`, real webhook route; sandbox PII DB + sandbox Redis guarded;
+synthetic sender; fake agent and fake bridge send; timings scaled 12 s→0.3 s, 120 s→1.5 s, back-off→0.1 s):
+- 19/19 pass on the change; 17/19 fail on the deployed code (most because no record exists; the behavioural probes are above).
+- Per-request evidence (rid, before/after state, timestamps, sends) is printed as `EVIDENCE` lines with `-s`.
+- Covers: slow + status note; two slow questions correlated per rid; deadline; fast/late exception; bridge down→up (3 attempts, sent);
+  bridge down throughout (`answered`/`failed`, 4 attempts); ambiguous timeout (`unknown`, 1 attempt); message-id redelivery;
+  in-flight resend; stale claim; interruption → re-run (attempts 2, delivered); interruption with attempts exhausted → failure text;
+  answered-undelivered → redelivered without the agent; empty answer ×4 (fast/late, blank, tags only); fast path.
+- **Regression:**
+  - WhatsApp suites 53/53;
+  - full sandbox suite 1650 passed / 62 failed / 71 skipped / 1 collection error. The baseline copy (change removed) has the same 62
+    plus the one source-structure test updated here, so no new failures. The pre-existing failures are pricing/offer-classification
+    tests on sandbox data, plus an import-path collection error in `test_fitment_pipeline_guardrails.py`.
+- Sandbox left clean (0 test keys, 0 test conversations).
+
+**Not done:**
+- Not deployed: production loaded the old module at 03:50:05; the new files' mtimes are 04:14 and 04:17. Production Redis has 0
+  `wa:agent_req` keys.
+- **Risk:** `/app` is the bind mount, so ANY backend restart would deploy this unreviewed change.
+- No live verification (no customer traffic since the restart, and no test messages to real customers).
+- Residual:
+  - an agent that committed its turn and died before `status=answered` would be re-run once (a duplicate turn in history);
+  - no history row for a failure text;
+  - the Telegram 12 s path is unchanged.
+
+Files: `backend/wa_agent_requests.py` (new), `backend/routes/webhooks.py`, `backend/BACKEND_API_ROUTES.py`,
+`backend/tests/test_whatsapp_request_lifecycle_e2e.py` (new), `backend/tests/test_whatsapp_late_reply.py`,
+`backend/tests/test_whatsapp_late_reply_e2e.py`.
+
+---
+
+## #72 — Continuation: Eurosender key state, nine test failures explained, keyword commands, chat E2E, bridge masking — 2026-10-20/21
+
+**1. Eurosender — the WEBHOOK SIGNING SECRET WAS NOT ROTATED (verified, values never printed; only equal/different booleans and the
+masks the dashboard itself shows).** The owner generated a new **API key** ("new api 20.10", `***b5e0`, written to `.env` at 17:45 UTC
+as `EUROSENDER_PRODUCTION_API_KEY`). `EUROSENDER_PRODUCTION_WEBHOOK_SECRET` in `.env` is byte-identical to the pre-rotation backup,
+and the running backend (started 17:33:08, not recreated since) still holds the OLD API key and the OLD webhook secret. Read-only
+`GET /v1/countries`: old key HTTP 200 (249), new key HTTP 200 (249) — the old API key is still active in Eurosender, so nothing is
+broken today. The verifier reads `eurosender_config.webhook_secret()` → `EUROSENDER_PRODUCTION_WEBHOOK_SECRET` (SANDBOX=0) from the
+process environment, which compose fills from `.env` only at container creation → a `.env` change needs
+`docker compose up -d --no-deps backend`. **Correction of #71:** the dashboard row "Production Webhook Signing Secret ***0f27" is an
+API KEY with a misleading name (the old API key; its last 4 match), not the signing secret — my earlier "***0f27 is not the key's
+last 4" was wrong, and the trash click the permission classifier blocked would have deleted the API key the running app uses.
+The signing secret is shown only by "Get Webhook Signing Key". New-key acceptance / old-key rejection: NOT TESTABLE until a new
+signing secret exists. Required order: recreate backend (loads new API key) → only then delete the old API key → rotate the signing
+secret (Get new key → `.env` → recreate → signed non-JSON test body: new 200, old 401).
+**2. The nine "failing tests" were the deliberate regression-proof run of #71** — the 13 new tests executed against the PRE-FIX
+code (reconstructed live `BACKEND_API_ROUTES.py`, HEAD `db_cleanup_agent.py`/`category_learning.py`) to show they catch the defects.
+Recovered reasons: keyword alert `TypeError` (no `now_ts`), pending posts / digest night runs / digest stale marks `AttributeError`
+(function did not exist), harvest ×3 `TypeError` (no `idle_realert_s`), idle-since wording (assertion on old source), task3b targeting
+(no targeting line). Classification: stale result by code/version mismatch, by design. Only 2 of the 9 demonstrate old BEHAVIOUR; the
+other 7 fail because the API did not exist — #71 overstated them as "every fixed behaviour"; their behavioural evidence is the live
+data (15 "new" keywords daily, REX 27 frozen since 06-14, idle repeats). Each of the nine re-run individually on the current code:
+**9/9 passed**. Identity: sha256 of `BACKEND_API_ROUTES.py`, `db_cleanup_agent.py`, `category_learning.py` identical in the sandbox
+`/app` and the production container `/app` (one bind mount); the running process loaded every #71 module at 17:33:08 (all mtimes
+earlier); `category_learning.py` and `agents/owner_console.py` changed after that (this entry) → repo-only.
+`test_base_price_classification.py` (separate): sandbox `parts_catalog` = 0 rows (queried) → the fixture's `scalar_one()` raises
+`NoResultFound`; the test UPDATEs real parts (rolled back) → never against production. Environmental, unchanged.
+**3. Keyword commands (FIXED in repo, NOT deployed).** Root cause: `(\S+)` captured the first word only — `דחהמילה <a> <b>` acted on
+the DIFFERENT token `<a>` (reproduced on the deployed code: a just-approved single-word token was rejected); 50 approved and 1 rejected
+keywords are multi-word (DB) and could not be decided; tokens were only `strip()`ped; `reject()` of a non-existent token still added it
+to the in-memory rejected set and ran `undo_keyword`. Fix: whole rest of the line, whitespace collapsed (`norm_token`); trailing
+בכוח/force is the override unless the full text is itself a stored token; exact-token existence check before approve/reject; unknown
+token → nothing changed + read-only whole-word suggestions; replies report the STORED status. Files `agents/owner_console.py`,
+`category_learning.py`. Tests `tests/test_keyword_commands.py` 14/14 (E2E through `process_owner_message` on the isolated sandbox DB,
+persisted status of every row checked, cleanup verified 0 leftovers); on the deployed code 14/14 fail, the E2E ones on behaviour.
+The 2,525 pending keywords were not touched.
+**4. Delayed chat answers — E2E through the real webhook route** (`tests/test_whatsapp_late_reply_e2e.py`, FastAPI app + router, sandbox
+PII DB, synthetic sender; agent + bridge send replaced): 7/7 — fast answer only; slow answer = wait note then the answer to the SAME
+question once; identical resend in flight → one agent run, one answer, one "still working"; redelivered `message_id` (reconnect replay)
+ignored; past the deadline → one honest failure text; Arabic customer → Arabic status (welcome also localized); same question after the
+answer = new turn. Production: 2 webhook calls since the restart, both the owner (console path) — no customer message, so the
+customer late path is NOT VERIFIED live.
+**5. Bridge masking — VERIFIED live** after the 17:36 restart: `Sending to ...0397`, `Sent OK to ...0397`, `[WA IN] ...0397`. The only
+long number in the bridge log since then is the bridge's own business account at startup (`linked account: …`, public). Repo fix
+(NOT deployed): the four error paths (send/delete/media/backend) printed `err.message` raw — now `maskNumbers()`; offline tests
+`test_no_raw_recipient_logging.mjs` 10/10; bridge suite 150 passed.
+**6. Keyword backlog review (sub-agent, read-only) complete:** `docs/fitment/keyword_backlog_review.{jsonl,md}` — 2,525 tokens:
+ok 480 · category_mismatch 1,260 · insufficient_evidence 558 · ambiguous 226 · error 1. Nothing approved/rejected.
+**7. Overnight report:** D:2026-10-21 running (auto_backup started 22:00:10 UTC); the 09:00 IL digest is the live check (see below).
+**Regression (sandbox):** 360 passed, 2 skipped (live-data fitment test; OOM-heavy full-catalogue task — both by design).
+
+## #71 — WhatsApp reported OLD results as new updates; slow chat answers discarded; keyword-learning loop stuck — FIXED IN REPOSITORY (deploy: see end) — 2026-10-20
+
+**Trigger.** Owner: yesterday's WhatsApp messages carried information from about a month ago instead of the scans and
+preparation work actually performed. Traced every owner message of 10-19 and 10-20 (bridge outbound history) back to
+its source rows. No message content containing customer data is reproduced here.
+
+**Root causes (each verified against source data):**
+1. **Keyword alert re-announced the same old tokens as "new" every day.** `db_cleanup_agent._notify_owner_pending_keywords`
+   sent `"{len(pending)} מילות סיווג חדשות"` where `pending = pending_for_owner(limit=15)` = the top 15 by votes. Identical
+   message (same tokens vest/computer/multi/buckle/lever…) on 11 of the 12 days 10-09..10-20; those tokens reached
+   consensus on **2026-07-27 / 08-06**; the real number waiting is **2,524**, not 15.
+2. **Pending-posts reminder re-listed July posts daily** ("פוסטים ממתינים לאישור (50)", oldest 2026-07-19, 2,130–2,227 h).
+   50 posts await owner approval; last approval 2026-09-19; no expiry rule exists (business decision, below).
+3. **09:00 digest printed frozen data and hid the real night work.** "משימות REX לקטלוג: הושלם 27" daily — those todos were
+   last updated **2026-06-14**. The worker section lists jobs started in the last 2 h, so the night pipeline (10 runs on
+   D:10-19/D:10-20, all COMPLETED: backup, eBay fitment, sync_prices 80–89 min, REX, category discovery) never appeared in
+   ANY WhatsApp message (the night pipeline itself notifies only failures).
+4. **Harvest "queue empty" repeated on the stall cadence:** 6 identical messages 10-06..10-09 (every 6 h, max 2/day — the
+   earlier "9× in 24 h" in #70 was my mis-statement: 9 repeats over two weeks).
+5. **Chat answers > 12 s were discarded:** `asyncio.wait_for(process_user_message(...), 12)` cancelled the agent, told the
+   customer (always Hebrew) "שלח שוב את שאלתך ואענה תוך שניות" and committed a half-processed turn.
+6. **Keyword learning loop (owner question "why aren't the word batches handled by the local model and agent"):**
+   (a) task3b's ranking read the stuck parts' text from `_uncategorized_index`, which task3 empties → ranking always empty →
+   every LLM call fell back to arbitrary parts (**0 "targeting" lines in 356 LLM batches**, 10-18..10-20) — the same bug
+   task3c had fixed; (b) tokens already awaiting the owner kept collecting votes (`vest` 128,965) instead of new tokens being
+   taught; (c) of the 15 tokens shown daily, **12 fail the evidence gate** approve() enforces (10 category_mismatch,
+   2 ambiguous) — the owner was asked to approve rules the system itself blocks; (d) by design (owner rule 2026-07-27)
+   nothing is applied without owner approval; Phase-2 auto-write needs ≥ 50 decisions per input type at ≥ 90 % approval
+   — the most any type has is 14 (Hebrew descriptive: 2 approved / 12 rejected); last approval 2026-08-03.
+   Verified accurate (no change): the group-scan report (13 "new" drafts = exactly the 13 rows created in that run).
+
+**Fixes (repository):**
+- New `backend/notify_backlog.py`: per-backlog "announced" set in Redis; NEW = not announced before; an unchanged backlog is a
+  labelled reminder at most every `BACKLOG_REMINDER_DAYS` (7); at most one "new" message per `BACKLOG_NEW_MIN_INTERVAL_S`
+  (24 h, new items held, never dropped); first use counts the existing backlog as old (a deploy can never announce 2,524
+  "new" tokens). Keyword alert + pending-posts reminder (`_notify_pending_posts`) use it; both show the real total and the
+  oldest date; the keyword alert marks each listed token ✅/⚠️ by the evidence gate. `notify_owner` returns its send result.
+- Digest: "עבודות הלילה (D:<date>)" from `night_pipeline_runs` (state + minutes + reason), REX counts marked
+  "(ללא שינוי מאז dd/mm/yyyy)" when older than a day.
+- Harvest: `HARVEST_IDLE_REALERT_S` (24 h) for the steady "queue empty" state (stall keeps 6 h); message says
+  "התור ריק מאז dd/mm HH:MM" (persisted across restarts). Recovery is still announced once (existing rule, existing test).
+- Chat: `routes/webhooks.run_agent_reply` — agent in its own session (conversation committed first), reply within 12 s as
+  before, else an honest "the answer will follow, no need to resend" in the customer's language (he/ar/en) and the answer
+  delivered when ready (deadline `WA_AGENT_LATE_DEADLINE_S` 120 s → honest failure text once); an identical resend while
+  in flight starts no second run (`wa:agent_inflight:*`).
+- task3b: text read from the DB when the index is empty; tokens awaiting the owner excluded from the ranking.
+
+**Tests:** new `tests/test_whatsapp_stale_notifications.py`, `tests/test_whatsapp_late_reply.py`,
+`tests/test_category_task3b_targeting.py` — 26/26; on the deployed code 9 fail (every fixed behaviour; 2 of them by a
+TypeError on the new parameter, stated as such) and 4 pass (pure tests of the new module, not evidence). Full sandbox
+regression: **337 passed, 1 skipped** (live-data fitment test). `tests/test_base_price_classification.py` 16 failed —
+ENVIRONMENTAL (needs real catalogue rows, inserts test rows; sandbox DB has none; no changed function involved).
+
+**DEPLOYED 2026-10-20 (owner-authorised restart for this task) — carries every repo-only change of #69, #70, #71.**
+Pre-restart (17:25–17:32 UTC): restart preflight SAFE, 0 long queries (an autovacuum and one 64 s db_cleanup batch only),
+0 lock waiters, no running job, bridge idle, quiet queue 0; the keyword evidence review (sub-agent, read-only) paused
+cleanly first (289/2,524 written, resumable). `pre_restart.sh` exit 0 → `docker restart autospare_backend` 17:32:56 →
+healthy in ~35 s (started 17:33:08) → `post_restart.sh` exit 0. Bridge: one quiet minute, `docker restart whatsapp_bridge`
+17:36:03 → CONNECTED 17:36:25 (no QR, account 972532426920, no mismatch).
+**Live evidence the new code runs (VERIFIED):** startup clean (no Traceback/ImportError; night controller started; HealthMonitor
+all OK); 17:33:48 pending-posts message in the NEW format ("תזכורת: 50 פוסטים ממתינים לאישור … אין פוסטים חדשים. הוותיק ממתין
+מ-19/07/2026"); 17:34:36 keyword message in the NEW format ("תזכורת: 2,524 מילות סיווג ממתינות לאישורך … הוותיקה ממתינה מ-27/07/2026",
+✅/⚠️ marks equal to the evidence check run directly on the DB); Redis backlog state created (noa_posts 50, keywords 2,524);
+task3b's first "targeting unknown token" line ever (`'set'`, 9 parts) — 0 before. Post-deploy search probe (real HTTP, independent
+check): 7/7 HTTP 200, 0 parts outside the allowed models — Peugeot 3008, MAZDA 3, MG4 now return fitting parts. API latency
+measured right after the restart (cold, load 4.6): Corolla 21.0 s, Civic 15.3 s, others 1.4–9.1 s — under the 30 s limit,
+slower than the in-process figures; not called fast. Pre-existing, not new: `task_heal_importer_price` backoffs (7 before the
+restart). Accepted-by-WhatsApp only — no delivery receipts exist.
+**NOT VERIFIED live:** bridge recipient masking (no send has gone through the new bridge process yet); late chat answers (needs a real
+customer message > 12 s); digest night-runs section and digest marker (next 09:00 IL); harvest idle cadence (needs an idle period);
+quiet-queue validation paths (need an invalid/overflow event). Each has a regression test (above / #70).
+**Eurosender secret (#69 §16-b x): NOT ROTATED.** Server value and the account's current signing key match (confirmed by last 4).
+The owner signed in; deleting the old key in the dashboard was blocked by the session's permission classifier, so no new key was
+created and `.env` is unchanged (backup `/root/.env.before_es_rotation_20261020T173148Z`, root-only). The "Get Webhook Signing Key"
+dialog displays the CURRENT key. (CORRECTED in #72: the list's "***0f27" row is the old API key, misleadingly named.) Remaining: delete old key (owner click or permission),
+Get new key, write `.env`, `docker compose up -d --no-deps backend` (env change → recreate; `--dry-run` first), verify a request
+signed with the new key → 200 and the old → 401 (non-JSON body: returns at the invalid-JSON branch, touches no order).
+
+**Decisions for the owner:** expire/reject the 50 pending NOA posts (oldest 2026-07-19) and the 477 pending group drafts
+(since 2026-08-18)? Bulk-decide the keyword backlog (an evidence review of all 2,524 tokens, read-only, is being produced
+in `docs/fitment/keyword_backlog_review.{jsonl,md}`). Telegram's 12 s fallback is unchanged.
+
+## #70 — WhatsApp reliability: queue validation, permanent vs transient failures, silent overflow, digest clock/duplicates — FIXED IN REPOSITORY, NOT DEPLOYED — 2026-10-20
+
+Map + contracts + runbook: `docs/WHATSAPP_NOTIFICATIONS.md`. Evidence base (read-only, 2026-10-20): bridge outbound
+history `msg_cache.json` (411 msgs 10-05..10-19), bridge stdout + `connection_events.log`, Redis queue (metadata),
+`social_posts`, `social_inbox`, `conversations`, backend logs. No message content in this entry.
+
+**Not defects (verified):** bridge since 09-21: 0 send errors, 0 rejections, 0 process crashes (all 261 send errors were
+the 09-11..09-20 logout/crash-loop, fixed then); disconnects are WhatsApp 428/503 with ~1 s reconnect; 8 since 10-18.
+"Waiting for this message": owner 1,013 decrypt retries 10-01..10-18, **0 since the LID fix**; customers 0 retries
+10-01..10-18. The quiet afternoon of 10-19 (no sends 10:54–18:00 UTC) = nothing generated (backend made 6 sends since
+the restart, all 200). Outbound history: 0 empty messages, 0 banner-only messages, longest 1,916 chars (cap 3,800).
+119 identical messages repeated within 24 h — all BEFORE 10-18 (101 = the 4.5-day stall reminder, #69 §3), 0 after
+(post-fix window too short: NOT VERIFIED). Queue now: 5 items, all with content. Bridge exposure: `127.0.0.1:3001` +
+internal network; sandbox on `sandbox_net` (cannot reach it).
+
+**Root causes fixed (code-established; regression tests: 15 of 17 FAIL on the deployed code — the 2 that pass are the normal night→morning path and alert-key dedup, i.e. behaviour that was already right — and all pass now):**
+1. `_wa_send_quiet` queued without validating: an empty/whitespace text would be delivered at 09:00 as the night
+   banner with nothing under it (the provider's empty-body guard saw the banner); a `None` text crashed the queueing
+   and the fallback **sent immediately at night**. Now refused (`INVALID_PAYLOAD: empty body` / `no recipient`),
+   never queued or sent. Provider also refuses a missing recipient.
+2. Flush treated a permanent error like a transient one: an `INVALID_PAYLOAD` item stayed at the head for 5 passes
+   (~25 min) blocking every message behind it. Now dropped at once (reason `permanent_error`); transient failures keep
+   FIFO + 5 bounded attempts; unknown outcomes (timeout/5xx) unchanged (at-least-once, documented).
+3. Overflow was silent: `LTRIM -50` dropped the oldest night entries with no log. The Lua script now records each
+   cut entry first (dead-letter list `autospare:wa_quiet_dead`, metadata only, ≤ 200, 30 d) and logs it. Max observed
+   27 / night, so this had not happened yet.
+4. Every drop (malformed, invalid, permanent, retry-exhausted, overflow) is dead-lettered and the owner gets ONE
+   summary per local day (`wa_dead_letter_<date>`).
+5. Daily status digest + weekly harvest digest used `(utc_hour + 3) % 24`: from 2026-10-25 (UTC+2) the 09:00
+   digest would fire at 08:00 IL (queued, "sent late" banner) with a wrong header time. Now Asia/Jerusalem
+   (`APP_LOCAL_TZ`). The daily digest was sent TWICE on 10-09 and 10-10 (restart days; in-memory "sent today") —
+   now a Redis marker per digest per local date, set only after a confirmed send. Worker section labelled with its
+   real window ("שהתחילו בשעתיים האחרונות") — at 09:00 it excludes the whole night pipeline.
+6. Post-payment WhatsApp tracking notice ignored the send result and a missing number — now logged.
+7. Pending-posts reminder typo "פוסטי'" → "פוסטים".
+8. **Personal data in the bridge log (live):** `index.js` printed every recipient's full number/LID on each send
+   (`Sending to` / `Sent OK to`, image, audio), on delete and on every inbound message (`[WA IN]`) — 46 lines in 48 h,
+   customers included, kept in the docker log. Now the existing `jidHint` (last 4 digits). New offline test
+   `test_no_raw_recipient_logging.mjs` (fails on the old `index.js`, exit 1; passes now). Bridge suite offline:
+   **144 passed** (140 + 4). Takes effect only after an approved BRIDGE restart. (Backend logs: 0 full numbers —
+   the 8 matches were part numbers in eBay queries; 0 token-like strings.)
+
+**Files:** `backend/BACKEND_API_ROUTES.py` (queue Lua, `_wa_text_usable`, `_wa_permanent_error`, `_wa_dead_letter`,
+`_wa_dead_letter_summary`, `_report_wa_dead_letters`, `_wa_send_quiet`, `_flush_wa_quiet_queue`, `_digest_due`,
+`_digest_*_sent`, `_status_update_loop`, `_harvest_supervisor_loop`, reminder title), `backend/social/whatsapp_provider.py`,
+`backend/routes/utils.py`; `whatsapp-bridge/index.js` (log masking only) + `whatsapp-bridge/test_no_raw_recipient_logging.mjs`.
+
+**Tests:** new `tests/test_whatsapp_quiet_queue.py` (real Lua + flush against the isolated `sandbox_redis`),
+`tests/test_whatsapp_notification_contracts.py` (DST-boundary schedule, restart marker, `notify_owner` rendering and
+cooldown), additions to `tests/test_whatsapp_empty_body_guard.py`. Sandbox: **297 passed, 1 skipped** (live-data
+fitment test) across the WhatsApp, #69 and night-pipeline files + 14/14 empty-body/post-payment. Baseline before any
+change: 73 passed (WhatsApp files); bridge 140 passed offline (`--network none`, copy without `auth_info`), unchanged.
+
+**Open / decisions:** customer 12 s timeout reply (discards the answer, Hebrew only, "within seconds"); 50 NOA posts
+pending since 2026-07-19 (daily reminder forever); harvest-idle alert repeats; no delivery/read receipts (ok =
+server-accepted); bridge `/send` unauthenticated (network-isolated; FlareSolverr shares the network — low risk);
+`EUROSENDER_PRODUCTION_WEBHOOK_SECRET` exposure (#69 §16-b x) not rotated.
+
+## #69 — Owner WhatsApp: undecryptable messages, a 4.5-day night-pipeline hang, alert spam, sends lost in bridge reconnects — APPLIED (backend + bridge restarted 2026-10-18 22:33/22:35 UTC) — 2026-10-18
+
+**Trigger.** Owner screenshot 2026-10-18 16:46 IL: "❌ שלב נכשל בתור המשימות / PIPELINE PARITY CHECK [FAIL] duplicate OEM groups 106" followed by four "בהמתנה להודעה זו". Owner asked to read the week's WhatsApp log and fix the messages. Source of the log: the bridge's persistent outbound cache `whatsapp-bridge/msg_cache.json` (412 messages 10-04..10-18) + bridge logs. 344 messages since 10-11.
+
+**1. "Waiting for this message" on every owner message (VERIFIED cause, fix on disk).** Baileys 6.17.16 has no phone-number↔LID mapping. The owner's devices are LID-addressed (`98058566160397@lid`). `auth_info/` holds two session sets for him: `session-972586050155.0` (~900 B, re-created on every retry) and `session-98058566160397.0` (35 KB, long-lived). All 437 bridge sends went to the phone-number JID; almost every one drew a `wa_retry` from devices 0 and 33 (`...0397`). Baileys answers the retry over the LID session and 770 of 776 retried ids needed only one retry, i.e. the LID copy decrypts and the phone-number copy never does. **Live test:** one labelled message to `98058566160397@lid` (id `3EB0E9E1CB500000D51793`, 17:20:33 UTC) drew **zero** retries (the phone-number send just before it drew one), and **the owner confirmed it displayed correctly.** The 2026-07-24 code comment "a LID is NOT deliverable" was recorded nowhere else and is contradicted by this test. **Fix:** `social/whatsapp_provider._owner_lid_jid` — the single bridge boundary (text, image, typing, `reply_jid`) maps every form of `OWNER_WHATSAPP_PHONE` to `OWNER_WHATSAPP_LID`. Customers, groups and other LIDs unchanged; never builds `<lid>@s.whatsapp.net`. Rollback without code: `OWNER_WHATSAPP_ROUTE_VIA_LID=0`. Comments in `BACKEND_API_ROUTES._wa_send_quiet` and `routes/webhooks.py` corrected. (The 2,108 bridge-side `Bad MAC`/"messages into the future" errors were a single burst on 2026-10-01 — not this.)
+
+**2. The screenshot's message is from 2026-08-05 (VERIFIED).** `pipeline_queue.parity_check` failed on 2026-08-05 and nothing in the queue has run since. The report loop kept "already announced" only in process memory, so every backend restart re-sent the finish summary AND a separate "step failed" for the same August failure (4× each this week; today's restart at 13:41:45 UTC + its 300 s delay = 13:46 UTC = 16:46 IL). **Fix:** announcements persisted in Redis keyed by event identity (`done:<last finished_at>`, `failed:<step>:<finished_at>`, `SET NX`, 180 days); a summary also marks the failures it lists. Keys for the existing August result were pre-seeded so the deploy cannot send it once more. Current duplicate-OEM groups (same query, read-only): **93**; weekly maintenance merges them (373 on 2026-10-10). Not changed here.
+
+**3. db_update_agent "תקוע באמת" ×153 was a REAL 4.5-day outage (VERIFIED).** Night-pipeline job `category_discovery` D:2026-10-13 started 2026-10-12 23:35 UTC and never returned until a restart on 10-17 10:47 (normal 113 min, max 120). Its heartbeat loop kept it looking alive. Rule 2 ("nothing starts while a job is RUNNING") then skipped **four nights** of in-app backups, `sync_prices`, REX and fitment (no `night_pipeline_runs` rows D:10-14..10-17), and `run_all_tasks` deferred to it every 10 min (no cycle 10-12 22:58 → 10-17 10:48). Where it hung is unknown — the backend log before 10-17 02:11 is gone. **Fix (`night_pipeline.py`):** every job has a hard deadline, `JobSpec.max_runtime_s` ≥ 2× its longest observed run (backup/fitment/REX 1 h, category_discovery 4.5 h, brand_discovery 5 h, sync_prices 7 h, weekly 2 h; `NIGHT_JOB_MAX_RUNTIME_<KEY>_S` overrides). Past it the job is cancelled (its own `finally` releases the lock and registry row) and recorded FAILED; a job that ignores cancellation for `NIGHT_JOB_CANCEL_GRACE_S` (120 s) is abandoned and the pipeline released anyway. Docstring rules 2/7 updated (old rule: "never cancels, only waits").
+**Alert content:** when `run_all_tasks` is idle because a night job holds the pipeline, the alert now says so and names the job instead of "no cycle started — docker restart". **Cadence:** reminder every 6 h (was hourly) + one "חזר לפעול" message on recovery.
+
+**4. Alerts went to the owner twice and to a test number (VERIFIED, privacy).** Four health-monitor paths WhatsApped every `users.is_admin` row: the owner (stored `0586050155`, so the `_OWNER_PHONE not in admin_phones` check never matched → duplicate of every alert) and **"Admin Test User" `+972501112233` — 103 "Sent OK" system alerts to that number in the week (10-13..10-17)**. **Fix:** one predicate `_admin_gets_wa(admin)` at all four sites: explicit opt-in via `ADMIN_ALERT_PHONES`, never the owner, never a merely-flagged row. The service-state path always notifies the owner via `_alert_owner`. In-app `Notification` rows for admins are unchanged. The test account itself was NOT modified.
+
+**5. "NOA — פוסט נפסל… אין פעולה נדרשת" ×16.** Now notify-by-exception: Redis streak counter, reset by a good post; alert only at 3 consecutive rejected cycles ("NOA לא פרסמה N מחזורים ברצף"), 24 h cooldown.
+
+**Tests.** New `tests/test_owner_whatsapp_routing.py` 15/15 (every owner-number form → LID; customers/groups untouched; rollback switch; admin predicate incl. the test number and owner-in-local-format; every `to=admin.phone` send is guarded; persisted announcements; notify-by-exception shapes). `tests/test_night_pipeline.py` 70/70 incl. 4 new (hung job → FAILED by deadline, night continues, marker cleared; job ignoring cancel → abandoned, pipeline released; inside-deadline unaffected; every production job has an explicit limit ≥ 2× observed max); the "only cancels its own heartbeat" source guard widened to the awaited job task only. Devtests `n7_n29_n28_targeted_fix_test.py` and `owner_alert_remediation_test.py` updated to the new strings — ALL PASS, no message sent during the runs (bridge log). Full backend pytest: see below.
+
+**6. Bridge disconnections (owner report: "each one was almost 5 minutes").** Measured from `connection_events.log`, first non-CONNECTED event to the next CONNECTED (my first script under-counted multi-event incidents; corrected): 124 incidents since 2026-09-21, median 1.1 s, longest 18 s (09-22, 408s), none ≥ 60 s; all `428 Connection Terminated` / `503 Stream Errored` from WhatsApp's servers with automatic reconnect. Send→phone-retry delay for 341 owner messages: median 0.6 s, p90 7.6 s, 6 over 60 s, 1 over 300 s. Bridge-side data therefore does NOT show 5-minute outages — **the owner's observation is not explained yet; a concrete time of one is needed.** Blind spots found: the backend link monitor polls only every 300 s (cannot see short outages) and a send refused during a reconnect was silent on both sides. **Real defect fixed:** `_wa_send` was one POST with no retry — a message sent inside a reconnect gap got 503 and was dropped. `social/whatsapp_provider._post_send` (text, image, audio) now retries only when nothing can have been sent: bridge readiness 503 in a transient state (`connecting`, `reconnecting`, `not created yet`, or `retryable: true`) or `ConnectError`; never after a timeout or 500 (no duplicates). Budget `WA_SEND_RETRY_BUDGET_S=15` (2× the longest observed gap; 2FA still falls back to SMS after it). Bridge `/send` now logs `SEND_REJECTED` and returns `retryable`. Bridge harness `test_bridge_lifecycle.mjs` was failing 100% before this change (it did not copy `msg_cache.js`, added 09-27) — fixed: 19/19.
+
+**Full-suite note.** `pytest tests/` inside the production backend container is OOM-killed by the 4 GB cgroup at `test_fitment_pipeline_guardrails.py` (~2.2 GB); the kernel killed only pytest each time, uvicorn unaffected. Run the suite per file under `ulimit -v`, never whole inside production. Per-file result: all pass except pre-existing failures unrelated to this change (verified the patterns exist in the committed code): `test_aliexpress_price_sync` 1, `test_db_network_hardening` 1 (compose path), `test_eurosender_adapter` 5 (live sandbox key present), `test_fitment_step0_release_gate` 2, `test_full_system` 4, `test_security` 1 (`eval(` already in HEAD), `test_fitment_search_flows` 1 (live API read timeout).
+
+**7. The pytest OOM was the already-fixed OOM task leaking through other entry points (2026-10-19).** `merge_catalog_fitment_from_part_vehicle_fitment` (and 5 other tasks) were disabled for OOM, but only inside `run_all_tasks` (`ordered_tasks` comment + local `_TODO_OOM_BLOCKED`). Measured now: 5,992,542 fitment rows, Jaguar alone 827,556 (the code comment assumed "~100K per manufacturer"). Still reachable: (a) `tests/test_fitment_pipeline_guardrails.py` called the task twice directly on the LIVE catalogue — the ~2.2 GB pytest process the cgroup killed, also writing `parts_catalog` from a test; (b) owner console `הרץ משימה` → `run_task` inside uvicorn; (c) admin `db_agent_run_task` API inside uvicorn; (d) `run_targeted_external_fitment_pass.py`, `maintenance/run_targeted_worker_fitment_pass.py`, `maintenance/run_step4_worker_cycle.py` in the same 4 GB cgroup. **Fix:** module-level `db_update_agent.OOM_BLOCKED_TASKS`; `run_task()` refuses them (`status=skipped`, reason) before any query — the single gate every path uses; `run_all_tasks`' todo filter is the same object; the console task menu hides them. The heavy contract test is opt-in (`RUN_HEAVY_DB_TESTS=1`, non-production DB only); new test proves `run_task` refuses all six without touching the DB. `test_db_agent_task_counting.py` would have passed vacuously after the move (its source parser fell back to an inline copy) — now it parses `OOM_BLOCKED_TASKS` and asserts both the todo filter and the `run_task` gate exist. In-process paths (b, c) need a backend restart to load the gate.
+
+**8. Every remaining test failure audited for real impact (2026-10-19, owner: "it is all your code — can it cause wrong data or a malfunction?").**
+- **Eurosender (5 + 3 hidden) — REAL RISK, fixed.** The container carries the LIVE production config (`EUROSENDER_ENABLED=1`, `EUROSENDER_SANDBOX=0`, production key); the config grew `EUROSENDER_PRODUCTION_API_KEY`/`_SANDBOX_API_KEY` but the tests only cleared the old `EUROSENDER_API_KEY`, so one test sent a real request to `api.eurosender.com` (`validate_creation`, 422, nothing created; the `create_shipment` test was mocked — no real shipment). Fix: `tests/conftest.py` autouse fixture removes the production credentials and forces `EUROSENDER_ENABLED=0`, `EUROSENDER_SANDBOX=1` for EVERY test; `test_eurosender_adapter.py` also clears all `EUROSENDER_*` and fails any unmocked HTTP call. 227/227 shipping tests. Production adapter code itself is correct. NOTE: the value of `EUROSENDER_PRODUCTION_WEBHOOK_SECRET` was printed once in this session's output by an incomplete redaction (not logged/sent anywhere) — rotating it is recommended.
+- **`test_db_network_hardening` — not a defect.** Live check on the host: both Postgres bind `127.0.0.1` only; Redis/Meilisearch have no host port; the test's own checks pass on the host. Inside the container (no compose file) it now skips with a reason, like the other compose tests.
+- **`eval(` (test_security) — false positive.** It is `redis.eval()` with a fixed Lua script and KEYS/ARGV. Rule tightened to a bare `eval(` (real Python eval still caught).
+- **`get_event_loop()` — real but small, fixed.** The supervised-task crash callback created the alert task via the deprecated getter and kept no reference (GC could drop the "a worker died" alert). Now `t.get_loop().create_task(...)` held in `_CRASH_ALERT_TASKS`.
+- **Password reset "SendGrid" — not a defect, test rewritten.** Reset goes through `email_utils` (SMTP first, SendGrid fallback, both configured), `FRONTEND_URL=https://autosparefinder.co.il`, `/reset-password` page 200. Real delivery not exercised (UNVERIFIED).
+- **Original/OEM buckets — buckets are disjoint (live: 0 overlaps in 4 searches), test rewritten. FINDING (owner decision):** 0 active parts have `part_type=original` (oem 2,965,072 · aftermarket 1,159,271 · oe_equivalent 1,754), so the "Original" bucket is always empty and genuine parts are shown under "OEM" together with OE-equivalents — a labelling gap vs the 3-barcode model.
+- **login test — the safety guard was right** (`nowhere.com` is a real domain); test uses `example.com`.
+- **`test_oom_watchdog` — order-dependent (deprecated loop getter after `test_offer_classification`), fixed with `asyncio.run`.**
+- **`test_fitment_step0_release_gate` — tests stale (cache helpers became async; clause params renamed), fixed. REAL FITMENT DEFECT found, NOT fixed (needs design + owner decision):** `_build_strict_vehicle_match_clause` matches word-prefixes and `'<model> %'`, so a different vehicle matches: Corolla → Corolla Cross 1,061 fitment rows; Range Rover Evoque → Range Rover 2,674; Land Cruiser Prado → Land Cruiser 40,957 and junk model `land` 534. Generation codes (`corolla e11`, `sportage ql`) are correct matches. Pinned by a strict `xfail` test. Fix direction: a registry-based model boundary (a fitment model whose longest known-model prefix is a different model does not match).
+- **`test_fitment_search_flows` — REAL performance problems, NOT fixed:** vehicle + category browse (the website flow after `/vehicles/identify`) 22.4 s uncached; `brake pads` + Kia Sportage 2019 → 0 parts (22,234 Sportage fitment rows); `/api/parts/by-license-plate/{plate}` (no website caller, public route) > 120 s with no deadline — every request holds a worker.
+- **`test_aliexpress_price_sync` — 1 failure did not reproduce (13/13 on rerun): flaky, cause not identified.**
+
+**§9–§14 status (2026-10-19): repository changes only — NOT deployed, NOT committed.** Sections 1–6 above are live since the 2026-10-18 22:33 UTC restart; everything below (and §7/§8 in-process gates) loads only at the next approved backend restart.
+
+**9. Fitment model rule — one shared rule, corrected once, ambiguity NOT resolved (PARTIAL).** Root cause (verified): five places matched the customer's model to fitment by word PREFIX in both directions or by substring — `routes/parts.py` `_build_strict_vehicle_match_clause` (pvf lane), `_build_vehicle_fitment_clause` (JSON lane `ILIKE '%model%'`, also used by `get_categories`), `BACKEND_AI_AGENTS.search_parts_in_db` (2 queries), `routes/public_api.py` (`LIKE model || '%'`, no word boundary). New `backend/vehicle_model_match.py` is the single rule (exact allowed-model list → `= ANY(:allowed)`); all five callers use it. Registry = `vehicle_market_il.kinuy_mishari` (truncated at 15 chars; Land Rover partly filed under "Rover"). First candidate over-removed (impact: 700 models, 22,131,933 → 20,173,666 rows); corrected for four logic defects: junk-prefix fired without registry evidence (Chevrolet has no Silverado in the registry), generation numeral `i`, one-digit engine codes (`t5`, `b4`), truncated variant words (`sportbac`, ≥5 chars so `range rover spo` stays Sport). Reverse direction now needs evidence: a specific customer model drops the parent's generic rows only if it is a registered name AND has ≥50 fitment rows of its own series. **Corrected impact (6,490 customer models, `docs/fitment/impact_full.jsonl`):** baseline 22,134,528 · previous candidate 20,176,261 (700 models changed) · corrected 21,185,683 (240 models changed, 948,845 rows removed, 4.3%) · 0 additions · 472 models restored vs the previous candidate · 0 newly removed. Reported cases: Corolla ↛ Corolla Cross (1,061) ✓, Evoque ↛ full-size Range Rover (2,674) ✓, Prado ↛ junk `land` (534) ✓; Land Cruiser for Prado unchanged (decision). Restored: Accord I 493→44,700, Silverado 1500 1,943→15,139, XK 8 546→20,714, S60 T5 32,776→65,608, Lancer Sportback 483→6,592, Civic Type R 24→45,162.
+**Decision package (`docs/fitment/fitment_decisions.json` / `.md`, `maintenance/fitment_decision_package.py`):** removals grouped by relationship with platform evidence (chassis codes of the extension's own series vs the base, excluding name tokens/years/doors): distinct 12 groups / 138,670 rows; not-a-model 4 / 40,566 (incl. `mini`, which looks wrong); same-platform 2 / 130,251 (Corolla Verso on the E12 platform); generation letter 47 / 77,045 (Astra G/H, Corsa B/C); ambiguous 156 / 562,313 (Yaris Cross, Niro Plus, Hilux Vigo, Spark LS, Range Rover Evoque/Sport/Velar — no platform codes in the names). **Only ~15–20% of the removals are evidence-backed; the rule must not be deployed before the owner decides the policy classes.**
+
+**10. Operational root causes of the 2026-10-19 lock incident (FIXED, verified).** (a) My ad-hoc impact script held ONE transaction 70 min; replaced by `maintenance/fitment_impact_check.py` — one read-only session per model (`SET TRANSACTION READ ONLY`, `SET LOCAL statement_timeout 60s`), closed on success/error/cancel; tests `tests/test_fitment_impact_check.py` 3/3; full run 6,490 sessions opened = closed, max transaction 4.8 s, 0 lock waiters in 38 one-minute samples, load 1.7–3.8. (b) `test_fitment_pipeline_guardrails` ran `ensure_part_vehicle_fitment_table()` (ALTER + full-table DELETE + CREATE INDEX) on production. New `tests/isolated_db_guard.py`: mutating tests need opt-in + ENVIRONMENT sandbox/test + non-production DB host + a live check of the server (refuses >100k parts or the production-only `night_pipeline_runs`). Production container with the flag set: refused (skipped with reason). Sandbox: the schema test ran and passed. `tests/test_isolated_db_guard.py` 12/12. The DELETE removed nothing (unique index `uix_pvf_part_mfr_model_year_from` valid).
+
+**11. `/api/v1/brands/with-parts` uncached full-catalogue scans (FIXED in repo).** Root cause of the remaining regression failure: two GROUP BY scans over 4.1M rows per request (10.8 s / 15.9 s measured), no cache — the §5 stampede shape. 10-min cache + single-flight; `tests/test_brands_with_parts_cache.py` 2/2.
+
+**12. Cerebras `402 Payment Required` (OWNER ACTION + code FIXED in repo).** 0 successful Cerebras calls since 2026-10-18 19:55 UTC; every agent on Gemini/Groq fallbacks (429 at peaks). `hf_client.hf_text` handled 402 like 429 (retried Cerebras + same-account fallback model each call, no alert). Now a 15-min breaker + Redis marker → health-monitor owner alert once/day. `tests/test_llm_billing_breaker.py` 5/5. **Billing renewal is an owner action.**
+
+**13. NOA notification content (FIXED in repo).** Weekly campaign was sent with every field empty (2026-10-19 10:00 UTC, LLM 429/empty) and stored as the week's plan → validated, one retry, never sent/stored empty, one honest failure notice. Daily Facebook report showed 0 with no hint the 10:00 IL group scan never ran (10-17, 10-18: restarts during the scan) → NOTABLE now states running / interrupted / did not run (from `inproc_job_marker`). Tests in `tests/test_owner_whatsapp_routing.py`. Not changed (owner decision / production data): "50 posts awaiting approval" reminder includes drafts 92 days old for unconfigured platforms.
+
+**14. Search bucket error masking (FIXED in repo).** `_fetch_three_buckets` used `asyncio.gather` without `return_exceptions`: the first failing bucket raised while two sibling queries were still running, the sessions were closed mid-query and the real error became `InterfaceError: another operation is in progress` (the failed before/after comparison). Now waits for all three, then raises the first real error. `tests/test_search_bucket_errors.py` 2/2.
+
+**Verification (2026-10-19).** Production container regression run 17:51–18:41 UTC: 337 passed, 46 skipped, 3 failed — `categories`/`manufacturers` read timeouts caused by the lock queue (pass on rerun), `brands_with_parts` = §11. Sandbox in-process run: 250 passed, 1 skipped, 19 failed — all environmental (sandbox schema 0059 vs production 0061, no seeded data; sandbox backup naming); every suite touching changed code passes (rule 47, guards, impact tool, breaker, owner routing 28, night pipeline 70 in production). Tests that write synthetic rows (offer classification, price boundary) were NOT re-run against production (rule), so their post-change result is NOT VERIFIED.
+
+**15. Before/after search comparison — INCOMPLETE (harness timeout), no latency regression attributable to the change.** Run 2 (19:25–20:15 UTC, `scratchpad/fit_e2e.py`, before = live API on the deployed code, after = new code in-process with `redis=None`) completed 8 of 9 cases before its own 3000 s `timeout` stopped it; the per-part summary prints only at the end and was lost (harness defect). Timings: Corolla brakes 21.2→13.3 s, Corolla (no category) 2.1→901 s, Evoque 4.3→0.4 s, Range Rover 1.2→0.6 s, Prado 20.5→759 s, Corolla E11 11.9→560 s, Sportage brakes 19.4→7.4 s, Mazda 3 209.5→402 s. Not comparable: the live path can answer from the Redis search cache; the in-process path cannot. Plan evidence (captured real bucket SQL for Prado, EXPLAIN only): the NEW predicate, the OLD-equivalent model list and the ORIGINAL `= ANY(prefix terms) OR LIKE` shape all get the SAME plan (Merge Semi Join over the 3M-row `parts_catalog` pkey, cost 2.60M / 2.62M / 2.65M) — the slowness of no-category vehicle searches is PRE-EXISTING, not caused by #69. Per-part correctness through search is NOT VERIFIED (only the fitment-model level, §9). A re-run needs a streaming harness with `statement_timeout`; not re-run because each no-category search holds three transactions 10–15 min.
+**Found (pre-existing, production risk, not fixed):** a no-category vehicle search runs 10–15 min holding three open transactions (two idle-in-transaction) — a customer request of that shape is a lock-queue hazard of the §10 kind.
+**Orphaned queries from my harness (2026-10-19 20:22 UTC):** pids 185969 / 185934 (comparison case 9, started 20:14:42) and 187161 (first plan-capture attempt, 20:16:21) kept running server-side after `timeout` killed their clients (PostgreSQL notices only when it sends results). Read-only, no lock waiters; NOT cancelled (needs approval). Lesson: an outer `timeout` does not stop server queries — every harness session sets `statement_timeout`.
+
+**16. Vehicle search — long transactions, numeric models erased, D1–D5 closure evidence (2026-10-19/20). Repository only — NOT deployed, NOT committed. STATUS PARTIAL.**
+- **(a) Long no-category vehicle-search transactions — root causes (VERIFIED by captured SQL + EXPLAIN, read-only):** (1) the strict fitment lane was a correlated `EXISTS` under `ORDER BY pc.id LIMIT` → walk of the 3M-row pkey (560–900 s seen on 2026-10-19); (2) when that lane returns nothing, the JSON fallback (`compatible_vehicles` + `jsonb_array_elements` per row) is a full pkey scan — 87% of ~4.6M rows carry an array, only `@>` can use the GIN index; (3) no statement limit, so a customer request could hold three transactions for minutes. **Fix (repo):** `_run_buckets` — one session per bucket, `SET LOCAL statement_timeout` (`SEARCH_STATEMENT_TIMEOUT_MS`, 30 s), all buckets awaited, first real error raised (no masking); fitting part ids resolved first (`SELECT DISTINCT pvf.part_id … LIMIT cap+1` in a savepoint) → `pc.id = ANY(ids)`. Cap `SEARCH_FIT_ID_RESOLVE_CAP` raised 20,000 → **200,000**: the 20k cap assumed a large set is dense enough for the walk to stop early — false under category/part-type filters (Corolla 2021 = 43,362 ids, Civic 2017 = 46,677 hit the 30 s limit; 2.8 s / 4.6 s by id). Tests `tests/test_search_bucket_errors.py`.
+- **(b) Numeric models erased before matching (pre-existing, production, FIXED in repo).** `normalize_vehicle_model_name` is an ingest noise filter ("keep values with letters", strip trailing numbers). Applied to the customer's model it returned `''` for Peugeot 3008/2008/208/308/5008/301/107/108 and a bare Mazda `3`, and turned the registry form `MAZDA 3` (94,692 active IL vehicles) into `MAZDA`. On the deployed code an empty model makes the pvf model predicate `TRUE` → **every model of the make for that year** (wrong parts), slow EXISTS. New single helper `manufacturer_normalization.customer_vehicle_model()` (canonical form, else the value as given; a make prefix in front of a numeric model is dropped) used by `_build_strict_vehicle_match_clause`, `_resolve_vehicle_search_context` and the three chat vehicle-context sites in `BACKEND_AI_AGENTS.py`. Public API passes the raw model (unaffected). Tests `tests/test_customer_vehicle_model.py` 14/14.
+- **(c) D1–D5 rule + impact + decision package (VERIFIED, artifacts in `docs/fitment/`).** Impact run: 6,490 models, one read-only session each, exit 0, 0 errors; `impact_final.jsonl` (1,449,742 B, sha256 f91d8edbf597ce62). Decision package `fitment_decisions_final.json` (141,088 B, bf79c10a53856545) / `.md` (46,430 B, 70d75c3fc6e128ca): 239 removal groups = 1,189,277 rows, groups sum equals JSONL removed rows (consistency assert). **PROVEN_CORRECT 19 groups / 181,329 rows** (disjoint chassis codes, e.g. Corolla vs Corolla Cross g10, Yaris vs Yaris Verso, Kangoo vs Kangoo Express, Megane vs Scenic, Prius vs Prius+; junk prefix `land`). **UNRESOLVED 220 / 1,007,948** (ambiguous 168 groups / 634,616; same platform 5 / 296,287 — D2: shared platform is not proof; generation letter year unverified 35 / 68,240 — D1 not verifiable because 36% of fitment rows carry placeholder years 1990–2030; single-letter model or trim 12 / 8,805). **PROVEN_INCORRECT 0** (the previously identified wrong removals — mini, Range Rover truncation, engine-code and `i` cases — are no longer removed). Names and shared platforms were never used as proof. Known artifact: one Kangoo code token `kc0)` (parser), classification unaffected. Not covered: registry forms such as `MAZDA 3` are not in the `vehicles` population the impact run used.
+- **(d) Before/after search comparison (2026-10-20 02:05–02:12 UTC, + Mazda rerun 02:13).** Preflight immediately before: run_all_tasks completed 02:03:51, restart preflight SAFE, 0 queries >30 s, 0 lock waiters, load 2.19. Same in-process `search_parts` both sides; baseline = old word-prefix model superset + correlated EXISTS + deployed model input; candidate = repo code. Both sides: search response cache (L1 + Redis) patched out; 30 s statement limit; 45 s per-case deadline; 2 attempts (cold-ish, warm buffers). Artifacts `docs/fitment/search_comparison_final.jsonl` (285,095 B, 83fa017d2a009fd7, 9 lines) + `search_comparison_final_mazda_rerun.jsonl` (19,079 B, 976a90ff2283ee91).
+
+  | case | baseline s (run1/run2) | candidate s | parts b→c | correctness |
+  |---|---|---|---|---|
+  | Corolla 2021 brakes | 33.8 / 11.0 | 12.6 / 11.1 | 215→215 | baseline 12 parts only via Aurion/Avalon/C-HR rows; candidate 0 |
+  | Corolla 2021 (no category) | timeout / timeout | 3.3 / 1.5 | –→288 | INCOMPLETE (baseline) |
+  | Range Rover Evoque 2018 | 1.5 / 0.25 | 0.47 / 0.11 | 160→160 | identical |
+  | Range Rover 2015 | 0.57 / 0.35 | 0.56 / 0.11 | 168→160 | baseline 78 parts only via Evoque/Sport rows; candidate 0 |
+  | Land Cruiser Prado 2015 | timeout / timeout | 2.2 / 0.17 | –→146 | INCOMPLETE; candidate 141/146 come from the JSON lane, their 2015 pvf rows are other models (auris, camry, hilux, `prado`, `land cruiser`) — UNRESOLVED (D5) |
+  | Corolla E11 2001 | timeout / timeout | 2.7 / 0.6 | –→288 | INCOMPLETE (baseline) |
+  | Sportage 2019 brakes | 24.0 / 8.2 | 6.0 / 4.6 | 267→267 | identical |
+  | Mazda 3 2018 | 40.3 / timeout (rerun) | 2.5 / 0.19 | –→146 | INCOMPLETE (baseline); candidate 146/146 via Mazda 3 rows |
+  | Civic 2017 | deadline / timeout | 2.6 / 1.1 | –→288 | INCOMPLETE (baseline) |
+
+  Timing: wall seconds; summed DB query time is in the JSONL (buckets run in parallel, so it can exceed wall); API latency through nginx NOT measured (in-process only). 4 of 9 cases complete on both sides; 5 are incomplete because the BASELINE times out — no before/after part diff exists for them.
+- **(e) Harness defects found (mine) and fixed.** (1) `search_parts` writes every response through to PRODUCTION Redis (`setex`, 120 s) and reads it — earlier in-process runs (2026-10-19, 2026-10-20 01:40–01:48) wrote results into the live search cache while the docstring said "no Redis cache". Exposure VERIFIED none: 0 website `parts/search` requests through nginx in 30 h, the chat brain does not call `search_parts`, entries expired. Timings stay valid (a cache hit = 0.01 s with 0 queries). Now both cache layers are patched out. (2) The 0.01 s "second attempts" earlier were that in-process cache, not warm buffers. (3) Baseline emulation built `… OR )` for an erased model; now emulates the deployed `TRUE`.
+- **Open / not done.** Corolla brakes still 11–13 s (category filter: `category ILIKE` + `supplier_parts` EXISTS + name/description ILIKE over 43k ids; baseline equal on run 2). JSON fallback remains an unindexable scan, bounded at 30 s in the repo, unbounded on the deployed code — making it fast needs a data-model decision (e.g. materialise `compatible_vehicles` into `part_vehicle_fitment`). Prado: plain `prado` (515 rows) never matched before or after; Prado 150 rows filed as `land cruiser 150 kdj15 grj15` excluded — UNRESOLVED, matching not changed. Tests: sandbox 123 passed, 3 skipped (live-data tests). Restart preflight (02:05 UTC): SAFE; 9 runtime modules repo-only (newer than the 2026-10-18 22:34 UTC start): BACKEND_API_ROUTES, BACKEND_AI_AGENTS, agents/owner_console, db_update_agent, hf_client, routes/parts, routes/public_api, routes/brands, vehicle_model_match — plus manufacturer_normalization (2026-10-20).
+
+**16-b. Follow-up 2026-10-20 03:20–04:10 UTC (closing the safety/correctness gaps). Repository only — NOT deployed, NOT committed. STATUS PARTIAL.** Every live measurement below ran read-only during a checked quiet window (0 queries > 30 s, 0 lock waiters, load ≤ 3.5) in a process made unable to change production state (see (iv)).
+- **(i) Model input, root causes and fixes.** (1) A customer/registry model is never passed through the ingest filter: `customer_vehicle_model()` + `customer_vehicle_model_forms()` in `manufacturer_normalization.py` are the single input point for the strict lane, the JSON lane, the fast JSON lane (it still used the ingest filter and probed `{"model": "MAZDA"}` for "MAZDA 3"), the vehicle-id context and the three chat sites. (2) **Make-prefix stripping alone was wrong, found by measurement:** over all 5,689 registry names (`vehicle_market_il`), 198 change input; the fitment table files the same car BOTH ways — Mazda `3 bk…` 4,963 rows and `mazda 3`/`mazda3` 639/2,972; MG only `mg4`, Jaecoo `jaecoo7`, Fiat `fiat 500 …` 12,136, Zeekr `zeekr 001`, JAC `jac 30` — so the stripped form alone matched 0 rows for MG4/MG3/Jaecoo/Zeekr/JAC. Now every filing form is judged by the same rule and the allowed models are the union (a form nothing is filed under adds nothing). Result over the 198: union loses NOTHING vs the raw form or the stripped form; names with fitment rows 39 → 85, active vehicles covered 71,268 → 353,199 (Mazda 3 0 → 5,602 rows, Peugeot 3008 0 → 7,357). 15 names lose models vs the DEPLOYED input — in every one the deployed input had become the bare make (`FIAT`, `JAC`, `ORA`, `MG`, `ZEEKR`) and admitted other models (JAC 30 → JAC 40/90, ORA 07 → ORA 03, MG 550 → MG 350/5/4EV, FIAT 500 → 500X, ZEEKR 001 → 7X): the make-wide wildcard; listed UNRESOLVED (names are not proof), incl. one formatting gap `fiat 500 1 2` vs `fiat 500 1.2`, not normalised. (3) **No wildcard on an unusable model:** JSON lane with an empty model set returns the constant `FALSE` (identical result to `= ANY('{}')`, without the full scan); a junk/blank model contributes nothing; chat: a plate profile with make + year but no model is a known car → `1 = 0`, never the unfiltered search it was (E2E found 20 random parts). (4) Vehicle-id context carries the raw model so every lane derives its forms. Artifacts `docs/fitment/registry_forms.json` (427,069 B, 26655d5edec7486f), `registry_forms_fitment.json` (53,685 B, f79266c2fd7e8359), `registry_forms_union.json` (84,245 B, 6c6698f333fcf3d7).
+- **(ii) E2E (`devtests/numeric_model_e2e.py`, website `search_parts` + chat `search_parts_in_db`, every returned id independently checked against `part_vehicle_fitment` + `compatible_vehicles`):** 19 cases — valid (Peugeot 3008/2008/208/308, Mazda 3), registry forms (`MAZDA 3`, `MAZDA3`, `MG4`, `JAECOO7`, `FIAT 500 1.2`, `ZEEKR 001`), malformed (`3008  2019`, ` 3008 `, `PEUGEOT-3008`, `3008@@`), missing (`   `, junk `sku`), ambiguous (`3008-5008`, `CX-3`). **Website 18/19 PASS, chat 19/19 PASS, 0 parts outside the allowed models in any case.** `3008@@` (well-formed, unknown model) on the website: JSON fallback times out at its new 8 s limit (9.7 s wall) and the search raises — bounded, but an error to the customer (OWNER DECISION: error vs "no verified parts"). Chat recall for English queries is low on several numeric models (fitting brake parts exist: 95 for 3008, 127 for Mazda 3; the chat text pool ∩ fitment returns 0) — pre-existing, not numeric-specific. Artifact `numeric_model_e2e.jsonl` (10,811 B, 4f437ca0ccd9dbdf). Make + year with NO model at all (manual filter) still uses the make-wide JSON lane by design ("partial manual filters") — OWNER DECISION, unchanged.
+- **(iii) Cap / equivalence against independent references.** Reference = the same rule in the correlated-EXISTS form (pre-resolution off, 120 s limit). **10 of 14 cases identical in parts AND order** (Corolla brakes, Range Rover Evoque, Range Rover, Prado, Sportage brakes, Mazda 3, i30 23,052 ids, Peugeot 3008 6,060, Focus 3,561, Golf 393). The 4 largest sets (Corolla 2021 43,362, Corolla E11, Civic 47,677, Hilux 40,700) are **INCOMPLETE**: both the EXISTS reference and a second, uncorrelated `pc.id IN (SELECT …)` reference time out at 120 s (same pkey-walk plan). For them equivalence rests on construction only (one predicate swapped; `EXISTS(pvf.part_id = pc.id AND P)` ⇔ `pc.id ∈ {pvf.part_id | P}`, completeness guaranteed by the `LIMIT cap+1` check) — NOT empirically verified. No measured customer model exceeds 200,000 ids (largest seen 47,677), so the cap's EXISTS fallback is covered only by unit tests. Artifacts `search_cap_reference.jsonl` (407,348 B, 5913a9e9719f0e19), `search_cap_reference_in.jsonl` (63,424 B, 7550c5beb76680fd). The 5 cases without an old-code baseline (§16(d)) stay INCOMPLETE; no speedup or equivalence vs the old code is claimed for them.
+- **(iv) Measurement isolation (fixed and proven).** `devtests/search_fitment_comparison.isolate_process()`: every SQLAlchemy transaction starts `READ ONLY` (an `after_begin` listener) and `get_redis` raises; plus the response cache and the chat search-miss logger patched out. Proven live: `CREATE TEMP TABLE` → "cannot execute CREATE TABLE in a read-only transaction"; Redis call → blocked. Used by the comparison, the E2E, the registry survey and `capture_slow`. My lapse: the 03:56 UTC reference_in run started while the restart preflight returned 4 (blocker: the thumbnail supervisor's `build_part_thumbnails.py`, nice 15 — a restart blocker, not DB contention; 0 long queries, 0 lock waiters, load 2.3); my command did not stop on that exit code. No effect found (thumbnail loop continued, no errors).
+- **(v) Statement limits — where they apply (verified).** Engine default for every connection is 15 min (`BACKEND_DATABASE_MODELS` `server_settings`). Repo code: result buckets 30 s (`SEARCH_STATEMENT_TIMEOUT_MS`), JSON fallback 8 s (`SEARCH_JSON_FALLBACK_TIMEOUT_MS`), and now the fitment lookups a search waits on — `allowed_fitment_models` (up to 5.8 s measured) and the fitting-id resolution — run under 30 s via `vehicle_model_match.bounded()` (savepoint + `set_config(…, is_local)`, previous value restored; on error the savepoint rollback reverts it). Proven live: inside 300 ms, after OK 15min, after a timeout 15min and the caller's transaction still usable. Still under the 15-min default: brand/system_settings lookups, image/spec/thumbnail lookups (primary-key lookups by ≤ 72 ids) and the vector rerank (disabled, `SEARCH_ENABLE_VECTOR_RERANK=0`).
+- **(vi) Corolla brakes 11–13 s — expensive operation identified (EXPLAIN ANALYZE, BUFFERS).** Each bucket probes every fitting id by primary key (43,362) and evaluates the category filter row by row incl. a `supplier_parts` subplan: 93,092 buffer hits / 21,616 rows removed for 144 results; the cross-reference pass 192,682 hits / 42,847 removed. Warm and alone 0.41 s / 0.97 s; inside the search (three buckets at once + cold pages) ~5 s each, twice. Cost scales with the fitting-set size, not the result size. Not changed; recommended fix: intersect the fitting ids with an indexed category lookup in the pre-resolution.
+- **(vii) Deployment / rollback (`docs/DEPLOY_69_SEARCH.md`).** Change set = 10 runtime modules (table there), no migration, no dependency, no Dockerfile/compose change, no DDL/DML. New env vars (code defaults) are NOT in compose; the backend has no `env_file`, so `.env` alone never reaches it — **the earlier rollback step "set `OWNER_WHATSAPP_ROUTE_VIA_LID=0`" would have had no effect** (not in compose, not in the live env). **Rollback source:** the live code (loaded 2026-10-18 22:34:13 UTC) was overwritten in place with no snapshot; reconstructed from the session transcript (`archive/rollback/69_live_source_2026-10-18T2234Z/`, MANIFEST.sha256): 43 recorded edits undone newest-first, every step proven by byte-identical forward replay (the two slice edits by re-executing the recorded script); 6 modules come back identical to HEAD; independent check — all 8 traceback frames the live process logged since its start fall in the function they name in the reconstruction (current repo files: 4 of 8). Post-deploy probe `devtests/post_deploy_search_probe.py` (real HTTP, API latency, independent check, exit 2 on any STOP).
+- **(viii) Website licence-plate lookup erased the model BEFORE the search (found 2026-10-20 after the owner's Berlingo example; FIXED in repo).** The registry gives the model in `kinuy_mishari` (fallback `degem_nm`, the model code) and the trim in `ramat_gimur` (e.g. BERLINGO / 7N9HN0 / COMFORT) — both website (`routes/parts.py` plate lookup) and chat (`_map_gov_record`) map them that way; the trim never becomes the model. But the website lookup ran the name through the ingest filter: it returned `""` for Peugeot 3008 / 208 and Tesla MODEL 3 and `"MAZDA"` for MAZDA 3, so the customer's next search had no model (make-wide). The §16-b E2E called the search with the registry name directly and did not cover this step. New `_plate_lookup_model()`: unchanged when the splitter gives a real model; the registry name itself when it would be empty or the bare make. Tests 8/8. Live read-only check of the owner's plate data (Citroën BERLINGO 2013, COMFORT): model `BERLINGO`, submodel `COMFORT`, 8 allowed fitment models, 288 parts, 288 via the fitment table for a 2013 Berlingo, 0 outside the allowed models (with and without the trim). Selector lists (`vehicles` table names) mostly unaffected: 6 of 332 Peugeot/Mazda names are hyphenated forms the splitter still drops (`3008-5008`, `5-cr19`, …) — reported, not changed.
+- **(ix) CORRECTIONS + REVERSALS (2026-10-20, after the owner challenged an unverified premise).** Audit of every change in §16-b for evidence vs assumption:
+  - **REVERTED — chat "known car with no model → no parts".** Built on my invented premise that a plate profile can lack a model. Fact: the chat plate profile always has one (`_map_gov_record`: `kinuy_mishari` → `degem_nm` → "Unknown"); but the free-text capture creates `{make, model:"", year}` for "Toyota 2015" (`(_ft_make or _ft_model) and _ft_year`) — my change would have turned that real case into zero results. Back to the deployed behaviour (`if _vp_mfr and _vp_model and _vp_year`, `elif vehicle_id`); make + year without a model stays an OWNER DECISION.
+  - **REVERTED — JSON fallback 8 s limit** (`SEARCH_JSON_FALLBACK_TIMEOUT_MS`): chosen from one data point (Prado ~2 s). The fallback is back under the general 30 s bucket limit. `3008@@` therefore errors after ~30 s, not 8 s.
+  - **REVERTED — dropping a junk raw model from the JSON lane**: no measurement behind it; the customer's value as given is kept again. Kept: the empty-set constant `FALSE` (provably the same result as `= ANY('{}')`).
+  - **CORRECTED CLAIM (viii):** the function changed there serves `GET /api/parts/by-license-plate/{plate}`, which the frontend does NOT call (no reference in `frontend/src`; 0 requests through nginx in 72 h). The frontend flow is `POST /vehicles/identify` → stored `vehicles` row (raw `kinuy_mishari`) → search by `vehicle_id`. On the deployed code a numeric model there gives `1 = 0` (no parts) — read from the reconstructed live code, NOT executed — not the make-wide search I stated. Today 0 of the 10 stored plate-identified vehicles have a numeric or make-only model. The `_plate_lookup_model` change is kept (it fixes that endpoint's own search; tests 8/8) with this corrected scope.
+  - **KEPT, evidence:** model forms (5,689-name registry survey + E2E), cap 200,000 (measured), `bounded()` 30 s on the fitment lookups (impact run: max transaction 4.8 s over 6,490 models; today's worst 5.8 s), vehicle-id raw model (the impact run evaluated exactly the raw `vehicles` names), empty-set `FALSE`.
+- **(x) Secret exposure — mine, OPEN.** 2026-10-19 I printed the value of `EUROSENDER_PRODUCTION_WEBHOOK_SECRET` into the Claude Code session output (the session transcript on this server, `/root/.claude/projects/…`, and the model API). Not committed, not logged by the backend, not published. NOT rotated: rotate the webhook secret in the Eurosender Production account, update `.env`, then a backend-only recreation after a SAFE preflight (the variable is in compose). Until rotated, treat the value as known to the transcript.
+- **Tests (sandbox, isolated):** 143 passed, 3 skipped (live-data tests) after the reversals; earlier counts 137 / 145 — `test_customer_vehicle_model` (forms, wildcard guards, JSON short-circuit, chat guard, input paths), `test_search_bucket_errors` (`bounded` set/restore/no-leak), plus the §9–§14 files.
+
+**Deploy.** 2026-10-19 01:33 IL: preflight SAFE, no night job started yet; `pre_restart.sh` OK; `docker restart autospare_backend` (healthy in ~35 s, no errors, night controller started with all 7 jobs and the new limits: backup/fitment/REX 60 min, category 270, brand 300, sync 420, weekly 120) then `docker restart whatsapp_bridge` (CONNECTED in 1.3 s, account 972532426920, no QR). Live env check: owner number → `98058566160397@lid`. First real owner message after 09:00 IL is still to be observed (UNVERIFIED until then).
+
+**Not done / remaining.** (b) Night-queue "🌙 נשלח מאוחר" (123/week) is a wrapper for the alerts above; expected to fall with them — UNVERIFIED until a week of data. (c) Harvest idle/recovered pairs (3+3) and the English "NOA — Daily Facebook Activity" report not changed. (d) Customer conversations to phone-number JIDs may hit the same decrypt-retry pattern; customers who message from a LID are already answered on `reply_jid`. Not investigated. (e) Long term: Baileys v7 has native LID mapping — a larger, separate upgrade.
+
+---
+
+## #67 — Backend image shipped production database dumps (no `.dockerignore` + `COPY . .`) — ROOT-FIXED in the build context; existing image not rebuilt — 2026-10-04 18:25 UTC
+
+**Root cause (verified in the image, not inferred).** `docker-compose.yml` builds the backend with `build: ./backend`; `backend/Dockerfile` ends with `COPY . .`; and there was **no `.dockerignore`** in `backend/` (or the repo root). The whole `backend/` directory therefore went into the image, runtime data included. `docker history` of `autosparefinder-backend:latest` (built 2026-07-28, used by BOTH production and the sandbox — same image ID): the `COPY . .` layer is **3.75 GB**, of which `/app/backups` is 3.48 GB — `autospare_20260728_074331.sql` and `autospare_20260728_144859.sql`, two production catalog dumps that happened to be in `backend/backups/` at build time. The same layer also carries `__pycache__`, `error_log.txt` and a snapshot of `state/`. Because the dumps are in the image at `/app/backups`, Docker copied them into the new, empty sandbox volume mounted there (#66).
+
+**Fix.** New `backend/.dockerignore`: `backups/`, `**/backups/`, `state/`; every dump form anywhere in the context (`*.sql`, `*.sql.gz`, `*.sql.partial`, `*.sql.meta`, `*.partial`, `*.dump`, `*.pgdump`, `*.backup`, `*.bak`, `*.sqlite*`, `*.db`), with `alembic/**/*.sql` kept as application source; `.env`, `.env.*` (keeping `.env.example`), `*.pem`, `*.key`; caches and logs. No Dockerfile change, no application change. Runtime behaviour is unchanged: production bind-mounts `./backend` over `/app`, and the backup directory is created at run time.
+
+**Verification (throwaway images only; `autosparefinder-backend:latest` untouched, nothing deployed).**
+- The real `backend/` context through the same `COPY .`: 88 MB; `backups/` absent, `state/` absent, 0 dump-like files, 0 `__pycache__`; application source complete — 522 of 522 `.py` files, 60 of 60 Alembic versions, Dockerfile, requirements, scripts. Before the fix the same context included `backups/` (currently a 9.1 MB PII dump and the 0.3 MB sandbox dump).
+- A decoy context with 16 future artifacts (production and sandbox dump names, `.partial`, `.meta`, `.sql.gz`, a dump under `state/`, nested `backups/`, stray `.sql`, `.pgdump`, `.bak`, `.sqlite3`, `.env`, `.env.production`, logs): **none** reached the image; all 7 legitimate files (code, Alembic `.py` and `.sql`, `.env.example`, requirements, a data fixture) did.
+- Static guard `backend/tests/test_docker_build_context.py` (5 tests): the rules exist, future backup names of every environment are excluded, application source is not, and every dump-like or secret-like file present in the context right now is excluded. With the isolation suite: 24 passed, 1 skipped.
+
+**RUNTIME CLEANUP REQUIRED — NOT PERFORMED.** The image in use still contains the two July dumps, and the sandbox volume `autospare_sandbox_sandbox_backups` holds the copies Docker made from it (3.6 GB). Removing them from the image needs an image rebuild (and a container recreate to run on it) — not done, no approval. Deleting the copies in the sandbox volume is a separate, harmless step that also needs a decision. Until the image is rebuilt, any NEW empty volume mounted at `/app/backups` will be pre-filled with those two dumps again.
+
+**Not changed, noted.** `uploads/` (30 MB of spreadsheets) and `data/` (46 MB) still enter the image; they are not backup artifacts and whether they are build inputs was not established.
+
+---
+
+## #66 — Sandbox backup isolation: sandbox could write into and prune production's in-app backup directory — FIXED and LIVE (sandbox recreated 2026-10-04 18:10 UTC)
+
+**Root cause (verified live).** `sandbox_backend` mounts `../backend:/app` — production's `backend/` directory, read-write. `auto_backup.py` defaulted `BACKUP_DIR` to `<its own directory>/backups`, so both environments resolved to the same host directory (`/opt/autosparefinder/backend/backups`), and both named a catalog dump `autospare_<timestamp>.sql`. The sandbox server (running since 2026-08-11) still has the 24-hour backup loop in memory that was removed from source on 2026-10-03; every day at 13:23 UTC it dumps the sandbox database there and prunes. Second defect in the same retention code: it selected files with the glob `autospare_*.sql`, which also matches `autospare_pii_*.sql`, so one database's retention counted the other database's files (correction to #65, which said retention was not per database — it was per label, with an over-matching pattern). With two PII dumps present, that prune deletes EVERY catalog dump, including one written seconds earlier.
+Affected: production in-app dumps (second backup layer) and the sandbox. Not affected: the dedicated backup containers (`./backups`, `./backups/catalog`) — never reachable from the sandbox mount.
+
+**Fix (root: identity + directory, not a filename filter alone).**
+- `backend/auto_backup.py`
+  - `backup_environment()`: only `ENVIRONMENT=production` without `SANDBOX_MODE` is production.
+  - `resolve_backup_dir()`: a non-production process resolves to `<app>/state/backups-<env>` (its own state volume). An explicit `BACKUP_DIR` that points at or inside the production directory is ignored. `run_backup()` additionally refuses to run if it is ever pointed there.
+  - File identity: production keeps `autospare_<ts>.sql` / `autospare_pii_<ts>.sql`; non-production writes `<env>_autospare_<ts>.sql`.
+  - `backup_files()`: retention, restore and partial-file cleanup select by exact `<prefix>_<YYYYMMDD>_<HHMMSS>.sql` match — one environment, one database.
+- `sandbox/docker-compose.sandbox.yml`: a dedicated `sandbox_backups` volume mounted over `/app/backups` (the production directory is not reachable from the sandbox at all), `ENVIRONMENT: sandbox`, `NIGHT_PIPELINE_ENABLED: "0"`, `BACKUP_DIR: /app/state/backups-sandbox`.
+- The 24-hour loop is not re-added; the only automatic caller of `run_backup()` is `night_pipeline`, which is disabled outside production.
+
+**Tests.** `backend/tests/test_backup_isolation.py` — 19 passed in the backend container + the compose check passed on the host (it skips in the container, where `sandbox/` is not mounted): directories differ by default and cannot be forced together by configuration; sandbox retention selects only sandbox files and pruning leaves production files untouched even in one shared directory; production retention ignores sandbox files and the other database; a new catalog dump survives its own retention when PII dumps exist; dump names carry the environment; restore picks the right database; no self-scheduling loop exists or is registered; night pipeline enabled only in production. Regression with the pipeline, schedule and credential suites: 126 passed, 1 skipped.
+
+**Live verification (read-only).**
+- Production (running backend's environment): `env=production dir=/app/backups prefix=autospare` — unchanged.
+- Sandbox, new code evaluated in the sandbox container's environment (fresh interpreter): `env=sandbox dir=/app/state/backups-sandbox prefix=sandbox_autospare`, `night_pipeline.enabled()=False`.
+- **Sandbox running server: NOT fixed yet** — old loop still in memory, container still without the new mount/env. Its next run is 2026-10-05 13:23 UTC and, with the old code, it will delete the in-app catalog dumps present then (including tonight's).
+- Production backend: `auto_backup` is imported lazily by the night pipeline's backup job and had not run since the 17:20 UTC start, so tonight's natural backup will load the new module from disk. Production behaviour differs only in the exact-match retention.
+- Backup containers healthy; their dumps present (catalog 2.26 GB and PII 11 MB, 2026-10-04 03:00 UTC). No backup file was deleted, moved or renamed in this task.
+
+**Inventory of the shared directory (nothing removed).** `autospare_pii_20261003_220450.sql` — production PII, 9.1 MB. `autospare_20261004_132339.sql` — SANDBOX catalog dump, 0.3 MB (sandbox log, 13:23:40 UTC), carrying production's name; left in place; production retention will count it as a catalog daily until it ages out.
+
+**Restart required: YES — sandbox only.** `docker compose -f sandbox/docker-compose.sandbox.yml up -d --no-deps sandbox_backend` recreates `sandbox_backend` (ends the in-memory loop, applies the volume and environment). Preserved: sandbox_postgres, sandbox_redis, sandbox_meili, sandbox_tools and all their volumes; no production container is touched. Not performed — needs owner approval. Deadline that matters: before 13:23 UTC on 2026-10-05.
+
+**LIVE CLOSURE — 2026-10-04 18:10 UTC (owner-approved sandbox-only recreate).**
+- Recreated `sandbox_backend` only (old container `444c15d8fc50` → new `638d8d645634`). Every other container — all production ones and sandbox Postgres/Redis/Meilisearch/tools — kept the same container ID and start time (diffed before/after).
+- Command used: `docker compose --env-file sandbox/.env.sandbox -f sandbox/docker-compose.sandbox.yml up -d --no-deps sandbox_backend`. **The `--env-file` is required**: the sandbox was created with it, and without it the recreate would have blanked the sandbox DB password, Redis password and secrets (checked with `compose config` first; with the env file exactly three settings change: `ENVIRONMENT`, `NIGHT_PIPELINE_ENABLED`, `BACKUP_DIR`). The command written in the first version of this entry omitted it.
+- Verified in the running container: `ENVIRONMENT=sandbox`, `NIGHT_PIPELINE_ENABLED=0`, `BACKUP_DIR=/app/state/backups-sandbox` (also in the uvicorn process's own environment); `/app/backups` is the volume `autospare_sandbox_sandbox_backups`; effective prefix `sandbox_autospare`; `night_pipeline` logged "disabled" and no backup task or loop exists (34 supervised tasks, none backup-related; no `auto_backup` log line). Write probe: a file created in the sandbox's `/app/backups` did not appear in the production directory (probe removed).
+- Production in-app backup directory: listing and SHA-256 of both dumps identical before and after. Backup containers healthy, dumps present. Production backend untouched (same container, 0 restarts), no job running at the time.
+- Tests: 85 passed in the production backend container (isolation 19 + night pipeline 66), 19 passed inside the new sandbox container, compose check passed on the host.
+- `autospare_20261004_132339.sql` identified positively as a SANDBOX dump: named in the sandbox's own log at 13:23:40 UTC; 43 tables, no `night_pipeline_runs` table (production has it), essentially empty `parts_catalog` (production: ~4.6 M rows; sandbox database: 15 MB). Left untouched.
+- Side effects to know: (1) Docker pre-filled the new, empty sandbox volume with what the backend IMAGE has at `/app/backups`: two 1.8 GB production catalog dumps from 2026-07-28 that were baked into the image at build time. They are copies inside the sandbox volume (3.6 GB of disk, now 81% used); the production directory was not involved. Left untouched. (2) The sandbox start-up ran its normal Alembic step and applied migration `0038_eurosender_shipping` (additive columns) to the SANDBOX database.
+- Also noticed: `sandbox/.env.sandbox` is tracked in git (sandbox-only credentials; verified different from production's DB password).
+
+**Remaining limitation.** The sandbox still mounts the whole production `backend/` directory read-write (code, `data/`, `uploads/` path, `backups/` now masked). Anything else it writes under `/app` outside its own volumes still lands in production's tree — a wider isolation question than backups.
+
+---
+
+## #65 — Pre-night closure audit (read-only): one more controller terminal-state hole closed on disk; sandbox backend found deleting production's nightly catalog dump — 2026-10-04 17:50 UTC
+
+Read-only against production: 0 containers restarted, 0 jobs triggered, no production data written.
+
+**1. Controller terminal-state audit (`night_pipeline.py`).**
+- **Defect found and fixed (same root cause as #64 bug 2).** `Controller._execute` called `store.finish()` unprotected after the job's work. If the store was unreachable at that moment (both the write and its report-less fallback fail), the exception left the row RUNNING and — rule 2, "nothing starts while a job is RUNNING" — held the pipeline until the next backend restart; the real outcome was lost. Fix: the outcome is kept in `Controller._pending_finish` and recorded at the start of the next `tick()`; while the store is still down the tick fails and retries. **On disk only — the running backend loaded its code at 17:20 UTC, before this edit; it takes effect at the next backend restart.** Low probability (needs a DB outage at the exact end of a job), so tonight's run is not at risk from it beyond what already existed.
+- Reviewed, no defect: `marker()` and `conflicts()` swallow their own errors; a `verify` that raises yields FAILED with the reason (conservative, by design); cancellation writes FAILED and restart recovery covers the rest.
+- New deterministic tests, all through `build_production_controller()` (real JobSpec, real run wrapper, real post-condition) and the real `Controller._execute`; only the heavy function and the `job_registry` read are replaced:
+  - `rex_night`: the exact report of the first natural run (no `status` key) → **COMPLETED**; a cycle with `errors > 0` → FAILED.
+  - `category_discovery`: report > 20,000 chars through the real `PgStore.finish` path → valid JSON ≤ 20,000 chars, state **COMPLETED**, nothing RUNNING.
+  - PostgreSQL itself (read-only `SELECT CAST(text AS jsonb)`, session set read-only): new text accepted; the old sliced text rejected with `InvalidTextRepresentationError` — the exact production error.
+  - store failure at finish → outcome retained, recorded on the next tick, row COMPLETED; store still down → keeps retrying, never drops the outcome.
+  - `tests/test_night_pipeline.py`: 66 tests.
+
+**2. Backup ↔ DB-agent overlap (22:04:50–22:08:23 UTC, 2026-10-03) — INCONCLUSIVE.** Evidence that exists: host `sar` at 10-minute resolution (host clock is UTC+2). The interval containing the overlap: CPU idle 11%, iowait 31%, 1-minute load 12.3 on 6 CPUs, 3.2 GB available, no OOM. The interval BEFORE the backup started was already as loaded (idle 7%, iowait 31%, load 10.7), so the pressure came from the DB-agent cycle plus the harvester, not visibly from the dump. Both jobs completed. Evidence that does not exist: PostgreSQL lock waits (`log_lock_waits=off`, `track_io_timing=off`, the DB container wrote no log lines in that window) and which DB-agent task ran in those minutes (that backend container's logs were lost in the recreate). No DB-level conclusion can be drawn. Not changed. To settle it: enable `log_lock_waits` (reloadable, no restart) and read tonight's logs — owner decision.
+
+**3. REAL ISSUE (pre-existing, not fixed — fixing needs a sandbox restart or config change, both outside this task).** `sandbox_backend` bind-mounts the same `backend/` directory, so its `/app/backups` IS production's in-app backup directory. It still runs the old 24-hour backup loop in memory (container up since 2026-08-11; the loop was removed from source on 2026-10-03). Every day at 13:23 UTC it dumps the tiny SANDBOX database as `autospare_<timestamp>.sql` (0.3 MB) into that directory and its prune deletes older files — including production's nightly catalog dump: `deleted old backup autospare_20261003_220450.sql` at 13:23:40 UTC today (sandbox log), and the same on 10-01. The directory now holds a 276 KB sandbox dump named like a production catalog backup, and no production catalog dump. Root cause: one shared backup directory, a retention count that does not know which database a file belongs to, and a sandbox still running removed code. **Mitigation in place:** the independent backup containers write real dumps daily (catalog 2.26 GB, PII 11 MB, latest 2026-10-04 03:00 UTC) — production is not without backups. Correct fix (not applied): the sandbox must not share the backup directory (own `BACKUP_DIR`/mount), and retention should be per database; restarting the sandbox alone would also stop the old loop.
+
+**4. Second Honda pair (Airwave 2004, Civic VII saloon).** Not a reclaim case: both models were already marked `done` at 17:19:19 / 17:19:25 (377 / 388 parts harvested) seconds before the stop. What was interrupted was the import subprocess of one vehicle file each; the input files were in the removed container, so resume was correctly refused. Parts of those two files that had not yet been written stay missing until the models' normal 14-day refresh. Extent not measured.
+
+**5. Night readiness (17:54 UTC).** One `night_pipeline` registration, 34/34 supervised tasks, no duplicates; no RUNNING/QUEUED pipeline row; no pipeline marker; the only lock is `db_update_agent`, held by the boot-triggered cycle running since 17:21 (live, TTL refreshing — not stale; due to end hours before 22:00 UTC); backend, both PostgreSQL servers and Redis healthy; 0 restarts, 0 OOM; one harvester.
+
+**Waiting for the natural run (22:00 UTC):** `rex_night` ending COMPLETED on a clean cycle; `category_discovery` ending COMPLETED with its report stored.
+
+---
+
+## #64 — nginx kept a stale backend address after a backend recreate (public API 502) — ROOT-FIXED and proven with a forced address change; first natural Night Pipeline run reviewed, 2 controller bugs fixed — 2026-10-04
+
+**Root cause (reproduced, not inferred).** `deploy/nginx.conf` had `upstream backend { server backend:8000; }`. A hostname in a plain `upstream` server is resolved ONCE, at config load; the `resolver 127.0.0.11` line in the same file does not apply to it. When the backend container came back on another address (#63: 172.18.0.4 → 172.18.0.11) nginx kept connecting to the old one — `connect() failed (111: Connection refused) … upstream: "http://<old address>:8000"` — until a manual reload. Reproduced in an isolated throwaway network with the production nginx image: target recreated on a new address, old address held by a non-listening container → old config **502**, new config **200**.
+
+**Fix (one file, no new infrastructure).** `deploy/nginx.conf`: `upstream backend { zone backend_upstream 64k; server backend:8000 resolve; keepalive 32; }` and `resolver 127.0.0.11 valid=10s ipv6=off;`. nginx 1.31.1 re-resolves the name at runtime and swaps the address itself. Written in place (same inode, single-file mount), validated with `nginx -t` in a throwaway container and in the live one, applied with one graceful `nginx -s reload` (no container restart). Guard: `backend/tests/test_nginx_upstream.py` (host-side; skips inside the backend container, where `deploy/` is not mounted).
+
+**Controlled production proof (2026-10-04 17:19 UTC; gate: no job running, no lock, no pipeline job, no pg_dump, no AliExpress/group scan).** Backend recreated with its old addresses deliberately held by a non-listening dummy container, so it had to move.
+- old address 172.18.0.11 / 172.19.0.2 → new address **172.18.0.13 / 172.19.0.4**
+- manual nginx reload: **none** (0 reloads in the nginx log; nginx container not restarted)
+- public API, probed every second: 502 from 17:19:30 to 17:20:35 (**66 s — the time the single backend was stopped and starting**), first 200 at 17:20:36, the second the backend answered and one second before Docker marked it healthy.
+- **502 after the backend was healthy: 0.** Last nginx error against the old address: 17:20:36. Static site: 0 failures throughout.
+- 3 probes after healthy returned no response within the probe's 4-second client timeout (17:20:44, 17:22:16, 17:22:21) with no nginx error — the backend busy during its own start-up, not routing. The same 4-second timeouts appeared in the earlier same-address recreate (6 of them).
+- An earlier recreate the same day (04:39 UTC) kept the same address and therefore proved nothing about this bug; recorded so it is not mistaken for the proof.
+- **Not fixed, by design:** a backend recreate still means about a minute of API 502 while the only backend instance restarts. Removing that needs a second backend instance — out of scope.
+- Correction to #63: its statement that the 16:55 restart "did not [break] because the address was unchanged" was an assumption, not checked at the time.
+
+**car-parts.ie reclaim (VERIFIED).** The 5 models interrupted by the #63 stop (Toyota bZ4X, Mercedes GLA200, Peugeot 108, Kia XCeed, Chevrolet Cruze) were reclaimed by the existing mechanism at 22:08:54 UTC (`reclaimed 5 stale in_progress model(s) → pending`), re-harvested by 22:10:49 (327–401 parts each) and are `done`. One harvester process throughout. Nothing was reset by hand.
+
+**First natural Night Pipeline run (night of 2026-10-04, window 22:00–04:00 UTC) — real production result.**
+| job | time (UTC) | result |
+|---|---|---|
+| auto_backup | 22:04:50–22:12:15 | COMPLETED — waited 4 ticks for load ≤ 1.5/CPU first; both databases dumped |
+| ebay_fitment_backfill | 22:18:21–22:24:00 | COMPLETED |
+| sync_prices | 22:25:00–23:44:01 | COMPLETED (102 parts updated, 0 errors) |
+| rex_night | 23:45:01–23:48:29 | **FAILED — false failure** (bug 1) |
+| category_discovery | 23:49:29–01:56:18 | work completed, **row stuck RUNNING** (bug 2) |
+Strictly sequential, one job at a time, exactly one controller registration, no OOM.
+- **Bug 1 — `rex_night` post-condition.** A scraper cycle that RAN returns counters and no `status` key (only its disabled/skipped/error exits carry one); the check treated a missing status as failure. The cycle was clean (200 parts checked, 0 errors, `job_registry` completed). Fixed in `night_pipeline.verify_rex`: missing status is not a failure; `errors > 0` is; the independent check stays the cycle's `job_registry` row.
+- **Bug 2 — report truncation.** `PgStore.finish` stored `json.dumps(detail)[:20000]`. Category discovery's report was longer, the slice cut it mid-token, PostgreSQL rejected it (`invalid input syntax for type json`), the UPDATE failed and the row stayed RUNNING — "nothing else starts while a job is RUNNING" then held the rest of the window. Root fix: `detail_json()` always produces valid JSON (oversized reports become a small summary; NaN/Infinity/NUL cleaned), and a rejected report can no longer block the terminal state. The stale row was closed by the controller's own restart recovery (labelled "interrupted by backend restart"; the work itself had finished at 01:56:18).
+- Tests: 4 added (`tests/test_night_pipeline.py`, 60 total).
+
+**`run_all_tasks` vs the pipeline.** Boot-triggered run 21:21:12–22:08:23 overlapped `auto_backup` for 3.5 minutes (22:04:50–22:08:23). That pair has no conflict lock by design (read-only dump; the resource guard had already held the backup back four times on load); no failure, no OOM. The next cycle was due about 01:08 and started at 02:08:35, after category discovery (memory-heavy, locked against the DB agent) ended at 01:56 — consistent with the deferral, **inferred from timing only**: that container's logs were lost when it was recreated. No duplicate heavy job, no duplicate scheduler.
+
+**Regression.** See session report. **Restarted/recreated:** `autospare_backend` twice (04:39 and 17:19 UTC), each gated; nginx reloaded once (config apply). No other service touched.
+
+**Open.** (1) The two controller fixes have not yet been exercised by a natural run — next window 22:00 UTC tonight. (2) Two Honda imports interrupted by the 17:19 recreate were correctly NOT resumed (their input files lived in the removed container); their models wait for the normal reclaim. (3) Whether a backup may overlap a DB-agent cycle is an owner decision; today it may.
+
+---
+
+## #63 — Production PostgreSQL credential ROTATED (old password from git history is dead) — 2026-10-03 21:19 UTC
+
+**Root cause.** The production DB password had been pasted as a literal into 54 tracked scripts (removed in #61 / commit `69ae358`), so it sits in git history, and it was still the live credential on both PostgreSQL servers.
+
+**Maintenance gate (VERIFIED before any change).** `run_all_tasks` completed 21:18:26 UTC (waited for it, not interrupted); no Redis job lock, no Night Pipeline job (window opens 22:00 UTC), no pg_dump, no AliExpress or group scan. Owner-authorized stop of car-parts.ie only.
+
+**What was done.**
+- `pre_restart.sh` capture: 0 resumable importers (the last import subprocess had finished). car-parts.ie harvester stopped with SIGTERM, exited in 1 s. No `kill -9`.
+- New credential: 48 chars `[A-Za-z0-9]` from a CSPRNG, held in memory and stdin only, never printed or passed on a command line.
+- `ALTER ROLE autospare WITH PASSWORD …` run independently on `autospare_postgres_catalog` and `autospare_postgres_pii` (one shared credential, as the deployment already did). Role, ownership and server configuration unchanged. Statement logging is off on both servers.
+- `.env` (gitignored): exactly 3 lines changed — `DB_PASSWORD`, `DATABASE_URL`, `DATABASE_PII_URL`. Same single mechanism as before; no new variable.
+- Recreated only `autospare_backend`, `autospare_postgres_backup`, `autospare_postgres_backup_catalog` (`docker compose up -d --no-deps --no-build`). Neither PostgreSQL container was recreated.
+
+**Proof (network authentication from the backend container, not the trusted local socket).** Before: old ACCEPTED ×2, new REJECTED ×2. After `ALTER ROLE` and again from the recreated backend: **old REJECTED on catalog and PII, new ACCEPTED on catalog and PII.** Both backup containers authenticate over the network with their new environment.
+
+**Incident caused by this operation — public API 502 for about 2 minutes (21:19:36–21:21:33 UTC).** Recreating the backend together with the backup containers changed its internal address (172.18.0.4 → 172.18.0.11); nginx resolves the upstream once and kept the old address. About the first minute was the normal backend start; the rest was the stale address. Fixed with a graceful `nginx -s reload` (no container restart); public API returned 200 immediately. **Not root-fixed:** nginx still caches the upstream address, so any backend recreate that changes its address will repeat this (the 16:55 restart did not, because the address was unchanged). Until fixed, reload nginx after every backend recreate.
+
+**After reconnect (VERIFIED).** Backend healthy, 0 restarts, no OOM; catalog and PII queries succeed; 34/34 supervised tasks running, exactly one `night_pipeline`, no duplicates; no password-authentication error in any log other than the 3 controlled rejected logins; no backup started off-schedule. The supervisor relaunched the car-parts.ie harvester (one process) and it is harvesting; 5 models interrupted mid-harvest stay `in_progress` until the existing 30/45-minute reclaim picks them up. `run_all_tasks` started on boot as it does after every backend start.
+
+**Secret audit.** Old credential: absent from `.env`, from the three recreated containers, from logs and process command lines; no longer authenticates. New credential: only in `.env` (3 lines); 0 hits in tracked files, git objects, logs, process command lines, `/tmp`. `.env` ignored and untracked.
+
+**Remaining.** (1) The old value is still in the environment of the two PostgreSQL containers (used only at first init; inert now) — clearing it means recreating the databases. (2) The old value is still in git history; not rewritten, by instruction — it is now a dead credential. (3) nginx stale-upstream root fix (above). (4) 11 dev-placeholder `getenv` passwords unchanged, by instruction.
+
+**Regression.** See test counts in the session report; no source code changed.
 
 ---
 
@@ -6802,6 +7862,32 @@ Running container: still holds the previously loaded environment until the backe
 
 **Safety:** no email sent, no Gmail mailbox touched, no container restarted, no production row written, no secret printed.
 
+---
+
+## #68 — Stitch homepage: `edit_screens` reports success without persisting; all four "Marketplace Home" screens were abridged — 2026-10-05
+
+**How it was found.** A prior session recorded Stitch screen `d45b6e30ebc947588126c1f068dc2223` ("AutoSpareFinder - Marketplace Home", 2560x3396) as the successful desktop homepage. That conclusion came from a **title match in `list_screens` plus the presence of an `htmlCode` entry** — the content was never fetched. Downloading it this session showed its html `<title>` is *"AutoSpare - High Performance Parts"*, its footer reads *"© 2024 AUTOSPARE PERFORMANCE. ENGINEERED FOR SPEED."*, and its 63 text nodes contain no categories, no vehicles, no why-us, no comparison table and no AI section. Exactly the failure mode in CLAUDE.md §1: *never pick a resource as "the" target of a task by name-match alone.*
+
+**Finding 1 — every Stitch homepage screen is abridged.** All four desktop screens carrying marketplace-home titles were downloaded and their visible text parsed. Each is the same shape: header + hero + four "Featured Parts" cards + footer. **Three of the eight required sections**; the hero search is a single input, not the dual-mode vehicle/part panel. Missing from all four: Popular Categories, Popular Vehicles, Why AutoSpareFinder, Supplier/Price Comparison, AI Chat CTA. Stitch collapses a long multi-section brief to its own template rather than honouring it.
+
+**Finding 2 (the real bug) — `edit_screens` does not commit.** Three separate edits against `3db3e13b610049b8bf41babb9f3d3196` each returned a detailed success payload naming the exact DOM operations, selectors and `verified_html_context`. Afterwards the stored HTML was **byte-identical (17,240 bytes)**, the `htmlCode` file id was unchanged (`0abceaf642734f79b11eaec20b7a263b`), the screenshot file id was unchanged, `list_screens` still returned 19 screens, and the rendered screenshot still showed "Find Your Perfect Part", a single search input and "© 2024". **Treat the `edit_screens` response as a plan, not a commit** — always re-download the HTML and compare bytes.
+
+**Finding 3 — prompt size governs the timeout.** `generate_screen_from_text` (MOBILE) timed out twice with no screen created, and a six-section `edit_screens` prompt timed out. A two-change prompt against the same screen returned in seconds. Reads (`list_screens`, `get_screen`) were never affected.
+
+**Delivered instead:** `.stitch/designs/homepage.html` — the full eight-section homepage built directly to `.stitch/DESIGN.md` tokens (Void Black `#0F1218`, Electric Blue `#0EA5E9`, 6px geometric buttons, speed-line dividers, AI glow `0 0 24px rgba(14,165,233,.40)`, Inter + JetBrains Mono), no light backgrounds and no pill buttons. Figures are **live catalog data**, not placeholders: 4,125,265 active parts and the real top-10 categories (`body-exterior` 905,751 … `fuel-air` 141,076) from `parts_catalog`; the top-4 Israeli vehicles (Toyota Corolla 132,079 … Kia Sportage 91,152) from `harvest_queue.il_vehicle_count`. Supplier names in the comparison table are masked per the `_mask_supplier` rule.
+
+**Verification (Playwright, headless Chromium, full-page):**
+- VERIFIED — all 8 sections render: sticky header, hero + dual-mode search + trust bar, 10 categories, 4 vehicles, 4 why-cards, 3-row comparison table with verified-fit badge, AI CTA with Hebrew chat bubbles and glow, 4-column footer reading "© 2026 AutoSpareFinder".
+- VERIFIED — zero horizontal overflow at 1440, 1280, 834, 768, 390 and 360 px.
+- VERIFIED — RTL (`dir="rtl"`) mirrors correctly: nav order reverses, logo moves right, hero art swaps side, Make/Model/Year reverse to Year/Model/Make, prices and OEM codes stay LTR via `unicode-bidi:isolate`.
+- Two overflow bugs were found and fixed during this check, not assumed away: the header's `.nav-right` overflowed to 443px at 390px wide (logo + 2 icon buttons + Sign In); and nav links still rendered at 834px, overflowing by 8px. Fixed by collapsing the nav to a burger at ≤900px and shrinking the header controls at ≤640px. Re-verified clean at all six widths.
+- NOT DONE — no MOBILE screen and no RTL screen exist in the Stitch project; the homepage was not uploaded to Stitch. Both are blocked on the write path above.
+- NOT CONSIDERED — the reference image named in the brief was not reachable in this session's context, so the design was reconciled against `.stitch/DESIGN.md`, `MASTER.md` and `STITCH_BRIEF.md` only.
+
+**Status:** PARTIAL. The homepage design exists and is verified locally; it is not in Stitch. `.stitch/metadata.json` now records the project id, design-system assetId, the per-screen audit and the blockers.
+
+**Never regress:** a Stitch screen title is not evidence of its content — download `htmlCode` and parse it. A Stitch write that returns success is not evidence of persistence — re-fetch and compare bytes.
+
 ## 2026-10-06 — Gmail OAuth: "no code after consent" root-caused; setup helper now captures the redirect itself
 
 **Report:** the owner approved the Gmail consent screen (twice, 2026-10-04) and saw no `?code=` in the browser.
@@ -7009,3 +8095,256 @@ Two genuine replies (Outlook Reply button), processed with the unchanged pipelin
 - **Reply chain — PARTIAL.** Each thread has 3 messages: our original, the sender's unlinked 2026-10-08 reply, and the new reply. The association set is exactly the linked original in both cases; the unlinked earlier reply is excluded. That earlier reply contained only dots, so its exclusion produced no visible difference; and a reply linking to the customer's OWN earlier message has still not been seen live.
 
 Side effects: Gmail 4 message GETs + 2 thread GETs, 1 token refresh, 0 non-GET; labels unchanged; business tables unchanged; alembic 0038; no Email Agent rows; backend `RestartCount=0`; agent disabled. No defect; no code change.
+
+## 2026-10-09 — Email Agent: live reply-chain (customer replies to own message about another account's order) — read-only
+
+Message `1a11f5b5bafd63be` (06:30:40 UTC, "Re: EA2-k other order", authored "any update?", 255-char quote). `In-Reply-To` = `References` = `<DB9P251MB073933EC730B30241D1CFBF2A5922@DB9P251MB0739.EURP251.PROD.OUTLOOK.COM>` = the customer's own earlier message `1a11f50a2061fb8a` ("Where is my order AUTO-2026-43EA94CF?"). Thread size 2; association set = exactly that parent.
+
+Result (code = `c1691fa`, in memory): order `sender_mismatch` ("referenced order belongs to a different account"), no order number or details in the context, verified references = customer only, `human_approval_required`, no reply text, not sendable. Category `order_shipping` came from the word "order" in this message's own subject. Gmail: 2 message GETs + 1 thread GET + 1 token refresh, 0 non-GET; labels unchanged; business tables unchanged; alembic 0038; backend `RestartCount=0`, agent disabled. Not committed (owner instruction for this run).
+
+Limit of the evidence: the order number is present both in the linked parent and in this message's own quote, so the live result cannot show which of the two supplied it; the thread held no unlinked message to exclude.
+
+**Evidence gap closed (in-memory test, 2026-10-09):** `test_cross_customer_order_inherited_only_through_the_explicitly_linked_parent` uses a reply whose own text and subject carry no order number and no quote, so the explicitly linked parent is the only possible source: result `sender_mismatch`, no order details, `human_approval_required`; the identical pair without reply headers leaves the order unresolved (parent ignored). `test_cross_customer_linked_reply_end_to_end_has_no_side_effects`: no draft, no reply text, only the token POST, nothing sendable. Suites: 272 passed, 3 skipped. Tests not committed (owner approval pending).
+
+## 2026-10-09 — OAuth values in nginx logs: root cause, fix (staged, not deployed), deployment runbook
+
+**Root cause (VERIFIED, counts only):** `deploy/nginx.conf` had no `log_format`, so nginx used "combined" and logged the full request line and Referer. A Google OAuth redirect to `/?state=..&code=..` therefore wrote the code (a) in the request line (5 lines in the current container log), (b) in the Referer of every follow-up request from that page (24 lines: assets, `/api/v1/parts/categories`, `/chat`), and (c) in the error log's `referrer:` field for missing static files (2 lines, `car.svg`). No access / refresh / ID tokens appear in any log. All codes found are expired or already exchanged.
+
+**Fix (`deploy/nginx.conf`, additive; the owner's uncommitted resolver edit is untouched):** chained `map`s produce `$request_redacted` and `$http_referer_redacted` with `code`, `state`, `access_token`, `refresh_token`, `id_token` values replaced by `<redacted>`; `log_format redacted` (combined fields) + `access_log … redacted`; http-level `log_not_found off` (the error log cannot be formatted and copied the raw Referer); `Referrer-Policy: no-referrer` on `location /` responses to a request carrying `code`. `maintenance/gmail_oauth_setup.py` now recognises `code=<redacted>` (reports `code_redacted`, refuses to exchange, asks for `--code`).
+
+**Tests:** host test `backend/tests/test_nginx_oauth_log_redaction.py` 5/5 — it runs the real nginx.conf in a throwaway container (no network, read-only mounts) and proves the fake code / state / token never reach either log, the 404 and the request path stay visible, and the landing response carries `no-referrer`; against the pre-fix config 4 of 5 fail. Helper test added (10 passed). Email Agent + OAuth + compose: 273 passed, 3 skipped. Host compose test 3/3; existing `test_nginx_upstream.py` passes; `docker compose config` valid; `nginx -t` successful; app-import suites 58 passed.
+
+**Not deployed:** nginx needs `docker restart autospare_nginx`. Runbook for nginx, backend recreate + migration 0039, read-only verification, activation and rollback: `docs/EMAIL_AGENT.md` § Deployment runbook. Nothing restarted, migrated or committed.
+
+## 2026-10-09 — nginx OAuth log redaction ACTIVATED (Phase 1, nginx only)
+
+**APPLIED** to `autospare_nginx` (owner-approved `docker restart autospare_nginx`; container id `4a157de882c6`, image unchanged, nginx 1.31.1). Preflight: the mounted file was byte-identical to the tested one; `nginx -t` passed with the production binary; the harvester was idle (queue drained, resting) so no relay post went through nginx during the restart.
+
+**Defect found by the first live check and fixed before closing:** the first activation (06:44 UTC) redacted `code` and `state` but, when a URL carried `access_token`, `refresh_token` and `id_token` together, only one of them — a single map used an alternation and replaces one match. The leaked values were synthetic test strings. Fix: one map per parameter (`$oauth_rq_1..5`, `$oauth_rf_1..5`) plus a final guard that withholds the whole query ("`?<query withheld>`", rebuilt from the original request line so the real path is kept) if any sensitive value is still unredacted, e.g. a repeated parameter. The host test now covers multi-token and duplicate-parameter URLs (5/5 pass; on the first-activation config the multi-token case fails). Re-validated with the production binary, then activated with a second `docker restart autospare_nginx` (06:46:05 UTC, healthy after 11 s).
+
+**Verified live after the second restart (synthetic values only):** inside nginx and through the public domain, `/?state=..&code=..` is logged as `state=<redacted>&...&code=<redacted>` with path, status and the non-sensitive `iss` / `scope` kept; a 404 with an OAuth Referer is logged with the Referer redacted and produces no error-log line; three tokens in one URL → all `<redacted>`; a repeated `code` → `GET /?<query withheld>`; `/plain-check?lang=he` logged unchanged. 0 synthetic secret values in any log line. Responses to `?code=` carry `Referrer-Policy: no-referrer`, others `strict-origin-when-cross-origin`. Public `/` and `/api/v1/system/health` return 200.
+
+**Untouched (ids and start times identical before and after):** backend (`68be62378617`, started 2026-10-04 17:20 UTC, harvester pid unchanged), frontend, whatsapp_bridge, postgres_pii, postgres_catalog. All `RestartCount` = 0. No migration, no DB write, no Email Agent change, no log purge (lines written before 06:44 UTC remain in the old log stream). Not committed.
+
+## 2026-10-09 — Backend recreation preflight (Email Agent / migration 0039) — NOT executed
+
+**Defect found and fixed (docs + guard, no runtime change):** the runbook (and CLAUDE.md "Deployment & Config") recommended `docker compose up -d backend`. Compose's own dry run shows that command would RECREATE BOTH Postgres containers (`postgres_pii Recreate`, `postgres_catalog Recreate`): their running `POSTGRES_PASSWORD` env differs from what `.env` renders today (only read when a data directory is first initialised, so data and logins are unaffected — the rendered backend DB URLs are byte-identical to the running ones and a read-only login with them succeeds — but Compose sees config drift). `docker compose up --dry-run -d --no-deps backend` recreates only the backend. Runbook and CLAUDE.md now require `--no-deps`; host test `test_runbook_never_recreates_the_backend_without_no_deps` guards it.
+
+**Live inventory (read-only):** backend `68be62378617` healthy since 2026-10-04 17:20 UTC, 2.6/4 GB; nginx restarted 06:46 UTC with the redaction (file sha `3f295a17d6d6df94`, synthetic check still redacted); postgres_pii/catalog/redis/meili/frontend/whatsapp_bridge unchanged. No `job_registry` row running (last `run_all_tasks` 04:38–04:50 UTC, ok=17 err=0); no Redis job locks; 0 waiting locks in both DBs; no importer subprocess; harvester idle (queue drained, resting). Host: load 0.6, 3.0 GB available, disk 84 %. `postgres_catalog` carries `OOMKilled=true` from an earlier event while still running — memory headroom is a standing risk.
+
+**Migration 0039 (isolated test — throwaway Postgres + backend image on an `--internal` Docker network):** base→0038→0039 creates only `email_agent_messages` (2 indexes + unique key, `CHECK ((sendable = false))`, an insert with `sendable=true` rejected); downgrade drops it; re-upgrade works; a second upgrade is a no-op. Production catalog is already at head (`0061_noa_ops_audit`), so start-up runs only PII 0038→0039.
+
+**Env and switches:** the recreated backend differs from the running one only by the 11 Email Agent / Gmail keys; rendered `EMAIL_AGENT_ENABLED=0`, `EMAIL_AGENT_GMAIL_DRAFTS=0`, grant `gmail.readonly`. Startup simulation with those values: the loop idles, no Gmail client, no heartbeat.
+
+**Tests:** Email Agent + OAuth + compose 273 passed, 4 skipped (incl. real-Postgres store test); app-import / config / restart-workers suites 77 passed; host compose 4/4, nginx redaction 5/5, nginx upstream pass; `docker compose config` valid. Execution plan: `docs/EMAIL_AGENT.md` § Step 2 execution plan. Not committed.
+
+### 2026-10-09 — Email Agent backend recreation EXECUTED (migration 0039 applied; agent stays disabled)
+
+**Status: APPLIED + VERIFIED.** Owner-approved recreation of `autospare_backend` only, per `docs/EMAIL_AGENT.md` § Step 2 execution plan. Agent activation, Gmail drafts and sending NOT done (separate approvals).
+
+**Gates (06:56–06:57 UTC, 09:56 IDT):** `docker compose up --dry-run -d --no-deps backend` → only `autospare_backend`; no `job_registry` row running (last `run_all_tasks` 04:38–04:50 UTC completed), no importer process, no Redis `autospare:lock:*`, 0 waiting locks in both DBs; harvester queue `done 6446 / empty 249`, resting; outside 01:00–07:00 IL, next `run_all_tasks` ~07:50 UTC; 3.0 GB available, load 0.5. Baseline: catalog `0061_noa_ops_audit`, PII `0038_eurosender_shipping`, no `email_agent_messages`; public `/api/health` 200.
+
+**Commands:** `bash backend/scripts/pre_restart.sh` (exit 0; 0 workers captured, nothing to stop) → re-check identical → dry-run again (backend only) → `docker compose up -d --no-deps backend` at 06:58:01Z (exit 0).
+
+**Result:** backend `68be62378617` → `ac0005a2ad4a`, started 06:58:14Z, healthy 06:59:17Z (~62 s; uvicorn ready ~45 s), restarts 0. Unchanged IDs/start times: postgres_pii `a6b9445b10e2`, postgres_catalog `09257137a6d9`, redis `881437256ee6`, meilisearch `918c3c2ebe1e`, nginx `4a157de882c6` (06:46:05Z), frontend, both backup containers, flaresolverr, whatsapp_bridge.
+- Migration log: `Running upgrade 0038_eurosender_shipping -> 0039_email_agent_messages`; `alembic -c alembic_pii.ini current` → `0039_email_agent_messages (head)`; table has PK, `UNIQUE (gmail_message_id)`, `CHECK ((sendable = false))`, `ix_email_agent_messages_thread`/`_status`; 0 rows.
+- Switches in the running container: `EMAIL_AGENT_ENABLED=0`, `EMAIL_AGENT_GMAIL_DRAFTS=0`; all 11 Email Agent/Gmail keys present. Log: `[email_agent] {"event":"idle","state":"disabled"}`. `GET /api/v1/system/email-agent` → `state=disabled`, `send_enabled=false`, empty store, no error. CLI `status` → `can_read: true`, `can_draft: false`, `send_enabled: false` (the CLI forces `enabled=True` for its own explicit run — `email_agent_cli.py:49` — the service stays disabled). 0 Gmail API requests in backend logs.
+- Public `/api/health` 200 after recreation (nginx re-resolved the new backend). `container_start.sh`: API ready after 19×2 s, nothing to resume. Harvester relaunched (pid 227) after its 60 s settle, cycle logged 06:59:41 (queue drained, resting). Amayama FS harvester: session ready, round 1 relayed 24 priced rows. `run_all_tasks` started 06:59:50 on its normal 90 s post-start schedule. `bash backend/scripts/post_restart.sh` → exit 0 (nothing to resume).
+- Only startup errors: direct-HTTP 403s from the search warm-up's live supplier probes (partsouq/autodoc/amayama) — the documented server-IP anti-bot block, not caused by this change (old container's logs not available to compare).
+- Tests after: Email Agent + compose + OAuth 272 passed, 5 skipped (real-Postgres store test deliberately NOT run — it would write to the production PII DB now that the table exists); host compose 4/4, nginx redaction 5/5, nginx upstream 3/3.
+
+**Remaining risks:** postgres `POSTGRES_PASSWORD` config drift (a plain `compose up` would recreate both DBs); `postgres_catalog` historical OOM flag; no runtime kill switch other than env + recreation. Not committed.
+
+### 2026-10-09 — Startup 403s root-caused; startup no longer waits for the optional warm-up; Email Agent runtime kill switch
+
+**Status: code + tests APPLIED on disk; NOT DEPLOYED** (uvicorn still runs the code loaded at 06:58:14Z; the bind-mounted CLI already runs the new code). No restart, no DB write, no Gmail call, agent still disabled.
+
+**Startup 403s — root cause (VERIFIED from the 06:58 start logs + code).** `_warm_search_paths` calls `search_parts(..., redis=None)`. For a non-empty query `search_parts` always started `_fetch_ext_suppliers`, a background lookup against every external supplier whose ONLY output is the Redis entry `ext_sup:<query>` — skipped when `redis` is None. So each start sent 5 queries × (PartSouq, Autodoc, Amayama → HTTP 403, server IP blocked) + 5 eBay Browse API calls + 1 eBay token request, and discarded every answer. Bounded already (one request per supplier, `wait_for` 2 s, no retry, exceptions swallowed); not customer-facing (a 403 yields `[]` or a price-0 placeholder that `_sanitize_external_offer` drops); not fatal. The same waste happened on every `search_parts` caller that passes `redis=None` (`routes/parts.py` ~2634 and ~3541, `maintenance/run_fitment_step1_parity_check.py`).
+- Fix: `routes/parts.py::_should_fetch_external_suppliers(query, redis)` — the lookup runs only with a query AND a Redis client to cache into. Customer requests (real Redis client) are unchanged.
+- **Second defect found:** startup `await`ed `_warm_search_paths()` before "Application startup complete", although its comment called it background. Cases allow up to 12 + 4×25 + 120 s ≈ 230 s cold, all on the API/health-check readiness path. Now `asyncio.create_task(_guarded_task(...))` with a strong reference (`_SEARCH_WARMUP_TASK`).
+- Warm-up results are now classified: new `search_warmup.py` (`run_warmup_cases` → ok / timeout / error per case, exception type logged, never raises; `summary_line` → `primed X/N (timeouts=, errors=)` instead of an unconditional "primed 6").
+- Not changed (needs a production config decision): live customer searches still send one request per new query to the three blocked sites. `EXTERNAL_ENABLE_PARTSOUQ/AUTODOC/AMAYAMA=0` would stop that (env change + recreation → owner approval).
+
+**Email Agent kill switch.** `EMAIL_AGENT_ENABLED` needs a recreation to change; there was no runtime stop. New `email_agent/control.py`: state file `/app/state/email_agent_control.json` (worker_state volume, shared by the uvicorn loop and `docker exec` CLI; `EMAIL_AGENT_CONTROL_FILE` overrides). Runs only when the file is valid JSON with `{"mode":"run"}`; missing → halted `not_armed` (default); unreadable / invalid / unknown mode / >4 KB → halted (fail closed). Atomic writes (temp + `os.replace`). Checkpoints: loop each iteration (no Gmail client / heartbeat / DB while halted, re-check 60 s); `process_once` start (no token refresh, no Gmail call, no store write); before each claim; before the draft step; before saving a result (both paths); `GmailClient._call` immediately before any non-GET request; CLI `run-once` (incl. `--dry-run`) exits 3 without building a client. A halt mid-message releases the claim (status `retry`, attempt not consumed). CLI `control` / `halt` / `arm`; status endpoint and CLI `status` report it. Check cost measured in the container: 17 µs (no file) / 45 µs (armed). Worst-case halt latency for reads = one in-flight Gmail GET (≈95 s with retries); a draft POST is checked immediately before it is sent. Remaining races documented in `docs/EMAIL_AGENT.md` § Runtime kill switch (µs window before an already-guarded POST; a halt between the two draft checks escalates that one message to a human; `release` is the one store write after a halt). Sending stays impossible by construction.
+
+**Tests (in-container, fakes only, no network, temp control files):** Email Agent + compose + OAuth 285 passed, 5 skipped (13 new kill-switch tests incl. parametrized fail-closed cases; real-Postgres store test deliberately not run); `tests/test_search_warmup.py` 8 passed (gate, three mocked upstream 403s = one request each and no customer offer, classified warm-up, successful warm-up, background scheduling). DB-free related suites: 54 passed, 2 failed — `test_fitment_step0_release_gate.py::test_cached_search_payload_isolated_by_vehicle_id` / `::test_strict_vehicle_clause_builds_json_and_pvf_guards` are PRE-EXISTING (test from 2026-04 calls the now-async `_get_cached_search_response` synchronously; expects a `gate_model_0` param the builder no longer emits) and untouched by this diff. Host: compose 4/4, nginx redaction 5/5, nginx upstream 3/3. DB-backed suites (rolled-back writes to production) not run.
+
+**Live, read-only (~07:10 UTC):** backend `ac0005a2ad4a` (started 06:58:14Z, healthy, restarts 0), postgres_pii/catalog/nginx/redis unchanged; `EMAIL_AGENT_ENABLED=0`, `EMAIL_AGENT_GMAIL_DRAFTS=0`; endpoint `state=disabled`, `send_enabled=false`; no control file in `/app/state` → CLI `control` = `halt / not_armed`; one `[email_agent] idle state=disabled` line since start.
+
+**Needs production approval:** a backend recreation to load the warm-up / search / loop / endpoint changes; optionally the three `EXTERNAL_ENABLE_*=0` settings. Not committed.
+
+### 2026-10-10 — Final pre-deployment gate: startup warm-up + Email Agent kill switch (code and tests only)
+
+**Status: PASS as a code-and-test gate. NOT DEPLOYED** — uvicorn still runs the code loaded 2026-10-09 06:58:14Z. No container recreated, no agent activation, no draft, no supplier config change, no production DB write, no commit.
+
+**Kill switch — paths traced (grep, 2026-10-10).** Entry points that process mail: the supervised loop (`BACKEND_API_ROUTES.py:2816-2817` → `email_agent/loop.py`) and CLI `run-once`. One route, read-only (`routes/email_agent_routes.py`). Exactly one Gmail write: `POST /drafts` (`gmail_client.py::create_draft`); no send method, six-endpoint allowlist unchanged. Store writes: `claim`, `mark_draft_attempt`, `save_result`, `mark_failed`, `release`.
+
+**Race assessment.** "Prevents new writes after halt" and "cancels an in-flight request" are different guarantees; only the first is claimed — a sent HTTP request cannot be recalled. The first is now exact without holding a lock across the network call: new `control.write_intent` — the writer records a marker, THEN reads the control, sends, removes the marker; `set_mode(halt)` writes the control, THEN reads the markers. So for every write either the writer saw the halt (nothing sent) or `halt` lists it in `writes_in_flight`. `halt` printing `[]` = nothing in flight and nothing will start. A listed write completes within the 25 s transport timeout (POST never retried). A lock held across the request was rejected (a hung request or crashed holder would block the kill switch). Also changed: a halted write is refused before the token step (no network at all); the intent fails closed if its marker cannot be written; a result is always saved when a Gmail draft was already created (never an untracked draft). Remaining limits (docs/EMAIL_AGENT.md § Runtime kill switch): listed writes complete; a killed process leaves a marker reported `stale` after 180 s; halt between the two draft checks escalates that message to a human; local bookkeeping rows (`release`, `save_result` of an existing draft, `mark_failed`) are still written; an in-flight GET completes (≈95 s worst case); the control file is protected only by container file access.
+
+**Warm-up / search — verified.** AST proof: no `await _warm_search_paths()` anywhere, one call site, inside `asyncio.create_task(_guarded_task(...))`; the function's whole body is inside `try/except Exception`. Real `SEARCH_WARMUP_CASES`: 6 cases, each ≤120 s, total bound 232 s, each attempted exactly once (no retry). The cache-only lookup `_fetch_ext_suppliers` exists only in `search_parts`, behind `_should_fetch_external_suppliers`; all callers covered: `routes/parts.py` ×3 (one with a real Redis client, two `redis=None`), `routes/vehicles.py` (real client), `maintenance/run_fitment_step1_parity_check.py` (`None`), warm-up (`None`). The public route still gets `redis=Depends(get_redis)`; `ENABLE_EXTERNAL_SUPPLIERS` default stays ON; `services/` and `docker-compose.yml` have no diff. Not covered by design: `routes/suppliers.py` (admin-only, returns the live results) and `_scrape_search_misses_loop` (every 6 h, ≤20 queries, uses the results). NOT verified live: actual startup timing with the background warm-up — needs the deployment.
+- Observation, unverified, not changed: `_scrape_search_misses_loop` treats any non-empty supplier result as "found"; Amayama returns a price-0 placeholder on HTTP 403, which may mark a miss as scraped.
+
+**Baseline of the two fitment-gate failures.** Reproduced in a throwaway container (`--network none`, code read-only) on a `git archive` of HEAD `75b1323` — identical on HEAD and on the working tree (related DB-free suites: 2 failed, 54 passed on both):
+- `tests/test_fitment_step0_release_gate.py::test_cached_search_payload_isolated_by_vehicle_id` — `assert <coroutine object _get_cached_search_response> == {'vehicle_id': 'veh-a', ...}`; the helper became `async` in `fe6332a` (2026-06-17), the test (b232012, 2026-04-17) still calls it synchronously.
+- `::test_strict_vehicle_clause_builds_json_and_pvf_guards` — `assert "gate_model_0" in params`; the builder emits `gate_json_model` / `gate_json_mfr_*`.
+Not modified (unrelated to this change).
+
+**Tests (throwaway container, no network, read-only code, temp control files):** Email Agent + compose + OAuth + warm-up: **312 passed, 5 skipped** (`test_email_agent.py` alone 287 passed, 1 skipped; `test_search_warmup.py` 15 passed). 4 of the skips are host-only compose tests, run on the host: compose 4/4, nginx redaction 5/5, nginx upstream 3/3. The fifth is the real-Postgres store test (not run). DB-backed suites not run.
+
+**Production unchanged (read-only, 2026-10-10 06:30 UTC):** backend `ac0005a2ad4a` started 2026-10-09T06:58:14Z, restarts 0; postgres_pii / catalog / nginx / redis / meilisearch / whatsapp_bridge / flaresolverr same IDs and start times; `EMAIL_AGENT_ENABLED=0`, `EMAIL_AGENT_GMAIL_DRAFTS=0`; `EXTERNAL_ENABLE_*` unchanged; no control file or marker directory in `/app/state` → `halt / not_armed`, `writes_in_flight: []`; one `[email_agent]` log line since start (`idle state=disabled`); HEAD `75b1323`, `docker-compose.yml` unchanged.
+
+**Needs separate approval:** backend recreation (`docker compose up -d --no-deps backend`) to load the changes.
+
+### 2026-10-10 — Search-miss false positives fixed; backend deployed; Email Agent activated read-only (E2E verified)
+
+**Status: APPLIED + VERIFIED live.** Not committed.
+
+**Search-miss false positives — root cause.** `_scrape_search_misses_loop` (every 6 h) marked a miss handled with `if results:`. The affiliate suppliers (`catalog_suppliers._SimpleAffiliate`, PartSouq, Amayama's fallback) return a price-0 link placeholder for ANY query of 4+ characters, also after HTTP 403 — so the list was never empty. `_notify_search_miss_loop` then told the customer "we found new parts". Live before the fix (read-only query): 43 of 43 `search_misses` rows `triggered_scrape=TRUE`, 37 customers notified, 0 rows left untriggered.
+- Fix: new `backend/search_miss_resolver.py` — `genuine_offers()` (price > 0 and total_cost > 0) and `process_misses()` (one lookup per miss, no retry; marks resolved only on a genuine offer; a placeholder-only answer or an error leaves the row untouched). The loop's UPDATE now lives only inside the callback handed to the resolver. To avoid re-querying unresolvable misses forever: 24 h in-process re-check cooldown per miss, and the loop selects only misses seen in the last 30 days. No schema change.
+- Not changed: the 43 historical rows (37 already notified — cannot be un-sent; resetting the 6 un-notified ones is a production data change, not done).
+- Tests: `tests/test_search_miss_resolver.py` 8 passed — priced vs placeholder, every affiliate placeholder, the three mocked 403s (one request each, not marked), persistence decisions (valid / placeholder / empty / error), cooldown, and a source check that the loop marks only through the resolver.
+
+**Pre-deployment gate (throwaway container, no network, read-only code):** Email Agent + compose + OAuth + warm-up + search-miss **320 passed, 5 skipped**; related DB-free suites 54 passed, 2 failed (the two documented baseline failures in `test_fitment_step0_release_gate.py`, identical on HEAD `75b1323`); host: compose 4/4, nginx redaction 5/5, nginx upstream 3/3; `docker compose config` valid. Migrations already at head (`0061_noa_ops_audit`, `0039_email_agent_messages`) — none added.
+
+**Deployment 1 — load the code, agent off (06:38 UTC).** Gates: no running job, no importer, no Redis lock, 0 waiting DB locks, harvester resting, 3.8 GB available, 09:38 IL. The established `docker compose up -d --no-deps backend` was a no-op (compose saw no config change — the code is bind-mounted), so `--force-recreate` was added; dry run touched only the backend. `pre_restart.sh` → recreate → backend `ac0005a2ad4a` → `46935faab0aa`, started 06:38:26.07Z.
+- Readiness MEASURED: first `/api/health` 200 at 06:38:32 (~6 s; was ~45 s on 2026-10-09); "Application startup complete" 06:38:31.6; `[SearchWarmup] primed 6/6 (timeouts=0, errors=0)` at 06:38:50 — 18.5 s later, in the background. 0 requests to PartSouq / Autodoc / Amayama / eBay during startup (was ~20). No Traceback. Every other container identical (diff of before/after snapshots = the backend line only). Public `/api/health` 200. `post_restart.sh` exit 0.
+- Live safety controls on the deployed code: `run-once --dry-run` refused (exit 3, `not_armed`); granted scopes = `gmail.readonly` only; `can_draft: false`.
+
+**Deployment 2 — switch the loop on (07:06 UTC).** `EMAIL_AGENT_ENABLED=1` appended to the gitignored `.env` (drafts stay 0). Waited for the post-restart `run_all_tasks` (06:40–06:49) and for a window with no thumbnail / Meilisearch subprocess; same gates re-checked; the established command (no force needed — env changed) → `46935faab0aa` → `21f097690b40`, started 07:06:58.80Z, first health 200 at 07:07:06, warm-up 6/6 at 07:07:45. Other containers identical again. Loop came up `configured` + `halted (not_armed)`: 0 Gmail calls, empty store.
+
+**Activation (read-only processing).**
+- 07:08:27 `arm` → 07:09:25 first live cycle: `listed 25, new 25, processed 25, failed 0, requires_human 19, drafts 5, draft_mode local, sent 0`. Store: 25 rows `processed`; `sendable` 0; `gmail_draft_id` 0; `draft_attempted_at` 0; `send_calls` 0; classifications order_shipping 12 / unknown 7 / refund_cancellation 2 / account_security 2 / newsletter 1 / complaint 1; 5 local reply texts, all on rows whose customer AND order resolved; 2 `sender_mismatch` rows carry no order number. No `orders` / `users` row changed.
+- 07:09:51 `halt` → `writes_in_flight: []`; `run-once` and `run-once --dry-run` refused (exit 3); a direct `create_draft` raised `Halted` before any network call. Separate-process reproduction of the loop decision: halted branch, 0 network calls, 0 rows. **Live loop log at its own wake, 07:19:25: `{"event":"idle","state":"halted","reason":"halted_by_operator"}`**; rows unchanged (last write 07:09:25).
+- 07:19:45 `arm` → **live loop cycle 07:20:27: `listed 25, new 0, skipped 25, processed 0, failed 0, sent 0`** (bounded and idempotent). Rows still 25, `attempts > 1` = 0.
+- Agent log lines since start: 29; with an email address, subject or body: 0 (ids, sender domain, classification, statuses only).
+- Supervised tasks: 35 of 35 `running`, `email_agent_loop` error None. Containers identical to the post-deployment snapshot. Harvester relaunched and resting on an empty queue. Public `/api/health` 200. 0 Traceback / CRITICAL.
+
+**Final live state:** `EMAIL_AGENT_ENABLED=1`, runtime control `run`, `EMAIL_AGENT_GMAIL_DRAFTS=0`, grant `gmail.readonly`, sending impossible. `docs/EMAIL_AGENT.md` § Live state.
+
+**Remaining limitations (and why):** (1) the two fitment-gate tests fail on HEAD too — stale tests, unrelated code, not touched; (2) a request already sent cannot be cancelled — reported via `writes_in_flight`, by design; (3) an idle loop notices a halt only at its next wake (≤600 s) — entry points and writes refuse immediately; (4) nobody reviews the stored results yet — no review surface is built; (5) Gmail drafts need a `gmail.compose` re-consent by the owner; (6) live customer searches still send one request per new query to the three blocked suppliers — stopping it is a supplier-config decision (`EXTERNAL_ENABLE_*`), excluded from this task; (7) Postgres `POSTGRES_PASSWORD` config drift — `--no-deps` stays mandatory; (8) `run_all_tasks` started 07:08:50 was still running (heartbeat 07:20:21) at closure — alive, not interrupted.
+
+### 2026-10-10 — Daytime workload audit: restart-anchored loops, a group scan cut by my own deployment, restart preflight
+
+**Status: code + tests APPLIED on disk; takes effect at the next approved backend restart (none performed in this task). The preflight is live now (pre_restart.sh and its helper run from the bind mount).** Not committed.
+
+**What was running at 07:26 UTC (10:26 IL) and why.**
+| Workload | Purpose | Trigger | Duration | Daytime by policy? |
+|---|---|---|---|---|
+| `run_all_tasks` (07:08:50–07:24:04, completed) | 3-hourly data quality | **container start + 90 s** (my 07:06 recreation) | 15 min | yes (3 h cadence, #52–#54) — but this run was extra |
+| `meili_sync.py` + `meili_purge_inactive.py` (07:17–~07:35) | search index freshness | **container start + 600 s** | ~18 min | yes (2 h cadence) — extra run |
+| `build_part_thumbnails.py` batches | thumbnail backlog | continuous supervisor | 150–245 s, 0 candidates | yes (continuous, nice 15) |
+| car-parts.ie harvester | catalogue refresh | continuous supervisor | idle, queue drained, resting 960 s | yes (protected, by design) |
+| Amayama server browser (Chrome ×12 procs) | price-fill feed | continuous | — | yes |
+| `db_cleanup_agent` batch query | self-heal | 30 s loop | seconds | yes |
+| Email Agent loop | read-only mail processing | 600 s | ~1 min/cycle | yes |
+Night pipeline: nothing ran in the daytime. 36 runs in 8 days, **0 overlapping pairs**, all inside 01:00–07:00 IL; last night complete by 04:37 IL (+ weekly maintenance 05:00–05:06 IL). The three non-COMPLETED rows are historical and explained on the row (2026-10-03/04).
+
+**Root cause of the daytime burst: restart re-anchoring, not a wrong schedule, duplicate scheduler or timezone error.** `db_update_agent._agent_loop` slept 90 s after process start and `_meili_sync_loop` 600 s, then ran a full cycle regardless of when the last one finished. My two approved recreations (06:38 and 07:06 UTC) therefore produced `run_all_tasks` at 05:20 (natural), **06:40 and 07:08**, and `meili_sync` at 06:48 and 07:17. No duplicate registration (35 supervised tasks, each registered once, all `running`).
+
+**A disruption I caused and missed.** The 07:06:43 UTC recreation cut the daily Facebook group scan that the previous container had started at 07:00:00 UTC (10:00 IL). It runs inside uvicorn — no job_registry row, no subprocess — so my gate did not see it, and the loop has no catch-up (`[group_scan] next run 2026-10-11 10:00 IDT`). Evidence: `group_comment_drafts` created per day 19 / 19 / 20 / 19 for 6–9 October, **0 today**. Not re-run by me: the only manual path is a ~3 h Facebook browser session that can post autonomously (owner decision, ban risk).
+
+**Fixes.**
+1. `local_schedule.delay_after_restart()` — interval measured from the last COMPLETED run. `run_all_tasks`: `MAX(job_registry.completed_at)`; keeps the 90 s lock-clear settle. `meili_sync`: completed checkpoint mtime via new `meili_checkpoint_state.py`; an interrupted sync still resumes at 600 s. Unknown / naive / future timestamps fall back to the old delay — a cycle is never skipped.
+2. `scripts/restart_preflight.py` (read-only, exit 4 = blocked), called FIRST by `pre_restart.sh`, before it captures, marks `superseded` or signals anything. Blocks on: group scan (marker, its Chrome, or inside 10:00–14:00 IL with no finish marker today), night-pipeline job, `job_registry` running rows, Redis job locks, heavy subprocesses, Gmail writes in flight, or an unreadable source (fail closed). Override: `PRE_RESTART_FORCE=1` (explicit owner decision).
+3. `inproc_job_marker.py` — the group scan loop writes a start and a finish marker (`/app/state/inproc_jobs/group_scan.json`) so the preflight knows exactly, not by window.
+Not changed: any schedule time, the night pipeline, the sequential controller, protected-job rules, supplier config. No group-scan auto catch-up was added (re-running Facebook automation after a restart is a ban-risk decision for the owner).
+
+**Tests (throwaway container, no network):** `tests/test_restart_scheduling.py` **20 passed** (cadence incl. the real incident timings, checkpoint states, marker lifecycle, every blocker kind, window edges, pre_restart ordering). With `test_overnight_schedule.py`, `test_restart_workers.py`, `test_night_pipeline.py`, `test_search_miss_resolver.py`, `test_search_warmup.py`: **157 passed, 3 failed** — all three in `test_night_pipeline.py`, none in code touched here: two need a real DB (connection refused in the isolated container), one (`test_interrupted_backup_never_leaves_a_dump_under_its_final_name`) is in the owner's uncommitted backup work — cause NOT established.
+
+**Live, read-only, 07:34 UTC:** preflight run → BLOCKED (thumbnail + Meili purge subprocess, group-scan window) — correct. `job_registry` running 0; no locks; backend `21f097690b40` healthy, restarts 0; all containers unchanged since 07:06; Email Agent `armed`, last cycle 25 listed / 25 skipped / 0 sent; load 5.3, 3.8 GB available. Nothing was paused, killed, restarted or unlocked in this task.
+
+**Remaining:** (1) the cadence fix and the group-scan marker load only at the next backend restart; (2) today's group scan is lost unless the owner chooses a manual run; (3) thumbnail batches spend 150–245 s finding 0 candidates and their back-off also resets on restart — observed, not changed.
+
+### 2026-10-10 — Scheduling fixes LOADED: backend recreated behind the preflight, cadence verified live
+
+**Status: APPLIED + VERIFIED live** for the restart-safe cadence (`run_all_tasks`, `meili_sync`, thumbnail back-off), the group-scan marker code and the preflight. Two further start-anchored loops found AFTER the recreation are fixed on disk only (see end). Not committed.
+
+**Pre-recreation safety (07:40–07:50 UTC).** `run_all_tasks` 07:08:50 had completed at 07:24:04. No running job, no Redis lock, no heavy subprocess, no Gmail write in flight, 4.2 GB available, load 2.0. Group scan, checked directly and not by window or DB rows: the loop's only log line since the 07:06:58 start was `[group_scan] next run 2026-10-11 10:00 IDT`; uvicorn (PID 1) started 07:06:58, after today's 10:00 IL slot, and the loop sleeps to the NEXT slot strictly after it starts; the only browser main process was the Amayama one (pid 213). A `/proc` match I first read as a Facebook Chrome was my own shell command line (re-checked with a self-excluding script: 0 matches).
+- The preflight's window heuristic blocked on that state without evidence of a scan. Not forced: it was made evidence-based — (a) any browser main process other than the always-on Amayama browser is a blocker (by exclusion; the scan's profile path proved unreliable: `fb_native_test/profile`, lock file dated 2026-09-19), (b) inside the window with no finish marker it blocks UNLESS this process started after today's slot. A running marker or a browser job always wins.
+- **First `pre_restart.sh` attempt (07:44:14) was BLOCKED for real:** a Playwright headless browser with a temp profile was running. Nothing was captured, stopped or recreated. Traced live (parent = Playwright driver, grandparent = uvicorn): `db_cleanup_agent.task_recover_motorstore_prices` — up to 8 motorstore.co.il fetches per cleanup cycle, bursts of ~10 s every ~5 min, idempotent per part. Re-run between bursts (07:49:57): `RESTART PREFLIGHT: SAFE`, `pre_restart.sh` exit 0. No `PRE_RESTART_FORCE`.
+
+**Recreation.** Dry run: backend only (0 other containers). `docker compose up -d --no-deps --force-recreate backend` at 07:50:05 UTC → `21f097690b40` → `7ae50cb1be4c`, started 07:50:20.06Z, first `/api/health` 200 at 07:50:27 (~7 s), healthy, restarts 0. Before/after snapshot diff = the backend line only. `post_restart.sh` exit 0. 0 Traceback / CRITICAL; 0 supplier requests at startup; warm-up 6/6 in the background.
+
+**Loaded code, proven by the new process's own log lines:**
+- `run_all_tasks: last cycle completed 2026-10-10 07:24:04 - first cycle after this start in 152 min` (old code: a full cycle at start + 90 s). 12 min after start: no new `run_all_tasks` row.
+- `[meili_sync_loop] first sync after this start in 100 min` (old code: start + 600 s). 12 min after start: 0 `meili_sync` processes.
+- `[thumbnail_import] first check after this start in 2 min`; then `/app/state/thumbnail_import_idle.json` back-off 300 → 600 s persisted (it used to reset to 300 s on every start).
+- `[group_scan] next run 2026-10-11 10:00 IDT`; marker status `known: False` until that scan writes it (same file as the lines above, so the marker code is loaded; its first real write is tomorrow — NOT yet observed).
+- Preflight after the restart: BLOCKED on `seed_car_parts_ie_full_catalog.py`, later on the Motorstore browser burst — it detects live work.
+- 35 of 35 supervised tasks `running`, no error; harvester relaunched (cycle 3780, queue drained); no Redis locks.
+- Email Agent: `EMAIL_AGENT_ENABLED=1`, `EMAIL_AGENT_GMAIL_DRAFTS=0`, granted scopes `gmail.readonly` only, control `run`, `writes_in_flight: []`; live cycles 07:51:14 and 08:01:16: 25 listed / 25 skipped / 0 sent; store 26 rows, all `processed`, 0 sendable, 0 Gmail draft ids (one new message was processed at 07:40:33, before this restart).
+
+**Thumbnail waste.** Each empty check is a ~100–245 s join over ~1.4 M `parts_images` rows; the loop backs off 300 s → 3600 s, but in memory. Fixed (loaded): `thumbnail_idle_state.py` persists the back-off. Not changed: the candidate query itself (an incremental scan would change which parts are picked up).
+
+**Found after the recreation, fixed on disk, NOT loaded:** two more loops ran because of the restart — `_car_parts_ie_full_seed_loop` ("monthly", ran 07:53–07:58, rc=0, 278 s) and `_supplier_sourcing_loop` ("weekly", ran 07:52: 12 discovered, 0 onboarded; today's earlier restart-triggered runs onboarded 3 pending, inactive suppliers). Both now anchor to their last success via `inproc_job_marker` + `delay_after_restart`. They take effect at the next restart; restarting again now would not help (the old code has already run them).
+
+**Tests (throwaway container, `--network none`, code read-only):**
+- `tests/test_restart_scheduling.py` + `test_restart_workers.py` + `test_overnight_schedule.py` + `test_search_miss_resolver.py` + `test_search_warmup.py`: **100 passed, 0 failed** (after the last edit).
+- Before the recreation, same runner, those plus `test_email_agent.py` and `test_gmail_oauth_setup.py`: **395 passed, 1 skipped** (real-Postgres store test).
+- `tests/test_night_pipeline.py`, classified:
+  - `test_interrupted_backup_never_leaves_a_dump_under_its_final_name` — PASSES with `ENVIRONMENT=production` (the real container's value; file then 59 passed), fails otherwise: `auto_backup.file_prefix()` is `autospare` only in production and `<env>_autospare` elsewhere, and the test hard-codes the production name. An undeclared test precondition, not a code defect. Test not modified (owner's uncommitted work).
+  - `test_postgresql_accepts_the_new_report_text_and_rejects_the_old_cut_one` — needs a real database; skips cleanly when none is configured.
+  - `test_rex_postcondition_accepts_a_clean_cycle_that_reports_no_status_key` — needs a real database (`job_registry` check), no skip guard → connection refused. With no DB URL at all, 5 more tests in the file fail the same way. NOT run against production; NOT verified.
+
+**Remaining:** today's Facebook group scan stays lost (not re-run: it can post autonomously); the group-scan marker's first real write is tomorrow 10:00 IL; the seeder and sourcing fixes load at the next restart; DB-dependent night-pipeline tests are unverified in this environment.
+
+### 2026-10-10 — Closure pass: seeder / sourcing cadence (on disk, NOT live), Facebook credential exposure, scan detection, pending suppliers
+
+**Status: PARTIAL.** No restart was performed in this pass. Not committed.
+
+**1. Seeder and supplier-sourcing cadence — code and tests complete, NOT LIVE.**
+- Diff reviewed (`backend/BACKEND_API_ROUTES.py`): both loops replace the fixed post-start sleep (180 s / 120 s) with `delay_after_restart(<last success from inproc_job_marker>, interval, floor)`; the seeder records success only on `rc == 0`, sourcing only after `run_sourcing_cycle()` returned.
+- Checkpoint behaviour (tested for both): never ran → runs at the floor; started but never finished → runs; valid success → waits out the remainder (a restart does not repeat it); due or long overdue → runs; corrupt file, future timestamp, malformed record → runs. Nothing can suppress the job beyond one interval.
+- Hot reload: not possible — uvicorn runs without a reload mechanism and the running loops are already asleep in the OLD code (seeder until ~2026-11-09, sourcing until ~2026-10-17).
+- Why no restart: the running container (old code) wrote no success record, so after a restart the new code would find none and run both loops once more at start — the unintended repeat this task forbids. Recording the two real completions (seeder `rc=0` 07:58:05 UTC, sourcing cycle 07:53:06 UTC, both from the container log) as the success records was **denied by the session's permission classifier**; not retried by other means. Preflight at 11:24 UTC was SAFE, so the restart itself is not blocked.
+- Owner options: (a) allow writing those two records, then one backend-only recreation → zero repeat runs; (b) accept one extra run of each at the next restart (seeder ≈5 min additive; sourcing ≈1 min, may add pending suppliers and notify); (c) leave as is — both loops are asleep and the fix applies from the next restart on.
+
+**Live evidence that the fixes loaded at 07:50 hold:** `run_all_tasks` ran at 10:24:05 UTC, exactly 3 h after the previous completion at 07:24:04 (predicted "152 min" at start) and completed 10:48:48; `meili_sync` ran 09:30:33–09:46:43 (predicted "100 min"); thumbnail back-off persisted and reached 3600 s; backend `7ae50cb1be4c` healthy, restarts 0, 0 Traceback; all containers identical to the 07:50 snapshot.
+
+**2. Facebook credential exposure.**
+- What: the Facebook ACCOUNT PASSWORD (`FB_PASSWORD`, with `FB_EMAIL`), passed from `.env` through `docker-compose.yml`; used at runtime by `social/facebook_browser/session.py::_try_auto_relogin` when the stored browser session expires, and by `fb_browser_login.py`. It is a live credential, not a token.
+- How: a diagnostic `env | grep` in this session printed it into tool output.
+- Where the value exists (checked by pattern file; names and counts only): this session's transcript and three earlier session transcripts (2026-09-21 … 09-28) under `/root/.claude/projects/` (mode 600); three Claude Code edit-history copies of `.env` (2026-09-19 … 09-21) and one old scratchpad `env.bak` (2026-09-20) — were mode 644; `.env` itself — was mode 644. NOT in any tracked file, git history (pickaxe: 0 commits), shell history, backend or nginx container logs, `/app/state/logs`, the memory directory, FIXES_TRACKER or docs. The session transcript is also held by the Claude service and the owner's connected client.
+- Containment done: `.env`, the three edit-history copies and `env.bak` set to mode 600 (`docker compose config` still valid); no non-system user accounts exist on the host. Nothing deleted.
+- Validity: NOT tested — the only test is a login attempt, which is prohibited for me and risks a Facebook checkpoint from this server's IP.
+- Rotation: **BLOCKED — owner action required.** Change the Facebook account password in Facebook (owner login + 2FA), set the new value in `.env` (`FB_PASSWORD`), then one backend-only recreation so the container reads it. A password change can sign the stored browser session out; if the next scan reports a session failure, re-import the session (`maintenance/fb_cookie_import.py`).
+
+**3. Facebook scan detection and next run.**
+- Trace: one registration (`_supervised_task("group_scan_loop", …)`); trigger `local_schedule.seconds_until(10, 0)` in `Asia/Jerusalem`; path `GroupAgent.scan_groups` → `FacebookSession` → persistent Chrome profile `/app/state/fb_native_test/profile`; start marker before discovery, finish marker after the scan-run record.
+- Live: the running process logged `[group_scan] next run 2026-10-11 10:00 IDT (2026-10-11T07:00Z)`; `describe()` in the container returns the same; `SOCIAL_GROUP_SCAN_ENABLED` unset (= on).
+- Preflight: blocks on a running marker, on ANY browser other than the always-on Amayama one, on an unreadable source, and inside the scan window with no finish marker unless the process started after the slot. The message now names the kind: "Facebook group scan: its browser is running … do not restart" vs "a short-lived scraper browser … re-run in about a minute" (the Motorstore fetches). Both block.
+- NOT verified: the first real marker write and a live block during a real scan — the next scan is 2026-10-11 10:00 IL. Not re-run manually.
+
+**4. Pending suppliers (added by the restart-triggered sourcing runs, 2026-10-10 07:09 UTC).** `2940d062-6f24-45f7-beac-fd39a02e54e7` (x-cart.com), `46579f2b-b6b5-4b93-9d36-ff11df5f9992` (flxpoint.com), `45ad2417-249c-4f66-91fe-3382cd588677` (sparkshipping.com): all `is_active=false`, `status=pending_review`, 0 `supplier_parts` offers, unchanged since creation. Customer-facing offer queries require `s.is_active` (`routes/parts.py` ×7, `BACKEND_AI_AGENTS.py`), and with no offers they cannot be listed or ordered. Not approved, deleted or activated. (All three look like e-commerce software vendors rather than parts suppliers — owner review.) 71 sourcing rows are pending in total.
+
+**5. Tests (throwaway containers, code read-only).**
+- `tests/test_restart_scheduling.py`: **31 passed** (cadence, checkpoint states for both loops, marker lifecycle, preflight incl. scan-vs-scraper browser and unknown/unreadable/stale state).
+- Regression set (`test_restart_scheduling`, `test_restart_workers`, `test_overnight_schedule`, `test_search_miss_resolver`, `test_search_warmup`, `test_email_agent`, `test_email_agent_compose`, `test_gmail_oauth_setup`), `--network none`: **402 passed, 5 skipped** (1 opt-in Postgres store test, 4 host-only compose/doc tests) — the 4 host-only pass on the host (compose 4/4, nginx redaction 5/5, nginx upstream 3/3).
+- `tests/test_night_pipeline.py` with `ENVIRONMENT=production` against a THROWAWAY Postgres (pgvector:pg16 on an `--internal` network, `job_registry` schema only copied from production, removed afterwards): **66 passed, 0 failed**. The three earlier failures were environment preconditions: production file naming (backup test) and a real database (two tests). Without a database the same file gives 59 passed, 6 failed, 1 skipped.
+- Backup tests alone with `ENVIRONMENT=production`: 23 passed, 1 skipped.
+- Not run: any suite against the production databases.
+
+### 2026-10-10 — Seeder and supplier-sourcing cadence fixes ACTIVATED (one backend-only recreation, no repeat runs)
+
+**Status: scheduling APPLIED + VERIFIED live. Overall PARTIAL** — Facebook password rotation is an owner action; the first real group-scan marker write is not yet observed. Not committed.
+
+**Checkpoint records.** Format and location: `backend/inproc_job_marker.py` → `/app/state/inproc_jobs/<name>.json` (`started_at`, `finished_at`, `pid`; atomic `os.replace`), the same module both loops read (`status`) and write (`mark_started` / `mark_finished`). The two completions were verified first-hand before recording, from the then-running container `7ae50cb1be4c`:
+- seeder: Docker-timestamped `[cpie_full_seed] seeding` 07:53:27.089Z and `finished rc=0 after 278s` 07:58:05.104Z; its own log `/app/state/logs/cpie_full_seed.log` ends `DONE brands=176 models_seen=6052 newly_inserted=0`, mtime 07:58:04.99;
+- supplier sourcing: cycle summary logged 07:53:06.805 (start = the loop's 120 s settle after the 07:50:27 startup);
+- no later run of either loop in that container.
+Recorded on the owner's explicit instruction through that module's own functions (the earlier attempt had been denied by the permission classifier and was not retried until instructed). Read back: both `known=True, running=False`, `finished` 07:58:05 / 07:53:06 UTC; files mode 644 root in a 755 root directory on the `worker_state` volume.
+
+**Preflight and recreation (12:43–12:44 UTC, 15:43 IL).** Independent check: no running job (last `run_all_tasks` completed 10:48:48), no Redis lock, no night-pipeline job, 0 waiting DB locks, 0 heavy subprocesses, harvester resting (queue drained), no Chrome on the Facebook profile, only short-lived Motorstore fetches, Email Agent `writes_in_flight: []` and between cycles, 3.7 GB available, load 3.1. `pre_restart.sh` (no `PRE_RESTART_FORCE`): `RESTART PREFLIGHT: SAFE`, exit 0. Dry run: backend only. `docker compose up -d --no-deps --force-recreate backend` at 12:44:22 → `7ae50cb1be4c` → `2c33f260a660`, started 12:44:36.19Z, first `/api/health` 200 at 12:44:42, healthy, restarts 0; snapshot diff = the backend line only; `post_restart.sh` exit 0; 0 Traceback; 0 supplier requests at startup.
+
+**Next-run decisions logged by the new process (12:44:41–12:46:21):**
+- `[supplier_sourcing] first cycle after this start in 163.1 h` (old code: 120 s)
+- `[cpie_full_seed] first seed after this start in 715.2 h` (old code: 180 s)
+- `[thumbnail_import] first check after this start in 37 min` · `[meili_sync_loop] first sync after this start in 81 min` · `run_all_tasks: last cycle completed 10:48:48 - first cycle after this start in 62 min`
+- `[group_scan] next run 2026-10-11 10:00 IDT (2026-10-11T07:00Z)`
+At 12:50:23 (5 min 47 s after start, past both old trigger points): 0 seeder run lines, 0 sourcing cycle lines, 0 seeder processes, seeder log mtime still 07:58:04, checkpoint files unchanged, 0 new `nir_sourcing` suppliers. 35 of 35 supervised tasks `running`, no duplicate names, no errors; each of the five loops registered exactly once in source.
+
+**Unchanged and verified:** Email Agent `EMAIL_AGENT_ENABLED=1`, `EMAIL_AGENT_GMAIL_DRAFTS=0`, armed, nothing in flight, cycle 12:45:29: 25 listed / 25 skipped / 0 sent. Suppliers `2940d062-…`, `46579f2b-…`, `45ad2417-…`: `is_active=false`, `pending_review`, 0 offers, unchanged since creation. Secret-bearing files (`.env`, three edit-history copies, `env.bak`, four session transcripts): all mode 600 root; `.env` gitignored.
+
+**Tests:** no code changed after the previous entry's runs (31 passed; 402 passed / 5 skipped; `test_night_pipeline.py` 66 passed on a throwaway database), so none were re-run.
+
+**Open:** (1) Facebook password rotation — owner: change it in Facebook, update `FB_PASSWORD` in `.env`, backend-only recreation after a SAFE preflight, re-import the session if the scan reports a session failure; (2) first real group-scan marker write and a live preflight block during a real scan — next scan 2026-10-11 10:00 IL.

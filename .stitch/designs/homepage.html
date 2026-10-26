@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AutoSpareFinder — Find the right part. Compare the right price.</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0F1218; --card:#151B27; --card2:#1E2535; --card3:#252D3D; --scrim:#0A0E17;
+  --blue:#0EA5E9; --blue-hi:#38BDF8; --blue-deep:#0284C7; --blue-net:#1D4ED8;
+  --text:#FFFFFF; --text-head:#E2E8F0; --text-sec:#94A3B8; --text-muted:#475569;
+  --border:rgba(148,163,184,.12); --border-hover:rgba(14,165,233,.30); --border-blue:rgba(14,165,233,.20);
+  --success:#22C55E; --warning:#F59E0B; --danger:#EF4444;
+  --maxw:1280px; --gutter:24px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text-head);font-family:Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+.wrap{max-width:var(--maxw);margin:0 auto;padding:0 var(--gutter)}
+.mono{font-family:'JetBrains Mono',ui-monospace,monospace}
+.speed-line{height:1px;background:linear-gradient(90deg,transparent 0%,var(--blue-net) 25%,var(--blue) 50%,var(--blue-net) 75%,transparent 100%);opacity:.5}
+.btn-primary{background:linear-gradient(135deg,#38BDF8 0%,#0EA5E9 60%,#0284C7 100%);color:#0F1218;font-weight:700;border:0;border-radius:6px;cursor:pointer;transition:filter .2s,box-shadow .2s;font-family:inherit}
+.btn-primary:hover{filter:brightness(1.08);box-shadow:0 0 20px rgba(14,165,233,.35)}
+.btn-secondary{background:transparent;border:1px solid rgba(148,163,184,.20);color:#fff;font-weight:600;border-radius:6px;cursor:pointer;transition:.2s;font-family:inherit}
+.btn-secondary:hover{border-color:var(--border-hover);color:var(--blue-hi)}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;transition:border-color .2s,box-shadow .2s}
+.card:hover{border-color:var(--border-blue);box-shadow:0 0 20px rgba(14,165,233,.10)}
+.sec{padding:48px 0}
+.sec-h{font-size:28px;font-weight:800;color:var(--text-head);margin-bottom:6px;letter-spacing:-.02em}
+.sec-sub{font-size:14px;color:var(--text-sec);margin-bottom:28px}
+:focus-visible{outline:none;box-shadow:0 0 0 2px var(--bg),0 0 0 4px var(--blue)}
+
+/* 1 — HEADER */
+header{position:sticky;top:0;z-index:50;height:64px;background:rgba(15,18,24,.90);backdrop-filter:blur(12px);border-bottom:1px solid var(--border)}
+.nav{height:64px;display:flex;align-items:center;gap:32px}
+.logo{font-size:19px;font-weight:900;color:#fff;letter-spacing:-.02em;white-space:nowrap}
+.logo i{color:var(--blue);font-style:normal}
+.nav-links{display:flex;gap:26px;margin-inline-start:12px}
+.nav-links a{color:var(--text-sec);text-decoration:none;font-size:14px;font-weight:500;transition:color .2s}
+.nav-links a:hover{color:#fff}
+.nav-links a.on{color:var(--blue)}
+.nav-right{margin-inline-start:auto;display:flex;align-items:center;gap:14px}
+.icon-btn{width:38px;height:38px;border-radius:8px;background:var(--card2);border:1px solid var(--border);color:var(--text-sec);display:grid;place-items:center;cursor:pointer;position:relative;font-size:15px}
+.icon-btn:hover{color:var(--blue-hi);border-color:var(--border-blue)}
+.cart-badge{position:absolute;top:-5px;inset-inline-end:-5px;background:var(--blue);color:#0F1218;font-size:10px;font-weight:800;border-radius:9px;min-width:17px;height:17px;display:grid;place-items:center;padding:0 4px}
+.burger{display:none;width:38px;height:38px;border-radius:8px;background:var(--card2);border:1px solid var(--border);color:#fff;cursor:pointer;font-size:17px}
+
+/* 2 — HERO */
+.hero{position:relative;padding:64px 0 52px;background:
+  radial-gradient(900px 420px at 78% 12%,rgba(14,165,233,.16),transparent 62%),
+  linear-gradient(180deg,#151B27 0%,#0F1218 100%);
+  border-bottom:1px solid var(--border);overflow:hidden}
+.hero::after{content:"";position:absolute;inset:0;pointer-events:none;
+  background-image:linear-gradient(rgba(148,163,184,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(148,163,184,.05) 1px,transparent 1px);
+  background-size:52px 52px;mask-image:radial-gradient(circle at 70% 28%,#000,transparent 72%)}
+.hero-grid{position:relative;z-index:1;display:grid;grid-template-columns:1.05fr .95fr;gap:48px;align-items:center}
+.eyebrow{display:inline-flex;align-items:center;gap:7px;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--blue-hi);background:rgba(14,165,233,.10);border:1px solid var(--border-blue);padding:6px 12px;border-radius:999px;margin-bottom:18px}
+h1{font-size:54px;line-height:1.07;font-weight:900;color:#fff;letter-spacing:-.03em;margin-bottom:16px}
+h1 em{display:block;font-style:normal;color:var(--blue-hi)}
+.hero p.lede{font-size:16px;color:var(--text-sec);max-width:50ch;margin-bottom:26px;line-height:1.6}
+
+/* dual-mode search panel */
+.panel{background:var(--card2);border:1px solid var(--border);border-radius:12px;padding:24px}
+.tabs{display:flex;gap:26px;border-bottom:1px solid var(--border);margin-bottom:20px}
+.tab{background:none;border:0;padding:0 0 11px;font-size:14px;font-weight:600;color:var(--text-sec);cursor:pointer;position:relative;font-family:inherit;display:flex;align-items:center;gap:7px}
+.tab[aria-selected="true"]{color:#fff}
+.tab[aria-selected="true"]::after{content:"";position:absolute;inset-inline:0;bottom:-1px;height:2px;background:var(--blue);border-radius:2px}
+.fields{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+label.fl{display:block;font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-sec);margin-bottom:6px}
+select,input[type=text]{width:100%;background:var(--card3);border:1px solid var(--border);color:#fff;border-radius:8px;padding:12px 13px;font-size:14px;font-family:inherit;appearance:none}
+select:focus,input:focus{outline:none;border-color:rgba(14,165,233,.40);box-shadow:0 0 0 3px rgba(14,165,233,.14)}
+input::placeholder{color:var(--text-muted);font-style:italic}
+.search-go{width:100%;height:52px;margin-top:16px;font-size:15px;display:flex;align-items:center;justify-content:center;gap:9px}
+.trust{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;margin-top:18px;font-size:12.5px;color:var(--text-sec)}
+.trust span{display:inline-flex;align-items:center;gap:6px}
+.trust b{color:var(--text-head);font-weight:700}
+.dot{color:var(--text-muted)}
+.hero-art{position:relative;border-radius:14px;overflow:hidden;border:1px solid var(--border);background:linear-gradient(145deg,#1E2535,#0F1218);aspect-ratio:4/3;display:grid;place-items:center}
+.hero-art::before{content:"";position:absolute;bottom:17%;left:12%;right:12%;height:3px;border-radius:50%;background:var(--blue);filter:blur(13px);opacity:.85}
+.hero-art svg{width:82%;position:relative;z-index:1}
+
+/* 3 — CATEGORIES */
+.cat-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:16px}
+.cat{padding:22px 16px;text-align:center;cursor:pointer;background:var(--card);border:1px solid var(--border);border-radius:12px;transition:.2s}
+.cat:hover{border-color:var(--border-blue);box-shadow:0 0 20px rgba(14,165,233,.10);transform:translateY(-2px)}
+.cat .ic{font-size:26px;margin-bottom:10px;display:block;filter:drop-shadow(0 0 8px rgba(14,165,233,.45))}
+.cat .nm{font-size:13.5px;font-weight:600;color:var(--text-head);display:block;margin-bottom:4px}
+.cat .ct{font-size:11px;color:var(--text-muted)}
+
+/* 4 — VEHICLES */
+.veh-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+.veh{padding:20px;cursor:pointer;background:var(--card);border:1px solid var(--border);border-radius:12px;transition:.2s}
+.veh:hover{border-color:var(--border-blue);box-shadow:0 0 20px rgba(14,165,233,.10)}
+.veh .silo{height:74px;display:grid;place-items:center;margin-bottom:14px;opacity:.9}
+.veh .nm{font-size:15px;font-weight:700;color:#fff;margin-bottom:3px}
+.veh .yr{font-size:12px;color:var(--text-sec);margin-bottom:10px}
+.veh .roads{font-size:11px;color:var(--text-muted);margin-bottom:12px}
+.veh .go{font-size:12.5px;font-weight:600;color:var(--blue);display:inline-flex;align-items:center;gap:5px}
+
+/* 5 — WHY */
+.why-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+.why{padding:26px 22px;background:var(--card);border:1px solid var(--border);border-radius:12px;transition:.2s}
+.why:hover{border-color:var(--border-blue)}
+.why .ic{width:42px;height:42px;border-radius:10px;background:rgba(14,165,233,.10);border:1px solid var(--border-blue);display:grid;place-items:center;font-size:20px;margin-bottom:15px}
+.why h3{font-size:15.5px;font-weight:700;color:#fff;margin-bottom:8px}
+.why p{font-size:13px;color:var(--text-sec);line-height:1.6}
+
+/* 6 — COMPARISON */
+.cmp{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.cmp-top{padding:20px 24px;border-bottom:1px solid var(--border);display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+.cmp-top .ttl{font-size:15.5px;font-weight:700;color:#fff}
+.cmp-top .oem{font-size:12.5px;color:var(--blue-hi)}
+.badge{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;padding:5px 11px;border-radius:6px;margin-inline-start:auto}
+.b-ok{background:rgba(34,197,94,.10);border:1px solid rgba(34,197,94,.25);color:var(--success)}
+table{width:100%;border-collapse:collapse}
+th{text-align:start;font-size:10.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted);padding:13px 24px;border-bottom:1px solid var(--border)}
+td{padding:17px 24px;border-bottom:1px solid var(--border);font-size:14px;color:var(--text-head);vertical-align:middle}
+tbody tr:last-child td{border-bottom:0}
+tbody tr{transition:background .2s}
+tbody tr:hover{background:rgba(14,165,233,.06)}
+.price{font-weight:800;color:var(--blue-hi);font-variant-numeric:tabular-nums;font-size:16px}
+.stock{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--success);font-weight:600}
+.pick{padding:8px 17px;font-size:12.5px}
+.cheapest{font-size:10px;font-weight:800;color:#0F1218;background:var(--blue-hi);padding:2px 7px;border-radius:4px;margin-inline-start:8px;letter-spacing:.04em}
+.cmp-note{padding:14px 24px;font-size:11.5px;color:var(--text-muted);background:var(--scrim)}
+
+/* 7 — AI CTA */
+.ai{background:linear-gradient(180deg,rgba(14,165,233,.08),rgba(14,165,233,.02));border:1px solid var(--border-blue);border-radius:16px;box-shadow:0 0 24px rgba(14,165,233,.40);padding:44px;display:grid;grid-template-columns:1fr 1fr;gap:44px;align-items:center}
+.ai .lbl{display:inline-flex;align-items:center;gap:7px;font-size:10.5px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:var(--blue-hi);text-shadow:0 0 12px rgba(56,189,248,.65);margin-bottom:14px}
+.ai h2{font-size:30px;font-weight:800;color:#fff;letter-spacing:-.02em;margin-bottom:12px;line-height:1.2}
+.ai p{font-size:14.5px;color:var(--text-sec);line-height:1.65;margin-bottom:24px}
+.ai .btns{display:flex;gap:12px;flex-wrap:wrap}
+.ai .btns button{height:46px;padding:0 24px;font-size:14px}
+.chat{display:flex;flex-direction:column;gap:12px}
+.bub{max-width:88%;padding:13px 16px;border-radius:12px;font-size:13.5px;line-height:1.55}
+.bub.u{background:var(--card3);color:#fff;align-self:flex-end;border-bottom-right-radius:4px}
+.bub.a{background:rgba(14,165,233,.10);border:1px solid var(--border-blue);color:var(--text-head);align-self:flex-start;border-bottom-left-radius:4px;box-shadow:0 0 18px rgba(14,165,233,.22)}
+.bub .who{display:block;font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--blue-hi);margin-bottom:6px}
+
+/* 8 — FOOTER */
+footer{background:var(--scrim);border-top:1px solid var(--border);padding:46px 0 26px;margin-top:8px}
+.f-grid{display:grid;grid-template-columns:1.6fr 1fr 1fr 1fr;gap:38px;margin-bottom:34px}
+.f-brand p{font-size:13px;color:var(--text-sec);line-height:1.65;margin:12px 0 18px;max-width:34ch}
+.f-soc{display:flex;gap:9px}
+.f-soc a{width:34px;height:34px;border-radius:8px;background:var(--card3);border:1px solid var(--border);display:grid;place-items:center;color:var(--text-sec);text-decoration:none;font-size:13px;transition:.2s}
+.f-soc a:hover{color:var(--blue-hi);border-color:var(--border-blue)}
+.f-col h4{font-size:11px;font-weight:800;letter-spacing:.11em;text-transform:uppercase;color:var(--text-head);margin-bottom:15px}
+.f-col a{display:block;font-size:13px;color:var(--text-sec);text-decoration:none;margin-bottom:10px;transition:color .2s}
+.f-col a:hover{color:var(--blue-hi)}
+.f-bot{border-top:1px solid var(--border);padding-top:20px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;font-size:12px;color:var(--text-muted)}
+.f-bot .langs{margin-inline-start:auto;display:flex;gap:7px}
+.f-bot .langs button{background:var(--card3);border:1px solid var(--border);color:var(--text-sec);font-size:11.5px;padding:5px 12px;border-radius:6px;cursor:pointer;font-family:inherit}
+.f-bot .langs button.on{color:var(--blue);border-color:var(--border-blue)}
+
+/* RTL */
+[dir="rtl"] body,[dir="rtl"]{text-align:right}
+[dir="rtl"] .hero-grid{direction:rtl}
+[dir="rtl"] .bub.u{align-self:flex-start;border-bottom-right-radius:12px;border-bottom-left-radius:4px}
+[dir="rtl"] .bub.a{align-self:flex-end;border-bottom-left-radius:12px;border-bottom-right-radius:4px}
+[dir="rtl"] .price,[dir="rtl"] .oem,[dir="rtl"] .mono{direction:ltr;display:inline-block;unicode-bidi:isolate}
+
+/* RESPONSIVE */
+@media(max-width:1024px){
+  .hero-grid{grid-template-columns:1fr;gap:34px}
+  .hero-art{order:-1;aspect-ratio:16/9}
+  h1{font-size:42px}
+  .cat-grid{grid-template-columns:repeat(4,1fr)}
+  .veh-grid,.why-grid{grid-template-columns:repeat(2,1fr)}
+  .ai{grid-template-columns:1fr;gap:30px;padding:34px}
+  .f-grid{grid-template-columns:1fr 1fr;gap:28px}
+}
+@media(max-width:900px){
+  .nav-links{display:none}
+  .burger{display:grid;place-items:center}
+}
+@media(max-width:640px){
+  :root{--gutter:16px}
+  .nav{gap:10px}
+  .logo{font-size:16px}
+  .nav-right{gap:8px}
+  .nav-right .icon-btn[aria-label="Search"]{display:none}
+  .icon-btn{width:34px;height:34px}
+  .nav-right .btn-secondary{height:34px;padding:0 12px;font-size:12.5px}
+  .sec{padding:36px 0}
+  .hero{padding:38px 0 34px}
+  h1{font-size:32px}
+  .eyebrow{font-size:10px}
+  .hero p.lede{font-size:14.5px}
+  .sec-h{font-size:21px}
+  .panel{padding:17px}
+  .fields{grid-template-columns:1fr;gap:10px}
+  .search-go{height:48px}
+  .cat-grid{grid-template-columns:repeat(2,1fr);gap:11px}
+  .veh-grid,.why-grid{grid-template-columns:1fr}
+  .ai{padding:24px}
+  .ai h2{font-size:23px}
+  .f-grid{grid-template-columns:1fr;gap:26px}
+  .cmp-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  table{min-width:580px}
+  .badge{margin-inline-start:0}
+  .f-bot .langs{margin-inline-start:0;width:100%}
+}
+</style>
+</head>
+<body>
+
+<!-- ───────────── 1. HEADER / NAV ───────────── -->
+<header>
+  <div class="wrap nav">
+    <button class="burger" aria-label="Menu">☰</button>
+    <div class="logo">AutoSpare<i>Finder</i><i> ●</i></div>
+    <nav class="nav-links">
+      <a href="#" class="on">Home</a>
+      <a href="#categories">Categories</a>
+      <a href="#vehicles">Vehicles</a>
+      <a href="#compare">Compare</a>
+      <a href="#ai">AI Assistant</a>
+    </nav>
+    <div class="nav-right">
+      <button class="icon-btn" aria-label="Search">⌕</button>
+      <button class="icon-btn" aria-label="Cart">⛶<span class="cart-badge">2</span></button>
+      <button class="btn-secondary" style="height:38px;padding:0 17px;font-size:13.5px">Sign In</button>
+    </div>
+  </div>
+  <div class="speed-line"></div>
+</header>
+
+<!-- ───────────── 2. HERO + DUAL-MODE SEARCH ───────────── -->
+<section class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <span class="eyebrow">◆ Fitment-verified marketplace</span>
+      <h1>Find the right part.<em>Compare the right price.</em></h1>
+      <p class="lede">4.1M parts from 50+ global suppliers — matched to your exact vehicle, then priced side by side. Search by vehicle, plate, VIN or OEM number.</p>
+
+      <div class="panel">
+        <div class="tabs" role="tablist">
+          <button class="tab" role="tab" aria-selected="true">🚗 By Vehicle</button>
+          <button class="tab" role="tab" aria-selected="false">⌗ By Part Number</button>
+        </div>
+        <div class="fields">
+          <div><label class="fl" for="mk">Make</label>
+            <select id="mk"><option>Toyota</option><option>Kia</option><option>Mazda</option><option>Hyundai</option><option>Skoda</option></select></div>
+          <div><label class="fl" for="md">Model</label>
+            <select id="md"><option>Corolla</option><option>Picanto</option><option>Mazda 3</option><option>Sportage</option></select></div>
+          <div><label class="fl" for="yr">Year</label>
+            <select id="yr"><option>2018</option><option>2020</option><option>2022</option><option>2024</option></select></div>
+        </div>
+        <button class="btn-primary search-go">⌕ Search Parts</button>
+      </div>
+
+      <div class="trust">
+        <span>✅ <b>4,125,265</b> parts</span><span class="dot">·</span>
+        <span>🔒 <b>Secure</b> payment</span><span class="dot">·</span>
+        <span>🚚 <b>Express</b> delivery</span><span class="dot">·</span>
+        <span>🏆 <b>Verified</b> suppliers</span>
+      </div>
+    </div>
+
+    <div class="hero-art">
+      <svg viewBox="0 0 400 170" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Vehicle">
+        <path d="M34 128h332c7 0 12-5 12-12v-16c0-13-9-24-22-27l-54-12-30-25c-7-6-16-9-25-9H160c-11 0-21 4-29 12l-26 24-60 13c-13 3-23 14-23 27v13c0 7 5 12 12 12z" fill="#1E2535" stroke="#38BDF8" stroke-width="1.6"/>
+        <path d="M150 36h58v30h-86l28-30z" fill="#0F1218" stroke="#38BDF8" stroke-width="1.2" opacity=".85"/>
+        <path d="M222 36h38c6 0 12 2 17 6l22 24h-77V36z" fill="#0F1218" stroke="#38BDF8" stroke-width="1.2" opacity=".85"/>
+        <circle cx="106" cy="129" r="25" fill="#0F1218" stroke="#38BDF8" stroke-width="2.2"/>
+        <circle cx="106" cy="129" r="10" fill="#1E2535" stroke="#0EA5E9" stroke-width="1.6"/>
+        <circle cx="300" cy="129" r="25" fill="#0F1218" stroke="#38BDF8" stroke-width="2.2"/>
+        <circle cx="300" cy="129" r="10" fill="#1E2535" stroke="#0EA5E9" stroke-width="1.6"/>
+        <path d="M18 92h34M8 106h30" stroke="#0EA5E9" stroke-width="2.4" stroke-linecap="round" opacity=".75"/>
+      </svg>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────── 3. POPULAR CATEGORIES ───────────── -->
+<section class="sec" id="categories">
+  <div class="wrap">
+    <h2 class="sec-h">Popular Categories</h2>
+    <p class="sec-sub">Live counts from the AutoSpareFinder catalogue</p>
+    <div class="cat-grid">
+      <div class="cat"><span class="ic">🚘</span><span class="nm">Body &amp; Exterior</span><span class="ct mono">905,751 parts</span></div>
+      <div class="cat"><span class="ic">⚡</span><span class="nm">Electrical</span><span class="ct mono">397,732 parts</span></div>
+      <div class="cat"><span class="ic">🪑</span><span class="nm">Interior &amp; Comfort</span><span class="ct mono">357,120 parts</span></div>
+      <div class="cat"><span class="ic">⚙️</span><span class="nm">Engine</span><span class="ct mono">324,093 parts</span></div>
+      <div class="cat"><span class="ic">🔧</span><span class="nm">Suspension &amp; Steering</span><span class="ct mono">303,122 parts</span></div>
+      <div class="cat"><span class="ic">❄️</span><span class="nm">A/C &amp; Heating</span><span class="ct mono">224,912 parts</span></div>
+      <div class="cat"><span class="ic">🛞</span><span class="nm">Wheels &amp; Bearings</span><span class="ct mono">218,514 parts</span></div>
+      <div class="cat"><span class="ic">🛑</span><span class="nm">Brakes</span><span class="ct mono">171,387 parts</span></div>
+      <div class="cat"><span class="ic">💧</span><span class="nm">Cooling</span><span class="ct mono">143,325 parts</span></div>
+      <div class="cat"><span class="ic">⛽</span><span class="nm">Fuel &amp; Air</span><span class="ct mono">141,076 parts</span></div>
+    </div>
+  </div>
+</section>
+
+<div class="wrap"><div class="speed-line"></div></div>
+
+<!-- ───────────── 4. POPULAR VEHICLES ───────────── -->
+<section class="sec" id="vehicles">
+  <div class="wrap">
+    <h2 class="sec-h">Popular in Israel</h2>
+    <p class="sec-sub">Ranked by active vehicles on Israeli roads — government registry data</p>
+    <div class="veh-grid">
+      <div class="veh">
+        <div class="silo"><svg viewBox="0 0 150 56" width="130" fill="none"><path d="M12 46h126c3 0 5-2 5-5v-6c0-5-4-9-8-10l-21-5-11-9c-3-2-6-4-10-4H62c-4 0-8 2-11 5l-10 8-23 5c-5 1-9 5-9 10v6c0 3 2 5 3 5z" fill="#1E2535" stroke="#38BDF8" stroke-width="1.3"/><circle cx="41" cy="46" r="9" fill="#0F1218" stroke="#38BDF8" stroke-width="1.6"/><circle cx="114" cy="46" r="9" fill="#0F1218" stroke="#38BDF8" stroke-width="1.6"/></svg></div>
+        <div class="nm">Toyota Corolla</div><div class="yr">2014 – 2026</div>
+        <div class="roads mono">132,079 on the road</div>
+        <span class="go">Find parts →</span>
+      </div>
+      <div class="veh">
+        <div class="silo"><svg viewBox="0 0 150 56" width="130" fill="none"><path d="M16 46h118c3 0 5-2 5-5v-7c0-5-3-8-8-9l-19-4-10-9c-3-3-7-4-11-4H64c-4 0-8 1-11 4l-10 9-21 4c-5 1-8 4-8 9v7c0 3 2 5 2 5z" fill="#1E2535" stroke="#38BDF8" stroke-width="1.3"/><circle cx="43" cy="46" r="9" fill="#0F1218" stroke="#38BDF8" stroke-width="1.6"/><circle cx="110" cy="46" r="9" fill="#0F1218" stroke="#38BDF8" stroke-width="1.6"/></svg></div>
+        <div class="nm">Kia Picanto</div><div class="yr">2011 – 2026</div>
+        <div class="roads mono">125,267 on the road</div>
+        <span class="go">Find parts →</span>
+      </div>
+      <div class="veh">
+        <div class="silo"><svg viewBox="0 0 150 56" width="130" fill="none"><path d="M12 46h126c3 0 5-2 5-5v-6c0-5-4-9-8-10l-21-5-11-9c-3-2-6-4-10-4H62c-4 0-8 2-11 5l-10 8-23 5c-5 1-9 5-9 10v6c0 3 2 5 3 5z" fill="#1E2535" stroke="#38BDF8" stroke-width="1.3"/><circle cx="41" cy="46" r="9" fill="#0F1218" stroke="#38BDF8" stroke-width="1.6"/><circle cx="114" cy="46" r="9" fill="#0F1218" stroke="#38BDF8" stroke-width="1.6"/></svg></div>
+        <div class="nm">Mazda 3</div><div class="yr">2013 – 2026</div>
+        <div class="roads mono">94,708 on the road</div>
+        <span class="go">Find parts →</span>
+      </div>
+      <div class="veh">
+        <div class="silo"><svg viewBox="0 0 150 56" width="130" fill="none"><path d="M12 45h126c3 0 5-2 5-5V31c0-5-4-8-8-9l-20-4-12-11c-3-2-6-3-10-3H62c-4 0-8 1-11 4L40 19l-22 4c-5 1-9 4-9 9v9c0 3 2 4 3 4z" fill="#1E2535" stroke="#38BDF8" stroke-width="1.3"/><circle cx="41" cy="45" r="9" fill="#0F1218" stroke="#38BDF8" stroke-width="1.6"/><circle cx="114" cy="45" r="9" fill="#0F1218" stroke="#38BDF8" stroke-width="1.6"/></svg></div>
+        <div class="nm">Kia Sportage</div><div class="yr">2010 – 2026</div>
+        <div class="roads mono">91,152 on the road</div>
+        <span class="go">Find parts →</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="wrap"><div class="speed-line"></div></div>
+
+<!-- ───────────── 5. WHY AUTOSPAREFINDER ───────────── -->
+<section class="sec">
+  <div class="wrap">
+    <h2 class="sec-h">Why AutoSpareFinder</h2>
+    <p class="sec-sub">What makes this different from a parts catalogue</p>
+    <div class="why-grid">
+      <div class="why"><div class="ic">🎯</div><h3>Fitment Verified</h3><p>We confirm the part fits your exact make, model and year before you pay — not a guess from a keyword match.</p></div>
+      <div class="why"><div class="ic">💰</div><h3>Real Price Comparison</h3><p>Every offer from every supplier, side by side, with shipping and VAT already included in the total.</p></div>
+      <div class="why"><div class="ic">🌍</div><h3>Global Inventory</h3><p>4.1M parts spanning OEM, OE-equivalent and aftermarket — Israeli importers and global marketplaces together.</p></div>
+      <div class="why"><div class="ic">🤖</div><h3>AI Part Search</h3><p>Describe the problem in plain Hebrew, Arabic or English. The assistant identifies the part and verifies the fit.</p></div>
+    </div>
+  </div>
+</section>
+
+<div class="wrap"><div class="speed-line"></div></div>
+
+<!-- ───────────── 6. SUPPLIER / PRICE COMPARISON ───────────── -->
+<section class="sec" id="compare">
+  <div class="wrap">
+    <h2 class="sec-h">Compare Prices Across Suppliers</h2>
+    <p class="sec-sub">One part, every offer — totals include shipping and conditional VAT</p>
+    <div class="cmp">
+      <div class="cmp-top">
+        <div>
+          <div class="ttl">Brake Pad Set — Front Axle</div>
+          <div class="oem mono">OEM 04465-02260</div>
+        </div>
+        <span class="badge b-ok">✅ Verified fit — Toyota Corolla 2018</span>
+      </div>
+      <div class="cmp-wrap">
+      <table>
+        <thead><tr><th>Supplier</th><th>Condition</th><th>Shipping</th><th>Availability</th><th>Total</th><th></th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Marketplace&nbsp;A</td><td>Aftermarket</td><td class="mono">Free</td>
+            <td><span class="stock">● In stock</span></td>
+            <td><span class="price mono">₪243</span><span class="cheapest">LOWEST</span></td>
+            <td><button class="btn-primary pick">Select</button></td>
+          </tr>
+          <tr>
+            <td>Marketplace&nbsp;B</td><td>OE-equivalent</td><td class="mono">₪45</td>
+            <td><span class="stock">● In stock</span></td>
+            <td><span class="price mono">₪358</span></td>
+            <td><button class="btn-secondary pick">Select</button></td>
+          </tr>
+          <tr>
+            <td>EU&nbsp;Distributor</td><td>OEM</td><td class="mono">₪89</td>
+            <td><span class="stock">● In stock</span></td>
+            <td><span class="price mono">₪541</span></td>
+            <td><button class="btn-secondary pick">Select</button></td>
+          </tr>
+        </tbody>
+      </table>
+      </div>
+      <div class="cmp-note">OEM, OE-equivalent and aftermarket offers are listed together and always labelled — never hidden or substituted. Supplier identities are revealed after checkout.</div>
+    </div>
+  </div>
+</section>
+
+<div class="wrap"><div class="speed-line"></div></div>
+
+<!-- ───────────── 7. AI CHAT CTA ───────────── -->
+<section class="sec" id="ai">
+  <div class="wrap">
+    <div class="ai">
+      <div>
+        <span class="lbl">⚡ AI-Powered</span>
+        <h2>Ask in Hebrew, Arabic or English</h2>
+        <p>Describe your car and what went wrong. The assistant identifies the part, verifies it fits your exact vehicle, and shows you every supplier's price — in the language you asked in.</p>
+        <div class="btns">
+          <button class="btn-primary">Start Chat →</button>
+          <button class="btn-secondary">WhatsApp</button>
+        </div>
+      </div>
+      <div class="chat">
+        <div class="bub u" dir="rtl">מחפש רפידות בלם לטויוטה קורולה 2018</div>
+        <div class="bub a" dir="rtl"><span class="who">AutoSpareFinder AI</span>נמצאו 3 חלקים מאומתים לרכב שלך ✅ — הזול ביותר ₪243 כולל משלוח. רוצה להשוות?</div>
+        <div class="bub u" dir="rtl">כן, תשווה בבקשה</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────── 8. FOOTER ───────────── -->
+<footer>
+  <div class="wrap">
+    <div class="f-grid">
+      <div class="f-brand">
+        <div class="logo">AutoSpare<i>Finder</i><i> ●</i></div>
+        <p>The fitment-verified marketplace for car parts — compare every supplier, pay once, get the part that actually fits.</p>
+        <div class="f-soc">
+          <a href="#" aria-label="WhatsApp">✆</a>
+          <a href="#" aria-label="Telegram">✈</a>
+          <a href="#" aria-label="Instagram">◎</a>
+          <a href="#" aria-label="Email">✉</a>
+        </div>
+      </div>
+      <div class="f-col"><h4>Marketplace</h4>
+        <a href="#categories">Categories</a><a href="#vehicles">Vehicles</a><a href="#compare">Compare Prices</a><a href="#">Search by Plate</a></div>
+      <div class="f-col"><h4>Support</h4>
+        <a href="#">How It Works</a><a href="#">Shipping</a><a href="#">Returns &amp; Warranty</a><a href="#">Track Order</a></div>
+      <div class="f-col"><h4>Company</h4>
+        <a href="#">About</a><a href="#">For Suppliers</a><a href="#">Privacy Policy</a><a href="#">Terms of Service</a></div>
+    </div>
+    <div class="f-bot">
+      <span>© 2026 AutoSpareFinder · כל הזכויות שמורות</span>
+      <div class="langs">
+        <button class="on">EN</button><button>עברית</button><button>العربية</button>
+      </div>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

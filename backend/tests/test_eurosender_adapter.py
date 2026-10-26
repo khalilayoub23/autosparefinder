@@ -14,6 +14,25 @@ from services.shipping.eurosender_adapter import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _isolated_from_live_eurosender(monkeypatch):
+    """The backend container carries the LIVE production config (EUROSENDER_ENABLED=1,
+    EUROSENDER_SANDBOX=0, a production key). These tests used to inherit it: on 2026-10-18
+    one of them sent a real request to api.eurosender.com. Every test starts from a clean
+    sandbox config, and any HTTP call not routed through _patch_client fails loudly."""
+    import os as _os
+    from services.shipping import eurosender_adapter as _mod
+    for k in [k for k in _os.environ if k.startswith("EUROSENDER_")]:
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("EUROSENDER_SANDBOX", "1")
+    monkeypatch.setenv("EUROSENDER_ENABLED", "0")
+
+    class _NoNetwork:
+        def __init__(self, *a, **k):
+            raise AssertionError("real HTTP call from an adapter test — use _patch_client")
+    monkeypatch.setattr(_mod.httpx, "AsyncClient", _NoNetwork)
+
+
 class _FakeResponse:
     def __init__(self, status_code: int, json_body: dict):
         self.status_code = status_code

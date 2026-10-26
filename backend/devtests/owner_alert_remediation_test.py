@@ -387,12 +387,12 @@ print("=" * 70)
 print("NOA — unchanged, already centralized (regression only)")
 print("=" * 70)
 
-print("\n9-11. NOA coherence-gate alert_key + cooldown untouched")
-check("noa_coherence_gate_exhausted alert_key still present", "noa_coherence_gate_exhausted" in _ROUTES_SRC, True)
-_noa_start = _ROUTES_SRC.index("noa_coherence_gate_exhausted")
+print("\n9-11. NOA coherence-gate alert is streak-based (#69)")
+check("noa_coherence_gate_streak alert_key present", "noa_coherence_gate_streak" in _ROUTES_SRC, True)
+_noa_start = _ROUTES_SRC.index("noa_coherence_gate_streak")
 _noa_region = _ROUTES_SRC[max(0, _noa_start - 600):_noa_start + 100]
 check("NOA alert still routes through notify_owner(", "await notify_owner(" in _noa_region, True)
-check("NOA cooldown still 3600s", "cooldown_s=3600" in _noa_region, True)
+check("NOA streak alert cooldown 86400s", "cooldown_s=86400" in _noa_region, True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

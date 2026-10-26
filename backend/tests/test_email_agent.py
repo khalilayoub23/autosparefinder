@@ -27,6 +27,17 @@ from email_agent.normalize import MalformedMessage, html_to_text, normalize_mess
 from email_agent.redaction import redact, register_secrets
 from email_agent.senders import is_authenticated, org_domain, sender_kind
 from email_agent.store import InMemoryStore
+from email_agent import control as control_mod
+
+
+@pytest.fixture(autouse=True)
+def _armed_runtime_control(tmp_path, monkeypatch):
+    """The pipeline tests below exercise an ARMED agent. Each test gets its own control file, so
+    nothing here reads or writes the production /app/state control file."""
+    path = tmp_path / "email_agent_control.json"
+    monkeypatch.setenv("EMAIL_AGENT_CONTROL_FILE", str(path))
+    control_mod.set_mode(control_mod.RUN, by="test")
+    return path
 
 MAILBOX = "autosparefinder2024@gmail.com"
 READ = "https://www.googleapis.com/auth/gmail.readonly"
@@ -1508,3 +1519,469 @@ def test_thread_association_rule():
     assert [m.message_id for m in associated_messages(cur, thread)] == ["m1"]
     cur2, thread2 = _thr(("m1", "a", None), ("m2", "b", None))
     assert associated_messages(cur2, thread2) == []
+
+
+# ══ Closure: the parent is the ONLY source of the order (no quote, nothing in the reply itself) ══════
+FOREIGN = {**ORDER, "id": "o-x", "user_id": "u-OTHER"}     # exists, belongs to a different account
+
+
+async def test_cross_customer_order_inherited_only_through_the_explicitly_linked_parent():
+    linked_cur, linked = _thr(("m1", "Where is my order AUTO-2026-1A2B3C4D?", None), ("m2", "any update?", _reply_to("m1")))
+    ctx, c, d = await _decide(linked_cur, linked, orders=(FOREIGN,))
+    assert "AUTO-2026-1A2B3C4D" not in linked_cur.body_text + linked_cur.subject      # nothing in the reply itself
+    assert ctx.order == {"status": "sender_mismatch", "reason": "referenced order belongs to a different account"}
+    assert ctx.shipment["status"] == "unresolved" and set(c.references) == {"customer_id"}
+    assert (d.tier, d.recommended_action, d.requires_human) == (policy.TIER_HUMAN, "escalate_to_human", True)
+    # identical messages without the reply link: the parent contributes nothing
+    unlinked_cur, unlinked = _thr(("m1", "Where is my order AUTO-2026-1A2B3C4D?", None), ("m2", "any update?", None))
+    ctx2, c2, _ = await _decide(unlinked_cur, unlinked, orders=(FOREIGN,))
+    assert ctx2.order["status"] == "unresolved" and "earlier messages" not in c2.reason
+    assert "earlier messages" not in c.reason          # linked case: category from the reply's own subject, not the parent
+
+
+async def test_cross_customer_linked_reply_end_to_end_has_no_side_effects():
+    parent = gmsg("m1", "t1", "dana@gmail.com", "Order question", "Where is my order AUTO-2026-1A2B3C4D?", ts=1000)
+    reply = gmsg("m2", "t1", "dana@gmail.com", "Re: Order question", "any update?", ts=2000, extra_headers=_reply_to("m1"))
+    fake = FakeGmail([parent, reply])
+    summary, store = await run(fake, FakeSource(users=[USER], orders=[FOREIGN]), gmail_drafts=True)
+    row = store.rows["m2"]
+    assert row["context"]["order"]["status"] == "sender_mismatch" and "order_number" not in row["context"]["order"]
+    assert row["requires_human"] is True and row["draft_body"] is None and row["gmail_draft_id"] is None
+    assert fake.drafts == {} and fake.paths("POST") == ["TOKEN"] and summary["sent"] == 0 and row["sendable"] is False
+    assert "AUTO-2026-1A2B3C4D" not in json.dumps(row, default=str).replace(row["context"].get("references", {}).get("order_number", "-"), "")
+
+
+# ── 30. runtime kill switch (email_agent/control.py) ───────────────────────────────
+ORDER_MSG = ("Order AUTO-2026-1A2B3C4D", "where is my order?")
+
+
+def test_control_fails_closed_on_every_unreadable_or_invalid_state(tmp_path):
+    p = tmp_path / "ctl.json"
+    assert control_mod.read_control(p) == {"mode": "halt", "running": False, "reason": "not_armed"}   # default
+    for content, reason in ((b"{not json", "invalid: not JSON"), (b'["run"]', "invalid: mode must be 'run' or 'halt'"),
+                            (b'{"mode": "RUN"}', "invalid: mode must be 'run' or 'halt'"),
+                            (b'{"mode": "go"}', "invalid: mode must be 'run' or 'halt'"),
+                            (b"\xff\xfe", "invalid: not JSON"),
+                            (b'{"mode": "run", "pad": "' + b"x" * 5000 + b'"}', "invalid: file too large")):
+        p.write_bytes(content)
+        assert control_mod.read_control(p) == {"mode": "halt", "running": False, "reason": reason}
+    d = tmp_path / "is_a_dir"
+    d.mkdir()
+    st = control_mod.read_control(d)
+    assert st["running"] is False and st["reason"].startswith("unreadable")
+    assert control_mod.set_mode("run", by="t", path=p)["running"] is True
+    assert control_mod.set_mode("halt", by="t", path=p) == {**control_mod.read_control(p), "running": False,
+                                                            "writes_in_flight": []}
+    assert (p.stat().st_mode & 0o777) == 0o644 and not list(tmp_path.glob(".email_agent_control.*"))
+    with pytest.raises(ValueError):
+        control_mod.set_mode("maybe", path=p)
+
+
+async def test_halted_cycle_makes_no_gmail_call_and_no_store_write():
+    control_mod.set_mode(control_mod.HALT, by="test")
+    fake = FakeGmail([gmsg("m1", "t1", "dana@gmail.com", *ORDER_MSG)])
+    summary, store = await run(fake, FakeSource(users=[USER], orders=[ORDER]), gmail_drafts=True)
+    assert summary["halted"] == "halted_by_operator" and summary["connection"]["state"] == "halted"
+    assert fake.calls == [] and store.rows == {} and summary["processed"] == summary["sent"] == 0
+
+
+@pytest.mark.parametrize("broken", ["missing", "garbage", "directory"])
+async def test_control_state_errors_block_processing(_armed_runtime_control, broken):
+    p = _armed_runtime_control
+    p.unlink()
+    if broken == "garbage":
+        p.write_text("mode=run")
+    elif broken == "directory":
+        p.mkdir()
+    fake = FakeGmail([gmsg("m1", "t1", "dana@gmail.com", *ORDER_MSG)])
+    summary, store = await run(fake, FakeSource(users=[USER], orders=[ORDER]), gmail_drafts=True)
+    assert summary.get("halted") and fake.calls == [] and store.rows == {}
+
+
+async def test_halt_during_message_processing_stops_before_draft_and_releases_the_claim():
+    fake = FakeGmail([gmsg("m1", "t1", "dana@gmail.com", *ORDER_MSG),
+                      gmsg("m2", "t2", "dana@gmail.com", "Order again", "and this one?")])
+    inner = fake.__call__
+
+    class HaltWhileReading:            # the operator halts while message 1's thread is being fetched
+        def __call__(self, method, url, headers, body):
+            out = inner(method, url, headers, body)
+            if "/threads/t1" in url:
+                control_mod.set_mode(control_mod.HALT, by="test")
+            return out
+
+    c = cfg(gmail_drafts=True)
+    store = InMemoryStore()
+    summary = await agent_mod.process_once(c, GmailClient(c, transport=HaltWhileReading(), sleep=lambda s: None),
+                                           store, FakeSource(users=[USER], orders=[ORDER]))
+    assert summary["halted"] == "halted_by_operator" and summary["processed"] == 0
+    assert "/drafts" not in fake.paths() and fake.drafts == {}
+    assert "/threads/t2" not in fake.paths()                                   # message 2 never started
+    assert store.rows["m1"]["status"] == "retry" and store.rows["m1"]["attempts"] == 0   # claim handed back
+    assert store.rows["m1"]["draft_attempted_at"] is None and "m2" not in store.rows
+    # re-armed: the released message is processed normally, exactly once
+    control_mod.set_mode(control_mod.RUN, by="test")
+    again = await agent_mod.process_once(c, GmailClient(c, transport=fake, sleep=lambda s: None),
+                                         store, FakeSource(users=[USER], orders=[ORDER]))
+    assert again["retried"] == 1 and again["new"] == 1 and again["processed"] == 2
+    assert sorted(d["message"]["threadId"] for d in fake.drafts.values()) == ["t1", "t2"]   # one draft each
+
+
+async def test_client_guard_blocks_the_draft_post_even_if_the_agent_checkpoint_was_passed(monkeypatch):
+    # The race: the agent's "before draft" checkpoint passed, then the operator halted. The client
+    # re-checks immediately before the POST, so nothing reaches Gmail.
+    calls = []
+    real = control_mod.require_running
+
+    def agent_side(stage):
+        calls.append(stage)
+        if stage == "before draft":
+            control_mod.set_mode(control_mod.HALT, by="test")   # halt lands right after this check passes
+            return None
+        return real(stage)
+
+    monkeypatch.setattr(agent_mod._control, "require_running", agent_side)
+    fake = FakeGmail([gmsg("m1", "t1", "dana@gmail.com", *ORDER_MSG)])
+    store = InMemoryStore()
+    summary, _ = await run(fake, FakeSource(users=[USER], orders=[ORDER]), store, gmail_drafts=True)
+    assert "before draft" in calls and summary["halted"] == "halted_by_operator"
+    assert "/drafts" not in fake.paths() and fake.drafts == {} and summary["sent"] == 0
+    row = store.rows["m1"]
+    # documented, conservative outcome: the attempt marker was written, so a re-armed run escalates
+    # this one message to a human instead of risking a duplicate draft
+    assert row["status"] == "retry" and row["attempts"] == 0 and row["draft_attempted_at"]
+
+
+def test_gmail_client_refuses_every_write_when_halted_and_send_is_never_reachable():
+    fake = FakeGmail()
+    client = client_for(fake)
+    control_mod.set_mode(control_mod.HALT, by="test")
+    with pytest.raises(control_mod.Halted):
+        client.create_draft("cmF3", "t1")
+    assert "/drafts" not in fake.paths()
+    assert client.profile()["emailAddress"] == MAILBOX            # read-only status still works
+    for armed in (False, True):
+        control_mod.set_mode(control_mod.RUN if armed else control_mod.HALT, by="test")
+        for path in ("/messages/send", "/drafts/send"):
+            with pytest.raises(SendProhibited):
+                client._call("POST", path, json_body={})
+    assert not [p for p in fake.paths() if "send" in p]
+
+
+async def test_loop_while_halted_creates_no_client_and_rechecks_quickly(monkeypatch):
+    from email_agent import loop as loop_mod
+    sleeps = []
+
+    async def fake_sleep(s):
+        sleeps.append(s)
+        if len(sleeps) >= 3:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(loop_mod.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(loop_mod, "GmailClient", lambda *a, **k: pytest.fail("no Gmail client while halted"))
+    monkeypatch.setattr(loop_mod, "_heartbeat", lambda *a, **k: pytest.fail("no heartbeat while halted"))
+    monkeypatch.setenv("EMAIL_AGENT_ENABLED", "1")
+    for k, v in (("GMAIL_OAUTH_CLIENT_ID", "cid"), ("GMAIL_OAUTH_CLIENT_SECRET", FAKE_SECRET),
+                 ("GMAIL_OAUTH_REFRESH_TOKEN", FAKE_REFRESH)):
+        monkeypatch.setenv(k, v)
+    control_mod.set_mode(control_mod.HALT, by="test")
+    with pytest.raises(KeyboardInterrupt):
+        await loop_mod.email_agent_loop()
+    assert sleeps[1:] == [loop_mod.HALT_RECHECK_S, loop_mod.HALT_RECHECK_S]
+    assert loop_mod.last_cycle == {"state": "halted", "reason": "halted_by_operator"}
+
+
+def _load_cli():
+    path = Path(__file__).resolve().parent.parent / "maintenance" / "email_agent_cli.py"
+    spec = importlib.util.spec_from_file_location("email_agent_cli_under_test", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+async def test_cli_run_once_is_refused_while_halted_even_as_an_operator(monkeypatch, capsys):
+    cli = _load_cli()
+    monkeypatch.setattr(cli, "GmailClient", lambda *a, **k: pytest.fail("no Gmail client while halted"))
+    monkeypatch.setattr(cli, "PgStore", lambda *a, **k: pytest.fail("no DB store while halted"))
+    for k, v in (("GMAIL_OAUTH_CLIENT_ID", "cid"), ("GMAIL_OAUTH_CLIENT_SECRET", FAKE_SECRET),
+                 ("GMAIL_OAUTH_REFRESH_TOKEN", FAKE_REFRESH)):
+        monkeypatch.setenv(k, v)
+    for argv in (["run-once"], ["run-once", "--dry-run"], ["run-once", "--gmail-drafts"]):
+        control_mod.set_mode(control_mod.HALT, by="test")
+        monkeypatch.setattr(cli.sys, "argv", ["cli", *argv])
+        assert await cli.main() == 3
+        assert json.loads(capsys.readouterr().out) == {"halted": "halted_by_operator", "send_enabled": False}
+
+
+async def test_cli_halt_arm_and_control_commands(monkeypatch, capsys, _armed_runtime_control):
+    cli = _load_cli()
+    monkeypatch.setattr(cli, "GmailClient", lambda *a, **k: pytest.fail("control commands never touch Gmail"))
+    for cmd, running in (("halt", False), ("control", False), ("arm", True), ("control", True), ("halt", False)):
+        monkeypatch.setattr(cli.sys, "argv", ["cli", cmd])
+        assert await cli.main() == 0
+        assert json.loads(capsys.readouterr().out)["runtime_control"]["running"] is running
+    assert control_mod.read_control(_armed_runtime_control)["reason"] == "halted_by_operator"
+
+
+async def test_status_endpoint_reports_the_runtime_control(monkeypatch):
+    from routes import email_agent_routes as routes_mod
+
+    class NoStore:
+        async def stats(self):
+            return {"by_status": {}, "requires_human": 0}
+
+        async def recent(self, n):
+            return []
+
+    import email_agent.store as store_mod
+    monkeypatch.setattr(store_mod, "PgStore", NoStore)
+    monkeypatch.setenv("COLLECT_SECRET", "s3cret")
+    control_mod.set_mode(control_mod.HALT, by="test")
+    out = await routes_mod.email_agent_status(x_collect_secret="s3cret")
+    assert out["runtime_control"]["running"] is False and out["send_enabled"] is False
+
+
+def test_kill_switch_check_is_cheap_enough_for_every_checkpoint():
+    import time as _t
+    n, t0 = 2000, _t.perf_counter()
+    for _ in range(n):
+        control_mod.read_control()
+    per_call_ms = (_t.perf_counter() - t0) / n * 1000
+    assert per_call_ms < 5, per_call_ms
+
+
+# ── 31. kill switch: write intents, every boundary, restart / re-arm ────────────────
+def _hook(fake, when, action):
+    """Transport that runs `action` right after the fake served a request matching `when`."""
+    def transport(method, url, headers, body):
+        out = fake(method, url, headers, body)
+        if when(method, url):
+            action()
+        return out
+    return transport
+
+
+def _halt():
+    return control_mod.set_mode(control_mod.HALT, by="test")
+
+
+def test_halt_reports_a_write_already_in_flight_and_does_not_claim_to_cancel_it():
+    # The honest limit: a request that was authorized and sent BEFORE the halt cannot be recalled.
+    # What the write intent guarantees is that the halt SEES it and reports it.
+    fake = FakeGmail()
+    seen = {}
+
+    def transport(method, url, headers, body):
+        if method == "POST" and url.endswith("/drafts"):
+            seen["during"] = _halt()["writes_in_flight"]        # operator halts mid-request
+        return fake(method, url, headers, body)
+
+    client = GmailClient(cfg(), transport=transport, sleep=lambda s: None)
+    raw = base64.urlsafe_b64encode(b"To: dana@gmail.com\r\nSubject: Re: hi\r\n\r\nHello").decode()
+    created = client.create_draft(raw, "t1")
+    assert created["id"] == "draft-1" and len(fake.drafts) == 1          # NOT cancelled
+    assert len(seen["during"]) == 1 and seen["during"][0]["stage"] == "gmail POST /drafts"
+    assert seen["during"][0]["stale"] is False
+    assert control_mod.writes_in_flight() == []                           # cleared when it finished
+    with pytest.raises(control_mod.Halted):                               # and no NEW write starts
+        client.create_draft("cmF3", "t1")
+    assert len(fake.drafts) == 1 and control_mod.writes_in_flight() == []
+
+
+def test_halt_before_the_write_sends_nothing_and_leaves_no_marker():
+    fake = FakeGmail()
+    client = client_for(fake)
+    assert _halt()["writes_in_flight"] == []
+    with pytest.raises(control_mod.Halted) as e:
+        client.create_draft("cmF3", "t1")
+    assert e.value.stage == "gmail POST /drafts" and "/drafts" not in fake.paths()
+    assert control_mod.writes_in_flight() == []
+
+
+def test_write_is_refused_when_its_intent_cannot_be_recorded(_armed_runtime_control):
+    blocker = _armed_runtime_control.with_name(_armed_runtime_control.name + ".inflight.d")
+    blocker.write_text("a file where the marker directory should be")
+    fake = FakeGmail()
+    with pytest.raises(control_mod.Halted) as e:
+        client_for(fake).create_draft("cmF3", "t1")
+    assert "cannot record write intent" in e.value.reason and "/drafts" not in fake.paths()
+
+
+def test_marker_is_cleared_when_the_request_fails_and_stale_markers_are_reported_then_removed(_armed_runtime_control):
+    def boom(method, url, headers, body):
+        if url.endswith("/drafts"):
+            raise ConnectionResetError("network down")
+        return FakeGmail()(method, url, headers, body)
+
+    with pytest.raises(GmailError):
+        GmailClient(cfg(), transport=boom, sleep=lambda s: None).create_draft("cmF3", "t1")
+    assert control_mod.writes_in_flight() == []
+    d = _armed_runtime_control.with_name(_armed_runtime_control.name + ".inflight.d")
+    old = control_mod.time.time() - control_mod.INFLIGHT_STALE_S - 60
+    stale = d / "999999-dead.json"
+    stale.write_text(json.dumps({"stage": "gmail POST /drafts", "pid": 999999, "started_at": old}))
+    os.utime(stale, (old, old))
+    (d / "garbage.json").write_text("{")
+    listed = control_mod.writes_in_flight()
+    assert {"stage": "unreadable marker", "pid": None, "age_s": None, "stale": False} in listed
+    assert [m for m in listed if m["pid"] == 999999][0]["stale"] is True
+    (d / "garbage.json").unlink()
+    with control_mod.write_intent("next write"):
+        assert [m["stage"] for m in control_mod.writes_in_flight()] == ["next write"]   # stale one removed
+    assert control_mod.writes_in_flight() == []
+
+
+async def test_halt_between_messages_stops_before_the_next_claim():
+    fake = FakeGmail([gmsg("m1", "t1", "dana@gmail.com", *ORDER_MSG),
+                      gmsg("m2", "t2", "dana@gmail.com", "Order again", "and this one?")])
+
+    class HaltAfterFirstSave(InMemoryStore):
+        async def save_result(self, message_id, record):
+            await super().save_result(message_id, record)
+            _halt()
+
+    store = HaltAfterFirstSave()
+    summary, _ = await run(fake, FakeSource(users=[USER], orders=[ORDER]), store)
+    assert summary["processed"] == 1 and summary["halted"] == "halted_by_operator"
+    assert store.rows["m1"]["status"] == "processed" and "m2" not in store.rows     # never claimed
+    assert "/threads/t2" not in fake.paths()
+
+
+async def test_halt_before_saving_releases_a_message_that_made_no_external_write(monkeypatch):
+    fake = FakeGmail([gmsg("m1", "t1", "dana@gmail.com", *ORDER_MSG)])
+    store = InMemoryStore()
+    real = control_mod.require_running
+
+    def staged(stage):                       # halt lands after the (local) draft step, before the save
+        if stage == "before saving the result":
+            _halt()
+        return real(stage)
+
+    monkeypatch.setattr(agent_mod._control, "require_running", staged)
+    summary, _ = await run(fake, FakeSource(users=[USER], orders=[ORDER]), store)   # local drafts: no Gmail write
+    assert summary["halted"] == "halted_by_operator" and summary["processed"] == 0
+    row = store.rows["m1"]
+    assert row["status"] == "retry" and row["attempts"] == 0 and row.get("draft_body") is None
+    assert fake.paths("POST") == ["TOKEN"]
+
+
+async def test_a_draft_created_just_before_the_halt_is_always_recorded():
+    # Halt lands right after Gmail accepted the draft. The record of that external write is kept
+    # (never an orphan draft the system does not know about); then the cycle stops.
+    fake = FakeGmail([gmsg("m1", "t1", "dana@gmail.com", *ORDER_MSG),
+                      gmsg("m2", "t2", "dana@gmail.com", "Order again", "and this one?")])
+    transport = _hook(fake, lambda m, u: m == "POST" and u.endswith("/drafts"), _halt)
+    c = cfg(gmail_drafts=True)
+    store = InMemoryStore()
+    summary = await agent_mod.process_once(c, GmailClient(c, transport=transport, sleep=lambda s: None),
+                                           store, FakeSource(users=[USER], orders=[ORDER]))
+    row = store.rows["m1"]
+    assert row["status"] == "processed" and row["gmail_draft_id"] == "draft-1" and row["sendable"] is False
+    assert summary["processed"] == 1 and summary["halted"] == "halted_by_operator"
+    assert len(fake.drafts) == 1 and "m2" not in store.rows and summary["sent"] == 0
+    # re-armed: m1 is not drafted twice, m2 is processed
+    control_mod.set_mode(control_mod.RUN, by="test")
+    again = await agent_mod.process_once(c, GmailClient(c, transport=fake, sleep=lambda s: None),
+                                         store, FakeSource(users=[USER], orders=[ORDER]))
+    assert again["skipped"] == 1 and again["new"] == 1
+    assert sorted(d["message"]["threadId"] for d in fake.drafts.values()) == ["t1", "t2"]
+
+
+async def test_unreadable_control_file_blocks_processing(monkeypatch, _armed_runtime_control):
+    real_open = open
+
+    def denied(path, *a, **k):
+        if str(path) == str(_armed_runtime_control):
+            raise PermissionError(13, "Permission denied")
+        return real_open(path, *a, **k)
+
+    monkeypatch.setattr("builtins.open", denied)
+    assert control_mod.read_control() == {"mode": "halt", "running": False, "reason": "unreadable: PermissionError"}
+    fake = FakeGmail([gmsg("m1", "t1", "dana@gmail.com", *ORDER_MSG)])
+    summary, store = await run(fake, FakeSource(users=[USER], orders=[ORDER]), gmail_drafts=True)
+    assert summary["halted"].startswith("unreadable") and fake.calls == [] and store.rows == {}
+    with pytest.raises(control_mod.Halted):
+        client_for(fake).create_draft("cmF3", "t1")
+    assert fake.paths() == []
+
+
+def test_control_state_survives_a_process_restart(_armed_runtime_control):
+    import importlib
+    _halt()
+    fresh = importlib.reload(importlib.import_module("email_agent.control"))     # a new process: no memory
+    try:
+        assert fresh.read_control()["reason"] == "halted_by_operator"
+        with pytest.raises(fresh.Halted):
+            fresh.require_running("after restart")
+        fresh.set_mode(fresh.RUN, by="test")
+        assert fresh.read_control()["running"] is True
+        _armed_runtime_control.unlink()                                          # volume lost / file deleted
+        assert fresh.read_control() == {"mode": "halt", "running": False, "reason": "not_armed"}
+    finally:
+        importlib.reload(fresh)
+
+
+async def _run_loop(monkeypatch, on_sleep, n=4):
+    from email_agent import loop as loop_mod
+    sleeps, cycles = [], []
+
+    async def fake_sleep(s):
+        sleeps.append(s)
+        on_sleep(len(sleeps))
+        if len(sleeps) >= n:
+            raise KeyboardInterrupt
+
+    async def fake_cycle(cfg_, client, store, source):
+        cycles.append(len(sleeps))
+        return {"state": "configured", "connection": {"ok": True}, "errors": []}
+
+    async def no_heartbeat(stats):
+        return None
+
+    monkeypatch.setattr(loop_mod.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(loop_mod, "process_once", fake_cycle)
+    monkeypatch.setattr(loop_mod, "_heartbeat", no_heartbeat)
+    monkeypatch.setattr(loop_mod, "GmailClient", lambda *a, **k: object())
+    monkeypatch.setattr(loop_mod, "PgStore", lambda *a, **k: object())
+    monkeypatch.setattr(loop_mod, "DbContextSource", lambda *a, **k: object())
+    for k, v in (("GMAIL_OAUTH_CLIENT_ID", "cid"), ("GMAIL_OAUTH_CLIENT_SECRET", FAKE_SECRET),
+                 ("GMAIL_OAUTH_REFRESH_TOKEN", FAKE_REFRESH)):
+        monkeypatch.setenv(k, v)
+    with pytest.raises(KeyboardInterrupt):
+        await loop_mod.email_agent_loop()
+    return sleeps, cycles, loop_mod
+
+
+async def test_loop_resumes_after_re_arm_and_stops_again_on_halt(monkeypatch):
+    monkeypatch.setenv("EMAIL_AGENT_ENABLED", "1")
+    _halt()
+
+    def on_sleep(i):       # sleep 1 = startup settle; 2 = halted re-check -> arm; 3 = after a cycle -> halt
+        if i == 2:
+            control_mod.set_mode(control_mod.RUN, by="test")
+        if i == 3:
+            _halt()
+
+    sleeps, cycles, loop_mod = await _run_loop(monkeypatch, on_sleep)
+    assert cycles == [2]                                       # exactly one cycle, only while armed
+    assert sleeps[1] == loop_mod.HALT_RECHECK_S and sleeps[3] == loop_mod.HALT_RECHECK_S
+    assert loop_mod.last_cycle["state"] == "halted"
+
+
+async def test_arming_alone_never_starts_the_loop_when_the_env_switch_is_off(monkeypatch):
+    monkeypatch.setenv("EMAIL_AGENT_ENABLED", "0")
+    control_mod.set_mode(control_mod.RUN, by="test")
+    sleeps, cycles, loop_mod = await _run_loop(monkeypatch, lambda i: None, n=3)
+    assert cycles == [] and sleeps[1] >= 3600 and loop_mod.last_cycle == {"state": DISABLED}
+
+
+async def test_cli_halt_reports_writes_in_flight(monkeypatch, capsys):
+    cli = _load_cli()
+    monkeypatch.setattr(cli.sys, "argv", ["cli", "halt"])
+    with control_mod.write_intent("gmail POST /drafts"):       # a write already authorized
+        assert await cli.main() == 0
+        out = json.loads(capsys.readouterr().out)["runtime_control"]
+        assert out["running"] is False and [w["stage"] for w in out["writes_in_flight"]] == ["gmail POST /drafts"]
+    monkeypatch.setattr(cli.sys, "argv", ["cli", "control"])
+    assert await cli.main() == 0
+    assert json.loads(capsys.readouterr().out)["runtime_control"]["writes_in_flight"] == []

@@ -6,7 +6,9 @@ Endpoints:
   GET /api/v1/brands/with-parts
   GET /api/v1/brands/{brand_name}/parts
 """
-from typing import Dict, Optional, Set
+import asyncio
+import time
+from typing import Any, Dict, Optional, Set
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -95,9 +97,34 @@ async def get_brands(
     }
 
 
+# Two GROUP BY scans over the whole catalogue (4.1M rows, measured 10.8-15.9 s) ran on EVERY
+# request with no cache — the stampede-able enumeration shape CLAUDE.md §5 forbids. Same pattern
+# as /parts/manufacturers: 10-min cache + single-flight rebuild (FIXES_TRACKER #69 §11).
+_BRANDS_WITH_PARTS_TTL_S = 600
+_brands_with_parts_cache: Dict[str, Any] = {"at": 0.0, "value": None}
+_BRANDS_WITH_PARTS_LOCK = asyncio.Lock()
+
+
 @router.get("/api/v1/brands/with-parts")
 async def get_brands_with_parts(db: AsyncSession = Depends(get_db)):
     """Return brands that have actual parts in parts_catalog, merged with registry info."""
+    def _fresh():
+        v = _brands_with_parts_cache["value"]
+        return v if v is not None and time.monotonic() - _brands_with_parts_cache["at"] < _BRANDS_WITH_PARTS_TTL_S else None
+
+    hit = _fresh()
+    if hit is not None:
+        return hit
+    async with _BRANDS_WITH_PARTS_LOCK:          # one scan at a time; waiters reuse its result
+        hit = _fresh()
+        if hit is not None:
+            return hit
+        value = await _brands_with_parts_uncached(db)
+        _brands_with_parts_cache.update(at=time.monotonic(), value=value)
+        return value
+
+
+async def _brands_with_parts_uncached(db: AsyncSession) -> Dict[str, Any]:
     # Primary lane: manufacturer_id-backed counts
     parts_result = await db.execute(
         select(PartsCatalog.manufacturer_id, func.count().label("parts_count"))

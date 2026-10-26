@@ -67,7 +67,7 @@ def test_notify_owner_called_on_new_kills():
 
     # Simulate the watchdog detection logic
     if current > baseline:
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             _fake_notify("health", f"{current - baseline} OOM kill(s)",
                          severity="critical", alert_key="oom_watchdog_new_kills", cooldown_s=1800)
         )

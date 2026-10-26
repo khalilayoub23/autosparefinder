@@ -44,18 +44,24 @@ BASE             = "https://www.car-parts.ie"
 _BASE_DIR        = Path(__file__).resolve().parent.parent  # /app (script now in harvesters/)
 STATE_FILE       = _BASE_DIR / "state" / "flaresolverr_state.json"
 LOG_DIR          = _BASE_DIR / "state" / "logs"
-PARALLEL_SESSIONS = int(os.environ.get("HARVESTER_PARALLEL_SESSIONS", "1"))
-                           # concurrent FlareSolverr browser sessions (each is a real headless-Chrome
-                           # Cloudflare solve → ~140% CPU sustained). 4 was fine for BURSTY IL-market
-                           # harvesting (queue drained fast → harvester idled). After the 2026-07-23
-                           # full-catalogue seeding (6,000-model backlog) the harvester runs FLAT-OUT,
-                           # so 4 sessions pinned flaresolverr at ~577% CPU and the box to load avg ~18.7
-                           # on 6 vCPUs (oversubscribed) → DB statement-timeouts failed heal/parity tasks
-                           # and starved sync_prices' heartbeat (false 'dead' alerts). Lowered to 2 for
-                           # SUSTAINED operation: the full catalogue is a multi-week marathon, not a sprint.
-                           # Env-tunable — raise (e.g. 4) ONLY after the server upgrade is actually active
-                           # (nproc > 6) AND re-measuring load avg (< ~12) + models-completed/10min.
-                           # Prior test at 5 on the OLD 4-core box → 0 models/10min (load 22-25). Do not guess.
+def _parallel_sessions(raw, default: int = 1, max_allowed: int = 8):
+    """HARVESTER_PARALLEL_SESSIONS → (value, note). The worker THREAD count (#78). Since 2026-07-23 (aaa4fc3) workers
+    are plain-HTTP threads sharing one cf_clearance cookie (FlareSolverr only mints that cookie ~2x/hour), so a
+    session is no longer a headless Chrome. Production value 5 = docker-compose.yml default, set and verified in
+    eb8a96f (2026-07-23: "all 5 workers producing, postgres ~130%" after the synchronous_commit import fix).
+    Invalid / < 1 → the safe default; above max_allowed → clamped (each worker adds DB import load)."""
+    try:
+        v = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return default, f"invalid HARVESTER_PARALLEL_SESSIONS={raw!r} → {default}"
+    if v < 1:
+        return default, f"HARVESTER_PARALLEL_SESSIONS={v} < 1 → {default}"
+    if v > max_allowed:
+        return max_allowed, f"HARVESTER_PARALLEL_SESSIONS={v} > {max_allowed} → clamped to {max_allowed}"
+    return v, ""
+
+
+PARALLEL_SESSIONS, _PARALLEL_NOTE = _parallel_sessions(os.environ.get("HARVESTER_PARALLEL_SESSIONS", "1"))
 BATCH_SIZE       = 50
 PAGE_TIMEOUT     = 20000   # ms per page request
 INTER_MODEL      = int(os.environ.get("HARVESTER_INTER_MODEL_S", "20"))
@@ -388,6 +394,62 @@ logging.basicConfig(
 log = logging.getLogger("fsharv")
 
 # ── State ─────────────────────────────────────────────────────────────────────
+# ── Health status (#78) ────────────────────────────────────────────────────────
+# Read by BACKEND_API_ROUTES._car_parts_ie_harvester_healthcheck_loop via harvester_health.evaluate(): idle on a
+# drained queue is an explicit state, and "working" is healthy only while requests keep completing.
+STATUS_FILE = _BASE_DIR / "state" / "harvester_status.json"
+_STATUS_LOCK = threading.Lock()
+_STATUS = {"pid": os.getpid(), "state": "starting", "since": time.time(), "updated_at": time.time(),
+           "rest_until": None, "last_progress_at": time.time(), "workers": {}, "parallel": None, "cycle": 0}
+_STATUS_LAST_WRITE = [0.0]
+
+
+def _status_write(force: bool = False, **changes) -> None:
+    """Merge changes and write the status file atomically. Throttled to one write / 10 s unless forced."""
+    now = time.time()
+    with _STATUS_LOCK:
+        _STATUS.update(changes)
+        _STATUS["updated_at"] = now
+        if not force and now - _STATUS_LAST_WRITE[0] < 10:
+            return
+        _STATUS_LAST_WRITE[0] = now
+        snap = json.dumps(_STATUS)
+    try:
+        tmp = STATUS_FILE.with_suffix(".json.tmp")
+        tmp.write_text(snap)
+        os.replace(tmp, STATUS_FILE)
+    except Exception as exc:                                  # never let status I/O break harvesting
+        log.warning(f"status write failed: {type(exc).__name__}")
+
+
+def _note_progress(vehicle: str = None, done: bool = False) -> None:
+    """A page request or a model completed (success, empty or error alike: the worker is not hung)."""
+    now = time.time()
+    name = threading.current_thread().name
+    with _STATUS_LOCK:
+        _STATUS["last_progress_at"] = now
+        w = _STATUS["workers"].setdefault(name, {})
+        if done:
+            _STATUS["workers"].pop(name, None)
+        else:
+            if vehicle and w.get("vehicle") != vehicle:
+                w.update(vehicle=vehicle, started_at=now)
+            w["last_progress_at"] = now
+    _status_write()
+
+
+def _rest(seconds: float, state: str) -> None:
+    """Sleep with an explicit, observable state; the main-loop heartbeat is refreshed at least every 60 s."""
+    end = time.time() + max(0.0, seconds)
+    _status_write(force=True, state=state, rest_until=end, since=time.time())
+    while True:
+        remaining = end - time.time()
+        if remaining <= 0:
+            break
+        time.sleep(min(60.0, remaining))
+        _status_write(force=True)
+
+
 def load_state():
     if STATE_FILE.exists():
         try:
@@ -752,15 +814,18 @@ def get_additional_slugs(html: str, brand: str, model: str) -> list:
 def harvest_model(session_id: str, vehicle: str, state: dict) -> int:
     brand, model = vehicle.split("/", 1)
     log.info(f"▶ {vehicle}")
+    _note_progress(vehicle)
 
     # Phase 1: Get additional slugs from model page
     model_html = fs_get(f"{BASE}/car-brands/{brand}/{model}-parts", session_id)
+    _note_progress(vehicle)
     extra_slugs = get_additional_slugs(model_html, brand, model) if model_html else []
 
     # Also try first variant page
     variant_ids = re.findall(rf"/car-brands/{re.escape(brand)}/{re.escape(model)}/(\d+)", model_html or "")
     if variant_ids:
         var_html = fs_get(f"{BASE}/car-brands/{brand}/{model}/{variant_ids[0]}", session_id)
+        _note_progress(vehicle)
         if var_html:
             extra_slugs += get_additional_slugs(var_html, brand, model)
 
@@ -774,6 +839,7 @@ def harvest_model(session_id: str, vehicle: str, state: dict) -> int:
     for i, slug in enumerate(all_slugs):
         path = f"/car-parts/{brand}/{model}/{slug}"
         html = fs_get(f"{BASE}{path}", session_id, timeout_ms=15000)
+        _note_progress(vehicle)
         if html:
             parts = [p for p in parse_parts(html, path) if p["sku"] not in seen]
             for p in parts:
@@ -806,6 +872,7 @@ def worker(worker_id: int, models_this_cycle: int, state: dict):
     plain HTTP (+ the shared cf_clearance cookie — NO browser, NO FlareSolverr session),
     record the result, repeat — until the per-cycle budget is spent or the queue is empty.
     `models_this_cycle` bounds how many this worker takes before the cycle rests."""
+    threading.current_thread().name = f"worker-{worker_id}"
     done = 0
     while done < models_this_cycle:
         claim = claim_next_model()
@@ -829,14 +896,22 @@ def worker(worker_id: int, models_this_cycle: int, state: dict):
             log.error(f"Worker {worker_id} error on {vehicle}: {e}")
             complete_model(qid, 0)  # mark empty so we don't wedge on it
         done += 1
+        _note_progress()
         time.sleep(INTER_MODEL)
 
+    _note_progress(done=True)
     log.info(f"Worker {worker_id}: done ({done} models this cycle)")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
     state = load_state()
+    if _PARALLEL_NOTE:
+        log.warning(_PARALLEL_NOTE)
+    log.info(f"parallel_sessions={PARALLEL_SESSIONS} (env HARVESTER_PARALLEL_SESSIONS="
+             f"{os.environ.get('HARVESTER_PARALLEL_SESSIONS', '<unset>')}) inter_model_s={INTER_MODEL} "
+             f"idle_max_rest_s={IDLE_MAX_REST_S}")
+    _status_write(force=True, state="working", parallel=PARALLEL_SESSIONS, last_progress_at=time.time())
 
     # Clean any sessions a previous run left open (best-effort), then mint the FIRST
     # cf_clearance cookie. From here every page is fetched by plain HTTP with that cookie
@@ -860,6 +935,9 @@ def main():
 
     while True:
         state["cycles"] = state.get("cycles", 0) + 1
+        # a cycle start (clearance refresh, queue maintenance, claiming) counts as the start of work
+        _status_write(force=True, state="working", cycle=state["cycles"], rest_until=None,
+                      last_progress_at=time.time(), since=time.time())
 
         # Keep the cf_clearance cookie fresh (re-mint when older than CLEARANCE_TTL_S).
         # This is the ONLY FlareSolverr browser use now — a couple of solves per hour.
@@ -904,7 +982,7 @@ def main():
         if not have_clearance:
             log.warning("No valid cf_clearance/session — skipping worker cycle to avoid false-empty "
                         "queue burn. Sleeping 60s before retry.")
-            time.sleep(60)
+            _rest(60, "waiting_clearance")
             continue
 
         # Each worker takes a bounded slice of the queue this cycle, then the cycle rests.
@@ -942,7 +1020,9 @@ def main():
             rest = 120
             log.info(f"Cycle {state['cycles']} done. Total parts: "
                      f"{state['total_parts']}. Resting {rest}s...")
-        time.sleep(rest)
+        # #78: an explicit, observable rest (idle on a drained queue, or the short pause between busy cycles) —
+        # the healthcheck reads this instead of mistaking a quiet log for a hang.
+        _rest(rest, "idle")
 
 
 if __name__ == "__main__":

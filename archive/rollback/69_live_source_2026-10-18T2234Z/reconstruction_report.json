@@ -1,0 +1,94 @@
+{
+ "events": 43,
+ "files": {
+  "BACKEND_API_ROUTES.py": {
+   "edits": 8,
+   "undone": 8,
+   "ok": true,
+   "problems": []
+  },
+  "BACKEND_AI_AGENTS.py": {
+   "edits": 6,
+   "undone": 6,
+   "ok": true,
+   "problems": []
+  },
+  "agents/owner_console.py": {
+   "edits": 1,
+   "undone": 1,
+   "ok": true,
+   "problems": []
+  },
+  "db_update_agent.py": {
+   "edits": 1,
+   "undone": 1,
+   "ok": true,
+   "problems": []
+  },
+  "hf_client.py": {
+   "edits": 3,
+   "undone": 3,
+   "ok": true,
+   "problems": []
+  },
+  "routes/parts.py": {
+   "edits": 17,
+   "undone": 17,
+   "ok": true,
+   "problems": []
+  },
+  "routes/public_api.py": {
+   "edits": 1,
+   "undone": 1,
+   "ok": true,
+   "problems": []
+  },
+  "routes/brands.py": {
+   "edits": 1,
+   "undone": 1,
+   "ok": true,
+   "problems": []
+  },
+  "manufacturer_normalization.py": {
+   "edits": 3,
+   "undone": 3,
+   "ok": true,
+   "problems": []
+  }
+ },
+ "unhandled": [
+  {
+   "ts": "2026-10-19T04:30:32.886Z",
+   "id": "toolu_01R39td6GxP8SQupQhPMK9yn",
+   "kind": "py_slice",
+   "target": null,
+   "src": "p='tests/test_full_system.py'; s=open(p).read()\na='\"email\": f\"ghost_{_RUN_ID}@nowhere.com\",'\nassert s.count(a)==1; s=s.replace(a,'\"email\": f\"ghost_{_RUN_ID}@example.com\",   # reserved domain \u2014 never a real inbox')\na='''def test_N_password_reset_uses_sendgrid():\n    auth_src = _auth_src()\n    assert \"sendgrid_key\" in auth_src or \"SENDGRID_API_KEY\" in auth_src, \\\\\n        \"Password reset must send email via SendGrid\"'''\nb='''def test_N_password_reset_sends_email():\n    \"\"\"A reset must actually send the link (SMTP first, SendGrid fallback \u2014 routes/email_utils)\n    to the public site, never to a localhost default.\"\"\"\n    import inspect\n    import BACKEND_AUTH_SECURITY as auth\n    from routes import email_utils\n    src = inspect.getsource(auth.create_password_reset_token)\n    assert \"send_template(\" in src and \"password_reset(\" in src, \"reset token is created but never emailed\"\n    mail = inspect.getsource(email_utils)\n    assert \"SMTP_HOST\" in mail and \"_send_via_sendgrid\" in mail, \"no working mail transport\"\n    assert (os.getenv(\"FRONTEND_URL\") or \"\").startswith(\"https://\"), \"reset link would point at localhost\"'''\nassert s.count(a)==1; s=s.replace(a,b)\na='''def test_N_search_oem_original_separate_queries():\n    \"\"\"OEM and Original search buckets must use different condition lists.\"\"\"\n    src = _routes_src()\n    # The original bucket should specify only 'Original', not mixed with OEM\n    assert '[\"Original\"]' in src, \\\\\n        'Original search bucket should use [\"Original\"], not mixed with OEM'\n    assert '[\"OEM\"]' in src, \\\\\n        'OEM search bucket should use [\"OEM\"], not mixed with Original\\''''\nif s.count(a)!=1:\n    i=s.index('def test_N_search_oem_original_separate_queries'); print(repr(s[i:i+520])); raise SystemExit\nb='''def test_N_search_oem_original_separate_queries():\n    \"\"\"Original, OEM and aftermarket buckets (routes/parts.py) use disjoint part_type lists,\n    so one part can never be offered under two labels.\"\"\"\n    from routes import parts\n    o, e, a = set(parts._PT_ORIGINAL), set(parts._PT_OEM), set(parts._PT_AFTERMARKET)\n    assert o and e and a\n    assert not (o & e) and not (o & a) and not (e & a), (o & e, o & a, e & a)'''\ns=s.replace(a,b); open(p,'w').write(s); print('ok')",
+   "pairs": []
+  },
+  {
+   "ts": "2026-10-19T20:32:17.476Z",
+   "id": "toolu_01NJbKYgpPMxjCwfKJtYNQV3",
+   "kind": "py_slice",
+   "target": "routes/parts.py",
+   "src": "p='routes/parts.py'; s=open(p).read()\na='''            fit_ids = (await db.execute(text('''\nb='''            async with db.begin_nested():                         # an error must not abort the caller's transaction\n                fit_ids = (await db.execute(text('''\nassert s.count(a)==1; s=s.replace(a,b)\na='''                \" LIMIT :fit_id_cap\"), {**id_params, \"fit_id_cap\": FIT_ID_RESOLVE_CAP + 1})).scalars().all()'''\nb='''                    \" LIMIT :fit_id_cap\"), {**id_params, \"fit_id_cap\": FIT_ID_RESOLVE_CAP + 1})).scalars().all()'''\nassert s.count(a)==1; s=s.replace(a,b)\n# re-indent the 4 SQL string lines between\nimport re\ni=s.index('                fit_ids = (await db.execute(text(')\nj=s.index('                    \" LIMIT :fit_id_cap\")')\nblock=s[i:j]\nlines=block.split('\\n')\nnew=[lines[0]]+[('    '+l if l.strip() else l) for l in lines[1:]]\ns=s[:i]+'\\n'.join(new)+s[j:]\nopen(p,'w').write(s)",
+   "pairs": []
+  },
+  {
+   "ts": "2026-10-19T20:32:55.251Z",
+   "id": "toolu_012BeqwuQKEvzk1sJWSHXYFJ",
+   "kind": "py_slice",
+   "target": "routes/parts.py",
+   "src": "p='routes/parts.py'; s=open(p).read()\ni=s.index('        if True:\\n            original_task = _bucket(_PT_ORIGINAL)')\nj=s.index('            return original_bucket, oem_bucket, aftermarket_bucket\\n', i)+len('            return original_bucket, oem_bucket, aftermarket_bucket\\n')\nblock=s[i:j].split('\\n')[1:]\nblock=[l[4:] if l.startswith('            ') else l for l in block]\ns=s[:i]+'\\n'.join(block)+s[j:]\nopen(p,'w').write(s)",
+   "pairs": []
+  },
+  {
+   "ts": "2026-10-20T03:48:36.597Z",
+   "id": "toolu_01DzeQTxd6QkSD3K2YbbHqXm",
+   "kind": "py_slice",
+   "target": null,
+   "src": "p='reconstruct.py'; s=open(p).read()\n# 1) sed without g = first occurrence per LINE\na='''                    events.append({\"ts\": ts, \"id\": tid, \"kind\": \"sed\", \"target\": t,\n                                   \"pairs\": [(unesc(mm.group(1)), unesc(mm.group(2)), -1 if mm.group(3) else 1)]})'''\nb='''                    events.append({\"ts\": ts, \"id\": tid, \"kind\": \"sed\", \"target\": t,\n                                   \"pairs\": [(unesc(mm.group(1)), unesc(mm.group(2)), -1 if mm.group(3) else \"perline\")]})'''\nassert s.count(a)==1; s=s.replace(a,b)\n# 2) slice scripts become their own kind with the source kept\na='''            if \"s.index(\" in src or \"s[:i]\" in src:\n                events.append({\"ts\": ts, \"id\": tid, \"kind\": \"py_slice\", \"src\": src})\n                continue'''\nb='''            if \"s.index(\" in src or \"s[:i]\" in src:\n                t = next((x for x in TARGETS if f\"'{x}'\" in src), None)\n                events.append({\"ts\": ts, \"id\": tid, \"kind\": \"py_slice\", \"target\": t, \"src\": src, \"pairs\": []})\n                continue'''\nassert s.count(a)==1; s=s.replace(a,b)\n# 3) reverse/forward helpers\na='''events.sort(key=lambda e: e[\"ts\"])'''\nb='''def _apply(text_, a, b, n):\n    if n == \"perline\":\n        return \"\\\\n\".join(l.replace(a, b, 1) for l in text_.split(\"\\\\n\"))\n    return text_.replace(a, b) if n == -1 else text_.replace(a, b, 1)\n\n\ndef exec_forward(src, target, content):\n    \"\"\"Run the RECORDED script on `content` for real; return what it would have written.\"\"\"\n    written = {}\n\n    def fake_open(p, mode=\"r\", *a, **k):\n        t = _target_of(p)\n        if \"w\" in mode:\n            buf = io.StringIO()\n            buf.close_orig = buf.close\n            def _close():\n                written[t] = buf.getvalue()\n            buf.close = _close\n            return buf\n        if t != target:\n            raise FileNotFoundError(p)\n        return io.StringIO(content)\n    g = {\"__name__\": \"__replay__\", \"open\": fake_open, \"__builtins__\": builtins}\n    real_sio_write = None\n    exec(compile(src.replace(\"open(p,'w').write(s)\", \"_w=open(p,'w'); _w.write(s); _w.close()\"), \"<fwd>\", \"exec\"), g)\n    return written.get(target)\n\n\ndef reverse_slice(src, later):\n    \"\"\"Exact inverses of the two slice scripts used on routes/parts.py (2026-10-19 20:32 UTC).\"\"\"\n    if \"lines=block.split('\\\\\\\\n')\" in src or \"new=[lines[0]]+\" in src:      # re-indent +4 after first line\n        i = later.index('                fit_ids = (await db.execute(text(')\n        j = later.index('                    \" LIMIT :fit_id_cap\")')\n        lines = later[i:j].split(\"\\\\n\")\n        back = [lines[0]] + [(l[4:] if l.startswith(\"    \") and l.strip() else l) for l in lines[1:]]\n        return later[:i] + \"\\\\n\".join(back) + later[j:], \"reindent\"\n    if \"if True:\" in src:                                                   # drop `if True:` + dedent 4\n        i = later.index('        original_task = _bucket(_PT_ORIGINAL)')\n        end = '        return original_bucket, oem_bucket, aftermarket_bucket\\\\n'\n        j = later.index(end, i) + len(end)\n        body = later[i:j].split(\"\\\\n\")\n        back = [\"        if True:\"] + [(\"    \" + l if l.strip() else l) for l in body]\n        return later[:i] + \"\\\\n\".join(back) + later[j:], \"if_true\"\n    raise ValueError(\"unknown slice script\")\n\n\nevents.sort(key=lambda e: e[\"ts\"])'''\nassert s.count(a)==1; s=s.replace(a,b)\n# 4) main loop: slice events + perline\na='''    for e in reversed(evs):\n        before = cur\n        for a, b, n in reversed(e[\"pairs\"]):'''\nb='''    for e in reversed(evs):\n        before = cur\n        if e[\"kind\"] == \"py_slice\":\n            # the slice scripts also contain plain replace() pairs that run BEFORE the slice\n            pre_pairs = [(x[1], x[2], x[3]) for x in run_script(e[\"src\"]) if x[0] == t]\n            try:\n                cur, how = reverse_slice(e[\"src\"], cur)\n            except Exception as ex:\n                problems.append((e[\"ts\"], f\"slice reverse failed: {ex}\"))\n                ok = False\n                break\n            for a, b, n in reversed(pre_pairs):\n                if cur.count(b) != 1:\n                    problems.append((e[\"ts\"], f\"slice pre-pair new text occurs {cur.count(b)}x\", b[:80]))\n                    ok = False\n                    break\n                cur = cur.replace(b, a, 1)\n            if not ok:\n                break\n            fwd = exec_forward(e[\"src\"], t, cur)                  # the recorded script, for real\n            if fwd != before:\n                problems.append((e[\"ts\"], f\"slice forward exec != later content ({how})\"))\n                ok = False\n                break\n            steps += 1\n            continue\n        for a, b, n in reversed(e[\"pairs\"]):'''\nassert s.count(a)==1; s=s.replace(a,b)\na='''            if n == 1 and c != 1:'''\nb='''            if n == \"perline\":\n                cur = \"\\\\n\".join(l.replace(b, a, 1) for l in cur.split(\"\\\\n\"))\n                continue\n            if n == 1 and c != 1:'''\nassert s.count(a)==1; s=s.replace(a,b)\na='''            fwd = fwd.replace(a, b) if n == -1 else fwd.replace(a, b, 1)'''\nb='''            fwd = _apply(fwd, a, b, n)'''\nassert s.count(a)==1; s=s.replace(a,b)\nopen(p,'w').write(s)",
+   "pairs": []
+  }
+ ],
+ "failed_scripts_skipped": []
+}

@@ -340,6 +340,59 @@ def canonicalize_vehicle_model_for_manufacturer(manufacturer: Optional[str], mod
     return override or canonical_model
 
 
+def customer_vehicle_model(manufacturer: Optional[str], model: Optional[str]) -> str:
+    """The vehicle model a customer (plate lookup, selector, chat) is searching for.
+
+    `normalize_vehicle_model_name` is an INGEST noise filter: it drops values without letters
+    and strips "year" suffixes. Applied to a customer's own selection it erased real models —
+    Peugeot 3008 / 2008 / 208 / 308, a bare Mazda "3" — so the fitment lane matched nothing and
+    the search fell into the unindexed JSON fallback scan (FIXES_TRACKER #69 §16). A customer's
+    model is never erased here: canonical form when there is one, else the value as given
+    (whitespace collapsed, a trailing year after another word removed).
+    A make name in front of a NUMERIC model is dropped first ("MAZDA 3" -> "3", the registry's
+    kinuy_mishari form): the ingest filter strips the trailing number and left "MAZDA". Only a
+    numeric remainder is split off, so a name like "Mini Cooper" is left as it is.
+    """
+    raw = " ".join(str(model or "").split())
+    if manufacturer and raw:
+        for mk in sorted({str(manufacturer).strip(),
+                          normalize_manufacturer_name(manufacturer, manufacturer) or ""}, key=len, reverse=True):
+            m = re.match(rf"^{re.escape(mk)}[\s\-]?(\d.*)$", raw, flags=re.IGNORECASE) if mk else None
+            if m:
+                raw = m.group(1).strip()
+                break
+    model = raw
+    canonical = (canonicalize_vehicle_model_for_manufacturer(manufacturer, model) if manufacturer
+                 else normalize_vehicle_model_name(model))
+    if canonical:
+        return canonical
+    v = " ".join(str(model or "").split())
+    v = re.sub(r"\s+(?:19|20)\d{2}$", "", v).strip()
+    if not v or v.lower() in MODEL_JUNK_TOKENS:
+        return ""
+    return v
+
+
+def customer_vehicle_model_forms(manufacturer: Optional[str], model: Optional[str]) -> list:
+    """Every form of the customer's model that fitment data may be filed under, primary first.
+
+    The fitment table files the same car both ways — Mazda "3 bk" (4,963 rows) AND "mazda 3" /
+    "mazda3" (639 / 2,972); MG only as "mg4", Jaecoo "jaecoo7", Fiat "fiat 500 …" (12,136 rows),
+    Zeekr "zeekr 001" — so neither the make-stripped form nor the registry form alone is right
+    (measured over all 5,689 registry names, FIXES_TRACKER #69 §16). Each form is judged by the
+    same fitment rule; a form nothing is filed under adds nothing. Empty when the model is unusable.
+    """
+    primary = customer_vehicle_model(manufacturer, model)
+    if not primary:
+        return []
+    raw = " ".join(str(model or "").split())
+    raw = re.sub(r"\s+(?:19|20)\d{2}$", "", raw).strip()
+    forms = [primary]
+    if raw and raw.casefold() != primary.casefold() and raw.casefold() not in MODEL_JUNK_TOKENS:
+        forms.append(raw)
+    return forms
+
+
 def normalize_vehicle_submodel_name(raw: Optional[str]) -> str:
     """Normalize sub-model/trim names for UI hierarchy display.
 

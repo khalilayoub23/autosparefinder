@@ -539,7 +539,7 @@ _IMPORTERS_DIR = _BACKEND_ROOT / "importers"
 
 def _task_names() -> List[str]:
     import db_update_agent as _dua
-    return list(_dua.TASK_REGISTRY.keys())
+    return [n for n in _dua.TASK_REGISTRY if n not in _dua.OOM_BLOCKED_TASKS]
 
 
 def _harvester_names() -> List[str]:
@@ -1303,16 +1303,43 @@ async def _keywords_list() -> str:
     return "\n".join(lines)
 
 
-async def _keyword_approve(token: str, force: bool = False) -> str:
+_KW_FORCE_RE = re.compile(r"\s+(בכוח|force|בכל מקרה)$", re.I)
+
+
+def _keyword_args(rest: str):
+    """(keyword, force, full_text) from the text after the command; whitespace collapsed."""
+    full = " ".join((rest or "").split())
+    m = _KW_FORCE_RE.search(full)
+    if m:
+        return full[:m.start()], True, full
+    return full, False, full
+
+
+async def _not_found_reply(cl, db, token: str, verb: str) -> str:
+    sim = await cl.similar_tokens(db, token)
+    hint = ("\nאולי התכוונת ל: " + ", ".join(f"*{t}*" for t in sim)) if sim else ""
+    return f"לא מצאתי מילה בשם *{cl.norm_token(token)}* — לא {verb} דבר.{hint}\nכתוב *מילים* לרשימה."
+
+
+async def _keyword_approve(token: str, force: bool = False, full: str = None) -> str:
     from catalog_scraper import scraper_session_factory
     import category_learning as cl
     if not token:
         return "צריך מילה. כתוב *מילים* לרשימה."
     try:
         async with scraper_session_factory() as db:
+            if force and full and await cl.token_exists(db, full):
+                token, force = full, False          # "<…> בכוח" is itself a stored token
+            if not await cl.token_exists(db, token):
+                return await _not_found_reply(cl, db, token, "אושר")
             res = await cl.approve(db, token, force=force)
+            stored = (await db.execute(_sql(
+                "SELECT status FROM category_learned_keywords WHERE token = :t AND category = :c"),
+                {"t": res.get("token"), "c": res.get("category")})).scalar() if res.get("ok") else None
     except Exception as e:
         return f"⚠️ שגיאה: {str(e)[:120]}"
+    if res.get("ok") and stored != "approved":         # report the STORED outcome (#72)
+        return f"⚠️ *{res['token']}*: האישור לא נשמר (מצב במסד: {stored}) — בדוק."
     if not res.get("ok"):
         if res.get("error") == "blocklisted":
             return (f"❌ *{token}* חסומה לצמיתות (שם יצרן / בורג / מיקום) "
@@ -1345,12 +1372,19 @@ async def _keyword_reject(token: str) -> str:
         return "צריך מילה. כתוב *מילים* לרשימה."
     try:
         async with scraper_session_factory() as db:
+            if not await cl.token_exists(db, token):
+                return await _not_found_reply(cl, db, token, "נדחה")
             res = await cl.reject(db, token)
+            persisted = (await db.execute(_sql(
+                "SELECT count(*) FILTER (WHERE status <> 'rejected') FROM category_learned_keywords WHERE token = :t"),
+                {"t": res.get("token")})).scalar() if res.get("ok") else None
     except Exception as e:
         return f"⚠️ שגיאה: {str(e)[:120]}"
     if not res.get("ok"):
-        return f"לא מצאתי מילה בשם *{token}*."
-    return f"🚫 *{token}* נדחתה — לא תיטען ולא תוצע שוב."
+        return f"לא מצאתי מילה בשם *{res.get('token')}*."
+    if persisted:                                   # report the STORED outcome, not the parse (#72)
+        return f"⚠️ *{res['token']}*: {persisted} רשומות לא עודכנו לדחייה — בדוק."
+    return f"🚫 *{res['token']}* נדחתה — לא תיטען ולא תוצע שוב."
 
 
 async def _sourcing_list() -> str:
@@ -1653,16 +1687,16 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp") -> 
     if m_rjs:
         return await _sourcing_reject(m_rjs.group(2) or "")
     # ── category keyword learning (approve/reject what the LLM taught) ────────
-    m_kwa = re.match(r"^(approve[\-_ ]?word|אשרמילה|אשר מילה)\b\s*(\S+)?", msg, re.I)
+    # The keyword is the WHOLE rest of the line (#72): `(\S+)` took only the first word, so
+    # "דחהמילה brake pad" acted on the different token "brake". A trailing בכוח/force is the
+    # evidence-gate override — unless the full text is itself a stored token.
+    m_kwa = re.match(r"^(approve[\-_ ]?word|אשרמילה|אשר מילה)(?=\s|$)", msg, re.I)
     if m_kwa:
-        _kw_arg = (m_kwa.group(2) or "").strip()
-        # "אשרמילה <word> בכוח" / "... force" = owner override of the evidence gate
-        _rest = msg[m_kwa.end():].strip().lower()
-        _force = bool(re.search(r"\b(בכוח|force|בכל מקרה)\b", _rest))
-        return await _keyword_approve(_kw_arg, force=_force)
-    m_kwr = re.match(r"^(reject[\-_ ]?word|דחהמילה|דחה מילה)\b\s*(\S+)?", msg, re.I)
+        _kw_arg, _force, _full = _keyword_args(msg[m_kwa.end():])
+        return await _keyword_approve(_kw_arg, force=_force, full=_full)
+    m_kwr = re.match(r"^(reject[\-_ ]?word|דחהמילה|דחה מילה)(?=\s|$)", msg, re.I)
     if m_kwr:
-        return await _keyword_reject((m_kwr.group(2) or "").strip())
+        return await _keyword_reject(" ".join(msg[m_kwr.end():].split()))
     if low in ("ai", "מנוע", "מודל", "embed", "שלב"):
         return await _embed_phase_report()
     if low in ("words", "מילים", "מילה", "keywords", "מילות מפתח"):

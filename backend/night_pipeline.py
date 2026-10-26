@@ -18,7 +18,7 @@ Process (Controller.tick, called by controller_loop every POLL seconds):
      daily "D:YYYY-MM-DD", weekly "W:YYYY-Www" (only on the job's weekday), monthly
      "M:YYYY-MM" (day `monthday` .. `monthday+catchup_days`). The row is the idempotency
      key: a period can be claimed QUEUED→RUNNING exactly once, ever.
-  2. If ANY pipeline job is RUNNING, nothing else starts — however long it has run.
+  2. If ANY pipeline job is RUNNING, nothing else starts (bounded by the deadline in 7).
   3. Jobs are taken strictly in registry order. The first QUEUED job starts only when:
      its earliest-start time has passed (a CONSTRAINT, not a trigger), every dependency
      is COMPLETED for this night, no conflicting lock is held (manual runs, DB agent for
@@ -34,14 +34,17 @@ Process (Controller.tick, called by controller_loop every POLL seconds):
      night instead (still at most one execution per month).
   6. On controller start, RUNNING rows left by a dead process become FAILED
      ("interrupted by backend restart") — never re-run, so a restart cannot duplicate.
-  The controller never cancels, kills or restarts anything; it only waits.
+  7. Every job has a hard deadline (JobSpec.max_runtime_s, ~2x its longest observed run,
+     NIGHT_JOB_MAX_RUNTIME_<KEY>_S overrides). Past it the job is cancelled and recorded
+     FAILED. Waiting forever was the old rule; one hung category_discovery held the whole
+     pipeline and run_all_tasks for 4.5 days (2026-10-12..17). Nothing else is killed.
 
 Data Imported/Modified: table `night_pipeline_runs` (self-created at controller start),
      Redis key autospare:night_pipeline:running (TTL marker other loops stand down on).
      The JOBS modify their own tables; this module never writes catalogue data.
 Data Sources: none (internal orchestration).
 Missing Data Delegation: n/a.
-Last Updated: 2026-10-03
+Last Updated: 2026-10-18
 """
 from __future__ import annotations
 
@@ -71,6 +74,35 @@ WINDOW_OPEN = _hm("NIGHT_PIPELINE_OPEN_IL", "01:00")
 WINDOW_CLOSE = _hm("NIGHT_PIPELINE_CLOSE_IL", "07:00")
 POLL_S = int(os.getenv("NIGHT_PIPELINE_POLL_S", "60"))
 COOLDOWN_S = int(os.getenv("NIGHT_PIPELINE_COOLDOWN_S", "60"))
+# A job that never returns would hold rule 2 forever: category_discovery D:2026-10-13 ran
+# from 2026-10-12 23:35 to a restart on 10-17 10:47 UTC (normal 113 min, max 120) while
+# its own heartbeat kept it looking alive — four nights of backups, price syncs and REX
+# never started, and run_all_tasks deferred to it the whole time.
+DEFAULT_MAX_RUNTIME_S = int(os.getenv("NIGHT_JOB_MAX_RUNTIME_S", "14400"))
+CANCEL_GRACE_S = int(os.getenv("NIGHT_JOB_CANCEL_GRACE_S", "120"))
+
+
+class JobDeadlineExceeded(Exception):
+    pass
+
+
+async def _await_with_deadline(coro: Awaitable[Any], limit_s: float, grace_s: float) -> Any:
+    """Await a job, cancelling it after limit_s. A job that ignores cancellation for grace_s
+    is abandoned: the pipeline is released either way."""
+    task = asyncio.ensure_future(coro)
+    try:
+        done, _ = await asyncio.wait({task}, timeout=limit_s)
+    except asyncio.CancelledError:
+        task.cancel()
+        raise
+    if done:
+        return task.result()
+    task.cancel()
+    finished, _ = await asyncio.wait({task}, timeout=grace_s)
+    if finished and not task.cancelled() and task.exception() is None:
+        return task.result()          # completed in the same instant it was cancelled
+    note = "" if finished else f"; did not stop within {grace_s:.0f}s of cancellation, abandoned"
+    raise JobDeadlineExceeded(f"exceeded max runtime {limit_s / 60:.0f} min, cancelled{note}")
 
 
 def enabled() -> bool:
@@ -94,6 +126,13 @@ class JobSpec:
     depends_on: Tuple[str, ...] = ()
     conflict_locks: Tuple[str, ...] = ()          # Redis lock names that must be free
     mem_heavy: bool = False
+    max_runtime_s: int = 0                        # 0 → DEFAULT_MAX_RUNTIME_S
+
+    def runtime_limit_s(self) -> int:
+        env = os.getenv(f"NIGHT_JOB_MAX_RUNTIME_{self.key.upper()}_S", "").strip()
+        if env.isdigit() and int(env) > 0:
+            return int(env)
+        return self.max_runtime_s or DEFAULT_MAX_RUNTIME_S
 
     def eligible(self, d: date) -> bool:
         if self.period == "daily":
@@ -166,6 +205,44 @@ class MemoryStore:
         return out
 
 
+DETAIL_MAX_CHARS = 20000
+
+
+def detail_json(detail: Any) -> Optional[str]:
+    """A job report as VALID JSON text for the jsonb column, bounded in size.
+
+    Slicing the serialized text (the old `json.dumps(...)[:20000]`) cut a large report in
+    the middle of a token, PostgreSQL rejected it, the UPDATE failed and the row stayed
+    RUNNING for good — category_discovery, 2026-10-04 (#64). An oversized report is
+    replaced by a small valid summary instead; NaN/Infinity (not legal JSON) become null.
+    """
+    if detail is None:
+        return None
+
+    def _clean(o: Any) -> Any:
+        if isinstance(o, float) and (o != o or o in (float("inf"), float("-inf"))):
+            return None
+        if isinstance(o, dict):
+            return {str(k): _clean(v) for k, v in o.items()}
+        if isinstance(o, (list, tuple, set)):
+            return [_clean(v) for v in o]
+        return o
+
+    text = json.dumps(_clean(detail), default=str).replace("\\u0000", "")
+    if len(text) <= DETAIL_MAX_CHARS:
+        return text
+    summary: Dict[str, Any] = {"truncated": True, "original_chars": len(text)}
+    if isinstance(detail, dict):
+        summary["keys"] = [str(k) for k in list(detail)[:50]]
+        summary["scalars"] = {str(k): v for k, v in _clean(detail).items()
+                              if (v is None or isinstance(v, (str, int, float, bool)))
+                              and len(str(v)) <= 300}
+        if len(json.dumps(summary, default=str)) > DETAIL_MAX_CHARS:
+            summary.pop("scalars")
+    summary["preview"] = text[:2000]
+    return json.dumps(summary, default=str)
+
+
 class PgStore:
     """night_pipeline_runs in the catalog DB. One row per (job, period) — the PRIMARY KEY
     is the idempotency guarantee; claim() is a single conditional UPDATE."""
@@ -213,10 +290,18 @@ class PgStore:
 
     async def finish(self, job_key: str, period_key: str, state: str, reason: Optional[str],
                      detail: Any, now: datetime) -> None:
-        await self._exec("UPDATE night_pipeline_runs SET state=:s, reason=:r, detail=CAST(:d AS jsonb), "
-                         "finished_at=:n WHERE job_key=:j AND period_key=:p",
-                         {"s": state, "r": reason, "n": now, "j": job_key, "p": period_key,
-                          "d": json.dumps(detail, default=str)[:20000] if detail is not None else None})
+        params = {"s": state, "r": reason, "n": now, "j": job_key, "p": period_key, "d": detail_json(detail)}
+        sql = ("UPDATE night_pipeline_runs SET state=:s, reason=:r, detail=CAST(:d AS jsonb), "
+               "finished_at=:n WHERE job_key=:j AND period_key=:p")
+        try:
+            await self._exec(sql, params)
+        except Exception as exc:
+            # The terminal STATE is what the sequence depends on; the detail is a report.
+            # A report the database refuses must never leave the row RUNNING (#64).
+            logger.error("[night_pipeline] detail for %s %s rejected (%s) — storing state without it",
+                         job_key, period_key, type(exc).__name__)
+            params["d"] = json.dumps({"detail_dropped": type(exc).__name__})
+            await self._exec(sql, params)
 
     async def note(self, job_key: str, period_key: str, reason: str) -> None:
         await self._exec("UPDATE night_pipeline_runs SET reason=:r WHERE job_key=:j AND period_key=:p "
@@ -323,6 +408,8 @@ class Controller:
     conflicts: Callable[[JobSpec], Awaitable[Optional[str]]] = _no_conflict
     marker: Callable[[Optional[str]], Awaitable[None]] = _no_marker
     process_start: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    # A terminal state the store could not record yet: (job_key, period_key, state, reason, detail).
+    _pending_finish: Optional[tuple] = field(default=None, repr=False)
 
     # — time helpers (all comparisons in UTC; wall times built in LOCAL_TZ → DST-safe) —
     @staticmethod
@@ -361,6 +448,16 @@ class Controller:
     async def tick(self) -> Dict[str, Any]:
         now = self.clock()
         d, window_open = self.night_of(now)
+
+        # A job whose work ended but whose terminal state could not be written (store outage at
+        # that moment) must not stay RUNNING until the next backend restart — rule 2 would hold
+        # the whole pipeline behind it. Record the state we still hold before anything else; if
+        # the store is still down this raises and the loop simply retries on the next tick (#65).
+        if self._pending_finish:
+            jk, ppk, st, rs, det = self._pending_finish
+            await self.store.finish(jk, ppk, st, rs, det, now)
+            self._pending_finish = None
+            logger.info("[night_pipeline] %s %s %s — terminal state recorded on retry", st, jk, ppk)
 
         running = await self.store.running()
         if running:                      # rule 2 — never start beside a running heavy job
@@ -439,7 +536,7 @@ class Controller:
         beat = asyncio.create_task(_beat())
         state, reason, result = FAILED, None, None
         try:
-            result = await job.run()                    # awaited to REAL completion
+            result = await _await_with_deadline(job.run(), job.runtime_limit_s(), CANCEL_GRACE_S)
             ok, why = await job.verify(result, started)
             if ok:
                 state = COMPLETED
@@ -454,8 +551,18 @@ class Controller:
         except Exception as exc:
             reason = f"{type(exc).__name__}: {str(exc)[:400]}"
         beat.cancel()
-        await self.store.finish(job.key, pk, state, reason, result if isinstance(result, (dict, list)) else None,
-                                self.clock())
+        detail = result if isinstance(result, (dict, list)) else None
+        try:
+            await self.store.finish(job.key, pk, state, reason, detail, self.clock())
+        except Exception as exc:
+            # The work is over; only the bookkeeping failed. Keep the real outcome and let
+            # tick() record it — never leave the row RUNNING and never lose the result (#65).
+            self._pending_finish = (job.key, pk, state, reason, detail)
+            await self.marker(None)
+            logger.error("[night_pipeline] %s %s finished as %s but the state could not be stored (%s) — will retry",
+                         job.key, pk, state, type(exc).__name__)
+            return {"action": "wait", "job": job.key,
+                    "reason": f"terminal state {state} not yet stored: {type(exc).__name__}"}
         await self.marker(None)
         (logger.info if state == COMPLETED else logger.error)(
             "[night_pipeline] %s %s %s%s", state, job.key, pk, f" — {reason}" if reason else "")
@@ -540,8 +647,15 @@ def build_production_controller() -> Controller:
         st = ((res or {}).get("scraper_cycle") or {}).get("status")
         if st == "disabled":                       # SCRAPE_ENABLED=false — nothing to verify
             return True, "scraper cycle disabled by configuration"
-        if st in ("error", "skipped", None):
+        cycle = (res or {}).get("scraper_cycle")
+        if not isinstance(cycle, dict) or st in ("error", "skipped"):
             return False, f"scraper cycle status={st}"
+        # A cycle that RAN reports counters and no "status" key at all (only its
+        # disabled/skipped/error exits carry one) — so a missing status is not a failure
+        # (#64: the first natural run was marked FAILED on a clean cycle). The independent
+        # post-condition is the cycle's own job_registry row.
+        if cycle.get("errors"):
+            return False, f"scraper cycle errors={cycle.get('errors')}"
         return await _registry_ok("run_scraper_cycle", started)
 
     # 5 — monthly brand discovery
@@ -573,22 +687,28 @@ def build_production_controller() -> Controller:
         return (res or {}).get("status") == "completed", f"status={(res or {}).get('status')} problems={(res or {}).get('problems')}"
 
     jobs = [
-        JobSpec("auto_backup", "daily", run_backup_job, verify_backup),
-        JobSpec("ebay_fitment_backfill", "daily", run_fitment_job, verify_fitment, conflict_locks=("sync_prices",)),
-        JobSpec("sync_prices", "daily", run_sync_job, verify_sync, conflict_locks=("sync_prices",)),
-        JobSpec("rex_night", "daily", run_rex_job, verify_rex, conflict_locks=("scraper_cycle",)),
+        JobSpec("auto_backup", "daily", run_backup_job, verify_backup, max_runtime_s=3600),
+        JobSpec("ebay_fitment_backfill", "daily", run_fitment_job, verify_fitment, conflict_locks=("sync_prices",),
+                max_runtime_s=3600),
+        JobSpec("sync_prices", "daily", run_sync_job, verify_sync, conflict_locks=("sync_prices",),
+                max_runtime_s=25200),          # observed 23..203 min
+        JobSpec("rex_night", "daily", run_rex_job, verify_rex, conflict_locks=("scraper_cycle",),
+                max_runtime_s=3600),
         JobSpec("brand_discovery", "monthly", run_brand_job, verify_brand,
                 earliest=_hm("BRAND_DISCOVERY_EARLIEST_IL", "03:15"),
                 monthday=int(os.getenv("BRAND_DISCOVERY_MONTHDAY", "1")),
                 catchup_days=int(os.getenv("BRAND_DISCOVERY_CATCHUP_DAYS", "6")),
                 depends_on=("sync_prices",),
-                conflict_locks=("brand_discovery", "category_discovery", "db_update_agent"), mem_heavy=True),
+                conflict_locks=("brand_discovery", "category_discovery", "db_update_agent"), mem_heavy=True,
+                max_runtime_s=18000),
         JobSpec("category_discovery", "daily", run_category_job, verify_category,
-                conflict_locks=("category_discovery", "brand_discovery", "db_update_agent"), mem_heavy=True),
+                conflict_locks=("category_discovery", "brand_discovery", "db_update_agent"), mem_heavy=True,
+                max_runtime_s=16200),          # observed 105..120 min
         JobSpec("weekly_maintenance", "weekly", run_weekly_job, verify_weekly,
                 earliest=_hm("WEEKLY_MAINT_EARLIEST_IL", "05:00"),
                 weekday=int(os.getenv("WEEKLY_MAINT_WEEKDAY_IL", "5")),
-                conflict_locks=("sync_prices", "brand_discovery", "category_discovery")),
+                conflict_locks=("sync_prices", "brand_discovery", "category_discovery"),
+                max_runtime_s=7200),
     ]
 
     async def conflicts(job: JobSpec) -> Optional[str]:

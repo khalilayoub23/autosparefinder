@@ -21,13 +21,17 @@ Process:
       GMAIL_OAUTH_CLIENT_SECRET / GMAIL_OAUTH_REFRESH_TOKEN into .env (replacing old lines).
       Without --code it takes the code from the state-matched callback (see callback-status).
       Prints only which keys were written and the granted scopes.
+      Once the 2026-10-09 nginx log redaction is deployed, the access log records the redirect
+      as "code=<redacted>": callback-status then reports code_redacted=true and exchange stops
+      and asks for --code (copy it from the browser's address bar). Capturing the code
+      server-side without logging it needs a dedicated callback route (not built).
   The backend picks the values up on its next start (no restart is performed here).
 Data Imported/Modified: /opt/autosparefinder/.env (three GMAIL_OAUTH_* lines);
          /root/.cache/autosparefinder/gmail_oauth_state.json (one-time state, removed after use).
 Data Sources: accounts.google.com (consent), oauth2.googleapis.com/token (exchange),
          `docker logs autospare_nginx` (read-only, to see the redirect).
 Missing Data Delegation: the consent click must be made by the owner, signed in as the mailbox.
-Last Updated: 2026-10-06
+Last Updated: 2026-10-09
 
 Run: python3 /opt/autosparefinder/backend/maintenance/gmail_oauth_setup.py auth-url --read-only
 """
@@ -57,6 +61,7 @@ SCOPE_READONLY = "https://www.googleapis.com/auth/gmail.readonly"
 SCOPE_COMPOSE = "https://www.googleapis.com/auth/gmail.compose"
 STATE_TTL_S = 3600          # a consent URL older than this is not accepted
 CODE_MAX_AGE_S = 480        # Google authorization codes are short-lived; refuse a stale one
+REDACTED = "<redacted>"     # what the redacting nginx log format writes in place of a code
 
 # nginx "combined" access line; only a request for exactly "/" with a query can be the redirect.
 _ACCESS = re.compile(r'\[(?P<ts>[^\]]+)\] "GET /\?(?P<query>\S+) HTTP/[0-9.]+" (?P<status>\d{3}) ')
@@ -128,8 +133,10 @@ def find_callback(lines: Iterable[str], state: str) -> Optional[dict]:
             ts = datetime.strptime(m.group("ts"), "%d/%b/%Y:%H:%M:%S %z")
         except ValueError:
             ts = None
+        raw_code = q.get("code", [""])[0]
         found = {"time": ts, "http_status": int(m.group("status")),
-                 "code": q.get("code", [""])[0], "error": q.get("error", [""])[0],
+                 "code": "" if raw_code == REDACTED else raw_code, "code_redacted": raw_code == REDACTED,
+                 "error": q.get("error", [""])[0],
                  "scope": q.get("scope", [""])[0], "iss": q.get("iss", [""])[0]}
     return found
 
@@ -142,6 +149,7 @@ def describe_callback(cb: Optional[dict], now: Optional[datetime] = None) -> dic
     age = int((now - cb["time"]).total_seconds()) if cb.get("time") else None
     return {"callback_received": True, "http_status": cb["http_status"], "age_s": age,
             "code_present": bool(cb["code"]), "code_length": len(cb["code"]),
+            "code_redacted": bool(cb.get("code_redacted")),
             "error": cb["error"] or None, "granted_scope": cb["scope"] or None,
             "issuer": cb["iss"] or None,
             "code_fresh": bool(cb["code"]) and age is not None and age <= CODE_MAX_AGE_S}
@@ -199,6 +207,9 @@ def main() -> int:
             sys.exit("no redirect with our state has reached the site yet.")
         if info["error"]:
             sys.exit(f"Google returned an error instead of a code: {info['error']}")
+        if info["code_redacted"]:
+            sys.exit("the redirect arrived, but nginx redacts OAuth codes from its logs: copy the code from the "
+                     "browser address bar and run: exchange --code '<code>'")
         if not info["code_fresh"]:
             sys.exit("the authorization code is missing or too old: run auth-url and approve again.")
         code = cb["code"]

@@ -1,0 +1,6805 @@
+[
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "nissan",
+  "base": "qashqai",
+  "extension": "qashqai",
+  "registry_name": "qashqai qashqai",
+  "customer_models": [
+   "qashqai qashqai 2 i van j10 jj10e",
+   "qashqai qashqai 2 j10 jj10"
+  ],
+  "fitment_models": [
+   [
+    "qashqai",
+    81279
+   ]
+  ],
+  "rows_removed": 162558,
+  "proposal": "same_platform",
+  "ext_codes": [
+   "j10",
+   "jj10",
+   "jj10e"
+  ],
+  "base_codes": [
+   "j10",
+   "j11",
+   "j12"
+  ],
+  "shared_codes": [
+   "j10"
+  ],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D2: shares platform codes with the base — a shared platform is not proof of part compatibility"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "toyota",
+  "base": "corolla",
+  "extension": "verso",
+  "registry_name": "corolla verso",
+  "customer_models": [
+   "corolla verso zde12 cde12",
+   "corolla verso zer zze12 r1",
+   "corolla verso zze12 nre12"
+  ],
+  "fitment_models": [
+   [
+    "corolla",
+    42956
+   ]
+  ],
+  "rows_removed": 128868,
+  "proposal": "same_platform",
+  "ext_codes": [
+   "cde12",
+   "nre12",
+   "r1",
+   "zde12",
+   "zze12"
+  ],
+  "base_codes": [
+   "ae10",
+   "ae86",
+   "aze15",
+   "e10",
+   "e11",
+   "e12",
+   "e12j",
+   "e12t"
+  ],
+  "shared_codes": [
+   "zde12",
+   "zze12"
+  ],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D2: shares platform codes with the base — a shared platform is not proof of part compatibility"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "toyota",
+  "base": "corolla",
+  "extension": "cross",
+  "registry_name": "corolla cross",
+  "customer_models": [
+   "corolla cross",
+   "corolla cross g10"
+  ],
+  "fitment_models": [
+   [
+    "corolla",
+    42956
+   ]
+  ],
+  "rows_removed": 85912,
+  "proposal": "distinct",
+  "ext_codes": [
+   "g10"
+  ],
+  "base_codes": [
+   "ae10",
+   "ae86",
+   "aze15",
+   "cde12",
+   "e10",
+   "e11",
+   "e12",
+   "e12j"
+  ],
+  "shared_codes": [],
+  "classification": "PROVEN_CORRECT",
+  "classification_reason": "different vehicle: the extension's own series and the base series carry disjoint platform/chassis codes (['g10'] vs ['ae10', 'ae86', 'aze15'])"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "toyota",
+  "base": "land",
+  "extension": "cruiser",
+  "registry_name": "land cruiser",
+  "customer_models": [
+   "land"
+  ],
+  "fitment_models": [
+   [
+    "land cruiser",
+    40957
+   ],
+   [
+    "land cruiser kdj12 grj12",
+    1163
+   ],
+   [
+    "land cruiser 90 j9",
+    532
+   ],
+   [
+    "land cruiser 80 j8",
+    515
+   ],
+   [
+    "land cruiser pzj7 kzj7 hzj7 bj7 lj7 rj7",
+    514
+   ],
+   [
+    "land cruiser 100 uzj100",
+    510
+   ]
+  ],
+  "rows_removed": 49325,
+  "proposal": "ambiguous",
+  "ext_codes": [
+   "bj7",
+   "grj12",
+   "grj15",
+   "hzj7",
+   "j25",
+   "j3",
+   "j4",
+   "j6"
+  ],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "kia",
+  "base": "niro",
+  "extension": "plus",
+  "registry_name": "niro plus",
+  "customer_models": [
+   "niro plus",
+   "niro plus ev"
+  ],
+  "fitment_models": [
+   [
+    "niro",
+    21728
+   ]
+  ],
+  "rows_removed": 43456,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "sg2"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "toyota",
+  "base": "yaris",
+  "extension": "cross hsd",
+  "registry_name": "yaris cross hsd",
+  "customer_models": [
+   "yaris cross hsd"
+  ],
+  "fitment_models": [
+   [
+    "yaris",
+    41542
+   ]
+  ],
+  "rows_removed": 41542,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "dl2s",
+   "ksp13",
+   "ksp9",
+   "ncp1",
+   "ncp13",
+   "ncp15",
+   "ncp2",
+   "ncp9"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "toyota",
+  "base": "yaris",
+  "extension": "cross",
+  "registry_name": "yaris cross",
+  "customer_models": [
+   "yaris cross mxp"
+  ],
+  "fitment_models": [
+   [
+    "yaris",
+    41542
+   ]
+  ],
+  "rows_removed": 41542,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "dl2s",
+   "ksp13",
+   "ksp9",
+   "ncp1",
+   "ncp13",
+   "ncp15",
+   "ncp2",
+   "ncp9"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "toyota",
+  "base": "yaris",
+  "extension": "verso",
+  "registry_name": "yaris verso",
+  "customer_models": [
+   "yaris verso nlp2 ncp2"
+  ],
+  "fitment_models": [
+   [
+    "yaris",
+    41542
+   ]
+  ],
+  "rows_removed": 41542,
+  "proposal": "distinct",
+  "ext_codes": [
+   "ncp2",
+   "nlp2"
+  ],
+  "base_codes": [
+   "dl2s",
+   "ksp13",
+   "ksp9",
+   "ncp1",
+   "ncp13",
+   "ncp15",
+   "ncp9",
+   "ncp90"
+  ],
+  "shared_codes": [],
+  "classification": "PROVEN_CORRECT",
+  "classification_reason": "different vehicle: the extension's own series and the base series carry disjoint platform/chassis codes (['ncp2', 'nlp2'] vs ['dl2s', 'ksp13', 'ksp9'])"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "toyota",
+  "base": "land cruiser",
+  "extension": "prado",
+  "registry_name": "land cruiser prado",
+  "customer_models": [
+   "land cruiser prado"
+  ],
+  "fitment_models": [
+   [
+    "land cruiser",
+    40957
+   ]
+  ],
+  "rows_removed": 40957,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "bj7",
+   "grj12",
+   "grj15",
+   "hzj7",
+   "j25",
+   "j3",
+   "j4",
+   "j6"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D5: generic Land Cruiser rows for Prado — not validated at part/generation level; D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "toyota",
+  "base": "hilux",
+  "extension": "vigo",
+  "registry_name": "hilux vigo",
+  "customer_models": [
+   "hilux vigo"
+  ],
+  "fitment_models": [
+   [
+    "hilux",
+    40899
+   ]
+  ],
+  "rows_removed": 40899,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "ggn1",
+   "ggn2",
+   "gun1",
+   "kun1",
+   "kun2",
+   "kzn1",
+   "ln1",
+   "ln3"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "chevrolet",
+  "base": "spark",
+  "extension": "ls",
+  "registry_name": "spark ls",
+  "customer_models": [
+   "spark ls"
+  ],
+  "fitment_models": [
+   [
+    "spark",
+    31037
+   ]
+  ],
+  "rows_removed": 31037,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "m200",
+   "m250",
+   "m300",
+   "m400"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "jaguar",
+  "base": "xj",
+  "extension": "xj",
+  "registry_name": "xj xj",
+  "customer_models": [
+   "xj xj 40"
+  ],
+  "fitment_models": [
+   [
+    "xj",
+    28722
+   ]
+  ],
+  "rows_removed": 28722,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "j12",
+   "j24",
+   "x300",
+   "x308",
+   "x35",
+   "x350",
+   "x358"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "suzuki",
+  "base": "sx4",
+  "extension": "crossover",
+  "registry_name": "sx4 crossover",
+  "customer_models": [
+   "sx4 crossover"
+  ],
+  "fitment_models": [
+   [
+    "sx4",
+    23789
+   ]
+  ],
+  "rows_removed": 23789,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "suzuki",
+  "base": "sx4",
+  "extension": "crossover",
+  "registry_name": "sx4 crossover",
+  "customer_models": [
+   "sx4"
+  ],
+  "fitment_models": [
+   [
+    "sx4 crossover",
+    23720
+   ]
+  ],
+  "rows_removed": 23720,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "kia",
+  "base": "niro",
+  "extension": "plus phev",
+  "registry_name": "niro plus phev",
+  "customer_models": [
+   "niro plus phev"
+  ],
+  "fitment_models": [
+   [
+    "niro",
+    21728
+   ]
+  ],
+  "rows_removed": 21728,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "sg2"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "citroen",
+  "base": "c3",
+  "extension": "aircross",
+  "registry_name": "c3 aircross",
+  "customer_models": [
+   "c3 aircross",
+   "c3 aircross acc",
+   "c3 aircross ii"
+  ],
+  "fitment_models": [
+   [
+    "c3",
+    6966
+   ]
+  ],
+  "rows_removed": 20898,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "1cb6"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "renault",
+  "base": "kangoo",
+  "extension": "express",
+  "registry_name": "kangoo express",
+  "customer_models": [
+   "kangoo express fc0",
+   "kangoo express fw0"
+  ],
+  "fitment_models": [
+   [
+    "kangoo",
+    10427
+   ]
+  ],
+  "rows_removed": 20854,
+  "proposal": "distinct",
+  "ext_codes": [
+   "fc0",
+   "fw0"
+  ],
+  "base_codes": [
+   "kc0",
+   "kc0)",
+   "kw0"
+  ],
+  "shared_codes": [],
+  "classification": "PROVEN_CORRECT",
+  "classification_reason": "different vehicle: the extension's own series and the base series carry disjoint platform/chassis codes (['fc0', 'fw0'] vs ['kc0', 'kc0)', 'kw0'])"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "citroen",
+  "base": "c4",
+  "extension": "picasso",
+  "registry_name": "c4 picasso",
+  "customer_models": [
+   "c4 picasso",
+   "c4 picasso i ud",
+   "c4 picasso ii"
+  ],
+  "fitment_models": [
+   [
+    "c4",
+    6813
+   ]
+  ],
+  "rows_removed": 20439,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "(c41)",
+   "b7"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "citroen",
+  "base": "c4",
+  "extension": "spacetourer",
+  "registry_name": "c4 spacetourer",
+  "customer_models": [
+   "c4 spacetourer",
+   "c4 spacetourer 3d",
+   "c4 spacetourer van 3d"
+  ],
+  "fitment_models": [
+   [
+    "c4",
+    6813
+   ]
+  ],
+  "rows_removed": 20439,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "(c41)",
+   "b7"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "citroen",
+  "base": "c4",
+  "extension": "cactus",
+  "registry_name": "c4 cactus",
+  "customer_models": [
+   "c4 cactus",
+   "c4 cactus acc"
+  ],
+  "fitment_models": [
+   [
+    "c4",
+    6813
+   ]
+  ],
+  "rows_removed": 13626,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "(c41)",
+   "b7"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "porsche",
+  "base": "718 boxster",
+  "extension": "spy",
+  "registry_name": "718 boxster spy",
+  "customer_models": [
+   "718 boxster spyder"
+  ],
+  "fitment_models": [
+   [
+    "718 boxster",
+    12945
+   ]
+  ],
+  "rows_removed": 12945,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "renault",
+  "base": "megane",
+  "extension": "e tech",
+  "registry_name": "megane e tech",
+  "customer_models": [
+   "megane e tech suv"
+  ],
+  "fitment_models": [
+   [
+    "megane",
+    10416
+   ]
+  ],
+  "rows_removed": 10416,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "b9a",
+   "ba0",
+   "bm0",
+   "bz0",
+   "cm0",
+   "da0",
+   "dz0",
+   "ea0"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "renault",
+  "base": "megane",
+  "extension": "scenic",
+  "registry_name": "megane scenic",
+  "customer_models": [
+   "megane scenic ja0"
+  ],
+  "fitment_models": [
+   [
+    "megane",
+    10416
+   ]
+  ],
+  "rows_removed": 10416,
+  "proposal": "distinct",
+  "ext_codes": [
+   "ja0"
+  ],
+  "base_codes": [
+   "b9a",
+   "ba0",
+   "bm0",
+   "bz0",
+   "cm0",
+   "da0",
+   "dz0",
+   "ea0"
+  ],
+  "shared_codes": [],
+  "classification": "PROVEN_CORRECT",
+  "classification_reason": "different vehicle: the extension's own series and the base series carry disjoint platform/chassis codes (['ja0'] vs ['b9a', 'ba0', 'bm0'])"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "renault",
+  "base": "clio",
+  "extension": "b",
+  "registry_name": "clio b",
+  "customer_models": [
+   "clio b"
+  ],
+  "fitment_models": [
+   [
+    "clio",
+    10410
+   ]
+  ],
+  "rows_removed": 10410,
+  "proposal": "generation_letter_year_unverified",
+  "ext_codes": [],
+  "base_codes": [
+   "bb0",
+   "br0",
+   "c57",
+   "cb0",
+   "cr0",
+   "kr0",
+   "s57",
+   "sb0"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)"
+ },
+ {
+  "reason": "generic_is_junk_prefix",
+  "make": "toyota",
+  "base": "land",
+  "extension": "",
+  "registry_name": null,
+  "customer_models": [
+   "land cruiser",
+   "land cruiser 100 uzj100",
+   "land cruiser 150 kdj15 grj15",
+   "land cruiser 300 j3",
+   "land cruiser 80 j8",
+   "land cruiser 90 j9",
+   "land cruiser hardtop j7",
+   "land cruiser j25",
+   "land cruiser j4",
+   "land cruiser j6",
+   "land cruiser kdj12 grj12",
+   "land cruiser pickup j4",
+   "land cruiser pickup j7",
+   "land cruiser prado",
+   "land cruiser pzj7 kzj7 hzj7 bj7 lj7 rj7",
+   "land cruiser softtop j4",
+   "land cruiser vdj20 uzj20"
+  ],
+  "fitment_models": [
+   [
+    "land",
+    534
+   ]
+  ],
+  "rows_removed": 9078,
+  "proposal": "not_a_model",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "PROVEN_CORRECT",
+  "classification_reason": "the fitment row names no vehicle: the registry uses it only as the start of other model names and it is not the make; no compatibility claim is possible"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "chevrolet",
+  "base": "malibu",
+  "extension": "lt",
+  "registry_name": "malibu lt",
+  "customer_models": [
+   "malibu lt"
+  ],
+  "fitment_models": [
+   [
+    "malibu",
+    7365
+   ]
+  ],
+  "rows_removed": 7365,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "v300"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "citroen",
+  "base": "c5",
+  "extension": "aircross",
+  "registry_name": "c5 aircross",
+  "customer_models": [
+   "c5"
+  ],
+  "fitment_models": [
+   [
+    "c5 aircross",
+    6979
+   ]
+  ],
+  "rows_removed": 6979,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "citroen",
+  "base": "c3",
+  "extension": "picasso",
+  "registry_name": "c3 picasso",
+  "customer_models": [
+   "c3 picasso"
+  ],
+  "fitment_models": [
+   [
+    "c3",
+    6966
+   ]
+  ],
+  "rows_removed": 6966,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "1cb6"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "byd",
+  "base": "byd seal",
+  "extension": "u",
+  "registry_name": "byd seal u",
+  "customer_models": [
+   "byd seal u dm-i",
+   "byd seal u ev"
+  ],
+  "fitment_models": [
+   [
+    "byd seal",
+    3049
+   ]
+  ],
+  "rows_removed": 6098,
+  "proposal": "generation_letter_year_unverified",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "chevrolet",
+  "base": "captiva",
+  "extension": "sport",
+  "registry_name": "captiva sport",
+  "customer_models": [
+   "captiva sport"
+  ],
+  "fitment_models": [
+   [
+    "captiva",
+    5793
+   ]
+  ],
+  "rows_removed": 5793,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "c100",
+   "c140"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "porsche",
+  "base": "911",
+  "extension": "carrera",
+  "registry_name": "911 carrera",
+  "customer_models": [
+   "911 carrera s"
+  ],
+  "fitment_models": [
+   [
+    "911",
+    4943
+   ]
+  ],
+  "rows_removed": 4943,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "gt2rs",
+   "gt3"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "porsche",
+  "base": "911",
+  "extension": "speedster",
+  "registry_name": "911 speedster",
+  "customer_models": [
+   "911 speedster"
+  ],
+  "fitment_models": [
+   [
+    "911",
+    4943
+   ]
+  ],
+  "rows_removed": 4943,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "gt2rs",
+   "gt3"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "land rover",
+  "base": "range rover",
+  "extension": "spo",
+  "registry_name": "range rover spo",
+  "customer_models": [
+   "range rover"
+  ],
+  "fitment_models": [
+   [
+    "range rover sport",
+    4734
+   ]
+  ],
+  "rows_removed": 4734,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "byd",
+  "base": "byd seal",
+  "extension": "u",
+  "registry_name": "byd seal u",
+  "customer_models": [
+   "byd seal"
+  ],
+  "fitment_models": [
+   [
+    "byd seal u dm-i",
+    2403
+   ],
+   [
+    "byd seal u ev",
+    2143
+   ]
+  ],
+  "rows_removed": 4546,
+  "proposal": "generation_letter_year_unverified",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "opel",
+  "base": "astra",
+  "extension": "g",
+  "registry_name": "astra g",
+  "customer_models": [
+   "astra"
+  ],
+  "fitment_models": [
+   [
+    "astra g hatchback f48 f08",
+    578
+   ],
+   [
+    "astra g classic saloon t98",
+    509
+   ],
+   [
+    "astra g estate f35",
+    503
+   ],
+   [
+    "astra g classic caravan f35",
+    498
+   ],
+   [
+    "astra g classic t98",
+    497
+   ],
+   [
+    "astra g coupe f07",
+    494
+   ]
+  ],
+  "rows_removed": 4545,
+  "proposal": "generation_letter_year_unverified",
+  "ext_codes": [
+   "f07",
+   "f08",
+   "f35",
+   "f48",
+   "f67",
+   "f69",
+   "f70",
+   "t98"
+  ],
+  "base_codes": [
+   "(t92)",
+   "l08",
+   "l35",
+   "l48",
+   "l67",
+   "l69",
+   "l70",
+   "p10"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "byd",
+  "base": "byd atto",
+  "extension": "2",
+  "registry_name": "byd atto 2",
+  "customer_models": [
+   "byd atto"
+  ],
+  "fitment_models": [
+   [
+    "byd atto 2 dm-i",
+    2219
+   ],
+   [
+    "byd atto 2",
+    2151
+   ]
+  ],
+  "rows_removed": 4370,
+  "proposal": "generation_letter_year_unverified",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "toyota",
+  "base": "prius",
+  "extension": "plus",
+  "registry_name": "prius plus",
+  "customer_models": [
+   "prius plus",
+   "prius plus van w4",
+   "prius plus zvw4"
+  ],
+  "fitment_models": [
+   [
+    "prius",
+    1439
+   ]
+  ],
+  "rows_removed": 4317,
+  "proposal": "distinct",
+  "ext_codes": [
+   "w4",
+   "zvw4"
+  ],
+  "base_codes": [
+   "nhp10",
+   "nhw11",
+   "nhw20",
+   "w1",
+   "w5",
+   "w52",
+   "w6",
+   "zvw3"
+  ],
+  "shared_codes": [],
+  "classification": "PROVEN_CORRECT",
+  "classification_reason": "different vehicle: the extension's own series and the base series carry disjoint platform/chassis codes (['w4', 'zvw4'] vs ['nhp10', 'nhw11', 'nhw20'])"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "opel",
+  "base": "astra",
+  "extension": "g",
+  "registry_name": "astra g",
+  "customer_models": [
+   "astra g box f70",
+   "astra g classic caravan f35",
+   "astra g classic saloon t98",
+   "astra g classic t98",
+   "astra g convertible f67",
+   "astra g coupe f07",
+   "astra g estate f35",
+   "astra g hatchback f48 f08"
+  ],
+  "fitment_models": [
+   [
+    "astra",
+    485
+   ]
+  ],
+  "rows_removed": 3880,
+  "proposal": "generation_letter_year_unverified",
+  "ext_codes": [
+   "f07",
+   "f08",
+   "f35",
+   "f48",
+   "f67",
+   "f69",
+   "f70",
+   "t98"
+  ],
+  "base_codes": [
+   "(t92)",
+   "l08",
+   "l35",
+   "l48",
+   "l67",
+   "l69",
+   "l70",
+   "p10"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "land rover",
+  "base": "range rover",
+  "extension": "evo",
+  "registry_name": "range rover evo",
+  "customer_models": [
+   "range rover"
+  ],
+  "fitment_models": [
+   [
+    "range rover evoque",
+    3773
+   ]
+  ],
+  "rows_removed": 3773,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "porsche",
+  "base": "taycan",
+  "extension": "cross tu",
+  "registry_name": "taycan cross tu",
+  "customer_models": [
+   "taycan cross turismo"
+  ],
+  "fitment_models": [
+   [
+    "taycan",
+    3740
+   ]
+  ],
+  "rows_removed": 3740,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "4s",
+   "y1a",
+   "y1c"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "chevrolet",
+  "base": "sonic",
+  "extension": "ls",
+  "registry_name": "sonic ls",
+  "customer_models": [
+   "sonic ls"
+  ],
+  "fitment_models": [
+   [
+    "sonic",
+    3715
+   ]
+  ],
+  "rows_removed": 3715,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "1.4turbo"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "chevrolet",
+  "base": "sonic",
+  "extension": "lt",
+  "registry_name": "sonic lt",
+  "customer_models": [
+   "sonic lt"
+  ],
+  "fitment_models": [
+   [
+    "sonic",
+    3715
+   ]
+  ],
+  "rows_removed": 3715,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "1.4turbo"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "opel",
+  "base": "astra",
+  "extension": "h",
+  "registry_name": "astra h",
+  "customer_models": [
+   "astra"
+  ],
+  "fitment_models": [
+   [
+    "astra h l48",
+    905
+   ],
+   [
+    "astra h estate l35",
+    500
+   ],
+   [
+    "astra h saloon l69",
+    490
+   ],
+   [
+    "astra h box l70",
+    482
+   ],
+   [
+    "astra h gtc l08",
+    482
+   ],
+   [
+    "astra h twintop l67",
+    473
+   ]
+  ],
+  "rows_removed": 3332,
+  "proposal": "generation_letter_year_unverified",
+  "ext_codes": [
+   "l08",
+   "l35",
+   "l48",
+   "l67",
+   "l69",
+   "l70"
+  ],
+  "base_codes": [
+   "(t92)",
+   "f07",
+   "f08",
+   "f35",
+   "f48",
+   "f67",
+   "f69",
+   "f70"
+  ],
+  "shared_codes": [
+   "l48"
+  ],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "byd",
+  "base": "byd seal",
+  "extension": "5",
+  "registry_name": "byd seal 5",
+  "customer_models": [
+   "byd seal 5 dm-i"
+  ],
+  "fitment_models": [
+   [
+    "byd seal",
+    3049
+   ]
+  ],
+  "rows_removed": 3049,
+  "proposal": "generation_letter_year_unverified",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "kia",
+  "base": "sorento",
+  "extension": "fywgc",
+  "registry_name": "sorento fywgc",
+  "customer_models": [
+   "sorento fywgc"
+  ],
+  "fitment_models": [
+   [
+    "sorento",
+    2922
+   ]
+  ],
+  "rows_removed": 2922,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "mq4",
+   "mq4a"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "opel",
+  "base": "astra",
+  "extension": "h",
+  "registry_name": "astra h",
+  "customer_models": [
+   "astra h box l70",
+   "astra h estate l35",
+   "astra h gtc l08",
+   "astra h l48",
+   "astra h saloon l69",
+   "astra h twintop l67"
+  ],
+  "fitment_models": [
+   [
+    "astra",
+    485
+   ]
+  ],
+  "rows_removed": 2910,
+  "proposal": "generation_letter_year_unverified",
+  "ext_codes": [
+   "l08",
+   "l35",
+   "l48",
+   "l67",
+   "l69",
+   "l70"
+  ],
+  "base_codes": [
+   "(t92)",
+   "f07",
+   "f08",
+   "f35",
+   "f48",
+   "f67",
+   "f69",
+   "f70"
+  ],
+  "shared_codes": [
+   "l48"
+  ],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "land rover",
+  "base": "range rover",
+  "extension": "vel",
+  "registry_name": "range rover vel",
+  "customer_models": [
+   "range rover"
+  ],
+  "fitment_models": [
+   [
+    "range rover velar",
+    2836
+   ]
+  ],
+  "rows_removed": 2836,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "land rover",
+  "base": "range rover",
+  "extension": "evo",
+  "registry_name": "range rover evo",
+  "customer_models": [
+   "range rover evoque"
+  ],
+  "fitment_models": [
+   [
+    "range rover",
+    2674
+   ]
+  ],
+  "rows_removed": 2674,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "land rover",
+  "base": "range rover",
+  "extension": "spo",
+  "registry_name": "range rover spo",
+  "customer_models": [
+   "range rover sport"
+  ],
+  "fitment_models": [
+   [
+    "range rover",
+    2674
+   ]
+  ],
+  "rows_removed": 2674,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "land rover",
+  "base": "range rover",
+  "extension": "vel",
+  "registry_name": "range rover vel",
+  "customer_models": [
+   "range rover velar"
+  ],
+  "fitment_models": [
+   [
+    "range rover",
+    2674
+   ]
+  ],
+  "rows_removed": 2674,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "chevrolet",
+  "base": "optra",
+  "extension": "ls",
+  "registry_name": "optra ls",
+  "customer_models": [
+   "optra ls"
+  ],
+  "fitment_models": [
+   [
+    "optra",
+    2393
+   ]
+  ],
+  "rows_removed": 2393,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "byd",
+  "base": "byd sealion",
+  "extension": "7",
+  "registry_name": "byd sealion 7",
+  "customer_models": [
+   "byd sealion"
+  ],
+  "fitment_models": [
+   [
+    "byd sealion 7",
+    2382
+   ]
+  ],
+  "rows_removed": 2382,
+  "proposal": "generation_letter_year_unverified",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "bmw",
+  "base": "x5",
+  "extension": "m",
+  "registry_name": "x5 m",
+  "customer_models": [
+   "x5 m"
+  ],
+  "fitment_models": [
+   [
+    "x5",
+    2249
+   ]
+  ],
+  "rows_removed": 2249,
+  "proposal": "generation_letter_year_unverified",
+  "ext_codes": [
+   "m50d"
+  ],
+  "base_codes": [
+   "0si",
+   "35i",
+   "40e",
+   "40i",
+   "45e",
+   "50e",
+   "50i",
+   "5s"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "kia",
+  "base": "optima",
+  "extension": "panorami",
+  "registry_name": "optima panorami",
+  "customer_models": [
+   "optima panorami"
+  ],
+  "fitment_models": [
+   [
+    "optima",
+    2215
+   ]
+  ],
+  "rows_removed": 2215,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "dl3"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "kia",
+  "base": "optima",
+  "extension": "premium",
+  "registry_name": "optima premium",
+  "customer_models": [
+   "optima premium"
+  ],
+  "fitment_models": [
+   [
+    "optima",
+    2215
+   ]
+  ],
+  "rows_removed": 2215,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "dl3"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "citroen",
+  "base": "c4",
+  "extension": "picasso",
+  "registry_name": "c4 picasso",
+  "customer_models": [
+   "c4"
+  ],
+  "fitment_models": [
+   [
+    "c4 picasso",
+    1178
+   ],
+   [
+    "c4 picasso ii",
+    510
+   ],
+   [
+    "c4 picasso i ud",
+    487
+   ]
+  ],
+  "rows_removed": 2175,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "(c41)",
+   "b7"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "mazda",
+  "base": "cx",
+  "extension": "5",
+  "registry_name": "cx 5",
+  "customer_models": [
+   "cx"
+  ],
+  "fitment_models": [
+   [
+    "cx 5 kf",
+    659
+   ],
+   [
+    "cx 5 ke gh",
+    552
+   ],
+   [
+    "cx 5",
+    533
+   ],
+   [
+    "cx 5 ke",
+    410
+   ]
+  ],
+  "rows_removed": 2154,
+  "proposal": "generation_letter_year_unverified",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "byd",
+  "base": "byd atto 2",
+  "extension": "dm i",
+  "registry_name": "byd atto 2 dm i",
+  "customer_models": [
+   "byd atto 2 dm-i"
+  ],
+  "fitment_models": [
+   [
+    "byd atto 2",
+    2151
+   ]
+  ],
+  "rows_removed": 2151,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "chevrolet",
+  "base": "impala",
+  "extension": "lt",
+  "registry_name": "impala lt",
+  "customer_models": [
+   "impala lt"
+  ],
+  "fitment_models": [
+   [
+    "impala",
+    2080
+   ]
+  ],
+  "rows_removed": 2080,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "audi",
+  "base": "a4",
+  "extension": "allroad",
+  "registry_name": "a4 allroad",
+  "customer_models": [
+   "a4 allroad 8kh b8",
+   "a4 allroad 8wh b9"
+  ],
+  "fitment_models": [
+   [
+    "a4",
+    1031
+   ]
+  ],
+  "rows_removed": 2062,
+  "proposal": "same_platform",
+  "ext_codes": [
+   "8kh",
+   "8wh",
+   "b8",
+   "b9"
+  ],
+  "base_codes": [
+   "8d2",
+   "8d5",
+   "8e2",
+   "8e5",
+   "8ec",
+   "8ed",
+   "8h7",
+   "8he"
+  ],
+  "shared_codes": [
+   "b8",
+   "b9"
+  ],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D2: shares platform codes with the base — a shared platform is not proof of part compatibility"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "byd",
+  "base": "byd seal",
+  "extension": "5",
+  "registry_name": "byd seal 5",
+  "customer_models": [
+   "byd seal"
+  ],
+  "fitment_models": [
+   [
+    "byd seal 5 dm-i",
+    2011
+   ]
+  ],
+  "rows_removed": 2011,
+  "proposal": "generation_letter_year_unverified",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "kia",
+  "base": "niro",
+  "extension": "plus",
+  "registry_name": "niro plus",
+  "customer_models": [
+   "niro"
+  ],
+  "fitment_models": [
+   [
+    "niro plus",
+    1335
+   ],
+   [
+    "niro plus ev",
+    523
+   ]
+  ],
+  "rows_removed": 1858,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "sg2"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "kia",
+  "base": "sorento",
+  "extension": "fywgc",
+  "registry_name": "sorento fywgc",
+  "customer_models": [
+   "sorento"
+  ],
+  "fitment_models": [
+   [
+    "sorento fywgc",
+    1791
+   ]
+  ],
+  "rows_removed": 1791,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "mq4",
+   "mq4a"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "citroen",
+  "base": "c3",
+  "extension": "aircross",
+  "registry_name": "c3 aircross",
+  "customer_models": [
+   "c3"
+  ],
+  "fitment_models": [
+   [
+    "c3 aircross",
+    603
+   ],
+   [
+    "c3 aircross ii 2023",
+    559
+   ],
+   [
+    "c3 aircross ii",
+    507
+   ]
+  ],
+  "rows_removed": 1669,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "1cb6"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "citroen",
+  "base": "c4",
+  "extension": "spacetourer",
+  "registry_name": "c4 spacetourer",
+  "customer_models": [
+   "c4"
+  ],
+  "fitment_models": [
+   [
+    "c4 spacetourer van 3d",
+    588
+   ],
+   [
+    "c4 spacetourer 3d",
+    522
+   ],
+   [
+    "c4 spacetourer",
+    509
+   ]
+  ],
+  "rows_removed": 1619,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "(c41)",
+   "b7"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "mg",
+  "base": "mg",
+  "extension": "zs",
+  "registry_name": "mg zs",
+  "customer_models": [
+   "mg zs",
+   "mg zs closed off road vehicle",
+   "mg zs hatchback"
+  ],
+  "fitment_models": [
+   [
+    "mg",
+    538
+   ]
+  ],
+  "rows_removed": 1614,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "4ev",
+   "5lfp",
+   "ap11",
+   "as33",
+   "rx5"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "porsche",
+  "base": "macan",
+  "extension": "4",
+  "registry_name": "macan 4",
+  "customer_models": [
+   "macan"
+  ],
+  "fitment_models": [
+   [
+    "macan 4",
+    1594
+   ]
+  ],
+  "rows_removed": 1594,
+  "proposal": "single_letter_model_or_trim",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "single-letter extension with no sibling generations (e.g. Prius C, X5 M): model or trim unknown"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "porsche",
+  "base": "panamera",
+  "extension": "4 e hy",
+  "registry_name": "panamera 4 e hy",
+  "customer_models": [
+   "panamera"
+  ],
+  "fitment_models": [
+   [
+    "panamera 4 e-hy",
+    1594
+   ]
+  ],
+  "rows_removed": 1594,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "audi",
+  "base": "q8",
+  "extension": "e tron",
+  "registry_name": "q8 e tron",
+  "customer_models": [
+   "q8"
+  ],
+  "fitment_models": [
+   [
+    "q8 e tron sportback get",
+    527
+   ],
+   [
+    "q8 e tron suv geg",
+    501
+   ],
+   [
+    "q8 e tron",
+    487
+   ]
+  ],
+  "rows_removed": 1515,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "4mn"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "opel",
+  "base": "corsa",
+  "extension": "c",
+  "registry_name": "corsa c",
+  "customer_models": [
+   "corsa"
+  ],
+  "fitment_models": [
+   [
+    "corsa c f08 f68",
+    513
+   ],
+   [
+    "corsa c saloon x01",
+    504
+   ],
+   [
+    "corsa c box f08 w5l",
+    490
+   ]
+  ],
+  "rows_removed": 1507,
+  "proposal": "generation_letter_year_unverified",
+  "ext_codes": [
+   "f08",
+   "f68",
+   "w5l",
+   "x01"
+  ],
+  "base_codes": [
+   "f35"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "opel",
+  "base": "corsa",
+  "extension": "b",
+  "registry_name": "corsa b",
+  "customer_models": [
+   "corsa"
+  ],
+  "fitment_models": [
+   [
+    "corsa b 73 78 79",
+    507
+   ],
+   [
+    "corsa b estate f35",
+    499
+   ],
+   [
+    "corsa b box 73",
+    480
+   ]
+  ],
+  "rows_removed": 1486,
+  "proposal": "generation_letter_year_unverified",
+  "ext_codes": [
+   "f35"
+  ],
+  "base_codes": [
+   "f08",
+   "f68",
+   "w5l",
+   "x01"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "mazda",
+  "base": "cx",
+  "extension": "3",
+  "registry_name": "cx 3",
+  "customer_models": [
+   "cx"
+  ],
+  "fitment_models": [
+   [
+    "cx 3 dk",
+    960
+   ],
+   [
+    "cx 3",
+    516
+   ]
+  ],
+  "rows_removed": 1476,
+  "proposal": "generation_letter_year_unverified",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "toyota",
+  "base": "prius",
+  "extension": "plus",
+  "registry_name": "prius plus",
+  "customer_models": [
+   "prius"
+  ],
+  "fitment_models": [
+   [
+    "prius plus",
+    495
+   ],
+   [
+    "prius plus zvw4",
+    480
+   ],
+   [
+    "prius plus van w4",
+    477
+   ]
+  ],
+  "rows_removed": 1452,
+  "proposal": "distinct",
+  "ext_codes": [
+   "w4",
+   "zvw4"
+  ],
+  "base_codes": [
+   "nhp10",
+   "nhw11",
+   "nhw20",
+   "w1",
+   "w5",
+   "w52",
+   "w6",
+   "zvw3"
+  ],
+  "shared_codes": [],
+  "classification": "PROVEN_CORRECT",
+  "classification_reason": "different vehicle: the extension's own series and the base series carry disjoint platform/chassis codes (['w4', 'zvw4'] vs ['nhp10', 'nhw11', 'nhw20'])"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "toyota",
+  "base": "prius",
+  "extension": "c",
+  "registry_name": "prius c",
+  "customer_models": [
+   "prius c nhp10"
+  ],
+  "fitment_models": [
+   [
+    "prius",
+    1439
+   ]
+  ],
+  "rows_removed": 1439,
+  "proposal": "single_letter_model_or_trim",
+  "ext_codes": [
+   "nhp10"
+  ],
+  "base_codes": [
+   "nhw11",
+   "nhw20",
+   "w1",
+   "w4",
+   "w5",
+   "w52",
+   "w6",
+   "zvw3"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "single-letter extension with no sibling generations (e.g. Prius C, X5 M): model or trim unknown"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "opel",
+  "base": "corsa",
+  "extension": "b",
+  "registry_name": "corsa b",
+  "customer_models": [
+   "corsa b 73 78",
+   "corsa b box",
+   "corsa b estate f35"
+  ],
+  "fitment_models": [
+   [
+    "corsa",
+    479
+   ]
+  ],
+  "rows_removed": 1437,
+  "proposal": "generation_letter_year_unverified",
+  "ext_codes": [
+   "f35"
+  ],
+  "base_codes": [
+   "f08",
+   "f68",
+   "w5l",
+   "x01"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "opel",
+  "base": "corsa",
+  "extension": "c",
+  "registry_name": "corsa c",
+  "customer_models": [
+   "corsa c box f08 w5l",
+   "corsa c f08 f68",
+   "corsa c saloon x01"
+  ],
+  "fitment_models": [
+   [
+    "corsa",
+    479
+   ]
+  ],
+  "rows_removed": 1437,
+  "proposal": "generation_letter_year_unverified",
+  "ext_codes": [
+   "f08",
+   "f68",
+   "w5l",
+   "x01"
+  ],
+  "base_codes": [
+   "f35"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "bmw",
+  "base": "x3",
+  "extension": "x drive 20d",
+  "registry_name": "x3 x drive 20d",
+  "customer_models": [
+   "x3 x drive 20d"
+  ],
+  "fitment_models": [
+   [
+    "x3",
+    1435
+   ]
+  ],
+  "rows_removed": 1435,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "20dexecutive",
+   "20i",
+   "20iexecutive",
+   "28i",
+   "2l",
+   "30e",
+   "30i",
+   "30iexecutive"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "audi",
+  "base": "a6",
+  "extension": "allroad",
+  "registry_name": "a6 allroad",
+  "customer_models": [
+   "a6 allroad 4ah c8",
+   "a6 allroad 4fh c6",
+   "a6 allroad 4gh 4gj"
+  ],
+  "fitment_models": [
+   [
+    "a6",
+    472
+   ]
+  ],
+  "rows_removed": 1416,
+  "proposal": "same_platform",
+  "ext_codes": [
+   "4ah",
+   "4fh",
+   "4gh",
+   "4gj",
+   "c6",
+   "c8"
+  ],
+  "base_codes": [
+   "4a",
+   "4a2",
+   "4a5",
+   "4b2",
+   "4b5",
+   "4f2",
+   "4f5",
+   "4g2"
+  ],
+  "shared_codes": [
+   "c6",
+   "c8"
+  ],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D2: shares platform codes with the base — a shared platform is not proof of part compatibility"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "toyota",
+  "base": "corolla",
+  "extension": "verso",
+  "registry_name": "corolla verso",
+  "customer_models": [
+   "corolla"
+  ],
+  "fitment_models": [
+   [
+    "corolla verso zde12 cde12",
+    495
+   ],
+   [
+    "corolla verso zer zze12 r1",
+    487
+   ],
+   [
+    "corolla verso zze12 nre12",
+    401
+   ]
+  ],
+  "rows_removed": 1383,
+  "proposal": "same_platform",
+  "ext_codes": [
+   "cde12",
+   "nre12",
+   "r1",
+   "zde12",
+   "zze12"
+  ],
+  "base_codes": [
+   "ae10",
+   "ae86",
+   "aze15",
+   "e10",
+   "e11",
+   "e12",
+   "e12j",
+   "e12t"
+  ],
+  "shared_codes": [
+   "zde12",
+   "zze12"
+  ],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D2: shares platform codes with the base — a shared platform is not proof of part compatibility"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "bmw",
+  "base": "x6",
+  "extension": "m",
+  "registry_name": "x6 m",
+  "customer_models": [
+   "x6 m"
+  ],
+  "fitment_models": [
+   [
+    "x6",
+    1358
+   ]
+  ],
+  "rows_removed": 1358,
+  "proposal": "single_letter_model_or_trim",
+  "ext_codes": [
+   "m50d",
+   "m50i"
+  ],
+  "base_codes": [
+   "35i",
+   "40i",
+   "50i",
+   "50iexclusive",
+   "e71",
+   "e72",
+   "f16",
+   "f86"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "single-letter extension with no sibling generations (e.g. Prius C, X5 M): model or trim unknown"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "bmw",
+  "base": "x6",
+  "extension": "xdrive 30d",
+  "registry_name": "x6 xdrive 30d",
+  "customer_models": [
+   "x6 xdrive 30d"
+  ],
+  "fitment_models": [
+   [
+    "x6",
+    1358
+   ]
+  ],
+  "rows_removed": 1358,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "35i",
+   "40i",
+   "50i",
+   "50iexclusive",
+   "e71",
+   "e72",
+   "f16",
+   "f86"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "bmw",
+  "base": "x6",
+  "extension": "xdrive 35i",
+  "registry_name": "x6 xdrive 35i",
+  "customer_models": [
+   "x6 xdrive 35i"
+  ],
+  "fitment_models": [
+   [
+    "x6",
+    1358
+   ]
+  ],
+  "rows_removed": 1358,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "40i",
+   "50i",
+   "50iexclusive",
+   "e71",
+   "e72",
+   "f16",
+   "f86",
+   "f96"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "toyota",
+  "base": "hilux",
+  "extension": "vigo",
+  "registry_name": "hilux vigo",
+  "customer_models": [
+   "hilux"
+  ],
+  "fitment_models": [
+   [
+    "hilux vigo",
+    1325
+   ]
+  ],
+  "rows_removed": 1325,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "ggn1",
+   "ggn2",
+   "gun1",
+   "kun1",
+   "kun2",
+   "kzn1",
+   "ln1",
+   "ln3"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "bmw",
+  "base": "x1",
+  "extension": "sdrive 18i",
+  "registry_name": "x1 sdrive 18i",
+  "customer_models": [
+   "x1 sdrive 18i"
+  ],
+  "fitment_models": [
+   [
+    "x1",
+    1299
+   ]
+  ],
+  "rows_removed": 1299,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "2.0d",
+   "20i",
+   "25e",
+   "e84",
+   "f48",
+   "sd18i",
+   "sdrive18i",
+   "sdrive20d"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "mg",
+  "base": "mg",
+  "extension": "hs",
+  "registry_name": "mg hs",
+  "customer_models": [
+   "mg"
+  ],
+  "fitment_models": [
+   [
+    "mg hs",
+    667
+   ],
+   [
+    "mg hs as33",
+    521
+   ]
+  ],
+  "rows_removed": 1188,
+  "proposal": "distinct",
+  "ext_codes": [
+   "as33"
+  ],
+  "base_codes": [
+   "4ev",
+   "5lfp",
+   "ap11",
+   "rx5"
+  ],
+  "shared_codes": [],
+  "classification": "PROVEN_CORRECT",
+  "classification_reason": "different vehicle: the extension's own series and the base series carry disjoint platform/chassis codes (['as33'] vs ['4ev', '5lfp', 'ap11'])"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "rover",
+  "base": "freelander",
+  "extension": "2",
+  "registry_name": "freelander 2",
+  "customer_models": [
+   "freelander"
+  ],
+  "fitment_models": [
+   [
+    "freelander 2",
+    1172
+   ]
+  ],
+  "rows_removed": 1172,
+  "proposal": "single_letter_model_or_trim",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "single-letter extension with no sibling generations (e.g. Prius C, X5 M): model or trim unknown"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "kia",
+  "base": "niro",
+  "extension": "plus phev",
+  "registry_name": "niro plus phev",
+  "customer_models": [
+   "niro"
+  ],
+  "fitment_models": [
+   [
+    "niro plus phev",
+    1121
+   ]
+  ],
+  "rows_removed": 1121,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "sg2"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "mg",
+  "base": "mg",
+  "extension": "3",
+  "registry_name": "mg 3",
+  "customer_models": [
+   "mg"
+  ],
+  "fitment_models": [
+   [
+    "mg 3 5lfp",
+    566
+   ],
+   [
+    "mg 3",
+    549
+   ]
+  ],
+  "rows_removed": 1115,
+  "proposal": "generation_letter_year_unverified",
+  "ext_codes": [
+   "5lfp",
+   "ap11"
+  ],
+  "base_codes": [
+   "4ev",
+   "as33",
+   "rx5"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "mg",
+  "base": "mg",
+  "extension": "hs",
+  "registry_name": "mg hs",
+  "customer_models": [
+   "mg hs",
+   "mg hs as33"
+  ],
+  "fitment_models": [
+   [
+    "mg",
+    538
+   ]
+  ],
+  "rows_removed": 1076,
+  "proposal": "distinct",
+  "ext_codes": [
+   "as33"
+  ],
+  "base_codes": [
+   "4ev",
+   "5lfp",
+   "ap11",
+   "rx5"
+  ],
+  "shared_codes": [],
+  "classification": "PROVEN_CORRECT",
+  "classification_reason": "different vehicle: the extension's own series and the base series carry disjoint platform/chassis codes (['as33'] vs ['4ev', '5lfp', 'ap11'])"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "toyota",
+  "base": "corolla",
+  "extension": "cross",
+  "registry_name": "corolla cross",
+  "customer_models": [
+   "corolla"
+  ],
+  "fitment_models": [
+   [
+    "corolla cross",
+    534
+   ],
+   [
+    "corolla cross g10",
+    527
+   ]
+  ],
+  "rows_removed": 1061,
+  "proposal": "distinct",
+  "ext_codes": [
+   "g10"
+  ],
+  "base_codes": [
+   "ae10",
+   "ae86",
+   "aze15",
+   "cde12",
+   "e10",
+   "e11",
+   "e12",
+   "e12j"
+  ],
+  "shared_codes": [],
+  "classification": "PROVEN_CORRECT",
+  "classification_reason": "different vehicle: the extension's own series and the base series carry disjoint platform/chassis codes (['g10'] vs ['ae10', 'ae86', 'aze15'])"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "mazda",
+  "base": "mazda",
+  "extension": "3",
+  "registry_name": "mazda 3",
+  "customer_models": [
+   "mazda"
+  ],
+  "fitment_models": [
+   [
+    "mazda 3",
+    639
+   ],
+   [
+    "mazda 3 sport",
+    404
+   ]
+  ],
+  "rows_removed": 1043,
+  "proposal": "generation_letter_year_unverified",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "toyota",
+  "base": "yaris",
+  "extension": "cross",
+  "registry_name": "yaris cross",
+  "customer_models": [
+   "yaris"
+  ],
+  "fitment_models": [
+   [
+    "yaris cross mxp",
+    509
+   ],
+   [
+    "yaris cross",
+    504
+   ]
+  ],
+  "rows_removed": 1013,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "dl2s",
+   "ksp13",
+   "ksp9",
+   "ncp1",
+   "ncp13",
+   "ncp15",
+   "ncp2",
+   "ncp9"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "audi",
+  "base": "r8",
+  "extension": "spyder",
+  "registry_name": "r8 spyder",
+  "customer_models": [
+   "r8"
+  ],
+  "fitment_models": [
+   [
+    "r8 spyder",
+    510
+   ],
+   [
+    "r8 spyder 4s9",
+    501
+   ]
+  ],
+  "rows_removed": 1011,
+  "proposal": "ambiguous",
+  "ext_codes": [
+   "4s9"
+  ],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "suzuki",
+  "base": "s",
+  "extension": "cross",
+  "registry_name": "s cross",
+  "customer_models": [
+   "s"
+  ],
+  "fitment_models": [
+   [
+    "s cross iii",
+    502
+   ],
+   [
+    "s cross",
+    500
+   ]
+  ],
+  "rows_removed": 1002,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "mitsubishi",
+  "base": "colt",
+  "extension": "lancer",
+  "registry_name": "colt lancer",
+  "customer_models": [
+   "colt lancer a7",
+   "colt lancer station wagon a7 k"
+  ],
+  "fitment_models": [
+   [
+    "colt",
+    481
+   ]
+  ],
+  "rows_removed": 962,
+  "proposal": "distinct",
+  "ext_codes": [
+   "a7"
+  ],
+  "base_codes": [
+   "a15",
+   "c1",
+   "c5",
+   "z2",
+   "z3"
+  ],
+  "shared_codes": [],
+  "classification": "PROVEN_CORRECT",
+  "classification_reason": "different vehicle: the extension's own series and the base series carry disjoint platform/chassis codes (['a7'] vs ['a15', 'c1', 'c5'])"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "volkswagen",
+  "base": "polo",
+  "extension": "gti",
+  "registry_name": "polo gti",
+  "customer_models": [
+   "polo gti"
+  ],
+  "fitment_models": [
+   [
+    "polo",
+    948
+   ]
+  ],
+  "rows_removed": 948,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "volkswagen",
+  "base": "tiguan",
+  "extension": "all spac",
+  "registry_name": "tiguan all spac",
+  "customer_models": [
+   "tiguan all spac"
+  ],
+  "fitment_models": [
+   [
+    "tiguan",
+    885
+   ]
+  ],
+  "rows_removed": 885,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "volkswagen",
+  "base": "tiguan",
+  "extension": "allspace",
+  "registry_name": "tiguan allspace",
+  "customer_models": [
+   "tiguan allspace"
+  ],
+  "fitment_models": [
+   [
+    "tiguan",
+    885
+   ]
+  ],
+  "rows_removed": 885,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "toyota",
+  "base": "proace",
+  "extension": "city",
+  "registry_name": "proace city",
+  "customer_models": [
+   "proace city box body mpv"
+  ],
+  "fitment_models": [
+   [
+    "proace",
+    884
+   ]
+  ],
+  "rows_removed": 884,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "toyota",
+  "base": "proace",
+  "extension": "city ver",
+  "registry_name": "proace city ver",
+  "customer_models": [
+   "proace city verso mpv"
+  ],
+  "fitment_models": [
+   [
+    "proace",
+    884
+   ]
+  ],
+  "rows_removed": 884,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "toyota",
+  "base": "proace",
+  "extension": "verso",
+  "registry_name": "proace verso",
+  "customer_models": [
+   "proace verso mpy"
+  ],
+  "fitment_models": [
+   [
+    "proace",
+    884
+   ]
+  ],
+  "rows_removed": 884,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "mazda",
+  "base": "mazda",
+  "extension": "2",
+  "registry_name": "mazda 2",
+  "customer_models": [
+   "mazda"
+  ],
+  "fitment_models": [
+   [
+    "mazda 2",
+    452
+   ],
+   [
+    "mazda 2 hybrid",
+    416
+   ]
+  ],
+  "rows_removed": 868,
+  "proposal": "generation_letter_year_unverified",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "chevrolet",
+  "base": "captiva",
+  "extension": "sport",
+  "registry_name": "captiva sport",
+  "customer_models": [
+   "captiva"
+  ],
+  "fitment_models": [
+   [
+    "captiva sport",
+    845
+   ]
+  ],
+  "rows_removed": 845,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "c100",
+   "c140"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "volkswagen",
+  "base": "golf",
+  "extension": "plus",
+  "registry_name": "golf plus",
+  "customer_models": [
+   "golf"
+  ],
+  "fitment_models": [
+   [
+    "golf plus",
+    840
+   ]
+  ],
+  "rows_removed": 840,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "volkswagen",
+  "base": "tiguan",
+  "extension": "all spac",
+  "registry_name": "tiguan all spac",
+  "customer_models": [
+   "tiguan"
+  ],
+  "fitment_models": [
+   [
+    "tiguan all spac",
+    808
+   ]
+  ],
+  "rows_removed": 808,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "land rover",
+  "base": "discovery",
+  "extension": "3",
+  "registry_name": "discovery 3",
+  "customer_models": [
+   "discovery"
+  ],
+  "fitment_models": [
+   [
+    "discovery 3",
+    794
+   ]
+  ],
+  "rows_removed": 794,
+  "proposal": "generation_letter_year_unverified",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "volkswagen",
+  "base": "tiguan",
+  "extension": "allspace",
+  "registry_name": "tiguan allspace",
+  "customer_models": [
+   "tiguan"
+  ],
+  "fitment_models": [
+   [
+    "tiguan allspace",
+    783
+   ]
+  ],
+  "rows_removed": 783,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "land rover",
+  "base": "freelander",
+  "extension": "2",
+  "registry_name": "freelander 2",
+  "customer_models": [
+   "freelander"
+  ],
+  "fitment_models": [
+   [
+    "freelander 2",
+    759
+   ]
+  ],
+  "rows_removed": 759,
+  "proposal": "single_letter_model_or_trim",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "single-letter extension with no sibling generations (e.g. Prius C, X5 M): model or trim unknown"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "volkswagen",
+  "base": "t cross",
+  "extension": "life",
+  "registry_name": "t cross life",
+  "customer_models": [
+   "t cross"
+  ],
+  "fitment_models": [
+   [
+    "t cross life",
+    755
+   ]
+  ],
+  "rows_removed": 755,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "volkswagen",
+  "base": "t cross",
+  "extension": "life",
+  "registry_name": "t cross life",
+  "customer_models": [
+   "t cross life"
+  ],
+  "fitment_models": [
+   [
+    "t cross",
+    754
+   ]
+  ],
+  "rows_removed": 754,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "kia",
+  "base": "optima",
+  "extension": "panorami",
+  "registry_name": "optima panorami",
+  "customer_models": [
+   "optima"
+  ],
+  "fitment_models": [
+   [
+    "optima panorami",
+    726
+   ]
+  ],
+  "rows_removed": 726,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "dl3"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "kia",
+  "base": "optima",
+  "extension": "premium",
+  "registry_name": "optima premium",
+  "customer_models": [
+   "optima"
+  ],
+  "fitment_models": [
+   [
+    "optima premium",
+    726
+   ]
+  ],
+  "rows_removed": 726,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "dl3"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "citroen",
+  "base": "c4",
+  "extension": "cactus",
+  "registry_name": "c4 cactus",
+  "customer_models": [
+   "c4"
+  ],
+  "fitment_models": [
+   [
+    "c4 cactus",
+    655
+   ]
+  ],
+  "rows_removed": 655,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "(c41)",
+   "b7"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "volkswagen",
+  "base": "polo",
+  "extension": "gti",
+  "registry_name": "polo gti",
+  "customer_models": [
+   "polo"
+  ],
+  "fitment_models": [
+   [
+    "polo gti",
+    644
+   ]
+  ],
+  "rows_removed": 644,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "citroen",
+  "base": "c3",
+  "extension": "picasso",
+  "registry_name": "c3 picasso",
+  "customer_models": [
+   "c3"
+  ],
+  "fitment_models": [
+   [
+    "c3 picasso",
+    639
+   ]
+  ],
+  "rows_removed": 639,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "1cb6"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "mazda",
+  "base": "mazda 3",
+  "extension": "sport",
+  "registry_name": "mazda 3 sport",
+  "customer_models": [
+   "mazda 3 sport"
+  ],
+  "fitment_models": [
+   [
+    "mazda 3",
+    639
+   ]
+  ],
+  "rows_removed": 639,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "volkswagen",
+  "base": "caddy",
+  "extension": "gp",
+  "registry_name": "caddy gp",
+  "customer_models": [
+   "caddy"
+  ],
+  "fitment_models": [
+   [
+    "caddy gp",
+    631
+   ]
+  ],
+  "rows_removed": 631,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "volkswagen",
+  "base": "caddy",
+  "extension": "maxi",
+  "registry_name": "caddy maxi",
+  "customer_models": [
+   "caddy"
+  ],
+  "fitment_models": [
+   [
+    "caddy maxi",
+    628
+   ]
+  ],
+  "rows_removed": 628,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "generic_is_junk_prefix",
+  "make": "mazda",
+  "base": "323",
+  "extension": "",
+  "registry_name": null,
+  "customer_models": [
+   "323 c iv bg",
+   "323 f v ba",
+   "323 f vi bj",
+   "323 i fa",
+   "323 i station wagon fa",
+   "323 ii bd",
+   "323 ii hatchback bd",
+   "323 iii bf",
+   "323 iii hatchback bf",
+   "323 iii station wagon bw",
+   "323 p v ba"
+  ],
+  "fitment_models": [
+   [
+    "323",
+    57
+   ]
+  ],
+  "rows_removed": 627,
+  "proposal": "not_a_model",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "PROVEN_CORRECT",
+  "classification_reason": "the fitment row names no vehicle: the registry uses it only as the start of other model names and it is not the make; no compatibility claim is possible"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "mazda",
+  "base": "mazda",
+  "extension": "6",
+  "registry_name": "mazda 6",
+  "customer_models": [
+   "mazda"
+  ],
+  "fitment_models": [
+   [
+    "mazda 6",
+    580
+   ]
+  ],
+  "rows_removed": 580,
+  "proposal": "generation_letter_year_unverified",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "toyota",
+  "base": "proace",
+  "extension": "verso",
+  "registry_name": "proace verso",
+  "customer_models": [
+   "proace"
+  ],
+  "fitment_models": [
+   [
+    "proace verso mpy",
+    558
+   ]
+  ],
+  "rows_removed": 558,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "toyota",
+  "base": "proace",
+  "extension": "city",
+  "registry_name": "proace city",
+  "customer_models": [
+   "proace"
+  ],
+  "fitment_models": [
+   [
+    "proace city box body mpv",
+    548
+   ]
+  ],
+  "rows_removed": 548,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "toyota",
+  "base": "avensis",
+  "extension": "verso",
+  "registry_name": "avensis verso",
+  "customer_models": [
+   "avensis verso clm2 acm2"
+  ],
+  "fitment_models": [
+   [
+    "avensis",
+    546
+   ]
+  ],
+  "rows_removed": 546,
+  "proposal": "distinct",
+  "ext_codes": [
+   "acm2",
+   "clm2"
+  ],
+  "base_codes": [
+   "adt27",
+   "t22",
+   "t25",
+   "zrt27"
+  ],
+  "shared_codes": [],
+  "classification": "PROVEN_CORRECT",
+  "classification_reason": "different vehicle: the extension's own series and the base series carry disjoint platform/chassis codes (['acm2', 'clm2'] vs ['adt27', 't22', 't25'])"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "mg",
+  "base": "mg",
+  "extension": "3",
+  "registry_name": "mg 3",
+  "customer_models": [
+   "mg 3 5lfp"
+  ],
+  "fitment_models": [
+   [
+    "mg",
+    538
+   ]
+  ],
+  "rows_removed": 538,
+  "proposal": "generation_letter_year_unverified",
+  "ext_codes": [
+   "5lfp",
+   "ap11"
+  ],
+  "base_codes": [
+   "4ev",
+   "as33",
+   "rx5"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "porsche",
+  "base": "718 boxster",
+  "extension": "spy",
+  "registry_name": "718 boxster spy",
+  "customer_models": [
+   "718 boxster"
+  ],
+  "fitment_models": [
+   [
+    "718 boxster spyder 982",
+    537
+   ]
+  ],
+  "rows_removed": 537,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "opel",
+  "base": "corsa",
+  "extension": "d",
+  "registry_name": "corsa d",
+  "customer_models": [
+   "corsa"
+  ],
+  "fitment_models": [
+   [
+    "corsa d",
+    535
+   ]
+  ],
+  "rows_removed": 535,
+  "proposal": "generation_letter_year_unverified",
+  "ext_codes": [],
+  "base_codes": [
+   "f08",
+   "f35",
+   "f68",
+   "w5l",
+   "x01"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "toyota",
+  "base": "proace",
+  "extension": "city ver",
+  "registry_name": "proace city ver",
+  "customer_models": [
+   "proace"
+  ],
+  "fitment_models": [
+   [
+    "proace city verso mpv",
+    531
+   ]
+  ],
+  "rows_removed": 531,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "audi",
+  "base": "q3",
+  "extension": "40 tfsi",
+  "registry_name": "q3 40 tfsi",
+  "customer_models": [
+   "q3 40 tfsi"
+  ],
+  "fitment_models": [
+   [
+    "q3",
+    530
+   ]
+  ],
+  "rows_removed": 530,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "8u",
+   "f3b",
+   "f3n"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "audi",
+  "base": "q3",
+  "extension": "sback etron",
+  "registry_name": "q3 sback etron",
+  "customer_models": [
+   "q3 sback etron"
+  ],
+  "fitment_models": [
+   [
+    "q3",
+    530
+   ]
+  ],
+  "rows_removed": 530,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "8u",
+   "f3b",
+   "f3n"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "toyota",
+  "base": "yaris",
+  "extension": "cross hsd",
+  "registry_name": "yaris cross hsd",
+  "customer_models": [
+   "yaris"
+  ],
+  "fitment_models": [
+   [
+    "yaris cross hsd",
+    510
+   ]
+  ],
+  "rows_removed": 510,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "dl2s",
+   "ksp13",
+   "ksp9",
+   "ncp1",
+   "ncp13",
+   "ncp15",
+   "ncp2",
+   "ncp9"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "land rover",
+  "base": "discovery",
+  "extension": "sport",
+  "registry_name": "discovery sport",
+  "customer_models": [
+   "discovery sport"
+  ],
+  "fitment_models": [
+   [
+    "discovery",
+    509
+   ]
+  ],
+  "rows_removed": 509,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "opel",
+  "base": "astra",
+  "extension": "gtc",
+  "registry_name": "astra gtc",
+  "customer_models": [
+   "astra"
+  ],
+  "fitment_models": [
+   [
+    "astra gtc j",
+    504
+   ]
+  ],
+  "rows_removed": 504,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "(t92)",
+   "f07",
+   "f08",
+   "f35",
+   "f48",
+   "f67",
+   "f69",
+   "f70"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "toyota",
+  "base": "c hr",
+  "extension": "hybrib",
+  "registry_name": "c hr hybrib",
+  "customer_models": [
+   "c hr hybrib"
+  ],
+  "fitment_models": [
+   [
+    "c hr",
+    504
+   ]
+  ],
+  "rows_removed": 504,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "h2",
+   "x1",
+   "x2"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "mazda",
+  "base": "cx",
+  "extension": "9",
+  "registry_name": "cx 9",
+  "customer_models": [
+   "cx"
+  ],
+  "fitment_models": [
+   [
+    "cx 9 tb",
+    503
+   ]
+  ],
+  "rows_removed": 503,
+  "proposal": "generation_letter_year_unverified",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "toyota",
+  "base": "avensis",
+  "extension": "verso",
+  "registry_name": "avensis verso",
+  "customer_models": [
+   "avensis"
+  ],
+  "fitment_models": [
+   [
+    "avensis verso clm2 acm2",
+    501
+   ]
+  ],
+  "rows_removed": 501,
+  "proposal": "distinct",
+  "ext_codes": [
+   "acm2",
+   "clm2"
+  ],
+  "base_codes": [
+   "adt27",
+   "t22",
+   "t25",
+   "zrt27"
+  ],
+  "shared_codes": [],
+  "classification": "PROVEN_CORRECT",
+  "classification_reason": "different vehicle: the extension's own series and the base series carry disjoint platform/chassis codes (['acm2', 'clm2'] vs ['adt27', 't22', 't25'])"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "bmw",
+  "base": "m3",
+  "extension": "competition",
+  "registry_name": "m3 competition",
+  "customer_models": [
+   "m3"
+  ],
+  "fitment_models": [
+   [
+    "m3 competition",
+    500
+   ]
+  ],
+  "rows_removed": 500,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "subaru",
+  "base": "legacy",
+  "extension": "outback",
+  "registry_name": "legacy outback",
+  "customer_models": [
+   "legacy outback bg"
+  ],
+  "fitment_models": [
+   [
+    "legacy",
+    500
+   ]
+  ],
+  "rows_removed": 500,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "b13"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "renault",
+  "base": "clio",
+  "extension": "b",
+  "registry_name": "clio b",
+  "customer_models": [
+   "clio"
+  ],
+  "fitment_models": [
+   [
+    "clio b",
+    496
+   ]
+  ],
+  "rows_removed": 496,
+  "proposal": "generation_letter_year_unverified",
+  "ext_codes": [],
+  "base_codes": [
+   "bb0",
+   "br0",
+   "c57",
+   "cb0",
+   "cr0",
+   "kr0",
+   "s57",
+   "sb0"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "citroen",
+  "base": "xsara",
+  "extension": "picasso",
+  "registry_name": "xsara picasso",
+  "customer_models": [
+   "xsara"
+  ],
+  "fitment_models": [
+   [
+    "xsara picasso n68",
+    492
+   ]
+  ],
+  "rows_removed": 492,
+  "proposal": "distinct",
+  "ext_codes": [
+   "n68"
+  ],
+  "base_codes": [
+   "n0",
+   "n1",
+   "n2"
+  ],
+  "shared_codes": [],
+  "classification": "PROVEN_CORRECT",
+  "classification_reason": "different vehicle: the extension's own series and the base series carry disjoint platform/chassis codes (['n68'] vs ['n0', 'n1', 'n2'])"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "toyota",
+  "base": "prius",
+  "extension": "c",
+  "registry_name": "prius c",
+  "customer_models": [
+   "prius"
+  ],
+  "fitment_models": [
+   [
+    "prius c nhp10",
+    490
+   ]
+  ],
+  "rows_removed": 490,
+  "proposal": "single_letter_model_or_trim",
+  "ext_codes": [
+   "nhp10"
+  ],
+  "base_codes": [
+   "nhw11",
+   "nhw20",
+   "w1",
+   "w4",
+   "w5",
+   "w52",
+   "w6",
+   "zvw3"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "single-letter extension with no sibling generations (e.g. Prius C, X5 M): model or trim unknown"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "opel",
+  "base": "astra",
+  "extension": "gtc",
+  "registry_name": "astra gtc",
+  "customer_models": [
+   "astra gtc j"
+  ],
+  "fitment_models": [
+   [
+    "astra",
+    485
+   ]
+  ],
+  "rows_removed": 485,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "(t92)",
+   "f07",
+   "f08",
+   "f35",
+   "f48",
+   "f67",
+   "f69",
+   "f70"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "opel",
+  "base": "astra",
+  "extension": "st",
+  "registry_name": "astra st",
+  "customer_models": [
+   "astra st"
+  ],
+  "fitment_models": [
+   [
+    "astra",
+    485
+   ]
+  ],
+  "rows_removed": 485,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "(t92)",
+   "f07",
+   "f08",
+   "f35",
+   "f48",
+   "f67",
+   "f69",
+   "f70"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "skoda",
+  "base": "rapid",
+  "extension": "spaceback",
+  "registry_name": "rapid spaceback",
+  "customer_models": [
+   "rapid spaceback nh1"
+  ],
+  "fitment_models": [
+   [
+    "rapid",
+    485
+   ]
+  ],
+  "rows_removed": 485,
+  "proposal": "distinct",
+  "ext_codes": [
+   "nh1"
+  ],
+  "base_codes": [
+   "120g",
+   "130g",
+   "135g",
+   "na2",
+   "nh3"
+  ],
+  "shared_codes": [],
+  "classification": "PROVEN_CORRECT",
+  "classification_reason": "different vehicle: the extension's own series and the base series carry disjoint platform/chassis codes (['nh1'] vs ['120g', '130g', '135g'])"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "toyota",
+  "base": "yaris",
+  "extension": "verso",
+  "registry_name": "yaris verso",
+  "customer_models": [
+   "yaris"
+  ],
+  "fitment_models": [
+   [
+    "yaris verso nlp2 ncp2",
+    485
+   ]
+  ],
+  "rows_removed": 485,
+  "proposal": "distinct",
+  "ext_codes": [
+   "ncp2",
+   "nlp2"
+  ],
+  "base_codes": [
+   "dl2s",
+   "ksp13",
+   "ksp9",
+   "ncp1",
+   "ncp13",
+   "ncp15",
+   "ncp9",
+   "ncp90"
+  ],
+  "shared_codes": [],
+  "classification": "PROVEN_CORRECT",
+  "classification_reason": "different vehicle: the extension's own series and the base series carry disjoint platform/chassis codes (['ncp2', 'nlp2'] vs ['dl2s', 'ksp13', 'ksp9'])"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "renault",
+  "base": "megane",
+  "extension": "e tech",
+  "registry_name": "megane e tech",
+  "customer_models": [
+   "megane"
+  ],
+  "fitment_models": [
+   [
+    "megane e tech suv",
+    483
+   ]
+  ],
+  "rows_removed": 483,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "b9a",
+   "ba0",
+   "bm0",
+   "bz0",
+   "cm0",
+   "da0",
+   "dz0",
+   "ea0"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "audi",
+  "base": "a3",
+  "extension": "design",
+  "registry_name": "a3 design",
+  "customer_models": [
+   "a3 design"
+  ],
+  "fitment_models": [
+   [
+    "a3",
+    481
+   ]
+  ],
+  "rows_removed": 481,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "8l1",
+   "8p1",
+   "8p7",
+   "8pa",
+   "8v1",
+   "8v7",
+   "8va",
+   "8vs"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "opel",
+  "base": "corsa",
+  "extension": "d",
+  "registry_name": "corsa d",
+  "customer_models": [
+   "corsa d"
+  ],
+  "fitment_models": [
+   [
+    "corsa",
+    479
+   ]
+  ],
+  "rows_removed": 479,
+  "proposal": "generation_letter_year_unverified",
+  "ext_codes": [],
+  "base_codes": [
+   "f08",
+   "f35",
+   "f68",
+   "w5l",
+   "x01"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "porsche",
+  "base": "cayenne",
+  "extension": "ehybrid",
+  "registry_name": "cayenne ehybrid",
+  "customer_models": [
+   "cayenne"
+  ],
+  "fitment_models": [
+   [
+    "cayenne ehybrid",
+    458
+   ]
+  ],
+  "rows_removed": 458,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "9ya",
+   "9yb"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "bmw",
+  "base": "cooper",
+  "extension": "s",
+  "registry_name": "cooper s",
+  "customer_models": [
+   "cooper"
+  ],
+  "fitment_models": [
+   [
+    "cooper s",
+    389
+   ],
+   [
+    "cooper s club",
+    30
+   ],
+   [
+    "cooper s 5d pep",
+    18
+   ],
+   [
+    "cooper s cab ch",
+    6
+   ],
+   [
+    "cooper s 5d plm",
+    2
+   ]
+  ],
+  "rows_removed": 445,
+  "proposal": "single_letter_model_or_trim",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "single-letter extension with no sibling generations (e.g. Prius C, X5 M): model or trim unknown"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "opel",
+  "base": "astra",
+  "extension": "st",
+  "registry_name": "astra st",
+  "customer_models": [
+   "astra"
+  ],
+  "fitment_models": [
+   [
+    "astra st",
+    438
+   ]
+  ],
+  "rows_removed": 438,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "(t92)",
+   "f07",
+   "f08",
+   "f35",
+   "f48",
+   "f67",
+   "f69",
+   "f70"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "opel",
+  "base": "astra",
+  "extension": "berlina",
+  "registry_name": "astra berlina",
+  "customer_models": [
+   "astra"
+  ],
+  "fitment_models": [
+   [
+    "astra berlina",
+    437
+   ]
+  ],
+  "rows_removed": 437,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "(t92)",
+   "f07",
+   "f08",
+   "f35",
+   "f48",
+   "f67",
+   "f69",
+   "f70"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "subaru",
+  "base": "impreza",
+  "extension": "tur new",
+  "registry_name": "impreza tur new",
+  "customer_models": [
+   "impreza"
+  ],
+  "fitment_models": [
+   [
+    "impreza tur new",
+    433
+   ]
+  ],
+  "rows_removed": 433,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "b3",
+   "g3"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "subaru",
+  "base": "impreza tur",
+  "extension": "new",
+  "registry_name": "impreza tur new",
+  "customer_models": [
+   "impreza tur"
+  ],
+  "fitment_models": [
+   [
+    "impreza tur new",
+    433
+   ]
+  ],
+  "rows_removed": 433,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "volkswagen",
+  "base": "golf",
+  "extension": "plus",
+  "registry_name": "golf plus",
+  "customer_models": [
+   "golf plus"
+  ],
+  "fitment_models": [
+   [
+    "golf",
+    429
+   ]
+  ],
+  "rows_removed": 429,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "mazda",
+  "base": "mazda",
+  "extension": "mx 5",
+  "registry_name": "mazda mx 5",
+  "customer_models": [
+   "mazda"
+  ],
+  "fitment_models": [
+   [
+    "mazda mx 5",
+    427
+   ]
+  ],
+  "rows_removed": 427,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "mazda",
+  "base": "mazda mx",
+  "extension": "5",
+  "registry_name": "mazda mx 5",
+  "customer_models": [
+   "mazda mx"
+  ],
+  "fitment_models": [
+   [
+    "mazda mx 5",
+    427
+   ]
+  ],
+  "rows_removed": 427,
+  "proposal": "single_letter_model_or_trim",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "single-letter extension with no sibling generations (e.g. Prius C, X5 M): model or trim unknown"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "bmw",
+  "base": "x6",
+  "extension": "xdrive 30d",
+  "registry_name": "x6 xdrive 30d",
+  "customer_models": [
+   "x6"
+  ],
+  "fitment_models": [
+   [
+    "x6 xdrive 30d",
+    404
+   ],
+   [
+    "x6 xdrive 30d f",
+    18
+   ]
+  ],
+  "rows_removed": 422,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "35i",
+   "40i",
+   "50i",
+   "50iexclusive",
+   "e71",
+   "e72",
+   "f16",
+   "f86"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "volvo",
+  "base": "v60",
+  "extension": "recharge t8",
+  "registry_name": "v60 recharge t8",
+  "customer_models": [
+   "v60"
+  ],
+  "fitment_models": [
+   [
+    "v60 recharge t8",
+    421
+   ]
+  ],
+  "rows_removed": 421,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "bmw",
+  "base": "x6",
+  "extension": "xdrive 35i",
+  "registry_name": "x6 xdrive 35i",
+  "customer_models": [
+   "x6"
+  ],
+  "fitment_models": [
+   [
+    "x6 xdrive 35i",
+    403
+   ],
+   [
+    "x6 xdrive 35i f",
+    12
+   ]
+  ],
+  "rows_removed": 415,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "40i",
+   "50i",
+   "50iexclusive",
+   "e71",
+   "e72",
+   "f16",
+   "f86",
+   "f96"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "volvo",
+  "base": "xc60",
+  "extension": "b5 fwd",
+  "registry_name": "xc60 b5 fwd",
+  "customer_models": [
+   "xc60"
+  ],
+  "fitment_models": [
+   [
+    "xc60 b5 fwd",
+    415
+   ]
+  ],
+  "rows_removed": 415,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "recharget8",
+   "t5",
+   "t8"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "chevrolet",
+  "base": "spark",
+  "extension": "ls",
+  "registry_name": "spark ls",
+  "customer_models": [
+   "spark"
+  ],
+  "fitment_models": [
+   [
+    "spark ls",
+    409
+   ]
+  ],
+  "rows_removed": 409,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "m200",
+   "m250",
+   "m300",
+   "m400"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "mazda",
+  "base": "mazda",
+  "extension": "cx 30",
+  "registry_name": "mazda cx 30",
+  "customer_models": [
+   "mazda"
+  ],
+  "fitment_models": [
+   [
+    "mazda cx 30",
+    409
+   ]
+  ],
+  "rows_removed": 409,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "mazda",
+  "base": "mazda3",
+  "extension": "sport",
+  "registry_name": "mazda3 sport",
+  "customer_models": [
+   "mazda3"
+  ],
+  "fitment_models": [
+   [
+    "mazda3 sport",
+    409
+   ]
+  ],
+  "rows_removed": 409,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "chevrolet",
+  "base": "sonic",
+  "extension": "lt",
+  "registry_name": "sonic lt",
+  "customer_models": [
+   "sonic"
+  ],
+  "fitment_models": [
+   [
+    "sonic lt",
+    408
+   ]
+  ],
+  "rows_removed": 408,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "1.4turbo"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "subaru",
+  "base": "impreza",
+  "extension": "new",
+  "registry_name": "impreza new",
+  "customer_models": [
+   "impreza"
+  ],
+  "fitment_models": [
+   [
+    "impreza new",
+    408
+   ]
+  ],
+  "rows_removed": 408,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "b3",
+   "g3"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "toyota",
+  "base": "camry",
+  "extension": "hybride",
+  "registry_name": "camry hybride",
+  "customer_models": [
+   "camry"
+  ],
+  "fitment_models": [
+   [
+    "camry hybride",
+    408
+   ]
+  ],
+  "rows_removed": 408,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "acv3",
+   "avv5",
+   "cv1",
+   "cv2",
+   "mcv2",
+   "mcv3",
+   "rav4",
+   "sxv2"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "bmw",
+  "base": "x3",
+  "extension": "x drive 20d",
+  "registry_name": "x3 x drive 20d",
+  "customer_models": [
+   "x3"
+  ],
+  "fitment_models": [
+   [
+    "x3 x drive 20d",
+    407
+   ]
+  ],
+  "rows_removed": 407,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "20dexecutive",
+   "20i",
+   "20iexecutive",
+   "28i",
+   "2l",
+   "30e",
+   "30i",
+   "30iexecutive"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "chevrolet",
+  "base": "sonic",
+  "extension": "ls",
+  "registry_name": "sonic ls",
+  "customer_models": [
+   "sonic"
+  ],
+  "fitment_models": [
+   [
+    "sonic ls",
+    406
+   ]
+  ],
+  "rows_removed": 406,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "1.4turbo"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "chevrolet",
+  "base": "impala",
+  "extension": "lt",
+  "registry_name": "impala lt",
+  "customer_models": [
+   "impala"
+  ],
+  "fitment_models": [
+   [
+    "impala lt",
+    405
+   ]
+  ],
+  "rows_removed": 405,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "chevrolet",
+  "base": "optra",
+  "extension": "ls",
+  "registry_name": "optra ls",
+  "customer_models": [
+   "optra"
+  ],
+  "fitment_models": [
+   [
+    "optra ls",
+    405
+   ]
+  ],
+  "rows_removed": 405,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "mazda",
+  "base": "mazda",
+  "extension": "cx 3",
+  "registry_name": "mazda cx 3",
+  "customer_models": [
+   "mazda"
+  ],
+  "fitment_models": [
+   [
+    "mazda cx 3",
+    405
+   ]
+  ],
+  "rows_removed": 405,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "mazda",
+  "base": "mazda cx",
+  "extension": "3",
+  "registry_name": "mazda cx 3",
+  "customer_models": [
+   "mazda cx"
+  ],
+  "fitment_models": [
+   [
+    "mazda cx 3",
+    405
+   ]
+  ],
+  "rows_removed": 405,
+  "proposal": "generation_letter_year_unverified",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "chevrolet",
+  "base": "malibu",
+  "extension": "lt",
+  "registry_name": "malibu lt",
+  "customer_models": [
+   "malibu"
+  ],
+  "fitment_models": [
+   [
+    "malibu lt",
+    404
+   ]
+  ],
+  "rows_removed": 404,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "v300"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "fiat",
+  "base": "fiat",
+  "extension": "ducato",
+  "registry_name": "fiat ducato",
+  "customer_models": [
+   "fiat"
+  ],
+  "fitment_models": [
+   [
+    "fiat ducato",
+    404
+   ]
+  ],
+  "rows_removed": 404,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "500x"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "mazda",
+  "base": "mazda",
+  "extension": "5",
+  "registry_name": "mazda 5",
+  "customer_models": [
+   "mazda"
+  ],
+  "fitment_models": [
+   [
+    "mazda 5",
+    404
+   ]
+  ],
+  "rows_removed": 404,
+  "proposal": "generation_letter_year_unverified",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "volvo",
+  "base": "ex30",
+  "extension": "sm",
+  "registry_name": "ex30 sm",
+  "customer_models": [
+   "ex30"
+  ],
+  "fitment_models": [
+   [
+    "ex30 sm",
+    404
+   ]
+  ],
+  "rows_removed": 404,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "mazda",
+  "base": "mazda",
+  "extension": "cx 5",
+  "registry_name": "mazda cx 5",
+  "customer_models": [
+   "mazda"
+  ],
+  "fitment_models": [
+   [
+    "mazda cx 5",
+    403
+   ]
+  ],
+  "rows_removed": 403,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "mazda",
+  "base": "mazda cx",
+  "extension": "5",
+  "registry_name": "mazda cx 5",
+  "customer_models": [
+   "mazda cx"
+  ],
+  "fitment_models": [
+   [
+    "mazda cx 5",
+    403
+   ]
+  ],
+  "rows_removed": 403,
+  "proposal": "generation_letter_year_unverified",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "mercedes-benz",
+  "base": "c180",
+  "extension": "cdi",
+  "registry_name": "c180 cdi",
+  "customer_models": [
+   "c180"
+  ],
+  "fitment_models": [
+   [
+    "c180 cdi",
+    402
+   ]
+  ],
+  "rows_removed": 402,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "fiat",
+  "base": "fiat",
+  "extension": "tipo",
+  "registry_name": "fiat tipo",
+  "customer_models": [
+   "fiat"
+  ],
+  "fitment_models": [
+   [
+    "fiat tipo",
+    401
+   ]
+  ],
+  "rows_removed": 401,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "500x"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "bmw",
+  "base": "530e",
+  "extension": "iperforman",
+  "registry_name": "530e iperforman",
+  "customer_models": [
+   "530e"
+  ],
+  "fitment_models": [
+   [
+    "530e iperforman",
+    398
+   ]
+  ],
+  "rows_removed": 398,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "fiat",
+  "base": "fiat",
+  "extension": "doblo",
+  "registry_name": "fiat doblo",
+  "customer_models": [
+   "fiat"
+  ],
+  "fitment_models": [
+   [
+    "fiat doblo",
+    398
+   ]
+  ],
+  "rows_removed": 398,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "500x"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "audi",
+  "base": "a3",
+  "extension": "design",
+  "registry_name": "a3 design",
+  "customer_models": [
+   "a3"
+  ],
+  "fitment_models": [
+   [
+    "a3 design",
+    397
+   ]
+  ],
+  "rows_removed": 397,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "8l1",
+   "8p1",
+   "8p7",
+   "8pa",
+   "8v1",
+   "8v7",
+   "8va",
+   "8vs"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "audi",
+  "base": "q3",
+  "extension": "sback etron",
+  "registry_name": "q3 sback etron",
+  "customer_models": [
+   "q3"
+  ],
+  "fitment_models": [
+   [
+    "q3 sback etron",
+    397
+   ]
+  ],
+  "rows_removed": 397,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "8u",
+   "f3b",
+   "f3n"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "bmw",
+  "base": "530e",
+  "extension": "iperforman",
+  "registry_name": "530e iperforman",
+  "customer_models": [
+   "530e iperforman"
+  ],
+  "fitment_models": [
+   [
+    "530e",
+    395
+   ]
+  ],
+  "rows_removed": 395,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "bmw",
+  "base": "cooper",
+  "extension": "s",
+  "registry_name": "cooper s",
+  "customer_models": [
+   "cooper s"
+  ],
+  "fitment_models": [
+   [
+    "cooper",
+    395
+   ]
+  ],
+  "rows_removed": 395,
+  "proposal": "single_letter_model_or_trim",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "single-letter extension with no sibling generations (e.g. Prius C, X5 M): model or trim unknown"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "bmw",
+  "base": "x1",
+  "extension": "sdrive 18i",
+  "registry_name": "x1 sdrive 18i",
+  "customer_models": [
+   "x1"
+  ],
+  "fitment_models": [
+   [
+    "x1 sdrive 18i",
+    395
+   ]
+  ],
+  "rows_removed": 395,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "2.0d",
+   "20i",
+   "25e",
+   "e84",
+   "f48",
+   "sd18i",
+   "sdrive18i",
+   "sdrive20d"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "nissan",
+  "base": "qashqai",
+  "extension": "plus 2",
+  "registry_name": "qashqai plus 2",
+  "customer_models": [
+   "qashqai"
+  ],
+  "fitment_models": [
+   [
+    "qashqai plus 2",
+    395
+   ]
+  ],
+  "rows_removed": 395,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "j10",
+   "j11",
+   "j12",
+   "jj10",
+   "jj10e"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "audi",
+  "base": "q3",
+  "extension": "40 tfsi",
+  "registry_name": "q3 40 tfsi",
+  "customer_models": [
+   "q3"
+  ],
+  "fitment_models": [
+   [
+    "q3 40 tfsi",
+    394
+   ]
+  ],
+  "rows_removed": 394,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "8u",
+   "f3b",
+   "f3n"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "audi",
+  "base": "q3",
+  "extension": "sb 35",
+  "registry_name": "q3 sb 35",
+  "customer_models": [
+   "q3"
+  ],
+  "fitment_models": [
+   [
+    "q3 sb 35",
+    393
+   ]
+  ],
+  "rows_removed": 393,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "8u",
+   "f3b",
+   "f3n"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "nissan",
+  "base": "infiniti",
+  "extension": "m",
+  "registry_name": "infiniti m",
+  "customer_models": [
+   "infiniti m"
+  ],
+  "fitment_models": [
+   [
+    "infiniti",
+    393
+   ]
+  ],
+  "rows_removed": 393,
+  "proposal": "single_letter_model_or_trim",
+  "ext_codes": [],
+  "base_codes": [
+   "q70"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "single-letter extension with no sibling generations (e.g. Prius C, X5 M): model or trim unknown"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "toyota",
+  "base": "lexus",
+  "extension": "rx 450h",
+  "registry_name": "lexus rx 450h",
+  "customer_models": [
+   "lexus"
+  ],
+  "fitment_models": [
+   [
+    "lexus rx 450h",
+    393
+   ]
+  ],
+  "rows_removed": 393,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "ls460"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "skoda",
+  "base": "octavia",
+  "extension": "s",
+  "registry_name": "octavia s",
+  "customer_models": [
+   "octavia"
+  ],
+  "fitment_models": [
+   [
+    "octavia s",
+    390
+   ]
+  ],
+  "rows_removed": 390,
+  "proposal": "generation_letter_year_unverified",
+  "ext_codes": [],
+  "base_codes": [
+   "1u2",
+   "1u5",
+   "1z3",
+   "1z5",
+   "5e3",
+   "5e5",
+   "nx3",
+   "nx5"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "toyota",
+  "base": "corolla",
+  "extension": "runx",
+  "registry_name": "corolla runx",
+  "customer_models": [
+   "corolla"
+  ],
+  "fitment_models": [
+   [
+    "corolla runx",
+    390
+   ]
+  ],
+  "rows_removed": 390,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "ae10",
+   "ae86",
+   "aze15",
+   "cde12",
+   "e10",
+   "e11",
+   "e12",
+   "e12j"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "toyota",
+  "base": "space",
+  "extension": "verso",
+  "registry_name": "space verso",
+  "customer_models": [
+   "space"
+  ],
+  "fitment_models": [
+   [
+    "space verso",
+    390
+   ]
+  ],
+  "rows_removed": 390,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "skoda",
+  "base": "fabia",
+  "extension": "space",
+  "registry_name": "fabia space",
+  "customer_models": [
+   "fabia"
+  ],
+  "fitment_models": [
+   [
+    "fabia space",
+    389
+   ]
+  ],
+  "rows_removed": 389,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "6y2",
+   "6y3",
+   "6y5",
+   "nj3",
+   "nj5",
+   "pj3"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "skoda",
+  "base": "octavia",
+  "extension": "space",
+  "registry_name": "octavia space",
+  "customer_models": [
+   "octavia"
+  ],
+  "fitment_models": [
+   [
+    "octavia space",
+    388
+   ]
+  ],
+  "rows_removed": 388,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "1u2",
+   "1u5",
+   "1z3",
+   "1z5",
+   "5e3",
+   "5e5",
+   "nx3",
+   "nx5"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "toyota",
+  "base": "land",
+  "extension": "criser",
+  "registry_name": "land criser",
+  "customer_models": [
+   "land"
+  ],
+  "fitment_models": [
+   [
+    "land criser",
+    387
+   ]
+  ],
+  "rows_removed": 387,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "bj7",
+   "grj12",
+   "grj15",
+   "hzj7",
+   "j25",
+   "j3",
+   "j4",
+   "j6"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "audi",
+  "base": "a8",
+  "extension": "long",
+  "registry_name": "a8 long",
+  "customer_models": [
+   "a8"
+  ],
+  "fitment_models": [
+   [
+    "a8 long",
+    386
+   ]
+  ],
+  "rows_removed": 386,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "4d2",
+   "4d8",
+   "4e",
+   "4h",
+   "4n2",
+   "4n8"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "bmw",
+  "base": "m3",
+  "extension": "competition",
+  "registry_name": "m3 competition",
+  "customer_models": [
+   "m3 competition"
+  ],
+  "fitment_models": [
+   [
+    "m3",
+    333
+   ]
+  ],
+  "rows_removed": 333,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "land rover",
+  "base": "discovery",
+  "extension": "4",
+  "registry_name": "discovery 4",
+  "customer_models": [
+   "discovery"
+  ],
+  "fitment_models": [
+   [
+    "discovery 4",
+    314
+   ]
+  ],
+  "rows_removed": 314,
+  "proposal": "generation_letter_year_unverified",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "bmw",
+  "base": "x6",
+  "extension": "m",
+  "registry_name": "x6 m",
+  "customer_models": [
+   "x6"
+  ],
+  "fitment_models": [
+   [
+    "x6 m",
+    214
+   ],
+   [
+    "x6 m competitio",
+    42
+   ],
+   [
+    "x6 m luxury",
+    40
+   ]
+  ],
+  "rows_removed": 296,
+  "proposal": "single_letter_model_or_trim",
+  "ext_codes": [
+   "m50d",
+   "m50i"
+  ],
+  "base_codes": [
+   "35i",
+   "40i",
+   "50i",
+   "50iexclusive",
+   "e71",
+   "e72",
+   "f16",
+   "f86"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "single-letter extension with no sibling generations (e.g. Prius C, X5 M): model or trim unknown"
+ },
+ {
+  "reason": "generic_is_junk_prefix",
+  "make": "volvo",
+  "base": "940",
+  "extension": "",
+  "registry_name": null,
+  "customer_models": [
+   "940 ii",
+   "940 ii estate",
+   "940 kombi"
+  ],
+  "fitment_models": [
+   [
+    "940",
+    79
+   ]
+  ],
+  "rows_removed": 237,
+  "proposal": "not_a_model",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "PROVEN_CORRECT",
+  "classification_reason": "the fitment row names no vehicle: the registry uses it only as the start of other model names and it is not the make; no compatibility claim is possible"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "citroen",
+  "base": "c5",
+  "extension": "aircross",
+  "registry_name": "c5 aircross",
+  "customer_models": [
+   "c5 aircross"
+  ],
+  "fitment_models": [
+   [
+    "c5",
+    158
+   ]
+  ],
+  "rows_removed": 158,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "volvo",
+  "base": "v60",
+  "extension": "recharge t8",
+  "registry_name": "v60 recharge t8",
+  "customer_models": [
+   "v60 recharge t8"
+  ],
+  "fitment_models": [
+   [
+    "v60",
+    111
+   ]
+  ],
+  "rows_removed": 111,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "citroen",
+  "base": "xsara",
+  "extension": "picasso",
+  "registry_name": "xsara picasso",
+  "customer_models": [
+   "xsara picasso n68"
+  ],
+  "fitment_models": [
+   [
+    "xsara",
+    98
+   ]
+  ],
+  "rows_removed": 98,
+  "proposal": "distinct",
+  "ext_codes": [
+   "n68"
+  ],
+  "base_codes": [
+   "n0",
+   "n1",
+   "n2"
+  ],
+  "shared_codes": [],
+  "classification": "PROVEN_CORRECT",
+  "classification_reason": "different vehicle: the extension's own series and the base series carry disjoint platform/chassis codes (['n68'] vs ['n0', 'n1', 'n2'])"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "bmw",
+  "base": "x5",
+  "extension": "m",
+  "registry_name": "x5 m",
+  "customer_models": [
+   "x5"
+  ],
+  "fitment_models": [
+   [
+    "x5 m",
+    72
+   ],
+   [
+    "x5 m luxury",
+    2
+   ]
+  ],
+  "rows_removed": 74,
+  "proposal": "generation_letter_year_unverified",
+  "ext_codes": [
+   "m50d"
+  ],
+  "base_codes": [
+   "0si",
+   "35i",
+   "40e",
+   "40i",
+   "45e",
+   "50e",
+   "50i",
+   "5s"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "ford",
+  "base": "bronco",
+  "extension": "bigbend",
+  "registry_name": "bronco bigbend",
+  "customer_models": [
+   "bronco bigbend"
+  ],
+  "fitment_models": [
+   [
+    "bronco",
+    66
+   ]
+  ],
+  "rows_removed": 66,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "ford",
+  "base": "bronco",
+  "extension": "outerban",
+  "registry_name": "bronco outerban",
+  "customer_models": [
+   "bronco outerban"
+  ],
+  "fitment_models": [
+   [
+    "bronco",
+    66
+   ]
+  ],
+  "rows_removed": 66,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "audi",
+  "base": "q8",
+  "extension": "e tron",
+  "registry_name": "q8 e tron",
+  "customer_models": [
+   "q8 e tron",
+   "q8 e tron sportback get",
+   "q8 e tron suv geg"
+  ],
+  "fitment_models": [
+   [
+    "q8",
+    17
+   ]
+  ],
+  "rows_removed": 51,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "4mn"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "chery",
+  "base": "tiggo",
+  "extension": "7 pro",
+  "registry_name": "tiggo 7 pro",
+  "customer_models": [
+   "tiggo"
+  ],
+  "fitment_models": [
+   [
+    "tiggo 7 pro",
+    48
+   ]
+  ],
+  "rows_removed": 48,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "chery",
+  "base": "tiggo",
+  "extension": "8 pro",
+  "registry_name": "tiggo 8 pro",
+  "customer_models": [
+   "tiggo"
+  ],
+  "fitment_models": [
+   [
+    "tiggo 8 pro",
+    48
+   ]
+  ],
+  "rows_removed": 48,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "bmw",
+  "base": "x6 m",
+  "extension": "competitio",
+  "registry_name": "x6 m competitio",
+  "customer_models": [
+   "x6 m"
+  ],
+  "fitment_models": [
+   [
+    "x6 m competitio",
+    42
+   ]
+  ],
+  "rows_removed": 42,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "gmc",
+  "base": "yukon",
+  "extension": "xl",
+  "registry_name": "yukon xl",
+  "customer_models": [
+   "yukon"
+  ],
+  "fitment_models": [
+   [
+    "yukon xl 2500",
+    17
+   ],
+   [
+    "yukon xl 1500",
+    15
+   ],
+   [
+    "yukon xl",
+    10
+   ]
+  ],
+  "rows_removed": 42,
+  "proposal": "ambiguous",
+  "ext_codes": [
+   "1500",
+   "2500"
+  ],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "bmw",
+  "base": "cooper",
+  "extension": "se",
+  "registry_name": "cooper se",
+  "customer_models": [
+   "cooper"
+  ],
+  "fitment_models": [
+   [
+    "cooper se loung",
+    34
+   ],
+   [
+    "cooper se de el",
+    6
+   ]
+  ],
+  "rows_removed": 40,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "bmw",
+  "base": "m5",
+  "extension": "competition",
+  "registry_name": "m5 competition",
+  "customer_models": [
+   "m5"
+  ],
+  "fitment_models": [
+   [
+    "m5 competition",
+    38
+   ]
+  ],
+  "rows_removed": 38,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "bmw",
+  "base": "x4",
+  "extension": "m",
+  "registry_name": "x4 m",
+  "customer_models": [
+   "x4"
+  ],
+  "fitment_models": [
+   [
+    "x4 m",
+    37
+   ]
+  ],
+  "rows_removed": 37,
+  "proposal": "single_letter_model_or_trim",
+  "ext_codes": [
+   "m40i"
+  ],
+  "base_codes": [
+   "20dexecutive",
+   "20i",
+   "20iexecutive",
+   "28i",
+   "30i",
+   "f26",
+   "g02",
+   "xdrive20i"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "single-letter extension with no sibling generations (e.g. Prius C, X5 M): model or trim unknown"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "bmw",
+  "base": "330e",
+  "extension": "iperforman",
+  "registry_name": "330e iperforman",
+  "customer_models": [
+   "330e"
+  ],
+  "fitment_models": [
+   [
+    "330e iperforman",
+    36
+   ]
+  ],
+  "rows_removed": 36,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "ford",
+  "base": "focus",
+  "extension": "st",
+  "registry_name": "focus st",
+  "customer_models": [
+   "focus"
+  ],
+  "fitment_models": [
+   [
+    "focus st-line",
+    26
+   ],
+   [
+    "focus st-line x",
+    9
+   ]
+  ],
+  "rows_removed": 35,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "bmw",
+  "base": "x3",
+  "extension": "xdrive 20d",
+  "registry_name": "x3 xdrive 20d",
+  "customer_models": [
+   "x3"
+  ],
+  "fitment_models": [
+   [
+    "x3 xdrive 20d",
+    32
+   ]
+  ],
+  "rows_removed": 32,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "20dexecutive",
+   "20i",
+   "20iexecutive",
+   "28i",
+   "2l",
+   "30e",
+   "30i",
+   "30iexecutive"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "bmw",
+  "base": "m2",
+  "extension": "competition",
+  "registry_name": "m2 competition",
+  "customer_models": [
+   "m2"
+  ],
+  "fitment_models": [
+   [
+    "m2 competition",
+    30
+   ]
+  ],
+  "rows_removed": 30,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "honda",
+  "base": "civic",
+  "extension": "type r",
+  "registry_name": "civic type r",
+  "customer_models": [
+   "civic"
+  ],
+  "fitment_models": [
+   [
+    "civic type r",
+    24
+   ]
+  ],
+  "rows_removed": 24,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "em1",
+   "em2"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "bmw",
+  "base": "x3",
+  "extension": "m",
+  "registry_name": "x3 m",
+  "customer_models": [
+   "x3"
+  ],
+  "fitment_models": [
+   [
+    "x3 m",
+    20
+   ]
+  ],
+  "rows_removed": 20,
+  "proposal": "generation_letter_year_unverified",
+  "ext_codes": [
+   "m40i"
+  ],
+  "base_codes": [
+   "20dexecutive",
+   "20i",
+   "20iexecutive",
+   "28i",
+   "2l",
+   "30e",
+   "30i",
+   "30iexecutive"
+  ],
+  "shared_codes": [
+   "m40i"
+  ],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D1: generation letters, but the fitment year filter cannot separate them (identical placeholder first years, e.g. 1990-2030)"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "bmw",
+  "base": "m3",
+  "extension": "comp",
+  "registry_name": "m3 comp",
+  "customer_models": [
+   "m3"
+  ],
+  "fitment_models": [
+   [
+    "m3 comp xdr",
+    18
+   ]
+  ],
+  "rows_removed": 18,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "bmw",
+  "base": "x5",
+  "extension": "xdrive 40d",
+  "registry_name": "x5 xdrive 40d",
+  "customer_models": [
+   "x5"
+  ],
+  "fitment_models": [
+   [
+    "x5 xdrive 40d f",
+    16
+   ]
+  ],
+  "rows_removed": 16,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "0si",
+   "35i",
+   "40e",
+   "40i",
+   "45e",
+   "50e",
+   "50i",
+   "5s"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "toyota",
+  "base": "lexus",
+  "extension": "gs 300",
+  "registry_name": "lexus gs 300",
+  "customer_models": [
+   "lexus"
+  ],
+  "fitment_models": [
+   [
+    "lexus gs 300",
+    16
+   ]
+  ],
+  "rows_removed": 16,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "450h",
+   "ls460"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "toyota",
+  "base": "lexus",
+  "extension": "is 250",
+  "registry_name": "lexus is 250",
+  "customer_models": [
+   "lexus"
+  ],
+  "fitment_models": [
+   [
+    "lexus is 250",
+    16
+   ]
+  ],
+  "rows_removed": 16,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "450h",
+   "ls460"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "audi",
+  "base": "a8",
+  "extension": "long",
+  "registry_name": "a8 long",
+  "customer_models": [
+   "a8 long"
+  ],
+  "fitment_models": [
+   [
+    "a8",
+    10
+   ]
+  ],
+  "rows_removed": 10,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "4d2",
+   "4d8",
+   "4e",
+   "4h",
+   "4n2",
+   "4n8"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "bmw",
+  "base": "x5",
+  "extension": "xdrive 30d",
+  "registry_name": "x5 xdrive 30d",
+  "customer_models": [
+   "x5"
+  ],
+  "fitment_models": [
+   [
+    "x5 xdrive 30d f",
+    8
+   ]
+  ],
+  "rows_removed": 8,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "0si",
+   "35i",
+   "40e",
+   "40i",
+   "45e",
+   "50e",
+   "50i",
+   "5s"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "bmw",
+  "base": "x5",
+  "extension": "xdrive 35i",
+  "registry_name": "x5 xdrive 35i",
+  "customer_models": [
+   "x5"
+  ],
+  "fitment_models": [
+   [
+    "x5 xdrive 35i f",
+    8
+   ]
+  ],
+  "rows_removed": 8,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "0si",
+   "40e",
+   "40i",
+   "45e",
+   "50e",
+   "50i",
+   "5s",
+   "e53"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "subaru",
+  "base": "wrx",
+  "extension": "sti",
+  "registry_name": "wrx sti",
+  "customer_models": [
+   "wrx"
+  ],
+  "fitment_models": [
+   [
+    "wrx sti",
+    8
+   ]
+  ],
+  "rows_removed": 8,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "bmw",
+  "base": "m4",
+  "extension": "comp xdrive",
+  "registry_name": "m4 comp xdrive",
+  "customer_models": [
+   "m4"
+  ],
+  "fitment_models": [
+   [
+    "m4 comp xdrive",
+    6
+   ]
+  ],
+  "rows_removed": 6,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "bmw",
+  "base": "x6",
+  "extension": "xdrive 50i",
+  "registry_name": "x6 xdrive 50i",
+  "customer_models": [
+   "x6"
+  ],
+  "fitment_models": [
+   [
+    "x6 xdrive 50i",
+    6
+   ]
+  ],
+  "rows_removed": 6,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "35i",
+   "40i",
+   "50iexclusive",
+   "e71",
+   "e72",
+   "f16",
+   "f86",
+   "f96"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "bmw",
+  "base": "z4",
+  "extension": "sdrive 35i",
+  "registry_name": "z4 sdrive 35i",
+  "customer_models": [
+   "z4"
+  ],
+  "fitment_models": [
+   [
+    "z4 sdrive 35i s",
+    6
+   ]
+  ],
+  "rows_removed": 6,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "20i",
+   "3.5i",
+   "30i",
+   "e85",
+   "e86",
+   "e89",
+   "g29",
+   "m40i"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "audi",
+  "base": "r8",
+  "extension": "spyder",
+  "registry_name": "r8 spyder",
+  "customer_models": [
+   "r8 spyder",
+   "r8 spyder 4s9"
+  ],
+  "fitment_models": [
+   [
+    "r8",
+    2
+   ]
+  ],
+  "rows_removed": 4,
+  "proposal": "ambiguous",
+  "ext_codes": [
+   "4s9"
+  ],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "toyota",
+  "base": "sienna",
+  "extension": "xle",
+  "registry_name": "sienna xle",
+  "customer_models": [
+   "sienna"
+  ],
+  "fitment_models": [
+   [
+    "sienna xle",
+    4
+   ]
+  ],
+  "rows_removed": 4,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "asl3",
+   "gsl2",
+   "gsl3",
+   "l4",
+   "mcl10",
+   "mcl2"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "bmw",
+  "base": "m3",
+  "extension": "cs",
+  "registry_name": "m3 cs",
+  "customer_models": [
+   "m3"
+  ],
+  "fitment_models": [
+   [
+    "m3 cs",
+    2
+   ]
+  ],
+  "rows_removed": 2,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "fitment_is_distinct_model",
+  "make": "bmw",
+  "base": "x5",
+  "extension": "xdrive 50i",
+  "registry_name": "x5 xdrive 50i",
+  "customer_models": [
+   "x5"
+  ],
+  "fitment_models": [
+   [
+    "x5 xdrive 50i f",
+    2
+   ]
+  ],
+  "rows_removed": 2,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [
+   "0si",
+   "35i",
+   "40e",
+   "40i",
+   "45e",
+   "50e",
+   "5s",
+   "e53"
+  ],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ },
+ {
+  "reason": "customer_is_distinct_model_with_own_series",
+  "make": "jaguar",
+  "base": "xk8",
+  "extension": "xkr",
+  "registry_name": "xk8 xkr",
+  "customer_models": [
+   "xk8 / xkr - to"
+  ],
+  "fitment_models": [
+   [
+    "xk8",
+    1
+   ]
+  ],
+  "rows_removed": 1,
+  "proposal": "ambiguous",
+  "ext_codes": [],
+  "base_codes": [],
+  "shared_codes": [],
+  "classification": "UNRESOLVED",
+  "classification_reason": "D3: no platform/chassis codes on one side — name similarity only, no part-level evidence"
+ }
+]

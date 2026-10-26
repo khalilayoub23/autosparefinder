@@ -24,6 +24,7 @@ from typing import Optional, List, Dict, Any, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, text, and_, or_
 import httpx
+import logging
 import os
 import re
 import time
@@ -44,6 +45,8 @@ from routes.utils import _mask_supplier
 from offer_classification import class_rank_sql, offer_label
 from manufacturer_normalization import (
     canonicalize_vehicle_model_for_manufacturer,
+    customer_vehicle_model,
+    customer_vehicle_model_forms,
     normalize_vehicle_model_name,
     normalize_vehicle_submodel_name,
     normalize_manufacturer_name,
@@ -181,6 +184,16 @@ def _customer_unit_price(
 # image_url is deliberately NOT here: a raw supplier image URL names the supplier's CDN (e.g. *.aliexpress-media.com)
 # and customer surfaces must only ever show our own bucket thumbnails (see thumbnail rules in CLAUDE.md).
 _EXTERNAL_OFFER_SAFE_FIELDS = ("title", "condition", "estimated_delivery_days", "ships_to_israel", "warranty_months")
+
+
+def _should_fetch_external_suppliers(query: str, redis) -> bool:
+    """The background external-supplier lookup in search_parts has exactly ONE output: the Redis entry
+    (`ext_sup:<query>`) that the NEXT search for the same query reads. Without a Redis client there is
+    nowhere to put the result, so the requests would be pure waste - that was the startup warm-up
+    (redis=None): every backend start sent ~20 requests to PartSouq/Autodoc/Amayama (403, the server IP
+    is blocked) and the eBay Browse API (quota), and discarded every answer (found 2026-10-09)."""
+    from outbound_policy import external_suppliers_enabled     # #100: one fail-closed rule (production default on)
+    return bool(query) and redis is not None and external_suppliers_enabled()[0]
 
 
 def _sanitize_external_offer(offer: Dict[str, Any], usd_to_ils: float) -> Optional[Dict[str, Any]]:
@@ -520,7 +533,7 @@ async def _lookup_vehicle_by_license_plate(license_plate: str) -> Dict[str, Any]
             "degem_cd": _to_int_or_none(record.get("degem_cd")),
             "shnat_yitzur": _to_int_or_none(record.get("shnat_yitzur")),
             "manufacturer": manufacturer,
-            "model": model_base or canonicalize_vehicle_model_for_manufacturer(manufacturer, raw_model) or normalize_vehicle_model_name(raw_model),
+            "model": _plate_lookup_model(manufacturer, raw_model, model_base),
             "submodel": resolved_submodel,
             "engine": record.get("nefah_manoa") or record.get("degem_manoa"),
         }
@@ -646,6 +659,22 @@ def _is_probable_variant_submodel(value: Optional[str]) -> bool:
     if normalize_vehicle_submodel_name(clean):
         return True
     return False
+
+
+def _plate_lookup_model(manufacturer: Optional[str], raw_model: Optional[str], model_base: Optional[str]) -> str:
+    """Model returned by the licence-plate lookup (registry kinuy_mishari / degem_nm).
+
+    The splitter starts from the ingest noise filter: for the registry's numeric names it returned
+    "" (Peugeot 3008 / 208, Tesla MODEL 3) or the bare make ("MAZDA 3" -> "MAZDA"), so the customer's
+    next search had no model — a make-wide search (FIXES_TRACKER #69 §16). Then the registry name
+    itself is returned when it is a usable model; the search derives every form it may be filed
+    under (customer_vehicle_model_forms). Trim (ramat_gimur) stays in `submodel`."""
+    base = model_base or canonicalize_vehicle_model_for_manufacturer(manufacturer, raw_model) or normalize_vehicle_model_name(raw_model)
+    make = (normalize_manufacturer_name(manufacturer, manufacturer) or manufacturer or "").casefold()
+    if base and base.casefold() not in (make, str(manufacturer or "").casefold()):
+        return base
+    raw = " ".join(str(raw_model or "").split())
+    return raw if customer_vehicle_model(manufacturer, raw) else ""
 
 
 def _split_vehicle_model_variant(manufacturer: Optional[str], value: Optional[str]) -> Tuple[str, str]:
@@ -818,11 +847,31 @@ async def _build_vehicle_fitment_clause(
             vehicle_fitment_checks.append(f"({' OR '.join(vmfr_clauses)})")
 
     if vehicle_model:
+        # Was `model ILIKE '%<model>%'` — a substring, so "Corolla" matched "Corolla Cross"
+        # and "3" matched "CX-30". Same shared rule as the fitment-table lane; the
+        # customer's own model strings are always accepted (JSON may hold a model the
+        # fitment table does not).
         key = f"{prefix}_model"
-        vehicle_fitment_checks.append(
-            f"COALESCE(cv_fit->>'model', cv_fit->>'model_year', '') ILIKE :{key}"
-        )
-        params[key] = f"%{vehicle_model}%"
+        # The customer's value as given plus every form the car may be filed under — not the
+        # ingest filter, which erased numeric models (#69 §16).
+        customer_models = list(dict.fromkeys(
+            m.strip().lower() for m in (vehicle_model, *customer_vehicle_model_forms(vehicle_manufacturer, vehicle_model))
+            if m and str(m).strip()))
+        if vehicle_manufacturer:
+            import vehicle_model_match as _vmm
+            allowed = await _vmm.allowed_fitment_models(db, clean_variants, customer_models)
+            params[key] = sorted(set(allowed) | set(customer_models))
+            if not params[key]:
+                # `= ANY('{}')` never matches: say so as a constant instead of scanning every
+                # compatible_vehicles array to find nothing (a 30 s timeout per bucket, #69 §16).
+                return "FALSE"
+            vehicle_fitment_checks.append(f"LOWER(TRIM(cv_fit->>'model')) = ANY(:{key})")
+        else:
+            params[key] = customer_models
+            vehicle_fitment_checks.append(
+                f"(LOWER(TRIM(cv_fit->>'model')) = ANY(:{key})"
+                f" OR LOWER(TRIM(cv_fit->>'model')) LIKE ANY(SELECT m || ' %' FROM unnest(CAST(:{key} AS text[])) m))"
+            )
 
     if vehicle_submodel:
         key = f"{prefix}_submodel"
@@ -901,10 +950,9 @@ async def _build_fast_vehicle_fitment_json_clause(
     except Exception:
         pass
 
-    canonical_model = canonicalize_vehicle_model_for_manufacturer(vehicle_manufacturer, vehicle_model) or normalize_vehicle_model_name(vehicle_model)
-    model_variants: List[str] = [vehicle_model]
-    if canonical_model and canonical_model not in model_variants:
-        model_variants.append(canonical_model)
+    # Exact-string containment: the forms the car may be filed under (#69 §16). The ingest filter
+    # used here before produced "MAZDA" for "MAZDA 3" — a containment probe for a generic model.
+    model_variants: List[str] = customer_vehicle_model_forms(vehicle_manufacturer, vehicle_model)
     if vehicle_submodel:
         submodel_clean = normalize_vehicle_submodel_name(vehicle_submodel)
         if submodel_clean:
@@ -970,7 +1018,9 @@ async def _resolve_vehicle_search_context(
 
     gov = vehicle.gov_api_data if isinstance(vehicle.gov_api_data, dict) else {}
     manufacturer = normalize_manufacturer_name(vehicle.manufacturer, vehicle.manufacturer) or vehicle.manufacturer
-    model = canonicalize_vehicle_model_for_manufacturer(manufacturer, vehicle.model) or normalize_vehicle_model_name(vehicle.model)
+    # The raw model when it is usable: every search lane derives the forms it may be filed under
+    # from it (customer_vehicle_model_forms); "" when unusable -> no parts, never a wildcard (#69 §16).
+    model = " ".join(str(vehicle.model or "").split()) if customer_vehicle_model(manufacturer, vehicle.model) else ""
     submodel = normalize_vehicle_submodel_name(str(gov.get("sub_model") or "")) or ""
     year = vehicle.year if isinstance(vehicle.year, int) and vehicle.year > 0 else None
 
@@ -1027,8 +1077,9 @@ async def _build_strict_vehicle_match_clause(
         pass
 
     clean_variants = [str(v).strip() for v in variants if v and str(v).strip()]
-    normalized_model = canonicalize_vehicle_model_for_manufacturer(vehicle_manufacturer, vehicle_model) or normalize_vehicle_model_name(vehicle_model)
-    model_variants = [normalized_model]
+    model_forms = customer_vehicle_model_forms(vehicle_manufacturer, vehicle_model)
+    normalized_model = model_forms[0] if model_forms else ""
+    model_variants = list(model_forms)                  # [] -> no allowed models -> FALSE, never a wildcard
     if vehicle_submodel:
         combined = " ".join([normalized_model, vehicle_submodel]).strip()
         if combined and combined not in model_variants:
@@ -1053,35 +1104,18 @@ async def _build_strict_vehicle_match_clause(
             f" OR LOWER(TRIM(pvf.manufacturer)) LIKE '%' || :{key} || '%')"
         )
 
-    # Model: match TERMS = each model variant PLUS its progressive word-prefixes,
-    # so a SPECIFIC customer model ("Corolla Verso") still matches a GENERAL
-    # fitment model ("Corolla"). This replaces the old un-indexable reverse LIKE
-    # with an indexable "= ANY(...)" (btree) — SAME recall (Corolla Verso →
-    # 43,704 rows both ways). The forward prefix LIKE ("Corolla %") catches the
-    # opposite direction (fitment MORE specific, e.g. "Corolla Cross").
-    model_terms: set = set()
-    model_fwd: List[str] = []
-    for variant in model_variants:
-        v = str(variant or "").strip().lower()
-        if not v:
-            continue
-        model_fwd.append(v)
-        words = v.split()
-        for i in range(1, len(words) + 1):
-            model_terms.add(" ".join(words[:i]))
-    pvf_model_clauses = []
-    if model_terms:
-        mt_key = f"{prefix}_model_terms"
-        params[mt_key] = sorted(model_terms)
-        pvf_model_clauses.append(f"LOWER(TRIM(pvf.model)) = ANY(:{mt_key})")
-    for idx, v in enumerate(model_fwd):
-        key = f"{prefix}_modelfwd_{idx}"
-        params[key] = v
-        pvf_model_clauses.append(f"LOWER(TRIM(pvf.model)) LIKE :{key} || ' %'")
+    # Model: the EXACT fitment model strings that fit, decided by the one shared rule
+    # (vehicle_model_match). The old word-prefix + "<model> %" matching treated a shared
+    # prefix as the same vehicle: Corolla → Corolla Cross, Evoque → full-size Range Rover,
+    # Prado → junk "land" (FIXES_TRACKER #69 §9). Still an indexable "= ANY(...)".
+    import vehicle_model_match as _vmm
+    allowed_models = await _vmm.allowed_fitment_models(db, clean_variants, model_variants)
+    mt_key = f"{prefix}_model_terms"
+    params[mt_key] = allowed_models
+    _model_sql = f"LOWER(TRIM(pvf.model)) = ANY(:{mt_key})" if allowed_models else "FALSE"
 
     params[f"{prefix}_year"] = int(vehicle_year)
     _mfr_sql = f"({' OR '.join(pvf_mfr_clauses)})" if pvf_mfr_clauses else "TRUE"
-    _model_sql = f"({' OR '.join(pvf_model_clauses)})" if pvf_model_clauses else "TRUE"
     pvf_clause = (
         "EXISTS ("
         " SELECT 1 FROM part_vehicle_fitment pvf"
@@ -1093,9 +1127,68 @@ async def _build_strict_vehicle_match_clause(
         ")"
     )
 
+    # Resolve the fitting part ids FIRST (index-driven: idx_pvf_model_norm + idx_pvf_mfr_trgm),
+    # then filter by primary key. As a correlated EXISTS, a no-text vehicle search
+    # (`ORDER BY pc.id LIMIT n`) made the planner walk the 3M-row pkey and probe fitment per row
+    # — ~2.7k fitting parts are sparse in id order, so it read almost everything: 560-900 s,
+    # three open transactions, on Corolla / Prado / Corolla E11 (FIXES_TRACKER #69 §16). Same
+    # pattern as the partner API fitment endpoint. Only a set above FIT_ID_RESOLVE_CAP keeps the
+    # EXISTS. The first cap (20,000) assumed a large set is dense enough for the walk to stop
+    # early — false once the category / part-type bucket filters apply: Corolla 2021 (43,362
+    # ids) and Civic 2017 (46,677) hit the 30 s limit with EXISTS and took 2.8 s / 4.6 s by id
+    # (measured 2026-10-20, §16).
+    if allowed_models:
+        try:
+            id_params = {k: v for k, v in params.items() if k.startswith(f"{prefix}_")}
+            # savepoint + its own statement limit: an error or timeout must not abort the caller's
+            # transaction, and the limit does not leak into it (vehicle_model_match.bounded)
+            async with _vmm.bounded(db, SEARCH_STATEMENT_TIMEOUT_MS):
+                fit_ids = (await db.execute(text(
+                    "SELECT DISTINCT pvf.part_id FROM part_vehicle_fitment pvf"
+                    f" WHERE {_mfr_sql} AND {_model_sql}"
+                    f"   AND pvf.year_from <= :{prefix}_year"
+                    f"   AND COALESCE(pvf.year_to, pvf.year_from) >= :{prefix}_year"
+                    " LIMIT :fit_id_cap"), {**id_params, "fit_id_cap": FIT_ID_RESOLVE_CAP + 1})).scalars().all()
+            if len(fit_ids) <= FIT_ID_RESOLVE_CAP:
+                params[f"{prefix}_fit_ids"] = [str(i) for i in fit_ids]
+                pvf_clause = (f"pc.id = ANY(CAST(:{prefix}_fit_ids AS uuid[]))" if fit_ids else "FALSE")
+        except Exception as exc:                                  # keep the EXISTS form
+            logger.warning("fitment id pre-resolution skipped (%s): %s", prefix, type(exc).__name__)
+
     if json_clause:
         return f"(({json_clause}) OR ({pvf_clause}))"
     return pvf_clause
+
+
+logger = logging.getLogger(__name__)
+# Hard ceiling for one search query (each bucket session). A customer search must never hold a
+# transaction for minutes; a timed-out bucket raises its own error (see _fetch_three_buckets).
+SEARCH_STATEMENT_TIMEOUT_MS = int(os.getenv("SEARCH_STATEMENT_TIMEOUT_MS", "30000"))
+FIT_ID_RESOLVE_CAP = int(os.getenv("SEARCH_FIT_ID_RESOLVE_CAP", "200000"))
+
+
+async def _run_buckets(session_factory, fetch, specs, timeout_ms: Optional[int] = None):
+    """Run the search's quality buckets in parallel, ONE short session per bucket.
+
+    Each bucket opens its own session inside its own task, sets a statement limit, and closes
+    as soon as that bucket is done. Previously all three sessions were opened together and kept
+    until the slowest bucket finished — finished ones sat "idle in transaction" (688 s observed)
+    and a bad plan ran 15 min unbounded (FIXES_TRACKER #69 §16). return_exceptions=True: the
+    first failing bucket used to raise while its siblings were still mid-query, their sessions
+    were closed under them and the real error became "InterfaceError: another operation is in
+    progress" (§14). Now every bucket finishes, then the first real error is raised."""
+    limit = SEARCH_STATEMENT_TIMEOUT_MS if timeout_ms is None else timeout_ms
+
+    async def _one(part_type_values, include_general):
+        async with session_factory() as bucket_db:
+            await bucket_db.execute(text(f"SET LOCAL statement_timeout = '{int(limit)}ms'"))
+            return await fetch(bucket_db, part_type_values, include_general)
+
+    results = await asyncio.gather(*(_one(pt, ig) for pt, ig in specs), return_exceptions=True)
+    for res in results:
+        if isinstance(res, BaseException):
+            raise res
+    return results
 
 
 # ==============================================================================
@@ -1926,34 +2019,26 @@ async def search_parts(
         where_sql_override: Optional[str] = None,
         where_sql_base_override: Optional[str] = None,
         force_direct_db: bool = False,
+        timeout_ms: Optional[int] = None,
     ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
-        async with async_session_factory() as db_original, async_session_factory() as db_oem, async_session_factory() as db_after:
-            original_task = _fetch_type(
-                _PT_ORIGINAL,
+        # One session PER BUCKET, opened inside its own task and closed the moment that bucket is
+        # done, with a statement limit. The three sessions used to be opened together and kept
+        # until the slowest bucket finished — the finished ones sat "idle in transaction" (688 s
+        # observed) and a bad plan ran 15 min unbounded (FIXES_TRACKER #69 §16).
+        def _fetch(bucket_db, part_type_values, include_general=False):
+            return _fetch_type(
+                part_type_values,
+                include_general=include_general,
                 where_sql_override=where_sql_override,
                 where_sql_base_override=where_sql_base_override,
                 force_direct_db=force_direct_db,
-                db_session=db_original,
+                db_session=bucket_db,
             )
-            oem_task = _fetch_type(
-                _PT_OEM,
-                where_sql_override=where_sql_override,
-                where_sql_base_override=where_sql_base_override,
-                force_direct_db=force_direct_db,
-                db_session=db_oem,
-            )
-            aftermarket_task = _fetch_type(
-                _PT_AFTERMARKET,
-                include_general=True,
-                where_sql_override=where_sql_override,
-                where_sql_base_override=where_sql_base_override,
-                force_direct_db=force_direct_db,
-                db_session=db_after,
-            )
-            original_bucket, oem_bucket, aftermarket_bucket = await asyncio.gather(
-                original_task, oem_task, aftermarket_task
-            )
-            return original_bucket, oem_bucket, aftermarket_bucket
+
+        original_bucket, oem_bucket, aftermarket_bucket = await _run_buckets(
+            async_session_factory, _fetch,
+            [(_PT_ORIGINAL, False), (_PT_OEM, False), (_PT_AFTERMARKET, True)], timeout_ms=timeout_ms)
+        return original_bucket, oem_bucket, aftermarket_bucket
 
     original_res, oem_res, aftermarket_res = await _fetch_three_buckets()
 
@@ -2264,7 +2349,7 @@ async def search_parts(
         pass
 
     # Fire external lookup in background — doesn't block this response at all
-    if query and os.getenv("ENABLE_EXTERNAL_SUPPLIERS", "1").strip() in ("1", "true", "yes"):
+    if _should_fetch_external_suppliers(query, redis):
         async def _fetch_ext_suppliers(_q: str, _key: str, _redis):
             try:
                 from services.supplier_aggregator import ACTIVE_SUPPLIERS

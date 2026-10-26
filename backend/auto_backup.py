@@ -17,14 +17,69 @@ from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
-BACKUP_DIR = os.environ.get("BACKUP_DIR", os.path.join(os.path.dirname(__file__), "backups"))
+# ── environment isolation (FIXES_TRACKER #66) ────────────────────────────────────
+# The sandbox backend bind-mounts this same backend/ directory. With one shared default
+# directory and one shared file name ("autospare_<ts>.sql") its daily dump landed among
+# production's dumps and its retention deleted them. Three independent rules now:
+#   1. identity   — only ENVIRONMENT=production without SANDBOX_MODE is "production";
+#   2. directory  — a non-production process can never resolve to the production directory,
+#                   not by default and not by configuration;
+#   3. file name  — non-production dumps carry the environment name, and retention /
+#                   restore select files by an exact "<prefix>_<YYYYMMDD>_<HHMMSS>.sql"
+#                   match, so no process can select another environment's — or another
+#                   database's — files ("autospare_*.sql" used to match "autospare_pii_*").
+PRODUCTION_BACKUP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backups")
+
+
+def backup_environment() -> str:
+    if os.environ.get("SANDBOX_MODE", "").strip().lower() in ("1", "true", "yes", "on"):
+        return "sandbox"
+    env = os.environ.get("ENVIRONMENT", "").strip().lower()
+    if env == "production":
+        return "production"
+    return re.sub(r"[^a-z0-9]+", "", env) or "nonprod"
+
+
+def _is_production_dir(path: str) -> bool:
+    real, prod = os.path.realpath(path), os.path.realpath(PRODUCTION_BACKUP_DIR)
+    return real == prod or real.startswith(prod + os.sep)
+
+
+def resolve_backup_dir(env: str | None = None) -> str:
+    env = env or backup_environment()
+    explicit = os.environ.get("BACKUP_DIR", "").strip()
+    if env == "production":
+        return explicit or PRODUCTION_BACKUP_DIR
+    private = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state", f"backups-{env}")
+    if not explicit or _is_production_dir(explicit):
+        return private                      # state/ is each environment's own volume
+    return explicit
+
+
+def file_prefix(db_label: str, env: str | None = None) -> str:
+    env = env or backup_environment()
+    return db_label if env == "production" else f"{env}_{db_label}"
+
+
+def backup_files(db_label: str, env: str | None = None, suffix: str = "") -> list:
+    """This environment's dumps of exactly this database, oldest first."""
+    rx = re.compile(r"^" + re.escape(file_prefix(db_label, env)) + r"_\d{8}_\d{6}\.sql(\.gz)?" + re.escape(suffix) + r"$")
+    try:
+        names = os.listdir(BACKUP_DIR)
+    except OSError:
+        return []
+    return [os.path.join(BACKUP_DIR, n) for n in sorted(names) if rx.match(n)]
+
+
+BACKUP_DIR = resolve_backup_dir()
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 # The container sets DATABASE_PII_URL; the old name PII_DATABASE_URL was never set, so the
 # PII database was silently "skipped" on every run (0 autospare_pii_* dumps ever existed).
 PII_DATABASE_URL = os.environ.get("DATABASE_PII_URL") or os.environ.get("PII_DATABASE_URL", "")
 KEEP_LAST = 7  # Keep last 7 daily backups
 
-os.makedirs(BACKUP_DIR, exist_ok=True)
+if not (backup_environment() != "production" and _is_production_dir(BACKUP_DIR)):
+    os.makedirs(BACKUP_DIR, exist_ok=True)
 
 
 def _pg_dump(db_url: str, out_path: str) -> bool:
@@ -107,9 +162,8 @@ def _prune_old_backups_smart(db_label: str) -> None:
     daily/weekly/monthly compressed backups in /opt/autosparefinder/backups.
     7 daily uncompressed dumps were consuming 39GB (26%) of the 150GB disk.
     """
-    pattern = os.path.join(BACKUP_DIR, f"{db_label}_*.sql")
-    files = sorted(glob.glob(pattern) + glob.glob(pattern + ".gz"))
-    
+    files = backup_files(db_label)      # exact match: this environment, this database only
+
     if not files:
         return
     
@@ -161,6 +215,12 @@ def _delete_backup(backup_path: str) -> None:
 
 async def run_backup(dry_run: bool = False) -> dict:
     """Back up autospare + autospare_pii. Returns {label: status} dict."""
+    env_name = backup_environment()
+    if env_name != "production" and _is_production_dir(BACKUP_DIR):
+        # Hard stop: whatever the configuration says, a non-production process does not
+        # write to or prune the production backup directory (#66).
+        logger.error("auto_backup: REFUSED — %s environment resolved to the production backup directory", env_name)
+        return {"autospare": "skipped", "autospare_pii": "skipped", "reason": "backup directory isolation"}
     os.makedirs(BACKUP_DIR, exist_ok=True)
     # A dump is written to "<name>.partial" and renamed only when pg_dump succeeded
     # (FIXES_TRACKER #58): a run killed mid-dump (backend restart, OOM) used to leave a
@@ -168,7 +228,7 @@ async def run_backup(dry_run: bool = False) -> dict:
     # "the latest backup" and retention would count as a real one. Leftovers of a killed
     # run are removed here; "*.sql.partial" never matches the "*.sql" restore/retention globs.
     if not dry_run:
-        for _stale in glob.glob(os.path.join(BACKUP_DIR, "*.sql.partial")):
+        for _stale in (backup_files("autospare", suffix=".partial") + backup_files("autospare_pii", suffix=".partial")):
             try:
                 os.remove(_stale)
                 logger.warning("auto_backup: removed partial dump left by an interrupted run: %s", _stale)
@@ -181,7 +241,7 @@ async def run_backup(dry_run: bool = False) -> dict:
             logger.warning("auto_backup: no URL configured for %s — skipping", label)
             results[label] = "skipped"
             continue
-        out_path = os.path.join(BACKUP_DIR, f"{label}_{ts}.sql")
+        out_path = os.path.join(BACKUP_DIR, f"{file_prefix(label, env_name)}_{ts}.sql")
         if dry_run:
             logger.info("auto_backup [dry-run]: would write %s", out_path)
             results[label] = "dry_run"
@@ -232,8 +292,7 @@ async def restore_latest_backup(db_label: str = "autospare", dry_run: bool = Tru
     import tempfile
     import shutil
     
-    pattern = os.path.join(BACKUP_DIR, f"{db_label}_*.sql")
-    files = sorted(glob.glob(pattern), reverse=True)  # newest first
+    files = [f for f in reversed(backup_files(db_label)) if f.endswith(".sql")]  # newest first, this env + db only
     
     if not files:
         return {"status": "error", "reason": f"no backups found for {db_label}"}

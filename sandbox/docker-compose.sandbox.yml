@@ -106,8 +106,10 @@ services:
     restart: unless-stopped
     mem_limit: 2048m
     # Run Alembic migrations on fresh DB, then start uvicorn with 1 worker
+    # #94: pipefail — `alembic … | tail` used to report tail's success, so a failed migration was silently ignored
+    # and uvicorn started on a half-migrated database (the sandbox sat at catalog 0059 for days).
     command: >
-      bash -c "
+      bash -o pipefail -c "
         echo '=== Sandbox backend starting ===' &&
         sleep 8 &&
         cd /app &&
@@ -122,6 +124,10 @@ services:
       # Live code mount — same as production
       - ../backend:/app
       - sandbox_worker_state:/app/state
+      # ISOLATION (FIXES_TRACKER #66): /app is production's backend/ directory, so without
+      # this mount /app/backups IS production's in-app backup directory. The sandbox's own
+      # volume is mounted over it: the production directory is not reachable from here.
+      - sandbox_backups:/app/backups
     environment:
       # ── Database ───────────────────────────────────────────────────────────
       DATABASE_URL: postgresql+asyncpg://autospare:${SB_DB_PASSWORD}@sandbox_postgres:5432/autospare
@@ -156,6 +162,19 @@ services:
       PYTHONPATH: /app
       REAL_DATA_ONLY: "0"
       SANDBOX_MODE: "1"
+      ENVIRONMENT: sandbox
+      # #88: deployment-config parity with production (non-secret). tests/test_system.py::test_hf_vision_model_env and
+      # tests/test_full_system.py::test_N_password_reset_sends_email assert these; the sandbox defined neither.
+      # FRONTEND_URL is a sandbox placeholder (https, never the production site); the model name matches production.
+      HF_VISION_MODEL: gemini-1.5-flash-8b
+      FRONTEND_URL: https://sandbox.autosparefinder.invalid
+      # #98/#100: every site search starts a background lookup at REAL suppliers unless this is 0 (it was unset here:
+      # 771 test-driven requests to autodoc / partsouq / amayama were logged from this sandbox, 2026-10-10..22).
+      ENABLE_EXTERNAL_SUPPLIERS: "0"
+      # No scheduled backups / heavy night jobs in the sandbox; if a backup is ever run by
+      # hand it goes to the sandbox's own state volume under a "sandbox_" file name.
+      NIGHT_PIPELINE_ENABLED: "0"
+      BACKUP_DIR: /app/state/backups-sandbox
 
       # ── AI keys (left blank — AI calls fail gracefully, auth/API routes work) ──
       CEREBRAS_API_KEY: ""
@@ -220,7 +239,11 @@ networks:
   sandbox_net:
     # Completely separate from production networks.
     # autosparefinder_internal and autosparefinder_public are NOT joined.
+    # #100: internal — NO route to the internet. This bridge used to NAT out, so test-driven searches reached real
+    # suppliers and government APIs (971 external requests logged by sandbox_backend, 2026-10-10..22). Image builds
+    # use Docker's build network, not this one, so `docker compose build` is unaffected.
     driver: bridge
+    internal: true
     name: sandbox_net
     ipam:
       config:
@@ -231,3 +254,4 @@ volumes:
   sandbox_redis_data:
   sandbox_meili_data:
   sandbox_worker_state:
+  sandbox_backups:

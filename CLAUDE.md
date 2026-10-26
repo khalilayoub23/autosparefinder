@@ -198,6 +198,14 @@ Rules:
   SEARCH for work — scope discovery to a bounded index range, not catalogue-wide.
 - **Two heavy writers on one table contend.** Before a big migration, enumerate every scheduled
   writer of the same table and give each a stand-down. Use `job_queue.queue_busy()`.
+- **"The list is not empty" is not "we found it" (2026-10-10).** The affiliate suppliers return a price-0
+  link placeholder for ANY query (also after an HTTP 403), so `if results:` marked every search miss
+  handled and notified the customer "we found new parts" (43 of 43 rows). A match is a result with a real
+  price: `search_miss_resolver.genuine_offers()`. Guarded by `tests/test_search_miss_resolver.py`.
+- **A lookup whose only output is a cache must not run without the cache (2026-10-09).** The startup
+  warm-up called `search_parts(redis=None)` and fired ~20 discarded supplier requests per start; startup
+  also `await`ed that optional warm-up. Gate: `routes/parts.py::_should_fetch_external_suppliers`;
+  the warm-up is a background task (`search_warmup.py`).
 - **Notify by exception.** A routine success report is camouflage — it trains the reader to ignore
   the channel. Only send on stall / idle / recovery.
 - **`browser.close()` must be called INSIDE the `async_playwright()` context manager** (root-fixed
@@ -282,9 +290,27 @@ Rules:
   promise it, the same way a claimed discount must exist in the DB before an agent states it.**
 
 ### Deployment & Config
+- **Live supplier traffic is OFF outside production (2026-10-22, #100).** `outbound_policy.external_suppliers_enabled()` is the one rule:
+  `ENABLE_EXTERNAL_SUPPLIERS` explicit on/off wins; unset → on ONLY when `ENVIRONMENT=production`; any other value → off. The
+  supplier registry (`services/supplier_aggregator`) and the search fan-out both ask it. Tests: `tests/network_guard.py` (installed
+  for every test by conftest) refuses and FAILS any lookup of a non-local host; chat lifecycle cases run on their own Redis
+  logical database so the environment's backend recovery loop cannot take them over (#103).
 - **Bind mount `./backend:/app`** — code changes are live on disk after `docker restart`. No
-  `docker cp` needed. `docker compose up -d backend` is now safe (the mount means no stale image
+  `docker cp` needed. Recreate the backend with `docker compose up -d --no-deps backend` (the mount means no stale image
   code). Only use `compose up -d` when `docker-compose.yml` itself changed.
+  **Never without `--no-deps`** (2026-10-09 preflight): both Postgres containers carry config drift
+  (`POSTGRES_PASSWORD`), so a plain `up -d backend` also recreates them. Check first with
+  `docker compose up --dry-run -d --no-deps backend`.
+- **`pre_restart.sh` runs a PREFLIGHT first and aborts (exit 4) when a restart would cut running work
+  (2026-10-10).** `scripts/restart_preflight.py` also sees work INSIDE uvicorn that has no job row and no
+  subprocess: the daily Facebook group scan (10:00 IL, ~3 h, **no catch-up** - a recreation at 10:06 IL
+  lost that day's drafts), the night-pipeline job, job locks, heavy subprocesses, Gmail writes in flight.
+  Never restart 10:00-14:00 IL unless the preflight says SAFE. Override = explicit owner decision
+  (`PRE_RESTART_FORCE=1`). A code-only deploy needs `--force-recreate` (compose sees no config change).
+- **An interval loop must measure its interval from the last COMPLETED run, not from process start
+  (2026-10-10).** `sleep(N)` at loop start re-anchors on every restart: two restarts 28 min apart ran
+  `run_all_tasks` three times in two hours and `meili_sync` twice. Use `local_schedule.delay_after_restart`
+  (same family as the 2026-10-03 wall-clock fix for daily jobs).
 - **A find-and-replace must exclude the definition site** of the thing it replaces — or the
   function calls itself recursively.
 - **Scrub URL secrets**, not just headers. `?key=`/`?api_key=`/`?token=` → `<redacted>` via
@@ -530,7 +556,11 @@ the business Gmail mailbox, classifies, resolves context against the DB, applies
 prepares DRAFTS. **It never sends**: `GmailClient` has no send method, every request passes a six-endpoint
 allowlist (`assert_allowed`), `policy.send_allowed()` returns False unconditionally, and
 `email_agent_messages` has `CHECK (sendable = false)`. Enabling sending is a reviewed code change plus a
-migration, never an env flag. Off unless `EMAIL_AGENT_ENABLED=1` and `GMAIL_OAUTH_*` are set. Context is
+migration, never an env flag. Off unless `EMAIL_AGENT_ENABLED=1` and `GMAIL_OAUTH_*` are set.
+**LIVE since 2026-10-10 in read-only processing mode** (`EMAIL_AGENT_ENABLED=1`, runtime control armed,
+`EMAIL_AGENT_GMAIL_DRAFTS=0`, grant `gmail.readonly` only) - see `docs/EMAIL_AGENT.md` § Live state.
+Runtime kill switch (no restart): `email_agent_cli.py halt|arm|control` → `/app/state/email_agent_control.json`;
+missing/invalid file = halted (fail closed), and `run-once` refuses while halted. Context is
 resolved only by exact DB match; an unauthenticated sender, another account's order or more than one
 candidate stays unresolved and goes to a human.
 **Layer B — pipeline workers**: `catalog_scraper` (ingest), `db_cleanup_agent` (30s self-heal),
@@ -1733,7 +1763,7 @@ asyncio.run(main())
 
 **Capacity reality check** — 11 containers run concurrently (3× Postgres, Meilisearch, Redis, backend, frontend, Nginx, FlareSolverr, WhatsApp bridge, 2× backup). Load average normally sits 8-12 on 6 CPUs (~1.5-2 per core); above 18 is oversubscription. Key constraints:
 - No swap → RAM exhaustion = immediate OOM kills, no graceful degradation.
-- **6 vCPUs → `PARALLEL_SESSIONS = 2`** (env `HARVESTER_PARALLEL_SESSIONS`; lowered 4→2 on 2026-07-23). 4 was fine when the IL-market queue drained fast and the harvester idled between bursts; after the full-catalogue seeding (6,000-model backlog) the harvester runs FLAT-OUT and 4 sessions pinned flaresolverr at ~577% CPU / load 18.7 (oversubscribed) → DB statement-timeouts failed heal/parity tasks + starved sync_prices' heartbeat. Also `INTER_MODEL = 20 s` (env `HARVESTER_INTER_MODEL_S`, was 5) for duty-cycle headroom. The box is 6 vCPU (the 4→6 upgrade, active); raise sessions back toward 4 ONLY after re-measuring load. **FlareSolverr Chrome LEAK — root-fixed 2026-07-23 (FlareSolverr is no longer the fetch engine):** FlareSolverr orphans LIVE Chrome on `sessions.destroy` and accumulates renderers within a session (leaked chromium are running procs reparented to PID 1, NOT zombies). The harvester used to route EVERY page (~80/model) through FlareSolverr's browser → constant churn → 577% CPU / load 18.7 → DB statement-timeouts. **Fix:** car-parts.ie is server-rendered (proven by the full-catalogue seeder's plain-`urllib` fetches), so the harvester now uses FlareSolverr **ONLY to mint a `cf_clearance` cookie (~2×/hour, `_solve_clearance` → destroys the session immediately)** and fetches every page via **plain `urllib` + that cookie** (`http_get`; re-mints on 403/503). `fs_get` is now a thin shim over `http_get`; the session pool / per-cycle create-destroy / worker `session_id` are all gone; workers are cheap HTTP threads. Verified: FS chrome dropped 40-52→~9 and held, load 21→10, full parts still harvested. **Never reintroduce a per-page FlareSolverr call** — that is the leak. If chrome ever climbs, check `docker exec flaresolverr ps -e | grep -c chrom` (should be a handful, spiking only during a ~2×/hour solve). Env: `HARVESTER_CLEARANCE_TTL_S` (cookie refresh, default 1500s).
+- **Car-parts harvester workers: `HARVESTER_PARALLEL_SESSIONS = 5`** (the `docker-compose.yml` default; `.env` does not set it; the code default is 1 for manual runs; values < 1 or non-numeric fall back to 1, values > 8 are clamped — `_parallel_sessions()`, logged at start-up as `parallel_sessions=N`). History, so nobody "restores" an obsolete number: 2 (2026-07-23, when every worker was a real FlareSolverr Chrome session and 4 pinned flaresolverr at ~577% CPU) → 1 (aaa4fc3, same day: workers became plain-HTTP threads, FlareSolverr only mints the cf_clearance cookie) → 3 → **5** (eb8a96f, 2026-07-23 21:54, after the `synchronous_commit=off` import fix cut postgres_catalog ~176%→92%; verified "all 5 workers producing, postgres ~130%"). Each worker adds DB import load, not browser load: raise above 5 only after re-measuring postgres CPU and load avg during a non-idle (refresh) cycle. Also `INTER_MODEL = 20 s` (env `HARVESTER_INTER_MODEL_S`). **Health (#78):** the harvester writes `/app/state/harvester_status.json` (idle / waiting_clearance / working + last real progress); the 30-min healthcheck (`harvester_health.evaluate`) treats a drained-queue rest as `idle`, and kills only on no request completed for 15 min while working, a rest that overran, or a stale heartbeat — never on log quietness alone (that killed it hourly while resting). **FlareSolverr Chrome LEAK — root-fixed 2026-07-23 (FlareSolverr is no longer the fetch engine):** FlareSolverr orphans LIVE Chrome on `sessions.destroy` and accumulates renderers within a session (leaked chromium are running procs reparented to PID 1, NOT zombies). The harvester used to route EVERY page (~80/model) through FlareSolverr's browser → constant churn → 577% CPU / load 18.7 → DB statement-timeouts. **Fix:** car-parts.ie is server-rendered (proven by the full-catalogue seeder's plain-`urllib` fetches), so the harvester now uses FlareSolverr **ONLY to mint a `cf_clearance` cookie (~2×/hour, `_solve_clearance` → destroys the session immediately)** and fetches every page via **plain `urllib` + that cookie** (`http_get`; re-mints on 403/503). `fs_get` is now a thin shim over `http_get`; the session pool / per-cycle create-destroy / worker `session_id` are all gone; workers are cheap HTTP threads. Verified: FS chrome dropped 40-52→~9 and held, load 21→10, full parts still harvested. **Never reintroduce a per-page FlareSolverr call** — that is the leak. If chrome ever climbs, check `docker exec flaresolverr ps -e | grep -c chrom` (should be a handful, spiking only during a ~2×/hour solve). Env: `HARVESTER_CLEARANCE_TTL_S` (cookie refresh, default 1500s).
 - `idle_in_transaction_session_timeout = 30min` (set via ALTER SYSTEM 2026-06-30).
 - Watchdog `BLOCKER_S = 2700s` (45 min) — moot for active-backend connections (never killed), relevant only for orphan-detection fallback.
 - `DB_AGENT_TASK_TIMEOUT_S = 3600` — per-task timeout inside `run_all_tasks`. Set in `docker-compose.yml`.

@@ -53,7 +53,7 @@ def test_callback_is_found_by_state_and_summary_never_contains_the_code():
     now = datetime(2026, 10, 4, 20, 18, 34, tzinfo=timezone.utc)
     info = setup.describe_callback(cb, now)
     assert info == {"callback_received": True, "http_status": 200, "age_s": 60, "code_present": True,
-                    "code_length": len(FAKE_CODE), "error": None, "granted_scope": READ,
+                    "code_length": len(FAKE_CODE), "code_redacted": False, "error": None, "granted_scope": READ,
                     "issuer": "https://accounts.google.com", "code_fresh": True}
     assert FAKE_CODE not in json.dumps(info)
 
@@ -137,3 +137,24 @@ def test_exchange_from_callback_writes_env_and_prints_no_secret(tmp_path, monkey
     text = env.read_text()
     assert "GMAIL_OAUTH_REFRESH_TOKEN=1//fake-refresh-000" in text and "OTHER=1" in text
     assert not setup.STATE_PATH.exists()
+
+
+def test_redacted_code_in_the_log_is_reported_and_never_exchanged(tmp_path, monkeypatch):
+    # after the nginx log redaction (2026-10-09) the access log holds "code=<redacted>"
+    redacted = line("state=st-1&iss=https%3A%2F%2Faccounts.google.com&code=<redacted>&scope=" + urllib.parse.quote(READ))
+    cb = setup.find_callback([redacted], "st-1")
+    assert cb["code"] == "" and cb["code_redacted"] is True
+    info = setup.describe_callback(cb, datetime(2026, 10, 4, 20, 18, tzinfo=timezone.utc))
+    assert info["code_redacted"] is True and info["code_present"] is False and info["code_fresh"] is False
+    env = tmp_path / ".env"
+    env.write_text("YOUTUBE_CLIENT_ID=cid\nYOUTUBE_CLIENT_SECRET=sec\n")
+    monkeypatch.setattr(setup, "ENV_PATH", env)
+    monkeypatch.setattr(setup, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(setup, "_exchange", lambda *a: pytest.fail("a redacted code must never be exchanged"))
+    now = datetime.now(timezone.utc).strftime("%d/%b/%Y:%H:%M:%S +0000")
+    setup.save_state("st-1", [READ])
+    monkeypatch.setattr(setup, "nginx_access_lines", lambda since="70m": [line("state=st-1&code=<redacted>", ts=now)])
+    monkeypatch.setattr(setup.sys, "argv", ["x", "exchange"])
+    with pytest.raises(SystemExit) as e:
+        setup.main()
+    assert "--code" in str(e.value) and "GMAIL_OAUTH" not in env.read_text()

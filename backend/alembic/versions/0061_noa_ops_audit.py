@@ -47,6 +47,35 @@ def upgrade() -> None:
         WHERE status IN ('pending_approval', 'approved', 'posted', 'failed')
     """)
 
+    # #94 (2026-10-22): no migration ever created social_inbox — only social/engagement.ensure_inbox_table at runtime —
+    # so on a FRESH database this ALTER failed and `alembic upgrade head` stopped at 0060 (the sandbox sat at 0059 for
+    # days; its startup command hid the failure behind `| tail`). Create the table first when, and only when, it is
+    # missing, with production's definition (pg_dump -s, read-only) minus the three columns added just below. On
+    # every existing database (production applied 0061 long ago) this branch does not run.
+    op.execute("""
+        DO $$
+        BEGIN
+            IF to_regclass('public.social_inbox') IS NULL THEN
+                CREATE TABLE public.social_inbox (
+                    id uuid DEFAULT gen_random_uuid() NOT NULL,
+                    platform character varying(24) NOT NULL,
+                    kind character varying(16) NOT NULL,
+                    external_id character varying(128) NOT NULL,
+                    parent_id character varying(128),
+                    author character varying(200),
+                    message text,
+                    permalink text,
+                    status character varying(20) DEFAULT 'new'::character varying NOT NULL,
+                    reply_text text,
+                    reply_external_id character varying(128),
+                    created_at timestamp with time zone DEFAULT now() NOT NULL,
+                    replied_at timestamp with time zone,
+                    CONSTRAINT social_inbox_pkey PRIMARY KEY (id),
+                    CONSTRAINT social_inbox_platform_external_id_key UNIQUE (platform, external_id)
+                );
+            END IF;
+        END $$;
+    """)
     op.execute("""
         ALTER TABLE social_inbox
             ADD COLUMN IF NOT EXISTS approved_by  VARCHAR,

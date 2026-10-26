@@ -80,6 +80,8 @@ from resilience import retry_with_backoff
 from agent_todo_utils import get_active_agent_todos, todo_requests_ranked_first
 from manufacturer_normalization import (
     canonicalize_vehicle_model_for_manufacturer,
+    customer_vehicle_model,
+    customer_vehicle_model_forms,
     normalize_manufacturer_name,
     normalize_vehicle_model_name,
 )
@@ -2420,7 +2422,8 @@ NEVER:
                 if vehicle_row:
                     vehicle_context = {
                         "manufacturer": normalize_manufacturer_name(vehicle_row.manufacturer, vehicle_row.manufacturer) or vehicle_row.manufacturer,
-                        "model": canonicalize_vehicle_model_for_manufacturer(vehicle_row.manufacturer, vehicle_row.model) or normalize_vehicle_model_name(vehicle_row.model),
+                        "model": customer_vehicle_model(vehicle_row.manufacturer, vehicle_row.model),
+                        "model_forms": customer_vehicle_model_forms(vehicle_row.manufacturer, vehicle_row.model),
                         "year": vehicle_row.year if isinstance(vehicle_row.year, int) and vehicle_row.year > 0 else None,
                     }
                     vehicle_manufacturer = vehicle_context["manufacturer"]
@@ -2439,8 +2442,8 @@ NEVER:
                 if _vp_mfr and _vp_model and _vp_year:
                     vehicle_context = {
                         "manufacturer": normalize_manufacturer_name(_vp_mfr, _vp_mfr) or _vp_mfr,
-                        "model": canonicalize_vehicle_model_for_manufacturer(_vp_mfr, _vp_model)
-                                 or normalize_vehicle_model_name(_vp_model),
+                        "model": customer_vehicle_model(_vp_mfr, _vp_model),
+                        "model_forms": customer_vehicle_model_forms(_vp_mfr, _vp_model),
                         "year": _vp_year,
                     }
                     if not vehicle_manufacturer:
@@ -2459,17 +2462,22 @@ NEVER:
 
             if vehicle_context and vehicle_context.get("manufacturer") and vehicle_context.get("model") and vehicle_context.get("year"):
                 params["fit_mfr"] = vehicle_context["manufacturer"]
-                params["fit_model"] = vehicle_context["model"]
                 params["fit_year"] = int(vehicle_context["year"])
+                # One shared model rule (vehicle_model_match): a shared word prefix is not the
+                # same vehicle (Corolla ≠ Corolla Cross) — FIXES_TRACKER #69 §9.
+                import vehicle_model_match as _vmm
+                async with async_session_factory() as _vmm_db:
+                    params["fit_models"] = await _vmm.allowed_fitment_models(
+                        _vmm_db, [vehicle_context["manufacturer"]],
+                        customer_vehicle_model_forms(vehicle_context["manufacturer"], vehicle_context["model"])
+                        + list(vehicle_context.get("model_forms") or [])) or ["<no fitting model>"]
                 conditions.append(
                     "EXISTS (SELECT 1 FROM part_vehicle_fitment pvf "
                     "        WHERE pvf.part_id = pc.id "
                     "          AND (LOWER(TRIM(pvf.manufacturer)) = LOWER(TRIM(:fit_mfr)) "
                     "               OR LOWER(TRIM(pvf.manufacturer)) LIKE CONCAT('%', LOWER(TRIM(:fit_mfr)), '%') "
                     "               OR LOWER(TRIM(:fit_mfr)) LIKE CONCAT('%', LOWER(TRIM(pvf.manufacturer)), '%')) "
-                    "          AND (LOWER(TRIM(pvf.model)) = LOWER(TRIM(:fit_model)) "
-                    "               OR LOWER(TRIM(pvf.model)) LIKE CONCAT(LOWER(TRIM(:fit_model)), ' %') "
-                    "               OR LOWER(TRIM(:fit_model)) LIKE CONCAT(LOWER(TRIM(pvf.model)), ' %')) "
+                    "          AND LOWER(TRIM(pvf.model)) = ANY(:fit_models) "
                     "          AND pvf.year_from <= :fit_year "
                     "          AND COALESCE(pvf.year_to, pvf.year_from) >= :fit_year)"
                 )
@@ -2540,7 +2548,8 @@ NEVER:
                 if vehicle_row:
                     vehicle_context = {
                         "manufacturer": normalize_manufacturer_name(vehicle_row.manufacturer, vehicle_row.manufacturer) or vehicle_row.manufacturer,
-                        "model": canonicalize_vehicle_model_for_manufacturer(vehicle_row.manufacturer, vehicle_row.model) or normalize_vehicle_model_name(vehicle_row.model),
+                        "model": customer_vehicle_model(vehicle_row.manufacturer, vehicle_row.model),
+                        "model_forms": customer_vehicle_model_forms(vehicle_row.manufacturer, vehicle_row.model),
                         "year": vehicle_row.year if isinstance(vehicle_row.year, int) and vehicle_row.year > 0 else None,
                     }
                     vehicle_manufacturer = vehicle_context["manufacturer"]
@@ -2577,20 +2586,23 @@ NEVER:
 
             if vehicle_context and vehicle_context.get("manufacturer") and vehicle_context.get("model") and vehicle_context.get("year"):
                 fit_mfr = vehicle_context["manufacturer"]
-                fit_model = vehicle_context["model"]
                 fit_year = int(vehicle_context["year"])
+                import vehicle_model_match as _vmm
+                async with async_session_factory() as _vmm_db:
+                    fit_models = await _vmm.allowed_fitment_models(
+                        _vmm_db, [fit_mfr],
+                        customer_vehicle_model_forms(fit_mfr, vehicle_context["model"])
+                        + list(vehicle_context.get("model_forms") or [])) or ["<no fitting model>"]
                 stmt = stmt.where(text(
                     "EXISTS (SELECT 1 FROM part_vehicle_fitment pvf "
                     "        WHERE pvf.part_id = parts_catalog.id "
                     "          AND (LOWER(TRIM(pvf.manufacturer)) = LOWER(TRIM(:fit_mfr)) "
                     "               OR LOWER(TRIM(pvf.manufacturer)) LIKE CONCAT('%', LOWER(TRIM(:fit_mfr)), '%') "
                     "               OR LOWER(TRIM(:fit_mfr)) LIKE CONCAT('%', LOWER(TRIM(pvf.manufacturer)), '%')) "
-                    "          AND (LOWER(TRIM(pvf.model)) = LOWER(TRIM(:fit_model)) "
-                    "               OR LOWER(TRIM(pvf.model)) LIKE CONCAT(LOWER(TRIM(:fit_model)), ' %') "
-                    "               OR LOWER(TRIM(:fit_model)) LIKE CONCAT(LOWER(TRIM(pvf.model)), ' %')) "
+                    "          AND LOWER(TRIM(pvf.model)) = ANY(:fit_models) "
                     "          AND pvf.year_from <= :fit_year "
                     "          AND COALESCE(pvf.year_to, pvf.year_from) >= :fit_year)"
-                )).params(fit_mfr=fit_mfr, fit_model=fit_model, fit_year=fit_year)
+                )).params(fit_mfr=fit_mfr, fit_models=fit_models, fit_year=fit_year)
             elif vehicle_id:
                 stmt = stmt.where(text("1 = 0"))
 
@@ -6589,14 +6601,8 @@ async def process_agent_response_for_message(
         print(f"[BG AGENT] conversation {conversation_id} not found")
         return
 
-    # Load history (last 20 messages)
-    hist_res = await db.execute(
-        select(Message)
-        .where(Message.conversation_id == conversation.id)
-        .order_by(Message.created_at.asc())
-        .limit(20)
-    )
-    history = [{"role": m.role, "content": m.content} for m in hist_res.scalars().all()]
+    # Load history (last 20 messages) — the shared loader: latest 20, chronological, no soft-deleted rows (#77)
+    history = [{"role": m.role, "content": m.content} for m in await _load_history_rows(db, conversation.id)]
 
     shared_memory_rows = await _load_shared_memory(
         db=db,
@@ -6928,6 +6934,16 @@ async def create_checkout_link(
     # Allow anonymous users — treat them as guest, use anon user_id directly
     if str(user_id) == _WHATSAPP_ANON_USER_ID:
         pass
+    # #77: one logical order + one Stripe session per chat request. create_whatsapp_checkout commits a NEW Order +
+    # Stripe session in its own session (outside the agent's turn); with the chat request id as idempotency_ref the
+    # order id and the Stripe idempotency key are deterministic, so a retry / recovery re-run of the same request
+    # gets the SAME order and session back (reconciled in the database and at Stripe), never a second one.
+    _rid = ""
+    try:
+        import chat_requests as _creq
+        _rid = _creq.CURRENT_REQUEST.get()
+    except Exception:
+        _rid = ""
     from routes.payments import create_whatsapp_checkout
     result = await create_whatsapp_checkout(
         user_id=user_id,
@@ -6935,7 +6951,17 @@ async def create_checkout_link(
         quantity=quantity,
         shipping_address=shipping_address,
         source=source,
+        idempotency_ref=_rid or None,
     )
+    if _rid:
+        try:
+            from BACKEND_AUTH_SECURITY import get_redis as _gr
+            _r = await _gr()
+            await _creq.update(_r, _rid, checkout_order_id=result.get("order_id") or "",
+                               side_effect=("checkout_reused" if result.get("reused") else "checkout_created")
+                               if result.get("ok") else f"checkout_error:{str(result.get('error'))[:60]}")
+        except Exception:
+            pass
     if result.get("ok"):
         # Hand customers a short branded link (autosparefinder.co.il/pay/XXX)
         # instead of the ~120-char Stripe URL (added 2026-07-05).
@@ -6946,6 +6972,24 @@ async def create_checkout_link(
             return result["checkout_url"]
     return f"ERROR: {result.get('error', 'Unknown error')}"
 
+
+
+async def _load_history_rows(db: AsyncSession, conversation_id):
+    """The conversation history the agent sees for this turn. Soft-deleted rows are not history (#74). During a
+    recovery re-run of a partial turn (chat_requests.REUSE_USER_ROW), the saved question IS the current message,
+    so that row is left out — the model sees the question once, not twice (#75)."""
+    q = select(Message).where(Message.conversation_id == conversation_id, Message.deleted_at.is_(None))
+    try:
+        import chat_requests as _creq
+        _reuse = _creq.REUSE_USER_ROW.get()
+        if _reuse:
+            q = q.where(Message.id != _UUID(str(_reuse)))
+    except (ImportError, ValueError):
+        pass
+    # #77: the LATEST 20 messages, handed to the model oldest → newest. (It used to be ORDER BY created_at ASC
+    # LIMIT 20 — the OLDEST 20 — so in any conversation longer than 20 messages the model never saw the recent turns.)
+    result = await db.execute(q.order_by(Message.created_at.desc()).limit(20))
+    return list(reversed(result.scalars().all()))
 
 
 async def process_user_message(
@@ -6979,13 +7023,7 @@ async def process_user_message(
         await db.flush()
 
     # ── 2. Load conversation history ───────────────────────────────────────────
-    result = await db.execute(
-        select(Message)
-        .where(Message.conversation_id == conversation.id)
-        .order_by(Message.created_at.asc())
-        .limit(20)  # last 20 messages for context
-    )
-    history_rows = result.scalars().all()
+    history_rows = await _load_history_rows(db, conversation.id)
     history = [
         {"role": msg.role, "content": msg.content}
         for msg in history_rows

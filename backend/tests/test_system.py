@@ -580,22 +580,24 @@ _TEST_TOKEN = None   # filled in by the register/login tests
 
 
 def test_auth_register_new_user():
-    global _TEST_TOKEN
-    r = httpx.post(
-        f"{BASE_URL}/api/v1/auth/register",
-        json={
-            "email": _TEST_EMAIL,
-            "password": _TEST_PASS,
-            "full_name": "System Check User",
-            "phone": _TEST_PHONE,
-        },
-        timeout=10,
-    )
-    if r.status_code == 429:
-        pytest.skip("Rate-limited (too many registrations from test suite IP) — security is working correctly")
-    assert r.status_code in (200, 201), f"Register failed: {r.text}"
-    body = r.json()
-    assert "user" in body or "message" in body
+    """#102: registers a user of its OWN (unique per run) and removes it. It used the module's shared identity, which
+    test_auth_login_returns_token also registers when it runs first — in reversed/shuffled order this test then got
+    409 "Email already registered". The shared user is provided by the login test (register-if-missing)."""
+    from registered_user_cleanup import delete_registered_user, unique_identity
+    email, phone = unique_identity("sysreg")
+    try:
+        r = httpx.post(
+            f"{BASE_URL}/api/v1/auth/register",
+            json={"email": email, "password": _TEST_PASS, "full_name": "System Check User", "phone": phone},
+            timeout=10,
+        )
+        if r.status_code == 429:
+            pytest.skip("Rate-limited (too many registrations from test suite IP) — security is working correctly")
+        assert r.status_code in (200, 201), f"Register failed: {r.text}"
+        body = r.json()
+        assert "user" in body or "message" in body
+    finally:
+        delete_registered_user(email)          # raises if the PII DB claims isolation but looks like production
 
 
 def test_auth_login_returns_token():
@@ -696,21 +698,26 @@ def test_auth_me_with_invalid_token():
 
 
 def test_auth_duplicate_register_rejected():
-    r = httpx.post(
-        f"{BASE_URL}/api/v1/auth/register",
-        json={
-            "email": _TEST_EMAIL,
-            "password": _TEST_PASS,
-            "full_name": "Duplicate",
-            "phone": "+972500000002",
-        },
-        timeout=10,
-    )
-    if r.status_code == 429:
-        pytest.skip("Rate-limited — security is working correctly")
-    assert r.status_code in (400, 409, 422), (
-        f"Duplicate register should be rejected, got {r.status_code}: {r.text}"
-    )
+    """#102: this test OWNS its user (unique per run), so it no longer depends on test_auth_register_new_user having
+    run first: register it, prove the SAME email is then refused with 409, remove it."""
+    from registered_user_cleanup import delete_registered_user, unique_identity
+    email, phone = unique_identity("sysdup")
+    _, other_phone = unique_identity("sysdup")
+    try:
+        first = httpx.post(f"{BASE_URL}/api/v1/auth/register", json={
+            "email": email, "password": _TEST_PASS, "full_name": "Duplicate Owner", "phone": phone}, timeout=10)
+        if first.status_code == 429:
+            pytest.skip("Rate-limited — security is working correctly")
+        assert first.status_code in (200, 201), f"precondition: first registration failed: {first.text}"
+        r = httpx.post(f"{BASE_URL}/api/v1/auth/register", json={
+            "email": email, "password": _TEST_PASS, "full_name": "Duplicate", "phone": other_phone}, timeout=10)
+        if r.status_code == 429:
+            pytest.skip("Rate-limited — security is working correctly")
+        assert r.status_code == 409 and "Email already registered" in r.text, (
+            f"Duplicate register should be rejected with 409, got {r.status_code}: {r.text}"
+        )
+    finally:
+        delete_registered_user(email)          # raises if the PII DB claims isolation but looks like production
 
 
 # ===========================================================================

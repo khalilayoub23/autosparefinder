@@ -30,6 +30,11 @@ from urllib.parse import urlparse
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# tests/ is a package (__init__.py), so pytest's default import mode puts only its PARENT on sys.path. Test helpers
+# (isolated_db_guard, chat_lifecycle_harness, checkout_fixture, catalog_population, …) are imported by bare name;
+# without this line that import worked only if some EARLIER-collected module had inserted tests/ itself, which made
+# tests/test_fitment_pipeline_guardrails.py a collection error alone and order-dependent in a full run (#88).
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from synthetic_recipients import is_production_bridge_url, is_reserved_test_email  # noqa: E402
 
 TEST_BRIDGE_SINK = "http://whatsapp-bridge.invalid:3001/send"
@@ -104,3 +109,69 @@ def _no_real_messaging_from_tests():
     mp.setattr(httpx, "request", _guarded_request)
     yield
     mp.undo()
+
+
+@pytest.fixture(autouse=True)
+def _no_real_eurosender_production(monkeypatch):
+    """Tests run inside the production container, which carries the LIVE Eurosender config
+    (EUROSENDER_ENABLED=1, a production key). A test that inherited it sent a real request to
+    api.eurosender.com on 2026-10-18. Remove the production credentials and disable production
+    for every test; the adapter then refuses production before any network call. A test that
+    needs a key or EUROSENDER_ENABLED sets it itself (fake key, mocked client)."""
+    for k in ("EUROSENDER_PRODUCTION_API_KEY", "EUROSENDER_API_KEY",
+              "EUROSENDER_PRODUCTION_WEBHOOK_SECRET"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("EUROSENDER_ENABLED", "0")
+    monkeypatch.setenv("EUROSENDER_SANDBOX", "1")
+
+
+# ── #97: deterministic rate-limit state for tests that call the RUNNING sandbox server ─────────────────────────
+# Every request from these modules comes from one client address (127.0.0.1); the server's per-IP auth limits use
+# 60-second windows (rate:register:{ip} 5/60 s, rate:login:{ip} 20/60 s, …). Whether a test got a 429 — and skipped —
+# therefore depended on how many auth calls earlier tests (or a back-to-back previous run) had just made: the skip
+# count changed with order and timing. Each such test now starts with a clean bucket for the test client. The limiter
+# itself is untouched, so a test that drives it to 429 within itself (brute-force) still sees it; no test relies on a
+# bucket filled by an earlier test (checked). Sandbox only: never runs unless the isolation guard passes and Redis is
+# the sandbox instance.
+_LIVE_SERVER_MODULES = {"test_system", "test_full_system", "test_security", "test_platform_goals",
+                        "test_fitment_search_flows"}
+_TEST_CLIENT_IPS = ("127.0.0.1", "::1", "localhost")
+
+
+@pytest.fixture(autouse=True)
+def _fresh_rate_limit_bucket_for_live_server_tests(request):
+    if request.module.__name__.rsplit(".", 1)[-1] not in _LIVE_SERVER_MODULES:
+        yield
+        return
+    try:
+        import isolated_db_guard
+        url = os.getenv("REDIS_URL", "")
+        if isolated_db_guard.static_refusal() is None and "sandbox" in (urlparse(url).hostname or ""):
+            import redis as _redis
+            r = _redis.Redis.from_url(url, socket_timeout=2)
+            try:
+                for ip in _TEST_CLIENT_IPS:
+                    keys = list(r.scan_iter(f"rate:*:{ip}")) + list(r.scan_iter(f"login:{ip}"))
+                    if keys:
+                        r.delete(*keys)
+            finally:
+                r.close()
+    except Exception:
+        pass        # best effort: a Redis hiccup must not turn into a test failure here
+    yield
+
+
+# #100 (2026-10-22): no test may reach a host outside the test environment. Every name lookup a test makes is checked
+# (tests/network_guard.py): a supplier site, a public API or a public IP is refused before any packet is sent AND the
+# test is reported as an error, even when the code under test swallowed the refusal — an attempted request must never
+# pass silently. Local services (docker names, sandbox/disposable containers, private and loopback addresses) work
+# normally. The server the live-server tests call is a separate process: outbound_policy (off outside production) and
+# the network's `internal: true` close its egress.
+@pytest.fixture(autouse=True)
+def _no_real_outbound_network(monkeypatch):
+    from network_guard import NetworkGuard
+    guard = NetworkGuard().install(monkeypatch)
+    yield guard
+    if guard.blocked:
+        pytest.fail(f"test tried to reach hosts outside the test environment (refused): {sorted(set(guard.blocked))}",
+                    pytrace=False)

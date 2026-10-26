@@ -19,6 +19,7 @@ if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
 from BACKEND_DATABASE_MODELS import DATABASE_URL
+import isolated_db_guard  # noqa: E402  (tests/ is on sys.path under pytest)
 from db_update_agent import ensure_part_vehicle_fitment_table
 from db_update_agent import merge_catalog_fitment_from_part_vehicle_fitment
 
@@ -29,12 +30,17 @@ def _make_catalog_session():
     return engine, factory
 
 
+@pytest.mark.skipif(isolated_db_guard.static_refusal() is not None,
+                    reason=f"runs DDL + a full-table DELETE: {isolated_db_guard.static_refusal()} "
+                           "(isolated test database only — see tests/isolated_db_guard.py)")
 @pytest.mark.asyncio
 async def test_fitment_table_schema_guardrails_present():
     """Ensure runtime bootstrap yields expected columns/indexes for fitment flows."""
     engine, factory = _make_catalog_session()
     try:
         async with factory() as db:
+            refusal = await isolated_db_guard.live_refusal(db)
+            assert refusal is None, f"REFUSED before any DDL: {refusal}"
             await ensure_part_vehicle_fitment_table(db)
 
             table_exists = (await db.execute(text("""
@@ -81,11 +87,36 @@ async def test_fitment_table_schema_guardrails_present():
 
 
 @pytest.mark.asyncio
+async def test_oom_blocked_tasks_are_refused_by_run_task_without_touching_the_db():
+    """Every entry point (run_all_tasks, owner console, admin run-task API, maintenance scripts)
+    goes through run_task(); a blocked task must be refused there, before any query."""
+    import db_update_agent as dua
+
+    class _NoDb:
+        def __getattr__(self, name):
+            raise AssertionError(f"blocked task touched the database ({name})")
+
+    assert "merge_catalog_fitment_from_part_vehicle_fitment" in dua.OOM_BLOCKED_TASKS
+    for name in dua.OOM_BLOCKED_TASKS:
+        res = await dua.run_task(name, _NoDb())
+        assert res["status"] == "skipped" and "OOM_BLOCKED_TASKS" in res["reason"], name
+    from agents import owner_console
+    assert not set(owner_console._task_names()) & dua.OOM_BLOCKED_TASKS
+
+
+@pytest.mark.skipif(isolated_db_guard.static_refusal() is not None,
+                    reason="writes parts_catalog: isolated test database only (tests/isolated_db_guard.py)")
+@pytest.mark.skipif(os.getenv("RUN_HEAVY_DB_TESTS") != "1",
+                    reason="runs a disabled full-catalogue task twice (~2.2 GB, writes parts_catalog): "
+                           "OOM-killed in the production container 2026-10-18; opt in on a non-production DB")
+@pytest.mark.asyncio
 async def test_fitment_merge_output_contract_and_repeat_stability():
     """Merge task should keep a stable output contract and trend toward idempotence."""
     engine, factory = _make_catalog_session()
     try:
         async with factory() as db:
+            refusal = await isolated_db_guard.live_refusal(db)
+            assert refusal is None, f"REFUSED before any write: {refusal}"
             first = await merge_catalog_fitment_from_part_vehicle_fitment(db)
             second = await merge_catalog_fitment_from_part_vehicle_fitment(db)
 

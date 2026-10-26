@@ -5,6 +5,21 @@
 
 set -e
 STATE_FILE="/tmp/restart_state.json"
+
+# 0. PREFLIGHT (2026-10-10): refuse BEFORE any side effect below when a restart would cut running
+#    work - including work that runs INSIDE uvicorn (the daily Facebook group scan), which the
+#    job_registry / subprocess checks cannot see. Read-only. Override only as an explicit owner
+#    decision: PRE_RESTART_FORCE=1 bash pre_restart.sh
+if ! docker exec autospare_backend python3 /app/scripts/restart_preflight.py >&2; then
+    if [ "${PRE_RESTART_FORCE:-0}" = "1" ]; then
+        echo "[pre_restart] PREFLIGHT BLOCKED - continuing because PRE_RESTART_FORCE=1" >&2
+    else
+        echo "[pre_restart] ABORTED by preflight: nothing was captured, stopped or changed." >&2
+        echo "[pre_restart] Wait for the work above to finish, or set PRE_RESTART_FORCE=1 to override." >&2
+        exit 4
+    fi
+fi
+
 echo "=== PRE-RESTART CAPTURE ===" >&2
 
 # 1. Capture job_registry running jobs

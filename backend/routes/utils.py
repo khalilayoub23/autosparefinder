@@ -428,7 +428,13 @@ async def _send_post_payment_notification(order_db, tracking_number: str, tracki
                 phone = conv.context.get("phone_e164") or conv.context.get("phone")
             if phone:
                 from social.whatsapp_provider import send_message as _wa_send
-                await _wa_send(phone, msg_he)
+                _res = await _wa_send(phone, msg_he)
+                if not _res.get("ok"):          # was ignored: a failed tracking message left no trace (#70)
+                    print(f"[PostPayment] WhatsApp tracking notice failed for order {getattr(order_db, 'id', '?')}: "
+                          f"{_res.get('error')}")
+            else:
+                print(f"[PostPayment] no WhatsApp number on the customer's conversation — tracking notice not sent "
+                      f"(order {getattr(order_db, 'id', '?')})")
 
         elif channel == "telegram":
             # Look up chat_id from conversation context
@@ -531,10 +537,17 @@ async def trigger_supplier_fulfillment(paid_orders: list, db: AsyncSession) -> N
     default_auto_topup_max_minor = int(os.getenv("SUPPLIER_ISSUING_TOPUP_MAX_MINOR", "500000") or "500000")
     allow_simulated_supplier_payments = _env_flag("ALLOW_SIMULATED_SUPPLIER_PAYMENTS", "0")
 
+    import order_payment_policy as _spend_policy
     for order in paid_orders:
         order_res = await db.execute(select(Order).where(Order.id == order.id))
         order_db = order_res.scalar_one_or_none()
         if not order_db:
+            continue
+        # #111: in production never spend on a supplier for an order that was not really paid (live Stripe checkout
+        # session) or whose customer is a reserved test address — before ANY supplier, Stripe or Issuing work.
+        _refusal = await _spend_policy.supplier_spend_refusal(db, order_db)
+        if _refusal:
+            print(f"[Fulfillment] {order_db.order_number}: supplier spend refused — {_refusal}")
             continue
 
         items_res = await db.execute(select(OrderItem).where(OrderItem.order_id == order_db.id))

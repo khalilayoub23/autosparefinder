@@ -58,6 +58,20 @@ def test_no_send_switch_exists_in_compose():
     assert not re.search(r"EMAIL_AGENT_[A-Z_]*SEND", _compose_text())
 
 
+def test_runbook_never_recreates_the_backend_without_no_deps():
+    # 2026-10-09 preflight: a plain `up -d backend` would also recreate both Postgres containers
+    docs = os.path.join(os.path.dirname(BACKEND_DIR), "docs", "EMAIL_AGENT.md")
+    claude = os.path.join(os.path.dirname(BACKEND_DIR), "CLAUDE.md")
+    if not os.path.exists(docs):
+        import pytest
+        pytest.skip("docs are not available in this environment (host-side test)")
+    for path in (docs, claude):
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        bad = re.findall(r"docker compose up -d backend", text)
+        assert not bad, f"{os.path.basename(path)} recommends 'docker compose up -d backend' without --no-deps"
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

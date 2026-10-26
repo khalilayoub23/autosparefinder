@@ -336,10 +336,20 @@ async def ensure_candidates_table(db: AsyncSession) -> None:
 
 
 async def _discovery_brands(db: AsyncSession, n: int = 14) -> list[str]:
+    """The catalog's most common manufacturers, for discovery queries. A 1% page sample is cheap and representative
+    on the multi-million-row production catalog. On a small catalog (a fresh install, the sandbox) that sample is
+    usually EMPTY — discovery then issued no query at all (#96) — so fall back to a bounded deterministic count
+    over at most 50,000 rows. Production behaviour is unchanged: the fallback runs only when the sample is empty."""
     rows = (await db.execute(text("""
         SELECT manufacturer FROM parts_catalog TABLESAMPLE SYSTEM (1)
         WHERE is_active AND manufacturer IS NOT NULL AND btrim(manufacturer) <> ''
         GROUP BY manufacturer ORDER BY count(*) DESC LIMIT :n"""), {"n": n})).fetchall()
+    if not rows:
+        rows = (await db.execute(text("""
+            SELECT manufacturer FROM (
+                SELECT manufacturer FROM parts_catalog
+                WHERE is_active AND manufacturer IS NOT NULL AND btrim(manufacturer) <> '' LIMIT 50000) s
+            GROUP BY manufacturer ORDER BY count(*) DESC, manufacturer LIMIT :n"""), {"n": n})).fetchall()
     return [r[0] for r in rows]
 
 

@@ -16,10 +16,16 @@ DST: all comparisons/subtractions happen in UTC. Subtracting two aware datetimes
   change) — never do that here. On the Israeli fall-back night 01:00-02:00 occurs twice;
   fold=0 (the first occurrence) is used, and because "next" is computed in UTC a job
   that just ran cannot fire again in the repeated hour.
+  3. delay_after_restart(...) is for INTERVAL loops (run_all_tasks every 3 h, meili_sync every
+     2 h). Those slept "N seconds after container start", so every restart re-anchored them and
+     ran a full cycle at once, however recently the last one finished (2026-10-10: two restarts
+     28 minutes apart ran run_all_tasks at 05:20, 06:40 and 07:08 UTC and meili_sync twice).
+     It returns how long the first cycle after a start must still wait so the interval is
+     measured from the LAST COMPLETED run, never less than the loop's own settle time.
 Data Imported/Modified: none (pure time math).
 Data Sources: none.
 Missing Data Delegation: n/a.
-Last Updated: 2026-10-03
+Last Updated: 2026-10-10
 """
 from __future__ import annotations
 
@@ -60,3 +66,19 @@ def describe(hour: int, minute: int = 0, weekday: int | None = None,
     """Human-readable next run, for log lines: '2026-10-04 01:00 IDT (2026-10-03T22:00Z)'."""
     nxt = next_run_utc(hour, minute, weekday, None, monthday)
     return f"{nxt.astimezone(LOCAL_TZ):%Y-%m-%d %H:%M %Z} ({nxt:%Y-%m-%dT%H:%MZ})"
+
+
+def delay_after_restart(last_completed: datetime | None, interval_s: float, floor_s: float,
+                        now: datetime | None = None) -> float:
+    """Seconds an interval loop must wait before its FIRST cycle after a process start.
+    `last_completed` = when the previous cycle finished (aware datetime, or None if unknown).
+    Never less than `floor_s` (the loop's settle time), never more than `interval_s`.
+    Unknown, naive or future timestamps fall back to `floor_s`: a cycle is never skipped."""
+    floor_s = max(0.0, float(floor_s))
+    if last_completed is None or last_completed.tzinfo is None:
+        return floor_s
+    now_utc = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    age = (now_utc - last_completed.astimezone(timezone.utc)).total_seconds()
+    if age < 0:
+        return floor_s
+    return max(floor_s, min(float(interval_s), float(interval_s) - age))

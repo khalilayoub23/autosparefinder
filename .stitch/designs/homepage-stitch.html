@@ -1,0 +1,657 @@
+<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0;font:14px system-ui,sans-serif;background:#faf9f7}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>AutoSpareFinder Homepage</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap" rel="stylesheet">
+<style>
+/* ── AutoSpareFinder homepage ─────────────────────────────────────────────────
+   Built from the Stitch screen "AutoSpareFinder — Mobile Homepage (390px)"
+   (project 6817478358970681127, screen 2200a00cc9494f1ab7cafb03f3de60af).
+   Stitch supplied the 390px composition; desktop and tablet extend it and RTL
+   mirrors it. Tokens are DESIGN.md / MASTER.md §4 verbatim. */
+:root{
+  color-scheme:dark;
+  --bg:#0F1218; --card:#151B27; --card2:#1E2535; --card3:#252D3D; --scrim:#0A0E17;
+  --bl:#0EA5E9; --bl-hi:#38BDF8; --bl-lo:#0284C7; --bl-net:#1D4ED8;
+  --tx:#FFFFFF; --hd:#E2E8F0; --sc:#94A3B8; --mu:#475569;
+  --bd:rgba(148,163,184,.12); --bd-h:rgba(14,165,233,.30); --bd-b:rgba(14,165,233,.20);
+  --ok:#22C55E; --wn:#F59E0B; --bad:#EF4444;
+  --u:'Inter',system-ui,-apple-system,sans-serif;
+  --m:'JetBrains Mono',ui-monospace,Menlo,monospace;
+  --e:cubic-bezier(.4,0,.2,1);
+  --max:1280px; --gut:16px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--hd);font-family:var(--u);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;overflow-x:hidden;padding-bottom:64px}
+.w{max-width:var(--max);margin-inline:auto;padding-inline:var(--gut)}
+svg{display:block}
+a{color:inherit;text-decoration:none}
+button{font-family:inherit}
+.mo{font-family:var(--m);font-variant-numeric:tabular-nums}
+:focus-visible{outline:none;box-shadow:0 0 0 2px var(--bg),0 0 0 4px var(--bl)}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.ms{font-family:'Material Symbols Outlined';font-weight:400;font-style:normal;line-height:1;letter-spacing:normal;text-transform:none;display:inline-block;white-space:nowrap;direction:ltr;-webkit-font-feature-settings:'liga';font-variation-settings:'opsz' 24}
+h2{font-size:24px;font-weight:800;letter-spacing:-.025em;color:var(--tx);line-height:1.15}
+.sub{font-size:12.5px;color:var(--sc);margin-top:4px}
+.hd{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;margin-bottom:16px}
+.hd>div{flex:1 1 auto;min-width:0}
+.hd .more{margin-inline-start:auto;font-size:12.5px;font-weight:600;color:var(--bl);display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+.hd .more:hover{color:var(--bl-hi)}
+.pill{font-size:11px;font-weight:700;color:var(--sc);background:var(--card2);border:1px solid var(--bd);border-radius:999px;padding:3px 10px;white-space:nowrap}
+.rtlflip{transition:transform .18s var(--e)}
+[dir=rtl] .rtlflip{transform:rotate(180deg)}
+.btn{border:0;border-radius:10px;cursor:pointer;font-weight:700;display:inline-flex;align-items:center;justify-content:center;gap:9px;white-space:nowrap;transition:all .18s var(--e)}
+.bp{background:linear-gradient(135deg,#38BDF8 0%,#0EA5E9 55%,#0284C7 100%);color:#0B1016}
+.bp:hover{filter:brightness(1.07);box-shadow:0 0 22px rgba(14,165,233,.3)}
+.bp:active{transform:scale(.99)}
+.bo{background:transparent;border:1px solid var(--bd-b);color:var(--bl-hi)}
+.bo:hover{border-color:var(--bd-h);background:rgba(14,165,233,.07)}
+.panel{background:var(--card);border:1px solid var(--bd);border-radius:14px}
+
+/* ═══ header ═══ */
+header{position:sticky;top:env(safe-area-inset-top,0px);z-index:60;background:rgba(15,18,24,.92);backdrop-filter:blur(14px);border-bottom:1px solid var(--bd)}
+.nav{height:58px;display:flex;align-items:center;gap:14px}
+.ico{width:38px;height:38px;border-radius:10px;background:none;border:0;color:var(--sc);display:grid;place-items:center;cursor:pointer;position:relative;transition:.18s;flex-shrink:0}
+.ico:hover{color:var(--tx);background:rgba(148,163,184,.07)}
+.ico .ms{font-size:22px}
+.brand{display:flex;align-items:center;gap:7px;flex-shrink:0}
+.brand b{font-size:16px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;color:var(--tx);white-space:nowrap}
+.brand i{width:7px;height:7px;border-radius:50%;background:var(--bl);display:block;box-shadow:0 0 8px var(--bl)}
+.links{display:none;gap:4px;margin-inline-start:14px}
+.links a{padding:8px 13px;border-radius:8px;font-size:13.5px;font-weight:600;color:var(--sc);transition:.18s}
+.links a:hover{color:var(--tx);background:rgba(148,163,184,.06)}
+.links a.on{color:var(--bl)}
+.hsearch{display:none;flex:1;min-width:0;max-width:440px;height:40px;align-items:center;gap:9px;background:var(--card2);border:1px solid var(--bd);border-radius:10px;padding-inline:13px}
+.hsearch:focus-within{border-color:var(--bd-h);box-shadow:0 0 0 3px rgba(14,165,233,.12)}
+.hsearch .ms{font-size:19px;color:var(--mu);flex-shrink:0}
+.hsearch input{flex:1;min-width:0;background:none;border:0;color:var(--tx);font-family:inherit;font-size:13.5px}
+.hsearch input::placeholder{color:var(--mu)}
+.hsearch input:focus{outline:none}
+.acts{margin-inline-start:auto;display:flex;align-items:center;gap:2px;flex-shrink:0}
+.dot{position:absolute;top:6px;inset-inline-end:6px;min-width:16px;height:16px;border-radius:8px;background:var(--bl);color:#0B1016;font-family:var(--m);font-size:9.5px;font-weight:700;display:grid;place-items:center;padding-inline:4px}
+
+/* ═══ hero ═══ */
+.hero{padding-block:26px 8px}
+h1{font-size:30px;line-height:1.1;font-weight:800;letter-spacing:-.035em;color:var(--tx)}
+h1 em{font-style:normal;display:block;color:var(--bl-hi)}
+.vtag{display:inline-flex;align-items:center;gap:8px;margin-top:12px;font-size:13px;color:var(--hd);font-weight:500}
+.vtag i{width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 7px var(--ok);flex-shrink:0}
+.tabs{display:flex;gap:0;border-bottom:1px solid var(--bd);margin-top:18px}
+.tab{background:none;border:0;padding:11px 15px;font-size:13.5px;font-weight:600;color:var(--sc);cursor:pointer;display:inline-flex;align-items:center;gap:8px;border-bottom:2px solid transparent;margin-bottom:-1px;transition:.18s;white-space:nowrap}
+.tab .ms{font-size:19px}
+.tab:hover{color:var(--hd)}
+.tab[aria-selected=true]{color:var(--bl);border-bottom-color:var(--bl)}
+.find{margin-top:16px;padding:16px}
+.fg{display:grid;gap:13px}
+.fl{display:block;font-family:var(--m);font-size:10px;font-weight:500;letter-spacing:.16em;text-transform:uppercase;color:var(--sc);margin-bottom:7px}
+.sel{position:relative}
+.sel select,.fin{width:100%;height:48px;background:var(--card2);border:1px solid var(--bd);border-radius:10px;color:var(--tx);font-family:inherit;font-size:14.5px;padding-inline:14px 40px;appearance:none;cursor:pointer;text-overflow:ellipsis}
+.fin{font-family:var(--m);cursor:text}
+.sel select:focus,.fin:focus{outline:none;border-color:var(--bd-h);box-shadow:0 0 0 3px rgba(14,165,233,.12)}
+.sel .ms{position:absolute;inset-inline-end:12px;top:50%;transform:translateY(-50%);color:var(--sc);font-size:21px;pointer-events:none}
+.go{width:100%;height:50px;font-size:15px;margin-top:3px}
+.oemrow{display:flex;gap:10px;align-items:center;margin-top:12px;padding:9px 11px;background:var(--card);border:1px solid var(--bd);border-radius:12px}
+.oemrow .ms{color:var(--mu);font-size:20px;flex-shrink:0}
+.oemrow input{flex:1;min-width:0;background:none;border:0;color:var(--tx);font-family:inherit;font-size:13.5px}
+.oemrow input::placeholder{color:var(--mu)}
+.oemrow input:focus{outline:none}
+.oemrow .btn{height:34px;padding-inline:12px;font-family:var(--m);font-size:11.5px;font-weight:600;letter-spacing:.04em;border-radius:8px;flex-shrink:0}
+.oemrow .btn .ms{font-size:16px;color:inherit}
+
+/* trust */
+.trust{margin-top:14px;padding:15px;display:grid;grid-template-columns:1fr 1fr;gap:16px 14px}
+.tc{display:flex;gap:10px;align-items:flex-start;min-width:0}
+.tc .ms{font-size:21px;color:var(--bl);flex-shrink:0;margin-top:1px}
+.tc b{display:block;font-size:13px;font-weight:700;color:var(--tx);line-height:1.25}
+.tc span{display:block;font-size:11px;color:var(--sc);margin-top:2px}
+.tc span.ok{color:var(--ok);font-weight:600}
+
+/* ═══ sections ═══ */
+.sec{padding-block:30px}
+.cats{display:grid;grid-template-columns:1fr 1fr;gap:11px}
+.cat{position:relative;overflow:hidden;background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:15px;text-align:start;cursor:pointer;min-width:0;
+  transition:border-color .2s var(--e),transform .2s var(--e),box-shadow .2s var(--e),background .2s var(--e)}
+.cat:hover,.cat:focus-visible{border-color:var(--bd-b);transform:translateY(-2px);box-shadow:0 8px 22px rgba(0,0,0,.34)}
+.cat:active{transform:translateY(-1px) scale(.986)}
+.cat .ib{width:40px;height:40px;border-radius:11px;background:var(--card3);display:grid;place-items:center;margin-bottom:12px;
+  transition:background .2s var(--e),box-shadow .2s var(--e)}
+.cat:hover .ib,.cat:focus-visible .ib{background:rgba(14,165,233,.14);box-shadow:0 0 16px rgba(14,165,233,.22)}
+.cat .ib .ms{font-size:22px;color:var(--bl-hi);transform-origin:center;animation:none}
+/* a light sweeps across the tile on hover/focus — purely decorative, clipped, no layout effect */
+.cat::after{content:"";position:absolute;inset-block:0;inset-inline-start:-40%;width:38%;pointer-events:none;opacity:0;
+  background:linear-gradient(100deg,transparent,rgba(56,189,248,.10),transparent);transform:translateX(0)}
+.cat:hover::after,.cat:focus-visible::after{animation:cat-sheen .75s var(--e)}
+[dir=rtl] .cat:hover::after,[dir=rtl] .cat:focus-visible::after{animation-name:cat-sheen-rtl}
+@keyframes cat-sheen{0%{opacity:0;transform:translateX(0)}18%{opacity:1}100%{opacity:0;transform:translateX(420%)}}
+@keyframes cat-sheen-rtl{0%{opacity:0;transform:translateX(0)}18%{opacity:1}100%{opacity:0;transform:translateX(-420%)}}
+/* selection — colour only, never geometry, so nothing reflows */
+.cat[aria-pressed="true"]{border-color:var(--bl);background:linear-gradient(180deg,rgba(14,165,233,.10),rgba(14,165,233,.025))}
+.cat[aria-pressed="true"] .ib{background:rgba(14,165,233,.20)}
+.cat[aria-pressed="true"] .nm{color:var(--bl-hi)}
+/* glyph motion is paused at rest; it runs on hover/focus with a pointer, or once on first view on touch */
+@media (hover:hover) and (pointer:fine){
+  .cat:hover .ib .ms,.cat:focus-visible .ib .ms,.cat:focus-within .ib .ms{animation:var(--anim)}
+}
+.cat.play .ib .ms{animation:var(--anim);animation-iteration-count:1}
+.m-spin   { --anim:cat-spin 5.5s linear infinite }
+.m-fan    { --anim:cat-spin 2.2s linear infinite }
+.m-piston { --anim:cat-piston 1.25s var(--e) infinite }
+.m-press  { --anim:cat-press 1.5s var(--e) infinite }
+.m-zap    { --anim:cat-zap 1.35s var(--e) infinite }
+.m-breathe{ --anim:cat-breathe 2s var(--e) infinite }
+.m-tilt   { --anim:cat-tilt 2.1s var(--e) infinite }
+.m-drift  { --anim:cat-drift 2s linear infinite }
+[dir=rtl] .m-drift { --anim:cat-drift-rtl 2s linear infinite }
+@keyframes cat-spin{to{transform:rotate(360deg)}}
+@keyframes cat-piston{0%,100%{transform:translateY(-1.6px)}50%{transform:translateY(1.6px)}}
+@keyframes cat-press{0%,100%{transform:scaleY(1)}50%{transform:scaleY(.82)}}
+@keyframes cat-zap{0%,100%{transform:scale(1);opacity:1}42%{transform:scale(1.16);opacity:.62}}
+@keyframes cat-breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.11)}}
+@keyframes cat-tilt{0%,100%{transform:rotate(0)}50%{transform:rotate(-7deg)}}
+@keyframes cat-drift{0%{transform:translateX(-3px);opacity:.6}50%{opacity:1}100%{transform:translateX(3px);opacity:.6}}
+@keyframes cat-drift-rtl{0%{transform:translateX(3px);opacity:.6}50%{opacity:1}100%{transform:translateX(-3px);opacity:.6}}
+.cat .nm{display:block;font-size:14px;font-weight:700;color:var(--tx)}
+.cat .ct{display:block;font-family:var(--m);font-size:11px;color:var(--mu);margin-top:3px}
+
+.vehs{display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x mandatory;scroll-padding-inline-start:var(--gut);margin-inline:calc(var(--gut)*-1);padding-inline:var(--gut);padding-bottom:4px;scrollbar-width:none}
+.vehs::-webkit-scrollbar{display:none}
+.veh{flex:0 0 76%;scroll-snap-align:start;background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:15px;cursor:pointer;text-align:start;transition:.18s;min-width:0}
+.veh:hover{border-color:var(--bd-b)}
+.veh .tp{display:flex;align-items:center;gap:8px;margin-bottom:11px}
+.chip{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:3px 8px;border-radius:5px;white-space:nowrap}
+.ch-ok{background:rgba(34,197,94,.12);color:var(--ok)}
+.ch-wn{background:rgba(245,158,11,.13);color:var(--wn)}
+.ch-bl{background:rgba(14,165,233,.13);color:var(--bl-hi)}
+.veh .yr{font-family:var(--m);font-size:11px;color:var(--mu);margin-inline-start:auto}
+.veh .nm{display:block;font-size:15.5px;font-weight:700;color:var(--tx)}
+.veh .pc{display:block;font-family:var(--m);font-size:11.5px;color:var(--sc);margin-top:3px}
+.veh .go2{display:inline-flex;align-items:center;gap:6px;margin-top:12px;font-size:12.5px;font-weight:600;color:var(--bl)}
+
+.why{display:grid;gap:12px}
+.wc{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:16px}
+.wc .t{display:flex;align-items:center;gap:11px;margin-bottom:10px}
+.wc .t .ib{width:34px;height:34px;border-radius:9px;background:rgba(14,165,233,.12);display:grid;place-items:center;flex-shrink:0}
+.wc .t .ib .ms{font-size:19px;color:var(--bl-hi)}
+.wc .t b{font-size:14.5px;font-weight:700;color:var(--tx)}
+.wc p{font-size:12.5px;color:var(--sc);line-height:1.6}
+.wc p b{color:var(--hd);font-weight:600}
+.wc p em{font-style:normal;color:var(--bl-hi)}
+
+.cmp-wrap{display:none}
+.cmp .q{display:flex;align-items:center;gap:8px;font-family:var(--m);font-size:11.5px;color:var(--sc);margin-bottom:14px}
+.cmp .q i{width:6px;height:6px;border-radius:50%;background:var(--ok);flex-shrink:0}
+.offer{background:var(--card);border:1px solid var(--bd);border-radius:14px;margin-bottom:10px;overflow:hidden}
+.offer.best{border-color:var(--bd-b)}
+.offer .ot{display:flex;align-items:flex-start;gap:12px;padding:14px 15px 12px}
+.offer .nm{font-size:14.5px;font-weight:700;color:var(--tx)}
+.offer .nm small{font-family:var(--u);font-size:11.5px;font-weight:400;color:var(--mu);margin-inline-start:5px}
+.offer .tier{display:block;font-family:var(--m);font-size:11.5px;color:var(--bl-hi);margin-top:4px}
+.offer .pr{margin-inline-start:auto;text-align:end;flex-shrink:0}
+.offer .pr b{display:block;font-family:var(--m);font-size:17px;font-weight:600;color:var(--bl-hi);font-variant-numeric:tabular-nums}
+.offer .pr span{display:block;font-size:11px;color:var(--ok);font-weight:600;margin-top:2px}
+.offer .pr span.low{color:var(--wn)}
+.offer .ob{display:flex;align-items:center;gap:8px;padding:10px 15px;border-top:1px solid var(--bd);background:rgba(10,14,23,.4)}
+.offer .ob .ms{font-size:17px;color:var(--mu)}
+.offer .ob .dl{font-size:12px;color:var(--sc)}
+.offer .ob .sel2{margin-inline-start:auto;font-size:12.5px;font-weight:700;color:var(--bl)}
+.offer .ob .sel2:hover{color:var(--bl-hi)}
+.cmpall{width:100%;height:48px;margin-top:4px;font-size:14px}
+
+.ai{background:linear-gradient(165deg,rgba(14,165,233,.09),rgba(14,165,233,.02));border:1px solid var(--bd-b);border-radius:16px;padding:18px;box-shadow:0 0 26px rgba(14,165,233,.22)}
+.ai .t{display:flex;align-items:center;gap:9px;margin-bottom:14px}
+.ai .t i{width:7px;height:7px;border-radius:50%;background:var(--bl);box-shadow:0 0 8px var(--bl);flex-shrink:0}
+.ai .t b{font-size:15.5px;font-weight:700;color:var(--tx)}
+.ai .t .ms{margin-inline-start:auto;font-size:24px;color:var(--bl-hi)}
+.bub{display:flex;gap:9px;align-items:flex-start;margin-bottom:10px}
+.bub .av{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-size:10px;font-weight:700;flex-shrink:0}
+.bub.u{flex-direction:row-reverse}
+.bub.u .av{background:var(--card3);color:var(--sc)}
+.bub.u .bx{background:var(--card2);border-radius:12px 12px 4px 12px;padding:10px 13px;font-size:13px;color:var(--hd)}
+.bub.a .av{background:rgba(14,165,233,.18);color:var(--bl-hi)}
+.bub.a .bx{background:rgba(14,165,233,.07);border:1px solid var(--bd-b);border-radius:12px 12px 12px 4px;padding:11px 13px;flex:1;min-width:0}
+.bub.a .hdl{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:700;color:var(--ok)}
+.bub.a .hdl .ms{font-size:17px}
+.bub.a .mt{font-family:var(--m);font-size:11.5px;color:var(--sc);margin-top:6px;display:flex;flex-wrap:wrap;gap:4px 12px}
+.bub.a .mt b{color:var(--bl-hi);font-weight:600}
+.ai .go3{width:100%;height:46px;margin-top:6px;font-size:14px}
+
+/* ═══ footer ═══ */
+footer{border-top:1px solid var(--bd);background:var(--scrim);padding-block:28px 22px;margin-top:12px}
+.fb p{font-size:12.5px;color:var(--sc);line-height:1.65;margin:11px 0 14px}
+.wasupport{display:inline-flex;align-items:center;gap:9px;padding:10px 13px;background:var(--card);border:1px solid var(--bd);border-radius:11px;font-size:12.5px;color:var(--hd);font-weight:600}
+.wasupport .ms{font-size:19px;color:var(--ok)}
+.fcols{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:24px}
+.fc h4{font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:var(--hd);margin-bottom:12px}
+.fc a{display:block;font-size:12.5px;color:var(--sc);margin-bottom:9px;transition:.18s}
+.fc a:hover{color:var(--bl-hi)}
+.hubs{display:flex;flex-wrap:wrap;gap:7px;margin-top:22px}
+.hubs span{font-family:var(--m);font-size:11px;color:var(--mu);border:1px solid var(--bd);border-radius:6px;padding:4px 9px}
+.fbot{border-top:1px solid var(--bd);margin-top:22px;padding-top:16px;display:flex;flex-wrap:wrap;gap:12px;align-items:center;font-family:var(--m);font-size:11px;color:var(--mu)}
+.langs{margin-inline-start:auto;display:flex;border:1px solid var(--bd);border-radius:8px;overflow:hidden}
+.langs button{background:none;border:0;border-inline-end:1px solid var(--bd);color:var(--sc);font-size:11.5px;font-weight:600;padding:6px 12px;cursor:pointer;transition:.18s}
+.langs button:last-child{border-inline-end:0}
+.langs button:hover{color:var(--hd)}
+.langs button.on{background:rgba(14,165,233,.12);color:var(--bl)}
+
+/* ═══ bottom tab bar (mobile) ═══ */
+.tabbar{position:fixed;inset-block-end:0;inset-inline:0;z-index:70;background:rgba(15,18,24,.96);backdrop-filter:blur(14px);border-top:1px solid var(--bd);display:grid;grid-template-columns:repeat(5,1fr);padding-bottom:env(safe-area-inset-bottom,0px)}
+.tabbar a{display:flex;flex-direction:column;align-items:center;gap:3px;padding:9px 0 8px;font-size:10.5px;font-weight:600;letter-spacing:.03em;color:var(--mu);position:relative}
+.tabbar a .ms{font-size:22px}
+.tabbar a.on{color:var(--bl)}
+.tabbar a .dot{top:4px;inset-inline-end:calc(50% - 20px)}
+
+/* ══════════ TABLET ══════════ */
+@media(min-width:700px){
+  :root{--gut:24px}
+  h1{font-size:40px}
+  h2{font-size:27px}
+  .hero{padding-block:34px 10px}
+  .fg{grid-template-columns:1fr 1fr 1fr}
+  .go{grid-column:1/-1}
+  .trust{grid-template-columns:repeat(4,1fr)}
+  .cats{grid-template-columns:repeat(3,1fr)}
+  .why{grid-template-columns:1fr 1fr}
+  .vehs{display:grid;grid-template-columns:repeat(2,1fr);overflow:visible;margin-inline:0;padding-inline:0}
+  .veh{flex:none}
+  .fcols{grid-template-columns:repeat(3,1fr)}
+}
+/* ══════════ DESKTOP ══════════ */
+@media(min-width:1000px){
+  :root{--gut:28px}
+  body{padding-bottom:0}
+  .tabbar{display:none}
+  .nav{height:68px}
+  .links{display:flex}
+  .hsearch{display:flex}
+  .menu{display:none}
+  h1{font-size:50px}
+  .hero{padding-block:46px 14px}
+  .herogrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,430px);grid-template-areas:'copy search' 'trust search';gap:0 44px;align-items:start}
+  .herocopy{grid-area:copy}
+  .searchcol{grid-area:search}
+  .trust{grid-area:trust;margin-top:20px}
+  .herocopy{padding-top:6px}
+  .lede{font-size:15.5px;color:var(--sc);margin-top:14px;max-width:46ch;line-height:1.6}
+  .trust{grid-template-columns:1fr 1fr;margin-top:18px}
+  .find{margin-top:0}
+  .tabs{margin-top:0}
+  .cats{grid-template-columns:repeat(5,1fr);gap:13px}
+  .vehs{grid-template-columns:repeat(4,1fr)}
+  .why{grid-template-columns:repeat(4,1fr)}
+  .fg{grid-template-columns:1fr}
+  .cmp-wrap{display:block}
+  .offers{display:none}
+  .ai{display:grid;grid-template-columns:1fr 1fr;gap:34px;align-items:center;padding:30px}
+  .ai .go3{width:auto;padding-inline:26px;margin-top:16px}
+  .fcols{grid-template-columns:repeat(4,1fr)}
+  .fgrid{display:grid;grid-template-columns:1.5fr 2.5fr;gap:48px}
+  .fcols{margin-top:0}
+}
+table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--bd);border-radius:14px;overflow:hidden}
+th{text-align:start;font-family:var(--m);font-size:10px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--mu);padding:13px 18px;border-bottom:1px solid var(--bd);background:rgba(10,14,23,.4);white-space:nowrap}
+td{padding:16px 18px;border-bottom:1px solid rgba(148,163,184,.07);font-size:13.5px;vertical-align:middle}
+tbody tr:last-child td{border-bottom:0}
+tbody tr{transition:background .18s}
+tbody tr:hover{background:rgba(14,165,233,.04)}
+tbody tr.best{background:rgba(14,165,233,.06)}
+td .sp{font-weight:700;color:var(--tx)}
+td .lo{font-size:11.5px;color:var(--mu);margin-top:2px}
+td .tier2{font-family:var(--m);font-size:12px;color:var(--bl-hi)}
+td .price{font-family:var(--m);font-size:17px;font-weight:600;color:var(--bl-hi);font-variant-numeric:tabular-nums}
+td .dl2{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:var(--sc)}
+td .dl2 .ms{font-size:17px;color:var(--mu)}
+.selbtn{height:34px;padding-inline:16px;font-size:12.5px;border-radius:8px}
+
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important;scroll-behavior:auto!important}
+  /* every animated element keeps a correct, readable resting state */
+  .cat .ib .ms{animation:none!important;transform:none!important;opacity:1!important}
+  .cat::after,.cat:hover::after,.cat:focus-visible::after{animation:none!important;opacity:0!important}
+  .cat:hover,.cat:focus-visible,.cat:active{transform:none}
+  /* hover/focus/selection stay legible without motion */
+  .cat:hover,.cat:focus-visible{border-color:var(--bd-b);box-shadow:none}
+}
+</style></head><body>
+
+<header>
+  <div class="w nav">
+    <button class="ico menu" aria-label="Menu"><span class="ms">menu</span></button>
+    <a href="/" class="brand"><b>AutoSpareFinder</b><i></i></a>
+    <nav class="links" aria-label="Main">
+      <a href="/parts" class="on" data-i="n.cat">Catalogue</a>
+      <a href="#vehicles" data-i="n.veh">Vehicles</a>
+      <a href="#compare" data-i="n.cmp">Compare</a>
+      <a href="/chat" data-i="n.ai">AI Assistant</a>
+    </nav>
+    <label class="hsearch"><span class="ms">search</span>
+      <span class="sr">Search</span>
+      <input type="text" placeholder="Search OEM, VIN, or part" data-ph="s.ph"></label>
+    <div class="acts">
+      <a href="/cart" class="ico" aria-label="Cart, 2 items"><span class="ms">shopping_cart</span><span class="dot">2</span></a>
+      <a href="/account" class="ico" aria-label="Account"><span class="ms">person</span></a>
+    </div>
+  </div>
+</header>
+
+<main>
+<section class="hero"><div class="w herogrid">
+  <div class="herocopy">
+    <h1><span data-i="h.a">Find the right part.</span><em data-i="h.b">Compare the right price.</em></h1>
+    <span class="vtag"><i></i><span data-i="h.v">AI-verified fitment · 4M+ parts</span></span>
+    <p class="lede" data-i="h.l" style="display:none">Pick the vehicle down to the engine variant and we check every supplier against it — then show what each one really charges.</p>
+  </div>
+
+  <div class="searchcol">
+    <div class="tabs" role="tablist" aria-label="Search mode">
+      <button class="tab" role="tab" aria-selected="true" aria-controls="p-v" id="t-v"><span class="ms">directions_car</span><span data-i="m.v">By Vehicle</span></button>
+      <button class="tab" role="tab" aria-selected="false" aria-controls="p-o" id="t-o"><span class="ms">search_check</span><span data-i="m.o">By OEM Search</span></button>
+    </div>
+
+    <div class="find panel" id="p-v" role="tabpanel" aria-labelledby="t-v">
+      <div class="fg">
+        <div><label class="fl" for="mk" data-i="f.mk">Make</label>
+          <div class="sel"><select id="mk"><option>Toyota</option><option>Hyundai</option><option>Kia</option><option>Mazda</option><option>Skoda</option></select><span class="ms">expand_more</span></div></div>
+        <div><label class="fl" for="mo" data-i="f.mo">Model</label>
+          <div class="sel"><select id="mo"><option>Corolla (E210)</option><option>Yaris Cross</option><option>RAV4 Hybrid</option><option>Camry</option></select><span class="ms">expand_more</span></div></div>
+        <div><label class="fl" for="ye" data-i="f.ye">Year &amp; engine</label>
+          <div class="sel"><select id="ye"><option>2022 (Hybrid 1.8L)</option><option>2021 (Hybrid 1.8L)</option><option>2020 (Petrol 1.6L)</option><option>2019 (Hybrid 1.8L)</option></select><span class="ms">expand_more</span></div></div>
+        <button class="btn bp go"><span class="ms">manage_search</span><span data-i="f.go">Find Parts</span></button>
+      </div>
+    </div>
+
+    <div class="find panel" id="p-o" role="tabpanel" aria-labelledby="t-o" hidden>
+      <div class="fg">
+        <div><label class="fl" for="oe" data-i="f.oe">OEM number, VIN or part name</label>
+          <input class="fin" id="oe" type="text" placeholder="04152-YZZA6"></div>
+        <button class="btn bp go"><span class="ms">manage_search</span><span data-i="f.go2">Search catalogue</span></button>
+      </div>
+    </div>
+
+    <div class="oemrow">
+      <span class="ms">search</span>
+      <label class="sr" for="q2">Search OEM, VIN or part</label>
+      <input id="q2" type="text" placeholder="Search OEM, VIN, or part" data-ph="s.ph">
+      <button class="btn bo"><span class="ms">document_scanner</span><span data-i="f.vin">AI VIN Decode</span></button>
+    </div>
+  </div>
+
+  <!-- trust grid sits BELOW the search panel, as in the Stitch reference -->
+  <div class="trust panel">
+    <div class="tc"><span class="ms">inventory_2</span><span><b data-i="t.1">4M+ Parts</b><span data-i="t.1s">Verified Catalogs</span></span></div>
+    <div class="tc"><span class="ms">hub</span><span><b data-i="t.2">50+ Suppliers</b><span data-i="t.2s">Real-time inventory</span></span></div>
+    <div class="tc"><span class="ms">verified</span><span><b data-i="t.3">Verified Fit</b><span class="ok" data-i="t.3s">99.8% Guarantee</span></span></div>
+    <div class="tc"><span class="ms">lock_clock</span><span><b data-i="t.4">Secure Pay</b><span data-i="t.4s">Israeli Garages Trust</span></span></div>
+  </div>
+</div></section>
+
+<section class="sec"><div class="w">
+  <div class="hd"><div><h2 data-i="c.h">Shop by Category</h2></div>
+    <span class="pill" data-i="c.p">10 Departments</span>
+    <a href="/parts" class="more"><span data-i="c.a">View all</span><span class="ms rtlflip" style="font-size:17px">chevron_right</span></a></div>
+  <div class="cats" id="cats"></div>
+</div></section>
+
+<section class="sec" id="vehicles" style="padding-top:0"><div class="w">
+  <div class="hd"><div><h2 data-i="v.h">Popular Vehicles</h2></div>
+    <a href="/parts" class="more"><span data-i="v.a">View all</span><span class="ms rtlflip" style="font-size:17px">chevron_right</span></a></div>
+  <div class="vehs" id="vehs"></div>
+</div></section>
+
+<section class="sec" style="padding-top:0"><div class="w">
+  <div class="hd"><div><h2 data-i="w.h">Why AutoSpareFinder?</h2></div>
+    <span class="pill" style="color:var(--bl-hi);border-color:var(--bd-b)" data-i="w.p">Proprietary AI</span></div>
+  <div class="why">
+    <div class="wc"><div class="t"><span class="ib"><span class="ms">verified</span></span><b data-i="w.1">99.8% fitment accuracy</b></div>
+      <p data-i="w.1p">Eliminates chassis-code and trim mismatch using automated VIN parsing, cross-referenced against official manufacturer engineering diagrams.</p></div>
+    <div class="wc"><div class="t"><span class="ib"><span class="ms">query_stats</span></span><b data-i="w.2">Compare all suppliers</b></div>
+      <p data-i="w.2p">Save up to 40% per repair. Aggregated live feeds from verified distributors, regional warehouses and certified importers.</p></div>
+    <div class="wc"><div class="t"><span class="ib"><span class="ms">layers</span></span><b data-i="w.3">3 verified quality tiers</b></div>
+      <p data-i="w.3p">Choose confidently between <b>Genuine OEM</b> <em>(factory original)</em>, <b>OE-Equivalent</b> <em>(manufacturer certified)</em>, or warranty-backed <b>Aftermarket</b>.</p></div>
+    <div class="wc"><div class="t"><span class="ib"><span class="ms">translate</span></span><b data-i="w.4">Hebrew · Arabic · English</b></div>
+      <p data-i="w.4p">Bilingual LTR/RTL support designed for Israeli garages, fleet mechanics and professional workshops in Tel Aviv, Haifa and Jerusalem.</p></div>
+  </div>
+</div></section>
+
+<section class="sec" id="compare" style="padding-top:0"><div class="w cmp">
+  <div class="hd"><div><h2 data-i="k.h">See how we compare</h2></div></div>
+  <div class="q"><i></i><span data-i="k.q">Live quotes · Toyota Corolla 2018 oil filter</span> · OEM <bdi dir="ltr">04152-YZZA6</bdi></div>
+
+  <div class="offers">
+    <div class="offer best">
+      <div class="ot"><div><span class="nm">Supplier Alpha <small data-i="k.l1">(Tel Aviv hub)</small></span><span class="tier" data-i="k.t1">OEM Genuine</span></div>
+        <div class="pr"><b><bdi dir="ltr">₪48.00</bdi></b><span data-i="k.in">In stock</span></div></div>
+      <div class="ob"><span class="ms">storefront</span><span class="dl" data-i="k.d1">Same-day pickup</span><a href="#" class="sel2" data-i="k.sel">Select part</a></div>
+    </div>
+    <div class="offer">
+      <div class="ot"><div><span class="nm">Supplier Beta <small data-i="k.l2">(Haifa logistics)</small></span><span class="tier">OE-Equivalent</span></div>
+        <div class="pr"><b><bdi dir="ltr">₪52.00</bdi></b><span data-i="k.in">In stock</span></div></div>
+      <div class="ob"><span class="ms">local_shipping</span><span class="dl" data-i="k.d2">Next-day express</span><a href="#" class="sel2" data-i="k.sel">Select part</a></div>
+    </div>
+    <div class="offer">
+      <div class="ot"><div><span class="nm">Supplier Gamma <small data-i="k.l3">(Central dist.)</small></span><span class="tier" data-i="k.t1">OEM Genuine</span></div>
+        <div class="pr"><b><bdi dir="ltr">₪59.00</bdi></b><span class="low" data-i="k.low">Low stock (3 left)</span></div></div>
+      <div class="ob"><span class="ms">schedule</span><span class="dl" data-i="k.d3">Standard delivery</span><a href="#" class="sel2" data-i="k.sel">Select part</a></div>
+    </div>
+  </div>
+
+  <div class="cmp-wrap"><table>
+    <thead><tr><th data-i="th.s">Supplier</th><th data-i="th.t">Tier</th><th data-i="th.d">Delivery</th><th data-i="th.a">Availability</th><th data-i="th.p">Price</th><th></th></tr></thead>
+    <tbody>
+      <tr class="best"><td><div class="sp">Supplier Alpha</div><div class="lo" data-i="k.l1">(Tel Aviv hub)</div></td>
+        <td><span class="tier2" data-i="k.t1">OEM Genuine</span></td>
+        <td><span class="dl2"><span class="ms">storefront</span><span data-i="k.d1">Same-day pickup</span></span></td>
+        <td><span class="chip ch-ok" data-i="k.in">In stock</span></td>
+        <td><span class="price"><bdi dir="ltr">₪48.00</bdi></span></td>
+        <td><button class="btn bp selbtn" data-i="k.sel">Select part</button></td></tr>
+      <tr><td><div class="sp">Supplier Beta</div><div class="lo" data-i="k.l2">(Haifa logistics)</div></td>
+        <td><span class="tier2">OE-Equivalent</span></td>
+        <td><span class="dl2"><span class="ms">local_shipping</span><span data-i="k.d2">Next-day express</span></span></td>
+        <td><span class="chip ch-ok" data-i="k.in">In stock</span></td>
+        <td><span class="price"><bdi dir="ltr">₪52.00</bdi></span></td>
+        <td><button class="btn bo selbtn" data-i="k.sel">Select part</button></td></tr>
+      <tr><td><div class="sp">Supplier Gamma</div><div class="lo" data-i="k.l3">(Central dist.)</div></td>
+        <td><span class="tier2" data-i="k.t1">OEM Genuine</span></td>
+        <td><span class="dl2"><span class="ms">schedule</span><span data-i="k.d3">Standard delivery</span></span></td>
+        <td><span class="chip ch-wn" data-i="k.low">Low stock (3 left)</span></td>
+        <td><span class="price"><bdi dir="ltr">₪59.00</bdi></span></td>
+        <td><button class="btn bo selbtn" data-i="k.sel">Select part</button></td></tr>
+    </tbody>
+  </table></div>
+
+  <button class="btn bp cmpall"><span data-i="k.all">View full comparison (12 suppliers)</span><span class="ms rtlflip" style="font-size:18px">arrow_forward</span></button>
+</div></section>
+
+<section class="sec" style="padding-top:0"><div class="w">
+  <div class="ai">
+    <div>
+      <div class="t"><i></i><b data-i="ai.h">Chat with our AI parts expert</b><span class="ms">smart_toy</span></div>
+      <div class="bub u"><span class="av">U</span><span class="bx" dir="rtl" lang="he">יש לי רעש חריקה בבלימה בטויוטה קורולה 2021…</span></div>
+      <div class="bub a"><span class="av">AI</span>
+        <span class="bx"><span class="hdl"><span class="ms">check_circle</span><span data-i="ai.d">AI diagnosed: front brake set</span></span>
+          <span class="mt"><span><b data-i="ai.m">100% match</b> · <bdi dir="ltr">₪265.00</bdi></span><span data-i="ai.o">OEM spec: <bdi dir="ltr">04465-02420</bdi></span></span></span></div>
+    </div>
+    <div>
+      <a href="/chat" class="btn bp go3"><span class="ms">chat</span><span data-i="ai.c">Start AI diagnostic chat</span></a>
+    </div>
+  </div>
+</div></section>
+</main>
+
+<footer><div class="w fgrid">
+  <div class="fb">
+    <a href="/" class="brand"><b>AutoSpareFinder</b><i></i></a>
+    <p data-i="f.b">National and global automotive spare-parts distribution infrastructure. Real-time OEM cross-referencing, multi-supplier bidding and AI chassis fitment.</p>
+    <span class="wasupport"><span class="ms">chat</span><span data-i="f.wa">WhatsApp support desk · 08:00–19:00</span></span>
+    <div class="hubs"><span>Tel Aviv Hub</span><span>Haifa Port</span><span>Jerusalem Area</span><span>Be'er Sheva</span></div>
+  </div>
+  <div class="fcols">
+    <div class="fc"><h4 data-i="f.c1">Categories</h4>
+      <a href="/parts" data-i="f.c1a">Engine parts</a><a href="/parts" data-i="f.c1b">Braking systems</a><a href="/parts" data-i="f.c1c">Suspension &amp; axles</a><a href="/parts" data-i="f.c1d">Filters &amp; service</a></div>
+    <div class="fc"><h4 data-i="f.c2">Support &amp; legal</h4>
+      <a href="#" data-i="f.c2a">Supplier portal</a><a href="#" data-i="f.c2b">VIN decoder guide</a><a href="#" data-i="f.c2c">Fitment warranty</a><a href="/privacy" data-i="f.c2d">Privacy &amp; terms</a></div>
+    <div class="fc"><h4 data-i="f.c3">Account</h4>
+      <a href="/account" data-i="f.c3a">My account</a><a href="/orders" data-i="f.c3b">My orders</a><a href="/cart" data-i="f.c3c">Cart</a><a href="/developers" data-i="f.c3d">Developer API</a></div>
+    <div class="fc"><h4 data-i="f.c4">Company</h4>
+      <a href="#" data-i="f.c4a">About</a><a href="#" data-i="f.c4b">How it works</a><a href="#" data-i="f.c4c">For suppliers</a><a href="/terms" data-i="f.c4d">Terms</a></div>
+  </div>
+</div>
+<div class="w"><div class="fbot"><span>© 2026 AutoSpareFinder Ltd.</span>
+  <div class="langs" role="group" aria-label="Language">
+    <button class="on" data-l="en" data-d="ltr">EN</button><button data-l="he" data-d="rtl">עברית</button><button data-l="ar" data-d="rtl">العربية</button>
+  </div></div></div>
+</footer>
+
+<nav class="tabbar" aria-label="Quick">
+  <a href="/" class="on"><span class="ms">home</span><span data-i="tb.h">Home</span></a>
+  <a href="/parts"><span class="ms">search</span><span data-i="tb.s">Search</span></a>
+  <a href="/cart"><span class="ms">shopping_cart</span><span class="dot">2</span><span data-i="tb.c">Cart</span></a>
+  <a href="/chat"><span class="ms">chat</span><span data-i="tb.ch">Chat</span></a>
+  <a href="/account"><span class="ms">person</span><span data-i="tb.a">Account</span></a>
+</nav>
+
+<script>
+(function(){
+  "use strict";
+  var red=false; try{red=matchMedia('(prefers-reduced-motion: reduce)').matches;}catch(e){}
+  /* departments — Stitch's ten, with live counts from GET /api/v1/parts/categories (2026-10-05) */
+  /* 4th field = motion class; each mirrors how the real part moves */
+  var C=[['manufacturing','Engine',324509,'m-piston'],['disc_full','Brakes',171553,'m-spin'],
+    ['swap_vertical_circle','Suspension',304532,'m-press'],['bolt','Electrical',396343,'m-zap'],
+    ['minor_crash','Body & Exterior',904924,'m-tilt'],['filter_alt','Filters',72803,'m-breathe'],
+    ['settings_input_component','Transmission',64369,'m-spin'],['ac_unit','Cooling',143473,'m-fan'],
+    ['air','Exhaust',77143,'m-drift'],['airline_seat_recline_extra','Interior',357145,'m-tilt']];
+  function f(n){return n.toLocaleString('en-US');}
+  var ch='';
+  C.forEach(function(c){ch+='<button type="button" class="cat '+c[3]+'" aria-pressed="false" aria-label="'+c[1]+', '+f(c[2])+' parts">'
+    +'<span class="ib"><span class="ms">'+c[0]+'</span></span>'
+    +'<span class="nm">'+c[1]+'</span><span class="ct">'+f(c[2])+' <span data-i="c.pp">parts</span></span></button>';});
+  var catGrid=document.getElementById('cats');
+  catGrid.innerHTML=ch;
+
+  /* selection: one department at a time, colour-only so nothing reflows */
+  catGrid.addEventListener('click',function(e){
+    var b=e.target.closest('.cat'); if(!b)return;
+    var on=b.getAttribute('aria-pressed')==='true';
+    catGrid.querySelectorAll('.cat').forEach(function(x){x.setAttribute('aria-pressed','false');});
+    b.setAttribute('aria-pressed', on?'false':'true');
+  });
+
+  /* touch has no hover: play each glyph once the first time it scrolls into view.
+     Never attached when the viewer prefers reduced motion. */
+  if(!red && 'IntersectionObserver' in window){
+    var coarse=true; try{coarse=!matchMedia('(hover:hover) and (pointer:fine)').matches;}catch(e){}
+    if(coarse){
+      var io=new IntersectionObserver(function(es){
+        es.forEach(function(en){ if(en.isIntersecting){ en.target.classList.add('play'); io.unobserve(en.target); } });
+      },{threshold:.4});
+      catGrid.querySelectorAll('.cat').forEach(function(x){io.observe(x);});
+    }
+  }
+
+  /* popular vehicles — Stitch's four, counts from harvest_queue (2026-10-05) */
+  var V=[['Toyota Corolla','2010–2024',132079],['Kia Sportage','2012–2024',91152],
+         ['Hyundai Tucson','2015–2024',69045],['Mazda 3','2008–2024',94708]];
+  var vh='';
+  V.forEach(function(v){vh+='<button class="veh" aria-label="Parts for '+v[0]+'">'
+    +'<span class="tp"><span class="chip ch-ok" data-i="v.in">In stock</span><span class="yr">'+v[1]+'</span></span>'
+    +'<span class="nm">'+v[0]+'</span>'
+    +'<span class="pc">'+f(v[2])+' <span data-i="v.av">vehicles registered</span></span>'
+    +'<span class="go2"><span data-i="v.br">Browse parts</span><span class="ms rtlflip" style="font-size:16px">arrow_forward</span></span></button>';});
+  document.getElementById('vehs').innerHTML=vh;
+
+  /* search mode tabs */
+  var tabs=document.querySelectorAll('.tab');
+  tabs.forEach(function(t){
+    t.addEventListener('click',function(){
+      tabs.forEach(function(x){x.setAttribute('aria-selected','false');
+        var p=document.getElementById(x.getAttribute('aria-controls')); if(p)p.hidden=true;});
+      t.setAttribute('aria-selected','true');
+      var p=document.getElementById(t.getAttribute('aria-controls')); if(p)p.hidden=false;
+    });
+    t.addEventListener('keydown',function(e){
+      if(e.key!=='ArrowRight'&&e.key!=='ArrowLeft')return;
+      e.preventDefault();
+      var l=Array.prototype.slice.call(tabs),i=l.indexOf(t);
+      var rtl=document.documentElement.getAttribute('dir')==='rtl';
+      var fwd=(e.key==='ArrowRight')!==rtl;
+      var n=l[(i+(fwd?1:l.length-1))%l.length]; n.focus(); n.click();
+    });
+  });
+
+  /* ── i18n. he/ar are TEMPORARY working copy from the approved English intent. */
+  var L={he:{'n.cat':'קטלוג','n.veh':'רכבים','n.cmp':'השוואה','n.ai':'עוזר AI','s.ph':'חיפוש מק״ט, שלדה או חלק',
+   'h.a':'מצא את החלק הנכון.','h.b':'השווה את המחיר הנכון.','h.v':'התאמה מאומתת ב-AI · למעלה מ-4 מיליון חלקים',
+   'h.l':'בוחרים את הרכב עד רמת המנוע ואנחנו בודקים מולו כל ספק — ומראים כמה כל אחד באמת גובה.',
+   't.1':'4 מיליון+ חלקים','t.1s':'קטלוגים מאומתים','t.2':'50+ ספקים','t.2s':'מלאי בזמן אמת',
+   't.3':'התאמה מאומתת','t.3s':'99.8% אחריות','t.4':'תשלום מאובטח','t.4s':'מוסכים בישראל סומכים',
+   'm.v':'לפי רכב','m.o':'חיפוש מק״ט','f.mk':'יצרן','f.mo':'דגם','f.ye':'שנה ומנוע','f.go':'מצא חלקים','f.go2':'חפש בקטלוג',
+   'f.oe':'מק״ט, מספר שלדה או שם חלק','f.vin':'פענוח שלדה AI',
+   'c.h':'קנייה לפי קטגוריה','c.p':'10 מחלקות','c.a':'הצג הכל','c.pp':'חלקים',
+   'v.h':'רכבים פופולריים','v.a':'הצג הכל','v.in':'במלאי','v.av':'רכבים רשומים','v.br':'עיון בחלקים',
+   'w.h':'למה AutoSpareFinder?','w.p':'AI קנייני',
+   'w.1':'99.8% דיוק התאמה','w.1p':'מונע אי-התאמה של קוד שלדה ורמת גימור באמצעות פענוח שלדה אוטומטי, מול תרשימי הנדסה רשמיים של היצרן.',
+   'w.2':'השוואת כל הספקים','w.2p':'חיסכון של עד 40% לתיקון. הזנות חיות מספקים מאומתים, מחסנים אזוריים ויבואנים מורשים.',
+   'w.3':'3 רמות איכות מאומתות','w.3p':'בוחרים בביטחון בין <b>מקורי OEM</b> <em>(מקורי מהיצרן)</em>, <b>חליפי OE</b> <em>(מאושר יצרן)</em>, או <b>אפטרמרקט</b> עם אחריות.',
+   'w.4':'עברית · ערבית · אנגלית','w.4p':'תמיכה דו-לשונית LTR/RTL שתוכננה למוסכים ישראליים, מכונאי צי ובתי מלאכה בתל אביב, חיפה וירושלים.',
+   'k.h':'ככה אנחנו משווים','k.q':'הצעות חיות · מסנן שמן לטויוטה קורולה 2018',
+   'k.l1':'(מרכז תל אביב)','k.l2':'(לוגיסטיקה חיפה)','k.l3':'(הפצה מרכז)','k.t1':'מקורי OEM',
+   'k.in':'במלאי','k.low':'מלאי נמוך (3 נותרו)','k.d1':'איסוף באותו יום','k.d2':'אקספרס למחרת','k.d3':'משלוח רגיל',
+   'k.sel':'בחר חלק','k.all':'הצג השוואה מלאה (12 ספקים)',
+   'th.s':'ספק','th.t':'רמה','th.d':'משלוח','th.a':'זמינות','th.p':'מחיר',
+   'ai.h':'שוחחו עם מומחה החלקים שלנו','ai.d':'AI אבחן: סט בלמים קדמי','ai.m':'התאמה 100%','ai.o':'מפרט OEM:','ai.c':'התחל אבחון AI',
+   'f.b':'תשתית הפצה ארצית וגלובלית לחלקי חילוף לרכב. הצלבת מק״טים בזמן אמת, מכרז רב-ספקים והתאמת שלדה מבוססת AI.',
+   'f.wa':'דלפק תמיכה בוואטסאפ · 08:00–19:00',
+   'f.c1':'קטגוריות','f.c1a':'חלקי מנוע','f.c1b':'מערכות בלימה','f.c1c':'מתלים וסרנים','f.c1d':'מסננים ושירות',
+   'f.c2':'תמיכה ומשפטי','f.c2a':'פורטל ספקים','f.c2b':'מדריך פענוח שלדה','f.c2c':'אחריות התאמה','f.c2d':'פרטיות ותנאים',
+   'f.c3':'חשבון','f.c3a':'החשבון שלי','f.c3b':'ההזמנות שלי','f.c3c':'סל','f.c3d':'API למפתחים',
+   'f.c4':'החברה','f.c4a':'אודות','f.c4b':'איך זה עובד','f.c4c':'לספקים','f.c4d':'תנאים',
+   'tb.h':'בית','tb.s':'חיפוש','tb.c':'סל','tb.ch':'צ׳אט','tb.a':'חשבון'},
+  ar:{'n.cat':'الكتالوج','n.veh':'المركبات','n.cmp':'المقارنة','n.ai':'مساعد AI','s.ph':'ابحث برقم القطعة أو الهيكل',
+   'h.a':'اعثر على القطعة الصحيحة.','h.b':'قارن السعر الصحيح.','h.v':'مطابقة مؤكدة بالذكاء الاصطناعي · أكثر من 4 ملايين قطعة',
+   'h.l':'اختر سيارتك حتى مستوى المحرك ونتحقق من كل مورد مقابلها — ثم نعرض ما يتقاضاه كل منهم فعلًا.',
+   't.1':'+4 ملايين قطعة','t.1s':'كتالوجات موثقة','t.2':'+50 موردًا','t.2s':'مخزون لحظي',
+   't.3':'مطابقة مؤكدة','t.3s':'ضمان 99.8%','t.4':'دفع آمن','t.4s':'ورش إسرائيل تثق بنا',
+   'm.v':'حسب السيارة','m.o':'بحث برقم القطعة','f.mk':'الصانع','f.mo':'الطراز','f.ye':'السنة والمحرك','f.go':'ابحث عن القطع','f.go2':'ابحث في الكتالوج',
+   'f.oe':'رقم القطعة أو الهيكل أو الاسم','f.vin':'فك رقم الهيكل بالذكاء الاصطناعي',
+   'c.h':'تسوق حسب الفئة','c.p':'10 أقسام','c.a':'عرض الكل','c.pp':'قطعة',
+   'v.h':'المركبات الشائعة','v.a':'عرض الكل','v.in':'متوفر','v.av':'مركبة مسجلة','v.br':'تصفح القطع',
+   'w.h':'لماذا AutoSpareFinder؟','w.p':'ذكاء اصطناعي خاص',
+   'w.1':'دقة مطابقة 99.8%','w.1p':'يلغي عدم تطابق رمز الهيكل ومستوى التجهيز عبر تحليل آلي لرقم الهيكل، مقابل مخططات هندسية رسمية من الصانع.',
+   'w.2':'قارن كل الموردين','w.2p':'وفّر حتى 40% لكل إصلاح. تغذية حية من موزعين موثوقين ومستودعات إقليمية ومستوردين معتمدين.',
+   'w.3':'3 مستويات جودة موثقة','w.3p':'اختر بثقة بين <b>OEM أصلي</b> <em>(أصلي من المصنع)</em> أو <b>مكافئ OE</b> <em>(معتمد من الصانع)</em> أو <b>تجاري</b> بضمان.',
+   'w.4':'العبرية · العربية · الإنجليزية','w.4p':'دعم ثنائي الاتجاه LTR/RTL مصمم للورش الإسرائيلية وميكانيكيي الأساطيل وورش المحترفين في تل أبيب وحيفا والقدس.',
+   'k.h':'هكذا نقارن','k.q':'عروض مباشرة · فلتر زيت تويوتا كورولا 2018',
+   'k.l1':'(مركز تل أبيب)','k.l2':'(لوجستيات حيفا)','k.l3':'(توزيع المركز)','k.t1':'OEM أصلي',
+   'k.in':'متوفر','k.low':'مخزون منخفض (3 متبقية)','k.d1':'استلام في نفس اليوم','k.d2':'سريع في اليوم التالي','k.d3':'توصيل عادي',
+   'k.sel':'اختر القطعة','k.all':'عرض المقارنة الكاملة (12 موردًا)',
+   'th.s':'المورد','th.t':'المستوى','th.d':'التوصيل','th.a':'التوفر','th.p':'السعر',
+   'ai.h':'تحدث مع خبير القطع بالذكاء الاصطناعي','ai.d':'التشخيص: طقم فرامل أمامي','ai.m':'تطابق 100%','ai.o':'مواصفة OEM:','ai.c':'ابدأ تشخيص AI',
+   'f.b':'بنية تحتية وطنية وعالمية لتوزيع قطع غيار السيارات. مطابقة مرجعية لحظية لأرقام OEM، ومزايدة متعددة الموردين، ومطابقة هيكل بالذكاء الاصطناعي.',
+   'f.wa':'مكتب دعم واتساب · 08:00–19:00',
+   'f.c1':'الفئات','f.c1a':'قطع المحرك','f.c1b':'أنظمة الفرامل','f.c1c':'التعليق والمحاور','f.c1d':'الفلاتر والصيانة',
+   'f.c2':'الدعم والقانوني','f.c2a':'بوابة الموردين','f.c2b':'دليل فك رقم الهيكل','f.c2c':'ضمان المطابقة','f.c2d':'الخصوصية والشروط',
+   'f.c3':'الحساب','f.c3a':'حسابي','f.c3b':'طلباتي','f.c3c':'السلة','f.c3d':'واجهة المطورين',
+   'f.c4':'الشركة','f.c4a':'من نحن','f.c4b':'كيف يعمل','f.c4c':'للموردين','f.c4d':'الشروط',
+   'tb.h':'الرئيسية','tb.s':'بحث','tb.c':'السلة','tb.ch':'دردشة','tb.a':'الحساب'}};
+  var EN={},cur='en';
+  document.querySelectorAll('[data-i]').forEach(function(e){EN[e.getAttribute('data-i')]=e.innerHTML;});
+  document.querySelectorAll('[data-ph]').forEach(function(e){EN[e.getAttribute('data-ph')]=e.getAttribute('placeholder');});
+  document.querySelectorAll('.langs button').forEach(function(b){
+    b.addEventListener('click',function(){
+      document.querySelectorAll('.langs button').forEach(function(x){x.classList.remove('on');});
+      b.classList.add('on');
+      cur=b.getAttribute('data-l');
+      var d=cur==='en'?EN:L[cur];
+      document.documentElement.setAttribute('lang',cur);
+      document.documentElement.setAttribute('dir',b.getAttribute('data-d'));
+      document.querySelectorAll('[data-i]').forEach(function(e){var k=e.getAttribute('data-i');var v=(d&&d[k])||EN[k];if(v)e.innerHTML=v;});
+      document.querySelectorAll('[data-ph]').forEach(function(e){var k=e.getAttribute('data-ph');var v=(d&&d[k])||EN[k];if(v)e.setAttribute('placeholder',v);});
+      window.scrollTo({top:0,behavior:red?'auto':'smooth'});
+    });
+  });
+})();
+</script>
+</body></html>

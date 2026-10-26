@@ -17,10 +17,17 @@ from sqlalchemy.pool import NullPool
 import services.aliexpress_price_sync as svc
 from BACKEND_DATABASE_MODELS import engine
 from services.suppliers.base_supplier import PartResult
+from catalog_population import seed_population  # noqa: E402  (tests/ on sys.path via conftest)
+import isolated_db_guard  # noqa: E402
 
 
 @pytest.fixture
 async def db():
+    # #95: isolated databases only — refuse BEFORE connecting (no opt-in / not an isolated environment /
+    # a production host), and again on the live server before the first write.
+    _refusal = isolated_db_guard.static_refusal()
+    if _refusal is not None:
+        pytest.skip(f"isolated DB only: {_refusal}")
     eng = create_async_engine(engine.url, poolclass=NullPool)
     try:
         conn = await eng.connect()
@@ -31,6 +38,10 @@ async def db():
     sess = AsyncSession(bind=conn, join_transaction_mode="create_savepoint", expire_on_commit=False)
     await svc.ensure_candidates_table(sess)
     try:
+        _live = await isolated_db_guard.live_refusal(sess)
+        if _live is not None:                        # fail CLOSED: never write to a production-like DB
+            pytest.fail(f"REFUSED before any write: {_live}")
+        await seed_population(sess)   # #88: the rows this file selects, in ITS rolled-back transaction
         yield sess
     finally:
         await sess.close(); await trans.rollback(); await conn.close(); await eng.dispose()
@@ -432,3 +443,11 @@ async def test_e2e_flow_control_response_is_unconfirmed_counted_and_not_retried(
     assert len(posts) == 1 and rep["api_call_limit_hits"] == 1                                   # not hammered, still observable
     assert rep["search_failure_kinds"] == {"rate_limit": 1} and rep["parts_not_found"] == 0
     assert await _cand_state(db, pid) == ("cited", 0, False)
+
+
+async def test_discovery_brands_are_found_on_a_small_catalog(db):
+    """#96: the 1% page sample is empty on a small catalog; the bounded fallback must still return the catalog's
+    manufacturers — deterministically, most common first (the fixture population: Toyota, Kia, Mazda, Honda)."""
+    brands = await svc._discovery_brands(db, n=14)
+    assert {"Toyota", "Kia", "Mazda", "Honda"} <= set(brands)
+    assert brands == await svc._discovery_brands(db, n=14)          # deterministic

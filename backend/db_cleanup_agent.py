@@ -388,10 +388,27 @@ async def task3b_llm_category_fallback(batch_size: int | None = None) -> int:
 
         pool = list(_unclassifiable)[:20000]
         blobs = {pid: _uncategorized_index.get(pid, "") for pid in pool}
+        awaiting: set = set()
+        try:
+            async with scraper_session_factory() as _tdb:
+                if not any(blobs.values()):
+                    # task3 POPS each id out of _uncategorized_index while processing it, so for the
+                    # stuck ids the index holds no text: the ranking was always empty and every LLM
+                    # call fell through to arbitrary parts (0 "targeting" lines in 356 batches,
+                    # 2026-10-18..20). Same bug task3c fixed by reading the DB (#71).
+                    _rows = (await _tdb.execute(text(
+                        "SELECT id::text, COALESCE(name,'') || ' ' || COALESCE(name_he,'') FROM parts_catalog "
+                        "WHERE id = ANY(CAST(:ids AS uuid[]))"), {"ids": pool})).fetchall()
+                    blobs = {r[0]: r[1] or "" for r in _rows}
+                # A token that already reached consensus and waits for the OWNER gains nothing from
+                # more votes ('vest' had 128,965) — teach the next token instead (#71).
+                awaiting = {p["token"] for p in await _cl.pending_for_owner(_tdb, limit=20000)}
+        except Exception as _te:
+            print(f"[Cleanup] task3b: target ranking input failed: {_te}")
         freq: _c.Counter = _c.Counter()
         for blob in blobs.values():
             for w in set(_WORD.findall(blob.lower())):
-                if (guess_category_by_text(w) is None) and not _cl.is_blocked(w):
+                if (guess_category_by_text(w) is None) and not _cl.is_blocked(w) and w not in awaiting:
                     freq[w] += 1
 
         if freq:
@@ -560,8 +577,10 @@ async def task3b_llm_category_fallback(batch_size: int | None = None) -> int:
 
         # Tokens that reached consensus wait for the owner (a single keyword can
         # move thousands of parts). Ping once per day so they don't sit unseen.
+        # The WHOLE waiting set (not the top 15): "new" is decided against what the owner was
+        # already told (#71) — the top-15 list was announced as "15 new" every day for weeks.
         async with scraper_session_factory() as db3:
-            pend = await category_learning.pending_for_owner(db3)
+            pend = await category_learning.pending_for_owner(db3, limit=20000)
         if pend:
             await _notify_owner_pending_keywords(pend)
     except Exception as exc:
@@ -647,34 +666,73 @@ async def task3c_embed_assist(limit: int = 400) -> int:
         return 0
 
 
-async def _notify_owner_pending_keywords(pending: list) -> None:
+async def _notify_owner_pending_keywords(pending: list, *, now_ts: float | None = None, redis_client=None) -> dict:
     """
-    WhatsApp the owner (once/day) that learned keywords await approval.
-    Goes through the quiet-hours-safe sender — never a raw _wa_send.
+    Tell the owner about learned keywords waiting for approval — honestly (#71).
+    NEW = tokens he was not told about before (notify_backlog keeps the announced set). An unchanged
+    backlog is a labelled reminder at most every BACKLOG_REMINDER_DAYS, with the real total and the
+    date of the oldest. It used to send "15 מילות סיווג חדשות" every day: the top 15 by votes,
+    always the same tokens (consensus 2026-07-27 / 08-06), with 2,524 really waiting.
+    Goes through notify_owner (quiet hours, updates group). Returns the plan (for tests/logs).
     """
+    import time as _t
+    from datetime import datetime
+    import category_learning
+    import notify_backlog as _nb
+    now_ts = _t.time() if now_ts is None else now_ts
     try:
-        import redis.asyncio as _redis
-        r = _redis.from_url(os.getenv("REDIS_URL", "redis://redis:6379/0"))
-        if not await r.set("cleanup:kwpending:notified", "1", ex=86400, nx=True):
-            await r.aclose()
-            return
-        await r.aclose()
-    except Exception:
-        pass  # Redis down → still notify rather than stay silent
-    try:
-        from BACKEND_API_ROUTES import notify_owner
+        if redis_client is None:
+            from BACKEND_AUTH_SECURITY import get_redis
+            redis_client = await get_redis()
+        current = {p["token"]: p.get("since") for p in pending}
+        state = await _nb.load_state(redis_client, "keywords")
+        plan = _nb.backlog_plan(current, state["announced"], last_reminder_ts=state["reminded_at"], now_ts=now_ts,
+                                last_new_ts=state["announced_at"])
+        if plan["bootstrap"] and plan["send"] is None:
+            await _nb.record_bootstrap(redis_client, "keywords", current)
+        if plan["send"] is None:
+            return plan
         owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
         if not owner:
-            return
-        top = ", ".join(f"{p['token']}→{p['category']}" for p in pending[:5])
-        await notify_owner(
-            "harvest",
-            f"{len(pending)} מילות סיווג חדשות ממתינות לאישורך",
-            f"{top}\nכתוב *מילים* לרשימה ואישור.",
-            severity="info",
-        )
+            return plan
+        from BACKEND_API_ROUTES import notify_owner
+        by_tok = {p["token"]: p for p in pending}
+        oldest = plan["oldest"].strftime("%d/%m/%Y") if plan["oldest"] else "?"
+        shown = plan["new"][:5] if plan["send"] == "new" else [p["token"] for p in pending[:5]]
+        # The same evidence check approve() enforces (#71): 12 of the 15 tokens this message listed
+        # every day failed it (category_mismatch / ambiguous), i.e. could not be approved without force.
+        verdict: dict = {}
+        try:
+            async with scraper_session_factory() as _edb:
+                for t in shown:
+                    verdict[t] = (await category_learning.evidence_profile(
+                        _edb, t, proposed=by_tok[t]["category"])).get("verdict")
+        except Exception:
+            pass
+
+        def _fmt(t):
+            mark = " ✅" if verdict.get(t) == "ok" else (" ⚠️" if t in verdict else "")
+            return f"{t}→{by_tok[t]['category']}{mark}"
+        legend = "\n✅ נתוני אמת תומכים · ⚠️ נתוני אמת לא תומכים — אישור ייחסם" if verdict else ""
+        if plan["send"] == "new":
+            top = ", ".join(_fmt(t) for t in shown)
+            title = f"{len(plan['new'])} מילות סיווג חדשות ממתינות לאישורך"
+            body = (f"{top}{legend}\nסה\"כ ממתינות לאישורך: {plan['total']:,} (הוותיקה מ-{oldest})\n"
+                    f"כתוב *מילים* לרשימה ואישור.")
+        else:
+            since_txt = (datetime.fromtimestamp(state["announced_at"]).strftime("%d/%m")
+                         if state.get("announced_at") else None)
+            top = ", ".join(_fmt(t) for t in shown)
+            title = f"תזכורת: {plan['total']:,} מילות סיווג ממתינות לאישורך"
+            body = ((f"אין מילים חדשות מאז {since_txt}. " if since_txt else "אין מילים חדשות. ")
+                    + f"הוותיקה ממתינה מ-{oldest}.\n{top}{legend}\nכתוב *מילים* לרשימה ואישור.")
+        res = await notify_owner("harvest", title, body, severity="info")
+        if (res or {}).get("ok"):
+            await _nb.save_state(redis_client, "keywords", current, plan, now_ts=now_ts)
+        return plan
     except Exception as exc:
         logger.warning("owner keyword notification failed: %s", exc)
+        return {"send": None, "error": str(exc)}
 
 
 async def _bulk_apply_new_keywords(limit: int = 20000) -> int:

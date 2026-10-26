@@ -1512,36 +1512,59 @@ async def fix_manufacturer_overflow(db: AsyncSession) -> Dict[str, Any]:
     }
 
 
+_FLAG_FAKE_SKUS_BATCH = int(os.getenv("FLAG_FAKE_SKUS_BATCH", "20000"))
+
+
 async def flag_fake_skus(db: AsyncSession) -> Dict[str, Any]:
     """
     Set needs_oem_lookup = TRUE on parts whose SKU matches auto-generated
     patterns (e.g., "OIL-TOY-001", "PART-12345").
+
+    #107 (2026-10-25): this used to SELECT every candidate row (4.27M on production) with fetchall() into the uvicorn
+    process — ~0.7-1.2 GB per run, every run_all_tasks cycle — which, together with the daily group scan's browser,
+    pushed the 4 GB backend container into OOM kills (2026-10-23, 2026-10-25). Same predicate, same rows flagged;
+    now read in keyset batches by primary key (bounded memory) and flagged per batch with one UPDATE that skips rows
+    another writer holds (they are flagged on a later cycle).
     """
     t0 = time.monotonic()
     rows_flagged = 0
+    scanned = 0
+    batches = 0
+    last_id = None
 
     try:
-        result = await db.execute(
-            text(
-                "SELECT id, sku FROM parts_catalog "
-                "WHERE sku IS NOT NULL AND (needs_oem_lookup IS NULL OR needs_oem_lookup = FALSE)"
-            )
-        )
-        rows = result.fetchall()
-
-        for part_id, sku in rows:
-            if _is_fake_sku(sku):
-                await db.execute(
+        while True:
+            params: Dict[str, Any] = {"n": _FLAG_FAKE_SKUS_BATCH}
+            keyset = ""
+            if last_id is not None:
+                keyset = " AND id > :last_id"
+                params["last_id"] = last_id
+            rows = (await db.execute(
+                text(
+                    "SELECT id, sku FROM parts_catalog "
+                    "WHERE sku IS NOT NULL AND (needs_oem_lookup IS NULL OR needs_oem_lookup = FALSE)"
+                    + keyset + " ORDER BY id LIMIT :n"
+                ),
+                params,
+            )).fetchall()
+            if not rows:
+                break
+            batches += 1
+            scanned += len(rows)
+            last_id = rows[-1][0]
+            fake_ids = [part_id for part_id, sku in rows if _is_fake_sku(sku)]
+            del rows
+            if fake_ids:
+                result = await db.execute(
                     text(
-                        "UPDATE parts_catalog SET needs_oem_lookup = TRUE, "
-                        "updated_at = NOW() WHERE id = :id"
+                        "UPDATE parts_catalog SET needs_oem_lookup = TRUE, updated_at = NOW() "
+                        "WHERE id IN (SELECT id FROM parts_catalog WHERE id = ANY(:ids) FOR UPDATE SKIP LOCKED)"
                     ),
-                    {"id": part_id},
+                    {"ids": fake_ids},
                 )
-                rows_flagged += 1
-
-        await db.commit()
-        logger.info("flag_fake_skus: flagged=%d", rows_flagged)
+                rows_flagged += result.rowcount or 0
+            await db.commit()
+        logger.info("flag_fake_skus: flagged=%d scanned=%d batches=%d", rows_flagged, scanned, batches)
     except Exception as exc:
         await db.rollback()
         logger.error("flag_fake_skus failed: %s", exc)
@@ -1551,6 +1574,8 @@ async def flag_fake_skus(db: AsyncSession) -> Dict[str, Any]:
         "task": "flag_fake_skus",
         "status": "ok",
         "rows_flagged": rows_flagged,
+        "scanned": scanned,
+        "batches": batches,
         "elapsed_s": round(time.monotonic() - t0, 2),
     }
 
@@ -4513,8 +4538,26 @@ TASK_REGISTRY: Dict[str, Any] = {
 }
 
 
+# Tasks that exhaust memory on today's catalogue (merge_catalog_fitment: Jaguar alone has 827K
+# fitment rows; one run reached ~2.2 GB against the backend's 4 GB cgroup, shared with uvicorn).
+# They were disabled only inside run_all_tasks, so the owner console (`הרץ משימה`), the admin
+# run-task API and the maintenance scripts — all of which call run_task() — could still start
+# them in the live container. run_task() is the single gate (2026-10-19).
+OOM_BLOCKED_TASKS: frozenset = frozenset({
+    "fix_base_prices",
+    "normalize_base_price",
+    "backfill_bmw_fitment_from_name_he",
+    "backfill_ford_fitment_from_name_he",
+    "backfill_jaguar_fitment_from_name",
+    "merge_catalog_fitment_from_part_vehicle_fitment",
+})
+
+
 async def run_task(task_name: str, db: AsyncSession) -> Dict[str, Any]:
     """Run a single named task and return its report dict."""
+    if task_name in OOM_BLOCKED_TASKS:
+        return {"task": task_name, "status": "skipped",
+                "reason": "blocked: exhausts backend memory (OOM_BLOCKED_TASKS)"}
     fn = TASK_REGISTRY.get(task_name)
     if fn is None:
         return {
@@ -4689,14 +4732,7 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
 
         # Tasks permanently disabled for OOM — never re-enabled via agent_todos, even if a stale todo
         # lists them in artifacts.task_names. The TASK_REGISTRY guard only checks existence, not safety.
-        _TODO_OOM_BLOCKED: frozenset[str] = frozenset({
-            "fix_base_prices",
-            "normalize_base_price",
-            "backfill_bmw_fitment_from_name_he",
-            "backfill_ford_fitment_from_name_he",
-            "backfill_jaguar_fitment_from_name",
-            "merge_catalog_fitment_from_part_vehicle_fitment",
-        })
+        _TODO_OOM_BLOCKED = OOM_BLOCKED_TASKS
 
         shared_todos = await get_active_agent_todos(db, "db_update_agent")
         todo_task_names = [
@@ -5020,6 +5056,24 @@ async def _agent_loop(get_db_fn, interval_hours: float = 6.0) -> None:
     from resilience import log_job_failure
     # Give container_start.sh time to clear stale Redis locks before first run
     await asyncio.sleep(90)
+    # Restart-safe cadence (2026-10-10): the interval is measured from the last COMPLETED
+    # cycle, not from the container start. Before this, every backend restart ran a full
+    # cycle 90 s later, however recently one had finished.
+    try:
+        from local_schedule import delay_after_restart
+        _last_done = None
+        async for _db in get_db_fn():
+            _last_done = (await _db.execute(text(
+                "SELECT MAX(completed_at) FROM job_registry "
+                "WHERE job_name = 'run_all_tasks' AND status = 'completed'"))).scalar()
+            break
+        _extra = delay_after_restart(_last_done, interval_hours * 3600, 0.0)
+        if _extra > 0:
+            logger.info("run_all_tasks: last cycle completed %s - first cycle after this start in %.0f min",
+                        _last_done, _extra / 60)
+            await asyncio.sleep(_extra)
+    except Exception as _rexc:       # never let the cadence check stop maintenance
+        logger.warning("run_all_tasks restart-cadence check skipped: %s", _rexc)
     logger.info(
         "DB update agent background loop started (interval=%.1fh)", interval_hours
     )

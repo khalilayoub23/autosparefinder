@@ -18,7 +18,7 @@ import qrcode from 'qrcode-terminal'
 import path from 'path'
 import { atomicWriteFile } from './atomic_write.js'
 import { createMsgCache } from './msg_cache.js'
-import { installSafeConsoleFilter, createSafeBaileysLogger } from './safe_logging.js'
+import { installSafeConsoleFilter, createSafeBaileysLogger, jidHint, maskNumbers } from './safe_logging.js'
 import { installOrphanTimeoutGuard, createConnectionState, socketUnavailable, healthSnapshot, safeListenerSend } from './bridge_lifecycle.js'
 
 // Root-fix 2026-09-12 (WhatsApp logging/telemetry hardening): installed as
@@ -173,7 +173,11 @@ async function downloadInboundMedia(messageNode, mediaType) {
 app.post('/send', async (req, res) => {
   const unavailable = socketUnavailable(connState, waSocket)
   if (unavailable) {
-    return res.status(503).json({ ok: false, error: unavailable })
+    // Nothing was sent. Transient states are retried by the backend (whatsapp_provider);
+    // this used to be silent, so a message refused during a reconnect left no trace.
+    const retryable = /connecting|reconnecting|not created yet/.test(unavailable)
+    logEvent('SEND_REJECTED', `retryable=${retryable} reason=${unavailable}`)
+    return res.status(503).json({ ok: false, error: unavailable, retryable })
   }
   const {
     to,
@@ -230,7 +234,7 @@ app.post('/send', async (req, res) => {
       if (typeof mime_type === 'string' && mime_type.trim()) {
         messagePayload.mimetype = mime_type.trim()
       }
-      console.log('[Bridge] Sending image to', jid, '| bytes:', imageBuffer.length)
+      console.log('[Bridge] Sending image to', jidHint(jid), '| bytes:', imageBuffer.length)
       sent = await waSocket.sendMessage(jid, messagePayload)
     } else if (hasAudio) {
       const b64 = audio_base64.includes(',') ? audio_base64.split(',').pop() : audio_base64
@@ -246,24 +250,24 @@ app.post('/send', async (req, res) => {
         mimetype: (typeof audio_mime === 'string' && audio_mime.trim()) ? audio_mime.trim() : 'audio/ogg; codecs=opus',
         ptt: audio_ptt !== false,
       }
-      console.log('[Bridge] Sending audio to', jid, '| bytes:', audioBuffer.length)
+      console.log('[Bridge] Sending audio to', jidHint(jid), '| bytes:', audioBuffer.length)
       sent = await waSocket.sendMessage(jid, payload)
       cacheOutboundMessage(sent?.key?.id, sent?.message)
       if (hasText) {
         sent = await waSocket.sendMessage(jid, { text: text.trim() })
       }
     } else {
-      console.log('[Bridge] Sending to', jid, '| text length:', text.length)
+      console.log('[Bridge] Sending to', jidHint(jid), '| text length:', text.length)  // last 4 digits only (#70)
       sent = await waSocket.sendMessage(jid, { text })
     }
 
     cacheOutboundMessage(sent?.key?.id, sent?.message)
-    console.log('[Bridge] Sent OK to', jid)
+    console.log('[Bridge] Sent OK to', jidHint(jid))
     // Return the message key so the caller can later delete-for-everyone (used to
     // remove a 2FA code from the chat once it's been verified). Non-breaking add.
     res.json({ ok: true, key: sent?.key || null })
   } catch (err) {
-    console.error('[Bridge] Send error:', err.message)
+    console.error('[Bridge] Send error:', maskNumbers(err.message))
     res.status(500).json({ ok: false, error: err.message })
   }
 })
@@ -408,10 +412,10 @@ app.post('/delete', async (req, res) => {
   }
   try {
     await waSocket.sendMessage(key.remoteJid, { delete: key })
-    console.log('[Bridge] Deleted message', key.id, 'in', key.remoteJid)
+    console.log('[Bridge] Deleted message', key.id, 'in', jidHint(key.remoteJid))
     res.json({ ok: true })
   } catch (err) {
-    console.error('[Bridge] Delete error:', err.message)
+    console.error('[Bridge] Delete error:', maskNumbers(err.message))
     res.status(500).json({ ok: false, error: err.message })
   }
 })
@@ -628,7 +632,7 @@ async function startBot() {
           }
         }
       } catch (mediaErr) {
-        console.error('[Bridge] Media decode error:', mediaErr.message)
+        console.error('[Bridge] Media decode error:', maskNumbers(mediaErr.message))
       }
 
       if (!text.trim() && !mediaKind) continue
@@ -657,12 +661,12 @@ async function startBot() {
         }
       }
 
-      console.log('[WA IN]', isLid ? jid : e164, '| text:', text.length, '| media:', mediaKind || 'none')
+      console.log('[WA IN]', jidHint(isLid ? jid : `${e164}@`), '| text:', text.length, '| media:', mediaKind || 'none')
 
       try {
         await axios.post(BACKEND_WEBHOOK, payload, { timeout: 90000 })
       } catch (err) {
-        console.error('[Bridge] Backend error:', err.message)
+        console.error('[Bridge] Backend error:', maskNumbers(err.message))
         // Listener boundary: this runs inside an un-awaited async listener, so a dead-socket throw here
         // used to become an unhandled rejection (process exit). Skip/contain expected dead-socket
         // failures; any other error is re-thrown unchanged.
