@@ -77,9 +77,14 @@ def test_both_loops_use_the_restart_safe_delay():
     agent = (BACKEND / "db_update_agent.py").read_text(encoding="utf-8")
     loop = next(n for n in ast.walk(ast.parse(agent)) if isinstance(n, ast.AsyncFunctionDef) and n.name == "_agent_loop")
     body = ast.get_source_segment(agent, loop)
-    assert "delay_after_restart(_last_done, interval_hours * 3600, 0.0)" in body
-    assert "job_name = 'run_all_tasks' AND status = 'completed'" in body
-    assert body.index("await asyncio.sleep(90)") < body.index("delay_after_restart(")   # lock-clear settle kept
+    # 2026-10-27 (owner): run_all_tasks moved from "every 3 h after the last completed cycle" to
+    # fixed Israel slots (21:30, 00:15, 07:15). The restart-safety rule this test guards still holds,
+    # more strictly: the run decision comes from job_registry history (_last_run_started) and the slot
+    # schedule (_due_slot: catch-up only inside the window) — never from the container start.
+    assert "interval_hours * 3600" not in body
+    assert "_last_run_started(get_db_fn)" in body and "_due_slot(times, last_started, served)" in body
+    assert body.index("await asyncio.sleep(90)") < body.index("_due_slot(")             # lock-clear settle kept
+    assert "job_name = 'run_all_tasks'" in agent
 
 
 # ── 2. in-process job marker ────────────────────────────────────────────────

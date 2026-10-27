@@ -37,6 +37,7 @@ def rig(monkeypatch):
     monkeypatch.setattr(hc, "GROQ_API_KEY", "g")
     monkeypatch.setattr(hc, "GEMINI_API_KEY", "")
     monkeypatch.setattr(hc, "_hf_primary_down_until", 0.0)
+    monkeypatch.setattr(hc, "_hf_billing_marked", False)
 
     async def _post(url, headers, body, timeout, label):
         if url.startswith(hc.CEREBRAS_BASE):
@@ -193,10 +194,52 @@ def test_hf_billing_or_token_failure_leaves_the_owner_alert_marker(rig, marker, 
         assert hc.HF_BILLING_REDIS_KEY not in marker
 
 
-def test_health_monitor_alerts_the_owner_daily_while_hf_is_blocked():
+def test_health_monitor_alert_block_for_hf():
     src = open(os.path.join(os.path.dirname(hc.__file__), "BACKEND_API_ROUTES.py"), encoding="utf-8").read()
     i = src.index('"autospare:llm:hf_primary_blocked"')
     block = src[i:i + 1400]
     assert hc.HF_BILLING_REDIS_KEY == "autospare:llm:hf_primary_blocked"
-    assert "_alert_owner(" in block and "cooldown_s=86400" in block and "llm_hf_primary_blocked" in block
+    assert "_alert_owner(" in block and "llm_hf_primary_blocked" in block
     assert "huggingface.co/settings/billing" in block
+
+
+# ── one alert per occurrence (owner 2026-10-27: "only when reached", not daily) ──
+
+def test_alert_fires_once_and_rearms_only_when_hf_answers_again(rig, monkeypatch):
+    calls, state = rig
+    store = {}
+
+    class _R:
+        async def set(self, k, v, ex=None):
+            store[k] = v
+
+        async def delete(self, *keys):
+            for k in keys:
+                store.pop(k, None)
+
+    async def _get_redis():
+        return _R()
+    import BACKEND_AUTH_SECURITY
+    monkeypatch.setattr(BACKEND_AUTH_SECURITY, "get_redis", _get_redis)
+    monkeypatch.setattr(hc, "_hf_billing_marked", False)
+    state["status"] = 402
+    asyncio.run(hc.hf_text("a"))
+    assert store[hc.HF_BILLING_REDIS_KEY] == "402"
+    store[hc.HF_BILLING_ANNOUNCED_KEY] = "1"            # the health monitor told the owner
+    monkeypatch.setattr(hc, "_hf_primary_down_until", 0.0)
+    asyncio.run(hc.hf_text("b"))                          # still blocked: no re-arm
+    assert hc.HF_BILLING_ANNOUNCED_KEY in store
+    monkeypatch.setattr(hc, "_hf_primary_down_until", 0.0)
+    state["status"] = 200
+    asyncio.run(hc.hf_text("c"))                          # recovered: marker + announced cleared
+    assert hc.HF_BILLING_REDIS_KEY not in store and hc.HF_BILLING_ANNOUNCED_KEY not in store
+
+
+def test_health_monitor_alerts_once_per_occurrence_not_daily():
+    src = open(os.path.join(os.path.dirname(hc.__file__), "BACKEND_API_ROUTES.py"), encoding="utf-8").read()
+    i = src.index('"autospare:llm:hf_primary_blocked"')
+    block = src[i - 400:i + 1600]
+    assert 'not await _rb.exists("autospare:llm:hf_primary_blocked:announced")' in block
+    assert 'await _rb.set("autospare:llm:hf_primary_blocked:announced", "1")' in block
+    assert "cooldown_s=86400" not in block
+    assert hc.HF_BILLING_ANNOUNCED_KEY == "autospare:llm:hf_primary_blocked:announced"

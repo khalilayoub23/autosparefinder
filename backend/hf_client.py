@@ -452,15 +452,36 @@ _hf_primary_down_until: float = 0.0
 
 
 HF_BILLING_REDIS_KEY = "autospare:llm:hf_primary_blocked"
+# Set by the health monitor when it has told the owner; cleared only when HF answers again.
+# Owner rule 2026-10-27: alert ONCE when the block is reached, not daily while it lasts.
+HF_BILLING_ANNOUNCED_KEY = "autospare:llm:hf_primary_blocked:announced"
+_hf_billing_marked = False
 
 
 async def _hf_billing_mark(status: int) -> None:
     """Leave the marker the health monitor turns into an owner alert. Value = HTTP status."""
+    global _hf_billing_marked
     try:
         from BACKEND_AUTH_SECURITY import get_redis
         r = await get_redis()
         if r:
             await r.set(HF_BILLING_REDIS_KEY, str(int(status)), ex=3600)
+            _hf_billing_marked = True
+    except Exception:
+        pass
+
+
+async def _hf_billing_clear() -> None:
+    """HF answered again: the block is over — re-arm the one-time alert for a future block."""
+    global _hf_billing_marked
+    if not _hf_billing_marked:
+        return
+    try:
+        from BACKEND_AUTH_SECURITY import get_redis
+        r = await get_redis()
+        if r:
+            await r.delete(HF_BILLING_REDIS_KEY, HF_BILLING_ANNOUNCED_KEY)
+        _hf_billing_marked = False
     except Exception:
         pass
 
@@ -506,6 +527,7 @@ async def _hf_primary_text(selected_model: str, body: dict, timeout: float, prio
             await _hf_billing_mark(resp.status_code)
         logger.warning("hf_text: HF primary %s HTTP %s — falling back", hf_model, resp.status_code)
         return None
+    await _hf_billing_clear()
     # content ONLY — never the reasoning field (that is chain-of-thought; an empty
     # content means the budget ran out mid-reasoning → let Cerebras answer instead).
     try:

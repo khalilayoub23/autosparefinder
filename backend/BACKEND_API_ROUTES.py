@@ -2983,7 +2983,7 @@ async def startup():
     import night_pipeline as _night_pipeline
     _supervised_task("night_pipeline",              _night_pipeline.controller_loop())
     start_scraper_task()           # ← catalog scraper: FX refresh + Jaguar todos every 3h (heavy night work → night_pipeline)
-    start_db_agent(get_db, 3.0)   # ← DB cleaning / normalisation agent (every 3h, staggered from scraper)
+    start_db_agent(get_db, 3.0)   # ← DB cleaning / normalisation agent — fixed Israel slots DB_AGENT_RUN_TIMES_IL (default 21:30,00:15,07:15); the 3.0 is ignored
     _supervised_task("cleanup_loop",                run_cleanup_loop())
     _supervised_task("noa_marketing_loop",          _noa_marketing_loop())
     _supervised_task("noa_engagement_loop",         _noa_engagement_loop())
@@ -5948,9 +5948,11 @@ async def _health_monitor_loop():
             # leaves this marker on HF 402 (prepaid credits exhausted) or 401/403 (token rejected);
             # every agent then runs on the Groq free tier, which throttles after a few calls.
             try:
+                # ONE alert per occurrence (owner 2026-10-27: "only when reached", not daily):
+                # the ':announced' flag is cleared by hf_client only when HF answers again.
                 _rb = await get_redis()
                 _hf_code = await _rb.get("autospare:llm:hf_primary_blocked") if _rb else None
-                if _hf_code:
+                if _hf_code and not await _rb.exists("autospare:llm:hf_primary_blocked:announced"):
                     _hf_code = _hf_code.decode() if isinstance(_hf_code, (bytes, bytearray)) else str(_hf_code)
                     _why = ("נגמר הקרדיט בחשבון Hugging Face (402)" if _hf_code == "402"
                             else f"הטוקן של Hugging Face נדחה ({_hf_code})")
@@ -5960,7 +5962,8 @@ async def _health_monitor_loop():
                         "שנחסם בעומס ומחזיר תשובות גיבוי.\n"
                         "פעולה: להוסיף קרדיט / להפעיל טעינה אוטומטית ב-huggingface.co/settings/billing, "
                         "או לחדש את HF_TOKEN.",
-                        alert_key="llm_hf_primary_blocked", cooldown_s=86400, severity="warning")
+                        alert_key="llm_hf_primary_blocked", cooldown_s=60, severity="warning")
+                    await _rb.set("autospare:llm:hf_primary_blocked:announced", "1")
             except Exception as _e:
                 print(f"[HealthMonitor] Check 2c (HF primary billing) error: {_e}")
 
@@ -6007,7 +6010,7 @@ async def _health_monitor_loop():
                 silence_mins = 0.0
                 async with async_session_factory() as _cdb:
                     _hb_row = (await _cdb.execute(text("""
-                        SELECT status, last_heartbeat_at FROM job_registry
+                        SELECT status, last_heartbeat_at, started_at FROM job_registry
                         WHERE job_id LIKE 'run_all_tasks%'
                         ORDER BY started_at DESC LIMIT 1
                     """))).fetchone()
@@ -6018,8 +6021,20 @@ async def _health_monitor_loop():
                     silence_mins = (datetime.utcnow() - _hb_ts).total_seconds() / 60
                     if str(_hb_row[0]) == "running" and silence_mins > 30:
                         _stall_reason = f"מחזור רץ אבל ה-heartbeat קפוא כבר {silence_mins:.0f} דקות — כנראה תקוע"
-                    elif str(_hb_row[0]) != "running" and silence_mins > 300:
-                        _stall_reason = f"לא התחיל מחזור חדש כבר {silence_mins:.0f} דקות (רגיל: עד ~180)"
+                    elif str(_hb_row[0]) != "running":
+                        # Schedule-aware (2026-10-27): cycles run at fixed Israel slots (3×/day), so
+                        # hours of quiet between slots are NORMAL. Stalled = a scheduled slot passed
+                        # (plus its catch-up window + 30 min) and no cycle started since it.
+                        import db_update_agent as _dua
+                        from local_schedule import parse_times as _pt, slot_missed as _sm, LOCAL_TZ as _ltz
+                        _st = _hb_row[2]
+                        if _st is not None and _st.tzinfo is None:
+                            _st = _st.replace(tzinfo=timezone.utc)
+                        _missed = _sm(_pt(_dua.DB_AGENT_RUN_TIMES_IL), _st,
+                                      grace_s=_dua.DB_AGENT_CATCHUP_WINDOW_S + 1800)
+                        if _missed is not None:
+                            _stall_reason = (f"המחזור המתוכנן של {_missed.astimezone(_ltz):%H:%M} לא התחיל "
+                                             f"(מחזורים: {_dua.DB_AGENT_RUN_TIMES_IL})")
 
                 # Name the real cause. For 4.5 days (2026-10-12..17) this said "no cycle started —
                 # docker restart" 153 times while run_all_tasks was deliberately deferring to a

@@ -82,3 +82,59 @@ def delay_after_restart(last_completed: datetime | None, interval_s: float, floo
     if age < 0:
         return floor_s
     return max(floor_s, min(float(interval_s), float(interval_s) - age))
+
+
+# ── fixed daily slots (2026-10-27: run_all_tasks 3×/day at owner-chosen local times) ──────────
+
+def parse_times(spec: str) -> list[tuple[int, int]]:
+    """'21:30,00:15,07:15' -> [(0, 15), (7, 15), (21, 30)] (sorted, de-duplicated).
+    Invalid entries raise ValueError — a typo must not silently drop a run."""
+    out = set()
+    for part in (spec or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        h, m = part.split(":")
+        h, m = int(h), int(m)
+        if not (0 <= h <= 23 and 0 <= m <= 59):
+            raise ValueError(f"invalid local time {part!r}")
+        out.add((h, m))
+    if not out:
+        raise ValueError("no run times configured")
+    return sorted(out)
+
+
+def next_slot_utc(times: list[tuple[int, int]], now: datetime | None = None) -> datetime:
+    """The earliest of the local daily slots strictly after now (aware UTC)."""
+    return min(next_run_utc(h, m, None, now) for h, m in times)
+
+
+def last_slot_utc(times: list[tuple[int, int]], now: datetime | None = None) -> datetime:
+    """The most recent local daily slot at or before now (aware UTC). DST-correct: each slot is
+    resolved on its own local calendar date."""
+    now_utc = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    today = now_utc.astimezone(LOCAL_TZ).date()
+    best = None
+    for back in range(0, 3):
+        day = today - timedelta(days=back)
+        for h, m in times:
+            cand = datetime.combine(day, time(h, m), tzinfo=LOCAL_TZ).astimezone(timezone.utc)
+            if cand <= now_utc and (best is None or cand > best):
+                best = cand
+        if best is not None:
+            return best
+    raise ValueError("no past slot found")
+
+
+def slot_missed(times: list[tuple[int, int]], last_started: datetime | None, grace_s: float,
+                now: datetime | None = None) -> datetime | None:
+    """The scheduled slot that should have started a run but did not, or None.
+    A slot counts as missed only once `grace_s` has passed since it, and only if no run started
+    at or after it. `last_started` must be aware (None = never ran)."""
+    now_utc = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    slot = last_slot_utc(times, now_utc)
+    if (now_utc - slot).total_seconds() < grace_s:
+        return None
+    if last_started is not None and last_started.astimezone(timezone.utc) >= slot:
+        return None
+    return slot

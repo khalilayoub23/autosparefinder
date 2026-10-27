@@ -5051,33 +5051,66 @@ def is_running() -> bool:
 _bg_task: Optional[asyncio.Task] = None
 
 
+# run_all_tasks schedule (owner 2026-10-27: 3 times a day, never in customer hours).
+# Fixed local (Israel) slots replace the old "every 3 h around the clock" interval, which also
+# caught up IMMEDIATELY after every restart — a 11:52 deploy started a midday cycle at 11:54.
+DB_AGENT_RUN_TIMES_IL = os.getenv("DB_AGENT_RUN_TIMES_IL", "21:30,00:15,07:15")
+# A missed slot (backend down / lock busy / deferred) is caught up only this long after it; later
+# than that the cycle waits for the next slot instead of running at an unplanned hour.
+DB_AGENT_CATCHUP_WINDOW_S = float(os.getenv("DB_AGENT_CATCHUP_WINDOW_S", "7200"))
+
+
+async def _last_run_started(get_db_fn) -> Optional[datetime]:
+    async for _db in get_db_fn():
+        v = (await _db.execute(text(
+            "SELECT MAX(started_at) FROM job_registry WHERE job_name = 'run_all_tasks'"))).scalar()
+        break
+    if isinstance(v, datetime) and v.tzinfo is None:
+        v = v.replace(tzinfo=timezone.utc)
+    return v if isinstance(v, datetime) else None
+
+
+def _due_slot(times, last_started: Optional[datetime], served: Optional[datetime],
+              now: Optional[datetime] = None) -> Optional[datetime]:
+    """The slot to run now, or None. Due = the most recent slot, no run started at/after it, not
+    already attempted by this process, and still inside the catch-up window."""
+    from local_schedule import last_slot_utc
+    now = now or datetime.now(timezone.utc)
+    slot = last_slot_utc(times, now)
+    if served is not None and served >= slot:
+        return None
+    if last_started is not None and last_started >= slot:
+        return None
+    if (now - slot).total_seconds() > DB_AGENT_CATCHUP_WINDOW_S:
+        return None
+    return slot
+
+
 async def _agent_loop(get_db_fn, interval_hours: float = 6.0) -> None:
-    """Periodic background loop.  Runs run_all_tasks every `interval_hours`."""
+    """Background loop: runs run_all_tasks at the fixed local slots DB_AGENT_RUN_TIMES_IL.
+    `interval_hours` is ignored (kept for the call signature)."""
     from resilience import log_job_failure
+    from local_schedule import parse_times, next_slot_utc, LOCAL_TZ
     # Give container_start.sh time to clear stale Redis locks before first run
     await asyncio.sleep(90)
-    # Restart-safe cadence (2026-10-10): the interval is measured from the last COMPLETED
-    # cycle, not from the container start. Before this, every backend restart ran a full
-    # cycle 90 s later, however recently one had finished.
-    try:
-        from local_schedule import delay_after_restart
-        _last_done = None
-        async for _db in get_db_fn():
-            _last_done = (await _db.execute(text(
-                "SELECT MAX(completed_at) FROM job_registry "
-                "WHERE job_name = 'run_all_tasks' AND status = 'completed'"))).scalar()
-            break
-        _extra = delay_after_restart(_last_done, interval_hours * 3600, 0.0)
-        if _extra > 0:
-            logger.info("run_all_tasks: last cycle completed %s - first cycle after this start in %.0f min",
-                        _last_done, _extra / 60)
-            await asyncio.sleep(_extra)
-    except Exception as _rexc:       # never let the cadence check stop maintenance
-        logger.warning("run_all_tasks restart-cadence check skipped: %s", _rexc)
-    logger.info(
-        "DB update agent background loop started (interval=%.1fh)", interval_hours
-    )
+    times = parse_times(DB_AGENT_RUN_TIMES_IL)
+    logger.info("DB update agent background loop started (slots %s Israel, catch-up window %.0f min)",
+                ",".join(f"{h:02d}:{m:02d}" for h, m in times), DB_AGENT_CATCHUP_WINDOW_S / 60)
+    served: Optional[datetime] = None
     while True:
+        try:
+            last_started = await _last_run_started(get_db_fn)
+        except Exception as _lexc:          # unknown history: only the in-process memory applies
+            logger.warning("run_all_tasks: could not read last start (%s)", _lexc)
+            last_started = None
+        slot = _due_slot(times, last_started, served)
+        if slot is None:
+            nxt = next_slot_utc(times)
+            wait = max(1.0, (nxt - datetime.now(timezone.utc)).total_seconds())
+            logger.info("run_all_tasks: next cycle %s (in %.0f min)",
+                        nxt.astimezone(LOCAL_TZ).strftime("%Y-%m-%d %H:%M %Z"), wait / 60)
+            await asyncio.sleep(wait)
+            continue
         result: dict = {}
         try:
             # DEFER to the job queue while it is driving a catalogue migration.
@@ -5120,7 +5153,10 @@ async def _agent_loop(get_db_fn, interval_hours: float = 6.0) -> None:
 
             async for db in get_db_fn():
                 result = await run_all_tasks(db)
+            if result.get("status") != "skipped":
+                served = slot
         except Exception as exc:
+            served = slot                  # a failing cycle is not retried until the next slot
             error_msg = str(exc)[:500]
             logger.error("DB update agent loop error: %s", error_msg)
             try:
@@ -5136,12 +5172,11 @@ async def _agent_loop(get_db_fn, interval_hours: float = 6.0) -> None:
             except Exception as dlq_err:
                 logger.error("Failed to log run_all_tasks to DLQ: %s", dlq_err)
 
-        # If skipped (lock held), retry in 2 minutes instead of sleeping the full interval
+        # Lock held: retry in 2 minutes while the slot's catch-up window lasts; otherwise the loop
+        # head waits for the next slot.
         if result.get("status") == "skipped":
             logger.warning("run_all_tasks skipped (lock held) — will retry in 2m")
             await asyncio.sleep(120)
-        else:
-            await asyncio.sleep(interval_hours * 3600)
 
 
 def start_agent_task(get_db_fn, interval_hours: float = 6.0) -> None:

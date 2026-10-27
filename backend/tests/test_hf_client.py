@@ -87,6 +87,7 @@ def reset_hf_client(monkeypatch):
     monkeypatch.setattr(hf_client, "CEREBRAS_ENABLED", False)
     monkeypatch.setattr(hf_client, "CEREBRAS_API_KEY", "")
     monkeypatch.setattr(hf_client, "_hf_primary_down_until", 0.0)
+    monkeypatch.setattr(hf_client, "_hf_billing_marked", False)
     # Reset shared client
     hf_client._http = None
     hf_client._embed_model = None
