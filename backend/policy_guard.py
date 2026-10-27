@@ -126,7 +126,7 @@ def fit_request(system: str, prompt: str, max_input_tokens: int) -> Tuple[str, s
 _NUM = r"\d{1,3}(?:[,٬]\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?"
 _CUR_AFTER = r"(?:₪|ש\"ח|ש״ח|שח\b|שקל(?:ים)?|NIS\b|ILS\b|shekels?\b|شيكل|شيقل|شواقل|\$|USD\b|€|EUR\b|euros?\b)"
 _CUR_BEFORE = r"(?:₪|\$|€|NIS|ILS|USD|EUR)"
-_DASH = r"\s*[-–—]\s*"
+_DASH = r"\s*[-–—\u2011\u2010]\s*"
 _RE_RANGE_BEFORE = re.compile(rf"{_CUR_BEFORE}\s*({_NUM}){_DASH}{_CUR_BEFORE}?\s*({_NUM})", re.I)
 _RE_RANGE_AFTER = re.compile(rf"({_NUM}){_DASH}({_NUM})\s*{_CUR_AFTER}", re.I)
 _RE_BEFORE = re.compile(rf"{_CUR_BEFORE}\s*({_NUM})", re.I)
@@ -209,9 +209,34 @@ _RE_SHIPPING_DEFERRED = re.compile(
 )
 
 
+# Delivery-TIME claims ("usually 2-5 business days") must come from the turn's data like amounts do
+# (owner 2026-10-27: an Arabic reply invented "2‑5 أيام عمل"). Only sentences about delivery/arrival are
+# judged; return/refund/warranty periods are policy facts, not delivery claims.
+_RE_SENTENCE = re.compile(r"[^.!?\n؟]+")
+_RE_DELIVERY_CTX = re.compile(
+    r"deliver|arriv|shipping|ships?\b|transit|courier|משלוח|אספקה|יגיע|תגיע|הגעה|שילוח|توصيل|شحن|الشحن|يصل|تصل|وصول",
+    re.IGNORECASE)
+_RE_POLICY_CTX = re.compile(r"return|refund|warrant|החזר|החזרה|אחריות|ביטול|إرجاع|استرجاع|استرداد|ضمان", re.IGNORECASE)
+_RE_DAYS = re.compile(
+    r"(\d+(?:\.\d+)?)(?:\s*[-–—\u2011\u2010]\s*(\d+(?:\.\d+)?))?\s*"
+    r"(?:(?:business|working|calendar)\s+)?(?:days?|weeks?|ימי\s+עסקים|ימים|יום|שבועות|שבוע|أيام|يوم|يوما|يومًا|أسابيع|أسبوع)",
+    re.IGNORECASE)
+
+
+def delivery_time_claims(text: str):
+    """Numbers stated as a delivery duration (both ends of a range), from delivery sentences only."""
+    out = []
+    for sent in _RE_SENTENCE.findall(text or ""):
+        if not _RE_DELIVERY_CTX.search(sent) or _RE_POLICY_CTX.search(sent):
+            continue
+        for m in _RE_DAYS.finditer(sent):
+            out += [float(x) for x in m.groups() if x]
+    return out
+
+
 @dataclass
 class Violation:
-    kind: str          # "empty" | "ungrounded_amount" | "ungrounded_link" | "shipping_deferred"
+    kind: str          # "empty" | "ungrounded_amount" | "ungrounded_link" | "shipping_deferred" | "ungrounded_delivery_time"
     detail: str
 
 
@@ -225,6 +250,9 @@ def validate_customer_reply(reply: str, grounding_texts: Iterable[str]) -> List[
     for amount in currency_amounts(reply):
         if not _is_grounded(amount, grounded):
             violations.append(Violation("ungrounded_amount", f"{amount:g}"))
+    for days in delivery_time_claims(reply):
+        if not any(abs(days - g) < 0.01 for g in grounded):
+            violations.append(Violation("ungrounded_delivery_time", f"{days:g}"))
     m_ship = _RE_SHIPPING_DEFERRED.search(reply or "")
     if m_ship:
         violations.append(Violation("shipping_deferred", m_ship.group(0)[:60]))
@@ -259,6 +287,10 @@ def correction_note(violations: List[Violation]) -> str:
     if "ungrounded_link" in kinds:
         parts.append("Your draft contained a link that the system did not provide. Use only links "
                      "that appear in the data, or https://autosparefinder.co.il/cart.")
+    if "ungrounded_delivery_time" in kinds:
+        parts.append("Your draft stated a delivery time that is not in the data. Never give a typical or "
+                     "generic delivery window; delivery time depends on the supplier and is shown with each "
+                     "part when known. Offer to find the part.")
     if "shipping_deferred" in kinds:
         parts.append("Your draft said the shipping cost is known only at checkout/payment. That is wrong: "
                      "delivery is already included in each part's total price and charged once with the part. "

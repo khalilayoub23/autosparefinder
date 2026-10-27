@@ -213,6 +213,17 @@ def _extract_shared_memory_updates(
     return updates
 
 
+# Every unregistered WhatsApp/Telegram customer is mapped to ONE shared user id (routes/webhooks.py:
+# `user.id if user else WHATSAPP_ANON_USER_ID`). Anything keyed only by user id is therefore SHARED between
+# unrelated customers for this id (2026-10-27: OrdersAgent listed the 15 anonymous orders to any anonymous
+# asker; one customer's user-scope `preferred_language` memory was loaded for all of them).
+SHARED_ANON_USER_ID = "00000000-0000-0000-0000-000000000001"
+
+
+def _is_shared_anonymous_user(user_id) -> bool:
+    return str(user_id or "").strip().lower() == SHARED_ANON_USER_ID
+
+
 async def _load_shared_memory(
     db: AsyncSession,
     user_id: str,
@@ -225,8 +236,13 @@ async def _load_shared_memory(
         return []
 
     conv_uuid = _safe_uuid(conversation_id) if conversation_id else None
+    anonymous = _is_shared_anonymous_user(user_id)
+    if anonymous and not conv_uuid:
+        return []                     # shared id: never another customer's user-scope memory
 
-    if conv_uuid:
+    if conv_uuid and anonymous:
+        scope_filter = and_(AgentSharedMemory.scope == "conversation", AgentSharedMemory.conversation_id == conv_uuid)
+    elif conv_uuid:
         scope_filter = or_(
             and_(AgentSharedMemory.scope == "conversation", AgentSharedMemory.conversation_id == conv_uuid),
             AgentSharedMemory.scope == "user",
@@ -282,6 +298,11 @@ async def _save_shared_memory_updates(
         key = str(item.get("memory_key") or "").strip()
         value = _truncate_memory_value(item.get("memory_value"))
         scope = str(item.get("scope") or "conversation").strip().lower()
+        if scope == "user" and _is_shared_anonymous_user(user_id):
+            # the shared anonymous id is many customers: user-scope facts stay in THIS conversation
+            if not conv_uuid:
+                continue
+            scope = "conversation"
         importance = int(item.get("importance") or 1)
         owner_agent = str(item.get("agent_name") or "").strip() or None
 
@@ -3598,7 +3619,18 @@ LANGUAGE: Reply in the customer's language (Hebrew, Arabic or English) — as na
         user_id = kwargs.get("user_id")
         order_context = ""
 
-        if user_id:
+        if _is_shared_anonymous_user(user_id):
+            # Unregistered WhatsApp/Telegram customers all share one user id and orders carry no phone/
+            # chat identity — listing "this user's" orders would show other customers' orders.
+            order_context = (
+                "[CUSTOMER NOT IDENTIFIED]\n"
+                "This customer is not signed in on this channel. You CANNOT see, confirm or discuss any order, "
+                "its status, amount or tracking, and you must never list or guess orders. Explain politely that "
+                "for privacy you can check an order only for a signed-in customer: they can sign in at "
+                "https://autosparefinder.co.il (My orders), or write to us from the account they ordered with. "
+                "You can still help them find and buy parts."
+            )
+        elif user_id:
             try:
                 # Always use PII DB — Order lives in autospare_pii
                 async with _pii_sf() as pii_db:

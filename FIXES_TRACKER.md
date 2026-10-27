@@ -8576,3 +8576,35 @@ e2e network); live Groq calls from a throwaway container with no DB access.
   separately after I pay?") answer "delivery is included in each part's price, not a separate charge".
 - **Rollback:** copy back `rollback_live_ship_20261027T1121/` (and delete the 3 new files listed in NEW_FILES.txt), restart
   backend, rebuild + recreate frontend.
+
+## 2026-10-27 — Anonymous-customer order/memory privacy, grounded delivery times, Eurosender task, test orders — DEPLOYED 14:00 Israel
+
+- **Privacy (root cause, verified):** every unregistered WhatsApp/Telegram customer gets ONE user id
+  (`routes/webhooks.py`: `user.id if user else WHATSAPP_ANON_USER_ID` = `00000000-…-0001`); orders carry no phone/chat
+  identity. OrdersAgent looked orders up by user id → any anonymous asker saw the shared id's orders (15 in production,
+  pending_payment, 2026-05-07..07-10). Shared memory with scope `user` was likewise shared (a `preferred_language` row
+  loaded for every anonymous customer). **Fix (`BACKEND_AI_AGENTS`):** `SHARED_ANON_USER_ID` / `_is_shared_anonymous_user`;
+  OrdersAgent never queries orders for that id and instructs the model it cannot see/confirm/guess orders (sign in at
+  the site); `_load_shared_memory` loads only the current conversation's memory for that id; `_save_shared_memory_updates`
+  stores its user-scope facts per conversation (or not at all without one).
+  Evidence (disposable DB, real `process_user_message`, model echoes any order number it sees): deployed code leaked the
+  anonymous orders on whatsapp/telegram/web (3/3 FAIL); fixed 4/4 PASS (registered customer still sees only own order).
+  Live after deploy: anonymous order questions (whatsapp en, telegram ar) → no order numbers, sign-in guidance;
+  anonymous memory load = 0 rows.
+- **Delivery-time claims grounded (`policy_guard.delivery_time_claims`):** "N(–M) days/weeks" (he/ar/en, incl. U+2011
+  hyphen) in a delivery sentence must appear in the turn's data; return/refund/warranty periods excluded; one corrective
+  retry → localized fallback. The live Arabic "2‑5 أيام عمل" is caught. Live: delivery questions ar/en/he → no window.
+  Observation (not changed): an Arabic delivery question routed to orders_agent got its localized fallback text, which
+  asks for an order number — harmless, but for anonymous users a sign-in hint would be more accurate.
+- **Eurosender (owner):** sellers that do not ship to IL must be registered in the Eurosender account and use its quotes →
+  agent_todos `40730329-5a6f-4525-b76d-ed302941372d` for **BOAZ** (priority 1, not_started) with candidates
+  (Car-Parts.ie IE 749,468 offers; SNG Barratt UK 134,893; eBay offers without an IL fee 7,054) and steps
+  (register pickups, read-only quote check, EUROSENDER_SUPPLIER_ALLOWLIST, quote → delivery fee). Note: no process
+  executes BOAZ todos automatically (only db_cleanup_agent/db_update_agent consume todos) — it is a tracked task.
+- **Test orders:** AUTO-2026-71C901A4 / B15312F0 / E3D55E4F (synthetic `cycle_*@example.com` users) → status cancelled,
+  `deleted_at` set, note added (soft delete, reversible).
+- **Tests:** `test_privacy_and_delivery.py` 19 passed; `test_privacy_e2e.py` 4 passed (deployed code: 3 failed);
+  broad regression identical to the deployed baseline (34 pre-existing env failures, +19 new passes); DB E2E: customer
+  flow 33/33, order shipping 1/1, checkout/side-effects/late-reply 33/33.
+- **Deploy:** preflight first BLOCKED (meili_purge_inactive running) → waited → SAFE 13:59 → backend recreated 14:00
+  Israel, healthy. Rollback: `rollback_live_priv_20261027T1155/`.
