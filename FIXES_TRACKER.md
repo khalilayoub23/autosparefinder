@@ -8621,3 +8621,9 @@ e2e network); live Groq calls from a throwaway container with no DB access.
   webhook/fulfillment + `test_isolated_db_guard` need a database (12, blocked by the network guard); `test_night_pipeline`
   needs a local Postgres (5) and a writable `/app/state`; `test_gemini_key_not_in_urls` passes its assertions but its
   teardown writes the Redis cache (3). With a disposable Postgres + Redis the DB-dependent ones pass (1,140 passed earlier).
+- **Orders fallback for anonymous customers (owner #5):** OrdersAgent's fixed fallback (timeout/provider error) said
+  "send me your order number and I'll check" — a check an anonymous (shared-id) customer cannot get. Now a per-turn
+  `ANON_ORDER_TURN` context flag (agents are shared singletons) selects `orders_agent_anonymous`: "To check an order,
+  please sign in at autosparefinder.co.il (My orders)" in he/ar/en; registered customers keep the old text. Tests: 574
+  passed (incl. 4 new). Deployed 14:23 Israel (preflight SAFE); live check with a simulated provider failure: anonymous
+  he/ar/en → sign-in text, registered → unchanged, flag reset after the turn.

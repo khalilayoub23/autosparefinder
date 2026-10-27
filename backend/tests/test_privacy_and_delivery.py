@@ -175,3 +175,56 @@ async def test_agent_invented_delivery_window_is_corrected(monkeypatch, lang, ba
 
 def test_policy_text_forbids_generic_delivery_windows():
     assert "no \"usually 2-5 business days\"" in A.TELEGRAM_BOT_POLICY
+
+
+# ── orders fallback text for anonymous customers (2026-10-27) ──────────────────
+
+@pytest.mark.parametrize("lang,q", [("he", "איפה ההזמנה שלי?"), ("ar", "وين وصل طلبي؟"), ("en", "Where is my order?")])
+async def test_anonymous_orders_fallback_guides_to_sign_in(monkeypatch, lang, q):
+    import BACKEND_DATABASE_MODELS as M
+
+    async def boom(*a, **k):
+        raise RuntimeError("provider down")
+    monkeypatch.setattr(A, "hf_text", boom)
+    monkeypatch.setattr(A, "hf_text_fast", boom)
+    monkeypatch.setenv("CEREBRAS_API_KEY", "k")
+    monkeypatch.setattr(M, "pii_session_factory", lambda: (_ for _ in ()).throw(AssertionError("no order query")))
+    rl.REPLY_LANGUAGE.set(lang)
+    try:
+        out = await A.OrdersAgent().process(q, [], None, user_id=ANON, source="whatsapp")
+    finally:
+        rl.REPLY_LANGUAGE.set(None)
+    assert out == rl.pick(A.BaseAgent._OFFLINE_TEXTS["orders_agent_anonymous"], lang)
+    assert "autosparefinder.co.il" in out and rl.reply_matches_language(out, lang)
+    assert A.ANON_ORDER_TURN.get() is False                      # flag scoped to the turn
+
+
+async def test_registered_orders_fallback_unchanged(monkeypatch):
+    import BACKEND_DATABASE_MODELS as M
+
+    async def boom(*a, **k):
+        raise RuntimeError("provider down")
+
+    class _Res:
+        def scalars(self):
+            return SimpleNamespace(all=lambda: [])
+
+    class _S:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def execute(self, stmt):
+            return _Res()
+    monkeypatch.setattr(A, "hf_text", boom)
+    monkeypatch.setattr(A, "hf_text_fast", boom)
+    monkeypatch.setenv("CEREBRAS_API_KEY", "k")
+    monkeypatch.setattr(M, "pii_session_factory", lambda: _S())
+    rl.REPLY_LANGUAGE.set("en")
+    try:
+        out = await A.OrdersAgent().process("Where is my order?", [], None, user_id=str(uuid.uuid4()), source="web")
+    finally:
+        rl.REPLY_LANGUAGE.set(None)
+    assert out == A.BaseAgent._OFFLINE_TEXTS["orders_agent"]["en"]

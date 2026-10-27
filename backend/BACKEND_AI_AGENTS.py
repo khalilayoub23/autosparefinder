@@ -224,6 +224,12 @@ def _is_shared_anonymous_user(user_id) -> bool:
     return str(user_id or "").strip().lower() == SHARED_ANON_USER_ID
 
 
+# Per-turn flag (agents are shared singletons, so this cannot live on the agent): True while OrdersAgent
+# answers a customer on the shared anonymous id — its fallback text must not promise an order check.
+import contextvars as _cv
+ANON_ORDER_TURN: _cv.ContextVar = _cv.ContextVar("anon_order_turn", default=False)
+
+
 async def _load_shared_memory(
     db: AsyncSession,
     user_id: str,
@@ -1591,6 +1597,12 @@ class BaseAgent:
             "ar": "مرحباً، أنا هنا لمساعدتك! 🔐 يبدو أن هناك مشكلة في تسجيل الدخول — أخبرني ما الذي يحدث: كلمة المرور، رمز التحقق، أم أن الحساب مقفل؟",
             "en": "Hi, I'm here to help! 🔐 It sounds like something is wrong with signing in — tell me what's happening: a password problem, a verification code, or a locked account?",
         },
+        # Anonymous customers (shared id): orders cannot be checked for privacy — guide to sign in instead.
+        "orders_agent_anonymous": {
+            "he": "כדי לבדוק הזמנה, יש להתחבר לחשבון באתר autosparefinder.co.il (ההזמנות שלי). בינתיים אשמח לעזור למצוא חלק 🙂",
+            "ar": "للتحقق من طلب، يرجى تسجيل الدخول إلى حسابك في autosparefinder.co.il (طلباتي). يسعدني مساعدتك في إيجاد قطعة في هذه الأثناء 🙂",
+            "en": "To check an order, please sign in at autosparefinder.co.il (My orders). Meanwhile I'm happy to help you find a part 🙂",
+        },
         "orders_agent": {
             "he": "היי! אני ליאור, האחראי על ההזמנות שלנו. שלח לי את מספר ההזמנה ואני בודק מיד איפה הכול עומד 📦",
             "ar": "مرحباً! أنا ليئور، المسؤول عن الطلبات. أرسل لي رقم الطلب وسأتحقق فوراً من حالته 📦",
@@ -1628,6 +1640,8 @@ class BaseAgent:
             return self._offline_router_json(user_msg)
 
         lang = _rl.normalize(lang)
+        if self.name == "orders_agent" and ANON_ORDER_TURN.get():
+            return _rl.pick(self._OFFLINE_TEXTS["orders_agent_anonymous"], lang)
         if lang:
             # Customer turn: always answer in the turn's language.
             if self.name in self._OFFLINE_TEXTS:
@@ -3680,11 +3694,15 @@ LANGUAGE: Reply in the customer's language (Hebrew, Arabic or English) — as na
         if order_context:
             system_with_data = self.system_prompt + "\n\n" + order_context
 
-        return await self.think(
-            conversation_history + [{"role": "user", "content": message}],
-            system_override=system_with_data,
-            source=kwargs.get("source"),
-        )
+        _anon_tok = ANON_ORDER_TURN.set(_is_shared_anonymous_user(user_id))
+        try:
+            return await self.think(
+                conversation_history + [{"role": "user", "content": message}],
+                system_override=system_with_data,
+                source=kwargs.get("source"),
+            )
+        finally:
+            ANON_ORDER_TURN.reset(_anon_tok)
 
     # ------------------------------------------------------------------
     # AUTO-FULFILLMENT  (called after payment — no human needed)
