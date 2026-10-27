@@ -552,7 +552,8 @@ extractor scrapes → JSON on disk; (2) a separate importer reads the JSON → P
 calls (localhost, inter-container) may use plain HTTP.
 
 ### The two agent layers
-**Layer A — AI customer agents** (`BACKEND_AI_AGENTS.py`, all on Cerebras gpt-oss-120b, one
+**Layer A — AI customer agents** (`BACKEND_AI_AGENTS.py`, all on gpt-oss-120b via the HF Router pinned to DeepInfra →
+Groq fallback; Cerebras OFF permanently since 2026-10-27 (owner) — `hf_client.py`; one
 shared brain `process_user_message`): AVI (router), NIR (parts/fitment/OEM), MAYA (sales/
 pricing), LIOR (orders), TAL (finance/VAT/invoices), DANA (support/returns/warranty), OREN
 (security/fraud), SHIRA (marketing), BOAZ (supplier B2B + daily price sync), NOA (social),
@@ -579,7 +580,7 @@ missing/invalid file = halted (fail closed), and `run-once` refuses while halted
 resolved only by exact DB match; an unauthenticated sender, another account's order or more than one
 candidate stays unresolved and goes to a human.
 **Layer B — pipeline workers**: `catalog_scraper` (ingest), `db_cleanup_agent` (30s self-heal),
-`db_update_agent` (`run_all_tasks` every 3h), `ai_catalog_builder` (enrichment), `meili_sync`
+`db_update_agent` (`run_all_tasks` 3×/day at 21:30/00:15/07:15 Israel, `DB_AGENT_RUN_TIMES_IL`), `ai_catalog_builder` (enrichment), `meili_sync`
 (indexing, 2h loop), `run_rex_transport_office_pipeline` (vehicle registry), REX harvest queue,
 `services/ebay_price_sync` + `aliexpress_price_sync`, `auto_backup` (24h). Phase order →
 `docs/phases.md`.
@@ -963,7 +964,7 @@ Always lowercase: `'new'`, `'used'`, `'oem'`, `'aftermarket'`, `'remanufactured'
 | Owner | File | Schedule | Responsibility |
 |---|---|---|---|
 | **REX** | `catalog_scraper.py` | Every 3h | Catalog discovery — scrapes OEM sites, writes parts_catalog + supplier_parts |
-| **DB Update Agent** | `db_update_agent.py` | Every 3h | Data quality — normalizes names, types, categories, prices, fitment |
+| **DB Update Agent** | `db_update_agent.py` | 21:30/00:15/07:15 Israel | Data quality — normalizes names, types, categories, prices, fitment |
 | **DB Cleanup Agent** | `db_cleanup_agent.py` | Every 30s | Continuous self-healing — fixes types, OEM numbers, categories, zombie jobs, **importer_price_ils=0 → heal**, **'New'→'new' → heal** |
 | **Boaz** | `BACKEND_AI_AGENTS.py` | Daily | Price pipeline — market price drift on supplier_parts |
 | **Importers** | `samelet_import_v2.py` etc. | On-demand | IL importer data — must follow Rules 1-3 above |
@@ -1470,7 +1471,7 @@ enrich search + the price **compare**, and orders route to them e2e.
 - **Real web search** = `hf_client.gemini_web_search(query)` — Gemini **Google-Search grounding**
   (returns a grounded answer + the source URLs it used). The server IP is anti-bot blocked for
   direct HTTP, so this is how backend agents "search the web." The free Gemini key 429s often →
-  `discover_sellers()` **falls back** to an LLM-propose (Cerebras `hf_text`) + a **live domain
+  `discover_sellers()` **falls back** to an LLM-propose (`hf_text`: HF/DeepInfra → Groq) + a **live domain
   fetch verify** (`_verify_domain`). **Never fabricates** — unverified/low-score candidates are
   skipped (score gate 0.55 + `http_ok` required).
 - **Onboarding** (`onboard_seller`): dedupe by `lower(name)` OR domain; INSERT into `suppliers`
