@@ -38,6 +38,7 @@ def rig(monkeypatch):
     monkeypatch.setattr(hc, "GEMINI_API_KEY", "")
     monkeypatch.setattr(hc, "_hf_primary_down_until", 0.0)
     monkeypatch.setattr(hc, "_hf_billing_marked", False)
+    monkeypatch.setattr(hc, "_groq_cooldown_until", {})
 
     async def _post(url, headers, body, timeout, label):
         if url.startswith(hc.CEREBRAS_BASE):
@@ -123,12 +124,13 @@ def test_empty_hf_content_never_returns_reasoning(rig):
     assert out.startswith("groq ok") and "let's think" not in out
 
 
-def test_groq_120b_failure_uses_groq_model(rig):
+def test_groq_120b_failure_uses_the_next_model_in_the_chain(rig, monkeypatch):
     calls, state = rig
+    monkeypatch.setattr(hc, "_groq_cooldown_until", {})
     state["status"] = 402
     state["groq_fail_120b"] = True
-    assert asyncio.run(hc.hf_text("hi")) == "groq ok (GROQ_MODEL)"
-    assert calls["groq"] == ["openai/gpt-oss-120b", "GROQ_MODEL"]
+    assert asyncio.run(hc.hf_text("hi")) == "groq ok (openai/gpt-oss-20b)"
+    assert calls["groq"] == ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]
 
 
 def test_provider_is_traced(rig):
@@ -243,3 +245,72 @@ def test_health_monitor_alerts_once_per_occurrence_not_daily():
     assert 'await _rb.set("autospare:llm:hf_primary_blocked:announced", "1")' in block
     assert "cooldown_s=86400" not in block
     assert hc.HF_BILLING_ANNOUNCED_KEY == "autospare:llm:hf_primary_blocked:announced"
+
+
+
+# ── Groq chain (measured limits 2026-10-27: 8K tokens/min per model) ───────────
+
+def test_groq_chain_default_order():
+    assert hc.GROQ_FALLBACK_MODELS == ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b"]
+
+
+@pytest.mark.parametrize("value,secs", [("25.73s", 25.73), ("1m26.4s", 86.4), ("2h3m", 7380), ("7", 7.0), (None, 60.0), ("x", 60.0)])
+def test_parse_groq_reset(value, secs):
+    assert abs(hc._parse_groq_reset_s(value) - secs) < 0.01
+
+
+def _groq_http(monkeypatch, plan):
+    """plan: model -> status. Intercepts the real groq_text HTTP call."""
+    sent = []
+
+    async def _post(url, headers, body, timeout, label):
+        m = json.loads(body)["model"]
+        sent.append((m, label))
+        st = plan.get(m, 200)
+        return httpx.Response(st, json={"choices": [{"message": {"content": f"ok {m}"}}]} if st == 200 else {"error": "rl"},
+                              headers={"x-ratelimit-reset-tokens": "30s"} if st == 429 else {},
+                              request=httpx.Request("POST", url))
+    monkeypatch.setattr(hc, "_post_with_retry", _post)
+    monkeypatch.setattr(hc, "GROQ_API_KEY", "g")
+    monkeypatch.setattr(hc, "_groq_cooldown_until", {})
+    return sent
+
+
+def test_429_fails_over_immediately_and_cools_the_model_down(monkeypatch):
+    sent = _groq_http(monkeypatch, {"openai/gpt-oss-120b": 429})
+    assert asyncio.run(hc._groq_chain("user: hi", "", 10)) == "ok openai/gpt-oss-20b"
+    assert [m for m, _ in sent] == ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]
+    assert hc._groq_cooldown_until["openai/gpt-oss-120b"] > time.time() + 20
+    sent.clear()
+    asyncio.run(hc._groq_chain("user: again", "", 10))       # 120b skipped while cooling down
+    assert [m for m, _ in sent] == ["openai/gpt-oss-20b"]
+
+
+def test_all_three_models_share_the_load(monkeypatch):
+    sent = _groq_http(monkeypatch, {"openai/gpt-oss-120b": 429, "openai/gpt-oss-20b": 429})
+    assert asyncio.run(hc._groq_chain("user: hi", "", 10)) == "ok qwen/qwen3.8-27b"
+
+
+def test_post_with_retry_does_not_retry_429_for_groq(monkeypatch):
+    calls = []
+
+    class _C:
+        async def post(self, url, headers=None, content=None, timeout=None):
+            calls.append(url)
+            return httpx.Response(429, json={}, request=httpx.Request("POST", url))
+    monkeypatch.setattr(hc, "_get_http", lambda: _C())
+    r = asyncio.run(hc._post_with_retry("https://api.groq.com/x", {}, b"{}", 5, "groq_text"))
+    assert r.status_code == 429 and len(calls) == 1
+
+
+# ── agent model: never silently unroutable (root fix 2026-10-27) ───────────────
+
+def test_agent_model_default_is_routable_and_bad_config_is_refused(caplog):
+    import BACKEND_AI_AGENTS as A
+    assert hc._hf_primary_model(hc.DEFAULT_AGENT_MODEL) == "openai/gpt-oss-120b:" + hc.HF_PRIMARY_PROVIDER
+    caplog.set_level("ERROR")
+    assert A._routable_agent_model("AGENTS_DEFAULT_MODEL", "Qwen/Qwen2.5-72B-Instruct") == hc.DEFAULT_AGENT_MODEL
+    assert "cannot be routed by the HF primary" in caplog.text
+    assert A._routable_agent_model("WEB_AI_MODEL", "gpt-oss-120b") == "gpt-oss-120b"
+    src = open(A.__file__, encoding="utf-8").read()
+    assert '"Qwen/Qwen2.5-72B-Instruct"' not in src

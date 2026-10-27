@@ -340,7 +340,10 @@ async def _post_with_retry(
 
         elapsed_ms = round((time.monotonic() - t0) * 1000)
 
-        if resp.status_code in (429, 503) and attempt < _MAX_RETRIES:
+        # Groq: a 429 means that model's per-minute budget is spent — retrying the same model only
+        # adds latency; the caller (_groq_chain) moves to the next model instead.
+        _retry_codes = (503,) if label == "groq_text" else (429, 503)
+        if resp.status_code in _retry_codes and attempt < _MAX_RETRIES:
             # 503 = model still loading  |  429 = rate limit
             wait = _bounded_backoff(attempt)
             retry_after = _parse_retry_after_seconds(resp.headers.get("retry-after"), wait)
@@ -443,6 +446,9 @@ async def _cerebras_call(
 # LLM_PRIMARY_PROVIDER=cerebras → old behaviour (Cerebras first).
 # Only gpt-oss model names are routed; any other model keeps the Cerebras path.
 LLM_PRIMARY_PROVIDER = os.getenv("LLM_PRIMARY_PROVIDER", "hf").strip().lower()
+# The ONE default agent model (2026-10-27). BACKEND_AI_AGENTS used to default to Qwen2.5-72B, which the
+# HF primary cannot route — agents would have silently skipped HF if the env var were missing.
+DEFAULT_AGENT_MODEL = "gpt-oss-120b"
 # CEREBRAS_ENABLED=0 → never call Cerebras; HF failure goes straight to Groq.
 # (Keep CEREBRAS_API_KEY set: BACKEND_AI_AGENTS mocks every reply when it is missing.)
 CEREBRAS_ENABLED     = os.getenv("CEREBRAS_ENABLED", "1").strip() not in ("0", "false", "no", "off")
@@ -605,15 +611,8 @@ async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority
         # Owner decision 2026-10-27: Cerebras OFF → Groq is the fallback.
         if not GROQ_API_KEY:
             raise RuntimeError("HF primary failed, Cerebras disabled and GROQ_API_KEY not set")
-        logger.warning("hf_text: HF primary failed — falling back to GROQ openai/gpt-oss-120b")
-        try:
-            result = await groq_text(prompt=prompt, system=system, timeout=timeout, model="openai/gpt-oss-120b")
-            _trace("groq:openai/gpt-oss-120b")
-        except Exception as _groq_err:
-            logger.warning("hf_text: GROQ gpt-oss-120b failed (%s) — trying %s", _groq_err, os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"))
-            result = await groq_text(prompt=prompt, system=system, timeout=timeout)
-            _trace(f"groq:{os.getenv('GROQ_MODEL', 'openai/gpt-oss-20b')}")
-        return _clean_response(result)
+        logger.warning("hf_text: HF primary failed — falling back to the Groq chain")
+        return _clean_response(await _groq_chain(prompt, system, timeout))
 
     resp = None
     status = 402                     # billing breaker open: treat as the 402 path, no request
@@ -680,16 +679,8 @@ async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority
         if GROQ_API_KEY:
             # First try Groq's gpt-oss-120b (same model as Cerebras primary, free on Groq).
             # Falls back to GROQ_MODEL (groq/compound) if gpt-oss-120b also fails.
-            logger.warning("hf_text: falling back to GROQ openai/gpt-oss-120b")
-            try:
-                _r = await groq_text(prompt=prompt, system=system, timeout=timeout, model="openai/gpt-oss-120b")
-                _trace("groq:openai/gpt-oss-120b")
-                return _r
-            except Exception as _groq_primary_err:
-                logger.warning("hf_text: GROQ gpt-oss-120b failed (%s) — trying %s", _groq_primary_err, os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"))
-                _r = await groq_text(prompt=prompt, system=system, timeout=timeout)
-                _trace(f"groq:{os.getenv('GROQ_MODEL', 'openai/gpt-oss-20b')}")
-                return _r
+            logger.warning("hf_text: falling back to the Groq chain")
+            return await _groq_chain(prompt, system, timeout)
     if resp is None:
         raise RuntimeError("Cerebras skipped (402 Payment Required) and no fallback provider answered")
     raise_for_status_safe(resp)
@@ -1258,6 +1249,59 @@ GROQ_MAX_COMPLETION_TOKENS = 1000
 _GROQ_INPUT_BUDGET = GROQ_MAX_REQUEST_TOKENS - GROQ_MAX_COMPLETION_TOKENS - 300
 
 
+# Groq fallback chain (2026-10-27). MEASURED limits on this account (response headers): every chat
+# model has its OWN 8,000 tokens/minute + 1,000 requests/day; a customer turn is ~3-4.5K prompt tokens,
+# so one model serves ~2 replies/minute. Before: a 429 was retried on the SAME exhausted model
+# (up to 3 waits of 8 s) and only two models were tried -> 25 s replies and fallback texts.
+# Now: a 429 fails over immediately to the next model, the exhausted model is skipped until Groq's
+# own reset time (x-ratelimit-reset-tokens / retry-after), and three models share the load.
+GROQ_FALLBACK_MODELS = [m.strip() for m in os.getenv(
+    "GROQ_FALLBACK_MODELS", "openai/gpt-oss-120b,openai/gpt-oss-20b,qwen/qwen3.8-27b").split(",") if m.strip()]
+_groq_cooldown_until: dict = {}
+
+
+def _parse_groq_reset_s(value) -> float:
+    """'25.73s' / '1m26.4s' / '2h3m' / '7' -> seconds. Unknown -> 60."""
+    if not value:
+        return 60.0
+    v = str(value).strip()
+    try:
+        return float(v)
+    except ValueError:
+        pass
+    total, num = 0.0, ""
+    for ch in v:
+        if ch.isdigit() or ch == ".":
+            num += ch
+        elif ch in "hms" and num:
+            total += float(num) * {"h": 3600, "m": 60, "s": 1}[ch]
+            num = ""
+    return total or 60.0
+
+
+def _groq_note_429(model: str, resp) -> None:
+    hdr = getattr(resp, "headers", {}) or {}
+    wait = _parse_groq_reset_s(hdr.get("retry-after") or hdr.get("x-ratelimit-reset-tokens"))
+    _groq_cooldown_until[model] = _time.time() + min(max(wait, 1.0), 3600.0)
+    logger.warning("groq: %s rate-limited — skipping it for %.0fs", model, wait)
+
+
+async def _groq_chain(prompt: str, system: str, timeout: float) -> str:
+    """Try each Groq model in order, skipping models still inside their rate-limit reset window."""
+    last_err: Exception | None = None
+    now = _time.time()
+    candidates = [m for m in GROQ_FALLBACK_MODELS if _groq_cooldown_until.get(m, 0.0) <= now]
+    for model in candidates or GROQ_FALLBACK_MODELS[:1]:
+        try:
+            out = await groq_text(prompt=prompt, system=system, timeout=timeout, model=model)
+            _trace(f"groq:{model}")
+            return out
+        except Exception as e:                    # 429 / 5xx / content error -> next model
+            last_err = e
+            logger.warning("hf_text: Groq %s failed (%s) — trying next", model, str(e)[:120])
+    raise last_err or RuntimeError("no Groq model available")
+
+
 async def groq_text(prompt: str, system: str = "", timeout: float = 60.0, model: str = "") -> str:
     """Chat completion via GROQ API. Used as fallback when Cerebras+Gemini are both 429."""
     if not GROQ_API_KEY:
@@ -1296,6 +1340,8 @@ async def groq_text(prompt: str, system: str = "", timeout: float = 60.0, model:
         timeout,
         "groq_text",
     )
+    if resp.status_code == 429:
+        _groq_note_429(_model, resp)
     raise_for_status_safe(resp)
     result: str = resp.json()["choices"][0]["message"]["content"]
     return _clean_response(result)

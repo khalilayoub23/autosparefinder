@@ -38,7 +38,7 @@ Named Agent Team:
                                         scrapes real OEM+aftermarket parts from
                                         autodoc, eBay, RockAuto and more.
 
-All agents run on Cerebras (AGENTS_DEFAULT_MODEL, currently gpt-oss-120b).
+All agents run on gpt-oss-120b via the HF Router/DeepInfra, Groq fallback (AGENTS_DEFAULT_MODEL).
 
 CRITICAL BUSINESS RULES (enforced in prompts & code):
   - NEVER expose supplier name to customer - show manufacturer only
@@ -783,7 +783,7 @@ async def _log_search_miss(
 # ==============================================================================
 
 # Model selection — HF-backed default model alias
-HF_DEFAULT_MODEL = os.getenv("HF_TEXT_MODEL", "Qwen/Qwen2.5-72B-Instruct")
+HF_DEFAULT_MODEL = os.getenv("HF_TEXT_MODEL", _hf_client.DEFAULT_AGENT_MODEL)
 
 # Aliases kept for backward-compat with agent subclasses that reference these names
 LLAMA_8B      = HF_DEFAULT_MODEL
@@ -798,11 +798,21 @@ CLAUDE_SONNET = HF_DEFAULT_MODEL
 CLAUDE_SONNET_46 = HF_DEFAULT_MODEL
 
 # Defaults — override via .env: AGENTS_DEFAULT_MODEL
-FREE_MODEL    = os.getenv("AGENTS_DEFAULT_MODEL", HF_DEFAULT_MODEL)
+def _routable_agent_model(name: str, configured: str) -> str:
+    """Root fix 2026-10-27: an agent model the HF primary cannot route (not gpt-oss) would make every
+    agent call skip HF silently and run on the Groq free tier. Refuse it loudly, use the default."""
+    if _hf_client._hf_primary_model(configured or ""):
+        return configured
+    logger.error("[ModelConfig] %s=%r cannot be routed by the HF primary — using %s instead",
+                 name, configured, _hf_client.DEFAULT_AGENT_MODEL)
+    return _hf_client.DEFAULT_AGENT_MODEL
+
+
+FREE_MODEL    = _routable_agent_model("AGENTS_DEFAULT_MODEL", os.getenv("AGENTS_DEFAULT_MODEL", HF_DEFAULT_MODEL))
 PREMIUM_MODEL = FREE_MODEL  # one model only
-TELEGRAM_AI_MODEL = os.getenv("TELEGRAM_AI_MODEL", FREE_MODEL)
-WHATSAPP_AI_MODEL = os.getenv("WHATSAPP_AI_MODEL", FREE_MODEL)
-WEB_AI_MODEL = os.getenv("WEB_AI_MODEL", FREE_MODEL)
+TELEGRAM_AI_MODEL = _routable_agent_model("TELEGRAM_AI_MODEL", os.getenv("TELEGRAM_AI_MODEL", FREE_MODEL))
+WHATSAPP_AI_MODEL = _routable_agent_model("WHATSAPP_AI_MODEL", os.getenv("WHATSAPP_AI_MODEL", FREE_MODEL))
+WEB_AI_MODEL = _routable_agent_model("WEB_AI_MODEL", os.getenv("WEB_AI_MODEL", FREE_MODEL))
 
 
 def _normalize_source(source: Optional[str]) -> str:
