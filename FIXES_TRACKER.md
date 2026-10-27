@@ -8608,3 +8608,16 @@ e2e network); live Groq calls from a throwaway container with no DB access.
   flow 33/33, order shipping 1/1, checkout/side-effects/late-reply 33/33.
 - **Deploy:** preflight first BLOCKED (meili_purge_inactive running) → waited → SAFE 13:59 → backend recreated 14:00
   Israel, healthy. Rollback: `rollback_live_priv_20261027T1155/`.
+
+### 2026-10-27 (closing) — main merged; anonymous test orders; failing-test audit
+- **Git:** `main` fast-forwarded to `9a04c41` (all of today's commits; the live tree was byte-identical, so only the ref and
+  index moved — `git status` clean) and pushed (`d99fa76..9a04c41`).
+- **15 anonymous orders** (shared anonymous user, pending_payment, 2026-05-07..07-10) confirmed by the owner as test orders →
+  cancelled + soft-deleted (`deleted_at`, note); 0 active anonymous orders remain. (Soft delete, reversible.)
+- **Eurosender seller registration:** deferred by the owner — to be built with the Email Agent activation (supplier mail).
+- **Failing tests audit:** the 34 failed + 27 errors in the broad isolated run are IDENTICAL on the pre-session code
+  (`d99fa76`) and the current code — none tests today's changes, none needs updating for them. Causes are environmental:
+  `test_system.py` needs a running API server at localhost:8000 (15 refused) + `HF_VISION_MODEL`; Eurosender
+  webhook/fulfillment + `test_isolated_db_guard` need a database (12, blocked by the network guard); `test_night_pipeline`
+  needs a local Postgres (5) and a writable `/app/state`; `test_gemini_key_not_in_urls` passes its assertions but its
+  teardown writes the Redis cache (3). With a disposable Postgres + Redis the DB-dependent ones pass (1,140 passed earlier).
