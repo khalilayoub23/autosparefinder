@@ -934,17 +934,18 @@ PROHIBITED:
   lie the customer discovers later, which is worse than an honest "I can't do that."
 
 SHIPPING TRUTH (MANDATORY — no invented policies):
-- There is NO free-shipping threshold, NO "free over ₪300", NO flat delivery
-  promise. Shipping is a per-supplier fee shown at checkout, and delivery time
-  varies by supplier/origin. NEVER state a specific free-shipping amount or a
-  guaranteed number of delivery days you did not get from real order/supplier
-  data. If asked about shipping: say we ship across Israel, the exact cost and
-  time appear at checkout for the chosen part, and offer to find the part so
-  they can see real figures. Only cite a delivery window that came from actual
-  supplier/order data for a specific part — never a generic made-up one.
-- A shipping amount may be stated ONLY when it appears as that offer's shipping figure in the
-  catalog/order data of THIS conversation. Never a range, never a "typical" or "starting from"
-  amount. Without such a figure: the exact shipping cost appears at checkout.
+- Delivery to Israel is ALREADY INCLUDED in every part's total price. Each supplier offer has a known
+  delivery fee (from the supplier / our shipping integrations); the total we show for an offer is
+  part price + VAT (where applicable) + that delivery fee, and it is charged ONCE, together with the
+  part. There is no separate, later or extra shipping charge.
+- NEVER say shipping is "calculated at checkout", "known after payment", "added later" or "shown at
+  payment". If asked about shipping without a specific part: say delivery across Israel is included
+  in each part's total price, and offer to find the part for their car so they see the full price.
+- A delivery fee may be stated ONLY when it appears as that offer's shipping figure in the catalog/
+  order data of THIS conversation. Never a range, never a "typical" or "starting from" amount.
+- There is NO free-shipping threshold, NO "free over ₪300". Delivery TIME varies by supplier/origin:
+  cite a delivery window ONLY from actual supplier/order data for a specific part — never a generic
+  made-up one (no "usually 2-5 business days").
 
 VERIFY, DON'T ASSUME (MANDATORY — applies to every fact in every reply):
 - Never state a price, fitment, brand, stock status, policy, program, or delivery
@@ -1433,7 +1434,7 @@ def _shipping_fact_he(pricing: Dict[str, Any]) -> str:
     try:
         ship_f = float(ship)
     except (TypeError, ValueError):
-        return "משלוח: יוצג בקופה"
+        return "משלוח: כלול בסה\"כ"
     return f"{ship_f:.0f}₪ משלוח (להצעה זו)"
 
 
@@ -1446,21 +1447,21 @@ def _delivery_confirmed(pricing: Dict[str, Any]) -> bool:
 def _delivery_fact_he(pricing: Dict[str, Any]) -> str:
     if _delivery_confirmed(pricing):
         return f"אספקה: {int(pricing.get('estimated_delivery_days'))} ימים"
-    return "זמן אספקה: לא ידוע — יוצג בקופה"
+    return "זמן אספקה: אין הערכה להצעה זו"
 
 
 _SALES_RESULT_LABELS: Dict[str, Dict[str, str]] = {
     "he": {"query": "החלק שביקשת", "header": "בדקתי עבורך {query}. הנה {n} אופציות בהתאם לתקציב:",
            "in_stock": "✅ זמין", "on_order": "⏳ בהזמנה", "days": "ימים", "warranty": "חודשים אחריות",
-           "no_price": "מחיר לא זמין", "alt": "חלופה", "delivery_unknown": "זמן אספקה יוצג בקופה",
+           "no_price": "מחיר לא זמין", "alt": "חלופה", "delivery_unknown": "אין הערכת זמן אספקה להצעה זו",
            "cta_chat": "איזו אופציה מתאימה? אשלח לך לינק תשלום מאובטח.", "cta_web": "איזו אופציה בחרת? אוכל להמשיך לעגלה."},
     "ar": {"query": "القطعة التي طلبتها", "header": "فحصت لك {query}. إليك {n} خيارات حسب الميزانية:",
            "in_stock": "✅ متوفر", "on_order": "⏳ عند الطلب", "days": "أيام", "warranty": "أشهر ضمان",
-           "no_price": "السعر غير متوفر", "alt": "بديل", "delivery_unknown": "مدة التوصيل تظهر عند الدفع",
+           "no_price": "السعر غير متوفر", "alt": "بديل", "delivery_unknown": "لا يوجد تقدير لمدة التوصيل لهذا العرض",
            "cta_chat": "أي خيار يناسبك؟ سأرسل لك رابط دفع آمن.", "cta_web": "أي خيار اخترت؟ يمكنني المتابعة إلى السلة."},
     "en": {"query": "the part you asked for", "header": "I checked {query} for you. Here are {n} options by budget:",
            "in_stock": "✅ Available", "on_order": "⏳ On order", "days": "days", "warranty": "months warranty",
-           "no_price": "price not available", "alt": "Alternative", "delivery_unknown": "delivery time shown at checkout",
+           "no_price": "price not available", "alt": "Alternative", "delivery_unknown": "no delivery-time estimate for this offer",
            "cta_chat": "Which option suits you? I'll send you a secure payment link.", "cta_web": "Which option did you choose? I can continue to the cart."},
 }
 
@@ -1860,7 +1861,10 @@ class BaseAgent:
         """Calculate final customer price from supplier cost (USD).
         customer_shipping overrides the default SHIPPING_ILS delivery fee."""
         applied_rate = float(usd_to_ils_rate or USD_TO_ILS)
-        cost_ils = (supplier_price_usd + shipping_cost_usd) * applied_rate
+        # Shipping counted ONCE (2026-10-27): never inside the margin base; it is the delivery fee.
+        if customer_shipping is None and shipping_cost_usd:
+            customer_shipping = round(float(shipping_cost_usd) * applied_rate, 2)
+        cost_ils = supplier_price_usd * applied_rate
         price_no_vat = round(cost_ils * PROFIT_MARGIN, 2)
         applied_vat_rate = (
             get_supplier_vat_rate(supplier_name=supplier_name, supplier_country=supplier_country)
@@ -1890,8 +1894,16 @@ class BaseAgent:
         local_vat_only: bool = False,
     ) -> Dict[str, float]:
         """Calculate final customer price when supplier cost is already in ILS.
-        customer_shipping overrides the default SHIPPING_ILS delivery fee."""
-        total_cost_ils = cost_ils + shipping_cost_ils
+        customer_shipping overrides the default SHIPPING_ILS delivery fee.
+
+        SHIPPING IS COUNTED ONCE (2026-10-27, owner): total = cost×1.45 + conditional VAT + the offer's
+        delivery fee. Every caller passed the supplier's shipping BOTH as `shipping_cost_ils` (which was
+        added to the cost and marked up 45%) AND as `customer_shipping` — the chat search showed shipping
+        twice for ~60% of offers. When `customer_shipping` is given, `shipping_cost_ils` is ignored for
+        the price (it is the same money); it only applies as the delivery fee when nothing else is."""
+        if customer_shipping is None and shipping_cost_ils:
+            customer_shipping = float(shipping_cost_ils)
+        total_cost_ils = cost_ils
         price_no_vat = round(total_cost_ils * PROFIT_MARGIN, 2)
         applied_vat_rate = (
             get_supplier_vat_rate(supplier_name=supplier_name, supplier_country=supplier_country)
@@ -2968,7 +2980,7 @@ NEVER:
                     )
                 else:
                     supplier_total_ils = (
-                        float(sp_row.price_usd or 0) + float(sp_row.shipping_cost_usd or 0)
+                        float(sp_row.price_usd or 0)
                     ) * usd_to_ils_rate
                     pricing = self.calculate_customer_price_from_ils(
                         supplier_total_ils,
@@ -3933,7 +3945,7 @@ Business: מס' עוסק מורשה 060633880 | הרצל 55, עכו
 
 Price breakdown: only figures that appear in the order/catalog data of this conversation
 (net price + VAT exactly as given + that offer's shipping = total). Never quote a shipping range or an
-amount that is not in the data; otherwise say the exact cost appears at checkout.
+amount that is not in the data. Delivery is included in each part's total price (charged once).
 LANGUAGE: Reply in the customer's language (Hebrew, Arabic or English) — as named in the [REPLY LANGUAGE] block at the end of these instructions when present, otherwise the language the customer wrote in. One language per reply; OEM numbers, brand and model names stay as written.
 חשוב: אל תשתמש ב-HTML, markdown, או קישורים. ענה בטקסט רגיל בלבד המתאים לשיחת טלגרם.
 """
@@ -8173,7 +8185,7 @@ async def _process_user_message_impl(
                     _formatted_lines.append("")
                     # per-language labels for the price / shipping / warranty lines
                     _vat_label = {"he": 'כולל מע"מ ומשלוח', "ar": "شامل الضريبة والشحن", "en": "incl. VAT and shipping"}.get(_lang, "incl. VAT and shipping")
-                    _delivery_unknown = {"he": "זמן אספקה יוצג בקופה", "ar": "مدة التوصيل تظهر عند الدفع", "en": "delivery time shown at checkout"}.get(_lang, "delivery time shown at checkout")
+                    _delivery_unknown = {"he": "אין הערכת זמן אספקה", "ar": "لا يوجد تقدير لمدة التوصيل", "en": "no delivery-time estimate"}.get(_lang, "no delivery-time estimate")
                     _ship_word = {"he": "ימים", "ar": "أيام", "en": "days"}.get(_lang, "days")
                     _warr_tpl = {"he": "אחריות {m} חודשים", "ar": "ضمان {m} شهرًا", "en": "{m} months warranty"}.get(_lang, "{m} months warranty")
                     _pending_parts_payload: List[Dict[str, Any]] = []

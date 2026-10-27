@@ -194,9 +194,24 @@ def _url_allowed(url: str, grounding_blob: str) -> bool:
     return False
 
 
+# Shipping is part of every offer's total (owner rule 2026-10-27). A reply must never present the
+# delivery COST as unknown until checkout/payment — that reads as a second, later charge.
+_SAME_SENTENCE = r"[^.!?\n؟]{0,90}"
+_RE_SHIPPING_DEFERRED = re.compile(
+    r"(?:(?:shipping|delivery)\s+(?:cost|costs|fee|fees|price|charge|charges)|cost\s+of\s+(?:shipping|delivery))"
+    + _SAME_SENTENCE +
+    r"(?:at\s+checkout|during\s+checkout|at\s+(?:the\s+)?payment|after\s+(?:the\s+)?payment|on\s+the\s+payment\s+page|later|separately)"
+    r"|(?:עלות|מחיר|דמי)\s+(?:ה)?משלוח" + _SAME_SENTENCE +
+    r"(?:בקופה|בתשלום|לאחר\s+התשלום|אחרי\s+התשלום|בעמוד\s+התשלום|בסיום\s+ההזמנה|בנפרד|בהמשך)"
+    r"|(?:تكلفة|سعر|رسوم|أجرة)\s+(?:ال)?(?:شحن|توصيل)" + _SAME_SENTENCE +
+    r"(?:عند\s+الدفع|بعد\s+الدفع|عند\s+إتمام\s+الطلب|في\s+صفحة\s+الدفع|عند\s+الطلب|بشكل\s+منفصل|لاحقا|لاحقاً)",
+    re.IGNORECASE,
+)
+
+
 @dataclass
 class Violation:
-    kind: str          # "empty" | "ungrounded_amount" | "ungrounded_link"
+    kind: str          # "empty" | "ungrounded_amount" | "ungrounded_link" | "shipping_deferred"
     detail: str
 
 
@@ -210,6 +225,9 @@ def validate_customer_reply(reply: str, grounding_texts: Iterable[str]) -> List[
     for amount in currency_amounts(reply):
         if not _is_grounded(amount, grounded):
             violations.append(Violation("ungrounded_amount", f"{amount:g}"))
+    m_ship = _RE_SHIPPING_DEFERRED.search(reply or "")
+    if m_ship:
+        violations.append(Violation("shipping_deferred", m_ship.group(0)[:60]))
     blob = "\n".join(grounding)
     for m in _RE_URL.finditer(reply or ""):
         if not _url_allowed(m.group(0), blob):
@@ -236,11 +254,15 @@ def correction_note(violations: List[Violation]) -> str:
     parts = []
     if "ungrounded_amount" in kinds:
         parts.append("Your draft stated a price or shipping amount that is not in the data provided. "
-                     "Use ONLY amounts that appear in the catalog/order data of this conversation; if the "
-                     "amount is not there, say it is shown at checkout / cannot be confirmed right now.")
+                     "Use ONLY amounts that appear in the catalog/order data of this conversation. Delivery is "
+                     "already included in each part's total price; without a part, offer to find it.")
     if "ungrounded_link" in kinds:
         parts.append("Your draft contained a link that the system did not provide. Use only links "
                      "that appear in the data, or https://autosparefinder.co.il/cart.")
+    if "shipping_deferred" in kinds:
+        parts.append("Your draft said the shipping cost is known only at checkout/payment. That is wrong: "
+                     "delivery is already included in each part's total price and charged once with the part. "
+                     "Say that, and offer to find the part for the customer's car.")
     if "empty" in kinds:
         parts.append("Your draft was empty. Write the reply.")
     return "\n\n[SYSTEM NOTE] " + " ".join(parts) if parts else ""

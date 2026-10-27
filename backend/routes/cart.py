@@ -37,6 +37,7 @@ from routes.schemas import (
 )
 from routes.utils import _mask_supplier
 from routes.parts import _customer_unit_price, _current_part_offer, _customer_thumbnail_map
+from routes.orders import _order_line_pricing
 from offer_classification import class_rank_sql, offer_label
 
 router = APIRouter()
@@ -136,7 +137,22 @@ async def _cart_to_response(items: list, cat_db: AsyncSession) -> list:
             "offerPartType":  offer_label(part.part_type, sp.part_type),
             "isIlSupplier":   is_local_supplier(supplier.name, supplier.country),
             "stockAvailable": sp.stock_quantity if sp.stock_quantity is not None else 99,
+            # `price` already INCLUDES VAT (canonical customer unit price). Delivery is the offer's known
+            # fee, charged ONCE per supplier exactly like order creation (routes.orders._order_line_pricing).
+            "vatIncluded":    True,
+            "deliveryFee":    _order_line_pricing(sp, supplier, usd_to_ils_rate)[2],
         })
+    # One delivery fee per supplier (the max of that supplier's lines) on the supplier's first line,
+    # 0 on the rest — so the page's sum of `shippingCost` equals what checkout charges.
+    # `deliveryFee` is each line's own fee; clients charge it once per supplier (max) over the
+    # SELECTED lines — routes.orders charges exactly that.
+    seen: dict = {}
+    for r in result:
+        seen[r["supplierId"]] = max(seen.get(r["supplierId"], 0.0), r["deliveryFee"])
+    assigned: set = set()
+    for r in result:
+        r["shippingCost"] = round(seen[r["supplierId"]], 2) if r["supplierId"] not in assigned else 0.0
+        assigned.add(r["supplierId"])
     return result
 
 

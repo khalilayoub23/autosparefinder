@@ -1,4 +1,5 @@
 import { offerClassInfo, realSupplierPartId } from '../utils/offerClass'
+import { cartTotals } from '../utils/cartTotals'
 import { useState, useEffect, useRef } from 'react'
 import { useCartStore } from '../stores/cartStore'
 import { useAuthStore } from '../stores/authStore'
@@ -39,17 +40,12 @@ export default function Cart() {
   }, [items])
 
   const selectedItems = items.filter((i) => selectedSupplierPartIds.includes(i.supplierPartId))
-  const selectedSubtotal = selectedItems.reduce((sum, i) => sum + (Number(i.price) || 0) * (Number(i.quantity) || 0), 0)
-  const selectedVat = Math.round(
-    selectedItems.reduce((sum, i) => {
-      const lineTotal = (Number(i.price) || 0) * (Number(i.quantity) || 0)
-      return sum + (i.isIlSupplier ? lineTotal * 0.18 : 0)
-    }, 0) * 100
-  ) / 100
-  const selectedShipping = selectedItems.length > 0
-    ? selectedItems.reduce((sum, i) => sum + (i.shippingCost ?? 0), 0) || 91
-    : 0
-  const selectedTotal = Math.round((selectedSubtotal + selectedVat + selectedShipping) * 100) / 100
+  // One rule with the store and the backend charge: price includes VAT; delivery once per supplier.
+  const selTotals = cartTotals(selectedItems)
+  const selectedSubtotal = selTotals.subtotal
+  const selectedVat = selTotals.vat
+  const selectedShipping = selTotals.shipping
+  const selectedTotal = selTotals.total
   const selectedCount = selectedItems.reduce((sum, i) => sum + (Number(i.quantity) || 0), 0)
   const payableTotal = typeof pendingCheckoutTotal === 'number' ? pendingCheckoutTotal : selectedTotal
   const allSelected = items.length > 0 && selectedItems.length === items.length
@@ -374,9 +370,9 @@ export default function Cart() {
           </div>
 
           <div className="card p-5 space-y-2 text-sm">
-            <div className="flex justify-between text-gray-600"><span>סכום ביניים (נבחר)</span><span>₪{selectedSubtotal.toFixed(2)}</span></div>
-            <div className="flex justify-between text-gray-600"><span>מע״מ 18% (נבחר)</span><span>₪{selectedVat.toFixed(2)}</span></div>
-            <div className="flex justify-between text-gray-600"><span>משלוח (נבחר)</span><span>₪{selectedShipping.toFixed(2)}</span></div>
+            <div className="flex justify-between text-gray-600"><span>מחיר החלקים כולל מע״מ (נבחר)</span><span>₪{selectedSubtotal.toFixed(2)}</span></div>
+            <div className="flex justify-between text-gray-600"><span>מתוכו מע״מ (נבחר)</span><span>₪{selectedVat.toFixed(2)}</span></div>
+            <div className="flex justify-between text-gray-600"><span>משלוח — מחיר ידוע לכל ספק (נבחר)</span><span>₪{selectedShipping.toFixed(2)}</span></div>
             <div className="flex justify-between text-base font-bold text-brand-navy border-t border-gray-200 pt-2">
               <span>סה״כ לתשלום</span><span className="text-brand-600">₪{selectedTotal.toFixed(2)}</span>
             </div>

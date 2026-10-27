@@ -320,7 +320,7 @@ async def get_parts_by_brand(
                     local_vat_only=True,
                 )
             else:
-                usd_total = float(sp_row.price_usd or 0) + float(sp_row.shipping_cost_usd or 0)
+                usd_total = float(sp_row.price_usd or 0)  # shipping is the delivery fee, never in the margin base
                 pricing = agent.calculate_customer_price_from_ils(
                     usd_total * usd_to_ils_rate,
                     0.0,
@@ -558,7 +558,7 @@ async def get_parts_by_truck_brand(
                     local_vat_only=True,
                 )
             else:
-                usd_total = float(sp_row.price_usd or 0) + float(sp_row.shipping_cost_usd or 0)
+                usd_total = float(sp_row.price_usd or 0)  # shipping is the delivery fee, never in the margin base
                 pricing = agent.calculate_customer_price_from_ils(
                     usd_total * usd_to_ils_rate,
                     0.0,

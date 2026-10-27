@@ -460,8 +460,8 @@ def test_language_block_survives_groq_fit():
     """Groq fitting (policy_guard.fit_request) may shorten guidance/history, never the language block."""
     import policy_guard as pg
     system = A._apply_channel_policy(A.SalesAgent.system_prompt, "whatsapp") + rl.language_directive("ar")
-    history = "\n".join(f"user: {'רפידות בלם לקורולה ' * 30}" for _ in range(60))
-    s2, p2, info = pg.fit_request(system, history + "\nuser: " + MSG["ar"], 3500)
+    history = "\n".join(f"user: {'רפידות בלם לקורולה ' * 30}" for _ in range(80))
+    s2, p2, info = pg.fit_request(system, history + "\nuser: " + MSG["ar"], hf_client._GROQ_INPUT_BUDGET)
     assert rl.DIRECTIVE_HEADER in s2 and rl.NAMES["ar"] in s2
     assert p2.endswith(MSG["ar"]) and info.history_lines_dropped > 0
 

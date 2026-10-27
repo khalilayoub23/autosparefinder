@@ -8536,3 +8536,43 @@ e2e network); live Groq calls from a throwaway container with no DB access.
 - **Latency (owner #5, documented only):** DeepInfra gpt-oss-120b live: p50 5.5 s, max 14.7 s (24 calls); production
   samples 10.6 s and 25.3 s; brain turns 0.1–43.5 s in the chat test (one 43.5 s Arabic turn). DeepSeek-V4.1-Flash on
   DeepInfra: p50 1.5 s, max 4.5 s at ~5× token cost (24/24 correct). Fast agents have a 28 s cap → localized fallback.
+
+## 2026-10-27 — Shipping is INCLUDED in every price and charged ONCE (web-cart double charge, chat price, cart page, agents' wording) — DEPLOYED 13:23 Israel
+
+- **Owner:** agents told customers shipping "appears at checkout / after payment" — wrong and dangerous ("we must not charge
+  the client twice"); suppliers' shipping fees are known and added to the part price.
+- **Rule (one, everywhere):** total = cost×1.45 + conditional VAT + that offer's delivery fee
+  (`resolve_customer_shipping_fee`: supplier shipping, else supplier profile), counted ONCE, never marked up.
+  Canonical: `routes/parts._customer_price_fields` (search/compare) and `create_whatsapp_checkout` already did this.
+- **Root causes found (verified in code + live data: 915,293 of 1,519,166 available priced offers carry supplier shipping):**
+  1. `routes/orders.create_order` (web cart charge): unit price = (cost + supplier shipping)×1.45 AND a separate per-supplier
+     fee (`get_supplier_shipping`, ₪59 default) → shipping charged twice. Before/after on a disposable DB (same 2 items):
+     deployed code subtotal ₪333.50, fixed ₪217.50 (+ VAT + one ₪45 fee). Historical web orders with such items: 3
+     (2026-04-17, ₪152.01 each: 1 confirmed, 1 delivered, 1 pending) — whether they were overcharged is UNVERIFIED (owner).
+  2. `BaseAgent.calculate_customer_price_from_ils` (chat search + `routes/parts` identify + `routes/brands` pages, 8 call
+     sites) put supplier shipping into the margin base AND as the delivery fee; 4 USD call sites added `shipping_cost_usd`
+     into the cost. Fixed at the helper (shipping never in the margin base) + the 4 call sites; USD helper too.
+  3. Web cart page/store: the cart API price already INCLUDES VAT (`_customer_unit_price`, since 2026-09-21) but the page
+     added 18% again (store: flat 18% on every item) and showed an invented ₪91 when no shipping field was sent.
+  4. Wording: SHIPPING TRUTH said "a per-supplier fee shown at checkout"; templates/labels said "יוצג בקופה".
+- **Fix:** `routes/orders._order_line_pricing` (same rule as checkout/search; one fee per supplier = max); helper fix;
+  cart API adds `vatIncluded`, `deliveryFee` (per line), `shippingCost` (once per supplier); frontend
+  `utils/cartTotals.js` shared by store + Cart page (VAT shown as contained, delivery once per supplier, no fallback fee);
+  SHIPPING TRUTH rewritten (included, charged once, never "at checkout/after payment"); fixed texts; `policy_guard`
+  violation `shipping_deferred` (he/ar/en, cost phrase deferred to checkout/payment in the same sentence) → one corrective
+  retry → localized fallback.
+- **Eurosender (re-verified):** used only in post-payment fulfillment, `EUROSENDER_SUPPLIER_ALLOWLIST` empty — it does not
+  price customer shipping; supplier shipping (`supplier_parts.shipping_cost_ils`, e.g. Sendcloud/eBay/RockAuto sync) does.
+- **Tests:** `test_shipping_included.py` (parity of every path, cart API, guard, agent correction in 3 languages);
+  `test_order_shipping_e2e.py` (real `create_order` on a disposable DB; FAILS on the deployed code: ₪333.50 vs ₪217.50);
+  frontend cart math 6/6 (Node, real `cartTotals.js`); frontend test build OK. Updated: `test_cart_vat` (VAT contained),
+  three earlier tests that asserted the old "shown at checkout" wording. Suites: 560 passed (language/policy/shipping);
+  broad regression identical to the deployed baseline except those intended updates; DB E2E: customer flow 33/33,
+  checkout-idempotency + side-effects + WhatsApp late-reply 33/33.
+- **Deploy:** backend recreated 13:22 (preflight SAFE), frontend image rebuilt + recreated 13:23 Israel, both healthy.
+- **Live verification:** public site serves the new Cart chunk (deliveryFee present, 0 × `||91`); 3 real offers with
+  supplier shipping: order = search = chat total (e.g. cost ₪72.31 + ship ₪114.17 → ₪219.02; old order math ≈ ₪384.57);
+  cart API returns price (VAT incl.) + deliveryFee + shippingCost; live chat 4/4 (ar/he/en + "is shipping charged
+  separately after I pay?") answer "delivery is included in each part's price, not a separate charge".
+- **Rollback:** copy back `rollback_live_ship_20261027T1121/` (and delete the 3 new files listed in NEW_FILES.txt), restart
+  backend, rebuild + recreate frontend.

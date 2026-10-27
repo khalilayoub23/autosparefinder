@@ -1,3 +1,4 @@
+import { cartTotals } from '../utils/cartTotals'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
@@ -40,16 +41,7 @@ export const useCartStore = create(
 
       clear: () => set({ items: [] }),
 
-      totals: () => {
-        const items = Array.isArray(get().items) ? get().items : []
-        const subtotal = items.reduce((sum, i) => sum + (Number(i.price) || 0) * (Number(i.quantity) || 0), 0)
-        const vat = Math.round(subtotal * 0.18 * 100) / 100
-        const shipping = items.length > 0
-          ? items.reduce((sum, i) => sum + (i.shippingCost ?? 0), 0) || 91
-          : 0
-        const total = Math.round((subtotal + vat + shipping) * 100) / 100
-        return { subtotal: Math.round(subtotal * 100) / 100, vat, shipping, total, count: items.reduce((s, i) => s + (Number(i.quantity) || 0), 0) }
-      },
+      totals: () => cartTotals(get().items),
     }),
     {
       name: 'cart-store',

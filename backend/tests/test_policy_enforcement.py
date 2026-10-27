@@ -80,11 +80,11 @@ def test_range_removed_from_every_runtime_source():
 @pytest.mark.parametrize("pricing,expected", [
     ({"shipping": 35.0}, "35₪ משלוח (להצעה זו)"),
     ({"shipping": 0.0}, "0₪ משלוח (להצעה זו)"),
-    ({}, "משלוח: יוצג בקופה"),
-    ({"shipping": None}, "משלוח: יוצג בקופה"),
-    ({"shipping": "n/a"}, "משלוח: יוצג בקופה"),
+    ({}, 'משלוח: כלול בסה"כ'),                      # owner 2026-10-27: included, never "at checkout"
+    ({"shipping": None}, 'משלוח: כלול בסה"כ'),
+    ({"shipping": "n/a"}, 'משלוח: כלול בסה"כ'),
 ])
-def test_shipping_fact_is_the_offer_figure_or_checkout(pricing, expected):
+def test_shipping_fact_is_the_offer_figure_or_included(pricing, expected):
     assert A._shipping_fact_he(pricing) == expected
 
 
@@ -98,7 +98,7 @@ def test_shipping_fact_is_the_offer_figure_or_checkout(pricing, expected):
 def test_delivery_placeholder_never_presented_as_estimate(pricing, confirmed):
     assert A._delivery_confirmed(pricing) is confirmed
     text = A._delivery_fact_he(pricing)
-    assert ("יוצג בקופה" in text) is (not confirmed)
+    assert ("אין הערכה" in text) is (not confirmed)
 
 
 OFFERS = [
@@ -125,7 +125,7 @@ async def test_parts_finder_context_carries_per_offer_shipping_not_range(fake, m
     system = f.calls[0]["system"]
     assert "35₪ משלוח (להצעה זו)" in system and "59₪ משלוח (להצעה זו)" in system   # each offer its own figure
     assert not re.search(r"29\s*[-–]\s*149", system)
-    assert "זמן אספקה: לא ידוע" in system and "אספקה: 6 ימים" in system           # placeholder not presented
+    assert "זמן אספקה: אין הערכה להצעה זו" in system and "אספקה: 6 ימים" in system   # placeholder not presented
     assert out.startswith("רפידות TRW")                                           # grounded reply passes
 
 

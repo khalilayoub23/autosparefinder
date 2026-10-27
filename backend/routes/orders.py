@@ -31,6 +31,29 @@ from routes.schemas import OrderCreate, OrderCancelRequest, ReturnRequest
 from routes.stripe_config import resolve_stripe_secret_key, is_valid_stripe_secret_key
 from routes.utils import _mask_supplier, _guarded_task, trigger_supplier_refund
 
+def _order_line_pricing(sp, supplier_rec, usd_to_ils_rate: float):
+    """(unit_price ex-VAT, VAT per unit, delivery fee) for one supplier offer — the SAME rule as the
+    search/compare price (`routes.parts._customer_price_fields`), the chat price and the WhatsApp
+    checkout (`create_whatsapp_checkout`): unit = cost×1.45, conditional VAT, and the offer's known
+    delivery fee (`resolve_customer_shipping_fee`: supplier shipping, else the supplier profile).
+
+    ROOT FIX 2026-10-27 (owner: "we must not charge the client twice"): this endpoint used to put the
+    supplier's shipping INTO the unit price (×1.45) AND add a separate per-supplier fee — shipping was
+    charged twice on every offer that carries supplier shipping (~60% of offers)."""
+    from BACKEND_AI_AGENTS import get_supplier_vat_rate, resolve_customer_shipping_fee
+    cost_ils = float(sp.price_ils or 0) or (float(sp.price_usd or 0) * float(usd_to_ils_rate or 0))
+    unit_price = round(cost_ils * 1.45, 2)
+    vat = round(unit_price * get_supplier_vat_rate(supplier_rec.name or "", supplier_rec.country or ""), 2)
+    delivery_fee = round(resolve_customer_shipping_fee(
+        supplier_shipping_ils=sp.shipping_cost_ils,
+        supplier_shipping_usd=sp.shipping_cost_usd,
+        usd_to_ils_rate=usd_to_ils_rate,
+        supplier_name=supplier_rec.name,
+        supplier_country=supplier_rec.country,
+    ), 2)
+    return unit_price, vat, delivery_fee
+
+
 router = APIRouter()
 
 
@@ -138,7 +161,7 @@ async def create_order(
     db: AsyncSession = Depends(get_pii_db),
     redis=Depends(get_redis),
 ):
-    from BACKEND_AI_AGENTS import get_supplier_shipping as _get_ship2, get_supplier_vat_rate as _get_vat_rate2
+    from BACKEND_AI_AGENTS import get_supplier_vat_rate as _get_vat_rate2
 
     if not data.items:
         raise HTTPException(status_code=400, detail="לא ניתן ליצור הזמנה ללא פריטים")
@@ -202,14 +225,10 @@ async def create_order(
             if not row:
                 raise HTTPException(status_code=404, detail=f"חלק {item.supplier_part_id} לא נמצא. נסה לרענן את הדף ולהוסיף את החלק מחדש לסל.")
             sp, part, supplier_rec = row
-            cost_ils = float(sp.price_ils or 0) or (float(sp.price_usd or 0) * usd_to_ils_rate)
-            ship_ils = float(sp.shipping_cost_ils or 0)
-            total_cost_ils = cost_ils + ship_ils
-            delivery_fee = _get_ship2(supplier_rec.name or "", supplier_rec.country or "")
-            supplier_vat_rate = _get_vat_rate2(supplier_rec.name or "", supplier_rec.country or "")
-            supplier_delivery_fees[str(supplier_rec.id)] = delivery_fee
-            unit_price = round(total_cost_ils * 1.45, 2)
-            vat = round(unit_price * supplier_vat_rate, 2)
+            unit_price, vat, delivery_fee = _order_line_pricing(sp, supplier_rec, usd_to_ils_rate)
+            # one delivery fee per supplier (the order ships once from each supplier)
+            _sk = str(supplier_rec.id)
+            supplier_delivery_fees[_sk] = max(supplier_delivery_fees.get(_sk, 0.0), delivery_fee)
             subtotal += unit_price * item.quantity
             vat_total += vat * item.quantity
             items_data.append(

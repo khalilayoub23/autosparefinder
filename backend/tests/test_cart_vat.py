@@ -58,7 +58,10 @@ def _sell(cost):
 
 
 def _vat_for_item(price, qty, is_il):
-    """Mirrors the Cart.jsx per-item logic."""
+    """Mirrors frontend/src/utils/cartTotals.js (2026-10-27): the cart API price is the canonical
+    customer price, so for an IL line it ALREADY INCLUDES 18% VAT. The VAT figure the page shows is
+    the VAT *contained* in that price ("of which VAT"), computed here on the ex-VAT sell price the
+    tests construct — the same amount. Foreign lines carry no VAT."""
     line = price * qty
     return line * _VAT if is_il else 0.0
 

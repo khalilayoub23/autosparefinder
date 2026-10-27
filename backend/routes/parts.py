@@ -3892,7 +3892,7 @@ async def compare_parts(part_id: str, db: AsyncSession = Depends(get_db), reques
                 local_vat_only=True,
             )
         else:
-            usd_total = float(sp.price_usd or 0) + float(sp.shipping_cost_usd or 0)
+            usd_total = float(sp.price_usd or 0)  # shipping is the delivery fee, never in the margin base
             pricing = agent.calculate_customer_price_from_ils(
                 usd_total * usd_to_ils_rate,
                 0.0,

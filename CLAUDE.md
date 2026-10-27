@@ -143,6 +143,10 @@ Rules:
 - **`importer_price_ils` guard**: in every ON CONFLICT DO UPDATE use
   `CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END`.
   Never hardcode `importer_price_ils = 0` or `= EXCLUDED.importer_price_ils` without the guard.
+- **Shipping is INCLUDED and charged ONCE (owner 2026-10-27).** total = cost×1.45 + conditional VAT + the offer's
+  delivery fee (`resolve_customer_shipping_fee`), never inside the margin base, one fee per supplier per order
+  (`routes/orders._order_line_pricing`). Agents never say shipping is known "at checkout/after payment"
+  (`policy_guard` `shipping_deferred`). Guarded by `tests/test_shipping_included.py`, `test_order_shipping_e2e.py`.
 - **One canonical price function**: `_customer_price_fields` (routes/parts.py). Every surface —
   search, chat, checkout, NOA — consumes it. No per-channel price formulas.
   Formula: `sell = cost × 1.45`, `vat = sell × 0.18 (IL only)`, `total = sell + vat + ship`.
