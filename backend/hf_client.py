@@ -435,6 +435,67 @@ async def _cerebras_call(
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
+# ── HF Router primary (2026-10-27) ───────────────────────────────────────────
+# LLM_PRIMARY_PROVIDER=hf  → gpt-oss calls go to HF Router first (provider pinned by
+#                            HF_PRIMARY_PROVIDER, default deepinfra — cheapest live
+#                            gpt-oss-120b on HF: $0.037 in / $0.17 out per 1M tokens).
+# LLM_PRIMARY_PROVIDER=cerebras → old behaviour (Cerebras first).
+# Only gpt-oss model names are routed; any other model keeps the Cerebras path.
+LLM_PRIMARY_PROVIDER = os.getenv("LLM_PRIMARY_PROVIDER", "hf").strip().lower()
+# CEREBRAS_ENABLED=0 → never call Cerebras; HF failure goes straight to Groq.
+# (Keep CEREBRAS_API_KEY set: BACKEND_AI_AGENTS mocks every reply when it is missing.)
+CEREBRAS_ENABLED     = os.getenv("CEREBRAS_ENABLED", "1").strip() not in ("0", "false", "no", "off")
+HF_PRIMARY_PROVIDER  = os.getenv("HF_PRIMARY_PROVIDER", "deepinfra").strip()
+_HF_PRIMARY_COOLDOWN = int(os.getenv("HF_PRIMARY_COOLDOWN_S", "300"))
+_hf_primary_down_until: float = 0.0
+
+
+def _hf_primary_model(selected_model: str) -> "str | None":
+    name = selected_model.split(":")[0]
+    if "gpt-oss" not in name:
+        return None
+    if "/" not in name:
+        name = f"openai/{name}"
+    return f"{name}:{HF_PRIMARY_PROVIDER}" if HF_PRIMARY_PROVIDER else name
+
+
+async def _hf_primary_text(selected_model: str, body: dict, timeout: float, priority: bool) -> "str | None":
+    """Try the HF Router primary. Returns text, or None so the caller falls back to Cerebras."""
+    global _hf_primary_down_until
+    if LLM_PRIMARY_PROVIDER != "hf" or not HF_TOKEN or _time.time() < _hf_primary_down_until:
+        return None
+    hf_model = _hf_primary_model(selected_model)
+    if not hf_model:
+        return None
+    payload = _json.dumps({**body, "model": hf_model}, ensure_ascii=False).encode()
+    sem = _PRIORITY_SEMAPHORE if priority else _BG_SEMAPHORE
+    await sem.acquire()
+    try:
+        resp = await _post_with_retry(
+            f"{ROUTER_BASE}/chat/completions",
+            {"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json"},
+            payload, timeout, f"hf_primary/{hf_model}",
+        )
+    except Exception as exc:
+        logger.warning("hf_text: HF primary %s error (%s) — falling back", hf_model, type(exc).__name__)
+        return None
+    finally:
+        sem.release()
+    if resp.status_code != 200:
+        if resp.status_code in (401, 402, 403, 429):
+            # credits exhausted / auth / rate limit — stop paying the latency for a while
+            _hf_primary_down_until = _time.time() + _HF_PRIMARY_COOLDOWN
+        logger.warning("hf_text: HF primary %s HTTP %s — falling back", hf_model, resp.status_code)
+        return None
+    # content ONLY — never the reasoning field (that is chain-of-thought; an empty
+    # content means the budget ran out mid-reasoning → let Cerebras answer instead).
+    try:
+        text = (resp.json()["choices"][0]["message"].get("content") or "").strip()
+    except Exception:
+        return None
+    return text or None
+
+
 async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority: bool = False, model: str | None = None, max_tokens: int = 2000, temperature: "float | None" = None, reasoning_effort: "str | None" = None, skip_fallback_model: bool = False) -> str:
     """Chat completion via HF Router. Cached in Redis for _TEXT_CACHE_TTL seconds.
     priority=True bypasses the background-job semaphore (use for webhook/realtime calls).
@@ -442,7 +503,7 @@ async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority
     spend part of the budget on chain-of-thought before the answer; 1000 was
     too small for JSON campaign plans (found 2026-07-05).
     """
-    if not CEREBRAS_API_KEY:
+    if not CEREBRAS_API_KEY and not (HF_TOKEN and LLM_PRIMARY_PROVIDER == "hf"):
         raise RuntimeError("CEREBRAS_API_KEY not set in .env")
 
     selected_model = (model or CEREBRAS_TEXT_MODEL).strip()
@@ -476,6 +537,26 @@ async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority
     if reasoning_effort:
         _body["reasoning_effort"] = reasoning_effort
     payload = _json.dumps(_body, ensure_ascii=False).encode()
+
+    # PRIMARY (owner decision 2026-10-27): gpt-oss via HF Router pinned to DeepInfra —
+    # same model as Cerebras at ~1/10 the price, and no Cerebras 429 storms. Any failure
+    # falls through to the Cerebras chain below unchanged.
+    _hf_result = await _hf_primary_text(selected_model, _body, timeout, priority)
+    if _hf_result is not None:
+        _hf_result = _clean_response(_hf_result)
+        await _cache_set(cache_key, _hf_result, _TEXT_CACHE_TTL)
+        return _hf_result
+    if not CEREBRAS_ENABLED or not CEREBRAS_API_KEY:
+        # Owner decision 2026-10-27: Cerebras OFF → Groq is the fallback.
+        if not GROQ_API_KEY:
+            raise RuntimeError("HF primary failed, Cerebras disabled and GROQ_API_KEY not set")
+        logger.warning("hf_text: HF primary failed — falling back to GROQ openai/gpt-oss-120b")
+        try:
+            result = await groq_text(prompt=prompt, system=system, timeout=timeout, model="openai/gpt-oss-120b")
+        except Exception as _groq_err:
+            logger.warning("hf_text: GROQ gpt-oss-120b failed (%s) — trying %s", _groq_err, os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"))
+            result = await groq_text(prompt=prompt, system=system, timeout=timeout)
+        return _clean_response(result)
 
     resp = None
     status = 402                     # billing breaker open: treat as the 402 path, no request

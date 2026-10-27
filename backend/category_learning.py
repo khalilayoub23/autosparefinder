@@ -623,6 +623,12 @@ async def reject(db, token: str) -> dict:
         # Nothing to reject: do NOT add it to the rejected set or run undo_keyword (#72) — before, a
         # mistyped/partial token was blocked from ever being learned until the next restart.
         return {"ok": False, "error": "not_found", "token": tok}
+    # Only an APPROVED keyword ever moved a part (_bulk_apply_new_keywords loads approved tokens only), so only
+    # then is there anything to undo. undo_keyword is a sequential scan of the whole catalogue (no index on
+    # category_by): running it for every pending word made rejecting the 2,600-word backlog take hours (#114).
+    was_live = bool((await db.execute(text(
+        "SELECT 1 FROM category_learned_keywords WHERE token = :t AND status = 'approved' LIMIT 1"
+    ), {"t": tok})).scalar())
     res = await db.execute(text(
         "UPDATE category_learned_keywords SET status='rejected', updated_at=NOW() "
         "WHERE token = :t"
@@ -632,7 +638,8 @@ async def reject(db, token: str) -> dict:
     category_map.LEARNED.pop(tok, None)
     # If this keyword had already been approved and applied, put its parts back.
     # Rejecting a live rule must undo its effect, not merely stop future ones.
-    reverted = await undo_keyword(db, tok)
+    if was_live:
+        await undo_keyword(db, tok)
     category_map._build_flat_rules()
     return {"ok": bool(res.rowcount), "token": tok}
 

@@ -666,6 +666,36 @@ async def task3c_embed_assist(limit: int = 400) -> int:
         return 0
 
 
+def _daily_keyword_batch_enabled() -> bool:
+    return os.getenv("OWNER_KEYWORD_DAILY_BATCH", "1").strip().lower() in ("1", "true", "yes", "on")
+
+
+_KW_DAILY_KEY = "autospare:owner:kw_daily_sent"
+
+
+async def _send_daily_keyword_batch(pending: list, *, now_ts: float, redis_client) -> dict:
+    """Owner rule 2026-10-27 (#114): "message all the words till we finish them". Once per Israel day, while words
+    wait, send the NEXT numbered batch (owner_console._keywords_list(advance=True): words not shown yet in this pass),
+    so every waiting word reaches the owner and the backlog shrinks by batch actions. Not a re-announcement (#71):
+    each day's message is different words. Goes through notify_owner (quiet hours, updates group)."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    day = datetime.fromtimestamp(now_ts, ZoneInfo("Asia/Jerusalem")).strftime("%Y-%m-%d")
+    plan = {"send": None, "total": len(pending), "day": day}
+    if not pending or not os.getenv("OWNER_WHATSAPP_PHONE", ""):
+        return plan
+    if await redis_client.get(_KW_DAILY_KEY) == day:
+        return plan
+    from agents import owner_console as _oc
+    from BACKEND_API_ROUTES import notify_owner
+    body = await _oc._keywords_list(advance=True)
+    res = await notify_owner("harvest", f"מילות סיווג לאישורך — {len(pending):,} ממתינות", body, severity="info")
+    if (res or {}).get("ok"):
+        await redis_client.set(_KW_DAILY_KEY, day, ex=3 * 86400)
+        plan["send"] = "batch"
+    return plan
+
+
 async def _notify_owner_pending_keywords(pending: list, *, now_ts: float | None = None, redis_client=None) -> dict:
     """
     Tell the owner about learned keywords waiting for approval — honestly (#71).
@@ -684,6 +714,8 @@ async def _notify_owner_pending_keywords(pending: list, *, now_ts: float | None 
         if redis_client is None:
             from BACKEND_AUTH_SECURITY import get_redis
             redis_client = await get_redis()
+        if _daily_keyword_batch_enabled():
+            return await _send_daily_keyword_batch(pending, now_ts=now_ts, redis_client=redis_client)
         current = {p["token"]: p.get("since") for p in pending}
         state = await _nb.load_state(redis_client, "keywords")
         plan = _nb.backlog_plan(current, state["announced"], last_reminder_ts=state["reminded_at"], now_ts=now_ts,

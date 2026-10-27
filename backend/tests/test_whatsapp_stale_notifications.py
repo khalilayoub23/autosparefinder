@@ -84,6 +84,7 @@ def test_keyword_alert_never_calls_old_tokens_new(monkeypatch):
     monkeypatch.setattr(cl, "evidence_profile", fake_evidence)
     monkeypatch.setattr(dca, "scraper_session_factory", lambda: _Db())
     monkeypatch.setenv("OWNER_WHATSAPP_PHONE", "+972500000001")
+    monkeypatch.setenv("OWNER_KEYWORD_DAILY_BATCH", "0")   # the #71 announce/remind mode (#114 batches are default)
     kind = f"keywords"
     tag = uuid.uuid4().hex[:8]
     monkeypatch.setattr(nb, "_key", lambda k, part: f"test:{tag}:{k}:{part}")

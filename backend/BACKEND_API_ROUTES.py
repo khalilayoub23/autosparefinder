@@ -4843,6 +4843,7 @@ async def _noa_marketing_loop():
                     _gen_prompt = post_prompt
                     caption = ""
                     _gate_failed = True
+                    _reason = ""
                     for _attempt in range(3):
                         raw_post = await _hf_text(prompt=_gen_prompt, system=_noa_system, timeout=90.0, max_tokens=1500, temperature=noa.temperature, reasoning_effort="low")
                         _candidate = noa._finalize_noa_post(raw_post, platforms=_configured)
@@ -4867,7 +4868,8 @@ async def _noa_marketing_loop():
                     # has stopped producing posts.
                     _streak_key = "autospare:noa:coherence_fail_streak"
                     if _gate_failed:
-                        logger.error("noa_marketing_loop: coherence gate failed 3/3 attempts — skipping this cycle")
+                        logger.error("noa_marketing_loop: coherence gate failed 3/3 attempts — skipping this cycle "
+                                     "(last reason: %s)", (_reason or "")[:200])
                         _streak = 0
                         try:
                             _rs = await get_redis()
@@ -4881,7 +4883,8 @@ async def _noa_marketing_loop():
                                 "social",
                                 f"NOA לא פרסמה {_streak} מחזורים ברצף",
                                 f"שער הבדיקה דחה את כל הניסיונות ב-{_streak} המחזורים האחרונים "
-                                f"(אחרון: {heb_part} — {car}). כנראה בעיה במודל או בשער — כדאי לבדוק.",
+                                f"(אחרון: {heb_part} — {car}).\n"
+                                f"סיבת הדחייה האחרונה: {(_reason or 'לא ידועה')[:200]}",
                                 severity="warning",
                                 alert_key="noa_coherence_gate_streak",
                                 cooldown_s=86400,

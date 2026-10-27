@@ -792,6 +792,7 @@ _HELP = (
     "*פקודות מהירות:*\n"
     "• *סטטוס* — סקירת מערכת חיה\n"
     "• *שאיבה* — התקדמות שאיבת הקטלוג\n"
+    "• *הזמנות* — הזמנות אמיתיות פתוחות שאולי דורשות טיפול שלך\n"
     "• *פוסטים* — פוסטים של NOA שממתינים לאישור\n"
     "• *אשר [מזהה]* / *דחה [מזהה]* — אשר/דחה פוסט\n"
     "• *קמפיין [נושא]* — SHIRA בונה קמפיין, NOA מייצרת תוכן לאישורך\n"
@@ -801,7 +802,8 @@ _HELP = (
     "• *ענה [מזהה]* / *דלג [מזהה]* — שלח את תשובת NOA / דלג\n"
     "• *הנחיות* — ההנחיות הקבועות שנתת ל-NOA\n"
     "• *ספקים* — ספקים חדשים ש-NIR מצא וממתינים לאישור\n"
-    "• *מילים* — מילות סיווג חדשות שהמערכת למדה וממתינות לאישורך\n"
+    "• *מילים* — מילות סיווג שממתינות לאישורך, ברשימות ממוספרות · *מילים הבא* — הרשימה הבאה\n"
+    "• *אשרהכל* / *דחההשאר* — לאשר את המילים ✅ ברשימה / לדחות את השאר · *אשרמילה 3 7* — לפי מספר\n"
     "• *מודל* — מצב מנוע הסיווג: אילו סוגי טקסט הוכיחו דיוק\n"
     "• *תור* — תור המשימות הכבדות: מה רץ, כמה נותר (נמדד מה-DB)\n"
     "• *עצור* / *המשך* — עצירה בטוחה של התור (בסוף המנה) והמשך\n"
@@ -922,6 +924,89 @@ def _detect_connect_intent(message: str) -> "tuple[str, list[str]] | None":
 _SAVE_INTENT = re.compile(
     r"תשמר|שמר[יי]?|נוהל|הנחי|מעכשיו|מעתה|תמיד תפרסמ|save|remember|guideline|from now",
     re.I)
+
+# NATURAL-LANGUAGE requests for data the console HAS (#113, 2026-10-26). The owner asked
+# "רשימת מילים לאישור" / "תבדוק מול המערכת איזה מילים מצריכות אישור" (23/10) and, replying to an
+# orders alert, "תאמת את ההזמנות" (25/10). None is an exact command, so each fell to the chat LLM,
+# which has no access to that data and answered "I don't have it" five times in a row — the
+# capability existed one exact word away (*מילים*), and for orders it did not exist at all.
+# Same rule as _CONNECT_INTENT_RE: when the request is clear, run the real command instead of
+# letting an agent describe one. Narrow by design: a topic word AND an ask word must both appear,
+# and the mapping never applies to an @agent message, a directive, or an approve/reject command.
+_NL_TOPICS = (
+    ("מילים", ("מילים", "מילות סיווג", "מילות מפתח", "מילה ", "keywords", "words")),
+    ("פוסטים", ("פוסטים", "פוסט ", "posts")),
+    ("הזמנות", ("הזמנות", "הזמנה", "orders", "order ")),
+)
+_NL_ASK = ("אישור", "לאשר", "ממתינ", "רשימ", "תבדוק", "בדוק", "תאמת", "לאמת", "אמת ", "מצריכ", "צריכ",
+           "טיפול", "תקוע", "תראה", "הראה", "תציג", "איזה", "אילו", "מה המצב", "pending", "approve",
+           "list", "check", "verify", "show")
+_NL_SKIP_RE = re.compile(r"^\s*(אשר|דחה|ענה|דלג|approve|reject)", re.I)
+_NL_CREATE_RE = re.compile(r"תכתב|תכינ|כתב[יו]|צר[יו] |תיצר|write|create|draft", re.I)
+
+
+def _natural_command(message: str) -> "str | None":
+    """The deterministic command a plain-language owner request maps to, or None."""
+    m = (message or "").strip()
+    if not m or _NL_SKIP_RE.match(m) or _SAVE_INTENT.search(m) or _CONNECT_INTENT_RE.search(m):
+        return None
+    if _pick_agent(m)[2]:
+        return None
+    low = m.lower() + " "
+    if not any(a in low for a in _NL_ASK):
+        return None
+    for cmd, words in _NL_TOPICS:
+        if any(w in low for w in words):
+            if cmd == "פוסטים" and _NL_CREATE_RE.search(m):
+                return None          # "write a post for approval" is work for NOA, not the pending list
+            return cmd
+    return None
+
+
+async def _orders_attention() -> str:
+    """Open orders (confirmed/paid/processing) that may need the owner, from the PII DB. Read-only.
+    In production only REAL orders count (order_payment_policy, #111): a live-mode paid Stripe payment and
+    a non-test customer; the rest are reported as a count, never as customer orders."""
+    from datetime import datetime as _dt
+    from sqlalchemy import select as _sel
+    import order_payment_policy as _pol
+    from BACKEND_DATABASE_MODELS import pii_session_factory as _psf, Order as _O, SupplierPayment as _SP
+    open_st = ["confirmed", "paid", "processing"]
+    try:
+        async with _psf() as pdb:
+            all_open = (await pdb.execute(_sel(_O).where(_O.status.in_(open_st))
+                                          .order_by(_O.created_at))).scalars().all()
+            if _pol.production_enforced():
+                real_ids = set((await pdb.execute(_sel(_O.id).where(
+                    _O.status.in_(open_st), _O.id.in_(_pol.live_paid_order_ids()),
+                    ~_O.user_id.in_(_pol.test_customer_user_ids())))).scalars().all())
+            else:
+                real_ids = {o.id for o in all_open}
+            real = [o for o in all_open if o.id in real_ids]
+            sp: dict = {}
+            if real:
+                for oid, st in (await pdb.execute(_sel(_SP.order_id, _SP.status).where(
+                        _SP.order_id.in_([o.id for o in real])))).all():
+                    sp.setdefault(oid, []).append(st)
+    except Exception as e:
+        return f"⚠️ שגיאה בקריאת ההזמנות: {type(e).__name__}"
+    other = len(all_open) - len(real)
+    if not real:
+        lines = ["📦 *הזמנות:* אין הזמנות אמיתיות פתוחות שדורשות טיפול. ✅"]
+    else:
+        lines = [f"📦 *הזמנות פתוחות ({len(real)}):*", ""]
+        now = _dt.utcnow()
+        for o in real[:15]:
+            age_h = int(((now - o.created_at).total_seconds() if o.created_at else 0) // 3600)
+            sup = ", ".join(sorted(set(sp.get(o.id, [])))) or "אין תשלום לספק עדיין"
+            lines.append(f"• *{o.order_number}* · {o.status} · ₪{float(o.total_amount or 0):,.2f} · "
+                         f"לפני {age_h} שע׳ · ספק: {sup}")
+        if len(real) > 15:
+            lines.append(f"…ועוד {len(real) - 15}")
+    if other:
+        lines.append(f"\n({other} הזמנות פתוחות נוספות הן הזמנות בדיקה / ללא תשלום חי — לא נספרות ולא מטופלות.)")
+    return "\n".join(lines)
+
 
 # ── AVI Execution Integrity Gate ─────────────────────────────────────────────
 # The conversational LLM path (hf_text) is READ-ONLY. It has no tool-call
@@ -1259,48 +1344,207 @@ async def _embed_phase_report() -> str:
     return "\n".join(lines)
 
 
-async def _keywords_list() -> str:
+# ── learned keywords: the whole backlog in numbered batches (#114) ──────────────────────────────────────
+# Owner 2026-10-27: "message all the words till we finish them" (~2,600 waiting). The list showed the same top-15
+# forever, one word per command. Now every batch is the next words NOT YET SHOWN, numbered, with batch actions; the
+# daily message sends the next batch until every waiting word was shown, then starts a new pass over what is left.
+# Each batch has an id so a reply to an older message acts on the words THAT message showed, never on newer ones.
+_KW_CUR_KEY = "autospare:owner:kw_batch:current"   # id of the batch shown last
+_KW_BATCH_KEY = "autospare:owner:kw_batch:{}"       # JSON list of tokens: what the numbers of batch {id} mean
+_KW_SHOWN_KEY = "autospare:owner:kw_shown"          # set: tokens already shown in this pass over the backlog
+_KW_TTL_S = 30 * 86400
+
+
+def _kw_batch_size() -> int:
+    try:
+        return max(5, min(80, int(os.getenv("OWNER_KEYWORD_BATCH", "40"))))
+    except ValueError:
+        return 40
+
+
+def _kw_pick(waiting: list, shown: set, current: list, size: int, advance: bool):
+    """(batch, new_pass). Pure. Without `advance` the current batch stays while any of its words still waits
+    (its numbers keep their meaning). Otherwise: the next `size` waiting words not shown in this pass; once every
+    waiting word was shown, a new pass from the top."""
+    wset = set(waiting)
+    if not advance and any(t in wset for t in current):
+        return list(current), False
+    fresh = [t for t in waiting if t not in shown and t not in current]
+    if fresh:
+        return fresh[:size], False
+    return list(waiting[:size]), True
+
+
+async def _kw_redis():
+    try:
+        from BACKEND_AUTH_SECURITY import get_redis
+        return await get_redis()
+    except Exception:
+        return None
+
+
+async def _kw_load_batch(r, batch_id=None):
+    """(id, tokens) of the given batch, or of the current one. (None, []) when there is none."""
+    if r is None:
+        return None, []
+    try:
+        bid = int(batch_id) if batch_id is not None else int(await r.get(_KW_CUR_KEY) or 0)
+        raw = await r.get(_KW_BATCH_KEY.format(bid)) if bid else None
+        return (bid, json.loads(raw)) if raw else (None, [])
+    except Exception:
+        return None, []
+
+
+async def _kw_waiting():
+    from catalog_scraper import scraper_session_factory
+    import category_learning as cl
+    async with scraper_session_factory() as db:
+        return await cl.pending_for_owner(db, limit=20000)
+
+
+async def _keywords_list(advance: bool = False) -> str:
     from catalog_scraper import scraper_session_factory
     import category_learning as cl
     try:
-        async with scraper_session_factory() as db:
-            pend = await cl.pending_for_owner(db)
+        pend = await _kw_waiting()
     except Exception as e:
         return f"⚠️ שגיאה בקריאת המילים: {str(e)[:120]}"
     if not pend:
         return ("אין מילות־קטלוג חדשות שממתינות לאישור. ✅\n"
                 "המערכת לומדת מילים חדשות רק כשהיא נתקעת על חלק שהיא לא מזהה.")
-    lines = ["🔤 *מילים חדשות שהמערכת למדה וממתינות לאישורך:*", ""]
-    # Show the EVIDENCE next to the vote. "96% agreement" only means the votes
-    # were consistent with each other, and the votes come from parts nobody has
-    # classified correctly yet — so it can be 96% consistent and still wrong
-    # (קופסת→gearbox was 98%, and the real parts are storage/relay/control
-    # boxes). The evidence line is measured against parts that ARE already
-    # filed in a real category, which is independent of the votes.
-    async with scraper_session_factory() as db:
-        for k in pend:
-            he = cl.category_map.display_name(k["category"], "he")
-            row = [f"• *{k['token']}* → {he} ({k['category']})",
-                   f"   ↳ {k['observations']} חלקים הסכימו · {k['agreement']:.0%} הסכמה"]
-            try:
-                p = await cl.evidence_profile(db, k["token"], proposed=k["category"])
-                if p["verdict"] == "ok":
-                    row.append(f"   ✅ נתוני אמת תומכים (פי {p['margin']} מהשנייה)")
-                elif p["verdict"] == "category_mismatch":
-                    top_he = cl.category_map.display_name(p["top"], "he") if p["top"] else "?"
-                    row.append(f"   ⚠️ נתוני אמת מצביעים על *{top_he}* — לא על מה שהוצע")
-                elif p["verdict"] == "ambiguous":
-                    row.append(f"   ⚠️ מילה כללית מדי (פי {p['margin']} בלבד מהקטגוריה השנייה)")
-                else:
-                    row.append("   ⚠️ אין מספיק נתוני אמת להחליט")
-            except Exception:
-                pass
-            lines.append("\n".join(row))
-    lines.append("")
-    lines.append("לאישור: *אשרמילה <מילה>* · לדחייה: *דחהמילה <מילה>*")
-    lines.append("מילה עם ⚠️ תיחסם — לאישור בכל זאת: *אשרמילה <מילה> בכוח*")
-    lines.append("אחרי אישור המילה תסווג *כל* החלקים שמכילים אותה.")
+    by_tok = {p["token"]: p for p in pend}
+    waiting = [p["token"] for p in pend]                      # most votes first
+    r = await _kw_redis()
+    cur_id, current = await _kw_load_batch(r)
+    shown = set()
+    if r is not None:
+        try:
+            shown = set(await r.smembers(_KW_SHOWN_KEY))
+        except Exception:
+            shown = set()
+    batch, new_pass = _kw_pick(waiting, shown, current, _kw_batch_size(), advance)
+    bid = cur_id if (batch == current and cur_id) else None
+    if r is not None and bid is None:
+        try:
+            bid = int(await r.incr(_KW_CUR_KEY + ":seq"))
+            await r.set(_KW_BATCH_KEY.format(bid), json.dumps(batch, ensure_ascii=False), ex=_KW_TTL_S)
+            await r.set(_KW_CUR_KEY, bid, ex=_KW_TTL_S)
+            if new_pass:
+                await r.delete(_KW_SHOWN_KEY)
+                shown = set()
+            await r.sadd(_KW_SHOWN_KEY, *batch)
+            await r.expire(_KW_SHOWN_KEY, _KW_TTL_S)
+        except Exception:
+            bid = None
+    shown |= set(batch)
+    # The EVIDENCE next to each word: agreement among votes measures consistency, not correctness
+    # (קופסת→gearbox was 98% and wrong). evidence_profile reads parts ALREADY filed in a real category, and it is
+    # the same check approve() enforces — ✅ is exactly "approvable without force".
+    verdicts = {}
+    try:
+        async with scraper_session_factory() as db:
+            for t in batch:
+                if t in by_tok:
+                    try:
+                        verdicts[t] = await cl.evidence_profile(db, t, proposed=by_tok[t]["category"])
+                    except Exception:
+                        verdicts[t] = None
+    except Exception:
+        pass
+    open_n = sum(1 for t in batch if t in by_tok)
+    ok_n = sum(1 for t in batch if (verdicts.get(t) or {}).get("verdict") == "ok")
+    label = f"רשימה {bid}" if bid else "רשימה"
+    lines = [f"🔤 *מילות סיווג לאישורך — {label}* ({open_n} כאן · {len(pend):,} ממתינות בסך הכול)", ""]
+    for i, t in enumerate(batch, 1):
+        if t not in by_tok:
+            continue                                          # decided since it was shown: numbers keep meaning
+        he = cl.category_map.display_name(by_tok[t]["category"], "he")
+        p = verdicts.get(t) or {}
+        v = p.get("verdict")
+        if v == "ok":
+            mark = "✅"
+        elif v == "category_mismatch":
+            top = cl.category_map.display_name(p["top"], "he") if p.get("top") else "?"
+            mark = f"⚠️ לפי הקטלוג: {top}"
+        elif v == "ambiguous":
+            mark = "⚠️ כללית מדי"
+        elif v == "insufficient_evidence":
+            mark = "❔ אין מספיק נתונים"
+        else:
+            mark = ""
+        lines.append(f"{i}. *{t}* → {he} {mark}".rstrip())
+    left = sum(1 for t in waiting if t not in shown)
+    n = f" {bid}" if bid else ""
+    lines += ["",
+              f"*אשרהכל{n}* — מאשר את {ok_n} המילים המסומנות ✅ ברשימה הזו",
+              f"*דחההשאר{n}* — דוחה כל מילה שנשארה ברשימה הזו (לא תוצע שוב) ושולח את הבאות",
+              "*אשרמילה 3 7* / *דחהמילה 5* — לפי מספר · *אשרמילה 4 בכוח* — לאשר מילה עם ⚠️/❔",
+              "*מילים הבא* — לרשימה הבאה בלי להחליט",
+              f"מילה מאושרת מסווגת את *כל* החלקים שמכילים אותה. עוד לא הוצגו: {left:,}"]
+    if r is None:
+        lines.append("⚠️ Redis לא זמין: פקודות לפי מספר ופקודות לרשימה לא יעבדו כרגע — השתמש בשם המילה.")
     return "\n".join(lines)
+
+
+_KW_BULK_RE = re.compile(r"^(אשר ?הכל|approve ?all|דחה ?השאר|reject ?rest)(?:\s+(\d+))?\s*$", re.I)
+_KW_INDEX_RE = re.compile(r"^[\d\s,]+$")
+
+
+async def _kw_bulk(approve: bool, batch_id=None) -> str:
+    """Approve every ✅ word, or reject every word still waiting, of ONE shown batch. The evidence gate is not
+    bypassed: approve() refuses whatever is not ✅, and those words stay for the owner to decide."""
+    from catalog_scraper import scraper_session_factory
+    import category_learning as cl
+    r = await _kw_redis()
+    bid, batch = await _kw_load_batch(r, batch_id)
+    if not batch:
+        return "אין רשימה כזו. כתוב *מילים* כדי לקבל רשימה."
+    try:
+        waiting = {p["token"] for p in await _kw_waiting()}
+        todo = [t for t in batch if t in waiting]
+        if not todo:
+            return f"כל המילים ברשימה {bid} כבר הוכרעו. כתוב *מילים* לרשימה הבאה."
+        async with scraper_session_factory() as db:
+            for t in todo:
+                await (cl.approve(db, t) if approve else cl.reject(db, t))
+            # report the STORED outcome, not the call results (#72)
+            rows = (await db.execute(_sql(
+                "SELECT token, bool_or(status = 'approved'), bool_and(status = 'rejected') "
+                "FROM category_learned_keywords WHERE token = ANY(:t) GROUP BY token"), {"t": todo})).fetchall()
+    except Exception as e:
+        return f"⚠️ שגיאה: {str(e)[:120]}"
+    approved = [t for t, a, _ in rows if a]
+    rejected = [t for t, _, rj in rows if rj]
+    if approve:
+        rest = [t for t in todo if t not in approved]
+        out = [f"✅ רשימה {bid}: אושרו {len(approved)}" + (f" — {', '.join(approved)}" if approved else "")]
+        if rest:
+            out.append(f"נשארו {len(rest)} שהקטלוג לא תומך בהן. *דחההשאר {bid}* לדחות אותן, "
+                       "או *אשרמילה <מספר> בכוח* למילה שאתה בטוח בה.")
+        return "\n".join(out)
+    failed = [t for t in todo if t not in rejected]
+    head = f"🚫 רשימה {bid}: נדחו {len(rejected)} — {', '.join(rejected)}"
+    if failed:
+        head += f"\n⚠️ לא נדחו ({len(failed)}): {', '.join(failed)} — בדוק."
+    return head + "\n\n" + await _keywords_list(advance=True)
+
+
+async def _kw_by_index(arg: str, approve: bool, force: bool) -> str:
+    """`אשרמילה 3 7` / `דחהמילה 5`: numbers of the batch shown last. A single word with a digit is never a
+    learned keyword (category_learning.is_blocked), so a numbers-only argument cannot name a real token."""
+    r = await _kw_redis()
+    bid, batch = await _kw_load_batch(r)
+    if not batch:
+        return "אין רשימה פעילה למספרים. כתוב *מילים* לקבלת רשימה, או כתוב את המילה עצמה."
+    nums = [int(x) for x in re.findall(r"\d+", arg)]
+    bad = [n for n in nums if not 1 <= n <= len(batch)]
+    if bad or not nums:
+        return f"מספר לא קיים ברשימה {bid}: {', '.join(map(str, bad)) or arg}. ברשימה יש 1–{len(batch)}."
+    replies = []
+    for n in dict.fromkeys(nums):
+        t = batch[n - 1]
+        replies.append(f"{n}. " + (await _keyword_approve(t, force=force) if approve else await _keyword_reject(t)))
+    return "\n".join(replies)
 
 
 _KW_FORCE_RE = re.compile(r"\s+(בכוח|force|בכל מקרה)$", re.I)
@@ -1625,6 +1869,11 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp") -> 
             return f"✅ יצאת משיחה עם *{tag}*. חזרת למרכז הבקרה.\nכתוב *עזרה* לתפריט או *@נועה* / *@אבי* לפנייה לסוכן."
         return _HELP
 
+    # ── plain-language request for data the console has → the real command (#113) ──
+    _nl_cmd = _natural_command(msg)
+    if _nl_cmd:
+        msg, low = _nl_cmd, _nl_cmd
+
     # ── deterministic commands ────────────────────────────────────────────────
     if low in ("help", "menu", "עזרה", "תפריט", "?", "start", "היי", "hi"):
         await _clear_active_agent()   # opening the menu leaves any agent session
@@ -1634,6 +1883,8 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp") -> 
     if low in ("harvester", "שאיבה", "קטלוג", "harvest"):
         snap = await build_status_snapshot(db, brief=True)
         return snap or "אין נתוני שאיבה כרגע."
+    if low in ("orders", "הזמנות", "הזמנה"):
+        return await _orders_attention()
     if low in ("posts", "פוסטים", "פוסט"):
         pend = await _list_pending_posts(db)
         if not pend:
@@ -1644,6 +1895,12 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp") -> 
             lines.append(f"🆔 {_short(p['id'])} [{', '.join(p['platforms'])}]\n   {first}")
         lines.append("\nלאישור: *אשר <מזהה>* · לדחייה: *דחה <מזהה>*")
         return "\n".join(lines)
+    # keyword batches (#114) — BEFORE the post commands: "אשר הכל" would otherwise be read as post id "הכל"
+    m_kwb = _KW_BULK_RE.match(msg)
+    if m_kwb:
+        return await _kw_bulk(m_kwb.group(1).lower().replace(" ", "") in ("אשרהכל", "approveall"), m_kwb.group(2))
+    if low in ("מילים הבא", "מילים הבאות", "words next", "next words"):
+        return await _keywords_list(advance=True)
     m_ap = re.match(r"^(approve|אשר)\b\s*(\S+)?", msg, re.I)
     if m_ap:
         post = await _resolve_post(db, m_ap.group(2) or "")
@@ -1693,10 +1950,15 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp") -> 
     m_kwa = re.match(r"^(approve[\-_ ]?word|אשרמילה|אשר מילה)(?=\s|$)", msg, re.I)
     if m_kwa:
         _kw_arg, _force, _full = _keyword_args(msg[m_kwa.end():])
+        if _kw_arg and _KW_INDEX_RE.match(_kw_arg):
+            return await _kw_by_index(_kw_arg, approve=True, force=_force)
         return await _keyword_approve(_kw_arg, force=_force, full=_full)
     m_kwr = re.match(r"^(reject[\-_ ]?word|דחהמילה|דחה מילה)(?=\s|$)", msg, re.I)
     if m_kwr:
-        return await _keyword_reject(" ".join(msg[m_kwr.end():].split()))
+        _kw_rarg = " ".join(msg[m_kwr.end():].split())
+        if _kw_rarg and _KW_INDEX_RE.match(_kw_rarg):
+            return await _kw_by_index(_kw_rarg, approve=False, force=False)
+        return await _keyword_reject(_kw_rarg)
     if low in ("ai", "מנוע", "מודל", "embed", "שלב"):
         return await _embed_phase_report()
     if low in ("words", "מילים", "מילה", "keywords", "מילות מפתח"):
