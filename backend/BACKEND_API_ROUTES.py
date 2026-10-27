@@ -5944,6 +5944,26 @@ async def _health_monitor_loop():
             except Exception as _e:
                 print(f"[HealthMonitor] Check 2b (LLM billing) error: {_e}")
 
+            # Check 2c: the PRIMARY provider since 2026-10-27 is the HF Router (DeepInfra). hf_client
+            # leaves this marker on HF 402 (prepaid credits exhausted) or 401/403 (token rejected);
+            # every agent then runs on the Groq free tier, which throttles after a few calls.
+            try:
+                _rb = await get_redis()
+                _hf_code = await _rb.get("autospare:llm:hf_primary_blocked") if _rb else None
+                if _hf_code:
+                    _hf_code = _hf_code.decode() if isinstance(_hf_code, (bytes, bytearray)) else str(_hf_code)
+                    _why = ("נגמר הקרדיט בחשבון Hugging Face (402)" if _hf_code == "402"
+                            else f"הטוקן של Hugging Face נדחה ({_hf_code})")
+                    await _alert_owner(
+                        "ספק ה-AI הראשי (Hugging Face / DeepInfra) חסום",
+                        f"{_why} — כל הסוכנים (צ'אט לקוחות, NOA, AVI) רצים על Groq החינמי, "
+                        "שנחסם בעומס ומחזיר תשובות גיבוי.\n"
+                        "פעולה: להוסיף קרדיט / להפעיל טעינה אוטומטית ב-huggingface.co/settings/billing, "
+                        "או לחדש את HF_TOKEN.",
+                        alert_key="llm_hf_primary_blocked", cooldown_s=86400, severity="warning")
+            except Exception as _e:
+                print(f"[HealthMonitor] Check 2c (HF primary billing) error: {_e}")
+
             # Check 3: worker silent > 2 hours (no recent heartbeat from db_update_agent)
             def _extract_dt(report) -> Optional[datetime]:
                 if report is None:

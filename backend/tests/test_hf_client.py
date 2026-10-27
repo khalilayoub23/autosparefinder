@@ -73,7 +73,20 @@ def reset_hf_client(monkeypatch):
     monkeypatch.setenv("HF_MAX_RETRIES", "3")
     monkeypatch.setenv("HF_TEXT_CACHE_TTL", "3600")
     monkeypatch.setenv("HF_EMBED_CACHE_TTL", "86400")
+    # Production provider chain since 2026-10-27 (owner: Cerebras will not be enabled again):
+    # HF Router pinned to DeepInfra is primary, Groq is the fallback, Cerebras is off and has no key
+    # here — so a test can never pass by silently reaching Cerebras.
+    monkeypatch.setenv("LLM_PRIMARY_PROVIDER", "hf")
+    monkeypatch.setenv("HF_PRIMARY_PROVIDER", "deepinfra")
+    monkeypatch.setenv("CEREBRAS_ENABLED", "0")
+    monkeypatch.setenv("CEREBRAS_API_KEY", "")
     import hf_client
+    monkeypatch.setattr(hf_client, "HF_TOKEN", "test-token")
+    monkeypatch.setattr(hf_client, "LLM_PRIMARY_PROVIDER", "hf")
+    monkeypatch.setattr(hf_client, "HF_PRIMARY_PROVIDER", "deepinfra")
+    monkeypatch.setattr(hf_client, "CEREBRAS_ENABLED", False)
+    monkeypatch.setattr(hf_client, "CEREBRAS_API_KEY", "")
+    monkeypatch.setattr(hf_client, "_hf_primary_down_until", 0.0)
     # Reset shared client
     hf_client._http = None
     hf_client._embed_model = None
@@ -101,11 +114,13 @@ async def test_http_pool_reused_across_calls():
 
     async def fake_post(url, *, headers, content, timeout):
         clients_used.append(id(hf_client._http))
+        assert url == "https://router.huggingface.co/v1/chat/completions"
+        assert json.loads(content)["model"] == "openai/gpt-oss-120b:deepinfra"
+        assert headers["Authorization"] == "Bearer test-token"
         return _text_resp("ok")
 
     with patch("hf_client._cache_get", new=AsyncMock(return_value=None)), \
          patch("hf_client._cache_set", new=AsyncMock()), \
-            patch("hf_client.CEREBRAS_API_KEY", "test-key"), \
          patch.object(hf_client._get_http(), "post", side_effect=fake_post):
         await hf_client.hf_text("q1")
         await hf_client.hf_text("q2")
@@ -137,7 +152,6 @@ async def test_retry_on_503():
     with patch("hf_client._cache_get", new=AsyncMock(return_value=None)), \
          patch("hf_client._cache_set", new=AsyncMock()), \
          patch("asyncio.sleep", new=AsyncMock()), \
-            patch("hf_client.CEREBRAS_API_KEY", "test-key"), \
          patch.object(hf_client._get_http(), "post", side_effect=fake_post):
         result = await hf_client.hf_text("test")
 
@@ -192,7 +206,6 @@ async def test_retry_respects_retry_after_header():
     with patch("hf_client._cache_get", new=AsyncMock(return_value=None)), \
          patch("hf_client._cache_set", new=AsyncMock()), \
          patch("asyncio.sleep", side_effect=fake_sleep), \
-            patch("hf_client.CEREBRAS_API_KEY", "test-key"), \
          patch.object(hf_client._get_http(), "post", side_effect=fake_post):
         result = await hf_client.hf_text("rate limited")
 
@@ -240,7 +253,6 @@ async def test_hf_text_cache_hit():
         return _text_resp()
 
     with patch("hf_client._cache_get", new=AsyncMock(return_value="cached answer")), \
-            patch("hf_client.CEREBRAS_API_KEY", "test-key"), \
          patch.object(hf_client._get_http(), "post", side_effect=fake_post):
         result = await hf_client.hf_text("anything")
 
@@ -262,7 +274,6 @@ async def test_hf_text_cache_miss_writes_to_cache():
 
     with patch("hf_client._cache_get", new=AsyncMock(return_value=None)), \
          patch("hf_client._cache_set", side_effect=fake_cache_set), \
-            patch("hf_client.CEREBRAS_API_KEY", "test-key"), \
          patch.object(hf_client._get_http(), "post",
                       new=AsyncMock(return_value=_text_resp("from hf"))):
         result = await hf_client.hf_text("my query")
@@ -294,7 +305,6 @@ async def test_cache_disabled_when_ttl_zero(monkeypatch):
 
     with patch("hf_client._cache_get", new=AsyncMock(return_value=None)), \
          patch("hf_client._cache_set", side_effect=fake_cache_set), \
-            patch("hf_client.CEREBRAS_API_KEY", "test-key"), \
          patch.object(hf_client._get_http(), "post",
                       new=AsyncMock(return_value=_text_resp("no cache"))):
         await hf_client.hf_text("anything")
@@ -460,7 +470,6 @@ async def test_request_is_logged(caplog):
     with caplog.at_level(logging.INFO, logger="hf_client"), \
          patch("hf_client._cache_get", new=AsyncMock(return_value=None)), \
          patch("hf_client._cache_set", new=AsyncMock()), \
-            patch("hf_client.CEREBRAS_API_KEY", "test-key"), \
          patch.object(hf_client._get_http(), "post", side_effect=fake_post):
         await hf_client.hf_text("log me")
 

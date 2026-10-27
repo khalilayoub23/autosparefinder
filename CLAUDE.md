@@ -267,6 +267,21 @@ Rules:
   A recognised directive injects an explicit acknowledgement note and produces no artefact.
 
 ### Agent Behavior
+- **A business claim in a customer reply must be grounded in application data, enforced in code (2026-10-27).**
+  `policy_guard.validate_customer_reply` (run by `BaseAgent.think` on every customer turn): every currency amount
+  (both ends of a range) and every link must appear in the turn's catalog/order data or the customer's own words —
+  the static prompt is not grounding. Never write an example price/shipping figure into a prompt or a context
+  template (the "₪29–₪149" range lived in prompts for 7 months). Router targets are an allowlist in code
+  (`CUSTOMER_AGENTS`), not prompt wording. Provider limits are measured, never guessed; a request that does not fit
+  is fitted by `fit_request` (guidance → oldest history) or refused — mandatory policy is never truncated.
+- **Reply language has ONE rule and ONE enforcement point (2026-10-27).** `reply_language.py` decides the
+  target (current customer message → conversation's last customer language → `he`); the brain publishes it per
+  turn (`REPLY_LANGUAGE` context var); `BaseAgent.think` appends `language_directive()` LAST, validates the WHOLE
+  reply (`reply_matches_language`), retries once, then returns the localized fallback. Never write
+  "default Hebrew"/"always respond in Hebrew" into an agent prompt, never add a Hebrew-only fixed reply on a
+  customer path (use `_rl.pick({...he/ar/en})`), and any truncation of a system prompt must keep the
+  `[REPLY LANGUAGE - FINAL AND OVERRIDING]` block (`hf_client._truncate_system_keep_language`). An empty model
+  reply is a failure, not a pass. Guarded by `tests/test_reply_language.py`.
 - **Every agent in `_fast_agents` needs its own `_offline_reply` branch.** A missing branch
   silently returns a wrong-context reply (worse than an explicit failure). Check `_fast_agents`
   membership against `_offline_reply` branches whenever either list changes.

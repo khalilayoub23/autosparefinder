@@ -8361,3 +8361,103 @@ At 12:50:23 (5 min 47 s after start, past both old trigger points): 0 seeder run
 - **Known trade-offs:** DeepInfra latency 5–12 s per reply (Groq ~0.3 s, Cerebras was fast). HF account `autospare` (PRO) has $2.00 credit, auto-recharge OFF — when it runs out HF returns 402 and traffic falls to Groq (free tier, can 429) until credits are added.
 - **Revert:** `.env` `LLM_PRIMARY_PROVIDER=cerebras`, `CEREBRAS_ENABLED=1`, then pre_restart.sh + `docker compose up -d --no-deps --force-recreate backend`.
 - **Status:** APPLIED + VERIFIED (both paths). Cost per month: NOT YET MEASURED (volume too low at deploy time).
+
+## 2026-10-27 — Fabricated shipping range, policy enforcement outside the model, reply language — ROOT FIX (branch `fix/reply-language`, NOT deployed)
+
+**STATUS:** owner approved deploy + live DeepInfra check + HF alert + HF credit (2026-10-27 ~11:30 Israel). Deploy and
+credit purchase recorded in the deploy entry below.
+
+### A. Fabricated "shipping ₪29–₪149"
+- **Premise corrected (verified):** Eurosender was never the customer-facing shipping-price source. `EurosenderAdapter.get_quote`
+  is reached only from post-payment fulfillment (`eurosender_fulfillment` → `evaluate_and_create_shipment`), gated by
+  `EUROSENDER_SUPPLIER_ALLOWLIST`, which is EMPTY in production (read 2026-10-27: len 0, ENABLED=1, SANDBOX=0) → no supplier
+  is routed, no quote is shown to customers. The customer shipping figure is the per-offer `shipping` inside the canonical
+  price (`calculate_customer_price_from_ils` / `_customer_price_fields` → `customer_total_ils`), i.e. what checkout charges.
+  Wiring live Eurosender quotes into chat would be a new production integration — out of scope, not done.
+- **Root cause:** the range was HARD-CODED (since 2026-03-20/21, `5ac4f5c` "shipping range in NIR prompts"): SalesAgent prompt
+  ("Always show … מע\"מ 18% + משלוח ₪29–₪149"), ServiceAgent prompt (same, flat 18% VAT too — wrong for foreign suppliers),
+  and four catalog-context templates (`"₪29-149 משלוח (לפי ספק)"`) although each offer's real `shipping` was in the dict.
+  The 2026-07-11 shipping-truth fix removed fictional supplier rates but missed these copies. Also invented delivery
+  windows: `estimated_delivery_days or 14` / `"10-14 ימים"` presented as fact; brain list labelled totals "incl. VAT"
+  although they include shipping.
+- **Fix:** templates show the offer's real figure (`_shipping_fact_he`) or "shown at checkout"; prompts: only figures in the
+  data, VAT exactly as given; SHIPPING TRUTH gains "no range, no typical/starting-from amount"; `delivery_days_confirmed`
+  flag + `_delivery_fact_he` / localized "delivery time shown at checkout"; label "incl. VAT and shipping"; and the
+  application-level guard below blocks any ungrounded amount (both ends of a range) on every customer agent/channel.
+- **Before/after (live, Groq):** before `"עלות המשלוח נעה בין 29 ₪ ל‑149 ₪"`, `"Shipping is ₪29–₪149 (NIS)…"`; after (3/3, en/he/ar)
+  "the exact amount appears at checkout", no amount, policy=ok.
+
+### B. Policy enforcement (outside the model) — new `backend/policy_guard.py`
+1. **Groq truncation (policy loss):** `groq_text` cut system prompts to 5,000 chars (customer prompts 9.5–14K) → PROHIBITED,
+   SHIPPING TRUTH, VERIFY, LANGUAGE and the reply-language block dropped on every Groq fallback; prompt cut to 6,000 → current
+   message lost. **Verified limit:** `x-ratelimit-limit-tokens: 8000`; 13,120-char prompt = 3,149 tokens, HTTP 200.
+   **Fix:** `fit_request` with `GROQ_MAX_REQUEST_TOKENS=8000` − 1000 completion − 300 margin: shortens only
+   `[GUIDANCE]` blocks (SALES FLOW, PROFESSIONAL SKILLS), then oldest history; mandatory policy + current message never cut;
+   otherwise `PolicyBudgetExceeded` → localized safe reply. DeepInfra/Gemini/Cerebras paths receive the full system (no cut).
+2. **Ungrounded business claims:** `BaseAgent.think` validates every customer reply: each currency amount (incl. ranges) and
+   each link must appear in the turn's application data (agent prompt suffix = catalog/order context) or the customer's own
+   messages; static prompt text is NOT grounding. One bounded corrective retry, then localized fallback; `[ReplyLang] …
+   policy=` log with provider. Payment/order links only from data; own static pages allowed.
+3. **Router permission bypass:** "admin only" was prompt wording; `route()` returned the model's choice unchecked → customers
+   could reach `social_media_manager_agent` (campaign plans/post drafts), `supplier_manager_agent`, `tech_agent` (signature
+   mismatch → crash). **Fix:** `RouterAgent._enforce_route` — customer channels limited to `policy_guard.CUSTOMER_AGENTS`
+   (7); unknown/internal → service_agent, `route_blocked_from` recorded.
+4. **Editor:** `_format_response_for_customer` rewrite rejected if it changes language or adds numbers/links.
+5. **Autonomous NOA public replies:** `noa_ops.send_page_reply(actor="autonomous")` also runs the grounded-claims gate
+   (no amounts/foreign links without data) → stays pending for the owner. Production runs AUTOREPLY=0 (owner approves).
+6. **Tools:** no model-driven tool execution exists — `think()` never forwards `tools`; consequential actions (checkout link,
+   orders, payments) are deterministic code paths. Tested.
+
+### C. Reply language (from the earlier entry, integrated)
+Six causes: conflicting prompts ("Default Hebrew", "ALWAYS respond in Hebrew"), first-message rule, brain language never
+passed to agents, editor without English rule reading the previous message, Hebrew-only fixed texts (timeouts = the identical
+OrdersAgent replies; "wrong part"/"frustrated" canned answers), Groq truncation. Fix: `reply_language.py` + per-turn context
+var + enforcement in `BaseAgent.think`; empty reply = failure. Registry: **11 agents** (7 customer-facing + router + 3 internal).
+
+### Provider tests updated (owner, 2026-10-27: "Cerebras won't be enabled any more")
+`test_llm_billing_breaker.py` rewritten for HF/DeepInfra primary → Groq (402/401/403/429 breaker, cooldown expiry, empty
+content never returns reasoning, Groq 120b→GROQ_MODEL, provider trace, no Cerebras call); `test_hf_client.py` pins the
+production chain (HF on, Cerebras off/no key) and asserts router URL + `openai/gpt-oss-120b:deepinfra`. Both pass with
+`CEREBRAS_ENABLED=0` and `=1`. Also fixed: `hf_text` raised "CEREBRAS_API_KEY not set" before trying Groq.
+
+### HF credit / token alert (owner: "both")
+`hf_client._hf_primary_text`: HF 402 (credits) / 401 / 403 (token) → Redis marker `autospare:llm:hf_primary_blocked`
+(value = status, 1 h TTL); health monitor Check 2c → `_alert_owner` once per 24 h while it lasts ("נגמר הקרדיט…",
+link to billing). Tests: marker set for 402/401/403, not for 429/500/200; static check of the alert block.
+
+### Live provider checks on the FINAL code (approved spend; Groq disabled so every answer is from the HF provider)
+7 customer agents × he/ar/en (channels rotated) + shipping question × 3 = 24 calls each:
+| Model (HF Router) | correct language & no range | real model answers | HTTP≠200 | latency p50 / max | tokens | ≈cost |
+|---|---|---|---|---|---|---|
+| openai/gpt-oss-120b:deepinfra (production) | 24/24 | 24/24, all first try | 0 | 5.5 s / 14.7 s | 74,842 | $0.004 |
+| deepseek-ai/DeepSeek-V4.1-Flash:deepinfra (owner's Space names it) | 24/24 | 24/24, all first try | 0 | 1.5 s / 4.5 s | 70,648 | $0.017 |
+Shipping answers: no amount, "exact cost at checkout" (both). The owner's Space `autospare/deepseek-ai.v.4.1_test` runs
+the default Gradio template (`greet(name)`), no model — DeepSeek was reached through the HF Router instead.
+Finding: agents' model comes from env `HF_TEXT_MODEL`/`AGENTS_DEFAULT_MODEL` (prod: gpt-oss-120b); code default is
+`Qwen/Qwen2.5-72B-Instruct`, which would silently skip the HF primary if the env were missing (follow-up).
+
+### Tests (isolated; evidence in the session scratchpad `lang/`)
+- **Final run, fix** (fresh disposable DB `asf-e2e-pg` + Redis on an `--internal` docker network; aliases `sandbox_postgres`
+  / `sandbox_redis` on that private network only, to satisfy the hostname pin of the sandbox E2E suites; the guard's live
+  not-production check still ran): 38 files → **1140 passed, 1 skipped, 0 failed, 0 errors** (`FINAL2_fix.txt`, final code
+  incl. the HF alert; previous run 1133 before the 7 alert tests). Skip = the
+  documented 2.2 GB full-catalogue test.
+- **Final run, baseline** (same files minus the 3 new, fresh DB): **567 passed, 6 failed, 1 skipped** (`FINAL_base.txt`) — the
+  6 = the old Cerebras-first provider tests under production's CEREBRAS_ENABLED=0 (rewritten above).
+- New: `test_reply_language.py` 386, `test_policy_enforcement.py` 130, `test_customer_flow_e2e.py` 33 (real
+  `process_user_message`, real PII DB, all 3 channels; only the LLM scripted). Same E2E file on the baseline code: **25 of 33
+  fail** (`e2e_base.txt`).
+- Live (Groq free tier only, no HF token): shipping 3/3 clean; earlier language matrix 30/33 (3 = empty replies, fixed after).
+
+### Not verified / follow-ups
+- Live provider evidence: DeepInfra gpt-oss-120b + DeepSeek-V4.1-Flash 24/24 each (above); Groq earlier.
+- Model default in code (`Qwen/Qwen2.5-72B-Instruct`) bypasses the HF primary if `HF_TEXT_MODEL` env is ever missing.
+- DeepInfra latency 5–30 s vs 28 s fast-agent cap. Order-status free text is not machine-validated (data-only prompt + link/
+  amount guards). Facebook page token invalidated. `archive/rollback/69_*` still contains the old range (frozen snapshot).
+
+**Rollback:** nothing deployed → nothing to roll back. If later applied: `git apply -R` the patch (or revert the commit), then
+the normal pre_restart.sh → `docker compose up -d --no-deps --force-recreate backend`. No schema/env/config change.
+
+**Production safety:** no production file, config, env, data or container changed or restarted; production read-only reads
+only (env var lengths/flags). Work in `/opt/asf-lang-wt`; tests in throwaway containers (`--network none` or the internal
+e2e network); live Groq calls from a throwaway container with no DB access.

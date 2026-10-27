@@ -69,6 +69,9 @@ from dotenv import load_dotenv
 from sqlalchemy import and_, or_, select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from hf_client import hf_embed, hf_text, hf_text_fast
+import hf_client as _hf_client
+import reply_language as _rl
+import policy_guard as _pg
 
 from BACKEND_DATABASE_MODELS import (
     AgentAction, AgentSharedMemory, AgentUsageLog, ApprovalQueue, CatalogVersion, Conversation, Message, Notification, Order, OrderItem,
@@ -876,6 +879,7 @@ CORE BEHAVIOR — APPLIES TO ALL CHANNELS (WhatsApp, Telegram, Web):
 13. Never ask the same clarification more than 2 times in a row; if still missing data, offer a smart fallback path.
 14. Be typo-tolerant and intent-first: if user writes close variants (e.g., גיא/גיר), continue naturally instead of resetting flow.
 
+[GUIDANCE - MAY BE SHORTENED]
 SALES FLOW — USE AS GUIDANCE (not a rigid script):
   Step 1 → Confirm understanding in natural language and request missing critical detail only if needed
   Step 2 → Once vehicle + part info exists, show the best result clearly and briefly
@@ -888,11 +892,12 @@ SALES FLOW — USE AS GUIDANCE (not a rigid script):
   - Mirror one concrete customer detail (part name, model, plate, or concern).
   - Use plain text, no markdown-heavy formatting.
 
+[/GUIDANCE]
+
 LANGUAGE RULES:
-- Detect language from customer's first message
-- Hebrew customer → reply in Hebrew throughout
-- Arabic customer → reply in Arabic throughout  
-- English customer → reply in English throughout
+- Reply in the language of the customer's CURRENT message (it switches when the customer
+  switches), as named in the [REPLY LANGUAGE] block at the end of these instructions
+- Hebrew customer → Hebrew. Arabic customer → Arabic. English customer → English
 - NEVER mix languages in a single message
 - Technical codes (OEM numbers) may remain in original format
 
@@ -927,6 +932,9 @@ SHIPPING TRUTH (MANDATORY — no invented policies):
   time appear at checkout for the chosen part, and offer to find the part so
   they can see real figures. Only cite a delivery window that came from actual
   supplier/order data for a specific part — never a generic made-up one.
+- A shipping amount may be stated ONLY when it appears as that offer's shipping figure in the
+  catalog/order data of THIS conversation. Never a range, never a "typical" or "starting from"
+  amount. Without such a figure: the exact shipping cost appears at checkout.
 
 VERIFY, DON'T ASSUME (MANDATORY — applies to every fact in every reply):
 - Never state a price, fitment, brand, stock status, policy, program, or delivery
@@ -941,6 +949,7 @@ VERIFY, DON'T ASSUME (MANDATORY — applies to every fact in every reply):
   those are specific instances of one rule — verify before you say it, for
   anything, not only price.
 
+[GUIDANCE - MAY BE SHORTENED]
 PROFESSIONAL SKILLS & TRAITS (how a great human agent behaves — apply these, don't announce them):
 - LISTEN & REMEMBER: Read what the customer actually wrote, reflect one concrete
   detail back, and never re-ask for something already given in this conversation
@@ -975,6 +984,7 @@ PROFESSIONAL SKILLS & TRAITS (how a great human agent behaves — apply these, d
   us directly" beats a confident promise nothing will fulfill.
 - CONSISTENCY: Same honesty, same prices, same quality of help on every channel
   and every turn. The customer gets the same trustworthy experience each time.
+[/GUIDANCE]
 """
 
 
@@ -1277,7 +1287,8 @@ def _strip_leaked_reasoning(text: str, user_msg: str = "") -> str:
     cleaned = "\n".join(kept).strip()
     # If what's left still smells of reasoning or is too short, use a safe reply.
     if not cleaned or len(cleaned) < 15 or _REASONING_LEAK_MARKERS.search(cleaned) or _rule_quote.search(cleaned):
-        lang = _detect_reply_language(user_msg or msg)
+        # The turn's language (customer), never the language of the leaked text itself.
+        lang = _rl.normalize(_rl.REPLY_LANGUAGE.get()) or _detect_reply_language(user_msg or msg)
         if lang == "ar":
             return "أنا معك 🙂 ما القطعة التي تبحث عنها، ولأي سيارة (موديل وسنة أو رقم اللوحة)؟"
         if lang == "en":
@@ -1300,7 +1311,7 @@ def _sanitize_internal_pricing_disclosure(text: str) -> str:
     if cleaned:
         return cleaned
 
-    lang = BaseAgent._detect_language(msg)
+    lang = _rl.normalize(_rl.REPLY_LANGUAGE.get()) or BaseAgent._detect_language(msg)
     if lang == "ar":
         return "السعر النهائي يتم احتسابه حسب سياسة الضريبة والشحن الخاصة بالمورّد. يمكنني إرسال تفصيل سعر مناسب للعميل."
     if lang == "en":
@@ -1404,6 +1415,73 @@ def _human_recovery_reply(
 # BASE AGENT
 # ==============================================================================
 
+def _shipping_fact_he(pricing: Dict[str, Any]) -> str:
+    """Catalog-context shipping text for the model: the offer's real customer shipping figure (the
+    same number already inside 'total'), never an invented range. 2026-10-27: this was the literal
+    "₪29-149 משלוח (לפי ספק)" in four templates — the source of the fabricated range in replies."""
+    ship = pricing.get("shipping")
+    try:
+        ship_f = float(ship)
+    except (TypeError, ValueError):
+        return "משלוח: יוצג בקופה"
+    return f"{ship_f:.0f}₪ משלוח (להצעה זו)"
+
+
+def _delivery_confirmed(pricing: Dict[str, Any]) -> bool:
+    if "delivery_days_confirmed" in pricing:
+        return bool(pricing.get("delivery_days_confirmed"))
+    return pricing.get("estimated_delivery_days") not in (None, "")
+
+
+def _delivery_fact_he(pricing: Dict[str, Any]) -> str:
+    if _delivery_confirmed(pricing):
+        return f"אספקה: {int(pricing.get('estimated_delivery_days'))} ימים"
+    return "זמן אספקה: לא ידוע — יוצג בקופה"
+
+
+_SALES_RESULT_LABELS: Dict[str, Dict[str, str]] = {
+    "he": {"query": "החלק שביקשת", "header": "בדקתי עבורך {query}. הנה {n} אופציות בהתאם לתקציב:",
+           "in_stock": "✅ זמין", "on_order": "⏳ בהזמנה", "days": "ימים", "warranty": "חודשים אחריות",
+           "no_price": "מחיר לא זמין", "alt": "חלופה", "delivery_unknown": "זמן אספקה יוצג בקופה",
+           "cta_chat": "איזו אופציה מתאימה? אשלח לך לינק תשלום מאובטח.", "cta_web": "איזו אופציה בחרת? אוכל להמשיך לעגלה."},
+    "ar": {"query": "القطعة التي طلبتها", "header": "فحصت لك {query}. إليك {n} خيارات حسب الميزانية:",
+           "in_stock": "✅ متوفر", "on_order": "⏳ عند الطلب", "days": "أيام", "warranty": "أشهر ضمان",
+           "no_price": "السعر غير متوفر", "alt": "بديل", "delivery_unknown": "مدة التوصيل تظهر عند الدفع",
+           "cta_chat": "أي خيار يناسبك؟ سأرسل لك رابط دفع آمن.", "cta_web": "أي خيار اخترت؟ يمكنني المتابعة إلى السلة."},
+    "en": {"query": "the part you asked for", "header": "I checked {query} for you. Here are {n} options by budget:",
+           "in_stock": "✅ Available", "on_order": "⏳ On order", "days": "days", "warranty": "months warranty",
+           "no_price": "price not available", "alt": "Alternative", "delivery_unknown": "delivery time shown at checkout",
+           "cta_chat": "Which option suits you? I'll send you a secure payment link.", "cta_web": "Which option did you choose? I can continue to the cart."},
+}
+
+
+def _canned_wrong_part_reply(message: str, upset: bool = False) -> str:
+    """Fixed reply for 'wrong part received' — in the turn's language (was Hebrew-only, and its
+    English trigger words 'wrong part'/'frustrated' answered English customers in Hebrew)."""
+    lang = _rl.current_target(message) or _rl.DEFAULT_LANGUAGE
+    texts = {
+        "he": ("אני מצטערת שזה קרה" if upset else "אני איתך") + ", ונטפל בזה מהר. "
+              "שלח לי בבקשה תמונה של החלק שקיבלת ותמונה של המדבקה או המספר שעל הקופסה, "
+              "ואדאג לבדיקה ולהחלפה בהקדם.",
+        "ar": ("أنا آسفة لما حدث" if upset else "أنا معك") + "، وسنعالج الأمر بسرعة. "
+              "أرسل لي من فضلك صورة للقطعة التي استلمتها وصورة للملصق أو الرقم الموجود على العلبة، "
+              "وسأتابع الفحص والاستبدال في أقرب وقت.",
+        "en": ("I'm sorry this happened" if upset else "I'm with you") + ", and we'll sort it out quickly. "
+              "Please send me a photo of the part you received and a photo of the label or the number on the box, "
+              "and I'll arrange the check and the replacement as soon as possible.",
+    }
+    return _rl.pick(texts, lang)
+
+
+def _canned_upset_reply(message: str) -> str:
+    lang = _rl.current_target(message) or _rl.DEFAULT_LANGUAGE
+    return _rl.pick({
+        "he": "אני מבינה את התסכול שלך. כתוב לי במשפט אחד מה בדיוק קרה עכשיו, ואני אתן לך את הצעד הכי מהיר לפתרון.",
+        "ar": "أفهم انزعاجك تماماً. اكتب لي في جملة واحدة ما الذي حدث بالضبط، وسأعطيك أسرع خطوة للحل.",
+        "en": "I understand your frustration. Tell me in one sentence what exactly happened, and I'll give you the fastest next step to fix it.",
+    }, lang)
+
+
 class BaseAgent:
     """Base class for all Auto Spare AI agents."""
 
@@ -1412,10 +1490,10 @@ class BaseAgent:
     system_prompt: str = (
         "אתה נציג שירות של AutoSpareFinder — פלטפורמת חלקי חילוף ישראלית. "
         "כללים מחייבים שאסור לעבור עליהם: "
-        "1. ענה תמיד בעברית בלבד. "
-        "2. אם הלקוח כותב ערבית — ענה בערבית בלבד. "
+        "1. ענה בשפה של הודעת הלקוח (עברית, ערבית או אנגלית) — כפי שמצוין בבלוק [REPLY LANGUAGE] בסוף ההוראות. "
+        "2. שפה אחת בלבד בכל תשובה. "
         "3. אסור בהחלט להשתמש בתווים סיניים, יפניים, קוריאניים או כל שפה אחרת. "
-        "4. אל תמציא מידע — אם אינך יודע, אמור זאת בעברית. "
+        "4. אל תמציא מידע — אם אינך יודע, אמור זאת. "
         "5. הטון חייב להיות אנושי, חם ושירותי (לא רובוטי). "
         "6. הובל את השיחה: בכל תשובה תן צעד הבא ברור אחד, ובסוף שאל שאלה ממוקדת אחת שמקדמת את הלקוח לפתרון. "
         "7. תשובות קצרות וברורות (עד 3-4 משפטים), אלא אם הלקוח ביקש פירוט. "
@@ -1473,7 +1551,39 @@ class BaseAgent:
             ensure_ascii=False,
         )
 
-    def _offline_reply(self, messages: List[Dict[str, str]]) -> str:
+    # Localized fallback texts for a customer turn (2026-10-27). These used to be Hebrew-only,
+    # so a timeout / provider outage answered English and Arabic customers in Hebrew.
+    _OFFLINE_TEXTS: Dict[str, Dict[str, str]] = {
+        "security_agent": {
+            "he": "היי, אני כאן בשבילך! 🔐 נשמע שיש משהו עם ההתחברות — ספר לי מה קורה: בעיה עם סיסמה, קוד אימות, או חשבון נעול?",
+            "ar": "مرحباً، أنا هنا لمساعدتك! 🔐 يبدو أن هناك مشكلة في تسجيل الدخول — أخبرني ما الذي يحدث: كلمة المرور، رمز التحقق، أم أن الحساب مقفل؟",
+            "en": "Hi, I'm here to help! 🔐 It sounds like something is wrong with signing in — tell me what's happening: a password problem, a verification code, or a locked account?",
+        },
+        "orders_agent": {
+            "he": "היי! אני ליאור, האחראי על ההזמנות שלנו. שלח לי את מספר ההזמנה ואני בודק מיד איפה הכול עומד 📦",
+            "ar": "مرحباً! أنا ليئور، المسؤول عن الطلبات. أرسل لي رقم الطلب وسأتحقق فوراً من حالته 📦",
+            "en": "Hi! I'm Lior, I handle our orders. Send me your order number and I'll check right away where everything stands 📦",
+        },
+        "finance_agent": {
+            "he": "שמחים לעזור בנושא חשבונית או חיוב! שלח מספר הזמנה וציין מה בדיוק תרצה — חשבונית, בירור חיוב, או החזר כספי.",
+            "ar": "يسعدنا مساعدتك بخصوص الفاتورة أو الدفع! أرسل رقم الطلب واذكر ما تحتاجه بالضبط — فاتورة، استفسار عن دفعة، أو استرداد.",
+            "en": "Happy to help with an invoice or a charge! Send your order number and tell me exactly what you need — an invoice, a billing question, or a refund.",
+        },
+        "marketing_agent": {
+            "he": "שלום! אשמח לעזור עם מבצעים ומידע על הפלטפורמה. מה תרצה לבדוק?",
+            "ar": "مرحباً! يسعدني مساعدتك بالعروض والمعلومات عن المنصة. ما الذي تريد أن تعرفه؟",
+            "en": "Hi! I'm happy to help with offers and information about the platform. What would you like to know?",
+        },
+        # Internal agents reached on a customer turn: an honest, localized holding reply
+        # instead of the internal diagnostic string.
+        "_internal_on_customer_turn": {
+            "he": "מצטערים, לא הצלחתי לענות כרגע. נסה שוב בעוד רגע, או כתוב לי איזה חלק אתה מחפש ולאיזה רכב.",
+            "ar": "عذراً، لم أتمكن من الرد الآن. حاول مرة أخرى بعد قليل، أو اكتب لي القطعة التي تبحث عنها ولأي سيارة.",
+            "en": "Sorry, I couldn't answer right now. Please try again in a moment, or tell me which part you need and for which car.",
+        },
+    }
+
+    def _offline_reply(self, messages: List[Dict[str, str]], lang: Optional[str] = None) -> str:
         import re
 
         user_msg = ""
@@ -1484,6 +1594,19 @@ class BaseAgent:
 
         if self.name == "router_agent":
             return self._offline_router_json(user_msg)
+
+        lang = _rl.normalize(lang)
+        if lang:
+            # Customer turn: always answer in the turn's language.
+            if self.name in self._OFFLINE_TEXTS:
+                return _rl.pick(self._OFFLINE_TEXTS[self.name], lang)
+            if self.name in ("social_media_manager_agent", "supplier_manager_agent", "tech_agent"):
+                return _rl.pick(self._OFFLINE_TEXTS["_internal_on_customer_turn"], lang)
+            if self.name == "service_agent":
+                return _human_recovery_reply(user_msg, preferred_lang=lang)
+            if lang != "he":
+                return _human_recovery_reply(user_msg, preferred_lang=lang)
+            # Hebrew customer on parts/sales: keep the existing Hebrew heuristics below.
 
         if self.name == "security_agent":
             return (
@@ -1554,13 +1677,24 @@ class BaseAgent:
         system_override: Optional[str] = None,
         source: Optional[str] = None,
     ) -> str:
-        """Send messages to GitHub Models API and return response text."""
+        """Send messages to the LLM chain and return the customer-facing reply.
+
+        Reply language (2026-10-27): on a customer turn this is the ONE enforcement point.
+        The target language comes from reply_language (the brain's per-turn value, else the
+        customer's last message); it is appended LAST to the system prompt, the reply is
+        validated as a whole, a wrong-language reply gets exactly one corrective retry, and if
+        that also fails the customer gets the localized fallback text - never a reply in a
+        language they did not write in. Every decision is logged as [ReplyLang].
+        """
+        target_lang = self._target_reply_language(messages, source)
         if not os.getenv("CEREBRAS_API_KEY", ""):
-            return self._offline_reply(messages)
+            return self._offline_reply(messages, lang=target_lang)
 
         try:
             selected_model = _channel_model_for_source(source, getattr(self, "model", FREE_MODEL))
             effective_system = _apply_channel_policy((system_override or self.system_prompt), source)
+            if target_lang:
+                effective_system = effective_system + _rl.language_directive(target_lang)
             prompt = "\n".join(
                 f"{m.get('role', 'user')}: {m.get('content', '')}"
                 for m in messages
@@ -1575,35 +1709,133 @@ class BaseAgent:
             # bot / broken sentences" the owner reported. Clamped to a safe conversational
             # ceiling so a stray high value can't reintroduce word-salad Hebrew.
             _temp = min(float(getattr(self, "temperature", 0.5) or 0.5), 0.6)
-            if self.name in _fast_agents:
-                # Hard 28s cap for customer-facing fast agents — the full fallback chain
-                # (Cerebras → zai-glm-4.7 → Gemini → GROQ) was taking 50+ seconds, causing
-                # customer-visible timeouts (2026-08-11 audit). On timeout, fall through to
-                # _offline_reply instead of holding the customer connection open.
-                return await asyncio.wait_for(
-                    hf_text_fast(
-                        prompt,
+            _is_fast = self.name in _fast_agents
+            _loop = asyncio.get_running_loop()
+            # Hard 28s cap for customer-facing fast agents — the full fallback chain
+            # (Cerebras → zai-glm-4.7 → Gemini → GROQ) was taking 50+ seconds, causing
+            # customer-visible timeouts (2026-08-11 audit). On timeout, fall through to
+            # _offline_reply instead of holding the customer connection open. The cap
+            # covers the language retry too (one shared deadline, not 28s per attempt).
+            _deadline = _loop.time() + 28.0 if _is_fast else None
+
+            async def _call(_prompt: str) -> str:
+                _trace = {}
+                _hf_client.LLM_CALL_TRACE.set(_trace)
+                if _is_fast:
+                    _left = _deadline - _loop.time()
+                    if _left <= 0:
+                        raise asyncio.TimeoutError()
+                    _text = await asyncio.wait_for(
+                        hf_text_fast(
+                            _prompt,
+                            system=effective_system,
+                            priority=_is_realtime,
+                            model=selected_model,
+                            temperature=_temp,
+                        ),
+                        timeout=_left,
+                    )
+                else:
+                    _text = await hf_text(
+                        _prompt,
                         system=effective_system,
                         priority=_is_realtime,
                         model=selected_model,
                         temperature=_temp,
-                    ),
-                    timeout=28.0,
-                )
-            return await hf_text(
-                prompt,
-                system=effective_system,
-                priority=_is_realtime,
-                model=selected_model,
-                temperature=_temp,
-            )
+                    )
+                return _text, _trace.get("provider", "unknown")
+
+            reply, provider = await _call(prompt)
+            if not target_lang:
+                return reply
+            # Business-critical claims must be grounded in what the APPLICATION supplied this turn
+            # (catalog / order data appended to the agent prompt) or what the customer wrote — not in
+            # the static prompt text and not in the model's own assumptions (policy_guard).
+            _grounding = [self._turn_data(system_override)] + [str(m.get("content") or "") for m in messages]
+
+            def _check(text: str):
+                return _rl.reply_matches_language(text, target_lang), _pg.validate_customer_reply(text, _grounding)
+
+            lang_ok, violations = _check(reply)
+            if lang_ok and not violations:
+                self._log_reply_language(source, target_lang, reply, provider, "ok")
+                return reply
+            self._log_reply_language(source, target_lang, reply, provider,
+                                     "mismatch_retry" if not lang_ok else "policy_retry", violations)
+            # Exactly ONE corrective retry (bounded: no loop, shares the fast-agent deadline).
+            if _is_fast and (_deadline - _loop.time()) < 4.0:
+                retry, provider2 = "", "skipped_no_time"
+            else:
+                _note = (_rl.correction_note(target_lang) if not lang_ok else "") + _pg.correction_note(violations)
+                retry, provider2 = await _call(prompt + _note)
+            if retry:
+                lang_ok2, violations2 = _check(retry)
+                if lang_ok2 and not violations2:
+                    self._log_reply_language(source, target_lang, retry, provider2, "retry_ok")
+                    return retry
+                violations = violations2 or violations
+            self._log_reply_language(source, target_lang, retry or reply, provider2, "fallback_localized", violations)
+            return self._offline_reply(messages, lang=target_lang)
+        except _pg.PolicyBudgetExceeded as e:
+            # The provider could not take the mandatory policy + current message: never send a
+            # truncated policy, answer with the localized holding reply instead.
+            print(f"[WARN] {self.name} request refused by policy budget: {e}")
+            if target_lang:
+                self._log_reply_language(source, target_lang, "", "policy_budget_exceeded", "fallback_localized")
+            return self._offline_reply(messages, lang=target_lang)
         except asyncio.TimeoutError:
             print(f"[WARN] {self.name} think() timed out after 28s — returning offline reply")
-            return self._offline_reply(messages)
+            if target_lang:
+                self._log_reply_language(source, target_lang, "", "timeout", "fallback_localized")
+            return self._offline_reply(messages, lang=target_lang)
         except Exception as e:
             status = getattr(getattr(e, "response", None), "status_code", None)
             print(f"[ERROR] {self.name} API call failed: status={status} error={e}")
-            return self._offline_reply(messages)
+            if target_lang:
+                self._log_reply_language(source, target_lang, "", "error", "fallback_localized")
+            return self._offline_reply(messages, lang=target_lang)
+
+    # Agents whose output is machine-read (JSON routing), never shown to a customer.
+    _NO_REPLY_LANGUAGE_AGENTS = frozenset({"router_agent"})
+
+    def _target_reply_language(self, messages: List[Dict[str, str]], source: Optional[str]) -> Optional[str]:
+        """Target language for this call, or None when it is not a customer reply
+        (background generation, owner tools, the JSON router) — those are left unchanged."""
+        if self.name in self._NO_REPLY_LANGUAGE_AGENTS:
+            return None
+        turn_lang = _rl.normalize(_rl.REPLY_LANGUAGE.get())
+        if turn_lang:
+            return turn_lang
+        if _normalize_source(source) not in ("whatsapp", "telegram", "web"):
+            return None
+        # Direct agent use on a customer channel without the brain: the customer's latest
+        # message with a language signal decides; assistant turns are never consulted.
+        user_msgs = [str(m.get("content") or "") for m in messages if m.get("role") == "user"]
+        current = user_msgs[-1] if user_msgs else ""
+        preferred = next((l for l in (_rl.detect_language(u) for u in reversed(user_msgs[:-1])) if l), None)
+        return _rl.resolve_reply_language(current, preferred=preferred)
+
+    def _turn_data(self, system_override: Optional[str]) -> str:
+        """The data the application appended to this agent's static prompt this turn (catalog
+        results, order context, stats). The static prompt itself is NOT grounding — it holds
+        examples and negative examples ("NO 'free over ₪300'")."""
+        if not system_override:
+            return ""
+        static = self.system_prompt or ""
+        if static and system_override.startswith(static):
+            return system_override[len(static):]
+        return system_override
+
+    def _log_reply_language(self, source, target, reply, provider, outcome, violations=None) -> None:
+        # No message text is logged — only the language decision, letter shares and the
+        # categories of policy violations (amount values are business data, not customer data).
+        logger.info(
+            "[ReplyLang] agent=%s channel=%s target=%s detected=%s shares=%s provider=%s outcome=%s policy=%s",
+            self.name, _normalize_source(source) or "-", target,
+            _rl.detected_reply_language(reply or "") or "-", _rl.reply_language_shares(reply or ""),
+            provider, outcome,
+            ",".join(f"{v.kind}:{v.detail}" for v in (violations or [])) or "ok",
+        )
 
     def calculate_customer_price(
         self,
@@ -1859,7 +2091,7 @@ IMPORTANT: Default to "he" (Hebrew) if the message contains only numbers, order 
             start = response.find("{")
             end = response.rfind("}") + 1
             if start >= 0 and end > start:
-                return json.loads(response[start:end])
+                return self._enforce_route(json.loads(response[start:end]), route_source)
         except Exception:
             pass
         # Default fallback
@@ -1870,6 +2102,25 @@ IMPORTANT: Default to "he" (Hebrew) if the message contains only numbers, order 
             "intent": "general_query",
             "extracted_data": {},
         }
+
+
+    @staticmethod
+    def _enforce_route(result: Any, route_source: Optional[str]) -> Dict[str, Any]:
+        """The model proposes an agent; the APPLICATION decides whether that agent may be reached.
+        2026-10-27: the "(admin only)" restriction was prompt wording only — the model's choice was
+        returned unchecked, so a customer message could reach social_media_manager_agent (internal
+        campaign plans / post drafts), supplier_manager_agent or tech_agent (signature mismatch ->
+        crash). Unknown names and, on customer channels, internal agents go to service_agent."""
+        if not isinstance(result, dict):
+            result = {}
+        proposed = str(result.get("agent") or "")
+        allowed = (_pg.CUSTOMER_AGENTS if _normalize_source(route_source) in ("whatsapp", "telegram", "web")
+                   else frozenset(AGENT_MAP))
+        if proposed not in allowed:
+            logger.info("[PolicyGuard] route_blocked proposed=%s channel=%s -> %s",
+                        proposed or "-", _normalize_source(route_source) or "-", _pg.CUSTOMER_FALLBACK_AGENT)
+            result = {**result, "agent": _pg.CUSTOMER_FALLBACK_AGENT, "route_blocked_from": proposed or None}
+        return result
 
 
 # ==============================================================================
@@ -2723,6 +2974,9 @@ NEVER:
                 pricing["warranty_months"] = sp_row.warranty_months
                 estimated_delivery_days = int(sp_row.estimated_delivery_days) if sp_row.estimated_delivery_days is not None else 14
                 pricing["estimated_delivery_days"] = estimated_delivery_days
+                # 14 above is a placeholder kept for existing numeric consumers; customer-facing text
+                # must not present it as a real estimate (SHIPPING TRUTH) — see _delivery_fact_he.
+                pricing["delivery_days_confirmed"] = sp_row.estimated_delivery_days is not None
                 pricing["supplier_part_id"] = str(sp_row.sp_id)
                 pricing["estimated_delivery"] = f"{estimated_delivery_days}–{estimated_delivery_days + 7} ימים"
                 suppliers.append(pricing)
@@ -2881,15 +3135,14 @@ NEVER:
                         pr = p.get("pricing") or {}
                         avail = pr.get("availability", "unknown")
                         avail_he = "זמין להזמנה ✅" if avail == "in_stock" else "זמין בהזמנה מיוחדת ⏳"
-                        delivery = pr.get("estimated_delivery_days")
-                        delivery_str = f"{delivery} ימים" if delivery else "10-14 ימים"
+                        delivery_str = _delivery_fact_he(pr)
                         warranty = pr.get("warranty_months", 12)
                         total = pr.get("total", 0.0)
                         vat = pr.get("vat", 0.0)
                         pnv = pr.get("price_no_vat", 0.0)
                         sp_id = pr.get("supplier_part_id", "")
                         if total > 0:
-                            price_line = f"מחיר: {pnv:.0f}₪ + {vat:.0f}₪ מע\"מ + ₪29-149 משלוח (לפי ספק) = **{total:.0f}₪ סה\"כ**"
+                            price_line = f"מחיר: {pnv:.0f}₪ + {vat:.0f}₪ מע\"מ + {_shipping_fact_he(pr)} = **{total:.0f}₪ סה\"כ**"
                         else:
                             price_line = "מחיר: לא זמין"
                         lines.append(
@@ -2925,13 +3178,12 @@ NEVER:
                             vat = pr.get("vat", 0.0)
                             pnv = pr.get("price_no_vat", 0.0)
                             avail_he = "זמין להזמנה ✅" if pr.get("availability") == "in_stock" else "זמין בהזמנה מיוחדת ⏳"
-                            delivery = pr.get("estimated_delivery_days", 14)
                             warranty = pr.get("warranty_months", 12)
                             sp_id = pr.get("supplier_part_id", "")
-                            price_line = f"{pnv:.0f}₪ + {vat:.0f}₪ מע\"מ + ₪29-149 משלוח (לפי ספק) = **{total:.0f}₪**" if total > 0 else "מחיר: לא זמין"
+                            price_line = f"{pnv:.0f}₪ + {vat:.0f}₪ מע\"מ + {_shipping_fact_he(pr)} = **{total:.0f}₪**" if total > 0 else "מחיר: לא זמין"
                             lines.append(
                                 f"{i}. [{p.get('part_type','?')}] {p.get('manufacturer','?')} – {p.get('name','?')}\n"
-                                f"   {price_line} | {avail_he} | {delivery} ימים | אחריות {warranty} חודשים\n"
+                                f"   {price_line} | {avail_he} | {_delivery_fact_he(pr)} | אחריות {warranty} חודשים\n"
                                 f"   supplier_part_id: {sp_id}\n"
                             )
                         parts_context = "\n".join(lines)
@@ -2972,10 +3224,10 @@ class SalesAgent(BaseAgent):
     agent_name = "Maya"         # מאיה — the sales pro
     system_prompt = """LANGUAGE RULES - MUST FOLLOW:
 1. Write each reply in ONE language only.
-2. Default language is Hebrew.
-3. If and only if the customer message is mainly in Arabic, reply fully in Arabic.
-4. NEVER mix Hebrew and Arabic in the same reply.
-5. NEVER insert English words unless they are technical part codes (e.g., OEM numbers).
+2. The reply language is the customer's language (Hebrew, Arabic or English) — as named in the
+   [REPLY LANGUAGE] block at the end of these instructions when present, otherwise the language
+   the customer wrote in.
+3. NEVER mix languages in the same reply. Part numbers, OEM codes, brand and model names stay as written.
 
 You are Maya, the Sales Agent for Auto Spare - an Israeli auto parts dropshipping platform.
 
@@ -2995,7 +3247,9 @@ STEP 2 — PRESENT RESULTS from the catalog data injected below, as tiers:
   ✅ טוב       — Aftermarket  (lowest price, good quality)
   ⭐ טוב יותר  — OEM          (mid price, fits like original)
   🏆 הכי טוב   — Original     (premium, factory quality)
-  Always show: מחיר ללא מע"מ + מע"מ 18% + משלוח ₪29–₪149 לפי ספק = סה"כ
+  Show the breakdown using ONLY the figures of that offer in the catalog data below:
+  net price + VAT (exactly as given — 0 for foreign suppliers) + that offer's shipping = total.
+  Never quote a shipping range or a shipping amount that is not in the data.
   If only one type is available, present it and explain why it's the best choice.
 
 STEP 3 — UPSELL SMART:
@@ -3061,8 +3315,17 @@ CRITICAL RULES:
     }
 
     def _deterministic_sales_fallback(self, message: str, source: Optional[str] = None) -> str:
-        query = self._extract_search_query(message) or "החלק שביקשת"
+        lang = _rl.current_target(message) or _rl.DEFAULT_LANGUAGE
         source_key = (source or "").strip().lower()
+        if lang != "he":
+            query = self._extract_search_query(message) or ("the part you asked for" if lang == "en" else "القطعة التي طلبتها")
+            return _rl.pick({
+                "en": f"I understand you're looking for {query}. So I don't give you an inaccurate price, I'm checking a real fit against the catalog. "
+                      "If you send your licence plate number or engine size, I can narrow it down and come back with an exact match.",
+                "ar": f"فهمت أنك تبحث عن {query}. حتى لا أعطيك سعراً غير دقيق، أتحقق الآن من التوافق الفعلي مع الكتالوج. "
+                      "إذا أرسلت رقم لوحة السيارة أو سعة المحرك، سأختصر الفحص وأعود إليك بتطابق دقيق.",
+            }, lang)
+        query = self._extract_search_query(message) or "החלק שביקשת"
         if source_key in {"whatsapp", "telegram"}:
             return (
                 f"הבנתי שאתה מחפש {query}. כדי לא לזרוק לך מחיר לא מדויק, אני בודקת עכשיו התאמה אמיתית מול הקטלוג. "
@@ -3080,8 +3343,10 @@ CRITICAL RULES:
         if not results:
             return self._deterministic_sales_fallback(message, source=source)
 
-        query = self._extract_search_query(message) or "החלק שביקשת"
-        lines = [f"בדקתי עבורך {query}. הנה {min(3, len(results))} אופציות בהתאם לתקציב:"]
+        lang = _rl.current_target(message) or _rl.DEFAULT_LANGUAGE
+        L = _SALES_RESULT_LABELS[lang if lang in _SALES_RESULT_LABELS else "he"]
+        query = self._extract_search_query(message) or L["query"]
+        lines = [L["header"].format(query=query, n=min(3, len(results)))]
         
         # Show up to 3 parts with their best supplier
         for i, result in enumerate(results[:3], 1):
@@ -3101,17 +3366,20 @@ CRITICAL RULES:
             total = float(supplier.get("total") or 0.0)
             warranty = int(supplier.get("warranty_months") or 12)
             availability = supplier.get("availability") or "on_order"
-            availability_text = "✅ זמין" if availability == "in_stock" else "⏳ בהזמנה"
-            delivery_days = int(supplier.get("estimated_delivery_days") or 14)
-            delivery_text = supplier.get("estimated_delivery") or f"{delivery_days}–{delivery_days + 7} ימים"
+            availability_text = L["in_stock"] if availability == "in_stock" else L["on_order"]
+            if _delivery_confirmed(supplier):
+                delivery_days = int(supplier.get("estimated_delivery_days"))
+                delivery_text = f"{delivery_days}–{delivery_days + 7} {L['days']}"
+            else:
+                delivery_text = L["delivery_unknown"]
             
             lines.append("")
             lines.append(f"{i}. {part_mfr}")
             if total > 0:
                 lines.append(f"   {part_name} – {total:.0f}₪")
-                lines.append(f"   {availability_text} | {delivery_text} | {warranty} חודשים אחריות")
+                lines.append(f"   {availability_text} | {delivery_text} | {warranty} {L['warranty']}")
             else:
-                lines.append(f"   {part_name} – מחיר לא זמין")
+                lines.append(f"   {part_name} – {L['no_price']}")
             
             # Show alternative suppliers if available (cheaper or in-stock alternative)
             if len(suppliers) > 1:
@@ -3119,14 +3387,14 @@ CRITICAL RULES:
                     alt_supplier = suppliers[alt_idx]
                     alt_total = float(alt_supplier.get("total") or 0.0)
                     if alt_total > 0 and abs(alt_total - total) > 1:  # different price (>1₪)
-                        lines.append(f"   חלופה: {alt_total:.0f}₪")
+                        lines.append(f"   {L['alt']}: {alt_total:.0f}₪")
         
         lines.append("")
         source_key = (source or "").strip().lower()
         if source_key in {"whatsapp", "telegram"}:
-            lines.append("איזו אופציה מתאימה? אשלח לך לינק תשלום מאובטח.")
+            lines.append(L["cta_chat"])
         else:
-            lines.append("איזו אופציה בחרת? אוכל להמשיך לעגלה.")
+            lines.append(L["cta_web"])
         
         return "\n".join(lines)
 
@@ -3173,14 +3441,13 @@ CRITICAL RULES:
                         pnv = pr.get("price_no_vat", 0.0)
                         vat = pr.get("vat", 0.0)
                         total = pr.get("total", 0.0)
-                        delivery = pr.get("estimated_delivery_days", 14)
                         warranty = pr.get("warranty_months", 12)
                         sp_id = pr.get("supplier_part_id", "")
                         avail_he = "זמין להזמנה ✅" if pr.get("availability") == "in_stock" else "זמין בהזמנה מיוחדת ⏳"
-                        price_line = f"{pnv:.0f}₪ + {vat:.0f}₪ מע\"מ + ₪29-149 משלוח (לפי ספק) = **{total:.0f}₪**" if total > 0 else "מחיר: לא זמין"
+                        price_line = f"{pnv:.0f}₪ + {vat:.0f}₪ מע\"מ + {_shipping_fact_he(pr)} = **{total:.0f}₪**" if total > 0 else "מחיר: לא זמין"
                         lines.append(
                             f"{i}. [{tier}] {p.get('manufacturer','?')} – {p.get('name','?')} | סוג המוצר: {_cls_he or 'לא צוין'}\n"
-                            f"   {price_line} | {avail_he} | אספקה: {delivery} ימים | אחריות: {warranty} חודשים\n"
+                            f"   {price_line} | {avail_he} | {_delivery_fact_he(pr)} | אחריות: {warranty} חודשים\n"
                             f"   supplier_part_id: {sp_id}\n"
                         )
                     parts_context = "\n".join(lines)
@@ -3197,14 +3464,13 @@ CRITICAL RULES:
                             pnv = pr.get("price_no_vat", 0.0)
                             vat = pr.get("vat", 0.0)
                             total = pr.get("total", 0.0)
-                            delivery = pr.get("estimated_delivery_days", 14)
                             warranty = pr.get("warranty_months", 12)
                             sp_id = pr.get("supplier_part_id", "")
                             avail_he = "זמין להזמנה ✅" if pr.get("availability") == "in_stock" else "זמין בהזמנה מיוחדת ⏳"
-                            price_line = f"{pnv:.0f}₪ + {vat:.0f}₪ מע\"מ + ₪29-149 משלוח (לפי ספק) = **{total:.0f}₪**" if total > 0 else "לא זמין"
+                            price_line = f"{pnv:.0f}₪ + {vat:.0f}₪ מע\"מ + {_shipping_fact_he(pr)} = **{total:.0f}₪**" if total > 0 else "לא זמין"
                             lines.append(
                                 f"{i}. {p.get('manufacturer','?')} – {p.get('name','?')} (סוג המוצר: {_oc.class_label_he(pr.get('part_type') or p.get('part_type')) or 'לא צוין'})\n"
-                                f"   {price_line} | {avail_he} | {delivery} ימים | {warranty} חודשים אחריות\n"
+                                f"   {price_line} | {avail_he} | {_delivery_fact_he(pr)} | {warranty} חודשים אחריות\n"
                                 f"   supplier_part_id: {sp_id}\n"
                             )
                         parts_context = "\n".join(lines)
@@ -3271,7 +3537,7 @@ You handle: order status, tracking, cancellations, and return requests.
 
 CRITICAL DROPSHIPPING RULE: Orders are placed with suppliers ONLY after customer payment confirmed. Never confirm supplier order before payment.
 
-Order statuses (always use these exact labels in Hebrew):
+Order statuses (use these labels, translated into the reply language):
 - pending_payment → ממתין לתשלום
 - paid → שולם, בעיבוד
 - supplier_ordered → הוזמן מספק, מספר מעקב הוקצה
@@ -3302,7 +3568,7 @@ ABANDONED CART:
 - If a customer mentions items they added but didn't complete payment for, this is an abandoned cart.
 - Say: "ראיתי שיש פריטים בעגלה שלך שלא הושלמו. כדי להשלים את הרכישה — כנס ל https://autosparefinder.co.il/cart ולחץ 'לתשלום'."
 
-LANGUAGE: ALWAYS respond in Hebrew. If customer writes in Arabic, respond in Arabic."""
+LANGUAGE: Reply in the customer's language (Hebrew, Arabic or English) — as named in the [REPLY LANGUAGE] block at the end of these instructions when present, otherwise the language the customer wrote in. One language per reply; OEM numbers, brand and model names stay as written."""
 
     async def process(self, message: str, conversation_history: List[Dict], db: AsyncSession, **kwargs) -> str:
         import re as _re
@@ -3626,10 +3892,10 @@ class FinanceAgent(BaseAgent):
     model = FREE_MODEL          # free: rule-based calculations
     system_prompt = """LANGUAGE RULES - MUST FOLLOW:
 1. Write each reply in ONE language only.
-2. Default language is Hebrew.
-3. If and only if the customer message is mainly in Arabic, reply fully in Arabic.
-4. NEVER mix Hebrew and Arabic in the same reply.
-5. NEVER insert English words unless they are technical part codes (e.g., OEM numbers).
+2. The reply language is the customer's language (Hebrew, Arabic or English) — as named in the
+   [REPLY LANGUAGE] block at the end of these instructions when present, otherwise the language
+   the customer wrote in.
+3. NEVER mix languages in the same reply. Part numbers, OEM codes, brand and model names stay as written.
 
 You are Tal, the Finance Agent for Auto Spare (עוסק מורשה 060633880, הרצל 55, עכו).
 
@@ -3655,8 +3921,10 @@ CHECKOUT: When a customer asks how to pay or wants a payment link, ALWAYS say:
 Do NOT say you cannot provide links. /cart is always the correct answer.
 Business: מס' עוסק מורשה 060633880 | הרצל 55, עכו
 
-Always show full breakdown: מחיר נטו + מע"מ 18% + משלוח (₪29–₪149) = סה"כ
-LANGUAGE: ALWAYS respond in Hebrew. If customer writes in Arabic, respond in Arabic.
+Price breakdown: only figures that appear in the order/catalog data of this conversation
+(net price + VAT exactly as given + that offer's shipping = total). Never quote a shipping range or an
+amount that is not in the data; otherwise say the exact cost appears at checkout.
+LANGUAGE: Reply in the customer's language (Hebrew, Arabic or English) — as named in the [REPLY LANGUAGE] block at the end of these instructions when present, otherwise the language the customer wrote in. One language per reply; OEM numbers, brand and model names stay as written.
 חשוב: אל תשתמש ב-HTML, markdown, או קישורים. ענה בטקסט רגיל בלבד המתאים לשיחת טלגרם.
 """
 
@@ -3668,18 +3936,10 @@ LANGUAGE: ALWAYS respond in Hebrew. If customer writes in Arabic, respond in Ara
         upset_terms = ("מתוסכל", "מאוכזב", "כועס", "מעצבן", "frustrated", "angry")
 
         if any(term in msg_l for term in wrong_part_terms):
-            opener = "אני מצטערת שזה קרה" if any(term in msg_l for term in upset_terms) else "אני איתך"
-            return (
-                f"{opener}, ונטפל בזה מהר. "
-                "שלח לי בבקשה תמונה של החלק שקיבלת ותמונה של המדבקה או המספר שעל הקופסה, "
-                "ואדאג לבדיקה ולהחלפה בהקדם."
-            )
+            return _canned_wrong_part_reply(msg, upset=any(term in msg_l for term in upset_terms))
 
         if any(term in msg_l for term in upset_terms):
-            return (
-                "אני מבינה את התסכול שלך. "
-                "כתוב לי במשפט אחד מה בדיוק קרה עכשיו, ואני אתן לך את הצעד הכי מהיר לפתרון."
-            )
+            return _canned_upset_reply(msg)
 
         return await self.think(
             conversation_history + [{"role": "user", "content": message}],
@@ -3747,18 +4007,10 @@ NEVER:
         upset_terms = ("מתוסכל", "מאוכזב", "כועס", "מעצבן", "frustrated", "angry")
 
         if any(term in msg_l for term in wrong_part_terms):
-            opener = "אני מצטערת שזה קרה" if any(term in msg_l for term in upset_terms) else "אני איתך"
-            return (
-                f"{opener}, ונטפל בזה מהר. "
-                "שלח לי בבקשה תמונה של החלק שקיבלת ותמונה של המדבקה או המספר שעל הקופסה, "
-                "ואדאג לבדיקה ולהחלפה בהקדם."
-            )
+            return _canned_wrong_part_reply(msg, upset=any(term in msg_l for term in upset_terms))
 
         if any(term in msg_l for term in upset_terms):
-            return (
-                "אני מבינה את התסכול שלך. "
-                "כתוב לי במשפט אחד מה בדיוק קרה עכשיו, ואני אתן לך את הצעד הכי מהיר לפתרון."
-            )
+            return _canned_upset_reply(msg)
 
         return await self.think(
             conversation_history + [{"role": "user", "content": message}],
@@ -3795,7 +4047,7 @@ RATE LIMITS (for customer awareness):
 - If a customer gets HTTP 429, tell them: "חרגת מהמגבלה. נסה שוב בעוד 60 שניות."
 
 Be security-conscious but helpful. Verify identity before making changes.
-LANGUAGE: ALWAYS respond in Hebrew (עברית). If the customer writes in Arabic, respond in Arabic. Never respond in any other language.
+LANGUAGE: Reply in the customer's language (Hebrew, Arabic or English) — as named in the [REPLY LANGUAGE] block at the end of these instructions when present, otherwise the language the customer wrote in. One language per reply; OEM numbers, brand and model names stay as written.
 """
 
     async def process(self, message: str, conversation_history: List[Dict], db: AsyncSession, **kwargs) -> str:
@@ -3856,7 +4108,7 @@ SEARCH MISS SIGNALS:
 - If a category has > 5 misses in 7 days → suggest a targeted campaign once stock is added.
 - Phrase: "אנחנו עובדים להביא עוד {category} — הישארו מעודכנים!"
 
-LANGUAGE: ALWAYS respond in Hebrew (עברית). If the customer writes in Arabic, respond in Arabic. Never respond in any other language.
+LANGUAGE: Reply in the customer's language (Hebrew, Arabic or English) — as named in the [REPLY LANGUAGE] block at the end of these instructions when present, otherwise the language the customer wrote in. One language per reply; OEM numbers, brand and model names stay as written.
 """
 
     # Campaign-intent keywords (he/ar/en) that trigger a proposal response.
@@ -3888,13 +4140,24 @@ LANGUAGE: ALWAYS respond in Hebrew (עברית). If the customer writes in Arabi
         The owner must confirm via the admin API (POST /api/v1/campaigns)
         before any campaign is created or content is queued.
         """
-        return (
-            "זיהיתי בקשה ליצירת קמפיין שיווקי. "
-            "כדי להתחיל, אנא השתמש בממשק הניהול (POST /api/v1/campaigns) "
-            "ותספק: מטרת הקמפיין, פלטפורמות יעד, טון, ותקציב משוער. "
-            "לאחר יצירת הקמפיין, NOA תייצר תוכן לאישור שלך לפני הפרסום.\n\n"
-            "אם אתה הבעלים — השתמש בקונסול הניהול כדי לאשר ולהתחיל."
-        )
+        lang = _rl.current_target(message) or _rl.DEFAULT_LANGUAGE
+        return _rl.pick({
+            "he": "זיהיתי בקשה ליצירת קמפיין שיווקי. "
+                  "כדי להתחיל, אנא השתמש בממשק הניהול (POST /api/v1/campaigns) "
+                  "ותספק: מטרת הקמפיין, פלטפורמות יעד, טון, ותקציב משוער. "
+                  "לאחר יצירת הקמפיין, NOA תייצר תוכן לאישור שלך לפני הפרסום.\n\n"
+                  "אם אתה הבעלים — השתמש בקונסול הניהול כדי לאשר ולהתחיל.",
+            "ar": "لاحظت طلباً لإنشاء حملة تسويقية. "
+                  "للبدء، يرجى استخدام واجهة الإدارة (POST /api/v1/campaigns) "
+                  "وتحديد: هدف الحملة، المنصات المستهدفة، الأسلوب، والميزانية التقديرية. "
+                  "بعد إنشاء الحملة، ستُعدّ NOA المحتوى لموافقتك قبل النشر.\n\n"
+                  "إذا كنت المالك — استخدم وحدة الإدارة للموافقة والبدء.",
+            "en": "I noticed a request to create a marketing campaign. "
+                  "To start, please use the admin interface (POST /api/v1/campaigns) "
+                  "and provide: the campaign goal, target platforms, tone, and an estimated budget. "
+                  "Once the campaign is created, NOA will prepare content for your approval before publishing.\n\n"
+                  "If you are the owner — use the admin console to approve and start.",
+        }, lang)
 
     async def delegate_to_social_campaign(
         self,
@@ -4627,7 +4890,11 @@ class SupplierManagerAgent(BaseAgent):
         return created
 
     async def process(self, message: str, conversation_history: List[Dict], db: AsyncSession, **kwargs) -> str:
-        return "סוכן זה הוא לשימוש פנימי בלבד. כדי לקבל עזרה עם הזמנה או חלקים, פנה לצוות השירות."
+        return _rl.pick({
+            "he": "סוכן זה הוא לשימוש פנימי בלבד. כדי לקבל עזרה עם הזמנה או חלקים, פנה לצוות השירות.",
+            "ar": "هذا الوكيل للاستخدام الداخلي فقط. للمساعدة في طلب أو قطع غيار، تواصل مع فريق الخدمة.",
+            "en": "This assistant is for internal use only. For help with an order or parts, please contact our service team.",
+        }, _rl.current_target(message))
 
 
 # ==============================================================================
@@ -6583,7 +6850,31 @@ def get_agent(name: str) -> BaseAgent:
 # MAIN MESSAGE PROCESSOR
 # ==============================================================================
 
+def _localized_agent_error() -> str:
+    return _rl.pick({
+        "he": "מצטער, נתקלתי בבעיה. אנא נסה שוב בעוד רגע.",
+        "ar": "عذراً، واجهت مشكلة. يرجى المحاولة مرة أخرى بعد قليل.",
+        "en": "Sorry, I ran into a problem. Please try again in a moment.",
+    }, _rl.REPLY_LANGUAGE.get())
+
+
 async def process_agent_response_for_message(
+    user_id: str,
+    message: str,
+    conversation_id: str,
+    db: AsyncSession,
+    source: str = "web",
+) -> None:
+    """Background web-chat turn. Scopes the turn's reply language (reply_language.REPLY_LANGUAGE)
+    to this call only, then runs the turn."""
+    _token = _rl.REPLY_LANGUAGE.set(None)
+    try:
+        return await _process_agent_response_for_message_impl(user_id, message, conversation_id, db, source)
+    finally:
+        _rl.REPLY_LANGUAGE.reset(_token)
+
+
+async def _process_agent_response_for_message_impl(
     user_id: str,
     message: str,
     conversation_id: str,
@@ -6600,6 +6891,11 @@ async def process_agent_response_for_message(
     if not conversation:
         print(f"[BG AGENT] conversation {conversation_id} not found")
         return
+
+    # Reply language for this turn: the current message, else the conversation's last
+    # customer language (same rule as process_user_message).
+    _bg_ctx = conversation.context if isinstance(conversation.context, dict) else {}
+    _rl.REPLY_LANGUAGE.set(_rl.resolve_reply_language(message, preferred=_bg_ctx.get("preferred_lang")))
 
     # Load history (last 20 messages) — the shared loader: latest 20, chronological, no soft-deleted rows (#77)
     history = [{"role": m.role, "content": m.content} for m in await _load_history_rows(db, conversation.id)]
@@ -6646,7 +6942,7 @@ async def process_agent_response_for_message(
     except Exception as e:
         print(f"[BG AGENT ERROR] {agent_name}: {e}")
         agent_error = str(e)
-        response_text = "מצטער, נתקלתי בבעיה. אנא נסה שוב בעוד רגע."
+        response_text = _localized_agent_error()
         agent_name = "service_agent"
         agent = get_agent(agent_name)
         model_used = _channel_model_for_source(source, getattr(agent, "model", FREE_MODEL))
@@ -6781,8 +7077,18 @@ async def _format_response_for_customer(
     agent_name: str,
     source: str,
     history: List[Dict[str, str]],
+    current_message: str = "",
+    target_lang: Optional[str] = None,
 ) -> str:
-    """Use Gemini to reformat raw agent response into warm customer-facing text. Skips short replies."""
+    """Rewrite a raw agent response into warm customer-facing text. Skips short replies.
+
+    Reply language (2026-10-27): this editor used to (a) have no English rule — the web/WhatsApp
+    prompt was written in Hebrew and only covered Hebrew/Arabic, the Telegram one said "Hebrew or
+    Arabic" — and (b) read the PREVIOUS customer message (history is loaded before the current
+    message is saved). Correct English replies were rewritten into Hebrew. Now the target language
+    is passed in explicitly, the prompt is language-neutral, and the rewrite is validated: if it is
+    not in the target language the agent's original reply is kept.
+    """
     fast_agents = {"router_agent", "orders_agent", "security_agent", "tech_agent",
                    "supplier_manager_agent", "social_media_manager_agent", "parts_finder_agent"}
     if agent_name not in fast_agents:
@@ -6791,48 +7097,54 @@ async def _format_response_for_customer(
     if len(raw_response) < 120:
         return raw_response
 
-    last_user_msg = ""
-    for m in reversed(history):
-        if m.get("role") == "user":
-            last_user_msg = m.get("content", "")
-            break
+    customer_msg = current_message
+    if not customer_msg:
+        for m in reversed(history):
+            if m.get("role") == "user":
+                customer_msg = m.get("content", "")
+                break
+    lang = _rl.normalize(target_lang) or _rl.normalize(_rl.REPLY_LANGUAGE.get()) \
+        or _rl.resolve_reply_language(customer_msg)
+    lang_name = _rl.NAMES[lang]
+    channel = "Telegram" if _normalize_source(source) == "telegram" else (
+        "WhatsApp" if _normalize_source(source) == "whatsapp" else "web chat")
 
-    if _normalize_source(source) == "telegram":
-        system = """You are the Telegram customer-service editor for Auto Spare Finder.
-Rewrite the raw response naturally, while strictly preserving facts and links from backend data only.
+    system = f"""You are the {channel} customer-service editor for Auto Spare Finder.
+Rewrite the raw response naturally — warm, short and professional — while strictly preserving
+its facts, numbers and links.
 
 Mandatory rules:
-1. Same language as customer input only (Hebrew or Arabic).
-2. No invented details.
-3. No cart mentions.
-4. No fake links; preserve real backend links exactly.
-5. Keep it short, warm, and professional (max 4 sentences).
-6. No HTML/markdown formatting.
-7. No marketing text, no compatibility claims, no shipping promises unless explicitly in raw data."""
-    else:
-        system = """אתה עורך לשון של שירות לקוחות ישראלי.
-קיבלת תשובה גולמית. עליך לנסח אותה מחדש — חמה, קצרה, מקצועית.
+1. Write the whole rewrite in {lang_name}. Do not change the language to match the raw response
+   or anything else; part numbers, OEM codes, brand and model names stay as written.
+2. No invented details, no compatibility claims, no shipping promises beyond the raw response.
+3. No cart mentions. No fake links; preserve real backend links exactly.
+4. Maximum 4 sentences.
+5. No HTML or markdown formatting.
+6. Return only the rewritten message."""
 
-חוקי שפה מחייבים:
-1. אם הלקוח כתב עברית — התשובה כולה בעברית. אסור אף מילה בערבית, סינית, או אנגלית. מונחים טכניים בלבד כמו OEM מותרים.
-2. אם הלקוח כתב ערבית — התשובה כולה בערבית. אסור אף מילה בעברית.
-3. אסור לערבב אותיות משפות שונות באותה מילה.
-4. לא יותר מ-4 משפטים.
-5. ללא HTML, markdown, או קישורים.
-6. טון חם — כמו נציג שירות אנושי."""
-
-    prompt = f"""תשובה גולמית מהמערכת:
+    prompt = f"""Raw response from the system:
 {raw_response}
 
-הודעת הלקוח:
-{last_user_msg}
+The customer's message:
+{customer_msg}
 
-נסח מחדש בצורה טבעית וחמה:"""
+Rewrite it in {lang_name}:"""
 
     try:
-        return await hf_text(prompt, system=system)
+        rewritten = await hf_text(prompt, system=system)
     except Exception:
         return raw_response
+    # The editor may rephrase; it may not change the language or add facts (numbers, amounts,
+    # links) that the agent's validated raw reply did not contain.
+    _added = _pg.rewrite_preserves_facts(raw_response, rewritten or "")
+    if rewritten and _rl.reply_matches_language(rewritten, lang) and not _added:
+        return rewritten
+    logger.info(
+        "[ReplyLang] agent=customer_formatter base=%s channel=%s target=%s detected=%s outcome=rewrite_rejected_kept_raw policy=%s",
+        agent_name, _normalize_source(source) or "-", lang, _rl.detected_reply_language(rewritten or "") or "-",
+        ",".join(f"{v.kind}:{v.detail}" for v in _added) or "ok",
+    )
+    return raw_response
 
 
 _WHATSAPP_ANON_USER_ID = "00000000-0000-0000-0000-000000000001"
@@ -7001,7 +7313,23 @@ async def process_user_message(
 ) -> Dict[str, Any]:
     """
     Main entry point: routes message, calls agent, saves to DB, returns response.
+    Scopes the turn's reply language (reply_language.REPLY_LANGUAGE) to this call only.
     """
+    _token = _rl.REPLY_LANGUAGE.set(None)
+    try:
+        return await _process_user_message_impl(user_id, message, conversation_id, db, source)
+    finally:
+        _rl.REPLY_LANGUAGE.reset(_token)
+
+
+async def _process_user_message_impl(
+    user_id: str,
+    message: str,
+    conversation_id: Optional[str],
+    db: AsyncSession,
+    source: str = "web",
+) -> Dict[str, Any]:
+    """Body of process_user_message (see the wrapper)."""
     # ── 1. Get or create conversation ──────────────────────────────────────────
     if conversation_id:
         result = await db.execute(
@@ -7191,16 +7519,14 @@ async def process_user_message(
     quick_part_choice = _quick_part_from_message(message)
     effective_message = quick_part_choice or message
 
-    _msg_lang = ""
-    if any("\u0600" <= ch <= "\u06FF" for ch in (message or "")):
-        _msg_lang = "ar"
-    elif any("\u0590" <= ch <= "\u05FF" for ch in (message or "")):
-        _msg_lang = "he"
-    elif any(ch.isalpha() for ch in (message or "")):
-        _msg_lang = "en"
+    # Reply language for the whole turn (reply_language.py is the single rule): the current
+    # message; a message with no language signal (plate, OEM number, "1") keeps the
+    # conversation's last customer language. Published to every agent call in this turn.
+    _msg_lang = _rl.detect_language(message) or ""
     if _msg_lang:
         context_data["preferred_lang"] = _msg_lang
-    _lang = str(context_data.get("preferred_lang") or _msg_lang or "he")
+    _lang = _rl.resolve_reply_language(message, preferred=context_data.get("preferred_lang"))
+    _rl.REPLY_LANGUAGE.set(_lang)
 
     if parts_flow_active:
         # ── Checkout intent: user replies 1/2/3 after seeing WhatsApp/Telegram results ──
@@ -7836,7 +8162,8 @@ async def process_user_message(
                     _formatted_lines.append(_banner.get(_lang, _banner["he"]))
                     _formatted_lines.append("")
                     # per-language labels for the price / shipping / warranty lines
-                    _vat_label = {"he": 'כולל מע"מ', "ar": "شامل الضريبة", "en": "incl. VAT"}.get(_lang, "incl. VAT")
+                    _vat_label = {"he": 'כולל מע"מ ומשלוח', "ar": "شامل الضريبة والشحن", "en": "incl. VAT and shipping"}.get(_lang, "incl. VAT and shipping")
+                    _delivery_unknown = {"he": "זמן אספקה יוצג בקופה", "ar": "مدة التوصيل تظهر عند الدفع", "en": "delivery time shown at checkout"}.get(_lang, "delivery time shown at checkout")
                     _ship_word = {"he": "ימים", "ar": "أيام", "en": "days"}.get(_lang, "days")
                     _warr_tpl = {"he": "אחריות {m} חודשים", "ar": "ضمان {m} شهرًا", "en": "{m} months warranty"}.get(_lang, "{m} months warranty")
                     _pending_parts_payload: List[Dict[str, Any]] = []
@@ -7845,15 +8172,18 @@ async def process_user_message(
                         _name = str(item.get("name") or "Part")
                         _manufacturer = str(item.get("manufacturer") or "Unknown")
                         _price_total = float(pr.get("total") or 0)
-                        _delivery_days = int(pr.get("estimated_delivery_days") or 14)
-                        _delivery_min = max(1, _delivery_days - 2)
+                        if _delivery_confirmed(pr):
+                            _delivery_days = int(pr.get("estimated_delivery_days"))
+                            _delivery_txt = f"{max(1, _delivery_days - 2)}–{_delivery_days} {_ship_word}"
+                        else:
+                            _delivery_txt = _delivery_unknown
                         _warranty_months = int(item.get("warranty_months") or 12)
                         _fit_mark = " ✅" if verified_fit else ""
                         _formatted_lines.extend(
                             [
                                 f"*[{i}]. {_name}*{_fit_mark} — {_manufacturer}",
                                 f"💰 ₪{_price_total:,.0f} ({_vat_label})",
-                                f"🚚 {_delivery_min}–{_delivery_days} {_ship_word} | 🛡️ {_warr_tpl.format(m=_warranty_months)}",
+                                f"🚚 {_delivery_txt} | 🛡️ {_warr_tpl.format(m=_warranty_months)}",
                                 "",
                             ]
                         )
@@ -7933,7 +8263,7 @@ async def process_user_message(
         except Exception as e:
             print(f"[ERROR] Agent {agent_name} failed: {e}")
             agent_error = str(e)
-            response_text = "מצטער, נתקלתי בבעיה. אנא נסה שוב בעוד רגע."
+            response_text = _localized_agent_error()
             agent_name = "service_agent"
             model_used = _channel_model_for_source(source, FREE_MODEL)
         exec_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
@@ -7981,11 +8311,17 @@ async def process_user_message(
                     context_data["vehicle_confirmed"] = False
                     context_data.pop("license_plate", None)
                     context_data["part_prompt_retries"] = 0
-                    response_text = (
-                        "בוא נתחיל נקי 🙂 שלח לי את מספר הרכב (לוחית רישוי) — "
-                        "ואני אשלוף אוטומטית את כל פרטי הרכב: יצרן, דגם, שנה ומנוע. "
-                        "אחר כך רק תגיד לי איזה חלק אתה צריך."
-                    )
+                    response_text = _rl.pick({
+                        "he": "בוא נתחיל נקי 🙂 שלח לי את מספר הרכב (לוחית רישוי) — "
+                              "ואני אשלוף אוטומטית את כל פרטי הרכב: יצרן, דגם, שנה ומנוע. "
+                              "אחר כך רק תגיד לי איזה חלק אתה צריך.",
+                        "ar": "لنبدأ من جديد 🙂 أرسل لي رقم لوحة السيارة — "
+                              "وسأجلب تلقائياً كل تفاصيل السيارة: الشركة، الموديل، السنة والمحرك. "
+                              "بعدها أخبرني فقط ما القطعة التي تحتاجها.",
+                        "en": "Let's start fresh 🙂 Send me your licence plate number — "
+                              "and I'll automatically pull all the car details: make, model, year and engine. "
+                              "Then just tell me which part you need.",
+                    }, _lang)
             else:
                 response_text = _human_recovery_reply(message, preferred_lang=preferred_lang)
     except Exception:
@@ -8004,7 +8340,8 @@ async def process_user_message(
     )
     if source in ("telegram", "whatsapp", "web") and not _skip_format and agent_name not in ("parts_finder_agent",):
         response_text = await _format_response_for_customer(
-            response_text, agent_name, source, history
+            response_text, agent_name, source, history,
+            current_message=message, target_lang=_lang,
         )
 
     # Payment-link guard (added 2026-07-05): the LLM once hallucinated a fake
@@ -8018,12 +8355,20 @@ async def process_user_message(
     ):
         print(f"[PaymentGuard] Stripped hallucinated payment link from {agent_name} reply")
         if context_data.get("pending_checkout_parts"):
-            response_text = "כדי לקבל קישור תשלום מאובטח, שלח את מספר החלק שבחרת — 1, 2 או 3 🙂"
+            response_text = _rl.pick({
+                "he": "כדי לקבל קישור תשלום מאובטח, שלח את מספר החלק שבחרת — 1, 2 או 3 🙂",
+                "ar": "للحصول على رابط دفع آمن، أرسل رقم القطعة التي اخترتها — 1 أو 2 أو 3 🙂",
+                "en": "To get a secure payment link, send the number of the part you chose — 1, 2 or 3 🙂",
+            }, _lang)
         else:
-            response_text = (
-                "לפני התשלום צריך לבחור חלק 🙂 תגיד לי איזה חלק אתה צריך, "
-                "אציג אפשרויות ומחירים, ואז אשלח קישור תשלום מאובטח."
-            )
+            response_text = _rl.pick({
+                "he": "לפני התשלום צריך לבחור חלק 🙂 תגיד לי איזה חלק אתה צריך, "
+                      "אציג אפשרויות ומחירים, ואז אשלח קישור תשלום מאובטח.",
+                "ar": "قبل الدفع يجب اختيار قطعة 🙂 أخبرني ما القطعة التي تحتاجها، "
+                      "سأعرض الخيارات والأسعار، ثم أرسل لك رابط دفع آمن.",
+                "en": "Before payment you need to choose a part 🙂 Tell me which part you need, "
+                      "I'll show options and prices, and then send you a secure payment link.",
+            }, _lang)
 
     response_text = _strip_leaked_reasoning(response_text)
     response_text = _sanitize_internal_pricing_disclosure(response_text)

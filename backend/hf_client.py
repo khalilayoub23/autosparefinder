@@ -14,6 +14,7 @@ import asyncio
 import hashlib
 import json as _json
 import logging
+import contextvars
 import os
 import re as _re
 import time
@@ -450,6 +451,20 @@ _HF_PRIMARY_COOLDOWN = int(os.getenv("HF_PRIMARY_COOLDOWN_S", "300"))
 _hf_primary_down_until: float = 0.0
 
 
+HF_BILLING_REDIS_KEY = "autospare:llm:hf_primary_blocked"
+
+
+async def _hf_billing_mark(status: int) -> None:
+    """Leave the marker the health monitor turns into an owner alert. Value = HTTP status."""
+    try:
+        from BACKEND_AUTH_SECURITY import get_redis
+        r = await get_redis()
+        if r:
+            await r.set(HF_BILLING_REDIS_KEY, str(int(status)), ex=3600)
+    except Exception:
+        pass
+
+
 def _hf_primary_model(selected_model: str) -> "str | None":
     name = selected_model.split(":")[0]
     if "gpt-oss" not in name:
@@ -485,6 +500,10 @@ async def _hf_primary_text(selected_model: str, body: dict, timeout: float, prio
         if resp.status_code in (401, 402, 403, 429):
             # credits exhausted / auth / rate limit — stop paying the latency for a while
             _hf_primary_down_until = _time.time() + _HF_PRIMARY_COOLDOWN
+        if resp.status_code in (401, 402, 403):
+            # Owner action needed (credits / token). Marker -> daily owner alert in the health
+            # monitor (same mechanism as the Cerebras 402 alert, FIXES_TRACKER #69 §12).
+            await _hf_billing_mark(resp.status_code)
         logger.warning("hf_text: HF primary %s HTTP %s — falling back", hf_model, resp.status_code)
         return None
     # content ONLY — never the reasoning field (that is chain-of-thought; an empty
@@ -496,6 +515,18 @@ async def _hf_primary_text(selected_model: str, body: dict, timeout: float, prio
     return text or None
 
 
+# Which provider produced the last hf_text answer in this call chain. The caller (BaseAgent.think)
+# installs a dict; a dict (not a plain value) so a write inside asyncio.wait_for's child task is
+# visible to the caller. Diagnostic only - never read for routing decisions.
+LLM_CALL_TRACE: "contextvars.ContextVar[dict | None]" = contextvars.ContextVar("llm_call_trace", default=None)
+
+
+def _trace(provider: str) -> None:
+    t = LLM_CALL_TRACE.get()
+    if t is not None:
+        t["provider"] = provider
+
+
 async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority: bool = False, model: str | None = None, max_tokens: int = 2000, temperature: "float | None" = None, reasoning_effort: "str | None" = None, skip_fallback_model: bool = False) -> str:
     """Chat completion via HF Router. Cached in Redis for _TEXT_CACHE_TTL seconds.
     priority=True bypasses the background-job semaphore (use for webhook/realtime calls).
@@ -503,8 +534,8 @@ async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority
     spend part of the budget on chain-of-thought before the answer; 1000 was
     too small for JSON campaign plans (found 2026-07-05).
     """
-    if not CEREBRAS_API_KEY and not (HF_TOKEN and LLM_PRIMARY_PROVIDER == "hf"):
-        raise RuntimeError("CEREBRAS_API_KEY not set in .env")
+    if not CEREBRAS_API_KEY and not (HF_TOKEN and LLM_PRIMARY_PROVIDER == "hf") and not GROQ_API_KEY:
+        raise RuntimeError("No LLM provider configured (CEREBRAS_API_KEY / HF_TOKEN / GROQ_API_KEY)")
 
     selected_model = (model or CEREBRAS_TEXT_MODEL).strip()
     # ROOT FIX 2026-07-20: temperature was NEVER sent — every agent ran at the Cerebras
@@ -519,6 +550,7 @@ async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority
         cleaned_cached = _clean_response(cached)
         if cleaned_cached != cached:
             await _cache_set(cache_key, cleaned_cached, _TEXT_CACHE_TTL)
+        _trace("cache")
         return cleaned_cached
 
     messages: list[dict[str, str]] = []
@@ -545,6 +577,7 @@ async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority
     if _hf_result is not None:
         _hf_result = _clean_response(_hf_result)
         await _cache_set(cache_key, _hf_result, _TEXT_CACHE_TTL)
+        _trace(f"hf:{HF_PRIMARY_PROVIDER or 'auto'}")
         return _hf_result
     if not CEREBRAS_ENABLED or not CEREBRAS_API_KEY:
         # Owner decision 2026-10-27: Cerebras OFF → Groq is the fallback.
@@ -553,9 +586,11 @@ async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority
         logger.warning("hf_text: HF primary failed — falling back to GROQ openai/gpt-oss-120b")
         try:
             result = await groq_text(prompt=prompt, system=system, timeout=timeout, model="openai/gpt-oss-120b")
+            _trace("groq:openai/gpt-oss-120b")
         except Exception as _groq_err:
             logger.warning("hf_text: GROQ gpt-oss-120b failed (%s) — trying %s", _groq_err, os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"))
             result = await groq_text(prompt=prompt, system=system, timeout=timeout)
+            _trace(f"groq:{os.getenv('GROQ_MODEL', 'openai/gpt-oss-20b')}")
         return _clean_response(result)
 
     resp = None
@@ -597,6 +632,7 @@ async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority
             try:
                 result = await _cerebras_call(prompt, system, CEREBRAS_FALLBACK_MODEL, timeout, priority, temperature, reasoning_effort)
                 await _cache_set(cache_key, result, _TEXT_CACHE_TTL)
+                _trace(f"cerebras:{CEREBRAS_FALLBACK_MODEL}")
                 return result
             except Exception as fb_err:
                 logger.warning("hf_text: Cerebras fallback also failed: %s", fb_err)
@@ -610,6 +646,7 @@ async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority
                 else:
                     try:
                         result = await gemini_text(prompt=prompt, system=system, timeout=timeout)
+                        _trace("gemini")
                         return result
                     except Exception as gemini_err:
                         err_str = str(gemini_err)
@@ -623,16 +660,21 @@ async def hf_text(prompt: str, system: str = "", timeout: float = 90.0, priority
             # Falls back to GROQ_MODEL (groq/compound) if gpt-oss-120b also fails.
             logger.warning("hf_text: falling back to GROQ openai/gpt-oss-120b")
             try:
-                return await groq_text(prompt=prompt, system=system, timeout=timeout, model="openai/gpt-oss-120b")
+                _r = await groq_text(prompt=prompt, system=system, timeout=timeout, model="openai/gpt-oss-120b")
+                _trace("groq:openai/gpt-oss-120b")
+                return _r
             except Exception as _groq_primary_err:
                 logger.warning("hf_text: GROQ gpt-oss-120b failed (%s) — trying %s", _groq_primary_err, os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"))
-                return await groq_text(prompt=prompt, system=system, timeout=timeout)
+                _r = await groq_text(prompt=prompt, system=system, timeout=timeout)
+                _trace(f"groq:{os.getenv('GROQ_MODEL', 'openai/gpt-oss-20b')}")
+                return _r
     if resp is None:
         raise RuntimeError("Cerebras skipped (402 Payment Required) and no fallback provider answered")
     raise_for_status_safe(resp)
     result: str = _extract_cerebras_content(resp.json())
     result = _clean_response(result)
     await _cache_set(cache_key, result, _TEXT_CACHE_TTL)
+    _trace(f"cerebras:{selected_model}")
     return result
 
 
@@ -1185,6 +1227,15 @@ async def gemini_web_search(
     return {"text": _clean_response(text), "sources": sources}
 
 
+# Groq request budget — VERIFIED live 2026-10-27: response header x-ratelimit-limit-tokens: 8000
+# (tokens per request window on this account); a full 13,120-char customer system prompt = 3,149
+# prompt tokens and was accepted (HTTP 200). The old fixed 5,000/6,000-char head cut was not a real
+# provider limit and silently dropped the mandatory policy. Input budget = limit − reply − margin.
+GROQ_MAX_REQUEST_TOKENS = int(os.getenv("GROQ_MAX_REQUEST_TOKENS", "8000"))
+GROQ_MAX_COMPLETION_TOKENS = 1000
+_GROQ_INPUT_BUDGET = GROQ_MAX_REQUEST_TOKENS - GROQ_MAX_COMPLETION_TOKENS - 300
+
+
 async def groq_text(prompt: str, system: str = "", timeout: float = 60.0, model: str = "") -> str:
     """Chat completion via GROQ API. Used as fallback when Cerebras+Gemini are both 429."""
     if not GROQ_API_KEY:
@@ -1192,12 +1243,17 @@ async def groq_text(prompt: str, system: str = "", timeout: float = 60.0, model:
     # Groq rejects payloads >~32KB with 413. NOA's system prompt alone can exceed that.
     # Keep the first 5000 chars of the system prompt (the core instructions) and the
     # first 6000 chars of the user prompt — enough for any real task, safe for Groq.
-    _MAX_SYS = 5000
-    _MAX_USR = 6000
-    if len(system) > _MAX_SYS:
-        system = system[:_MAX_SYS] + "\n[... truncated for Groq fallback ...]"
-    if len(prompt) > _MAX_USR:
-        prompt = prompt[:_MAX_USR] + "\n[... truncated ...]"
+    # 2026-10-27: this used to keep only the first 5,000 chars of the system prompt and the first
+    # 6,000 of the prompt — every customer prompt (9.5-14K) lost PROHIBITED / SHIPPING TRUTH /
+    # VERIFY and the reply-language block, and long chats lost the CURRENT message. Now the request
+    # is fitted to the verified token budget by policy_guard.fit_request: optional guidance and the
+    # oldest history go first; mandatory policy and the current message are never cut. If they do
+    # not fit, PolicyBudgetExceeded propagates and the caller fails safe.
+    import policy_guard as _pg
+    system, prompt, _fit = _pg.fit_request(system, prompt, _GROQ_INPUT_BUDGET)
+    if _fit.notes:
+        logger.info("[PolicyFit] provider=groq budget_tok=%s system_tok=%s prompt_tok=%s %s",
+                    _GROQ_INPUT_BUDGET, _fit.system_tokens, _fit.prompt_tokens, " ".join(_fit.notes))
     messages: list[dict[str, str]] = []
     if system:
         messages.append({"role": "system", "content": system})
@@ -1206,7 +1262,7 @@ async def groq_text(prompt: str, system: str = "", timeout: float = 60.0, model:
     payload = _json.dumps({
         "model": _model,
         "messages": messages,
-        "max_tokens": 1000,
+        "max_tokens": GROQ_MAX_COMPLETION_TOKENS,
     }, ensure_ascii=False).encode()
     resp = await _post_with_retry(
         f"{GROQ_BASE}/chat/completions",

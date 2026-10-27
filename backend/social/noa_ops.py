@@ -282,6 +282,14 @@ async def send_page_reply(db, item: Dict[str, Any], text: str, *, actor: str) ->
     from social import engagement as _eng
     if actor == "autonomous":
         ok, why = safety_check(text, max_chars=500)
+        if ok:
+            # 2026-10-27 policy_guard: an autonomous PUBLIC reply has no catalog/order data behind it,
+            # so it may not state any price/shipping amount or a link the system did not provide.
+            # Blocked drafts stay pending_approval for the owner (same path as the safety gate).
+            import policy_guard as _pg
+            _v = _pg.validate_customer_reply(text, [])
+            if _v:
+                ok, why = False, "policy:" + ",".join(sorted({x.kind for x in _v}))
         if not ok:
             await db.execute(sa.text("UPDATE social_inbox SET last_error=:e WHERE id=CAST(:id AS uuid)"),
                              {"e": f"safety:{why}", "id": item["id"]})
