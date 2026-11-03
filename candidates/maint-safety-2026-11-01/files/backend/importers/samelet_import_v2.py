@@ -1,0 +1,381 @@
+#!/usr/bin/env python3
+"""
+Script: samelet_import_v2.py
+Purpose: Import all Israeli-official-importer parts from samelet.com price lists.
+
+Process:
+  1. Authenticate per-brand on samelet.com to get session token
+  2. Enumerate all parts using 2-char prefix searches (A-Z x A-Z + digits) for full coverage
+  3. Also search Hebrew single-char and SKU digit prefix for complete harvest
+  4. Upsert to parts_catalog (ON CONFLICT update; do NOT delete/re-insert)
+  5. Create or update supplier_parts record for each part
+  6. Add specifications JSONB with VAT, currency, source, warranty
+  7. Delegate missing fitment to REX agent via agent_todos
+
+Data Imported / Modified:
+  - parts_catalog: sku, name, name_he, category, manufacturer, manufacturer_id,
+                   part_type, base_price (IL retail incl. VAT), importer_price_ils (0 — no trade cost),
+                   max_price_ils, oem_number, specifications (JSONB), is_active
+  - supplier_parts: supplier_id, part_id, supplier_sku, price_ils, availability,
+                    is_available, warranty_months, estimated_delivery_days, supplier_url
+  - agent_todos: REX task for missing fitment per brand
+
+Data Sources / Web Links:
+  - Alfa Romeo parts: https://samelet.com/form/parts-prices/alfaromeo
+  - Jeep parts: https://samelet.com/form/parts-prices/jeep
+  - Fiat parts: https://samelet.com/form/parts-prices/fiat
+  - RAM parts: https://samelet.com/form/parts-prices/ram
+  - Subaru parts: https://samelet.com/form/parts-prices/subaru
+  - Abarth parts: https://samelet.com/form/parts-prices/abarth
+  - Iveco parts: https://samelet.com/form/parts-prices/iveco
+  - Hongqi parts: https://samelet.com/form/parts-prices/hongqi
+  - WEY parts: https://samelet.com/form/parts-prices/wey
+  - samelet.com API: POST https://samelet.com/api
+
+Missing Data Delegation:
+  - English descriptions → ai_catalog_builder.py (master_enriched=False)
+  - Fitment data → REX agent todo created per brand after each import
+  - Missing OEM cross-refs → needs_oem_lookup=True on all parts
+
+VAT Rules:
+  - samelet.com returns PriceNoVat (excl.) and PriceWithVat (incl. 18%)
+  - Store: cost=PriceWithVat/1.18, base_price=cost×1.45, importer_price_ils=cost, max_price_ils=PriceWithVat
+  - These are official IL importer retail prices (shown to customers as OEM reference, no extra markup)
+
+Confidence tier: 1.00 (Official Israeli importer price data)
+
+Author: AutoSpareFinder Agent
+Last Updated: 2026-06-01
+"""
+from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environment, never from source (FIXES_TRACKER #61)
+import price_policy as _pp  # the one base_price formula (price_policy.base_price_for_cost)
+import asyncio, asyncpg, requests, time, re, os, string, json, uuid, sys
+from warranty_policy import resolve as _warranty_resolve
+
+DB_URL = os.environ.get("DATABASE_URL", f"postgresql://autospare:{_DB_PW}@postgres_catalog:5432/autospare").replace("postgresql+asyncpg://", "postgresql://")
+# Run a single brand: python3 samelet_import_v2.py Hongqi  (or 'hongqi')
+SINGLE = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("SAMELET_BRAND", "")
+
+BRANDS = [
+    ("alfaromeo","Alfa Romeo","Italy","AR"),
+    ("jeep","Jeep","USA","JP"),
+    ("fiat","Fiat","Italy","FI"),
+    ("ram","RAM","USA","RM"),
+    ("subaru","Subaru","Japan","SU"),
+    ("abarth","Abarth","Italy","AB"),
+    ("iveco","Iveco","Italy","IV"),
+    ("hongqi","Hongqi","China","HQ"),
+    ("wey","WEY","China","WY"),
+]
+
+SAMELET_BRAND_URLS = {
+    'alfaromeo': 'https://samelet.com/form/parts-prices/alfaromeo',
+    'jeep': 'https://samelet.com/form/parts-prices/jeep',
+    'fiat': 'https://samelet.com/form/parts-prices/fiat',
+    'ram': 'https://samelet.com/form/parts-prices/ram',
+    'subaru': 'https://samelet.com/form/parts-prices/subaru',
+    'abarth': 'https://samelet.com/form/parts-prices/abarth',
+    'iveco': 'https://samelet.com/form/parts-prices/iveco',
+    'hongqi': 'https://samelet.com/form/parts-prices/hongqi',
+    'wey': 'https://samelet.com/form/parts-prices/wey',
+}
+
+
+API_CAP = 29
+HEBREW = list("אבגדהוזחטיכלמנסעפצקרשתךםןףץ")
+
+# Category rules DELEGATED to category_map — the single source of truth.
+# Add keywords to category_map.py, never here.
+from category_map import CATCH_ALL, categorize_on_ingest, normalize_category_label
+
+def classify_part(en, he):
+    """
+    -> canonical category slug via category_map.
+    The private rules this replaces returned NON-CANONICAL values ("General Parts"),
+    which parts_catalog.category may never hold — so every part they
+    classified got an unusable label. Fallback is now 'כללי'.
+    """
+    return categorize_on_ingest(name=en or "", name_he=he or "")
+
+def get_token(slug):
+    try:
+        r = requests.get(f"https://samelet.com/form/parts-prices/{slug}", timeout=15)
+        m = re.search(r'name="token" type="hidden" value="([a-f0-9]+)"', r.text)
+        if m: return m.group(1)
+    except Exception as e:
+        print(f"  [WARN] token error: {e}")
+    return ""
+
+SESSION = requests.Session()
+
+def search_parts(slug, token, query, opt="2"):
+    try:
+        r = SESSION.post("https://samelet.com/api", data={
+            "site": slug, "tag": "parts-prices",
+            "part_search": query, "part_search_options": opt,
+            "token": token, "page_name": "מחירון חלפים",
+        }, headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Referer": f"https://samelet.com/form/parts-prices/{slug}",
+        }, timeout=15)
+        d = r.json()
+        if d.get("success") != 1: return []
+        parts = d.get("parts", [])
+        if isinstance(parts, dict): parts = [parts]
+        return parts if isinstance(parts, list) else []
+    except Exception as e:
+        return []
+
+def enumerate_all_parts(slug, token):
+    all_parts = {}
+    seen = set()
+
+    def do_search(query, opt, depth=0):
+        key = f"{opt}:{query}"
+        if key in seen or depth > 3: return
+        seen.add(key)
+        parts = search_parts(slug, token, query, opt)
+        new = 0
+        for p in parts:
+            mid = p.get("Material","")
+            if mid and mid not in all_parts:
+                all_parts[mid] = p
+                new += 1
+        time.sleep(0.12)
+        # If capped, go deeper
+        if len(parts) >= API_CAP and depth < 3:
+            ext_chars = string.ascii_letters + string.digits
+            for ext in ext_chars:
+                do_search(query + ext, opt, depth + 1)
+
+    upper = string.ascii_uppercase
+
+    # Phase 1: All 2-char combinations starting with uppercase letter
+    # This gives comprehensive coverage: A-Z x (A-Z + a-z + 0-9) = 1,612 searches
+    print(f"  Phase 1: 2-char English prefix searches (1,612 queries)...")
+    for i, c1 in enumerate(upper):
+        for c2 in string.ascii_letters + string.digits:
+            do_search(c1 + c2, "2")
+        pct = (i+1) * 100 // 26
+        print(f"    After {c1}*: {len(all_parts)} unique parts [{pct}%]", flush=True)
+
+    # Phase 2: Hebrew single-char (covers Hebrew-only descriptions)
+    print(f"  Phase 2: Hebrew single-char ({len(HEBREW)} queries)...")
+    for ch in HEBREW:
+        do_search(ch, "2")
+
+    # Phase 3: SKU digit prefix (for numeric-only SKUs)
+    print(f"  Phase 3: SKU digit prefix (10 queries)...")
+    for d in string.digits:
+        do_search(d, "1", depth=0)
+
+    return all_parts
+
+async def ensure_brands(conn):
+    for name, country in [("Abarth","Italy"),("RAM","USA")]:
+        ex = await conn.fetchval("SELECT 1 FROM car_brands WHERE LOWER(name)=LOWER($1)", name)
+        if not ex:
+            await conn.execute("INSERT INTO car_brands(id,name,country,is_active) VALUES(gen_random_uuid(),$1,$2,TRUE) ON CONFLICT DO NOTHING", name, country)
+            print(f"  Created brand: {name}")
+
+async def import_brand(conn, slug, brand_name, prefix):
+    print(f"\n{'='*60}\nImporting {brand_name} (slug={slug}, prefix={prefix}-)\n{'='*60}")
+    token = get_token(slug)
+    if not token:
+        print(f"  [ERROR] No token for {slug}")
+        return 0
+    print(f"  Token: {token[:10]}...")
+
+    # Get or create manufacturer_id from car_brands
+    brand_row = await conn.fetchrow(
+        "SELECT id FROM car_brands WHERE LOWER(name)=LOWER($1) LIMIT 1", brand_name)
+    if not brand_row:
+        await conn.execute(
+            "INSERT INTO car_brands(id,name,is_active,created_at) VALUES(gen_random_uuid(),$1,TRUE,NOW()) ON CONFLICT DO NOTHING",
+            brand_name)
+        brand_row = await conn.fetchrow(
+            "SELECT id FROM car_brands WHERE LOWER(name)=LOWER($1) LIMIT 1", brand_name)
+    manufacturer_id = str(brand_row["id"]) if brand_row else None
+
+    # Get or create official importer supplier record
+    supplier_name = f"{brand_name} Official Importer Israel"
+    supp_row = await conn.fetchrow("SELECT id FROM suppliers WHERE name=$1", supplier_name)
+    if not supp_row:
+        sid = str(uuid.uuid4())
+        supplier_url = SAMELET_BRAND_URLS.get(slug, f"https://samelet.com/form/parts-prices/{slug}")
+        await conn.execute("""
+            INSERT INTO suppliers (id, name, website, country,
+                                   is_active, is_manufacturer, manufacturer_name,
+                                   manufacturer_id, reliability_score, created_at, updated_at)
+            VALUES ($1, $2, $3, 'IL', true, true, $4, $5::uuid, 0.95, NOW(), NOW())
+            ON CONFLICT (name) DO NOTHING
+        """, sid, supplier_name, supplier_url, brand_name, manufacturer_id)
+        supp_row = await conn.fetchrow("SELECT id FROM suppliers WHERE name=$1", supplier_name)
+    supplier_id = str(supp_row["id"]) if supp_row else None
+    supplier_url = SAMELET_BRAND_URLS.get(slug, f"https://samelet.com/form/parts-prices/{slug}")
+
+    parts_dict = enumerate_all_parts(slug, token)
+    if not parts_dict:
+        print(f"  [WARN] No parts found")
+        return 0
+    print(f"  {len(parts_dict)} unique parts, upserting...")
+
+    ins = err = 0
+    new_part_ids = []
+    batch = []
+    for mid, p in parts_dict.items():
+        try:
+            raw_sku = mid.lstrip("0") or mid
+            sku = f"{prefix}-{raw_sku}"
+            name_en = (p.get("MatDescEn","") or "").strip()
+            name_he = (p.get("MatDescHe","") or "").strip()
+            # RULE 7: an SKU is an identifier, not a name. Still create the
+            # part, but flag it so enrichment fills a real name.
+            name_missing = not (name_en or name_he)
+            name = name_en or name_he or sku
+            try:
+                il_retail = float(p.get("PriceWithVat","0") or "0")  # consumer retail incl. VAT
+            except:
+                il_retail = 0.0
+            # CLAUDE.md formula: cost = price/1.18, base_price = cost*1.45, max_price = price
+            cost = round(il_retail / 1.18, 2) if il_retail > 0 else 0.0
+            base_price_val = _pp.base_price_for_cost(cost) if cost > 0 else 0.0
+            max_price = il_retail
+            category  = classify_part(name_en, name_he)
+            mat_type = p.get("MaterialType", "01")
+            part_type = "original" if mat_type == "01" else "aftermarket"
+            _wmonths, _wsource = _warranty_resolve(p.get("Warranty") or p.get("warranty"))
+            specs = json.dumps({
+                "vat_included":       True,
+                "vat_rate":           0.18,
+                "currency":           "ILS",
+                "source":             f"samelet.com official importer - {brand_name}",
+                "source_url":         f"https://samelet.com/form/parts-prices/{slug}",
+                "shipping_to_il":     True,
+                "importer":           supplier_name,
+                "warranty_months":    _wmonths,
+                "samelet_slug":       slug,
+                "material_type":      mat_type,
+                "category_hint":      "original" if mat_type == "01" else "aftermarket",
+                "name_he":            name_he,
+                "il_retail_incl_vat": il_retail,
+            }, ensure_ascii=False)
+            tier = 'OE_equivalent' if part_type == 'aftermarket' else None
+            batch.append((sku, name, name_he, category, brand_name, manufacturer_id,
+                          part_type, base_price_val, cost, max_price, mid, specs,
+                          max_price, tier, name_missing))
+        except Exception as e:
+            err += 1
+            if err <= 3: print(f"  [ERR] prep {mid}: {e}")
+
+    # Upsert row by row (never DELETE - ON CONFLICT). The previous version sent a whole 25-row chunk as ONE flattened argument
+    # list to a single-row statement (it only worked for a chunk of exactly one row) and its per-row fallback passed 14 of the 15
+    # arguments, so every row of a multi-part brand failed (found by the E2E test, 2026-11-02).
+    UPSERT_SQL = """
+                INSERT INTO parts_catalog(
+                    id, sku, name, name_he, category, manufacturer, manufacturer_id,
+                    part_type, base_price, importer_price_ils, max_price_ils, min_price_ils,
+                    oem_number, specifications, aftermarket_tier, is_active,
+                    part_condition, needs_oem_lookup, master_enriched,
+                    created_at, updated_at)
+                VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6::uuid,$7,$8,$9,$10,$13,$11,$12::jsonb,$14,TRUE,
+                       'new',$15,FALSE,NOW(),NOW())
+                ON CONFLICT(sku) DO UPDATE SET
+                    name=EXCLUDED.name,
+                    name_he=COALESCE(EXCLUDED.name_he, parts_catalog.name_he),
+                    category=EXCLUDED.category,
+                    manufacturer=EXCLUDED.manufacturer,
+                    base_price=CASE WHEN parts_catalog.base_price IS NULL OR parts_catalog.base_price = 0 THEN EXCLUDED.base_price ELSE parts_catalog.base_price END,
+                    importer_price_ils=CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
+                    max_price_ils=CASE WHEN EXCLUDED.max_price_ils > 0
+                                      THEN EXCLUDED.max_price_ils
+                                      ELSE parts_catalog.max_price_ils END,
+                    min_price_ils=CASE WHEN EXCLUDED.min_price_ils > 0
+                                      THEN EXCLUDED.min_price_ils
+                                      ELSE parts_catalog.min_price_ils END,
+                    aftermarket_tier=COALESCE(EXCLUDED.aftermarket_tier, parts_catalog.aftermarket_tier),
+                    specifications=COALESCE(parts_catalog.specifications,'{}')::jsonb
+                                    || EXCLUDED.specifications::jsonb,
+                    part_type=EXCLUDED.part_type,
+                    updated_at=NOW()
+                RETURNING id, oem_number, base_price
+            """
+    for row in batch:
+        try:
+            result = await conn.fetchrow(UPSERT_SQL, *row)
+            if result and supplier_id:
+                new_part_ids.append((str(result["id"]), row[10], row[8], supplier_id))
+            ins += 1
+        except Exception as e2:
+            err += 1
+            if err <= 10: print(f"  [ERR] {row[0]}: {e2}")
+
+    # Create supplier_parts for all upserted parts
+    if supplier_id:
+        existing_parts = await conn.fetch(
+            "SELECT id, oem_number, base_price FROM parts_catalog WHERE LOWER(manufacturer)=LOWER($1) AND is_active=TRUE",
+            brand_name)
+        sp_count = 0
+        for part in existing_parts:
+            try:
+                _sp = json.loads(part.get("specifications") or "{}") if isinstance(part.get("specifications"), str) else {}
+                _wm = _sp.get("warranty_months", 12)
+                _ws = _sp.get("warranty_source", "platform_default")
+                await conn.execute("""
+                    INSERT INTO supplier_parts (
+                        id, supplier_id, part_id, supplier_sku,
+                        price_ils, price_usd, availability, is_available,
+                        warranty_months, warranty_source,
+                        estimated_delivery_days, supplier_url,
+                        created_at, updated_at)
+                    VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3, $4, 0.0,
+                            'in_stock', TRUE, $5, $6, 21, $7, NOW(), NOW())
+                    ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE SET
+                        price_ils=EXCLUDED.price_ils,
+                        warranty_months=EXCLUDED.warranty_months,
+                        warranty_source=EXCLUDED.warranty_source,
+                        updated_at=NOW()
+                """, supplier_id, str(part["id"]), str(part["oem_number"]),
+                     float(part["base_price"] or 0), _wm, _ws, supplier_url)
+                sp_count += 1
+            except Exception:
+                pass
+        print(f"  {brand_name}: supplier_parts upserted={sp_count}")
+
+    # Delegate fitment to REX
+    try:
+        await conn.execute("""
+            INSERT INTO agent_todos
+                (id, agent_name, title, description, priority, status, created_at, updated_at)
+            VALUES (gen_random_uuid(), 'REX', $1, $2, 'high', 'not_started', NOW(), NOW())
+        """,
+        f"Fetch fitment for {brand_name} samelet parts ({ins} parts)",
+        f"{ins} parts imported from samelet.com for {brand_name}. No vehicle fitment data. "
+        f"Query TecDoc or eBay fitment APIs to map parts to specific models/years.")
+    except Exception:
+        pass
+
+    print(f"  {brand_name}: upserted={ins} errors={err}")
+    return ins
+
+async def main():
+    print("Samelet Catalog Importer v2 (full 2-char coverage) starting...")
+    conn = await asyncpg.connect(DB_URL)
+    try:
+        await ensure_brands(conn)
+        total = 0
+        counts = {}
+        brands_to_run = [(s,b,c,p) for s,b,c,p in BRANDS if not SINGLE or b==SINGLE or s==SINGLE]
+        for slug, brand, country, prefix in brands_to_run:
+            c = await import_brand(conn, slug, brand, prefix)
+            counts[brand] = c
+            total += c
+            time.sleep(3)
+        print(f"\n{'='*60}\nIMPORT COMPLETE")
+        for b,c in counts.items(): print(f"  {b}: {c}")
+        print(f"  TOTAL: {total}")
+    finally:
+        await conn.close()
+
+if __name__ == "__main__":
+    asyncio.run(main())

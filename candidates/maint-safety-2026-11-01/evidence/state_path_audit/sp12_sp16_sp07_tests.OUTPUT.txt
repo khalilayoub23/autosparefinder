@@ -1,0 +1,2 @@
+SKIPPED [1] tests/test_fetch_embed_model.py:139: real 470 MB download: set RUN_REAL_MODEL_DOWNLOAD=1 (needs internet)
+=================== 43 passed, 1 skipped in 65.55s (0:01:05) ===================

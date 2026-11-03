@@ -1,0 +1,9 @@
+night=tests/test_night_pipeline.py::test_rex_postcondition_accepts_a_clean_cycle_that_reports_no_status_key
+== tests/test_order_shipping_e2e.py::test_web_order_charges_shipping_once
+1 passed, 3 warnings in 6.22s
+== tests/test_night_pipeline.py::test_rex_postcondition_accepts_a_clean_cycle_that_reports_no_status_key
+1 passed in 1.04s
+== tests/test_order_shipping_e2e.py::test_web_order_charges_shipping_once tests/test_night_pipeline.py::test_rex_postcondition_accepts_a_clean_cycle_that_reports_no_status_key
+2 passed, 3 warnings in 3.42s
+== tests/test_night_pipeline.py::test_rex_postcondition_accepts_a_clean_cycle_that_reports_no_status_key tests/test_order_shipping_e2e.py::test_web_order_charges_shipping_once
+2 passed, 3 warnings in 3.30s

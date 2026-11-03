@@ -1,0 +1,17 @@
+[WARN] JWT_REFRESH_SECRET_KEY not set — using random key. All tokens will be lost on restart.
+{
+ "catalog_scraper.db_upsert_part": {
+  "error": "ProgrammingError: (sqlalchemy.dialects.postgresql.asyncpg.ProgrammingError) <class 'asyncpg.exceptions.AmbiguousParameterError'>: could no"
+ },
+ "routes.admin.import_parts_excel": {
+  "existing_88_after_upload_price_5": 5.0,
+  "new_part_uploaded_price_7": 7.0
+ },
+ "ai_catalog_builder.insert_parts": {
+  "inserted_with_LLM_price_400": 400.0,
+  "owned_123.45_after_rebuild_at_9999": 9999.0
+ },
+ "car_parts_ie_import_generic (re-harvest)": {
+  "owned_33.0_after_reharvest_at_72.5": 72.5
+ }
+}

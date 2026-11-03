@@ -16,11 +16,12 @@ Process:
   draft text in the audit row only. Nothing is ever sent, and no message is marked, labelled,
   archived or deleted.
 Data Imported/Modified: email_agent_messages (PII DB); Gmail drafts when enabled.
-Last Updated: 2026-10-10
+Last Updated: 2026-10-27 (Spam/Junk pass: relevant supplier mail only, source_folder='spam')
 """
 from __future__ import annotations
 
 import asyncio
+from collections import OrderedDict
 import json
 import logging
 from typing import Any, Dict, List, Optional
@@ -174,8 +175,69 @@ async def process_message(cfg: EmailAgentConfig, client: GmailClient, store, sou
             "verification": verification}
 
 
+MAX_SCAN_PAGES = 5            # newest-first pages scanned per cycle to find unprocessed mail (25 x 5 = 125 ids)
+_SPAM_IGNORED: "OrderedDict[str, bool]" = OrderedDict()    # spam ids already judged irrelevant (ids only)
+_SPAM_IGNORED_MAX = 5000
+
+
+async def unprocessed_refs(client, store, query: str, want: int, *, include_spam: bool = False,
+                           skip_ids=None, max_pages: int = MAX_SCAN_PAGES) -> Dict[str, Any]:
+    """Up to `want` messages not yet finished, paging newest-first past already-processed ones. Before
+    2026-10-27 only the newest page was read, so once that page was all known, older new mail (a burst of more
+    than one page between cycles) was never seen. A message is "finished" when its store row exists and is not
+    'retry' (claim() decides retries)."""
+    out, seen, known, token, pages = [], 0, 0, None, 0
+    if not hasattr(client, "list_message_page"):              # single-page client (tests / old fakes)
+        refs = await asyncio.to_thread(client.list_message_ids, query, want, include_spam) if include_spam \
+            else await asyncio.to_thread(client.list_message_ids, query, want)
+        return {"refs": refs, "seen": len(refs), "known": 0, "pages": 1, "exhausted": True}
+    while pages < max_pages and len(out) < want:
+        refs, token = await asyncio.to_thread(client.list_message_page, query, 25, token, include_spam)
+        pages += 1
+        for r in refs:
+            seen += 1
+            if skip_ids is not None and r["id"] in skip_ids:
+                known += 1
+                continue
+            row = await store.get(r["id"])
+            if row is not None and row.get("status") != "retry":
+                known += 1
+                continue
+            out.append(r)
+            if len(out) >= want:
+                break
+        if not token:
+            break
+    return {"refs": out, "seen": seen, "known": known, "pages": pages, "exhausted": token is None}
+
+
+def _header(meta: Dict[str, Any], name: str) -> str:
+    for h in ((meta.get("payload") or {}).get("headers") or []):
+        if isinstance(h, dict) and str(h.get("name", "")).lower() == name.lower():
+            return str(h.get("value") or "")
+    return ""
+
+
+async def spam_relevance(client: GmailClient, source: ContextSource, outreach_store, mid: str, tid: str) -> Optional[str]:
+    """Why a Spam message is worth reading (None = leave it alone). Uses headers only - no body, no links,
+    no attachments - and never trusts the content: relevance is a thread or a domain we already know."""
+    from email.utils import parseaddr
+    if outreach_store is not None and tid and await outreach_store.by_thread(tid):
+        return "outreach_thread"
+    meta = await asyncio.to_thread(client.get_message_metadata, mid)
+    addr = parseaddr(_header(meta, "From"))[1].lower()
+    dom = addr.rsplit("@", 1)[-1] if "@" in addr else ""
+    if not dom:
+        return None
+    if outreach_store is not None and await outreach_store.awaiting_by_recipient_domain(dom):
+        return "outreach_recipient_domain"
+    if await source.find_suppliers_by_domain(dom):
+        return "known_supplier_domain"
+    return None
+
+
 async def process_once(cfg: EmailAgentConfig, client: GmailClient, store, source: ContextSource,
-                       limit: Optional[int] = None) -> Dict[str, Any]:
+                       limit: Optional[int] = None, outreach_store=None) -> Dict[str, Any]:
     summary: Dict[str, Any] = {"state": cfg.state, "listed": 0, "new": 0, "retried": 0, "skipped": 0,
                                "processed": 0, "failed": 0, "requires_human": 0, "drafts": 0,
                                "draft_mode": "none", "sent": 0, "errors": []}
@@ -194,8 +256,13 @@ async def process_once(cfg: EmailAgentConfig, client: GmailClient, store, source
     draft_mode = "gmail" if (cfg.gmail_drafts and conn.get("can_draft")) else "local"
     summary["draft_mode"] = draft_mode
 
-    refs = await asyncio.to_thread(client.list_message_ids, cfg.query, limit or cfg.max_per_cycle)
-    summary["listed"] = len(refs)
+    scan = await unprocessed_refs(client, store, cfg.query, limit or cfg.max_per_cycle)
+    refs = scan["refs"]
+    summary["listed"] = scan["seen"]
+    summary["skipped"] += scan["known"]
+    summary["scan_pages"] = scan["pages"]
+    if not scan["exhausted"] and len(refs) >= (limit or cfg.max_per_cycle):
+        summary["backlog"] = True        # more unprocessed mail waits for the next cycle (never dropped)
     thread_cache: Dict[str, Any] = {}
     for ref in refs:
         mid, tid = ref["id"], ref["threadId"]
@@ -245,5 +312,64 @@ async def process_once(cfg: EmailAgentConfig, client: GmailClient, store, source
             summary["failed"] += 1
             summary["errors"].append({"message_id": mid, "status": status, "error": safe_error(e, 160)})
             audit_log("failed", message_id=mid, thread_id=tid, status=status, failure_reason=safe_error(e, 200))
+    if cfg.scan_spam and not summary.get("halted") and not summary.get("aborted") \
+            and await store.supplier_schema_ready():
+        await _spam_pass(cfg, client, store, source, outreach_store, draft_mode, thread_cache, summary)
     audit_log("cycle", **{k: v for k, v in summary.items() if k not in ("errors", "connection")})
     return summary
+
+
+async def _spam_pass(cfg, client, store, source, outreach_store, draft_mode, thread_cache, summary) -> None:
+    """Spam/Junk inspection (2026-10-27). Only messages relevant by thread or known domain are claimed and
+    processed exactly like inbox mail (same idempotency, retries and post-conditions) and tagged
+    source_folder='spam'. Unrelated spam is counted, not stored. Labels are never changed: the grant has no
+    gmail.modify scope, so un-spamming is reported to the owner instead."""
+    sp = {"listed": 0, "relevant": 0, "ignored": 0, "processed": 0, "failed": 0, "unspam": "not permitted (no gmail.modify scope)"}
+    summary["spam"] = sp
+    try:
+        scan = await unprocessed_refs(client, store, cfg.spam_query, cfg.spam_max_per_cycle, include_spam=True,
+                                      skip_ids=_SPAM_IGNORED)
+        refs = scan["refs"]
+    except GmailError as e:
+        sp["error"] = f"{e.kind}: {safe_error(e, 120)}"
+        audit_log("spam_scan_failed", error_kind=e.kind, failure_reason=safe_error(e, 200))
+        return
+    sp["listed"] = len(refs)
+    for ref in refs:
+        mid, tid = ref["id"], ref["threadId"]
+        if not _control.read_control()["running"]:
+            summary["halted"] = "halted during spam pass"
+            break
+        known = await store.get(mid)
+        if known and known.get("status") in ("processed", "failed", "processing"):
+            continue                                  # already handled (repeat scans create nothing new)
+        try:
+            why = await spam_relevance(client, source, outreach_store, mid, tid)
+        except GmailError as e:
+            sp["failed"] += 1
+            summary["errors"].append({"message_id": mid, "status": "spam_check_failed", "error": safe_error(e, 160)})
+            continue
+        if not why:
+            sp["ignored"] += 1
+            _SPAM_IGNORED[mid] = True                       # ids only; bounded; re-checked after a restart
+            while len(_SPAM_IGNORED) > _SPAM_IGNORED_MAX:
+                _SPAM_IGNORED.popitem(last=False)
+            continue
+        sp["relevant"] += 1
+        claim = await store.claim(mid, tid, cfg.max_attempts)
+        if claim == "skip":
+            continue
+        try:
+            await process_message(cfg, client, store, source, mid, tid, draft_mode, thread_cache)
+            await store.set_source_folder(mid, "spam")
+            sp["processed"] += 1
+            audit_log("spam_relevant_processed", message_id=mid, thread_id=tid, relevance=why, sent=False)
+        except _control.Halted:
+            await store.release(mid)
+            summary["halted"] = "halted during spam pass"
+            break
+        except Exception as e:                        # recorded like any inbox message; retried next cycle
+            status = await store.mark_failed(mid, safe_error(e), isinstance(e, GmailError) and e.retryable,
+                                             cfg.max_attempts)
+            sp["failed"] += 1
+            summary["errors"].append({"message_id": mid, "status": status, "error": safe_error(e, 160)})

@@ -1148,7 +1148,8 @@ async def task_recover_priced_inactive(batch_size: int = 100) -> int:
     """Bucket 2 recovery — Part A (no web):
     Find inactive parts whose supplier_parts row already has price_usd > 0
     but whose base_price was never copied (or was zeroed by a PDF sweep).
-    Copy the price, convert USD→ILS, and reactivate the part.
+    Reactivate the part; its base_price comes from the #119 ownership rule (it was the raw USD cost x rate with no
+    margin, taken from the HIGHEST offer).
     Runs with exponential backoff — dormant when nothing to recover.
     """
     global _RECOVER_INACTIVE_SKIP_UNTIL, _RECOVER_INACTIVE_BACKOFF_S
@@ -1161,29 +1162,26 @@ async def task_recover_priced_inactive(batch_size: int = 100) -> int:
             fx = await get_usd_to_ils_rate(db)
             result = await db.execute(text("""
                 WITH candidates AS (
-                    SELECT DISTINCT ON (p.id)
-                        p.id,
-                        sp.price_usd,
-                        ROUND((sp.price_usd * :fx)::numeric, 2) AS new_price_ils
+                    SELECT DISTINCT p.id
                     FROM parts_catalog p
                     JOIN supplier_parts sp ON sp.part_id = p.id
                     WHERE p.is_active = false
                       AND (p.base_price IS NULL OR p.base_price = 0)
                       AND sp.price_usd > 0
-                    ORDER BY p.id, sp.price_usd DESC
                     LIMIT :batch
                 )
                 UPDATE parts_catalog pc
-                SET base_price = candidates.new_price_ils,
-                    is_active   = true,
+                SET is_active   = true,
                     updated_at  = NOW()
                 FROM candidates
                 WHERE pc.id = candidates.id
-                RETURNING pc.id
-            """), {"fx": fx, "batch": batch_size})
+                RETURNING pc.id::text
+            """), {"batch": batch_size})
             rows = result.fetchall()
             recovered = len(rows)
             if recovered:
+                from db_update_agent import apply_base_price_rule
+                await apply_base_price_rule(db, scope="all", part_ids=[r[0] for r in rows], usd_to_ils=fx)
                 await db.commit()
                 logger.info("task_recover_priced_inactive: reactivated=%d fx=%.4f", recovered, fx)
                 # Work found → reset to eager so we drain the backlog fast.
@@ -1208,7 +1206,7 @@ async def task_recover_motorstore_prices(batch_size: int = 8) -> int:
     """Bucket 2 recovery — Part B (web scraping):
     For inactive parts linked to Motorstore IL with no price anywhere,
     fetch the live price from motorstore.co.il using the OEM number,
-    write it back to supplier_parts + base_price, and reactivate the part.
+    write it back to supplier_parts, reactivate the part, base_price from the #119 ownership rule.
     Small batch per cycle to respect rate limits.
     """
     recovered = 0
@@ -1254,12 +1252,14 @@ async def task_recover_motorstore_prices(batch_size: int = 8) -> int:
                         WHERE id = :sp_id
                     """), {"usd": price_usd, "ils": price_ils, "sp_id": sp_id})
 
-                    # Update catalog and reactivate
+                    # Reactivate; base_price from the #119 ownership rule (was the scraped price itself)
                     await db.execute(text("""
                         UPDATE parts_catalog
-                        SET base_price = :ils, is_active = true, updated_at = NOW()
+                        SET is_active = true, updated_at = NOW()
                         WHERE id = :id
-                    """), {"ils": price_ils, "id": part_id})
+                    """), {"id": part_id})
+                    from db_update_agent import apply_base_price_rule
+                    await apply_base_price_rule(db, scope="all", part_ids=[str(part_id)], usd_to_ils=fx)
 
                     await db.commit()
                     recovered += 1
@@ -1423,48 +1423,84 @@ _BASE_PRICE_BATCH_BACKOFF_S = 30.0
 _BASE_PRICE_BATCH_BACKOFF_MAX = 1800.0
 
 
-# base_price = cost x 1.45 of the cheapest CLASS-COMPATIBLE offer (offer_classification.py). An aftermarket offer
-# (e.g. AliExpress) must never become the base price of an OEM catalog part: base_price is the price of the catalog
-# part's own product class. No compatible offer => the part stays unpriced (its other-class offers are still listed,
-# labeled, to the customer by search/cart — they just are not the catalog price).
-_NORMALIZE_BASE_PRICE_SQL = """
+# Unpriced parts that just received a supplier price (the harvester bumps supplier_parts.updated_at). base_price
+# itself comes from the ONE ownership rule (db_update_agent.apply_base_price_rule, #119): the price policy's net of
+# the part's cheapest customer-visible offer of its own product class, else the catalog estimate. The cost columns
+# the policy's estimate reads (importer_price_ils = a LOCAL cost, max_price_ils = a consumer price incl. VAT) are
+# filled only when empty and only from a LOCAL offer — a foreign cost written there would be priced with Israeli VAT.
+_UNPRICED_WITH_FRESH_OFFER_SQL = """
+    SELECT DISTINCT sp.part_id::text
+    FROM supplier_parts sp
+    JOIN parts_catalog pcx ON pcx.id = sp.part_id
+    WHERE sp.updated_at > NOW() - INTERVAL '35 min'
+      AND sp.is_available = TRUE AND sp.price_ils > 0
+      AND __RANK__ = 0
+      AND pcx.is_active AND (pcx.base_price IS NULL OR pcx.base_price = 0)
+      __ONLY__
+    LIMIT :batch
+"""
+
+_FILL_COST_COLUMNS_SQL = """
     UPDATE parts_catalog pc
-    SET base_price        = ROUND((sp_min.min_price * 1.45)::numeric, 2),
-        importer_price_ils = sp_min.min_price,
-        max_price_ils      = COALESCE(NULLIF(pc.max_price_ils, 0), ROUND((sp_min.min_price * 1.18)::numeric, 2)),
-        min_price_ils      = sp_min.min_price,
+    SET importer_price_ils = CASE WHEN COALESCE(pc.importer_price_ils, 0) = 0 AND c.local_min > 0
+                                  THEN c.local_min ELSE pc.importer_price_ils END,
+        max_price_ils      = CASE WHEN COALESCE(pc.max_price_ils, 0) = 0 AND c.local_min > 0
+                                  THEN ROUND((c.local_min * __VAT_FACTOR__)::numeric, 2) ELSE pc.max_price_ils END,
+        min_price_ils      = c.any_min,
         updated_at         = NOW()
     FROM (
-        SELECT sp.part_id, MIN(sp.price_ils) AS min_price
+        SELECT sp.part_id,
+               MIN(sp.price_ils) AS any_min,
+               MIN(sp.price_ils) FILTER (WHERE __LOCAL__) AS local_min
         FROM supplier_parts sp
+        JOIN suppliers s ON s.id = sp.supplier_id
         JOIN parts_catalog pcx ON pcx.id = sp.part_id
-        WHERE sp.updated_at > NOW() - INTERVAL '35 min'
-          AND sp.is_available = TRUE AND sp.price_ils > 0
-          AND __RANK__ = 0
-          __ONLY__
+        WHERE sp.part_id = ANY(CAST(:ids AS uuid[]))
+          AND sp.is_available = TRUE AND sp.price_ils > 0 AND __RANK__ = 0
         GROUP BY sp.part_id
-        LIMIT :batch
-    ) sp_min
-    WHERE pc.id = sp_min.part_id
-      AND pc.is_active
-      AND (pc.base_price IS NULL OR pc.base_price = 0)
+    ) c
+    WHERE pc.id = c.part_id
 """
 
 
-def _normalize_base_price_sql(only_ids: bool = False) -> str:
+def _local_supplier_sql() -> str:
+    """SQL twin of price_policy.is_local_supplier (s = suppliers): a known country decides; no country -> the
+    local supplier names."""
+    import price_policy as pp
+    keys = ", ".join("'" + k.replace("'", "''") + "'" for k in sorted(pp.LOCAL_COUNTRY_KEYS))
+    names = ", ".join("'" + n.replace("'", "''") + "'" for n in sorted(pp.LOCAL_SUPPLIER_NAMES))
+    return (f"(CASE WHEN BTRIM(COALESCE(s.country, '')) <> '' THEN LOWER(BTRIM(s.country)) IN ({keys}) "
+            f"ELSE LOWER(BTRIM(COALESCE(s.name, ''))) IN ({names}) END)")
+
+
+def _cleanup_sql(sql: str, only_ids: bool = False) -> str:
+    import price_policy as pp
     from offer_classification import class_rank_sql
-    return (_NORMALIZE_BASE_PRICE_SQL
-            .replace("__RANK__", class_rank_sql("sp.part_type", "pcx.part_type"))
-            .replace("__ONLY__", "AND sp.part_id = ANY(CAST(:only_ids AS uuid[]))" if only_ids else ""))
+    return (sql.replace("__RANK__", class_rank_sql("sp.part_type", "pcx.part_type"))
+               .replace("__LOCAL__", _local_supplier_sql())
+               .replace("__VAT_FACTOR__", repr(1 + pp.VAT_RATE))
+               .replace("__ONLY__", "AND sp.part_id = ANY(CAST(:only_ids AS uuid[]))" if only_ids else ""))
+
+
+async def normalize_base_price_for_parts(db, batch_size: int, only_ids: Optional[List[str]] = None) -> int:
+    """One pass of the cleanup normalizer on `db` (no commit): unpriced parts with a fresh compatible offer ->
+    local cost columns filled when empty -> base_price from the ownership rule. Returns parts priced."""
+    from db_update_agent import apply_base_price_rule
+    params: Dict[str, Any] = {"batch": batch_size}
+    if only_ids is not None:
+        params["only_ids"] = list(only_ids)
+    ids = [r[0] for r in (await db.execute(text(_cleanup_sql(_UNPRICED_WITH_FRESH_OFFER_SQL, only_ids is not None)),
+                                           params)).fetchall()]
+    if not ids:
+        return 0
+    await db.execute(text(_cleanup_sql(_FILL_COST_COLUMNS_SQL)), {"ids": ids})
+    return (await apply_base_price_rule(db, scope="all", part_ids=ids))["updated"]
 
 
 async def task_normalize_base_price_batched(batch_size: int = 1000) -> int:
-    """Batched normalize_base_price — replaces the disabled full-table-scan version.
-    Finds parts where base_price=0 but a supplier_parts price exists, then sets:
-      supplier_parts.price_ils = ex-VAT cost (documented in db_update_agent.py:1243)
-      base_price = cost * 1.45  (45% margin — CLAUDE.md policy)
-      importer_price_ils = cost (the raw ex-VAT cost)
-    Safe: processes batch_size rows per call, never scans full 3.4M table at once.
+    """Price parts that just received a supplier price while their base_price is still empty
+    (normalize_base_price_for_parts: base_price from the #119 ownership rule; local cost columns filled when empty).
+    Safe: processes batch_size parts per call, never scans the full catalogue.
 
     Exponential backoff (added 2026-07-11): there are ~2.24M active parts with
     base_price=0, but essentially ALL of them are the unpriced global catalog with
@@ -1489,8 +1525,7 @@ async def task_normalize_base_price_batched(batch_size: int = 1000) -> int:
             # the recent window catches exactly those. The 35-min window is wider
             # than the max backoff (30 min) below, so nothing is missed between
             # runs. Idempotent: once fixed, base_price>0 excludes it next time.
-            result = await db.execute(text(_normalize_base_price_sql()), {"batch": batch_size})
-            fixed = result.rowcount or 0
+            fixed = await normalize_base_price_for_parts(db, batch_size)
             if fixed:
                 await db.commit()
                 logger.info("task_normalize_base_price_batched: fixed %d parts", fixed)
@@ -1532,7 +1567,7 @@ async def task_heal_importer_price(batch_size: int = 500) -> int:
 
     Fix: importer_price_ils = the cheapest IL supplier's recorded ex-VAT cost
     (`supplier_parts.price_ils`, the SAME value the customer price is derived from, so the
-    fields stay consistent and customer-facing prices don't move), and base_price = cost*1.45.
+    fields stay consistent and customer-facing prices don't move); base_price from the #119 ownership rule.
 
     Guards:
       - `online_price_ils = 0` → only IL-sourced parts; NEVER touch foreign parts (their cost
@@ -1573,13 +1608,16 @@ async def task_heal_importer_price(batch_size: int = 500) -> int:
                 )
                 UPDATE parts_catalog pc
                 SET importer_price_ils = cost.c,
-                    base_price = ROUND((cost.c * 1.45)::numeric, 2),
                     updated_at = NOW()
                 FROM cost
                 WHERE pc.id = cost.part_id
+                RETURNING pc.id::text
             """), {"batch": batch_size})
-            fixed = result.rowcount or 0
+            healed = [r[0] for r in result.fetchall()]
+            fixed = len(healed)
             if fixed:
+                from db_update_agent import apply_base_price_rule
+                await apply_base_price_rule(db, scope="all", part_ids=healed)
                 await db.commit()
                 logger.info("task_heal_importer_price: fixed %d parts", fixed)
                 _HEAL_IMPORTER_BACKOFF_S = 30.0          # work found → stay eager

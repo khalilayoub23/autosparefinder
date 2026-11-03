@@ -1,0 +1,18 @@
+[WARN] JWT_REFRESH_SECRET_KEY not set — using random key. All tokens will be lost on restart.
+{
+ "catalog_scraper.db_upsert_part": {
+  "new_part_from_USD_10": 53.94,
+  "owned_77.77_after_rediscovery_at_999": 77.77
+ },
+ "routes.admin.import_parts_excel": {
+  "existing_88_after_upload_price_5": 88.0,
+  "new_part_uploaded_price_7": null
+ },
+ "ai_catalog_builder.insert_parts": {
+  "inserted_with_LLM_price_400": null,
+  "owned_123.45_after_rebuild_at_9999": 123.45
+ },
+ "car_parts_ie_import_generic (re-harvest)": {
+  "owned_33.0_after_reharvest_at_72.5": 33.0
+ }
+}

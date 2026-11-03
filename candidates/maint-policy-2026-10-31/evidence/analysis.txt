@@ -1,0 +1,114 @@
+
+######## OLD CODE
+
+-- backfill_bmw_fitment_from_name_he: {'status': 'ok', 'inserted': 2, 'parts_matched': 2}
+   DBG-BMW-G20          fitment: [] -> [['BMW', '3 Series', 2018, 2026, 'chassis:G20']]
+   DBG-BMW-MINI         fitment: [] -> [['MINI', 'MINI Clubman', 2015, 2024, 'chassis:F54']]
+
+-- backfill_ford_fitment_from_name_he: {'status': 'ok', 'inserted': 4, 'parts_matched': 4}
+   DBG-FORD-CONNECTOR   fitment: [] -> [['Ford', 'Ford Transit Connect', 2002, 2026, 'extracted:name_he']]
+   DBG-FORD-F250        fitment: [] -> [['Ford', 'Ford F-250', 1980, 2026, 'extracted:name_he']]
+   DBG-FORD-FOCUS       fitment: [] -> [['Ford', 'Ford Focus', 1998, 2023, 'extracted:name_he']]
+   DBG-FORD-RANGER      fitment: [] -> [['Ford', 'Ford Transit Connect', 2002, 2026, 'extracted:name_he']]
+
+-- backfill_jaguar_fitment_from_name: {'status': 'ok', 'scanned': 5, 'skipped': 0, 'inserted': 5, 'parts_matched': 5}
+   DBG-JAG-CLASSIC      fitment: [] -> [['Jaguar', 'S-Type', 1999, 2008, 'name_parse:jaguar']]
+   DBG-JAG-KIT          fitment: [] -> [['Jaguar', 'S-Type', 1999, 2008, 'name_parse:jaguar']]
+   DBG-JAG-LOGO         fitment: [] -> [['Jaguar', 'F-Type', 2013, 2023, 'name_parse:jaguar']]
+   DBG-JAG-TSHIRT       fitment: [] -> [['Jaguar', 'F-Type', 2013, 2023, 'name_parse:jaguar']]
+   DBG-JAG-XF           fitment: [] -> [['Jaguar', 'XF', 2008, 2018, 'name_parse:jaguar']]
+
+-- merge_catalog_fitment_from_part_vehicle_fitment: {'status': 'ok', 'updated_parts': 17}
+   DBG-BMW-G20          compatible_vehicles: ['None'] -> [('BMW', '3 Series', 'part_vehicle_fitment')]
+   DBG-BMW-MINI         compatible_vehicles: ['None'] -> [('MINI', 'MINI Clubman', 'part_vehicle_fitment')]
+   DBG-FIT-2MAKES       compatible_vehicles: ['None'] -> [('Toyota', 'Corolla', 'part_vehicle_fitment')]
+   DBG-FIT-DICT         compatible_vehicles: ["{'manufacturer': 'Toyota'}"] -> [('Toyota', 'Corolla', 'part_vehicle_fitment')]
+   DBG-FIT-DUP          compatible_vehicles: [('Toyota', 'Auris', 'xls')] -> [('Toyota', 'Auris', 'part_vehicle_fitment'), ('Toyota', 'Auris', 'xls')]
+   DBG-FIT-STALE        compatible_vehicles: [('Toyota', 'OLDMODEL', 'part_vehicle_fitment'), ('Toyota', 'Yaris', 'xls')] -> [('Toyota', 'Corolla', 'part_vehicle_fitment'), ('Toyota', 'Yaris', 'xls')]
+   DBG-FORD-CONNECTOR   compatible_vehicles: ['None'] -> [('Ford', 'Ford Transit Connect', 'part_vehicle_fitment')]
+   DBG-FORD-F250        compatible_vehicles: ['None'] -> [('Ford', 'Ford F-250', 'part_vehicle_fitment')]
+   DBG-FORD-FOCUS       compatible_vehicles: ['None'] -> [('Ford', 'Ford Focus', 'part_vehicle_fitment')]
+   DBG-FORD-PREFIXED    compatible_vehicles: ['None'] -> [('Ford', 'Ford Focus', 'part_vehicle_fitment')]
+   DBG-FORD-RANGER      compatible_vehicles: ['None'] -> [('Ford', 'Ford Transit Connect', 'part_vehicle_fitment')]
+   DBG-JAG-CLASSIC      compatible_vehicles: ['None'] -> [('Jaguar', 'S-Type', 'part_vehicle_fitment')]
+   DBG-JAG-KIT          compatible_vehicles: ['None'] -> [('Jaguar', 'S-Type', 'part_vehicle_fitment')]
+   DBG-JAG-LOGO         compatible_vehicles: ['None'] -> [('Jaguar', 'F-Type', 'part_vehicle_fitment')]
+   DBG-JAG-TSHIRT       compatible_vehicles: ['None'] -> [('Jaguar', 'F-Type', 'part_vehicle_fitment')]
+   DBG-JAG-XF           compatible_vehicles: ['None'] -> [('Jaguar', 'XF', 'part_vehicle_fitment')]
+
+-- fix_base_prices: {'status': 'ok', 'rows_updated': 7}
+   DBG-COMPETE          base_price: 10.0 -> 43.5
+   DBG-FORD-FOCUS       base_price: None -> 290.0
+   DBG-LOCAL            base_price: 50.0 -> 145.0
+   DBG-PINGPONG         base_price: None -> 145.0
+   DBG-UNKNOWN          base_price: None -> 145.0
+   DBG-URLLESS          base_price: None -> 72.5
+   DBG-USD              base_price: None -> 174.0
+
+-- normalize_base_price: {'status': 'ok', 'total_updated': 2}
+   DBG-PINGPONG         base_price: 145.0 -> 116.0
+   DBG-URLLESS          base_price: 72.5 -> 145.0
+
+search before: {'Ford Focus 2015': [], 'Ford Ranger 2015': [], 'Ford Transit Connect 2015': [], 'Lexus CT 2014': ['DBG-FIT-2MAKES'], 'Toyota Corolla 2016': ['DBG-FIT-2MAKES', 'DBG-FIT-DICT', 'DBG-FIT-OK', 'DBG-FIT-STALE'], 'BMW 3 Series 2020': [], 'MINI Clubman 2016': [], 'Jaguar XF 2012': []}
+search after:  {'Ford Focus 2015': [], 'Ford Ranger 2015': [], 'Ford Transit Connect 2015': [], 'Lexus CT 2014': ['DBG-FIT-2MAKES'], 'Toyota Corolla 2016': ['DBG-FIT-2MAKES', 'DBG-FIT-DICT', 'DBG-FIT-OK', 'DBG-FIT-STALE'], 'BMW 3 Series 2020': ['DBG-BMW-G20'], 'MINI Clubman 2016': ['DBG-BMW-MINI'], 'Jaguar XF 2012': ['DBG-JAG-XF']}
+customer surfaces identical before/after all six tasks: True
+rerun: rows changed -> [('fix_base_prices', {'DBG-PINGPONG': {'base_price': [116.0, 145.0]}}), ('normalize_base_price', {'DBG-PINGPONG': {'base_price': [145.0, 116.0]}})]; reported writes -> [('merge_catalog_fitment_from_part_vehicle_fitment', {'updated_parts': 2}), ('fix_base_prices', {'rows_updated': 1}), ('normalize_base_price', {'total_updated': 1})]
+reverse: rows changed -> [('fix_base_prices', {'DBG-PINGPONG': {'base_price': [116.0, 145.0]}})]; reported writes -> [('fix_base_prices', {'rows_updated': 1}), ('merge_catalog_fitment_from_part_vehicle_fitment', {'updated_parts': 2})]
+
+######## NEW CODE
+
+-- backfill_bmw_fitment_from_name_he: {'status': 'ok', 'scanned': 3, 'eligible': 2, 'updated': 2, 'unchanged': 0, 'skipped': 1, 'failed': 0, 'reasons': {'no_chassis_code': 1}}
+   DBG-BMW-G20          fitment: [] -> [['BMW', '3 Series', 2018, 2026, 'chassis:G20']]
+   DBG-BMW-MINI         fitment: [] -> [['MINI', 'MINI Clubman', 2015, 2024, 'chassis:F54']]
+
+-- backfill_ford_fitment_from_name_he: {'status': 'ok', 'scanned': 4, 'eligible': 3, 'updated': 3, 'unchanged': 0, 'skipped': 1, 'failed': 0, 'reasons': {'no_model_name': 1}}
+   DBG-FORD-F250        fitment: [] -> [['Ford', 'F-250', 1980, 2026, 'extracted:name_he']]
+   DBG-FORD-FOCUS       fitment: [] -> [['Ford', 'Focus', 1998, 2023, 'extracted:name_he']]
+   DBG-FORD-RANGER      fitment: [] -> [['Ford', 'Ranger', 1983, 2026, 'extracted:name_he']]
+
+-- backfill_jaguar_fitment_from_name: {'status': 'ok', 'scanned': 5, 'eligible': 2, 'updated': 2, 'unchanged': 0, 'skipped': 3, 'failed': 0, 'reasons': {'merchandise': 2, 'classic_era': 1}}
+   DBG-JAG-KIT          fitment: [] -> [['Jaguar', 'S-Type', 1999, 2008, 'name_parse:jaguar']]
+   DBG-JAG-XF           fitment: [] -> [['Jaguar', 'XF', 2008, 2018, 'name_parse:jaguar']]
+
+-- merge_catalog_fitment_from_part_vehicle_fitment: {'status': 'ok', 'eligible': 13, 'unchanged': 1, 'skipped': 1, 'failed': 0, 'reasons': {'nothing_to_copy': 1}, 'updated_parts': 12}
+   DBG-BMW-G20          compatible_vehicles: ['None'] -> [('BMW', '3 Series', 'part_vehicle_fitment')]
+   DBG-BMW-MINI         compatible_vehicles: ['None'] -> [('MINI', 'MINI Clubman', 'part_vehicle_fitment')]
+   DBG-FIT-2MAKES       compatible_vehicles: ['None'] -> [('Lexus', 'CT', 'part_vehicle_fitment'), ('Toyota', 'Corolla', 'part_vehicle_fitment')]
+   DBG-FIT-DICT         compatible_vehicles: ["{'manufacturer': 'Toyota'}"] -> [('Toyota', 'Corolla', 'part_vehicle_fitment')]
+   DBG-FIT-DUP          compatible_vehicles: [('Toyota', 'Auris', 'xls')] -> [('Toyota', 'Auris', 'part_vehicle_fitment'), ('Toyota', 'Auris', 'xls')]
+   DBG-FIT-STALE        compatible_vehicles: [('Toyota', 'OLDMODEL', 'part_vehicle_fitment'), ('Toyota', 'Yaris', 'xls')] -> [('Toyota', 'Corolla', 'part_vehicle_fitment'), ('Toyota', 'Yaris', 'xls')]
+   DBG-FORD-F250        compatible_vehicles: ['None'] -> [('Ford', 'F-250', 'part_vehicle_fitment')]
+   DBG-FORD-FOCUS       compatible_vehicles: ['None'] -> [('Ford', 'Focus', 'part_vehicle_fitment')]
+   DBG-FORD-PREFIXED    compatible_vehicles: ['None'] -> [('Ford', 'Ford Focus', 'part_vehicle_fitment')]
+   DBG-FORD-RANGER      compatible_vehicles: ['None'] -> [('Ford', 'Ranger', 'part_vehicle_fitment')]
+   DBG-JAG-KIT          compatible_vehicles: ['None'] -> [('Jaguar', 'S-Type', 'part_vehicle_fitment')]
+   DBG-JAG-XF           compatible_vehicles: ['None'] -> [('Jaguar', 'XF', 'part_vehicle_fitment')]
+
+-- fix_base_prices: {'status': 'ok', 'scanned': 32, 'eligible': 7, 'updated': 7, 'unchanged': 0, 'skipped': 25, 'failed': 0, 'reasons': {'no_basis': 19, 'other_owner': 5, 'other_class_only': 1}}
+   DBG-COMPETE          base_price: 10.0 -> 130.5
+   DBG-FORD-FOCUS       base_price: None -> 290.0
+   DBG-FOREIGN          base_price: 999.0 -> 145.0
+   DBG-LOCAL            base_price: 50.0 -> 145.0
+   DBG-PINGPONG         base_price: None -> 145.0
+   DBG-UNKNOWN          base_price: None -> 145.0
+   DBG-USD              base_price: None -> 174.0
+
+-- normalize_base_price: {'status': 'ok', 'scanned': 32, 'eligible': 5, 'updated': 5, 'unchanged': 0, 'skipped': 27, 'failed': 0, 'reasons': {'no_basis': 19, 'other_owner': 7, 'other_class_only': 1}}
+   DBG-IMPCHG           base_price: 116.0 -> 145.0
+   DBG-MAXONLY          base_price: None -> 145.0
+   DBG-ONLINE           base_price: None -> 72.5
+   DBG-STALE            base_price: None -> 145.0
+   DBG-URLLESS          base_price: None -> 145.0
+
+search before: {'Ford Focus 2015': [], 'Ford Ranger 2015': [], 'Ford Transit Connect 2015': [], 'Lexus CT 2014': ['DBG-FIT-2MAKES'], 'Toyota Corolla 2016': ['DBG-FIT-2MAKES', 'DBG-FIT-DICT', 'DBG-FIT-OK', 'DBG-FIT-STALE'], 'BMW 3 Series 2020': [], 'MINI Clubman 2016': [], 'Jaguar XF 2012': []}
+search after:  {'Ford Focus 2015': ['DBG-FORD-FOCUS'], 'Ford Ranger 2015': ['DBG-FORD-RANGER'], 'Ford Transit Connect 2015': [], 'Lexus CT 2014': ['DBG-FIT-2MAKES'], 'Toyota Corolla 2016': ['DBG-FIT-2MAKES', 'DBG-FIT-DICT', 'DBG-FIT-OK', 'DBG-FIT-STALE'], 'BMW 3 Series 2020': ['DBG-BMW-G20'], 'MINI Clubman 2016': ['DBG-BMW-MINI'], 'Jaguar XF 2012': ['DBG-JAG-XF']}
+customer surfaces identical before/after all six tasks: True
+rerun: rows changed -> NONE; reported writes -> []
+reverse: rows changed -> NONE; reported writes -> []
+interrupt steps:
+   {'status': 'ok', 'batches': 1, 'started_after': '00000000-0000-0000-0000-000000000000', 'resume_after': '1329a1ad-541c-489a-8635-b873eaea9b44', 'pass_completed': False, 'updated': 2, 'failed': 0, 'error': None}
+   {'status': 'error', 'batches': 1, 'started_after': '1329a1ad-541c-489a-8635-b873eaea9b44', 'resume_after': '306e5e5d-e94e-42e0-8e51-166bbb7906ef', 'pass_completed': False, 'updated': 0, 'failed': 1, 'error': 'simulated interruption'}
+   {'status': 'ok', 'batches': 7, 'started_after': '306e5e5d-e94e-42e0-8e51-166bbb7906ef', 'resume_after': '00000000-0000-0000-0000-000000000000', 'pass_completed': True, 'updated': 5, 'failed': 0, 'error': None}
+   {'status': 'ok', 'batches': 9, 'started_after': '00000000-0000-0000-0000-000000000000', 'resume_after': '00000000-0000-0000-0000-000000000000', 'pass_completed': True, 'updated': 5, 'failed': 0, 'error': None}
+mismatch vs uninterrupted: {}
+cleanup normalizer: {'priced': 3, 'diff': {'DBG-FOREIGN': {'base_price': [None, 145.0], 'min_price_ils': [None, 100.0]}, 'DBG-LOCAL': {'base_price': [None, 145.0], 'importer_price_ils': [None, 100.0], 'max_price_ils': [None, 118.0], 'min_price_ils': [None, 100.0]}, 'DBG-URLLESS': {'base_price': [None, 72.5], 'importer_price_ils': [None, 50.0], 'max_price_ils': [None, 59.0], 'min_price_ils': [None, 50.0]}}}

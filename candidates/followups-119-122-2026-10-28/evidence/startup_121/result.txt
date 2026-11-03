@@ -1,0 +1,43 @@
+[19:22:31] T1 successful migration completes BEFORE uvicorn starts
+PASS T1a
+PASS T1b
+PASS T1c
+PASS T1d
+PASS T1e
+PASS T1f
+PASS T1g
+[19:23:00] T7 normal stop of a running API: uvicorn shuts down gracefully
+PASS T7a
+PASS T7b
+PASS T7c
+[19:23:02] T2 migration fails on every attempt (lock held > 3 x 15 s lock_timeout): uvicorn never starts, no restart loop
+PASS T2a
+PASS T2b
+PASS T2c
+PASS T2d
+PASS T2e
+PASS T2f
+PASS T2g
+PASS T2h
+PASS T2i
+[19:24:32] T6 docker stop while holding: exits promptly
+PASS T6a
+[19:24:32] T10 recovery: blocker gone, 'docker restart' -> migration applies, API starts
+PASS T10a
+[19:25:24] T3 transient lock (released after 26 s): attempt 1 times out on the lock, attempt 2 succeeds
+PASS T3a
+PASS T3b
+PASS T3c
+[19:26:08] T4 migration hangs past MIGRATION_TIMEOUT_S=5 (lock wait 15 s): killed deterministically, API not started
+PASS T4a
+PASS T4b
+PASS T4c
+[19:27:24] T5 docker stop DURING a migration: SIGTERM forwarded, exits promptly, database unchanged
+PASS T5a
+PASS T5b
+PASS T5c
+[19:28:39] T8 STARTUP_ON_MIGRATION_FAILURE=exit (restart: no): exits non-zero instead of holding
+PASS T8a
+[19:29:53] T9 runbook one-off form is unaffected (its command replaces the start script)
+PASS T9a
+[19:30:16] DONE: 0 failed

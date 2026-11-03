@@ -25,7 +25,7 @@ Data Sources: Gemini Google-Search grounding; live domain fetches for verificati
 Missing Data Delegation: sellers that need a B2B account/token (Turn14, Keystone,
     ASAP, …) are onboarded as status=pending_credentials with `needs` describing the
     exact owner step; they stay is_active=FALSE until the owner supplies the credential.
-Last Updated: 2026-07-26
+Last Updated: 2026-10-27 (existing suppliers never relabelled; exact-one approve/reject; activation authorization; qualification record)
 """
 from __future__ import annotations
 
@@ -250,16 +250,24 @@ async def onboard_seller(conn, *, name: str, website: str, country: str = "Unkno
     if needs:
         meta["needs"] = needs
     if existing:
-        # refresh sourcing metadata; never downgrade an already-active supplier
+        # 2026-10-27 root fix: an EXISTING supplier (e.g. RockAuto, Mann Filter) must never be relabelled as a
+        # NIR candidate - merging source/status into its top-level credentials marked live suppliers
+        # 'pending_review' and made them reachable by דחהספק (reject = is_active FALSE). The re-discovery is
+        # kept under its own key only.
         await conn.execute(
             """UPDATE suppliers
-               SET credentials = coalesce(credentials,'{}'::jsonb) || $2::jsonb,
+               SET credentials = jsonb_set(coalesce(credentials,'{}'::jsonb), '{nir_rediscovery}', $2::jsonb, true),
                    updated_at = NOW()
                WHERE id = $1::uuid""",
-            existing["id"], json.dumps(meta),
+            existing["id"], json.dumps({k: meta[k] for k in ("discovered_at", "reasons", "signals")}),
         )
         return {"supplier_id": existing["id"], "created": False, "name": existing["name"],
                 "already_active": existing["is_active"]}
+    try:
+        import supplier_qualification as _q
+        meta["qualification"] = _q.from_sourcing_signals("pending", signals or {}, dom)
+    except Exception as _qe:                       # qualification is evidence, never a blocker for recording
+        logger.warning("[sourcing] qualification record skipped: %s", type(_qe).__name__)
 
     row = await conn.fetchrow(
         """INSERT INTO suppliers (id, name, country, website, api_endpoint,
@@ -270,6 +278,10 @@ async def onboard_seller(conn, *, name: str, website: str, country: str = "Unkno
         name, country, ("https://" + dom) if dom else website, api_endpoint,
         json.dumps(meta), reliability,
     )
+    if "qualification" in meta:
+        await conn.execute(
+            "UPDATE suppliers SET credentials = jsonb_set(credentials, '{qualification,supplier_id}', to_jsonb($1::text)) "
+            "WHERE id = $1::uuid", row["id"])
     return {"supplier_id": row["id"], "created": True, "name": name}
 
 
@@ -365,38 +377,76 @@ async def list_pending(conn=None) -> list[dict]:
             await conn.close()
 
 
-async def approve_supplier(id_prefix: str, conn=None) -> dict:
+async def _one_candidate(conn, id_prefix: str, *, pending_only: bool):
+    """Exactly one NIR candidate for an id prefix (2026-10-27: the old `UPDATE ... LIKE prefix%` changed
+    EVERY matching row - a 1-character prefix could activate or deactivate many suppliers at once)."""
+    p = "".join(ch for ch in (id_prefix or "").lower() if ch in "0123456789abcdef-")
+    if len(p) < 4:
+        return None, "short"
+    rows = await conn.fetch(
+        """SELECT id::text AS id, name, is_active, credentials->'qualification' AS qualification FROM suppliers
+           WHERE id::text LIKE $1 AND credentials->>'source'='nir_sourcing'
+             AND ($2 = FALSE OR is_active = FALSE)""", p + "%", pending_only)
+    if len(rows) != 1:
+        return None, ("none" if not rows else "ambiguous")
+    return rows[0], None
+
+
+async def approve_supplier(id_prefix: str, conn=None, *, approved_by: str = "owner_whatsapp",
+                           auth_store=None) -> dict:
+    """Owner activation of ONE NIR candidate. Records a supplier_activation authorization (the owner's command
+    is the approval) before the status change; activation never implies messaging, ordering or paying."""
+    import supplier_authorization as _auth
     own = False
     if conn is None:
         conn = await _connect(); own = True
     try:
-        row = await conn.fetchrow(
+        row, err = await _one_candidate(conn, id_prefix, pending_only=True)
+        if err:
+            return {"ok": False, "error": err, "name": None}
+        qual = row["qualification"]
+        qual = json.loads(qual) if isinstance(qual, str) else qual
+        cls, ds = None, None
+        if qual:
+            import supplier_qualification as _q
+            c = _q.classify(qual)
+            cls, ds = c["classification"], c["dropshipping"]
+        a = await _auth.grant(auth_store or _auth.PgAuthStore(), domain="supplier_activation", scope="activate",
+                              entity_type="supplier", entity_id=row["id"], approved_by=approved_by,
+                              source="owner_whatsapp", terms={"qualification": cls, "dropshipping": ds})
+        await _auth.require(auth_store or _auth.PgAuthStore(), "supplier_activation", "supplier", row["id"],
+                            scope="activate", terms={"qualification": cls, "dropshipping": ds})
+        await conn.execute(
             """UPDATE suppliers
                SET is_active = TRUE,
-                   credentials = coalesce(credentials,'{}'::jsonb) || '{"status":"approved"}'::jsonb,
+                   credentials = coalesce(credentials,'{}'::jsonb) || jsonb_build_object(
+                       'status','approved','activation_authorization_id',$2::text),
                    updated_at = NOW()
-               WHERE id::text LIKE $1 AND credentials->>'source'='nir_sourcing'
-               RETURNING name""",
-            id_prefix + "%")
-        return {"ok": bool(row), "name": row["name"] if row else None}
+               WHERE id = $1::uuid""", row["id"], a.id)
+        await _auth.consume(auth_store or _auth.PgAuthStore(), a, "activated")
+        return {"ok": True, "name": row["name"], "supplier_id": row["id"], "qualification": cls, "dropshipping": ds,
+                "authorization_id": a.id}
     finally:
         if own:
             await conn.close()
 
 
 async def reject_supplier(id_prefix: str, conn=None) -> dict:
+    """Reject ONE NIR candidate that is not active. An active supplier is never deactivated from here
+    (that is a supplier_integration_change, a different permission)."""
     own = False
     if conn is None:
         conn = await _connect(); own = True
     try:
-        row = await conn.fetchrow(
+        row, err = await _one_candidate(conn, id_prefix, pending_only=True)
+        if err:
+            return {"ok": False, "error": err, "name": None}
+        await conn.execute(
             """UPDATE suppliers
                SET credentials = coalesce(credentials,'{}'::jsonb) || '{"status":"rejected"}'::jsonb,
-                   is_active = FALSE, updated_at = NOW()
-               WHERE id::text LIKE $1 AND credentials->>'source'='nir_sourcing'
-               RETURNING name""",
-            id_prefix + "%")
-        return {"ok": bool(row), "name": row["name"] if row else None}
+                   updated_at = NOW()
+               WHERE id = $1::uuid AND is_active = FALSE""", row["id"])
+        return {"ok": True, "name": row["name"]}
     finally:
         if own:
             await conn.close()

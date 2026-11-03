@@ -1,0 +1,25 @@
+...........s............................................................ [ 23%]
+........................................................................ [ 46%]
+........................................................................ [ 70%]
+.......................................s................................ [ 93%]
+....................                                                     [100%]
+=============================== warnings summary ===============================
+<unknown>:2: 1 warning
+tests/test_base_price_writers.py: 3 warnings
+tests/test_night_pipeline.py: 12 warnings
+  <unknown>:2: DeprecationWarning: invalid escape sequence '\ '
+
+../usr/local/lib/python3.11/site-packages/passlib/utils/__init__.py:854
+  /usr/local/lib/python3.11/site-packages/passlib/utils/__init__.py:854: DeprecationWarning: 'crypt' is deprecated and slated for removal in Python 3.13
+    from crypt import crypt as _crypt
+
+../usr/local/lib/python3.11/site-packages/clamd/__init__.py:6
+  /usr/local/lib/python3.11/site-packages/clamd/__init__.py:6: DeprecationWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html
+    __version__ = __import__('pkg_resources').get_distribution('clamd').version
+
+tests/test_base_price_writers.py::test_admin_upload_does_not_type_a_price_into_base_price
+  /app/routes/schemas.py:51: PydanticDeprecatedSince20: `min_items` is deprecated and will be removed, use `min_length` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    items: List[OrderItemCreate] = Field(..., min_items=1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+306 passed, 2 skipped, 19 warnings in 378.74s (0:06:18)

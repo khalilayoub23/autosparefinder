@@ -1,0 +1,52 @@
+=== X1 exact compose form: deploy chain + full rollback with backup + restore
+  deployed tree, upgrade head:
+    INFO  [alembic.runtime.migration] Running upgrade 0038_eurosender_shipping -> 0039_email_agent_messages, Add email_agent_messages - idem
+    INFO  [alembic.runtime.migration] Running upgrade 0039_email_agent_messages -> 0040_messages_chat_req_uniq, One logical conversation tur
+    INFO  [alembic.runtime.migration] Running upgrade 0040_messages_chat_req_uniq -> 0041_email_agent_owner_flow, Email Agent owner flow: no
+    exit=0
+    version=0041_email_agent_owner_flow new_tables=0
+  candidate tree, upgrade head:
+    INFO  [alembic.runtime.migration] Running upgrade 0041_email_agent_owner_flow -> 0042_supplier_lifecycle, Supplier lifecycle: separate a
+    exit=0
+    version=0042_supplier_lifecycle new_tables=4
+    SEEDED
+    before: auth 4 6e48cb637650c6cebd9daa236b6caec3
+    before: outreach 1 adbf04c344725290194584475d688eb3
+    before: proc 3 82a99ccc3fa17847fd047cdcdfd61bb7
+    before: events 7 3cd7d907ffa1bc1d847d8616d56e3815
+    before: email_cols 2 669678ecf2d556870f9ce7f0e6222ed8
+    before: events_seq 7 true
+    BACKUP OK: /tmp/claude-0/-opt-autosparefinder/2b46ba28-2c33-4d4f-b9b3-7c878aed1e70/scratchpad/rehearsal3/bk
+    UNCHANGED since backup
+  candidate tree, downgrade (EXACT runbook form):
+    INFO  [alembic.runtime.migration] Running downgrade 0042_supplier_lifecycle -> 0041_email_agent_owner_flow, Supplier lifecycle: separate
+    exit=0
+    version=0041_email_agent_owner_flow new_tables=0
+  startup hook ran in any one-off? 0
+=== X2 repeated recovery execution
+  downgrade again (already 0041):
+    exit=0
+    version=0041_email_agent_owner_flow new_tables=0
+  deployed tree, current:
+    0041_email_agent_owner_flow (head)
+    exit=0
+  re-deploy upgrade:
+    version=0042_supplier_lifecycle new_tables=4
+    RESTORE OK from /tmp/claude-0/-opt-autosparefinder/2b46ba28-2c33-4d4f-b9b3-7c878aed1e70/scratchpad/rehearsal3/bk (authorizations=4 outreach=1 procurement=3 events=7 email_rows=1)
+    restore #1 exit=0
+    CONTENT FINGERPRINT IDENTICAL
+    STOP: target 0042 tables are not empty (15 rows) - refusing to merge
+    restore #2 exit=7 (must refuse: tables not empty)
+    data unchanged by the refused repeat
+    STOP: /tmp/claude-0/-opt-autosparefinder/2b46ba28-2c33-4d4f-b9b3-7c878aed1e70/scratchpad/rehearsal3/bk already exists - refusing to overwrite a backup
+    backup into the same dir exit=2 (must refuse)
+=== X3 migration killed part-way (process dies while the upgrade waits on a lock)
+    version=0041_email_agent_owner_flow new_tables=0
+    killed the migration container mid-transaction
+    version=0041_email_agent_owner_flow new_tables=0
+    waiting migrations left in pg_stat_activity: 1
+  after the lock clears, a fresh upgrade:
+    INFO  [alembic.runtime.migration] Running upgrade 0041_email_agent_owner_flow -> 0042_supplier_lifecycle, Supplier lifecycle: separate a
+    exit=0
+    version=0042_supplier_lifecycle new_tables=4
+isolated project removed

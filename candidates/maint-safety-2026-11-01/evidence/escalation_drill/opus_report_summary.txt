@@ -1,0 +1,1 @@
+Opus subagent report (model: opus, general-purpose, handed only handoff.md as prompt): PASS 19/19, root cause = lone separator read as thousands without checking the leading group ([1-9]\d{0,2}); 7 regression cases added; original 12 unchanged. Claude re-ran: see claude_reverify.txt.

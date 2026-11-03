@@ -1,0 +1,17 @@
+common 2842
+outcome changes: []
+failure detail changes: []
+removed: []
+added: 12
+   tests.test_boaz_recovery::test_healthy_in_progress_task_is_not_reclaimed passed
+   tests.test_boaz_recovery::test_crash_before_processing_is_requeued_and_completed passed
+   tests.test_boaz_recovery::test_crash_after_side_effect_is_never_repeated passed
+   tests.test_boaz_recovery::test_retry_safe_handler_is_rerun_after_a_crash_inside_it passed
+   tests.test_boaz_recovery::test_crash_after_processing_before_recording_applies_the_recorded_outcome passed
+   tests.test_boaz_recovery::test_retry_limit_then_terminal_escalation passed
+   tests.test_boaz_recovery::test_other_agents_escalated_and_legacy_tasks_are_untouched passed
+   tests.test_boaz_recovery::test_a_late_worker_cannot_overwrite_the_new_owner passed
+   tests.test_boaz_recovery::test_lease_outlives_the_handler_bound passed
+   tests.test_boaz_recovery::test_pg_two_concurrent_recoverers_never_take_the_same_task skipped
+   tests.test_boaz_recovery::test_pg_crash_after_side_effect_is_reconciled_not_repeated skipped
+   tests.test_db_agent_task_counting::test_deleted_119_steps_cannot_run passed

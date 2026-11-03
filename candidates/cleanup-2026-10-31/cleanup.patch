@@ -1,0 +1,187 @@
+--- a/backend/BACKEND_AI_AGENTS.py
++++ b/backend/BACKEND_AI_AGENTS.py
+@@ -1887,7 +1887,6 @@
+         usd_to_ils_rate: Optional[float] = None,
+         supplier_name: Optional[str] = None,
+         supplier_country: Optional[str] = None,
+-        local_vat_only: bool = False,
+     ) -> Dict[str, float]:
+         """Calculate final customer price from supplier cost (USD).
+         customer_shipping overrides the default SHIPPING_ILS delivery fee."""
+@@ -1896,8 +1895,7 @@
+         if customer_shipping is None and shipping_cost_usd:
+             customer_shipping = round(float(shipping_cost_usd) * applied_rate, 2)
+         cost_ils = supplier_price_usd * applied_rate
+-        # price_policy is the one rule; VAT is ALWAYS conditional (local_vat_only is kept for callers, ignored:
+-        # a flat 18% on a foreign offer is not the policy - 2026-10-29)
++        # price_policy is the one rule; VAT is always conditional (18% local, 0% foreign)
+         _u = _pp.unit_price(cost_ils, supplier_name, supplier_country) or _pp.UnitPrice(0.0, 0.0, 0.0, 0.0)
+         price_no_vat, vat = _u.net, _u.vat
+         delivery = customer_shipping if customer_shipping is not None else SHIPPING_ILS
+@@ -1919,7 +1917,6 @@
+         customer_shipping: Optional[float] = None,
+         supplier_name: Optional[str] = None,
+         supplier_country: Optional[str] = None,
+-        local_vat_only: bool = False,
+     ) -> Dict[str, float]:
+         """Calculate final customer price when supplier cost is already in ILS.
+         customer_shipping overrides the default SHIPPING_ILS delivery fee.
+@@ -1932,7 +1929,7 @@
+         if customer_shipping is None and shipping_cost_ils:
+             customer_shipping = float(shipping_cost_ils)
+         total_cost_ils = cost_ils
+-        # price_policy is the one rule; VAT is ALWAYS conditional (local_vat_only kept for callers, ignored)
++        # price_policy is the one rule; VAT is always conditional (18% local, 0% foreign)
+         _u = _pp.unit_price(total_cost_ils, supplier_name, supplier_country) or _pp.UnitPrice(0.0, 0.0, 0.0, 0.0)
+         price_no_vat, vat = _u.net, _u.vat
+         delivery = customer_shipping if customer_shipping is not None else SHIPPING_ILS
+@@ -3001,7 +2998,6 @@
+                         customer_shipping=delivery_fee,
+                         supplier_name=sp_row.supplier_name,
+                         supplier_country=sp_row.supplier_country,
+-                        local_vat_only=True,
+                     )
+                 else:
+                     supplier_total_ils = (
+@@ -3013,7 +3009,6 @@
+                         customer_shipping=delivery_fee,
+                         supplier_name=sp_row.supplier_name,
+                         supplier_country=sp_row.supplier_country,
+-                        local_vat_only=True,
+                     )
+                 pricing["availability"] = availability
+                 # product class of THIS offer (own label, else the catalog part's) — same rule as search/cart
+--- a/backend/routes/parts.py
++++ b/backend/routes/parts.py
+@@ -3901,7 +3901,6 @@
+                 customer_shipping=delivery_fee,
+                 supplier_name=supplier.name,
+                 supplier_country=supplier.country,
+-                local_vat_only=True,
+             )
+         else:
+             usd_total = float(sp.price_usd or 0)  # shipping is the delivery fee, never in the margin base
+@@ -3911,7 +3910,6 @@
+                 customer_shipping=delivery_fee,
+                 supplier_name=supplier.name,
+                 supplier_country=supplier.country,
+-                local_vat_only=True,
+             )
+         comparisons.append({
+             "supplier_part_id": str(sp.id),
+--- a/backend/routes/payments.py
++++ b/backend/routes/payments.py
+@@ -696,7 +696,6 @@
+         raise HTTPException(status_code=400, detail="לא ניתן לפתוח תשלום להזמנה ללא פריטים")
+ 
+     # ── Live price validation ──────────────────────────────────────────────
+-    from decimal import Decimal
+     async with async_session_factory() as _cat:
+         _rate = await get_usd_to_ils_rate(_cat)
+ 
+@@ -913,7 +912,6 @@
+             raise HTTPException(status_code=400, detail=f"הזמנה ללא פריטים אינה ניתנת לתשלום: {o.order_number}")
+ 
+     # ── Live price validation ──────────────────────────────────────────────
+-    from decimal import Decimal
+     async with async_session_factory() as _cat:
+         _rate = await get_usd_to_ils_rate(_cat)
+ 
+--- a/backend/routes/brands.py
++++ b/backend/routes/brands.py
+@@ -321,7 +321,6 @@
+                     customer_shipping=delivery_fee,
+                     supplier_name=sp_row.supplier_name,
+                     supplier_country=sp_row.supplier_country,
+-                    local_vat_only=True,
+                 )
+             else:
+                 usd_total = float(sp_row.price_usd or 0)  # shipping is the delivery fee, never in the margin base
+@@ -331,7 +330,6 @@
+                     customer_shipping=delivery_fee,
+                     supplier_name=sp_row.supplier_name,
+                     supplier_country=sp_row.supplier_country,
+-                    local_vat_only=True,
+                 )
+             pricing["availability"] = "in_stock" if sp_row.is_available else "on_order"
+             pricing["warranty_months"] = sp_row.warranty_months
+@@ -562,7 +560,6 @@
+                     customer_shipping=delivery_fee,
+                     supplier_name=sp_row.supplier_name,
+                     supplier_country=sp_row.supplier_country,
+-                    local_vat_only=True,
+                 )
+             else:
+                 usd_total = float(sp_row.price_usd or 0)  # shipping is the delivery fee, never in the margin base
+@@ -572,7 +569,6 @@
+                     customer_shipping=delivery_fee,
+                     supplier_name=sp_row.supplier_name,
+                     supplier_country=sp_row.supplier_country,
+-                    local_vat_only=True,
+                 )
+             pricing["availability"] = "in_stock" if sp_row.is_available else "on_order"
+             pricing["warranty_months"] = sp_row.warranty_months
+--- a/backend/tests/test_price_policy_unified.py
++++ b/backend/tests/test_price_policy_unified.py
+@@ -92,19 +92,17 @@
+ 
+ 
+ @pytest.mark.parametrize("o", OFFERS, ids=[o["id"] for o in OFFERS])
+-@pytest.mark.parametrize("local_vat_only", [True, False])
+-def test_chat_and_brands_agent_prices_equal_policy(o, local_vat_only):
++def test_chat_and_brands_agent_prices_equal_policy(o):
+     import BACKEND_AI_AGENTS as A
+     cost, u, fee = _expected(o)
+     agent = A.BaseAgent.__new__(A.BaseAgent)
+     p = agent.calculate_customer_price_from_ils(cost, o["ship_ils"] or 0, customer_shipping=fee,
+-                                                supplier_name=o["name"], supplier_country=o["country"],
+-                                                local_vat_only=local_vat_only)
++                                                supplier_name=o["name"], supplier_country=o["country"])
+     assert (p["price_no_vat"], p["vat"], p["total"]) == (u.net, u.vat, round(u.total + fee, 2))
+     if o["price_usd"]:
+         q = agent.calculate_customer_price(o["price_usd"], o["ship_usd"] or 0, customer_shipping=fee,
+                                            usd_to_ils_rate=RATE, supplier_name=o["name"],
+-                                           supplier_country=o["country"], local_vat_only=local_vat_only)
++                                           supplier_country=o["country"])
+         assert (q["price_no_vat"], q["vat"], q["total"]) == (u.net, u.vat, round(u.total + fee, 2))
+ 
+ 
+--- a/backend/tests/test_shipping_included.py
++++ b/backend/tests/test_shipping_included.py
+@@ -50,16 +50,14 @@
+ @pytest.mark.parametrize("cost,ship", [(100.0, 35.0), (358.0, 0.0), (1234.5, 89.9)])
+ def test_chat_price_helper_counts_shipping_once(kind, cost, ship):
+     p = A.BaseAgent().calculate_customer_price_from_ils(cost, ship, customer_shipping=ship,
+-                                                         supplier_name=kind[0], supplier_country=kind[1],
+-                                                         local_vat_only=True)
++                                                         supplier_name=kind[0], supplier_country=kind[1])
+     assert p["price_no_vat"] == round(cost * 1.45, 2)            # shipping NOT in the margin base
+     assert p["shipping"] == ship
+     assert p["total"] == pytest.approx(canonical_total(cost, ship, kind), abs=0.01)
+ 
+ 
+ def test_helper_without_customer_shipping_uses_supplier_shipping_once():
+-    p = A.BaseAgent().calculate_customer_price_from_ils(100.0, 35.0, supplier_name="x", supplier_country="IE",
+-                                                         local_vat_only=True)
++    p = A.BaseAgent().calculate_customer_price_from_ils(100.0, 35.0, supplier_name="x", supplier_country="IE")
+     assert p["price_no_vat"] == 145.0 and p["shipping"] == 35.0 and p["total"] == 180.0
+ 
+ 
+--- a/frontend/src/pages/Parts.jsx
++++ b/frontend/src/pages/Parts.jsx
+@@ -1801,7 +1801,6 @@
+     const bucketToFlat = (bucket, fallbackType) => {
+       if (!bucket?.part) return null
+       const suppliers = bucket.suppliers || []
+-      const firstPriced = suppliers.find((s) => Number.isFinite(Number(s?.price_ils)))
+       const availability = suppliers.some((s) => s?.availability === 'in_stock')
+         ? 'in_stock'
+         : (suppliers[0]?.availability || null)
+@@ -1824,7 +1823,6 @@
+         .filter((b) => b?.part)
+         .map((b) => {
+           const suppliers = b.suppliers || []
+-          const firstPriced = suppliers.find((s) => Number.isFinite(Number(s?.price_ils)))
+           const availability = suppliers.some((s) => s?.availability === 'in_stock')
+             ? 'in_stock'
+             : (suppliers[0]?.availability || null)

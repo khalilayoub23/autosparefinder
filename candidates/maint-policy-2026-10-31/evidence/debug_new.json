@@ -1,0 +1,3132 @@
+{
+ "phase": "new",
+ "code": "new",
+ "seed": {
+  "DBG-BMW-G20": {
+   "id": "e1293ef0-b108-4542-a445-b6fe54540eae",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-BMW-MINI": {
+   "id": "021a930d-3216-4c39-91f9-6bf587161414",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-BMW-NONE": {
+   "id": "2fb3fa81-db3b-4494-959a-78acd9a9f22e",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-COMPETE": {
+   "id": "b74f2db3-d931-474e-b3b1-de8c346afa32",
+   "base_price": 10.0,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-FIT-2MAKES": {
+   "id": "c01e5bec-08c2-46c2-94ff-6597efd8217c",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [
+    [
+     "Lexus",
+     "CT",
+     2011,
+     2017,
+     null
+    ],
+    [
+     "Toyota",
+     "Corolla",
+     2015,
+     2018,
+     null
+    ]
+   ],
+   "updated_at": "None"
+  },
+  "DBG-FIT-DICT": {
+   "id": "237e3285-c4dd-48e0-98fc-5d6a7332dc27",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": {
+    "manufacturer": "Toyota"
+   },
+   "fitment": [
+    [
+     "Toyota",
+     "Corolla",
+     2015,
+     2018,
+     null
+    ]
+   ],
+   "updated_at": "None"
+  },
+  "DBG-FIT-DUP": {
+   "id": "306e5e5d-e94e-42e0-8e51-166bbb7906ef",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": [
+    {
+     "model": "Auris",
+     "source": "xls",
+     "manufacturer": "Toyota"
+    },
+    {
+     "model": "Auris",
+     "source": "xls",
+     "manufacturer": "Toyota"
+    }
+   ],
+   "fitment": [
+    [
+     "Toyota",
+     "Auris",
+     2012,
+     2018,
+     null
+    ]
+   ],
+   "updated_at": "None"
+  },
+  "DBG-FIT-NOYEAR": {
+   "id": "cdfd406d-5764-4652-bac0-65ea96d91355",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [
+    [
+     "Toyota",
+     "Corolla",
+     2015,
+     null,
+     null
+    ]
+   ],
+   "updated_at": "None"
+  },
+  "DBG-FIT-OK": {
+   "id": "9454953e-7e45-4fd4-867c-d93abc436476",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": [
+    {
+     "model": "Corolla",
+     "source": "part_vehicle_fitment",
+     "year_to": 2018,
+     "year_from": 2015,
+     "manufacturer": "Toyota"
+    }
+   ],
+   "fitment": [
+    [
+     "Toyota",
+     "Corolla",
+     2015,
+     2018,
+     null
+    ]
+   ],
+   "updated_at": "None"
+  },
+  "DBG-FIT-STALE": {
+   "id": "8d0881ba-df19-4251-971e-9df5bc194877",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": [
+    {
+     "model": "OLDMODEL",
+     "source": "part_vehicle_fitment",
+     "manufacturer": "Toyota"
+    },
+    {
+     "model": "Yaris",
+     "source": "xls",
+     "manufacturer": "Toyota"
+    }
+   ],
+   "fitment": [
+    [
+     "Toyota",
+     "Corolla",
+     2015,
+     2018,
+     null
+    ]
+   ],
+   "updated_at": "None"
+  },
+  "DBG-FORD-CONNECTOR": {
+   "id": "e6f40a95-b062-432c-b08d-9899293ee2da",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-FORD-F250": {
+   "id": "4d322f91-1c6d-455d-bbfd-25e8c272a0f1",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-FORD-FOCUS": {
+   "id": "8df1b7f5-975e-45b4-b959-15193154a3fc",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-FORD-PREFIXED": {
+   "id": "fd878593-c0dc-458b-b953-9782d234a06a",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [
+    [
+     "Ford",
+     "Ford Focus",
+     1998,
+     2023,
+     "extracted:name_he"
+    ]
+   ],
+   "updated_at": "None"
+  },
+  "DBG-FORD-RANGER": {
+   "id": "79ea7db8-37c8-44cf-adfe-6a4f7edbccad",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-FOREIGN": {
+   "id": "8a3d1750-dab2-4301-a836-da488cf5a5e5",
+   "base_price": 999.0,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-IMPCHG": {
+   "id": "72e38ed0-ef63-49fc-b8f8-b4c43474634e",
+   "base_price": 116.0,
+   "importer_price_ils": 100.0,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-JAG-CLASSIC": {
+   "id": "b0a9d515-c76b-433d-b625-cc802598d9be",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-JAG-KIT": {
+   "id": "cbcfc3ec-3d34-4425-b7fb-1a4b6e188f13",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-JAG-LOGO": {
+   "id": "628dd46d-4aa2-45d5-8b44-7ddab5959035",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-JAG-TSHIRT": {
+   "id": "ecf3e77c-e4af-4ad9-929c-c250cc3dac0a",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-JAG-XF": {
+   "id": "cefeaf26-d812-4937-ac3b-fba1c0e884ef",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-LOCAL": {
+   "id": "d2bed7f6-c698-432b-8252-6cce6da4df0c",
+   "base_price": 50.0,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-MAXONLY": {
+   "id": "0ab3d189-d7e6-4146-854a-adf0d640f4f8",
+   "base_price": null,
+   "importer_price_ils": 0.0,
+   "max_price_ils": 118.0,
+   "min_price_ils": null,
+   "online_price_ils": 50.0,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-NOBASIS": {
+   "id": "7b4124e9-f45b-4baa-b68d-87e490e85e58",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-ONLINE": {
+   "id": "b6e8f8a0-10fb-48d4-bfc8-88e6f37bef84",
+   "base_price": null,
+   "importer_price_ils": 0.0,
+   "max_price_ils": 0.0,
+   "min_price_ils": null,
+   "online_price_ils": 50.0,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-OTHERCLS": {
+   "id": "4028aa68-382e-4e73-9033-ca58de6cf748",
+   "base_price": 77.0,
+   "importer_price_ils": 100.0,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-PINGPONG": {
+   "id": "06488e0b-d71c-439d-b6a3-6bc0124e346c",
+   "base_price": null,
+   "importer_price_ils": 80.0,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-STALE": {
+   "id": "27158438-01bc-4361-9e9d-8dd83f677112",
+   "base_price": null,
+   "importer_price_ils": 100.0,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-UNKNOWN": {
+   "id": "bf8aa59a-55e0-495c-aabb-d8dc3a2e4548",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-URLLESS": {
+   "id": "9eaeda7d-b7eb-4fbb-a721-aaf578346a20",
+   "base_price": null,
+   "importer_price_ils": 100.0,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-USD": {
+   "id": "1329a1ad-541c-489a-8635-b873eaea9b44",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  }
+ },
+ "surfaces_before": {
+  "DBG-BMW-G20": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-BMW-MINI": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-BMW-NONE": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-COMPETE": {
+   "compare": [
+    [
+     true,
+     43.5,
+     7.83,
+     80.33,
+     false
+    ],
+    [
+     true,
+     14.5,
+     0.0,
+     163.5,
+     false
+    ],
+    [
+     true,
+     130.5,
+     23.49,
+     182.99,
+     false
+    ],
+    [
+     true,
+     174.0,
+     0.0,
+     233.0,
+     false
+    ]
+   ],
+   "wishlist_cart": 153.99
+  },
+  "DBG-FIT-2MAKES": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-FIT-DICT": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-FIT-DUP": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-FIT-NOYEAR": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-FIT-OK": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-FIT-STALE": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-FORD-CONNECTOR": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-FORD-F250": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-FORD-FOCUS": {
+   "compare": [
+    [
+     true,
+     290.0,
+     52.2,
+     371.2,
+     false
+    ]
+   ],
+   "wishlist_cart": 342.2
+  },
+  "DBG-FORD-PREFIXED": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-FORD-RANGER": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-FOREIGN": {
+   "compare": [
+    [
+     true,
+     145.0,
+     0.0,
+     204.0,
+     false
+    ]
+   ],
+   "wishlist_cart": 145.0
+  },
+  "DBG-IMPCHG": {
+   "compare": [
+    [
+     false,
+     145.0,
+     26.1,
+     200.1,
+     true
+    ]
+   ],
+   "wishlist_cart": null
+  },
+  "DBG-JAG-CLASSIC": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-JAG-KIT": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-JAG-LOGO": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-JAG-TSHIRT": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-JAG-XF": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-LOCAL": {
+   "compare": [
+    [
+     true,
+     145.0,
+     26.1,
+     200.1,
+     false
+    ]
+   ],
+   "wishlist_cart": 171.1
+  },
+  "DBG-MAXONLY": {
+   "compare": [
+    [
+     false,
+     145.0,
+     26.1,
+     200.1,
+     true
+    ]
+   ],
+   "wishlist_cart": null
+  },
+  "DBG-NOBASIS": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-ONLINE": {
+   "compare": [
+    [
+     false,
+     72.5,
+     0.0,
+     131.5,
+     true
+    ]
+   ],
+   "wishlist_cart": null
+  },
+  "DBG-OTHERCLS": {
+   "compare": [
+    [
+     true,
+     29.0,
+     0.0,
+     178.0,
+     false
+    ]
+   ],
+   "wishlist_cart": 29.0
+  },
+  "DBG-PINGPONG": {
+   "compare": [
+    [
+     true,
+     145.0,
+     26.1,
+     200.1,
+     false
+    ]
+   ],
+   "wishlist_cart": 171.1
+  },
+  "DBG-STALE": {
+   "compare": [
+    [
+     false,
+     145.0,
+     26.1,
+     200.1,
+     true
+    ]
+   ],
+   "wishlist_cart": null
+  },
+  "DBG-UNKNOWN": {
+   "compare": [
+    [
+     true,
+     145.0,
+     0.0,
+     204.0,
+     false
+    ]
+   ],
+   "wishlist_cart": 145.0
+  },
+  "DBG-URLLESS": {
+   "compare": [
+    [
+     true,
+     72.5,
+     13.05,
+     114.55,
+     false
+    ]
+   ],
+   "wishlist_cart": null
+  },
+  "DBG-USD": {
+   "compare": [
+    [
+     true,
+     174.0,
+     0.0,
+     233.0,
+     false
+    ]
+   ],
+   "wishlist_cart": 174.0
+  }
+ },
+ "search_before": {
+  "Ford Focus 2015": [],
+  "Ford Ranger 2015": [],
+  "Ford Transit Connect 2015": [],
+  "Lexus CT 2014": [
+   "DBG-FIT-2MAKES"
+  ],
+  "Toyota Corolla 2016": [
+   "DBG-FIT-2MAKES",
+   "DBG-FIT-DICT",
+   "DBG-FIT-OK",
+   "DBG-FIT-STALE"
+  ],
+  "BMW 3 Series 2020": [],
+  "MINI Clubman 2016": [],
+  "Jaguar XF 2012": []
+ },
+ "tasks": [
+  {
+   "task": "backfill_bmw_fitment_from_name_he",
+   "report": {
+    "task": "backfill_bmw_fitment_from_name_he",
+    "status": "ok",
+    "scanned": 3,
+    "eligible": 2,
+    "updated": 2,
+    "unchanged": 0,
+    "skipped": 1,
+    "failed": 0,
+    "reasons": {
+     "no_chassis_code": 1
+    },
+    "batches": 1,
+    "started_after": "00000000-0000-0000-0000-000000000000",
+    "resume_after": "00000000-0000-0000-0000-000000000000",
+    "pass_completed": true,
+    "elapsed_s": 0.06,
+    "_wall_s": 0.06
+   },
+   "diff": {
+    "DBG-BMW-G20": {
+     "fitment": [
+      [],
+      [
+       [
+        "BMW",
+        "3 Series",
+        2018,
+        2026,
+        "chassis:G20"
+       ]
+      ]
+     ]
+    },
+    "DBG-BMW-MINI": {
+     "fitment": [
+      [],
+      [
+       [
+        "MINI",
+        "MINI Clubman",
+        2015,
+        2024,
+        "chassis:F54"
+       ]
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "task": "backfill_ford_fitment_from_name_he",
+   "report": {
+    "task": "backfill_ford_fitment_from_name_he",
+    "status": "ok",
+    "scanned": 4,
+    "eligible": 3,
+    "updated": 3,
+    "unchanged": 0,
+    "skipped": 1,
+    "failed": 0,
+    "reasons": {
+     "no_model_name": 1
+    },
+    "batches": 1,
+    "started_after": "00000000-0000-0000-0000-000000000000",
+    "resume_after": "00000000-0000-0000-0000-000000000000",
+    "pass_completed": true,
+    "elapsed_s": 0.08,
+    "_wall_s": 0.08
+   },
+   "diff": {
+    "DBG-FORD-F250": {
+     "fitment": [
+      [],
+      [
+       [
+        "Ford",
+        "F-250",
+        1980,
+        2026,
+        "extracted:name_he"
+       ]
+      ]
+     ]
+    },
+    "DBG-FORD-FOCUS": {
+     "fitment": [
+      [],
+      [
+       [
+        "Ford",
+        "Focus",
+        1998,
+        2023,
+        "extracted:name_he"
+       ]
+      ]
+     ]
+    },
+    "DBG-FORD-RANGER": {
+     "fitment": [
+      [],
+      [
+       [
+        "Ford",
+        "Ranger",
+        1983,
+        2026,
+        "extracted:name_he"
+       ]
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "task": "backfill_jaguar_fitment_from_name",
+   "report": {
+    "task": "backfill_jaguar_fitment_from_name",
+    "status": "ok",
+    "scanned": 5,
+    "eligible": 2,
+    "updated": 2,
+    "unchanged": 0,
+    "skipped": 3,
+    "failed": 0,
+    "reasons": {
+     "merchandise": 2,
+     "classic_era": 1
+    },
+    "batches": 1,
+    "started_after": "00000000-0000-0000-0000-000000000000",
+    "resume_after": "00000000-0000-0000-0000-000000000000",
+    "pass_completed": true,
+    "elapsed_s": 0.07,
+    "_wall_s": 0.07
+   },
+   "diff": {
+    "DBG-JAG-KIT": {
+     "fitment": [
+      [],
+      [
+       [
+        "Jaguar",
+        "S-Type",
+        1999,
+        2008,
+        "name_parse:jaguar"
+       ]
+      ]
+     ]
+    },
+    "DBG-JAG-XF": {
+     "fitment": [
+      [],
+      [
+       [
+        "Jaguar",
+        "XF",
+        2008,
+        2018,
+        "name_parse:jaguar"
+       ]
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "task": "merge_catalog_fitment_from_part_vehicle_fitment",
+   "report": {
+    "task": "merge_catalog_fitment_from_part_vehicle_fitment",
+    "status": "ok",
+    "scanned_rows": 14,
+    "parts_with_fitment": 13,
+    "eligible": 13,
+    "updated_parts": 12,
+    "unchanged": 1,
+    "skipped": 1,
+    "failed": 0,
+    "merged_fitment_rows": 13,
+    "reasons": {
+     "nothing_to_copy": 1
+    },
+    "batches": 1,
+    "started_after": "00000000-0000-0000-0000-000000000000",
+    "resume_after": "00000000-0000-0000-0000-000000000000",
+    "pass_completed": true,
+    "elapsed_s": 0.11,
+    "_wall_s": 0.11
+   },
+   "diff": {
+    "DBG-BMW-G20": {
+     "compatible_vehicles": [
+      null,
+      [
+       {
+        "model": "3 Series",
+        "source": "part_vehicle_fitment",
+        "year_to": 2026,
+        "year_from": 2018,
+        "manufacturer": "BMW"
+       }
+      ]
+     ]
+    },
+    "DBG-BMW-MINI": {
+     "compatible_vehicles": [
+      null,
+      [
+       {
+        "model": "MINI Clubman",
+        "source": "part_vehicle_fitment",
+        "year_to": 2024,
+        "year_from": 2015,
+        "manufacturer": "MINI"
+       }
+      ]
+     ]
+    },
+    "DBG-FIT-2MAKES": {
+     "compatible_vehicles": [
+      null,
+      [
+       {
+        "model": "CT",
+        "source": "part_vehicle_fitment",
+        "year_to": 2017,
+        "year_from": 2011,
+        "manufacturer": "Lexus"
+       },
+       {
+        "model": "Corolla",
+        "source": "part_vehicle_fitment",
+        "year_to": 2018,
+        "year_from": 2015,
+        "manufacturer": "Toyota"
+       }
+      ]
+     ]
+    },
+    "DBG-FIT-DICT": {
+     "compatible_vehicles": [
+      {
+       "manufacturer": "Toyota"
+      },
+      [
+       {
+        "model": "Corolla",
+        "source": "part_vehicle_fitment",
+        "year_to": 2018,
+        "year_from": 2015,
+        "manufacturer": "Toyota"
+       }
+      ]
+     ]
+    },
+    "DBG-FIT-DUP": {
+     "compatible_vehicles": [
+      [
+       {
+        "model": "Auris",
+        "source": "xls",
+        "manufacturer": "Toyota"
+       },
+       {
+        "model": "Auris",
+        "source": "xls",
+        "manufacturer": "Toyota"
+       }
+      ],
+      [
+       {
+        "model": "Auris",
+        "source": "part_vehicle_fitment",
+        "year_to": 2018,
+        "year_from": 2012,
+        "manufacturer": "Toyota"
+       },
+       {
+        "model": "Auris",
+        "source": "xls",
+        "manufacturer": "Toyota"
+       }
+      ]
+     ]
+    },
+    "DBG-FIT-STALE": {
+     "compatible_vehicles": [
+      [
+       {
+        "model": "OLDMODEL",
+        "source": "part_vehicle_fitment",
+        "manufacturer": "Toyota"
+       },
+       {
+        "model": "Yaris",
+        "source": "xls",
+        "manufacturer": "Toyota"
+       }
+      ],
+      [
+       {
+        "model": "Corolla",
+        "source": "part_vehicle_fitment",
+        "year_to": 2018,
+        "year_from": 2015,
+        "manufacturer": "Toyota"
+       },
+       {
+        "model": "Yaris",
+        "source": "xls",
+        "manufacturer": "Toyota"
+       }
+      ]
+     ]
+    },
+    "DBG-FORD-F250": {
+     "compatible_vehicles": [
+      null,
+      [
+       {
+        "model": "F-250",
+        "source": "part_vehicle_fitment",
+        "manufacturer": "Ford"
+       }
+      ]
+     ]
+    },
+    "DBG-FORD-FOCUS": {
+     "compatible_vehicles": [
+      null,
+      [
+       {
+        "model": "Focus",
+        "source": "part_vehicle_fitment",
+        "year_to": 2023,
+        "year_from": 1998,
+        "manufacturer": "Ford"
+       }
+      ]
+     ]
+    },
+    "DBG-FORD-PREFIXED": {
+     "compatible_vehicles": [
+      null,
+      [
+       {
+        "model": "Ford Focus",
+        "source": "part_vehicle_fitment",
+        "year_to": 2023,
+        "year_from": 1998,
+        "manufacturer": "Ford"
+       }
+      ]
+     ]
+    },
+    "DBG-FORD-RANGER": {
+     "compatible_vehicles": [
+      null,
+      [
+       {
+        "model": "Ranger",
+        "source": "part_vehicle_fitment",
+        "manufacturer": "Ford"
+       }
+      ]
+     ]
+    },
+    "DBG-JAG-KIT": {
+     "compatible_vehicles": [
+      null,
+      [
+       {
+        "model": "S-Type",
+        "source": "part_vehicle_fitment",
+        "year_to": 2008,
+        "year_from": 1999,
+        "manufacturer": "Jaguar"
+       }
+      ]
+     ]
+    },
+    "DBG-JAG-XF": {
+     "compatible_vehicles": [
+      null,
+      [
+       {
+        "model": "XF",
+        "source": "part_vehicle_fitment",
+        "year_to": 2018,
+        "year_from": 2008,
+        "manufacturer": "Jaguar"
+       }
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "task": "fix_base_prices",
+   "report": {
+    "task": "fix_base_prices",
+    "status": "ok",
+    "scope": "offer",
+    "started_after": "00000000-0000-0000-0000-000000000000",
+    "scanned": 32,
+    "eligible": 7,
+    "updated": 7,
+    "unchanged": 0,
+    "skipped": 25,
+    "failed": 0,
+    "reasons": {
+     "no_basis": 19,
+     "other_owner": 5,
+     "other_class_only": 1
+    },
+    "batches": 1,
+    "resume_after": "00000000-0000-0000-0000-000000000000",
+    "pass_completed": true,
+    "usd_to_ils": 3.0,
+    "elapsed_s": 0.06,
+    "_wall_s": 0.06
+   },
+   "diff": {
+    "DBG-COMPETE": {
+     "base_price": [
+      10.0,
+      130.5
+     ]
+    },
+    "DBG-FORD-FOCUS": {
+     "base_price": [
+      null,
+      290.0
+     ]
+    },
+    "DBG-FOREIGN": {
+     "base_price": [
+      999.0,
+      145.0
+     ]
+    },
+    "DBG-LOCAL": {
+     "base_price": [
+      50.0,
+      145.0
+     ]
+    },
+    "DBG-PINGPONG": {
+     "base_price": [
+      null,
+      145.0
+     ]
+    },
+    "DBG-UNKNOWN": {
+     "base_price": [
+      null,
+      145.0
+     ]
+    },
+    "DBG-USD": {
+     "base_price": [
+      null,
+      174.0
+     ]
+    }
+   }
+  },
+  {
+   "task": "normalize_base_price",
+   "report": {
+    "task": "normalize_base_price",
+    "status": "ok",
+    "scope": "estimate",
+    "started_after": "00000000-0000-0000-0000-000000000000",
+    "scanned": 32,
+    "eligible": 5,
+    "updated": 5,
+    "unchanged": 0,
+    "skipped": 27,
+    "failed": 0,
+    "reasons": {
+     "no_basis": 19,
+     "other_owner": 7,
+     "other_class_only": 1
+    },
+    "batches": 1,
+    "resume_after": "00000000-0000-0000-0000-000000000000",
+    "pass_completed": true,
+    "usd_to_ils": 3.0,
+    "elapsed_s": 0.06,
+    "_wall_s": 0.06
+   },
+   "diff": {
+    "DBG-IMPCHG": {
+     "base_price": [
+      116.0,
+      145.0
+     ]
+    },
+    "DBG-MAXONLY": {
+     "base_price": [
+      null,
+      145.0
+     ]
+    },
+    "DBG-ONLINE": {
+     "base_price": [
+      null,
+      72.5
+     ]
+    },
+    "DBG-STALE": {
+     "base_price": [
+      null,
+      145.0
+     ]
+    },
+    "DBG-URLLESS": {
+     "base_price": [
+      null,
+      145.0
+     ]
+    }
+   }
+  }
+ ],
+ "after_first_pass": {
+  "DBG-BMW-G20": {
+   "id": "e1293ef0-b108-4542-a445-b6fe54540eae",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": [
+    {
+     "model": "3 Series",
+     "source": "part_vehicle_fitment",
+     "year_to": 2026,
+     "year_from": 2018,
+     "manufacturer": "BMW"
+    }
+   ],
+   "fitment": [
+    [
+     "BMW",
+     "3 Series",
+     2018,
+     2026,
+     "chassis:G20"
+    ]
+   ],
+   "updated_at": "2026-10-31 11:05:21.506424"
+  },
+  "DBG-BMW-MINI": {
+   "id": "021a930d-3216-4c39-91f9-6bf587161414",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": [
+    {
+     "model": "MINI Clubman",
+     "source": "part_vehicle_fitment",
+     "year_to": 2024,
+     "year_from": 2015,
+     "manufacturer": "MINI"
+    }
+   ],
+   "fitment": [
+    [
+     "MINI",
+     "MINI Clubman",
+     2015,
+     2024,
+     "chassis:F54"
+    ]
+   ],
+   "updated_at": "2026-10-31 11:05:21.506424"
+  },
+  "DBG-BMW-NONE": {
+   "id": "2fb3fa81-db3b-4494-959a-78acd9a9f22e",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-COMPETE": {
+   "id": "b74f2db3-d931-474e-b3b1-de8c346afa32",
+   "base_price": 130.5,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "2026-10-31 11:05:21.560878"
+  },
+  "DBG-FIT-2MAKES": {
+   "id": "c01e5bec-08c2-46c2-94ff-6597efd8217c",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": [
+    {
+     "model": "CT",
+     "source": "part_vehicle_fitment",
+     "year_to": 2017,
+     "year_from": 2011,
+     "manufacturer": "Lexus"
+    },
+    {
+     "model": "Corolla",
+     "source": "part_vehicle_fitment",
+     "year_to": 2018,
+     "year_from": 2015,
+     "manufacturer": "Toyota"
+    }
+   ],
+   "fitment": [
+    [
+     "Lexus",
+     "CT",
+     2011,
+     2017,
+     null
+    ],
+    [
+     "Toyota",
+     "Corolla",
+     2015,
+     2018,
+     null
+    ]
+   ],
+   "updated_at": "2026-10-31 11:05:21.506424"
+  },
+  "DBG-FIT-DICT": {
+   "id": "237e3285-c4dd-48e0-98fc-5d6a7332dc27",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": [
+    {
+     "model": "Corolla",
+     "source": "part_vehicle_fitment",
+     "year_to": 2018,
+     "year_from": 2015,
+     "manufacturer": "Toyota"
+    }
+   ],
+   "fitment": [
+    [
+     "Toyota",
+     "Corolla",
+     2015,
+     2018,
+     null
+    ]
+   ],
+   "updated_at": "2026-10-31 11:05:21.506424"
+  },
+  "DBG-FIT-DUP": {
+   "id": "306e5e5d-e94e-42e0-8e51-166bbb7906ef",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": [
+    {
+     "model": "Auris",
+     "source": "part_vehicle_fitment",
+     "year_to": 2018,
+     "year_from": 2012,
+     "manufacturer": "Toyota"
+    },
+    {
+     "model": "Auris",
+     "source": "xls",
+     "manufacturer": "Toyota"
+    }
+   ],
+   "fitment": [
+    [
+     "Toyota",
+     "Auris",
+     2012,
+     2018,
+     null
+    ]
+   ],
+   "updated_at": "2026-10-31 11:05:21.506424"
+  },
+  "DBG-FIT-NOYEAR": {
+   "id": "cdfd406d-5764-4652-bac0-65ea96d91355",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [
+    [
+     "Toyota",
+     "Corolla",
+     2015,
+     null,
+     null
+    ]
+   ],
+   "updated_at": "None"
+  },
+  "DBG-FIT-OK": {
+   "id": "9454953e-7e45-4fd4-867c-d93abc436476",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": [
+    {
+     "model": "Corolla",
+     "source": "part_vehicle_fitment",
+     "year_to": 2018,
+     "year_from": 2015,
+     "manufacturer": "Toyota"
+    }
+   ],
+   "fitment": [
+    [
+     "Toyota",
+     "Corolla",
+     2015,
+     2018,
+     null
+    ]
+   ],
+   "updated_at": "None"
+  },
+  "DBG-FIT-STALE": {
+   "id": "8d0881ba-df19-4251-971e-9df5bc194877",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": [
+    {
+     "model": "Corolla",
+     "source": "part_vehicle_fitment",
+     "year_to": 2018,
+     "year_from": 2015,
+     "manufacturer": "Toyota"
+    },
+    {
+     "model": "Yaris",
+     "source": "xls",
+     "manufacturer": "Toyota"
+    }
+   ],
+   "fitment": [
+    [
+     "Toyota",
+     "Corolla",
+     2015,
+     2018,
+     null
+    ]
+   ],
+   "updated_at": "2026-10-31 11:05:21.506424"
+  },
+  "DBG-FORD-CONNECTOR": {
+   "id": "e6f40a95-b062-432c-b08d-9899293ee2da",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-FORD-F250": {
+   "id": "4d322f91-1c6d-455d-bbfd-25e8c272a0f1",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": [
+    {
+     "model": "F-250",
+     "source": "part_vehicle_fitment",
+     "manufacturer": "Ford"
+    }
+   ],
+   "fitment": [
+    [
+     "Ford",
+     "F-250",
+     1980,
+     2026,
+     "extracted:name_he"
+    ]
+   ],
+   "updated_at": "2026-10-31 11:05:21.506424"
+  },
+  "DBG-FORD-FOCUS": {
+   "id": "8df1b7f5-975e-45b4-b959-15193154a3fc",
+   "base_price": 290.0,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": [
+    {
+     "model": "Focus",
+     "source": "part_vehicle_fitment",
+     "year_to": 2023,
+     "year_from": 1998,
+     "manufacturer": "Ford"
+    }
+   ],
+   "fitment": [
+    [
+     "Ford",
+     "Focus",
+     1998,
+     2023,
+     "extracted:name_he"
+    ]
+   ],
+   "updated_at": "2026-10-31 11:05:21.560878"
+  },
+  "DBG-FORD-PREFIXED": {
+   "id": "fd878593-c0dc-458b-b953-9782d234a06a",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": [
+    {
+     "model": "Ford Focus",
+     "source": "part_vehicle_fitment",
+     "year_to": 2023,
+     "year_from": 1998,
+     "manufacturer": "Ford"
+    }
+   ],
+   "fitment": [
+    [
+     "Ford",
+     "Ford Focus",
+     1998,
+     2023,
+     "extracted:name_he"
+    ]
+   ],
+   "updated_at": "2026-10-31 11:05:21.506424"
+  },
+  "DBG-FORD-RANGER": {
+   "id": "79ea7db8-37c8-44cf-adfe-6a4f7edbccad",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": [
+    {
+     "model": "Ranger",
+     "source": "part_vehicle_fitment",
+     "manufacturer": "Ford"
+    }
+   ],
+   "fitment": [
+    [
+     "Ford",
+     "Ranger",
+     1983,
+     2026,
+     "extracted:name_he"
+    ]
+   ],
+   "updated_at": "2026-10-31 11:05:21.506424"
+  },
+  "DBG-FOREIGN": {
+   "id": "8a3d1750-dab2-4301-a836-da488cf5a5e5",
+   "base_price": 145.0,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "2026-10-31 11:05:21.560878"
+  },
+  "DBG-IMPCHG": {
+   "id": "72e38ed0-ef63-49fc-b8f8-b4c43474634e",
+   "base_price": 145.0,
+   "importer_price_ils": 100.0,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "2026-10-31 11:05:21.651534"
+  },
+  "DBG-JAG-CLASSIC": {
+   "id": "b0a9d515-c76b-433d-b625-cc802598d9be",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-JAG-KIT": {
+   "id": "cbcfc3ec-3d34-4425-b7fb-1a4b6e188f13",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": [
+    {
+     "model": "S-Type",
+     "source": "part_vehicle_fitment",
+     "year_to": 2008,
+     "year_from": 1999,
+     "manufacturer": "Jaguar"
+    }
+   ],
+   "fitment": [
+    [
+     "Jaguar",
+     "S-Type",
+     1999,
+     2008,
+     "name_parse:jaguar"
+    ]
+   ],
+   "updated_at": "2026-10-31 11:05:21.506424"
+  },
+  "DBG-JAG-LOGO": {
+   "id": "628dd46d-4aa2-45d5-8b44-7ddab5959035",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-JAG-TSHIRT": {
+   "id": "ecf3e77c-e4af-4ad9-929c-c250cc3dac0a",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-JAG-XF": {
+   "id": "cefeaf26-d812-4937-ac3b-fba1c0e884ef",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": [
+    {
+     "model": "XF",
+     "source": "part_vehicle_fitment",
+     "year_to": 2018,
+     "year_from": 2008,
+     "manufacturer": "Jaguar"
+    }
+   ],
+   "fitment": [
+    [
+     "Jaguar",
+     "XF",
+     2008,
+     2018,
+     "name_parse:jaguar"
+    ]
+   ],
+   "updated_at": "2026-10-31 11:05:21.506424"
+  },
+  "DBG-LOCAL": {
+   "id": "d2bed7f6-c698-432b-8252-6cce6da4df0c",
+   "base_price": 145.0,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "2026-10-31 11:05:21.560878"
+  },
+  "DBG-MAXONLY": {
+   "id": "0ab3d189-d7e6-4146-854a-adf0d640f4f8",
+   "base_price": 145.0,
+   "importer_price_ils": 0.0,
+   "max_price_ils": 118.0,
+   "min_price_ils": null,
+   "online_price_ils": 50.0,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "2026-10-31 11:05:21.651534"
+  },
+  "DBG-NOBASIS": {
+   "id": "7b4124e9-f45b-4baa-b68d-87e490e85e58",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-ONLINE": {
+   "id": "b6e8f8a0-10fb-48d4-bfc8-88e6f37bef84",
+   "base_price": 72.5,
+   "importer_price_ils": 0.0,
+   "max_price_ils": 0.0,
+   "min_price_ils": null,
+   "online_price_ils": 50.0,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "2026-10-31 11:05:21.651534"
+  },
+  "DBG-OTHERCLS": {
+   "id": "4028aa68-382e-4e73-9033-ca58de6cf748",
+   "base_price": 77.0,
+   "importer_price_ils": 100.0,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-PINGPONG": {
+   "id": "06488e0b-d71c-439d-b6a3-6bc0124e346c",
+   "base_price": 145.0,
+   "importer_price_ils": 80.0,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "2026-10-31 11:05:21.560878"
+  },
+  "DBG-STALE": {
+   "id": "27158438-01bc-4361-9e9d-8dd83f677112",
+   "base_price": 145.0,
+   "importer_price_ils": 100.0,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "2026-10-31 11:05:21.651534"
+  },
+  "DBG-UNKNOWN": {
+   "id": "bf8aa59a-55e0-495c-aabb-d8dc3a2e4548",
+   "base_price": 145.0,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "2026-10-31 11:05:21.560878"
+  },
+  "DBG-URLLESS": {
+   "id": "9eaeda7d-b7eb-4fbb-a721-aaf578346a20",
+   "base_price": 145.0,
+   "importer_price_ils": 100.0,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "2026-10-31 11:05:21.651534"
+  },
+  "DBG-USD": {
+   "id": "1329a1ad-541c-489a-8635-b873eaea9b44",
+   "base_price": 174.0,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "2026-10-31 11:05:21.560878"
+  }
+ },
+ "surfaces_after": {
+  "DBG-BMW-G20": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-BMW-MINI": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-BMW-NONE": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-COMPETE": {
+   "compare": [
+    [
+     true,
+     43.5,
+     7.83,
+     80.33,
+     false
+    ],
+    [
+     true,
+     14.5,
+     0.0,
+     163.5,
+     false
+    ],
+    [
+     true,
+     130.5,
+     23.49,
+     182.99,
+     false
+    ],
+    [
+     true,
+     174.0,
+     0.0,
+     233.0,
+     false
+    ]
+   ],
+   "wishlist_cart": 153.99
+  },
+  "DBG-FIT-2MAKES": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-FIT-DICT": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-FIT-DUP": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-FIT-NOYEAR": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-FIT-OK": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-FIT-STALE": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-FORD-CONNECTOR": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-FORD-F250": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-FORD-FOCUS": {
+   "compare": [
+    [
+     true,
+     290.0,
+     52.2,
+     371.2,
+     false
+    ]
+   ],
+   "wishlist_cart": 342.2
+  },
+  "DBG-FORD-PREFIXED": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-FORD-RANGER": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-FOREIGN": {
+   "compare": [
+    [
+     true,
+     145.0,
+     0.0,
+     204.0,
+     false
+    ]
+   ],
+   "wishlist_cart": 145.0
+  },
+  "DBG-IMPCHG": {
+   "compare": [
+    [
+     false,
+     145.0,
+     26.1,
+     200.1,
+     true
+    ]
+   ],
+   "wishlist_cart": null
+  },
+  "DBG-JAG-CLASSIC": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-JAG-KIT": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-JAG-LOGO": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-JAG-TSHIRT": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-JAG-XF": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-LOCAL": {
+   "compare": [
+    [
+     true,
+     145.0,
+     26.1,
+     200.1,
+     false
+    ]
+   ],
+   "wishlist_cart": 171.1
+  },
+  "DBG-MAXONLY": {
+   "compare": [
+    [
+     false,
+     145.0,
+     26.1,
+     200.1,
+     true
+    ]
+   ],
+   "wishlist_cart": null
+  },
+  "DBG-NOBASIS": {
+   "compare": [],
+   "wishlist_cart": null
+  },
+  "DBG-ONLINE": {
+   "compare": [
+    [
+     false,
+     72.5,
+     0.0,
+     131.5,
+     true
+    ]
+   ],
+   "wishlist_cart": null
+  },
+  "DBG-OTHERCLS": {
+   "compare": [
+    [
+     true,
+     29.0,
+     0.0,
+     178.0,
+     false
+    ]
+   ],
+   "wishlist_cart": 29.0
+  },
+  "DBG-PINGPONG": {
+   "compare": [
+    [
+     true,
+     145.0,
+     26.1,
+     200.1,
+     false
+    ]
+   ],
+   "wishlist_cart": 171.1
+  },
+  "DBG-STALE": {
+   "compare": [
+    [
+     false,
+     145.0,
+     26.1,
+     200.1,
+     true
+    ]
+   ],
+   "wishlist_cart": null
+  },
+  "DBG-UNKNOWN": {
+   "compare": [
+    [
+     true,
+     145.0,
+     0.0,
+     204.0,
+     false
+    ]
+   ],
+   "wishlist_cart": 145.0
+  },
+  "DBG-URLLESS": {
+   "compare": [
+    [
+     true,
+     72.5,
+     13.05,
+     114.55,
+     false
+    ]
+   ],
+   "wishlist_cart": null
+  },
+  "DBG-USD": {
+   "compare": [
+    [
+     true,
+     174.0,
+     0.0,
+     233.0,
+     false
+    ]
+   ],
+   "wishlist_cart": 174.0
+  }
+ },
+ "search_after": {
+  "Ford Focus 2015": [
+   "DBG-FORD-FOCUS"
+  ],
+  "Ford Ranger 2015": [
+   "DBG-FORD-RANGER"
+  ],
+  "Ford Transit Connect 2015": [],
+  "Lexus CT 2014": [
+   "DBG-FIT-2MAKES"
+  ],
+  "Toyota Corolla 2016": [
+   "DBG-FIT-2MAKES",
+   "DBG-FIT-DICT",
+   "DBG-FIT-OK",
+   "DBG-FIT-STALE"
+  ],
+  "BMW 3 Series 2020": [
+   "DBG-BMW-G20"
+  ],
+  "MINI Clubman 2016": [
+   "DBG-BMW-MINI"
+  ],
+  "Jaguar XF 2012": [
+   "DBG-JAG-XF"
+  ]
+ },
+ "rerun": [
+  {
+   "task": "backfill_bmw_fitment_from_name_he",
+   "report": {
+    "task": "backfill_bmw_fitment_from_name_he",
+    "status": "ok",
+    "scanned": 1,
+    "eligible": 0,
+    "updated": 0,
+    "unchanged": 0,
+    "skipped": 1,
+    "failed": 0,
+    "reasons": {
+     "no_chassis_code": 1
+    },
+    "batches": 1,
+    "started_after": "00000000-0000-0000-0000-000000000000",
+    "resume_after": "00000000-0000-0000-0000-000000000000",
+    "pass_completed": true,
+    "elapsed_s": 0.03,
+    "_wall_s": 0.03
+   },
+   "diff": {}
+  },
+  {
+   "task": "backfill_ford_fitment_from_name_he",
+   "report": {
+    "task": "backfill_ford_fitment_from_name_he",
+    "status": "ok",
+    "scanned": 1,
+    "eligible": 0,
+    "updated": 0,
+    "unchanged": 0,
+    "skipped": 1,
+    "failed": 0,
+    "reasons": {
+     "no_model_name": 1
+    },
+    "batches": 1,
+    "started_after": "00000000-0000-0000-0000-000000000000",
+    "resume_after": "00000000-0000-0000-0000-000000000000",
+    "pass_completed": true,
+    "elapsed_s": 0.05,
+    "_wall_s": 0.05
+   },
+   "diff": {}
+  },
+  {
+   "task": "backfill_jaguar_fitment_from_name",
+   "report": {
+    "task": "backfill_jaguar_fitment_from_name",
+    "status": "ok",
+    "scanned": 3,
+    "eligible": 0,
+    "updated": 0,
+    "unchanged": 0,
+    "skipped": 3,
+    "failed": 0,
+    "reasons": {
+     "merchandise": 2,
+     "classic_era": 1
+    },
+    "batches": 1,
+    "started_after": "00000000-0000-0000-0000-000000000000",
+    "resume_after": "00000000-0000-0000-0000-000000000000",
+    "pass_completed": true,
+    "elapsed_s": 0.05,
+    "_wall_s": 0.05
+   },
+   "diff": {}
+  },
+  {
+   "task": "merge_catalog_fitment_from_part_vehicle_fitment",
+   "report": {
+    "task": "merge_catalog_fitment_from_part_vehicle_fitment",
+    "status": "ok",
+    "scanned_rows": 14,
+    "parts_with_fitment": 13,
+    "eligible": 13,
+    "updated_parts": 0,
+    "unchanged": 13,
+    "skipped": 1,
+    "failed": 0,
+    "merged_fitment_rows": 0,
+    "reasons": {
+     "nothing_to_copy": 1
+    },
+    "batches": 1,
+    "started_after": "00000000-0000-0000-0000-000000000000",
+    "resume_after": "00000000-0000-0000-0000-000000000000",
+    "pass_completed": true,
+    "elapsed_s": 0.07,
+    "_wall_s": 0.07
+   },
+   "diff": {}
+  },
+  {
+   "task": "fix_base_prices",
+   "report": {
+    "task": "fix_base_prices",
+    "status": "ok",
+    "scope": "offer",
+    "started_after": "00000000-0000-0000-0000-000000000000",
+    "scanned": 32,
+    "eligible": 7,
+    "updated": 0,
+    "unchanged": 7,
+    "skipped": 25,
+    "failed": 0,
+    "reasons": {
+     "no_basis": 19,
+     "other_owner": 5,
+     "other_class_only": 1
+    },
+    "batches": 1,
+    "resume_after": "00000000-0000-0000-0000-000000000000",
+    "pass_completed": true,
+    "usd_to_ils": 3.0,
+    "elapsed_s": 0.03,
+    "_wall_s": 0.03
+   },
+   "diff": {}
+  },
+  {
+   "task": "normalize_base_price",
+   "report": {
+    "task": "normalize_base_price",
+    "status": "ok",
+    "scope": "estimate",
+    "started_after": "00000000-0000-0000-0000-000000000000",
+    "scanned": 32,
+    "eligible": 5,
+    "updated": 0,
+    "unchanged": 5,
+    "skipped": 27,
+    "failed": 0,
+    "reasons": {
+     "no_basis": 19,
+     "other_owner": 7,
+     "other_class_only": 1
+    },
+    "batches": 1,
+    "resume_after": "00000000-0000-0000-0000-000000000000",
+    "pass_completed": true,
+    "usd_to_ils": 3.0,
+    "elapsed_s": 0.02,
+    "_wall_s": 0.02
+   },
+   "diff": {}
+  }
+ ],
+ "reverse": [
+  {
+   "task": "normalize_base_price",
+   "report": {
+    "task": "normalize_base_price",
+    "status": "ok",
+    "scope": "estimate",
+    "started_after": "00000000-0000-0000-0000-000000000000",
+    "scanned": 32,
+    "eligible": 5,
+    "updated": 0,
+    "unchanged": 5,
+    "skipped": 27,
+    "failed": 0,
+    "reasons": {
+     "no_basis": 19,
+     "other_owner": 7,
+     "other_class_only": 1
+    },
+    "batches": 1,
+    "resume_after": "00000000-0000-0000-0000-000000000000",
+    "pass_completed": true,
+    "usd_to_ils": 3.0,
+    "elapsed_s": 0.02,
+    "_wall_s": 0.02
+   },
+   "diff": {}
+  },
+  {
+   "task": "fix_base_prices",
+   "report": {
+    "task": "fix_base_prices",
+    "status": "ok",
+    "scope": "offer",
+    "started_after": "00000000-0000-0000-0000-000000000000",
+    "scanned": 32,
+    "eligible": 7,
+    "updated": 0,
+    "unchanged": 7,
+    "skipped": 25,
+    "failed": 0,
+    "reasons": {
+     "no_basis": 19,
+     "other_owner": 5,
+     "other_class_only": 1
+    },
+    "batches": 1,
+    "resume_after": "00000000-0000-0000-0000-000000000000",
+    "pass_completed": true,
+    "usd_to_ils": 3.0,
+    "elapsed_s": 0.02,
+    "_wall_s": 0.02
+   },
+   "diff": {}
+  },
+  {
+   "task": "merge_catalog_fitment_from_part_vehicle_fitment",
+   "report": {
+    "task": "merge_catalog_fitment_from_part_vehicle_fitment",
+    "status": "ok",
+    "scanned_rows": 14,
+    "parts_with_fitment": 13,
+    "eligible": 13,
+    "updated_parts": 0,
+    "unchanged": 13,
+    "skipped": 1,
+    "failed": 0,
+    "merged_fitment_rows": 0,
+    "reasons": {
+     "nothing_to_copy": 1
+    },
+    "batches": 1,
+    "started_after": "00000000-0000-0000-0000-000000000000",
+    "resume_after": "00000000-0000-0000-0000-000000000000",
+    "pass_completed": true,
+    "elapsed_s": 0.06,
+    "_wall_s": 0.06
+   },
+   "diff": {}
+  },
+  {
+   "task": "backfill_jaguar_fitment_from_name",
+   "report": {
+    "task": "backfill_jaguar_fitment_from_name",
+    "status": "ok",
+    "scanned": 3,
+    "eligible": 0,
+    "updated": 0,
+    "unchanged": 0,
+    "skipped": 3,
+    "failed": 0,
+    "reasons": {
+     "merchandise": 2,
+     "classic_era": 1
+    },
+    "batches": 1,
+    "started_after": "00000000-0000-0000-0000-000000000000",
+    "resume_after": "00000000-0000-0000-0000-000000000000",
+    "pass_completed": true,
+    "elapsed_s": 0.04,
+    "_wall_s": 0.04
+   },
+   "diff": {}
+  },
+  {
+   "task": "backfill_ford_fitment_from_name_he",
+   "report": {
+    "task": "backfill_ford_fitment_from_name_he",
+    "status": "ok",
+    "scanned": 1,
+    "eligible": 0,
+    "updated": 0,
+    "unchanged": 0,
+    "skipped": 1,
+    "failed": 0,
+    "reasons": {
+     "no_model_name": 1
+    },
+    "batches": 1,
+    "started_after": "00000000-0000-0000-0000-000000000000",
+    "resume_after": "00000000-0000-0000-0000-000000000000",
+    "pass_completed": true,
+    "elapsed_s": 0.05,
+    "_wall_s": 0.05
+   },
+   "diff": {}
+  },
+  {
+   "task": "backfill_bmw_fitment_from_name_he",
+   "report": {
+    "task": "backfill_bmw_fitment_from_name_he",
+    "status": "ok",
+    "scanned": 1,
+    "eligible": 0,
+    "updated": 0,
+    "unchanged": 0,
+    "skipped": 1,
+    "failed": 0,
+    "reasons": {
+     "no_chassis_code": 1
+    },
+    "batches": 1,
+    "started_after": "00000000-0000-0000-0000-000000000000",
+    "resume_after": "00000000-0000-0000-0000-000000000000",
+    "pass_completed": true,
+    "elapsed_s": 0.06,
+    "_wall_s": 0.06
+   },
+   "diff": {}
+  }
+ ],
+ "interrupt": {
+  "steps": [
+   {
+    "status": "ok",
+    "batches": 1,
+    "started_after": "00000000-0000-0000-0000-000000000000",
+    "resume_after": "1329a1ad-541c-489a-8635-b873eaea9b44",
+    "pass_completed": false,
+    "updated": 2,
+    "failed": 0,
+    "error": null
+   },
+   {
+    "status": "error",
+    "batches": 1,
+    "started_after": "1329a1ad-541c-489a-8635-b873eaea9b44",
+    "resume_after": "306e5e5d-e94e-42e0-8e51-166bbb7906ef",
+    "pass_completed": false,
+    "updated": 0,
+    "failed": 1,
+    "error": "simulated interruption"
+   },
+   {
+    "status": "ok",
+    "batches": 7,
+    "started_after": "306e5e5d-e94e-42e0-8e51-166bbb7906ef",
+    "resume_after": "00000000-0000-0000-0000-000000000000",
+    "pass_completed": true,
+    "updated": 5,
+    "failed": 0,
+    "error": null
+   },
+   {
+    "status": "ok",
+    "batches": 9,
+    "started_after": "00000000-0000-0000-0000-000000000000",
+    "resume_after": "00000000-0000-0000-0000-000000000000",
+    "pass_completed": true,
+    "updated": 5,
+    "failed": 0,
+    "error": null
+   }
+  ],
+  "mismatch_vs_uninterrupted": {}
+ },
+ "cleanup_normalizer": {
+  "priced": 3,
+  "diff": {
+   "DBG-FOREIGN": {
+    "base_price": [
+     null,
+     145.0
+    ],
+    "min_price_ils": [
+     null,
+     100.0
+    ]
+   },
+   "DBG-LOCAL": {
+    "base_price": [
+     null,
+     145.0
+    ],
+    "importer_price_ils": [
+     null,
+     100.0
+    ],
+    "max_price_ils": [
+     null,
+     118.0
+    ],
+    "min_price_ils": [
+     null,
+     100.0
+    ]
+   },
+   "DBG-URLLESS": {
+    "base_price": [
+     null,
+     72.5
+    ],
+    "importer_price_ils": [
+     null,
+     50.0
+    ],
+    "max_price_ils": [
+     null,
+     59.0
+    ],
+    "min_price_ils": [
+     null,
+     50.0
+    ]
+   }
+  }
+ },
+ "after_ford_repair": {
+  "fitment": [
+   [
+    "Ford",
+    "Focus",
+    1998,
+    2023,
+    "extracted:name_he"
+   ]
+  ],
+  "search": [
+   "DBG-FORD-FOCUS",
+   "DBG-FORD-PREFIXED"
+  ]
+ },
+ "final": {
+  "DBG-BMW-G20": {
+   "id": "e1293ef0-b108-4542-a445-b6fe54540eae",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": [
+    {
+     "model": "3 Series",
+     "source": "part_vehicle_fitment",
+     "year_to": 2026,
+     "year_from": 2018,
+     "manufacturer": "BMW"
+    }
+   ],
+   "fitment": [
+    [
+     "BMW",
+     "3 Series",
+     2018,
+     2026,
+     "chassis:G20"
+    ]
+   ],
+   "updated_at": "2026-10-31 11:05:21.506424"
+  },
+  "DBG-BMW-MINI": {
+   "id": "021a930d-3216-4c39-91f9-6bf587161414",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": [
+    {
+     "model": "MINI Clubman",
+     "source": "part_vehicle_fitment",
+     "year_to": 2024,
+     "year_from": 2015,
+     "manufacturer": "MINI"
+    }
+   ],
+   "fitment": [
+    [
+     "MINI",
+     "MINI Clubman",
+     2015,
+     2024,
+     "chassis:F54"
+    ]
+   ],
+   "updated_at": "2026-10-31 11:05:21.506424"
+  },
+  "DBG-BMW-NONE": {
+   "id": "2fb3fa81-db3b-4494-959a-78acd9a9f22e",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-COMPETE": {
+   "id": "b74f2db3-d931-474e-b3b1-de8c346afa32",
+   "base_price": 130.5,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "2026-10-31 11:05:23.929494"
+  },
+  "DBG-FIT-2MAKES": {
+   "id": "c01e5bec-08c2-46c2-94ff-6597efd8217c",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": [
+    {
+     "model": "CT",
+     "source": "part_vehicle_fitment",
+     "year_to": 2017,
+     "year_from": 2011,
+     "manufacturer": "Lexus"
+    },
+    {
+     "model": "Corolla",
+     "source": "part_vehicle_fitment",
+     "year_to": 2018,
+     "year_from": 2015,
+     "manufacturer": "Toyota"
+    }
+   ],
+   "fitment": [
+    [
+     "Lexus",
+     "CT",
+     2011,
+     2017,
+     null
+    ],
+    [
+     "Toyota",
+     "Corolla",
+     2015,
+     2018,
+     null
+    ]
+   ],
+   "updated_at": "2026-10-31 11:05:21.506424"
+  },
+  "DBG-FIT-DICT": {
+   "id": "237e3285-c4dd-48e0-98fc-5d6a7332dc27",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": [
+    {
+     "model": "Corolla",
+     "source": "part_vehicle_fitment",
+     "year_to": 2018,
+     "year_from": 2015,
+     "manufacturer": "Toyota"
+    }
+   ],
+   "fitment": [
+    [
+     "Toyota",
+     "Corolla",
+     2015,
+     2018,
+     null
+    ]
+   ],
+   "updated_at": "2026-10-31 11:05:21.506424"
+  },
+  "DBG-FIT-DUP": {
+   "id": "306e5e5d-e94e-42e0-8e51-166bbb7906ef",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": [
+    {
+     "model": "Auris",
+     "source": "part_vehicle_fitment",
+     "year_to": 2018,
+     "year_from": 2012,
+     "manufacturer": "Toyota"
+    },
+    {
+     "model": "Auris",
+     "source": "xls",
+     "manufacturer": "Toyota"
+    }
+   ],
+   "fitment": [
+    [
+     "Toyota",
+     "Auris",
+     2012,
+     2018,
+     null
+    ]
+   ],
+   "updated_at": "2026-10-31 11:05:21.506424"
+  },
+  "DBG-FIT-NOYEAR": {
+   "id": "cdfd406d-5764-4652-bac0-65ea96d91355",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [
+    [
+     "Toyota",
+     "Corolla",
+     2015,
+     null,
+     null
+    ]
+   ],
+   "updated_at": "None"
+  },
+  "DBG-FIT-OK": {
+   "id": "9454953e-7e45-4fd4-867c-d93abc436476",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": [
+    {
+     "model": "Corolla",
+     "source": "part_vehicle_fitment",
+     "year_to": 2018,
+     "year_from": 2015,
+     "manufacturer": "Toyota"
+    }
+   ],
+   "fitment": [
+    [
+     "Toyota",
+     "Corolla",
+     2015,
+     2018,
+     null
+    ]
+   ],
+   "updated_at": "None"
+  },
+  "DBG-FIT-STALE": {
+   "id": "8d0881ba-df19-4251-971e-9df5bc194877",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": [
+    {
+     "model": "Corolla",
+     "source": "part_vehicle_fitment",
+     "year_to": 2018,
+     "year_from": 2015,
+     "manufacturer": "Toyota"
+    },
+    {
+     "model": "Yaris",
+     "source": "xls",
+     "manufacturer": "Toyota"
+    }
+   ],
+   "fitment": [
+    [
+     "Toyota",
+     "Corolla",
+     2015,
+     2018,
+     null
+    ]
+   ],
+   "updated_at": "2026-10-31 11:05:21.506424"
+  },
+  "DBG-FORD-CONNECTOR": {
+   "id": "e6f40a95-b062-432c-b08d-9899293ee2da",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-FORD-F250": {
+   "id": "4d322f91-1c6d-455d-bbfd-25e8c272a0f1",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": [
+    {
+     "model": "F-250",
+     "source": "part_vehicle_fitment",
+     "manufacturer": "Ford"
+    }
+   ],
+   "fitment": [
+    [
+     "Ford",
+     "F-250",
+     1980,
+     2026,
+     "extracted:name_he"
+    ]
+   ],
+   "updated_at": "2026-10-31 11:05:21.506424"
+  },
+  "DBG-FORD-FOCUS": {
+   "id": "8df1b7f5-975e-45b4-b959-15193154a3fc",
+   "base_price": 290.0,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": [
+    {
+     "model": "Focus",
+     "source": "part_vehicle_fitment",
+     "year_to": 2023,
+     "year_from": 1998,
+     "manufacturer": "Ford"
+    }
+   ],
+   "fitment": [
+    [
+     "Ford",
+     "Focus",
+     1998,
+     2023,
+     "extracted:name_he"
+    ]
+   ],
+   "updated_at": "2026-10-31 11:05:23.896797"
+  },
+  "DBG-FORD-PREFIXED": {
+   "id": "fd878593-c0dc-458b-b953-9782d234a06a",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": [
+    {
+     "model": "Ford Focus",
+     "source": "part_vehicle_fitment",
+     "year_to": 2023,
+     "year_from": 1998,
+     "manufacturer": "Ford"
+    }
+   ],
+   "fitment": [
+    [
+     "Ford",
+     "Focus",
+     1998,
+     2023,
+     "extracted:name_he"
+    ]
+   ],
+   "updated_at": "2026-10-31 11:05:21.506424"
+  },
+  "DBG-FORD-RANGER": {
+   "id": "79ea7db8-37c8-44cf-adfe-6a4f7edbccad",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": [
+    {
+     "model": "Ranger",
+     "source": "part_vehicle_fitment",
+     "manufacturer": "Ford"
+    }
+   ],
+   "fitment": [
+    [
+     "Ford",
+     "Ranger",
+     1983,
+     2026,
+     "extracted:name_he"
+    ]
+   ],
+   "updated_at": "2026-10-31 11:05:21.506424"
+  },
+  "DBG-FOREIGN": {
+   "id": "8a3d1750-dab2-4301-a836-da488cf5a5e5",
+   "base_price": 145.0,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": 100.0,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "2026-10-31 11:05:24.450180"
+  },
+  "DBG-IMPCHG": {
+   "id": "72e38ed0-ef63-49fc-b8f8-b4c43474634e",
+   "base_price": 145.0,
+   "importer_price_ils": 100.0,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "2026-10-31 11:05:24.108503"
+  },
+  "DBG-JAG-CLASSIC": {
+   "id": "b0a9d515-c76b-433d-b625-cc802598d9be",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-JAG-KIT": {
+   "id": "cbcfc3ec-3d34-4425-b7fb-1a4b6e188f13",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": [
+    {
+     "model": "S-Type",
+     "source": "part_vehicle_fitment",
+     "year_to": 2008,
+     "year_from": 1999,
+     "manufacturer": "Jaguar"
+    }
+   ],
+   "fitment": [
+    [
+     "Jaguar",
+     "S-Type",
+     1999,
+     2008,
+     "name_parse:jaguar"
+    ]
+   ],
+   "updated_at": "2026-10-31 11:05:21.506424"
+  },
+  "DBG-JAG-LOGO": {
+   "id": "628dd46d-4aa2-45d5-8b44-7ddab5959035",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-JAG-TSHIRT": {
+   "id": "ecf3e77c-e4af-4ad9-929c-c250cc3dac0a",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-JAG-XF": {
+   "id": "cefeaf26-d812-4937-ac3b-fba1c0e884ef",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": [
+    {
+     "model": "XF",
+     "source": "part_vehicle_fitment",
+     "year_to": 2018,
+     "year_from": 2008,
+     "manufacturer": "Jaguar"
+    }
+   ],
+   "fitment": [
+    [
+     "Jaguar",
+     "XF",
+     2008,
+     2018,
+     "name_parse:jaguar"
+    ]
+   ],
+   "updated_at": "2026-10-31 11:05:21.506424"
+  },
+  "DBG-LOCAL": {
+   "id": "d2bed7f6-c698-432b-8252-6cce6da4df0c",
+   "base_price": 145.0,
+   "importer_price_ils": 100.0,
+   "max_price_ils": 118.0,
+   "min_price_ils": 100.0,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "2026-10-31 11:05:24.450180"
+  },
+  "DBG-MAXONLY": {
+   "id": "0ab3d189-d7e6-4146-854a-adf0d640f4f8",
+   "base_price": 145.0,
+   "importer_price_ils": 0.0,
+   "max_price_ils": 118.0,
+   "min_price_ils": null,
+   "online_price_ils": 50.0,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "2026-10-31 11:05:24.049218"
+  },
+  "DBG-NOBASIS": {
+   "id": "7b4124e9-f45b-4baa-b68d-87e490e85e58",
+   "base_price": null,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-ONLINE": {
+   "id": "b6e8f8a0-10fb-48d4-bfc8-88e6f37bef84",
+   "base_price": 72.5,
+   "importer_price_ils": 0.0,
+   "max_price_ils": 0.0,
+   "min_price_ils": null,
+   "online_price_ils": 50.0,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "2026-10-31 11:05:24.167681"
+  },
+  "DBG-OTHERCLS": {
+   "id": "4028aa68-382e-4e73-9033-ca58de6cf748",
+   "base_price": 77.0,
+   "importer_price_ils": 100.0,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "None"
+  },
+  "DBG-PINGPONG": {
+   "id": "06488e0b-d71c-439d-b6a3-6bc0124e346c",
+   "base_price": 145.0,
+   "importer_price_ils": 80.0,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "2026-10-31 11:05:23.747463"
+  },
+  "DBG-STALE": {
+   "id": "27158438-01bc-4361-9e9d-8dd83f677112",
+   "base_price": 145.0,
+   "importer_price_ils": 100.0,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "2026-10-31 11:05:24.077868"
+  },
+  "DBG-UNKNOWN": {
+   "id": "bf8aa59a-55e0-495c-aabb-d8dc3a2e4548",
+   "base_price": 145.0,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "2026-10-31 11:05:23.929494"
+  },
+  "DBG-URLLESS": {
+   "id": "9eaeda7d-b7eb-4fbb-a721-aaf578346a20",
+   "base_price": 72.5,
+   "importer_price_ils": 50.0,
+   "max_price_ils": 59.0,
+   "min_price_ils": 50.0,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "2026-10-31 11:05:24.450180"
+  },
+  "DBG-USD": {
+   "id": "1329a1ad-541c-489a-8635-b873eaea9b44",
+   "base_price": 174.0,
+   "importer_price_ils": null,
+   "max_price_ils": null,
+   "min_price_ils": null,
+   "online_price_ils": null,
+   "compatible_vehicles": null,
+   "fitment": [],
+   "updated_at": "2026-10-31 11:05:23.747463"
+  }
+ }
+}

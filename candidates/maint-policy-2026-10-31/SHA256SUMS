@@ -1,0 +1,5 @@
+14a32c1f339b10b710ae5e6201a5a37ec1a4a9c91ee84c398771593d9f35f7e5  ./backend/db_cleanup_agent.py
+d864f22f976479c32bd253fd0f44005a2286088c65a17bdb6451d58036b0a0f5  ./backend/db_update_agent.py
+3764a25ec77103752560da20ff3c9c1252ff76ae57e5b47eeace1b310e8f129b  ./backend/tests/test_base_price_classification.py
+6356c6b208c62c39001d644cc0e3280989b8f2285b8f0ef5111edec96c96a4fd  ./backend/tests/test_maintenance_policy_alignment.py
+592b06446017ee94375db1a830f1d19f1eb61a62fd00f4106aeb33d38a5248e8  ./docs/PRICE_POLICY.md

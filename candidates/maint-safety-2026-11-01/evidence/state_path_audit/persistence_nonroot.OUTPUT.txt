@@ -1,0 +1,3 @@
+read  : 2000.0
+write : REFUSED -> PermissionError [Errno 13] Permission denied: '/app/state/inproc_jobs/other.tmp'
+in-process job marker 'other' NOT written (/app/state/inproc_jobs): [Errno 13] Permission denied: '/app/state/inproc_jobs/other.tmp'

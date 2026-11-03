@@ -1,0 +1,1242 @@
+FFF.FF.FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF                            [100%]
+=================================== FAILURES ===================================
+_____________________ test_kia_il_direct_script_end_to_end _____________________
+
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-0/test_kia_il_direct_script_end_0')
+
+    async def test_kia_il_direct_script_end_to_end(tmp_path):
+        tag = new_tag()
+        conn = await _connect()
+        try:
+            mid, made = await ensure_brand(conn, "Kia")
+            await seed_part(conn, f"KIA-OLD-{tag}-1", "Kia", mid, oem=f"K{tag}1")                 # existing, no base
+            await seed_part(conn, f"KIA-OLD-{tag}-2", "Kia", mid, oem=f"K{tag}2", base=OWNED)     # existing, owned
+            f = tmp_path / "Kia_oem.json"
+            f.write_text(json.dumps([{"sku": f"K{tag}1", "name": "a", "price": 100.0}, {"sku": f"K{tag}2", "name": "b", "price": 50.0},
+                                     {"sku": f"K{tag}3", "name": "c", "price": 10.0}]))
+            for run in (1, 2):
+                p = run_script("importers/kia_il_direct_import.py", f)
+                assert p.returncode == 0, p.stderr[-800:]
+                assert await base_by(conn, "sku", f"KIA-OLD-{tag}-1") == pp.base_price_for_cost(100.0) == 145.0
+>               assert await base_by(conn, "sku", f"KIA-OLD-{tag}-2") == OWNED
+E               assert 72.5 == 33.0
+
+tests/test_importers_e2e_scripts.py:55: AssertionError
+_____________________ test_bmw_il_direct_script_end_to_end _____________________
+
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-0/test_bmw_il_direct_script_end_0')
+
+    async def test_bmw_il_direct_script_end_to_end(tmp_path):
+        tag = new_tag()
+        conn = await _connect()
+        try:
+            mid, _ = await ensure_brand(conn, "BMW")
+            await seed_part(conn, f"BMW-OLD-{tag}-1", "BMW", mid, oem=f"B{tag}1")
+            await seed_part(conn, f"BMW-OLD-{tag}-2", "BMW", mid, oem=f"B{tag}2", base=OWNED)
+            f = tmp_path / "bmw.json"
+            f.write_text(json.dumps({"parts": [{"oem_number": f"B{tag}1", "name_he": "רפידה", "price_ils": 200.0, "model": "G20"},
+                                               {"oem_number": f"B{tag}2", "name_he": "פילטר", "price_ils": 80.0, "model": "F30"},
+                                               {"oem_number": f"B{tag}3", "name_he": "חדש", "price_ils": 20.0, "model": "G30"}]}))
+            for _ in range(2):
+                p = run_script("importers/bmw_il_direct_import.py", f)
+                assert p.returncode == 0, p.stderr[-800:]
+                assert await base_by(conn, "sku", f"BMW-OLD-{tag}-1") == pp.base_price_for_cost(200.0) == 290.0
+>               assert await base_by(conn, "sku", f"BMW-OLD-{tag}-2") == OWNED
+E               assert 116.0 == 33.0
+
+tests/test_importers_e2e_scripts.py:82: AssertionError
+______ test_jaguar_scripts_end_to_end[importers/jaguar_ndjson_import.py] _______
+
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-0/test_jaguar_scripts_end_to_end0')
+script = 'importers/jaguar_ndjson_import.py'
+
+    @pytest.mark.parametrize("script", ["importers/jaguar_ndjson_import.py", "importers/jaguar_batch_import.py"])
+    async def test_jaguar_scripts_end_to_end(tmp_path, script):
+        tag = new_tag()
+        conn = await _connect()
+        try:
+            mid, _ = await ensure_brand(conn, "Jaguar")
+            await seed_part(conn, f"JAG-OLD-{tag}-1", "Jaguar", mid, oem=f"J{tag}1")
+            await seed_part(conn, f"JAG-OLD-{tag}-2", "Jaguar", mid, oem=f"J{tag}2", base=OWNED)
+            f = _ndjson(tmp_path, tag)
+            for _ in range(2):
+                p = run_script(script, f)
+                assert p.returncode == 0, p.stderr[-800:]
+                assert await base_by(conn, "sku", f"JAG-OLD-{tag}-1") == pp.base_price_for_cost(round(20.0 * JAG_GBP_ILS, 2))
+>               assert await base_by(conn, "sku", f"JAG-OLD-{tag}-2") == OWNED
+E               assert 69.6 == 33.0
+
+tests/test_importers_e2e_scripts.py:115: AssertionError
+_________________ test_xlsx_il_price_import_script_end_to_end __________________
+
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-0/test_xlsx_il_price_import_scri0')
+
+    async def test_xlsx_il_price_import_script_end_to_end(tmp_path):
+        """`xlsx_il_price_import.py --brand B --file F`: columns SKU / OEM Number / Importer Price (ex-VAT cost) / Name HE."""
+        tag = new_tag()
+        brand = f"ZZXL{tag}"
+        conn = await _connect()
+        try:
+            mid, made = await ensure_brand(conn, brand)
+            await seed_part(conn, f"XL-OLD-{tag}-1", brand, mid, oem=f"X{tag}1")
+            await seed_part(conn, f"XL-OLD-{tag}-2", brand, mid, oem=f"X{tag}2", base=OWNED)
+            f = _xlsx(tmp_path / "p.xlsx", [["SKU", "OEM Number", "Importer Price", "Name HE"],
+                                             [f"S{tag}1", f"X{tag}1", 100.0, "רפידה"], [f"S{tag}2", f"X{tag}2", 50.0, "פילטר"],
+                                             [f"S{tag}3", f"X{tag}3", 10.0, "חדש"]])
+            for _ in range(2):
+                p = run_script("importers/xlsx_il_price_import.py", "--brand", brand, "--file", f)
+                assert p.returncode == 0, p.stderr[-800:]
+                assert await base_by(conn, "sku", f"XL-OLD-{tag}-1") == pp.base_price_for_cost(100.0) == 145.0
+>               assert await base_by(conn, "sku", f"XL-OLD-{tag}-2") == OWNED
+E               assert 72.5 == 33.0
+
+tests/test_importers_e2e_scripts.py:149: AssertionError
+_______________ test_il_consumer_price_import_script_end_to_end ________________
+
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-0/test_il_consumer_price_import_0')
+
+    async def test_il_consumer_price_import_script_end_to_end(tmp_path):
+        """`il_consumer_price_import.py`: Hebrew header row; the price column is the CONSUMER price incl. VAT -> cost = price/1.18."""
+        tag = new_tag()
+        brand = f"ZZIL{tag}"
+        conn = await _connect()
+        try:
+            mid, made = await ensure_brand(conn, brand)
+            await seed_part(conn, f"IL-OLD-{tag}-1", brand, mid, oem=f"C{tag}1")
+            await seed_part(conn, f"IL-OLD-{tag}-2", brand, mid, oem=f"C{tag}2", base=OWNED)
+            f = _xlsx(tmp_path / "c.xlsx", [["מספר קטלוגי", "תיאור", "מצאי", "סוג פריט", "מחיר לצרכן"],
+                                             [f"C{tag}1", "רפידה", "יש", "מקורי", 118.0], [f"C{tag}2", "פילטר", "יש", "מקורי", 59.0],
+                                             [f"C{tag}3", "חדש", "יש", "מקורי", 11.8]])
+            for _ in range(2):
+                p = run_script("importers/il_consumer_price_import.py", "--brand", brand, "--file", f)
+                assert p.returncode == 0, p.stderr[-800:]
+                assert await base_by(conn, "sku", f"IL-OLD-{tag}-1") == pp.base_price_for_cost(round(118.0 / 1.18, 2)) == 145.0
+>               assert await base_by(conn, "sku", f"IL-OLD-{tag}-2") == OWNED
+E               assert 72.5 == 33.0
+
+tests/test_importers_e2e_scripts.py:172: AssertionError
+___________________ test_import_kia_israel_script_end_to_end ___________________
+
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-0/test_import_kia_israel_script_0')
+
+    async def test_import_kia_israel_script_end_to_end(tmp_path):
+        """`import_kia_israel.py` (KIA_JSON): kia_israel_harvester output; prices are already ex-VAT (price_no_vat)."""
+        tag = new_tag()
+        conn = await _connect()
+        try:
+            mid, _ = await ensure_brand(conn, "Kia")
+            await seed_part(conn, f"KIAIL-{tag}-1", "Kia", mid, oem=f"KI{tag}1")
+            await seed_part(conn, f"KIAIL-{tag}-2", "Kia", mid, oem=f"KI{tag}2", base=OWNED)
+            f = tmp_path / "kia.json"
+            f.write_text(json.dumps({"parts": [
+                {"oem_number": f"KI{tag}1", "price_no_vat": 100.0, "name_he": "רפידה", "in_stock": True},
+                {"oem_number": f"KI{tag}2", "price_no_vat": 50.0, "name_he": "פילטר", "in_stock": True},
+                {"oem_number": f"KI{tag}3", "price_no_vat": 10.0, "name_he": "חדש", "in_stock": True}]}))
+            for _ in range(2):
+                p = run_script("importers/import_kia_israel.py", env_extra={"KIA_JSON": str(f)})
+                assert p.returncode == 0, p.stdout[-400:] + p.stderr[-800:]
+                assert await base_by(conn, "sku", f"KIAIL-{tag}-1") == pp.base_price_for_cost(100.0) == 145.0
+>               assert await base_by(conn, "sku", f"KIAIL-{tag}-2") == OWNED          # the old `CASE WHEN $2 > 0` overwrote this
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               assert 72.0 == 33.0
+
+tests/test_importers_e2e_scripts.py:221: AssertionError
+________________ test_import_champion_motors_script_end_to_end _________________
+
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-0/test_import_champion_motors_sc0')
+
+    async def test_import_champion_motors_script_end_to_end(tmp_path):
+        """`import_champion_motors.py` (CM_JSON): consumer prices INCL. 18% VAT (price_ils) -> cost = price/1.18."""
+        tag = new_tag()
+        conn = await _connect()
+        try:
+            mid, _ = await ensure_brand(conn, "Audi")
+            await seed_part(conn, f"CM-CMA{tag}1", "Audi", mid, oem=f"CMA{tag}1")
+            await seed_part(conn, f"CM-CMA{tag}2", "Audi", mid, oem=f"CMA{tag}2", base=OWNED)
+            f = tmp_path / "cm.json"
+            f.write_text(json.dumps({"parts": [
+                {"oem_number": f"CMA{tag}1", "vehicle_make": "audi", "name_he": "רפידה", "price_ils": 118.0, "model": "A4", "is_original": True},
+                {"oem_number": f"CMA{tag}2", "vehicle_make": "audi", "name_he": "פילטר", "price_ils": 59.0, "model": "A4", "is_original": True},
+                {"oem_number": f"CMA{tag}3", "vehicle_make": "audi", "name_he": "חדש", "price_ils": 11.8, "model": "A3", "is_original": True}]}))
+            for _ in range(2):
+                p = run_script("importers/import_champion_motors.py", env_extra={"CM_JSON": str(f)})
+                assert p.returncode == 0, p.stdout[-400:] + p.stderr[-800:]
+                assert await base_by(conn, "sku", f"CM-CMA{tag}1") == pp.base_price_for_cost(round(118.0 / 1.18, 2)) == 145.0
+>               assert await base_by(conn, "sku", f"CM-CMA{tag}2") == OWNED
+E               assert 72.5 == 33.0
+
+tests/test_importers_e2e_scripts.py:247: AssertionError
+_______________________ test_lr_import_script_end_to_end _______________________
+
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-0/test_lr_import_script_end_to_e0')
+
+    async def test_lr_import_script_end_to_end(tmp_path):
+        """`lr_import.py` (JSON_FILE): scraped landrover.co.il list; `price` is the ex-VAT cost; sku depends on the row index."""
+        tag = new_tag()
+        conn = await _connect()
+        try:
+            await ensure_brand(conn, "Land Rover")
+            f = tmp_path / "lr.json"
+            f.write_text(json.dumps({"parts": [{"oem_number": f"LR{tag}1", "name": f"Brake pad {tag}", "price": 100.0, "description": "d", "in_stock": True}]}))
+            p = run_script("importers/lr_import.py", env_extra={"JSON_FILE": str(f)})
+            assert p.returncode == 0, p.stdout[-400:] + p.stderr[-800:]
+>           assert await base_by(conn, "oem_number", f"LR{tag}1") == pp.base_price_for_cost(100.0) == 145.0      # new part
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           assert 100.0 == 145.0
+E            +  where 145.0 = <function base_price_for_cost at 0x7785060bce00>(100.0)
+E            +    where <function base_price_for_cost at 0x7785060bce00> = pp.base_price_for_cost
+
+tests/test_importers_e2e_scripts.py:264: AssertionError
+__________________ test_toyota_il_importer_script_end_to_end ___________________
+
+    async def test_toyota_il_importer_script_end_to_end():
+        """`toyota_il_importer.py`: reads /app/state/toyota_il_parts.json (the fixture is written there - the scratch /app of the
+        isolated test container - and refused if a file is already present); price is EX-VAT; sku = TOYOTA-<oem>."""
+        src = "/app/state/toyota_il_parts.json"          # the importer prefers this path when it exists
+        if os.path.exists(src):
+            pytest.skip("a real toyota_il_parts.json exists in this tree: refusing to overwrite it")
+        tag = new_tag()
+        conn = await _connect()
+        try:
+            mid, _ = await ensure_brand(conn, "Toyota")
+            tid, tmade = await ensure_brand_id(conn, "01954786-65c7-4ff4-a6ad-4836b31da9f4", "Toyota")     # the importer's hard-coded brand id
+            await seed_part(conn, f"TOYOTA-T{tag}1", "Toyota", mid, oem=f"T{tag}1")
+            await seed_part(conn, f"TOYOTA-T{tag}2", "Toyota", mid, oem=f"T{tag}2", base=OWNED)
+            with open(src, "w") as fh:
+                json.dump({"parts": [{"oem": f"T{tag}1", "name_he": "רפידה", "price": 100.0, "models": [], "in_stock": True, "type": "מקורי"},
+                                     {"oem": f"T{tag}2", "name_he": "פילטר", "price": 50.0, "models": [], "in_stock": True, "type": "מקורי"},
+                                     {"oem": f"T{tag}3", "name_he": "חדש", "price": 10.0, "models": [], "in_stock": True, "type": "מקורי"}]}, fh, ensure_ascii=False)
+            for _ in range(2):
+                p = run_script("importers/toyota_il_importer.py")
+                assert p.returncode == 0, p.stdout[-400:] + p.stderr[-800:]
+                assert await base_by(conn, "sku", f"TOYOTA-T{tag}1") == pp.base_price_for_cost(100.0) == 145.0
+>               assert await base_by(conn, "sku", f"TOYOTA-T{tag}2") == OWNED
+E               assert 72.5 == 33.0
+
+tests/test_importers_e2e_scripts.py:297: AssertionError
+___________ test_mazda_il_importer_with_synthetic_delek_api_response ___________
+
+    async def test_mazda_il_importer_with_synthetic_delek_api_response():
+        """`mazda_il_importer.py main()`: harvest_all -> fetch_seed -> urlopen (replaced) -> parse -> price -> DB.
+        API shape from the importer's own parser: {"data": [{item, name, foreignName, priceWithTax(incl. VAT), modelDescription, isOriginal}]}."""
+        tag = new_tag()
+        conn = await _connect()
+        try:
+            mid, _ = await ensure_brand(conn, "Mazda")
+            zid, zmade = await ensure_brand_id(conn, "72dd2cd7-a452-471c-8ea8-a376ff905c45", "Mazda")      # the importer's hard-coded brand id
+            await seed_part(conn, f"MAZDA-MZ{tag}1", "Mazda", mid, oem=f"MZ{tag}1")
+            await seed_part(conn, f"MAZDA-MZ{tag}2", "Mazda", mid, oem=f"MZ{tag}2", base=OWNED)
+            fx = {"default": {"data": [
+                {"item": f"MZ{tag}1", "name": "רפידה", "foreignName": "pad", "priceWithTax": 118.0, "modelDescription": "Mazda3", "isOriginal": "מקורי"},
+                {"item": f"MZ{tag}2", "name": "פילטר", "foreignName": "filter", "priceWithTax": 59.0, "modelDescription": "Mazda3", "isOriginal": "מקורי"},
+                {"item": f"MZ{tag}3", "name": "חדש", "foreignName": "new", "priceWithTax": 11.8, "modelDescription": "Mazda6", "isOriginal": "מקורי"}]}}
+            for _ in range(2):
+                p = run_script_with_http("importers/mazda_il_importer.py", fx)
+                assert p.returncode == 0, p.stdout[-400:] + p.stderr[-900:]
+                assert await base_by(conn, "sku", f"MAZDA-MZ{tag}1") == pp.base_price_for_cost(round(118.0 / 1.18, 2)) == 145.0
+>               assert await base_by(conn, "sku", f"MAZDA-MZ{tag}2") == OWNED
+E               assert 72.5 == 33.0
+
+tests/test_importers_e2e_scripts.py:328: AssertionError
+______________ test_mct_importer_with_synthetic_mct_api_response _______________
+
+    async def test_mct_importer_with_synthetic_mct_api_response():
+        """`mct_importer.py --brands 1` (Honda): the MCT API answers a base64(JSON) body {parts:[{a: OEM, b: name, e: stock, f: ex-VAT price}],
+        pages:{pageNext}} - built from parse_part()'s own contract; transport replaced, everything after it real."""
+        import base64
+        tag = new_tag()
+        conn = await _connect()
+        try:
+            mid, _ = await ensure_brand(conn, "Honda")
+            await seed_part(conn, f"MCT-OLD-{tag}-1", "Honda", mid, oem=f"HO{tag}1")
+            await seed_part(conn, f"MCT-OLD-{tag}-2", "Honda", mid, oem=f"HO{tag}2", base=OWNED)
+            page = {"parts": [{"a": f"HO{tag}1", "b": "רפידה", "e": "כן", "f": "100.00"}, {"a": f"HO{tag}2", "b": "פילטר", "e": "כן", "f": "50.00"},
+                              {"a": f"HO{tag}3", "b": "חדש", "e": "כן", "f": "10.00"}], "pages": {"pageNext": False}}
+            fx = {"default": base64.b64encode(json.dumps(page).encode()).decode()}
+            for _ in range(2):
+                p = run_script_with_http("importers/mct_importer.py", fx, "--brands", "1")
+                assert p.returncode == 0, p.stdout[-400:] + p.stderr[-900:]
+                assert await base_by(conn, "sku", f"MCT-OLD-{tag}-1") == pp.base_price_for_cost(100.0) == 145.0
+>               assert await base_by(conn, "sku", f"MCT-OLD-{tag}-2") == OWNED
+E               assert 72.0 == 33.0
+
+tests/test_importers_e2e_scripts.py:352: AssertionError
+_____________________ test_bmw_il_import_script_end_to_end _____________________
+
+    async def test_bmw_il_import_script_end_to_end():
+        """`bmw_il_import.py`: UPDATE-only price phase (+fitment) from /app/bmw_parts.json (written into the scratch /app, refused
+        if present): price_ils = ex-VAT cost, price_ils_vat = consumer price. Unknown OEMs are reported, never inserted."""
+        src = "/app/bmw_parts.json"
+        if os.path.exists(src):
+            pytest.skip("a real bmw_parts.json exists in this tree: refusing to overwrite it")
+        tag = new_tag()
+        conn = await _connect()
+        try:
+            mid, _ = await ensure_brand(conn, "BMW")
+            await seed_part(conn, f"BMWIL-{tag}-1", "BMW", mid, oem=f"BI{tag}1")
+            await seed_part(conn, f"BMWIL-{tag}-2", "BMW", mid, oem=f"BI{tag}2", base=OWNED)
+            with open(src, "w") as fh:
+                json.dump({"parts": [{"oem_number": f"BI{tag}1", "price_ils": 100.0, "price_ils_vat": 118.0, "model": "G20"},
+                                     {"oem_number": f"BI{tag}2", "price_ils": 50.0, "price_ils_vat": 59.0, "model": "G20"},
+                                     {"oem_number": f"BI{tag}9", "price_ils": 10.0, "price_ils_vat": 11.8, "model": "G20"}]}, fh)
+            for _ in range(2):
+                p = run_script("importers/bmw_il_import.py")
+                assert p.returncode == 0, p.stdout[-400:] + p.stderr[-800:]
+>               assert await base_by(conn, "sku", f"BMWIL-{tag}-1") == pp.base_price_for_cost(100.0) == 145.0      # old: 118.0 (gross)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               assert 118.0 == 145.0
+E                +  where 145.0 = <function base_price_for_cost at 0x7785060bce00>(100.0)
+E                +    where <function base_price_for_cost at 0x7785060bce00> = pp.base_price_for_cost
+
+tests/test_importers_e2e_scripts.py:378: AssertionError
+_________ test_delek_multi_importer_with_synthetic_delek_api_response __________
+
+    async def test_delek_multi_importer_with_synthetic_delek_api_response():
+        """`delek_multi_importer.py --brands 3` (BMW, Delek serviceforms API): same API shape as Mazda's; transport replaced."""
+        tag = new_tag()
+        conn = await _connect()
+        try:
+            mid, _ = await ensure_brand(conn, "BMW")
+            await seed_part(conn, f"BMW-DM-{tag}-1", "BMW", mid, oem=f"DM{tag}1")
+            await seed_part(conn, f"BMW-DM-{tag}-2", "BMW", mid, oem=f"DM{tag}2", base=OWNED)
+            fx = {"default": {"data": [
+                {"item": f"DM{tag}1", "name": "רפידה", "foreignName": "pad", "priceWithTax": 118.0, "modelDescription": "G20", "isWithQuantity": "יש"},
+                {"item": f"DM{tag}2", "name": "פילטר", "foreignName": "filter", "priceWithTax": 59.0, "modelDescription": "G20", "isWithQuantity": "יש"},
+                {"item": f"DM{tag}3", "name": "חדש", "foreignName": "new", "priceWithTax": 11.8, "modelDescription": "G30", "isWithQuantity": "יש"}]}}
+            for _ in range(2):
+                p = run_script_with_http("importers/delek_multi_importer.py", fx, "--brands", "3")
+                assert p.returncode == 0, p.stdout[-400:] + p.stderr[-900:]
+                assert await base_by(conn, "sku", f"BMW-DM-{tag}-1") == pp.base_price_for_cost(round(118.0 / 1.18, 2)) == 145.0
+>               assert await base_by(conn, "sku", f"BMW-DM-{tag}-2") == OWNED
+E               assert 72.0 == 33.0
+
+tests/test_importers_e2e_scripts.py:404: AssertionError
+______________________ test_asap_import_script_end_to_end ______________________
+
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-0/test_asap_import_script_end_to0')
+
+    async def test_asap_import_script_end_to_end(tmp_path):
+        """`asap_import.py <csv> --brand-name B`: ASAP/ACA product sheet (sku, title, list_price USD = consumer reference).
+        cost = list x rate / 1.18; base = policy net of that cost; existing rows matched by sku."""
+        tag = new_tag()
+        brand = f"ZZASAP{tag}"
+        conn = await _connect()
+        try:
+            mid, made = await ensure_brand(conn, brand)
+            await seed_part(conn, f"ASAP-{tag}-1", brand, mid, oem=f"A{tag}1")
+            await seed_part(conn, f"ASAP-{tag}-2", brand, mid, oem=f"A{tag}2", base=OWNED)
+            import csv as _csv
+            f = tmp_path / "asap.csv"
+            with open(f, "w", newline="", encoding="utf-8") as fh:
+                w = _csv.writer(fh)
+                w.writerow(["sku", "title", "list_price", "brand"])
+                w.writerow([f"ASAP-{tag}-1", "Shock absorber", "100.00", brand])
+                w.writerow([f"ASAP-{tag}-2", "Spring", "50.00", brand])
+                w.writerow([f"ASAP-{tag}-3", "Brand new part", "10.00", brand])
+            rate = 3.72
+            cost = lambda usd: round(round(usd * rate, 2) / 1.18, 2)
+            for _ in range(2):
+                p = run_script("importers/asap_import.py", f, "--brand-name", brand, env_extra={"ILS_PER_USD": str(rate)})
+                assert p.returncode == 0, p.stdout[-400:] + p.stderr[-800:]
+>               assert await base_by(conn, "sku", f"ASAP-{tag}-1") == pp.base_price_for_cost(cost(100.0))
+E               assert 457.0 == 457.11
+E                +  where 457.11 = <function base_price_for_cost at 0x7785060bce00>(315.25)
+E                +    where <function base_price_for_cost at 0x7785060bce00> = pp.base_price_for_cost
+E                +    and   315.25 = <function test_asap_import_script_end_to_end.<locals>.<lambda> at 0x778504eed620>(100.0)
+
+tests/test_importers_e2e_scripts.py:434: AssertionError
+___________ test_subaru_il_importer_with_synthetic_samelet_response ____________
+
+    async def test_subaru_il_importer_with_synthetic_samelet_response():
+        """`subaru_il_importer.py main()`: harvest (samelet API JSON {parts:[{Material, MatDescHe, MatTypeDesc, PriceNoVat, PriceWithVat,
+        StatusCode, StockExist}]}, transport replaced) -> /app/subaru_il_parts.json -> import_parts."""
+        tag = new_tag()
+        conn = await _connect()
+        try:
+            mid, _ = await ensure_brand(conn, "Subaru")
+            sid, smade = await ensure_brand_id(conn, "88a04aee-d7d5-45ff-8308-4c6b50c67c0e", "Subaru")     # importer's hard-coded brand id
+            await seed_part(conn, f"SUBARU-SB{tag}1", "Subaru", mid, oem=f"SB{tag}1")
+            await seed_part(conn, f"SUBARU-SB{tag}2", "Subaru", mid, oem=f"SB{tag}2", base=OWNED)
+            fx = {"default": {"parts": [
+                {"Material": f"SB{tag}1", "MatDescHe": "רפידה", "MatTypeDesc": "מקורי", "PriceNoVat": 100.0, "PriceWithVat": 118.0, "StatusCode": "1", "StockExist": "X"},
+                {"Material": f"SB{tag}2", "MatDescHe": "פילטר", "MatTypeDesc": "מקורי", "PriceNoVat": 50.0, "PriceWithVat": 59.0, "StatusCode": "1", "StockExist": "X"},
+                {"Material": f"SB{tag}3", "MatDescHe": "חדש", "MatTypeDesc": "מקורי", "PriceNoVat": 10.0, "PriceWithVat": 11.8, "StatusCode": "1", "StockExist": "X"}]}}
+            for _ in range(2):
+                p = run_script_with_http("importers/subaru_il_importer.py", fx)
+                assert p.returncode == 0, p.stdout[-500:] + p.stderr[-900:]
+>               assert await base_by(conn, "sku", f"SUBARU-SB{tag}1") == pp.base_price_for_cost(round(118.0 / 1.18, 2)) == 145.0
+E               assert None == 145.0
+E                +  where 145.0 = <function base_price_for_cost at 0x7785060bce00>(100.0)
+E                +    where <function base_price_for_cost at 0x7785060bce00> = pp.base_price_for_cost
+E                +    and   100.0 = round((118.0 / 1.18), 2)
+
+tests/test_importers_e2e_scripts.py:459: AssertionError
+_ test_colmobil_format_pdf_importers_end_to_end[importers/hyundai_genesis_mitsubishi_import.py-MITSUBISHI_20260518_161229.pdf] _
+
+script = 'importers/hyundai_genesis_mitsubishi_import.py'
+pdf_name = 'MITSUBISHI_20260518_161229.pdf'
+
+    @pytest.mark.parametrize("script,pdf_name", [("importers/hyundai_genesis_mitsubishi_import.py", "MITSUBISHI_20260518_161229.pdf"),
+                                                  ("importers/fitz_pdf_import.py", "MITSUBISHI_20260518_161229.pdf")])
+    async def test_colmobil_format_pdf_importers_end_to_end(script, pdf_name):
+        """Colmobil layout `{OEM}{brand in Hebrew}` / `{description}{price incl. VAT}    {זמין|לא זמין}`; UPDATE-only importers
+        (manufacturer 'Mitsubishi'): no base -> filled, owned -> kept, unknown OEM -> not inserted."""
+        pdf = f"/app/uploads/{pdf_name}"
+        if os.path.exists(pdf):
+            pytest.skip("a real price-list PDF exists at this path: refusing to overwrite it")
+        tag = new_tag()
+        conn = await _connect()
+        try:
+            mid, _ = await ensure_brand(conn, "Mitsubishi")
+            await seed_part(conn, f"MIT-{tag}-1", "Mitsubishi", mid, oem=f"MT{tag}1")
+            await seed_part(conn, f"MIT-{tag}-2", "Mitsubishi", mid, oem=f"MT{tag}2", base=OWNED)
+            make_pdf(pdf, [f"MT{tag}1מיצובישי", "רפידה קדמית 118.00    זמין", f"MT{tag}2מיצובישי", "פילטר שמן 59.00    זמין",
+                           f"MT{tag}9מיצובישי", "חלק לא קיים 11.80    לא זמין"])
+            for _ in range(2):
+                p = run_script(script)
+                assert p.returncode == 0, p.stdout[-500:] + p.stderr[-900:]
+                assert await base_by(conn, "sku", f"MIT-{tag}-1") == pp.base_price_for_cost(round(118.0 / 1.18, 2)) == 145.0
+>               assert await base_by(conn, "sku", f"MIT-{tag}-2") == OWNED
+E               assert 72.5 == 33.0
+
+tests/test_importers_e2e_scripts.py:500: AssertionError
+_ test_colmobil_format_pdf_importers_end_to_end[importers/fitz_pdf_import.py-MITSUBISHI_20260518_161229.pdf] _
+
+script = 'importers/fitz_pdf_import.py'
+pdf_name = 'MITSUBISHI_20260518_161229.pdf'
+
+    @pytest.mark.parametrize("script,pdf_name", [("importers/hyundai_genesis_mitsubishi_import.py", "MITSUBISHI_20260518_161229.pdf"),
+                                                  ("importers/fitz_pdf_import.py", "MITSUBISHI_20260518_161229.pdf")])
+    async def test_colmobil_format_pdf_importers_end_to_end(script, pdf_name):
+        """Colmobil layout `{OEM}{brand in Hebrew}` / `{description}{price incl. VAT}    {זמין|לא זמין}`; UPDATE-only importers
+        (manufacturer 'Mitsubishi'): no base -> filled, owned -> kept, unknown OEM -> not inserted."""
+        pdf = f"/app/uploads/{pdf_name}"
+        if os.path.exists(pdf):
+            pytest.skip("a real price-list PDF exists at this path: refusing to overwrite it")
+        tag = new_tag()
+        conn = await _connect()
+        try:
+            mid, _ = await ensure_brand(conn, "Mitsubishi")
+            await seed_part(conn, f"MIT-{tag}-1", "Mitsubishi", mid, oem=f"MT{tag}1")
+            await seed_part(conn, f"MIT-{tag}-2", "Mitsubishi", mid, oem=f"MT{tag}2", base=OWNED)
+            make_pdf(pdf, [f"MT{tag}1מיצובישי", "רפידה קדמית 118.00    זמין", f"MT{tag}2מיצובישי", "פילטר שמן 59.00    זמין",
+                           f"MT{tag}9מיצובישי", "חלק לא קיים 11.80    לא זמין"])
+            for _ in range(2):
+                p = run_script(script)
+                assert p.returncode == 0, p.stdout[-500:] + p.stderr[-900:]
+>               assert await base_by(conn, "sku", f"MIT-{tag}-1") == pp.base_price_for_cost(round(118.0 / 1.18, 2)) == 145.0
+E               assert 118.0 == 145.0
+E                +  where 145.0 = <function base_price_for_cost at 0x7785060bce00>(100.0)
+E                +    where <function base_price_for_cost at 0x7785060bce00> = pp.base_price_for_cost
+E                +    and   100.0 = round((118.0 / 1.18), 2)
+
+tests/test_importers_e2e_scripts.py:499: AssertionError
+_________________ test_fitz_mb_suzuki_pdf_importer_end_to_end __________________
+
+    async def test_fitz_mb_suzuki_pdf_importer_end_to_end():
+        """`fitz_mb_suzuki_import.py`: a Mercedes-Benz PDF (Colmobil layout) AND a Suzuki PDF (price line `118.00זמין` then a line ending
+        `P.<OEM>`); UPDATE-only for manufacturers 'Mercedes-Benz' / 'Suzuki'."""
+        mb_pdf, sz_pdf = "/app/uploads/MERCEDES-BENZ_20260518_154959.pdf", "/app/uploads/SUZUKI_20260518_170146.pdf"
+        if os.path.exists(mb_pdf) or os.path.exists(sz_pdf):
+            pytest.skip("a real price-list PDF exists at this path: refusing to overwrite it")
+        tag = new_tag()
+        conn = await _connect()
+        try:
+            mmid, _ = await ensure_brand(conn, "Mercedes-Benz")
+            smid, _ = await ensure_brand(conn, "Suzuki")
+            await seed_part(conn, f"MB-{tag}-1", "Mercedes-Benz", mmid, oem=f"MB{tag}1")
+            await seed_part(conn, f"MB-{tag}-2", "Mercedes-Benz", mmid, oem=f"MB{tag}2", base=OWNED)
+            await seed_part(conn, f"SZ-{tag}-1", "Suzuki", smid, oem=f"P.SU{tag}1")
+            await seed_part(conn, f"SZ-{tag}-2", "Suzuki", smid, oem=f"P.SU{tag}2", base=OWNED)
+            make_pdf(mb_pdf, [f"MB{tag}1מרצדס", "רפידה 118.00    זמין", f"MB{tag}2מרצדס", "פילטר 59.00    זמין"])
+            make_pdf(sz_pdf, ["118.00זמין", f"מסנן שמן P.SU{tag}1", "59.00זמין", f"רפידה P.SU{tag}2"])
+            for _ in range(2):
+                p = run_script("importers/fitz_mb_suzuki_import.py")
+                assert p.returncode == 0, p.stdout[-600:] + p.stderr[-900:]
+                assert await base_by(conn, "sku", f"MB-{tag}-1") == pp.base_price_for_cost(100.0) == 145.0
+>               assert await base_by(conn, "sku", f"MB-{tag}-2") == OWNED
+E               assert 72.5 == 33.0
+
+tests/test_importers_e2e_scripts.py:529: AssertionError
+_____________________ test_renault_pdf_importer_end_to_end _____________________
+
+    async def test_renault_pdf_importer_end_to_end():
+        """`renault_pdf_import.py`: the PRICE sits at the end of the line BEFORE a bare `RE<alnum>` OEM line; UPDATE-only ('Renault')."""
+        pdf = "/app/uploads/RENAULT_20260518_223327.pdf"
+        if os.path.exists(pdf):
+            pytest.skip("a real price-list PDF exists at this path: refusing to overwrite it")
+        tag = new_tag()
+        conn = await _connect()
+        try:
+            mid, _ = await ensure_brand(conn, "Renault")
+            await seed_part(conn, f"REN-{tag}-1", "Renault", mid, oem=f"RE{tag}01")
+            await seed_part(conn, f"REN-{tag}-2", "Renault", mid, oem=f"RE{tag}02", base=OWNED)
+            make_pdf(pdf, ["רפידה קדמית 118.00", f"RE{tag}01", "פילטר שמן 59.00", f"RE{tag}02"])
+            for _ in range(2):
+                p = run_script("importers/renault_pdf_import.py")
+                assert p.returncode == 0, p.stdout[-600:] + p.stderr[-900:]
+                assert await base_by(conn, "sku", f"REN-{tag}-1") == pp.base_price_for_cost(round(118.0 / 1.18, 2)) == 145.0
+>               assert await base_by(conn, "sku", f"REN-{tag}-2") == OWNED
+E               assert 72.5 == 33.0
+
+tests/test_importers_e2e_scripts.py:554: AssertionError
+______________________ test_zeekr_pdf_importer_end_to_end ______________________
+
+    async def test_zeekr_pdf_importer_end_to_end():
+        """`zeekr_pdf_import.py`: OEM line, then a `כן|לא <ex-VAT price>` line; matched to existing 'Zeekr' parts (UPDATE-only)."""
+        pdf = "/app/uploads/ZEEKER001_20260519_131930.pdf"
+        if os.path.exists(pdf):
+            pytest.skip("a real price-list PDF exists at this path: refusing to overwrite it")
+        tag = new_tag()
+        conn = await _connect()
+        try:
+            mid, _ = await ensure_brand(conn, "Zeekr")
+            await seed_part(conn, f"ZK-{tag}-1", "Zeekr", mid, oem=f"ZK{tag}1")
+            await seed_part(conn, f"ZK-{tag}-2", "Zeekr", mid, oem=f"ZK{tag}2", base=OWNED)
+            make_pdf(pdf, [f"ZK{tag}1 רפידה קדמית", "כן 100.00", f"ZK{tag}2 פילטר", "כן 50.00"])
+            for _ in range(2):
+                p = run_script("importers/zeekr_pdf_import.py")
+                assert p.returncode == 0, p.stdout[-600:] + p.stderr[-900:]
+                assert await base_by(conn, "sku", f"ZK-{tag}-1") == pp.base_price_for_cost(100.0) == 145.0
+>               assert await base_by(conn, "sku", f"ZK-{tag}-2") == OWNED
+E               assert 72.5 == 33.0
+
+tests/test_importers_e2e_scripts.py:577: AssertionError
+____________________ test_il_pdf_batch_importer_end_to_end _____________________
+
+    async def test_il_pdf_batch_importer_end_to_end():
+        """`il_pdf_batch_import.py --brand Mitsubishi`: pdfplumber lines `[stock] [price ex-VAT] [description] [OEM]` (OEM last)."""
+        pdf = "/app/uploads/MITSUBISHI_20260518_161229.pdf"
+        if os.path.exists(pdf):
+            pytest.skip("a real price-list PDF exists at this path: refusing to overwrite it")
+        tag = new_tag()
+        conn = await _connect()
+        try:
+            mid, _ = await ensure_brand(conn, "Mitsubishi")
+            await seed_part(conn, f"MIB-{tag}-1", "Mitsubishi", mid, oem=f"IP{tag}1")
+            await seed_part(conn, f"MIB-{tag}-2", "Mitsubishi", mid, oem=f"IP{tag}2", base=OWNED)
+            make_pdf(pdf, [f"Available 100.00 front brake pad IP{tag}1", f"Available 50.00 oil filter IP{tag}2",
+                           f"Available 10.00 unknown part IP{tag}9"])
+            for _ in range(2):
+                p = run_script("importers/il_pdf_batch_import.py", "--brand", "Mitsubishi")
+                assert p.returncode == 0, p.stdout[-600:] + p.stderr[-900:]
+>               assert await base_by(conn, "sku", f"MIB-{tag}-1") == pp.base_price_for_cost(100.0) == 145.0      # old: 118.0 (price x 1.18)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               assert 118.0 == 145.0
+E                +  where 145.0 = <function base_price_for_cost at 0x7785060bce00>(100.0)
+E                +    where <function base_price_for_cost at 0x7785060bce00> = pp.base_price_for_cost
+
+tests/test_importers_e2e_scripts.py:600: AssertionError
+________________ test_il_importer_pdf_import_script_end_to_end _________________
+
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-0/test_il_importer_pdf_import_sc0')
+
+    async def test_il_importer_pdf_import_script_end_to_end(tmp_path):
+        """`il_importer_pdf_import.py --pdf F --brand B`: pdfplumber text fallback, `<OEM> <description> <price>` rows; an unlisted brand
+        takes the 'IL importer, price excl. VAT' branch of compute_price_triple. Updates by oem, then sku, then INSERTs (new part)."""
+        tag = new_tag()
+        brand = f"ZZIMP{tag}"
+        conn = await _connect()
+        try:
+            mid, made = await ensure_brand(conn, brand)
+            await seed_part(conn, f"IMP-{tag}-1", brand, mid, oem=f"IM{tag}1")
+            await seed_part(conn, f"IMP-{tag}-2", brand, mid, oem=f"IM{tag}2", base=OWNED)
+            pdf = make_pdf(tmp_path / "imp.pdf", [f"IM{tag}1 front brake pad 100.00", f"IM{tag}2 oil filter 50.00", f"IM{tag}3 new part 10.00"])
+            for _ in range(2):
+                p = run_script("importers/il_importer_pdf_import.py", "--pdf", pdf, "--brand", brand, "--importer", "e2e importer")
+                assert p.returncode == 0, p.stdout[-700:] + p.stderr[-900:]
+                assert await base_by(conn, "sku", f"IMP-{tag}-1") == pp.base_price_for_cost(100.0) == 145.0
+>               assert await base_by(conn, "sku", f"IMP-{tag}-2") == OWNED
+E               assert 72.5 == 33.0
+
+tests/test_importers_e2e_scripts.py:624: AssertionError
+______________________ test_lexus_pdf_importer_end_to_end ______________________
+
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-0/test_lexus_pdf_importer_end_to0')
+
+    async def test_lexus_pdf_importer_end_to_end(tmp_path):
+        """`lexus_pdf_import.py` (LEXUS_PDF): pdfplumber.extract_tables(); columns 1 models, 2 price (ex-VAT), 3 stock, 4 description, 5 OEM."""
+        tag = new_tag()
+        conn = await _connect()
+        try:
+            mid, _ = await ensure_brand(conn, "Lexus")
+            await seed_part(conn, f"LEX-{tag}-1", "Lexus", mid, oem=f"LX{tag}01")
+            await seed_part(conn, f"LEX-{tag}-2", "Lexus", mid, oem=f"LX{tag}02", base=OWNED)
+            pdf = make_table_pdf(tmp_path / "lexus.pdf", [
+                ["x", "models", "price", "stock", "desc", "oem"],
+                ["", "RX350", "100.00", "yes", "brake pad", f"LX{tag}01"],
+                ["", "RX350", "50.00", "yes", "oil filter", f"LX{tag}02"],
+                ["", "RX350", "10.00", "yes", "new part", f"LX{tag}03"]])
+            for _ in range(2):
+                p = run_script("importers/lexus_pdf_import.py", env_extra={"LEXUS_PDF": pdf})
+                assert p.returncode == 0, p.stdout[-700:] + p.stderr[-900:]
+                assert await base_by(conn, "sku", f"LEX-{tag}-1") == pp.base_price_for_cost(100.0) == 145.0
+>               assert await base_by(conn, "sku", f"LEX-{tag}-2") == OWNED
+E               assert 72.0 == 33.0
+
+tests/test_importers_e2e_scripts.py:652: AssertionError
+_____________________ test_porsche_pdf_importer_end_to_end _____________________
+
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-0/test_porsche_pdf_importer_end_0')
+
+    async def test_porsche_pdf_importer_end_to_end(tmp_path):
+        """`porsche_import.py` (PORSCHE_PDF): pdfplumber tables; column 0 consumer price INCL. VAT, 1 stock, 4 description, 5 OEM."""
+        tag = new_tag()
+        conn = await _connect()
+        try:
+            mid, _ = await ensure_brand(conn, "Porsche")
+            await seed_part(conn, f"POR-{tag}-1", "Porsche", mid, oem=f"PO{tag}01")
+            await seed_part(conn, f"POR-{tag}-2", "Porsche", mid, oem=f"PO{tag}02", base=OWNED)
+            pdf = make_table_pdf(tmp_path / "porsche.pdf", [
+                ["118.00", "avail", "x", "y", "brake pad", f"PO{tag}01"],
+                ["59.00", "avail", "x", "y", "oil filter", f"PO{tag}02"]])
+            for _ in range(2):
+                p = run_script("importers/porsche_import.py", env_extra={"PORSCHE_PDF": pdf})
+                assert p.returncode == 0, p.stdout[-700:] + p.stderr[-900:]
+                assert await base_by(conn, "sku", f"POR-{tag}-1") == pp.base_price_for_cost(round(118.0 / 1.18, 2)) == 145.0
+>               assert await base_by(conn, "sku", f"POR-{tag}-2") == OWNED
+E               assert 72.5 == 33.0
+
+tests/test_importers_e2e_scripts.py:674: AssertionError
+___________________ test_cadillac_israel_importer_end_to_end ___________________
+
+    async def test_cadillac_israel_importer_end_to_end():
+        """`cadillac_israel_import.py` (/tmp/cadillac_parts.xlsx): two header rows are skipped; columns importer, part_num, Hebrew
+        description, type, stock, consumer price (the importer divides by ITS OWN 1.17 - VAT rate not touched here), warranty, model."""
+        xlsx = "/tmp/cadillac_parts.xlsx"
+        if os.path.exists(xlsx):
+            pytest.skip("/tmp/cadillac_parts.xlsx exists: refusing to overwrite it")
+        tag = new_tag()
+        conn = await _connect()
+        try:
+            cid, cmade = await ensure_brand_id(conn, "6f18818a-3c94-4a70-bab1-1384c19a94fc", "Cadillac")     # the importer's hard-coded brand id
+            await seed_part(conn, f"CADILLAC-CAD{tag}01", "Cadillac", cid, oem=f"CAD{tag}01")
+            await seed_part(conn, f"CADILLAC-CAD{tag}02", "Cadillac", cid, oem=f"CAD{tag}02", base=OWNED)
+            import openpyxl
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.append([None] * 8)
+            ws.append(["importer", "part_num", "desc", "type", "stock", "price", "warranty", "model"])
+            ws.append(["Universal", f"CAD{tag}01", "רפידות בלם", "מקורי", "יש", 117.0, "12", "CT5"])
+            ws.append(["Universal", f"CAD{tag}02", "מסנן שמן", "מקורי", "יש", 58.5, "12", "CT5"])
+            ws.append(["Universal", f"CAD{tag}03", "חלק חדש", "מקורי", "יש", 11.7, "12", "CT5"])
+            wb.save(xlsx)
+            for _ in range(2):
+                p = run_script("importers/cadillac_israel_import.py")
+                assert p.returncode == 0, p.stdout[-700:] + p.stderr[-900:]
+                assert await base_by(conn, "sku", f"CADILLAC-CAD{tag}01") == pp.base_price_for_cost(round(117.0 / 1.17, 2)) == 145.0
+>               assert await base_by(conn, "sku", f"CADILLAC-CAD{tag}02") == OWNED
+E               assert 72.5 == 33.0
+
+tests/test_importers_e2e_scripts.py:705: AssertionError
+_____________________ test_isuzu_excel_importer_end_to_end _____________________
+
+    async def test_isuzu_excel_importer_end_to_end():
+        """`isuzu_excel_import.py` (/tmp/isuzuFile.xlsx): rows from the 3rd on, columns (_, catalog_num, name_he, _, stock, price = consumer
+        price incl. VAT, _, vehicle); upsert by sku ISUZU-<OEM>."""
+        xlsx = "/tmp/isuzuFile.xlsx"
+        if os.path.exists(xlsx):
+            pytest.skip("/tmp/isuzuFile.xlsx exists: refusing to overwrite it")
+        tag = new_tag()
+        conn = await _connect()
+        try:
+            iid, imade = await ensure_brand_id(conn, "a5f0f44e-814d-4fa2-b6b6-dd1b3175d855", "Isuzu")      # the importer's hard-coded brand id
+            await seed_part(conn, f"ISUZU-ISU{tag}01", "Isuzu", iid, oem=f"ISU{tag}01")
+            await seed_part(conn, f"ISUZU-ISU{tag}02", "Isuzu", iid, oem=f"ISU{tag}02", base=OWNED)
+            import openpyxl
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.append([None] * 8)
+            ws.append(["", "catalog", "name", "", "stock", "price", "", "vehicle"])
+            ws.append(["", f"ISU{tag}01", "רפידות בלם", "", "יש", 118.0, "", "D-MAX 2020"])
+            ws.append(["", f"ISU{tag}02", "מסנן שמן", "", "יש", 59.0, "", "D-MAX 2020"])
+            ws.append(["", f"ISU{tag}03", "חלק חדש", "", "יש", 11.8, "", "D-MAX 2020"])
+            wb.save(xlsx)
+            for _ in range(2):
+                p = run_script("importers/isuzu_excel_import.py")
+                assert p.returncode == 0, p.stdout[-700:] + p.stderr[-900:]
+                assert await base_by(conn, "sku", f"ISUZU-ISU{tag}01") == pp.base_price_for_cost(round(118.0 / 1.18, 2)) == 145.0
+>               assert await base_by(conn, "sku", f"ISUZU-ISU{tag}02") == OWNED
+E               assert 72.5 == 33.0
+
+tests/test_importers_e2e_scripts.py:738: AssertionError
+______________________ test_xls_prices_import_end_to_end _______________________
+
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-0/test_xls_prices_import_end_to_0')
+
+    async def test_xls_prices_import_end_to_end(tmp_path):
+        """`xls_prices_import.py` main(): sheet rows (name = col 4, consumer price incl. VAT = col 5, OEM = col 6) set max_price_ils; then the
+        empty base_price of every part with a max price gets the policy ESTIMATE (max/(1+VAT) x margin). The importer's input path is a
+        module constant pointing at a real 12 MB workbook in the tree, so the entry function is run with XLS_PATH pointed at the fixture."""
+        tag = new_tag()
+        conn = await _connect()
+        try:
+            mid, _ = await ensure_brand(conn, "Renault")
+            await seed_part(conn, f"XP-{tag}-1", "Renault", mid, oem=f"XP{tag}01")
+            await seed_part(conn, f"XP-{tag}-2", "Renault", mid, oem=f"XP{tag}02", base=OWNED)
+            import openpyxl
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.append([None, None, None, None, "רפידה", 118.0, f"XP{tag}01"])
+            ws.append([None, None, None, None, "פילטר", 59.0, f"XP{tag}02"])
+            f = tmp_path / "parts_database.xlsx"
+            wb.save(f)
+            from importer_e2e_harness import run_code
+            code = ("import asyncio, sys; sys.path.insert(0, '/app/importers'); import xls_prices_import as m; "
+                    f"m.XLS_PATH = {str(f)!r}; asyncio.run(m.main())")
+            for _ in range(2):
+                p = run_code(code)
+                assert p.returncode == 0, p.stdout[-700:] + p.stderr[-900:]
+                r1 = await conn.fetchrow("SELECT max_price_ils, base_price FROM parts_catalog WHERE sku = $1", f"XP-{tag}-1")
+                assert float(r1["max_price_ils"]) == 118.0
+>               assert float(r1["base_price"]) == pp.base_price_for_estimate(None, 118.0, None) == 145.0     # old code: 118.0 x 1.45 = 171.1 (gross base)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               AssertionError: assert 171.1 == 145.0
+E                +  where 171.1 = float(Decimal('171.10'))
+E                +  and   145.0 = <function base_price_for_estimate at 0x7785060bcea0>(None, 118.0, None)
+E                +    where <function base_price_for_estimate at 0x7785060bcea0> = pp.base_price_for_estimate
+
+tests/test_importers_e2e_scripts.py:771: AssertionError
+____________________ test_gmc_buick_umi_importer_end_to_end ____________________
+
+    async def test_gmc_buick_umi_importer_end_to_end():
+        """`gmc_buick_umi_import.py` (/tmp/umi_full_text.txt = pdftotext output of the UMI price PDF): a line carries >=6 LTR-marked and >=3
+        RTL-marked blocks (the marks are the importer's own constants); ltr[1] = part number, ltr[-4] = consumer price incl. 17% VAT,
+        ltr[-1] = model containing GMC/BUICK, rtl[2] = Hebrew description. The text is a SYNTHETIC rendering of that layout."""
+        txt = "/tmp/umi_full_text.txt"
+        if os.path.exists(txt):
+            pytest.skip("/tmp/umi_full_text.txt exists: refusing to overwrite it")
+        import importlib
+        m = importlib.import_module("importers.gmc_buick_umi_import")
+        tag = new_tag()
+        conn = await _connect()
+        try:
+            gid, gmade = await ensure_brand_id(conn, m.GMC_BRAND_ID, "GMC")
+            sku1, sku2, sku3 = (m.build_sku("GMC", f"G{tag}0{i}") for i in (1, 2, 3))
+            await seed_part(conn, sku1, "GMC", gid, oem=f"G{tag}01")
+            await seed_part(conn, sku2, "GMC", gid, oem=f"G{tag}02", base=OWNED)
+    
+            def line(pn, price):
+                L, R, E = m.LTR, m.RTL, m.PDF_MARK
+                return ("".join(f"{R}{v}{E}" for v in ("a", "b", "רפידה קדמית")) +
+                        "".join(f"{L}{v}{E}" for v in ("x", pn, "y", f"{price:.2f}", "z", "w", "GMC SIERRA 2020")) + "\n")
+            with open(txt, "w", encoding="utf-8") as fh:
+                fh.write(line(f"G{tag}01", 117.0) + line(f"G{tag}02", 58.5) + line(f"G{tag}03", 11.7))
+            for _ in range(2):
+                p = run_script("importers/gmc_buick_umi_import.py")
+                assert p.returncode == 0, p.stdout[-700:] + p.stderr[-900:]
+>               assert await base_by(conn, "sku", sku1) == pp.base_price_for_cost(round(117.0 / 1.17, 2)) == 145.0      # old: price/1.17*1.18
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               assert 118.0 == 145.0
+E                +  where 145.0 = <function base_price_for_cost at 0x7785060bce00>(100.0)
+E                +    where <function base_price_for_cost at 0x7785060bce00> = pp.base_price_for_cost
+E                +    and   100.0 = round((117.0 / 1.17), 2)
+
+tests/test_importers_e2e_scripts.py:804: AssertionError
+__________________ test_import_delek_brands_script_end_to_end __________________
+
+    async def test_import_delek_brands_script_end_to_end():
+        """`import_delek_brands.py --brand NIO`: reads <DATA_DIR>/nio_parts.json ({oem_number, name_he, price_ils (ex-VAT), is_original, model});
+        DATA_DIR is /opt/autosparefinder INSIDE the isolated test container (not a host mount), where the fixture is written."""
+        path = "/opt/autosparefinder/nio_parts.json"
+        if os.path.exists(path):
+            pytest.skip(f"{path} exists in the test container: refusing to overwrite it")
+        tag = new_tag()
+        conn = await _connect()
+        try:
+            mid, _ = await ensure_brand(conn, "NIO")
+            await seed_part(conn, f"NIO-OLD-{tag}-1", "NIO", mid, oem=f"NO{tag}1")
+            await seed_part(conn, f"NIO-OLD-{tag}-2", "NIO", mid, oem=f"NO{tag}2", base=OWNED)
+            os.makedirs("/opt/autosparefinder", exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump([{"oem_number": f"NO{tag}1", "name_he": "רפידה", "name": "pad", "price_ils": 100.0, "is_original": True, "model": "ES6"},
+                           {"oem_number": f"NO{tag}2", "name_he": "פילטר", "name": "filter", "price_ils": 50.0, "is_original": True, "model": "ES6"},
+                           {"oem_number": f"NO{tag}3", "name_he": "חדש", "name": "new", "price_ils": 10.0, "is_original": True, "model": "ES6"}], fh, ensure_ascii=False)
+            for _ in range(2):
+                p = run_script("importers/import_delek_brands.py", "--brand", "NIO")
+                assert p.returncode == 0, p.stdout[-700:] + p.stderr[-900:]
+                assert await base_by(conn, "sku", f"NIO-OLD-{tag}-1") == pp.base_price_for_cost(100.0) == 145.0
+>               assert await base_by(conn, "sku", f"NIO-OLD-{tag}-2") == OWNED
+E               assert 72.0 == 33.0
+
+tests/test_importers_e2e_scripts.py:834: AssertionError
+_________________ test_acura_browser_harvest_import_end_to_end _________________
+
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-0/test_acura_browser_harvest_imp0')
+
+    async def test_acura_browser_harvest_import_end_to_end(tmp_path):
+        """`harvesters/acura_browser_harvest.py <parts.json>`: the browser harvest's output [{oem, name, price(USD), msrp}] -> import_parts.
+        cost = price x USD_ILS_RATE (env)."""
+        tag = new_tag()
+        conn = await _connect()
+        try:
+            mid, _ = await ensure_brand(conn, "Acura")
+            await seed_part(conn, f"ACU-AC{tag}1", "Acura", mid, oem=f"AC{tag}1")
+            await seed_part(conn, f"ACU-AC{tag}2", "Acura", mid, oem=f"AC{tag}2", base=OWNED)
+            f = tmp_path / "acura.json"
+            f.write_text(json.dumps([{"oem": f"AC{tag}1", "name": "Brake pad", "price": 10.0, "msrp": 12.0},
+                                     {"oem": f"AC{tag}2", "name": "Oil filter", "price": 5.0, "msrp": 6.0},
+                                     {"oem": f"AC{tag}3", "name": "New part", "price": 2.0, "msrp": 3.0}]))
+            rate = 3.70
+            for _ in range(2):
+                p = run_script("harvesters/acura_browser_harvest.py", f, env_extra={"USD_ILS_RATE": str(rate)})
+                assert p.returncode == 0, p.stdout[-700:] + p.stderr[-900:]
+                assert await base_by(conn, "sku", f"ACU-AC{tag}1") == pp.base_price_for_cost(round(10.0 * rate, 2))
+>               assert await base_by(conn, "sku", f"ACU-AC{tag}2") == OWNED
+E               assert 26.82 == 33.0
+
+tests/test_importers_e2e_scripts.py:860: AssertionError
+_______ test_import_parts_db_with_the_real_saved_workbook_porsche_sheet ________
+
+    async def test_import_parts_db_with_the_real_saved_workbook_porsche_sheet():
+        """SAVED-SOURCE E2E: `import_parts_db.py Porsche` reads the REAL workbook saved in the repo (data/parts_database.xlsx, sheet 'Porsche',
+        1,496 rows) through workbook_normalizer, into the isolated DB. The workbook's price column must NOT reach base_price: every
+        inserted row has the sentinel (0), a base_price owned by another path survives a re-import, and a second run inserts nothing."""
+        wbk = "/app/data/parts_database.xlsx"
+        if not os.path.exists(wbk):
+            pytest.skip("data/parts_database.xlsx is not in this tree")
+        conn = await _connect()
+        t0 = await conn.fetchval("SELECT now()::timestamp")
+        try:
+            mid, _ = await ensure_brand(conn, "Porsche")
+            p = run_script("importers/import_parts_db.py", "Porsche", timeout=600)
+            assert p.returncode == 0, p.stdout[-800:] + p.stderr[-900:]
+            rows = await conn.fetch("SELECT id, base_price FROM parts_catalog WHERE created_at >= $1 AND LOWER(manufacturer) = 'porsche'", t0)
+            assert len(rows) > 1000, f"only {len(rows)} rows inserted from the saved Porsche sheet"
+>           assert all(r["base_price"] in (None, 0) or float(r["base_price"]) == 0.0 for r in rows)       # old code: the sheet's price
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           assert False
+E            +  where False = all(<generator object test_import_parts_db_with_the_real_saved_workbook_porsche_sheet.<locals>.<genexpr> at 0x7784ea7daea0>)
+
+tests/test_importers_e2e_scripts.py:882: AssertionError
+__________ test_kia_new_models_import_with_synthetic_kia_israel_page ___________
+
+    async def test_kia_new_models_import_with_synthetic_kia_israel_page():
+        """`kia_new_models_import.py run()`: POST kia-israel.co.il price page -> HTML table (row: sku, _, description, EX-VAT price, stock);
+        sku KIA-<sku>; the transport is replaced by a synthetic page of that structure (every model search returns it)."""
+        tag = new_tag()
+        conn = await _connect()
+        try:
+            kid, kmade = await ensure_brand_id(conn, "626947bf-be3f-4dd1-a52e-fbcff8168cfc", "Kia")      # the importer's hard-coded brand id
+            mid, _ = await ensure_brand(conn, "Kia")
+            await seed_part(conn, f"KIA-KN{tag}1", "Kia", mid, oem=f"KN{tag}1")
+            await seed_part(conn, f"KIA-KN{tag}2", "Kia", mid, oem=f"KN{tag}2", base=OWNED)
+            fx = {"default": _kia_html([(f"KN{tag}1", "רפידות בלם", "100.00"), (f"KN{tag}2", "מסנן שמן", "50.00"), (f"KN{tag}3", "חלק חדש", "10.00")])}
+            for _ in range(2):
+                p = run_script_with_http("importers/kia_new_models_import.py", fx)
+>               assert p.returncode == 0, p.stdout[-700:] + p.stderr[-900:]
+E               AssertionError: 
+E                 [Carens] Fetching 'קרנס'...
+E                   Got 3 parts
+E                  call last):
+E                   File "<string>", line 82, in <module>
+E                   File "<frozen runpy>", line 291, in run_path
+E                   File "<frozen runpy>", line 98, in _run_module_code
+E                   File "<frozen runpy>", line 88, in _run_code
+E                   File "/app/importers/kia_new_models_import.py", line 147, in <module>
+E                     asyncio.run(run())
+E                   File "/usr/local/lib/python3.11/asyncio/runners.py", line 190, in run
+E                     return runner.run(main)
+E                            ^^^^^^^^^^^^^^^^
+E                   File "/usr/local/lib/python3.11/asyncio/runners.py", line 118, in run
+E                     return self._loop.run_until_complete(task)
+E                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E                   File "/usr/local/lib/python3.11/asyncio/base_events.py", line 654, in run_until_complete
+E                     return future.result()
+E                            ^^^^^^^^^^^^^^^
+E                   File "/app/importers/kia_new_models_import.py", line 127, in run
+E                     json.dumps({"source": "kia_new_models_import",
+E                     ^^^^
+E                 NameError: name 'json' is not defined
+E                 
+E               assert 1 == 0
+E                +  where 1 = CompletedProcess(args=['/usr/local/bin/python3', '-c', '\nimport json, os, runpy, socket, sys, urllib.request\n# Sever... 127, in run\n    json.dumps({"source": "kia_new_models_import",\n    ^^^^\nNameError: name \'json\' is not defined\n').returncode
+
+tests/test_importers_e2e_scripts.py:921: AssertionError
+________________ test_kia_import_with_synthetic_kia_israel_page ________________
+
+    async def test_kia_import_with_synthetic_kia_israel_page():
+        """`kia_import.py run()`: same page structure; sku = the raw OEM (no prefix); INSERT..ON CONFLICT(sku) fill-only."""
+        tag = new_tag()
+        conn = await _connect()
+        try:
+            kid, kmade = await ensure_brand_id(conn, "626947bf-be3f-4dd1-a52e-fbcff8168cfc", "Kia")
+            mid, _ = await ensure_brand(conn, "Kia")
+            await seed_part(conn, f"KI{tag}1", "Kia", mid, oem=f"KI{tag}1")
+            await seed_part(conn, f"KI{tag}2", "Kia", mid, oem=f"KI{tag}2", base=OWNED)
+            fx = {"default": _kia_html([(f"KI{tag}1", "רפידות בלם", "100.00"), (f"KI{tag}2", "מסנן שמן", "50.00"), (f"KI{tag}3", "חלק חדש", "10.00")])}
+            for _ in range(2):
+                p = run_script_with_http("importers/kia_import.py", fx)
+                assert p.returncode == 0, p.stdout[-700:] + p.stderr[-900:]
+>               assert await base_by(conn, "sku", f"KI{tag}1") == pp.base_price_for_cost(100.0) == 145.0      # old: price x 1.18 = 118.0
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               assert 118.0 == 145.0
+E                +  where 145.0 = <function base_price_for_cost at 0x7785060bce00>(100.0)
+E                +    where <function base_price_for_cost at 0x7785060bce00> = pp.base_price_for_cost
+
+tests/test_importers_e2e_scripts.py:943: AssertionError
+____________ test_eliteparts_scraper_with_synthetic_shopify_catalog ____________
+
+    async def test_eliteparts_scraper_with_synthetic_shopify_catalog():
+        """`scrapers/eliteparts_scraper.py main()`: eliteparts.org Shopify `products.json` ({products:[{title, tags, body_html,
+        variants:[{sku, price, compare_at_price, available}]}]}); transport replaced. A NEW OEM is inserted with the policy ESTIMATE of the
+        retail price list (max = compare_at); an OEM already in the catalogue is skipped entirely (its owned base_price is untouched)."""
+        tag = new_tag()
+        conn = await _connect()
+        try:
+            gid, gmade = await ensure_brand_id(conn, "60e78dce-367f-4041-9157-b5df7f64a41f", "GWM")        # the scraper's hard-coded brand id
+            mid, _ = await ensure_brand(conn, "GWM")
+            await seed_part(conn, f"GWM-EP{tag}02", "GWM", mid, oem=f"EP{tag}02", base=OWNED)
+            page = {"products": [{"title": "GWM Haval H6 brake pad", "handle": "gwm-haval-h6-brake-pad", "tags": ["GWM"], "body_html": "<p>pad</p>", "images": [],
+                                  "variants": [{"sku": f"EP{tag}01", "price": "118.00", "compare_at_price": "177.00", "available": True},
+                                               {"sku": f"EP{tag}02", "price": "59.00", "compare_at_price": "59.00", "available": True}]}]}
+            for _ in range(2):
+                p = run_script_with_http("scrapers/eliteparts_scraper.py", {"default": page})
+                assert p.returncode == 0, p.stdout[-700:] + p.stderr[-900:]
+>               assert await base_by(conn, "oem_number", f"EP{tag}01") == pp.base_price_for_estimate(None, 177.0, None) == 217.5
+E               assert 118.0 == 217.5
+E                +  where 217.5 = <function base_price_for_estimate at 0x7785060bcea0>(None, 177.0, None)
+E                +    where <function base_price_for_estimate at 0x7785060bcea0> = pp.base_price_for_estimate
+
+tests/test_importers_e2e_scripts.py:967: AssertionError
+_____________ test_kgm_ssangyong_importer_with_synthetic_kgm_page ______________
+
+    async def test_kgm_ssangyong_importer_with_synthetic_kgm_page():
+        """`kgm_ssangyong_importer.py main()` (httpx POST kgm.co.il price page; transport replaced): HTML rows with exactly 5 cells
+        (part number, suffix, Hebrew description, consumer price incl. VAT, stock `יש`); upsert by sku KGM-<PN>."""
+        tag = new_tag()
+        conn = await _connect()
+        try:
+            mid, made = await ensure_brand(conn, "SsangYong")
+            await seed_part(conn, f"KGM-KG{tag}01", "SsangYong", mid, oem=f"KG{tag}01")
+            await seed_part(conn, f"KGM-KG{tag}02", "SsangYong", mid, oem=f"KG{tag}02", base=OWNED)
+            rows = "".join(f"<tr><td>{pn}</td><td></td><td>{d}</td><td>{pr}</td><td>יש</td></tr>"
+                           for pn, d, pr in ((f"KG{tag}01", "רפידות בלם", "118.00"), (f"KG{tag}02", "מסנן שמן", "59.00"), (f"KG{tag}03", "חלק חדש", "11.80")))
+            fx = {"default": f"<html><body><table><tr><th>a</th><th>b</th><th>c</th><th>d</th><th>e</th></tr>{rows}</table></body></html>"}
+            for _ in range(2):
+                p = run_script_with_http("importers/kgm_ssangyong_importer.py", fx)
+                assert p.returncode == 0, p.stdout[-700:] + p.stderr[-900:]
+                assert await base_by(conn, "sku", f"KGM-KG{tag}01") == pp.base_price_for_cost(round(118.0 / 1.18, 2)) == 145.0
+>               assert await base_by(conn, "sku", f"KGM-KG{tag}02") == OWNED
+E               assert 72.5 == 33.0
+
+tests/test_importers_e2e_scripts.py:991: AssertionError
+______________ test_samelet_import_v2_with_synthetic_samelet_api _______________
+
+    async def test_samelet_import_v2_with_synthetic_samelet_api():
+        """`samelet_import_v2.py subaru` (requests; samelet.com): GET the form page for a token, then POST /api part searches answering
+        {success:1, parts:[{Material, MatDescHe, MatDescEn, PriceWithVat (incl. VAT), MaterialType}]}; sku = <prefix>-<Material>.
+        Transport replaced (sleep() disabled: the importer issues ~1,700 searches)."""
+        tag = new_tag()
+        conn = await _connect()
+        seeded_before = {r["name"] for r in await conn.fetch("SELECT name FROM car_brands WHERE name IN ('Abarth', 'RAM')")}
+        try:
+            mid, made = await ensure_brand(conn, "Subaru")
+            await seed_part(conn, f"SU-SMX{tag}1", "Subaru", mid, oem=f"SMX{tag}1")
+            await seed_part(conn, f"SU-SMX{tag}2", "Subaru", mid, oem=f"SMX{tag}2", base=OWNED)
+            api = {"success": 1, "parts": [
+                {"Material": f"SMX{tag}1", "MatDescEn": "brake pad", "MatDescHe": "רפידה", "PriceWithVat": "118.00", "MaterialType": "01"},
+                {"Material": f"SMX{tag}2", "MatDescEn": "oil filter", "MatDescHe": "פילטר", "PriceWithVat": "59.00", "MaterialType": "01"},
+                {"Material": f"SMX{tag}3", "MatDescEn": "new part", "MatDescHe": "חדש", "PriceWithVat": "11.80", "MaterialType": "01"}]}
+            fx = {"no_sleep": True, "routes": [{"match": "samelet.com/api", "body": api},
+                                                {"match": "form/parts-prices", "body": '<input name="token" type="hidden" value="abc123">'}]}
+            for _ in range(2):
+                p = run_script_with_http("importers/samelet_import_v2.py", fx, "subaru", timeout=600)
+                assert p.returncode == 0, p.stdout[-700:] + p.stderr[-900:]
+>               assert await base_by(conn, "sku", f"SU-SMX{tag}1") == pp.base_price_for_cost(round(118.0 / 1.18, 2)) == 145.0
+E               assert None == 145.0
+E                +  where 145.0 = <function base_price_for_cost at 0x7785060bce00>(100.0)
+E                +    where <function base_price_for_cost at 0x7785060bce00> = pp.base_price_for_cost
+E                +    and   100.0 = round((118.0 / 1.18), 2)
+
+tests/test_importers_e2e_scripts.py:1018: AssertionError
+____________ test_selected_parts_scraper_with_synthetic_site_pages _____________
+
+    async def test_selected_parts_scraper_with_synthetic_site_pages():
+        """`scrapers/selected_parts_scraper.py main()` (requests; selected.parts): main listing -> sub-category -> product pages. Synthetic HTML
+        built from the scraper's own regexes (ITEM_RE, CODE_RE, price `<n> ₪`, <title>); transport replaced, sleep() disabled. The site prices are
+        consumer prices (the scraper converts 17% -> 18% VAT); base_price = the policy ESTIMATE of that consumer price."""
+        tag = new_tag()
+        conn = await _connect()
+        try:
+            lid, lmade = await ensure_brand_id(conn, "7f060acf-2382-42e1-8413-f9b045cb0836", "Land Rover")      # the scraper's hard-coded brand id
+            mid, _ = await ensure_brand(conn, "Land Rover")
+            await seed_part(conn, f"LR-SEL{tag}1", "Land Rover", mid, oem=f"SEL{tag}1")
+            await seed_part(conn, f"LR-SEL{tag}2", "Land Rover", mid, oem=f"SEL{tag}2", base=OWNED)
+    
+            def product(code, price):
+                return (f'<html><head><title>רפידות בלם - XYZ LR</title></head><body><span class="code_item">{code}</span>'
+                        f'<span class="origin_price_number">{price} ₪</span></body></html>')
+            routes = [
+                {"match": "/items/", "body": None},                                        # replaced below by per-item routes
+                {"match": "/179509-LAND-ROVER-PARTS", "body": '<a href="/123456-SUBCAT-ONE">sub</a>'},
+                {"match": "/179510-JAGUAR-PARTS", "body": "<html></html>"},
+                {"match": "/123456-SUBCAT-ONE", "body": "".join(f"<a href='/items/{i}-x'>i</a>" for i in (1001, 1002, 1003))},
+            ]
+            routes = [r for r in routes if r["body"] is not None] + [
+                {"match": "/items/1001-x", "body": product(f"SEL{tag}1", "118")},
+                {"match": "/items/1002-x", "body": product(f"SEL{tag}2", "59")},
+                {"match": "/items/1003-x", "body": product(f"SEL{tag}3", "12")}]
+            # specific routes first (substring match, first hit wins)
+            routes = [r for r in routes if r["match"].startswith("/items/")] + [r for r in routes if not r["match"].startswith("/items/")]
+            fx = {"no_sleep": True, "routes": routes, "default": "<html></html>"}
+            est = lambda price: pp.base_price_for_estimate(None, round(price / 1.17 * 1.18, 2), None)
+            for _ in range(2):
+                p = run_script_with_http("scrapers/selected_parts_scraper.py", fx, timeout=300)
+                assert p.returncode == 0, p.stdout[-700:] + p.stderr[-900:]
+>               assert await base_by(conn, "sku", f"LR-SEL{tag}1") == est(118.0)
+E               assert 119.01 == 146.25
+E                +  where 146.25 = <function test_selected_parts_scraper_with_synthetic_site_pages.<locals>.<lambda> at 0x7784e5c9fe20>(118.0)
+
+tests/test_importers_e2e_scripts.py:1061: AssertionError
+___________________ test_zeekr_full_pdf_importer_end_to_end ____________________
+
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-0/test_zeekr_full_pdf_importer_e0')
+
+    async def test_zeekr_full_pdf_importer_end_to_end(tmp_path):
+        """`zeekr_full_import.py` (/app/uploads/ZEEKER001_*.pdf, pdfplumber extract_table): columns [type, models, price (ex-VAT), stock, description,
+        sku]; sku stored ZEEKR-IL-<sku>. The ruled-table PDF is a SYNTHETIC rendering of that layout."""
+        pdf = "/app/uploads/ZEEKER001_20260519_131930.pdf"
+        if os.path.exists(pdf):
+            pytest.skip("a real price-list PDF exists at this path: refusing to overwrite it")
+        tag = new_tag()
+        conn = await _connect()
+        try:
+            zid, zmade = await ensure_brand_id(conn, "ac1ddaf7-d0e3-4ea2-8990-da71fbc71ade", "Zeekr")        # the importer's hard-coded brand id
+            await seed_part(conn, f"ZEEKR-IL-ZE-Z{tag}01", "Zeekr", zid, oem=f"Z{tag}01")
+            await seed_part(conn, f"ZEEKR-IL-ZE-Z{tag}02", "Zeekr", zid, oem=f"Z{tag}02", base=OWNED)
+            make_table_pdf(pdf, [["orig", "ZEEKR 001", "100.00", "yes", "brake pad", f"ZE-Z{tag}01"],
+                                 ["orig", "ZEEKR 001", "50.00", "yes", "oil filter", f"ZE-Z{tag}02"],
+                                 ["orig", "ZEEKR 001", "10.00", "yes", "new part", f"ZE-Z{tag}03"]])
+            for _ in range(2):
+                p = run_script("importers/zeekr_full_import.py", timeout=300)
+                assert p.returncode == 0, p.stdout[-800:] + p.stderr[-900:]
+>               assert await base_by(conn, "sku", f"ZEEKR-IL-ZE-Z{tag}01") == pp.base_price_for_cost(100.0) == 145.0      # old: price x 1.18 = 118.0
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               assert 118.0 == 145.0
+E                +  where 145.0 = <function base_price_for_cost at 0x7785060bce00>(100.0)
+E                +    where <function base_price_for_cost at 0x7785060bce00> = pp.base_price_for_cost
+
+tests/test_importers_e2e_scripts.py:1087: AssertionError
+_______ test_bydil_scraper_scrape_and_import_with_synthetic_byd_catalog ________
+
+    async def test_bydil_scraper_scrape_and_import_with_synthetic_byd_catalog():
+        """`scrapers/bydil_scraper.py --scrape --import-db` (httpx POST bydauto.co.il; transport replaced, sleeps disabled): a `<table>` whose rows
+        have 8 cells (name, type, catalog, brand, model, stock, warranty, price incl. VAT); the scrape writes bydil_parts.json, the import
+        upserts by sku BYDIL-<catalog>."""
+        tag = new_tag()
+        conn = await _connect()
+        try:
+            mid, made = await ensure_brand(conn, "BYD")
+            await seed_part(conn, f"BYDIL-BY{tag}01", "BYD", mid, oem=f"BY{tag}01")
+            await seed_part(conn, f"BYDIL-BY{tag}02", "BYD", mid, oem=f"BY{tag}02", base=OWNED)
+    
+            def row(cat, price):
+                return f"<tr><td>רפידה</td><td>מקורי</td><td>{cat}</td><td>BYD</td><td>ATTO 3</td><td>יש</td><td>24 חודשים</td><td>{price}</td></tr>"
+            table = "<table>" + row(f"BY{tag}01", "118.00") + row(f"BY{tag}02", "59.00") + row(f"BY{tag}03", "11.80") + "</table>"
+            fx = {"no_sleep": True, "mkdirs": ["/opt/autosparefinder"], "default": table}
+            for _ in range(2):
+                p = run_script_with_http("scrapers/bydil_scraper.py", fx, "--scrape", "--import-db", timeout=600)
+                assert p.returncode == 0, p.stdout[-800:] + p.stderr[-900:]
+>               assert await base_by(conn, "sku", f"BYDIL-BY{tag}01") == pp.base_price_for_cost(100.0) == 145.0
+E               assert 100.0 == 145.0
+E                +  where 145.0 = <function base_price_for_cost at 0x7785060bce00>(100.0)
+E                +    where <function base_price_for_cost at 0x7785060bce00> = pp.base_price_for_cost
+
+tests/test_importers_e2e_scripts.py:1118: AssertionError
+__ test_spareto_harvester_end_to_end_with_synthetic_listing_and_product_pages __
+
+    async def test_spareto_harvester_end_to_end_with_synthetic_listing_and_product_pages():
+        """`harvesters/spareto_harvester.py --makes TOYOTA --pages 3` (httpx GET spareto.com; transport replaced): listing page -> product
+        pages (title, meta OEM list, itemprop price in EUR) -> upsert_part. Regression for two arity bugs found by this run: the UPDATE
+        passed 7 arguments to a 6-placeholder statement and the INSERT passed 8 to a 9-placeholder statement, so no part was ever written."""
+        tag = new_tag()
+        conn = await _connect()
+        try:
+            mid, _ = await ensure_brand(conn, "Toyota")
+            await seed_part(conn, f"SP{tag}A", "Toyota", mid, oem=f"SP{tag}A")                       # existing, no base
+            await seed_part(conn, f"SP{tag}B", "Toyota", mid, oem=f"SP{tag}B", base=OWNED)           # existing, owned
+            try:
+                rate = float(await conn.fetchval("SELECT value FROM system_settings WHERE key = 'eur_to_ils_rate' LIMIT 1"))
+            except Exception:
+                rate = 3.9
+    
+            def prod(n):
+                return (f"<html><head><title>SP{tag}{n} NGK Ignition coil | Spareto</title>"
+                        f'<meta name="description" content="Fully compatible with original part numbers 9091902{n}1, and 9091902{n}2."></head>'
+                        f'<body><span itemprop="price" content="10.00">10</span></body></html>')
+            listing = "".join(f'<a href="/products/ngk-ignition-coil/sp{tag}{n}">x</a>' for n in "ABC")
+            fx = {"no_sleep": True, "routes": [
+                {"match": "spareto.com/products?", "body": f"<html>{listing}</html>"},
+                {"match": f"/sp{tag}A", "body": prod("A")},
+                {"match": f"/sp{tag}B", "body": prod("B")},
+                {"match": f"/sp{tag}C", "body": prod("C")}]}
+            for _ in range(2):
+                p = run_script_with_http("harvesters/spareto_harvester.py", fx, "--makes", "TOYOTA", "--pages", "3", timeout=600)
+                assert p.returncode == 0, p.stdout[-800:] + p.stderr[-1200:]
+                want = pp.base_price_for_cost(10.0 * rate)
+>               assert await base_by(conn, "sku", f"SP{tag}A") == want, (p.stdout + p.stderr)[-2500:]
+E               AssertionError: 2026-11-02 04:53:42,819 [INFO] Starting Spareto harvest: makes=['TOYOTA'] pages=3 dry=False
+E                 2026-11-02 04:53:42,886 [INFO] EUR/ILS rate: 3.90
+E                 2026-11-02 04:53:43,006 [INFO] Processing make: TOYOTA (up to 3 pages)
+E                 2026-11-02 04:53:43,008 [INFO]   Page 1: 3 new products
+E                 2026-11-02 04:53:43,025 [WARNING] Upsert failed for SPF5ED1BABA: the server expects 6 arguments for this query, 7 were passed
+E                 HINT:  Check the query against the passed list of arguments.
+E                 2026-11-02 04:53:43,028 [WARNING] Upsert failed for SPF5ED1BABB: the server expects 6 arguments for this query, 7 were passed
+E                 HINT:  Check the query against the passed list of arguments.
+E                 2026-11-02 04:53:43,031 [WARNING] Upsert failed for SPF5ED1BABC: the server expects 9 arguments for this query, 8 were passed
+E                 HINT:  Check the query against the passed list of arguments.
+E                 2026-11-02 04:53:43,033 [INFO]   No new products on page 3 — stopping TOYOTA
+E                 2026-11-02 04:53:43,055 [INFO] Final stats: {'inserted': 0, 'updated': 0, 'skipped': 0, 'error': 3, 'fitment': 0}
+E                 
+E               assert None == 56.55
+
+tests/test_importers_e2e_scripts.py:1155: AssertionError
+__ test_colmobil_import_v2_end_to_end_from_a_generated_mitsubishi_price_list ___
+
+    async def test_colmobil_import_v2_end_to_end_from_a_generated_mitsubishi_price_list():
+        """`importers/colmobil_import_v2.py --brands mitsubishi`: reads /app/state/MIT.PDF (Colmobil layout, real PDF text extraction),
+        updates existing parts (fill-only base), INSERTS an OEM not yet in the catalog, writes the supplier offer; repeat is idempotent."""
+        pdf = "/app/state/MIT.PDF"
+        if os.path.exists(pdf):
+            pytest.skip("a real price-list PDF exists at this path: refusing to overwrite it")
+        tag = new_tag()
+        conn = await _connect()
+        sup_before = await conn.fetchval("SELECT id FROM suppliers WHERE name = 'Colmobil - Mitsubishi Israel'")
+        try:
+            mid, _ = await ensure_brand(conn, "Mitsubishi")
+            await seed_part(conn, f"MIT-{tag}-1", "Mitsubishi", mid, oem=f"CM{tag}1")
+            await seed_part(conn, f"MIT-{tag}-2", "Mitsubishi", mid, oem=f"CM{tag}2", base=OWNED)
+            make_pdf(pdf, [f"CM{tag}1מיצובישי", "רפידה קדמית 118.00    זמין", f"CM{tag}2מיצובישי", "פילטר שמן 59.00    זמין",
+                           f"CM{tag}3מיצובישי", "חלק חדש 11.80    זמין"])
+            for _ in range(2):
+                p = run_script("importers/colmobil_import_v2.py", "--brands", "mitsubishi")
+                assert p.returncode == 0, p.stdout[-600:] + p.stderr[-900:]
+                assert await base_by(conn, "oem_number", f"CM{tag}1") == pp.base_price_for_cost(round(118.0 / 1.18, 2)) == 145.0
+>               assert await base_by(conn, "oem_number", f"CM{tag}2") == OWNED
+E               assert 72.0 == 33.0
+
+tests/test_importers_e2e_scripts.py:1182: AssertionError
+_ test_freesbe_recovery_dry_run_then_apply_end_to_end_against_the_isolated_database _
+
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-0/test_freesbe_recovery_dry_run_0')
+
+    async def test_freesbe_recovery_dry_run_then_apply_end_to_end_against_the_isolated_database(tmp_path):
+        """`importers/freesbe_recovery.py`: dry-run (writes a JSON report; default mode never writes), then `--apply --from-report` which
+        re-validates every candidate against the (replaced) FREESBE transport and corrects the rows. The sandbox database is the isolated
+        one the harness enforces; the production-recovery flag is the tool's own interlock, not a production connection.
+        Persisted: importer_price_ils -> ex-VAT price, max_price_ils -> price incl. VAT, base_price FILL-ONLY (empty -> policy net of the
+        ex-VAT cost; a non-empty base is never rewritten by this tool - normalize/fix_base_prices own that). Repeat: SKIP_ALREADY_CORRECT."""
+        tag = new_tag()
+        conn = await _connect()
+        try:
+            mid, _ = await ensure_brand(conn, "Kia")
+            oems = {n: f"FR{tag}{n}" for n in "12"}
+            await seed_part(conn, f"FR-{tag}-1", "Kia", mid, oem=oems["1"], importer=118.0, base=171.1, mx=None)      # corrupted, non-empty base
+            await seed_part(conn, f"FR-{tag}-2", "Kia", mid, oem=oems["2"], importer=59.0, base=None, mx=None)        # corrupted, empty base
+    
+            def item(n, price, wo):
+                return {"id": int(n), "attributes": {"partId": f"KI-{oems[n]}", "price": price, "priceWithoutVat": wo}}
+            everything = {"data": [item("1", 118.0, 100.0), item("2", 59.0, 50.0)], "meta": {"pagination": {"pageCount": 1, "page": 1}}}
+            fx = {"no_sleep": True, "routes": [
+                {"match": oems["1"], "body": {"data": [item("1", 118.0, 100.0)]}},
+                {"match": oems["2"], "body": {"data": [item("2", 59.0, 50.0)]}}],
+                "default": everything}
+            report = str(tmp_path / "freesbe_report.json")
+            before = await conn.fetch("SELECT sku, importer_price_ils, base_price, max_price_ils FROM parts_catalog WHERE sku LIKE $1 ORDER BY sku", f"FR-{tag}-%")
+    
+            p = run_script_with_http("importers/freesbe_recovery.py", fx, "--out", report, timeout=300)           # DRY RUN
+            assert p.returncode == 0, p.stdout[-800:] + p.stderr[-1200:]
+            assert await conn.fetch("SELECT sku, importer_price_ils, base_price, max_price_ils FROM parts_catalog WHERE sku LIKE $1 ORDER BY sku", f"FR-{tag}-%") == before, "dry-run wrote"
+            rep = json.loads(open(report).read())
+            mine = [r for r in rep["rows"] if r["catalog_sku"].startswith(f"FR-{tag}-")]
+            assert sorted(r["classification"] for r in mine) == ["SAFE_AUTOMATIC_RECOVERY"] * 2, mine
+    
+            for round_ in (1, 2):
+                p = run_script_with_http("importers/freesbe_recovery.py", fx, "--apply", "--confirm-production-recovery", "--from-report", report, timeout=300)
+                assert p.returncode == 0, p.stdout[-800:] + p.stderr[-1200:]
+                rows = {r["sku"]: r for r in await conn.fetch("SELECT sku, importer_price_ils, base_price, max_price_ils FROM parts_catalog WHERE sku LIKE $1", f"FR-{tag}-%")}
+                r1, r2 = rows[f"FR-{tag}-1"], rows[f"FR-{tag}-2"]
+                assert (float(r1["importer_price_ils"]), float(r1["max_price_ils"])) == (100.0, 118.0)
+>               assert float(r1["base_price"]) == 171.1                                  # non-empty base is never rewritten here
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               AssertionError: assert 145.0 == 171.1
+E                +  where 145.0 = float(Decimal('145.00'))
+
+tests/test_importers_e2e_scripts.py:1231: AssertionError
+_______ test_supplier_pdf_import_apply_end_to_end_from_a_ruled_table_pdf _______
+
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-0/test_supplier_pdf_import_apply0')
+
+    async def test_supplier_pdf_import_apply_end_to_end_from_a_ruled_table_pdf(tmp_path):
+        """`importers/supplier_pdf_import.py --pdf X --manufacturer ORA --apply`: pdfplumber table extraction (header: Catalog/Name/Price/
+        Availability, ex-VAT price) -> compute_price_triple -> insert new part / update existing. Persisted: new part base = policy estimate
+        of the consumer reference (max = price*1.18); an existing part with an EMPTY base is filled, an owned base is kept, and an existing
+        importer_price_ils is never overwritten by the 0.0 an IL-importer row carries (regression for the unguarded importer_price_ils SET)."""
+        tag = new_tag()
+        conn = await _connect()
+        sup_before = await conn.fetchval("SELECT id FROM suppliers WHERE name = 'ORA Official Importer Israel'")
+        brand_before = await conn.fetchval("SELECT id FROM car_brands WHERE LOWER(name) = 'ora'")
+        try:
+            mid, _ = await ensure_brand(conn, "ORA")
+            await seed_part(conn, f"ORA-{tag}1", "ORA", mid, oem=f"OR{tag}1", importer=77.0)                      # empty base, has importer cost
+            await seed_part(conn, f"ORA-{tag}2", "ORA", mid, oem=f"OR{tag}2", base=OWNED, importer=88.0)          # owned base
+            pdf = make_table_pdf(tmp_path / "ora.pdf", [["Catalog", "Name", "Price", "Availability"],
+                                                         [f"OR{tag}1", "Brake pad", "100.00", "available"],
+                                                         [f"OR{tag}2", "Oil filter", "50.00", "available"],
+                                                         [f"OR{tag}3", "New wiper", "10.00", "available"]])
+            for _ in range(2):
+                p = run_script("importers/supplier_pdf_import.py", "--pdf", pdf, "--manufacturer", "ORA", "--apply", timeout=600)
+                assert p.returncode == 0, p.stdout[-800:] + p.stderr[-1500:]
+>               assert await base_by(conn, "oem_number", f"OR{tag}1") == pp.base_price_for_estimate(None, 118.0, None)
+E               assert 118.0 == 145.0
+E                +  where 145.0 = <function base_price_for_estimate at 0x7785060bcea0>(None, 118.0, None)
+E                +    where <function base_price_for_estimate at 0x7785060bcea0> = pp.base_price_for_estimate
+
+tests/test_importers_e2e_scripts.py:1259: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_importers_e2e_scripts.py::test_kia_il_direct_script_end_to_end
+FAILED tests/test_importers_e2e_scripts.py::test_bmw_il_direct_script_end_to_end
+FAILED tests/test_importers_e2e_scripts.py::test_jaguar_scripts_end_to_end[importers/jaguar_ndjson_import.py]
+FAILED tests/test_importers_e2e_scripts.py::test_xlsx_il_price_import_script_end_to_end
+FAILED tests/test_importers_e2e_scripts.py::test_il_consumer_price_import_script_end_to_end
+FAILED tests/test_importers_e2e_scripts.py::test_import_kia_israel_script_end_to_end
+FAILED tests/test_importers_e2e_scripts.py::test_import_champion_motors_script_end_to_end
+FAILED tests/test_importers_e2e_scripts.py::test_lr_import_script_end_to_end
+FAILED tests/test_importers_e2e_scripts.py::test_toyota_il_importer_script_end_to_end
+FAILED tests/test_importers_e2e_scripts.py::test_mazda_il_importer_with_synthetic_delek_api_response
+FAILED tests/test_importers_e2e_scripts.py::test_mct_importer_with_synthetic_mct_api_response
+FAILED tests/test_importers_e2e_scripts.py::test_bmw_il_import_script_end_to_end
+FAILED tests/test_importers_e2e_scripts.py::test_delek_multi_importer_with_synthetic_delek_api_response
+FAILED tests/test_importers_e2e_scripts.py::test_asap_import_script_end_to_end
+FAILED tests/test_importers_e2e_scripts.py::test_subaru_il_importer_with_synthetic_samelet_response
+FAILED tests/test_importers_e2e_scripts.py::test_colmobil_format_pdf_importers_end_to_end[importers/hyundai_genesis_mitsubishi_import.py-MITSUBISHI_20260518_161229.pdf]
+FAILED tests/test_importers_e2e_scripts.py::test_colmobil_format_pdf_importers_end_to_end[importers/fitz_pdf_import.py-MITSUBISHI_20260518_161229.pdf]
+FAILED tests/test_importers_e2e_scripts.py::test_fitz_mb_suzuki_pdf_importer_end_to_end
+FAILED tests/test_importers_e2e_scripts.py::test_renault_pdf_importer_end_to_end
+FAILED tests/test_importers_e2e_scripts.py::test_zeekr_pdf_importer_end_to_end
+FAILED tests/test_importers_e2e_scripts.py::test_il_pdf_batch_importer_end_to_end
+FAILED tests/test_importers_e2e_scripts.py::test_il_importer_pdf_import_script_end_to_end
+FAILED tests/test_importers_e2e_scripts.py::test_lexus_pdf_importer_end_to_end
+FAILED tests/test_importers_e2e_scripts.py::test_porsche_pdf_importer_end_to_end
+FAILED tests/test_importers_e2e_scripts.py::test_cadillac_israel_importer_end_to_end
+FAILED tests/test_importers_e2e_scripts.py::test_isuzu_excel_importer_end_to_end
+FAILED tests/test_importers_e2e_scripts.py::test_xls_prices_import_end_to_end
+FAILED tests/test_importers_e2e_scripts.py::test_gmc_buick_umi_importer_end_to_end
+FAILED tests/test_importers_e2e_scripts.py::test_import_delek_brands_script_end_to_end
+FAILED tests/test_importers_e2e_scripts.py::test_acura_browser_harvest_import_end_to_end
+FAILED tests/test_importers_e2e_scripts.py::test_import_parts_db_with_the_real_saved_workbook_porsche_sheet
+FAILED tests/test_importers_e2e_scripts.py::test_kia_new_models_import_with_synthetic_kia_israel_page
+FAILED tests/test_importers_e2e_scripts.py::test_kia_import_with_synthetic_kia_israel_page
+FAILED tests/test_importers_e2e_scripts.py::test_eliteparts_scraper_with_synthetic_shopify_catalog
+FAILED tests/test_importers_e2e_scripts.py::test_kgm_ssangyong_importer_with_synthetic_kgm_page
+FAILED tests/test_importers_e2e_scripts.py::test_samelet_import_v2_with_synthetic_samelet_api
+FAILED tests/test_importers_e2e_scripts.py::test_selected_parts_scraper_with_synthetic_site_pages
+FAILED tests/test_importers_e2e_scripts.py::test_zeekr_full_pdf_importer_end_to_end
+FAILED tests/test_importers_e2e_scripts.py::test_bydil_scraper_scrape_and_import_with_synthetic_byd_catalog
+FAILED tests/test_importers_e2e_scripts.py::test_spareto_harvester_end_to_end_with_synthetic_listing_and_product_pages
+FAILED tests/test_importers_e2e_scripts.py::test_colmobil_import_v2_end_to_end_from_a_generated_mitsubishi_price_list
+FAILED tests/test_importers_e2e_scripts.py::test_freesbe_recovery_dry_run_then_apply_end_to_end_against_the_isolated_database
+FAILED tests/test_importers_e2e_scripts.py::test_supplier_pdf_import_apply_end_to_end_from_a_ruled_table_pdf
+43 failed, 2 passed in 113.30s (0:01:53)
+DONE

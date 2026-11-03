@@ -1,0 +1,617 @@
+services:
+  postgres_catalog:
+    image: pgvector/pgvector:pg16
+    container_name: autospare_postgres_catalog
+    restart: unless-stopped
+    mem_limit: 5120m
+    shm_size: 512m
+    command: ["postgres", "-c", "shared_buffers=2GB", "-c", "work_mem=32MB", "-c", "maintenance_work_mem=256MB", "-c", "effective_cache_size=8GB", "-c", "max_connections=50"]
+    environment:
+      POSTGRES_DB: autospare
+      POSTGRES_USER: autospare
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+    - postgres_catalog_data:/var/lib/postgresql/data
+    - ./database/init.sql:/docker-entrypoint-initdb.d/:ro
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pg_isready -U autospare -d autospare
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    ports:
+    - 127.0.0.1:5432:5432
+    networks:
+    - internal
+    security_opt:
+    - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+  postgres_pii:
+    image: pgvector/pgvector:pg16
+    container_name: autospare_postgres_pii
+    restart: unless-stopped
+    mem_limit: 1024m
+    environment:
+      POSTGRES_DB: autospare_pii
+      POSTGRES_USER: autospare
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+    - postgres_pii_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pg_isready -U autospare -d autospare_pii
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    ports:
+    - 127.0.0.1:5433:5432
+    networks:
+    - internal
+    security_opt:
+    - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+  redis:
+    image: redis:7-alpine
+    container_name: autospare_redis
+    restart: unless-stopped
+    mem_limit: 512m
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    volumes:
+    - redis_data:/data
+    healthcheck:
+      test:
+      - CMD
+      - redis-cli
+      - -a
+      - ${REDIS_PASSWORD}
+      - ping
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+    - internal
+    security_opt:
+    - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+  backend:
+    build: ./backend
+    container_name: autospare_backend
+    restart: unless-stopped
+    mem_limit: 4096m
+    shm_size: 256m
+    environment:
+      # /app is on the path so sitecustomize.py auto-loads and appends the script
+      # subfolders (importers/harvesters/scrapers/maintenance/legacy/devtests) to
+      # sys.path — every bare `import X` resolves regardless of which subfolder X.py
+      # now lives in, for uvicorn AND every `python3 /app/.../X.py` subprocess.
+      PYTHONPATH: /app
+      # Thumbnail pipeline throughput (raised 2026-07-20 — owner: "run at full power").
+      # The harvest re-trigger produces source images faster than the old 80/90s cadence
+      # could clean them. nice(15) still yields CPU to the FlareSolverr harvesters.
+      THUMBNAIL_IMPORT_BATCH: ${THUMBNAIL_IMPORT_BATCH:-400}
+      THUMBNAIL_IMPORT_SLEEP: ${THUMBNAIL_IMPORT_SLEEP:-40}
+      # Contabo Object Storage (S3-compatible) — part thumbnails. Secret lives only in .env.
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_REGION: ${S3_REGION:-eu2}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+      S3_BUCKET: ${S3_BUCKET:-part-thumbnails}
+      THUMB_PUBLIC_BASE: ${THUMB_PUBLIC_BASE:-https://autosparefinder.co.il/api/v1/thumbnails}
+      DATABASE_URL: postgresql+asyncpg://autospare:${DB_PASSWORD}@postgres_catalog:5432/autospare
+      DATABASE_PII_URL: postgresql+asyncpg://autospare:${DB_PASSWORD}@postgres_pii:5432/autospare_pii
+      # Raised 2026-08-13 after a 100-user load test showed the PII pool (customers/
+      # orders/payments) exhausting at its old default (pool_size=5, overflow=2 — the
+      # PII engine derives from half of these) — `QueuePool limit of size 5 overflow 2
+      # reached` on every cart/checkout/payment/order-history call under concurrent
+      # load. Postgres itself allows max_connections=100 with ~90 headroom unused, so
+      # this only raises the app-level pool, not the DB server. Catalog pool = this
+      # value + overflow; PII pool = half of each (see BACKEND_DATABASE_MODELS.py).
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-40}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-20}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_REFRESH_SECRET_KEY: ${JWT_REFRESH_SECRET_KEY}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      HF_TOKEN: ${HF_TOKEN}
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-20b}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      CEREBRAS_API_KEY: ${CEREBRAS_API_KEY}
+      CEREBRAS_TEXT_MODEL: ${CEREBRAS_TEXT_MODEL:-gpt-oss-120b}
+      LLM_PRIMARY_PROVIDER: ${LLM_PRIMARY_PROVIDER:-hf}
+      HF_PRIMARY_PROVIDER: ${HF_PRIMARY_PROVIDER:-deepinfra}
+      CEREBRAS_ENABLED: ${CEREBRAS_ENABLED:-1}
+      CEREBRAS_FALLBACK_MODEL: ${CEREBRAS_FALLBACK_MODEL:-}  # zai-glm-4.7 removed from Cerebras API (returns 404)
+      ALIEXPRESS_APP_KEY: ${ALIEXPRESS_APP_KEY:-}
+      ALIEXPRESS_APP_SECRET: ${ALIEXPRESS_APP_SECRET:-}
+      ALIEXPRESS_ACCESS_TOKEN: ${ALIEXPRESS_ACCESS_TOKEN:-}
+      ALIEXPRESS_REFRESH_TOKEN: ${ALIEXPRESS_REFRESH_TOKEN:-}
+      ALIEXPRESS_TOKEN_EXPIRE: ${ALIEXPRESS_TOKEN_EXPIRE:-0}
+      ALIEXPRESS_DS_API_URL: ${ALIEXPRESS_DS_API_URL:-https://api-sg.aliexpress.com/sync}
+      ALIEXPRESS_PRICE_SYNC_LIMIT: ${ALIEXPRESS_PRICE_SYNC_LIMIT:-200}
+      ALIEXPRESS_PRICE_SYNC_ENABLED: ${ALIEXPRESS_PRICE_SYNC_ENABLED:-1}
+      HF_TEXT_MODEL: ${HF_TEXT_MODEL}
+      HF_VISION_MODEL: ${HF_VISION_MODEL:-Qwen/Qwen3-VL-8B-Instruct}
+      EXTERNAL_FITMENT_PROVIDER_URLS: ${EXTERNAL_FITMENT_PROVIDER_URLS:-https://www.autodoc.eu/api/v1/part/applicability,https://www.buycarparts.co.uk/api/v1/part/applicability}
+      EXTERNAL_ENABLE_NHTSA: ${EXTERNAL_ENABLE_NHTSA:-true}
+      NHTSA_API_BASE: ${NHTSA_API_BASE:-https://vpic.nhtsa.dot.gov/api}
+      EXTERNAL_ENABLE_EBAY: ${EXTERNAL_ENABLE_EBAY:-true}
+      EBAY_BROWSE_API_BASE: ${EBAY_BROWSE_API_BASE:-https://api.ebay.com/buy/browse/v1}
+      EBAY_MARKETPLACE_ID: ${EBAY_MARKETPLACE_ID:-EBAY_US}
+      EBAY_BEARER_TOKEN: ${EBAY_BEARER_TOKEN:-}
+      EBAY_CLIENT_ID: ${EBAY_CLIENT_ID:-}
+      EBAY_CLIENT_SECRET: ${EBAY_CLIENT_SECRET:-}
+      EBAY_PRICE_SYNC_LIMIT: ${EBAY_PRICE_SYNC_LIMIT:-4400}
+      SENDCLOUD_PUBLIC_KEY: ${SENDCLOUD_PUBLIC_KEY:-}
+      SENDCLOUD_SECRET_KEY: ${SENDCLOUD_SECRET_KEY:-}
+      # Eurosender — shipping integration (services/shipping/).
+      # Every default below is the SAFE/off state, matching
+      # services/shipping/eurosender_config.py's own Python-side defaults —
+      # adding this pass-through does not enable or change anything by itself;
+      # it only lets a value placed in .env actually reach the container.
+      # A production call is additionally refused unless EUROSENDER_ENABLED is
+      # set — see EurosenderProductionBlocked in eurosender_adapter.py.
+      EUROSENDER_ENABLED: ${EUROSENDER_ENABLED:-0}
+      EUROSENDER_SANDBOX: ${EUROSENDER_SANDBOX:-1}
+      # Legacy single-env-var names — historically always held the SANDBOX
+      # credential; kept only as sandbox_mode()'s fallback (never read in
+      # production — see eurosender_config.py).
+      EUROSENDER_API_KEY: ${EUROSENDER_API_KEY:-}
+      EUROSENDER_WEBHOOK_SECRET: ${EUROSENDER_WEBHOOK_SECRET:-}
+      # Environment-specific credentials (production-hardening closure,
+      # 2026-09-29) — added so Sandbox and Production keys/secrets can never
+      # cross into each other's endpoint. Empty until the owner sets them.
+      EUROSENDER_SANDBOX_API_KEY: ${EUROSENDER_SANDBOX_API_KEY:-}
+      EUROSENDER_SANDBOX_WEBHOOK_SECRET: ${EUROSENDER_SANDBOX_WEBHOOK_SECRET:-}
+      EUROSENDER_PRODUCTION_API_KEY: ${EUROSENDER_PRODUCTION_API_KEY:-}
+      EUROSENDER_PRODUCTION_WEBHOOK_SECRET: ${EUROSENDER_PRODUCTION_WEBHOOK_SECRET:-}
+      EUROSENDER_SUPPLIER_ALLOWLIST: ${EUROSENDER_SUPPLIER_ALLOWLIST:-}
+      EUROSENDER_MAX_WEIGHT_KG: ${EUROSENDER_MAX_WEIGHT_KG:-25}
+      EUR_TO_ILS: ${EUR_TO_ILS:-4.05}
+      EBAY_APP_ID: ${EBAY_APP_ID:-}
+      EBAY_CERT_ID: ${EBAY_CERT_ID:-}
+      EBAY_SCOPE: ${EBAY_SCOPE:-https://api.ebay.com/oauth/api_scope/buy.browse}
+      EBAY_IDENTITY_BASE: ${EBAY_IDENTITY_BASE:-https://api.ebay.com/identity/v1}
+      EXTERNAL_ENABLE_ROCKAUTO: ${EXTERNAL_ENABLE_ROCKAUTO:-true}
+      ROCKAUTO_CROSSREF_ENDPOINT_TEMPLATE: ${ROCKAUTO_CROSSREF_ENDPOINT_TEMPLATE:-}
+      ROCKAUTO_ITEMS_PATH: ${ROCKAUTO_ITEMS_PATH:-items}
+      EXTERNAL_ENABLE_OEM_EPC: ${EXTERNAL_ENABLE_OEM_EPC:-true}
+      OEM_EPC_ENDPOINT_TEMPLATES: ${OEM_EPC_ENDPOINT_TEMPLATES:-}
+      OEM_EPC_ITEMS_PATH: ${OEM_EPC_ITEMS_PATH:-items}
+      AGENTS_DEFAULT_MODEL: ${AGENTS_DEFAULT_MODEL}
+      WEB_AI_MODEL: ${WEB_AI_MODEL}
+      WHATSAPP_AI_MODEL: ${WHATSAPP_AI_MODEL}
+      TELEGRAM_AI_MODEL: ${TELEGRAM_AI_MODEL}
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN}
+      TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER}
+      # 2FA delivery: WhatsApp (Baileys bridge) primary, Twilio SMS auto-fallback.
+      WHATSAPP_2FA_PRIMARY: ${WHATSAPP_2FA_PRIMARY:-1}
+      WHATSAPP_BRIDGE_URL: ${WHATSAPP_BRIDGE_URL:-http://whatsapp-bridge:3001/send}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
+      STRIPE_ISSUING_WEBHOOK_SECRET: ${STRIPE_ISSUING_WEBHOOK_SECRET}
+      ALLOW_SIMULATED_PAYMENTS: ${ALLOW_SIMULATED_PAYMENTS:-0}
+      ALLOW_SIMULATED_PAYMENTS_PUBLIC: ${ALLOW_SIMULATED_PAYMENTS_PUBLIC:-0}
+      ALLOW_SIMULATED_SUPPLIER_PAYMENTS: ${ALLOW_SIMULATED_SUPPLIER_PAYMENTS:-0}
+      SUPPLIER_SPEND_PROVIDER: issuing
+      SUPPLIER_ISSUING_CARD_ID: ${SUPPLIER_ISSUING_CARD_ID:-}
+      SUPPLIER_ISSUING_CURRENCY: ${SUPPLIER_ISSUING_CURRENCY:-usd}
+      SUPPLIER_ISSUING_ILS_PER_USD: ${SUPPLIER_ISSUING_ILS_PER_USD:-3.65}
+      SUPPLIER_ISSUING_AUTO_TOPUP_ON_INSUFFICIENT_FUNDS: ${SUPPLIER_ISSUING_AUTO_TOPUP_ON_INSUFFICIENT_FUNDS:-1}
+      SUPPLIER_ISSUING_AUTO_TOPUP_SOURCE: ${SUPPLIER_ISSUING_AUTO_TOPUP_SOURCE:-btok_us_verified}
+      SUPPLIER_ISSUING_TOPUP_BUFFER_MINOR: ${SUPPLIER_ISSUING_TOPUP_BUFFER_MINOR:-5000}
+      SUPPLIER_ISSUING_TOPUP_MAX_MINOR: ${SUPPLIER_ISSUING_TOPUP_MAX_MINOR:-500000}
+      SENDGRID_API_KEY: ${SENDGRID_API_KEY}
+      # Transactional email via Gmail SMTP (2026-07-14). Provider-neutral: email_utils
+      # prefers SMTP when SMTP_HOST is set, so these route all mail through Gmail.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHANNEL_ID: ${TELEGRAM_CHANNEL_ID}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET}
+      TIKTOK_CLIENT_KEY: ${TIKTOK_CLIENT_KEY}
+      TIKTOK_CLIENT_SECRET: ${TIKTOK_CLIENT_SECRET}
+      TIKTOK_SANDBOX: ${TIKTOK_SANDBOX:-true}
+      TELEGRAM_ADMIN_BOT_TOKEN: ${TELEGRAM_ADMIN_BOT_TOKEN}
+      TELEGRAM_OWNER_CHAT_ID: ${TELEGRAM_OWNER_CHAT_ID}
+      # NOA social publishers (see docs/SOCIAL_SETUP.md). Empty = platform stays draft.
+      # NOA engagement (read+reply) tunables:
+      NOA_ENGAGEMENT_MAX_REPLIES: ${NOA_ENGAGEMENT_MAX_REPLIES:-5}
+      # Phase 2 (autonomous) release control - deliberate operator action, default OFF. Even when 1,
+      # the runtime readiness gate + safety + rate limits still apply (social/noa_ops.py).
+      NOA_ENGAGEMENT_AUTOREPLY: ${NOA_ENGAGEMENT_AUTOREPLY:-0}
+      NOA_AUTONOMOUS_MAX_PER_HOUR: ${NOA_AUTONOMOUS_MAX_PER_HOUR:-3}
+      NOA_AUTONOMOUS_MAX_PER_DAY: ${NOA_AUTONOMOUS_MAX_PER_DAY:-10}
+      NOA_GROUP_DRAFT_MAX_PER_CYCLE: ${NOA_GROUP_DRAFT_MAX_PER_CYCLE:-20}
+      SOCIAL_GROUP_SCAN_START_DELAY_S: ${SOCIAL_GROUP_SCAN_START_DELAY_S:-7200}
+      SOCIAL_GROUP_SCAN_MAX_GROUPS: ${SOCIAL_GROUP_SCAN_MAX_GROUPS:-0}
+      GRAPH_API_VERSION: ${GRAPH_API_VERSION:-v21.0}
+      FACEBOOK_PAGE_ID: ${FACEBOOK_PAGE_ID:-}
+      FACEBOOK_PAGE_TOKEN: ${FACEBOOK_PAGE_TOKEN:-}
+      FACEBOOK_APP_ID: ${FACEBOOK_APP_ID:-}
+      FACEBOOK_APP_SECRET: ${FACEBOOK_APP_SECRET:-}
+      INSTAGRAM_USER_ID: ${INSTAGRAM_USER_ID:-}
+      INSTAGRAM_ACCESS_TOKEN: ${INSTAGRAM_ACCESS_TOKEN:-}
+      X_API_KEY: ${X_API_KEY:-}
+      X_API_SECRET: ${X_API_SECRET:-}
+      X_ACCESS_TOKEN: ${X_ACCESS_TOKEN:-}
+      X_ACCESS_SECRET: ${X_ACCESS_SECRET:-}
+      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
+      DISCORD_ENGAGE_CHANNELS: ${DISCORD_ENGAGE_CHANNELS:-}
+      REDDIT_CLIENT_ID: ${REDDIT_CLIENT_ID:-}
+      REDDIT_CLIENT_SECRET: ${REDDIT_CLIENT_SECRET:-}
+      REDDIT_USERNAME: ${REDDIT_USERNAME:-}
+      REDDIT_PASSWORD: ${REDDIT_PASSWORD:-}
+      REDDIT_SUBREDDIT: ${REDDIT_SUBREDDIT:-}
+      REDDIT_USER_AGENT: ${REDDIT_USER_AGENT:-autosparefinder:noa:v1}
+      GOOGLE_BUSINESS_CLIENT_ID: ${GOOGLE_BUSINESS_CLIENT_ID:-}
+      GOOGLE_BUSINESS_CLIENT_SECRET: ${GOOGLE_BUSINESS_CLIENT_SECRET:-}
+      GOOGLE_BUSINESS_REFRESH_TOKEN: ${GOOGLE_BUSINESS_REFRESH_TOKEN:-}
+      GOOGLE_BUSINESS_ACCOUNT: ${GOOGLE_BUSINESS_ACCOUNT:-}
+      GOOGLE_BUSINESS_LOCATION: ${GOOGLE_BUSINESS_LOCATION:-}
+      YOUTUBE_CLIENT_ID: ${YOUTUBE_CLIENT_ID:-}
+      YOUTUBE_CLIENT_SECRET: ${YOUTUBE_CLIENT_SECRET:-}
+      YOUTUBE_REFRESH_TOKEN: ${YOUTUBE_REFRESH_TOKEN:-}
+      YOUTUBE_CHANNEL_ID: ${YOUTUBE_CHANNEL_ID:-}
+      # Email Agent (docs/EMAIL_AGENT.md) - draft-only, never sends. Off unless EMAIL_AGENT_ENABLED=1.
+      EMAIL_AGENT_ENABLED: ${EMAIL_AGENT_ENABLED:-0}
+      EMAIL_AGENT_GMAIL_DRAFTS: ${EMAIL_AGENT_GMAIL_DRAFTS:-0}
+      EMAIL_AGENT_MAILBOX: ${EMAIL_AGENT_MAILBOX:-autosparefinder2024@gmail.com}
+      EMAIL_AGENT_INTERVAL_S: ${EMAIL_AGENT_INTERVAL_S:-600}
+      EMAIL_AGENT_MAX_PER_CYCLE: ${EMAIL_AGENT_MAX_PER_CYCLE:-25}
+      EMAIL_AGENT_MIN_REQUEST_INTERVAL_MS: ${EMAIL_AGENT_MIN_REQUEST_INTERVAL_MS:-1500}
+      # Empty = the code default in email_agent/config.py applies (query "in:inbox newer_than:14d", 3 attempts).
+      EMAIL_AGENT_QUERY: ${EMAIL_AGENT_QUERY:-}
+      EMAIL_AGENT_MAX_ATTEMPTS: ${EMAIL_AGENT_MAX_ATTEMPTS:-}
+      GMAIL_OAUTH_CLIENT_ID: ${GMAIL_OAUTH_CLIENT_ID:-}
+      GMAIL_OAUTH_CLIENT_SECRET: ${GMAIL_OAUTH_CLIENT_SECRET:-}
+      GMAIL_OAUTH_REFRESH_TOKEN: ${GMAIL_OAUTH_REFRESH_TOKEN:-}
+      NOA_MARKETING_INTERVAL_H: ${NOA_MARKETING_INTERVAL_H:-24}
+      DEV_2FA_CODE: ${DEV_2FA_CODE}
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://autosparefinder.co.il,https://www.autosparefinder.co.il,https://www.car-parts.ie}
+      FRONTEND_PUBLIC_URL: ${FRONTEND_PUBLIC_URL:-https://autosparefinder.co.il}
+      FRONTEND_INTERNAL_URL: ${FRONTEND_INTERNAL_URL:-http://frontend}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+      CLAMD_HOST: clamav
+      MEILI_URL: http://meilisearch:7700
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
+      MEILI_REBUILD: '0'
+      HF_ENRICH_MODEL: 'microsoft/Phi-3-mini-4k-instruct:featherless-ai'
+      ENVIRONMENT: production
+      REAL_DATA_ONLY: 'true'        # blocks synthetic/AI-generated data; real harvesting uses REX_HARVEST_ENABLED
+      REX_HARVEST_ENABLED: 'true'  # allows REX to scrape and import real parts data through the pipeline
+      # LLM ASSIST for categorization — ON, but budgeted.
+      # It is a HELPER for a stuck worker, not the worker: it only sees parts the
+      # deterministic keyword matcher genuinely could not place, and every answer
+      # is mined into a permanent keyword rule (category_learning), so demand
+      # SHRINKS over time. The 2026-07-27 blowout was an unbounded caller
+      # (batch 500 every 30s, nothing learned) — the three limits below make that
+      # shape impossible. Raise them only after checking provider headroom.
+      # Local multilingual embedding assist (ONNX MiniLM). FREE — no per-call
+      # cost, so unlike the LLM it has no daily cap. Proposes keywords only;
+      # every suggestion still passes the blocklist, the consensus threshold and
+      # the owner approval gate before it can affect a single part.
+      EMBED_ASSIST_ENABLED: '1'
+      EMBED_LEARN_MIN_SCORE: '0.80'   # only high-confidence predictions may propose
+      EMBED_THREADS: '2'              # keep off the harvester's CPU
+      CLEANUP_LLM_ENABLED: '1'          # task3b LLM assist in db_cleanup_agent
+      CLEANUP_LLM_BATCH: '25'           # parts per prompt (NEVER 500)
+      CLEANUP_LLM_MIN_INTERVAL_S: '180' # ≥3 min between calls
+      CLEANUP_LLM_DAILY_MAX_CALLS: '150'# hard per-day ceiling
+      # ── Sequenced catalogue pipeline (job_queue.py) ──────────────────────
+      # Owner said "run the jobs" 2026-07-29. Runs ONE batch at a time in order:
+      # merge → categorize → thumbnails → reindex → parity. Observe with the
+      # WhatsApp `תור` command or GET /api/v1/system/job-queue; stop safely with
+      # `עצור` (finishes the current batch, never a kill).
+      JOB_QUEUE_ENABLED: '1'
+      JOB_QUEUE_COOLDOWN_S: '20'        # breathing room between batches
+      JOB_QUEUE_BATCH_TIMEOUT_S: '2400' # a batch that exceeds this is too big
+      JOB_QUEUE_IDLE_SLEEP_S: '300'
+      # Amayama server-side harvester. OFF 2026-08-02: measured 29 Cloudflare
+      # challenge timeouts and 0 successful solves in 24h, 0 parts written, while
+      # its FlareSolverr instance burned ~283% CPU. Re-enable only after proving
+      # a solve succeeds — it is pure waste until then.
+      # Parallel parts in the thumbnail builder. Measured 2026-08-04 on 300
+      # images: serial 176s, c=8 102s, c=16 161s, c=24 100s (load 14). Past 8 it
+      # stops paying — the ceiling is CPU (tesseract OCR), not the network. At c=8 the
+      # backend hit 561% CPU / load 27 (8 tesseract procs at ~55% each), which is the
+      # same oversubscription that caused the DB statement timeouts. 3 keeps headroom.
+      # extra threads just contend for 6 shared cores.
+      THUMB_CONCURRENCY: '3'
+      AMAYAMA_HARVEST_ENABLED: '0'
+      # Drained-queue backoff for the car-parts.ie harvester (see the harvester's
+      # IDLE_MAX_REST_S). The IL market is fully harvested; the queue only refills
+      # as models age past the 14-day refresh window.
+      HARVESTER_IDLE_MAX_REST_S: '3600'
+      OEM_LOOKUP_ENABLED: '0'      # lookup_oem_spec in run_all_tasks — disabled by default (hits Cerebras per-row)
+      ENRICH_PARTS_ENABLED: '0'    # enrich_pending_parts loop + run_all_tasks wrapper — disabled by default
+      DISCOVERY_TARGET: '500000'   # parts per brand before REX stops (default 200 was too low; goal is 10M parts)
+      DISCOVERY_PER_RUN: '20'      # brands to process per REX cycle (default 5)
+      DISCOVERY_INTERVAL_H: '3'    # run REX every 3h aligned with scraper cycle (default 24)
+      DISCOVERY_ENABLED: 'true'
+      DEBUG: 'false'
+      COMPANY_NAME: ${COMPANY_NAME:-Auto Spare Finder}
+      COMPANY_PHONE: ${COMPANY_PHONE:-+972-53-242-6920}
+      COMPANY_NUMBER: ${COMPANY_NUMBER:-060633880}
+      COMPANY_ADDRESS: ${COMPANY_ADDRESS}
+      COMPANY_EMAIL: ${COMPANY_EMAIL:-info@autosparefinder.co.il}
+      SEARCH_ENABLE_HF_QUERY_NORMALIZATION: '0'
+      SEARCH_ENABLE_VECTOR_RERANK: '0'
+      SEARCH_HF_QUERY_NORMALIZATION_TIMEOUT_S: '0.5'
+      SEARCH_VECTOR_RERANK_MIN_QUERY_LEN: '4'
+      ENABLE_CROSS_REFERENCE_EXPANSION: '0'
+      SEARCH_MEILI_TIMEOUT_S: '5.0'
+      SCRAPER_JOB_TTL_S: '21600'
+      SCRAPER_LOCK_TTL_S: '21600'
+      DB_AGENT_HEARTBEAT_INTERVAL_S: '30'
+      OWNER_WHATSAPP_PHONE: '+972586050155'
+      NOA_TELEGRAM_MIRROR: '1'
+      COLLECT_SECRET: ${COLLECT_SECRET}
+      FLARESOLVERR_URL: http://flaresolverr:8191/v1
+      CPIE_FULL_SEED_ENABLED: ${CPIE_FULL_SEED_ENABLED:-1}
+      HARVESTER_PARALLEL_SESSIONS: ${HARVESTER_PARALLEL_SESSIONS:-5}
+      PLAYWRIGHT_MAX_CONCURRENT: ${PLAYWRIGHT_MAX_CONCURRENT:-2}
+      OWNER_WHATSAPP_LID: ${OWNER_WHATSAPP_LID:-98058566160397@lid}
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+      FB_EMAIL: ${FB_EMAIL}
+      FB_PASSWORD: ${FB_PASSWORD}
+    depends_on:
+      postgres_catalog:
+        condition: service_healthy
+      postgres_pii:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      meilisearch:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD
+      - python3
+      - -c
+      - import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health').getcode()
+        == 200 else 1)
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+    # Live source bind-mount — on-disk backend/ is always what runs, so `docker compose
+    # up` / recreate can't revert code to a stale image (the drift documented in CLAUDE.md).
+    # Python deps still come from the image (site-packages); these sub-path volumes
+    # override /app/uploads and /app/state on top of the bind mount.
+    - ./backend:/app
+    - upload_files:/app/uploads
+    - worker_state:/app/state
+    # #121 (2026-10-28): migrations run in the FOREGROUND and the API starts only after both succeeded
+    # (scripts/start_backend.sh). The old `A && B && container_start.sh & uvicorn` started uvicorn at once.
+    command: ["/bin/bash", "/app/scripts/start_backend.sh", "--workers", "${API_WORKERS:-1}"]
+    networks:
+    - internal
+    - public
+    security_opt:
+    - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+  frontend:
+    build: ./frontend
+    container_name: autospare_frontend
+    restart: unless-stopped
+    mem_limit: 128m
+    volumes:
+    - frontend_build:/usr/share/nginx/html
+    depends_on:
+    - backend
+    networks:
+    - internal
+    security_opt:
+    - no-new-privileges:true
+    healthcheck:
+      test:
+      - CMD
+      - wget
+      - --quiet
+      - --tries=1
+      - --spider
+      - http://127.0.0.1:80/
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+  nginx:
+    image: nginx:alpine
+    container_name: autospare_nginx
+    restart: unless-stopped
+    mem_limit: 128m
+    ports:
+    - 80:80
+    volumes:
+    - ./deploy/nginx.conf:/etc/nginx/nginx.conf:ro
+    - frontend_build:/usr/share/nginx/html:ro
+    depends_on:
+    - backend
+    - frontend
+    networks:
+    - public
+    - internal
+    security_opt:
+    - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - wget -q --spider http://127.0.0.1/api/v1/system/health || exit 1
+      interval: 10s
+      timeout: 3s
+      retries: 3
+  meilisearch:
+    image: getmeili/meilisearch:v1.7
+    container_name: autospare_meilisearch
+    restart: unless-stopped
+    mem_limit: 2560m
+    environment:
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
+      MEILI_ENV: production
+    volumes:
+    - meili_data:/meili_data
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - curl -sf http://localhost:7700/health || exit 1
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+    - internal
+    security_opt:
+    - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+  whatsapp-bridge:
+    image: node:20-alpine
+    container_name: whatsapp_bridge
+    working_dir: /app
+    volumes:
+    - ./whatsapp-bridge:/app
+    environment:
+    - BACKEND_URL=http://backend:8000/api/v1/webhooks/whatsapp
+    # The BUSINESS WhatsApp account this bridge must run as ("Autosparefinder.co.il").
+    # A QR scan links whatever phone scans it — on 2026-07-29 it was re-linked with
+    # the owner's PERSONAL number, which silently cut off every customer messaging
+    # the business line. The bridge now refuses to pretend that is fine.
+    - WHATSAPP_EXPECTED_NUMBER=972532426920
+    command: sh -c "npm install --silent && node index.js"
+    ports:
+    # LOCALHOST ONLY. POST /send has no authentication, so a 0.0.0.0 binding
+    # meant anyone able to reach this port could send WhatsApp messages AS the
+    # platform. The backend talks to it over the internal docker network
+    # (http://whatsapp-bridge:3001/send) and never needs the host mapping; this
+    # is kept bound to 127.0.0.1 purely for local debugging.
+    - 127.0.0.1:3001:3001
+    restart: unless-stopped
+    depends_on:
+    - backend
+    networks:
+    - internal
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+  # clamav: DECOMMISSIONED 2026-07-12 — this box has 7.8GB RAM / NO swap, and modern
+  # ClamAV needs ~1.2-2GB just to load signatures. At the only affordable cap (512m)
+  # clamd was OOM-killed on every DB load (signal 9) and never actually ran for ~4
+  # weeks. Giving it the RAM it needs would risk OOM-killing Postgres/backend. The
+  # upload scanner (routes/utils.py:_scan_bytes_for_virus) fails OPEN, so uploads
+  # (owner-only, auth-gated) keep working. Re-enable this block + set mem_limit>=1500m
+  # ONLY if the box gets more RAM. Do not run ClamAV at 512m — it cannot start.
+  # postgres_backup below is unchanged.
+  postgres_backup:
+    image: prodrigestivill/postgres-backup-local
+    container_name: autospare_postgres_backup
+    restart: unless-stopped
+    init: true  # go-cron is PID 1 and never reaps orphaned healthcheck curl -> zombies
+    environment:
+      POSTGRES_HOST: postgres_pii
+      POSTGRES_DB: autospare_pii
+      POSTGRES_USER: autospare
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      SCHEDULE: 0 3 * * *
+      BACKUP_KEEP_DAYS: '7'
+      BACKUP_DIR: /backups
+    volumes:
+    - ./backups:/backups
+    networks:
+    - internal
+    depends_on:
+    - postgres_pii
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+  postgres_backup_catalog:
+    image: prodrigestivill/postgres-backup-local
+    container_name: autospare_postgres_backup_catalog
+    restart: unless-stopped
+    init: true  # go-cron is PID 1 and never reaps orphaned healthcheck curl -> zombies
+    environment:
+      POSTGRES_HOST: postgres_catalog
+      POSTGRES_DB: autospare
+      POSTGRES_USER: autospare
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      SCHEDULE: 0 3 * * *
+      BACKUP_KEEP_DAYS: '7'
+      BACKUP_DIR: /backups
+    volumes:
+    - ./backups/catalog:/backups
+    networks:
+    - internal
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    restart: unless-stopped
+    mem_limit: 2560m
+    memswap_limit: 5120m
+    environment:
+      LOG_LEVEL: info
+    tmpfs:
+    - /tmp:size=536870912,exec
+    networks:
+    - internal
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "3"
+    security_opt:
+    - no-new-privileges:true
+networks:
+  internal:
+    driver: bridge
+  public:
+    driver: bridge
+volumes:
+  postgres_catalog_data: null
+  postgres_pii_data: null
+  redis_data: null
+  upload_files: null
+  frontend_build: null
+  meili_data: null
+  backup_data: null
+  clamav_data: null
+  worker_state: null

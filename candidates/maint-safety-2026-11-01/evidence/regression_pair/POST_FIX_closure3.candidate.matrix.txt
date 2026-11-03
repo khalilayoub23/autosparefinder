@@ -1,0 +1,15 @@
+ship_alone_1 rc=0 1 passed, 3 warnings in 4.04s
+ship_alone_2 rc=0 1 passed, 3 warnings in 3.26s
+ship_alone_3 rc=0 1 passed, 3 warnings in 3.06s
+night_alone_1 rc=0 1 passed in 1.05s
+night_alone_2 rc=0 1 passed in 1.08s
+night_alone_3 rc=0 1 passed in 1.04s
+ship_module rc=0 1 passed, 3 warnings in 3.08s
+night_module rc=0 70 passed, 13 warnings in 79.41s (0:01:19)
+ship_then_night_1 rc=0 2 passed, 3 warnings in 3.88s
+night_then_ship_1 rc=0 2 passed, 3 warnings in 3.94s
+ship_then_night_2 rc=0 2 passed, 3 warnings in 4.20s
+night_then_ship_2 rc=0 2 passed, 3 warnings in 3.42s
+ship_then_night_3 rc=0 2 passed, 3 warnings in 3.51s
+night_then_ship_3 rc=0 2 passed, 3 warnings in 3.48s
+finished

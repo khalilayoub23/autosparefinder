@@ -16,6 +16,7 @@ from sqlalchemy import select, or_, func, text
 
 from BACKEND_DATABASE_MODELS import get_db, CarBrand, TruckBrand, PartsCatalog
 from currency_rate import get_usd_to_ils_rate
+import price_policy as _pp
 from manufacturer_normalization import normalize_manufacturer_name
 
 router = APIRouter()
@@ -288,10 +289,13 @@ async def get_parts_by_brand(
                 s.name AS supplier_name, s.country AS supplier_country
             FROM supplier_parts sp
             JOIN suppliers s ON sp.supplier_id = s.id
-            WHERE sp.part_id = ANY(:pids) AND s.is_active = true
-            ORDER BY sp.part_id, sp.is_available DESC, s.priority ASC
-        """),
-        {"pids": part_ids},
+            WHERE sp.part_id = ANY(:pids) AND __VISIBLE__ AND __COST__ > 0
+            ORDER BY sp.part_id, __ORDER__
+        """.replace("__VISIBLE__", _pp.VISIBLE_OFFER_SQL).replace("__COST__", _pp.offer_cost_sql())
+           .replace("__ORDER__", _pp.price_basis_order_sql(
+               "(SELECT pc0.part_type FROM parts_catalog pc0 WHERE pc0.id = sp.part_id)"))),
+        # 2026-10-29: the SAME offer as the website search (price_policy) - not supplier priority
+        {"pids": part_ids, "usd_to_ils_rate": usd_to_ils_rate},
     )
     sp_map = {str(r.part_id): r for r in sp_batch.fetchall()}
 
@@ -317,7 +321,6 @@ async def get_parts_by_brand(
                     customer_shipping=delivery_fee,
                     supplier_name=sp_row.supplier_name,
                     supplier_country=sp_row.supplier_country,
-                    local_vat_only=True,
                 )
             else:
                 usd_total = float(sp_row.price_usd or 0)  # shipping is the delivery fee, never in the margin base
@@ -327,7 +330,6 @@ async def get_parts_by_brand(
                     customer_shipping=delivery_fee,
                     supplier_name=sp_row.supplier_name,
                     supplier_country=sp_row.supplier_country,
-                    local_vat_only=True,
                 )
             pricing["availability"] = "in_stock" if sp_row.is_available else "on_order"
             pricing["warranty_months"] = sp_row.warranty_months
@@ -527,10 +529,13 @@ async def get_parts_by_truck_brand(
                 s.name AS supplier_name, s.country AS supplier_country
             FROM supplier_parts sp
             JOIN suppliers s ON sp.supplier_id = s.id
-            WHERE sp.part_id = ANY(:pids) AND s.is_active = true
-            ORDER BY sp.part_id, sp.is_available DESC, s.priority ASC
-        """),
-        {"pids": part_ids},
+            WHERE sp.part_id = ANY(:pids) AND __VISIBLE__ AND __COST__ > 0
+            ORDER BY sp.part_id, __ORDER__
+        """.replace("__VISIBLE__", _pp.VISIBLE_OFFER_SQL).replace("__COST__", _pp.offer_cost_sql())
+           .replace("__ORDER__", _pp.price_basis_order_sql(
+               "(SELECT pc0.part_type FROM parts_catalog pc0 WHERE pc0.id = sp.part_id)"))),
+        # 2026-10-29: the SAME offer as the website search (price_policy) - not supplier priority
+        {"pids": part_ids, "usd_to_ils_rate": usd_to_ils_rate},
     )
     sp_map = {str(r.part_id): r for r in sp_batch.fetchall()}
 
@@ -555,7 +560,6 @@ async def get_parts_by_truck_brand(
                     customer_shipping=delivery_fee,
                     supplier_name=sp_row.supplier_name,
                     supplier_country=sp_row.supplier_country,
-                    local_vat_only=True,
                 )
             else:
                 usd_total = float(sp_row.price_usd or 0)  # shipping is the delivery fee, never in the margin base
@@ -565,7 +569,6 @@ async def get_parts_by_truck_brand(
                     customer_shipping=delivery_fee,
                     supplier_name=sp_row.supplier_name,
                     supplier_country=sp_row.supplier_country,
-                    local_vat_only=True,
                 )
             pricing["availability"] = "in_stock" if sp_row.is_available else "on_order"
             pricing["warranty_months"] = sp_row.warranty_months

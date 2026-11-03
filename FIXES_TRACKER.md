@@ -122,6 +122,11 @@ No item is an immediate risk to data integrity, security, payment correctness or
 | #116 | Web chat answers with a different brain than WhatsApp/Telegram (G2) | OPEN — found 2026-10-27 during #84 | Medium | `routes/chat.py` → `process_agent_response_for_message` calls `agent.process` directly; WhatsApp/Telegram use `process_user_message` (fitment-first search, free-text car capture, parts flow). G2 requires the same answers and prices on every channel. #84 deliberately did not change what web chat answers. | Web customers may get different (non-fitment-verified) answers. | Owner decision: route web through `process_user_message` (the lifecycle's REUSE_USER_ROW mechanism already supports a pre-saved question). |
 | #117 | Web chat `send_message` does not check that the conversation belongs to the user | OPEN — found 2026-10-27 during #84 (security) | High | `routes/chat.py::send_message` loads `Conversation.id == data.conversation_id` with no `user_id` filter (the read endpoints do filter). | A logged-in user who has another user's conversation id can post into it and get the agent to answer with that conversation's history. | Add `Conversation.user_id == current_user.id` (404 otherwise) + a test. Small, own patch. |
 | #118 | Server disk filled to 100% on 2026-10-27 at about 10:28 Israel time | OPEN (incident resolved, capacity follow-up) | High | Cause: my own test copies — each full copy of `backend/` is 4 GB because `backend/backups/` holds 3.9 GB of local dumps (3 host copies + container copies). Impact checked: Postgres catalog/PII, Redis, Meilisearch, backend: no disk errors, no restarts; WhatsApp bridge: ONE credentials save failed (ENOSPC 10:28), the previous creds.json (saved 10:18) stayed valid, bridge CONNECTED. Freed by deleting my copies: 2.1 MB → 27 GB free (87%). Rule from now on: test copies exclude backups/ and uploads/ (66 MB). Remaining capacity: `/opt/autosparefinder/backups` 37 GB (catalog dump 2.3 GB × daily/weekly/monthly), Docker 89 GB with ~31 GB reclaimable (build cache 17.8 GB, unused images 13.7 GB), `backend/backups` 3.9 GB inside the code tree. | A full disk stops Postgres/Redis writes and WhatsApp session saves. | Owner decision: prune Docker build cache + unused images; review backup retention; move `backend/backups` out of the code tree; add a disk-space alert. **UPDATE 2026-11-03 (second disk incident, 100% / 371 MB free; closed PARTIAL):** (1) ROOT CAUSES — duplicate dumps in Claude scratch dirs (20.9 GB + 4.2 GB, SHA-256-verified identical to `backend/backups`, removed), Docker build cache (33 GB, `builder prune -a` done), and the same "test copies include backups/" pattern as above. Result: 76% used, ~48-50 GB free. (2) BACKUP — the 03:00 catalog `pg_dump` failed with ENOSPC; the container is `unhealthy` because go-cron's health endpoint returns 503 while `Last.Exit_status=1` (verified by curl inside the container). It is a STALE STATUS, not a new fault: the next scheduled run (03:00 IL) should clear it; no manual run done. Latest verified recovery point: `autospare-20261102` (2,333,293,080 B, sha256 `5d6f9dcd…2e`, `gzip -t` OK, ends with "PostgreSQL database dump complete"). It is ONE inode with 4 names (last/daily/weekly/monthly) and there is NO offsite copy — all catalog recovery points live on the one disk. (3) MEILISEARCH task store (11 GB, 31,493 tasks, all succeeded) — ROOT CAUSE: `BACKEND_API_ROUTES._meili_sync_loop` runs `maintenance/meili_purge_inactive.py` after every 2 h sync; it re-sends ALL ~495k inactive part ids (50 `documentDeletion` tasks x 10,000 ids) every run, although the documents are already gone (`deletedDocuments: 0`), and Meilisearch stores each id list in the task store. LMDB does not shrink, so deleting tasks alone frees no disk. FIX NEEDS APPROVAL: purge only ids deactivated since the last run (or ids still in the index), then one compaction window. (4) PRICE_HISTORY — 8.6M rows came from two bursts (2026-04: 3.86M, 2026-05: 4.78M); now ~80 rows/day, so no growth problem; 1.8 GB is historical. (5) INDEX candidates (~1.9 GB) are NOT proven unused: counters only cover 15 days since 2026-10-18, and `idx_parts_catalog_norm_oem` matches the importer SQL in 8 scripts that run intermittently. No index dropped. (6) NOT DELETED, kept on evidence: `fb_native_test` (live Facebook profile referenced by `social/facebook_browser/session.py`, written 2026-11-02), Amayama Chrome profile (in use), 34 anonymous PG volumes from the 2026-10-27 rehearsals, `sandbox_backups` (July dumps baked into the image; still mounted by `sandbox_backend`). (7) PROPOSALS awaiting approval: journald `SystemMaxUse=1G` (3.0 GB now, ~36 MB/day, since 2026-08-11), disk alerts at 80/85/90/95 %, offsite copy of the nightly dump, delete-on-finish for scratch workflows. Evidence: this session's report. **UPDATE 2026-11-03 06:2x-06:40 IL (follow-up execution):** (a) JOURNAL — PASS: `/etc/systemd/journald.conf.d/99-asf-size.conf` `SystemMaxUse=1G`; `journalctl --vacuum-size=1G` + `systemctl restart systemd-journald` (Docker log driver is json-file, no container affected); 3.0G → 991.8M, df used 156,045,430,784 → 153,830,408,192 B (**2,215,022,592 B** freed); Nov 2 data still present, new entries logged. Incident extract kept at `/root/incident-evidence/journal-2026-11-02_03-extract.txt` (300 lines). (b) SCRATCH — PASS: the report did not list the nine paths; identified as the 9 copies of `full car database.xlsx` in the two idle sessions 9f1a83bf (4) and 51a42e63 (5) (no process, no open handle; the 20 copies in session 2b46ba28 were NOT touched — that session is a live process, PID 3974488). Each 23,777,730 B, sha256 `9fdc53cb0082e2ffa226f2cec8fb35ab53343245438410756d767d3e1ea4c20a` = `git HEAD:backend/data/full car database.xlsx`. Deleted exactly those 9: 213,999,570 B. (c) MEILISEARCH CODE — PASS (not activated): `maintenance/meili_purge_inactive.py` now probes the index (`POST documents/fetch`, `id IN [...]`, read-only, no task) and deletes only ids still present; a failed probe skips the chunk and exits 1 (never a blind delete); delete-batch failures do not stop later batches. Live read-only check: 0 of 5,000 inactive ids present, 5/5 active control ids found, ~6 s per 5,000-id probe. 9 new tests `tests/test_meili_purge_inactive.py` (absent / present / newly deactivated / empty / 26,000-id chunking / repeat run / transient + persistent probe failure / failed delete) passed in a throwaway `--network none` container (9 passed). Diff: +68/-14 in the script + the new test file. Not activated: no restart, no purge run; takes effect when `_meili_sync_loop` next spawns the script. (d) TASK-STORE PLAN — PASS (plan only): `docs/MEILI_TASKSTORE_RECLAMATION.md` (tasks `data.mdb` 11,001,094,144 B; 31,493 tasks; deletion via API frees no disk; dump → fresh volume recommended; every action needs separate approval). (e) DOCKER — PASS (investigation only, nothing removed): classification in this entry's report; reclaimable 14.13 GB = 6.98 GB VERIFIED REMOVABLE images (python:3.11, node:18, node:18-alpine, node:20.18.0, node:20.19.0, clamav, alpine/curl, 2 test frontend tags) + 5.56 GB UNCERTAIN (gstack-sandbox 3.91 GB, hotmail-wa-relay 0.84, postgres:16-alpine 0.42, node:22-slim 0.33, redis:7.4 0.06) + 1.59 GB KEEP (node:20 = frontend builder); 36 unlinked volumes 2.42 GB: 5 empty + 4 tiny dump.rdb = removable, clamav_data 175.7 MB + 1 empty `backup_data` removable, `gstack-sandbox_sandbox_claude_home` 466.9 MB UNCERTAIN, 24 PG16 rehearsal volumes (~1.78 GB, created 2026-10-09/10 and 2026-10-27) UNCERTAIN — no per-volume provenance recorded, none referenced by id in any release record. (f) STILL OPEN: catalog backup container still `unhealthy`, latest file still `autospare-20261102-030001.sql.gz` (2,333,293,080 B) — untouched by this work; no offsite copy; disk alert still not built; Meilisearch task-store/index reclamation, Docker removals and the purge activation await approval. Final `/`: used 153,831,038,976 B, avail 53,052,465,152 B (75%); 17/17 containers running; backend started 2026-11-01 17:19 UTC, meilisearch/postgres 2026-10-18 — no restarts. **UPDATE 2026-11-03 (authorized execution, Docker/backup/restart):** (a) **Docker:** 9 verified-removable images removed by exact ID (6,977,716,224 B); no prune, no volumes; UNCERTAIN/KEEP images (incl. `node:20`) untouched; 7.15 GB still reclaimable per `docker system df` (not approved). (b) **Catalog backup:** `/backup.sh` run manually -> `backups/catalog/last/autospare-20261103-060532.sql.gz` (gzip -t, completion marker, sha256 recorded in `/root/incident-evidence/`); prior good dump pinned via hard link `backups/catalog_keep/autospare-20261102-030001.sql.gz`; retention unchanged, no restore against prod. **PARTIAL:** `autospare_postgres_backup_catalog` still reports unhealthy (go-cron records only scheduled runs); expected to clear after the 04:00 IL scheduled run on 2026-11-04 - NOT yet confirmed. (c) **Backend restart:** `autospare_backend` only, after `pre_restart.sh` preflight SAFE, 07:14 IL; same container, healthy ~36 s, 0 OOM, 0 restarts since, 17/17 containers up; harvester (`car_parts_ie_flaresolverr_harvester`) running again from 07:15. (d) **Purge fix ACTIVE and observed once (naturally, not triggered by me):** first post-restart `_meili_sync_loop` cycle ran `meili_sync.py` from 07:33 IL, then the corrected `meili_purge_inactive.py` (running 07:46-07:51+ IL, backend CPU peak ~180%, Meili 35-50% CPU, postgres_catalog up to 205%, no OOM). Meilisearch evidence afterwards: `documentDeletion` total **23,150 = unchanged baseline**, newest deletion uid still 119524 (04:38 UTC) -> **0 new deletion tasks** (previously ~50 per cycle); tasks 31,493 -> 31,577 are 79 `documentAdditionOrUpdate` + 5 `settingsUpdate` (normal sync), all succeeded; index docs 4,137,772. **Limits (ASSUMED/unverified):** the loop sends purge stdout/stderr to DEVNULL, so exit code, exact end time and the `still in index` line were not captured; my watcher stopped sampling at 07:51 IL. Later cycles (~2 h) also created no deletions. (e) **Disk now:** `/` 136 GB used, 58 GB free (71%) vs 53.05 GB avail before Docker removal; journal 1007.8 MB; backups dir 33 GB. Task-store (11 GB) NOT reclaimed - plan only, `docs/MEILI_TASKSTORE_RECLAMATION.md` unchanged. (f) **Follow-ups (not done):** make `_meili_sync_loop` log purge output/rc instead of DEVNULL; offsite backup copy; disk alerts at 80/85/90/95%; task-store reclamation approvals; UNCERTAIN Docker images/volumes; git-commit the purge fix + test (still uncommitted). |
+| #121 | Backend start command does not gate uvicorn on the migrations; `container_start.sh` is skipped when a migration fails | PARTIAL — FIX BUILT + VERIFIED ISOLATED 2026-10-28 (32/32), NOT DEPLOYED (needs owner approval: backend recreate) | Medium | `docker-compose.yml` backend command `alembic … && alembic_pii … && container_start.sh & uvicorn …`: bash runs `(A && B && C) &` then uvicorn, so uvicorn always starts at once, in parallel with the migrations. Reproduced with the exact command (`candidates/supplier-lifecycle-2026-10-27/evidence/2026-10-28-release/startup_order/`): a 0042 upgrade blocked > lock_timeout rolls back, PII stays 0041, the app serves HTTP 200, `container_start.sh` (stale job cleanup, worker resume) never runs, the container stays `running` with 0 restarts (silent); on a normal start the app serves on the OLD schema until the migration commits. Not a blocker for the 2026-10-28 supplier-lifecycle release: that code is schema-tolerant both ways (re-checks `supplier_schema_ready` until True; supplier features refuse on 0041) and 0042 is one transaction with a 15 s lock timeout; the runbook detects a failed migration (steps 2.5/2.6 → F-A). Fix (production config change, owner decision): run migrations first and make a failure visible (e.g. `{ alembic … && alembic_pii …; } || alert` then `container_start.sh &` independent of the migration result, `exec uvicorn`), with a decision whether a failed migration should stop the API (fail-closed = outage) or run degraded + alert. |
+| #122 | A BOAZ task whose process dies mid-handler stays `in_progress` forever | PARTIAL — FIX BUILT + VERIFIED ISOLATED 2026-10-28 (11/11 incl. real PG), NOT DEPLOYED; BOAZ stays OFF | Low | `boaz_tasks.PgTaskRepo.claim` moves `not_started → in_progress` before the handler runs and only claims `not_started`; a crash between claim and `finish` leaves the task `in_progress` with no attempt recorded. Safe direction (never falsely completed; visible in `משימות בועז`), but never retried. Same shape as the Email Agent `processing` row note (2026-10-27 follow-ups). Fix: reclaim `in_progress` rows whose `updated_at` is older than N × interval with an attempt counter. BOAZ_TASKS_ENABLED is OFF, so nothing runs today. |
+| #123 | `needs_oem_lookup` flag ping-pong: 3 run_all_tasks steps set it TRUE, db_cleanup task4 resets it FALSE | OPEN — VERIFIED 2026-10-28 (read-only) | High | `dedup_catalog_parts`, `fix_manufacturer_overflow`, `flag_fake_skus` set TRUE (+`updated_at`); `db_cleanup_agent.task4_fix_oem_lookup_flag` sets FALSE (+`updated_at`) on every row with an `oem_number` — the overflow rule only flags rows that have one. Overflow count per run 25,950 / 9,745 / 14,554 / 66,187 (never trends to 0); `needs_oem_lookup` 86,859 → 162,850 during the 2026-10-28 21:30 run. Consumer `lookup_oem_spec` is OFF. Effect: tens of thousands of no-value `updated_at` bumps per run (feed delta tasks + Meili incremental sync), 7–22 min of run time. Next: owner decides the ONE meaning of the flag; both agents use one predicate; no `updated_at` bump for a flag nobody consumes. |
+| #124 | `generate_image_embeddings` reports ok but has never embedded an image | OPEN — VERIFIED 2026-10-28 | Medium | Every run: task `ok, triggered 20`, background batch `0/20 embedded`; tonight all 20 → HTTP 400 from `router.huggingface.co/hf-inference/models/openai/clip-vit-large-patch14`. `parts_images.embedding_generated` TRUE on 0 rows, 1,700,141 pending. Next: decide if image embeddings are wanted at all (60/day could never cover 1.7 M); if yes, a working endpoint/local model + a failure that is reported (status error), else remove the task. |
+| #125 | `backfill_catalog_fitment_from_xls` rewrites ~35K unchanged parts every run | OPEN — VERIFIED 2026-10-28 (read-only) | Medium | No unchanged-check: every matched part gets `compatible_vehicles` + `updated_at = NOW()` from a static file (`data/parts_database.xlsx`, 2026-03-30); 34,784 of 65,738 xlsx-fitment parts were stamped inside tonight's 6-min task window; 5–7 min per run. Next: skip when merged JSON == stored JSON (as `merge_catalog_fitment…` does) or run only when the file's hash changes. Also: `backfill_mini_fitment_from_name_he` matched 0 parts in all 4 runs (no-op, #120). |
 
 ---
 
@@ -8627,6 +8632,593 @@ e2e network); live Groq calls from a throwaway container with no DB access.
   please sign in at autosparefinder.co.il (My orders)" in he/ar/en; registered customers keep the old text. Tests: 574
   passed (incl. 4 new). Deployed 14:23 Israel (preflight SAFE); live check with a simulated provider failure: anonymous
   he/ar/en → sign-in text, registered → unchanged, flag reset after the turn.
+
+### 2026-10-27 — Read-only audit: owner WhatsApp notifications (follow-ups only, nothing changed)
+
+**Status: PARTIAL** — dispatch and bridge acceptance VERIFIED; WhatsApp server ack, delivery and owner-console receipt NOT VERIFIABLE with the current telemetry. No message sent, no code/config/DB/Redis change, nothing restarted. All times Israel time.
+
+**Path (verified in code):** `BACKEND_API_ROUTES.notify_owner` (34 call sites; plus 12 `_wa_send_update`, 8 direct `_wa_send_quiet`) → `_wa_send_update` (no updates group configured in env or Redis → owner 1:1) → `_wa_send_quiet` (09:00–21:00 window or `critical`; else Redis `autospare:wa_quiet_queue`) → `social/whatsapp_provider.send_message` (owner number → owner LID `…0397`, `OWNER_WHATSAPP_ROUTE_VIA_LID` default on; bounded retry only for pre-send 503s) → bridge `POST /send` → Baileys `sock.sendMessage` → bridge logs `Sent OK` and returns `{ok:true, key}`.
+
+**Evidence (2026-10-27 ~16:30):** bridge container up since 2026-10-21 22:39 (restart policy recovered an `UNHANDLED_REJECTION_FATAL: Connection Closed` in 10 s), `/health` from the backend network: `CONNECTED`, `session_invalid=false`, `account_mismatch=null`, business JID; 33 reconnects in 7 days (codes 428/503, max gap 1.5 s), 0 `SEND_REJECTED`, 0 bridge send errors in 7 days (last error 2026-09-20). 57 owner-LID sends retained (2026-10-20 → 2026-10-27 15:04), 57/57 `Sent OK` in 0.1–0.4 s. Latest 20: 20/20 bridge-accepted. Redis `autospare:owner_delivery:last` = 2026-10-27 15:04:28 ok; quiet queue empty; dead-letter list empty. 36/36 supervised tasks running. Owner-side: last owner message into the console 2026-10-25 18:16 (9 of 57 sends were followed by an owner message within 30 min); 2026-10-25 22:12–22:13 a NEW owner device (34) sent 57 retry requests for distinct message ids — the envelopes reached that device; no retry followed any of the 57 sends within 120 s (the 2026-10-15…18 decrypt bug — devices 0/33, 328 retries — not reproduced).
+
+**Follow-ups (not fixed):**
+1. **No delivery telemetry.** The bridge subscribes only to `connection.update`, `creds.update`, `messages.upsert` — no `messages.update` / `message-receipt.update`, so WhatsApp server-ack, delivery and read receipts are never captured. `Sent OK` / HTTP 200 / `{ok:true}` mean "handed to the WhatsApp socket", and `notify_owner` treats that as delivered (sets the alert cooldown and `owner_delivery:last ok`).
+2. **No per-message record of owner sends.** `notify_owner` logs nothing on success; owner sends do not log their message id (retry receipts carry ids that cannot be matched to sends); Redis keeps only the single latest outcome; the PII `notifications` table is in-app push only. Event type of a delivered alert cannot be reconstructed; backend logs are lost on every recreation (today's backend started 14:23); bridge stdout rotates (3×10 MB, oldest line 2026-09-12).
+3. **Disk full at 10:28** (`CREDS_SAVE_FAILED | ENOSPC` in the bridge event log; once). Bridge credentials have saved successfully since; disk now 87% (27 GB free). Cause not identified; postgres/redis/meili logs show no ENOSPC today; the backend log does not cover 10:28.
+4. **The bridge container has no Docker healthcheck** (`Health` absent) — `docker ps` shows only "running"; session state is visible only through the app-level `/health`.
+
+**Addendum (same day, ~16:50) — owner-console receipt VERIFIED in the owner's WhatsApp Web (owner-authorized, read-only; nothing typed or sent).** Account = +972 58-605-0155 (= `OWNER_WHATSAPP_PHONE`); chat "Auto Spare Finder" = +972 53-242-6920 (= the bridge's business JID). So recipient and sender are correct — the "wrong WhatsApp id/number" hypothesis is NOT supported: the LID `…0397` the bridge addresses delivers into the owner's account. Reconciliation of all 57 owner sends retained in the bridge log (2026-10-20 20:39 → 2026-10-27 15:04): **56 displayed** in that chat (minute + length match; e.g. today 09:03 ×3 queued-night messages, 09:04, 10:01, 10:02, 13:01, 15:04), **1 deliberately deleted** — 2026-10-26 20:57:24 (138 chars), `Deleted message … in …0397` 6 s later (delete-for-everyone path). 0 undelivered. The chat also holds the owner's own console messages (2026-10-20, 10-23, 10-25). Correction to the entry above: receipt IS verifiable through the owner's own client; follow-ups 1–4 still stand (the system itself records no delivery state).
+
+### 2026-10-27 (17:17 IL) — Email Agent owner flow: notify, digest, agent tasks, owner-approved send (#110)
+- **Root cause (owner: "why didn't I get notified about received mails?"):** the Email Agent only notified on Gmail connection failures (`loop.py`); owner review was "not built yet" (`docs/EMAIL_AGENT.md`). 130 mails processed, 22 needed a human, the owner was told about none.
+- **Fix (owner decisions: approve each send · important now + 09:00 digest · tasks for agents):** migration `0041_email_agent_owner_flow` (owner columns + `CHECK (sent_at IS NULL OR send_approved_at IS NOT NULL)`; historic rows marked notified/digested so nothing is replayed); `email_agent/owner_flow.py` (alerts, digest, `agent_todos` routing incl. supplier/AliExpress/eBay/Eurosender → BOAZ); `GmailClient.send_approved_draft(OwnerApproval)` = the only send path (`drafts/send` only, never autonomous); `agents/email_console.py` + hook/help in `owner_console`; `notify_owner` category `email`.
+- **Regression:** `tests/test_email_owner_flow.py` (new, 18) + `tests/test_email_agent.py` send rule updated deliberately (`test_no_autonomous_send_capability_exists`); 353 passed offline. Migration up×2/down + CHECK verified on a throwaway Postgres.
+- **Deploy:** preflight SAFE → `up -d --no-deps --force-recreate backend` 17:16 IL; live `alembic_version=0041`, 130/130 historic rows not pending; console `מיילים` lists 20 waiting, `משימות מייל` empty. No email sent.
+- **Status:** APPLIED. NOT YET VERIFIED: first live alert on a NEW important mail and a real `שלחמייל` (needs the owner).
+- **Not done / follow-ups:** the mapped agents (LIOR/DANA/TAL/BOAZ/NIR/OREN) do not act on todos autonomously — the tasks are a worklist; `docs/EMAIL_AGENT.md` § Owner review still to be rewritten.
+
+### 2026-10-27 — BOAZ supplier-cycle audit (read-only; nothing changed)
+- VERIFIED: nightly `sync_prices` completed 10/10 nights (real eBay+AliExpress prices only, `REAL_DATA_ONLY=true`, synthetic drift unreachable in production); weekly NIR supplier sourcing running (next cycle ~91 h after 17:16 IL).
+- Gaps: (1) BOAZ reads todos as `pricing_agent` but they are filed as `BOAZ` (exact-match SQL) → BOAZ never reads its own todos, and nothing in BOAZ acts on todos; (2) `detect_bulk_opportunities` is dormant (0 supplier_parts with stock_quantity>50) and writes the PII model `ApprovalQueue` through a catalog session — would fail if it ever fired; (3) BOAZ owns no supplier contact, onboarding approval or order placement: sourcing = NIR, purchase = `trigger_supplier_fulfillment` + OrdersAgent, `place_order` is a stub on every connector (base returns success=False); (4) `Mann Filter` and `RockAuto` are `is_active=TRUE` while their credentials say `pending_review` (0 customer-visible offers each); (5) 67 NIR candidates await owner review; no real orders in 60 days.
+
+### 2026-10-27 (evening) — Supplier lifecycle: NIR · BOAZ · Email Agent (owner master task) — BUILT, NOT DEPLOYED
+Reference: `docs/SUPPLIER_LIFECYCLE.md` (permission table, flow, requirements→code map, deploy + rollback).
+- **Verified defects (root-fixed in code):**
+  1. BOAZ looked up todos as `pricing_agent`; todos filed as `BOAZ`; exact-match SQL → BOAZ never saw a task. Fix: `agent_identity.py` canonical names + alias-aware `get_active_agent_todos`; `boaz_tasks.py` executes / escalates / never fake-completes (supervised `boaz_task_loop`).
+  2. `detect_bulk_opportunities` added the PII model `ApprovalQueue` to a CATALOG session (would fail on commit); no dedupe; full-table GROUP BY. Fix: PII session, pending-row dedupe, candidate-scoped average, reported result.
+  3. NIR `onboard_seller` merged `source/status` into EXISTING suppliers' credentials → RockAuto + Mann Filter (active) labelled `pending_review`, reachable by `דחהספק`. Fix: re-discovery under `credentials.nir_rediscovery` only. `approve/reject` used `UPDATE … LIKE prefix%` (could hit many rows) → exactly one candidate, ≥4 chars, reject never deactivates an active supplier, activation records a `supplier_activation` authorization.
+  4. Customer payment flowed straight into supplier spend (only the live-payment check). Fix: `procurement.gate_paid_order` in `trigger_supplier_fulfillment` (fails closed): payment → PREPARED only; separate `purchase_order` and `supplier_payment` owner approvals bound to a terms hash, one-shot; ambiguous supplier results → EXCEPTION, never resubmitted.
+  5. Spam never scanned (`in:inbox` only). Fix: relevance-filtered Spam pass, `source_folder='spam'`; un-spam BLOCKED (no `gmail.modify`).
+  6. AliExpress SKU price assumed USD → non-USD SKU now skipped (fail closed). Currency of live responses ASSUMED USD (request sets `target_currency=USD`), not inspected.
+- **New:** `supplier_authorization.py`, `supplier_qualification.py`, `supplier_outreach.py` (NIR inquiries, OFF: `NIR_OUTREACH_ENABLED=0` + owner standing grant), `procurement.py`, `boaz_tasks.py`, `agent_identity.py`, `email_agent/supplier_routing.py`, `agents/supplier_console.py`, `alembic_pii/versions/0042_supplier_lifecycle.py`, `tests/test_supplier_lifecycle.py`, `docs/SUPPLIER_LIFECYCLE.md`.
+- **Tests:** `tests/test_supplier_lifecycle.py` 46 + email suites → 351 passed / 1 skipped (offline container). Full suite offline: new 127 failed / 2326 passed / 308 skipped / 4 errors vs baseline 143 / 2264 / 308 / 20 — **0 tests fail on the new code that pass on the baseline** (remaining failures need DB/network, identical in both). Migration 0042 up×2 / down + every CHECK/UNIQUE verified on a throwaway Postgres; PG-backed stores (auth, outreach, procurement, email routing, BOAZ claim, alias lookup) verified on a throwaway Postgres (found + fixed a param-type bug in `PgTaskRepo.finish`). E2E is SIMULATED (fake Gmail / supplier / payments).
+- **Operational risk:** the backend bind-mounts `./backend`, so ANY backend restart (incl. an OOM restart) loads this code and applies 0042 before an approved deploy. Nothing was restarted, sent, ordered or paid.
+- **Status:** NOT DEPLOYED (approval-gated). NOT DONE: automatic NIR evidence verification / reply-claim extraction, automatic supplier ordering (`place_order` stub everywhere), bulk threshold (owner decision: max live stock 36 < rule 50), un-spam (scope), data cleanup of the RockAuto / Mann Filter labels (production supplier record change — owner approval).
+
+### 2026-10-27 (late) — Supplier order connections (owner: "build it now and prepare it for the suppliers") — BUILT, OFF, NOT DEPLOYED
+- `backend/supplier_ordering.py`: one contract (`place_order` / `get_status`, `AmbiguousSubmission`) + AliExpress DS, order-by-email, awaiting-credentials (5 dropship suppliers) and manual connections; master switch `SUPPLIER_AUTO_ORDER_ENABLED` (default 0 = everything manual).
+- **AliExpress API VERIFIED against the official Open Platform reference** (owner's browser, AE-Dropshipper, read 2026-10-27): the SDK's `aliexpress.trade.buy.placeorder` is NOT the current method — `aliexpress.ds.order.create` is ("Create and Pay"): `try_to_pay` is forced `"false"`, our procurement id is `out_order_id` (`REPEATED_ORDER_ERROR` on a repeat → treated as ambiguous), delivery method from `aliexpress.ds.freight.query` (tracked only, within approved shipping), payment only via `aliexpress.ds.order.afterpay` behind the `supplier_payment` approval, status via `aliexpress.trade.ds.order.get` + `aliexpress.ds.order.tracking.get`. NOT verified against a live order.
+- `procurement`: connector evidence stored, `reconcile()`, `pay_via_connector()` (one-shot, ambiguous → EXCEPTION), `current_terms_for_procurement()`; fulfillment spend refuses an order paid through its connection (no double payment). Gmail: `send_purchase_order_email` + `PurchaseOrderEmailAuthorization` (own endpoint set). Routing: replies in a PO thread → BOAZ `procurement_reply` task, other sender domain → exception. Console: `אשררכש` submits through the connection, `אשרתשלוםספק` pays where the connection can, `בדוקרכש` checks status. AliExpress SKU price currency guard kept.
+- **Tests:** `tests/test_supplier_ordering.py` (17) + lifecycle + email suites: 368 passed / 1 skipped offline. Full suite: 127 failed / 2343 passed / 308 skipped / 4 errors — 0 new failures vs baseline. Throwaway Postgres: PO thread lookup, `pay_via_connector` → SUPPLIER_PAID with the DB CHECKs, reconcile tracking.
+- **Status:** NOT DEPLOYED, OFF. Next (owner approval): deploy; then `SUPPLIER_AUTO_ORDER_ENABLED=1` and ONE small real AliExpress order end to end (`אשררכש` → `אשרתשלוםספק` → `בדוקרכש`). Known limits: AliExpress offers store no shipping cost, so until approved shipping is known only free tracked shipping passes (`ALIEXPRESS_DS_MAX_SHIPPING_USD`); Israeli address fields beyond name/street/city/zip/phone (e.g. tax id) are ASSUMED not required.
+
+### 2026-10-27 (night) — Pre-deployment safety gates for the supplier-lifecycle candidate (owner master execution task)
+- **Critical exposure root-fixed:** the candidate sat in the bind-mounted `backend/` of a `restart: unless-stopped` container whose start command runs `alembic … upgrade head` — any restart (incl. crash recovery) would have loaded it and applied 0042, and `agents/owner_console.py` (not imported since the 17:17 IL deploy) would have loaded the candidate on the owner's next WhatsApp message with no restart at all. The candidate was moved to `candidates/supplier-lifecycle-2026-10-27/` (MANIFEST, SHA256SUMS, patch, evidence, DEPLOY.md) and `backend/` restored to the running deployment — VERIFIED: compiled-cache source sizes of 12/13 changed modules equal the deployed files (the 13th was not imported), live vs deployed = 0 differences, container not restarted, PII schema still 0041.
+- **Candidate fixes (isolated copy):** `supplier_flags.py` (one switch module, OFF unless exactly "1": BOAZ loop, Spam scan, supplier routing, NIR outreach, auto-ordering); schema-aware email store (new code on an un-migrated schema keeps the 0041 owner flow, refuses only supplier features); **message-loss bug fixed** (deployed code too): the cycle read only the newest 25 inbox/Spam messages, so a burst > 25 between cycles was never seen — now pages past processed mail (≤5 pages, backlog flagged; ignored-spam ids cached); missing AliExpress shipping fee no longer read as free; atomic DB claim per submission / payment (1 of 10 concurrent claims wins, real PG); dropshipping qualification dimension (DROPSHIPPING-READY / -CANDIDATE / -FAILED; v1 records → UNVERIFIED); email PO requires DROPSHIPPING-READY and states shipping + approval reference; onboarding / inactive suppliers never orderable (only Meyer + ATD were `pending_credentials`; ASAP / Keystone / Turn 14 carry other statuses and would not have hit the waiting slot).
+- **Verified:** supplier spend only via `trigger_supplier_fulfillment` after the gate (AST) and `pay_via_connector` (AliExpress afterpay); `stripe_issuing_service.py` has no callers. Rollback rehearsed (see DEPLOY.md): downgrade must run with the candidate code; restoring old code without downgrading makes every container start fail its migration step and skip `container_start.sh`. Regression: candidate 2397 pass / 127 fail / 4 err vs baseline 2280 / 127 / 4 — identical failure set and messages (117 DB-less container, 11 read-only mount, 3 missing env/layout), 117 new tests pass.
+- **Follow-ups (out of scope, owner decision):** docker-compose start chain lets uvicorn run when a migration fails and silently skips `container_start.sh` (production config change); inbox claim leaves a crashed `processing` row skipped forever (pre-existing); bulk-deal threshold (max live stock 36 < 50); RockAuto / Mann Filter label cleanup; `gmail.modify` for un-spam; AliExpress `out_order_id` length limit UNVERIFIED (uuid 36 chars).
+- **Status:** PARTIAL — candidate verified in isolation, NOT DEPLOYED; live AliExpress order/payment NOT tested (needs approval).
+
+### 2026-10-27 (late night) — Deployment blockers: live `owner_console.py` identity + 0042 rollback data-loss protection
+- **Blocker 1 (PRODUCTION READ-ONLY):** live `backend/agents/owner_console.py` (host inode 265325 = container `/app/agents/owner_console.py`, bind mount) SHA-256 `c44a7d01cff1ad5e1bbe5d65ab5cb88b07e12ed46586d28e8409fcf5dda823ed`, byte-identical (`cmp`) to the deployed source reconstructed from HEAD `048454c` + the working-tree snapshot (`baseline_uncommitted.diff` sha256 `46125f2b…`, `baseline_untracked.tgz` `6f593f77…`, taken 15:46:08Z). **No immutable release artifact exists** — the 15:16Z deploy ran from an uncommitted working tree (HEAD's version differs: `b55e9de5…`). The session's timestamped tool log shows the last edit to the file before the deploy at 15:06:09Z and the next at 15:52:00Z (candidate) — none between deploy and snapshot. Runtime: all three importers (WhatsApp webhook — 0 `[WA IN]` since 15:16Z in the bridge log; Telegram admin approve — 0 approvals since 2026-09-12; db_cleanup daily keyword batch — Redis marker set 05:27Z) had not run since the 15:17Z start; the daily batch then ran at 22:03:31Z and loaded the module from disk while it hashed `c44a7d01…` before (21:47Z) and after (22:05Z). No in-process introspection was done → running-process version is indirect, not proven.
+- **Blocker 2 (ISOLATED REHEARSAL):** DEPLOY.md v1 backup command was broken (`$POSTGRES_USER` expanded on the host), omitted the 3 email columns, had no snapshot consistency, validation, restore test, writer freeze, lock timeout or failure branches. New in the bundle: `ops/backup_0042_data.sh` (one REPEATABLE READ snapshot: 4 tables + 3 columns + sequence + schema; counts/checksums validated; refuses overwrite), `ops/verify_unchanged_0042.sh`, `ops/restore_0042_data.sh` (one transaction, commits only on matching counts), DEPLOY.md v2 (preconditions, step success criteria, F-A..F-F branches, STOP rules, approvals). Migration 0042 downgrade now `SET LOCAL lock_timeout = '15s'`. Rehearsed on Postgres 16 with production names/image: migration failure → stays 0041; backup → downgrade → re-deploy → restore = identical content fingerprint (4 tables, email columns, sequence); late write detected (exit 5); blocked downgrade fails after 15 s, data intact, retry works; Recovery B (deployed code + kept 0042 file) works; corrupt/forged backup → nothing restored (exit 6 / 9); mixed code tree detected and repaired; runbook commands executed verbatim on a repo replica. Rehearsal found and fixed 1 defect in the new restore script (sequence flag `t`).
+- **Not verified:** the production form `docker compose run --rm --no-deps --entrypoint "" backend alembic … downgrade` (rehearsed as `docker run` with the same image + mount); no production backup of 0042 data exists (0042 never applied). Evidence: `candidates/supplier-lifecycle-2026-10-27/evidence/`.
+
+## 2026-10-28 — OPEN (owner request): disabled `run_all_tasks` steps + proof that every task really helps
+
+### #119 — Disabled fitment/price backfills: "already complete" is an unverified claim — PARTIAL (2026-10-28: measured; 3 of 6 resolved in the follow-up bundle, 3 need an owner decision)
+- `backend/db_update_agent.py` `run_all_tasks` has these steps commented out: `backfill_bmw_fitment_from_name_he` (l.4707),
+  `backfill_ford_fitment_from_name_he` (l.4709), `backfill_jaguar_fitment_from_name` (l.4710) — comment
+  "DISABLED: OOM / already complete"; also `merge_catalog_fitment_from_part_vehicle_fitment` (l.4711, "full-catalog scan,
+  OOM per cycle, near-zero updates"), `fix_base_prices` and `normalize_base_price` (l.4724-4725, "OOM / already complete").
+- The comments mix two different reasons: they crashed the box (out of memory) AND the work is done. Only the first is
+  evidence-backed by history; "already complete" was never measured. If BMW / Ford / Jaguar parts still lack fitment rows,
+  those cars get fewer fitment-verified search results and nothing is filling the gap.
+- **To do:** (1) measure, read-only, how many active BMW / Ford / Jaguar parts have a Hebrew name the backfill could parse
+  but no `part_vehicle_fitment` row (= the remaining work), same for the price tasks (parts with a cost but a missing /
+  wrong `base_price`); (2) if the remainder is real, rebuild the step as a bounded batch (keyset, `LIMIT`, `SKIP LOCKED`,
+  per-run cap) so it cannot OOM, and re-enable it; if the remainder is ~0, delete the dead step and record the
+  measurement; (3) never re-enable an unbounded version.
+
+### #120 — Verify that every `run_all_tasks` task does its job and actually helps — PARTIAL (2026-10-28: 15 of 19 classified with evidence; 4 log no result; 4 defects → #123–#125)
+- Owner request 2026-10-28: check and verify that the 3×/day run (21:30 / 00:15 / 07:15 Israel) really performs its
+  tasks, not just that the run reports "completed" (CLAUDE.md lesson: a run can complete while every task inside it
+  errors or skips — "8,210/8,210 skipped is a total outage").
+- **To do, per task** (19 enabled, counted in the code 2026-10-28: seed_system_settings, fill_car_brands,
+  normalize_imported_manufacturers, sync_models_from_catalog, backfill_catalog_fitment_from_xls,
+  backfill_mini_fitment_from_name_he, sync_manufacturer_registries, clean_part_names, normalize_part_types,
+  normalize_categories, dedup_catalog_parts, normalize_availability, fix_manufacturer_overflow, flag_fake_skus,
+  refresh_min_max_prices, lookup_oem_spec, enrich_pending_parts, generate_image_embeddings, validate_watchdog_actions): (1) tally `status` / `scanned` /
+  `updated` / `errors` from the last N runs' logs and result JSON; (2) flag tasks that always error, always skip, always
+  hit the per-task timeout, or always report 0 updates; (3) for tasks that do write, verify a sample of the written rows
+  is correct (not just counted); (4) check the remaining backlog each task is meant to shrink is actually shrinking
+  (e.g. `lookup_oem_spec` vs `needs_oem_lookup`, `generate_image_embeddings` vs `parts_images.embedding IS NULL`);
+  (5) report: useful / no-op (candidate for removal) / broken (root-fix) / harmful.
+- Read-only investigation first; any change to a task is a separate, root-fixed change with its own verification.
+
+## 2026-10-28 — Post-night backend restart + production health gate — DONE 07:52 Israel (no candidate deployed)
+- **Window (VERIFIED):** overnight work completed — `sync_prices` 02:22, `category_discovery` 04:18, `run_all_tasks` 00:15 run 00:42 and 07:15 run 07:47 IL (ok=17 skip=2 err=0, 1958.8 s). First preflight 07:49 IL **BLOCKED** (`meili_purge_inactive.py` running) — waited, no job touched; SAFE at 07:51 IL.
+- **Restart (VERIFIED):** `bash backend/scripts/pre_restart.sh` (exit 0, SAFE) → `docker restart autospare_backend` (exit 0, 05:51:59Z→05:52:11Z). Only the backend; same container `5f1afa2e667f…`, same image `sha256:bf7efaf6…`, RestartCount 0, no OOM; healthy after ~30 s.
+- **After (VERIFIED, read-only):** `/api/health` 200; startup log 0 Traceback / 0 ERROR / 0 import errors, no `Running upgrade` (PII `0041_email_agent_owner_flow`, catalog `0062_version_oob_schema`, 0 tables of 0042); `container_start.sh` ran; loops re-anchored on last completed runs (meili 115 min, thumbnails 31 min, sourcing 74 h); harvester relaunched once; Postgres ×2 / Redis (no stale locks) / Meilisearch / WhatsApp bridge (connected, business number) healthy; live `backend/` = deployed baseline (0 diffs), candidate absent from `backend/`, bundle hashes intact. Isolated tests on the live tree (no network, read-only mount): 391 passed, 2 skipped.
+- **owner_console.py:** source `c44a7d01cff1ad5e…` on host and in the container — **SOURCE: VERIFIED**. Runtime: the new process (05:52:10Z) has no read-only introspection path (static `/api/v1/system/version`, no py-spy/gdb, ptrace restricted); its importers had not fired by 05:55Z (0 `[WA IN]`; today's keyword batch already sent) — **RUNNING PROCESS VERSION: UNVERIFIED**; on first import it reads the file above.
+- **Not done here:** candidate deploy, migration 0042, any flag change. 0042 rollback status unchanged: see the 2026-10-27 (late night) entry — production form of the one-off `docker compose run … alembic` command still UNVERIFIED.
+
+## 2026-10-28 (evening) — Master closure: owner_console runtime identity, 0042 rollback safety, compose form, release gate
+
+Times are Israel time (UTC+2). Production = live server; isolated = disposable containers/DBs with no network. Nothing from the supplier-lifecycle candidate was deployed; 0042 was not applied or downgraded in production; no commit, no push.
+
+### WS1 — Which owner_console.py the process is running — **PASS (production VERIFIED)**
+- **Root cause:** CPython compiles a module once and does not re-read the source, so the hash of the file on disk proves nothing about the running process. There was no introspection path (no py-spy/gdb, ptrace restricted, a static `/version`). Also, `owner_console` was imported lazily (first WhatsApp message, Telegram approval, or the daily keyword batch), so a fresh process had often not loaded it at all.
+- **Fix:**
+  - `backend/runtime_identity.py` (stdlib only), installed from `sitecustomize.py`, wraps `SourceFileLoader.get_code` for the watched modules (default `agents.owner_console`). It hashes the exact bytes it compiles and writes an atomic record to `/app/state/runtime_identity/<module>.<pid>.<starttime>.json`. The record ties pid, `/proc` start time and boot_id together, so a record from an earlier process cannot pass.
+  - `routes/webhooks.py` now imports `agents.owner_console` at module import. An AST check confirmed the import has no side effects (definitions and env reads only).
+  - `maintenance/runtime_identity_check.py --pid 1 --expect MOD=SHA` is read-only and exits 0 only on LOADED_MATCH.
+  - Tests: `tests/test_runtime_identity.py` (8).
+- **Restart:**
+  - Preflight SAFE at 19:02.
+  - `bash backend/scripts/pre_restart.sh` exit 0 at 19:02:57.
+  - `docker restart autospare_backend` exit 0, 19:02:59→19:03:10.
+  - Same container `5f1afa2e667f` and image `bf7efaf6`, RestartCount 0, no OOM.
+  - `/api/health` 200, startup log 0 Traceback / 0 ERROR / 0 `Running upgrade`, `container_start` ran.
+  - Only the backend was restarted.
+- **Evidence:** `runtime_identity_check.py --pid 1 --expect agents.owner_console=c44a7d01cff1ad5e1bbe5d65ab5cb88b07e12ed46586d28e8409fcf5dda823ed` → `LOADED_MATCH loaded=disk=c44a7d01… pid=1 start=87609384 loaded 19:03:13`, exit 0. Re-checked later the same evening: exit 0.
+- **Rollback:** `/root/asf-runtime-identity-20261028T170246Z/` (chmod 400): restore `sitecustomize.py` (`3f826ddc…`) and `webhooks.py` (`9733303c…`), delete the 3 new files, run `pre_restart.sh`, then `docker restart autospare_backend`.
+- **New deployed baseline ("base3"):** the previous baseline + runtime identity. The live code tree equals base3 except the nightly DB dumps in `backend/backups/`, which are data, not code.
+
+### WS2 — 0042 rollback data protection — **PASS (isolated VERIFIED; production run not authorized)**
+- **Isolated rehearsal 3** used the exact production command form in a separate compose project (`rh3`, same image, own Postgres):
+  - **X1:** deployed upgrade → 0041; candidate → 0042; seed; backup OK; unchanged-check OK; downgrade exit 0 → 0041; startup hook ran 0 times.
+  - **X2:** repeat downgrade is a no-op (exit 0); re-upgrade; restore exit 0 with an identical content fingerprint; repeat restore refused (exit 7, data unchanged); repeat backup refused (exit 2).
+  - **X3:** migration killed mid-wait → stays 0041 with no tables; the orphaned statement is bounded by the 15 s lock timeout; a later upgrade succeeds.
+- The earlier rehearsal 2 also passed: write after backup, lock timeout, corrupt backup, interrupted deploy, repeated recovery.
+- **Defect fixed (DEPLOY.md v3):** the precondition-4 `deployed.sha256` list included `error_log.txt`, a live log, so the F-A/F-B code-restore check would always fail. Logs are now excluded. Re-tested on a replica after a simulated log write: pass. Runtime identity files survive both deploy and rollback.
+- **Evidence:** `candidates/supplier-lifecycle-2026-10-27/evidence/2026-10-28-closure/rehearsal3/` (SHA256SUMS `6ca27a07…`).
+
+### WS3 — Production one-off compose command — **PASS (production VERIFIED, read-only)**
+- `docker compose run -T --rm --no-deps --entrypoint "" backend alembic -c alembic_pii.ini current` → exit 0, `0041_email_agent_owner_flow (head)`.
+- Schema fingerprint md5 `9196c4b8…` was the same before and after, and the container set was identical.
+- Docker events for the one-off: create→start→die→destroy. The only backend events were the routine healthcheck.
+- `-T` is required; compose cannot dry-run `run`.
+- The production-form ops scripts refused correctly at 0041: `backup_0042_data.sh` exit 3 (no output dir created), `restore_0042_data.sh` exit 3.
+- The downgrade itself was rehearsed only in isolation (WS2). It is never to be run in production without approval A2/A4.
+- **Evidence:** `evidence/2026-10-28-closure/compose_current/`.
+
+### WS4 — Release gate — **PASS**
+Isolated suite, same command for every tree (`--network none`, read-only mount):
+
+| Tree | Failed | Passed | Skipped | Errors |
+|---|---|---|---|---|
+| base2 (previous) | 127 | 2280 | 308 | 4 |
+| base3 (live) | 127 | 2288 | 308 | 4 |
+| cand3 (candidate on base3) | 127 | 2405 | 308 | 4 |
+
+- 0 base3-pass→cand3-fail; failure messages identical; 117 candidate-only tests all pass; no tests removed.
+- The 127 failures are the same pre-existing ones in every tree.
+- Bundle: `sha256sum -c SHA256SUMS` exit 0 (`SHA256SUMS` = `67013ca3…`, 28 files), cand3 == base3 + bundle with 0 differences.
+- Production: PII `0041_email_agent_owner_flow`, 0 of the 4 tables from 0042, no 0042 file in the live `alembic_pii/versions`.
+- The 14 candidate files that also exist in live all differ from it; the 14 new-only files are absent from live.
+- Candidate `owner_console` also has no import-time side effects.
+
+### Still open (approval-gated, not blockers of this task)
+- Candidate deploy (A1).
+- Production downgrade/restore, only under A2/A4.
+- Feature switches.
+- The one live AliExpress order.
+- #119, #120.
+- docker-compose start chain: uvicorn starts even when a migration fails, and `container_start.sh` is skipped.
+- Bulk threshold.
+- RockAuto/Mann Filter label cleanup.
+- `gmail.modify`.
+
+## 2026-10-28 (night) — Supplier lifecycle RELEASED: deployed 20:20 Israel, PII 0042, E2E verified — PASS
+
+Times Israel (UTC+2). Labels: PRODUCTION = live server, read-only unless stated; ISOLATED = disposable containers / DBs on
+internal-only networks. No commit, no push. No supplier order, supplier payment, customer charge or supplier email was created.
+
+### Finding 1 — "candidate == live + bundle" vs "14 shared files differ" — RESOLVED (no discrepancy)
+- Both statements were true and about different things: the candidate tree is the live tree with the 28 bundle files laid over
+  it (0 byte differences to the bundle), and the 14 bundle files that also exist in live differ from live because they ARE the
+  candidate's changes. Per file (live / previous baseline / current baseline / candidate hash + diff size):
+  `evidence/2026-10-28-release/reconciliation/table.txt`.
+- VERIFIED: each of the 14 shared files is byte-identical across live, the previous deployed baseline and the current baseline
+  (nothing on live changed since the candidate was built → deploying it reverts nothing); the runtime-identity files
+  (`runtime_identity.py`, `maintenance/runtime_identity_check.py`, `tests/test_runtime_identity.py`, `sitecustomize.py`,
+  `routes/webhooks.py`) do not overlap the bundle; the reviewed `candidate_vs_deployed.patch` applied to live reproduces the
+  bundle byte-for-byte (`patch` exit 0, 0 mismatches); the bundle holds only `.py` files, no logs/data, no secrets (scan: the
+  only hits are `sk_test_` prefix checks), no added e-mail/phone literals.
+
+### Finding 2 — Regression by test identity — PASS
+- Same command for every tree (image `bf7efaf6…` = production): previous baseline, live (with runtime identity), candidate v3,
+  final candidate v4. Main suite: 0 outcome changes, 0 failure-type/message changes, 0 removed tests; 119 candidate-only tests
+  all pass (117 + 2 new race tests); 8 runtime-identity tests pass.
+- The 127 failed + 4 errors are identical in all trees and environmental (no API server / no DB → connection refused,
+  read-only `/app`, host-only files, `HF_VISION_MODEL` unset) — none in supplier authorization, procurement, pricing or
+  rollback code.
+- NEW: the 203 tests that need an isolated DB were run against a disposable pgvector PG + Redis (22 files, 565 tests; base on
+  0041, candidates on 0042): 0 outcome changes, 0 removed; 472 pass in every tree (checkout idempotency, customer price
+  boundary, order payment policy, privacy, customer flow, AliExpress discovery/price sync …). Remaining 80 failures identical and
+  environmental; `test_order_shipping_e2e` fails only in the combined run ("Future attached to a different loop") and passes
+  alone on both trees. Evidence: `evidence/2026-10-28-release/regression/`, `…/db_suites/`.
+
+### Finding 3 — Startup order — VERIFIED defect, NOT a blocker for this release → follow-up #121
+- Reproduced in isolation with the exact production command (`evidence/2026-10-28-release/startup_order/result.txt`):
+  migration blocked > lock timeout → 0042 rolls back, PII stays 0041, app serves 200, `container_start.sh` skipped, container
+  `running`, 0 restarts; normal start → app serves on the OLD schema until the migration commits (~3 s).
+- Why not a blocker: the candidate re-checks `supplier_schema_ready()` until True (no stale "not ready" cache), refuses supplier
+  features on 0041, and 0042 is one transaction with `lock_timeout = 15s` in both directions; runbook steps 2.5/2.6 detect a
+  failed migration (→ F-A). Not changed in this release (production config change; fail-closed vs degraded is an owner
+  decision) — tracker #121.
+
+### Defect found by the E2E and fixed — one supplier-payment approval released fulfillment 3 times — FIXED, VERIFIED
+- Root cause: `procurement.payment_refusal` checked the approval (`require`) and then marked it consumed with an
+  unconditional UPDATE; 5 concurrent payment webhooks all passed the check before any consumed it — real PG: **3 of 5
+  released** (`evidence/2026-10-28-release/e2e/result_cand3_before_fix.txt`, check C11). (Downstream `supplier_payments` has
+  UNIQUE(order_id, supplier_id), but the one-shot approval itself must hold.)
+- Fix: `supplier_authorization.consume()` is atomic for one-shot domains — `PgAuthStore.consume_once` =
+  `UPDATE … SET consumed_at … WHERE id = … AND consumed_at IS NULL AND revoked_at IS NULL RETURNING id`, returns who won
+  (InMemoryAuthStore equivalent); `payment_refusal` releases only when it wins, else refuses + audit event.
+  Files: `supplier_authorization.py` `a58d44de…`, `procurement.py` `79d2d848…`, `tests/test_supplier_safety_gates.py`
+  `1d856cb4…` (+2 tests: concurrent release once; second holder of a grant loses — both FAIL on the old code, PASS now).
+  After: real PG 5 concurrent → exactly 1 released (C11 PASS).
+- Artifact: v3 (`SHA256SUMS` `67013ca3…`) preserved in `archive/files-v3-SHA256SUMS-67013ca3.tgz` (`747bcbc4…`);
+  final v4 `SHA256SUMS` = `649f41dd9b0b729ae84b5a38544c6d32943040bcff36b63265fd7e67c0d168b3`, patch regenerated
+  (`eea32d16…`), old patch kept as `candidate_vs_deployed.v3.patch`. Full regression rerun on v4 (above).
+
+### Backup / migration / compose / rollback — PASS (isolated + production read-only; no production downgrade)
+- Unchanged from the 2026-10-28 (evening) entry: rehearsal 2 (write-after-backup, lock timeout, corrupt backup, interrupted
+  deploy, repeated recovery) and rehearsal 3 (exact `docker compose run -T --rm --no-deps --entrypoint ""` form) passed;
+  production `… current` read-only returned 0041 with an unchanged fingerprint. The v4 delta touches no migration, backup,
+  restore or startup code. Expected revision: before 0041_email_agent_owner_flow → after 0042_supplier_lifecycle (VERIFIED).
+- DEPLOY.md v4 (v3 kept as DEPLOY.v3.md): records the v4 artifact hash; step 2.4 = `docker restart autospare_backend`
+  (same container; bind-mounted code; container config hash `c4a2b502…` = `docker compose config --hash backend`, so a
+  recreate would change nothing — and a restart cannot pick up unrelated config).
+
+### Deployment — PASS (PRODUCTION)
+- Preconditions 20:19 IL: bundle `sha256sum -c` exit 0; PII 0041; disk 29 G free; all 5 supplier switches unset (OFF); no
+  active PII sessions. Rollback target `/root/asf-deploy-20261028T181942Z/` (chmod 400: `deployed.sha256` 714 files,
+  `deployed_manifest_files.tgz` 14 files, `new_paths.txt` 14 paths, `artifact.SHA256SUMS`).
+- `bash backend/scripts/pre_restart.sh` exit 0 at 20:19:52 → `RESTART PREFLIGHT: SAFE` (only the continuous car-parts.ie
+  harvester running, relaunched by design).
+- 2.1 copy exit 0 (20:20:09) · 2.2 bundle + deployed-tree hash check exit 0 · 2.3 dry-run "Running", config hashes equal ·
+  2.4 `docker restart autospare_backend` exit 0, 20:20:29.5→20:20:40.8 · 2.5 log `Running upgrade 0041… -> 0042…`, 0 ERROR /
+  Traceback · 2.6 PII `0042_supplier_lifecycle` (20:20:45) · 2.7 health 200 (1st try) · 2.8 no switch = 1 ·
+  2.10 runtime identity LOADED_MATCH · `container_start.sh` "Startup complete".
+- Container `5f1afa2e667f…` (same), image `bf7efaf6…` (same), RestartCount 0, OOMKilled false. Only the backend restarted.
+- 2.9 (20:36:54 IL, 16 min after start): 0 Traceback, 0 ERROR in the backend log; Email Agent heartbeat `ok` at 20:31:42 on the new code (sent 0); container healthy, 0 restarts, no OOM; postgres_catalog / postgres_pii / redis / meilisearch / nginx healthy, whatsapp_bridge + flaresolverr up. One-off `docker compose run -T --rm --no-deps --entrypoint "" backend alembic -c alembic_pii.ini current` → `0042_supplier_lifecycle (head)`, exit 0, container set unchanged. Post-deploy isolated run of the supplier, email and runtime-identity suites against the LIVE tree (read-only mount): 432 passed, 1 skipped; live tree vs artifact v4 `sha256sum -c` exit 0.
+
+### Runtime identity — PASS (PRODUCTION)
+- `docker exec autospare_backend python3 /app/maintenance/runtime_identity_check.py --pid 1 --expect
+  agents.owner_console=1e1458c7389af2759c48ff3a0161f7622573bf33f6e294436e61c03775078059` → `LOADED_MATCH
+  loaded_sha256=disk_sha256=1e1458c7… path=/app/agents/owner_console.py pid=1 start=88074423 host=5f1afa2e667f
+  loaded_utc=2026-10-28T18:20:43Z loads=1`, exit 0; pid 1 = uvicorn; the hash is of the bytes the new process compiled
+  (startup log line `[runtime_identity] agents.owner_console sha256=1e1458c7… pid=1 start=88074423`), the expected value is
+  the artifact file's hash. Re-checked at 2.9 (20:36:54 IL): LOADED_MATCH, exit 0.
+
+### E2E (non-binding) — PASS — ISOLATED E2E (76/76), PRODUCTION READ-ONLY (below); external acceptance BLOCKED
+- `evidence/2026-10-28-release/e2e/e2e_lifecycle.py` on the final candidate: real modules + real PG stores on a fresh
+  disposable 0042 DB; only the AliExpress Open Platform (documented response shapes) and Gmail (in memory) are fakes.
+  A discovery/qualification 10 · B product/price validation 9 · C authorization boundaries 14 · E order lifecycle 20 ·
+  G recovery/audit 2 · D BOAZ ownership 8 · F outreach + routing 13 → 76 PASS (`result_cand4.txt`).
+- State mapping (candidate names, not renamed): PREPARED/AWAITING_AUTHORIZATION = `AWAITING_PO_AUTHORIZATION`;
+  VALIDATION_FAILED = connector refusal before any order request → `SUBMISSION_FAILED` (E11/E12); SUBMISSION_BLOCKED = refused
+  without approval, supplier never contacted (E13); CREATED_UNPAID = `SUBMITTED` with `paid: false`, `try_to_pay: "false"`
+  (E1, simulator only); REJECTED = `SUBMISSION_FAILED` (E4); TIMEOUT_UNKNOWN / RECONCILIATION_REQUIRED = `EXCEPTION`
+  (E6–E9, never resubmitted); FAILED = `SUBMISSION_FAILED` "nothing sent" (E10); confirmed = `SUPPLIER_CONFIRMED` (E3).
+- **BLOCKED — REAL EXTERNAL ACTION REQUIRED:** real AliExpress acceptance of `ds.order.create`. The DS API has no sandbox for
+  order creation and an order created unpaid still reserves stock / obligates — not tested, by design. Same for a real
+  e-mailed purchase order and a real supplier inquiry send.
+- PRODUCTION READ-ONLY after deploy: new tables 0 rows (authorizations, outreach, procurement, events); 131/131 historic
+  emails marked routed (history not replayed); live AliExpress supplier → `ManualConnector` ("automatic ordering is switched
+  off"); 8 onboarding suppliers → `AwaitingCredentialsConnector`; `gate_bypassed()` False; switches all False; non-consuming
+  payment check → "no procurement prepared"; BOAZ list read; 0 BOAZ/NIR todos and 0 suppliers changed since 20:20;
+  Email Agent cycle on the new code: sent 0, no Spam pass.
+
+### No binding action — VERIFIED (PRODUCTION, 12 h window to 20:3x IL)
+- 0 supplier_payments created/updated, 0 Email-Agent sends, 0 orders, 0 payments, 0 `agent_authorizations` / outreach /
+  procurement rows, 0 log lines for `ds.order` / `afterpay` / `send_supplier_inquiry` / `drafts/send`.
+
+### Rollback (approval A2, not used)
+- F-B per DEPLOY.md v4 with `D=/root/asf-deploy-20261028T181942Z` (backup → verify → one-off downgrade → restore code →
+  preflight → restart). Code-only restore is invalid while the DB is at 0042 (old code cannot downgrade).
+
+### Status
+- Finding 1 PASS · Finding 2 PASS · Finding 3 VERIFIED, follow-up #121 · race defect FIXED · deploy PASS · runtime identity
+  PASS · isolated E2E PASS · real supplier acceptance BLOCKED (needs a real order) · new follow-up #122.
+
+## 2026-10-28 (late night) — #119, #120, #121, #122 worked; bundle `candidates/followups-119-122-2026-10-28/` (NOT deployed)
+
+Israel time. No production restart, deploy, commit or push; no supplier order, payment, outreach, email, activation or
+switch change. Production checks were read-only and run after the 21:30 `run_all_tasks` finished (22:00:39). Bundle:
+`SHA256SUMS` `68e88194…` (7 files), `BASE.sha256` `8d1e9a58…` (the live versions it replaces + `docker-compose.yml`;
+`sha256sum -c` exit 0 = nothing deployed), `EVIDENCE.sha256` `4771a7de…`, runbook `DEPLOY.md` (owner approval needed).
+
+### #119 — PARTIAL
+- Requirement: measure the remaining work of the six disabled steps; real → rebuild bounded + re-enable; ~0 → delete +
+  record; never re-enable an unbounded version.
+- Measured read-only with the steps' own rules (`evidence/measure_119.py` → `measure_119_result.json`, one READ ONLY
+  transaction): BMW **71** parsable of 225,465 active parts without fitment; Ford **89** of 72,254; Jaguar **164** of
+  49,458 (samples include merchandise). → **"already complete" TRUE for the three name backfills.** They are DELETED
+  in the bundle (`db_update_agent.py` −442 lines: 3 functions + their rule tables + 9 name entries; guard test updated,
+  new `test_deleted_119_steps_cannot_run`; `maintenance/run_step4_worker_cycle.py` list). Nothing that runs today
+  changes — they were already blocked by `OOM_BLOCKED_TASKS` and commented out.
+- **"already complete" FALSE for the other three** — still blocked, NOT rebuilt (needs the owner):
+  `merge_catalog_fitment_from_part_vehicle_fitment` — 1,906 of a 3,000-part sample (≈64% of 1,486,673 parts with
+  fitment rows) lack the JSON copy, BUT search reads `compatible_vehicles` only as a fallback when the structured
+  `part_vehicle_fitment` path finds nothing (`routes/parts.py` ~2046), so the copy adds no proven search result;
+  `fix_base_prices` ≤879,335 parts below cheapest offer × 1.45 and `normalize_base_price` ≤246,729 off-formula — two
+  different definitions of `base_price` that would rewrite each other's rows; customer prices never use `base_price`.
+  Next action: owner decides whether `base_price` / `compatible_vehicles` still need maintaining at all; only then a
+  bounded rebuild.
+- **CORRECTION 2026-10-29 06:2x IL (re-verified in code + read-only DB):** "customer prices never use `base_price`" was WRONG.
+  When a part has NO live priced offer, `base_price` IS the customer price: `/api/v1/parts/{id}/suppliers` adds a synthetic
+  "AutoSpareFinder" offer at `base_price` + 18% VAT (`routes/parts.py` ~3746), and the cart falls back to it (`routes/cart.py:180`);
+  search also uses it as an ordering tiebreak. Measured: 288,984 active parts with an importer cost have `base_price` ≠ cost × 1.45;
+  98,867 of them have no live offer (customer-visible): 95,245 within ₪1 (rounding), 3,622 more than ₪1 off, only 8 more than 5% off
+  (3 low, 5 high), 1 more than 20% off, 0 below cost. So the customer-visible damage is small; the `fix_base_prices` mismatches
+  (parts WITH offers) are not shown to customers, because the offer price wins.
+
+### #120 — PARTIAL
+- Report `evidence/REPORT_120_run_all_tasks.md`: all 19 tasks over 4 logged runs (all `ok=17 skip=2 err=0`), own result
+  lines, code, read-only before/after counts. Verdicts: no-op 8 (1, 2, 6, 8, 9, 10, 12, 15), broken 1
+  (`generate_image_embeddings` → #124), harmful 4 (`backfill_catalog_fitment_from_xls` → #125; `dedup_catalog_parts`,
+  `fix_manufacturer_overflow`, `flag_fake_skus` → #123), intentionally off 2 (`lookup_oem_spec`, `enrich_pending_parts`),
+  **unverified 4** (`normalize_imported_manufacturers`, `sync_models_from_catalog`, `sync_manufacturer_registries`,
+  `validate_watchdog_actions` — they log no result line; the in-memory report needs an admin session = a production write).
+- Next action: add a one-line result log (`task`, `scanned`, `updated`) to those 4 in the next code change, then read one run.
+  The fixes themselves are #123–#125 (separate root-fixed changes, per #120's own rule).
+
+### #121 — PARTIAL (fix verified in isolation; not deployed)
+- Root cause: compose `A && B && container_start.sh & uvicorn` — bash backgrounds the whole chain and starts uvicorn at once.
+- Fix: `backend/scripts/start_backend.sh` (`c4d98e5e…`) — each migration in the foreground, exit code checked, bounded
+  by `MIGRATION_TIMEOUT_S` (900), ≤`MIGRATION_RETRIES` (3) attempts `MIGRATION_RETRY_DELAY_S` (20) apart; success →
+  `container_start.sh &` + `exec uvicorn` (PID 1 as before); failure → API never started, `FATAL` lines with the action,
+  `/app/state/startup_status.json`, container HOLDS unhealthy (no restart loop under `unless-stopped`);
+  `STARTUP_ON_MIGRATION_FAILURE=exit` optional. Compose: only the backend `command:` changes
+  (`compose/docker-compose.patch` `8b94cdc4…`; resolved-config diff = the command only, `--workers 1` preserved).
+- Isolated acceptance (`evidence/startup_121/`, production image, production healthcheck, `restart: unless-stopped`, the
+  rendered candidate command, real alembic on a disposable PG, stub app/hook): **32/32 PASS** — T1 migration completes
+  before the app's first look (sees 0042), hook once, PID 1 uvicorn, healthy; T2 every attempt fails → PII stays 0041, app
+  never imported, nothing on :8000, unhealthy, running with 0 restarts, exactly 3 attempts, FATAL + status file; T3
+  transient lock → attempt 2 succeeds; T4 timeout kills deterministically, orphaned statement gone; T5 SIGTERM during a
+  migration → exit 143 in < 8 s, DB unchanged; T6 stop while holding → 143 at once; T7 normal stop → uvicorn graceful,
+  exit 0; T8 exit mode → exit 1; T9 runbook one-off form unaffected; T10 blocker gone + restart → applies + serves.
+- Not proven: production behaviour (needs the approved recreate, DEPLOY.md step 2.4).
+
+### #122 — PARTIAL (fix verified in isolation; not deployed; BOAZ OFF)
+- Root cause: `claim` moved `not_started → in_progress` with no owner/expiry; a crash left it there forever.
+- Fix (`backend/boaz_tasks.py` `bc9bd49b…`): lease {token, phase, worker, expires_at} written in the claim statement;
+  phases claimed → executing → handled (+ outcome); handler bounded by `BOAZ_HANDLER_TIMEOUT_S` (300) < `LEASE_S` (660);
+  every later write fenced by the token; `recover_stale` = one statement (`FOR UPDATE SKIP LOCKED`) taking only expired
+  leases of BOAZ tasks; by phase: claimed → re-queue; handled → apply the recorded outcome (no re-run); executing →
+  re-run only `RETRY_SAFE` kinds (email, supplier_handoff, procurement_reply), else `reconciliation_required`;
+  ≤`MAX_RECOVERIES` (2), then terminal escalation; history in `metrics.boaz.history`. No schema change. Escalated /
+  legacy tasks (no lease) and other agents' tasks are never selected.
+- Tests `tests/test_boaz_recovery.py`: 9 in-memory + 2 real-PG = **11/11 PASS** (healthy not reclaimed; crash before /
+  during (side effect not repeated) / after processing; retry-safe re-run; retry limit → terminal; other agents /
+  escalated / legacy untouched; late worker fenced; handler bound; 2 concurrent recoverers never share a task; history).
+  Activation gate before BOAZ is ever switched on: DEPLOY.md §3.
+
+### Regression (by test identity, live tree = baseline)
+- Main suite (same command as the release): 2,842 common tests — 0 outcome changes, 0 failure-detail changes, 0 removed;
+  +12 (10 pass, 2 PG tests skip here and pass in the DB run). Totals 127 failed / 2,417 passed / 310 skipped / 4 errors —
+  the same pre-existing environmental failures.
+- DB-gated suites (disposable PG + Redis): 565 common — 0 changes, 0 removed; +11 (all pass); 80 failed / 483 passed.
+- Evidence: `evidence/regression_*`.
+
+### Safety (production, read-only, 22:1x IL)
+- Live tree == pre-bundle base (`BASE.sha256` exit 0) and == supplier artifact v4; `start_backend.sh` not in live;
+  backend not restarted (started 20:20:40, 0 restarts, healthy); all five supplier switches unset (OFF).
+- Since the 20:20 deploy: 0 authorizations, 0 outreach, 0 procurement, 0 supplier payments, 0 agent-sent emails,
+  0 orders, 0 suppliers activated.
+
+## 2026-10-29 07:48 Israel — ONE customer price policy on every channel (owner top priority) — DEPLOYED, VERIFIED LIVE
+
+Owner (2026-10-29): read the price policy and implement it in all price files and gates so every agent and customer
+channel uses the same policy and shows the same price. Policy: `docs/PRICE_POLICY.md`; code: `backend/price_policy.py`.
+Bundle `candidates/price-policy-2026-10-29/` (`SHA256SUMS` `e7ee401c…`, 15 files, +555/−298, `EVIDENCE.sha256` `41371d6e…`).
+
+### What was wrong (each found in the code, then proven by a test that FAILED on the old code: 11 of 30)
+1. **Different offers on different channels.** Website search priced a part from the cheapest *visible* offer
+   (class-compatible first); the **chat** picked by supplier **priority, not price**, incl. unavailable offers; the
+   **brands pages** the same; **wishlist/watch** from a different set (no listing filter, ILS-only); **NOA** from yet
+   another set → the same part could show different prices per channel.
+2. **The pre-charge check** (Stripe single + multi order) compared a VAT-INCLUSIVE live unit with the ex-VAT stored
+   unit (every local-supplier order flagged "price changed" → 409 and its unit rewritten), re-priced from the cheapest
+   offer of ANY supplier instead of the chosen one, and set shipping to the MAX fee (multi-supplier orders under-charged).
+3. **Raw cost shown as a price.** Search payload carried `base_price` / `min_price_ils` / `max_price_ils` (catalog
+   costs) and `cheapest/most_expensive_price_ils` = MIN/MAX of raw supplier cost; the website list fell back to
+   `min_price_ils` (our cost) / `base_price` when no offer was priced.
+4. **base_price as a customer price** with a flat 18%: compare-page fallback (also claimed "in stock, 3 days"),
+   cart fallback, chat fallback (`total = base_price + a default fee`, and `base_price / 1.18` as if it held VAT).
+5. **Two VAT rules for an unknown supplier** (agents 0%, search 18%) and a flat-18% default (`local_vat_only=False`).
+6. **Rounding:** one-step `round(cost×1.45×(1+vat))` vs net and VAT rounded separately; WhatsApp checkout VAT on
+   the rounded subtotal vs per-unit VAT × qty on its Stripe line; `int(x*100)` truncation for Stripe amounts.
+7. **The website computed prices itself** (`cost×1.45`, flat `×0.18`) when the backend price was missing; labels said
+   "VAT 18%" on 0%-VAT (foreign) prices; the search list showed the pre-VAT net while the detail/cart showed net+VAT.
+8. Own `1.45`/`1.18`/`0.18` numbers in `orders.py`, `payments.py` (3×), agents (2×), NOA, issuing service, admin.
+
+### Fix
+`backend/price_policy.py` = the one rule (margin, conditional VAT incl. unknown → local, rounding, lines, delivery
+once per supplier, agorot rounding, `VISIBLE_OFFER_SQL` / `ORDERABLE_OFFER_SQL` / `price_basis_order_sql`, no-offer
+ESTIMATE from the importer cost — never `base_price`). Every surface calls it: `routes/parts.py` (search fields +
+customer price range + compare list sorted by what the customer pays + estimate), `routes/cart.py`, wishlist/watch
+(`_current_part_offer`), `routes/orders.py`, `routes/payments.py` (`_live_reprice_order` for both checkouts, WhatsApp
+checkout, `_agorot`), `BACKEND_AI_AGENTS.py` (chat price functions, chat offer query, chat estimate),
+`routes/brands.py`, NOA (`_noa_real_catalog_fact`, exact price), `services/stripe_issuing_service.py`, admin constants;
+website `Parts.jsx` / `Orders.jsx` (no client formula, no raw fallback, VAT-inclusive list price, real VAT label).
+Behaviour change to know: an order whose chosen offer is no longer orderable (unavailable / inactive supplier) gets
+"unavailable" at payment instead of being silently re-priced from another supplier.
+
+### Tests (isolated) — PASS
+- `tests/test_price_policy_unified.py` 30/30 (policy, cross-surface equality for local / foreign / USD / unknown /
+  rounding offers, pre-charge re-price = create_order and idempotent, AST guard: no price number in any customer-facing
+  module, no raw cost in payloads, one offer rule, website computes nothing). On the OLD code: 11 FAIL.
+- Main suite vs live by test identity: 2,842 common, **0 changes**, 0 removed; +30 (29 pass, 1 host-side skip — passed
+  with `frontend/src` mounted). 2 tests updated, not weakened: `test_shipping_included` (asserts the policy calls and
+  no inline ×1.45), `test_customer_price_boundary` (the competing offer gets a listing URL — the price basis is the
+  visible set; same assertion). DB-gated suites (disposable PG): 565 common, **0 changes**. Frontend build OK.
+
+### Deploy — PASS
+07:47 IL after the 07:15 run_all_tasks finished (07:47:08); bundle + live-base hashes exit 0; rollback archive
+`/root/asf-price-20261029T054729Z` (13 files); `pre_restart.sh` SAFE; files copied + verified; `docker restart autospare_backend` 07:47:52 →
+health 200 07:48:11, 0 Traceback / 0 ERROR, `container_start` complete, 0 restarts; `docker compose build frontend` +
+`up -d --no-deps frontend` → healthy; served JS contains the new build (raw-cost fallback gone). Switches unchanged
+(all OFF); runtime identity unchanged (LOADED_MATCH).
+
+### Live verification (production, read-only) — 13/13 PASS (`evidence/verify_live_result.txt`)
+Local offer (cost 780.21 → net 1131.30 + VAT 203.63 = 1334.93, delivery 29.00) and foreign offer (35.49 → 51.46,
+VAT 0, delivery 38.07): website search offer + list price, compare page (and sorted by customer total), wishlist/watch,
+order line, pre-charge re-price (no false 409), chat — identical. Catalog-only part: estimate 90.51 from importer
+cost 52.90 (not base_price), on order. Not exercised live: a USD-only offer (none in the catalog — unit-tested),
+NOA generation and a real Stripe/WhatsApp checkout (would create orders — covered by the unit/DB tests).
+
+### Rollback
+`tar xzf /root/asf-price-20261029T054729Z/replaced.tgz && rm -f backend/price_policy.py backend/tests/test_price_policy_unified.py` → preflight →
+`docker restart autospare_backend` → `docker compose build frontend && docker compose up -d --no-deps frontend`.
+
+### Follow-ups (internal, not customer prices)
+- Admin revenue report strips a flat 18% VAT from all revenue (wrong for 0%-VAT foreign orders) — internal report.
+- `fix_base_prices` vs `normalize_base_price` (#119): `base_price` is now internal-only (no customer surface reads
+  it), so their conflict no longer reaches customers; decide whether to keep maintaining it.
+
+## 2026-10-31 — New golden rule #7 "Clean before you build" (owner)
+- Added to CLAUDE.md §4 Golden rules: before a feature/code change clean the code it touches (dead code, unused imports, duplicates, stale comments, obsolete fallbacks; extend the existing implementation, never a parallel one); after it remove what it superseded and every leftover (backups, debug output, temp files, test containers/images, stray __pycache__). Wider cleanup = tracker follow-up; only remove what a real check proves unused. Also saved to agent memory.
+
+## 2026-10-31 11:49 Israel — Cleanup under golden rule #7 — DEPLOYED, VERIFIED
+- Removed (leftovers of the 2026-10-29 price change): the ignored `local_vat_only` parameter (2 signatures, 8 call sites, 2 tests),
+  2 unused `from decimal import Decimal` in `routes/payments.py`, 2 unused `firstPriced` in `frontend/src/pages/Parts.jsx` (+7/−26).
+- Deleted 2 backups not created by me after checks: `backend/BACKEND_AI_AGENTS.py.backup` (2026-05-20; all 117 defs still in the live
+  file, 0 unique; byte-identical in git 3b46c33; no reference/import anywhere, incl. dynamic ".backup" paths) and
+  `backend/data/rex_transport_import_checkpoint.json.backup` (2026-05-11; same resource ids/queue/status as the live checkpoint,
+  older timestamp; in git 5c78f97; nothing reads it). Archived: `candidates/cleanup-2026-10-31/archive/deleted_backups.tgz` + `/root/asf-cleanup-20261031T094831Z`.
+- Tests: full suite live vs cleaned 2,862 common, 0 outcome changes (10 removed = the dropped `local_vat_only` variants, 5 replacements
+  pass); price DB tests 121/121; frontend build OK. Deploy: `pre_restart.sh` SAFE 11:48 → `docker restart autospare_backend` 11:48:54 →
+  health 200 11:49:13, 0 Traceback; frontend rebuilt + recreated, healthy; live price check 13/13 PASS after the cleanup.
+- Correction: at 11:42 I reported the restart BLOCKED by the Facebook group-scan window. That check was run on the HOST, where the
+  preflight cannot read the scan marker; inside the container the marker shows today's scan started 10:00 and ended 10:02 (it failed
+  at login), and the in-container preflight did not block on it. Use `pre_restart.sh` / the in-container preflight only.
+
+### #112 — Facebook group scan session expired again (2026-10-31)
+- 10:00 IL: Facebook showed the account picker ("session expired"); automatic credential re-login failed twice (10:01, 10:02 — still on
+  the login page, no c_user/xs); scan halted ("session not authenticated — scan did not run"); next run 2026-11-01 10:00 IL. The
+  2026-10-26 cookie import lasted 5 days. NOA engagement (Page token) unaffected.
+- Next action (owner session needed): same recovery as 2026-10-26 (cookies from the owner's logged-in browser →
+  `maintenance/fb_cookie_import.py`), before 10:00 tomorrow. Root follow-up: the session is not durable (credential login from the
+  server is refused; a cookie import lasts days) — needs a durable design decision.
+
+## 2026-10-31 / 11-01 — #119 maintenance tasks aligned with the price policy — FIXED IN CANDIDATE, VERIFIED IN ISOLATION, NOT DEPLOYED
+Bundle `candidates/maint-policy-2026-10-31/` (SHA256SUMS, BASE.sha256 = live files, DEPLOY.md with steps A1 code / A2 data
+repairs / A3 scheduler, each a separate owner approval). Supersedes the #119 part of `candidates/followups-119-122-2026-10-28/`
+(its deletion of the BMW/Ford/Jaguar tasks is withdrawn; its #121/#122 files are unaffected).
+
+### #119 — PARTIAL (code fixed + verified; deploy, data repair and scheduler release await approval)
+Root causes (traced in code, measured read-only on production 2026-10-31):
+- `fix_base_prices` (cheapest available offer × 1.45, raise-only, ignored offer visibility) and `normalize_base_price`
+  (importer × 1.45 for every part, also parts with offers; estimate order importer → online → max, unlike the policy) wrote
+  different values to the same rows: 722,972 of 1,221,671 parts with a visible offer hold importer × 1.45 ≠ the offer net. On
+  the isolated DB one part flipped ₪145 ↔ ₪116 on every run. Customer prices were never affected (no surface reads base_price).
+- Cleanup-agent writers: the normalizer copied any (also foreign) offer cost into `importer_price_ils`/`max_price_ils`
+  (69 live rows carry its signature); two recovery tasks wrote the raw USD cost (highest offer, no margin) / the scraped price.
+- `merge_catalog_fitment_from_part_vehicle_fitment` ran per manufacturer and replaced a part's whole copy each time: a part
+  fitting two makes kept the last one (563 of 563 already-copied multi-make parts list one make) and was rewritten every run.
+- BMW/Ford/Jaguar backfills: unbounded fetchall; `except: pass` around inserts (one failure aborts the transaction silently);
+  inserts counted on conflict; Jaguar re-read the same first 2,000 parts forever (1 of 164 matches reachable); Ford wrote
+  "Ford Focus" — vehicle search accepts "focus" but never "ford focus" (12,360 rows / 12,156 parts invisible); `\bCONNECT`
+  matched CONNECTION; Jaguar matched merchandise and classic-era cars (27 of its 32 live rows are wrong); BMW read tyre sizes
+  as motorcycle codes R17/R18/R19 (644 live rows) and mapped U25 to "X2 Electric" (U25 = MINI Countryman, BMW X2 = U10; 95 rows).
+Fix: one ownership rule `apply_base_price_rule` (policy net of the cheapest visible offer of the part's own class → owner
+fix_base_prices; else the catalog estimate → owner normalize_base_price; other-class-only / no input → unchanged), used by both
+tasks and the four cleanup writers; per-part fitment sync; shared bounded name-backfill runner; keyset batches + saved cursor,
+SKIP LOCKED, time budget, counters scanned/eligible/updated/unchanged/skipped/failed/reasons. `price_policy.py` unchanged;
+`docs/PRICE_POLICY.md` documents the rule. The six stay in `OOM_BLOCKED_TASKS` until A3.
+Evidence (`evidence/`):
+- Isolated DEBUG run, old vs new code, representative dataset (local/foreign/unknown/USD suppliers, competing, stale, URL-less,
+  other-class, no-offer, multi-make, stale/dict/duplicate JSON, incomplete fitment, merchandise): new code — customer surfaces
+  identical before/after, rerun and reverse order 0 rows changed, interrupted run resumes to the identical result, counters =
+  rows changed; searches Ford Focus/Ranger, BMW 3 Series, MINI Clubman, Jaguar XF find their parts (old: Ford none, Lexus part
+  loses Lexus, ping-pong on every rerun); prepared Ford repair makes the old prefixed row searchable.
+- Tests: `test_maintenance_policy_alignment.py` (new) + `test_base_price_classification.py` (fixtures made explicit; G/I assert
+  the ownership rule): 69 passed on the candidate; on the old code the behavioural ones fail (999 kept, 43.5 from a hidden offer,
+  72.5 estimate order, 270 raw cost, ping-pong). Full regression by test identity vs deployed baseline: unit 2,865 common, 0
+  outcome changes; isolated DB 563 common, 1 change (heavy fitment-merge contract test failure → pass); existing failures unchanged.
+- Production dry run (read-only, the new code's own functions): base_price 1.35 M of ≈ 4.1 M scanned in 40 min — fix_base_prices
+  would change 304,015 of 409,764 offer parts in the sample (≈ 0.91–0.93 M overall), normalize 27,538 of 232,851 (≈ 0.08–0.10 M);
+  merge full pass 721,033 parts (5,983 multi-make restored); BMW 71 / Ford 298 / Jaguar 61 new rows (Jaguar reviewed by hand).
+Remaining (approvals): A1 deploy; A2 `REPAIR_FITMENT.sql` (R1 12,360 Ford renames, R2 95 U25, R3 644 tyre rows, R4 27 Jaguar);
+A3 `scheduler_A3.patch` (release + schedule, batch plan and stop conditions in DEPLOY.md).
+
+### Separate findings (not in #119 scope, not changed)
+- #126 Car-Parts.ie importer writes the Irish supplier cost into `importer_price_ils` AND `max_price_ils` (273,966 parts);
+  the policy estimate treats both as local → for the 3,472 such parts with no visible offer the customer estimate adds 18% VAT
+  to a foreign cost.
+- #127 `refresh_min_max_prices` overwrites `max_price_ils` with the HIGHEST available offer × 1.18 (any supplier, any class);
+  the estimate reads it as the Israeli consumer reference.
+- #128 `price_policy.vat_rate`: a supplier with a name but no/unknown country is foreign (0% VAT) — e.g. "Motorstore IL" country
+  'Unknown'; `docs/PRICE_POLICY.md` says an unknown supplier is local. Doc vs code: owner decision.
+- #129 duplicates left for a later cleanup: `backfill_mini_fitment_from_name_he` should use the shared runner;
+  `maintenance/run_brand_fitment_merge.py` is a second copy of the merge logic; `BACKEND_API_ROUTES.py` todo router uses
+  `:arts::jsonb` in `text()` (the documented `::` collision pattern) — unverified whether it fails.
+
+## 2026-11-01 — Owner rules: system-wide bug resolution, production safety, model selection; CLAUDE.md consolidated
+- CLAUDE.md: §2 meta-rule 1 extended (full-scope investigation + closure criteria); §4 golden rules 8 (production safety,
+  PASS/PARTIAL/BLOCKED status) and 9 (Sonnet 5.5 medium default, escalate only the hard part to Opus 5.5).
+  Consolidated (pointers instead of copies, every requirement kept): nginx-restart and browser.close() duplicates in
+  Deployment & Config, §7 header lines repeating §2/§6, §7 supplier_parts ON CONFLICT block (= §6 Patterns 1/5),
+  §8 Rules 2/3 (= §6 Patterns 2/3), outdated "Never regress" price paragraph (now `price_policy.py`), Contents numbering.
+  Corrected outdated facts: `task_heal_importer_price` uses the cheapest Israeli offer, not max/1.18; the Cadillac
+  importer is NOT fixed (still /1.17); the stale session cron id 0073265b removed (CronCreate is session-scoped).
+  Backup: scratchpad CLAUDE.md.before-consolidation.
+- `.claude/settings.json`: `model` claude-sonnet-4-6 → claude-sonnet-5-5, `effortLevel` medium (+ modelSettings);
+  permissions unchanged. Applies to new sessions (a running session keeps its model).
+
+### #130 — 17% VAT and foreign costs treated as local in importers — OPEN (found 2026-11-01 applying meta-rule 1)
+Israeli VAT is 18% since 2025-01-01. 27 code sites still use 1.17 / 0.17 (grep `(/|\*)\s*1\.17|0\.17`). Not a blind
+replace: a price list PUBLISHED in 2024 legitimately includes 17%. Classification (code read 2026-11-01):
+| Site | Wired? | Defect class | Status |
+|---|---|---|---|
+| `oempartsonline_importer.py:464` `max_price_ils = price_ils*1.17` | LIVE (catalog_scraper, routes/system) | foreign (US) cost written as an IL consumer price with 17% → the estimate (max/1.18, local, +18% VAT) prices a foreign part | CONFIRMED in code; impact not yet measured |
+| `importers/supplier_pdf_import.py:628-630` Cadillac/KGM/SsangYong `0.17` | LIVE (API-triggered) | embedded-VAT rate of the PDF price list | ASSUMED wrong for any list published 2025+; list dates unverified |
+| `harvesters/rockauto_harvester.py:252`, `tecdoc_harvester.py:275`, `importers/rockauto_browser_import.py:125`, `saab_partsforsaabs_importer.py:122` `/1.17` on a foreign price | no caller (manual) | phantom IL VAT stripped from a foreign price (same as the car-parts.ie 2026-08-26 fix) | CONFIRMED in code, inactive |
+| `cadillac_israel_import.py:151`, `gmc_buick_umi_import.py:202`, `scrapers/selected_parts_scraper.py:245`, `il_consumer_price_import.py`, `fitz_pdf_import.py`, `mixed_brands_import.py` (via freesbe_recovery), `il_importer_pdf_import.py:48-50` | manual one-offs | IL consumer price ÷ 1.17 | depends on the source list's date — unverified |
+| `oempartsonline_importer.py`-style `max = cost*1.17`: `xlsx_il_price_import`, `il_pdf_batch_import`, `kia_il_direct_import`, `jaguar_ndjson_import`, `lexus_pdf_import`, `scrapers/bdv_playwright_scraper.py:224` | manual / audit only | consumer reference built with 17% | CONFIRMED wrong rate (any run after 2025-01-01) |
+| `maintenance/vat_fix_batched.py`, `tests/test_platform_goals.py`, `hf_client.py` (token price comment) | — | data-repair tool / test / unrelated | not defects |
+Next: (1) measure the live impact of `oempartsonline_importer` max_price_ils on no-offer estimates (read-only); (2) one
+authoritative `price_policy`-level import helper (consumer price + its VAT rate/date → cost; foreign price → cost, no
+VAT strip) used by every importer; (3) fix the confirmed sites in a candidate with regression tests; (4) data repair
+with owner approval. Related: #126 (car-parts.ie costs in importer/max columns), #127 (refresh_min_max_prices max).
+
+## 2026-11-01 19:19–19:45 Israel — #119 A1 (code) + A2 (data repairs) DEPLOYED, VERIFIED (owner approval "A1+A2 CONFIRMED")
+- A1: preflight BLOCKED twice (meili_purge_inactive, then car-parts.ie imports + build_part_thumbnails); waited, not forced;
+  `pre_restart.sh` passed 19:19:15 (stopped one resumable car-parts.ie import) → bundle copied, SHA256SUMS OK →
+  `docker restart autospare_backend` 19:19:27 → healthy, `/api/health` 200, 0 Traceback. Loaded code has
+  `apply_base_price_rule`; the six tasks still in `OOM_BLOCKED_TASKS`. Rollback archive `/root/asf-maint-20261101T181200Z`.
+  Live price check (`verify_live_prices.py`): 13/13 PASS (local, foreign, estimate on compare/wishlist/order/charge/chat/search).
+  Watch item: `task_heal_importer_price` timed out once at 19:24 (its unchanged gap scan alone measures 8.5 s of its 15 s
+  limit; first run after a restart) — not repeated since; keep under observation.
+- A2 (`REPAIR_FITMENT.sql`, audit table `pvf_repair_119_backup`): R1 12,360 Ford rows "Ford <model>" → "<model>"
+  (13 batches, 0 duplicates deleted); R2 95 U25 rows → MINI Countryman 2024–2026; R3 644 tyre rows (R17/R18/R19) deleted;
+  R4 27 Jaguar merchandise / classic rows deleted (5 genuine kept). Counts before = measured; after: 0 prefixed Ford rows,
+  0 U25-as-BMW, 95 MINI Countryman. Live website search Ford Focus 2015: 48 results, 24 of them repaired backfill parts
+  (unreachable before). Undo: bottom of REPAIR_FITMENT.sql.
+- The `compatible_vehicles` JSON copies of the repaired parts still carry the old forms until the fitment sync runs (A3).
+- #119 status: PARTIAL — A3 (scheduler release, `scheduler_A3.patch`) awaits owner approval.
+
+## 2026-11-01 — #119 follow-up: maintenance safety controller + base_price writer alignment — CANDIDATE, NOT DEPLOYED (status PARTIAL: closure pass 2)
+Candidate: `candidates/maint-safety-2026-11-01/` (`DEPLOY.md`, `files/docs/MAINTENANCE_SAFETY.md`, `files/docs/BASE_PRICE_WRITERS.{md,json}`). Trigger: the pre-A3 audit (BLOCKED — no stop condition existed in code).
+**Root causes.** (1) The six tasks had batch size and a time budget but no enforced stop: kill switch, write cap, consecutive-error latch, load/CPU, price verification and a lock on the direct `run_task()` paths were documented as operator checks only. (2) The fitment tasks re-ran DDL + a whole-table self-join DELETE (`ensure_part_vehicle_fitment_table`) every run. (3) `base_price` had ~60 writers, each with its own formula and most overwriting on every run, so no two paths could agree on the value that `fix_base_prices` / `normalize_base_price` own.
+**Changed (`files.status`: 85 files — 70 modified, 15 new).** `maintenance_guard.py` (new) + runners in `db_update_agent.py` (`run_guarded`, `_base_price_runner`, `_name_fitment_runner`, `_merge_fitment_runner`, `apply_base_price_rule(write_limit, pre_write)`, `run_all_tasks` halting + `tasks_stopped`); `price_policy.base_price_for_cost / base_price_for_estimate`; every `base_price` writer made fill-only through the policy accessors (registry: 60 Python writers + 1 shell); `routes/admin.py` + `Admin.jsx` (price column reported unsupported); `price_audit_fix.py` rewritten, `margin_fix_batched.py` superseded, `vat_fix_batched.py` base write removed; `base_price_snapshot.py` (new data undo).
+**Tests (isolated sandbox only).** Safety: `test_maintenance_guard.py`; writers: `test_base_price_writers.py`, `test_price_audit_fix.py`, `test_importers_e2e.py` (E2E for catalog_scraper, car-parts.ie SQL, freesbe, delek_json, ev_vag_lexus, geely, sng_barratt, subaru, amayama, rockauto, oempartsonline, fix_oem_price_gaps.sh; statement-prepare test over every asyncpg writer), `test_base_price_snapshot.py`; UI helper `adminImportWarnings.node-test.mjs` (3 passed). Old-vs-new: `evidence/old_vs_new.{BASELINE,CANDIDATE}.json`. Exact counts: combined new/changed suites (7 files) **235 passed, 1 skipped** ×5 consecutive runs (one earlier run had 1 intermittent failure in `test_backfill_counts_real_inserts…` while a concurrent F8 loop shared the sandbox — not reproduced in 5 runs; probable interference, unproven). Full suite (`evidence/full_suite.*.txt`): baseline **84 failed / 2739 passed / 88 skipped**; candidate **86 failed / 2912 passed / 89 skipped**; the 84 baseline failures are unchanged; the 2 extra (`test_order_shipping_e2e::test_web_order_charges_shipping_once`, `test_night_pipeline::test_rex_postcondition_accepts_a_clean_cycle_…`) are event-loop / test-order failures of the same pair that ALSO fail in a 2-test run on the UNMODIFIED baseline tree (shipping fails alone on baseline; night fails after shipping) — pre-existing test-isolation defects exposed by the changed test order, not product regressions. Not fixed here (follow-up).
+**Writer status.** 60 Python writers: 3 VERIFIED_COMPLIANT · 11 FIXED_AND_VERIFIED (E2E) · 0 INACTIVE_VERIFIED · 46 BLOCKED_WITH_EVIDENCE (fixed in code, statement + value proven, **end-to-end not run**: PDF/XLSX/live-HTTP/JSON-schema fixtures missing) + 1 shell FIXED_AND_VERIFIED. 0 unreviewed.
+**F8 flake.** `test_F8_recovery_after_failure_persisted_but_before_history_sync` (extra failure in the candidate full run) passes alone on both trees; the F7–F9 group run 15× per tree: baseline 14 pass / **1 fail (F7)**, candidate 15 pass / 0 fail. A failure of the same family occurs on the UNMODIFIED baseline, so it is nondeterministic and not introduced by the candidate; cause class: timing race in the lifecycle recovery tests that share the sandbox Redis with a running `sandbox_backend` recovery loop (not proven to a single line — limitation).
+**Limits / not done.** Production was only read: no deploy, restart, task run, write, commit. A fresh production recount of the A3 backlog was NOT taken (needed the production credential in a new container; refused by the environment) — the 2026-10-31 dry run is cited. `Admin.jsx` not built. CPU threshold is host-wide, not postgres-container.
+**Follow-ups (not fixed here).** `catalog_scraper.py:2332` second copy of the margin/VAT formula writing `supplier_parts.price_ils`; `ai_catalog_builder` writes an LLM-invented (non-visible) offer price; `import_from_excel.py` fabricates a 100.0 offer price; `backfill_mini_fitment_from_name_he` still calls the DDL helper (not one of the six); VAT 17 % vs 18 % in several manual importers (#130).
+**Owner decisions pending.** CPU threshold · Admin Excel price semantics · name-backfill caps · acceptance of the 46 blocked importers · deploy + A3 approvals.
+**Rollback / recovery.** Code: `DEPLOY.md` "Code rollback". Data (separate): `DEPLOY.md` "Data recovery" (`base_price_snapshot.py`).
+
+## 2026-11-02 — #119 closure pass 3: 46 base_price writer end-to-end gaps + two full-suite regression failures — CANDIDATE, NOT DEPLOYED (status PARTIAL: 45/46 closed, 1 BLOCKED)
+Candidate: `candidates/maint-safety-2026-11-01/` (evidence: `evidence/importer_e2e/`, `evidence/regression_pair/`, `evidence/full_suite.CANDIDATE_FINAL.txt`; registry `files/docs/BASE_PRICE_WRITERS.{json,md}`).
+**A. Writers.** Each of the 46 former `BLOCKED_WITH_EVIDENCE` writers was run as the real script (`python3 /app/<file>`, subprocess) against the isolated sandbox DB (`tests/test_importers_e2e_scripts.py`, harness `tests/importer_e2e_harness.py`): synthetic fixture built from the parser contract (generated PDFs/XLSX; HTTP sources replace only the transport) -> the script's own parse/map/SQL -> persisted `base_price` read back for new part / empty base (filled) / owned base (kept) / repeat run. **Result: 44 `E2E_VERIFIED_FIXTURE`, 1 `E2E_VERIFIED_SAVED_SOURCE` (`import_parts_db.py`, the real saved workbook), 0 `E2E_VERIFIED_LIVE_SOURCE` (no live source reachable; none claimed), 1 `BLOCKED_WITH_EVIDENCE`: `repair_manufacturer_import.py` - pandas is installed neither in the production image nor in the sandbox image, the script cannot start; next action: owner decision (pandas in a separate test image, or rewrite the loader with openpyxl).** Israeli/foreign VAT variation: NOT_APPLICABLE per importer (single cost basis each; covered by price-policy tests).
+Old-behaviour proof: the same tests against the unmodified baseline importers: 43 of 45 fail (`evidence/importer_e2e/OLD_BEHAVIOR_*`); the 2 that pass were already fill-only.
+**Real defects the runs exposed (fixed, each pinned by its test):** `subaru_il_importer` NameError (supplier offer never written); `kia_new_models_import` missing `import json`; `samelet_import_v2` executemany arg count (nothing could be written); `spareto_harvester` UPDATE 7 args / 6 placeholders and INSERT 8 / 9 (no part was ever written); `supplier_pdf_import` price update overwrote a stored `importer_price_ils` with 0.0 (now guarded); plus fill-only conversions in `freesbe_importer, colmobil_import_v2, asap_import, lexus_pdf_import, mct_importer, import_delek_brands, import_kia_israel, delek_multi_importer` and `bydil_scraper` now uses `base_price_for_cost(price_ils)` of the ex-VAT cost. Static ratchet `test_no_importer_overwrites_a_non_empty_base_price` tightened. `freesbe_recovery --apply` is now fill-only for base_price (it still corrects importer/max price): a non-empty corrupted base is left to `normalize_base_price`/`fix_base_prices` - owner to confirm.
+**B. Regression failures.** `test_order_shipping_e2e::test_web_order_charges_shipping_once` and `test_night_pipeline::test_rex_postcondition_...` failed only when run after other async-DB tests. Root cause (not "baseline also fails"): the process-global async SQLAlchemy engines (`engine`, `pii_engine`) keep pooled asyncpg connections bound to the event loop of the first test that used them; a later test (pytest-asyncio gives each its own loop) checks out such a connection -> "attached to a different loop". Reproduced independently: baseline and candidate, alone / module / exact pair in both orders / original full-suite order, 3x each (`evidence/regression_pair/PRE_FIX.*`). Fix: `tests/conftest.py` autouse fixture `_isolate_global_async_pools` drops the pooled connections before and after every test (`sync_engine.dispose(close=False)`) - no skip, no reorder, no retry, no relaxed assertion. Closure: alone 3/3, modules, pair both orders 3/3 (`POST_FIX_FINAL.candidate.matrix.txt`), full suite: neither test fails.
+**Test-hygiene findings fixed on the way (shared state):** the new E2E tests leaked brands/suppliers (an extra `Jaguar` row broke `test_sng_barratt`/`test_oempartsonline` that need the hard-coded brand id) -> harness tracks created brands, an autouse fixture releases them (and importer-created suppliers); `samelet` seeds Abarth/RAM -> removed by its test. Baseline tests that leaked on every run: `test_order_shipping_e2e` (brand, supplier, 2 parts, 2 offers, user, order per run - skewed `test_aliexpress_discovery`) now cleans up; `checkout_fixture.cleanup` deleted `zz-chk-%` brands wholesale, so ONE leaked row made every later chat-checkout test fail at teardown (17 failures) -> deletes only unreferenced fixture rows. Sandbox DB row counts identical before/after the E2E modules (`evidence/importer_e2e/sandbox_counts_*`).
+**Full regression (sandbox, original order):** candidate 84 failed / 2958 passed / 89 skipped; the 84 failures are the identical set to the baseline run (all `httpx.ConnectError` environment tests: no network from the isolated container); 0 new, the two target tests pass. 
+**Not done / limits.** No live-source run; `repair_manufacturer_import` blocked (above); fixtures are synthetic, so a live site whose markup changed would still break an importer. Production: not modified, nothing deployed/restarted/committed/pushed, the six maintenance tasks remain in `OOM_BLOCKED_TASKS`, no production data written.
+
+## 2026-11-02 — #119 closure pass 4: `repair_manufacturer_import.py` E2E closed + Claude→Opus two-attempt escalation rule — CANDIDATE, NOT DEPLOYED (status PASS for the candidate)
+**Task 1 - `importers/repair_manufacturer_import.py`.** Blocker: `import pandas` (pandas is in neither the production nor the sandbox image). Pandas was used ONLY to read workbooks, so it was replaced by `openpyxl` (already pinned in `requirements.txt`, present in the image): `read_sheet()` returns header + row dicts, `pick_column` / `resolve_sheet` take plain lists; column matching, `parts_catalog_import` manufacturer filter, key/price/name cleaning, duplicate-by-priority merge and all DB semantics are unchanged. Dependencies: before pandas+openpyxl(unused) -> after openpyxl only; nothing added. The E2E exposed two more latent defects, fixed: (a) workbook paths were host-absolute `/opt/autosparefinder/...` (nonexistent in the container, so every source was silently skipped) - now `<app>/data` with `REPAIR_MANUFACTURER_DATA_DIR` override; (b) the INSERT omitted the NOT NULL `parts_catalog.manufacturer_id` (verified NOT NULL in production read-only), so no missing key could ever be inserted - now get-or-create the `car_brands` row (exact name) like `supplier_pdf_import`. Test `test_repair_manufacturer_import_end_to_end_without_pandas` runs the real script (`--dry-run`, then `--apply` twice) against the isolated DB with generated workbooks: dry-run writes nothing; missing keys inserted once (duplicates incl. case variants collapse, blank key skipped, bad/negative price tolerated, other manufacturer excluded), brand created once, repeat run inserts 0, existing OWNED base untouched, inactive row reactivated, blank name/category repaired, every inserted `base_price` = 0.0 sentinel (a workbook price is never a base_price). Baseline importer fails the same test with `ModuleNotFoundError: pandas` (`evidence/importer_e2e/repair_manufacturer.OLD_BEHAVIOR.txt`). Registry: `E2E_VERIFIED_FIXTURE` (no live source accessed). Writers now: 45 fixture, 1 saved-source, 0 live, **0 blocked**. No debugging escalation was needed for this task (passed on the first implementation attempt after two schema findings).
+**Task 2 - escalation rule.** Persistent instruction: `/opt/autosparefinder/CLAUDE.md` §4 golden rule **10 "Two-Attempt Debugging Rule"** (additive; rules 1-9 incl. rule 8 production safety untouched). Mechanism (verified, not invented): `Agent` tool with `model:"opus"`, not `fork` (a fork ignores the model override); the prompt is the whole handoff because the agent starts cold; the result returns as a task notification; Claude reviews/re-tests/closes. **Handoff is not automatic** - Claude must make the call; the tool cannot physically prevent a third attempt, it makes the limit auditable: `candidates/.../process/debug_escalation.py` (ledger: `attempt` refuses vague/repeat attempts and exits 3 = ESCALATE after the 2nd failed attempt and = LOCKED for a 3rd; `handoff` refuses before 2 failures and writes the context package with the fixed safety constraints; 6 tests pass). Splitting one problem into several issue ids is not detectable by the tool. Doc: `process/DEBUG_ESCALATION.md`. Drill (`evidence/escalation_drill/`): scratch problem, two real failed attempts (7/8, 10/12), third attempt refused (rc=3), handoff built, Opus agent given only that package returned PASS 19/19 with its own root cause (a lone separator must follow a valid 1-3 digit leading group); Claude re-ran it (19/19, original 12 expectations unchanged) before accepting. Limitation: the drill proves the round trip on a toy problem, not a production bug.
+**Verification (sandbox).** Final modules (writers, both importer E2E modules, shipping E2E, night pipeline, price-policy, maintenance guard): 306 passed, 2 skipped, 0 failed; pair matrix both orders 3/3 + alone + module all pass (`POST_FIX_closure3.candidate.matrix.txt`); sandbox row counts clean. Production: not modified, nothing restarted/deployed/committed/pushed, six tasks still in `OOM_BLOCKED_TASKS`. Unrelated finding recorded, not fixed: `routes`/importers still contain other host-absolute `/opt/autosparefinder/...` paths (grep before assuming they work in the container).
 
 ## 2026-11-03 (evening) — #118 follow-up: purge run log, wait guard, disk alerts, task store, Docker (CODE-ONLY, NOT ACTIVATED)
 

@@ -1,0 +1,25 @@
+Comparison by full test identity (classname::name), outcome + normalized failure type/message. Same command for every tree:
+docker run --rm --network none -v <tree>/backend:/app:ro -e PYTHONPATH=/app -e PYTHONDONTWRITEBYTECODE=1 -e DATABASE_URL=...@127.0.0.1:1/none
+  -e DATABASE_PII_URL=...@127.0.0.1:1/none -e ENVIRONMENT=test -e RUNTIME_IDENTITY_DIR=/tmp/ri -w /app --memory 2500m
+  autosparefinder-backend:latest (image sha256:bf7efaf6..., = production) python3 -m pytest -q -p no:cacheprovider -rfEs --junitxml=/dev/stdout tests/
+Trees: base2 = deployed before 2026-10-28 19:03 IL; base3 = live after the runtime-identity deploy (== live tree); cand3 = base3 + artifact v3;
+cand4 = base3 + artifact v4 (FINAL, deployed 2026-10-28 20:20 IL).
+
+MAIN SUITE
+base2 -> base3: common 2715, outcome changes 0, failure type/message changes 0, removed 0, added 8 (runtime identity, all pass)
+base3 -> cand3: common 2723, outcome changes 0, changes 0, removed 0, added 117 (all pass)
+base3 -> cand4: outcome changes 0, failure detail changes 0, removed 0, candidate-only 119 (all pass) = cand3's 117 + 2 race tests
+Remaining 127 failed + 4 errors (identical in all four trees) - all environmental, none in supplier/procurement/pricing/rollback code:
+  67+10 test_full_system, 15+14+1 test_system (no API server / no DB: connection refused; HF_VISION_MODEL unset),
+  9 test_harvester_health (host repo layout + read-only /app), 5+1 test_fitment_search_flows, 2 test_night_pipeline,
+  1 test_vehicle_model_match, 1 test_isolated_db_guard, 1 test_platform_connectivity (connection refused),
+  4 test_backup_isolation teardown errors (read-only /app/state), 1 reset-link localhost assertion.
+Skips: 203 need an isolated DB (run separately below), 48 need a running server, 20 need the sandbox Redis, 10 host-side files, 6 no token.
+
+DB-GATED SUITES (22 files, RUN_DB_MUTATION_TESTS=1, disposable pgvector PG + Redis on an internal network, sentinel user seeded
+with the app's own startup SQL): base3 at 0041, cand3/cand4 at 0042 - 565 tests each:
+  base3 -> cand3: outcome changes 0, removed 0 ; base3 -> cand4: outcome changes 0, removed 0. 80 failed / 472 passed / 13 skipped in all.
+  Failures: 68 test_full_system (needs the live API server), 10 test_harvester_health (host layout), 1 test_platform_connectivity
+  (external DNS), 1 test_order_shipping_e2e ("Future attached to a different loop" - shared engine across tests in one process;
+  passes alone on base3 AND cand4: 1 passed each). Covered and passing on both: checkout idempotency, chat side effects,
+  customer price boundary, order payment policy, privacy, customer flow, AliExpress discovery/price sync, offer classification.

@@ -1,0 +1,21 @@
+# targeted suites, scratch layout (writable RAM /app populated from the candidate tree, RAM state+uploads, ASF_PATH_TEST_LAYOUT=1, sandbox DB)
+..........................s............................................. [ 28%]
+........................................................................ [ 42%]
+...................................................................s.s.. [ 56%]
+.........................s.............................................. [ 70%]
+........................................................................ [ 84%]
+........................................................................ [ 99%]
+.....                                                                    [100%]
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_fetch_embed_model.py:139: real 470 MB download: set RUN_REAL_MODEL_DOWNLOAD=1 (needs internet)
+SKIPPED [2] tests/test_base_price_writers.py:237: docs/BASE_PRICE_WRITERS.json is not mounted in this tree
+SKIPPED [1] tests/test_app_paths.py:69: running as root: permission bits are not enforced
+505 passed, 4 skipped in 390.18s (0:06:30)
+== tests/test_order_shipping_e2e.py::test_web_order_charges_shipping_once
+1 passed in 5.04s
+== tests/test_night_pipeline.py::test_rex_postcondition_accepts_a_clean_cycle_that_reports_no_status_key
+1 passed in 1.79s
+== tests/test_order_shipping_e2e.py::test_web_order_charges_shipping_once tests/test_night_pipeline.py::test_rex_postcondition_accepts_a_clean_cycle_that_reports_no_status_key
+2 passed in 5.40s
+== tests/test_night_pipeline.py::test_rex_postcondition_accepts_a_clean_cycle_that_reports_no_status_key tests/test_order_shipping_e2e.py::test_web_order_charges_shipping_once
+2 passed in 4.02s

@@ -1,9 +1,10 @@
 """
 Script: email_agent/gmail_client.py
 Purpose: Minimal Gmail API v1 client for the Email Agent: OAuth refresh-token flow, mailbox
-         read (messages / threads) and draft create + read-back. THERE IS NO SEND FUNCTION, and
-         the transport refuses every request that is not on ALLOWED_ENDPOINTS - a send endpoint
-         (messages/send, drafts/send) cannot be reached through this module even by mistake.
+         read (messages / threads), draft create + read-back, and sending ONE existing draft after
+         the owner approved it (send_approved_draft + OwnerApproval, 2026-10-27). Nothing is ever
+         sent autonomously: messages/send is unreachable, drafts/send only with an OwnerApproval,
+         and every other request must be on ALLOWED_ENDPOINTS.
 Process:
   - token: POST oauth2.googleapis.com/token (refresh_token grant), cached until ~expiry; the
     granted scope set is kept so read / draft capability is known, not assumed.
@@ -21,15 +22,17 @@ Process:
         transient   5xx / network                                            retryable
         permanent   other 4xx          malformed   unparseable success body
     Messages are redacted before they leave this module.
-  - the mailbox is never mutated except by create_draft, and every non-GET request is sent
+  - the mailbox is never mutated except by create_draft and send_approved_draft (sends ONE existing
+    draft, only with an OwnerApproval; 2026-10-27), and every non-GET request is sent
     inside a runtime-kill-switch write intent (email_agent/control.py): announced, checked, sent.
 Data Imported/Modified: Gmail drafts (create only), nothing else.
 Data Sources: https://gmail.googleapis.com/gmail/v1/users/me, https://oauth2.googleapis.com/token
-Last Updated: 2026-10-10
+Last Updated: 2026-10-27
 """
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 import re
 import time
 import urllib.error
@@ -55,6 +58,58 @@ ALLOWED_ENDPOINTS: Tuple[Tuple[str, "re.Pattern[str]"], ...] = (
     ("GET", re.compile(rf"^/drafts/{_ID}$")),
     ("POST", re.compile(r"^/drafts$")),
 )
+
+# The ONE send endpoint, reachable only through send_approved_draft() with an OwnerApproval
+# (owner decision 2026-10-27: every reply is sent only after the owner approves it in the WhatsApp
+# console). messages/send - composing and sending a new message - is never reachable.
+OWNER_APPROVED_ENDPOINTS: Tuple[Tuple[str, "re.Pattern[str]"], ...] = (
+    ("POST", re.compile(r"^/drafts/send$")),
+)
+
+
+# NIR's routine, non-binding supplier inquiries (owner task 2026-10-27, section 4.4): a SEPARATE, narrowly
+# scoped path. Reachable only through send_supplier_inquiry() with a SupplierInquiryAuthorization, which
+# supplier_outreach.py builds only after the scope check, the verified-recipient check, the dedupe check, the
+# draft read-back check and a recorded supplier_message/routine_inquiry authorization.
+SUPPLIER_INQUIRY_ENDPOINTS: Tuple[Tuple[str, "re.Pattern[str]"], ...] = (
+    ("POST", re.compile(r"^/drafts/send$")),
+)
+
+
+@dataclass(frozen=True)
+class SupplierInquiryAuthorization:
+    outreach_id: str
+    draft_id: str
+    authorization_id: str
+    recipient: str
+    body_sha256: str
+
+
+# A purchase-order email to a supplier (supplier_ordering.EmailPurchaseOrderConnector): reachable only through
+# send_purchase_order_email() with a PurchaseOrderEmailAuthorization, which exists only after the owner's
+# purchase_order approval for the exact terms (procurement.submit_po) and a draft read-back check.
+PURCHASE_ORDER_ENDPOINTS: Tuple[Tuple[str, "re.Pattern[str]"], ...] = (
+    ("POST", re.compile(r"^/drafts/send$")),
+)
+
+
+@dataclass(frozen=True)
+class PurchaseOrderEmailAuthorization:
+    procurement_id: str
+    draft_id: str
+    authorization_id: str
+    recipient: str
+    body_sha256: str
+
+
+@dataclass(frozen=True)
+class OwnerApproval:
+    """Proof that the owner approved sending ONE specific Gmail draft. Created only by
+    email_agent/owner_flow.approve_and_send after the approval is recorded in the store."""
+    row_id: str
+    draft_id: str
+    approved_by: str
+    approved_at: float
 
 # (method, url, headers, body) -> (http_status, response_bytes). Raises OSError on network failure.
 Transport = Callable[[str, str, Dict[str, str], Optional[bytes]], Tuple[int, bytes]]
@@ -128,7 +183,22 @@ class SendProhibited(GmailError):
         super().__init__("prohibited", f"Gmail operation not allowed in this phase: {method} {path}")
 
 
-def assert_allowed(method: str, path: str) -> None:
+def assert_allowed(method: str, path: str, owner_approved: bool = False, supplier_inquiry: bool = False,
+                   purchase_order: bool = False) -> None:
+    if sum((bool(owner_approved), bool(supplier_inquiry), bool(purchase_order))) > 1:
+        raise SendProhibited(method, path)
+    if purchase_order:
+        if any(m == method.upper() and pat.match(path) for m, pat in PURCHASE_ORDER_ENDPOINTS):
+            return
+        raise SendProhibited(method, path)
+    if owner_approved:
+        if any(m == method.upper() and pat.match(path) for m, pat in OWNER_APPROVED_ENDPOINTS):
+            return
+        raise SendProhibited(method, path)
+    if supplier_inquiry:
+        if any(m == method.upper() and pat.match(path) for m, pat in SUPPLIER_INQUIRY_ENDPOINTS):
+            return
+        raise SendProhibited(method, path)
     if "send" in path.lower():
         raise SendProhibited(method, path)
     for m, pat in ALLOWED_ENDPOINTS:
@@ -209,8 +279,10 @@ class GmailClient:
         self._next_call_at = now + self._min_interval
 
     def _call(self, method: str, path: str, params: Optional[List[Tuple[str, str]]] = None,
-              json_body: Optional[dict] = None) -> Dict[str, Any]:
-        assert_allowed(method, path)
+              json_body: Optional[dict] = None, _owner_approved: bool = False,
+              _supplier_inquiry: bool = False, _purchase_order: bool = False) -> Dict[str, Any]:
+        assert_allowed(method, path, owner_approved=_owner_approved, supplier_inquiry=_supplier_inquiry,
+                       purchase_order=_purchase_order)
         url = API_BASE + path + ("?" + urllib.parse.urlencode(params) if params else "")
         body = json.dumps(json_body).encode() if json_body is not None else None
         attempts = (self._get_retries + 1) if method == "GET" else 1
@@ -264,8 +336,11 @@ class GmailClient:
             raise GmailError("malformed", "profile response has no emailAddress")
         return data
 
-    def list_message_ids(self, query: str, max_results: int = 25) -> List[Dict[str, str]]:
-        data = self._call("GET", "/messages", [("q", query), ("maxResults", str(max_results))])
+    def list_message_ids(self, query: str, max_results: int = 25, include_spam: bool = False) -> List[Dict[str, str]]:
+        params = [("q", query), ("maxResults", str(max_results))]
+        if include_spam:
+            params.append(("includeSpamTrash", "true"))      # messages.list omits SPAM/TRASH otherwise
+        data = self._call("GET", "/messages", params)
         msgs = data.get("messages", [])
         if not isinstance(msgs, list):
             raise GmailError("malformed", "messages.list: 'messages' is not a list")
@@ -275,10 +350,36 @@ class GmailClient:
                 out.append({"id": str(m["id"]), "threadId": str(m["threadId"])})
         return out
 
+    def list_message_page(self, query: str, max_results: int = 25, page_token: Optional[str] = None,
+                          include_spam: bool = False) -> Tuple[List[Dict[str, str]], Optional[str]]:
+        """One page of messages.list plus the next page token (2026-10-27: the cycle pages past messages it already
+        processed instead of re-reading only the newest page)."""
+        params = [("q", query), ("maxResults", str(max_results))]
+        if include_spam:
+            params.append(("includeSpamTrash", "true"))
+        if page_token:
+            params.append(("pageToken", page_token))
+        data = self._call("GET", "/messages", params)
+        msgs = data.get("messages", [])
+        if not isinstance(msgs, list):
+            raise GmailError("malformed", "messages.list: 'messages' is not a list")
+        out = [{"id": str(m["id"]), "threadId": str(m["threadId"])} for m in msgs
+               if isinstance(m, dict) and m.get("id") and m.get("threadId")]
+        nxt = data.get("nextPageToken")
+        return out, (str(nxt) if nxt else None)
+
     def get_thread(self, thread_id: str) -> Dict[str, Any]:
         data = self._call("GET", f"/threads/{thread_id}", [("format", "full")])
         if data.get("id") != thread_id or not isinstance(data.get("messages"), list):
             raise GmailError("malformed", "threads.get: id mismatch or no messages list")
+        return data
+
+    def get_message_metadata(self, message_id: str) -> Dict[str, Any]:
+        """Headers + labels only (no body) - used to decide whether a Spam message is relevant before reading it."""
+        data = self._call("GET", f"/messages/{message_id}",
+                          [("format", "metadata"), ("metadataHeaders", "From"), ("metadataHeaders", "Subject")])
+        if data.get("id") != message_id:
+            raise GmailError("malformed", "messages.get(metadata): id mismatch")
         return data
 
     def get_message(self, message_id: str) -> Dict[str, Any]:
@@ -292,6 +393,47 @@ class GmailClient:
         data = self._call("POST", "/drafts", json_body={"message": {"raw": raw_b64url, "threadId": thread_id}})
         if not data.get("id"):
             raise GmailError("malformed", "drafts.create returned no draft id")
+        return data
+
+    def create_new_draft(self, raw_b64url: str, thread_id: Optional[str] = None) -> Dict[str, Any]:
+        """A draft that starts a new thread (or follows up in one of OUR outreach threads)."""
+        message: Dict[str, Any] = {"raw": raw_b64url}
+        if thread_id:
+            message["threadId"] = thread_id
+        data = self._call("POST", "/drafts", json_body={"message": message})
+        if not data.get("id"):
+            raise GmailError("malformed", "drafts.create returned no draft id")
+        return data
+
+    def send_supplier_inquiry(self, auth: "SupplierInquiryAuthorization") -> Dict[str, Any]:
+        """Send ONE verified supplier-inquiry draft (supplier_outreach.send_outreach). Never retried (POST)."""
+        if not isinstance(auth, SupplierInquiryAuthorization) or not all(
+                (auth.outreach_id, auth.draft_id, auth.authorization_id, auth.recipient, auth.body_sha256)):
+            raise SendProhibited("POST", "/drafts/send (no supplier-inquiry authorization)")
+        data = self._call("POST", "/drafts/send", json_body={"id": auth.draft_id}, _supplier_inquiry=True)
+        if not data.get("id") or "SENT" not in (data.get("labelIds") or []):
+            raise GmailError("malformed", "drafts.send returned no SENT message")
+        return data
+
+    def send_purchase_order_email(self, auth: "PurchaseOrderEmailAuthorization") -> Dict[str, Any]:
+        """Send ONE verified purchase-order draft (owner-approved PO). Never retried (POST)."""
+        if not isinstance(auth, PurchaseOrderEmailAuthorization) or not all(
+                (auth.procurement_id, auth.draft_id, auth.authorization_id, auth.recipient, auth.body_sha256)):
+            raise SendProhibited("POST", "/drafts/send (no purchase-order authorization)")
+        data = self._call("POST", "/drafts/send", json_body={"id": auth.draft_id}, _purchase_order=True)
+        if not data.get("id") or "SENT" not in (data.get("labelIds") or []):
+            raise GmailError("malformed", "drafts.send returned no SENT message")
+        return data
+
+    def send_approved_draft(self, approval: "OwnerApproval") -> Dict[str, Any]:
+        """Send ONE existing Gmail draft that the owner approved. Never retried (POST), passes the
+        runtime kill switch like every write, and the result must carry the SENT label."""
+        if not isinstance(approval, OwnerApproval) or not approval.draft_id or not approval.row_id \
+                or not approval.approved_by or not approval.approved_at:
+            raise SendProhibited("POST", "/drafts/send (no owner approval)")
+        data = self._call("POST", "/drafts/send", json_body={"id": approval.draft_id}, _owner_approved=True)
+        if not data.get("id") or "SENT" not in (data.get("labelIds") or []):
+            raise GmailError("malformed", "drafts.send returned no SENT message")
         return data
 
     def get_draft(self, draft_id: str) -> Dict[str, Any]:

@@ -1,0 +1,4 @@
+
+tests/test_importers_e2e_scripts.py::test_repair_manufacturer_import_end_to_end_without_pandas PASSED [100%]
+
+======================= 1 passed, 45 deselected in 4.12s =======================

@@ -8,7 +8,8 @@ logger = logging.getLogger(__name__)
 
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "")
 
-PROFIT_MARGIN = Decimal("1.45")
+from price_policy import MARGIN as _POLICY_MARGIN   # 2026-10-29: one source for the margin
+PROFIT_MARGIN = Decimal(str(_POLICY_MARGIN))
 
 async def get_usd_rate() -> Decimal:
     try:

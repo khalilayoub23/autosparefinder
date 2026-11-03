@@ -1,0 +1,19 @@
+# SP07/SP12 tests run against the BASELINE versions of fetch_embed_model.py, fb_login_extended.py, devtests/fb_mbasic_login.py and fb_browser_login.py (without the writability pre-check); everything else = candidate.
+# Expected: the defect-detecting tests FAIL here and PASS on the candidate (see full_suite / targeted_suites).
+FAILED tests/test_fb_login_cookie_persistence.py::test_unwritable_session_dir_fails_up_front_with_the_path_and_the_uid
+FAILED tests/test_fb_login_cookie_persistence.py::test_uncreatable_session_dir_fails_up_front_with_the_path_and_the_reason
+FAILED tests/test_fb_login_cookie_persistence.py::test_every_session_dir_writer_honours_state_dir_and_agrees_with_the_default[fb_login_extended.py-_STATE_DIR]
+FAILED tests/test_fb_login_cookie_persistence.py::test_every_session_dir_writer_honours_state_dir_and_agrees_with_the_default[devtests/fb_mbasic_login.py-_STATE]
+FAILED tests/test_fb_login_cookie_persistence.py::test_no_application_module_hardcodes_the_session_directory
+FAILED tests/test_fetch_embed_model.py::test_valid_cache_is_reused_without_any_download_from_any_cwd
+FAILED tests/test_fetch_embed_model.py::test_incomplete_or_unreadable_cache_is_never_accepted_and_is_repaired_by_a_forced_download[truncated_onnx]
+FAILED tests/test_fetch_embed_model.py::test_incomplete_or_unreadable_cache_is_never_accepted_and_is_repaired_by_a_forced_download[garbage_onnx]
+FAILED tests/test_fetch_embed_model.py::test_incomplete_or_unreadable_cache_is_never_accepted_and_is_repaired_by_a_forced_download[empty_onnx]
+FAILED tests/test_fetch_embed_model.py::test_incomplete_or_unreadable_cache_is_never_accepted_and_is_repaired_by_a_forced_download[missing_config]
+FAILED tests/test_fetch_embed_model.py::test_incomplete_or_unreadable_cache_is_never_accepted_and_is_repaired_by_a_forced_download[missing_onnx_only_incomplete]
+FAILED tests/test_fetch_embed_model.py::test_incomplete_or_unreadable_cache_is_never_accepted_and_is_repaired_by_a_forced_download[corrupt_tokenizer]
+FAILED tests/test_fetch_embed_model.py::test_download_that_leaves_a_bad_or_missing_artifact_fails_non_zero
+FAILED tests/test_fetch_embed_model.py::test_download_is_checked_against_the_published_size_and_sha256
+FAILED tests/test_fetch_embed_model.py::test_network_failure_is_a_clear_non_zero_exit_not_a_traceback
+FAILED tests/test_fetch_embed_model.py::test_force_redownloads_a_valid_cache
+# result: 16 failed; the other 9 of the 25 tests that run here pass on the baseline too (they do not depend on the changed code); +1 gated real-download test not run. Candidate: all 25 pass (+ the gated one passes with RUN_REAL_MODEL_DOWNLOAD=1).

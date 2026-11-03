@@ -1,0 +1,34 @@
+            "none = m._load_failed();"
+            "m._save_failed({'a.example': 100.5}); a = m._load_failed(); m._save_failed({'a.example': 100.5, 'b.example': 7.0}); b = m._load_failed();"
+            "open(m._CLEARANCE_FAIL_FILE, 'w').write('[broken'); bad = m._load_failed();"
+        out, p = py(load("maintenance/build_part_thumbnails.py") + "m._save_failed({'x': 1.0}); print(json.dumps(True))", tmp_path,
+E        +  where 'true\n' = CompletedProcess(args=['/usr/local/bin/python3', '-W', 'ignore', '-c', "import importlib.util, json, sys; sys.path.ins....loader.exec_module(m);m._save_failed({'x': 1.0}); print(json.dumps(True))"], returncode=0, stdout='true\n', stderr='').stdout
+E         maintenance/build_part_thumbnails.py:121 os.getenv('THUMB_CLEARANCE_FAIL_FILE', '/app/state/thumb_clearance_failed.json')
+FAILED tests/test_state_paths.py::test_default_resolution_is_the_state_volume_and_independent_of_the_cwd[SP16]
+FAILED tests/test_state_paths.py::test_absolute_override_is_used_by_the_real_module[SP16]
+FAILED tests/test_state_paths.py::test_relative_override_resolves_against_the_app_root_not_the_cwd[SP01]
+FAILED tests/test_state_paths.py::test_relative_override_resolves_against_the_app_root_not_the_cwd[SP03]
+FAILED tests/test_state_paths.py::test_relative_override_resolves_against_the_app_root_not_the_cwd[SP04]
+FAILED tests/test_state_paths.py::test_relative_override_resolves_against_the_app_root_not_the_cwd[SP05]
+FAILED tests/test_state_paths.py::test_relative_override_resolves_against_the_app_root_not_the_cwd[SP06]
+FAILED tests/test_state_paths.py::test_relative_override_resolves_against_the_app_root_not_the_cwd[SP07]
+FAILED tests/test_state_paths.py::test_relative_override_resolves_against_the_app_root_not_the_cwd[SP08]
+FAILED tests/test_state_paths.py::test_relative_override_resolves_against_the_app_root_not_the_cwd[SP09]
+FAILED tests/test_state_paths.py::test_relative_override_resolves_against_the_app_root_not_the_cwd[SP10]
+FAILED tests/test_state_paths.py::test_relative_override_resolves_against_the_app_root_not_the_cwd[SP11]
+FAILED tests/test_state_paths.py::test_relative_override_resolves_against_the_app_root_not_the_cwd[SP12]
+FAILED tests/test_state_paths.py::test_relative_override_resolves_against_the_app_root_not_the_cwd[SP13]
+FAILED tests/test_state_paths.py::test_relative_override_resolves_against_the_app_root_not_the_cwd[SP14]
+FAILED tests/test_state_paths.py::test_relative_override_resolves_against_the_app_root_not_the_cwd[SP15]
+FAILED tests/test_state_paths.py::test_relative_override_resolves_against_the_app_root_not_the_cwd[SP16]
+FAILED tests/test_state_paths.py::test_relative_override_resolves_against_the_app_root_not_the_cwd[SP17]
+FAILED tests/test_state_paths.py::test_state_dir_override_roots_the_default_of_modules_that_honour_it[SP16]
+FAILED tests/test_state_paths.py::test_SP03_unwritable_marker_dir_names_the_path_then_raises
+FAILED tests/test_state_paths.py::test_SP04_clearance_failure_cache_roundtrip_malformed_and_unwritable
+FAILED tests/test_state_paths.py::test_SP05_improve_only_cursor_written_resumed_and_failures_are_loud
+FAILED tests/test_state_paths.py::test_SP08_reader_and_writer_agree_on_the_override_and_formats
+FAILED tests/test_state_paths.py::test_SP09_record_written_atomically_unique_per_process_and_failure_is_visible
+FAILED tests/test_state_paths.py::test_SP16_readiness_profile_is_the_session_profile_and_cookies_probe
+FAILED tests/test_state_paths.py::test_SP17_idle_backoff_save_resume_repeat_clear_malformed_and_unwritable
+FAILED tests/test_state_paths.py::test_state_modules_do_not_hardcode_the_state_volume_or_use_cwd_relative_paths
+27 failed, 46 passed in 32.64s

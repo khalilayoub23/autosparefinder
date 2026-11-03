@@ -1,0 +1,19 @@
+== local: part 00000aee offer fe75bd45 cost 780.21 -> net 1131.3 vat 203.63 unit 1334.93 delivery 29.0
+PASS local.compare part page lists this offer at policy unit + delivery; list sorted by customer total
+PASS local.wishlist wishlist/watch unit = policy unit
+PASS local.order order line = policy (net, VAT, delivery)
+PASS local.charge pre-charge re-price accepts the order priced by the policy (no 409)
+PASS local.chat chat price = policy unit + delivery
+PASS local.search website search offer = policy; list price = policy unit
+== foreign: part 0000112f offer ae42632b cost 35.49 -> net 51.46 vat 0.0 unit 51.46 delivery 38.07
+PASS foreign.compare part page lists this offer at policy unit + delivery; list sorted by customer total
+PASS foreign.wishlist wishlist/watch unit = policy unit
+PASS foreign.order order line = policy (net, VAT, delivery)
+PASS foreign.charge pre-charge re-price accepts the order priced by the policy (no 409)
+PASS foreign.chat chat price = policy unit + delivery
+PASS foreign.search website search offer = policy; list price = policy unit
+SKIP usd: no such offer in the catalog
+== catalog-only: part 1a9111d8 importer 52.90 base_price 76.70 -> estimate unit 90.51
+PASS estimate.compare part page estimate = importer cost under the policy (not base_price)
+
+TOTAL 13 checks: 13 PASS, 0 FAIL

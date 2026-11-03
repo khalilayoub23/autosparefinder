@@ -12,6 +12,8 @@ Last Updated: 2026-10-04
 """
 from __future__ import annotations
 
+import supplier_flags as _flags
+
 import os
 from dataclasses import dataclass, field
 from typing import List, Mapping
@@ -57,6 +59,10 @@ class EmailAgentConfig:
     # the Cloud console 2026-10-06) and ~75 thread reads in a minute exhausted it; 1.5 s keeps a
     # cycle at <= 40 calls/minute.
     min_request_interval_s: float = 1.5
+    # Spam/Junk pass (2026-10-27): supplier replies filtered into Spam must still reach their owner.
+    scan_spam: bool = False             # supplier_flags EMAIL_AGENT_SCAN_SPAM (OFF unless "1")
+    spam_query: str = "in:spam newer_than:14d"
+    spam_max_per_cycle: int = 25
 
     def missing(self) -> List[str]:
         vals = {"GMAIL_OAUTH_CLIENT_ID": self.client_id,
@@ -82,6 +88,8 @@ class EmailAgentConfig:
             "max_per_cycle": self.max_per_cycle,
             "interval_s": self.interval_s,
             "send_enabled": False,
+            "scan_spam": self.scan_spam,
+            "spam_query": self.spam_query,
         }
 
 
@@ -100,6 +108,9 @@ def load_config(env: Mapping[str, str] | None = None) -> EmailAgentConfig:
         interval_s=_int(env, "EMAIL_AGENT_INTERVAL_S", 600, 60, 86400),
         max_attempts=_int(env, "EMAIL_AGENT_MAX_ATTEMPTS", 3, 1, 10),
         min_request_interval_s=_int(env, "EMAIL_AGENT_MIN_REQUEST_INTERVAL_MS", 1500, 0, 60000) / 1000.0,
+        scan_spam=_flags.enabled("EMAIL_AGENT_SCAN_SPAM", env),
+        spam_query=g("EMAIL_AGENT_SPAM_QUERY") or "in:spam newer_than:14d",
+        spam_max_per_cycle=_int(env, "EMAIL_AGENT_SPAM_MAX_PER_CYCLE", 25, 1, 100),
     )
     register_secrets([cfg.client_secret, cfg.refresh_token])
     return cfg

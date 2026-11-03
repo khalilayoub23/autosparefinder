@@ -117,8 +117,9 @@ _EXTERNAL_API_SEMAPHORE = asyncio.Semaphore(max(1, _EXTERNAL_API_MAX_CONCURRENCY
 #   total    = sell_net + vat + shipping
 # Every supplier offer the API returns carries these fields; the frontend and
 # chat display them as-is and never invent their own margins again.
-_MARGIN = 1.45
-_VAT_RATE = 0.18
+import price_policy as _pp                               # 2026-10-29: THE price policy (one source)
+_MARGIN = _pp.MARGIN
+_VAT_RATE = _pp.VAT_RATE
 
 def _offer_price_fields(cf: Dict[str, Any]) -> Dict[str, Any]:
     """Customer-facing price fields for an offer payload. `price_ils` is the CUSTOMER price (same as the compare
@@ -141,16 +142,7 @@ def _customer_price_fields(
     displayed price must equal the charged price. When the supplier is unknown, fall back to the
     local rate so VAT is never silently dropped.
     """
-    if not cost_ils or cost_ils <= 0:
-        return {"customer_price_ils": None, "customer_vat_ils": None, "customer_total_ils": None}
-    sell_net = round(float(cost_ils) * _MARGIN, 2)
-    if supplier_name is not None or supplier_country is not None:
-        vat_rate = get_supplier_vat_rate(supplier_name=supplier_name, supplier_country=supplier_country)
-    else:
-        vat_rate = _VAT_RATE
-    vat = round(sell_net * vat_rate, 2)
-    total = round(sell_net + vat + float(ship_ils or 0), 2)
-    return {"customer_price_ils": sell_net, "customer_vat_ils": vat, "customer_total_ils": total}
+    return _pp.customer_fields(cost_ils, ship_ils, supplier_name=supplier_name, supplier_country=supplier_country)
 
 async def _customer_thumbnail_map(db, part_ids) -> Dict[str, str]:
     """part_id -> clean bucket thumbnail URL (status 'ok'): the ONLY image ever shown to customers (owner rule
@@ -179,6 +171,20 @@ def _customer_unit_price(
     never be shown as, or stand in for, the customer price. Returns None when there is no usable cost."""
     return _customer_price_fields(cost_ils, 0, supplier_name=supplier_name,
                                   supplier_country=supplier_country)["customer_total_ils"]
+
+
+def _apply_customer_price_range(part_dict: Dict[str, Any], offers: List[Dict[str, Any]], importer_price_ils=None,
+                                max_price_ils=None, online_price_ils=None) -> None:
+    """Customer-facing price summary of a search part (2026-10-29): `cheapest_price_ils` / `most_expensive_ils`
+    = the CUSTOMER unit prices (net + VAT, before delivery) of its listed offers; with no priced offer, a catalog
+    ESTIMATE by the same policy (`customer_estimate_ils`, `is_estimate`). Raw costs are never put here."""
+    units = sorted(round(float(o["customer_price_ils"]) + float(o.get("customer_vat_ils") or 0), 2)
+                   for o in offers if o.get("customer_price_ils"))
+    part_dict["cheapest_price_ils"] = units[0] if units else None
+    part_dict["most_expensive_ils"] = units[-1] if units else None
+    est = None if units else _pp.catalog_estimate_price(importer_price_ils, max_price_ils, online_price_ils)
+    part_dict["customer_estimate_ils"] = est.total if est else None
+    part_dict["is_estimate"] = bool(est)
 
 
 # image_url is deliberately NOT here: a raw supplier image URL names the supplier's CDN (e.g. *.aliexpress-media.com)
@@ -229,14 +235,17 @@ async def _current_part_offer(cat_db, part_id: str):
     """Price-basis offer of a part: the cheapest available offer whose product class is COMPATIBLE with the part
     (offer_classification.py), as a customer-safe dict {price_ils, name, part_type} (price via the canonical policy,
     ex-delivery; part_type = the offer's displayed class). None when there is no usable offer."""
-    row = (await cat_db.execute(text("""
-        SELECT sp.price_ils, s.name, s.country, pc.name_he, pc.name, sp.part_type, pc.part_type
+    # 2026-10-29: the SAME offer as the website search (price_policy.VISIBLE_OFFER_SQL + price-basis order),
+    # incl. USD-priced offers - it used to pick from a different set (no listing filter, ILS-only).
+    rate = await get_usd_to_ils_rate(cat_db)
+    row = (await cat_db.execute(text(f"""
+        SELECT {_pp.offer_cost_sql()} AS cost, s.name, s.country, pc.name_he, pc.name, sp.part_type, pc.part_type
         FROM supplier_parts sp
         JOIN suppliers s ON s.id = sp.supplier_id
         JOIN parts_catalog pc ON pc.id = sp.part_id
-        WHERE sp.part_id = :pid AND sp.is_available AND sp.price_ils > 0 AND s.is_active
-        ORDER BY {_rank}, sp.price_ils ASC LIMIT 1
-    """.replace("{_rank}", class_rank_sql("sp.part_type", "pc.part_type"))), {"pid": part_id})).first()
+        WHERE sp.part_id = :pid AND {_pp.VISIBLE_OFFER_SQL} AND {_pp.offer_cost_sql()} > 0
+        ORDER BY {_pp.price_basis_order_sql("pc.part_type")} LIMIT 1
+    """), {"pid": part_id, "usd_to_ils_rate": rate})).first()
     if not row:
         return None
     return {"price_ils": _customer_unit_price(float(row[0]), row[1], row[2]), "name": (row[3] or row[4] or ""),
@@ -1612,8 +1621,8 @@ async def search_parts(
                 text(f"""
                     SELECT
                         pc.id, pc.sku, pc.name, pc.name_he, pc.manufacturer,
-                        pc.category, pc.part_type, pc.base_price,
-                        pc.min_price_ils, pc.max_price_ils, pc.description,
+                        pc.category, pc.part_type, pc.importer_price_ils,
+                        pc.online_price_ils, pc.max_price_ils, pc.description,
                         pc.oem_number, pc.barcode, pc.weight_kg,
                         pc.is_safety_critical, pc.part_condition,
                         pc.created_at, pc.updated_at
@@ -1658,8 +1667,8 @@ async def search_parts(
                 text(f"""
                     SELECT
                         pc.id, pc.sku, pc.name, pc.name_he, pc.manufacturer,
-                        pc.category, pc.part_type, pc.base_price,
-                        pc.min_price_ils, pc.max_price_ils, pc.description,
+                        pc.category, pc.part_type, pc.importer_price_ils,
+                        pc.online_price_ils, pc.max_price_ils, pc.description,
                         pc.oem_number, pc.barcode, pc.weight_kg,
                         pc.is_safety_critical, pc.part_condition,
                         pc.created_at, pc.updated_at{score_col}
@@ -1701,8 +1710,8 @@ async def search_parts(
                     text(f"""
                         SELECT DISTINCT ON (pc.id)
                             pc.id, pc.sku, pc.name, pc.name_he, pc.manufacturer,
-                            pc.category, pc.part_type, pc.base_price,
-                            pc.min_price_ils, pc.max_price_ils, pc.description,
+                            pc.category, pc.part_type, pc.importer_price_ils,
+                            pc.online_price_ils, pc.max_price_ils, pc.description,
                             pc.oem_number, pc.barcode, pc.weight_kg,
                             pc.is_safety_critical, pc.part_condition,
                             pc.created_at, pc.updated_at
@@ -1833,9 +1842,6 @@ async def search_parts(
             "manufacturer":     part_row[4],
             "category":         part_row[5],
             "part_type":        part_row[6],
-            "base_price":       float(part_row[7]) if part_row[7] else None,
-            "min_price_ils":    float(part_row[8]) if part_row[8] else None,
-            "max_price_ils":    float(part_row[9]) if part_row[9] else None,
             "description":      part_row[10],
             "oem_number":       part_row[11],
             "barcode":          _display_barcode,   # quality-specific barcode
@@ -1846,8 +1852,10 @@ async def search_parts(
             "updated_at":       part_row[17].isoformat() if part_row[17] else None,
             # Marketplace comparison metadata
             "supplier_count":       int(sup_agg[0]) if sup_agg else 0,
-            "cheapest_price_ils":   round(float(sup_agg[1]), 2) if sup_agg and sup_agg[1] else None,
-            "most_expensive_ils":   round(float(sup_agg[2]), 2) if sup_agg and sup_agg[2] else None,
+            # price range = CUSTOMER unit prices of the listed offers (set below); raw supplier costs
+            # (MIN/MAX of supplier_parts.price_ils) were sent here until 2026-10-29
+            "cheapest_price_ils":   None,
+            "most_expensive_ils":   None,
         }
 
         suppliers_list = []
@@ -1889,6 +1897,7 @@ async def search_parts(
                 "last_checked_at":       sp[17].isoformat() if sp[17] else None,
             })
 
+        _apply_customer_price_range(part_dict, suppliers_list, part_row[7], part_row[9], part_row[8])
         results: List[Dict[str, Any]] = [{"part": part_dict, "suppliers": suppliers_list}]
 
         # ── Batch-fetch best supplier for additional matching rows ────────────
@@ -1961,9 +1970,6 @@ async def search_parts(
                     "manufacturer":     extra_row[4],
                     "category":         extra_row[5],
                     "part_type":        extra_row[6],
-                    "base_price":       float(extra_row[7]) if extra_row[7] else None,
-                    "min_price_ils":    float(extra_row[8]) if extra_row[8] else None,
-                    "max_price_ils":    float(extra_row[9]) if extra_row[9] else None,
                     "description":      extra_row[10],
                     "oem_number":       extra_row[11],
                     "barcode":          _ex_barcode,
@@ -2011,6 +2017,7 @@ async def search_parts(
                         "express_cutoff_time":     bsp[17],
                         "last_checked_at":         bsp[18].isoformat() if bsp[18] else None,
                     }]
+                _apply_customer_price_range(extra_dict, extra_suppliers, extra_row[7], extra_row[9], extra_row[8])
                 results.append({"part": extra_dict, "suppliers": extra_suppliers})
 
         return results
@@ -3742,43 +3749,48 @@ async def get_part_suppliers(
             "source":                  _supplier_source_tag(r[1], r[3]),
         })
 
-    # Fallback: if no supplier_parts, check if part has IL importer price
-    # Add AutoSpareFinder as a synthetic supplier offer (marketplace own stock)
+    # Fallback: a catalog-only part (no live offer) - an ESTIMATE priced by the policy from the importer cost
+    # (price_policy.catalog_estimate_price), never from base_price + a flat 18% (2026-10-29), and never
+    # claimed "in stock" / 3 days: nothing confirms stock or delivery for a part without an offer.
     if not suppliers:
         part_row = (await db.execute(
-            text("SELECT base_price, importer_price_ils, part_condition, sku FROM parts_catalog WHERE id = :pid AND is_active"),
+            text("SELECT importer_price_ils, max_price_ils, online_price_ils, part_condition, sku, part_type "
+                 "FROM parts_catalog WHERE id = :pid AND is_active"),
             {"pid": part_id}
         )).fetchone()
-        if part_row and part_row[0] and float(part_row[0]) > 0:
+        _est = _pp.catalog_estimate(part_row[0], part_row[1], part_row[2]) if part_row else None
+        if _est is not None:
+            _cf = _pp.customer_fields(_est[0], 0, supplier_country=_est[1])
+            _ship = _pp.delivery_fee(supplier_country=_est[1])
             suppliers.append({
                 "supplier_part_id":       None,
                 "supplier_name":          "AutoSpareFinder",
-                "supplier_country":       "IL",
+                "supplier_country":       "IL" if _est[1] == "il" else "",
                 "supplier_website":       "https://autosparefinder.co.il",
                 "supplier_logo":          None,
-                "supplier_sku":           part_row[3],
+                "supplier_sku":           part_row[4],
                 "price_usd":              None,
-                # base_price is already cost×1.45 — add VAT for the customer total
-                "price_ils":              float(part_row[0]),
-                "customer_price_ils":     float(part_row[0]),
-                "customer_vat_ils":       round(float(part_row[0]) * _VAT_RATE, 2),
-                "customer_total_ils":     round(float(part_row[0]) * (1 + _VAT_RATE), 2),
-                "shipping_cost_ils":      0.0,
-                "availability":           "in_stock",
+                **_offer_price_fields(_cf),
+                "customer_total_ils":     round(_cf["customer_total_ils"] + _ship, 2),
+                "shipping_cost_ils":      _ship,
+                "availability":           "on_order",
                 "stock_quantity":         None,
                 "warranty_months":        12,
-                "estimated_delivery_days": 3,
+                "estimated_delivery_days": 14,
                 "supplier_url":           f"https://autosparefinder.co.il/parts/{part_id}",
                 "express_available":      False,
                 "express_price_ils":      None,
                 "express_delivery_days":  None,
                 "last_checked_at":        None,
-                "part_condition":         part_row[2] or "new",
-                "part_type":              "aftermarket",
-                "total_cost_ils":         round(float(part_row[0]) * (1 + _VAT_RATE), 2),
+                "part_condition":         part_row[3] or "new",
+                "part_type":              offer_label(part_row[5], None),
+                "total_cost_ils":         round(_cf["customer_total_ils"] + _ship, 2),
+                "is_base_price_fallback": True,      # = catalog estimate (key the website reads)
                 "source":                 "autosparefinder",
             })
 
+    # what the CUSTOMER pays decides the order of the list (it was raw cost + raw shipping, 2026-10-29)
+    suppliers.sort(key=lambda o: (o.get("customer_total_ils") is None, o.get("customer_total_ils") or 0))
     return {
         "part_id":        part_id,
         "supplier_count": len(suppliers),
@@ -3889,7 +3901,6 @@ async def compare_parts(part_id: str, db: AsyncSession = Depends(get_db), reques
                 customer_shipping=delivery_fee,
                 supplier_name=supplier.name,
                 supplier_country=supplier.country,
-                local_vat_only=True,
             )
         else:
             usd_total = float(sp.price_usd or 0)  # shipping is the delivery fee, never in the margin base
@@ -3899,7 +3910,6 @@ async def compare_parts(part_id: str, db: AsyncSession = Depends(get_db), reques
                 customer_shipping=delivery_fee,
                 supplier_name=supplier.name,
                 supplier_country=supplier.country,
-                local_vat_only=True,
             )
         comparisons.append({
             "supplier_part_id": str(sp.id),

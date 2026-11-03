@@ -1,0 +1,26 @@
+== A. container A (uid 0): real login() -> cookies.json, cwd=/
+2026-11-02 21:45:45,705 [fb_login] Health check URL after navigation: https://mbasic.facebook.com/home.php
+2026-11-02 21:45:45,717 [fb_login] ✅ Health check PASSED — session is authenticated (c_user+xs present, no login form)
+2026-11-02 21:45:45,724 [fb_login] Saved 3 cookies → /app/state/fb_browser_session/cookies.json
+2026-11-02 21:45:45,724 [fb_login] Cookie names: ['c_user', 'xs', 'datr']
+2026-11-02 21:45:45,725 [fb_login] Session AUTHENTICATED (c_user=present, xs=present)
+{"login_returned": true, "cookies_file": "/app/state/fb_browser_session/cookies.json", "exists": true, "count": 3, "names": ["c_user", "datr", "xs"], "mode": "0o644", "uid": 0, "has_secret_marker": true}
+== file on the shared directory
+644 0:0 630 bytes /dev/shm/asf_sp12_final/fb_browser_session/cookies.json
+== B. NEW container B (uid 1000), same directory: consumers read the session
+{"uid": 1000, "session_file": "/app/state/fb_browser_session/cookies.json", "login_file": "/app/state/fb_browser_session/cookies.json", "import_dir": "/app/state/fb_browser_session", "same_dir": true, "session_names": ["c_user", "datr", "xs"], "import_tool_file_names": ["c_user", "datr", "xs"], "identical": true, "authenticated_pair": true}
+== C. a failed login in a new container leaves the file byte-identical
+2026-11-02 21:45:50,572 [fb_login] ❌ Health check FAILED — login form visible (not authenticated)
+2026-11-02 21:45:50,572 [fb_login] fb_browser_login: login failed — cookie write SKIPPED to preserve last-known-good session (c_user=MISSING xs=MISSING). cookies.json unchanged.
+sha256 before=519790891c9872fa after=519790891c9872fa
+== D. STATE_DIR override honoured by fb_login_extended.py / default unchanged
+override -> /srv/override/fb_browser_session
+default  -> /app/state/fb_browser_session /app/state/fb_browser_session/cookies.json
+== E. uid 1000 against the root-owned directory: login() refuses up front, names the path and uid, writes nothing
+2026-11-02 21:45:54,361 [fb_login] Facebook session directory /app/state/fb_browser_session is not writable by uid 1000 - nothing could be saved, login not attempted (fix the worker_state volume permissions)
+{"login_returned": false, "cookies_file": "/app/state/fb_browser_session/cookies.json", "exists": true, "count": 3, "names": ["c_user", "datr", "xs"], "mode": "0o644", "uid": 0, "has_secret_marker": true}
+== F. uncreatable state dir
+2026-11-02 21:45:55,503 [fb_login] Facebook session directory /proc/nonexistent/fb_browser_session cannot be created ([Errno 2] No such file or directory: '/proc/nonexistent') - nothing could be saved, login not attempted
+{"login_returned": false, "cookies_file": "/proc/nonexistent/fb_browser_session/cookies.json", "exists": false}
+== no cookie value was printed above (only names / counts / hashes); the caller greps this file for the fixture's value string
+RAM-backed state removed

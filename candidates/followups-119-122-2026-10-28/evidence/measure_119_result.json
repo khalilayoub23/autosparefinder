@@ -1,0 +1,63 @@
+{
+ "measured_at": "2026-10-28T20:02:24Z",
+ "fitment_BMW": {
+  "active_parts": 281733,
+  "active_without_fitment": 225465,
+  "parsable_by_task_rules_REMAINING": 71,
+  "samples": [
+   "F57 \u05db\u05d9\u05e1\u05d5\u05d9 \u05e7\u05d8\u05df \u05d1\u05de\u05d5\u05e9\u05d1 \u05d0\u05d7 rover for ceor",
+   "E-46TD \u05de\u05e1\u05e0\u05df \u05d0\u05d5\u05d9\u05e8 Air filter ior",
+   "F66'\u05d0\u05d7 PDC \u05d7\u05d9\u05d9\u05e9\u05df Ultrasonic sor",
+   "U11 '\u05db\u05e0\u05e3 \u05e7\u05d3' \u05e9\u05de Side panel, or",
+   "F10 '\u05e8\u05d9\u05e4\u05d5\u05d3 \u05de\u05e9\u05e2\u05e0\u05ea \u05e7\u05d3' \u05d9\u05de Cover for coor"
+  ],
+  "elapsed_s": 34.4
+ },
+ "fitment_Ford": {
+  "active_parts": 127921,
+  "active_without_fitment": 72254,
+  "parsable_by_task_rules_REMAINING": 89,
+  "samples": [
+   "#F250 '\u05ea\u05d5\u05ea\u05d1 \u05dc\u05e7\u05e4\u05d9\u05e5 \u05e2\u05dc\u05d9\u05dd \u05d0\u05d7 #F250 '\u05ea\u05d5\u05ea\u05d1 \u05dc\u05e7\u05e4\u05d9\u05e5 \u05e2\u05dc\u05d9\u05dd \u05d0\u05d7",
+   "#      F250'\u05db\u05d1\u05dc \u05dc\u05de\u05e6\u05dc\u05de\u05d4 \u05e7\u05d3 # F250 \u05db\u05d1\u05dc \u05dc\u05de\u05e6\u05dc\u05de\u05d4 \u05e7\u05d3",
+   "\u05e7\u05d0\u05e1\u05d8\u05d5 TRN '\u05db\u05d5\u05e0\u05e1 \u05d0\u05d5\u05d5\u05d9\u05e8 \u05d9\u05de DEFLECTOR",
+   "#       F350 \u05d1\u05d5\u05e8\u05d2 \u05de\u05d5\u05d8 \u05d4\u05d2\u05d4 BOLT",
+   "# F250 \u05d2\u05d5\u05e3 \u05d7\u05d9\u05de\u05d5\u05dd \u05de\u05d5\u05e9\u05d1 \u05e0\u05d4\u05d2 ELEMENT ASY - HEATING"
+  ],
+  "elapsed_s": 17.9
+ },
+ "fitment_Jaguar": {
+  "active_parts": 267846,
+  "active_without_fitment": 49458,
+  "parsable_by_task_rules_REMAINING": 164,
+  "samples": [
+   " Lucas Starter Motor for Jaguar XJ6, 4.2 Straight 6 (but not E type)",
+   "S-Type V8 Silver Service Kit S-Type V8 Silver Service Kit",
+   "F-type Logo F-type Logo",
+   "Leather F-Type iPad holder - Black Leather F-Type iPad holder - Black",
+   "XK 5.0 Cat-Back 'SuperSport' Exhaust System XK 5.0 Cat-Back 'SuperSport' Exhaust System"
+  ],
+  "elapsed_s": 40.4
+ },
+ "merge_compatible_vehicles": {
+  "parts_with_fitment_rows": 1486673,
+  "sample": 3000,
+  "sample_without_pvf_copy": 1906,
+  "elapsed_s": 9.6
+ },
+ "fix_base_prices": {
+  "parts_with_priced_offer": 1279368,
+  "base_null": 1940,
+  "base_below_cheapest_x_margin": 879335,
+  "elapsed_s": 49.2,
+  "note": "upper bound: ignores the task's offer-class rank and USD-only offers"
+ },
+ "normalize_base_price": {
+  "case1_rows": 1935634,
+  "case1_off": 244618,
+  "case2_off": 30,
+  "case3_off": 2081,
+  "elapsed_s": 21.8,
+  "note": "upper bound: ignores the task's offer-class guard"
+ }
+}

@@ -423,12 +423,12 @@ function PhotoEditorModal({ src, onApply, onClose }) {
 function PriceTag({ price, vat, shipping, total }) {
   return (
     <div className="bg-gray-50 rounded-lg p-3 text-sm space-y-1">
-      <div className="flex justify-between text-gray-600"><span>מחיר נטו</span><span className="font-medium">₪{price?.toFixed(0)}</span></div>
-      <div className="flex justify-between text-gray-500"><span>מע״מ 18%</span><span>₪{vat?.toFixed(0)}</span></div>
+      <div className="flex justify-between text-gray-600"><span>מחיר נטו</span><span className="font-medium">₪{price?.toFixed(2)}</span></div>
+      <div className="flex justify-between text-gray-500"><span>{vat > 0 ? 'מע״מ 18%' : 'מע״מ 0% (ספק מחו״ל)'}</span><span>₪{vat?.toFixed(2)}</span></div>
       <div className="flex justify-between text-gray-500"><span>משלוח</span><span>{_shippingDisplay(shipping, true)}</span></div>
       <div className="flex justify-between font-bold text-brand-navy border-t border-gray-200 pt-1 mt-1">
         <span>סה״כ לתשלום</span>
-        <span className="text-brand-600 text-base">₪{total?.toFixed(0)}</span>
+        <span className="text-brand-600 text-base">₪{total?.toFixed(2)}</span>
       </div>
     </div>
   )
@@ -557,21 +557,16 @@ function _supplierForCard(sp) {
       ? resolvedShip
       : (Number.isFinite(rawShip) ? rawShip : 0)).toFixed(2))
 
-  // Single source of truth (2026-07-05): the backend computes the canonical
-  // customer price (cost×1.45 + 18% VAT — identical to Stripe checkout) and
-  // sends it as customer_price_ils / customer_vat_ils / customer_total_ils.
-  // Use those directly. The old client-side ×1.30 margin diverged from what
-  // the customer was actually charged at checkout.
+  // Single source of truth: the backend's price policy (backend/price_policy.py) sends the customer price
+  // as customer_price_ils / customer_vat_ils / customer_total_ils (cost×1.45 + VAT 18% for a local
+  // supplier, 0% for a foreign one). The website NEVER computes a price itself (2026-10-29: the old
+  // fallback here applied ×1.45 and a FLAT 18% to a raw cost); no backend price = no price shown.
   const backendNet = Number(sp?.customer_price_ils)
   const backendVat = Number(sp?.customer_vat_ils)
   const hasBackendPrice = Number.isFinite(backendNet) && backendNet > 0
 
-  const priceNet = hasBackendPrice
-    ? backendNet
-    : Number((baseCostIls * 1.45).toFixed(2))
-  const vatAmount = hasBackendPrice && Number.isFinite(backendVat)
-    ? backendVat
-    : Number((priceNet * 0.18).toFixed(2))
+  const priceNet = hasBackendPrice ? backendNet : null
+  const vatAmount = hasBackendPrice ? (Number.isFinite(backendVat) ? backendVat : 0) : null
 
   return {
     ...sp,
@@ -580,8 +575,8 @@ function _supplierForCard(sp) {
     price_no_vat:           priceNet,
     vat:                    vatAmount,
     shipping:               ship,
-    subtotal:               Number((priceNet + vatAmount).toFixed(2)),
-    total:                  Number((priceNet + vatAmount + ship).toFixed(2)),
+    subtotal:               hasBackendPrice ? Number((priceNet + vatAmount).toFixed(2)) : null,
+    total:                  hasBackendPrice ? Number((priceNet + vatAmount + ship).toFixed(2)) : null,
     availability:           sp.availability || "on_order",
     estimated_delivery_days: sp.estimated_delivery_days,
     is_base_price_fallback: false,
@@ -1806,7 +1801,6 @@ export default function Parts() {
     const bucketToFlat = (bucket, fallbackType) => {
       if (!bucket?.part) return null
       const suppliers = bucket.suppliers || []
-      const firstPriced = suppliers.find((s) => Number.isFinite(Number(s?.price_ils)))
       const availability = suppliers.some((s) => s?.availability === 'in_stock')
         ? 'in_stock'
         : (suppliers[0]?.availability || null)
@@ -1816,7 +1810,9 @@ export default function Parts() {
         suppliers,
         pricing: {
           availability,
-          total_price: firstPriced?.price_ils ?? bucket.part.min_price_ils ?? bucket.part.base_price ?? null,
+          // customer unit price (net + VAT) from the backend policy; a catalog estimate when no offer.
+          // Never a raw cost (min_price_ils) or base_price (2026-10-29).
+          total_price: bucket.part.cheapest_price_ils ?? bucket.part.customer_estimate_ils ?? null,
         },
       }
     }
@@ -1827,7 +1823,6 @@ export default function Parts() {
         .filter((b) => b?.part)
         .map((b) => {
           const suppliers = b.suppliers || []
-          const firstPriced = suppliers.find((s) => Number.isFinite(Number(s?.price_ils)))
           const availability = suppliers.some((s) => s?.availability === 'in_stock')
             ? 'in_stock'
             : (suppliers[0]?.availability || null)
@@ -1836,7 +1831,7 @@ export default function Parts() {
             suppliers,
             pricing: {
               availability,
-              total_price: firstPriced?.price_ils ?? b.part.min_price_ils ?? b.part.base_price ?? null,
+              total_price: b.part.cheapest_price_ils ?? b.part.customer_estimate_ils ?? null,
             },
           }
         })

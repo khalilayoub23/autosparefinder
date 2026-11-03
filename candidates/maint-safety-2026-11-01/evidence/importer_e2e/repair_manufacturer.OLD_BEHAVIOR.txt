@@ -1,0 +1,3 @@
+E         ModuleNotFoundError: No module named 'pandas'
+E        +  where 1 = CompletedProcess(args=['/usr/local/bin/python3', '-c', '\nimport json, os, runpy, socket, sys, urllib.request\n# Sever...facturer_import.py", line 30, in <module>\n    import pandas as pd\nModuleNotFoundError: No module named \'pandas\'\n').returncode
+1 failed, 45 deselected in 1.75s

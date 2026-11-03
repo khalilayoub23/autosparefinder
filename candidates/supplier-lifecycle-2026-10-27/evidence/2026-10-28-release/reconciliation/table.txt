@@ -1,0 +1,29 @@
+path                                                 live       base2      base3      cand       diffstat
+backend/BACKEND_AI_AGENTS.py                         d7336df3df d7336df3df d7336df3df d4d47b66b3 108 lines                    shared: intended candidate change
+backend/BACKEND_API_ROUTES.py                        7f7b0db927 7f7b0db927 7f7b0db927 f5b80c9f05 21 lines                     shared: intended candidate change
+backend/agent_identity.py                            -          -          -          020e9ed642 new 44 lines                 new: intended candidate file
+backend/agent_todo_utils.py                          782be07b16 782be07b16 782be07b16 13627c6553 8 lines                      shared: intended candidate change
+backend/agents/owner_console.py                      c44a7d01cf c44a7d01cf c44a7d01cf 1e1458c738 36 lines                     shared: intended candidate change
+backend/agents/supplier_console.py                   -          -          -          7ac8d352c1 new 169 lines                new: intended candidate file
+backend/alembic_pii/versions/0042_supplier_lifecycle.py -          -          -          5eb1f6f43f new 169 lines                new: intended candidate file
+backend/boaz_tasks.py                                -          -          -          478efb0565 new 332 lines                new: intended candidate file
+backend/email_agent/agent.py                         d23f4e9a6b d23f4e9a6b d23f4e9a6b f7d9093b12 134 lines                    shared: intended candidate change
+backend/email_agent/config.py                        098e80d240 098e80d240 098e80d240 98a44fe983 11 lines                     shared: intended candidate change
+backend/email_agent/gmail_client.py                  ded735491f ded735491f ded735491f 251f4aaeef 117 lines                    shared: intended candidate change
+backend/email_agent/loop.py                          e2fb1abd51 e2fb1abd51 e2fb1abd51 9ed7b162d2 31 lines                     shared: intended candidate change
+backend/email_agent/owner_flow.py                    ca40fa8301 ca40fa8301 ca40fa8301 a3a2a5c11f 23 lines                     shared: intended candidate change
+backend/email_agent/store.py                         142163f96e 142163f96e 142163f96e fb66e59a20 66 lines                     shared: intended candidate change
+backend/email_agent/supplier_routing.py              -          -          -          d970e9673d new 120 lines                new: intended candidate file
+backend/procurement.py                               -          -          -          9361239a5d new 526 lines                new: intended candidate file
+backend/routes/utils.py                              39567b857f 39567b857f 39567b857f cff31528da 17 lines                     shared: intended candidate change
+backend/services/supplier_sourcing.py                161dfe9585 161dfe9585 161dfe9585 8efc7892ef 84 lines                     shared: intended candidate change
+backend/services/suppliers/aliexpress_supplier.py    5e260e82b6 5e260e82b6 5e260e82b6 0bc20851f5 5 lines                      shared: intended candidate change
+backend/supplier_authorization.py                    -          -          -          0ddfade655 new 221 lines                new: intended candidate file
+backend/supplier_flags.py                            -          -          -          daf85c39a8 new 36 lines                 new: intended candidate file
+backend/supplier_ordering.py                         -          -          -          1ae6270277 new 516 lines                new: intended candidate file
+backend/supplier_outreach.py                         -          -          -          dda9692fb8 new 375 lines                new: intended candidate file
+backend/supplier_qualification.py                    -          -          -          453b93245c new 262 lines                new: intended candidate file
+backend/tests/test_email_agent.py                    2e6b9ab654 2e6b9ab654 2e6b9ab654 4ddb3a4ab0 17 lines                     shared: intended candidate change
+backend/tests/test_supplier_lifecycle.py             -          -          -          8b5a565819 new 880 lines                new: intended candidate file
+backend/tests/test_supplier_ordering.py              -          -          -          e00bcde40d new 417 lines                new: intended candidate file
+backend/tests/test_supplier_safety_gates.py          -          -          -          751e8b5890 new 524 lines                new: intended candidate file

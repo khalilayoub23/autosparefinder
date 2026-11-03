@@ -1,0 +1,3755 @@
+{
+ "started": "2026-10-31 10:59:58",
+ "names": {
+  "bmw": {
+   "candidates": 225465,
+   "would_match_parts": 71,
+   "would_insert_rows": 71,
+   "skip_reasons": {
+    "no_chassis_code": 225394
+   },
+   "models": [
+    [
+     "BMW X2 Electric",
+     11
+    ],
+    [
+     "MINI MINI 3-door",
+     9
+    ],
+    [
+     "BMW 5 Series",
+     9
+    ],
+    [
+     "BMW 7 Series",
+     7
+    ],
+    [
+     "BMW X1",
+     6
+    ],
+    [
+     "MINI MINI Countryman",
+     4
+    ],
+    [
+     "BMW X5",
+     4
+    ],
+    [
+     "BMW Z4",
+     4
+    ],
+    [
+     "MINI MINI Convertible",
+     3
+    ],
+    [
+     "BMW 3 Series",
+     3
+    ],
+    [
+     "BMW M3",
+     3
+    ],
+    [
+     "MINI MINI Clubman",
+     2
+    ],
+    [
+     "BMW X6",
+     2
+    ],
+    [
+     "BMW X2",
+     2
+    ],
+    [
+     "BMW i4",
+     1
+    ],
+    [
+     "BMW 1 Series",
+     1
+    ]
+   ],
+   "matches": [
+    [
+     "rover for ceor",
+     "F57 כיסוי קטן במושב אח",
+     [
+      "MINI Convertible"
+     ]
+    ],
+    [
+     "Air filter ior",
+     "E-46TD מסנן אויר",
+     [
+      "3 Series"
+     ]
+    ],
+    [
+     "Ultrasonic sor",
+     "F66'אח PDC חיישן",
+     [
+      "MINI 3-door"
+     ]
+    ],
+    [
+     "Side panel, or",
+     "U11 'כנף קד' שמ",
+     [
+      "X1"
+     ]
+    ],
+    [
+     "Cover for coor",
+     "F10 'ריפוד משענת קד' ימ",
+     [
+      "5 Series"
+     ]
+    ],
+    [
+     "Additional tode",
+     "EV F56'פנס איתות בכנף שמ",
+     [
+      "MINI 3-door"
+     ]
+    ],
+    [
+     "Electric A/Code",
+     "#           G60 מדחס מזגן",
+     [
+      "5 Series"
+     ]
+    ],
+    [
+     "Cover, towinode",
+     "F60'כיסוי לוו גרירה אח",
+     [
+      "MINI Countryman"
+     ]
+    ],
+    [
+     "Radio remoteode",
+     "G60 מקלט לשלט",
+     [
+      "5 Series"
+     ]
+    ],
+    [
+     "Emblem frontor",
+     "F60 MINI 'סמל קד",
+     [
+      "MINI Countryman"
+     ]
+    ],
+    [
+     "Cover, wheel",
+     "MI F-57 'ביטנה קד' ימ",
+     [
+      "MINI Convertible"
+     ]
+    ],
+    [
+     "Housing, lowor",
+     "U11 תוש סוללה תח",
+     [
+      "X1"
+     ]
+    ],
+    [
+     "Repair kit, or",
+     "F56 ער דיס'בלם קד",
+     [
+      "MINI 3-door"
+     ]
+    ],
+    [
+     "Left illuminor",
+     "G20 מגן שמן נהג",
+     [
+      "3 Series"
+     ]
+    ],
+    [
+     "Attachment kor",
+     "SA G05 ער'ברגים לתא מטען",
+     [
+      "X5"
+     ]
+    ],
+    [
+     "WIPER BLADE",
+     "F-54 'מגב אח",
+     [
+      "MINI Clubman"
+     ]
+    ],
+    [
+     "Airbag contror",
+     "G70 מחשב כריות אוויר",
+     [
+      "7 Series"
+     ]
+    ],
+    [
+     "Cover, basicor",
+     "F10 'ריפוד משענת אח",
+     [
+      "5 Series"
+     ]
+    ],
+    [
+     "Headlight wior",
+     "G80 'פנס לד ראשי קד' ימ",
+     [
+      "M3"
+     ]
+    ],
+    [
+     "Fixed side wor",
+     "U25 'שמשה לדלת אח'ימ",
+     [
+      "X2 Electric"
+     ]
+    ],
+    [
+     "Finisher winode",
+     "G06 'גומי גשם אח' שמ' פנ",
+     [
+      "X6"
+     ]
+    ],
+    [
+     "RP exhaust mor",
+     "משופץ E70 ממיר+סע' פליטה",
+     [
+      "X5"
+     ]
+    ],
+    [
+     "Lettering ode",
+     "U11\"S-DRIVE 18I\" סמל",
+     [
+      "X1"
+     ]
+    ],
+    [
+     "Frame for gror",
+     "U25 מסגרת ניקל גריל חזית",
+     [
+      "X2 Electric"
+     ]
+    ],
+    [
+     "Grill front or",
+     "U10 סורג חזית",
+     [
+      "X2"
+     ]
+    ],
+    [
+     "Mirror glas,or",
+     "F70 זכוכית מראה ימ",
+     [
+      "7 Series"
+     ]
+    ],
+    [
+     "Air vent, ouor",
+     "F57 'תריס מזגן צדדי בדש",
+     [
+      "MINI Convertible"
+     ]
+    ],
+    [
+     "Exterior miror",
+     "U11 'מראה חיצונית שמ",
+     [
+      "X1"
+     ]
+    ],
+    [
+     "Mount, bumpeor",
+     "G81 תומך אח' שמ' צדדי",
+     [
+      "M3"
+     ]
+    ],
+    [
+     "Reinforcemenor",
+     "F60 פנימי תח למגן אח",
+     [
+      "MINI Countryman"
+     ]
+    ],
+    [
+     "Trim pull-ouor",
+     "U25'כיסוי לעמוד שמ' אח",
+     [
+      "X2 Electric"
+     ]
+    ],
+    [
+     "Cover, columor",
+     "U25 'כיסוי לעמוד שמ' אח",
+     [
+      "X2 Electric"
+     ]
+    ],
+    [
+     "Trim pull-ouor",
+     "U25 'כיסוי עמוד אח' ימי",
+     [
+      "X2 Electric"
+     ]
+    ],
+    [
+     "Cover, columor",
+     "U25 'כיסוי לעמוד ימ' אח",
+     [
+      "X2 Electric"
+     ]
+    ],
+    [
+     "Opener, glovor",
+     "G70 מנעול תא כפפות",
+     [
+      "7 Series"
+     ]
+    ],
+    [
+     "Side window,or",
+     "U25 'שמשה לדלת אח' שמ",
+     [
+      "X2 Electric"
+     ]
+    ],
+    [
+     "Leather coveor",
+     "F10 'ריפוד מושב אח",
+     [
+      "5 Series"
+     ]
+    ],
+    [
+     "Headlight, Lor",
+     "G80 'פנס לד ראשי קד' שמ",
+     [
+      "M3"
+     ]
+    ],
+    [
+     "Additional tor",
+     "F56 'איתות בכנף קד' שמ",
+     [
+      "MINI 3-door"
+     ]
+    ],
+    [
+     "Rear light tor",
+     "G05 'פנס אח' שמ' פני",
+     [
+      "X5"
+     ]
+    ],
+    [
+     "Rear light ior",
+     "F70 פנס אח שמ חיצ",
+     [
+      "7 Series"
+     ]
+    ],
+    [
+     "Trim, seat ior",
+     "G30 תושבת מתגים",
+     [
+      "5 Series"
+     ]
+    ],
+    [
+     "Channel coveor",
+     "G26 'גומי גשם אח' ימ",
+     [
+      "i4"
+     ]
+    ],
+    [
+     "Rain-light-sor",
+     "F70 חיישן גשם בשמשה",
+     [
+      "7 Series"
+     ]
+    ],
+    [
+     "Left column or",
+     "U25 'כיסוי בדלת שמ",
+     [
+      "X2 Electric"
+     ]
+    ],
+    [
+     "Right columnor",
+     "U25  'כיסוי בדלת ימי",
+     [
+      "X2 Electric"
+     ]
+    ],
+    [
+     "License-plator",
+     "F66 תוש לוחית רישוי קד",
+     [
+      "MINI 3-door"
+     ]
+    ],
+    [
+     "Cover pot",
+     "F-60 MI תושבת לדלתית דלק",
+     [
+      "MINI Countryman"
+     ]
+    ],
+    [
+     "Door trim paode",
+     "E87 'ריפוד דלת קד' ימ",
+     [
+      "1 Series"
+     ]
+    ],
+    [
+     "Cover for coor",
+     "F10 'ריפוד מושב קד",
+     [
+      "5 Series"
+     ]
+    ],
+    [
+     "Cover for coor",
+     "F10 'ריפוד משענת קד' שמ",
+     [
+      "5 Series"
+     ]
+    ],
+    [
+     "Wiring harneor",
+     "U11 צמת חוטים לדשבורד",
+     [
+      "X1"
+     ]
+    ],
+    [
+     "Headlight, Lode",
+     "#           G29'פנס קד'ימ",
+     [
+      "Z4"
+     ]
+    ],
+    [
+     "Light moduleor",
+     "G70 'פנס סף קד' ימ",
+     [
+      "7 Series"
+     ]
+    ],
+    [
+     "Upper belt lor",
+     "G29 'חגורת בטיחות קד' שמ",
+     [
+      "Z4"
+     ]
+    ],
+    [
+     "Upper belt ror",
+     "G29 'חגורת בטיחות קד' ימ",
+     [
+      "Z4"
+     ]
+    ],
+    [
+     "Right door sor",
+     "F-66'כיסוי מדרכה ימ",
+     [
+      "MINI 3-door"
+     ]
+    ],
+    [
+     "Wheel arch tor",
+     "F66 קשת כנף קד ימ",
+     [
+      "MINI 3-door"
+     ]
+    ],
+    [
+     "Operating unor",
+     "G06 כפתורים למולטימדיה",
+     [
+      "X6"
+     ]
+    ],
+    [
+     "HV wiring haor",
+     "G05כבל טעינה",
+     [
+      "X5"
+     ]
+    ],
+    [
+     "Sensor f. AUor",
+     "G-60 חיישן טמפרטורה",
+     [
+      "5 Series"
+     ]
+    ],
+    [
+     "Flex. fast cor",
+     "G20 תקע מטען",
+     [
+      "3 Series"
+     ]
+    ],
+    [
+     "License-plator",
+     "U10 תושבת לוחית רישוי",
+     [
+      "X2"
+     ]
+    ],
+    [
+     "Cover columnor",
+     "U25 'קישוט עמוד שמ",
+     [
+      "X2 Electric"
+     ]
+    ],
+    [
+     "Door opener,or",
+     "F54 'ידית פנ' קד' שמ",
+     [
+      "MINI Clubman"
+     ]
+    ],
+    [
+     "I-panel trimor",
+     "U11 'פנל קישוט ימ' בדש",
+     [
+      "X1"
+     ]
+    ],
+    [
+     "RP Head Unitor",
+     "#                G70 רדיו",
+     [
+      "7 Series"
+     ]
+    ],
+    [
+     "Schloss Aktior",
+     "F66 מנעול ימ מכסה מנוע",
+     [
+      "MINI 3-door"
+     ]
+    ],
+    [
+     "Schloss Aktior",
+     "F66 מנעול שמ מכסה מנוע",
+     [
+      "MINI 3-door"
+     ]
+    ],
+    [
+     "Cover columnor",
+     "U25 קישוט עמו' ימי",
+     [
+      "X2 Electric"
+     ]
+    ],
+    [
+     "LEFT SUN VISor",
+     "G-29 'סוכך שמש שמ",
+     [
+      "Z4"
+     ]
+    ]
+   ],
+   "elapsed_s": 24.7
+  },
+  "ford": {
+   "candidates": 72254,
+   "would_match_parts": 298,
+   "would_insert_rows": 298,
+   "skip_reasons": {
+    "no_model_name": 71956
+   },
+   "models": [
+    [
+     "Ford Ranger",
+     215
+    ],
+    [
+     "Ford F-250",
+     34
+    ],
+    [
+     "Ford F-150",
+     16
+    ],
+    [
+     "Ford Transit",
+     10
+    ],
+    [
+     "Ford Focus",
+     8
+    ],
+    [
+     "Ford F-350",
+     4
+    ],
+    [
+     "Ford F-550",
+     3
+    ],
+    [
+     "Ford Fiesta",
+     3
+    ],
+    [
+     "Ford Puma",
+     2
+    ],
+    [
+     "Ford F-600",
+     1
+    ],
+    [
+     "Ford Kuga",
+     1
+    ],
+    [
+     "Ford Mustang",
+     1
+    ]
+   ],
+   "matches": [
+    [
+     "#F250 'תותב לקפיץ עלים אח",
+     "#F250 'תותב לקפיץ עלים אח",
+     [
+      "F-250"
+     ]
+    ],
+    [
+     "SEAL-VALVE STEM",
+     "#   RB גומי שסתום ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "SENSOR-CRSHAFT",
+     "# חיישן גל ארכובה ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "HOUSING ASSY",
+     "#  בית מתגים בהגה ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "# F250 כבל למצלמה קד",
+     "#      F250'כבל למצלמה קד",
+     [
+      "F-250"
+     ]
+    ],
+    [
+     "DEFLECTOR",
+     "קאסטו TRN 'כונס אוויר ימ",
+     [
+      "Transit"
+     ]
+    ],
+    [
+     "WHEEL-STEERING",
+     "#     RB גלגל הגה ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "GRILLE-RADIATOR",
+     "# RB גריל קד ערום ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "DOOR-FRONT",
+     "#  RB דלת קד' שמ' ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "KIT-FUEL INJ.",
+     "#B ערכת מזרק  דלק ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "KNUCKLE-F/WHEEL",
+     "#   RB מפרק קד שמ ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "BOLT",
+     "#       F350 בורג מוט הגה",
+     [
+      "F-350"
+     ]
+    ],
+    [
+     "DISC - BRAKE",
+     "#   RB דיסק בילום ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "ARM-FRONT SUSP.",
+     "#  RB זרוע קד'ימ' ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "BEZEL",
+     "#     RB פנל רדיו ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "ELEMENT ASY - HEATING",
+     "# F250 גוף חימום מושב נהג",
+     [
+      "F-250"
+     ]
+    ],
+    [
+     "WHEEL ASY",
+     "#חש F150 חישוק סגסוגת קלה",
+     [
+      "F-150"
+     ]
+    ],
+    [
+     "HANDLE",
+     "#ידית דלת תא מטען ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "HOSE ASSY",
+     "#  RB צינור חימום ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "SENSOR ASSY",
+     "# חיישן מזרק דלק  ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "HEADLAMP ASSY",
+     "#  RB פנס ראשי שמ ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "CONNECTION",
+     "# מחבר ליציאת מים ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "DUCT-AIR",
+     "#  RB צינור אוויר ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "PUMP ASY-WATER",
+     "#       משאבת מים ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "AXLE ASY - REAR",
+     "#    RB סרן אחורי ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "TENSIONER-BELT",
+     "#מותח רצועת תזמון ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "COVER",
+     "#B כיסוי מראה ימ  ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "DEFLECTOR-AIR",
+     "#    RB מסיט רוח  ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "PULLEY-TENSION",
+     "#מותחן לגל ארכובה ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "MIRROR-RR VIEW",
+     "#     RB מראה ימ' ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "SHAFT-REAR AXLE",
+     "#ציר סרן אחורי ימ ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "MOULDING",
+     "#R קשת גלגל אח'ימ'ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "SPRING-REAR",
+     "#   RB קפיץ אחורי ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "BOLT",
+     "#    F250 בורג גל הינע אח",
+     [
+      "F-250"
+     ]
+    ],
+    [
+     "PANEL ASY - BODY SIDE INN",
+     "# F250 'כיסוי תח' עמוד ימ",
+     [
+      "F-250"
+     ]
+    ],
+    [
+     "WEDGE ASY",
+     "#   F550 תושבת מרווח קפיץ",
+     [
+      "F-550"
+     ]
+    ],
+    [
+     "COVER",
+     "#חשמלי F150 כיסוי יח'בקרה",
+     [
+      "F-150"
+     ]
+    ],
+    [
+     "חשמלי F150 מנוע אחורי",
+     "חשמלי F150 מנוע אחורי",
+     [
+      "F-150"
+     ]
+    ],
+    [
+     "CIRCLIP - INNER",
+     "#ח F150 טבעת אבטחה לציריה",
+     [
+      "F-150"
+     ]
+    ],
+    [
+     "HOSE-RADIATOR",
+     "#RB צינור רדיאטור ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "HOSE-HTR WATER",
+     "# צינור חימום מים ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "MAT-FRONT FLOOR",
+     "#    RB סט שטיחים ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "RING - SEALING",
+     "#CCN טבעת מזרק דלק פיאסטה",
+     [
+      "Fiesta"
+     ]
+    ],
+    [
+     "GASKET",
+     "#          RB אטם ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "BRACKET-PULLEY",
+     "#    RB אלטרנטור  ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "CONNECTION",
+     "# מקשר ליציאת מים ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "LAMP",
+     "#איתות כנף שמ'ריינג'ר יבו",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "GASKET",
+     "# אטם לסעפת פליטה ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "BELT - TIMING",
+     "#רצועה למשאבת דלק ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "GASKET",
+     "#          RB אטם ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "CONNECTION",
+     "#GE צינור אינטרקולר פוקוס",
+     [
+      "Focus"
+     ]
+    ],
+    [
+     "GASKET",
+     "#          RB אטם ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "HOSE-AIR",
+     "#  RB צינור אוויר ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "PUMP ASY-WATER",
+     "#    RB משאבת מים ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "GASKET-OIL PAN",
+     "#  RB אטם אגן שמן ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "HOSE-AIR",
+     "#  RB צינור אוויר ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "COOLER-CHRG AIR",
+     "#   RB מצנן אוויר ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "COMPRESSOR ASY",
+     "#    RB מדחס מזגן ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "MODULE - EEC V",
+     "#  3.0L מחשב מנוע ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "PUMP-FUEL INJ.",
+     "#  משאבת הזרקה פוקוס דיזל",
+     [
+      "Focus"
+     ]
+    ],
+    [
+     "HOSE-RADIATOR",
+     "*RB צינור רדיאטור ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "MOULDING",
+     "#B קישוט ימ לארגז ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "MOULDING",
+     "#B קישוט ארגז שמ' ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "TUBE ASSY",
+     "#RB מכלול צינורות ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "SPRING-REAR",
+     "#      קפיץ אחורי ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "HANDLE-JACK",
+     "#           TRN ידית מגבה",
+     [
+      "Transit"
+     ]
+    ],
+    [
+     "PIPE - FUEL",
+     "#    RB צינור דלק ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "TRACK ASY - SEAT",
+     "#    F250 בסיס מושב קד שמ",
+     [
+      "F-250"
+     ]
+    ],
+    [
+     "FRAME - DOOR",
+     "*(L) F250 מסגרת צד לדלתות",
+     [
+      "F-250"
+     ]
+    ],
+    [
+     "FRAME - DOOR",
+     "##'19 F250 מסג' צד לדלתות",
+     [
+      "F-250"
+     ]
+    ],
+    [
+     "NAME PLATE",
+     "#SA F600 'קד' שמ F600 סמל",
+     [
+      "F-600"
+     ]
+    ],
+    [
+     "SEPARATOR-OIL",
+     "#    RB מפריד שמן ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "LAMP-SIDE MARKR",
+     "# CGE פנ'ערפ' קד ימ פוקוס",
+     [
+      "Focus"
+     ]
+    ],
+    [
+     "REGULATOR-WINDW",
+     "# FOC 'מנגנון שמשה קד' ימ",
+     [
+      "Focus"
+     ]
+    ],
+    [
+     "KNUCKLE-F/WHEEL",
+     "#   RB מפרק קד ימ ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "CALIPER",
+     "# RB קליפר קד ימי ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "CALIPER",
+     "#  RB קליפר קד שמ ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "KIT-FUEL INJ.",
+     "#B ערכת מזרק  דלק ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "HOUSING-F/PIPE",
+     "# בית דלתית תדלוק ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "KIT-FUEL INJ.",
+     "#RB ערכת מזרק דלק ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "NOZZLE & HOLDER",
+     "##   RB מזרק דלק  ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "SHOCK ABSORBER",
+     "#      RB בולם קד ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "INSERT-MOULDING",
+     "#  מכלול גריל קד' ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "LATCH",
+     "#B מנעול דל'קד'שמ ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "INDICATOR-OIL",
+     "#     RB מדיד שמן ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "ARM-FRONT SUSP.",
+     "# RB זרוע מתלה קד ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "RECEIVER-RADIO",
+     "#         RB רדיו ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "CONTROL UNIT",
+     "#RB ממסר מצתי להט ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "TUBE ASSY",
+     "#   RB צינור מזגן ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "CIRCUIT BREAKER",
+     "#         RB פיוז ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "KIT-LOCK SYSTEM",
+     "#   RB בית פיוזים ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "# F250 12V מצבר",
+     "#           F250 12V מצבר",
+     [
+      "F-250"
+     ]
+    ],
+    [
+     "INSULATOR ASSY",
+     "#B תושבת מנוע שמ' ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "# גלגל הגה ריינג'ר",
+     "#        גלגל הגה ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "MANIFOLD-INLET",
+     "#   RB סעפת יניקה ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "ADAPTOR-FILTER",
+     "# מכלול למסנן שמן ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "TUBE",
+     "# צינור החזרת זמן ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "HOSE-WATER INL.",
+     "#RB ערכ' צינורות  ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "MANIFOLD-INLET",
+     "#מכסה שסתומים ימי ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "MANIFOLD-INLET",
+     "#מכסה שסתומים שמ  ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "BATTERY",
+     "#          GC סוללה פוקוס",
+     [
+      "Focus"
+     ]
+    ],
+    [
+     "SPEAKER ASY",
+     "#        F250'רמקול קד'ימ",
+     [
+      "F-250"
+     ]
+    ],
+    [
+     "COVER ASY - SEAT BACK",
+     "#       F250 ריפוד גב נהג",
+     [
+      "F-250"
+     ]
+    ],
+    [
+     "COLUMN ASY - STEERING",
+     "#5-20 F150 עמוד הגה מושלם",
+     [
+      "F-150"
+     ]
+    ],
+    [
+     "WIRING ASY - REAR LAMPS",
+     "#  #      F250 'צמה צד שמ",
+     [
+      "F-250"
+     ]
+    ],
+    [
+     "EXTENSION",
+     "#    F250 'כיסוי מדרגה ימ",
+     [
+      "F-250"
+     ]
+    ],
+    [
+     "HEADLINING-ROOF",
+     "#     RB ריפוד גג ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "BUMPER-FRONT",
+     "#     RB פגוש קד' ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "VALVE-EXHAUST",
+     "#  RB שסתום פליטה ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "BAR-STABILIZER",
+     "#    RB מוט מייצב ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "FILTER-OIL",
+     "#   3.0L מסנן שמן ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "SHAFT-DRIVE",
+     "#      RB גל הינע ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "SHAFT-DRIVE",
+     "#      RB גל הינע ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "TURBOCHARGER",
+     "#   RB מגדש טורבו ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "REINFORCEMENT",
+     "#B תושבת ידית שמ' ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "DOOR-FRONT",
+     "#  RB דלת קד' ימ' ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "BELT - TIMING",
+     "#B  רצועת טיימינג ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "CONVERTER ASSY",
+     "#     ממיר קטליטי ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "CAMSHAFT",
+     "#גל זיזים יני'שמ' ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "HOSE-HTR WATER",
+     "#    RB צינור מים ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "PIPE - OIL FEED",
+     "#   RB  צינור שמן ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "LOCKSET-VEHICLE",
+     "#     ער' מנעולים ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "LAMP-LIC.PLATE",
+     "#     פנס מספר ימ'ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "HOSE-WATER",
+     "#    RB צינור מים ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "WHEEL-STEERING",
+     "#        גלגל הגה ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "DAMPER ASSY",
+     "#     TIT PUMA גלגל תנופה",
+     [
+      "Puma"
+     ]
+    ],
+    [
+     "CONNECTION",
+     "#B מחבר יציאת מים ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "# 'אקס+F150 'מגב'קד",
+     "#       'אקס+F150 'מגב'קד",
+     [
+      "F-150"
+     ]
+    ],
+    [
+     "DECAL-NAMEPLATE",
+     "#    סמל אח' ריינג'ר יבוא",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "ARM-FRONT SUSP.",
+     "#   RB זרוע קד שמ ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "GLASS-W/SCREEN",
+     "#     RB שמשה קד' ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "REINFORCEMENT",
+     "#B תושבת לידית ימ ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "SOCKET AND WIRE",
+     "#  צמה לפנס אחורי ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "# USA שמשה קדמית ריינג'ר",
+     "#  USA שמשה קדמית ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "HOSE-HTR WATER",
+     "# צינור חימום מים ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "LAMP ASSY-REAR",
+     "# פנס בלימה בארגז ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "MOTOR AND PUMP",
+     "#פיסאוה PUMA מש' מתיז מים",
+     [
+      "Puma"
+     ]
+    ],
+    [
+     "NAME PLATE",
+     "#     RB סמל לוגו ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "COVER",
+     "#חשמל F150 אטם מכסה סוללה",
+     [
+      "F-150"
+     ]
+    ],
+    [
+     "KNOB-SEAT TRACK",
+     "#  13 גלגלת לכסא נהג קוגה",
+     [
+      "Kuga"
+     ]
+    ],
+    [
+     "PANEL-FUSE JUNC",
+     "#   RB בית נתיכים ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "# F150 שלט פתיחה",
+     "#          F150 שלט פתיחה",
+     [
+      "F-150"
+     ]
+    ],
+    [
+     "COIL - IGNITION",
+     "#20 FOC 4D 1.0L סליל הצתה",
+     [
+      "Focus"
+     ]
+    ],
+    [
+     "TUBE ASSY",
+     "#  RB צינור למזגן ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "TUBE ASSY",
+     "#  RB צינור למזגן ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "STARTER MOTOR",
+     "#         RB מתנע ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "HOSE ASSY",
+     "#        RB צינור ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "EGR ASSY",
+     "##    RB ריינג'ר EGR מקרר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "VALVE ASSY",
+     "#        RB שסתום ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "RESERVOIR",
+     "# מיכל למפריד שמן ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "COVER",
+     "#B כיסוי מראה שמ' ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "SHIELD - FENDER APRON",
+     "#         F250'בטנה קד'שמ",
+     [
+      "F-250"
+     ]
+    ],
+    [
+     "KIT - HOUSING",
+     "# תושבת לסמל יצרן ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "GRILLE CENTRE",
+     "#  RB תושבת לסמל  ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "# TT ציריה אח'שמ' טרנזיט",
+     "#  TT ציריה אח'שמ' טרנזיט",
+     [
+      "Transit"
+     ]
+    ],
+    [
+     "CALIPER",
+     "#RB קליפר אח' ימ' ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "WIRE ASY",
+     "#    F150 צמת חוטים ראשית",
+     [
+      "F-150"
+     ]
+    ],
+    [
+     "BOOSTER - BRAKE",
+     "#     RB מגבר בלם ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "GASKET",
+     "#   RB אטם לצינור ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "PIPE - FUEL",
+     "#    RB צינור דלק ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "SOCKET ASY - ADDITIONAL",
+     "#             F250 שקע כח",
+     [
+      "F-250"
+     ]
+    ],
+    [
+     "WIRE ASY - JUMPER",
+     "#       F250 צמת חוטים גג",
+     [
+      "F-250"
+     ]
+    ],
+    [
+     "WIRE ASY",
+     "#      USA F250 שקע אבחון",
+     [
+      "F-250"
+     ]
+    ],
+    [
+     "ACTUATOR ASY",
+     "#F250 מפעיל חש' לדלת ארגז",
+     [
+      "F-250"
+     ]
+    ],
+    [
+     "BOLT - HEX.HEAD",
+     "#B בורג ראש משושה ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "VALVE-INLET",
+     "#  RB שסתום יניקה ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "SWITCH-CONTROL",
+     "#B מתג בקרת אחיזה ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "MOULDING",
+     "#RB ספויילר לארגז ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "CONTROL UNIT",
+     "#   RB יחידת בקרה ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "TUBE ASSY",
+     "#        RB צינור ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "COVER AND PLATE",
+     "#B מגע כרית אוויר ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "SENSOR",
+     "#B חיישן מזרק דלק ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "COVER-CYL.FRONT",
+     "#RB כיסוי צילינדר ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "HOSE-WATER INL.",
+     "# צינור כניסת מים ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "LATCH",
+     "#מנעול דלת קד'ימ' ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "PAN ASY - ENGINE OIL",
+     "#       F550 אגן שמן מנוע",
+     [
+      "F-550"
+     ]
+    ],
+    [
+     "SENSOR ASSY",
+     "#   RB חיישן טמפ' ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "ALTERNATOR ASY",
+     "#           F250 אלטרנטור",
+     [
+      "F-250"
+     ]
+    ],
+    [
+     "MIRROR-RR VIEW",
+     "#     RB מראה ימ' ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "COVER",
+     "#  כיסוי אלטרנטור ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "MIRROR ASY - REAR VIEW OU",
+     "#         XL F350'מראה שמ",
+     [
+      "F-350"
+     ]
+    ],
+    [
+     "CONTROL",
+     "#B מפעיל דלת ארגז ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "MOULDING",
+     "#  קישוט תח'לגריל ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "LAMP",
+     "#RB פנס אחורי ימ' ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "REPLACED BY 2517246",
+     "#      TRN 'דופן אמצעי שמ",
+     [
+      "Transit"
+     ]
+    ],
+    [
+     "HOSE-HTR WATER",
+     "# צינור חימום מים ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "WHEEL ASSY",
+     "#חישוק סגסוגת קלה ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "LAMP",
+     "#RB פנס אחורי שמ' ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "END-SPINDLE ROD",
+     "#  RB תפוח הגה שמ ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "END-SPINDLE ROD",
+     "# RB תפוח הגה ימי ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "PANEL ASY - BODY SIDE INN",
+     "# F250 'ריפוד תח' עמוד ימ",
+     [
+      "F-250"
+     ]
+    ],
+    [
+     "REGULATOR-FUEL",
+     "#  RB וסת לחץ דלק ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "SHOCK ABSORBER",
+     "#   RB בולם אחורי ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "TUBE ASSY-FUEL",
+     "#RB צינור לחץ דלק ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "SPRING-REAR",
+     "#   TR קפיץ אחורי ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "PAD - SEAT BACK",
+     "# F250 ספוג משענת כסא נהג",
+     [
+      "F-250"
+     ]
+    ],
+    [
+     "COVER",
+     "#כיסוי פגוש אחורי ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "MIRROR ASY - REAR VIEW OU",
+     "#       XL F350 מראה ימין",
+     [
+      "F-350"
+     ]
+    ],
+    [
+     "GASKET-CYL.HEAD",
+     "# RB אטם ראש מנוע ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "GASKET",
+     "#F250 אטם צינור ניקוז שמן",
+     [
+      "F-250"
+     ]
+    ],
+    [
+     "GASKET-CYL.HEAD",
+     "# RB אטם ראש מנוע ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "FLANGE",
+     "#   F250 אוגן צלב גל הינע",
+     [
+      "F-250"
+     ]
+    ],
+    [
+     "JOINT & SHAFT",
+     "#צירייה קד חצ ימי ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "COOL PLATE",
+     "#F150 פלטת קירור תא סוללה",
+     [
+      "F-150"
+     ]
+    ],
+    [
+     "NUT - ADJUSTING SCREW",
+     "#          F-250 אום לפנס",
+     [
+      "F-250"
+     ]
+    ],
+    [
+     "INST. CLUSTER",
+     "#   RB לוח שעונים ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "DOOR-REAR",
+     "#   RB דלת אח'ימ' ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "LOCK ASY - DOOR",
+     "# מנעול דלת אח'ימ'ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "SENSOR-AIR BAG",
+     "#חיישן כרית אוויר ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "BASE-REAR LAMP",
+     "# R פנס אח'ימ'מוש'ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "SEAL-CRANK.FRT",
+     "#B אטם למשאבת שמן ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "RESERVOIR-WATER",
+     "#RB מיכל מתיז מים ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "PUMP-FUEL INJ.",
+     "# משאבת הזרקת דלק ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "BOLT AND WASHER ASY - HEX",
+     "#               F-250 אום",
+     [
+      "F-250"
+     ]
+    ],
+    [
+     "CYLINDER HEAD",
+     "#B ראש צילינדר שמ ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "GASKET",
+     "#          RB אטם ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "DECAL",
+     "#    סמל אח' ריינג'ר יבוא",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "CYLINDER HEAD",
+     "# ראש צילינדר ימי ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "KIT-FIXINGPARTS",
+     "#B צינור לזרק דלק ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "TRACK-SEAT",
+     "# בסיס מושב קד'שמ'ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "MIRROR-RR VIEW",
+     "#     RB מראה שמ' ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "TUBE ASSY-FUEL",
+     "#RB צינור לחץ דלק ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "PUMP ASY - OIL",
+     "#    RB משאבת שמן ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "LAMP",
+     "#RB פנס אחורי ימ' ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "MUFFLER & PIPE",
+     "# R דוד עמם קד'ימ'ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "BOLT - HEX.HEAD",
+     "#RB בורג ראש מנוע ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "# TFD F150 דלתית דלק",
+     "#      TFD F150 דלתית דלק",
+     [
+      "F-150"
+     ]
+    ],
+    [
+     "TUBE - VACUUM",
+     "#       F150 צינור וואקום",
+     [
+      "F-150"
+     ]
+    ],
+    [
+     "#T אטם במנוע חשמלי טרנזיט",
+     "#T אטם במנוע חשמלי טרנזיט",
+     [
+      "Transit"
+     ]
+    ],
+    [
+     "SWITCH ASSY",
+     "# FOC כפתור הפע' בלם חניה",
+     [
+      "Focus"
+     ]
+    ],
+    [
+     "HOSE-HTR WATER",
+     "# צינור חימום מים ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "BAR - STABILIZER",
+     "#      F250 'מוט מייצב קד",
+     [
+      "F-250"
+     ]
+    ],
+    [
+     "SOLENOID ASSY",
+     "#     RB סולנואיד ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "GASKET-COVER",
+     "#אטם מכסה שסתומים ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "PAN-ENGINE OIL",
+     "# RB אגן שמן מנוע ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "TUBE",
+     "#B צינור מעבר מים ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "FUSE",
+     "#         RB פיוז ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "SHAFT-REAR AXLE",
+     "#     ציריה אח'שמ'ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "LAMP",
+     "#RB פנס אחורי שמ' ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "TRAY-BATTERY",
+     "#    קאסטום TRN תוש' מצבר",
+     [
+      "Transit"
+     ]
+    ],
+    [
+     "SENSOR ASSY",
+     "#B חיישן לחץ סעפת ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "RETAINER - SEAL",
+     "#    RB מחזיר שמן ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "REINFORCEMENT",
+     "#  תושבת לידית שמ ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "PEDAL",
+     "#     CCN דוושת גז פיאסטה",
+     [
+      "Fiesta"
+     ]
+    ],
+    [
+     "CYLINDER ASY",
+     "#   3.0L חצי מנוע ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "INLET",
+     "#         F-150 שקע טעינה",
+     [
+      "F-150"
+     ]
+    ],
+    [
+     "BOLT",
+     "חשמלי F150 בורג למנוע",
+     [
+      "F-150"
+     ]
+    ],
+    [
+     "MOUNTING ASY",
+     "#מפעיל מגדש טורבו ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "HEADLAMP ASSY",
+     "# RB פנס ראשי ימ' ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "CONNECTION",
+     "#B מקשר יציאת מים ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "GEAR-STEERING",
+     "#   3.0L מסרק הגה ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "MODULE - TRANSMISSION CON",
+     "#          F250 מחשב תיבת הילוכים",
+     [
+      "F-250"
+     ]
+    ],
+    [
+     "PIPE - FUEL",
+     "#    RB צינור דלק ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "CALIPER",
+     "#  RB קליפר אח שמ ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "AUTOMATIC TRANS",
+     "# 10 ריינג'ר יבואR80 תיבת הילוכים",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "TURBOCHARGER",
+     "#מפעיל מגדש טורבו ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "LOCK ASY - DOOR",
+     "# מנעול דלת אח שמ ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "NAME PLATE",
+     "#  RB ריינג'ר LIMITED סמל",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "COVER - WHEEL",
+     "#     TTH צלחת נוי טרנזיט",
+     [
+      "Transit"
+     ]
+    ],
+    [
+     "FLYWHEEL ASSY",
+     "#   RB גלגל תנופה ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "CABLE ASY - CONTROL",
+     "#חשמלי F150 כבל מכסה מנוע",
+     [
+      "F-150"
+     ]
+    ],
+    [
+     "SWITCH - WINDOW CONTROL -",
+     "#      F250 מתג הרמת שמשה",
+     [
+      "F-250"
+     ]
+    ],
+    [
+     "PIN - SPECIAL",
+     "#               F-250 תפס",
+     [
+      "F-250"
+     ]
+    ],
+    [
+     "CONTROL UNIT",
+     "#SA בקרת מילוי דלק פיאסטה",
+     [
+      "Fiesta"
+     ]
+    ],
+    [
+     "TRIGGER WHEEL",
+     "# גלגל למחזיר שמן ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "TUBE ASSY",
+     "#  RB צינור למזגן ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "F550 לוח שעונים",
+     "F550 לוח שעונים",
+     [
+      "F-550"
+     ]
+    ],
+    [
+     "SUPPORT",
+     "#   MUS 'תושבת דוד עמם אח",
+     [
+      "Mustang"
+     ]
+    ],
+    [
+     "WHEEL-STEERING",
+     "*        גלגל הגה ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "# TT אום לבית גלגל טרנזיט",
+     "# TT אום לבית גלגל טרנזיט",
+     [
+      "Transit"
+     ]
+    ],
+    [
+     "SENSOR ASY",
+     "#    F250 חיישן חום אוויר",
+     [
+      "F-250"
+     ]
+    ],
+    [
+     "MODULE",
+     "#     ריינג'ר GWM יח'בקרה",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "SHAFT",
+     "#     R נבה אח'שמ'ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "SENSOR-EXH-TEMP",
+     "# חיישן גזי פליטה ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "CABLE ASY",
+     "# FL 3 כבל בורר היל'פוקוס",
+     [
+      "Focus"
+     ]
+    ],
+    [
+     "CAMERA ASSY",
+     "# RB מצלמה היקפית ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "VANE - RAD SHTR",
+     "#  3.0L תריס קדמי ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "MIRROR-RR VIEW",
+     "#     RB מראה שמ' ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "LAMP",
+     "#     R פנס אח'ימ'ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "REINFORCEMENT",
+     "#B תושבת ליד' ימ' ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "NAME PLATE",
+     "#    R סמל \"רפטור\"ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "HORN ASSY",
+     "#         RB צופר ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "CABLE ASY - BATTERY TO BA",
+     "#        F250 כבל + למצבר",
+     [
+      "F-250"
+     ]
+    ],
+    [
+     "GASKET-CYL.HEAD",
+     "# RB אטם ראש מנוע ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "PAD - PEDAL",
+     "#     F150 גומי דוושת בלם",
+     [
+      "F-150"
+     ]
+    ],
+    [
+     "INSERT",
+     "# מרווח קפיץ עלים ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "CABLE - BATTERY",
+     "#       כבל למצבר ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "NAME PLATE",
+     "#דל' מטען ריינג'ר XLT סמל",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "GASKET-CYL.HEAD",
+     "# RB אטם ראש מנוע ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "SERVICE ENGINE",
+     "# 3.0L מנוע מושלם ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "INSULATOR-ENG.",
+     "#B תושבת מנוע ימ' ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "PIN",
+     "#   F-250 תפס לכונס אוויר",
+     [
+      "F-250"
+     ]
+    ],
+    [
+     "NUT - CASTLE",
+     "#   F250 'אום לבית נבה קד",
+     [
+      "F-250"
+     ]
+    ],
+    [
+     "REMOTE CONTROL",
+     "# שלט אימובילייזר ריינג'ר",
+     [
+      "Ranger"
+     ]
+    ],
+    [
+     "DEFLECTOR",
+     "#קאסטו TRN 'כונס אוויר שמ",
+     [
+      "Transit"
+     ]
+    ],
+    [
+     "NUT",
+     "#UT         F350     בורג",
+     [
+      "F-350"
+     ]
+    ],
+    [
+     "# TT בורג טרנזיט",
+     "#          TT בורג טרנזיט",
+     [
+      "Transit"
+     ]
+    ],
+    [
+     "# F250 אום תח' לבית נבה",
+     "#   F250 אום תח' לבית נבה",
+     [
+      "F-250"
+     ]
+    ]
+   ],
+   "elapsed_s": 13.3
+  },
+  "jaguar": {
+   "candidates": 49445,
+   "would_match_parts": 60,
+   "would_insert_rows": 61,
+   "skip_reasons": {
+    "no_model_name": 46445,
+    "merchandise": 2705,
+    "classic_era": 229,
+    "no_descriptive_word": 6
+   },
+   "models": [
+    [
+     "Jaguar XF",
+     23
+    ],
+    [
+     "Jaguar S-Type",
+     8
+    ],
+    [
+     "Jaguar XKR",
+     7
+    ],
+    [
+     "Jaguar XK",
+     6
+    ],
+    [
+     "Jaguar F-Type",
+     5
+    ],
+    [
+     "Jaguar X-Type",
+     3
+    ],
+    [
+     "Jaguar XJ",
+     2
+    ],
+    [
+     "Jaguar XK8",
+     2
+    ],
+    [
+     "Jaguar XJ6",
+     1
+    ],
+    [
+     "Jaguar I-Pace",
+     1
+    ],
+    [
+     "Jaguar XJ8",
+     1
+    ],
+    [
+     "Jaguar F-Pace",
+     1
+    ],
+    [
+     "Jaguar E-Pace",
+     1
+    ]
+   ],
+   "matches": [
+    [
+     "S-Type V8 Silver Service Kit",
+     "S-Type V8 Silver Service Kit",
+     [
+      "S-Type"
+     ]
+    ],
+    [
+     "New XK Bronze Service Kit",
+     "New XK Bronze Service Kit",
+     [
+      "XK"
+     ]
+    ],
+    [
+     "XF 2.7D Rear Sports Exhaust Sections",
+     null,
+     [
+      "XF"
+     ]
+    ],
+    [
+     "XF 5.0 Silver Service Kit",
+     "XF 5.0 Silver Service Kit",
+     [
+      "XF"
+     ]
+    ],
+    [
+     "XK 5.0 Cat-Back 'SuperSport' Exhaust System",
+     "XK 5.0 Cat-Back 'SuperSport' Exhaust System",
+     [
+      "XK"
+     ]
+    ],
+    [
+     "Ball Joint Cup Xk",
+     null,
+     [
+      "XK"
+     ]
+    ],
+    [
+     "F-Type Tail Gate Assembly",
+     null,
+     [
+      "F-Type"
+     ]
+    ],
+    [
+     "XF 5.0 Bronze Service Kit",
+     "XF 5.0 Bronze Service Kit",
+     [
+      "XF"
+     ]
+    ],
+    [
+     "Washer on Xk Drive S",
+     "Washer on Xk Drive S",
+     [
+      "XK"
+     ]
+    ],
+    [
+     "X-Type Silver Service Kit",
+     "X-Type Silver Service Kit",
+     [
+      "X-Type"
+     ]
+    ],
+    [
+     "XF 3.0 Bronze Service Kit",
+     "XF 3.0 Bronze Service Kit",
+     [
+      "XF"
+     ]
+    ],
+    [
+     "XF 3.0 Platinum Service Kit",
+     "XF 3.0 Platinum Service Kit",
+     [
+      "XF"
+     ]
+    ],
+    [
+     "XF 4.2 Gold Service Kit",
+     "XF 4.2 Gold Service Kit",
+     [
+      "XF"
+     ]
+    ],
+    [
+     "XF 5.0 Platinum Service Kit",
+     "XF 5.0 Platinum Service Kit",
+     [
+      "XF"
+     ]
+    ],
+    [
+     "F-Type Front End Kit",
+     null,
+     [
+      "F-Type"
+     ]
+    ],
+    [
+     "XKR / XKR-S 5.0 Cat-Back 'SuperSport' Exhaust System",
+     "XKR / XKR-S 5.0 Cat-Back 'SuperSport' Exhaust System",
+     [
+      "XKR"
+     ]
+    ],
+    [
+     "X-Type Gold Service Kit",
+     "X-Type Gold Service Kit",
+     [
+      "X-Type"
+     ]
+    ],
+    [
+     "XFR 5.0 Rear Sports Exhaust Sections",
+     "XFR 5.0 Rear Sports Exhaust Sections",
+     [
+      "XF"
+     ]
+    ],
+    [
+     "XJ Coupe",
+     "XJ Coupe",
+     [
+      "XJ"
+     ]
+    ],
+    [
+     "XF 5.0 Rear Sports Exhaust Sections",
+     "XF 5.0 Rear Sports Exhaust Sections",
+     [
+      "XF"
+     ]
+    ],
+    [
+     "Xj6 Retail C",
+     "Xj6 Retail C",
+     [
+      "XJ6"
+     ]
+    ],
+    [
+     "Instrument Panel (Xk",
+     "Instrument Panel (Xk",
+     [
+      "XK"
+     ]
+    ],
+    [
+     "X-Type Bronze Service Kit",
+     "X-Type Bronze Service Kit",
+     [
+      "X-Type"
+     ]
+    ],
+    [
+     "S-Type V6 Bronze Service Kit",
+     "S-Type V6 Bronze Service Kit",
+     [
+      "S-Type"
+     ]
+    ],
+    [
+     "XF 3.0 Gold Service Kit",
+     "XF 3.0 Gold Service Kit",
+     [
+      "XF"
+     ]
+    ],
+    [
+     "Snap-on Windlace Xj",
+     "Snap-on Windlace Xj",
+     [
+      "XJ"
+     ]
+    ],
+    [
+     "XF SV8 4.2 Rear Sports Exhaust Sections",
+     "XF SV8 4.2 Rear Sports Exhaust Sections",
+     [
+      "XF"
+     ]
+    ],
+    [
+     "Jaguar F Type 2 Litre P300 - Sport Exhaust With Sound Architect™ (2020 on)",
+     "Jaguar F Type 2 Litre P300 - Sport Exhaust With Sound Architect™ (2020 on)",
+     [
+      "F-Type"
+     ]
+    ],
+    [
+     "XF 4.2 Silver Service Kit",
+     "XF 4.2 Silver Service Kit",
+     [
+      "XF"
+     ]
+    ],
+    [
+     "Rear Valance With Xfr",
+     null,
+     [
+      "XF"
+     ]
+    ],
+    [
+     "XKR / XKR-S 5.0 Cat-Back 'Sport' Exhaust System",
+     "XKR / XKR-S 5.0 Cat-Back 'Sport' Exhaust System",
+     [
+      "XKR"
+     ]
+    ],
+    [
+     "XF 3.0 Silver Service Kit",
+     "XF 3.0 Silver Service Kit",
+     [
+      "XF"
+     ]
+    ],
+    [
+     "XKR Rear End Kit",
+     "XKR Rear End Kit",
+     [
+      "XKR"
+     ]
+    ],
+    [
+     "Carbon Fiber Hood Louvres Xfr Only Right",
+     null,
+     [
+      "XF"
+     ]
+    ],
+    [
+     "Carbon Fiber Hood Louvres Xfr Only Left",
+     null,
+     [
+      "XF"
+     ]
+    ],
+    [
+     "Rubber Floor Mat Set. For Right Hand Drive XK8/XKR Models Only",
+     "Rubber Floor Mat Set. For Right Hand Drive XK8/XKR Models Only",
+     [
+      "XKR",
+      "XK8"
+     ]
+    ],
+    [
+     "Rubber Floor Mat Set. For Right Hand Drive I-Pace Models Only",
+     "Rubber Floor Mat Set. For Right Hand Drive I-Pace Models Only",
+     [
+      "I-Pace"
+     ]
+    ],
+    [
+     "S-Type V6 Platinum Service Kit",
+     "S-Type V6 Platinum Service Kit",
+     [
+      "S-Type"
+     ]
+    ],
+    [
+     "XK 4.2 Cat-Back 'SuperSport' Exhaust System",
+     "XK 4.2 Cat-Back 'SuperSport' Exhaust System",
+     [
+      "XK"
+     ]
+    ],
+    [
+     "XJ8 Beige Overmat Set LHD",
+     "XJ8 Beige Overmat Set LHD",
+     [
+      "XJ8"
+     ]
+    ],
+    [
+     "S-Type V8 Gold Service Kit",
+     "S-Type V8 Gold Service Kit",
+     [
+      "S-Type"
+     ]
+    ],
+    [
+     "Rubber Floor Mat Set. For Right Hand Drive XF Models Only",
+     "Rubber Floor Mat Set. For Right Hand Drive XF Models Only",
+     [
+      "XF"
+     ]
+    ],
+    [
+     "Rubber Floor Mat Set. For Right Hand Drive F-Pace Models Only",
+     "Rubber Floor Mat Set. For Right Hand Drive F-Pace Models Only",
+     [
+      "F-Pace"
+     ]
+    ],
+    [
+     "XF 5.0 Gold Service Kit",
+     "XF 5.0 Gold Service Kit",
+     [
+      "XF"
+     ]
+    ],
+    [
+     "XKR 4.2 Cat-Back 'Sport' Exhaust System",
+     "XKR 4.2 Cat-Back 'Sport' Exhaust System",
+     [
+      "XKR"
+     ]
+    ],
+    [
+     "XKR 4.2 Cat-Back 'SuperSport' Exhaust System",
+     "XKR 4.2 Cat-Back 'SuperSport' Exhaust System",
+     [
+      "XKR"
+     ]
+    ],
+    [
+     "Jaguar F Type V8 inc. AWD - Sport System with Sound Architect™ (2014 on)",
+     "Jaguar F Type V8 inc. AWD - Sport System with Sound Architect™ (2014 on)",
+     [
+      "F-Type"
+     ]
+    ],
+    [
+     "XF 3.0 / 4.0 Rear Sports Exhaust Sections",
+     "XF 3.0 / 4.0 Rear Sports Exhaust Sections",
+     [
+      "XF"
+     ]
+    ],
+    [
+     "S-Type V6 Silver Service Kit",
+     "S-Type V6 Silver Service Kit",
+     [
+      "S-Type"
+     ]
+    ],
+    [
+     "Overmat Carpet Set Beige XK8 RHD",
+     "Overmat Carpet Set Beige XK8 RHD",
+     [
+      "XK8"
+     ]
+    ],
+    [
+     "S-Type V8 Bronze Service Kit",
+     "S-Type V8 Bronze Service Kit",
+     [
+      "S-Type"
+     ]
+    ],
+    [
+     "Jaguar F Type V6 Coupe, Convertible Sport Exhaust (2014 on)",
+     "Jaguar F Type V6 Coupe, Convertible Sport Exhaust (2014 on)",
+     [
+      "F-Type"
+     ]
+    ],
+    [
+     "XF 3.0 Diesel & Diesel S Rear Sports Exhaust Sections",
+     "XF 3.0 Diesel & Diesel S Rear Sports Exhaust Sections",
+     [
+      "XF"
+     ]
+    ],
+    [
+     "XF 3.0 S/C Rear Sports Exhaust Sections",
+     "XF 3.0 S/C Rear Sports Exhaust Sections",
+     [
+      "XF"
+     ]
+    ],
+    [
+     "XFR-S Rear Sports Exhaust Sections",
+     "XFR-S Rear Sports Exhaust Sections",
+     [
+      "XF"
+     ]
+    ],
+    [
+     "S-Type Body Rubber Seal Kit",
+     "S-Type Body Rubber Seal Kit",
+     [
+      "S-Type"
+     ]
+    ],
+    [
+     "S-Type V6 Gold Service Kit",
+     "S-Type V6 Gold Service Kit",
+     [
+      "S-Type"
+     ]
+    ],
+    [
+     "XF 4.2 Bronze Service Kit",
+     "XF 4.2 Bronze Service Kit",
+     [
+      "XF"
+     ]
+    ],
+    [
+     "Rubber Floor Mat Set. For Right Hand Drive E-Pace Models Only",
+     "Rubber Floor Mat Set. For Right Hand Drive E-Pace Models Only",
+     [
+      "E-Pace"
+     ]
+    ],
+    [
+     "XKR Front End Kit",
+     null,
+     [
+      "XKR"
+     ]
+    ]
+   ],
+   "elapsed_s": 18.4
+  },
+  "ford_repair": {
+   "n": 12360,
+   "parts": 12156,
+   "would_delete_as_duplicate": 0,
+   "by_model": [
+    {
+     "model": "Ford F-350",
+     "n": 2517
+    },
+    {
+     "model": "Ford Focus",
+     "n": 2410
+    },
+    {
+     "model": "Ford F-150",
+     "n": 1551
+    },
+    {
+     "model": "Ford Transit",
+     "n": 795
+    },
+    {
+     "model": "Ford F-250",
+     "n": 720
+    },
+    {
+     "model": "Ford F-550",
+     "n": 695
+    },
+    {
+     "model": "Ford Kuga",
+     "n": 668
+    },
+    {
+     "model": "Ford Transit Connect",
+     "n": 592
+    },
+    {
+     "model": "Ford Fiesta",
+     "n": 580
+    },
+    {
+     "model": "Ford Edge",
+     "n": 312
+    },
+    {
+     "model": "Ford Explorer",
+     "n": 296
+    },
+    {
+     "model": "Ford Mustang",
+     "n": 293
+    },
+    {
+     "model": "Ford Mustang Mach-E",
+     "n": 243
+    },
+    {
+     "model": "Ford Puma",
+     "n": 222
+    },
+    {
+     "model": "Ford Mondeo",
+     "n": 175
+    },
+    {
+     "model": "Ford EcoSport",
+     "n": 142
+    },
+    {
+     "model": "Ford S-MAX",
+     "n": 89
+    },
+    {
+     "model": "Ford Flex",
+     "n": 25
+    },
+    {
+     "model": "Ford Bronco",
+     "n": 7
+    },
+    {
+     "model": "Ford F-530",
+     "n": 5
+    },
+    {
+     "model": "Ford F-600",
+     "n": 5
+    },
+    {
+     "model": "Ford Expedition",
+     "n": 4
+    },
+    {
+     "model": "Ford Lincoln Town Car",
+     "n": 3
+    },
+    {
+     "model": "Ford Fusion",
+     "n": 3
+    },
+    {
+     "model": "Ford F-520",
+     "n": 2
+    },
+    {
+     "model": "Ford Escape",
+     "n": 2
+    },
+    {
+     "model": "Ford Maverick",
+     "n": 1
+    },
+    {
+     "model": "Ford Taurus",
+     "n": 1
+    },
+    {
+     "model": "Ford F-450",
+     "n": 1
+    },
+    {
+     "model": "Ford C-MAX",
+     "n": 1
+    }
+   ]
+  },
+  "jaguar_existing": [
+   {
+    "name": "Borg & Beck Clutch Kit for Daimler; Jaguar E-Type and Jaguar XJ",
+    "model": "XJ"
+   },
+   {
+    "name": "F-Type card holder",
+    "model": "F-Type"
+   },
+   {
+    "name": "F-Type Convertible Rear End Kit",
+    "model": "F-Type"
+   },
+   {
+    "name": "F-Type 'F' cufflinks - Gunmetal",
+    "model": "F-Type"
+   },
+   {
+    "name": "F-Type keyring - Black",
+    "model": "F-Type"
+   },
+   {
+    "name": "F-type Logo",
+    "model": "F-Type"
+   },
+   {
+    "name": "F-type Logo",
+    "model": "F-Type"
+   },
+   {
+    "name": "F-type Logo",
+    "model": "F-Type"
+   },
+   {
+    "name": "F-type Logo",
+    "model": "F-Type"
+   },
+   {
+    "name": "F-Type logo polo shirt - White XL",
+    "model": "F-Type"
+   },
+   {
+    "name": "F-Type money clip",
+    "model": "F-Type"
+   },
+   {
+    "name": "F-type Polo",
+    "model": "F-Type"
+   },
+   {
+    "name": "F-type Polo",
+    "model": "F-Type"
+   },
+   {
+    "name": "F-Type polo shirt - Black XL",
+    "model": "F-Type"
+   },
+   {
+    "name": "F Type Print",
+    "model": "F-Type"
+   },
+   {
+    "name": "F Type Print",
+    "model": "F-Type"
+   },
+   {
+    "name": "F-type T-shi",
+    "model": "F-Type"
+   },
+   {
+    "name": "Jaguar S-Type Revotec Fan Kit",
+    "model": "S-Type"
+   },
+   {
+    "name": "Jaguar XK 120 - the remarkable history of JWK 651",
+    "model": "XK"
+   },
+   {
+    "name": "Jr M Xe Tee,",
+    "model": "XE"
+   },
+   {
+    "name": "Ladies' F-Type suede driving shoe - Navy 36",
+    "model": "F-Type"
+   },
+   {
+    "name": "Ladies' F-Type suede driving shoes - Red 36",
+    "model": "F-Type"
+   },
+   {
+    "name": "Leather F-Type jacket wallet",
+    "model": "F-Type"
+   },
+   {
+    "name": "Leather F-Type passport holder",
+    "model": "F-Type"
+   },
+   {
+    "name": "Men's F-Type leather driving shoes - Black 10",
+    "model": "F-Type"
+   },
+   {
+    "name": "Men's F-Type leather driving shoes - Black 9",
+    "model": "F-Type"
+   },
+   {
+    "name": "Men's F-Type suede driving shoes - Navy 8",
+    "model": "F-Type"
+   },
+   {
+    "name": "Men's F-Type suede driving shoes - Navy 9",
+    "model": "F-Type"
+   },
+   {
+    "name": "Performance Alternator Assembly -11AC Jaguar E Type & XJ6 - Right Hand Mounting",
+    "model": "XJ6"
+   },
+   {
+    "name": "Rubber Floor Mat Set. For Right Hand Drive XE Models Only",
+    "model": "XE"
+   },
+   {
+    "name": "XK8 Bronze Service Kit",
+    "model": "XK8"
+   },
+   {
+    "name": "XK Black Overmat Set RHD",
+    "model": "XK"
+   }
+  ],
+  "bmw_existing_sample": [
+   {
+    "name": "Owner S Manual For F82 M4 861011",
+    "name_he": null,
+    "manufacturer": "BMW",
+    "model": "M4",
+    "notes": "chassis:F82"
+   },
+   {
+    "name": "Expansion taode",
+    "name_he": "G80 מיכל עיבוי",
+    "manufacturer": "BMW",
+    "model": "M3",
+    "notes": "chassis:G80"
+   },
+   {
+    "name": "Clamp or",
+    "name_he": "G26 תפס צמת מנוע",
+    "manufacturer": "BMW",
+    "model": "i4",
+    "notes": "chassis:G26"
+   },
+   {
+    "name": "Hvac Heater Hose",
+    "name_he": "G02 צינור קירור",
+    "manufacturer": "BMW",
+    "model": "X4",
+    "notes": "chassis:G02"
+   },
+   {
+    "name": "Grill front",
+    "name_he": "G20 גריל חזית",
+    "manufacturer": "BMW",
+    "model": "3 Series",
+    "notes": "chassis:G20"
+   },
+   {
+    "name": "235 55 R18 104v Ventus As Rh 369041",
+    "name_he": null,
+    "manufacturer": "BMW",
+    "model": "R 18",
+    "notes": "chassis:R18"
+   },
+   {
+    "name": "F-20 מגן קד' חיצוני",
+    "name_he": "F-20 מגן קד' חיצוני",
+    "manufacturer": "BMW",
+    "model": "1 Series",
+    "notes": "chassis:F20"
+   },
+   {
+    "name": "Air Duct",
+    "name_he": "F-15 'כונס אויר ימ",
+    "manufacturer": "BMW",
+    "model": "X5",
+    "notes": "chassis:F15"
+   },
+   {
+    "name": "bulb socket,",
+    "name_he": "F54'בית מנורה לפנס אח'ימ",
+    "manufacturer": "MINI",
+    "model": "MINI Clubman",
+    "notes": "chassis:F54"
+   },
+   {
+    "name": "Angular-cont",
+    "name_he": "F-25 מיסב לנבה",
+    "manufacturer": "BMW",
+    "model": "X3",
+    "notes": "chassis:F25"
+   },
+   {
+    "name": "Park Sensor Ring",
+    "name_he": "F-15 PDC טבעת לחיישן",
+    "manufacturer": "BMW",
+    "model": "X5",
+    "notes": "chassis:F15"
+   },
+   {
+    "name": "E89 חיישן שמ'לגג נפתח",
+    "name_he": "E89 חיישן שמ'לגג נפתח",
+    "manufacturer": "BMW",
+    "model": "Z4",
+    "notes": "chassis:E89"
+   },
+   {
+    "name": "X5 G05 כיסוי תח' למצנן",
+    "name_he": "X5 G05 כיסוי תח' למצנן",
+    "manufacturer": "BMW",
+    "model": "X5",
+    "notes": "chassis:G05"
+   },
+   {
+    "name": "M/F48 'כיסוי וו גרירה אח",
+    "name_he": "M/F48 'כיסוי וו גרירה אח",
+    "manufacturer": "BMW",
+    "model": "X1",
+    "notes": "chassis:F48"
+   },
+   {
+    "name": "Left engine",
+    "name_he": "G20 'ציר מכסה מנוע שמ",
+    "manufacturer": "BMW",
+    "model": "3 Series",
+    "notes": "chassis:G20"
+   },
+   {
+    "name": "Owner S Manual F10 F18 861011",
+    "name_he": null,
+    "manufacturer": "BMW",
+    "model": "5 Series",
+    "notes": "chassis:F10"
+   },
+   {
+    "name": "Loading sillor",
+    "name_he": "F60 כיסוי סף תא מטען",
+    "manufacturer": "MINI",
+    "model": "MINI Countryman",
+    "notes": "chassis:F60"
+   },
+   {
+    "name": "Dust Shield",
+    "name_he": "G05'מגן לבולם קד",
+    "manufacturer": "BMW",
+    "model": "X5",
+    "notes": "chassis:G05"
+   },
+   {
+    "name": "Headlight ar",
+    "name_he": "E-90 'תושבת לפנס קד' שמ",
+    "manufacturer": "BMW",
+    "model": "3 Series",
+    "notes": "chassis:E90"
+   },
+   {
+    "name": "G60 פנס ראשי שמ'לד",
+    "name_he": "G60 פנס ראשי שמ'לד",
+    "manufacturer": "BMW",
+    "model": "5 Series",
+    "notes": "chassis:G60"
+   },
+   {
+    "name": "G26 'זרוע תח' אח' ימ",
+    "name_he": "G26 'זרוע תח' אח' ימ",
+    "manufacturer": "BMW",
+    "model": "i4",
+    "notes": "chassis:G26"
+   },
+   {
+    "name": "Owner S Handbook Z4 E85 C861011",
+    "name_he": null,
+    "manufacturer": "BMW",
+    "model": "Z4",
+    "notes": "chassis:E85"
+   },
+   {
+    "name": "Park Sensor",
+    "name_he": "#       G07 'קד PDC חיישן",
+    "manufacturer": "BMW",
+    "model": "X7",
+    "notes": "chassis:G07"
+   },
+   {
+    "name": "F82 'מודול פנס איתות שמ",
+    "name_he": "F82 'מודול פנס איתות שמ",
+    "manufacturer": "BMW",
+    "model": "M4",
+    "notes": "chassis:F82"
+   },
+   {
+    "name": "# F-34 'מגן קד' חיצ",
+    "name_he": "#       F-34 'מגן קד' חיצ",
+    "manufacturer": "BMW",
+    "model": "3 Series GT",
+    "notes": "chassis:F34"
+   },
+   {
+    "name": "F10 אטם לסעפת פליטה",
+    "name_he": "F10 אטם לסעפת פליטה",
+    "manufacturer": "BMW",
+    "model": "5 Series",
+    "notes": "chassis:F10"
+   },
+   {
+    "name": "Rear muffler",
+    "name_he": "F87 דוד עמם אחורי",
+    "manufacturer": "BMW",
+    "model": "M2",
+    "notes": "chassis:F87"
+   },
+   {
+    "name": "Owner S Manual For F16 861011",
+    "name_he": null,
+    "manufacturer": "BMW",
+    "model": "X6",
+    "notes": "chassis:F16"
+   },
+   {
+    "name": "Rear reflectode",
+    "name_he": "F-96 'מחזיר אור אח' שמ",
+    "manufacturer": "BMW",
+    "model": "X6 M",
+    "notes": "chassis:F96"
+   },
+   {
+    "name": "LED headlighode",
+    "name_he": "G70M LED'פנס ראשי תח'ימ",
+    "manufacturer": "BMW",
+    "model": "7 Series",
+    "notes": "chassis:G70"
+   },
+   {
+    "name": "G30 טבעת עצירה",
+    "name_he": "G30 טבעת עצירה",
+    "manufacturer": "BMW",
+    "model": "5 Series",
+    "notes": "chassis:G30"
+   },
+   {
+    "name": "Hydro unit Dode",
+    "name_he": "*             G20 DSC 'יח",
+    "manufacturer": "BMW",
+    "model": "3 Series",
+    "notes": "chassis:G20"
+   },
+   {
+    "name": "G30 מתגים לקונסולה",
+    "name_he": "G30 מתגים לקונסולה",
+    "manufacturer": "BMW",
+    "model": "5 Series",
+    "notes": "chassis:G30"
+   },
+   {
+    "name": "Sensor, fronode",
+    "name_he": "F96 חיישן קירבה",
+    "manufacturer": "BMW",
+    "model": "X6 M",
+    "notes": "chassis:F96"
+   },
+   {
+    "name": "G06 תומך לפגוש אח' אמצעי",
+    "name_he": "G06 תומך לפגוש אח' אמצעי",
+    "manufacturer": "BMW",
+    "model": "X6",
+    "notes": "chassis:G06"
+   },
+   {
+    "name": "G-05 יחידה פנ' למזגן",
+    "name_he": "G-05 יחידה פנ' למזגן",
+    "manufacturer": "BMW",
+    "model": "X5",
+    "notes": "chassis:G05"
+   },
+   {
+    "name": "Owner S Manual F01h F02h 861011",
+    "name_he": null,
+    "manufacturer": "BMW",
+    "model": "7 Series",
+    "notes": "chassis:F01"
+   },
+   {
+    "name": "Oil Pump",
+    "name_he": "יבוא G05משאבת שמן מנוע",
+    "manufacturer": "BMW",
+    "model": "X5",
+    "notes": "chassis:G05"
+   },
+   {
+    "name": "Owner S Manual For F23 With 861011",
+    "name_he": null,
+    "manufacturer": "BMW",
+    "model": "2 Series",
+    "notes": "chassis:F23"
+   },
+   {
+    "name": "Door weather",
+    "name_he": "X5 G05 'גומי לדלת קד",
+    "manufacturer": "BMW",
+    "model": "X5",
+    "notes": "chassis:G05"
+   }
+  ]
+ },
+ "finished": "2026-10-31 11:01:17"
+}

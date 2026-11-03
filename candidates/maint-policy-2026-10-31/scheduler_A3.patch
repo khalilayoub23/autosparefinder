@@ -1,0 +1,132 @@
+diff -ru a/backend/db_update_agent.py b/backend/db_update_agent.py
+--- a/backend/db_update_agent.py	2026-11-01 17:59:40.111096299 +0100
++++ b/backend/db_update_agent.py	2026-11-01 17:59:40.205095400 +0100
+@@ -4457,12 +4457,8 @@
+ # run-task API and the maintenance scripts — all of which call run_task() — could still start
+ # them in the live container. run_task() is the single gate (2026-10-19).
+ OOM_BLOCKED_TASKS: frozenset = frozenset({
+-    "fix_base_prices",
+-    "normalize_base_price",
+-    "backfill_bmw_fitment_from_name_he",
+-    "backfill_ford_fitment_from_name_he",
+-    "backfill_jaguar_fitment_from_name",
+-    "merge_catalog_fitment_from_part_vehicle_fitment",
++    # empty since #119 (owner-approved): the six formerly blocked tasks run in bounded keyset batches with a time
++    # budget (BASE_PRICE_TASK_*, FITMENT_MERGE_*, NAME_FITMENT_*), so none loads the catalogue into memory any more.
+ })
+ 
+ 
+@@ -4617,11 +4613,11 @@
+             "sync_models_from_catalog",
+             # sync_models_from_catalog_file excluded — XLS already imported; runs on-demand only
+             "backfill_catalog_fitment_from_xls",
+-            # "backfill_bmw_fitment_from_name_he",  # DISABLED: OOM / already complete
++            "backfill_bmw_fitment_from_name_he",
+             "backfill_mini_fitment_from_name_he",
+-            # "backfill_ford_fitment_from_name_he",  # DISABLED: OOM / already complete
+-            # "backfill_jaguar_fitment_from_name",  # DISABLED: OOM / already complete
+-            # "merge_catalog_fitment_from_part_vehicle_fitment",  # DISABLED: full-catalog scan, OOM per cycle, near-zero updates
++            "backfill_ford_fitment_from_name_he",
++            "backfill_jaguar_fitment_from_name",
++            "merge_catalog_fitment_from_part_vehicle_fitment",
+             "sync_manufacturer_registries",
+             # trigger_scraper_for_registry_gaps / trigger_scraper_for_misses REMOVED (#55, 2026-10-03):
+             # brand discovery has exactly ONE automatic trigger — the monthly loop in
+@@ -4634,8 +4630,8 @@
+             "normalize_availability",
+             "fix_manufacturer_overflow",
+             "flag_fake_skus",
+-            # "fix_base_prices",  # DISABLED: OOM / already complete
+-            # "normalize_base_price",  # DISABLED: OOM / already complete
++            "fix_base_prices",
++            "normalize_base_price",
+             "refresh_min_max_prices",
+             "lookup_oem_spec",
+             "enrich_pending_parts",
+diff -ru a/backend/tests/test_db_agent_task_counting.py b/backend/tests/test_db_agent_task_counting.py
+--- a/backend/tests/test_db_agent_task_counting.py	2026-11-01 17:59:40.133096088 +0100
++++ b/backend/tests/test_db_agent_task_counting.py	2026-11-01 17:59:59.351912434 +0100
+@@ -6,7 +6,7 @@
+   3. A non-ok/non-skipped/non-error status (e.g. unknown) IS counted as an error (safe default).
+   4. OOM-blocked task names are filtered out of todo-injected task lists.
+   5. Normal (safe) task names pass through the OOM filter unchanged.
+-  6. All six required task names remain in _TODO_OOM_BLOCKED (regression).
++  6. The OOM gate stays wired (todo filter + run_task); since #119 the six bounded tasks are no longer in it.
+ """
+ 
+ import os
+@@ -153,9 +153,10 @@
+         assert blocked not in filtered, f"{blocked} must be filtered out"
+ 
+ 
+-def test_oom_blocked_frozenset_contains_required_tasks():
+-    """_TODO_OOM_BLOCKED must contain all six OOM-disabled task names (regression guard)."""
+-    required = frozenset({
++def test_oom_gate_stays_wired_and_the_six_bounded_tasks_are_released():
++    """#119: the six tasks run in bounded keyset batches now and were released from the gate by the owner; the gate
++    itself (todo filter + run_task refusal) must stay wired for any future memory-unsafe task."""
++    six = frozenset({
+         "fix_base_prices",
+         "normalize_base_price",
+         "backfill_bmw_fitment_from_name_he",
+@@ -169,5 +170,4 @@
+                             "db_update_agent.py")).read()
+     assert "_TODO_OOM_BLOCKED = OOM_BLOCKED_TASKS" in src      # todo filter uses the same list
+     assert "if task_name in OOM_BLOCKED_TASKS:" in src         # and run_task() enforces it
+-    missing = required - live
+-    assert not missing, f"Missing from _TODO_OOM_BLOCKED: {missing}"
++    assert not (six & live), f"still blocked: {six & live}"
+diff -ru a/backend/tests/test_fitment_pipeline_guardrails.py b/backend/tests/test_fitment_pipeline_guardrails.py
+--- a/backend/tests/test_fitment_pipeline_guardrails.py	2026-11-01 17:59:40.145095974 +0100
++++ b/backend/tests/test_fitment_pipeline_guardrails.py	2026-11-01 17:59:59.351912434 +0100
+@@ -87,19 +87,19 @@
+ 
+ 
+ @pytest.mark.asyncio
+-async def test_oom_blocked_tasks_are_refused_by_run_task_without_touching_the_db():
++async def test_oom_blocked_tasks_are_refused_by_run_task_without_touching_the_db(monkeypatch):
+     """Every entry point (run_all_tasks, owner console, admin run-task API, maintenance scripts)
+-    goes through run_task(); a blocked task must be refused there, before any query."""
++    goes through run_task(); a blocked task must be refused there, before any query. (#119: the six formerly
++    blocked tasks are bounded now and released; the gate is exercised with a stand-in name.)"""
+     import db_update_agent as dua
+ 
+     class _NoDb:
+         def __getattr__(self, name):
+             raise AssertionError(f"blocked task touched the database ({name})")
+ 
+-    assert "merge_catalog_fitment_from_part_vehicle_fitment" in dua.OOM_BLOCKED_TASKS
+-    for name in dua.OOM_BLOCKED_TASKS:
+-        res = await dua.run_task(name, _NoDb())
+-        assert res["status"] == "skipped" and "OOM_BLOCKED_TASKS" in res["reason"], name
++    monkeypatch.setattr(dua, "OOM_BLOCKED_TASKS", frozenset({"fix_base_prices"}))
++    res = await dua.run_task("fix_base_prices", _NoDb())
++    assert res["status"] == "skipped" and "OOM_BLOCKED_TASKS" in res["reason"]
+     from agents import owner_console
+     assert not set(owner_console._task_names()) & dua.OOM_BLOCKED_TASKS
+ 
+diff -ru a/backend/tests/test_maintenance_policy_alignment.py b/backend/tests/test_maintenance_policy_alignment.py
+--- a/backend/tests/test_maintenance_policy_alignment.py	2026-11-01 17:59:40.124096175 +0100
++++ b/backend/tests/test_maintenance_policy_alignment.py	2026-11-01 17:59:40.206095391 +0100
+@@ -419,12 +419,18 @@
+         await eng.dispose()
+ 
+ 
+-# ── contract: the six tasks stay blocked until the owner approves the scheduler change ──────────────────────────
+-def test_contract_tasks_still_registered_and_blocked():
++# ── contract: the six tasks are registered, scheduled in run_all_tasks order, and no longer blocked ──────────────
++def test_contract_tasks_scheduled_and_unblocked():
+     six = {"fix_base_prices", "normalize_base_price", "backfill_bmw_fitment_from_name_he",
+            "backfill_ford_fitment_from_name_he", "backfill_jaguar_fitment_from_name",
+            "merge_catalog_fitment_from_part_vehicle_fitment"}
+-    assert six <= set(dua.TASK_REGISTRY) and six <= dua.OOM_BLOCKED_TASKS
++    assert six <= set(dua.TASK_REGISTRY) and not (six & dua.OOM_BLOCKED_TASKS)
++    import inspect
++    src = inspect.getsource(dua.run_all_tasks)
++    pos = [src.index(f'"{t}",') for t in ("backfill_bmw_fitment_from_name_he", "backfill_ford_fitment_from_name_he",
++                                          "backfill_jaguar_fitment_from_name", "merge_catalog_fitment_from_part_vehicle_fitment",
++                                          "fix_base_prices", "normalize_base_price", "refresh_min_max_prices")]
++    assert pos == sorted(pos)
+ 
+ 
+ # ── name extractors (pure; every case is a live catalogue name, 2026-10-31) ──────────────────────────────────────

@@ -19,3 +19,14 @@ for _sub in ("importers", "harvesters", "scrapers", "maintenance", "legacy", "de
     _p = os.path.join(_ROOT, _sub)
     if os.path.isdir(_p) and _p not in sys.path:
         sys.path.append(_p)
+
+# Runtime identity (2026-10-28): record the exact source bytes the process compiles for the watched modules
+# (default agents.owner_console). Never allowed to break interpreter start-up.
+try:
+    if os.environ.get("RUNTIME_IDENTITY_DISABLED") != "1":
+        if _ROOT not in sys.path:
+            sys.path.insert(0, _ROOT)
+        import runtime_identity as _runtime_identity
+        _runtime_identity.install()
+except Exception:
+    pass

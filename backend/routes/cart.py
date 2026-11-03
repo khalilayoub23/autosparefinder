@@ -37,6 +37,7 @@ from routes.schemas import (
 )
 from routes.utils import _mask_supplier
 from routes.parts import _customer_unit_price, _current_part_offer, _customer_thumbnail_map
+import price_policy as _pp
 from routes.orders import _order_line_pricing
 from offer_classification import class_rank_sql, offer_label
 
@@ -175,9 +176,11 @@ async def _wishlist_item_to_response(item, cat_db: AsyncSession) -> dict:
         "name":         part.name,
         "category":     part.category,
         "manufacturer": part.manufacturer,
-        # min_price_ils is an INTERNAL supplier-cost aggregate (never a customer price): use the cheapest
-        # live offer through the canonical policy, falling back to base_price (already cost×1.45).
-        "price":        float((_offer or {}).get("price_ils") or part.base_price or 0),
+        # The cheapest live offer through the canonical policy; with no offer, the policy's catalog ESTIMATE
+        # (price_policy.catalog_estimate_price). base_price / min_price_ils are internal - never shown (2026-10-29).
+        "price":        float((_offer or {}).get("price_ils") or getattr(_pp.catalog_estimate_price(
+                            part.importer_price_ils, part.max_price_ils, part.online_price_ils), "total", 0) or 0),
+        "isEstimate":   not (_offer or {}).get("price_ils"),
         # product class of the offer the price is taken from (own label, else the part's)
         "offerPartType": (_offer or {}).get("part_type") or offer_label(part.part_type, None),
         "imageUrl":     _thumb,

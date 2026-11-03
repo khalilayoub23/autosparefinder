@@ -1,0 +1,14 @@
+# ISOLATED disposable DB stack for the RUN_DB_MUTATION_TESTS suites (fresh volumes per run, internal network only)
+name: dbt
+services:
+  sandbox_postgres:
+    image: pgvector/pgvector:pg16
+    environment: {POSTGRES_DB: autospare, POSTGRES_USER: autospare, POSTGRES_HOST_AUTH_METHOD: trust}
+    volumes: ["/opt/autosparefinder/database/init.sql:/docker-entrypoint-initdb.d/:ro"]
+    healthcheck: {test: ["CMD-SHELL", "pg_isready -U autospare -d autospare"], interval: 3s, retries: 30}
+    networks: [dbtnet]
+  sandbox_redis:
+    image: redis:7-alpine
+    networks: [dbtnet]
+networks:
+  dbtnet: {internal: true, name: dbtnet}

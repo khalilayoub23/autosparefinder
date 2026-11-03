@@ -13,14 +13,19 @@ Process:
   mark_failed()         'retry' (retryable and attempts left) or terminal 'failed'.
   release()             hands a claim back without consuming an attempt (mailbox-level outage:
                         auth / scope failure is not the message's fault).
+  Owner flow (0041): owner_pending / digest_pending / open_items / by_ref and the mark_* writers
+                        used by email_agent/owner_flow.py. mark_sent() is only reached after
+                        mark_send_approved(); the table enforces CHECK (sent_at IS NULL OR
+                        send_approved_at IS NOT NULL).
   Two implementations with the same contract: PgStore (production) and InMemoryStore (tests,
   dry runs). sendable is always written false; the table also enforces CHECK (sendable = false).
 Data Imported/Modified: email_agent_messages (PII DB).
-Last Updated: 2026-10-04
+Last Updated: 2026-10-27
 """
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -34,16 +39,49 @@ _RESULT_FIELDS = (
 )
 
 
+# Owner-flow columns (alembic_pii 0041). See email_agent/owner_flow.py.
+_OWNER_DEFAULTS = {"owner_notified_at": None, "digest_at": None, "owner_closed_at": None, "task_ids": [],
+                   "send_approved_at": None, "send_approved_by": None, "sent_at": None,
+                   "gmail_sent_message_id": None, "send_error": None,
+                   # supplier routing (alembic_pii 0042, email_agent/supplier_routing.py)
+                   "source_folder": "inbox", "supplier_routed_at": None, "supplier_route": None}
+_OWNER_COLS = ("id::text AS id, gmail_message_id, gmail_thread_id, sender_email, subject, classification, "
+               "reason, risk_flags, recommended_action, requires_human, policy_tier, draft_subject, draft_body, "
+               "gmail_draft_id, verification, context, status, created_at, owner_notified_at, digest_at, "
+               "owner_closed_at, task_ids, send_approved_at, send_approved_by, sent_at, gmail_sent_message_id, "
+               "send_error")
+# alembic_pii 0042 columns. Selected only when the live schema has them: the container starts uvicorn even when
+# `alembic upgrade` failed (docker-compose `... && ... &`), so new code must keep the 0041 owner flow working on
+# an old schema and refuse ONLY the supplier-routing features (SupplierSchemaNotReady).
+_SUPPLIER_COLS = ", source_folder, supplier_routed_at, supplier_route"
+
+
+class SupplierSchemaNotReady(RuntimeError):
+    """email_agent_messages has no 0042 supplier-routing columns (migration not applied)."""
+_OPEN_SQL = ("status = 'processed' AND owner_closed_at IS NULL AND sent_at IS NULL AND "
+             "(requires_human OR gmail_draft_id IS NOT NULL OR draft_body IS NOT NULL)")
+
+
+def _is_open(r: Dict[str, Any]) -> bool:
+    return (r.get("status") == "processed" and not r.get("owner_closed_at") and not r.get("sent_at")
+            and bool(r.get("requires_human") or r.get("gmail_draft_id") or r.get("draft_body")))
+
+
 class InMemoryStore:
-    def __init__(self):
+    def __init__(self, supplier_schema: bool = True):
         self.rows: Dict[str, Dict[str, Any]] = {}
+        self._supplier_schema = supplier_schema
+
+    async def supplier_schema_ready(self) -> bool:
+        return self._supplier_schema
 
     async def claim(self, message_id: str, thread_id: str, max_attempts: int) -> str:
         row = self.rows.get(message_id)
         if row is None:
-            self.rows[message_id] = {"gmail_message_id": message_id, "gmail_thread_id": thread_id,
-                                     "status": "processing", "attempts": 1, "sendable": False,
-                                     "draft_attempted_at": None, "gmail_draft_id": None}
+            self.rows[message_id] = {"id": str(uuid.uuid4()), "gmail_message_id": message_id,
+                                     "gmail_thread_id": thread_id, "status": "processing", "attempts": 1,
+                                     "sendable": False, "draft_attempted_at": None, "gmail_draft_id": None,
+                                     "created_at": datetime.now(timezone.utc), **_OWNER_DEFAULTS}
             return "new"
         if row["status"] == "retry" and row["attempts"] < max_attempts:
             row["status"] = "processing"
@@ -73,6 +111,73 @@ class InMemoryStore:
         row["status"] = "retry"
         row["attempts"] = max(0, row["attempts"] - 1)
 
+    # ── owner flow (email_agent/owner_flow.py) ────────────────────────────────────────
+    def _now(self):
+        return datetime.now(timezone.utc)
+
+    async def owner_pending(self, limit: int = 50) -> List[Dict[str, Any]]:
+        rows = [r for r in self.rows.values() if r.get("status") == "processed"
+                and r.get("owner_notified_at") is None and r.get("owner_closed_at") is None]
+        return sorted(rows, key=lambda r: r["created_at"])[:limit]
+
+    async def digest_pending(self, limit: int = 200) -> List[Dict[str, Any]]:
+        rows = [r for r in self.rows.values() if r.get("status") == "processed" and r.get("digest_at") is None]
+        return sorted(rows, key=lambda r: r["created_at"])[:limit]
+
+    async def last_digest_at(self):
+        vals = [r["digest_at"] for r in self.rows.values() if r.get("digest_at")]
+        return max(vals) if vals else None
+
+    async def open_items(self, limit: int = 20) -> List[Dict[str, Any]]:
+        rows = [r for r in self.rows.values() if _is_open(r)]
+        return sorted(rows, key=lambda r: r["created_at"], reverse=True)[:limit]
+
+    async def by_ref(self, ref: str) -> List[Dict[str, Any]]:
+        ref = (ref or "").strip().lower()
+        return [r for r in self.rows.values() if ref and str(r.get("id", "")).startswith(ref)]
+
+    def _by_id(self, row_id: str) -> Dict[str, Any]:
+        return next(r for r in self.rows.values() if r.get("id") == row_id)
+
+    async def mark_owner_notified(self, row_id: str) -> None:
+        self._by_id(row_id)["owner_notified_at"] = self._now()
+
+    async def mark_digested(self, row_ids: List[str]) -> None:
+        for i in row_ids:
+            self._by_id(i)["digest_at"] = self._now()
+
+    async def set_task_ids(self, row_id: str, task_ids: List[str]) -> None:
+        self._by_id(row_id)["task_ids"] = list(task_ids)
+
+    async def close_item(self, row_id: str) -> None:
+        self._by_id(row_id)["owner_closed_at"] = self._now()
+
+    async def set_source_folder(self, message_id: str, folder: str) -> None:
+        self.rows[message_id]["source_folder"] = folder
+
+    async def supplier_route_pending(self, limit: int = 50) -> List[Dict[str, Any]]:
+        rows = [r for r in self.rows.values() if r.get("status") == "processed" and r.get("supplier_routed_at") is None]
+        return sorted(rows, key=lambda r: r["created_at"])[:limit]
+
+    async def set_supplier_route(self, row_id: str, route: Dict[str, Any], requires_human: bool = False) -> None:
+        r = self._by_id(row_id)
+        r["supplier_route"], r["supplier_routed_at"] = dict(route), self._now()
+        if requires_human:
+            r["requires_human"] = True
+
+    async def mark_send_approved(self, row_id: str, by: str) -> None:
+        r = self._by_id(row_id)
+        r["send_approved_at"], r["send_approved_by"] = self._now(), by
+
+    async def mark_sent(self, row_id: str, gmail_message_id: str) -> None:
+        r = self._by_id(row_id)
+        if not r.get("send_approved_at"):                      # mirrors the table CHECK
+            raise ValueError("sent_requires_approval")
+        r["sent_at"], r["gmail_sent_message_id"], r["send_error"] = self._now(), gmail_message_id, None
+
+    async def mark_send_error(self, row_id: str, error: str) -> None:
+        self._by_id(row_id)["send_error"] = redact(error)[:500]
+
     async def stats(self) -> Dict[str, Any]:
         out: Dict[str, int] = {}
         for r in self.rows.values():
@@ -84,6 +189,23 @@ class InMemoryStore:
 class PgStore:
     def __init__(self, session_factory=None):
         self._factory = session_factory
+        self._supplier_schema: Optional[bool] = None
+
+    async def supplier_schema_ready(self) -> bool:
+        """True once migration 0042 added the supplier-routing columns. Re-checked until it is True."""
+        if self._supplier_schema:
+            return True
+        from sqlalchemy import text
+        async with self._session() as db:
+            n = (await db.execute(text(
+                "SELECT count(*) FROM information_schema.columns WHERE table_name = 'email_agent_messages' "
+                "AND column_name IN ('source_folder', 'supplier_routed_at', 'supplier_route')"))).scalar()
+        self._supplier_schema = (n == 3)
+        return self._supplier_schema
+
+    async def _require_supplier_schema(self) -> None:
+        if not await self.supplier_schema_ready():
+            raise SupplierSchemaNotReady("migration 0042_supplier_lifecycle is not applied")
 
     def _session(self):
         if self._factory is None:
@@ -174,6 +296,87 @@ class PgStore:
                                   "attempts = GREATEST(attempts - 1, 0), updated_at = NOW() "
                                   "WHERE gmail_message_id = :m"), {"m": message_id})
             await db.commit()
+
+    # ── owner flow (email_agent/owner_flow.py) ────────────────────────────────────────
+    async def _select(self, where: str, params: Dict[str, Any], order: str, limit: int) -> List[Dict[str, Any]]:
+        from sqlalchemy import text
+        async with self._session() as db:
+            cols = _OWNER_COLS + (_SUPPLIER_COLS if await self.supplier_schema_ready() else "")
+            res = await db.execute(text(f"SELECT {cols} FROM email_agent_messages WHERE {where} "
+                                        f"ORDER BY {order} LIMIT :lim"), {**params, "lim": int(limit)})
+            return [dict(r._mapping) for r in res.fetchall()]
+
+    async def _exec(self, sql: str, params: Dict[str, Any]) -> None:
+        from sqlalchemy import text
+        async with self._session() as db:
+            await db.execute(text(sql), params)
+            await db.commit()
+
+    async def owner_pending(self, limit: int = 50) -> List[Dict[str, Any]]:
+        return await self._select("status = 'processed' AND owner_notified_at IS NULL AND owner_closed_at IS NULL",
+                                  {}, "created_at", limit)
+
+    async def digest_pending(self, limit: int = 200) -> List[Dict[str, Any]]:
+        return await self._select("status = 'processed' AND digest_at IS NULL", {}, "created_at", limit)
+
+    async def last_digest_at(self):
+        from sqlalchemy import text
+        async with self._session() as db:
+            return (await db.execute(text("SELECT MAX(digest_at) FROM email_agent_messages"))).scalar()
+
+    async def open_items(self, limit: int = 20) -> List[Dict[str, Any]]:
+        return await self._select(_OPEN_SQL, {}, "created_at DESC", limit)
+
+    async def by_ref(self, ref: str) -> List[Dict[str, Any]]:
+        ref = "".join(ch for ch in (ref or "").lower() if ch in "0123456789abcdef-")
+        if len(ref) < 4:
+            return []
+        return await self._select("id::text LIKE :p", {"p": ref + "%"}, "created_at", 5)
+
+    async def mark_owner_notified(self, row_id: str) -> None:
+        await self._exec("UPDATE email_agent_messages SET owner_notified_at = NOW(), updated_at = NOW() "
+                         "WHERE id = CAST(:i AS uuid)", {"i": row_id})
+
+    async def mark_digested(self, row_ids: List[str]) -> None:
+        if row_ids:
+            await self._exec("UPDATE email_agent_messages SET digest_at = NOW(), updated_at = NOW() "
+                             "WHERE id = ANY(CAST(:ids AS uuid[]))", {"ids": list(row_ids)})
+
+    async def set_task_ids(self, row_id: str, task_ids: List[str]) -> None:
+        await self._exec("UPDATE email_agent_messages SET task_ids = CAST(:t AS jsonb), updated_at = NOW() "
+                         "WHERE id = CAST(:i AS uuid)", {"i": row_id, "t": json.dumps(list(task_ids))})
+
+    async def close_item(self, row_id: str) -> None:
+        await self._exec("UPDATE email_agent_messages SET owner_closed_at = NOW(), updated_at = NOW() "
+                         "WHERE id = CAST(:i AS uuid)", {"i": row_id})
+
+    async def set_source_folder(self, message_id: str, folder: str) -> None:
+        await self._require_supplier_schema()
+        await self._exec("UPDATE email_agent_messages SET source_folder = :f, updated_at = NOW() "
+                         "WHERE gmail_message_id = :m", {"f": folder, "m": message_id})
+
+    async def supplier_route_pending(self, limit: int = 50) -> List[Dict[str, Any]]:
+        await self._require_supplier_schema()
+        return await self._select("status = 'processed' AND supplier_routed_at IS NULL", {}, "created_at", limit)
+
+    async def set_supplier_route(self, row_id: str, route: Dict[str, Any], requires_human: bool = False) -> None:
+        await self._require_supplier_schema()
+        await self._exec("UPDATE email_agent_messages SET supplier_route = CAST(:r AS jsonb), supplier_routed_at = NOW(), "
+                         "requires_human = requires_human OR :h, updated_at = NOW() WHERE id = CAST(:i AS uuid)",
+                         {"i": row_id, "r": json.dumps(route, default=str), "h": bool(requires_human)})
+
+    async def mark_send_approved(self, row_id: str, by: str) -> None:
+        await self._exec("UPDATE email_agent_messages SET send_approved_at = NOW(), send_approved_by = :b, "
+                         "updated_at = NOW() WHERE id = CAST(:i AS uuid)", {"i": row_id, "b": by[:40]})
+
+    async def mark_sent(self, row_id: str, gmail_message_id: str) -> None:
+        await self._exec("UPDATE email_agent_messages SET sent_at = NOW(), gmail_sent_message_id = :g, "
+                         "send_error = NULL, updated_at = NOW() WHERE id = CAST(:i AS uuid)",
+                         {"i": row_id, "g": gmail_message_id[:128]})
+
+    async def mark_send_error(self, row_id: str, error: str) -> None:
+        await self._exec("UPDATE email_agent_messages SET send_error = :e, updated_at = NOW() "
+                         "WHERE id = CAST(:i AS uuid)", {"i": row_id, "e": redact(error)[:500]})
 
     async def stats(self) -> Dict[str, Any]:
         from sqlalchemy import text

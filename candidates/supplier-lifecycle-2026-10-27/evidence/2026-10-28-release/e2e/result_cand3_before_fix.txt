@@ -1,0 +1,83 @@
+fresh disposable DB: PII 0042_supplier_lifecycle
+== A. discovery + qualification
+PASS A1 homepage keywords only -> needs_investigation, not integration-ready, not dropshipping-ready
+PASS A2 VERIFIED from a supplier claim / keyword is refused
+PASS A3 VERIFIED without an evidence source is refused
+PASS A4 all six VERIFIED -> integration_ready; dropshipping still CANDIDATE (dropship checks unverified)
+PASS A5 API readiness and dropshipping readiness are separate: dropship VERIFIED -> DROPSHIPPING-READY
+PASS A6 stale availability evidence (>30 d) is not VERIFIED
+PASS A7 a supplier claim that contradicts VERIFIED evidence is flagged and removes readiness
+PASS A8 FAILED api -> no_api_candidate (business path), never integration-ready
+PASS A9 a v1 record (no dropship checks) never passes dropshipping
+PASS A10 discovery dedupes by name/domain and never activates (is_active=FALSE)
+== B/C/E/G. pricing gates, authorization boundaries, order lifecycle
+PASS B1 two variants at the approved price -> refused (never guesses)
+PASS B2 out of stock for the quantity -> refused
+PASS B3 non-USD variant is ignored (currency label) -> refused
+PASS B4 supplier price above the approved price -> refused
+PASS B5 exactly one in-stock USD variant at the approved price -> chosen
+PASS B6 missing / unreadable shipping fee is NOT treated as free -> refused
+PASS B7 untracked delivery -> refused
+PASS B8 cheapest tracked fee above the approved cap -> refused
+PASS B9 incomplete ship-to address -> refused before any order request
+PASS C1 customer payment -> one procurement AWAITING_PO_AUTHORIZATION, spend refused, owner told once
+PASS C2 repeat payment webhook -> no second procurement, no second alert
+PASS C0 an approval from a non-owner source (email) is refused
+PASS C3 inquiry permission does not authorize activation
+PASS C4 activation does not authorize commercial terms
+PASS C5 a standing (blanket) grant is refused outside routine inquiries
+PASS C6 purchase-order approval does not release supplier payment
+PASS C7 supplier payment cannot be approved before the order is submitted
+PASS E1 approved PO -> SUBMITTED (created, UNPAID): try_to_pay='false', out_order_id = procurement id
+PASS E1b request sequence: product.get -> freight.query -> order.create, no afterpay
+PASS E2 replayed submission -> refused, no second order.create
+PASS C8 AliExpress-connected order is never paid through fulfillment (no second payment path)
+PASS E3 reconcile -> SUPPLIER_CONFIRMED with tracking from the status API
+PASS C9 pay without a supplier_payment approval -> refused, no afterpay call
+PASS C10 payment approval is bound to the terms: changed cost -> refused + back to re-approval
+PASS G1 procurement_events: every transition recorded with actor, chain consistent
+PASS E4 supplier rejects -> SUBMISSION_FAILED (definite), reason kept
+PASS E5 after a definite failure a resubmit needs a NEW approval
+PASS E6 timeout -> EXCEPTION (outcome unknown), approval consumed, never resubmitted
+PASS E7 repeated -> EXCEPTION 'reconcile before retry', no supplier reference recorded
+PASS E8 no_number -> EXCEPTION 'reconcile before retry', no supplier reference recorded
+PASS E9 http500 -> EXCEPTION 'reconcile before retry', no supplier reference recorded
+PASS E10 never reached AliExpress -> SUBMISSION_FAILED 'nothing sent' (safe to retry after re-approval)
+PASS E11 ambiguous variant -> SUBMISSION_FAILED before any order.create (validation failure)
+PASS E12 paid shipping above the approved (free) shipping -> refused before order.create
+PASS E13 no PO approval -> SUBMISSION_BLOCKED (refused), supplier never contacted
+PASS E14 10 concurrent submissions of one approved PO -> exactly 1 order.create
+PASS E15 price changed between approval and submission -> back to AWAITING_PO_AUTHORIZATION, no request
+PASS G2 restart after a crash mid-submission -> no resubmit, in-flight record kept, reconcile asks for a manual check
+PASS E16 inactive supplier -> manual connector (cannot be ordered from)
+PASS E17 onboarding supplier -> awaiting credentials
+PASS E18 active supplier with SUPPLIER_AUTO_ORDER_ENABLED off -> manual (no automatic purchase)
+PASS E19 recording a manual supplier order still needs the PO approval
+FAIL C11 one supplier-payment approval releases fulfillment exactly once (5 concurrent payment webhooks)  [released=3 results=[None, None, 'procurement 9bd0f012: approval is for different terms, expired or already used', 'procurement 9bd0f012: approval is for different terms, expired or already used', None]]
+PASS C12 after release, a replayed webhook is refused
+PASS C13 an expired payment approval is refused
+== D. BOAZ task ownership
+PASS D1 two concurrent BOAZ runs claim each task once (5 BOAZ-owned, under 3 spellings)
+PASS D2 NIR's task is never touched
+PASS D3 old name 'pricing_agent' is BOAZ's; handoff with gaps -> escalated, NOT completed
+PASS D4 unknown task type -> escalated, never silently completed
+PASS D5 email ref that does not resolve uniquely -> escalated
+PASS D6 a handler that did the work completes the task with its result (bulk scan: live stock 36 < 50 reported, threshold unchanged)
+PASS D7 a failing handler retries, then escalates after 3 attempts - never completed
+PASS D8 escalations alert the owner once per task (deduped key)
+== F. outreach + reply routing
+PASS F0 a contact without its own evidence source is never used for outreach
+PASS F1 inquiry prepared only for a VERIFIED contact; second plan is deduped
+PASS F2 outreach switch off -> nothing drafted or sent
+PASS F3 switch on but no inquiry approval -> CANCELLED, nothing sent
+PASS F4 draft read-back adds a recipient -> FAILED, not sent
+PASS F5 approved inquiry -> one in-memory 'send' (FAKE Gmail, nothing leaves the process), AWAITING_REPLY
+PASS F6 reply in the outreach thread from the supplier's domain (found in Spam) -> NIR, one task, outreach REPLY_RECEIVED
+PASS F7 same thread, different sender domain -> exception for a human, not NIR
+PASS F8 two open inquiries for one domain -> exception (ambiguous), not misrouted
+PASS F9 supplier mail outside any inquiry -> BOAZ
+PASS F10 unrelated mail -> no owner
+PASS F11 repeated routing pass -> nothing re-routed, no duplicate task
+PASS F12 Gmail client has no label/modify/trash/delete method (Spam pass cannot move or delete mail)
+
+TOTAL 76 checks: 75 PASS, 1 FAIL ['C11']

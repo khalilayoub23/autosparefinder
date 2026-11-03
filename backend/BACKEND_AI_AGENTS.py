@@ -1032,8 +1032,9 @@ def _apply_channel_policy(system_text: str, source: Optional[str]) -> str:
         return f"{system_text}\n\n[CHANNEL POLICY - MUST FOLLOW]\n{TELEGRAM_BOT_POLICY}\n[CHANNEL: {source_key.upper()}]"
     return system_text
 # Business constants
-PROFIT_MARGIN = 1.45       # 45% markup on cost
-VAT_RATE = 0.18            # 18%
+# 2026-10-29: the policy lives in price_policy.py (one source); these names are kept for existing importers of them.
+from price_policy import MARGIN as PROFIT_MARGIN, VAT_RATE   # noqa: E402
+import price_policy as _pp   # noqa: E402
 SHIPPING_ILS = float(os.getenv("DEFAULT_CUSTOMER_SHIPPING_ILS", "59"))  # dynamic fallback
 # Import the single source of truth for USD→ILS rate from BACKEND_DATABASE_MODELS
 from BACKEND_DATABASE_MODELS import USD_TO_ILS
@@ -1064,8 +1065,8 @@ SUPPLIER_SHIPPING_RATES: dict = {
     # fake and redundant. If the API omits it, the per-origin fallback applies.
 }
 
-_LOCAL_SUPPLIER_NAMES = {"autoparts pro il"}
-_LOCAL_COUNTRY_KEYS = {"il", "israel", "ישראל"}
+_LOCAL_SUPPLIER_NAMES = _pp.LOCAL_SUPPLIER_NAMES
+_LOCAL_COUNTRY_KEYS = _pp.LOCAL_COUNTRY_KEYS
 # Per-origin-country LAST-RESORT fallback (used only when a supplier has no
 # captured shipping_cost AND is not in SUPPLIER_SHIPPING_RATES above).
 # ⚠️ These are UNVERIFIED ESTIMATES, not measured quotes — international parcel
@@ -1155,17 +1156,12 @@ NOA_INSTAGRAM_URL = (os.getenv("NOA_INSTAGRAM_URL") or "https://instagram.com/au
 
 
 def is_local_supplier(supplier_name: Optional[str] = None, supplier_country: Optional[str] = None) -> bool:
-    country_key = (supplier_country or "").strip().lower()
-    if country_key:
-        return country_key in _LOCAL_COUNTRY_KEYS
-
-    supplier_key = (supplier_name or "").strip().lower()
-    return supplier_key in _LOCAL_SUPPLIER_NAMES
+    return _pp.is_local_supplier(supplier_name, supplier_country)
 
 
 def get_supplier_vat_rate(supplier_name: Optional[str] = None, supplier_country: Optional[str] = None) -> float:
-    """VAT applies only to local suppliers."""
-    return VAT_RATE if is_local_supplier(supplier_name, supplier_country) else 0.0
+    """VAT applies only to local suppliers; an unknown supplier counts as local (price_policy.vat_rate)."""
+    return _pp.vat_rate(supplier_name, supplier_country)
 
 
 def get_supplier_shipping(supplier_name: str, supplier_country: Optional[str] = None) -> float:
@@ -1891,7 +1887,6 @@ class BaseAgent:
         usd_to_ils_rate: Optional[float] = None,
         supplier_name: Optional[str] = None,
         supplier_country: Optional[str] = None,
-        local_vat_only: bool = False,
     ) -> Dict[str, float]:
         """Calculate final customer price from supplier cost (USD).
         customer_shipping overrides the default SHIPPING_ILS delivery fee."""
@@ -1900,15 +1895,11 @@ class BaseAgent:
         if customer_shipping is None and shipping_cost_usd:
             customer_shipping = round(float(shipping_cost_usd) * applied_rate, 2)
         cost_ils = supplier_price_usd * applied_rate
-        price_no_vat = round(cost_ils * PROFIT_MARGIN, 2)
-        applied_vat_rate = (
-            get_supplier_vat_rate(supplier_name=supplier_name, supplier_country=supplier_country)
-            if local_vat_only
-            else VAT_RATE
-        )
-        vat = round(price_no_vat * applied_vat_rate, 2)
+        # price_policy is the one rule; VAT is always conditional (18% local, 0% foreign)
+        _u = _pp.unit_price(cost_ils, supplier_name, supplier_country) or _pp.UnitPrice(0.0, 0.0, 0.0, 0.0)
+        price_no_vat, vat = _u.net, _u.vat
         delivery = customer_shipping if customer_shipping is not None else SHIPPING_ILS
-        total = round(price_no_vat + vat + delivery, 2)
+        total = round(_u.total + delivery, 2)
         profit = round(price_no_vat - cost_ils, 2)
         return {
             "cost_ils": round(cost_ils, 2),
@@ -1926,7 +1917,6 @@ class BaseAgent:
         customer_shipping: Optional[float] = None,
         supplier_name: Optional[str] = None,
         supplier_country: Optional[str] = None,
-        local_vat_only: bool = False,
     ) -> Dict[str, float]:
         """Calculate final customer price when supplier cost is already in ILS.
         customer_shipping overrides the default SHIPPING_ILS delivery fee.
@@ -1939,15 +1929,11 @@ class BaseAgent:
         if customer_shipping is None and shipping_cost_ils:
             customer_shipping = float(shipping_cost_ils)
         total_cost_ils = cost_ils
-        price_no_vat = round(total_cost_ils * PROFIT_MARGIN, 2)
-        applied_vat_rate = (
-            get_supplier_vat_rate(supplier_name=supplier_name, supplier_country=supplier_country)
-            if local_vat_only
-            else VAT_RATE
-        )
-        vat = round(price_no_vat * applied_vat_rate, 2)
+        # price_policy is the one rule; VAT is always conditional (18% local, 0% foreign)
+        _u = _pp.unit_price(total_cost_ils, supplier_name, supplier_country) or _pp.UnitPrice(0.0, 0.0, 0.0, 0.0)
+        price_no_vat, vat = _u.net, _u.vat
         delivery = customer_shipping if customer_shipping is not None else SHIPPING_ILS
-        total = round(price_no_vat + vat + delivery, 2)
+        total = round(_u.total + delivery, 2)
         profit = round(price_no_vat - total_cost_ils, 2)
         return {
             "cost_ils": round(total_cost_ils, 2),
@@ -2969,16 +2955,17 @@ NEVER:
                         sp.is_available, sp.warranty_months, sp.estimated_delivery_days,
                         s.name AS supplier_name, s.country AS supplier_country,
                         sp.part_type AS offer_part_type,
-                        ROW_NUMBER() OVER (
-                            PARTITION BY sp.part_id
-                            ORDER BY sp.is_available DESC, __RANK__, s.priority ASC
-                        ) AS rn
+                        1 AS rn
                     FROM supplier_parts sp
                     JOIN suppliers s ON sp.supplier_id = s.id
-                    WHERE sp.part_id = ANY(:pids) AND s.is_active = true
-                    ORDER BY sp.part_id, sp.is_available DESC, __RANK__, s.priority ASC
-                """.replace("__RANK__", _oc.class_rank_sql("sp.part_type", "(SELECT pc0.part_type FROM parts_catalog pc0 WHERE pc0.id = sp.part_id)"))),
-                {"pids": part_ids},
+                    WHERE sp.part_id = ANY(:pids) AND __VISIBLE__ AND __COST__ > 0
+                    ORDER BY sp.part_id, __ORDER__
+                """.replace("__VISIBLE__", _pp.VISIBLE_OFFER_SQL).replace("__COST__", _pp.offer_cost_sql())
+                   .replace("__ORDER__", _pp.price_basis_order_sql(
+                       "(SELECT pc0.part_type FROM parts_catalog pc0 WHERE pc0.id = sp.part_id)"))),
+                # 2026-10-29: the SAME offer as the website search (price_policy) - it used to pick by
+                # supplier priority (not price), include unavailable offers and skip the listing filter
+                {"pids": part_ids, "usd_to_ils_rate": usd_to_ils_rate},
             )
             sp_rows_all = sp_batch_result.fetchall()
         # Group up to 3 suppliers per part (in_stock first, then on_order)
@@ -3011,7 +2998,6 @@ NEVER:
                         customer_shipping=delivery_fee,
                         supplier_name=sp_row.supplier_name,
                         supplier_country=sp_row.supplier_country,
-                        local_vat_only=True,
                     )
                 else:
                     supplier_total_ils = (
@@ -3023,7 +3009,6 @@ NEVER:
                         customer_shipping=delivery_fee,
                         supplier_name=sp_row.supplier_name,
                         supplier_country=sp_row.supplier_country,
-                        local_vat_only=True,
                     )
                 pricing["availability"] = availability
                 # product class of THIS offer (own label, else the catalog part's) — same rule as search/cart
@@ -3038,42 +3023,27 @@ NEVER:
                 pricing["estimated_delivery"] = f"{estimated_delivery_days}–{estimated_delivery_days + 7} ימים"
                 suppliers.append(pricing)
 
-            # Fallback: synthesise pricing from base_price when no supplier row exists.
-            # base_price 3-case logic:
-            #   1. importer_price_ils > 0 (KGM/SsangYong \u2014 real wholesale cost):
-            #      base = max \u00d7 1.45; price_no_vat = importer \u00d7 1.45; vat = price_no_vat \u00d7 0.18
-            #   2. online_price_ils > 0 (eBay/international): base = online \u00d7 1.45; vat = 0
-            #   3. max_price_ils only (IL official importer reference \u2014 no markup):
-            #      base = max (dealer retail incl. VAT); decompose for display
+            # Fallback: a catalog-only part (no live offer). price_policy.catalog_estimate_price - the importer
+            # cost under the SAME rule as every offer (cost x 1.45 + conditional VAT); base_price is never used
+            # (2026-10-29: it used to set total = base_price + a default fee, inconsistent with its own net/VAT).
             bp = float(part.base_price) if part.base_price else 0.0
-            if not suppliers and bp > 0:
-                importer_cost = float(part.importer_price_ils) if part.importer_price_ils else 0.0
-                online_cost   = float(part.online_price_ils) if part.online_price_ils else 0.0
-                shipping      = SHIPPING_ILS
-                if importer_cost > 0:
-                    # KGM/SsangYong \u2014 actual wholesale trade cost, apply IL VAT on top of margin
-                    price_no_vat = round(importer_cost * PROFIT_MARGIN, 2)
-                    vat          = round(price_no_vat * VAT_RATE, 2)
-                elif online_cost > 0:
-                    # International / eBay \u2014 no IL VAT
-                    price_no_vat = round(online_cost * PROFIT_MARGIN, 2)
-                    vat          = 0.0
-                else:
-                    # IL official importer reference (base = dealer retail incl. VAT) \u2014 decompose for display
-                    price_no_vat = round(bp / (1 + VAT_RATE), 2)
-                    vat          = round(bp - price_no_vat, 2)
+            _est = None if suppliers else _pp.catalog_estimate(part.importer_price_ils, part.max_price_ils,
+                                                               part.online_price_ils)
+            if _est is not None:
+                _u = _pp.unit_price(_est[0], supplier_country=_est[1])
+                shipping = _pp.delivery_fee(supplier_country=_est[1])
                 suppliers = [{
-                    "price_no_vat": price_no_vat,
-                    "vat": vat,
+                    "price_no_vat": _u.net,
+                    "vat": _u.vat,
                     "shipping": shipping,
-                    "total": round(bp + shipping, 2),
+                    "total": round(_u.total + shipping, 2),
                     "availability": "on_order",
                     "warranty_months": 12,
                     "estimated_delivery_days": 14,
                     "supplier_part_id": None,
                     "part_type": _oc.offer_label(part.part_type, None),
                     "estimated_delivery": "14\u201321 \u05d9\u05de\u05d9\u05dd",
-                    "is_base_price_fallback": True,
+                    "is_base_price_fallback": True,      # = catalog estimate (key kept for consumers)
                 }]
 
             # Best option = first supplier (in_stock best price)
@@ -3091,7 +3061,6 @@ NEVER:
                 "compatible_vehicles": part.compatible_vehicles or [],
                 "pricing": best,           # kept for backward compat
                 "suppliers": suppliers,    # all options (up to 3)
-                "base_price": bp,
                 "warranty_months": rows[0].warranty_months if rows else 12,
             })
 
@@ -4620,7 +4589,7 @@ class SupplierManagerAgent(BaseAgent):
         sup_res = await db.execute(select(Supplier).where(Supplier.is_active == True))
         suppliers = {str(s.id): s for s in sup_res.scalars().all()}
 
-        pricing_todos = await get_active_agent_todos(db, "pricing_agent")
+        pricing_todos = await get_active_agent_todos(db, "BOAZ")   # canonical owner (agent_identity); also matches pricing_agent
         ranked_first = todo_requests_ranked_first(pricing_todos)
 
         report: Dict = {
@@ -4911,55 +4880,67 @@ class SupplierManagerAgent(BaseAgent):
         await _sync_lock.release()
         return report
 
-    async def detect_bulk_opportunities(self, db: AsyncSession) -> int:
+    async def detect_bulk_opportunities(self, db: AsyncSession) -> Dict[str, Any]:
         """
-        Find SupplierPart rows with high stock and price significantly below
-        the per-catalog average.  Creates ApprovalQueue entries for admin review.
-        Threshold: stock_quantity > 50 AND price_ils < avg_price * 0.85
+        Bulk-deal candidates: an offer with stock above BOAZ_BULK_MIN_STOCK whose price is below
+        BOAZ_BULK_MAX_PRICE_RATIO x the average of OTHER offers for the same part (>= 2 offers needed - an
+        average of one offer is itself). Creates ApprovalQueue rows for admin review.
+
+        Root fixes 2026-10-27: (1) ApprovalQueue is a PII-DB model but was added to this CATALOG session, so
+        the commit would have failed ("relation approval_queue does not exist") had a row ever matched;
+        rows are now written through pii_session_factory. (2) one pending row per offer (no duplicates per
+        nightly run). (3) the average is computed only over the candidates' parts, not a GROUP BY over every
+        supplier_parts row. (4) the result is reported, never silent. The 50-unit threshold is the documented
+        BOAZ rule; live data (2026-10-27) has max stock_quantity = 36, so it currently matches nothing -
+        reported as 'no_candidates', changing it is an owner decision.
         """
-        avg_sq = (
-            select(
-                SupplierPart.part_id,
-                func.avg(SupplierPart.price_ils).label("avg_price"),
-            )
-            .where(SupplierPart.price_ils > 0)
-            .group_by(SupplierPart.part_id)
-            .subquery()
-        )
-        stmt = (
-            select(SupplierPart, avg_sq.c.avg_price)
-            .join(avg_sq, SupplierPart.part_id == avg_sq.c.part_id)
-            .where(
-                SupplierPart.stock_quantity > 50,
-                SupplierPart.price_ils > 0,
-                SupplierPart.price_ils < avg_sq.c.avg_price * 0.85,
-            )
-            .limit(200)
-        )
-        rows = (await db.execute(stmt)).all()
-        created = 0
-        for sp, avg_price in rows:
-            discount_pct = round(
-                (float(avg_price) - float(sp.price_ils)) / float(avg_price) * 100, 2
-            )
-            db.add(ApprovalQueue(
-                entity_type="bulk_deal",
-                entity_id=sp.id,
-                action="approve_bulk_deal",
-                payload={
-                    "supplier_part_id": str(sp.id),
-                    "supplier_id": str(sp.supplier_id),
-                    "part_id": str(sp.part_id),
-                    "price_ils": float(sp.price_ils),
-                    "avg_market_price_ils": round(float(avg_price), 2),
-                    "discount_pct": discount_pct,
-                    "stock_quantity": sp.stock_quantity,
-                },
-            ))
-            created += 1
-        if created:
-            await db.commit()
-        return created
+        from sqlalchemy import text as _t
+        from BACKEND_DATABASE_MODELS import pii_session_factory
+        min_stock = int(os.getenv("BOAZ_BULK_MIN_STOCK", "50"))
+        ratio = float(os.getenv("BOAZ_BULK_MAX_PRICE_RATIO", "0.85"))
+        out: Dict[str, Any] = {"task": "detect_bulk_opportunities", "min_stock": min_stock, "ratio": ratio,
+                               "candidates": 0, "created": 0, "duplicates": 0, "status": "ok"}
+        try:
+            rows = (await db.execute(_t("""
+                WITH cand AS (
+                    SELECT id, part_id, supplier_id, price_ils, stock_quantity FROM supplier_parts
+                    WHERE stock_quantity > :n AND price_ils > 0 AND is_available LIMIT 2000),
+                avgp AS (
+                    SELECT sp.part_id, AVG(sp.price_ils) AS avg_price, COUNT(*) AS offers FROM supplier_parts sp
+                    WHERE sp.part_id IN (SELECT part_id FROM cand) AND sp.price_ils > 0 GROUP BY sp.part_id)
+                SELECT c.id, c.part_id, c.supplier_id, c.price_ils, c.stock_quantity, a.avg_price
+                FROM cand c JOIN avgp a ON a.part_id = c.part_id
+                WHERE a.offers >= 2 AND c.price_ils < a.avg_price * :r LIMIT 200"""),
+                {"n": min_stock, "r": ratio})).all()
+        except Exception as e:
+            out.update(status="error", error=f"{type(e).__name__}: {str(e)[:160]}")
+            logger.error("[BOAZ] bulk-deal scan failed: %s", out["error"])
+            return out
+        out["candidates"] = len(rows)
+        if not rows:
+            out["status"] = "no_candidates"
+            logger.info("[BOAZ] bulk-deal scan: no candidates (min_stock=%s ratio=%s)", min_stock, ratio)
+            return out
+        async with pii_session_factory() as pdb:
+            pending = set((await pdb.execute(_t(
+                "SELECT entity_id::text FROM approval_queue WHERE entity_type = 'bulk_deal' AND status = 'pending' "
+                "AND entity_id = ANY(CAST(:ids AS uuid[]))"), {"ids": [str(r[0]) for r in rows]})).scalars().all())
+            for sp_id, part_id, supplier_id, price, stock, avg_price in rows:
+                if str(sp_id) in pending:
+                    out["duplicates"] += 1
+                    continue
+                discount_pct = round((float(avg_price) - float(price)) / float(avg_price) * 100, 2)
+                pdb.add(ApprovalQueue(
+                    entity_type="bulk_deal", entity_id=sp_id, action="approve_bulk_deal",
+                    payload={"supplier_part_id": str(sp_id), "supplier_id": str(supplier_id), "part_id": str(part_id),
+                             "price_ils": float(price), "avg_market_price_ils": round(float(avg_price), 2),
+                             "discount_pct": discount_pct, "stock_quantity": stock,
+                             "reason": f"stock {stock} > {min_stock} and price < {ratio} x average of other offers"}))
+                out["created"] += 1
+            if out["created"]:
+                await pdb.commit()
+        logger.info("[BOAZ] bulk-deal scan: %s", out)
+        return out
 
     async def process(self, message: str, conversation_history: List[Dict], db: AsyncSession, **kwargs) -> str:
         return _rl.pick({

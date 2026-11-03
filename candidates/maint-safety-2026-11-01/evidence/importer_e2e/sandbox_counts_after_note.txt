@@ -1,0 +1,3 @@
+..                                                                       [100%]
+2 passed, 43 deselected in 96.09s (0:01:36)
+COUNTS {'car_brands': 35, 'suppliers': 51, 'supplier_parts': 67, 'parts_catalog': 67, 'part_vehicle_fitment': 0, 'parts_images': 0, 'part_thumbnails': 0, 'agent_todos': 0, 'system_settings': 9, 'aftermarket_brands': 20}

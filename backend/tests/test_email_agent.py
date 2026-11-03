@@ -598,11 +598,21 @@ def test_transport_refuses_everything_outside_the_allowlist(method, path):
     assert fake.calls == []                                           # refused before any network call
 
 
-def test_no_send_capability_exists():
+def test_no_autonomous_send_capability_exists():
+    # 2026-10-27 owner decision: the ONLY send path is send_approved_draft(OwnerApproval).
     import email_agent
+    from email_agent.gmail_client import OWNER_APPROVED_ENDPOINTS, OwnerApproval, assert_allowed, GmailError
     assert email_agent.SEND_ENABLED is False and policy.send_allowed() is False
-    assert not [n for n in dir(GmailClient) if "send" in n.lower()]
+    # 2026-10-27: exactly two send methods, each behind its own authorization object and endpoint set
+    assert sorted(n for n in dir(GmailClient) if "send" in n.lower()) == [
+        "send_approved_draft", "send_purchase_order_email", "send_supplier_inquiry"]
     assert not any("send" in pat.pattern for _, pat in ALLOWED_ENDPOINTS)
+    assert [(m, p.pattern) for m, p in OWNER_APPROVED_ENDPOINTS] == [("POST", r"^/drafts/send$")]
+    for path in ("/drafts/send", "/messages/send"):
+        with pytest.raises(Exception):
+            assert_allowed("POST", path)                       # not without an owner approval
+    with pytest.raises(Exception):
+        assert_allowed("POST", "/messages/send", owner_approved=True)   # never a raw message send
     assert [m for m, _ in ALLOWED_ENDPOINTS].count("POST") == 1
     d = policy.PolicyDecision(policy.TIER_SAFE, "draft_order_status", False)
     assert d.to_dict()["sendable"] is False and policy.send_allowed(d) is False
@@ -1931,7 +1941,7 @@ async def _run_loop(monkeypatch, on_sleep, n=4):
         if len(sleeps) >= n:
             raise KeyboardInterrupt
 
-    async def fake_cycle(cfg_, client, store, source):
+    async def fake_cycle(cfg_, client, store, source, **kw):      # 2026-10-27: + outreach_store
         cycles.append(len(sleeps))
         return {"state": "configured", "connection": {"ok": True}, "errors": []}
 
@@ -1942,8 +1952,17 @@ async def _run_loop(monkeypatch, on_sleep, n=4):
     monkeypatch.setattr(loop_mod, "process_once", fake_cycle)
     monkeypatch.setattr(loop_mod, "_heartbeat", no_heartbeat)
     monkeypatch.setattr(loop_mod, "GmailClient", lambda *a, **k: object())
-    monkeypatch.setattr(loop_mod, "PgStore", lambda *a, **k: object())
+    class _StubStore:
+        async def supplier_schema_ready(self):
+            return False                                  # pre-0042 schema: supplier features stay off
+
+    monkeypatch.setattr(loop_mod, "PgStore", lambda *a, **k: _StubStore())
     monkeypatch.setattr(loop_mod, "DbContextSource", lambda *a, **k: object())
+    monkeypatch.setattr(loop_mod, "PgOutreachStore", lambda *a, **k: object())
+
+    async def no_routing(*a, **k):
+        return {}
+    monkeypatch.setattr(loop_mod, "route_supplier_replies", no_routing)
     for k, v in (("GMAIL_OAUTH_CLIENT_ID", "cid"), ("GMAIL_OAUTH_CLIENT_SECRET", FAKE_SECRET),
                  ("GMAIL_OAUTH_REFRESH_TOKEN", FAKE_REFRESH)):
         monkeypatch.setenv(k, v)

@@ -10,7 +10,7 @@ Tasks
 2.  normalize_part_types      – unify to lowercase: "original" / "oem" / "aftermarket"
 3.  normalize_categories      – map variants to shared canonical Hebrew categories
 4.  normalize_availability    – unify to "in_stock" / "out_of_stock" / "on_order"
-5.  fix_base_prices           – ensure base_price = supplier min + 18 % VAT markup
+5.  fix_base_prices           – base_price = price-policy net of the part's price-basis offer (#119)
 6.  flag_fake_skus            – set needs_oem_lookup=True for auto-generated SKUs
 7.  fill_car_brands           – seed il_importer / warranty_* for known makes
 8.  sync_manufacturer_registries – keep car/truck brand registries clean + logos
@@ -879,14 +879,35 @@ async def _save_task_checkpoint(db: AsyncSession, task_name: str,
     stuck at a 27-DAY window and refresh_min_max_prices at 5 days, both failing
     on every single run.
     """
-    key = f"delta_checkpoint__{task_name}"
-    val = (at or datetime.utcnow()).isoformat()  # naive UTC matches updated_at column type
+    await _put_setting(db, f"delta_checkpoint__{task_name}",
+                       (at or datetime.utcnow()).isoformat())  # naive UTC matches updated_at column type
+
+
+async def _put_setting(db: AsyncSession, key: str, value: str) -> None:
+    """Upsert one system_settings value and commit (task checkpoints and cursors)."""
     await db.execute(text("""
         INSERT INTO system_settings (id, key, value, value_type, is_public, updated_at)
         VALUES (gen_random_uuid(), :k, :v, 'string', false, NOW())
         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
-    """), {"k": key, "v": val})
+    """), {"k": key, "v": value})
     await db.commit()
+
+
+_ZERO_UUID = "00000000-0000-0000-0000-000000000000"
+
+
+async def _get_task_cursor(db: AsyncSession, task_name: str) -> str:
+    """The last primary key a keyset-batched task finished (resume point); the zero UUID = start of a pass."""
+    val = (await db.execute(text("SELECT value FROM system_settings WHERE key = :k"),
+                            {"k": f"cursor__{task_name}"})).scalar_one_or_none()
+    try:
+        return str(uuid.UUID(str(val))) if val else _ZERO_UUID
+    except ValueError:
+        return _ZERO_UUID
+
+
+async def _save_task_cursor(db: AsyncSession, task_name: str, last_id: str) -> None:
+    await _put_setting(db, f"cursor__{task_name}", last_id)
 
 
 # =========================================================================
@@ -1249,218 +1270,200 @@ async def normalize_availability(db: AsyncSession) -> Dict[str, Any]:
 
 
 # =========================================================================
-# Task 5 – Fix base prices
+# Task 5 – base_price: fix_base_prices (offer) + normalize_base_price (estimate)
 # =========================================================================
 
-async def fix_base_prices(db: AsyncSession, only_part_ids: Optional[list] = None) -> Dict[str, Any]:
-    """
-    Ensure parts_catalog.base_price is not below the cheapest supplier retail price.
+# base_price ownership (#119, 2026-10-31) — docs/PRICE_POLICY.md "base_price (internal reference)".
+# base_price is an INTERNAL reference (search tie-break, harvest targeting, admin export), never a customer price.
+# It is always the price policy's own net price (price_policy.unit_price(cost).net = cost x 1.45), from:
+#   offer     the part has a customer-visible offer (VISIBLE_OFFER_SQL) of its own product class: the cheapest
+#             one, ordered by price_policy.price_basis_order_sql                         -> owned by fix_base_prices
+#   estimate  the part has no customer-visible offer: price_policy.catalog_estimate_price(importer, max, online),
+#             the estimate the customer is shown                                        -> owned by normalize_base_price
+#   none      only offers of another class (owner rule 2026-09-21: they never set base_price) or no input at all:
+#             base_price is left as it is.
+# The two populations are disjoint, so the two tasks cannot undo each other. Every base_price writer outside the
+# importers (these two tasks, the cleanup agent's healers) goes through apply_base_price_rule().
+BASE_PRICE_SCOPES = ("offer", "estimate", "all")
 
-    Pricing policy:
-      - Domestic (IL) suppliers: cost_excl_vat × 1.18 × 1.45
-      - International suppliers: cost_excl_vat × 1.45 (no IL VAT)
-      - MARGIN = 1.45 (45% hidden markup — never shown to customers)
 
-    VAT is determined per supplier via suppliers.country = 'IL'.
-    supplier_parts.price_ils is always stored excl. VAT.
-
-    Classification safety (2026-09-21): only offers whose product class is COMPATIBLE with the catalog part
-    (offer_classification.class_rank = 0) can be the basis — an aftermarket offer never sets or raises the
-    base_price of an OEM part. `only_part_ids` restricts the run (tests); None = the whole catalog (production).
-    """
+def _base_price_inputs_sql(only_ids: bool) -> str:
+    import price_policy as pp
     from offer_classification import class_rank_sql
-    MARGIN = 1.45
+    rank = class_rank_sql("sp.part_type", "pc.part_type")
+    cost = pp.offer_cost_sql(":rate")
+    where = "pc.id = ANY(CAST(:ids AS uuid[]))" if only_ids else "pc.id > CAST(:after AS uuid)"
+    return f"""
+        SELECT pc.id::text AS id, pc.base_price, pc.importer_price_ils, pc.max_price_ils, pc.online_price_ils,
+               bo.price_ils AS offer_ils, bo.price_usd AS offer_usd,
+               EXISTS (SELECT 1 FROM supplier_parts sp JOIN suppliers s ON s.id = sp.supplier_id
+                       WHERE sp.part_id = pc.id AND {pp.VISIBLE_OFFER_SQL} AND {cost} > 0) AS has_visible,
+               (EXISTS (SELECT 1 FROM supplier_parts sp WHERE sp.part_id = pc.id AND sp.price_ils > 0 AND {rank} <> 0)
+                AND NOT EXISTS (SELECT 1 FROM supplier_parts sp
+                                WHERE sp.part_id = pc.id AND sp.price_ils > 0 AND {rank} = 0)) AS other_class_only
+        FROM parts_catalog pc
+        LEFT JOIN LATERAL (
+            SELECT sp.price_ils, sp.price_usd
+            FROM supplier_parts sp JOIN suppliers s ON s.id = sp.supplier_id
+            WHERE sp.part_id = pc.id AND {pp.VISIBLE_OFFER_SQL} AND {cost} > 0 AND {rank} = 0
+            ORDER BY {pp.price_basis_order_sql("pc.part_type", ":rate")}
+            LIMIT 1) bo ON TRUE
+        WHERE pc.is_active AND {where}
+        ORDER BY pc.id
+        {"" if only_ids else "LIMIT :batch"}"""
+
+
+def base_price_target(row: Any, usd_to_ils: float) -> Tuple[Optional[float], str]:
+    """(new base_price, source) for one part under the ownership rule; source is offer | estimate |
+    other_class_only | no_basis. Pure: the same function the tests and the tasks use."""
+    import price_policy as pp
+    if row.offer_ils is not None or row.offer_usd is not None:
+        u = pp.unit_price(pp.offer_cost_ils(row.offer_ils, row.offer_usd, usd_to_ils))
+        if u is not None:
+            return u.net, "offer"
+    if row.has_visible or row.other_class_only:
+        return None, "other_class_only"
+    est = pp.catalog_estimate_price(row.importer_price_ils, row.max_price_ils, row.online_price_ils)
+    if est is not None:
+        return est.net, "estimate"
+    return None, "no_basis"
+
+
+def _new_counters() -> Dict[str, Any]:
+    return {"scanned": 0, "eligible": 0, "updated": 0, "unchanged": 0, "skipped": 0, "failed": 0,
+            "reasons": defaultdict(int)}
+
+
+async def apply_base_price_rule(db: AsyncSession, *, scope: str = "all", part_ids: Optional[List[str]] = None,
+                                after_id: str = _ZERO_UUID, batch: int = 2000,
+                                usd_to_ils: Optional[float] = None) -> Dict[str, Any]:
+    """Apply the base_price ownership rule to ONE bounded batch: the given part ids, or the next `batch` active
+    parts after `after_id` (primary-key keyset). Writes only rows whose value changes; rows another writer holds
+    are skipped (SKIP LOCKED) and counted. Does not commit. Returns counters + last_id (None = end of catalogue)."""
+    if scope not in BASE_PRICE_SCOPES:
+        raise ValueError(f"scope must be one of {BASE_PRICE_SCOPES}")
+    rate = usd_to_ils if usd_to_ils is not None else await get_usd_to_ils_rate(db)
+    only = part_ids is not None
+    params: Dict[str, Any] = {"rate": rate}
+    if only:
+        params["ids"] = [str(i) for i in part_ids]
+    else:
+        params.update({"after": after_id, "batch": int(batch)})
+    rows = (await db.execute(text(_base_price_inputs_sql(only)), params)).fetchall()
+    c = _new_counters()
+    c["scanned"] = len(rows)
+    writes: Dict[str, float] = {}
+    for r in rows:
+        target, source = base_price_target(r, rate)
+        if target is None:
+            c["skipped"] += 1
+            c["reasons"][source] += 1
+            continue
+        if scope != "all" and source != scope:
+            c["skipped"] += 1
+            c["reasons"]["other_owner"] += 1
+            continue
+        c["eligible"] += 1
+        if r.base_price is not None and round(float(r.base_price), 2) == target:
+            c["unchanged"] += 1
+        else:
+            writes[r.id] = target
+    if writes:
+        from decimal import Decimal
+        res = await db.execute(text("""
+            UPDATE parts_catalog pc SET base_price = t.v, updated_at = NOW()
+            FROM unnest(CAST(:ids AS uuid[]), CAST(:vals AS numeric[])) AS t(id, v)
+            WHERE pc.id = t.id
+              AND pc.base_price IS DISTINCT FROM t.v
+              AND pc.id IN (SELECT id FROM parts_catalog WHERE id = ANY(CAST(:ids AS uuid[])) FOR UPDATE SKIP LOCKED)
+        """), {"ids": list(writes), "vals": [Decimal(f"{v:.2f}") for v in writes.values()]})
+        done = res.rowcount or 0
+        c["updated"] += done
+        if done < len(writes):
+            c["skipped"] += len(writes) - done
+            c["reasons"]["locked_or_changed"] += len(writes) - done
+    c["reasons"] = dict(c["reasons"])
+    c["last_id"] = rows[-1].id if rows and (only or len(rows) == int(batch)) else None
+    c["usd_to_ils"] = rate
+    return c
+
+
+async def _run_base_price_task(db: AsyncSession, task: str, scope: str,
+                               only_part_ids: Optional[List[str]] = None,
+                               max_batches: Optional[int] = None) -> Dict[str, Any]:
+    """Bounded, resumable run of one base_price owner task: keyset batches from the saved cursor until the time
+    budget or the end of the catalogue (then the cursor wraps for the next pass). A failed batch stops the run and
+    keeps the cursor, so the next run retries it. `only_part_ids` (tests, healers) = one call, no cursor."""
     t0 = time.monotonic()
-    rows_updated = 0
+    total = _new_counters()
+    total["reasons"] = {}
 
-    # Retry up to 3× on deadlock — concurrent freesbe/run_all writes can cause transient deadlocks
-    for _attempt in range(3):
+    def _add(c: Dict[str, Any]) -> None:
+        for k in ("scanned", "eligible", "updated", "unchanged", "skipped", "failed"):
+            total[k] += c[k]
+        for k, v in c["reasons"].items():
+            total["reasons"][k] = total["reasons"].get(k, 0) + v
+
+    report = {"task": task, "status": "ok", "scope": scope}
+    if only_part_ids is not None:
         try:
-            ils_rate = await _get_ils_rate(db)
-
-            # Single bulk UPDATE via CTE — minimises lock window vs row-by-row loop
-            # Pricing policy: base_price = supplier_cost_excl_vat × 1.45 (45% margin, no VAT factor)
-            _fix_sql = """
-                    WITH new_prices AS (
-                        SELECT
-                            pc.id,
-                            ROUND(MIN(
-                                CASE
-                                    WHEN sp.price_ils IS NOT NULL THEN
-                                        sp.price_ils * :margin
-                                    WHEN sp.price_usd IS NOT NULL THEN
-                                        sp.price_usd * :rate * :margin
-                                    ELSE NULL
-                                END
-                            )::numeric, 2) AS min_retail_ils
-                        FROM parts_catalog pc
-                        JOIN supplier_parts sp ON sp.part_id = pc.id AND sp.is_available = TRUE
-                             AND __RANK__ = 0
-                        JOIN suppliers s ON s.id = sp.supplier_id
-                        __ONLY__
-                        GROUP BY pc.id
-                        HAVING MIN(
-                            CASE
-                                WHEN sp.price_ils IS NOT NULL THEN
-                                    sp.price_ils * :margin
-                                WHEN sp.price_usd IS NOT NULL THEN
-                                    sp.price_usd * :rate * :margin
-                                ELSE NULL
-                            END
-                        ) IS NOT NULL
-                    )
-                    UPDATE parts_catalog pc
-                    SET base_price = np.min_retail_ils, updated_at = NOW()
-                    FROM new_prices np
-                    WHERE pc.id = np.id
-                      AND (pc.base_price IS NULL OR pc.base_price < np.min_retail_ils)
-                    """
-            _fix_sql = (_fix_sql.replace("__RANK__", class_rank_sql("sp.part_type", "pc.part_type"))
-                        .replace("__ONLY__", "WHERE pc.id = ANY(CAST(:only_ids AS uuid[]))" if only_part_ids else ""))
-            _fix_params = {"rate": ils_rate, "margin": MARGIN}
-            if only_part_ids:
-                _fix_params["only_ids"] = [str(i) for i in only_part_ids]
-            result = await db.execute(text(_fix_sql), _fix_params)
-            rows_updated = result.rowcount or 0
+            _add(await apply_base_price_rule(db, scope=scope, part_ids=only_part_ids))
             await db.commit()
-            logger.info("fix_base_prices: updated=%d (rate=%.2f)", rows_updated, ils_rate)
-            break  # success
-
         except Exception as exc:
             await db.rollback()
-            exc_str = str(exc)
-            if "deadlock" in exc_str.lower() and _attempt < 2:
-                wait = 2 ** _attempt
-                logger.warning("fix_base_prices deadlock (attempt %d/3), retrying in %ds", _attempt + 1, wait)
-                await asyncio.sleep(wait)
-                continue
-            logger.error("fix_base_prices failed: %s", exc)
-            return {"task": "fix_base_prices", "status": "error", "error": exc_str}
+            logger.error("%s failed: %s", task, exc)
+            return {**report, "status": "error", "error": str(exc)[:300], **total}
+        return {**report, **total, "elapsed_s": round(time.monotonic() - t0, 2)}
 
-    return {
-        "task": "fix_base_prices",
-        "status": "ok",
-        "rows_updated": rows_updated,
-        "ils_per_usd_used": ils_rate,
-        "elapsed_s": round(time.monotonic() - t0, 2),
-    }
+    budget_s = float(os.getenv("BASE_PRICE_TASK_MAX_S", "900"))
+    batch = max(int(os.getenv("BASE_PRICE_TASK_BATCH", "2000")), 1)
+    cursor = await _get_task_cursor(db, task)
+    report["started_after"] = cursor
+    rate = await get_usd_to_ils_rate(db)
+    batches, pass_completed = 0, False
+    while True:
+        try:
+            await db.execute(text("SET LOCAL lock_timeout = '5s'"))
+            await db.execute(text("SET LOCAL statement_timeout = '120s'"))
+            c = await apply_base_price_rule(db, scope=scope, after_id=cursor, batch=batch, usd_to_ils=rate)
+            await db.commit()
+        except Exception as exc:
+            await db.rollback()
+            total["failed"] += 1
+            total["reasons"]["batch_error"] = total["reasons"].get("batch_error", 0) + 1
+            logger.error("%s batch after %s failed: %s", task, cursor, exc)
+            report.update(status="error", error=str(exc)[:300])
+            break
+        _add(c)
+        batches += 1
+        if c["last_id"] is None:
+            cursor, pass_completed = _ZERO_UUID, True
+        else:
+            cursor = c["last_id"]
+        await _save_task_cursor(db, task, cursor)
+        await asyncio.sleep(0)
+        if pass_completed or time.monotonic() - t0 > budget_s or (max_batches and batches >= max_batches):
+            break
+    logger.info("%s: %s", task, {k: total[k] for k in ("scanned", "eligible", "updated", "unchanged",
+                                                        "skipped", "failed")})
+    return {**report, **total, "batches": batches, "resume_after": cursor, "pass_completed": pass_completed,
+            "usd_to_ils": rate, "elapsed_s": round(time.monotonic() - t0, 2)}
 
 
-# =========================================================================
-# Task 5b – Normalize base_price from alternate price columns
-# =========================================================================
+async def fix_base_prices(db: AsyncSession, only_part_ids: Optional[list] = None,
+                          max_batches: Optional[int] = None) -> Dict[str, Any]:
+    """base_price of every part that HAS a customer-visible offer of its own product class = the price policy's net
+    price of its cheapest such offer (both directions; the old version only raised it). Parts without one belong to
+    normalize_base_price. Bounded and resumable (see _run_base_price_task)."""
+    return await _run_base_price_task(db, "fix_base_prices", "offer", only_part_ids, max_batches)
 
-async def normalize_base_price(db: AsyncSession, only_part_ids: Optional[List[str]] = None) -> Dict[str, Any]:
-    """
-    Compute base_price (customer-facing retail) from source price columns.
 
-    Pricing policy: base_price = cost_excl_vat × 1.45. No exceptions.
-
-    Decision tree (applied in priority order):
-
-      1. importer_price_ils > 0  (actual wholesale cost excl. VAT, all IL brands):
-         base = importer_price_ils * 1.45
-
-      2. importer=0, online_price_ils > 0  (eBay/international, no IL VAT):
-         base = online_price_ils * 1.45
-
-      3. importer=0, online=0, max_price_ils > 0  (IL consumer ref price incl. 18% VAT):
-         base = (max_price_ils / 1.18) * 1.45  — divide out VAT first, then apply margin
-    """
-    from offer_classification import class_rank_sql
-    MARGIN = float(os.getenv("IL_MARGIN", "1.45"))
-    t0 = time.monotonic()
-    # Class guard (2026-09-21): importer/online/max_price_ils are catalog-level columns that ALSO get fed by
-    # cross-offer aggregates (refresh_min_max_prices writes max_price_ils over ALL offers). A part whose only
-    # priced offers are of ANOTHER class (an aftermarket AliExpress listing on an OEM part) must not get a
-    # base_price from them. Parts with no offers at all (catalog-only importer data) or with a compatible
-    # offer are unaffected.
-    _rank = class_rank_sql("sp_g.part_type", "parts_catalog.part_type")
-    _guard = f"""AND NOT (
-                EXISTS (SELECT 1 FROM supplier_parts sp_g WHERE sp_g.part_id = parts_catalog.id AND sp_g.price_ils > 0 AND {_rank} <> 0)
-                AND NOT EXISTS (SELECT 1 FROM supplier_parts sp_g WHERE sp_g.part_id = parts_catalog.id AND sp_g.price_ils > 0 AND {_rank} = 0))"""
-    _only = "AND id = ANY(CAST(:only_ids AS uuid[]))" if only_part_ids is not None else ""
-    _extra = {"only_ids": only_part_ids} if only_part_ids is not None else {}
-    # Delta scope (added 2026-07-11): base_price only needs recomputing when a
-    # SOURCE price column changed — and every importer bumps updated_at when it
-    # writes prices (mandatory pipeline rule) — so we only scan rows touched since
-    # the last checkpoint instead of the whole 1.9M-row table every cycle. The old
-    # full-table scan ran ~30 min holding a snapshot (blocking other work and
-    # deadlocking the harvester); delta scans a few thousand rows in seconds. A
-    # weekly full pass still catches anything missed (e.g. a MARGIN change). Same
-    # pattern as refresh_min_max_prices.
-    since = await _get_task_checkpoint(db, "normalize_base_price")
-    full_pass = (datetime.utcnow() - since) > timedelta(days=7)
-    try:
-        # Fail fast instead of deadlocking/blocking on rows the harvester holds;
-        # the run_all_tasks central deadlock/lock retry re-runs it next.
-        await db.execute(text("SET LOCAL lock_timeout = '2min'"))
-        # No-op guard: each UPDATE writes only rows whose base_price would ACTUALLY
-        # change (`IS DISTINCT FROM`) — steady state writes ~0.
-        # Case 1: importer_price_ils is the actual cost excl. VAT — 45% margin over cost
-        r1 = await db.execute(text(f"""
-            UPDATE parts_catalog
-            SET base_price = ROUND((importer_price_ils * :margin)::numeric, 2),
-                updated_at = NOW()
-            WHERE importer_price_ils > 0
-              AND is_active = TRUE
-              AND (:full_pass OR updated_at > :since)
-              AND base_price IS DISTINCT FROM ROUND((importer_price_ils * :margin)::numeric, 2)
-              {_guard} {_only}
-        """), {"margin": MARGIN, "full_pass": full_pass or only_part_ids is not None, "since": since, **_extra})
-        importer_updated = r1.rowcount
-
-        # Case 2: eBay / international buy price (already excl. VAT) — 45% margin
-        r2 = await db.execute(text(f"""
-            UPDATE parts_catalog
-            SET base_price = ROUND((online_price_ils * :margin)::numeric, 2),
-                updated_at = NOW()
-            WHERE (importer_price_ils IS NULL OR importer_price_ils = 0)
-              AND online_price_ils > 0
-              AND is_active = TRUE
-              AND (:full_pass OR updated_at > :since)
-              AND base_price IS DISTINCT FROM ROUND((online_price_ils * :margin)::numeric, 2)
-              {_guard} {_only}
-        """), {"margin": MARGIN, "full_pass": full_pass or only_part_ids is not None, "since": since, **_extra})
-        online_updated = r2.rowcount
-
-        # Case 3: IL importer reference price (incl. 18% VAT) — divide out VAT, then 45% margin
-        r3 = await db.execute(text(f"""
-            UPDATE parts_catalog
-            SET base_price = ROUND((max_price_ils / 1.18 * :margin)::numeric, 2),
-                updated_at = NOW()
-            WHERE (importer_price_ils IS NULL OR importer_price_ils = 0)
-              AND (online_price_ils IS NULL OR online_price_ils = 0)
-              AND max_price_ils > 0
-              AND is_active = TRUE
-              AND (:full_pass OR updated_at > :since)
-              AND base_price IS DISTINCT FROM ROUND((max_price_ils / 1.18 * :margin)::numeric, 2)
-              {_guard} {_only}
-        """), {"margin": MARGIN, "full_pass": full_pass or only_part_ids is not None, "since": since, **_extra})
-        max_updated = r3.rowcount
-
-        await db.commit()
-        await _save_task_checkpoint(db, "normalize_base_price")
-        total = online_updated + importer_updated + max_updated
-        logger.info(
-            "normalize_base_price: online→%d importer→%d il_ref→%d total=%d in %.2fs",
-            online_updated, importer_updated, max_updated, total,
-            round(time.monotonic() - t0, 2),
-        )
-    except Exception as exc:
-        await db.rollback()
-        logger.error("normalize_base_price failed: %s", exc)
-        return {"task": "normalize_base_price", "status": "error", "error": str(exc)}
-
-    return {
-        "task": "normalize_base_price",
-        "status": "ok",
-        "online_price_updated": online_updated,
-        "importer_price_updated": importer_updated,
-        "il_ref_price_updated": max_updated,
-        "total_updated": total,
-        "elapsed_s": round(time.monotonic() - t0, 2),
-    }
+async def normalize_base_price(db: AsyncSession, only_part_ids: Optional[List[str]] = None,
+                               max_batches: Optional[int] = None) -> Dict[str, Any]:
+    """base_price of every part WITHOUT a customer-visible offer = the price policy's net of the catalog estimate
+    (importer cost -> max_price_ils / 1.18 -> online price — the estimate the customer is shown). A part whose only
+    priced offers are of another product class is left alone. Bounded and resumable (see _run_base_price_task)."""
+    return await _run_base_price_task(db, "normalize_base_price", "estimate", only_part_ids, max_batches)
 
 
 # =========================================================================
@@ -2612,7 +2615,6 @@ _BMW_CHASSIS_MAP: dict = {
     "G87": ("M2",       2022, 2026),
     # U-series (latest generation)
     "U10": ("X2",         2023, 2026), "U11": ("X1",       2022, 2026),
-    "U25": ("X2 Electric",2024, 2026),
     # i / iX
     "I01": ("i3",       2013, 2022), "I12": ("i8",       2014, 2020),
     "I20": ("iX",       2021, 2026),
@@ -2634,6 +2636,8 @@ _BMW_MINI_PASSTHROUGH: dict = {
     "F57": ("MINI Convertible", 2015, 2023),
     "F60": ("MINI Countryman",  2016, 2024),
     "F66": ("MINI 3-door",      2024, 2026),
+    # U25 is the current MINI Countryman (BMW X2 is U10); the map had it as "X2 Electric" (#119, 2026-10-31)
+    "U25": ("MINI Countryman",  2024, 2026),
 }
 
 _BMW_CHASSIS_RE = re.compile(
@@ -2646,103 +2650,101 @@ _BMW_CHASSIS_RE = re.compile(
 )
 
 
-async def backfill_bmw_fitment_from_name_he(db: AsyncSession) -> Dict[str, Any]:
-    """
-    Parse BMW chassis codes (E46, F30, G20, etc.) from parts_catalog.name_he
-    and insert rows into part_vehicle_fitment for every BMW part that has no
-    fitment yet.  Afterwards, run merge_catalog_fitment_from_part_vehicle_fitment
-    to promote those rows into compatible_vehicles.
-    """
+_NAME_FITMENT_MFR_IDS = {"BMW": "caa6ba39-02aa-4394-969d-a15f3f19104c", "MINI": "47a433bf-4f6f-4f8f-a686-a8c02f7727a8",
+                         "Ford": "73fc77ef-5414-4270-9476-2444d8b7eb41", "Jaguar": "fde0f2dc-c6fb-4ab6-b699-765044fbc073"}
+
+
+async def _name_fitment_backfill(db: AsyncSession, task: str, manufacturer: str, extract, *, extra_where: str = "",
+                                 only_part_ids: Optional[List[str]] = None,
+                                 max_batches: Optional[int] = None) -> Dict[str, Any]:
+    """Shared runner of the name-parsing fitment backfills (#119): active parts of `manufacturer` with NO fitment
+    row, keyset batches from the saved cursor (bounded memory, resumable, time budget). `extract(name, name_he)`
+    returns [(fitment_manufacturer, model, year_from, year_to, notes)] or [] (no code / excluded). Each insert runs
+    in its own savepoint, so one failure cannot abort the batch; `updated` counts rows really inserted."""
     t0 = time.monotonic()
     await ensure_part_vehicle_fitment_table(db)
+    budget_s = float(os.getenv("NAME_FITMENT_MAX_S", "600"))
+    batch = max(int(os.getenv("NAME_FITMENT_BATCH", "1000")), 1)
+    c = {"scanned": 0, "eligible": 0, "updated": 0, "unchanged": 0, "skipped": 0, "failed": 0}
+    reasons: Dict[str, int] = defaultdict(int)
+    cursor = _ZERO_UUID if only_part_ids is not None else await _get_task_cursor(db, task)
+    started_after, batches, pass_completed, status = cursor, 0, False, "ok"
+    scope = "pc.id = ANY(CAST(:ids AS uuid[]))" if only_part_ids is not None else "pc.id > CAST(:after AS uuid)"
+    while True:
+        params: Dict[str, Any] = {"m": manufacturer, "batch": batch}
+        params.update({"ids": [str(i) for i in only_part_ids]} if only_part_ids is not None else {"after": cursor})
+        rows = (await db.execute(text(f"""
+            SELECT pc.id::text, pc.name, pc.name_he FROM parts_catalog pc
+            WHERE pc.manufacturer = :m AND pc.is_active = TRUE AND {scope} {extra_where}
+              AND NOT EXISTS (SELECT 1 FROM part_vehicle_fitment pvf WHERE pvf.part_id = pc.id)
+            ORDER BY pc.id LIMIT :batch"""), params)).fetchall()
+        for i, (part_id, name, name_he) in enumerate(rows):
+            if i % 200 == 0:
+                await asyncio.sleep(0)
+            c["scanned"] += 1
+            found, why = extract(name or "", name_he or "")
+            if not found:
+                c["skipped"] += 1
+                reasons[why] += 1
+                continue
+            c["eligible"] += 1
+            for fit_mfr, model, yf, yt, notes in found:
+                try:
+                    async with db.begin_nested():
+                        res = await db.execute(text("""
+                            INSERT INTO part_vehicle_fitment
+                                (id, part_id, manufacturer, manufacturer_id, model, year_from, year_to, notes, updated_at)
+                            VALUES (gen_random_uuid(), CAST(:part_id AS uuid), :mfr, CAST(:mfr_id AS uuid),
+                                    :model, :yf, :yt, :notes, NOW())
+                            ON CONFLICT (part_id, manufacturer, model, year_from) DO NOTHING"""),
+                            {"part_id": part_id, "mfr": fit_mfr, "mfr_id": _NAME_FITMENT_MFR_IDS[fit_mfr],
+                             "model": model, "yf": yf, "yt": min(yt, 2026), "notes": notes})
+                    if res.rowcount:
+                        c["updated"] += 1
+                    else:
+                        c["unchanged"] += 1
+                except Exception as exc:
+                    c["failed"] += 1
+                    reasons[f"insert_error:{type(exc).__name__}"] += 1
+                    logger.warning("%s: insert for part %s failed: %s", task, part_id, str(exc)[:200])
+        await db.commit()
+        batches += 1
+        if only_part_ids is not None:
+            break
+        if len(rows) < batch:
+            pass_completed, cursor = True, _ZERO_UUID
+        else:
+            cursor = rows[-1][0]
+        await _save_task_cursor(db, task, cursor)
+        if pass_completed or time.monotonic() - t0 > budget_s or (max_batches and batches >= max_batches):
+            break
+    if c["failed"]:
+        status = "error"
+    logger.info("%s: %s", task, c)
+    return {"task": task, "status": status, **c, "reasons": dict(reasons), "batches": batches,
+            "started_after": started_after, "resume_after": cursor, "pass_completed": pass_completed,
+            "elapsed_s": round(time.monotonic() - t0, 2)}
 
-    # Fetch BMW parts without fitment
-    rows = (await db.execute(text("""
-        SELECT pc.id, pc.name_he, pc.name
-        FROM parts_catalog pc
-        WHERE pc.manufacturer = 'BMW'
-          AND pc.is_active = TRUE
-          AND NOT EXISTS (
-              SELECT 1 FROM part_vehicle_fitment pvf WHERE pvf.part_id = pc.id
-          )
-        ORDER BY pc.id
-    """))).fetchall()
 
-    inserted = 0
-    skipped = 0
-    parts_matched = 0
+# A tyre size ("235 55 R18 104v", "225/45ZR17") is not a chassis code: R17/R18/R19 are BMW motorcycle codes in the map,
+# and 644 tyre rows had been given motorcycle fitment that way (#119, measured 2026-10-31).
+_TYRE_SIZE_RE = re.compile(r"\b\d{3}\s*[/ ]\s*\d{2}\s*Z?R\s*-?\s*\d{2}\b", re.IGNORECASE)
 
-    for _bi, (part_id, name_he, name_en) in enumerate(rows):
-        if _bi % 200 == 0:
-            await asyncio.sleep(0)
-        text_to_scan = (name_he or "") + " " + (name_en or "")
-        raw = {m.upper().replace('-', '') for m in _BMW_CHASSIS_RE.findall(text_to_scan)}
-        bmw_mapped  = [(c, _BMW_CHASSIS_MAP[c])       for c in raw if c in _BMW_CHASSIS_MAP]
-        mini_mapped = [(c, _BMW_MINI_PASSTHROUGH[c])  for c in raw if c in _BMW_MINI_PASSTHROUGH]
-        if not bmw_mapped and not mini_mapped:
-            skipped += 1
-            continue
 
-        parts_matched += 1
-        _MINI_MFR_ID = "47a433bf-4f6f-4f8f-a686-a8c02f7727a8"
-        _BMW_MFR_ID  = "caa6ba39-02aa-4394-969d-a15f3f19104c"
-        for chassis, (model_series, yf, yt) in bmw_mapped:
-            try:
-                await db.execute(text("""
-                    INSERT INTO part_vehicle_fitment
-                        (id, part_id, manufacturer, manufacturer_id,
-                         model, year_from, year_to, notes, updated_at)
-                    VALUES (gen_random_uuid(), :part_id, 'BMW', :mfr_id,
-                            :model, :yf, :yt, :notes, NOW())
-                    ON CONFLICT (part_id, manufacturer, model, year_from) DO NOTHING
-                """), {
-                    "part_id": str(part_id),
-                    "mfr_id":  _BMW_MFR_ID,
-                    "model":   model_series,
-                    "yf":      yf,
-                    "yt":      min(yt, 2026),
-                    "notes":   f"chassis:{chassis}",
-                })
-                inserted += 1
-            except Exception:
-                pass
-        for chassis, (model_series, yf, yt) in mini_mapped:
-            try:
-                await db.execute(text("""
-                    INSERT INTO part_vehicle_fitment
-                        (id, part_id, manufacturer, manufacturer_id,
-                         model, year_from, year_to, notes, updated_at)
-                    VALUES (gen_random_uuid(), :part_id, 'MINI', :mfr_id,
-                            :model, :yf, :yt, :notes, NOW())
-                    ON CONFLICT (part_id, manufacturer, model, year_from) DO NOTHING
-                """), {
-                    "part_id": str(part_id),
-                    "mfr_id":  _MINI_MFR_ID,
-                    "model":   model_series,
-                    "yf":      yf,
-                    "yt":      min(yt, 2026),
-                    "notes":   f"chassis:{chassis}",
-                })
-                inserted += 1
-            except Exception:
-                pass
+def _bmw_fitment_from_name(name: str, name_he: str):
+    raw = {m.upper().replace('-', '') for m in _BMW_CHASSIS_RE.findall(_TYRE_SIZE_RE.sub(" ", name_he + " " + name))}
+    found = [("BMW", *_BMW_CHASSIS_MAP[c], f"chassis:{c}") for c in sorted(raw) if c in _BMW_CHASSIS_MAP]
+    found += [("MINI", *_BMW_MINI_PASSTHROUGH[c], f"chassis:{c}") for c in sorted(raw) if c in _BMW_MINI_PASSTHROUGH]
+    return found, "no_chassis_code"
 
-        if parts_matched % 500 == 0:
-            await db.commit()
 
-    await db.commit()
-    logger.info(
-        "backfill_bmw_fitment_from_name_he: parts_matched=%d inserted=%d skipped=%d",
-        parts_matched, inserted, skipped,
-    )
-    return {
-        "task":          "backfill_bmw_fitment_from_name_he",
-        "status":        "ok",
-        "parts_matched": parts_matched,
-        "inserted":      inserted,
-        "skipped_no_code": skipped,
-        "elapsed_s":     round(time.monotonic() - t0, 2),
-    }
+async def backfill_bmw_fitment_from_name_he(db: AsyncSession, only_part_ids: Optional[List[str]] = None,
+                                            max_batches: Optional[int] = None) -> Dict[str, Any]:
+    """BMW chassis codes (E46, F30, G20, ...) in name_he/name -> part_vehicle_fitment rows (MINI codes on BMW-filed
+    parts -> MINI rows) for BMW parts with no fitment yet. merge_catalog_fitment_from_part_vehicle_fitment then
+    copies them into compatible_vehicles."""
+    return await _name_fitment_backfill(db, "backfill_bmw_fitment_from_name_he", "BMW", _bmw_fitment_from_name,
+                                        only_part_ids=only_part_ids, max_batches=max_batches)
 
 
 # -------------------------------------------------------------------------
@@ -2763,7 +2765,7 @@ _FORD_MODEL_PATTERNS = [
     (r'\bMUSTANG|\bMUST\b|\bMUS\s|\bMUS\'', "Mustang",         1964, 2026),
     (r'\bBRONCO',                        "Bronco",           2021, 2026),
     (r'\bEXPLORER|\bEXP\s|\bEXP\'', "Explorer",        1990, 2026),
-    (r'\bRANGER',                        "Ranger",           1983, 2026),
+    (r"\bRANGER|ריינג'ר",               "Ranger",           1983, 2026),
     (r'\bEDGE\b|\bEDG\s|\bEDG\'',  "Edge",            2007, 2023),
     (r'\bESCAPE',                        "Escape",           2000, 2026),
     (r'\bFIESTA|פיאסטה',                "Fiesta",          1976, 2023),
@@ -2776,7 +2778,7 @@ _FORD_MODEL_PATTERNS = [
     (r'\bPUMA\b',                       "Puma",             2019, 2026),
     (r'\bTAURUS',                        "Taurus",           1985, 2026),
     (r'\bMONDEO|מונדיאו',             "Mondeo",          1992, 2022),
-    (r'\bCONNECT',                       "Transit Connect",  2002, 2026),
+    (r'\bCONNECT\b',                     "Transit Connect",  2002, 2026),  # not CONNECTION/CONNECTOR
     (r'\bTOWN.?CAR',                     "Lincoln Town Car", 1981, 2011),
     (r'\bGALAXY',                        "Galaxy",           1995, 2006),
     (r'\bC-MAX',                         "C-MAX",            2003, 2019),
@@ -2786,83 +2788,22 @@ _FORD_MODEL_PATTERNS = [
 ]
 
 
-async def backfill_ford_fitment_from_name_he(db: AsyncSession) -> Dict[str, Any]:
-    """Extract Ford model names from name_he and insert part_vehicle_fitment rows."""
-    t0 = time.monotonic()
-    await ensure_part_vehicle_fitment_table(db)
+_FORD_COMPILED = [(re.compile(p, re.IGNORECASE), model, yf, yt) for p, model, yf, yt in _FORD_MODEL_PATTERNS]
 
-    _FORD_MFR_ID = "73fc77ef-5414-4270-9476-2444d8b7eb41"
-    compiled = [
-        (re.compile(p, re.IGNORECASE), model, yf, yt)
-        for p, model, yf, yt in _FORD_MODEL_PATTERNS
-    ]
 
-    rows = (await db.execute(text("""
-        SELECT pc.id, pc.name_he, pc.name
-        FROM parts_catalog pc
-        WHERE pc.manufacturer = 'Ford'
-          AND pc.is_active = TRUE
-          AND NOT EXISTS (
-              SELECT 1 FROM part_vehicle_fitment pvf WHERE pvf.part_id = pc.id
-          )
-        ORDER BY pc.id
-    """))).fetchall()
+def _ford_fitment_from_name(name: str, name_he: str):
+    text_to_scan = name_he + " " + name
+    models = {(model, yf, yt) for pattern, model, yf, yt in _FORD_COMPILED if pattern.search(text_to_scan)}
+    # model WITHOUT the make: vehicle search matches part_vehicle_fitment.model against the customer's model
+    # ("Focus"), and the old "Ford Focus" rows were never found (#119).
+    return [("Ford", model, yf, yt, "extracted:name_he") for model, yf, yt in sorted(models)], "no_model_name"
 
-    inserted = 0
-    skipped = 0
-    parts_matched = 0
 
-    for _fi, (part_id, name_he, name_en) in enumerate(rows):
-        if _fi % 200 == 0:
-            await asyncio.sleep(0)
-        text_to_scan = (name_he or "") + " " + (name_en or "")
-        matched_models: set = set()
-        for pattern, model, yf, yt in compiled:
-            if pattern.search(text_to_scan):
-                matched_models.add((model, yf, yt))
-
-        if not matched_models:
-            skipped += 1
-            continue
-
-        parts_matched += 1
-        for model, yf, yt in matched_models:
-            try:
-                await db.execute(text("""
-                    INSERT INTO part_vehicle_fitment
-                        (id, part_id, manufacturer, manufacturer_id,
-                         model, year_from, year_to, notes, updated_at)
-                    VALUES (gen_random_uuid(), :part_id, 'Ford', :mfr_id,
-                            :model, :yf, :yt, :notes, NOW())
-                    ON CONFLICT (part_id, manufacturer, model, year_from) DO NOTHING
-                """), {
-                    "part_id": str(part_id),
-                    "mfr_id":  _FORD_MFR_ID,
-                    "model":   f"Ford {model}",
-                    "yf":      yf,
-                    "yt":      yt,
-                    "notes":   "extracted:name_he",
-                })
-                inserted += 1
-            except Exception:
-                pass
-
-        if parts_matched % 500 == 0:
-            await db.commit()
-
-    await db.commit()
-    logger.info(
-        "backfill_ford_fitment_from_name_he: parts_matched=%d inserted=%d skipped=%d",
-        parts_matched, inserted, skipped,
-    )
-    return {
-        "task":             "backfill_ford_fitment_from_name_he",
-        "status":           "ok",
-        "parts_matched":    parts_matched,
-        "inserted":         inserted,
-        "skipped_no_match": skipped,
-        "elapsed_s":        round(time.monotonic() - t0, 2),
-    }
+async def backfill_ford_fitment_from_name_he(db: AsyncSession, only_part_ids: Optional[List[str]] = None,
+                                             max_batches: Optional[int] = None) -> Dict[str, Any]:
+    """Ford model names in name_he/name -> part_vehicle_fitment rows for Ford parts with no fitment yet."""
+    return await _name_fitment_backfill(db, "backfill_ford_fitment_from_name_he", "Ford", _ford_fitment_from_name,
+                                        only_part_ids=only_part_ids, max_batches=max_batches)
 
 
 # -------------------------------------------------------------------------
@@ -2978,249 +2919,221 @@ _JAGUAR_MODEL_MAP: list[tuple[re.Pattern, str, int, int]] = [
     (re.compile(r"(?<![A-Za-z0-9])XE(?![A-Za-z0-9])",         re.IGNORECASE), "XE",      2015, 2022),
     (re.compile(r"(?<![A-Za-z0-9])XF[-\s]?[RS]?(?![A-Za-z0-9])", re.IGNORECASE), "XF",   2008, 2018),
 ]
-_JAGUAR_MFR_ID = "fde0f2dc-c6fb-4ab6-b699-765044fbc073"
+
+# What a Jaguar name may NOT be turned into a fitment from (#119, every rule from live rows read 2026-10-31):
+#   merchandise / media  "F-type T-shi", "Jr M Xe Tee", "F-type Logo", "Leather F-Type iPhone 5 case", "F-Type 24" suitcase",
+#                        "F-Type 'F' cufflinks", "Leather F-Type card holder", "Book Xj6 Pu", "Original Jaguar XK - the
+#                        restorer's guide", "X-Type Parts & Technical USB", "1/43 F-pace", "F-type 1:18", "Xj Stick Pin"
+#   classic era          "Clutch Kit for Jaguar E-Type; MK II and XK", "XJ (1968-1993)", "For XJ Series 1, 2 & 3",
+#                        "XK 120 Supersonic", "S Type Revotec Fan Kit - Positive Earth", "XJ6, 4.2 Straight 6", "Daimler":
+#                        the model map's year ranges are the modern (1999+) cars, so a classic-era name would get the
+#                        wrong years.
+#   no descriptive word  "Jaguar Xj", "Jaguar Xe Ke", "F-type 'f' K", "D E F Type S" (truncated listing titles)
+#   article numbers      see _JAGUAR_ARTICLE_RE
+_JAGUAR_MERCH_EXCLUDE = re.compile(
+    r'\b(shirt|t-shi\w*|tee(?!\s*(?:piece|connector|joint|hose|pipe))|polo|shoe|shoes|boot|jacket|wallet|keyri\w*|'
+    r'key\s+ring|mug|notebook|ebook|e-book|badge|scarf|hat|bag|scale\s+model|umbrella|cap|socks?|cufflinks?|gloves?|'
+    r'passport|money\s+clip|suede|print|sticker|poster|pennant|artwork|miniature|logo|ipad|iphone|suitcase|luggage|'
+    r'briefcase|portfolio|card\s+holder|stick\s+pin|motif|book|guide|history|edition|restoration|usb)\b|'
+    r'\b1\s*[:/]\s*\d{1,3}\b',
+    re.IGNORECASE,
+)
+_JAGUAR_CLASSIC_RE = re.compile(
+    r"(?<![A-Za-z0-9])E[-\s]?TYPE(?![A-Za-z0-9])|\bMK\s?(?:I{1,3}|[12])\b|\bSERIES\s+[123]\b|\bXK\s?1[2-5]0\b|"
+    r"\bDAIMLER\b|\bPOSITIVE\s+EARTH\b|\bSTRAIGHT\s*6\b|\b19[0-8]\d\b",
+    re.IGNORECASE,
+)
+_JAGUAR_WORD_RE = re.compile(r"[A-Za-z]{4,}")
+# A model code inside an article number is not the car: MEYLE "300 135 1005/XK" (/XK = MEYLE's kit suffix),
+# FEBEST "3975-XJR". Article-number tokens are removed before the model patterns run.
+_JAGUAR_ARTICLE_RE = re.compile(r"\b\d+[-/][A-Za-z0-9-]+")
 
 
-async def backfill_jaguar_fitment_from_name(db: AsyncSession) -> Dict[str, Any]:
+def _jaguar_fitment_from_name(name: str, name_he: str):
+    text_to_scan = " ".join(filter(None, [name, name_he]))
+    if _JAGUAR_MERCH_EXCLUDE.search(text_to_scan):
+        return [], "merchandise"
+    if _JAGUAR_CLASSIC_RE.search(text_to_scan):
+        return [], "classic_era"
+    text_to_scan = _JAGUAR_ARTICLE_RE.sub(" ", text_to_scan)
+    found, seen, rest = [], set(), text_to_scan
+    for pattern, model_name, yf, yt in _JAGUAR_MODEL_MAP:
+        if pattern.search(text_to_scan) and model_name not in seen:
+            found.append(("Jaguar", model_name, yf, yt, "name_parse:jaguar"))
+            seen.add(model_name)
+        rest = pattern.sub(" ", rest)
+    if found and not any(w.lower() not in ("jaguar", "type", "pace") for w in _JAGUAR_WORD_RE.findall(rest)):
+        return [], "no_descriptive_word"
+    return found, "no_model_name"
+
+
+async def backfill_jaguar_fitment_from_name(db: AsyncSession, only_part_ids: Optional[List[str]] = None,
+                                            max_batches: Optional[int] = None) -> Dict[str, Any]:
+    """Jaguar model names (XE, XF, XJ, F-Pace, ...) in name/name_he -> part_vehicle_fitment rows for Jaguar parts
+    (not filed as accessories) with no fitment yet. The old version re-read the SAME first 2000 parts on every run
+    (LIMIT without a cursor) and so never reached the rest; the shared runner walks the whole set (#119)."""
+    return await _name_fitment_backfill(db, "backfill_jaguar_fitment_from_name", "Jaguar", _jaguar_fitment_from_name,
+                                        extra_where="AND (pc.category IS NULL OR pc.category != 'accessories')",
+                                        only_part_ids=only_part_ids, max_batches=max_batches)
+
+
+def _pvf_fitment_entry(manufacturer: Any, model: Any, year_from: Any, year_to: Any,
+                       engine_type: Any) -> Optional[Dict[str, Any]]:
+    """One compatible_vehicles entry for a part_vehicle_fitment row (canonical names), or None."""
+    canonical_manufacturer = normalize_manufacturer_name(str(manufacturer or ""), str(manufacturer or ""))
+    canonical_model = canonicalize_vehicle_model_for_manufacturer(canonical_manufacturer, model)
+    if not canonical_manufacturer or not canonical_model:
+        return None
+    entry: Dict[str, Any] = {"manufacturer": canonical_manufacturer, "model": canonical_model,
+                             "source": "part_vehicle_fitment"}
+    if engine_type:
+        entry["engine"] = str(engine_type).strip()[:50]
+    try:
+        yf = int(year_from or 0)
+    except (TypeError, ValueError):
+        yf = 0
+    try:
+        yt = int(year_to or 0)
+    except (TypeError, ValueError):
+        yt = 0
+    if yf and not yt:
+        yt = yf
+    if yf and yt and 1985 <= yf <= yt <= 2030:
+        entry["year_from"], entry["year_to"] = yf, yt
+    return entry
+
+
+def _canonical_fitment_list(items: Any) -> List[Dict[str, Any]]:
+    """Deduplicated, stably ordered list of dict entries (the stored form; equal lists = no write)."""
+    unique, seen = [], set()
+    for item in (items if isinstance(items, list) else []):
+        if not isinstance(item, dict):
+            continue
+        key = json.dumps(item, sort_keys=True, ensure_ascii=False)
+        if key not in seen:
+            seen.add(key)
+            unique.append(item)
+    unique.sort(key=lambda r: json.dumps(r, sort_keys=True, ensure_ascii=False))
+    return unique
+
+
+def merged_compatible_vehicles(existing: Any, pvf_rows: List[Tuple]) -> List[Dict[str, Any]]:
+    """compatible_vehicles after the sync: every entry another source wrote is kept as is; the
+    part_vehicle_fitment-sourced entries are replaced by the part's CURRENT fitment rows of ALL manufacturers."""
+    kept = [i for i in (existing if isinstance(existing, list) else [])
+            if not (isinstance(i, dict) and i.get("source") == "part_vehicle_fitment")]
+    fresh = [e for e in (_pvf_fitment_entry(*r) for r in pvf_rows) if e is not None]
+    return _canonical_fitment_list(kept + fresh)
+
+
+async def merge_catalog_fitment_from_part_vehicle_fitment(db: AsyncSession, only_part_ids: Optional[List[str]] = None,
+                                                          max_batches: Optional[int] = None) -> Dict[str, Any]:
     """
-    Parse Jaguar model names (XE, XF, XJ, F-Pace, E-Pace, etc.) from
-    parts_catalog.name and name_he, then insert rows into part_vehicle_fitment
-    for Jaguar parts that currently have no fitment data.
+    Copy part_vehicle_fitment into parts_catalog.compatible_vehicles (entries tagged source='part_vehicle_fitment')
+    for the readers of the JSON: the chat's fitment list and the JSON fallbacks of vehicle search / model lists.
 
-    Uses Israeli vehicle registry year ranges from vehicle_market_il.
-    Mirrors the BMW chassis-code approach — no external API calls needed.
-    Processes up to 2000 parts per run; idempotent via ON CONFLICT DO NOTHING.
+    Per PART, all manufacturers at once (#119: the old per-manufacturer pass replaced a part's whole
+    part_vehicle_fitment copy with the LAST manufacturer processed, so a part fitting two makes kept one and was
+    rewritten on every run). Keyset batches of part ids from the saved cursor, bounded by a time budget; writes
+    only parts whose stored list changes (SKIP LOCKED). Rows without a model or a year are not copied (unchanged
+    contract). Year filter: 1985 <= year_from <= year_to <= 2030.
     """
     t0 = time.monotonic()
+    task = "merge_catalog_fitment_from_part_vehicle_fitment"
     await ensure_part_vehicle_fitment_table(db)
-
-    # Exclude branded merchandise: clothing, accessories, and non-automotive items
-    _MERCH_EXCLUDE = re.compile(
-        r'\b(shirt|polo|shoe|shoes|boot|jacket|wallet|keyring|key\s+ring|'
-        r'mug|notebook|ebook|e-book|badge|scarf|hat\b|bag\b|scale\s+model|'
-        r'umbrella|cap\b|sock|cufflink|glove|passport|money\s+clip|suede|'
-        r'driving\s+shoe|print\b|sticker|poster|pennant|artwork|miniature)\b',
-        re.IGNORECASE,
-    )
-
-    rows = (await db.execute(text("""
-        SELECT pc.id, pc.name, pc.name_he
-        FROM parts_catalog pc
-        WHERE pc.manufacturer = 'Jaguar'
-          AND pc.is_active = TRUE
-          AND (pc.category IS NULL OR pc.category != 'accessories')
-          AND NOT EXISTS (
-              SELECT 1 FROM part_vehicle_fitment pvf WHERE pvf.part_id = pc.id
-          )
-        ORDER BY pc.id
-        LIMIT 2000
-    """))).fetchall()
-
-    inserted = 0
-    skipped = 0
-    parts_matched = 0
-
-    for idx, (part_id, name, name_he) in enumerate(rows):
-        if idx % 50 == 0:
-            await asyncio.sleep(0)
-
-        text_to_scan = " ".join(filter(None, [name or "", name_he or ""]))
-
-        # Skip branded merchandise — clothing, lifestyle, non-automotive items
-        if _MERCH_EXCLUDE.search(text_to_scan):
-            skipped += 1
-            continue
-
-        matched_models: list[tuple[str, int, int]] = []
-        seen_models: set[str] = set()
-
-        for pattern, model_name, yf, yt in _JAGUAR_MODEL_MAP:
-            if pattern.search(text_to_scan) and model_name not in seen_models:
-                matched_models.append((model_name, yf, yt))
-                seen_models.add(model_name)
-
-        if not matched_models:
-            skipped += 1
-            continue
-
-        parts_matched += 1
-        for model_name, yf, yt in matched_models:
-            try:
-                await db.execute(text("""
-                    INSERT INTO part_vehicle_fitment
-                        (id, part_id, manufacturer, manufacturer_id,
-                         model, year_from, year_to, notes, updated_at)
-                    VALUES (gen_random_uuid(), :part_id, 'Jaguar', :mfr_id,
-                            :model, :yf, :yt, 'name_parse:jaguar', NOW())
-                    ON CONFLICT (part_id, manufacturer, model, year_from) DO NOTHING
-                """), {
-                    "part_id": str(part_id),
-                    "mfr_id":  _JAGUAR_MFR_ID,
-                    "model":   model_name,
-                    "yf":      yf,
-                    "yt":      yt,
-                })
-                inserted += 1
-            except Exception:
-                pass
-
-    with contextlib.suppress(Exception):
-        await db.commit()
-
-    return {
-        "task":          "backfill_jaguar_fitment_from_name",
-        "status":        "ok",
-        "scanned":       len(rows),
-        "parts_matched": parts_matched,
-        "inserted":      inserted,
-        "skipped":       skipped,
-        "elapsed_s":     round(time.monotonic() - t0, 2),
-    }
-
-
-async def merge_catalog_fitment_from_part_vehicle_fitment(db: AsyncSession) -> Dict[str, Any]:
-    """
-    Promote part_vehicle_fitment rows into parts_catalog.compatible_vehicles.
-    Processes one manufacturer at a time (no full-table fetchall) to avoid OOM.
-    Year filter: 1985 <= year_from <= year_to <= 2030.
-    """
-    t0 = time.monotonic()
-    await ensure_part_vehicle_fitment_table(db)
-
-    def _normalize_fitment_json_list(items):
-        unique, seen = [], set()
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            key = json.dumps(item, sort_keys=True, ensure_ascii=False)
-            if key not in seen:
-                seen.add(key)
-                unique.append(item)
-        unique.sort(key=lambda r: json.dumps(r, sort_keys=True, ensure_ascii=False))
-        return unique
-
-    # Step 1: get distinct manufacturers that have fitment data
-    mfr_rows = (await db.execute(text("""
-        SELECT DISTINCT manufacturer
-        FROM part_vehicle_fitment
-        WHERE manufacturer IS NOT NULL AND TRIM(manufacturer) <> ''
-        ORDER BY manufacturer
-    """))).fetchall()
-
-    total_updated  = 0
-    total_merged   = 0
-    total_scanned  = 0
-    mfrs_processed = 0
-
-    for (mfr,) in mfr_rows:
-        # Step 2: per-manufacturer JOIN — at most ~100K rows, ~30 MB
-        rows = (await db.execute(text("""
-            SELECT
-                pc.id,
-                pc.compatible_vehicles,
-                pvf.manufacturer,
-                pvf.model,
-                pvf.year_from,
-                pvf.year_to,
-                pvf.engine_type
-            FROM parts_catalog pc
-            JOIN part_vehicle_fitment pvf ON pvf.part_id = pc.id
-            WHERE pvf.manufacturer = :mfr
-              AND pvf.model IS NOT NULL
-              AND TRIM(pvf.model) <> ''
-              AND pvf.year_from IS NOT NULL
-              AND pvf.year_to   IS NOT NULL
-        """), {"mfr": mfr})).fetchall()
-
-        if not rows:
-            continue
-        mfrs_processed += 1
-
-        part_existing: Dict[str, list] = {}
-        part_fitments: Dict[str, list] = defaultdict(list)
-
-        for i, (part_id, compat, manufacturer, model, year_from, year_to, engine_type) in enumerate(rows):
-            if i % 100 == 0:  # unconditional yield before any continue so heartbeat always fires
-                await asyncio.sleep(0)
-            total_scanned += 1
-            pid = str(part_id)
-            if pid not in part_existing:
-                part_existing[pid] = list(compat or []) if isinstance(compat, list) else []
-
-            canonical_manufacturer = normalize_manufacturer_name(
-                str(manufacturer or ""), str(manufacturer or ""))
-            canonical_model = canonicalize_vehicle_model_for_manufacturer(
-                canonical_manufacturer, model)
-            if not canonical_manufacturer or not canonical_model:
-                continue
-
-            fitment: Dict[str, Any] = {
-                "manufacturer": canonical_manufacturer,
-                "model":        canonical_model,
-                "source":       "part_vehicle_fitment",
-            }
-            if engine_type:
-                fitment["engine"] = str(engine_type).strip()[:50]
-
-            try:
-                yf = int(year_from or 0)
-            except Exception:
-                yf = 0
-            try:
-                yt = int(year_to or 0)
-            except Exception:
-                yt = 0
-            if yf and not yt:
-                yt = yf
-            if yf and yt and 1985 <= yf <= yt <= 2030:
-                fitment["year_from"] = yf
-                fitment["year_to"]   = yt
-
-            part_fitments[pid].append(fitment)
-
-        # Step 3: update parts_catalog for this manufacturer
-        updated_this_mfr = 0
-        for j, (part_id, entries) in enumerate(part_fitments.items()):
-            if j % 50 == 0:  # unconditional yield before continue so heartbeat always fires
-                await asyncio.sleep(0)
-            preserved = [
-                item for item in part_existing.get(part_id, [])
-                if not (isinstance(item, dict) and item.get("source") == "part_vehicle_fitment")
-            ]
-            merged = _normalize_fitment_json_list(preserved + entries)
-
-            existing_json = json.dumps(
-                _normalize_fitment_json_list(list(part_existing.get(part_id, []))),
-                sort_keys=True, ensure_ascii=False)
-            merged_json = json.dumps(merged, sort_keys=True, ensure_ascii=False)
-            if existing_json == merged_json:
-                continue
-
-            await db.execute(text("""
-                UPDATE parts_catalog
-                SET compatible_vehicles = CAST(:compat AS jsonb),
-                    updated_at = NOW()
-                WHERE id = CAST(:part_id AS uuid)
-            """), {"part_id": part_id,
-                   "compat":  json.dumps(merged, ensure_ascii=False)})
-            updated_this_mfr += 1
-            total_merged += len(entries)
-
-        await db.commit()
-        await asyncio.sleep(0)  # yield after each manufacturer commit
-        total_updated += updated_this_mfr
-        logger.info("merge_catalog_fitment: mfr=%s scanned=%d updated=%d",
-                    mfr, len(rows), updated_this_mfr)
-
-    return {
-        "task":                   "merge_catalog_fitment_from_part_vehicle_fitment",
-        "status":                 "ok",
-        "manufacturers_processed": mfrs_processed,
-        "scanned_rows":           total_scanned,
-        "updated_parts":          total_updated,
-        "merged_fitment_rows":    total_merged,
-        "elapsed_s":              round(time.monotonic() - t0, 2),
-    }
+    budget_s = float(os.getenv("FITMENT_MERGE_MAX_S", "900"))
+    batch = max(int(os.getenv("FITMENT_MERGE_BATCH", "1000")), 1)
+    c = {"scanned_rows": 0, "parts_with_fitment": 0, "eligible": 0, "updated_parts": 0, "unchanged": 0,
+         "skipped": 0, "failed": 0, "merged_fitment_rows": 0}
+    reasons: Dict[str, int] = defaultdict(int)
+    cursor = _ZERO_UUID if only_part_ids is not None else await _get_task_cursor(db, task)
+    started_after, batches, pass_completed, status, error = cursor, 0, False, "ok", None
+    while True:
+        try:
+            await db.execute(text("SET LOCAL lock_timeout = '5s'"))
+            await db.execute(text("SET LOCAL statement_timeout = '120s'"))
+            if only_part_ids is not None:
+                ids = sorted({str(i) for i in only_part_ids})
+            else:
+                ids = [r[0] for r in (await db.execute(text("""
+                    SELECT DISTINCT part_id::text FROM part_vehicle_fitment
+                    WHERE part_id > CAST(:after AS uuid) ORDER BY 1 LIMIT :batch"""),
+                    {"after": cursor, "batch": batch})).fetchall()]
+            if not ids:
+                pass_completed, cursor = True, _ZERO_UUID
+                break
+            pvf: Dict[str, List[Tuple]] = defaultdict(list)
+            for r in (await db.execute(text("""
+                SELECT part_id::text, manufacturer, model, year_from, year_to, engine_type
+                FROM part_vehicle_fitment
+                WHERE part_id = ANY(CAST(:ids AS uuid[]))
+                  AND manufacturer IS NOT NULL AND TRIM(manufacturer) <> ''
+                  AND model IS NOT NULL AND TRIM(model) <> ''
+                  AND year_from IS NOT NULL AND year_to IS NOT NULL"""), {"ids": ids})).fetchall():
+                pvf[r[0]].append(tuple(r[1:]))
+                c["scanned_rows"] += 1
+            current = {r[0]: r[1] for r in (await db.execute(text(
+                "SELECT id::text, compatible_vehicles FROM parts_catalog WHERE id = ANY(CAST(:ids AS uuid[]))"),
+                {"ids": ids})).fetchall()}
+            writes: Dict[str, str] = {}
+            for pid in ids:
+                if pid not in current:
+                    c["skipped"] += 1
+                    reasons["part_missing"] += 1
+                    continue
+                c["parts_with_fitment"] += 1 if pvf.get(pid) else 0
+                merged = merged_compatible_vehicles(current[pid], pvf.get(pid, []))
+                had_list = isinstance(current[pid], list)
+                if not had_list and not merged:
+                    c["skipped"] += 1
+                    reasons["nothing_to_copy"] += 1
+                    continue
+                c["eligible"] += 1
+                if had_list and merged == _canonical_fitment_list(current[pid]):
+                    c["unchanged"] += 1
+                    continue
+                writes[pid] = json.dumps(merged, ensure_ascii=False)
+                c["merged_fitment_rows"] += sum(1 for e in merged if e.get("source") == "part_vehicle_fitment")
+            if writes:
+                res = await db.execute(text("""
+                    UPDATE parts_catalog pc SET compatible_vehicles = CAST(t.cv AS jsonb), updated_at = NOW()
+                    FROM unnest(CAST(:ids AS uuid[]), CAST(:cvs AS text[])) AS t(id, cv)
+                    WHERE pc.id = t.id
+                      AND pc.compatible_vehicles IS DISTINCT FROM CAST(t.cv AS jsonb)
+                      AND pc.id IN (SELECT id FROM parts_catalog WHERE id = ANY(CAST(:ids AS uuid[]))
+                                    FOR UPDATE SKIP LOCKED)"""), {"ids": list(writes), "cvs": list(writes.values())})
+                done = res.rowcount or 0
+                c["updated_parts"] += done
+                if done < len(writes):
+                    c["skipped"] += len(writes) - done
+                    reasons["locked_or_changed"] += len(writes) - done
+            await db.commit()
+        except Exception as exc:
+            await db.rollback()
+            c["failed"] += 1
+            reasons["batch_error"] += 1
+            status, error = "error", str(exc)[:300]
+            logger.error("%s batch after %s failed: %s", task, cursor, exc)
+            break
+        batches += 1
+        if only_part_ids is not None:
+            break
+        cursor = ids[-1]
+        if len(ids) < batch:
+            pass_completed, cursor = True, _ZERO_UUID
+        await _save_task_cursor(db, task, cursor)
+        await asyncio.sleep(0)
+        if pass_completed or time.monotonic() - t0 > budget_s or (max_batches and batches >= max_batches):
+            break
+    if only_part_ids is None and pass_completed:
+        await _save_task_cursor(db, task, _ZERO_UUID)
+    logger.info("%s: %s", task, c)
+    out = {"task": task, "status": status, **c, "reasons": dict(reasons), "batches": batches,
+           "started_after": started_after, "resume_after": cursor, "pass_completed": pass_completed,
+           "elapsed_s": round(time.monotonic() - t0, 2)}
+    if error:
+        out["error"] = error
+    return out
 
 
 # =========================================================================

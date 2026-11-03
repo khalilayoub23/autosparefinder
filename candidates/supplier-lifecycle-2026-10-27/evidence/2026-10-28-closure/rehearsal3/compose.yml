@@ -1,0 +1,19 @@
+# ISOLATED rehearsal project: same image, same service name, same command semantics as production 'backend'
+name: rh3
+services:
+  pg:
+    image: postgres:16-alpine
+    container_name: rh3pg
+    environment: {POSTGRES_HOST_AUTH_METHOD: trust, POSTGRES_USER: autospare, POSTGRES_DB: autospare_pii}
+    networks: [rh3net]
+  backend:
+    image: autosparefinder-backend:latest
+    working_dir: /app
+    volumes: ["${APP_TREE}:/app:ro"]
+    environment: {PYTHONPATH: /app, PYTHONDONTWRITEBYTECODE: "1", DATABASE_PII_URL: "postgresql+asyncpg://autospare@pg:5432/autospare_pii", RUNTIME_IDENTITY_DIR: /tmp/ri}
+    command: ["/bin/bash", "-c", "alembic -c alembic_pii.ini upgrade head && echo STARTUP_HOOK_RAN && sleep 3600"]
+    restart: unless-stopped
+    depends_on: [pg]
+    networks: [rh3net]
+networks:
+  rh3net: {internal: true}

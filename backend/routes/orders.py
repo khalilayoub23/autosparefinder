@@ -40,18 +40,12 @@ def _order_line_pricing(sp, supplier_rec, usd_to_ils_rate: float):
     ROOT FIX 2026-10-27 (owner: "we must not charge the client twice"): this endpoint used to put the
     supplier's shipping INTO the unit price (×1.45) AND add a separate per-supplier fee — shipping was
     charged twice on every offer that carries supplier shipping (~60% of offers)."""
-    from BACKEND_AI_AGENTS import get_supplier_vat_rate, resolve_customer_shipping_fee
-    cost_ils = float(sp.price_ils or 0) or (float(sp.price_usd or 0) * float(usd_to_ils_rate or 0))
-    unit_price = round(cost_ils * 1.45, 2)
-    vat = round(unit_price * get_supplier_vat_rate(supplier_rec.name or "", supplier_rec.country or ""), 2)
-    delivery_fee = round(resolve_customer_shipping_fee(
-        supplier_shipping_ils=sp.shipping_cost_ils,
-        supplier_shipping_usd=sp.shipping_cost_usd,
-        usd_to_ils_rate=usd_to_ils_rate,
-        supplier_name=supplier_rec.name,
-        supplier_country=supplier_rec.country,
-    ), 2)
-    return unit_price, vat, delivery_fee
+    import price_policy as _pp                     # 2026-10-29: the one policy (no inline ×1.45 / VAT here)
+    cost_ils = _pp.offer_cost_ils(sp.price_ils, sp.price_usd, usd_to_ils_rate)
+    u = _pp.unit_price(cost_ils, supplier_rec.name, supplier_rec.country) or _pp.UnitPrice(0.0, 0.0, 0.0, 0.0)
+    delivery_fee = _pp.delivery_fee(sp.shipping_cost_ils, sp.shipping_cost_usd, usd_to_ils_rate,
+                                    supplier_rec.name, supplier_rec.country)
+    return u.net, u.vat, delivery_fee
 
 
 router = APIRouter()

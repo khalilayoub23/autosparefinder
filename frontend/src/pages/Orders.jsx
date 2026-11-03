@@ -284,7 +284,7 @@ function OrderCard({ order, onReturn, onDelete, selected, onSelect }) {
           {/* Totals */}
           <div className="border-t border-gray-200 pt-3 space-y-1 text-sm">
             <div className="flex justify-between text-gray-600"><span>סכום ביניים</span><span>₪{Number(detail.subtotal).toFixed(2)}</span></div>
-            <div className="flex justify-between text-gray-600"><span>מע״מ 18%</span><span>₪{Number(detail.vat).toFixed(2)}</span></div>
+            <div className="flex justify-between text-gray-600"><span>{Number(detail.vat) > 0 ? 'מע״מ' : 'מע״מ 0% (ספק מחו״ל)'}</span><span>₪{Number(detail.vat).toFixed(2)}</span></div>
             <div className="flex justify-between text-gray-600"><span>משלוח</span><span>₪{Number(detail.shipping).toFixed(2)}</span></div>
             <div className="flex justify-between font-bold text-brand-navy text-base pt-1 border-t border-gray-200"><span>סה״כ</span><span className="text-brand-600">₪{Number(detail.total).toFixed(2)}</span></div>
           </div>

@@ -334,8 +334,9 @@ async def get_admin_stats(current_user: User = Depends(get_current_admin_user), 
     # price_no_vat  = net_revenue / 1.18  (remove 18% VAT)
     # profit        = price_no_vat × (45 / 145)  ← 45% markup portion
     # cost          = price_no_vat - profit       ← supplier cost
-    MARGIN_RATE = 0.45
-    VAT_RATE = 0.18
+    import price_policy as _pp                      # 2026-10-29: one source for margin + VAT
+    MARGIN_RATE = round(_pp.MARGIN - 1, 4)
+    VAT_RATE = _pp.VAT_RATE
     price_no_vat_net   = round(float(net_revenue) / (1 + VAT_RATE), 2)           # strip VAT
     profit_total      = round(price_no_vat_net * (MARGIN_RATE / (1 + MARGIN_RATE)), 2)  # 45/145
     cost_total        = round(price_no_vat_net - profit_total, 2)
@@ -4797,7 +4798,8 @@ async def scraper_run_one_part(
         if prices:
             prices.sort()
             median = prices[len(prices) // 2]
-            derived_cost = median / 1.18 / 1.45
+            import price_policy as _pp
+            derived_cost = median / (1 + _pp.VAT_RATE) / _pp.MARGIN
             old = float(row.price_ils or derived_cost)
             new_ils = round(max(old * 0.75, min(derived_cost, old * 1.25)), 2)
             await db_update_supplier_part(

@@ -1,0 +1,51 @@
+== 1. baseline code: full PII chain from an empty database
+INFO  [alembic.runtime.migration] Running upgrade 0040_messages_chat_req_uniq -> 0041_email_agent_owner_flow, Email Agent owner flow: notification, digest, tasks and OWNER-APPROVED sending.
+  exit=0
+  version=0041_email_agent_owner_flow
+== 2. candidate code: upgrade head (as the container start would)
+INFO  [alembic.runtime.migration] Running upgrade 0041_email_agent_owner_flow -> 0042_supplier_lifecycle, Supplier lifecycle: separate authorizations, NIR supplier outreach, procurement, spam-folder routing.
+  exit=0
+  version=0042_supplier_lifecycle
+  new_tables=4 new_cols=3
+  historic row routed-marked: t
+== 3. candidate code: upgrade head again (restart loop)
+  exit=0
+  version=0042_supplier_lifecycle
+== 4. write data into the new tables
+  rows: auth=1 proc=1
+== 5. baseline (deployed) code against the 0042 schema (code restored WITHOUT downgrade)
+OLD CODE OK: owner_pending=1 digest_pending=1 open=1 claim=new by_ref=1 mark_notified=ok
+  baseline 'upgrade head' on a 0042 database:
+FAILED: Can't locate revision identified by '0042_supplier_lifecycle'
+  exit=255
+== 6. WRONG order: restore old code first, then downgrade with it
+FAILED: Can't locate revision identified by '0042_supplier_lifecycle'
+  exit=255
+  version=0042_supplier_lifecycle
+== 7. documented order: downgrade with the CANDIDATE code
+  pre-downgrade backup: 2 lines (header + rows)
+INFO  [alembic.runtime.migration] Running downgrade 0042_supplier_lifecycle -> 0041_email_agent_owner_flow, Supplier lifecycle: separate authorizations, NIR supplier outreach, procurement, spam-folder routing.
+  exit=0
+  version=0041_email_agent_owner_flow
+  new_tables=0 new_cols=0
+  email row kept: 1  (its source_folder/supplier_route values are gone with the columns)
+== 8. baseline code against the downgraded schema
+OLD CODE OK: owner_pending=0 digest_pending=1 open=1 claim=new by_ref=0 mark_notified=ok
+  baseline 'upgrade head' after downgrade (container restart on old code):
+  exit=0
+  version=0041_email_agent_owner_flow
+== 9. re-upgrade with the candidate (deploy after a rollback)
+  exit=0
+  version=0042_supplier_lifecycle
+  new_tables=4 new_cols=3
+== 10. interrupted upgrade: a failing 0042 must leave the database at 0041 with nothing half-applied
+  exit=0
+asyncpg.exceptions.DivisionByZeroError: division by zero
+sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.Error: <class 'asyncpg.exceptions.DivisionByZeroError'>: division by zero
+    sys.exit(main())
+  version=0041_email_agent_owner_flow
+  new_tables=0 new_cols=0
+== 11. after the failure, the real candidate upgrades cleanly
+  exit=0
+  version=0042_supplier_lifecycle
+  new_tables=4 new_cols=3

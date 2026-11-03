@@ -1,0 +1,835 @@
+{
+ "generated": "2026-11-01",
+ "writers": [
+  {
+   "file": "catalog_scraper.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "FIXED_AND_VERIFIED",
+   "changed_in_candidate": true,
+   "callers": [
+    "scripts/pre_restart.sh",
+    "db_update_agent.py",
+    "BACKEND_DATABASE_MODELS.py",
+    "BACKEND_API_ROUTES.py"
+   ],
+   "evidence": "test_base_price_writers.py::test_new_discovered_part_*, test_rediscovery_*, test_part_without_any_cost_* -- db_upsert_part insert / update / re-run on the isolated DB",
+   "limitation": "",
+   "formula_lines_remaining": [
+    2332
+   ]
+  },
+  {
+   "file": "db_cleanup_agent.py",
+   "kinds": [
+    "rule"
+   ],
+   "status": "VERIFIED_COMPLIANT",
+   "changed_in_candidate": false,
+   "callers": [
+    "scripts/backfill_part_categories.py",
+    "BACKEND_API_ROUTES.py",
+    "importers/supplier_pdf_import.py",
+    "category_learning.py"
+   ],
+   "evidence": "four healers call apply_base_price_rule only (test_base_price_classification.py, test_maintenance_policy_alignment.py)",
+   "limitation": "",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "db_update_agent.py",
+   "kinds": [
+    "rule",
+    "sql"
+   ],
+   "status": "VERIFIED_COMPLIANT",
+   "changed_in_candidate": true,
+   "callers": [
+    "scripts/container_start.sh",
+    "alembic/versions/0034_manufacturer_fk_phase1.py",
+    "BACKEND_DATABASE_MODELS.py",
+    "job_queue.py"
+   ],
+   "evidence": "apply_base_price_rule IS the policy writer (test_maintenance_policy_alignment.py, test_maintenance_guard.py)",
+   "limitation": "",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "harvesters/acura_browser_harvest.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_acura_browser_harvest_import_end_to_end -- entry point: script <parts.json>; input: synthetic browser-harvest JSON; persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "harvesters/spareto_harvester.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [
+    "services/suppliers/catalog_suppliers.py"
+   ],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_spareto_harvester_end_to_end_with_synthetic_listing_and_product_pages -- entry point: script --makes TOYOTA --pages 3, httpx replaced; input: synthetic listing + product HTML; persisted base_price read back from the isolated DB (new / empty / owned / repeat run); DEFECT FOUND+FIXED: UPDATE passed 7 args to 6 placeholders and INSERT 8 to 9: no part was ever written",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/amayama_price_import.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "FIXED_AND_VERIFIED",
+   "changed_in_candidate": true,
+   "callers": [
+    "harvesters/amayama_flaresolverr_harvester.py",
+    "routes/system.py"
+   ],
+   "evidence": "test_importers_e2e.py::test_price_fill_importers_end_to_end[amayama] -- relay JSON -> main(path) -> price fill, owned untouched, 2 runs",
+   "limitation": "",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/asap_import.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [
+    "routes/system.py"
+   ],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_asap_import_script_end_to_end -- entry point: script CSV --brand-name; input: generated CSV; persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/bmw_il_direct_import.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_bmw_il_direct_script_end_to_end -- entry point: script main; input: synthetic BMW IL JSON; persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/bmw_il_import.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_bmw_il_import_script_end_to_end -- entry point: script main (/app/bmw_parts.json); input: synthetic JSON; persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/cadillac_israel_import.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_cadillac_israel_importer_end_to_end -- entry point: script main; input: generated .xlsx; persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/car_parts_ie_import_generic.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "FIXED_AND_VERIFIED",
+   "changed_in_candidate": true,
+   "callers": [
+    "scripts/restart_workers.py",
+    "BACKEND_API_ROUTES.py",
+    "importers/asap_import.py",
+    "routes/system.py"
+   ],
+   "evidence": "test_base_price_writers.py::test_car_parts_ie_reharvest_* -- the importer's own INSERT..ON CONFLICT statement, new / owned / emptied / repeated",
+   "limitation": "",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/colmobil_import_v2.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [
+    "importers/freesbe_importer.py"
+   ],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_colmobil_import_v2_end_to_end_from_a_generated_mitsubishi_price_list -- entry point: script --brands mitsubishi; input: generated /app/state/MIT.PDF; persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/delek_json_price_update.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "FIXED_AND_VERIFIED",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "test_importers_e2e.py::test_delek_json_update_end_to_end -- JSON file -> update_from_json -> persisted base_price, owned value, 2 runs",
+   "limitation": "",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/delek_multi_importer.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_delek_multi_importer_with_synthetic_delek_api_response -- entry point: script --brands 3, HTTP transport replaced; input: synthetic Delek API JSON; persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/ev_vag_lexus_import.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "FIXED_AND_VERIFIED",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "test_importers_e2e.py::test_ev_vag_lexus_end_to_end -- NIO update + Voyah/M-Hero insert/conflict; load_json fixture; NOT the VAG/Lexus update paths (same helper, statement prepared only)",
+   "limitation": "",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/fitz_mb_suzuki_import.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_fitz_mb_suzuki_pdf_importer_end_to_end -- entry point: script main; input: generated MB + Suzuki PDFs; persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/fitz_pdf_import.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_colmobil_format_pdf_importers_end_to_end[fitz_pdf] -- entry point: script main; input: generated PDF (Colmobil layout); persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/freesbe_importer.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "FIXED_AND_VERIFIED",
+   "changed_in_candidate": true,
+   "callers": [
+    "scripts/restart_workers.py",
+    "importers/freesbe_recovery.py"
+   ],
+   "evidence": "test_base_price_writers.py::test_freesbe_normalizer_* -- normalize_base_price_batched (real function) on rows with and without base_price",
+   "limitation": "",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/freesbe_recovery.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_freesbe_recovery_dry_run_then_apply_end_to_end_against_the_isolated_database -- entry point: script dry-run, then --apply --from-report; input: synthetic FREESBE API (pages + targeted lookups); persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/geely_israel_import.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "FIXED_AND_VERIFIED",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "test_importers_e2e.py::test_geely_israel_end_to_end -- embedded PARTS -> import_parts -> insert, owned value on re-run",
+   "limitation": "",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/gmc_buick_umi_import.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_gmc_buick_umi_importer_end_to_end -- entry point: script main; input: generated PDF; persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/hyundai_genesis_mitsubishi_import.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_colmobil_format_pdf_importers_end_to_end[hyundai_genesis_mitsubishi] -- entry point: script main; input: generated PDF (Colmobil layout); persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/il_consumer_price_import.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_il_consumer_price_import_script_end_to_end -- entry point: script main; input: generated .xlsx; persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/il_importer_pdf_import.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_il_importer_pdf_import_script_end_to_end -- entry point: script main; input: generated PDF; persisted base_price read back from the isolated DB (new / empty / owned / repeat run); DEFECT FOUND+FIXED: insert casts",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/il_pdf_batch_import.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_il_pdf_batch_importer_end_to_end -- entry point: script main; input: generated PDF; persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/import_champion_motors.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [
+    "harvesters/champion_motors_harvester.py"
+   ],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_import_champion_motors_script_end_to_end -- entry point: script main (CM_JSON); input: synthetic harvest JSON; persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/import_delek_brands.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_import_delek_brands_script_end_to_end -- entry point: script main; input: synthetic Delek JSON; persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/import_kia_israel.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [
+    "harvesters/kia_israel_harvester.py"
+   ],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_import_kia_israel_script_end_to_end -- entry point: script main (KIA_JSON); input: synthetic harvest JSON; persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/import_parts_db.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_SAVED_SOURCE",
+   "changed_in_candidate": true,
+   "callers": [
+    "start.sh"
+   ],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_import_parts_db_with_the_real_saved_workbook_porsche_sheet -- entry point: script Porsche; input: the REAL saved workbook data/parts_database.xlsx (sheet 'Porsche', 1,496 rows); persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "saved source file, not a live source",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/isuzu_excel_import.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_isuzu_excel_importer_end_to_end -- entry point: script main; input: generated .xlsx; persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/jaguar_batch_import.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_jaguar_scripts_end_to_end[batch] -- entry point: script main; input: synthetic JSON batch; persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/jaguar_ndjson_import.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_jaguar_scripts_end_to_end[ndjson] -- entry point: script main; input: synthetic NDJSON; persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/kgm_ssangyong_importer.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_kgm_ssangyong_importer_with_synthetic_kgm_page -- entry point: script main, HTTP transport replaced; input: synthetic kgm.co.il HTML; persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/kia_il_direct_import.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_kia_il_direct_script_end_to_end -- entry point: script main; input: synthetic Kia IL JSON; persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/kia_import.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [
+    "importers/import_kia_israel.py",
+    "importers/catalogs_parts_importer.py"
+   ],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_kia_import_with_synthetic_kia_israel_page -- entry point: script main, HTTP transport replaced; input: synthetic kia-israel HTML; persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/kia_new_models_import.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_kia_new_models_import_with_synthetic_kia_israel_page -- entry point: script main, HTTP transport replaced; input: synthetic kia-israel HTML; persisted base_price read back from the isolated DB (new / empty / owned / repeat run); DEFECT FOUND+FIXED: missing `import json`",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/lexus_pdf_import.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_lexus_pdf_importer_end_to_end -- entry point: script main; input: generated ruled-table PDF; persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/lr_import.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_lr_import_script_end_to_end -- entry point: script main (JSON_FILE); input: synthetic JSON; persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/lr_subaru_byd_import.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "FIXED_AND_VERIFIED",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "test_importers_e2e.py::test_subaru_update_end_to_end -- Subaru path end to end; Land Rover / BYD paths: statement prepared only",
+   "limitation": "",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/mazda_il_importer.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [
+    "importers/toyota_il_importer.py",
+    "importers/delek_multi_importer.py"
+   ],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_mazda_il_importer_with_synthetic_delek_api_response -- entry point: script main, HTTP transport replaced; input: synthetic Delek API JSON; persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/mct_importer.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_mct_importer_with_synthetic_mct_api_response -- entry point: script main, HTTP transport replaced; input: synthetic MCT API JSON (base64); persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/mixed_brands_import.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [
+    "importers/freesbe_recovery.py"
+   ],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_mixed_brands_import_script_end_to_end -- entry point: script --file; input: generated .xlsx; persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/porsche_import.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_porsche_pdf_importer_end_to_end -- entry point: script main; input: generated ruled-table PDF; persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/renault_pdf_import.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_renault_pdf_importer_end_to_end -- entry point: script main; input: generated PDF; persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/repair_manufacturer_import.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_repair_manufacturer_import_end_to_end_without_pandas -- entry point: script <MFR> --dry-run, then --apply twice (REPAIR_MANUFACTURER_DATA_DIR); input: generated .xlsx workbooks (manufacturer sheet + parts_catalog_import); persisted base_price read back from the isolated DB (new / empty / owned / repeat run); DEFECT FOUND+FIXED: died at `import pandas` (not installed); workbook paths were host-absolute so every source was skipped in the container; the INSERT omitted the NOT NULL manufacturer_id",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/rockauto_price_import.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "FIXED_AND_VERIFIED",
+   "changed_in_candidate": true,
+   "callers": [
+    "routes/system.py"
+   ],
+   "evidence": "test_importers_e2e.py::test_price_fill_importers_end_to_end[rockauto] -- relay JSON -> main(path) -> price fill, owned untouched, 2 runs",
+   "limitation": "",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/samelet_import_v2.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_samelet_import_v2_with_synthetic_samelet_api -- entry point: script main, HTTP transport replaced; input: synthetic samelet API JSON; persisted base_price read back from the isolated DB (new / empty / owned / repeat run); DEFECT FOUND+FIXED: executemany argument count did not match the statement",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/sng_barratt_jaguar_import.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "FIXED_AND_VERIFIED",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "test_importers_e2e.py::test_sng_barratt_end_to_end -- record batch -> import_batch; foreign supplier net, owned value",
+   "limitation": "",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/subaru_il_importer.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_subaru_il_importer_with_synthetic_samelet_response -- entry point: script main, HTTP transport replaced; input: synthetic samelet JSON; persisted base_price read back from the isolated DB (new / empty / owned / repeat run); DEFECT FOUND+FIXED: NameError `importer_price` (the supplier offer was never written)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/supplier_pdf_import.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [
+    "BACKEND_API_ROUTES.py"
+   ],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_supplier_pdf_import_apply_end_to_end_from_a_ruled_table_pdf -- entry point: script --pdf --manufacturer ORA --apply; input: generated ruled-table PDF; persisted base_price read back from the isolated DB (new / empty / owned / repeat run); DEFECT FOUND+FIXED: price update overwrote a stored importer_price_ils with the 0.0 an IL-importer row carries",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/toyota_il_importer.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [
+    "importers/mazda_il_importer.py",
+    "harvesters/toyota_il_harvester.py"
+   ],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_toyota_il_importer_script_end_to_end -- entry point: script main (/app/state/toyota_il_parts.json); input: synthetic harvest JSON; persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/xls_prices_import.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_xls_prices_import_end_to_end -- entry point: main() with XLS_PATH -> fixture; input: generated .xlsx; persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/xlsx_il_price_import.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_xlsx_il_price_import_script_end_to_end -- entry point: script main; input: generated .xlsx; persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/zeekr_full_import.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_zeekr_full_pdf_importer_end_to_end -- entry point: script main; input: generated PDF; persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "importers/zeekr_pdf_import.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_zeekr_pdf_importer_end_to_end -- entry point: script main; input: generated PDF; persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "maintenance/base_price_snapshot.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "VERIFIED_COMPLIANT",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "data-recovery writer: restores a verified snapshot only, sha256-confirmed (test_base_price_snapshot.py)",
+   "limitation": "",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "oempartsonline_importer.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "FIXED_AND_VERIFIED",
+   "changed_in_candidate": true,
+   "callers": [
+    "scripts/restart_workers.py",
+    "scripts/pre_restart.sh",
+    "importers/gm_run_import.py",
+    "routes/system.py"
+   ],
+   "evidence": "test_importers_e2e.py::test_oempartsonline_import_products_end_to_end -- product dicts -> import_products -> insert, owned value on re-import at another rate",
+   "limitation": "",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "scrapers/bydil_scraper.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_bydil_scraper_scrape_and_import_with_synthetic_byd_catalog -- entry point: script --scrape --import-db, httpx replaced; input: synthetic bydauto table HTML; persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "scrapers/eliteparts_scraper.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_eliteparts_scraper_with_synthetic_shopify_catalog -- entry point: script --scrape/--import, HTTP transport replaced; input: synthetic Shopify JSON; persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  },
+  {
+   "file": "scrapers/selected_parts_scraper.py",
+   "kinds": [
+    "sql"
+   ],
+   "status": "E2E_VERIFIED_FIXTURE",
+   "changed_in_candidate": true,
+   "callers": [],
+   "evidence": "tests/test_importers_e2e_scripts.py::test_selected_parts_scraper_with_synthetic_site_pages -- entry point: script main, HTTP transport replaced; input: synthetic site HTML; persisted base_price read back from the isolated DB (new / empty / owned / repeat run)",
+   "limitation": "not a live-source run (no live source reachable from the isolation)",
+   "formula_lines_remaining": []
+  }
+ ],
+ "shell_writers": [
+  {
+   "file": "backend/scripts/fix_oem_price_gaps.sh",
+   "status": "FIXED_AND_VERIFIED",
+   "evidence": "test_importers_e2e.py::test_fix_oem_price_gaps_copies_cost_but_never_a_stale_base_price (embedded python executed against the isolated DB)"
+  }
+ ],
+ "reviewed_non_writers": [
+  {
+   "file": "maintenance/price_audit_fix.py",
+   "note": "rewritten: no price formula, dry-run by default, --apply only via the guarded tasks",
+   "tests": "test_price_audit_fix.py"
+  },
+  {
+   "file": "maintenance/margin_fix_batched.py",
+   "note": "superseded: delegates to price_audit_fix",
+   "tests": "test_price_audit_fix.py"
+  },
+  {
+   "file": "maintenance/vat_fix_batched.py",
+   "note": "no longer writes base_price (importer cost repair only)",
+   "tests": "test_price_audit_fix.py (static)"
+  },
+  {
+   "file": "importers/import_from_excel.py",
+   "note": "base_price assignment removed (workbook price is not a base_price)",
+   "tests": "static inventory"
+  },
+  {
+   "file": "ai_catalog_builder.py",
+   "note": "never writes base_price",
+   "tests": "test_base_price_writers.py::test_ai_catalog_builder_*"
+  },
+  {
+   "file": "routes/admin.py",
+   "note": "import_parts_excel reports the price column as unsupported",
+   "tests": "test_base_price_writers.py::test_admin_upload_*; adminImportWarnings.node-test.mjs"
+  },
+  {
+   "file": "harvesters/rockauto_harvester.py harvesters/tecdoc_harvester.py importers/ebay_brand_importer.py importers/fridayparts_seed_import.py importers/geely_seed_import.py importers/gm_brands_seed_import.py importers/multi_brand_seed_import.py importers/rockauto_browser_import.py importers/saab_partsforsaabs_importer.py opel_car_parts_ie_import.py scrapers/bmw_spare_parts_scraper.py scripts/import_merged_catalog.py",
+   "note": "INSERT INTO parts_catalog without base_price in the column list or SET clause (AST proof): NOT writers",
+   "tests": "inventory scan"
+  },
+  {
+   "file": "services/aliexpress_price_sync.py services/ebay_price_sync.py",
+   "note": "read base_price only (SELECT / WHERE)",
+   "tests": "inventory scan"
+  }
+ ]
+}

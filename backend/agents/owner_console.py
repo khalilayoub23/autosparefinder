@@ -793,6 +793,11 @@ _HELP = (
     "• *סטטוס* — סקירת מערכת חיה\n"
     "• *שאיבה* — התקדמות שאיבת הקטלוג\n"
     "• *הזמנות* — הזמנות אמיתיות פתוחות שאולי דורשות טיפול שלך\n"
+    "• *מיילים* — מיילים שממתינים לך · *מייל [מזהה]* — פרטים וטיוטה\n"
+    "• *שלחמייל [מזהה]* — שליחת הטיוטה (רק באישורך) · *סגורמייל [מזהה]* — טופל בלי לשלוח\n"
+    "• *משימות מייל* · *סגורמשימה [מזהה]* — משימות שסוכן המיילים פתח לסוכנים\n"
+    "• *משימות בועז* · *רכש* · *אשררכש [מזהה]* · *הוזמןידנית [מזהה] [אסמכתה]* · *אשרתשלוםספק [מזהה]*\n"
+    "• *אשרפניותספקים* / *בטלפניותספקים* — הרשאה ל-NIR לפניות מידע לא מחייבות לספקים\n"
     "• *פוסטים* — פוסטים של NOA שממתינים לאישור\n"
     "• *אשר [מזהה]* / *דחה [מזהה]* — אשר/דחה פוסט\n"
     "• *קמפיין [נושא]* — SHIRA בונה קמפיין, NOA מייצרת תוכן לאישורך\n"
@@ -1667,8 +1672,23 @@ async def _sourcing_approve(token: str) -> str:
     if not token:
         return "ציין מזהה ספק: *אשרספק <מזהה>*"
     r = await ss.approve_supplier(token)
-    return (f"✅ הופעל הספק *{r['name']}* — יופיע בהשוואת המחירים ברגע שיהיו לו מחירים." if r.get("ok")
-            else "לא מצאתי ספק ממתין עם המזהה הזה. כתוב *ספקים* לרשימה.")
+    if r.get("ok"):
+        try:                                   # NIR -> BOAZ handoff: onboarding prerequisites (never fatal)
+            import boaz_tasks as _bt
+            await _bt.file_supplier_handoff(r["supplier_id"], r["name"], "owner_whatsapp")
+        except Exception:
+            pass
+    if not r.get("ok"):
+        return {"short": "כתוב לפחות 4 תווים של מזהה הספק.",
+                "ambiguous": "המזהה מתאים ליותר מספק אחד — כתוב עוד תווים."}.get(
+            r.get("error"), "לא מצאתי ספק ממתין עם המזהה הזה. כתוב *ספקים* לרשימה.")
+    q = r.get("qualification")
+    warn = "" if q in (None, "integration_ready") else f"\n⚠️ סטטוס בדיקה: {q} — לא כל הדרישות אומתו."
+    ds = r.get("dropshipping")
+    if ds and ds != "DROPSHIPPING-READY":
+        warn += f"\n⚠️ דרופשיפינג: {ds} — לא תישלח הזמנה ישירות ללקוח עד שזה יאומת."
+    return (f"✅ הופעל הספק *{r['name']}* — יופיע בהשוואת המחירים ברגע שיהיו לו מחירים.{warn}\n"
+            "ההפעלה לא מאשרת פנייה מסחרית, הזמנה או תשלום לספק.")
 
 
 async def _sourcing_reject(token: str) -> str:
@@ -1676,8 +1696,11 @@ async def _sourcing_reject(token: str) -> str:
     if not token:
         return "ציין מזהה ספק: *דחהספק <מזהה>*"
     r = await ss.reject_supplier(token)
-    return (f"🗑️ נדחה הספק *{r['name']}*." if r.get("ok")
-            else "לא מצאתי ספק ממתין עם המזהה הזה. כתוב *ספקים* לרשימה.")
+    if not r.get("ok"):
+        return {"short": "כתוב לפחות 4 תווים של מזהה הספק.",
+                "ambiguous": "המזהה מתאים ליותר מספק אחד — כתוב עוד תווים."}.get(
+            r.get("error"), "לא מצאתי ספק ממתין (לא פעיל) עם המזהה הזה. כתוב *ספקים* לרשימה.")
+    return f"🗑️ נדחה הספק *{r['name']}*."
 
 
 async def _fb_groups_list(db) -> str:
@@ -1885,6 +1908,22 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp") -> 
         return snap or "אין נתוני שאיבה כרגע."
     if low in ("orders", "הזמנות", "הזמנה"):
         return await _orders_attention()
+    # Email Agent commands (מיילים / מייל / שלחמייל / סגורמייל / משימות מייל / סגורמשימה) - 2026-10-27
+    try:
+        from agents import email_console as _email_console
+        _mail_reply = await _email_console.handle(msg)
+    except Exception as _mail_exc:
+        _mail_reply = f"⚠️ פקודת מייל נכשלה: {str(_mail_exc)[:160]}"
+    if _mail_reply is not None:
+        return _mail_reply
+    # BOAZ / procurement / NIR outreach approvals (רכש / אשררכש / אשרתשלוםספק / משימות בועז ...) - 2026-10-27
+    try:
+        from agents import supplier_console as _supplier_console
+        _sup_reply = await _supplier_console.handle(msg)
+    except Exception as _sup_exc:
+        _sup_reply = f"⚠️ פקודת ספקים/רכש נכשלה: {str(_sup_exc)[:160]}"
+    if _sup_reply is not None:
+        return _sup_reply
     if low in ("posts", "פוסטים", "פוסט"):
         pend = await _list_pending_posts(db)
         if not pend:

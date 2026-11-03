@@ -116,7 +116,7 @@ Rules:
 ---
 
 **Contents**
-[1. Critical Directives](#1-critical-directives) · [2. Critical Lessons Learned](#2-critical-lessons-learned) · [3. Platform Vision & Goals](#3-platform-vision-goals) · [4. Repository & Agent Architecture](#4-repository-agent-architecture) · [5. Hard Constraints](#5-hard-constraints) · [6. Mandatory Importer Patterns](#6-mandatory-importer-patterns) · [7. IL Importer Site Reference](#7-il-importer-site-reference) · [8. Business Rules](#8-business-rules) · [9. Feature Modules](#9-feature-modules) · [10. Operations Reference](#10-operations-reference)
+[1. Critical Directives](#1-critical-directives) · [2. Critical Lessons Learned](#2-critical-lessons-learned) · [3. Platform Vision & Goals](#3-platform-vision-goals) · [4. Repository & Agent Architecture](#4-repository-agent-architecture) · [5. Hard Constraints](#5-hard-constraints) · [6. Mandatory Importer Patterns](#6-mandatory-importer-patterns) · [7. IL Importer Site Reference](#7-il-importer-site-reference) · [8. Business Rules](#8-business-rules) · [9. Feature Modules](#9-feature-modules) · [10. Google Stitch Design Integration](#10-google-stitch-design-integration) · [11. Operations Reference](#11-operations-reference)
 
 ---
 
@@ -127,8 +127,16 @@ Rules:
 > **Before closing any task, re-read this section and check the work against it.**
 
 **Meta-rules (how to apply):**
-1. **Fix all layers, not the first one.** When a rule is wrong in one file, `grep` the whole
-   codebase and fix every occurrence. "Fixed where it was reported" ≠ fixed.
+1. **Fix all layers, not the first one (owner rule, extended 2026-11-01).** A confirmed bug obliges a
+   full-scope investigation: (a) document the root cause; (b) search the whole codebase for every
+   occurrence of the defective logic, pattern or assumption; (c) trace callers, writers, readers, scheduled
+   jobs, agents, APIs, UI surfaces, scripts and integrations it reaches, and duplicated implementations;
+   (d) fix every CONFIRMED occurrence through one authoritative implementation — never a blind global
+   replace: each extra change needs evidence that the code shares the defect; (e) regression tests for the
+   original defect and every affected path; (f) verify unrelated behaviour is unchanged; (g) update docs +
+   `FIXES_TRACKER.md`; (h) report every suspected occurrence that could not be verified or safely fixed.
+   A bug is closed only when the root cause is addressed, all confirmed occurrences are fixed, regressions
+   pass, the system-wide paths are verified and remaining limits are written down.
 2. **A policy needs a single enforcement point + a guard.** Prefer one function every surface
    calls over re-implementing per file.
 3. **Verify against the LIVE system**, not self-reports or `.md` files.
@@ -147,9 +155,16 @@ Rules:
   delivery fee (`resolve_customer_shipping_fee`), never inside the margin base, one fee per supplier per order
   (`routes/orders._order_line_pricing`). Agents never say shipping is known "at checkout/after payment"
   (`policy_guard` `shipping_deferred`). Guarded by `tests/test_shipping_included.py`, `test_order_shipping_e2e.py`.
-- **One canonical price function**: `_customer_price_fields` (routes/parts.py). Every surface —
-  search, chat, checkout, NOA — consumes it. No per-channel price formulas.
-  Formula: `sell = cost × 1.45`, `vat = sell × 0.18 (IL only)`, `total = sell + vat + ship`.
+- **ONE price policy module: `backend/price_policy.py` (2026-10-29, owner top priority) — full rule in
+  `docs/PRICE_POLICY.md`.** It defines the margin, the conditional VAT (18% local, 0% foreign, unknown → local),
+  the rounding (`round(cost×1.45,2)`, `round(net×rate,2)`), lines (per-unit VAT × qty), delivery once per supplier,
+  agorot rounding, WHICH offer prices a part (`VISIBLE_OFFER_SQL` + `price_basis_order_sql`: the website search's
+  visible set, class-compatible then cheapest — chat, brands, NOA, wishlist/watch and the pre-charge re-price use
+  the same) and the no-offer ESTIMATE (importer cost, never `base_price`). `_customer_price_fields`,
+  `calculate_customer_price*`, `_order_line_pricing`, `_live_reprice_order`, WhatsApp checkout and NOA all call
+  it. Never write a `1.45` / `1.18` / `0.18` number in a customer-facing module, never derive a customer price from
+  `base_price` / `min_price_ils` / `importer_price_ils`, never compute a price in the frontend — guarded by
+  `tests/test_price_policy_unified.py` (AST + cross-surface equality).
 - **A raw supplier cost is NEVER a customer price (2026-09-21).** `supplier_parts.price_ils`, `parts_catalog.min_price_ils`/
   `importer_price_ils` and a live external result's `price`/`total_cost` are INTERNAL. Every customer-visible per-part price comes from
   `routes/parts.py::_customer_unit_price` / `_customer_price_fields`; live external results reach customers only through
@@ -164,6 +179,14 @@ Rules:
   active supplier, available, priced, non-empty `supplier_url`). Search hides URL-less offers (IL importer price lists), so a URL-bearing
   new offer on such a part would become the ONLY listed offer and hide the existing OEM price — the priced AliExpress population is
   restricted accordingly (`aliexpress_price_sync._select_targets`). Found by the live production sample.
+- **`base_price` has ONE ownership rule (#119, candidate 2026-10-31, not yet deployed).** It is internal (search tie-break, harvest
+  targeting), never a customer price, and equals the price policy's own net: `fix_base_prices` owns parts with a customer-visible
+  offer of their class, `normalize_base_price` owns parts without one (catalog estimate). Two writers with two formulas on the same
+  rows flipped a part between ₪145 and ₪116 on every run. Never add a writer with its own `× 1.45`; call `apply_base_price_rule`.
+- **A name parser is a guess — review real matches before it writes fitment (#119).** The Jaguar parser gave T-shirts, shoes and
+  books F-Type fitment; the BMW map read tyre sizes ("R18") as motorcycles (644 rows) and U25 as an X2 (it is the MINI Countryman);
+  the Ford parser wrote "Ford Focus", a form vehicle search never matches (12,360 invisible rows). Read every proposed match on live
+  names, and test the written form against `vehicle_model_match.allowed_fitment_models`.
 - **Import formula**: `cost = consumer_price / 1.18` → `importer_price_ils = cost`,
   `base_price = cost × 1.45`, `max_price_ils = consumer_price`. Never reverse this.
 
@@ -335,16 +358,10 @@ Rules:
 - **Scrub URL secrets**, not just headers. `?key=`/`?api_key=`/`?token=` → `<redacted>` via
   `_scrub_secrets()` + `raise_for_status_safe()`. A credential in a URL leaks through every error
   path that logs `str(exc)`.
-- **nginx single-file mounts need a container RESTART, not reload.** Editing the host file changes
-  the inode; the running container holds the old inode until `docker restart autospare_nginx`.
+- **nginx single-file mounts need a container RESTART, not reload** — full rule + validation command in §5.
 - **Adding a value to an in-memory enum requires a restart before backfilling.** The bind mount
   updates files, not the loaded module. Watch a backfilled count for drift afterwards.
-- **`browser.close()` must be called INSIDE the `async with async_playwright() as p:` block.**
-  Calling it in an outer `finally` (after the `async with` exits) sends the CDP close command to
-  a Playwright NodeJS server that has already been stopped — Chrome is SIGKILLed by the dying
-  server, reparents to uvicorn, and the Python waitpid loop cannot reap it. 22 zombie Chrome
-  processes accumulated per scraper cycle before this was fixed (2026-08-11). See Background Jobs
-  section for the full pattern.
+- **`browser.close()` INSIDE the `async with async_playwright()` block** — rule + pattern under Background Jobs.
 
 ### External APIs & OAuth
 - **External API capabilities drift — verify live before stating a limitation.** Training-era
@@ -453,7 +470,7 @@ After finding the right part, the platform shows **prices from multiple sellers*
 
 **Never regress (G8, 2026-07-20):** NOA post sanitization must stay **structure-preserving and subtractive** — never collapse `\s+` across newlines, never staple boilerplate onto every post, never re-add a multi-line link footer. The lone-Hebrew-letter garble check must keep its prefix exemption (`מ-198`, `ב-2020`, `ב AutoSpareFinder`) or every real-price selling post gets mangled again. Hashtag handling must keep Arabic (`؀-ۿ`) in `_NOA_HASHTAG_RE` and must not strip `_` inside tags. **All outbound owner/customer WhatsApp must go through `_wa_send_quiet`** (or explicitly justify `critical=True`) — a new send site that calls `_wa_send` directly reintroduces 03:00 messages. **Reminder caps are LIFETIME, never a rolling window** — a rolling window is not a cap.
 
-**Never regress:** price/margin math lives ONLY in the backend (`_customer_price_fields` + `create_whatsapp_checkout`). No client-side or per-channel price formulas. Any new channel/surface must consume the same fields. **VAT is CONDITIONAL, not flat ×1.18** — `get_supplier_vat_rate` applies 18% ONLY to LOCAL (IL) suppliers and 0% to foreign-sourced parts (most of the catalog: Car-Parts.ie/IE, SNG/UK, eBay/US). Any price ANY surface displays (incl. NOA's advertised/marketing prices) must be `cheapest-supplier cost × 1.45 + conditional VAT` — NEVER a flat ×1.18, and NEVER `base_price` (unreliable on some rows; can land near raw cost). NOA fixed 2026-07-14 (`_noa_real_catalog_fact`). Customer-facing agents may only claim programs/discounts that actually exist in code+DB. Chat agents: free-text car capture + query-strip + fitment-verified fallback must stay (a category/vocab miss must never discard a `part_vehicle_fitment` match); customer replies pass through `_strip_leaked_reasoning` + `_sanitize_internal_pricing_disclosure` (never leak chain-of-thought, draft options, or internal state under 429 fallback).
+**Never regress:** every customer price comes from `backend/price_policy.py` (rule: §2 Pricing & VAT and `docs/PRICE_POLICY.md`) — no client-side or per-channel formula, never a flat ×1.18, never `base_price`. Customer-facing agents may only claim programs/discounts that actually exist in code+DB. Chat agents: free-text car capture + query-strip + fitment-verified fallback must stay (a category/vocab miss must never discard a `part_vehicle_fitment` match); customer replies pass through `_strip_leaked_reasoning` + `_sanitize_internal_pricing_disclosure` (never leak chain-of-thought, draft options, or internal state under 429 fallback).
 
 
 ## 4. Repository & Agent Architecture
@@ -573,16 +590,33 @@ rolling Redis history. Deterministic commands: `סטטוס`/status, `שאיבה`
 CATALOG-DB session (those tables aren't in the PII DB the webhook passes).
 **Email Agent** (`backend/email_agent/`, added 2026-10-04 — full reference `docs/EMAIL_AGENT.md`): reads
 the business Gmail mailbox, classifies, resolves context against the DB, applies a response policy and
-prepares DRAFTS. **It never sends**: `GmailClient` has no send method, every request passes a six-endpoint
-allowlist (`assert_allowed`), `policy.send_allowed()` returns False unconditionally, and
-`email_agent_messages` has `CHECK (sendable = false)`. Enabling sending is a reviewed code change plus a
-migration, never an env flag. Off unless `EMAIL_AGENT_ENABLED=1` and `GMAIL_OAUTH_*` are set.
-**LIVE since 2026-10-10 in read-only processing mode** (`EMAIL_AGENT_ENABLED=1`, runtime control armed,
-`EMAIL_AGENT_GMAIL_DRAFTS=0`, grant `gmail.readonly` only) - see `docs/EMAIL_AGENT.md` § Live state.
+prepares DRAFTS. **It never sends on its own**: every request passes a six-endpoint allowlist
+(`assert_allowed`), `policy.send_allowed()` returns False unconditionally, and `email_agent_messages` has
+`CHECK (sendable = false)`. **The ONLY send path (owner decision 2026-10-27, migration 0041):** the owner
+types `שלחמייל <ref>` in the WhatsApp console → `owner_flow.approve_and_send` records `send_approved_at` →
+`GmailClient.send_approved_draft(OwnerApproval)` → `POST /drafts/send` of that one existing draft
+(`messages/send` stays unreachable; DB `CHECK (sent_at IS NULL OR send_approved_at IS NOT NULL)`).
+**Owner flow** (`email_agent/owner_flow.py`, run after every armed cycle): important mail (needs a human / has a
+draft / customer, order, refund, complaint, payment, security, supplier) → immediate WhatsApp alert via
+`notify_owner` category `email` + one `agent_todos` task for the owning agent (LIOR/DANA/TAL/BOAZ/NIR/OREN,
+category `email`); everything else → 09:00 IL digest. Console: `מיילים` · `מייל <ref>` · `שלחמייל <ref>` ·
+`סגורמייל <ref>` · `משימות מייל` · `סגורמשימה <ref>` (`agents/email_console.py`). The mapped agents do NOT
+act on these todos autonomously — they are a visible worklist. Off unless `EMAIL_AGENT_ENABLED=1` and `GMAIL_OAUTH_*` are set.
+**LIVE since 2026-10-10** (`EMAIL_AGENT_ENABLED=1`, runtime control armed; Gmail drafts ON since 2026-10-25,
+grant `gmail.readonly` + `gmail.compose`; owner flow live 2026-10-27 17:17 IL) - see `docs/EMAIL_AGENT.md` § Live state.
 Runtime kill switch (no restart): `email_agent_cli.py halt|arm|control` → `/app/state/email_agent_control.json`;
 missing/invalid file = halted (fail closed), and `run-once` refuses while halted. Context is
 resolved only by exact DB match; an unauthenticated sender, another account's order or more than one
 candidate stays unresolved and goes to a human.
+**Supplier lifecycle (NIR → Email Agent → BOAZ → procurement) — DEPLOYED 2026-10-28 20:20 Israel (PII migration 0042,
+all five supplier switches OFF; each switch is a separate owner approval; bundle/runbook/rollback in
+`candidates/supplier-lifecycle-2026-10-27/` + `/root/asf-deploy-20261028T181942Z/`):** see `docs/SUPPLIER_LIFECYCLE.md`.
+One-shot approvals (purchase order, supplier payment) are consumed ATOMICALLY (`supplier_authorization.consume_once`) —
+never reintroduce a check-then-mark consume (it let 3 of 5 concurrent payment webhooks through on one approval).
+Which code a process runs is proven with `maintenance/runtime_identity_check.py --pid 1 --expect MOD=SHA`, not a disk hash. Never copy candidate files into the bind-mounted
+`backend/` as a parking spot — every container start and every lazy import runs whatever is on disk. Separate permissions (`supplier_authorization.py`): a customer payment
+never authorizes a supplier order or payment; `אשררכש` / `אשרתשלוםספק` / `אשרספק` / `אשרפניותספקים` are the only
+approval sources. BOAZ owns todos under every spelling (`agent_identity.py`) and executes them (`boaz_tasks.py`).
 **Layer B — pipeline workers**: `catalog_scraper` (ingest), `db_cleanup_agent` (30s self-heal),
 `db_update_agent` (`run_all_tasks` 3×/day at 21:30/00:15/07:15 Israel, `DB_AGENT_RUN_TIMES_IL`), `ai_catalog_builder` (enrichment), `meili_sync`
 (indexing, 2h loop), `run_rex_transport_office_pipeline` (vehicle registry), REX harvest queue,
@@ -621,6 +655,56 @@ candidate stays unresolved and goes to a human.
 5. **Document every fix** in `FIXES_TRACKER.md`; update `docs/roadmap.md` / `docs/phases.md` /
    `docs/PRE_LAUNCH_CHECKLIST.md` as relevant.
 6. **Never fabricate data** — counts/metrics/statuses come from live queries, never invented.
+7. **Clean before you build (owner rule 2026-10-31).** Before adding a feature or changing code,
+   clean up the code the change touches, and remove the leftovers it creates or replaces:
+   - **Before the change, in the files and functions you touch:** remove dead code, unused imports
+     and variables, commented-out blocks, duplicated logic (call the existing function instead of a
+     second copy), stale comments and docstrings that no longer match the code, and obsolete
+     fallbacks or flags that nothing reads. Check for an existing implementation first (`grep`)
+     and extend it — never build a parallel one.
+   - **After the change:** delete what it superseded (the old code path, its constants, its config
+     entries, its now-wrong tests and docs) and every working leftover — scratch/backup copies
+     (`*.backup`, `*.bak`, `*.orig`), debug prints, temp files, test containers/volumes/images,
+     stray `__pycache__` in bundles. No orphan file, no second copy, no "kept just in case".
+   - **Scope:** the cleanup stays inside what the change touches; anything wider is recorded in
+     `FIXES_TRACKER.md` as a follow-up, not done silently. Cleanup is a code change like any other:
+     covered by tests, compared against the baseline, and listed in the tracker entry (what was
+     removed and why). Never delete data, production files you did not create, or anything you
+     have not traced to "unused" with a real check (grep for callers, imports, config, schedules).
+8. **Production safety (owner 2026-11-01; "default to execution" in §1 does NOT cover these).** Never
+   restart, recreate, stop or cycle a production service, never interrupt an active scan / harvester /
+   background job, never make a destructive production data change or a commercial action (supplier
+   order, payment, customer charge, real email) without the owner's explicit approval for that operation.
+   Keep three stages separate: isolated testing → production read-only verification → production
+   deployment; an isolated test never proves a deployment. Record evidence, test results, changed files
+   and rollback for every change, and give every task a status: **PASS**, **PARTIAL** or **BLOCKED**
+   (alongside the VERIFIED / ASSUMED / APPLIED / NOT DONE labels of §1 rule 5).
+9. **Model selection (owner 2026-11-01).** Default model: Claude Sonnet 5.5 at medium effort (project
+   `.claude/settings.json`: `model` + `effortLevel`). Escalate to Opus 5.5 only for the part that needs it —
+   hard root-cause analysis, cross-system debugging, architectural decisions, or work Sonnet cannot do
+   reliably — never just because a task is long or touches many files; hand back to Sonnet for routine
+   implementation and verification, passing the findings, decisions and evidence so nothing is
+   re-investigated. Never silently substitute a model; say so when a model is unavailable. Save tokens
+   without lowering investigation, implementation, test or verification quality.
+10. **Two-Attempt Debugging Rule (owner 2026-11-02).** For a debugging problem that needs investigation
+    and code changes: (1) at most TWO genuine attempts; (2) each must use a meaningfully different
+    diagnostic or fix — never the same command or a parameter tweak without a reason; (3) each records the
+    suspected root cause, a targeted fix or concrete diagnostic, a relevant verification test and the
+    actual outcome; (4) fixed + relevant tests pass within either attempt → continue normal verification
+    and close; (5) two attempts failed or made no meaningful progress → STOP debugging independently and
+    escalate to Opus; (6) never start a third independent attempt before escalating; (7) never split the
+    same underlying issue into several nominal tasks to reset the count. Not for routine implementation,
+    normal testing, documentation or unrelated work.
+    **Mechanism (verified 2026-11-02, `candidates/maint-safety-2026-11-01/process/DEBUG_ESCALATION.md`):**
+    the `Agent` tool with `model: "opus"` and NO `subagent_type: "fork"` (a fork ignores the model
+    override) starts a fresh Opus agent; its only context is the prompt, so the prompt IS the handoff
+    package — build it with `process/debug_escalation.py handoff` (attempt ledger, exact errors, files,
+    git state, constraints, acceptance criteria). Opus owns the task to completion (root cause, fix,
+    regression tests, run them, report commands + results); its final message returns to Claude, who then
+    reviews the diff, re-runs the acceptance tests, rejects unsupported PASS claims and closes. Handoff is
+    NOT automatic: Claude must make the `Agent` call. Escalation grants Opus no extra permission — all
+    production-safety rules (rule 8) and approval gates stay in force; never put credentials, secrets or
+    private customer data in the package.
 
 ### Conflict resolution / confidence tiers (never overwrite higher with lower)
 `1.00` official manufacturer/importer · `0.90` OEM cross-reference · `0.85` known aftermarket
@@ -666,6 +750,10 @@ These were confirmed exploitable vulnerabilities found during a live pentest. Ne
 - **All new internal-only endpoints** (harvest relay, import triggers, admin actions) must be authenticated. Options: (1) `X-Collect-Secret` style shared secret, (2) `Depends(get_current_admin_user)`, (3) nginx internal-only restriction.
 - **`supplier_parts` ON CONFLICT for re-harvest importers must include `price_ils` and `is_available`** — omitting them means price changes and stock-outs are silently discarded.
 - **`task_normalize_base_price_batched` formula**: `supplier_parts.price_ils` = ex-VAT cost → `base_price = cost × 1.45`, `importer_price_ils = cost`. Never reverse this.
+  **#119 candidate (`candidates/maint-policy-2026-10-31/`, NOT DEPLOYED — until it is, the line above describes the live code):**
+  every non-importer `base_price` writer calls `db_update_agent.apply_base_price_rule` (policy net of the cheapest customer-visible
+  offer of the part's own class, else of the catalog estimate; see `docs/PRICE_POLICY.md`), and `importer_price_ils` /
+  `max_price_ils` are filled only when empty and only from a LOCAL offer.
 - **Batched loops with `updated_at=NOW()` must be bounded** — use `cutoff_id = MAX(id) WHERE updated_at > :since` at loop start; add `AND id <= :cutoff_id` to the batch query. Otherwise the loop perpetually refreshes rows back into scope and never terminates.
 - **Multithreaded state dicts need a `threading.Lock()`** — any dict shared across threads (harvester `state`, etc.) must protect all read-modify-write operations and file writes with a lock.
 
@@ -748,11 +836,9 @@ The 2.1M OEMPartsOnline parts with 0% IL price exist because:
 
 ## 7. IL Importer Site Reference
 
-- **Pricing**: UNIFORM 45% margin on ALL parts. base_price = cost × 1.45. No exceptions.
-- **VAT**: Israeli VAT = **18%** (0.18). All scripts must use VAT = 0.18. Never 0.17.
-- **Import formula**: Consumer price incl. VAT → cost = price/1.18 → max_price = price → base_price = cost×1.45. NEVER double-apply VAT.
-- **Restarts**: Always run `bash /opt/autosparefinder/backend/scripts/pre_restart.sh` before any docker restart.
-- **Monitoring**: Keep 30-min wakeup active (cron 0073265b). Reschedule after every restart.
+- **Pricing / VAT / import formula**: §2 Pricing & VAT and §6 (VAT 18%, never 0.17 — 27 code sites still use 0.17, see FIXES_TRACKER #130).
+- **Restarts**: §2 Deployment & Config + §4 golden rule 8 (preflight, owner approval).
+- **Monitoring**: keep a 30-min wakeup (CronCreate is session-scoped: recreate it each session and after restarts).
 - **Wakeup checks**: Every wakeup must verify crawler + REX + DB agent + catalogue agent.
 - **NIR todos**: These are human tasks for the business owner (Khalil) — contact importers directly.
 - **Scraper/Acura**: Solved via browser harvest → window.name → /api/v1/system/oem-relay → oempartsonline_importer. 5741 parts imported 2026-06-15.
@@ -833,13 +919,7 @@ The 2.1M OEMPartsOnline parts with 0% IL price exist because:
   - brandId=9: MAXUS M-Hero Series 2 (variant)
   - Run BMW+NIO: `docker exec autospare_backend python3 /app/importers/delek_multi_importer.py --brands 3,6`
 
-- **supplier_parts ON CONFLICT fix (2026-07-01)** — affects all importers:
-  - `supplier_parts` table has TWO unique constraints: `(part_id, supplier_id)` AND `(supplier_id, supplier_sku)`
-  - Old code used `ON CONFLICT (part_id, supplier_id)` but the actual conflict hits `(supplier_id, supplier_sku)` when same OEM was imported from multiple sources creating duplicate catalog entries
-  - Fix: change to `ON CONFLICT (supplier_id, supplier_sku) DO UPDATE SET price_ils=..., is_available=..., updated_at=NOW()`
-  - Fixed in: `toyota_il_importer.py`, `delek_multi_importer.py`
-  - Also use per-row savepoints: `async with conn.transaction():` nested inside outer loop to prevent cascade aborts
-  - Check other importers if they use `ON CONFLICT (part_id, supplier_id)` and fix similarly
+- **supplier_parts ON CONFLICT** — see §6 Pattern 1 (constraint) and Pattern 5 (per-row savepoints).
 
 - **IL Importer WordPress/POST pattern — general rule (documented 2026-07-01)**:
   Several Israeli car importers use WordPress for their price list pages. The pattern varies:
@@ -946,23 +1026,10 @@ Every scraper/importer must write to these 3 tables together (atomically):
 - `supplier_parts` — the price/availability record (links supplier to part)
 - `part_vehicle_fitment` — fitment rows (if vehicle data available)
 
-**Rule 2 — NEVER hardcode `importer_price_ils=0` in INSERT or ON CONFLICT UPDATE**
-`importer_price_ils` is the ex-VAT cost we pay the IL importer. Always compute it:
-```python
-cost = il_consumer_price / 1.18        # ex-VAT
-importer_price_ils = cost
-base_price = round(cost * 1.45, 2)     # 45% margin
-max_price_ils = il_consumer_price      # consumer reference
-```
-In ON CONFLICT DO UPDATE, ALWAYS use CASE WHEN to preserve existing value:
-```sql
-importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0
-    THEN EXCLUDED.importer_price_ils
-    ELSE parts_catalog.importer_price_ils END
-```
+**Rule 2 — `importer_price_ils` is the computed ex-VAT cost, never 0** — formula: §2 Pricing & VAT
+"Import formula"; ON CONFLICT guard: §6 Pattern 2.
 
-**Rule 3 — NEVER write `part_condition='New'` (uppercase)**
-Always lowercase: `'new'`, `'used'`, `'oem'`, `'aftermarket'`, `'remanufactured'`, `'oe_equivalent'`
+**Rule 3 — `part_condition` is lowercase** — §6 Pattern 3.
 
 **Rule 4 — Pipeline ownership (who writes what)**
 | Owner | File | Schedule | Responsibility |
@@ -974,7 +1041,8 @@ Always lowercase: `'new'`, `'used'`, `'oem'`, `'aftermarket'`, `'remanufactured'
 | **Importers** | `samelet_import_v2.py` etc. | On-demand | IL importer data — must follow Rules 1-3 above |
 
 **DB Cleanup Agent self-healing tasks (added 2026-06-18)**:
-- `task_heal_importer_price()` — every 30s: finds `max_price_ils > 0` AND `importer_price_ils = 0`, applies formula `cost = max/1.18, base = cost×1.45`
+- `task_heal_importer_price()` — every 30s (backs off when idle): parts with `max_price_ils > 0`, no importer and no online cost →
+  `importer_price_ils` = the cheapest Israeli supplier offer's cost (`base_price` per the #119 rule once deployed, else cost × 1.45)
 - `task_heal_part_condition()` — every 30s: finds uppercase `'New'/'OEM'/'Used'` etc., converts to lowercase
 
 These tasks are the **safety net** — even if an importer bug writes wrong data, the cleanup agent will auto-correct it within 30 seconds.
@@ -1011,7 +1079,7 @@ Every time REX, the scraper, or any importer runs, it MUST collect and store:
 - `job_registry` — all agent job runs with heartbeat and status
 
 ### Known pipeline bugs fixed
-- `cadillac_israel_import.py` — `importer_price_ils=0` hardcoded → fixed to `cost=price/1.17`
+- `cadillac_israel_import.py` — `importer_price_ils=0` hardcoded → fixed, but it still divides by 1.17 (17% VAT): FIXES_TRACKER #130
 - `gmc_buick_umi_import.py` — same bug → SQL fix applied
 - OEM Parts Online supplier_parts — `is_available=false` on all 36K records → fixed to true
 - Seat pads miscategorized as `brakes` → moved to `interior-comfort`

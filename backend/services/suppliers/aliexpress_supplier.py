@@ -675,6 +675,11 @@ class AliExpressSupplier(BaseSupplier):
             skus = (item.get("ae_item_sku_info_dtos", {}) or {}).get("ae_item_sku_info_d_t_o", []) or []
             price = 0.0
             for sku in skus:
+                # 2026-10-27: the request asks for target_currency=USD and the price is stored as USD; a SKU
+                # that states another currency is skipped (fail closed) instead of being read as dollars.
+                _cur = str(sku.get("currency_code") or "USD").strip().upper()
+                if _cur != "USD":
+                    continue
                 p = (_p(sku.get("offer_sale_price")) or _p(sku.get("offer_bulk_sale_price"))
                      or _p(sku.get("sku_price")))
                 if p > 0 and (price == 0 or p < price):

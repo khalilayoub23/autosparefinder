@@ -46,6 +46,7 @@ from routes.utils import (
 )
 from BACKEND_AI_AGENTS import get_supplier_vat_rate, resolve_customer_shipping_fee
 
+from price_policy import agorot as _agorot   # 2026-10-29: rounded ILS -> agorot for every Stripe amount
 router = APIRouter()
 
 
@@ -145,7 +146,7 @@ async def regenerate_order_pay_link(order_id: str) -> str | None:
             if order.shipping_cost and float(order.shipping_cost) > 0:
                 line_items.append({
                     "price_data": {"currency": "ils", "product_data": {"name": "משלוח"},
-                                   "unit_amount": int(float(order.shipping_cost) * 100)},
+                                   "unit_amount": _agorot(order.shipping_cost)},
                     "quantity": 1,
                 })
 
@@ -607,6 +608,55 @@ async def _reconcile_pending_checkout_sessions_for_user(user_id, db: AsyncSessio
     }
 
 
+
+async def _live_reprice_order(cat, order, order_items, rate) -> bool:
+    """Re-price an order from the CURRENT offers before charging (2026-10-29, price_policy): each line from the
+    offer the customer chose (`supplier_part_id`; the price-basis offer only when none is recorded), exactly as
+    create_order priced it - unit_price = net (ex-VAT), vat_amount = VAT per unit, total_price = (net + VAT) x qty,
+    delivery once per supplier. Mutates the rows; True when anything changed. Raises 409 when an offer is gone.
+    (The old check compared a VAT-INCLUSIVE live unit with the ex-VAT stored unit - every local-supplier order
+    was "changed" - re-priced from the cheapest offer of ANY supplier, and set shipping to the max fee.)"""
+    import price_policy as _pp
+    lines, changed = [], False
+    for it in order_items:
+        if not it.part_id:
+            continue
+        if it.supplier_part_id:      # the offer the customer chose: still orderable (any listed or not)
+            where, params = f"sp.id = CAST(:spid AS uuid) AND {_pp.ORDERABLE_OFFER_SQL}", {"spid": str(it.supplier_part_id)}
+        else:                        # no recorded offer: the part's price-basis offer
+            where, params = f"sp.part_id = CAST(:pid AS uuid) AND {_pp.VISIBLE_OFFER_SQL}", {"pid": str(it.part_id)}
+        row = (await cat.execute(text(f"""
+            SELECT sp.supplier_id, sp.price_ils, sp.price_usd, sp.shipping_cost_ils, sp.shipping_cost_usd,
+                   s.name, s.country
+            FROM supplier_parts sp JOIN suppliers s ON s.id = sp.supplier_id
+            JOIN parts_catalog pc ON pc.id = sp.part_id
+            WHERE {where} AND {_pp.offer_cost_sql()} > 0
+            ORDER BY {_pp.price_basis_order_sql("pc.part_type")} LIMIT 1"""),
+            {**params, "usd_to_ils_rate": rate})).fetchone()
+        if row is None:
+            raise HTTPException(status_code=409, detail={
+                "detail": "part_unavailable",
+                "message": "אחד או יותר מהחלקים אינם זמינים כרגע. אנא צור קשר עם שירות הלקוחות."})
+        u = _pp.unit_price(_pp.offer_cost_ils(row[1], row[2], rate), row[5], row[6])
+        fee = _pp.delivery_fee(row[3], row[4], rate, row[5], row[6])
+        net, vat, line_total = u.line(int(it.quantity or 0))
+        if abs(float(it.unit_price or 0) - u.net) > 0.005 or abs(float(it.vat_amount or 0) - u.vat) > 0.005:
+            changed = True
+            it.unit_price, it.vat_amount, it.total_price = u.net, u.vat, line_total
+        lines.append({"unit": u, "quantity": int(it.quantity or 0), "supplier_key": str(row[0]), "delivery_fee": fee})
+    if not lines:
+        return False
+    tot = _pp.order_totals(lines)
+    no_part = sum(float(it.total_price or 0) for it in order_items if not it.part_id)
+    total = round(tot["total"] + no_part - float(order.discount_amount or 0), 2)
+    if (abs(float(order.shipping_cost or 0) - tot["shipping"]) > 0.005
+            or abs(float(order.total_amount or 0) - total) > 0.005):
+        changed = True
+    if changed:
+        order.subtotal, order.vat_amount = tot["subtotal"], tot["vat"]
+        order.shipping_cost, order.total_amount = tot["shipping"], total
+    return changed
+
 @router.post("/api/v1/payments/create-checkout")
 async def create_checkout_session(
     order_id: str,
@@ -646,80 +696,21 @@ async def create_checkout_session(
         raise HTTPException(status_code=400, detail="לא ניתן לפתוח תשלום להזמנה ללא פריטים")
 
     # ── Live price validation ──────────────────────────────────────────────
-    from decimal import Decimal
     async with async_session_factory() as _cat:
         _rate = await get_usd_to_ils_rate(_cat)
 
     _items_res = await db.execute(select(OrderItem).where(OrderItem.order_id == order.id))
     _order_items = _items_res.scalars().all()
-    _price_changed = False
-    _max_shipping = 0.0
-    _new_items_total = Decimal("0")
-
     try:
         async with async_session_factory() as _cat:
-            for _item in _order_items:
-                if not _item.part_id:
-                    _new_items_total += Decimal(str(float(_item.total_price)))
-                    continue
-                _sp_row = (await _cat.execute(
-                    text("""
-                        SELECT
-                            COALESCE(price_ils, price_usd * :rate) AS cost_ils,
-                            COALESCE(shipping_cost_ils, shipping_cost_usd * :rate) AS ship_ils,
-                            s.name AS supplier_name,
-                            s.country AS supplier_country
-                        FROM supplier_parts
-                        JOIN suppliers s ON s.id = supplier_parts.supplier_id
-                        WHERE part_id = :part_id AND is_available = TRUE
-                        ORDER BY
-                            COALESCE(price_ils, price_usd * :rate) ASC,
-                            is_available DESC,
-                            s.priority ASC
-                        LIMIT 1
-                    """),
-                    {"part_id": str(_item.part_id), "rate": _rate},
-                )).fetchone()
-
-                if _sp_row is None:
-                    raise HTTPException(
-                        status_code=409,
-                        detail={
-                            "detail": "part_unavailable",
-                            "message": "אחד או יותר מהחלקים אינם זמינים כרגע. אנא צור קשר עם שירות הלקוחות.",
-                        },
-                    )
-
-                if _sp_row[0] is not None:
-                    _vat_rate = get_supplier_vat_rate(_sp_row[2], _sp_row[3])
-                    _live_unit = round(float(_sp_row[0]) * 1.45 * (1.0 + _vat_rate), 2)
-                    _live_ship = resolve_customer_shipping_fee(
-                        supplier_shipping_ils=_sp_row[1],
-                        supplier_name=_sp_row[2],
-                        supplier_country=_sp_row[3],
-                    )
-                    _max_shipping = max(_max_shipping, _live_ship)
-                    if abs(_live_unit - round(float(_item.unit_price), 2)) > 0.01:
-                        _price_changed = True
-                        _item.unit_price = _live_unit
-                        _item.total_price = round(_live_unit * _item.quantity, 2)
-                _new_items_total += Decimal(str(float(_item.total_price)))
+            _price_changed = await _live_reprice_order(_cat, order, _order_items, _rate)
     except HTTPException:
         raise
     except Exception as _e:
         print(f"[Payment] Live price check error (using stored prices): {_e}")
-        _new_items_total = Decimal("0")
         _price_changed = False
-        _max_shipping = 0.0
-        for _item in _order_items:
-            _new_items_total += Decimal(str(float(_item.total_price)))
-
-    if _max_shipping > 0 and abs(_max_shipping - round(float(order.shipping_cost), 2)) > 0.01:
-        _price_changed = True
-        order.shipping_cost = round(_max_shipping, 2)
 
     if _price_changed:
-        order.total_amount = round(float(_new_items_total) + float(order.shipping_cost), 2)
         await db.commit()
         raise HTTPException(
             status_code=409,
@@ -796,7 +787,7 @@ async def create_checkout_session(
         if int(item.quantity or 0) <= 0:
             raise HTTPException(status_code=400, detail="כמות פריט לא תקינה בהזמנה")
 
-        unit_amount_agorot = int(round(float(item.total_price) / item.quantity * 100))
+        unit_amount_agorot = _agorot(float(item.total_price) / item.quantity)
         if unit_amount_agorot <= 0:
             raise HTTPException(status_code=400, detail="מחיר פריט לא תקין בהזמנה")
 
@@ -818,7 +809,7 @@ async def create_checkout_session(
             "price_data": {
                 "currency": "ils",
                 "product_data": {"name": "משלוח"},
-                "unit_amount": int(float(order.shipping_cost) * 100),
+                "unit_amount": _agorot(order.shipping_cost),
             },
             "quantity": 1,
         })
@@ -921,7 +912,6 @@ async def create_multi_checkout_session(
             raise HTTPException(status_code=400, detail=f"הזמנה ללא פריטים אינה ניתנת לתשלום: {o.order_number}")
 
     # ── Live price validation ──────────────────────────────────────────────
-    from decimal import Decimal
     async with async_session_factory() as _cat:
         _rate = await get_usd_to_ils_rate(_cat)
 
@@ -930,63 +920,7 @@ async def create_multi_checkout_session(
         for _order in orders:
             _items_res = await db.execute(select(OrderItem).where(OrderItem.order_id == _order.id))
             _order_items = _items_res.scalars().all()
-            _order_changed = False
-            _max_shipping = 0.0
-            _new_items_total = Decimal("0")
-
-            for _item in _order_items:
-                if not _item.part_id:
-                    _new_items_total += Decimal(str(float(_item.total_price)))
-                    continue
-                _sp_row = (await _cat.execute(
-                    text("""
-                        SELECT
-                            COALESCE(price_ils, price_usd * :rate) AS cost_ils,
-                            COALESCE(shipping_cost_ils, shipping_cost_usd * :rate) AS ship_ils,
-                            s.name AS supplier_name,
-                            s.country AS supplier_country
-                        FROM supplier_parts
-                        JOIN suppliers s ON s.id = supplier_parts.supplier_id
-                        WHERE part_id = :part_id AND is_available = TRUE
-                        ORDER BY
-                            COALESCE(price_ils, price_usd * :rate) ASC,
-                            is_available DESC,
-                            s.priority ASC
-                        LIMIT 1
-                    """),
-                    {"part_id": str(_item.part_id), "rate": _rate},
-                )).fetchone()
-
-                if _sp_row:
-                    _vat_rate = get_supplier_vat_rate(_sp_row[2], _sp_row[3])
-                    _live_unit = round(float(_sp_row[0]) * 1.45 * (1.0 + _vat_rate), 2)
-                    _live_ship = resolve_customer_shipping_fee(
-                        supplier_shipping_ils=_sp_row[1],
-                        supplier_name=_sp_row[2],
-                        supplier_country=_sp_row[3],
-                    )
-                    _max_shipping = max(_max_shipping, _live_ship)
-                else:
-                    raise HTTPException(
-                        status_code=409,
-                        detail={
-                            "detail": "part_unavailable",
-                            "message": "אחד או יותר מהחלקים אינם זמינים כרגע. אנא צור קשר עם שירות הלקוחות.",
-                        },
-                    )
-
-                if abs(_live_unit - round(float(_item.unit_price), 2)) > 0.01:
-                    _order_changed = True
-                    _item.unit_price = _live_unit
-                    _item.total_price = round(_live_unit * _item.quantity, 2)
-                _new_items_total += Decimal(str(float(_item.total_price)))
-
-            if _max_shipping > 0 and abs(_max_shipping - round(float(_order.shipping_cost), 2)) > 0.01:
-                _order_changed = True
-                _order.shipping_cost = round(_max_shipping, 2)
-
-            if _order_changed:
-                _order.total_amount = round(float(_new_items_total) + float(_order.shipping_cost), 2)
+            if await _live_reprice_order(_cat, _order, _order_items, _rate):
                 _updated_orders.append(_order.order_number)
 
     if _updated_orders:
@@ -1009,7 +943,7 @@ async def create_multi_checkout_session(
             if int(item.quantity or 0) <= 0:
                 raise HTTPException(status_code=400, detail=f"כמות פריט לא תקינה בהזמנה: {order.order_number}")
 
-            unit_amount_agorot = int(round(float(item.total_price) / item.quantity * 100))
+            unit_amount_agorot = _agorot(float(item.total_price) / item.quantity)
             if unit_amount_agorot <= 0:
                 raise HTTPException(status_code=400, detail=f"מחיר פריט לא תקין בהזמנה: {order.order_number}")
 
@@ -1029,7 +963,7 @@ async def create_multi_checkout_session(
                 "price_data": {
                     "currency": "ils",
                     "product_data": {"name": f"משלוח [{order.order_number}]"},
-                    "unit_amount": int(float(order.shipping_cost) * 100),
+                    "unit_amount": _agorot(order.shipping_cost),
                 },
                 "quantity": 1,
             })
@@ -2185,20 +2119,13 @@ async def create_whatsapp_checkout(
     if cost_ils <= 0:
         return {"ok": False, "error": "Part has no valid price"}
 
-    supplier_vat_rate = get_supplier_vat_rate(supplier_rec.name or "", supplier_rec.country or "")
-    ship_ils = resolve_customer_shipping_fee(
-        supplier_shipping_ils=sp.shipping_cost_ils,
-        supplier_shipping_usd=sp.shipping_cost_usd,
-        usd_to_ils_rate=rate,
-        supplier_name=supplier_rec.name,
-        supplier_country=supplier_rec.country,
-    )
-
-    unit_price = round(cost_ils * 1.45, 2)           # 45% markup (ex-VAT)
-    vat_per_unit = round(unit_price * supplier_vat_rate, 2)
-    subtotal = round(unit_price * quantity, 2)
-    vat_total = round(subtotal * supplier_vat_rate, 2)
-    shipping = round(ship_ils, 2)
+    import price_policy as _pp                     # 2026-10-29: the one policy (same lines as create_order)
+    _u = _pp.unit_price(cost_ils, supplier_rec.name, supplier_rec.country)
+    supplier_vat_rate = _u.vat_rate
+    shipping = _pp.delivery_fee(sp.shipping_cost_ils, sp.shipping_cost_usd, rate, supplier_rec.name,
+                                supplier_rec.country)
+    unit_price, vat_per_unit = _u.net, _u.vat
+    subtotal, vat_total, _line = _u.line(quantity)      # VAT = per-unit VAT x qty (= the Stripe line)
     total = round(subtotal + vat_total + shipping, 2)
 
     # ── 3. Create Order + OrderItem (PII DB) ───────────────────────────────────
@@ -2302,7 +2229,7 @@ async def create_whatsapp_checkout(
                                             + f"אחריות {sp.warranty_months or 12} חודשים"
                                         ),
                                     },
-                                    "unit_amount": int(round((unit_price + vat_per_unit) * quantity * 100)),
+                                    "unit_amount": _agorot(subtotal + vat_total),
                                 },
                                 "quantity": 1,
                             },
@@ -2310,7 +2237,7 @@ async def create_whatsapp_checkout(
                                 "price_data": {
                                     "currency": "ils",
                                     "product_data": {"name": "משלוח"},
-                                    "unit_amount": int(shipping * 100),
+                                    "unit_amount": _agorot(shipping),
                                 },
                                 "quantity": 1,
                             },

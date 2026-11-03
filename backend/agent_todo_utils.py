@@ -20,7 +20,7 @@ _ACTIVE_TODO_SQL = text(
         COALESCE(tags, ARRAY[]::varchar[]) AS tags,
         COALESCE(artifacts, '{}'::jsonb) AS artifacts
     FROM agent_todos
-    WHERE assigned_to_agent = :agent_name
+    WHERE assigned_to_agent = ANY(CAST(:agent_names AS varchar[]))
       AND status IN ('not_started', 'in_progress')
     ORDER BY
         CASE priority
@@ -35,7 +35,11 @@ _ACTIVE_TODO_SQL = text(
 
 
 async def get_active_agent_todos(db: AsyncSession, agent_name: str) -> List[Dict[str, Any]]:
-    rows = (await db.execute(_ACTIVE_TODO_SQL, {"agent_name": agent_name})).mappings().all()
+    # 2026-10-27: match every historic spelling of the agent (agent_identity) - BOAZ looked up
+    # "pricing_agent" while its todos were filed as "BOAZ", so it never saw one. Unknown names match exactly.
+    from agent_identity import aliases
+    names = sorted(aliases(agent_name))
+    rows = (await db.execute(_ACTIVE_TODO_SQL, {"agent_names": names})).mappings().all()
     todos: List[Dict[str, Any]] = []
     for row in rows:
         todo = dict(row)

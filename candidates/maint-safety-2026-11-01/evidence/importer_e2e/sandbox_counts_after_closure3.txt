@@ -1,0 +1,1 @@
+COUNTS {'car_brands': 1, 'suppliers': 17, 'supplier_parts': 0, 'parts_catalog': 0, 'part_vehicle_fitment': 0, 'parts_images': 0, 'part_thumbnails': 0, 'agent_todos': 0, 'system_settings': 9, 'aftermarket_brands': 20}

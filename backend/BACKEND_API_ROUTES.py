@@ -2994,6 +2994,7 @@ async def startup():
     from email_agent.loop import email_agent_loop as _email_agent_loop
     _supervised_task("email_agent_loop",            _email_agent_loop(notify=notify_owner))
     _supervised_task("supplier_sourcing_loop",      _supplier_sourcing_loop())
+    _supervised_task("boaz_task_loop",              _boaz_task_loop())
     _supervised_task("social_feedback_loop",        _social_feedback_loop())
     _supervised_task("group_scan_loop",             _group_scan_loop())
     _supervised_task("noa_eod_report_loop",         _noa_eod_report_loop())
@@ -3894,6 +3895,7 @@ _NOTIFY_CATEGORIES = {
     "orders":   "📦 הזמנות",
     "social":   "📣 סושיאל",
     "supplier": "🔌 ספקים",
+    "email":    "📧 מיילים",
 }
 _NOTIFY_SEVERITY_ICON = {
     "critical": "🔴",
@@ -4246,6 +4248,26 @@ async def _noa_engagement_loop():
         await asyncio.sleep(interval)
 
 
+async def _boaz_task_loop():
+    """BOAZ executes its agent_todos (boaz_tasks.py, owner task 2026-10-27): claims tasks filed under BOAZ or any
+    historic spelling, runs the permitted work, completes only with a result, escalates owner decisions (deduped
+    WhatsApp via notify_owner). Toggle BOAZ_TASKS_ENABLED (supplier_flags: OFF unless exactly "1"); interval BOAZ_TASK_INTERVAL_S (900 s).
+    Light DB work only (<= BOAZ_TASK_BATCH rows per pass); never sends to a supplier, orders or pays."""
+    import boaz_tasks as _bt
+    interval = max(60, int(os.getenv("BOAZ_TASK_INTERVAL_S", "900")))
+    await asyncio.sleep(180)   # let startup settle
+    while True:
+        import supplier_flags as _sf
+        if _sf.enabled("BOAZ_TASKS_ENABLED"):
+            try:
+                res = await _bt.run_once(_bt.PgTaskRepo(), _bt.pg_deps(), notify=notify_owner)
+                if res.get("claimed"):
+                    logger.info("[boaz_tasks] %s", res)
+            except Exception as exc:
+                logger.error("[boaz_tasks] pass failed: %s", exc)
+        await asyncio.sleep(interval)
+
+
 async def _supplier_sourcing_loop():
     """
     NIR's supplier-sourcing "superpower" (see services/supplier_sourcing.py).
@@ -4451,10 +4473,10 @@ async def _noa_marketing_loop():
                        mp.cost, mp.supplier_name, mp.country
                 FROM parts_catalog pc
                 JOIN LATERAL (
-                    SELECT sp.price_ils AS cost, s.name AS supplier_name, s.country
+                    SELECT __COST__ AS cost, s.name AS supplier_name, s.country
                     FROM supplier_parts sp JOIN suppliers s ON s.id = sp.supplier_id
-                    WHERE sp.part_id = pc.id AND sp.is_available AND sp.price_ils > 0
-                    ORDER BY __RANK__, sp.price_ils ASC LIMIT 1
+                    WHERE sp.part_id = pc.id AND __VISIBLE__ AND __COST__ > 0
+                    ORDER BY __ORDER__ LIMIT 1
                 ) mp ON TRUE
                 WHERE pc.is_active
                   AND (pc.name_he ILIKE :hq OR pc.name ILIKE :eq)
@@ -4462,9 +4484,12 @@ async def _noa_marketing_loop():
                   AND mp.cost BETWEEN 15 AND 4000
                 ORDER BY random() LIMIT 1
             """
-            params = {"hq": f"%{heb_part.split()[0]}%", "eq": f"%{eng_part.split()[0]}%"}
-            from offer_classification import class_rank_sql as _crs
-            _sql = _sql.replace("__RANK__", _crs("sp.part_type", "pc.part_type"))   # marketing price = class-compatible offer
+            import price_policy as _pp        # 2026-10-29: the SAME offer + price as the website (one policy)
+            from currency_rate import get_usd_to_ils_rate as _rate_fn
+            params = {"hq": f"%{heb_part.split()[0]}%", "eq": f"%{eng_part.split()[0]}%",
+                      "usd_to_ils_rate": await _rate_fn(db)}
+            _sql = (_sql.replace("__VISIBLE__", _pp.VISIBLE_OFFER_SQL).replace("__COST__", _pp.offer_cost_sql())
+                    .replace("__ORDER__", _pp.price_basis_order_sql("pc.part_type")))
             row = (await db.execute(text(_sql.format(mfr_clause="AND pc.manufacturer ILIKE :mfr")),
                                     {**params, "mfr": f"%{car_make}%"})).fetchone()
             if not row:
@@ -4487,11 +4512,9 @@ async def _noa_marketing_loop():
                 _pname = _name_he_raw if re.search(r"[֐-׿]", _name_he_raw) \
                     else (heb_part or (row[0] or "").strip())
                 _pname = _pname[:70]
-                cost = float(row[3])
-                sell_net = cost * PROFIT_MARGIN                      # cost × 1.45
-                vat_rate = get_supplier_vat_rate(                     # 18% local, 0% foreign
-                    supplier_name=row[4], supplier_country=row[5])
-                price = round(sell_net + sell_net * vat_rate)         # pre-shipping "from"
+                _u = _pp.unit_price(float(row[3]), row[4], row[5])   # = the website's unit price, exactly
+                price = f"{_u.total:,.2f}"                            # pre-shipping "from"
+                vat_rate = _u.vat_rate
                 vat_note = "כולל מע\"מ" if vat_rate > 0 else "ללא מע\"מ (יבוא)"
                 # Manufacturer returned alongside the text (not just embedded in it) so
                 # the coherence gate can deterministically verify it survived the LLM's

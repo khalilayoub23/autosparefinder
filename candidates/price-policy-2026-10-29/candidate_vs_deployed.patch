@@ -1,0 +1,1399 @@
+--- a/backend/BACKEND_AI_AGENTS.py
++++ b/backend/BACKEND_AI_AGENTS.py
+@@ -1032,8 +1032,9 @@
+         return f"{system_text}\n\n[CHANNEL POLICY - MUST FOLLOW]\n{TELEGRAM_BOT_POLICY}\n[CHANNEL: {source_key.upper()}]"
+     return system_text
+ # Business constants
+-PROFIT_MARGIN = 1.45       # 45% markup on cost
+-VAT_RATE = 0.18            # 18%
++# 2026-10-29: the policy lives in price_policy.py (one source); these names are kept for existing importers of them.
++from price_policy import MARGIN as PROFIT_MARGIN, VAT_RATE   # noqa: E402
++import price_policy as _pp   # noqa: E402
+ SHIPPING_ILS = float(os.getenv("DEFAULT_CUSTOMER_SHIPPING_ILS", "59"))  # dynamic fallback
+ # Import the single source of truth for USD→ILS rate from BACKEND_DATABASE_MODELS
+ from BACKEND_DATABASE_MODELS import USD_TO_ILS
+@@ -1064,8 +1065,8 @@
+     # fake and redundant. If the API omits it, the per-origin fallback applies.
+ }
+ 
+-_LOCAL_SUPPLIER_NAMES = {"autoparts pro il"}
+-_LOCAL_COUNTRY_KEYS = {"il", "israel", "ישראל"}
++_LOCAL_SUPPLIER_NAMES = _pp.LOCAL_SUPPLIER_NAMES
++_LOCAL_COUNTRY_KEYS = _pp.LOCAL_COUNTRY_KEYS
+ # Per-origin-country LAST-RESORT fallback (used only when a supplier has no
+ # captured shipping_cost AND is not in SUPPLIER_SHIPPING_RATES above).
+ # ⚠️ These are UNVERIFIED ESTIMATES, not measured quotes — international parcel
+@@ -1155,17 +1156,12 @@
+ 
+ 
+ def is_local_supplier(supplier_name: Optional[str] = None, supplier_country: Optional[str] = None) -> bool:
+-    country_key = (supplier_country or "").strip().lower()
+-    if country_key:
+-        return country_key in _LOCAL_COUNTRY_KEYS
+-
+-    supplier_key = (supplier_name or "").strip().lower()
+-    return supplier_key in _LOCAL_SUPPLIER_NAMES
++    return _pp.is_local_supplier(supplier_name, supplier_country)
+ 
+ 
+ def get_supplier_vat_rate(supplier_name: Optional[str] = None, supplier_country: Optional[str] = None) -> float:
+-    """VAT applies only to local suppliers."""
+-    return VAT_RATE if is_local_supplier(supplier_name, supplier_country) else 0.0
++    """VAT applies only to local suppliers; an unknown supplier counts as local (price_policy.vat_rate)."""
++    return _pp.vat_rate(supplier_name, supplier_country)
+ 
+ 
+ def get_supplier_shipping(supplier_name: str, supplier_country: Optional[str] = None) -> float:
+@@ -1900,15 +1896,12 @@
+         if customer_shipping is None and shipping_cost_usd:
+             customer_shipping = round(float(shipping_cost_usd) * applied_rate, 2)
+         cost_ils = supplier_price_usd * applied_rate
+-        price_no_vat = round(cost_ils * PROFIT_MARGIN, 2)
+-        applied_vat_rate = (
+-            get_supplier_vat_rate(supplier_name=supplier_name, supplier_country=supplier_country)
+-            if local_vat_only
+-            else VAT_RATE
+-        )
+-        vat = round(price_no_vat * applied_vat_rate, 2)
++        # price_policy is the one rule; VAT is ALWAYS conditional (local_vat_only is kept for callers, ignored:
++        # a flat 18% on a foreign offer is not the policy - 2026-10-29)
++        _u = _pp.unit_price(cost_ils, supplier_name, supplier_country) or _pp.UnitPrice(0.0, 0.0, 0.0, 0.0)
++        price_no_vat, vat = _u.net, _u.vat
+         delivery = customer_shipping if customer_shipping is not None else SHIPPING_ILS
+-        total = round(price_no_vat + vat + delivery, 2)
++        total = round(_u.total + delivery, 2)
+         profit = round(price_no_vat - cost_ils, 2)
+         return {
+             "cost_ils": round(cost_ils, 2),
+@@ -1939,15 +1932,11 @@
+         if customer_shipping is None and shipping_cost_ils:
+             customer_shipping = float(shipping_cost_ils)
+         total_cost_ils = cost_ils
+-        price_no_vat = round(total_cost_ils * PROFIT_MARGIN, 2)
+-        applied_vat_rate = (
+-            get_supplier_vat_rate(supplier_name=supplier_name, supplier_country=supplier_country)
+-            if local_vat_only
+-            else VAT_RATE
+-        )
+-        vat = round(price_no_vat * applied_vat_rate, 2)
++        # price_policy is the one rule; VAT is ALWAYS conditional (local_vat_only kept for callers, ignored)
++        _u = _pp.unit_price(total_cost_ils, supplier_name, supplier_country) or _pp.UnitPrice(0.0, 0.0, 0.0, 0.0)
++        price_no_vat, vat = _u.net, _u.vat
+         delivery = customer_shipping if customer_shipping is not None else SHIPPING_ILS
+-        total = round(price_no_vat + vat + delivery, 2)
++        total = round(_u.total + delivery, 2)
+         profit = round(price_no_vat - total_cost_ils, 2)
+         return {
+             "cost_ils": round(total_cost_ils, 2),
+@@ -2969,16 +2958,17 @@
+                         sp.is_available, sp.warranty_months, sp.estimated_delivery_days,
+                         s.name AS supplier_name, s.country AS supplier_country,
+                         sp.part_type AS offer_part_type,
+-                        ROW_NUMBER() OVER (
+-                            PARTITION BY sp.part_id
+-                            ORDER BY sp.is_available DESC, __RANK__, s.priority ASC
+-                        ) AS rn
++                        1 AS rn
+                     FROM supplier_parts sp
+                     JOIN suppliers s ON sp.supplier_id = s.id
+-                    WHERE sp.part_id = ANY(:pids) AND s.is_active = true
+-                    ORDER BY sp.part_id, sp.is_available DESC, __RANK__, s.priority ASC
+-                """.replace("__RANK__", _oc.class_rank_sql("sp.part_type", "(SELECT pc0.part_type FROM parts_catalog pc0 WHERE pc0.id = sp.part_id)"))),
+-                {"pids": part_ids},
++                    WHERE sp.part_id = ANY(:pids) AND __VISIBLE__ AND __COST__ > 0
++                    ORDER BY sp.part_id, __ORDER__
++                """.replace("__VISIBLE__", _pp.VISIBLE_OFFER_SQL).replace("__COST__", _pp.offer_cost_sql())
++                   .replace("__ORDER__", _pp.price_basis_order_sql(
++                       "(SELECT pc0.part_type FROM parts_catalog pc0 WHERE pc0.id = sp.part_id)"))),
++                # 2026-10-29: the SAME offer as the website search (price_policy) - it used to pick by
++                # supplier priority (not price), include unavailable offers and skip the listing filter
++                {"pids": part_ids, "usd_to_ils_rate": usd_to_ils_rate},
+             )
+             sp_rows_all = sp_batch_result.fetchall()
+         # Group up to 3 suppliers per part (in_stock first, then on_order)
+@@ -3038,42 +3028,27 @@
+                 pricing["estimated_delivery"] = f"{estimated_delivery_days}–{estimated_delivery_days + 7} ימים"
+                 suppliers.append(pricing)
+ 
+-            # Fallback: synthesise pricing from base_price when no supplier row exists.
+-            # base_price 3-case logic:
+-            #   1. importer_price_ils > 0 (KGM/SsangYong \u2014 real wholesale cost):
+-            #      base = max \u00d7 1.45; price_no_vat = importer \u00d7 1.45; vat = price_no_vat \u00d7 0.18
+-            #   2. online_price_ils > 0 (eBay/international): base = online \u00d7 1.45; vat = 0
+-            #   3. max_price_ils only (IL official importer reference \u2014 no markup):
+-            #      base = max (dealer retail incl. VAT); decompose for display
++            # Fallback: a catalog-only part (no live offer). price_policy.catalog_estimate_price - the importer
++            # cost under the SAME rule as every offer (cost x 1.45 + conditional VAT); base_price is never used
++            # (2026-10-29: it used to set total = base_price + a default fee, inconsistent with its own net/VAT).
+             bp = float(part.base_price) if part.base_price else 0.0
+-            if not suppliers and bp > 0:
+-                importer_cost = float(part.importer_price_ils) if part.importer_price_ils else 0.0
+-                online_cost   = float(part.online_price_ils) if part.online_price_ils else 0.0
+-                shipping      = SHIPPING_ILS
+-                if importer_cost > 0:
+-                    # KGM/SsangYong \u2014 actual wholesale trade cost, apply IL VAT on top of margin
+-                    price_no_vat = round(importer_cost * PROFIT_MARGIN, 2)
+-                    vat          = round(price_no_vat * VAT_RATE, 2)
+-                elif online_cost > 0:
+-                    # International / eBay \u2014 no IL VAT
+-                    price_no_vat = round(online_cost * PROFIT_MARGIN, 2)
+-                    vat          = 0.0
+-                else:
+-                    # IL official importer reference (base = dealer retail incl. VAT) \u2014 decompose for display
+-                    price_no_vat = round(bp / (1 + VAT_RATE), 2)
+-                    vat          = round(bp - price_no_vat, 2)
++            _est = None if suppliers else _pp.catalog_estimate(part.importer_price_ils, part.max_price_ils,
++                                                               part.online_price_ils)
++            if _est is not None:
++                _u = _pp.unit_price(_est[0], supplier_country=_est[1])
++                shipping = _pp.delivery_fee(supplier_country=_est[1])
+                 suppliers = [{
+-                    "price_no_vat": price_no_vat,
+-                    "vat": vat,
++                    "price_no_vat": _u.net,
++                    "vat": _u.vat,
+                     "shipping": shipping,
+-                    "total": round(bp + shipping, 2),
++                    "total": round(_u.total + shipping, 2),
+                     "availability": "on_order",
+                     "warranty_months": 12,
+                     "estimated_delivery_days": 14,
+                     "supplier_part_id": None,
+                     "part_type": _oc.offer_label(part.part_type, None),
+                     "estimated_delivery": "14\u201321 \u05d9\u05de\u05d9\u05dd",
+-                    "is_base_price_fallback": True,
++                    "is_base_price_fallback": True,      # = catalog estimate (key kept for consumers)
+                 }]
+ 
+             # Best option = first supplier (in_stock best price)
+@@ -3091,7 +3066,6 @@
+                 "compatible_vehicles": part.compatible_vehicles or [],
+                 "pricing": best,           # kept for backward compat
+                 "suppliers": suppliers,    # all options (up to 3)
+-                "base_price": bp,
+                 "warranty_months": rows[0].warranty_months if rows else 12,
+             })
+ 
+--- a/backend/BACKEND_API_ROUTES.py
++++ b/backend/BACKEND_API_ROUTES.py
+@@ -4471,10 +4471,10 @@
+                        mp.cost, mp.supplier_name, mp.country
+                 FROM parts_catalog pc
+                 JOIN LATERAL (
+-                    SELECT sp.price_ils AS cost, s.name AS supplier_name, s.country
++                    SELECT __COST__ AS cost, s.name AS supplier_name, s.country
+                     FROM supplier_parts sp JOIN suppliers s ON s.id = sp.supplier_id
+-                    WHERE sp.part_id = pc.id AND sp.is_available AND sp.price_ils > 0
+-                    ORDER BY __RANK__, sp.price_ils ASC LIMIT 1
++                    WHERE sp.part_id = pc.id AND __VISIBLE__ AND __COST__ > 0
++                    ORDER BY __ORDER__ LIMIT 1
+                 ) mp ON TRUE
+                 WHERE pc.is_active
+                   AND (pc.name_he ILIKE :hq OR pc.name ILIKE :eq)
+@@ -4482,9 +4482,12 @@
+                   AND mp.cost BETWEEN 15 AND 4000
+                 ORDER BY random() LIMIT 1
+             """
+-            params = {"hq": f"%{heb_part.split()[0]}%", "eq": f"%{eng_part.split()[0]}%"}
+-            from offer_classification import class_rank_sql as _crs
+-            _sql = _sql.replace("__RANK__", _crs("sp.part_type", "pc.part_type"))   # marketing price = class-compatible offer
++            import price_policy as _pp        # 2026-10-29: the SAME offer + price as the website (one policy)
++            from currency_rate import get_usd_to_ils_rate as _rate_fn
++            params = {"hq": f"%{heb_part.split()[0]}%", "eq": f"%{eng_part.split()[0]}%",
++                      "usd_to_ils_rate": await _rate_fn(db)}
++            _sql = (_sql.replace("__VISIBLE__", _pp.VISIBLE_OFFER_SQL).replace("__COST__", _pp.offer_cost_sql())
++                    .replace("__ORDER__", _pp.price_basis_order_sql("pc.part_type")))
+             row = (await db.execute(text(_sql.format(mfr_clause="AND pc.manufacturer ILIKE :mfr")),
+                                     {**params, "mfr": f"%{car_make}%"})).fetchone()
+             if not row:
+@@ -4507,11 +4510,9 @@
+                 _pname = _name_he_raw if re.search(r"[֐-׿]", _name_he_raw) \
+                     else (heb_part or (row[0] or "").strip())
+                 _pname = _pname[:70]
+-                cost = float(row[3])
+-                sell_net = cost * PROFIT_MARGIN                      # cost × 1.45
+-                vat_rate = get_supplier_vat_rate(                     # 18% local, 0% foreign
+-                    supplier_name=row[4], supplier_country=row[5])
+-                price = round(sell_net + sell_net * vat_rate)         # pre-shipping "from"
++                _u = _pp.unit_price(float(row[3]), row[4], row[5])   # = the website's unit price, exactly
++                price = f"{_u.total:,.2f}"                            # pre-shipping "from"
++                vat_rate = _u.vat_rate
+                 vat_note = "כולל מע\"מ" if vat_rate > 0 else "ללא מע\"מ (יבוא)"
+                 # Manufacturer returned alongside the text (not just embedded in it) so
+                 # the coherence gate can deterministically verify it survived the LLM's
+--- /dev/null
++++ b/backend/price_policy.py
+@@ -0,0 +1,179 @@
++"""
++Script: price_policy.py
++Purpose: THE customer price policy of AutoSpareFinder - the ONE place that defines how a customer price is
++         calculated. Every surface that shows, quotes, checks or charges a customer price (website search /
++         compare / cart / orders / Stripe checkout and its live re-check / WhatsApp-Telegram-web chat / NOA posts /
++         partner API / brands pages) calls these functions; none may re-implement the margin, the VAT rule,
++         the rounding or the delivery rule (guard: tests/test_price_policy_unified.py).
++Process (owner policy, CLAUDE.md "Pricing & VAT"):
++  cost        = the supplier OFFER's cost in ILS (price_ils, else price_usd x live USD->ILS rate)
++  net         = round(cost x MARGIN, 2)                       MARGIN = 1.45 (uniform 45%, no exceptions)
++  vat         = round(net x vat_rate, 2)                      18% ONLY for a LOCAL (Israeli) supplier, 0% for a
++                                                              foreign one; an UNKNOWN supplier counts as local
++                                                              (VAT is never silently dropped)
++  unit_total  = net + vat                                     = the customer unit price shown everywhere
++  line        = net x qty, vat x qty
++  delivery    = the offer's known delivery fee (resolve_customer_shipping_fee), charged ONCE per supplier per
++                order (the highest fee among that supplier's lines), never inside the margin base
++  order total = sum(lines) + sum(delivery per supplier)
++  No live offer (catalog-only part): the estimate uses the catalog's IMPORTER cost with the same rule as a
++  local supplier (importer_price_ils; else max_price_ils / 1.18, the IL consumer reference incl. VAT; else
++  online_price_ils as a FOREIGN cost). `base_price` is NEVER a customer price (it is an internal column).
++  A raw cost (supplier_parts.price_ils, parts_catalog.min_price_ils / importer_price_ils / online_price_ils /
++  base_price) is never shown as, or stands in for, a customer price.
++Data Imported/Modified: none (pure functions).
++Last Updated: 2026-10-29
++"""
++from __future__ import annotations
++
++from dataclasses import dataclass
++from typing import Any, Dict, Iterable, Optional, Tuple
++
++MARGIN = 1.45
++VAT_RATE = 0.18
++LOCAL_SUPPLIER_NAMES = frozenset({"autoparts pro il"})
++LOCAL_COUNTRY_KEYS = frozenset({"il", "israel", "ישראל"})
++
++
++def _num(v: Any) -> float:
++    try:
++        f = float(v)
++    except (TypeError, ValueError):
++        return 0.0
++    return f if f == f else 0.0      # NaN -> 0
++
++
++def is_local_supplier(supplier_name: Optional[str] = None, supplier_country: Optional[str] = None) -> bool:
++    country = (supplier_country or "").strip().lower()
++    if country:
++        return country in LOCAL_COUNTRY_KEYS
++    return (supplier_name or "").strip().lower() in LOCAL_SUPPLIER_NAMES
++
++
++def vat_rate(supplier_name: Optional[str] = None, supplier_country: Optional[str] = None) -> float:
++    """18% for a local supplier, 0% for a foreign one. Unknown supplier (no name AND no country) -> local."""
++    if not (supplier_name or "").strip() and not (supplier_country or "").strip():
++        return VAT_RATE
++    return VAT_RATE if is_local_supplier(supplier_name, supplier_country) else 0.0
++
++
++def offer_cost_ils(price_ils: Any, price_usd: Any = None, usd_to_ils: Any = None) -> float:
++    """The supplier offer's cost in ILS: price_ils when set, else price_usd x the live rate. 0 = no usable cost."""
++    c = _num(price_ils)
++    if c > 0:
++        return c
++    u, r = _num(price_usd), _num(usd_to_ils)
++    return u * r if u > 0 and r > 0 else 0.0
++
++
++@dataclass(frozen=True)
++class UnitPrice:
++    net: float          # before VAT (cost x 1.45)
++    vat: float          # VAT on net (0 for a foreign supplier)
++    vat_rate: float
++    total: float        # net + vat = THE customer unit price
++
++    def line(self, quantity: int) -> Tuple[float, float, float]:
++        q = max(int(quantity or 0), 0)
++        net, vat = round(self.net * q, 2), round(self.vat * q, 2)
++        return net, vat, round(net + vat, 2)
++
++
++def unit_price(cost_ils: Any, supplier_name: Optional[str] = None,
++               supplier_country: Optional[str] = None) -> Optional[UnitPrice]:
++    cost = _num(cost_ils)
++    if cost <= 0:
++        return None
++    rate = vat_rate(supplier_name, supplier_country)
++    net = round(cost * MARGIN, 2)
++    vat = round(net * rate, 2)
++    return UnitPrice(net=net, vat=vat, vat_rate=rate, total=round(net + vat, 2))
++
++
++def customer_fields(cost_ils: Any, ship_ils: Any = 0, supplier_name: Optional[str] = None,
++                    supplier_country: Optional[str] = None) -> Dict[str, Optional[float]]:
++    """The offer payload fields every surface returns: customer_price_ils (net), customer_vat_ils,
++    customer_total_ils (net + VAT + the offer's delivery fee)."""
++    p = unit_price(cost_ils, supplier_name, supplier_country)
++    if p is None:
++        return {"customer_price_ils": None, "customer_vat_ils": None, "customer_total_ils": None}
++    return {"customer_price_ils": p.net, "customer_vat_ils": p.vat,
++            "customer_total_ils": round(p.total + max(_num(ship_ils), 0.0), 2)}
++
++
++def delivery_fee(supplier_shipping_ils: Any = None, supplier_shipping_usd: Any = None, usd_to_ils: Any = None,
++                 supplier_name: Optional[str] = None, supplier_country: Optional[str] = None) -> float:
++    """The offer's customer delivery fee - the ONE resolver (supplier shipping, else the supplier profile)."""
++    from BACKEND_AI_AGENTS import resolve_customer_shipping_fee
++    return round(_num(resolve_customer_shipping_fee(
++        supplier_shipping_ils=supplier_shipping_ils, supplier_shipping_usd=supplier_shipping_usd,
++        usd_to_ils_rate=usd_to_ils, supplier_name=supplier_name, supplier_country=supplier_country)), 2)
++
++
++def order_totals(lines: Iterable[Dict[str, Any]]) -> Dict[str, float]:
++    """lines: {"unit": UnitPrice, "quantity": int, "supplier_key": str, "delivery_fee": float}.
++    Delivery is charged once per supplier (the highest fee among that supplier's lines)."""
++    subtotal = vat = 0.0
++    per_supplier: Dict[str, float] = {}
++    for ln in lines:
++        n, v, _t = ln["unit"].line(ln["quantity"])
++        subtotal += n
++        vat += v
++        k = str(ln.get("supplier_key") or "")
++        per_supplier[k] = max(per_supplier.get(k, 0.0), _num(ln.get("delivery_fee")))
++    shipping = round(sum(per_supplier.values()), 2)
++    subtotal, vat = round(subtotal, 2), round(vat, 2)
++    return {"subtotal": subtotal, "vat": vat, "shipping": shipping, "total": round(subtotal + vat + shipping, 2)}
++
++
++def agorot(amount_ils: Any) -> int:
++    """ILS -> agorot for a payment provider: ROUNDED (int(x*100) truncated ₪29.99 to 2998)."""
++    return int(round(_num(amount_ils) * 100))
++
++
++# ── which offer sets a part's price (the SAME on every channel) ────────────────────────────────────────────
++# A customer-visible offer: available, active supplier, not an internal/test supplier, with a listing URL (the
++# website search's own predicate since 2026-09-21). Among them the PRICE-BASIS offer is the one whose product
++# class is compatible with the part (offer_classification.class_rank_sql), then the lowest cost.
++# Aliases: sp = supplier_parts, s = suppliers.
++ORDERABLE_OFFER_SQL = ("sp.is_available = TRUE AND s.is_active = TRUE "
++                       "AND s.name NOT IN ('Official Manufacturer Sites', 'Sandbox Supplier QA')")
++# the offer that sets a part's ADVERTISED price must also be listed (search hides URL-less price-list offers); an
++# offer the customer CHOSE (compare page lists every orderable offer) is re-priced with ORDERABLE_OFFER_SQL.
++VISIBLE_OFFER_SQL = ORDERABLE_OFFER_SQL + " AND NULLIF(BTRIM(sp.supplier_url), '') IS NOT NULL"
++
++
++def offer_cost_sql(rate_param: str = ":usd_to_ils_rate") -> str:
++    return f"COALESCE(sp.price_ils, sp.price_usd * {rate_param})"
++
++
++def price_basis_order_sql(part_type_sql: str, rate_param: str = ":usd_to_ils_rate") -> str:
++    """ORDER BY fragment: class-compatible offers first, then the cheapest cost."""
++    from offer_classification import class_rank_sql
++    return f"{class_rank_sql('sp.part_type', part_type_sql)}, {offer_cost_sql(rate_param)} ASC"
++
++
++def catalog_estimate(importer_price_ils: Any = None, max_price_ils: Any = None,
++                     online_price_ils: Any = None) -> Optional[Tuple[float, Optional[str]]]:
++    """(cost_ils, supplier_country) for a part with NO live offer, or None. The importer cost is a LOCAL cost;
++    the consumer reference max_price_ils includes 18% VAT; online_price_ils is a foreign buy price.
++    base_price is deliberately not an input."""
++    imp = _num(importer_price_ils)
++    if imp > 0:
++        return imp, "il"
++    mx = _num(max_price_ils)
++    if mx > 0:
++        return round(mx / (1 + VAT_RATE), 2), "il"
++    onl = _num(online_price_ils)
++    if onl > 0:
++        return onl, "foreign"
++    return None
++
++
++def catalog_estimate_price(importer_price_ils: Any = None, max_price_ils: Any = None,
++                           online_price_ils: Any = None) -> Optional[UnitPrice]:
++    est = catalog_estimate(importer_price_ils, max_price_ils, online_price_ils)
++    if est is None:
++        return None
++    cost, country = est
++    return unit_price(cost, supplier_country=country)
+--- a/backend/routes/admin.py
++++ b/backend/routes/admin.py
+@@ -334,8 +334,9 @@
+     # price_no_vat  = net_revenue / 1.18  (remove 18% VAT)
+     # profit        = price_no_vat × (45 / 145)  ← 45% markup portion
+     # cost          = price_no_vat - profit       ← supplier cost
+-    MARGIN_RATE = 0.45
+-    VAT_RATE = 0.18
++    import price_policy as _pp                      # 2026-10-29: one source for margin + VAT
++    MARGIN_RATE = round(_pp.MARGIN - 1, 4)
++    VAT_RATE = _pp.VAT_RATE
+     price_no_vat_net   = round(float(net_revenue) / (1 + VAT_RATE), 2)           # strip VAT
+     profit_total      = round(price_no_vat_net * (MARGIN_RATE / (1 + MARGIN_RATE)), 2)  # 45/145
+     cost_total        = round(price_no_vat_net - profit_total, 2)
+@@ -4797,7 +4798,8 @@
+         if prices:
+             prices.sort()
+             median = prices[len(prices) // 2]
+-            derived_cost = median / 1.18 / 1.45
++            import price_policy as _pp
++            derived_cost = median / (1 + _pp.VAT_RATE) / _pp.MARGIN
+             old = float(row.price_ils or derived_cost)
+             new_ils = round(max(old * 0.75, min(derived_cost, old * 1.25)), 2)
+             await db_update_supplier_part(
+--- a/backend/routes/brands.py
++++ b/backend/routes/brands.py
+@@ -16,6 +16,7 @@
+ 
+ from BACKEND_DATABASE_MODELS import get_db, CarBrand, TruckBrand, PartsCatalog
+ from currency_rate import get_usd_to_ils_rate
++import price_policy as _pp
+ from manufacturer_normalization import normalize_manufacturer_name
+ 
+ router = APIRouter()
+@@ -288,10 +289,13 @@
+                 s.name AS supplier_name, s.country AS supplier_country
+             FROM supplier_parts sp
+             JOIN suppliers s ON sp.supplier_id = s.id
+-            WHERE sp.part_id = ANY(:pids) AND s.is_active = true
+-            ORDER BY sp.part_id, sp.is_available DESC, s.priority ASC
+-        """),
+-        {"pids": part_ids},
++            WHERE sp.part_id = ANY(:pids) AND __VISIBLE__ AND __COST__ > 0
++            ORDER BY sp.part_id, __ORDER__
++        """.replace("__VISIBLE__", _pp.VISIBLE_OFFER_SQL).replace("__COST__", _pp.offer_cost_sql())
++           .replace("__ORDER__", _pp.price_basis_order_sql(
++               "(SELECT pc0.part_type FROM parts_catalog pc0 WHERE pc0.id = sp.part_id)"))),
++        # 2026-10-29: the SAME offer as the website search (price_policy) - not supplier priority
++        {"pids": part_ids, "usd_to_ils_rate": usd_to_ils_rate},
+     )
+     sp_map = {str(r.part_id): r for r in sp_batch.fetchall()}
+ 
+@@ -527,10 +531,13 @@
+                 s.name AS supplier_name, s.country AS supplier_country
+             FROM supplier_parts sp
+             JOIN suppliers s ON sp.supplier_id = s.id
+-            WHERE sp.part_id = ANY(:pids) AND s.is_active = true
+-            ORDER BY sp.part_id, sp.is_available DESC, s.priority ASC
+-        """),
+-        {"pids": part_ids},
++            WHERE sp.part_id = ANY(:pids) AND __VISIBLE__ AND __COST__ > 0
++            ORDER BY sp.part_id, __ORDER__
++        """.replace("__VISIBLE__", _pp.VISIBLE_OFFER_SQL).replace("__COST__", _pp.offer_cost_sql())
++           .replace("__ORDER__", _pp.price_basis_order_sql(
++               "(SELECT pc0.part_type FROM parts_catalog pc0 WHERE pc0.id = sp.part_id)"))),
++        # 2026-10-29: the SAME offer as the website search (price_policy) - not supplier priority
++        {"pids": part_ids, "usd_to_ils_rate": usd_to_ils_rate},
+     )
+     sp_map = {str(r.part_id): r for r in sp_batch.fetchall()}
+ 
+--- a/backend/routes/cart.py
++++ b/backend/routes/cart.py
+@@ -37,6 +37,7 @@
+ )
+ from routes.utils import _mask_supplier
+ from routes.parts import _customer_unit_price, _current_part_offer, _customer_thumbnail_map
++import price_policy as _pp
+ from routes.orders import _order_line_pricing
+ from offer_classification import class_rank_sql, offer_label
+ 
+@@ -175,9 +176,11 @@
+         "name":         part.name,
+         "category":     part.category,
+         "manufacturer": part.manufacturer,
+-        # min_price_ils is an INTERNAL supplier-cost aggregate (never a customer price): use the cheapest
+-        # live offer through the canonical policy, falling back to base_price (already cost×1.45).
+-        "price":        float((_offer or {}).get("price_ils") or part.base_price or 0),
++        # The cheapest live offer through the canonical policy; with no offer, the policy's catalog ESTIMATE
++        # (price_policy.catalog_estimate_price). base_price / min_price_ils are internal - never shown (2026-10-29).
++        "price":        float((_offer or {}).get("price_ils") or getattr(_pp.catalog_estimate_price(
++                            part.importer_price_ils, part.max_price_ils, part.online_price_ils), "total", 0) or 0),
++        "isEstimate":   not (_offer or {}).get("price_ils"),
+         # product class of the offer the price is taken from (own label, else the part's)
+         "offerPartType": (_offer or {}).get("part_type") or offer_label(part.part_type, None),
+         "imageUrl":     _thumb,
+--- a/backend/routes/orders.py
++++ b/backend/routes/orders.py
+@@ -40,18 +40,12 @@
+     ROOT FIX 2026-10-27 (owner: "we must not charge the client twice"): this endpoint used to put the
+     supplier's shipping INTO the unit price (×1.45) AND add a separate per-supplier fee — shipping was
+     charged twice on every offer that carries supplier shipping (~60% of offers)."""
+-    from BACKEND_AI_AGENTS import get_supplier_vat_rate, resolve_customer_shipping_fee
+-    cost_ils = float(sp.price_ils or 0) or (float(sp.price_usd or 0) * float(usd_to_ils_rate or 0))
+-    unit_price = round(cost_ils * 1.45, 2)
+-    vat = round(unit_price * get_supplier_vat_rate(supplier_rec.name or "", supplier_rec.country or ""), 2)
+-    delivery_fee = round(resolve_customer_shipping_fee(
+-        supplier_shipping_ils=sp.shipping_cost_ils,
+-        supplier_shipping_usd=sp.shipping_cost_usd,
+-        usd_to_ils_rate=usd_to_ils_rate,
+-        supplier_name=supplier_rec.name,
+-        supplier_country=supplier_rec.country,
+-    ), 2)
+-    return unit_price, vat, delivery_fee
++    import price_policy as _pp                     # 2026-10-29: the one policy (no inline ×1.45 / VAT here)
++    cost_ils = _pp.offer_cost_ils(sp.price_ils, sp.price_usd, usd_to_ils_rate)
++    u = _pp.unit_price(cost_ils, supplier_rec.name, supplier_rec.country) or _pp.UnitPrice(0.0, 0.0, 0.0, 0.0)
++    delivery_fee = _pp.delivery_fee(sp.shipping_cost_ils, sp.shipping_cost_usd, usd_to_ils_rate,
++                                    supplier_rec.name, supplier_rec.country)
++    return u.net, u.vat, delivery_fee
+ 
+ 
+ router = APIRouter()
+--- a/backend/routes/parts.py
++++ b/backend/routes/parts.py
+@@ -117,8 +117,9 @@
+ #   total    = sell_net + vat + shipping
+ # Every supplier offer the API returns carries these fields; the frontend and
+ # chat display them as-is and never invent their own margins again.
+-_MARGIN = 1.45
+-_VAT_RATE = 0.18
++import price_policy as _pp                               # 2026-10-29: THE price policy (one source)
++_MARGIN = _pp.MARGIN
++_VAT_RATE = _pp.VAT_RATE
+ 
+ def _offer_price_fields(cf: Dict[str, Any]) -> Dict[str, Any]:
+     """Customer-facing price fields for an offer payload. `price_ils` is the CUSTOMER price (same as the compare
+@@ -141,16 +142,7 @@
+     displayed price must equal the charged price. When the supplier is unknown, fall back to the
+     local rate so VAT is never silently dropped.
+     """
+-    if not cost_ils or cost_ils <= 0:
+-        return {"customer_price_ils": None, "customer_vat_ils": None, "customer_total_ils": None}
+-    sell_net = round(float(cost_ils) * _MARGIN, 2)
+-    if supplier_name is not None or supplier_country is not None:
+-        vat_rate = get_supplier_vat_rate(supplier_name=supplier_name, supplier_country=supplier_country)
+-    else:
+-        vat_rate = _VAT_RATE
+-    vat = round(sell_net * vat_rate, 2)
+-    total = round(sell_net + vat + float(ship_ils or 0), 2)
+-    return {"customer_price_ils": sell_net, "customer_vat_ils": vat, "customer_total_ils": total}
++    return _pp.customer_fields(cost_ils, ship_ils, supplier_name=supplier_name, supplier_country=supplier_country)
+ 
+ async def _customer_thumbnail_map(db, part_ids) -> Dict[str, str]:
+     """part_id -> clean bucket thumbnail URL (status 'ok'): the ONLY image ever shown to customers (owner rule
+@@ -181,6 +173,20 @@
+                                   supplier_country=supplier_country)["customer_total_ils"]
+ 
+ 
++def _apply_customer_price_range(part_dict: Dict[str, Any], offers: List[Dict[str, Any]], importer_price_ils=None,
++                                max_price_ils=None, online_price_ils=None) -> None:
++    """Customer-facing price summary of a search part (2026-10-29): `cheapest_price_ils` / `most_expensive_ils`
++    = the CUSTOMER unit prices (net + VAT, before delivery) of its listed offers; with no priced offer, a catalog
++    ESTIMATE by the same policy (`customer_estimate_ils`, `is_estimate`). Raw costs are never put here."""
++    units = sorted(round(float(o["customer_price_ils"]) + float(o.get("customer_vat_ils") or 0), 2)
++                   for o in offers if o.get("customer_price_ils"))
++    part_dict["cheapest_price_ils"] = units[0] if units else None
++    part_dict["most_expensive_ils"] = units[-1] if units else None
++    est = None if units else _pp.catalog_estimate_price(importer_price_ils, max_price_ils, online_price_ils)
++    part_dict["customer_estimate_ils"] = est.total if est else None
++    part_dict["is_estimate"] = bool(est)
++
++
+ # image_url is deliberately NOT here: a raw supplier image URL names the supplier's CDN (e.g. *.aliexpress-media.com)
+ # and customer surfaces must only ever show our own bucket thumbnails (see thumbnail rules in CLAUDE.md).
+ _EXTERNAL_OFFER_SAFE_FIELDS = ("title", "condition", "estimated_delivery_days", "ships_to_israel", "warranty_months")
+@@ -229,14 +235,17 @@
+     """Price-basis offer of a part: the cheapest available offer whose product class is COMPATIBLE with the part
+     (offer_classification.py), as a customer-safe dict {price_ils, name, part_type} (price via the canonical policy,
+     ex-delivery; part_type = the offer's displayed class). None when there is no usable offer."""
+-    row = (await cat_db.execute(text("""
+-        SELECT sp.price_ils, s.name, s.country, pc.name_he, pc.name, sp.part_type, pc.part_type
++    # 2026-10-29: the SAME offer as the website search (price_policy.VISIBLE_OFFER_SQL + price-basis order),
++    # incl. USD-priced offers - it used to pick from a different set (no listing filter, ILS-only).
++    rate = await get_usd_to_ils_rate(cat_db)
++    row = (await cat_db.execute(text(f"""
++        SELECT {_pp.offer_cost_sql()} AS cost, s.name, s.country, pc.name_he, pc.name, sp.part_type, pc.part_type
+         FROM supplier_parts sp
+         JOIN suppliers s ON s.id = sp.supplier_id
+         JOIN parts_catalog pc ON pc.id = sp.part_id
+-        WHERE sp.part_id = :pid AND sp.is_available AND sp.price_ils > 0 AND s.is_active
+-        ORDER BY {_rank}, sp.price_ils ASC LIMIT 1
+-    """.replace("{_rank}", class_rank_sql("sp.part_type", "pc.part_type"))), {"pid": part_id})).first()
++        WHERE sp.part_id = :pid AND {_pp.VISIBLE_OFFER_SQL} AND {_pp.offer_cost_sql()} > 0
++        ORDER BY {_pp.price_basis_order_sql("pc.part_type")} LIMIT 1
++    """), {"pid": part_id, "usd_to_ils_rate": rate})).first()
+     if not row:
+         return None
+     return {"price_ils": _customer_unit_price(float(row[0]), row[1], row[2]), "name": (row[3] or row[4] or ""),
+@@ -1612,8 +1621,8 @@
+                 text(f"""
+                     SELECT
+                         pc.id, pc.sku, pc.name, pc.name_he, pc.manufacturer,
+-                        pc.category, pc.part_type, pc.base_price,
+-                        pc.min_price_ils, pc.max_price_ils, pc.description,
++                        pc.category, pc.part_type, pc.importer_price_ils,
++                        pc.online_price_ils, pc.max_price_ils, pc.description,
+                         pc.oem_number, pc.barcode, pc.weight_kg,
+                         pc.is_safety_critical, pc.part_condition,
+                         pc.created_at, pc.updated_at
+@@ -1658,8 +1667,8 @@
+                 text(f"""
+                     SELECT
+                         pc.id, pc.sku, pc.name, pc.name_he, pc.manufacturer,
+-                        pc.category, pc.part_type, pc.base_price,
+-                        pc.min_price_ils, pc.max_price_ils, pc.description,
++                        pc.category, pc.part_type, pc.importer_price_ils,
++                        pc.online_price_ils, pc.max_price_ils, pc.description,
+                         pc.oem_number, pc.barcode, pc.weight_kg,
+                         pc.is_safety_critical, pc.part_condition,
+                         pc.created_at, pc.updated_at{score_col}
+@@ -1701,8 +1710,8 @@
+                     text(f"""
+                         SELECT DISTINCT ON (pc.id)
+                             pc.id, pc.sku, pc.name, pc.name_he, pc.manufacturer,
+-                            pc.category, pc.part_type, pc.base_price,
+-                            pc.min_price_ils, pc.max_price_ils, pc.description,
++                            pc.category, pc.part_type, pc.importer_price_ils,
++                            pc.online_price_ils, pc.max_price_ils, pc.description,
+                             pc.oem_number, pc.barcode, pc.weight_kg,
+                             pc.is_safety_critical, pc.part_condition,
+                             pc.created_at, pc.updated_at
+@@ -1833,9 +1842,6 @@
+             "manufacturer":     part_row[4],
+             "category":         part_row[5],
+             "part_type":        part_row[6],
+-            "base_price":       float(part_row[7]) if part_row[7] else None,
+-            "min_price_ils":    float(part_row[8]) if part_row[8] else None,
+-            "max_price_ils":    float(part_row[9]) if part_row[9] else None,
+             "description":      part_row[10],
+             "oem_number":       part_row[11],
+             "barcode":          _display_barcode,   # quality-specific barcode
+@@ -1846,8 +1852,10 @@
+             "updated_at":       part_row[17].isoformat() if part_row[17] else None,
+             # Marketplace comparison metadata
+             "supplier_count":       int(sup_agg[0]) if sup_agg else 0,
+-            "cheapest_price_ils":   round(float(sup_agg[1]), 2) if sup_agg and sup_agg[1] else None,
+-            "most_expensive_ils":   round(float(sup_agg[2]), 2) if sup_agg and sup_agg[2] else None,
++            # price range = CUSTOMER unit prices of the listed offers (set below); raw supplier costs
++            # (MIN/MAX of supplier_parts.price_ils) were sent here until 2026-10-29
++            "cheapest_price_ils":   None,
++            "most_expensive_ils":   None,
+         }
+ 
+         suppliers_list = []
+@@ -1889,6 +1897,7 @@
+                 "last_checked_at":       sp[17].isoformat() if sp[17] else None,
+             })
+ 
++        _apply_customer_price_range(part_dict, suppliers_list, part_row[7], part_row[9], part_row[8])
+         results: List[Dict[str, Any]] = [{"part": part_dict, "suppliers": suppliers_list}]
+ 
+         # ── Batch-fetch best supplier for additional matching rows ────────────
+@@ -1961,9 +1970,6 @@
+                     "manufacturer":     extra_row[4],
+                     "category":         extra_row[5],
+                     "part_type":        extra_row[6],
+-                    "base_price":       float(extra_row[7]) if extra_row[7] else None,
+-                    "min_price_ils":    float(extra_row[8]) if extra_row[8] else None,
+-                    "max_price_ils":    float(extra_row[9]) if extra_row[9] else None,
+                     "description":      extra_row[10],
+                     "oem_number":       extra_row[11],
+                     "barcode":          _ex_barcode,
+@@ -2011,6 +2017,7 @@
+                         "express_cutoff_time":     bsp[17],
+                         "last_checked_at":         bsp[18].isoformat() if bsp[18] else None,
+                     }]
++                _apply_customer_price_range(extra_dict, extra_suppliers, extra_row[7], extra_row[9], extra_row[8])
+                 results.append({"part": extra_dict, "suppliers": extra_suppliers})
+ 
+         return results
+@@ -3742,43 +3749,48 @@
+             "source":                  _supplier_source_tag(r[1], r[3]),
+         })
+ 
+-    # Fallback: if no supplier_parts, check if part has IL importer price
+-    # Add AutoSpareFinder as a synthetic supplier offer (marketplace own stock)
++    # Fallback: a catalog-only part (no live offer) - an ESTIMATE priced by the policy from the importer cost
++    # (price_policy.catalog_estimate_price), never from base_price + a flat 18% (2026-10-29), and never
++    # claimed "in stock" / 3 days: nothing confirms stock or delivery for a part without an offer.
+     if not suppliers:
+         part_row = (await db.execute(
+-            text("SELECT base_price, importer_price_ils, part_condition, sku FROM parts_catalog WHERE id = :pid AND is_active"),
++            text("SELECT importer_price_ils, max_price_ils, online_price_ils, part_condition, sku, part_type "
++                 "FROM parts_catalog WHERE id = :pid AND is_active"),
+             {"pid": part_id}
+         )).fetchone()
+-        if part_row and part_row[0] and float(part_row[0]) > 0:
++        _est = _pp.catalog_estimate(part_row[0], part_row[1], part_row[2]) if part_row else None
++        if _est is not None:
++            _cf = _pp.customer_fields(_est[0], 0, supplier_country=_est[1])
++            _ship = _pp.delivery_fee(supplier_country=_est[1])
+             suppliers.append({
+                 "supplier_part_id":       None,
+                 "supplier_name":          "AutoSpareFinder",
+-                "supplier_country":       "IL",
++                "supplier_country":       "IL" if _est[1] == "il" else "",
+                 "supplier_website":       "https://autosparefinder.co.il",
+                 "supplier_logo":          None,
+-                "supplier_sku":           part_row[3],
++                "supplier_sku":           part_row[4],
+                 "price_usd":              None,
+-                # base_price is already cost×1.45 — add VAT for the customer total
+-                "price_ils":              float(part_row[0]),
+-                "customer_price_ils":     float(part_row[0]),
+-                "customer_vat_ils":       round(float(part_row[0]) * _VAT_RATE, 2),
+-                "customer_total_ils":     round(float(part_row[0]) * (1 + _VAT_RATE), 2),
+-                "shipping_cost_ils":      0.0,
+-                "availability":           "in_stock",
++                **_offer_price_fields(_cf),
++                "customer_total_ils":     round(_cf["customer_total_ils"] + _ship, 2),
++                "shipping_cost_ils":      _ship,
++                "availability":           "on_order",
+                 "stock_quantity":         None,
+                 "warranty_months":        12,
+-                "estimated_delivery_days": 3,
++                "estimated_delivery_days": 14,
+                 "supplier_url":           f"https://autosparefinder.co.il/parts/{part_id}",
+                 "express_available":      False,
+                 "express_price_ils":      None,
+                 "express_delivery_days":  None,
+                 "last_checked_at":        None,
+-                "part_condition":         part_row[2] or "new",
+-                "part_type":              "aftermarket",
+-                "total_cost_ils":         round(float(part_row[0]) * (1 + _VAT_RATE), 2),
++                "part_condition":         part_row[3] or "new",
++                "part_type":              offer_label(part_row[5], None),
++                "total_cost_ils":         round(_cf["customer_total_ils"] + _ship, 2),
++                "is_base_price_fallback": True,      # = catalog estimate (key the website reads)
+                 "source":                 "autosparefinder",
+             })
+ 
++    # what the CUSTOMER pays decides the order of the list (it was raw cost + raw shipping, 2026-10-29)
++    suppliers.sort(key=lambda o: (o.get("customer_total_ils") is None, o.get("customer_total_ils") or 0))
+     return {
+         "part_id":        part_id,
+         "supplier_count": len(suppliers),
+--- a/backend/routes/payments.py
++++ b/backend/routes/payments.py
+@@ -46,6 +46,7 @@
+ )
+ from BACKEND_AI_AGENTS import get_supplier_vat_rate, resolve_customer_shipping_fee
+ 
++from price_policy import agorot as _agorot   # 2026-10-29: rounded ILS -> agorot for every Stripe amount
+ router = APIRouter()
+ 
+ 
+@@ -145,7 +146,7 @@
+             if order.shipping_cost and float(order.shipping_cost) > 0:
+                 line_items.append({
+                     "price_data": {"currency": "ils", "product_data": {"name": "משלוח"},
+-                                   "unit_amount": int(float(order.shipping_cost) * 100)},
++                                   "unit_amount": _agorot(order.shipping_cost)},
+                     "quantity": 1,
+                 })
+ 
+@@ -607,6 +608,55 @@
+     }
+ 
+ 
++
++async def _live_reprice_order(cat, order, order_items, rate) -> bool:
++    """Re-price an order from the CURRENT offers before charging (2026-10-29, price_policy): each line from the
++    offer the customer chose (`supplier_part_id`; the price-basis offer only when none is recorded), exactly as
++    create_order priced it - unit_price = net (ex-VAT), vat_amount = VAT per unit, total_price = (net + VAT) x qty,
++    delivery once per supplier. Mutates the rows; True when anything changed. Raises 409 when an offer is gone.
++    (The old check compared a VAT-INCLUSIVE live unit with the ex-VAT stored unit - every local-supplier order
++    was "changed" - re-priced from the cheapest offer of ANY supplier, and set shipping to the max fee.)"""
++    import price_policy as _pp
++    lines, changed = [], False
++    for it in order_items:
++        if not it.part_id:
++            continue
++        if it.supplier_part_id:      # the offer the customer chose: still orderable (any listed or not)
++            where, params = f"sp.id = CAST(:spid AS uuid) AND {_pp.ORDERABLE_OFFER_SQL}", {"spid": str(it.supplier_part_id)}
++        else:                        # no recorded offer: the part's price-basis offer
++            where, params = f"sp.part_id = CAST(:pid AS uuid) AND {_pp.VISIBLE_OFFER_SQL}", {"pid": str(it.part_id)}
++        row = (await cat.execute(text(f"""
++            SELECT sp.supplier_id, sp.price_ils, sp.price_usd, sp.shipping_cost_ils, sp.shipping_cost_usd,
++                   s.name, s.country
++            FROM supplier_parts sp JOIN suppliers s ON s.id = sp.supplier_id
++            JOIN parts_catalog pc ON pc.id = sp.part_id
++            WHERE {where} AND {_pp.offer_cost_sql()} > 0
++            ORDER BY {_pp.price_basis_order_sql("pc.part_type")} LIMIT 1"""),
++            {**params, "usd_to_ils_rate": rate})).fetchone()
++        if row is None:
++            raise HTTPException(status_code=409, detail={
++                "detail": "part_unavailable",
++                "message": "אחד או יותר מהחלקים אינם זמינים כרגע. אנא צור קשר עם שירות הלקוחות."})
++        u = _pp.unit_price(_pp.offer_cost_ils(row[1], row[2], rate), row[5], row[6])
++        fee = _pp.delivery_fee(row[3], row[4], rate, row[5], row[6])
++        net, vat, line_total = u.line(int(it.quantity or 0))
++        if abs(float(it.unit_price or 0) - u.net) > 0.005 or abs(float(it.vat_amount or 0) - u.vat) > 0.005:
++            changed = True
++            it.unit_price, it.vat_amount, it.total_price = u.net, u.vat, line_total
++        lines.append({"unit": u, "quantity": int(it.quantity or 0), "supplier_key": str(row[0]), "delivery_fee": fee})
++    if not lines:
++        return False
++    tot = _pp.order_totals(lines)
++    no_part = sum(float(it.total_price or 0) for it in order_items if not it.part_id)
++    total = round(tot["total"] + no_part - float(order.discount_amount or 0), 2)
++    if (abs(float(order.shipping_cost or 0) - tot["shipping"]) > 0.005
++            or abs(float(order.total_amount or 0) - total) > 0.005):
++        changed = True
++    if changed:
++        order.subtotal, order.vat_amount = tot["subtotal"], tot["vat"]
++        order.shipping_cost, order.total_amount = tot["shipping"], total
++    return changed
++
+ @router.post("/api/v1/payments/create-checkout")
+ async def create_checkout_session(
+     order_id: str,
+@@ -652,74 +702,16 @@
+ 
+     _items_res = await db.execute(select(OrderItem).where(OrderItem.order_id == order.id))
+     _order_items = _items_res.scalars().all()
+-    _price_changed = False
+-    _max_shipping = 0.0
+-    _new_items_total = Decimal("0")
+-
+     try:
+         async with async_session_factory() as _cat:
+-            for _item in _order_items:
+-                if not _item.part_id:
+-                    _new_items_total += Decimal(str(float(_item.total_price)))
+-                    continue
+-                _sp_row = (await _cat.execute(
+-                    text("""
+-                        SELECT
+-                            COALESCE(price_ils, price_usd * :rate) AS cost_ils,
+-                            COALESCE(shipping_cost_ils, shipping_cost_usd * :rate) AS ship_ils,
+-                            s.name AS supplier_name,
+-                            s.country AS supplier_country
+-                        FROM supplier_parts
+-                        JOIN suppliers s ON s.id = supplier_parts.supplier_id
+-                        WHERE part_id = :part_id AND is_available = TRUE
+-                        ORDER BY
+-                            COALESCE(price_ils, price_usd * :rate) ASC,
+-                            is_available DESC,
+-                            s.priority ASC
+-                        LIMIT 1
+-                    """),
+-                    {"part_id": str(_item.part_id), "rate": _rate},
+-                )).fetchone()
+-
+-                if _sp_row is None:
+-                    raise HTTPException(
+-                        status_code=409,
+-                        detail={
+-                            "detail": "part_unavailable",
+-                            "message": "אחד או יותר מהחלקים אינם זמינים כרגע. אנא צור קשר עם שירות הלקוחות.",
+-                        },
+-                    )
+-
+-                if _sp_row[0] is not None:
+-                    _vat_rate = get_supplier_vat_rate(_sp_row[2], _sp_row[3])
+-                    _live_unit = round(float(_sp_row[0]) * 1.45 * (1.0 + _vat_rate), 2)
+-                    _live_ship = resolve_customer_shipping_fee(
+-                        supplier_shipping_ils=_sp_row[1],
+-                        supplier_name=_sp_row[2],
+-                        supplier_country=_sp_row[3],
+-                    )
+-                    _max_shipping = max(_max_shipping, _live_ship)
+-                    if abs(_live_unit - round(float(_item.unit_price), 2)) > 0.01:
+-                        _price_changed = True
+-                        _item.unit_price = _live_unit
+-                        _item.total_price = round(_live_unit * _item.quantity, 2)
+-                _new_items_total += Decimal(str(float(_item.total_price)))
++            _price_changed = await _live_reprice_order(_cat, order, _order_items, _rate)
+     except HTTPException:
+         raise
+     except Exception as _e:
+         print(f"[Payment] Live price check error (using stored prices): {_e}")
+-        _new_items_total = Decimal("0")
+         _price_changed = False
+-        _max_shipping = 0.0
+-        for _item in _order_items:
+-            _new_items_total += Decimal(str(float(_item.total_price)))
+-
+-    if _max_shipping > 0 and abs(_max_shipping - round(float(order.shipping_cost), 2)) > 0.01:
+-        _price_changed = True
+-        order.shipping_cost = round(_max_shipping, 2)
+ 
+     if _price_changed:
+-        order.total_amount = round(float(_new_items_total) + float(order.shipping_cost), 2)
+         await db.commit()
+         raise HTTPException(
+             status_code=409,
+@@ -796,7 +788,7 @@
+         if int(item.quantity or 0) <= 0:
+             raise HTTPException(status_code=400, detail="כמות פריט לא תקינה בהזמנה")
+ 
+-        unit_amount_agorot = int(round(float(item.total_price) / item.quantity * 100))
++        unit_amount_agorot = _agorot(float(item.total_price) / item.quantity)
+         if unit_amount_agorot <= 0:
+             raise HTTPException(status_code=400, detail="מחיר פריט לא תקין בהזמנה")
+ 
+@@ -818,7 +810,7 @@
+             "price_data": {
+                 "currency": "ils",
+                 "product_data": {"name": "משלוח"},
+-                "unit_amount": int(float(order.shipping_cost) * 100),
++                "unit_amount": _agorot(order.shipping_cost),
+             },
+             "quantity": 1,
+         })
+@@ -930,63 +922,7 @@
+         for _order in orders:
+             _items_res = await db.execute(select(OrderItem).where(OrderItem.order_id == _order.id))
+             _order_items = _items_res.scalars().all()
+-            _order_changed = False
+-            _max_shipping = 0.0
+-            _new_items_total = Decimal("0")
+-
+-            for _item in _order_items:
+-                if not _item.part_id:
+-                    _new_items_total += Decimal(str(float(_item.total_price)))
+-                    continue
+-                _sp_row = (await _cat.execute(
+-                    text("""
+-                        SELECT
+-                            COALESCE(price_ils, price_usd * :rate) AS cost_ils,
+-                            COALESCE(shipping_cost_ils, shipping_cost_usd * :rate) AS ship_ils,
+-                            s.name AS supplier_name,
+-                            s.country AS supplier_country
+-                        FROM supplier_parts
+-                        JOIN suppliers s ON s.id = supplier_parts.supplier_id
+-                        WHERE part_id = :part_id AND is_available = TRUE
+-                        ORDER BY
+-                            COALESCE(price_ils, price_usd * :rate) ASC,
+-                            is_available DESC,
+-                            s.priority ASC
+-                        LIMIT 1
+-                    """),
+-                    {"part_id": str(_item.part_id), "rate": _rate},
+-                )).fetchone()
+-
+-                if _sp_row:
+-                    _vat_rate = get_supplier_vat_rate(_sp_row[2], _sp_row[3])
+-                    _live_unit = round(float(_sp_row[0]) * 1.45 * (1.0 + _vat_rate), 2)
+-                    _live_ship = resolve_customer_shipping_fee(
+-                        supplier_shipping_ils=_sp_row[1],
+-                        supplier_name=_sp_row[2],
+-                        supplier_country=_sp_row[3],
+-                    )
+-                    _max_shipping = max(_max_shipping, _live_ship)
+-                else:
+-                    raise HTTPException(
+-                        status_code=409,
+-                        detail={
+-                            "detail": "part_unavailable",
+-                            "message": "אחד או יותר מהחלקים אינם זמינים כרגע. אנא צור קשר עם שירות הלקוחות.",
+-                        },
+-                    )
+-
+-                if abs(_live_unit - round(float(_item.unit_price), 2)) > 0.01:
+-                    _order_changed = True
+-                    _item.unit_price = _live_unit
+-                    _item.total_price = round(_live_unit * _item.quantity, 2)
+-                _new_items_total += Decimal(str(float(_item.total_price)))
+-
+-            if _max_shipping > 0 and abs(_max_shipping - round(float(_order.shipping_cost), 2)) > 0.01:
+-                _order_changed = True
+-                _order.shipping_cost = round(_max_shipping, 2)
+-
+-            if _order_changed:
+-                _order.total_amount = round(float(_new_items_total) + float(_order.shipping_cost), 2)
++            if await _live_reprice_order(_cat, _order, _order_items, _rate):
+                 _updated_orders.append(_order.order_number)
+ 
+     if _updated_orders:
+@@ -1009,7 +945,7 @@
+             if int(item.quantity or 0) <= 0:
+                 raise HTTPException(status_code=400, detail=f"כמות פריט לא תקינה בהזמנה: {order.order_number}")
+ 
+-            unit_amount_agorot = int(round(float(item.total_price) / item.quantity * 100))
++            unit_amount_agorot = _agorot(float(item.total_price) / item.quantity)
+             if unit_amount_agorot <= 0:
+                 raise HTTPException(status_code=400, detail=f"מחיר פריט לא תקין בהזמנה: {order.order_number}")
+ 
+@@ -1029,7 +965,7 @@
+                 "price_data": {
+                     "currency": "ils",
+                     "product_data": {"name": f"משלוח [{order.order_number}]"},
+-                    "unit_amount": int(float(order.shipping_cost) * 100),
++                    "unit_amount": _agorot(order.shipping_cost),
+                 },
+                 "quantity": 1,
+             })
+@@ -2185,20 +2121,13 @@
+     if cost_ils <= 0:
+         return {"ok": False, "error": "Part has no valid price"}
+ 
+-    supplier_vat_rate = get_supplier_vat_rate(supplier_rec.name or "", supplier_rec.country or "")
+-    ship_ils = resolve_customer_shipping_fee(
+-        supplier_shipping_ils=sp.shipping_cost_ils,
+-        supplier_shipping_usd=sp.shipping_cost_usd,
+-        usd_to_ils_rate=rate,
+-        supplier_name=supplier_rec.name,
+-        supplier_country=supplier_rec.country,
+-    )
+-
+-    unit_price = round(cost_ils * 1.45, 2)           # 45% markup (ex-VAT)
+-    vat_per_unit = round(unit_price * supplier_vat_rate, 2)
+-    subtotal = round(unit_price * quantity, 2)
+-    vat_total = round(subtotal * supplier_vat_rate, 2)
+-    shipping = round(ship_ils, 2)
++    import price_policy as _pp                     # 2026-10-29: the one policy (same lines as create_order)
++    _u = _pp.unit_price(cost_ils, supplier_rec.name, supplier_rec.country)
++    supplier_vat_rate = _u.vat_rate
++    shipping = _pp.delivery_fee(sp.shipping_cost_ils, sp.shipping_cost_usd, rate, supplier_rec.name,
++                                supplier_rec.country)
++    unit_price, vat_per_unit = _u.net, _u.vat
++    subtotal, vat_total, _line = _u.line(quantity)      # VAT = per-unit VAT x qty (= the Stripe line)
+     total = round(subtotal + vat_total + shipping, 2)
+ 
+     # ── 3. Create Order + OrderItem (PII DB) ───────────────────────────────────
+@@ -2302,7 +2231,7 @@
+                                             + f"אחריות {sp.warranty_months or 12} חודשים"
+                                         ),
+                                     },
+-                                    "unit_amount": int(round((unit_price + vat_per_unit) * quantity * 100)),
++                                    "unit_amount": _agorot(subtotal + vat_total),
+                                 },
+                                 "quantity": 1,
+                             },
+@@ -2310,7 +2239,7 @@
+                                 "price_data": {
+                                     "currency": "ils",
+                                     "product_data": {"name": "משלוח"},
+-                                    "unit_amount": int(shipping * 100),
++                                    "unit_amount": _agorot(shipping),
+                                 },
+                                 "quantity": 1,
+                             },
+--- a/backend/services/stripe_issuing_service.py
++++ b/backend/services/stripe_issuing_service.py
+@@ -8,7 +8,8 @@
+ 
+ stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "")
+ 
+-PROFIT_MARGIN = Decimal("1.45")
++from price_policy import MARGIN as _POLICY_MARGIN   # 2026-10-29: one source for the margin
++PROFIT_MARGIN = Decimal(str(_POLICY_MARGIN))
+ 
+ async def get_usd_rate() -> Decimal:
+     try:
+--- a/backend/tests/test_customer_price_boundary.py
++++ b/backend/tests/test_customer_price_boundary.py
+@@ -196,8 +196,10 @@
+     pid = (await db.execute(sa.text("""SELECT pc.id::text FROM parts_catalog pc WHERE pc.is_active AND pc.oem_number<>''
+         AND NOT EXISTS (SELECT 1 FROM supplier_parts sp WHERE sp.part_id = pc.id) ORDER BY pc.id LIMIT 1"""))).scalar_one()
+     other = (await db.execute(sa.text("SELECT id::text, name, country FROM suppliers WHERE is_active AND name <> 'AliExpress' AND country IS NOT NULL ORDER BY name LIMIT 1"))).fetchone()
+-    await db.execute(sa.text("""INSERT INTO supplier_parts (id, supplier_id, part_id, supplier_sku, price_ils, price_usd, is_available, availability)
+-        VALUES (gen_random_uuid(), CAST(:s AS uuid), CAST(:p AS uuid), :sku, 50, 16.5, TRUE, 'in_stock')"""), {"s": other[0], "p": pid, "sku": "OTHER" + pid[:6]})
++    # the cheaper offer is a CUSTOMER-VISIBLE one (listing URL) - since 2026-10-29 every surface prices a part from
++    # the same visible offer set as the website search (price_policy.VISIBLE_OFFER_SQL)
++    await db.execute(sa.text("""INSERT INTO supplier_parts (id, supplier_id, part_id, supplier_sku, price_ils, price_usd, is_available, availability, supplier_url)
++        VALUES (gen_random_uuid(), CAST(:s AS uuid), CAST(:p AS uuid), :sku, 50, 16.5, TRUE, 'in_stock', 'https://other.example/p')"""), {"s": other[0], "p": pid, "sku": "OTHER" + pid[:6]})
+     before = (await parts._current_part_price(db, pid))[0]
+     ali = (await db.execute(sa.text("SELECT id::text FROM suppliers WHERE name='AliExpress'"))).scalar_one()
+     await db.execute(sa.text("UPDATE suppliers SET is_active = TRUE WHERE id = CAST(:a AS uuid)"), {"a": ali})
+--- /dev/null
++++ b/backend/tests/test_price_policy_unified.py
+@@ -0,0 +1,220 @@
++"""
++Script: tests/test_price_policy_unified.py
++Purpose: The customer price policy is ONE rule (backend/price_policy.py) and every price surface returns the same
++         number for the same offer (owner, 2026-10-29: "every agent or customer channel use the same policy and get
++         unified price"). Three layers:
++           1. the policy itself (margin, conditional VAT, unknown supplier, rounding, lines, delivery once per
++              supplier, agorot, catalog estimate never from base_price);
++           2. equivalence: website search/compare fields, cart/wishlist/watch unit price, chat + brands pages
++              (agent functions, ILS and USD), order lines (create_order), the pre-charge re-price, all = policy;
++           3. guards: no customer-facing module carries its own 1.45 / 1.18 / 0.18 number; no customer payload
++              carries a raw cost or base_price; the website never computes a price.
++Process: pure functions + fakes (no network, no DB).
++Data Imported/Modified: none.
++Last Updated: 2026-10-29
++"""
++from __future__ import annotations
++
++import ast
++import asyncio
++from pathlib import Path
++from types import SimpleNamespace
++
++import pytest
++
++import price_policy as pp
++
++BACKEND = Path(__file__).resolve().parent.parent
++RATE = 3.71
++
++# local / foreign / USD-priced / unknown supplier / a cost with awkward rounding
++OFFERS = [
++    {"id": "local", "price_ils": 100.0, "price_usd": None, "ship_ils": 29.0, "ship_usd": None,
++     "name": "AutoParts Pro IL", "country": "IL"},
++    {"id": "foreign", "price_ils": 243.17, "price_usd": None, "ship_ils": 58.5, "ship_usd": None,
++     "name": "car-parts.ie", "country": "IE"},
++    {"id": "usd", "price_ils": None, "price_usd": 19.99, "ship_ils": None, "ship_usd": 12.0,
++     "name": "eBay", "country": "US"},
++    {"id": "unknown", "price_ils": 77.77, "price_usd": None, "ship_ils": 0.0, "ship_usd": None,
++     "name": None, "country": None},
++    {"id": "rounding", "price_ils": 33.333, "price_usd": None, "ship_ils": 0.01, "ship_usd": None,
++     "name": "x", "country": "israel"},
++]
++
++
++def _expected(o):
++    cost = pp.offer_cost_ils(o["price_ils"], o["price_usd"], RATE)
++    return cost, pp.unit_price(cost, o["name"], o["country"]), pp.delivery_fee(
++        o["ship_ils"], o["ship_usd"], RATE, o["name"], o["country"])
++
++
++# ── 1. the policy ─────────────────────────────────────────────────────────────────────────────────────────
++def test_policy_numbers():
++    u = pp.unit_price(100, "AutoParts Pro IL", "IL")
++    assert (u.net, u.vat, u.total, u.vat_rate) == (145.0, 26.1, 171.1, 0.18)
++    f = pp.unit_price(100, "car-parts.ie", "IE")
++    assert (f.net, f.vat, f.total, f.vat_rate) == (145.0, 0.0, 145.0, 0.0)
++    assert pp.unit_price(100).vat_rate == 0.18                         # unknown supplier = local (VAT never dropped)
++    assert pp.unit_price(0) is None and pp.unit_price(None) is None and pp.unit_price("x") is None
++    assert pp.offer_cost_ils(None, 10, 3.7) == 37.0 and pp.offer_cost_ils(5, 10, 3.7) == 5.0
++    assert pp.agorot(29.99) == 2999 and pp.agorot(0.1 + 0.2) == 30     # rounded, never truncated
++    r = pp.unit_price(33.333, None, "IL")             # 48.33285 -> 48.33 ; 48.33 x 0.18 = 8.6994 -> 8.70
++    assert (r.net, r.vat, r.total) == (48.33, 8.7, 57.03) and r.line(3) == (144.99, 26.1, 171.09)
++
++
++def test_order_totals_charge_delivery_once_per_supplier():
++    a, b = pp.unit_price(100, "x", "IL"), pp.unit_price(50, "y", "IE")
++    t = pp.order_totals([
++        {"unit": a, "quantity": 2, "supplier_key": "S1", "delivery_fee": 29.0},
++        {"unit": a, "quantity": 1, "supplier_key": "S1", "delivery_fee": 25.0},   # same supplier: one fee (highest)
++        {"unit": b, "quantity": 1, "supplier_key": "S2", "delivery_fee": 40.0},
++    ])
++    assert t == {"subtotal": 507.5, "vat": 78.3, "shipping": 69.0, "total": 654.8}
++
++
++def test_catalog_estimate_uses_importer_cost_never_base_price():
++    assert pp.catalog_estimate(100, 999, 50) == (100.0, "il")
++    assert pp.catalog_estimate(None, 118, None) == (100.0, "il")          # consumer reference incl. VAT
++    assert pp.catalog_estimate(None, None, 80) == (80.0, "foreign")
++    assert pp.catalog_estimate(None, None, None) is None
++    assert pp.catalog_estimate_price(100).total == 171.1
++    assert "base_price" not in pp.catalog_estimate.__code__.co_varnames
++
++
++# ── 2. every surface = the policy ─────────────────────────────────────────────────────────────────────────
++@pytest.mark.parametrize("o", OFFERS, ids=[o["id"] for o in OFFERS])
++def test_website_search_and_cart_fields_equal_policy(o):
++    from routes.parts import _customer_price_fields, _customer_unit_price
++    cost, u, fee = _expected(o)
++    assert _customer_price_fields(cost, fee, o["name"], o["country"]) == {
++        "customer_price_ils": u.net, "customer_vat_ils": u.vat, "customer_total_ils": round(u.total + fee, 2)}
++    assert _customer_unit_price(cost, o["name"], o["country"]) == u.total
++
++
++@pytest.mark.parametrize("o", OFFERS, ids=[o["id"] for o in OFFERS])
++@pytest.mark.parametrize("local_vat_only", [True, False])
++def test_chat_and_brands_agent_prices_equal_policy(o, local_vat_only):
++    import BACKEND_AI_AGENTS as A
++    cost, u, fee = _expected(o)
++    agent = A.BaseAgent.__new__(A.BaseAgent)
++    p = agent.calculate_customer_price_from_ils(cost, o["ship_ils"] or 0, customer_shipping=fee,
++                                                supplier_name=o["name"], supplier_country=o["country"],
++                                                local_vat_only=local_vat_only)
++    assert (p["price_no_vat"], p["vat"], p["total"]) == (u.net, u.vat, round(u.total + fee, 2))
++    if o["price_usd"]:
++        q = agent.calculate_customer_price(o["price_usd"], o["ship_usd"] or 0, customer_shipping=fee,
++                                           usd_to_ils_rate=RATE, supplier_name=o["name"],
++                                           supplier_country=o["country"], local_vat_only=local_vat_only)
++        assert (q["price_no_vat"], q["vat"], q["total"]) == (u.net, u.vat, round(u.total + fee, 2))
++
++
++def test_agent_vat_rule_is_the_policy_rule():
++    import BACKEND_AI_AGENTS as A
++    for name, country in (("AutoParts Pro IL", None), ("x", "IL"), ("x", "IE"), (None, None), ("", "")):
++        assert A.get_supplier_vat_rate(name, country) == pp.vat_rate(name, country)
++    assert A.PROFIT_MARGIN == pp.MARGIN and A.VAT_RATE == pp.VAT_RATE
++
++
++@pytest.mark.parametrize("o", OFFERS, ids=[o["id"] for o in OFFERS])
++def test_order_line_equals_policy(o):
++    from routes.orders import _order_line_pricing
++    cost, u, fee = _expected(o)
++    sp = SimpleNamespace(price_ils=o["price_ils"], price_usd=o["price_usd"],
++                         shipping_cost_ils=o["ship_ils"], shipping_cost_usd=o["ship_usd"])
++    assert _order_line_pricing(sp, SimpleNamespace(name=o["name"], country=o["country"]), RATE) == (u.net, u.vat, fee)
++
++
++class _FakeCat:
++    """Answers the re-price query with the offer of each item's supplier_part_id."""
++
++    def __init__(self, offers):
++        self.offers = offers
++
++    async def execute(self, _sql, params):
++        o = self.offers[params.get("spid") or params.get("pid")]
++        row = (o["supplier_id"], o["price_ils"], o["price_usd"], o["ship_ils"], o["ship_usd"], o["name"], o["country"])
++        return SimpleNamespace(fetchone=lambda: row)
++
++
++def test_pre_charge_reprice_matches_create_order_and_is_idempotent():
++    from routes.payments import _live_reprice_order
++    offers = {"spA": {**OFFERS[0], "supplier_id": "S1"}, "spB": {**OFFERS[1], "supplier_id": "S2"},
++              "spC": {**OFFERS[0], "supplier_id": "S1", "price_ils": 40.0, "ship_ils": 10.0}}
++    items = [SimpleNamespace(part_id="p1", supplier_part_id="spA", quantity=2, unit_price=0, vat_amount=0, total_price=0),
++             SimpleNamespace(part_id="p2", supplier_part_id="spB", quantity=1, unit_price=0, vat_amount=0, total_price=0),
++             SimpleNamespace(part_id="p3", supplier_part_id="spC", quantity=1, unit_price=0, vat_amount=0, total_price=0)]
++    order = SimpleNamespace(subtotal=0, vat_amount=0, shipping_cost=0, total_amount=0, discount_amount=0)
++    assert asyncio.run(_live_reprice_order(_FakeCat(offers), order, items, RATE)) is True
++    lines = []
++    for it in items:
++        o = offers[it.supplier_part_id]
++        _c, u, fee = _expected(o)
++        assert (it.unit_price, it.vat_amount, it.total_price) == (u.net, u.vat, u.line(it.quantity)[2])
++        lines.append({"unit": u, "quantity": it.quantity, "supplier_key": o["supplier_id"], "delivery_fee": fee})
++    t = pp.order_totals(lines)
++    assert (order.subtotal, order.vat_amount, order.shipping_cost, order.total_amount) == (
++        t["subtotal"], t["vat"], t["shipping"], t["total"])
++    assert t["shipping"] == round(29.0 + 58.5, 2)                       # S1 once (highest of 29 / 10) + S2
++    assert asyncio.run(_live_reprice_order(_FakeCat(offers), order, items, RATE)) is False   # stable: no 409 loop
++
++
++def test_search_price_range_is_customer_prices_or_estimate():
++    from routes.parts import _apply_customer_price_range
++    d = {}
++    _apply_customer_price_range(d, [{"customer_price_ils": 145.0, "customer_vat_ils": 26.1},
++                                    {"customer_price_ils": 200.0, "customer_vat_ils": 0.0}], 1, 2, 3)
++    assert (d["cheapest_price_ils"], d["most_expensive_ils"], d["customer_estimate_ils"], d["is_estimate"]) == (
++        171.1, 200.0, None, False)
++    e = {}
++    _apply_customer_price_range(e, [], 100, None, None)
++    assert (e["cheapest_price_ils"], e["customer_estimate_ils"], e["is_estimate"]) == (None, 171.1, True)
++
++
++# ── 3. guards ─────────────────────────────────────────────────────────────────────────────────────────────
++CUSTOMER_MODULES = (sorted((BACKEND / "routes").glob("*.py")) + sorted((BACKEND / "services").rglob("*.py"))
++                    + sorted((BACKEND / "social").glob("*.py")) + sorted((BACKEND / "agents").glob("*.py"))
++                    + [BACKEND / n for n in ("BACKEND_AI_AGENTS.py", "BACKEND_API_ROUTES.py", "procurement.py",
++                                             "supplier_ordering.py", "warranty_policy.py")])
++
++
++def test_no_customer_module_has_its_own_margin_or_vat_number():
++    bad = []
++    for f in CUSTOMER_MODULES:
++        if not f.exists():
++            continue
++        for n in ast.walk(ast.parse(f.read_text())):
++            if isinstance(n, ast.Constant) and isinstance(n.value, float) and n.value in (1.45, 1.18, 0.18):
++                bad.append(f"{f.relative_to(BACKEND)}:{n.lineno} {n.value}")
++    assert not bad, f"price numbers outside price_policy.py: {bad}"
++
++
++def test_no_customer_payload_carries_a_raw_cost_or_base_price():
++    src = (BACKEND / "routes" / "parts.py").read_text()
++    for key in ('"base_price":', '"min_price_ils":', '"max_price_ils":', '"importer_price_ils":', '"online_price_ils":'):
++        assert key not in src, key
++    agents = (BACKEND / "BACKEND_AI_AGENTS.py").read_text()
++    assert '"base_price": bp' not in agents
++    assert "round(bp + shipping, 2)" not in agents and "bp / (1 + VAT_RATE)" not in agents
++
++
++def test_customer_offer_selection_is_one_rule():
++    """website search, wishlist/watch, chat, brands pages, NOA and the pre-charge re-price pick the SAME offer."""
++    for rel in ("routes/parts.py", "BACKEND_AI_AGENTS.py", "routes/brands.py", "BACKEND_API_ROUTES.py",
++                "routes/payments.py"):
++        src = (BACKEND / rel).read_text()
++        assert "VISIBLE_OFFER_SQL" in src and "price_basis_order_sql" in src, rel
++    assert "ORDER BY sp.part_id, sp.is_available DESC, s.priority ASC" not in (BACKEND / "routes/brands.py").read_text()
++    pay = (BACKEND / "routes/payments.py").read_text()
++    # an offer the customer CHOSE is re-priced if still orderable (the compare page lists unlisted offers too)
++    assert 'sp.id = CAST(:spid AS uuid) AND {_pp.ORDERABLE_OFFER_SQL}' in pay
++    assert pp.VISIBLE_OFFER_SQL.startswith(pp.ORDERABLE_OFFER_SQL) and "supplier_url" in pp.VISIBLE_OFFER_SQL
++    assert 'suppliers.sort(key=lambda o: (o.get("customer_total_ils") is None' in (BACKEND / "routes/parts.py").read_text()
++
++
++def test_website_never_computes_a_price():
++    f = BACKEND.parent / "frontend" / "src" / "pages" / "Parts.jsx"
++    if not f.exists():
++        pytest.skip("frontend/ is not available in this environment (host-side test)")
++    src = f.read_text()
++    assert "* 1.45" not in src and "* 0.18" not in src
++    assert "part.min_price_ils" not in src and "part.base_price" not in src
+--- a/backend/tests/test_shipping_included.py
++++ b/backend/tests/test_shipping_included.py
+@@ -84,7 +84,8 @@
+     src = Path(A.__file__).with_name("routes").joinpath("payments.py").read_text(encoding="utf-8")
+     i = src.index("async def create_whatsapp_checkout(")
+     body = src[i:i + 9000]
+-    assert "unit_price = round(cost_ils * 1.45, 2)" in body and "resolve_customer_shipping_fee(" in body
++    # 2026-10-29: the rule lives in price_policy (same unit + the one delivery resolver as every surface)
++    assert "_pp.unit_price(cost_ils" in body and "_pp.delivery_fee(" in body and "* 1.45" not in body
+ 
+ 
+ def test_no_pricing_path_puts_shipping_into_the_margin_base():
+--- a/frontend/src/pages/Orders.jsx
++++ b/frontend/src/pages/Orders.jsx
+@@ -284,7 +284,7 @@
+           {/* Totals */}
+           <div className="border-t border-gray-200 pt-3 space-y-1 text-sm">
+             <div className="flex justify-between text-gray-600"><span>סכום ביניים</span><span>₪{Number(detail.subtotal).toFixed(2)}</span></div>
+-            <div className="flex justify-between text-gray-600"><span>מע״מ 18%</span><span>₪{Number(detail.vat).toFixed(2)}</span></div>
++            <div className="flex justify-between text-gray-600"><span>{Number(detail.vat) > 0 ? 'מע״מ' : 'מע״מ 0% (ספק מחו״ל)'}</span><span>₪{Number(detail.vat).toFixed(2)}</span></div>
+             <div className="flex justify-between text-gray-600"><span>משלוח</span><span>₪{Number(detail.shipping).toFixed(2)}</span></div>
+             <div className="flex justify-between font-bold text-brand-navy text-base pt-1 border-t border-gray-200"><span>סה״כ</span><span className="text-brand-600">₪{Number(detail.total).toFixed(2)}</span></div>
+           </div>
+--- a/frontend/src/pages/Parts.jsx
++++ b/frontend/src/pages/Parts.jsx
+@@ -423,12 +423,12 @@
+ function PriceTag({ price, vat, shipping, total }) {
+   return (
+     <div className="bg-gray-50 rounded-lg p-3 text-sm space-y-1">
+-      <div className="flex justify-between text-gray-600"><span>מחיר נטו</span><span className="font-medium">₪{price?.toFixed(0)}</span></div>
+-      <div className="flex justify-between text-gray-500"><span>מע״מ 18%</span><span>₪{vat?.toFixed(0)}</span></div>
++      <div className="flex justify-between text-gray-600"><span>מחיר נטו</span><span className="font-medium">₪{price?.toFixed(2)}</span></div>
++      <div className="flex justify-between text-gray-500"><span>{vat > 0 ? 'מע״מ 18%' : 'מע״מ 0% (ספק מחו״ל)'}</span><span>₪{vat?.toFixed(2)}</span></div>
+       <div className="flex justify-between text-gray-500"><span>משלוח</span><span>{_shippingDisplay(shipping, true)}</span></div>
+       <div className="flex justify-between font-bold text-brand-navy border-t border-gray-200 pt-1 mt-1">
+         <span>סה״כ לתשלום</span>
+-        <span className="text-brand-600 text-base">₪{total?.toFixed(0)}</span>
++        <span className="text-brand-600 text-base">₪{total?.toFixed(2)}</span>
+       </div>
+     </div>
+   )
+@@ -557,21 +557,16 @@
+       ? resolvedShip
+       : (Number.isFinite(rawShip) ? rawShip : 0)).toFixed(2))
+ 
+-  // Single source of truth (2026-07-05): the backend computes the canonical
+-  // customer price (cost×1.45 + 18% VAT — identical to Stripe checkout) and
+-  // sends it as customer_price_ils / customer_vat_ils / customer_total_ils.
+-  // Use those directly. The old client-side ×1.30 margin diverged from what
+-  // the customer was actually charged at checkout.
++  // Single source of truth: the backend's price policy (backend/price_policy.py) sends the customer price
++  // as customer_price_ils / customer_vat_ils / customer_total_ils (cost×1.45 + VAT 18% for a local
++  // supplier, 0% for a foreign one). The website NEVER computes a price itself (2026-10-29: the old
++  // fallback here applied ×1.45 and a FLAT 18% to a raw cost); no backend price = no price shown.
+   const backendNet = Number(sp?.customer_price_ils)
+   const backendVat = Number(sp?.customer_vat_ils)
+   const hasBackendPrice = Number.isFinite(backendNet) && backendNet > 0
+ 
+-  const priceNet = hasBackendPrice
+-    ? backendNet
+-    : Number((baseCostIls * 1.45).toFixed(2))
+-  const vatAmount = hasBackendPrice && Number.isFinite(backendVat)
+-    ? backendVat
+-    : Number((priceNet * 0.18).toFixed(2))
++  const priceNet = hasBackendPrice ? backendNet : null
++  const vatAmount = hasBackendPrice ? (Number.isFinite(backendVat) ? backendVat : 0) : null
+ 
+   return {
+     ...sp,
+@@ -580,8 +575,8 @@
+     price_no_vat:           priceNet,
+     vat:                    vatAmount,
+     shipping:               ship,
+-    subtotal:               Number((priceNet + vatAmount).toFixed(2)),
+-    total:                  Number((priceNet + vatAmount + ship).toFixed(2)),
++    subtotal:               hasBackendPrice ? Number((priceNet + vatAmount).toFixed(2)) : null,
++    total:                  hasBackendPrice ? Number((priceNet + vatAmount + ship).toFixed(2)) : null,
+     availability:           sp.availability || "on_order",
+     estimated_delivery_days: sp.estimated_delivery_days,
+     is_base_price_fallback: false,
+@@ -1816,7 +1811,9 @@
+         suppliers,
+         pricing: {
+           availability,
+-          total_price: firstPriced?.price_ils ?? bucket.part.min_price_ils ?? bucket.part.base_price ?? null,
++          // customer unit price (net + VAT) from the backend policy; a catalog estimate when no offer.
++          // Never a raw cost (min_price_ils) or base_price (2026-10-29).
++          total_price: bucket.part.cheapest_price_ils ?? bucket.part.customer_estimate_ils ?? null,
+         },
+       }
+     }
+@@ -1836,7 +1833,7 @@
+             suppliers,
+             pricing: {
+               availability,
+-              total_price: firstPriced?.price_ils ?? b.part.min_price_ils ?? b.part.base_price ?? null,
++              total_price: b.part.cheapest_price_ils ?? b.part.customer_estimate_ils ?? null,
+             },
+           }
+         })

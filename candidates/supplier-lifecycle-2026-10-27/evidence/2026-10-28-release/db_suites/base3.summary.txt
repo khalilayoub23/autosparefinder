@@ -1,0 +1,1 @@
+80 failed, 472 passed, 13 skipped, 20 warnings in 356.70s (0:05:56) exit=1 

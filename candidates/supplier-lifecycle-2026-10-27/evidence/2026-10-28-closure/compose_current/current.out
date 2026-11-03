@@ -1,0 +1,10 @@
+time="2026-10-28T18:05:11+01:00" level=warning msg="volume \"autosparefinder_postgres_catalog_data\" already exists but was not created by Docker Compose. Use `external: true` to use an existing volume"
+time="2026-10-28T18:05:11+01:00" level=warning msg="volume \"autosparefinder_upload_files\" already exists but was not created by Docker Compose. Use `external: true` to use an existing volume"
+time="2026-10-28T18:05:11+01:00" level=warning msg="volume \"autosparefinder_redis_data\" already exists but was not created by Docker Compose. Use `external: true` to use an existing volume"
+time="2026-10-28T18:05:11+01:00" level=warning msg="volume \"autosparefinder_postgres_pii_data\" already exists but was not created by Docker Compose. Use `external: true` to use an existing volume"
+time="2026-10-28T18:05:11+01:00" level=warning msg="volume \"autosparefinder_meili_data\" already exists but was not created by Docker Compose. Use `external: true` to use an existing volume"
+ Container autosparefinder-backend-run-ab08705181ad Creating 
+ Container autosparefinder-backend-run-ab08705181ad Created 
+INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+0041_email_agent_owner_flow (head)

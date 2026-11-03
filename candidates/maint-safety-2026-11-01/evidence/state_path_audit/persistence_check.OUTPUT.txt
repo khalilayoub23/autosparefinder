@@ -1,0 +1,66 @@
+== production mount config (read-only inspect)
+volume autosparefinder_worker_state -> /app/state mode=rw rw=true
+bind  -> /app mode=rw rw=true
+volume autosparefinder_upload_files -> /app/uploads mode=rw rw=true
+uid=0(root) gid=0(root) groups=0(root)
+== A: writer (uid 0, app tree READ-ONLY, state = disposable named volume, cwd=/)
+2026-11-02 20:09:11,296 [fb_login] Screenshot saved → /app/state/fb_browser_session/persist_login.png
+{"uid": 0, "cwd": "/", "cursor_part": "f3853430-9669-4f43-8d37-360a15caee94", "cursor_rc": 0}
+== A: container writable-layer changes (docker diff) - anything outside /app/state is NOT on the volume
+C /root
+C /root/.cache
+A /root/.cache/huggingface
+A /root/.cache/huggingface/hub
+A /root/.cache/huggingface/hub/ephemeral_marker
+C /root/.cache/ms-playwright
+C /root/.cache/ms-playwright/chromium_headless_shell-1228
+C /root/.cache/ms-playwright/chromium_headless_shell-1228/DEPENDENCIES_VALIDATED
+C /var
+C /var/cache
+C /var/cache/fontconfig
+A /var/cache/fontconfig/4d6aee6d44eccb37054d3216e945f618-le64.cache-11
+A /var/cache/fontconfig/99e8ed0e538f840c565b6ed5dad60d56-le64.cache-11
+A /var/cache/fontconfig/da82082e1ef13c4097208324d67c180c-le64.cache-11
+A /var/cache/fontconfig/573ec803664ed168555e0e8b6d0f0c7f-le64.cache-11
+A /var/cache/fontconfig/c855463f699352c367813e37f3f70ea7-le64.cache-11
+A /var/cache/fontconfig/3830d5c3ddfd5cd38a049b759396e72e-le64.cache-11
+A /var/cache/fontconfig/4c599c202bc5c08e2d34565a40eac3b2-le64.cache-11
+A /var/cache/fontconfig/6333f38776742d18e214673cd2c24e34-le64.cache-11
+A /var/cache/fontconfig/d52a8644073d54c13679302ca1180695-le64.cache-11
+A /var/cache/fontconfig/e13b20fdb08344e0e664864cc2ede53d-le64.cache-11
+A /var/cache/fontconfig/0bd3dc0958fa2205aaaa8ebb13e2872b-le64.cache-11
+A /var/cache/fontconfig/3047814df9a2f067bd2d96a2b9c36e5a-le64.cache-11
+A /var/cache/fontconfig/707971e003b4ae6c8121c3a920e507f5-le64.cache-11
+A /var/cache/fontconfig/7ef2298fde41cc6eeb7af42e48b7d293-le64.cache-11
+A /var/cache/fontconfig/d589a48862398ed80a3d6066f4f56f4c-le64.cache-11
+A /var/cache/fontconfig/fe547fea3a41b43a38975d292a2b19c7-le64.cache-11
+A /var/cache/fontconfig/bb9ef35e7661cc55c3d6e0d2d8cc2051-le64.cache-11
+A /audit
+== B: NEW container, same volume (reads back through real modules)
+{"uid": 0, "SP03": true, "SP04": true, "SP17": true, "SP09": true, "SP08": true, "SP10": true, "SP13": true, "SP14": true, "SP12": true, "SP01": true, "SP15": true, "SP16": true, "SP05": true, "SP06": true, "SP07": true, "SP11": true, "SP02_hf_cache_survived_recreation": false}
+== volume tree
+.
+./categorize_improve_cursor.json
+./fb_browser_session
+./fb_browser_session/cookies.json
+./fb_browser_session/persist_login.png
+./fb_native_test
+./fb_native_test/profile
+./inproc_jobs
+./inproc_jobs/group_scan.json
+./logs
+./logs/fb_browser_failures
+./meili_sync_checkpoint.json
+./models
+./models/minilm-multilingual
+./runtime_identity
+./runtime_identity/persist_probe.99.1.json
+./thumb_clearance_failed.json
+./thumbnail_import_idle.json
+./worker_state.json
+0:0 755 .
+0:0 755 logs
+0:0 755 inproc_jobs
+== C: NON-root (uid 1000) against the root-owned volume: read ok? write refused with a clear message?
+Error response from daemon: remove asf_state_audit_4157071: volume is in use - [b6d2a375e8be1de4b835a6ef7cff3669dc58c863f7632f832ac2569dfed57b4b]
+disposable volume removed

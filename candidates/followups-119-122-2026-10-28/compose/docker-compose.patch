@@ -1,0 +1,16 @@
+--- docker-compose.yml.deployed	2026-10-28 20:22:19.081092283 +0100
++++ docker-compose.yml.candidate	2026-10-28 20:22:19.105092055 +0100
+@@ -402,10 +402,9 @@
+     - ./backend:/app
+     - upload_files:/app/uploads
+     - worker_state:/app/state
+-    command: "/bin/bash -c \"\n  alembic -c alembic.ini upgrade head &&\n  alembic\
+-      \ -c alembic_pii.ini upgrade head &&\n  /app/scripts/container_start.sh &\n\
+-      \  uvicorn BACKEND_API_ROUTES:app --host 0.0.0.0 --port 8000 --workers ${API_WORKERS:-1}\n\
+-      \"\n"
++    # #121 (2026-10-28): migrations run in the FOREGROUND and the API starts only after both succeeded
++    # (scripts/start_backend.sh). The old `A && B && container_start.sh & uvicorn` started uvicorn at once.
++    command: ["/bin/bash", "/app/scripts/start_backend.sh", "--workers", "${API_WORKERS:-1}"]
+     networks:
+     - internal
+     - public

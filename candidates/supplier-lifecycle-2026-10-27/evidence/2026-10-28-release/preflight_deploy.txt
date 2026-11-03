@@ -1,0 +1,16 @@
+RESTART PREFLIGHT: SAFE
+  note: car-parts.ie harvester is running (continuous by design; relaunched after the restart)
+=== PRE-RESTART CAPTURE ===
+{
+  "jobs": null,
+  "workers": [],
+  "timestamp": "2026-10-28T18:19:53Z"
+}
+[pre_restart] 0 worker(s) recorded with exact arguments in /app/state/worker_state.json
+
+State saved to /tmp/restart_state.json
+Closing in-flight jobs (job_registry running → superseded)...
+  marked superseded
+Sending SIGTERM to active importers...
+[restart_workers] stop: no managed importer/scraper process is running
+=== PRE-RESTART COMPLETE ===

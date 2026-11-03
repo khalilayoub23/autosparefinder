@@ -50,16 +50,14 @@ def canonical_total(cost, ship, kind):
 @pytest.mark.parametrize("cost,ship", [(100.0, 35.0), (358.0, 0.0), (1234.5, 89.9)])
 def test_chat_price_helper_counts_shipping_once(kind, cost, ship):
     p = A.BaseAgent().calculate_customer_price_from_ils(cost, ship, customer_shipping=ship,
-                                                         supplier_name=kind[0], supplier_country=kind[1],
-                                                         local_vat_only=True)
+                                                         supplier_name=kind[0], supplier_country=kind[1])
     assert p["price_no_vat"] == round(cost * 1.45, 2)            # shipping NOT in the margin base
     assert p["shipping"] == ship
     assert p["total"] == pytest.approx(canonical_total(cost, ship, kind), abs=0.01)
 
 
 def test_helper_without_customer_shipping_uses_supplier_shipping_once():
-    p = A.BaseAgent().calculate_customer_price_from_ils(100.0, 35.0, supplier_name="x", supplier_country="IE",
-                                                         local_vat_only=True)
+    p = A.BaseAgent().calculate_customer_price_from_ils(100.0, 35.0, supplier_name="x", supplier_country="IE")
     assert p["price_no_vat"] == 145.0 and p["shipping"] == 35.0 and p["total"] == 180.0
 
 
@@ -84,7 +82,8 @@ def test_whatsapp_checkout_uses_the_same_rule():
     src = Path(A.__file__).with_name("routes").joinpath("payments.py").read_text(encoding="utf-8")
     i = src.index("async def create_whatsapp_checkout(")
     body = src[i:i + 9000]
-    assert "unit_price = round(cost_ils * 1.45, 2)" in body and "resolve_customer_shipping_fee(" in body
+    # 2026-10-29: the rule lives in price_policy (same unit + the one delivery resolver as every surface)
+    assert "_pp.unit_price(cost_ils" in body and "_pp.delivery_fee(" in body and "* 1.45" not in body
 
 
 def test_no_pricing_path_puts_shipping_into_the_margin_base():

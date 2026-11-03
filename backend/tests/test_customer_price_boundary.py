@@ -196,8 +196,10 @@ async def test_dearer_aliexpress_offer_does_not_change_the_customer_price(db):
     pid = (await db.execute(sa.text("""SELECT pc.id::text FROM parts_catalog pc WHERE pc.is_active AND pc.oem_number<>''
         AND NOT EXISTS (SELECT 1 FROM supplier_parts sp WHERE sp.part_id = pc.id) ORDER BY pc.id LIMIT 1"""))).scalar_one()
     other = (await db.execute(sa.text("SELECT id::text, name, country FROM suppliers WHERE is_active AND name <> 'AliExpress' AND country IS NOT NULL ORDER BY name LIMIT 1"))).fetchone()
-    await db.execute(sa.text("""INSERT INTO supplier_parts (id, supplier_id, part_id, supplier_sku, price_ils, price_usd, is_available, availability)
-        VALUES (gen_random_uuid(), CAST(:s AS uuid), CAST(:p AS uuid), :sku, 50, 16.5, TRUE, 'in_stock')"""), {"s": other[0], "p": pid, "sku": "OTHER" + pid[:6]})
+    # the cheaper offer is a CUSTOMER-VISIBLE one (listing URL) - since 2026-10-29 every surface prices a part from
+    # the same visible offer set as the website search (price_policy.VISIBLE_OFFER_SQL)
+    await db.execute(sa.text("""INSERT INTO supplier_parts (id, supplier_id, part_id, supplier_sku, price_ils, price_usd, is_available, availability, supplier_url)
+        VALUES (gen_random_uuid(), CAST(:s AS uuid), CAST(:p AS uuid), :sku, 50, 16.5, TRUE, 'in_stock', 'https://other.example/p')"""), {"s": other[0], "p": pid, "sku": "OTHER" + pid[:6]})
     before = (await parts._current_part_price(db, pid))[0]
     ali = (await db.execute(sa.text("SELECT id::text FROM suppliers WHERE name='AliExpress'"))).scalar_one()
     await db.execute(sa.text("UPDATE suppliers SET is_active = TRUE WHERE id = CAST(:a AS uuid)"), {"a": ali})

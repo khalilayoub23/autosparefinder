@@ -1,0 +1,7 @@
+backend/BACKEND_AI_AGENTS.py
+backend/routes/brands.py
+backend/routes/parts.py
+backend/routes/payments.py
+backend/tests/test_price_policy_unified.py
+backend/tests/test_shipping_included.py
+frontend/src/pages/Parts.jsx

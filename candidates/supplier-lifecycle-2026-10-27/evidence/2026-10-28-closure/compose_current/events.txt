@@ -1,0 +1,62 @@
+1793207110 exec_create: /bin/sh -c pg_isready -U autospare -d autospare sandbox_postgres
+1793207110 exec_start: /bin/sh -c pg_isready -U autospare -d autospare sandbox_postgres
+1793207110 exec_die sandbox_postgres
+1793207112 exec_create: /bin/sh -c curl -sf http://localhost:7700/health || exit 1 sandbox_meili
+1793207112 exec_start: /bin/sh -c curl -sf http://localhost:7700/health || exit 1 sandbox_meili
+1793207112 exec_die sandbox_meili
+1793207112 exec_create: /bin/sh -c pg_isready -U autospare -d autospare_pii autospare_postgres_pii
+1793207112 exec_start: /bin/sh -c pg_isready -U autospare -d autospare_pii autospare_postgres_pii
+1793207112 exec_die autospare_postgres_pii
+1793207113 exec_create: /bin/sh -c pg_isready -U autospare -d autospare autospare_postgres_catalog
+1793207113 exec_start: /bin/sh -c pg_isready -U autospare -d autospare autospare_postgres_catalog
+1793207113 exec_die autospare_postgres_catalog
+1793207113 exec_create: python3 -c import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health').getcode() == 200 else 1) autospare_backend
+1793207113 exec_start: python3 -c import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health').getcode() == 200 else 1) autospare_backend
+1793207113 exec_create: /bin/sh -c curl -sf http://localhost:7700/health || exit 1 autospare_meilisearch
+1793207113 exec_start: /bin/sh -c curl -sf http://localhost:7700/health || exit 1 autospare_meilisearch
+1793207113 exec_die autospare_meilisearch
+1793207114 exec_die autospare_backend
+1793207114 exec_create: /bin/sh -c wget -q --spider http://127.0.0.1/api/v1/system/health || exit 1 autospare_nginx
+1793207114 exec_start: /bin/sh -c wget -q --spider http://127.0.0.1/api/v1/system/health || exit 1 autospare_nginx
+1793207114 exec_create: redis-cli -a 6de3ec0bf8bb83b76bdb2283266e8e48bf796c8a0e74cb38958ac9d39ff6a3e4 ping autospare_redis
+1793207114 exec_start: redis-cli -a 6de3ec0bf8bb83b76bdb2283266e8e48bf796c8a0e74cb38958ac9d39ff6a3e4 ping autospare_redis
+1793207114 exec_create: redis-cli -a sandbox_redis_pass_autospare_2024 ping sandbox_redis
+1793207114 exec_start: redis-cli -a sandbox_redis_pass_autospare_2024 ping sandbox_redis
+1793207115 exec_create: /bin/sh -c pg_isready -U autospare -d autospare sandbox_postgres
+1793207115 exec_start: /bin/sh -c pg_isready -U autospare -d autospare sandbox_postgres
+1793207117 exec_create: /bin/sh -c pg_isready -U autospare -d autospare_pii autospare_postgres_pii
+1793207117 exec_start: /bin/sh -c pg_isready -U autospare -d autospare_pii autospare_postgres_pii
+1793207118 exec_die sandbox_redis
+1793207118 exec_die autospare_redis
+1793207118 exec_die sandbox_postgres
+1793207118 exec_die autospare_postgres_pii
+1793207118 exec_die autospare_nginx
+1793207118 create autosparefinder-backend-run-ab08705181ad
+1793207118 attach autosparefinder-backend-run-ab08705181ad
+1793207118 exec_create: /bin/sh -c pg_isready -U autospare -d autospare autospare_postgres_catalog
+1793207118 exec_start: /bin/sh -c pg_isready -U autospare -d autospare autospare_postgres_catalog
+1793207118 exec_die autospare_postgres_catalog
+1793207118 start autosparefinder-backend-run-ab08705181ad
+1793207120 die autosparefinder-backend-run-ab08705181ad
+1793207121 destroy autosparefinder-backend-run-ab08705181ad
+1793207122 exec_create: /bin/sh -c curl -sf http://localhost:7700/health || exit 1 sandbox_meili
+1793207122 exec_start: /bin/sh -c curl -sf http://localhost:7700/health || exit 1 sandbox_meili
+1793207122 exec_die sandbox_meili
+1793207123 exec_create: redis-cli -a sandbox_redis_pass_autospare_2024 ping sandbox_redis
+1793207123 exec_start: redis-cli -a sandbox_redis_pass_autospare_2024 ping sandbox_redis
+1793207123 exec_create: redis-cli -a 6de3ec0bf8bb83b76bdb2283266e8e48bf796c8a0e74cb38958ac9d39ff6a3e4 ping autospare_redis
+1793207123 exec_start: redis-cli -a 6de3ec0bf8bb83b76bdb2283266e8e48bf796c8a0e74cb38958ac9d39ff6a3e4 ping autospare_redis
+1793207123 exec_die autospare_redis
+1793207123 exec_create: /bin/sh -c pg_isready -U autospare -d autospare sandbox_postgres
+1793207123 exec_start: /bin/sh -c pg_isready -U autospare -d autospare sandbox_postgres
+1793207123 exec_create: /bin/sh -c pg_isready -U autospare -d autospare_pii autospare_postgres_pii
+1793207123 exec_start: /bin/sh -c pg_isready -U autospare -d autospare_pii autospare_postgres_pii
+1793207123 exec_die sandbox_redis
+1793207123 exec_die autospare_postgres_pii
+1793207123 exec_create: /bin/sh -c pg_isready -U autospare -d autospare autospare_postgres_catalog
+1793207123 exec_start: /bin/sh -c pg_isready -U autospare -d autospare autospare_postgres_catalog
+1793207123 exec_die sandbox_postgres
+1793207123 exec_die autospare_postgres_catalog
+1793207123 exec_create: /bin/sh -c curl -sf http://localhost:7700/health || exit 1 autospare_meilisearch
+1793207123 exec_start: /bin/sh -c curl -sf http://localhost:7700/health || exit 1 autospare_meilisearch
+1793207123 exec_die autospare_meilisearch

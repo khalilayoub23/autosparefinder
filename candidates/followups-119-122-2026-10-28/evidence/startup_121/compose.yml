@@ -1,0 +1,41 @@
+# ISOLATED #121 test: production image, production healthcheck command (faster interval), restart: unless-stopped,
+# the NEW start command, disposable PG, stub app + stub container_start.sh.
+name: s121
+services:
+  pg:
+    image: postgres:16-alpine
+    container_name: s121pg
+    environment: {POSTGRES_HOST_AUTH_METHOD: trust, POSTGRES_USER: autospare, POSTGRES_DB: autospare}
+    networks: [s121net]
+  backend:
+    image: autosparefinder-backend:latest
+    container_name: s121backend
+    working_dir: /app
+    volumes:
+      - "${APP_TREE}:/app:ro"
+      - "./stub/BACKEND_API_ROUTES.py:/app/BACKEND_API_ROUTES.py:ro"
+      - "./stub/container_start.sh:/app/scripts/container_start.sh:ro"
+      - "./out:/tmp/out"
+    environment:
+      PYTHONPATH: /app
+      PYTHONDONTWRITEBYTECODE: "1"
+      RUNTIME_IDENTITY_DIR: /tmp/ri
+      DATABASE_URL: "postgresql+asyncpg://autospare@pg:5432/autospare"
+      DATABASE_PII_URL: "postgresql+asyncpg://autospare@pg:5432/autospare_pii"
+      PG_DSN_PII: "host=pg user=autospare dbname=autospare_pii"
+      STARTUP_STATUS_FILE: /tmp/out/startup_status.json
+      MIGRATION_RETRY_DELAY_S: "${RETRY_DELAY:-3}"
+      MIGRATION_RETRIES: "${RETRIES:-3}"
+      MIGRATION_TIMEOUT_S: "${MTIMEOUT:-900}"
+      STARTUP_ON_MIGRATION_FAILURE: "${ON_FAIL:-hold}"
+    command: ["/bin/bash", "/app/scripts/start_backend.sh", "--workers", "1"]   # = rendered candidate compose command
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health').getcode() == 200 else 1)"]
+      interval: 3s
+      timeout: 2s
+      retries: 2
+    restart: "${RESTART:-unless-stopped}"
+    depends_on: [pg]
+    networks: [s121net]
+networks:
+  s121net: {internal: true}

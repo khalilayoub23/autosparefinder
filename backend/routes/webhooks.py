@@ -33,6 +33,10 @@ from BACKEND_DATABASE_MODELS import (
     User, Conversation, Message, SystemSetting,
 )
 from BACKEND_AI_AGENTS import process_user_message
+# Load the owner console at app start-up (it was imported lazily on the first WhatsApp message), so the running
+# process always has a runtime_identity record of the exact owner_console source it runs (2026-10-28).
+# Import-time effects of owner_console: definitions + env reads only (checked with ast).
+import agents.owner_console  # noqa: E402,F401
 import chat_requests as creq
 import time
 

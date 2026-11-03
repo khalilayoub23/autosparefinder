@@ -1,0 +1,91 @@
+=== R1 FAILURE DURING MIGRATION (0042 errors half-way)
+    alembic upgrade head -> exit=1
+    version=0041_email_agent_owner_flow new_tables=0 new_cols=0
+  recovery = restore deployed code (no downgrade needed); deployed code on this schema:
+    OLD CODE OK: owner_pending=2 digest_pending=2 open=2 claim=new by_ref=1 mark_notified=ok
+  candidate code meanwhile (if the container serves before recovery):
+    CANDIDATE ON 0041: schema_ready=False owner_pending/digest/open ok (1,2,2) supplier_routing_refused=True
+    deployed 'upgrade head' (container start) -> exit=0
+    version=0041_email_agent_owner_flow new_tables=0 new_cols=0
+=== R2 MIGRATION OK, ACTIVATION/HEALTH FAILS -> FULL ROLLBACK WITH BACKUP
+    INFO  [alembic.runtime.migration] Running upgrade 0041_email_agent_owner_flow -> 0042_supplier_lifecycle, Supplier lifecycle: separate authorizati
+    alembic upgrade head -> exit=0
+    SEEDED
+    before: auth 4 c87d1aa9e3afe5bd8d0fb189d6b98569
+    before: outreach 1 44d5ae53d009f3ee06a4ec33d1b051ab
+    before: proc 3 296c1ad77034cafa9e082db4e7fe0c4a
+    before: events 7 cca2fef60581359aefa35810db49100e
+    before: email_cols 3 37a62bac5d7a49f7cf8e8ef14b23cdcb
+    before: events_seq 7 true
+    backup VALID {'agent_authorizations': 4, 'supplier_outreach': 1, 'procurement_orders': 3, 'procurement_events': 7, 'email_agent_messages_supplier_cols': 3, 'email_rows_with_supplier_data': 1}
+    BACKUP OK: /tmp/claude-0/-opt-autosparefinder/2b46ba28-2c33-4d4f-b9b3-7c878aed1e70/scratchpad/rehearsal2/bk1
+    backup exit=0
+  overwrite guard:
+    STOP: /tmp/claude-0/-opt-autosparefinder/2b46ba28-2c33-4d4f-b9b3-7c878aed1e70/scratchpad/rehearsal2/bk1 already exists - refusing to overwrite a backup
+    exit=2
+    UNCHANGED since backup
+    verify exit=0
+    INFO  [alembic.runtime.migration] Running downgrade 0042_supplier_lifecycle -> 0041_email_agent_owner_flow, Supplier lifecycle: separate authoriza
+    alembic downgrade 0041_email_agent_owner_flow -> exit=0
+    version=0041_email_agent_owner_flow new_tables=0 new_cols=0
+  deployed code after rollback:
+    OLD CODE OK: owner_pending=3 digest_pending=3 open=3 claim=new by_ref=1 mark_notified=ok
+    deployed 'upgrade head' (container start) -> exit=0
+  later re-deploy + restore:
+    RESTORE OK from /tmp/claude-0/-opt-autosparefinder/2b46ba28-2c33-4d4f-b9b3-7c878aed1e70/scratchpad/rehearsal2/bk1 (authorizations=4 outreach=1 procurement=3 events=7 email_rows=1)
+    restore exit=0
+    CONTENT FINGERPRINT IDENTICAL (all 4 tables + email columns + sequence)
+  constraints still enforced after restore:
+    violates foreign key constraint "procurement_events_procurement_id_fkey"
+    next event id continues: 9 (max before restore: 7)
+  candidate code works on the restored data:
+    RACE submission claims: 1 of 10 won
+    RACE payment claims: 1 of 10 won
+=== R3 A WRITE LANDS AFTER THE BACKUP, BEFORE THE DOWNGRADE
+    STOP: data changed since the backup:
+    1c1
+    < agent_authorizations,4
+    ---
+    > agent_authorizations,6
+    3,5c3,5
+    < procurement_orders,3
+    < procurement_events,7
+    < email_agent_messages_supplier_cols,3
+    ---
+    > procurement_orders,5
+    > procurement_events,11
+    > email_agent_messages_supplier_cols,4
+    verify exit=5  -> STOP, take a new backup
+    BACKUP OK: /tmp/claude-0/-opt-autosparefinder/2b46ba28-2c33-4d4f-b9b3-7c878aed1e70/scratchpad/rehearsal2/bk2
+    UNCHANGED since backup
+=== R4 DOWNGRADE BLOCKED (a live transaction holds a lock)
+    asyncpg.exceptions.LockNotAvailableError: canceling statement due to lock timeout
+    alembic downgrade 0041_email_agent_owner_flow -> exit=1
+    version=0042_supplier_lifecycle new_tables=4 new_cols=3
+    rows intact: 5
+  recovery A: retry when the lock is gone
+    INFO  [alembic.runtime.migration] Running downgrade 0042_supplier_lifecycle -> 0041_email_agent_owner_flow, Supplier lifecycle: separate authoriza
+    alembic downgrade 0041_email_agent_owner_flow -> exit=0
+    version=0041_email_agent_owner_flow new_tables=0 new_cols=0
+  recovery B (downgrade impossible): deployed code + KEEP the 0042 migration file
+    RESTORE OK from /tmp/claude-0/-opt-autosparefinder/2b46ba28-2c33-4d4f-b9b3-7c878aed1e70/scratchpad/rehearsal2/bk2 (authorizations=6 outreach=1 procurement=5 events=11 email_rows=1)
+    alembic upgrade head -> exit=0
+    version=0042_supplier_lifecycle new_tables=4 new_cols=3
+    OLD CODE OK: owner_pending=2 digest_pending=3 open=3 claim=new by_ref=1 mark_notified=ok
+    (without the file the deployed start fails:)
+    exit=255
+=== R5 BACKUP RESTORE INCOMPLETE / CORRUPT
+sha256sum: WARNING: 1 computed checksum did NOT match
+    procurement_orders.csv: FAILED
+    STOP: backup files fail their checksums
+    (a) truncated file -> exit=6
+    ERROR:  insert or update on table "procurement_events" violates foreign key constraint "procurement_events_procurement_id_fkey"
+    RESTORE FAILED (psql exit 3) - transaction rolled back, NOTHING was restored
+    (b) truncated file + re-forged checksums -> exit=9
+    rows after failed restores: 0  (must be 0 = nothing half-restored)
+    RESTORE OK from /tmp/claude-0/-opt-autosparefinder/2b46ba28-2c33-4d4f-b9b3-7c878aed1e70/scratchpad/rehearsal2/bk2 (authorizations=6 outreach=1 procurement=5 events=11 email_rows=1)
+=== R6 CODE RESTORATION FAILS HALF-WAY
+    deployed files hashed: 712
+    files still NOT deployed version: 12
+    -> STOP: tree is mixed; do not start the container
+    re-run complete: tree == deployed (712 files)

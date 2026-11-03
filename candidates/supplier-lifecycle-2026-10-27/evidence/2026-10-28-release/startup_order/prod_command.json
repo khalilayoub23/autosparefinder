@@ -1,0 +1,1 @@
+["/bin/bash", "-c", "\n  alembic -c alembic.ini upgrade head &&\n  alembic -c alembic_pii.ini upgrade head &&\n  /app/scripts/container_start.sh &\n  uvicorn BACKEND_API_ROUTES:app --host 0.0.0.0 --port 8000 --workers 1\n"]

@@ -1,0 +1,17 @@
+SP07 / SP12 / SP16 - final gaps, 2026-11-02 (candidate maint-safety-2026-11-01; nothing deployed)
+
+SP07  real download PERFORMED. sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 @ e8f8c211226b
+      onnx/model.onnx 470,301,610 B, sha256 10f7a088420252b26caf819236ca2c9d2987afd0fc06fec7553b542a5655a05a == published LFS sha256
+      (script check + independent sha256sum). Loaded via category_embed: (2,384) unit-norm embeddings. Interrupted download rejected,
+      truncated file rejected+repaired, offline repeat reuses the file untouched, cwd-independent.   Defects D5, D8 fixed.   FIXED_AND_VERIFIED
+SP12  STATE_DIR defect (fb_login_extended.py + devtests/fb_mbasic_login.py) fixed; D7 (late failure on unwritable dir) fixed.
+      Real login() cookie-writing path executed in real Chromium against a CONTROLLED FIXTURE - NO real Facebook authentication was
+      performed, no account/credential used (UNVERIFIED, owner-supervised only). Cross-container (A root writes, B uid 1000 reads) verified.
+      Cookie values never in output.   FIXED_AND_VERIFIED for the persistence path
+SP16  all 11 DB statements of readiness_report executed against a throw-away DB in the sandbox Postgres: healthy / empty / unhealthy /
+      schema-defect / DB-error / unreachable; read-only proven (read-only server session, unchanged table+catalog fingerprints, SELECT-only spy);
+      cwd-independent. No policy/threshold change. Check 13 (WhatsApp bridge/Redis) is not a DB check - stubbed.   FIXED_AND_VERIFIED
+TESTS new 12 (+1 gated, passes with RUN_REAL_MODEL_DOWNLOAD=1) + 14 + 18; baseline code fails 16 of the 25 SP07/SP12 ones.
+FULL  84 failed / 3129 passed / 92 skipped; failing set identical to the previous candidate (0 new). Targeted 505 passed / 4 skipped; pair 4/4.
+PROD  untouched: BASE.sha256 verifies (rc 0), no restart/volume/db/setting/schedule change. HOST DISK WAS 100 % FULL during the work - see
+      IMPORTER_PATH_AUDIT.md 8.6.6 item 1 (owner decision needed).

@@ -1,0 +1,7 @@
+6e218875e1dbe1abbc17945be410b1806d9c9a7323982c902df53fc781570a97  ./backend/BACKEND_AI_AGENTS.py
+c1449523bb8a9aef436bc61b165499889ae35bff68cdc3650989578fa0c70797  ./backend/routes/brands.py
+b0661b079a8822a8cda0eb6be6f789f79c193a8c1ad3a5c1b25253d2a5786bd8  ./backend/routes/parts.py
+653ee0c1dcd5d2ff718b9e1560ecaccdc63a6f7fc2b0620158220024abba3009  ./backend/routes/payments.py
+8dc398e8d08fcd11193da16a7704a915000681c9a953ce4e7595814107fb24ee  ./backend/tests/test_price_policy_unified.py
+617254663620e90c4da0b0beadea277147ecacbd2c3df3f7cca06b760e3981be  ./backend/tests/test_shipping_included.py
+fa0a9c6c2517444584c215dd9be2bce95bf75b92d2df2e376cbf1c4dcca716fe  ./frontend/src/pages/Parts.jsx

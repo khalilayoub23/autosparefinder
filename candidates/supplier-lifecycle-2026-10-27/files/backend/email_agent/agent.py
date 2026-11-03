@@ -1,0 +1,375 @@
+"""
+Script: email_agent/agent.py
+Purpose: One Email Agent cycle: Gmail -> read -> normalize -> resolve context -> classify ->
+         policy -> draft -> verify -> audit. Every step has a post-condition; a step that cannot
+         be verified is recorded as such and routed to a human, never reported as success.
+Process:
+  check_connection()  token + profile; the authenticated mailbox MUST equal the configured
+                      business mailbox (wrong-account guard) and the grant must allow reading.
+  process_once()      list recent inbox messages, claim each unseen inbound one in the store
+                      (idempotency), process it, write one structured audit log line.
+  Runtime kill switch (email_agent/control.py): checked at cycle start, before each claim, before
+  the draft step and before the result is saved (unless a Gmail draft was already created - that
+  record is always kept); a halt mid-message releases the claim.
+  Draft modes: 'gmail' (EMAIL_AGENT_GMAIL_DRAFTS=1 and the grant allows drafts) creates a Gmail
+  draft in the original thread and verifies it by reading it back; otherwise 'local' stores the
+  draft text in the audit row only. Nothing is ever sent, and no message is marked, labelled,
+  archived or deleted.
+Data Imported/Modified: email_agent_messages (PII DB); Gmail drafts when enabled.
+Last Updated: 2026-10-27 (Spam/Junk pass: relevant supplier mail only, source_folder='spam')
+"""
+from __future__ import annotations
+
+import asyncio
+from collections import OrderedDict
+import json
+import logging
+from typing import Any, Dict, List, Optional
+
+from email_agent import classifier as _cls
+from email_agent import control as _control
+from email_agent import drafts as _drafts
+from email_agent import policy as _policy
+from email_agent.config import CONFIGURED, EmailAgentConfig, can_draft, can_read
+from email_agent.context import ContextSource, resolve_context, verify_context
+from email_agent.gmail_client import MAILBOX_LEVEL_KINDS, GmailClient, GmailError
+from email_agent.normalize import MalformedMessage, NormalizedEmail, normalize_thread
+from email_agent.redaction import redact, safe_error
+
+logger = logging.getLogger("email_agent")
+
+
+def audit_log(event: str, **fields: Any) -> None:
+    """One structured line per event. Redacted; carries ids and decisions, never body text."""
+    logger.info("[email_agent] %s", redact(json.dumps({"event": event, **fields}, ensure_ascii=False, default=str)))
+
+
+def verify_read(email: NormalizedEmail, requested_id: str, requested_thread: str) -> Dict[str, Any]:
+    checks = {
+        "message_id_matches": bool(email.message_id) and email.message_id == requested_id,
+        "thread_id_matches": bool(email.thread_id) and email.thread_id == requested_thread,
+        "sender_present": "@" in email.sender_email,
+        "content_normalized": bool(email.body_text.strip()) or bool(email.attachments) or bool(email.subject),
+    }
+    return {"ok": all(checks.values()), "checks": checks}
+
+
+async def check_connection(cfg: EmailAgentConfig, client: GmailClient) -> Dict[str, Any]:
+    if cfg.state != CONFIGURED:
+        return {"ok": False, "state": cfg.state, "missing": cfg.missing()}
+    try:
+        prof = await asyncio.to_thread(client.profile)
+    except GmailError as e:
+        return {"ok": False, "state": cfg.state, "error_kind": e.kind, "error": str(e)}
+    mailbox = str(prof.get("emailAddress", "")).lower()
+    if mailbox != cfg.mailbox:
+        return {"ok": False, "state": cfg.state, "error_kind": "wrong_account",
+                "error": "authenticated mailbox is not the configured business mailbox"}
+    scopes = client.granted_scopes
+    return {"ok": can_read(scopes), "state": cfg.state, "mailbox": mailbox,
+            "can_read": can_read(scopes), "can_draft": can_draft(scopes),
+            **({} if can_read(scopes) else {"error_kind": "scope", "error": "grant does not include a Gmail read scope"})}
+
+
+async def process_message(cfg: EmailAgentConfig, client: GmailClient, store, source: ContextSource,
+                          message_id: str, thread_id: str, draft_mode: str,
+                          thread_cache: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Process one claimed message. Raises on failure (the caller records retry / failed)."""
+    raw_thread = (thread_cache or {}).get(thread_id)
+    if raw_thread is None:
+        raw_thread = await asyncio.to_thread(client.get_thread, thread_id)
+        if thread_cache is not None:
+            thread_cache[thread_id] = raw_thread       # one read per thread per cycle (quota)
+    thread = normalize_thread(raw_thread, cfg.mailbox)
+    email = next((m for m in thread if m.message_id == message_id), None)
+    if email is None:
+        raise MalformedMessage("message is not present / not parseable in its thread")
+    if not email.is_inbound:
+        _control.require_running("before saving the result")
+        await store.save_result(message_id, {
+            "sender_email": email.sender_email, "subject": email.subject, "received_at": email.date,
+            "reason": "message was sent or drafted by this mailbox: not an inbound email",
+            "recommended_action": "ignore", "policy_tier": _policy.TIER_NONE, "requires_human": False})
+        audit_log("skipped_outbound", message_id=message_id, thread_id=thread_id, sent=False)
+        return {"classification": None, "policy": {"requires_human": False}, "draft": {"body": None},
+                "verification": {"send_calls": 0, "sendable": False}}
+    read_v = verify_read(email, message_id, thread_id)
+    if not read_v["ok"]:
+        raise MalformedMessage(f"read post-condition failed: {read_v['checks']}")
+
+    ctx = await resolve_context(email, thread, source)
+    ctx_v = await verify_context(ctx, source)
+    if not ctx_v["ok"]:
+        raise RuntimeError(f"context post-condition failed: {ctx_v['checks']}")
+
+    c = _cls.classify(email, thread, ctx)
+    later_outbound = any((not m.is_inbound) and "DRAFT" not in m.labels and m.date and email.date
+                         and m.date > email.date for m in thread)
+    decision = _policy.decide(c, ctx, already_answered=later_outbound)
+    c.recommended_action, c.requires_human = decision.recommended_action, decision.requires_human
+
+    _control.require_running("before draft")          # kill switch: no draft step once halted
+    draft: Optional[_drafts.Draft] = None
+    draft_id: Optional[str] = None
+    draft_v: Dict[str, Any] = {"ok": True, "mode": "none", "checks": {}, "send_calls": 0}
+    if decision.wants_draft:
+        try:
+            draft = _drafts.build_draft(decision.recommended_action, email, ctx)
+        except _drafts.DraftNotPossible as e:
+            decision = _policy.PolicyDecision(_policy.TIER_HUMAN, "escalate_to_human", True,
+                                              decision.reasons + [f"draft not possible: {e}"])
+            c.recommended_action, c.requires_human = decision.recommended_action, True
+    if draft is not None:
+        prior = await store.get(message_id) or {}
+        if draft_mode == "gmail" and prior.get("draft_attempted_at") and not prior.get("gmail_draft_id"):
+            # An earlier attempt may already have created a draft in Gmail: never create a second.
+            draft_v = {"ok": False, "mode": "gmail", "checks": {"earlier_attempt_unverified": False}, "send_calls": 0}
+            decision = _policy.PolicyDecision(_policy.TIER_HUMAN, "escalate_to_human", True,
+                                              decision.reasons + ["an earlier draft attempt could not be verified"])
+            c.recommended_action, c.requires_human = decision.recommended_action, True
+        elif draft_mode == "gmail":
+            await store.mark_draft_attempt(message_id)
+            raw = _drafts.build_rfc822(draft, email, cfg.mailbox)
+            created = await asyncio.to_thread(client.create_draft, raw, email.thread_id)
+            draft_id = str(created["id"])
+            read_back = await asyncio.to_thread(client.get_draft, draft_id)
+            draft_v = _drafts.verify_gmail_draft(read_back, draft, email, draft_id)
+            if not draft_v["ok"]:
+                decision = _policy.PolicyDecision(_policy.TIER_HUMAN, "escalate_to_human", True,
+                                                  decision.reasons + ["Gmail draft failed verification"])
+                c.recommended_action, c.requires_human = decision.recommended_action, True
+        else:
+            draft_v = _drafts.verify_local_draft(draft, email)
+
+    problems = _cls.validate_classification(c, ctx)
+    if problems:
+        raise RuntimeError("classification post-condition failed: " + "; ".join(problems))
+
+    verification = {"read": read_v, "context": ctx_v, "classification": {"ok": True},
+                    "draft": draft_v, "send_calls": 0, "sendable": False}
+    record = {
+        "rfc822_message_id": email.rfc822_message_id, "sender_email": email.sender_email,
+        "subject": email.subject, "received_at": email.date, "classification": c.classification,
+        "confidence": c.confidence, "reason": c.reason, "risk_flags": c.risk_flags,
+        "policy_tier": decision.tier, "recommended_action": decision.recommended_action,
+        "requires_human": decision.requires_human,
+        "context": {**ctx.to_dict(), "policy_reasons": decision.reasons, "references": c.references},
+        "attachments": email.attachments,
+        "draft_subject": draft.subject if draft else None, "draft_body": draft.body if draft else None,
+        "draft_reason": draft.reason if draft else None, "gmail_draft_id": draft_id,
+        "verification": verification,
+    }
+    if draft_id is None:
+        _control.require_running("before saving the result")
+    # else: a Gmail draft already exists for this message. Its record is ALWAYS saved, halted or
+    # not - losing track of an external write that happened is worse than one local row.
+    await store.save_result(message_id, record)
+    audit_log("processed", message_id=message_id, thread_id=thread_id, sender_domain=email.sender_domain,
+              classification=c.classification, confidence=c.confidence,
+              context={k: getattr(ctx, k).get("status") for k in ("customer", "order", "shipment", "supplier")},
+              recommended_action=decision.recommended_action, requires_human=decision.requires_human,
+              draft_mode=draft_v["mode"], draft_id=draft_id, draft_verified=draft_v["ok"],
+              attachments=len(email.attachments), sent=False)
+    return {"classification": c.to_dict(), "policy": decision.to_dict(), "context": ctx.to_dict(),
+            "draft": {"mode": draft_v["mode"], "gmail_draft_id": draft_id, "body": draft.body if draft else None},
+            "verification": verification}
+
+
+MAX_SCAN_PAGES = 5            # newest-first pages scanned per cycle to find unprocessed mail (25 x 5 = 125 ids)
+_SPAM_IGNORED: "OrderedDict[str, bool]" = OrderedDict()    # spam ids already judged irrelevant (ids only)
+_SPAM_IGNORED_MAX = 5000
+
+
+async def unprocessed_refs(client, store, query: str, want: int, *, include_spam: bool = False,
+                           skip_ids=None, max_pages: int = MAX_SCAN_PAGES) -> Dict[str, Any]:
+    """Up to `want` messages not yet finished, paging newest-first past already-processed ones. Before
+    2026-10-27 only the newest page was read, so once that page was all known, older new mail (a burst of more
+    than one page between cycles) was never seen. A message is "finished" when its store row exists and is not
+    'retry' (claim() decides retries)."""
+    out, seen, known, token, pages = [], 0, 0, None, 0
+    if not hasattr(client, "list_message_page"):              # single-page client (tests / old fakes)
+        refs = await asyncio.to_thread(client.list_message_ids, query, want, include_spam) if include_spam \
+            else await asyncio.to_thread(client.list_message_ids, query, want)
+        return {"refs": refs, "seen": len(refs), "known": 0, "pages": 1, "exhausted": True}
+    while pages < max_pages and len(out) < want:
+        refs, token = await asyncio.to_thread(client.list_message_page, query, 25, token, include_spam)
+        pages += 1
+        for r in refs:
+            seen += 1
+            if skip_ids is not None and r["id"] in skip_ids:
+                known += 1
+                continue
+            row = await store.get(r["id"])
+            if row is not None and row.get("status") != "retry":
+                known += 1
+                continue
+            out.append(r)
+            if len(out) >= want:
+                break
+        if not token:
+            break
+    return {"refs": out, "seen": seen, "known": known, "pages": pages, "exhausted": token is None}
+
+
+def _header(meta: Dict[str, Any], name: str) -> str:
+    for h in ((meta.get("payload") or {}).get("headers") or []):
+        if isinstance(h, dict) and str(h.get("name", "")).lower() == name.lower():
+            return str(h.get("value") or "")
+    return ""
+
+
+async def spam_relevance(client: GmailClient, source: ContextSource, outreach_store, mid: str, tid: str) -> Optional[str]:
+    """Why a Spam message is worth reading (None = leave it alone). Uses headers only - no body, no links,
+    no attachments - and never trusts the content: relevance is a thread or a domain we already know."""
+    from email.utils import parseaddr
+    if outreach_store is not None and tid and await outreach_store.by_thread(tid):
+        return "outreach_thread"
+    meta = await asyncio.to_thread(client.get_message_metadata, mid)
+    addr = parseaddr(_header(meta, "From"))[1].lower()
+    dom = addr.rsplit("@", 1)[-1] if "@" in addr else ""
+    if not dom:
+        return None
+    if outreach_store is not None and await outreach_store.awaiting_by_recipient_domain(dom):
+        return "outreach_recipient_domain"
+    if await source.find_suppliers_by_domain(dom):
+        return "known_supplier_domain"
+    return None
+
+
+async def process_once(cfg: EmailAgentConfig, client: GmailClient, store, source: ContextSource,
+                       limit: Optional[int] = None, outreach_store=None) -> Dict[str, Any]:
+    summary: Dict[str, Any] = {"state": cfg.state, "listed": 0, "new": 0, "retried": 0, "skipped": 0,
+                               "processed": 0, "failed": 0, "requires_human": 0, "drafts": 0,
+                               "draft_mode": "none", "sent": 0, "errors": []}
+    ctl = _control.read_control()
+    if not ctl["running"]:
+        # Runtime kill switch: no token refresh, no Gmail call, no store write.
+        summary["halted"] = ctl["reason"]
+        summary["connection"] = {"ok": False, "state": "halted", "reason": ctl["reason"]}
+        audit_log("halted", stage="cycle start", reason=ctl["reason"])
+        return summary
+    conn = await check_connection(cfg, client)
+    summary["connection"] = conn
+    if not conn.get("ok"):
+        audit_log("connection_not_ready", **{k: v for k, v in conn.items() if k != "mailbox"})
+        return summary
+    draft_mode = "gmail" if (cfg.gmail_drafts and conn.get("can_draft")) else "local"
+    summary["draft_mode"] = draft_mode
+
+    scan = await unprocessed_refs(client, store, cfg.query, limit or cfg.max_per_cycle)
+    refs = scan["refs"]
+    summary["listed"] = scan["seen"]
+    summary["skipped"] += scan["known"]
+    summary["scan_pages"] = scan["pages"]
+    if not scan["exhausted"] and len(refs) >= (limit or cfg.max_per_cycle):
+        summary["backlog"] = True        # more unprocessed mail waits for the next cycle (never dropped)
+    thread_cache: Dict[str, Any] = {}
+    for ref in refs:
+        mid, tid = ref["id"], ref["threadId"]
+        ctl = _control.read_control()
+        if not ctl["running"]:
+            summary["halted"] = ctl["reason"]
+            audit_log("halted", stage="before claim", message_id=mid, reason=ctl["reason"])
+            break
+        claim = await store.claim(mid, tid, cfg.max_attempts)
+        if claim == "skip":
+            summary["skipped"] += 1
+            continue
+        summary["new" if claim == "new" else "retried"] += 1
+        try:
+            result = await process_message(cfg, client, store, source, mid, tid, draft_mode, thread_cache)
+            summary["processed"] += 1
+            summary["requires_human"] += int(result["policy"]["requires_human"])
+            summary["drafts"] += int(result["draft"]["body"] is not None)
+        except _control.Halted as e:
+            # Halted mid-message: nothing further is drafted or saved. Hand the claim back without
+            # using an attempt so the message is processed normally once the agent is re-armed.
+            await store.release(mid)
+            summary["halted"] = e.reason
+            audit_log("halted", stage=e.stage, message_id=mid, reason=e.reason)
+            break
+        except GmailError as e:
+            if e.kind == "rate_limit":
+                # Gmail quota: not a failure of this message and not a permission problem. Hand the
+                # claim back without using an attempt and end the cycle; the next cycle continues.
+                await store.release(mid)
+                summary["throttled"] = True
+                audit_log("cycle_throttled", message_id=mid, error_kind=e.kind, failure_reason=safe_error(e, 200))
+                break
+            if e.kind in MAILBOX_LEVEL_KINDS:
+                # mailbox-level failure, not this message's fault: hand the claim back and stop
+                await store.release(mid)
+                summary["aborted"] = e.kind
+                summary["errors"].append({"message_id": mid, "status": "retry", "error": safe_error(e, 160)})
+                audit_log("cycle_aborted", message_id=mid, error_kind=e.kind, failure_reason=safe_error(e, 200))
+                break
+            status = await store.mark_failed(mid, safe_error(e), e.retryable, cfg.max_attempts)
+            summary["failed"] += 1
+            summary["errors"].append({"message_id": mid, "status": status, "error": safe_error(e, 160)})
+            audit_log("failed", message_id=mid, thread_id=tid, status=status, failure_reason=safe_error(e, 200))
+        except Exception as e:  # recorded per message; one bad email never stops the cycle
+            status = await store.mark_failed(mid, safe_error(e), False, cfg.max_attempts)
+            summary["failed"] += 1
+            summary["errors"].append({"message_id": mid, "status": status, "error": safe_error(e, 160)})
+            audit_log("failed", message_id=mid, thread_id=tid, status=status, failure_reason=safe_error(e, 200))
+    if cfg.scan_spam and not summary.get("halted") and not summary.get("aborted") \
+            and await store.supplier_schema_ready():
+        await _spam_pass(cfg, client, store, source, outreach_store, draft_mode, thread_cache, summary)
+    audit_log("cycle", **{k: v for k, v in summary.items() if k not in ("errors", "connection")})
+    return summary
+
+
+async def _spam_pass(cfg, client, store, source, outreach_store, draft_mode, thread_cache, summary) -> None:
+    """Spam/Junk inspection (2026-10-27). Only messages relevant by thread or known domain are claimed and
+    processed exactly like inbox mail (same idempotency, retries and post-conditions) and tagged
+    source_folder='spam'. Unrelated spam is counted, not stored. Labels are never changed: the grant has no
+    gmail.modify scope, so un-spamming is reported to the owner instead."""
+    sp = {"listed": 0, "relevant": 0, "ignored": 0, "processed": 0, "failed": 0, "unspam": "not permitted (no gmail.modify scope)"}
+    summary["spam"] = sp
+    try:
+        scan = await unprocessed_refs(client, store, cfg.spam_query, cfg.spam_max_per_cycle, include_spam=True,
+                                      skip_ids=_SPAM_IGNORED)
+        refs = scan["refs"]
+    except GmailError as e:
+        sp["error"] = f"{e.kind}: {safe_error(e, 120)}"
+        audit_log("spam_scan_failed", error_kind=e.kind, failure_reason=safe_error(e, 200))
+        return
+    sp["listed"] = len(refs)
+    for ref in refs:
+        mid, tid = ref["id"], ref["threadId"]
+        if not _control.read_control()["running"]:
+            summary["halted"] = "halted during spam pass"
+            break
+        known = await store.get(mid)
+        if known and known.get("status") in ("processed", "failed", "processing"):
+            continue                                  # already handled (repeat scans create nothing new)
+        try:
+            why = await spam_relevance(client, source, outreach_store, mid, tid)
+        except GmailError as e:
+            sp["failed"] += 1
+            summary["errors"].append({"message_id": mid, "status": "spam_check_failed", "error": safe_error(e, 160)})
+            continue
+        if not why:
+            sp["ignored"] += 1
+            _SPAM_IGNORED[mid] = True                       # ids only; bounded; re-checked after a restart
+            while len(_SPAM_IGNORED) > _SPAM_IGNORED_MAX:
+                _SPAM_IGNORED.popitem(last=False)
+            continue
+        sp["relevant"] += 1
+        claim = await store.claim(mid, tid, cfg.max_attempts)
+        if claim == "skip":
+            continue
+        try:
+            await process_message(cfg, client, store, source, mid, tid, draft_mode, thread_cache)
+            await store.set_source_folder(mid, "spam")
+            sp["processed"] += 1
+            audit_log("spam_relevant_processed", message_id=mid, thread_id=tid, relevance=why, sent=False)
+        except _control.Halted:
+            await store.release(mid)
+            summary["halted"] = "halted during spam pass"
+            break
+        except Exception as e:                        # recorded like any inbox message; retried next cycle
+            status = await store.mark_failed(mid, safe_error(e), isinstance(e, GmailError) and e.retryable,
+                                             cfg.max_attempts)
+            sp["failed"] += 1
+            summary["errors"].append({"message_id": mid, "status": status, "error": safe_error(e, 160)})

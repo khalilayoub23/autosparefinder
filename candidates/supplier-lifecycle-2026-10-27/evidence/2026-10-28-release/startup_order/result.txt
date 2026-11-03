@@ -1,0 +1,23 @@
+[17:30:30.878] catalog stamp head exit=0
+[17:30:38.106] pii -> 0041 exit=0
+[17:30:38.332] S2 start: PII=0041_email_agent_owner_flow; holding ACCESS SHARE lock on email_agent_messages for 40 s
+[17:30:41.494] service started
+[17:31:06.714] S2 after 25s: PII=0041_email_agent_owner_flow container=running restarts=0
+HTTP 200
+[17:31:07.025] S2 app_started: 1793208642.0822723 rev=0041_email_agent_owner_flow (T0=1793208640.341286869)
+[17:31:07.034] S2 served: 1793208666.9751203 /probe rev=0041_email_agent_owner_flow
+[17:31:07.042] S2 container_start ran: 0
+   S2 log: INFO  [alembic.runtime.migration] Running upgrade 0041_email_agent_owner_flow -> 0042_supplier_lifecycle, Supplier lifecycle: separate authorizations, NIR supplier outreach, procurement, spam-folder routing.
+   S2 log: asyncpg.exceptions.LockNotAvailableError: canceling statement due to lock timeout
+   S2 log: sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.Error: <class 'asyncpg.exceptions.LockNotAvailableError'>: canceling statement due to lock timeout
+   S2 log: sqlalchemy.exc.DBAPIError: (sqlalchemy.dialects.postgresql.asyncpg.Error) <class 'asyncpg.exceptions.LockNotAvailableError'>: canceling statement due to lock timeout
+[17:31:18.563] S3 recovery: lock released, docker restart
+[17:31:39.612] S3: PII=0042_supplier_lifecycle container=running restarts=0
+HTTP 200
+[17:31:39.862] S3 app_started: 1793208679.790754 rev=0041_email_agent_owner_flow
+[17:31:39.871] S3 served: 1793208699.8130324 /probe rev=0042_supplier_lifecycle
+[17:31:39.886] S3 container_start ran: 1 at 1793208683.237842133
+   S3 log: INFO  [alembic.runtime.migration] Running upgrade 0041_email_agent_owner_flow -> 0042_supplier_lifecycle, Supplier lifecycle: separate authorizations, NIR supplier outreach, procurement, spam-folder routing.
+   S3 log: INFO  [alembic.runtime.migration] Running upgrade 0041_email_agent_owner_flow -> 0042_supplier_lifecycle, Supplier lifecycle: separate authorizations, NIR supplier outreach, procurement, spam-folder routing.
+[17:31:39.932] S1-equivalent ordering check: app_started vs hook (hook runs only AFTER both migrations; app does not wait)
+[17:31:41.459] done

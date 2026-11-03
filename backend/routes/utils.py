@@ -568,6 +568,23 @@ async def trigger_supplier_fulfillment(paid_orders: list, db: AsyncSession) -> N
                 asyncio.create_task(_guarded_task(publish_notification(str(admin.id), {"type": "supplier_order", "title": _title, "message": _msg})))
             continue
 
+        # Owner task 2026-10-27: a customer payment never authorizes a supplier order or a supplier payment.
+        # procurement.gate_paid_order prepares the procurement (idempotent, owner notified once) and refuses
+        # until the owner has SEPARATELY approved the purchase order and the supplier payment for the
+        # CURRENT terms. Fails closed: an error in the gate is a refusal.
+        try:
+            import procurement as _proc
+            try:
+                from BACKEND_API_ROUTES import notify_owner as _proc_notify
+            except Exception:
+                _proc_notify = None
+            _proc_refusal = await _proc.gate_paid_order(order_db, order_items, notify=_proc_notify)
+        except Exception as _proc_exc:
+            _proc_refusal = f"procurement gate error ({type(_proc_exc).__name__}) - refused"
+        if _proc_refusal:
+            print(f"[Fulfillment] {order_db.order_number}: supplier order/payment not authorized — {_proc_refusal}")
+            continue
+
         supplier_part_ids = [oi.supplier_part_id for oi in order_items if oi.supplier_part_id]
         supplier_meta: dict[str, dict] = {}
         if supplier_part_ids:

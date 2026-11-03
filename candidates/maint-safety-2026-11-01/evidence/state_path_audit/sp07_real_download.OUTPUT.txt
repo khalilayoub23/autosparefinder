@@ -1,0 +1,55 @@
+== source metadata (published size + sha256 of onnx/model.onnx)
+revision e8f8c211226b894fcb81acc59f3b34ba3efd5f42
+onnx/model.onnx 470301610 10f7a088420252b26caf819236ca2c9d2987afd0fc06fec7553b542a5655a05a
+tokenizer.json 9081518 2c3387be76557bd40970cec13153b3bbf80407865484b209e655e5e4729076b8
+== 1. interrupted download (SIGKILL after 12 s) in container A, cwd=/
+rc=137
+state after the kill:
+0 models/minilm-multilingual/.cache/huggingface/download/onnx/ihhw_uFzBe-Y54_HOJQmXx4GS8A=.10f7a088420252b26caf819236ca2c9d2987afd0fc06fec7553b542a5655a05a.e17050e7.incomplete
+190 models/minilm-multilingual/1_Pooling/config.json
+645 models/minilm-multilingual/config.json
+53 models/minilm-multilingual/sentence_bert_config.json
+239 models/minilm-multilingual/special_tokens_map.json
+9081518 models/minilm-multilingual/tokenizer.json
+526 models/minilm-multilingual/tokenizer_config.json
+== 2. is the interrupted state accepted? (new container, no network, cwd=/tmp)
+[fetch_embed_model] cached model is NOT valid (missing: onnx/model.onnx) — downloading again
+[fetch_embed_model] downloading sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 -> /app/state/models/minilm-multilingual
+Returning existing local_dir `/app/state/models/minilm-multilingual` as remote repo cannot be accessed in `snapshot_download` ([Errno -3] Temporary failure in name resolution).
+[fetch_embed_model] FAILED - the downloaded model is not valid: missing: onnx/model.onnx
+rc=1
+== 3. complete download, new container, cwd=/app/tests
+[fetch_embed_model] cached model is NOT valid (missing: onnx/model.onnx) — downloading again
+[fetch_embed_model] downloading sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 -> /app/state/models/minilm-multilingual
+[fetch_embed_model] done: 470301610 bytes, loadable; checked against source revision e8f8c211226b
+elapsed 20.57 s
+rc=0
+== 4. independent integrity check on the host (sha256sum) vs the published values above
+10f7a088420252b26caf819236ca2c9d2987afd0fc06fec7553b542a5655a05a  /dev/shm/asf_sp07_final/models/minilm-multilingual/onnx/model.onnx
+2c3387be76557bd40970cec13153b3bbf80407865484b209e655e5e4729076b8  /dev/shm/asf_sp07_final/models/minilm-multilingual/tokenizer.json
+470301610 bytes  /dev/shm/asf_sp07_final/models/minilm-multilingual/onnx/model.onnx
+== 5. repeat run, NEW container, NO NETWORK, cwd=/: must reuse the cache and leave the file untouched
+[fetch_embed_model] already present and loadable (470 MB) — skipping
+rc=0
+model.onnx untouched (inode/mtime 177 1793653003)
+== 6. load through the real supported mechanism (category_embed), default paths, no network, cwd=/
+MODEL_DIR /app/state/models/minilm-multilingual available True
+embed shape (2, 384) unit norms [1.0, 1.0]
+== 7. truncated model.onnx (100,000,000 of 470,301,610 bytes), NO network: must not be accepted; clear failure, rc 1
+[fetch_embed_model] cached model is NOT valid (model.onnx not loadable: [ONNXRuntimeError] : 7 : INVALID_PROTOBUF : Load model from /app/state/models/minilm-multilingual/onnx/model.onnx failed:Protobuf parsing failed.) — downloading again
+[fetch_embed_model] downloading sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 -> /app/state/models/minilm-multilingual
+Returning existing local_dir `/app/state/models/minilm-multilingual` as remote repo cannot be accessed in `snapshot_download` ([Errno -3] Temporary failure in name resolution).
+[fetch_embed_model] FAILED - the downloaded model is not valid: model.onnx not loadable: [ONNXRuntimeError] : 7 : INVALID_PROTOBUF : Load model from /app/state/models/minilm-multilingual/onnx/model.onnx failed:Protobuf parsing failed.
+rc=1
+== 8. same truncated file, network on: repaired, re-verified against the published sha256
+[fetch_embed_model] cached model is NOT valid (model.onnx not loadable: [ONNXRuntimeError] : 7 : INVALID_PROTOBUF : Load model from /app/state/models/minilm-multilingual/onnx/model.onnx failed:Protobuf parsing failed.) — downloading again
+[fetch_embed_model] downloading sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 -> /app/state/models/minilm-multilingual
+[fetch_embed_model] done: 470301610 bytes, loadable; checked against source revision e8f8c211226b
+10f7a088420252b26caf819236ca2c9d2987afd0fc06fec7553b542a5655a05a  /dev/shm/asf_sp07_final/models/minilm-multilingual/onnx/model.onnx
+== 9. same-size corruption of the cache (1 byte flipped) with the network on: the model still LOADS, so the offline check cannot see it
+[fetch_embed_model] already present and loadable (470 MB) — skipping
+(see docs: a fully-sized, still-parseable corruption is detected only by --force / the post-download sha256, by design)
+== 10. gated real-download pytest (RUN_REAL_MODEL_DOWNLOAD=1), tmp on RAM
+............                                                             [100%]
+12 passed in 42.23s
+RAM-backed state removed

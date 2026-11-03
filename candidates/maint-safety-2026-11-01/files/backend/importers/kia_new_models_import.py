@@ -1,0 +1,148 @@
+#!/usr/bin/env python3
+"""Kia new model parts importer — kia-israel.co.il"""
+from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environment, never from source (FIXES_TRACKER #61)
+import price_policy as _pp  # the one base_price formula (price_policy.base_price_for_cost)
+import asyncio, asyncpg, json, urllib.request, urllib.parse   # json was missing: every insert raised NameError
+from html.parser import HTMLParser
+
+# Kia Israel price list page returns an HTML table (OEM + Hebrew desc + price).
+# No image URLs are present in the response — image capture is not possible.
+_SOURCE_HAS_NO_IMAGES = True
+
+# ONE category source of truth — never a private ruleset here.
+from category_map import categorize_on_ingest
+
+DB_URL   = f"postgresql://autospare:{_DB_PW}@postgres_catalog:5432/autospare"
+KIA_MFR  = "626947bf-be3f-4dd1-a52e-fbcff8168cfc"
+PARTS_URL= "https://kia-israel.co.il/%d7%9e%d7%97%d7%99%d7%a8%d7%95%d7%9f-%d7%97%d7%9c%d7%a4%d7%99%d7%9d"
+BATCH    = 25
+
+MODELS = [
+    ("Carens",    "קרנס"),
+    ("Cadenza",   "קדנזה"),
+    ("Pregio",    "פרגיו"),
+    ("Sephia II", "ספיה"),
+    ("Pride",     "פרייד"),
+    ("Shuma",     "שומה"),
+    ("Clarus",    "קלרוס"),
+    ("Mentor",    "מנטור"),
+    ("Opirus",    "אופירוס"),
+    ("Joice",     "ג'וייס"),
+]
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 Chrome/120",
+    "Content-Type": "application/x-www-form-urlencoded",
+    "Accept": "text/html",
+    "Referer": "https://kia-israel.co.il/",
+    "Origin": "https://kia-israel.co.il"
+}
+
+class TableParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.in_t=self.in_r=self.in_c=False
+        self.cur_row=[];self.cur_cell=[];self.rows=[]
+    def handle_starttag(self,tag,attrs):
+        if tag=="table":self.in_t=True
+        elif tag=="tr" and self.in_t:self.in_r=True;self.cur_row=[]
+        elif tag in("td","th") and self.in_r:self.in_c=True;self.cur_cell=[]
+    def handle_endtag(self,tag):
+        if tag=="table":self.in_t=False
+        elif tag=="tr" and self.in_r:
+            self.in_r=False
+            if self.cur_row:self.rows.append(self.cur_row)
+        elif tag in("td","th") and self.in_c:
+            self.in_c=False;self.cur_row.append(" ".join(self.cur_cell).strip())
+    def handle_data(self,d):
+        if self.in_c:self.cur_cell.append(d)
+
+def map_cat(desc) -> str:
+    """Delegates to category_map — the ONE source of truth.
+
+    This previously carried its own keyword ruleset returning a vocabulary
+    parts_catalog.category may never hold (hyphenated slugs like brakes-clutch/filters-oils), so every part it
+    classified got an unusable label that normalize_categories then had to
+    map back or flatten into the catch-all.
+    Never re-add keyword rules here — add them to category_map.py.
+    """
+    return categorize_on_ingest(name=desc)
+
+def fetch_model(search_term):
+    data = urllib.parse.urlencode({"catalogNum":"","partDesc": search_term}).encode("utf-8")
+    req  = urllib.request.Request(PARTS_URL, data=data, headers=HEADERS, method="POST")
+    with urllib.request.urlopen(req, timeout=30) as r:
+        html = r.read().decode("utf-8", errors="replace")
+    p = TableParser(); p.feed(html)
+    parts = []
+    for row in p.rows[1:]:
+        if len(row) < 4: continue
+        sku  = row[0].strip()
+        desc = row[2].strip()
+        price_s = row[3].strip().replace(",","")
+        if not sku or not desc: continue
+        try: price = float(price_s)
+        except: price = 0.0
+        parts.append({"sku": sku, "name": desc, "price": price, "category": map_cat(desc)})
+    return parts
+
+async def run():
+    conn = await asyncpg.connect(DB_URL)
+    total_parts = 0
+    total_fitment = 0
+
+    for model_en, model_he in MODELS:
+        print(f"\n[{model_en}] Fetching '{model_he}'...", flush=True)
+        try:
+            parts = fetch_model(model_he)
+        except Exception as e:
+            print(f"  ERROR: {e}", flush=True)
+            continue
+        print(f"  Got {len(parts)} parts", flush=True)
+
+        parts_added = 0
+        fit_added   = 0
+
+        for i in range(0, len(parts), BATCH):
+            batch = parts[i:i+BATCH]
+            async with conn.transaction():
+                for p in batch:
+                    sku  = ("KIA-" + p["sku"])[:100]
+                    name = p["name"][:255]
+                    cat  = p["category"]
+
+                    # gen_random_uuid() supplies the id
+                    part_id = await conn.fetchval("""
+                        INSERT INTO parts_catalog
+                          (id, sku, name, category, base_price, oem_number,
+                           manufacturer, manufacturer_id, is_active,
+                           part_condition, needs_oem_lookup, specifications)
+                        VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,'Kia',$6,TRUE,'new',FALSE,$7::jsonb)
+                        ON CONFLICT (sku) DO UPDATE
+                          SET name=EXCLUDED.name,
+                              base_price= CASE WHEN parts_catalog.base_price IS NULL OR parts_catalog.base_price = 0 THEN EXCLUDED.base_price ELSE parts_catalog.base_price END,
+                              category=EXCLUDED.category,
+                              updated_at=NOW()
+                        RETURNING id
+                    """, sku, name, cat, _pp.base_price_for_cost(p["price"]), p["sku"], KIA_MFR,
+                        json.dumps({"source": "kia_new_models_import",
+                                    "model": p.get("model")}))
+
+                    if part_id:
+                        parts_added += 1
+                        await conn.execute("""
+                            INSERT INTO part_vehicle_fitment
+                              (part_id, manufacturer, model, year_from, manufacturer_id)
+                            VALUES ($1,'Kia',$2,0,$3)
+                            ON CONFLICT (part_id, manufacturer, model, year_from) DO NOTHING
+                        """, part_id, model_en, KIA_MFR)
+                        fit_added += 1
+
+        print(f"  {model_en}: {parts_added} parts upserted, {fit_added} fitment records", flush=True)
+        total_parts   += parts_added
+        total_fitment += fit_added
+
+    await conn.close()
+    print(f"\nDONE. Total: {total_parts} parts, {total_fitment} fitment records", flush=True)
+
+asyncio.run(run())

@@ -1,0 +1,17 @@
+autospare_backend Up 2 minutes (healthy)
+autospare_frontend Up 30 hours (healthy)
+autospare_meilisearch Up 10 days (healthy)
+autospare_nginx Up 10 days (healthy)
+autospare_postgres_backup Up 10 days (healthy)
+autospare_postgres_backup_catalog Up 10 days (healthy)
+autospare_postgres_catalog Up 10 days (healthy)
+autospare_postgres_pii Up 10 days (healthy)
+autospare_redis Up 10 days (healthy)
+flaresolverr Up 10 days
+hotmail_mcp Up 10 days
+sandbox_backend Up 2 days
+sandbox_meili Up 2 days (healthy)
+sandbox_postgres Up 2 days (healthy)
+sandbox_redis Up 2 days (healthy)
+sandbox_tools Up 2 days
+whatsapp_bridge Up 6 days

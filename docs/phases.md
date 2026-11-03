@@ -196,6 +196,11 @@ Sequential tasks:
 7. `backfill_jaguar_fitment_from_name(db)` → Jaguar model names (XE/XF/F-Pace etc.) from part names; filters merchandise
 8. `merge_catalog_fitment_from_part_vehicle_fitment(db)` → merge into canonical table
 
+> **2026-10-28 (#119, FIXES_TRACKER):** steps 4, 6, 7 (BMW / Ford / Jaguar name backfills) are measured done (71 / 89 /
+> 164 parsable parts left) and are deleted in the follow-up bundle `candidates/followups-119-122-2026-10-28/` (not yet
+> deployed); step 8 and the two price tasks stay blocked by `OOM_BLOCKED_TASKS` pending an owner decision; step 5 matches
+> 0 parts every run (#120). Step 3 rewrites ~35K unchanged parts per run (#120 — needs an unchanged-check).
+
 Target table: `part_vehicle_fitment`
 Unique index: `(part_id, manufacturer, model, year_from)`
 
