@@ -2772,13 +2772,15 @@ async def _meili_sync_loop() -> None:
                     os.path.dirname(os.path.abspath(__file__)),
                     "maintenance", "meili_purge_inactive.py")
                 if os.path.exists(purge):
-                    pproc = await asyncio.create_subprocess_exec(
-                        _sys.executable, purge,
-                        stdout=asyncio.subprocess.DEVNULL,
-                        stderr=asyncio.subprocess.DEVNULL,
-                    )
-                    prc = await pproc.wait()
-                    print(f"[meili_sync_loop] inactive purge rc={prc}", flush=True)
+                    # Output is CAPTURED (not DEVNULL): exit code, duration and the script's
+                    # own counters land in /app/state/logs/meili_purge_runs.jsonl.
+                    from purge_run_log import run_captured
+                    prc, _prec = await run_captured([_sys.executable, purge], "meili_purge")
+                    _ps = _prec.get("summary") or {}
+                    print(f"[meili_sync_loop] inactive purge rc={prc} status={_prec['status']} "
+                          f"duration={_prec['duration_s']}s checked={_ps.get('checked')} "
+                          f"present={_ps.get('present')} submitted={_ps.get('submitted')} "
+                          f"skipped={_ps.get('skipped')}", flush=True)
             except Exception as pexc:
                 print(f"[meili_sync_loop] purge skipped: {pexc}", flush=True)
 
@@ -6253,6 +6255,45 @@ async def _health_monitor_loop():
                         )
                         print(f"[HealthMonitor] ALERT: job {_jr.job_name} ({_jr.job_id}) {_jr.status}")
                         await _alert_owner(_jt, _jm, alert_key="", severity="critical")  # no cooldown — each job_id is unique
+
+                    # 5a2: Disk usage (80/85/90/95 %) — disk_alert.py holds the rules; state in Redis.
+                    # A monitoring failure is alerted as such, never treated as "disk ok".
+                    try:
+                        import disk_alert as _da
+                        _r = await get_redis()
+                        _seen_dev = set()
+                        for _dp in ("/", "/app/state"):
+                            try:  # one alert stream per distinct filesystem (state volume shares / today)
+                                _dev = os.stat(_dp).st_dev
+                            except OSError:
+                                _dev = None
+                            if _dev is not None and _dev in _seen_dev:
+                                continue
+                            _seen_dev.add(_dev)
+                            _sk = f"autospare:disk_alert:{_dp}"
+                            try:
+                                _s = _da.sample(_dp)
+                            except OSError as _de:
+                                await notify_owner("health", "ניטור הדיסק נכשל", f"{_dp}: {_de}",
+                                                   severity="warning", alert_key=f"disk_monitor_error:{_dp}",
+                                                   cooldown_s=6 * 3600)
+                                continue
+                            _prev = (await _r.get(_sk + ":level")) or "ok"
+                            _sent = await _r.get(_sk + ":sent_at")
+                            _prev = _prev.decode() if isinstance(_prev, bytes) else _prev
+                            _sent = float(_sent) if _sent else None
+                            _lvl, _act = _da.evaluate(_s["pct"], _prev, _sent, time.time())
+                            if _act:
+                                _cons = (await asyncio.to_thread(_da.top_consumers)) if _act != "recovered" else None
+                                _t, _b = _da.format_message(_s, _lvl, _act, _cons)
+                                _res = await notify_owner("health", _t, _b,
+                                                          severity=_da.SEVERITY.get(_lvl, "info"),
+                                                          alert_key=f"disk_{_lvl}:{_dp}:{_act}", cooldown_s=60)
+                                if _res.get("ok") or _res.get("queued"):
+                                    await _r.set(_sk + ":level", _lvl)
+                                    await _r.set(_sk + ":sent_at", str(time.time()))
+                    except Exception as _dexc:
+                        print(f"[HealthMonitor] disk check error: {_dexc}")
 
                     # 5b: Zombie jobs — running but heartbeat silent beyond their TTL.
                     # Respects ttl_seconds from job_registry (same logic as task_zombie_watchdog).
